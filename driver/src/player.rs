@@ -412,6 +412,9 @@ impl Player {
         arrived: impl Fn(&ProbeSnapshot) -> bool,
     ) {
         let deadline = Deadline::from(&self.desktop, LONG);
+        // Where a click on the way that the game read as somewhere else was aimed: far ground the
+        // camera grazes may read a little off, and aiming there again would only miss again.
+        let mut missed: Vec<Pos<Meters>> = Vec::new();
         loop {
             let seen = self.snapshot();
             if arrived(&seen) {
@@ -450,6 +453,8 @@ impl Player {
                             !beside_anyone(&seen, *ground)
                         }
                         && (!in_warp(&seen, *ground) || *ground == target)
+                        && (*ground == target
+                            || !missed.iter().any(|miss| miss.distance(*ground) < SPACING))
                 })
                 .last()
                 .or_else(|| detour(&seen, mesh, me.at, target, length(me.at, &path)));
@@ -469,6 +474,9 @@ impl Player {
             };
             let at = clickable_point(&seen, hop).expect("open ground is in view");
             if !wanted(&self.point_at(at).claim) || !wanted(&self.click().claim) {
+                if !onto_goal {
+                    missed.push(hop);
+                }
                 continue;
             }
             // On the way the next click goes out as the player nears this one; onto the goal, once

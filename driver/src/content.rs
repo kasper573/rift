@@ -7,6 +7,8 @@ use engine::core::content::{
 };
 use engine::core::math::{Offset, Pos, Rect};
 use engine::core::units::{MeterPos, Meters};
+use engine::systems::actor::model::ModelId;
+use engine::systems::actor::stance::HandIndex;
 use engine::systems::area::{self, Area, AreaDef, AreaId, AreaModule, PropDef};
 use engine::systems::input::map::{InputAction, InputMap};
 use engine::systems::item::{ItemId, Wear};
@@ -106,6 +108,22 @@ pub fn held_in_stance(item: ItemId, stance: &str) -> bool {
         item.get(content).wear(),
         Some(Wear::Held { stance: held, .. }) if held.name(content) == stance
     )
+}
+
+/// What a body of `model` calls its `hand`, as the equipment window names it.
+pub fn hand_name(model: ModelId, hand: HandIndex) -> String {
+    let content = content();
+    let skeleton = model.get(content).skeleton.get(content);
+    let name = &skeleton
+        .hands
+        .get(usize::from(hand.0))
+        .unwrap_or_else(|| panic!("a body of {} has no hand {}", model.name(content), hand.0))
+        .name;
+    let mut letters = name.chars();
+    letters
+        .next()
+        .map(|first| first.to_uppercase().chain(letters).collect())
+        .unwrap_or_default()
 }
 
 /// Where the townsperson lives: standing there puts a player at their feet.

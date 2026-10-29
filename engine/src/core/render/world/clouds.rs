@@ -39,18 +39,23 @@ const WARP: f32 = 0.12;
 /// far past that it is thick.
 const CLEAR_SKY: f32 = 0.8;
 const FULL_COVER: f32 = 0.2;
-const SOFTNESS: f32 = 0.16;
+pub const SOFTNESS: f32 = 0.16;
+/// The second read of the noise every point blends with its first: turned and scaled by amounts
+/// no small whole numbers relate, so the two only fall in step again far past anything in view,
+/// and the turn crosses the rows the noise's square lattice would otherwise line its clouds up in.
+const SECOND_TURN: f32 = 1.0;
+const SECOND_SCALE: f32 = 0.754_877_7;
+pub const SECOND_SHIFT: Vec2 = Vec2::new(0.373, 0.619);
 
-/// The one field of cloud every sky paints and every sun casts: `field`, in each texel how cloudy
-/// the sky is there in red and how far inside the cloud's edge it lies in green, at the cover it
-/// was last drawn for; and `shadows`, how much of the light reaches the ground through it, laid along
-/// the light's rays as the light and the drift last stood.
+/// The one field of cloud every sky paints and every sun casts: `field`, the noise the clouds are
+/// drawn from in red, read twice and blended where it is read (`read`), so it never shows where it
+/// repeats, and thresholded at the cover's `edge`; and `shadows`, how much of the light reaches
+/// the ground through it, laid along the light's rays as the light and the drift last stood.
 #[derive(Resource)]
 pub struct CloudSheet {
     field: Handle<Image>,
     shadows: Handle<Image>,
     noise: Vec<f32>,
-    cloud: Vec<f32>,
     weather: (f32, f32),
     laid: Option<Laid>,
 }
@@ -62,10 +67,14 @@ impl FromWorld for CloudSheet {
                 noise(Vec2::new((texel % SHEET) as f32, (texel / SHEET) as f32) / SHEET as f32)
             })
             .collect();
-        let weather = (0.0, 0.0);
-        let cloud = cloudiness(&noise, weather.0);
         let mut images = world.resource_mut::<Assets<Image>>();
-        let field = images.add(field(&noise, &cloud, weather.0));
+        let field = images.add(picture(
+            SHEET,
+            noise
+                .iter()
+                .flat_map(|&noise| [noise, 0.0, 0.0, 1.0].map(|value| (value * 255.0) as u8))
+                .collect(),
+        ));
         let shadows = images.add(picture(
             SHADOWS,
             vec![255; (SHADOWS * SHADOWS * 4) as usize],
@@ -74,8 +83,7 @@ impl FromWorld for CloudSheet {
             field,
             shadows,
             noise,
-            cloud,
-            weather,
+            weather: (0.0, 0.0),
             laid: None,
         }
     }
@@ -95,17 +103,19 @@ impl CloudSheet {
         self.field.clone()
     }
 
-    /// Thickens or thins the field to cover `clouds` of the sky, 0 none and 1 all of it, its
-    /// shadows as dark as cloud holding `water` casts.
-    pub fn cover(&mut self, clouds: f32, water: f32, images: &mut Assets<Image>) {
-        if self.weather == (clouds, water) {
-            return;
-        }
-        self.weather = (clouds, water);
-        self.cloud = cloudiness(&self.noise, clouds);
-        self.laid = None;
-        if let Some(mut image) = images.get_mut(&self.field) {
-            *image = field(&self.noise, &self.cloud, clouds);
+    /// How cloudy the sky is at `at`, in tiles, under the cover last set, 0 clear to 1 thick, as
+    /// the sky reads the field.
+    pub fn cloudiness(&self, at: Vec2) -> f32 {
+        let edge = edge(self.weather.0);
+        smoothstep(edge, edge + SOFTNESS, read(&self.noise, at))
+    }
+
+    /// Thickens or thins the field's shadows to cover `clouds` of the sky, 0 none and 1 all of
+    /// it, as dark as cloud holding `water` casts.
+    pub fn cover(&mut self, clouds: f32, water: f32) {
+        if self.weather != (clouds, water) {
+            self.weather = (clouds, water);
+            self.laid = None;
         }
     }
 
@@ -141,7 +151,7 @@ impl CloudSheet {
                     light.transform_point(Vec3::new(1.0 - 2.0 * uv.x, 2.0 * uv.y - 1.0, 0.0));
                 let over = near + toward * (CLOUD_BASE.0 - near.y) / toward.y;
                 let at = (Vec2::new(over.x, over.z) - drift) / CLOUD_TILE.0;
-                let lit = 1.0 - shade * sampled(&self.cloud, at);
+                let lit = 1.0 - shade * self.cloudiness(at);
                 [lit, lit, lit, 1.0].map(|value| (value * 255.0) as u8)
             })
             .collect();
@@ -184,35 +194,25 @@ fn lean(light: Transform) -> Vec2 {
     Vec2::new(toward.x, toward.z) / toward.y
 }
 
-/// How cloudy the sky is at each texel of the noise under `clouds`.
-fn cloudiness(noise: &[f32], clouds: f32) -> Vec<f32> {
-    let edge = edge(clouds);
-    noise
-        .iter()
-        .map(|&noise| smoothstep(edge, edge + SOFTNESS, noise))
-        .collect()
-}
-
 /// Where, in the noise's range, cloud begins under `clouds`.
-fn edge(clouds: f32) -> f32 {
+pub fn edge(clouds: f32) -> f32 {
     CLEAR_SKY + (FULL_COVER - CLEAR_SKY) * clouds.clamp(0.0, 1.0)
 }
 
-/// The field as the sky reads it: how cloudy the sky is, and how far past the cloud's edge the
-/// noise lies under `clouds`, negative outside it, halved and raised by a half to fit the texel.
-fn field(noise: &[f32], cloud: &[f32], clouds: f32) -> Image {
-    let edge = edge(clouds);
-    let data = cloud
-        .iter()
-        .zip(noise)
-        .flat_map(|(&cloud, &noise)| {
-            [cloud, (noise - edge) * 0.5 + 0.5, 0.0, 1.0].map(|value| (value * 255.0) as u8)
-        })
-        .collect();
-    picture(SHEET, data)
+/// How the second read of the noise is turned and scaled from the first, in tiles; it is then
+/// carried `SECOND_SHIFT`.
+pub fn second_read() -> Mat2 {
+    Mat2::from_scale_angle(Vec2::splat(SECOND_SCALE), SECOND_TURN)
 }
 
-/// The field's cloudiness at `at`, in tiles, blended between texels and repeating every tile.
+/// The field's noise at `at`, in tiles: its two reads blended, as varied as either alone.
+fn read(noise: &[f32], at: Vec2) -> f32 {
+    let first = sampled(noise, at);
+    let second = sampled(noise, second_read() * at + SECOND_SHIFT);
+    0.5 + (first + second - 1.0) * std::f32::consts::FRAC_1_SQRT_2
+}
+
+/// The field's noise at `at`, in tiles, blended between texels and repeating every tile.
 fn sampled(cloud: &[f32], at: Vec2) -> f32 {
     let texel = at * SHEET as f32 - 0.5;
     let corner = texel.floor();

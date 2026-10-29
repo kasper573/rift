@@ -16,6 +16,10 @@ struct Heavens {
     cloud_base: f32,
     cloud_tile: f32,
     drift: vec2<f32>,
+    cloud_edge: f32,
+    cloud_softness: f32,
+    cloud_shift: vec2<f32>,
+    cloud_second: mat2x2<f32>,
 }
 
 var<private> looking: vec3<f32>;
@@ -66,8 +70,16 @@ fn sky_light(way: vec3<f32>) -> vec3<f32> {
 // (`cloud_base`), drifting on the wind, and the sun casts its shadows where its rays carry them.
 fn cloud_at(point: vec3<f32>) -> vec2<f32> {
     let at = (point.xz - heavens.drift) / heavens.cloud_tile;
-    let field = textureSampleLevel(cloud_picture, cloud_sampler, at, 0.0).rg;
-    return vec2<f32>(field.x, field.y * 2.0 - 1.0);
+    let first = cloud_noise(at);
+    let second = cloud_noise(heavens.cloud_second * at + heavens.cloud_shift);
+    let inside = 0.5 + (first + second - 1.0) * 0.70710678 - heavens.cloud_edge;
+    return vec2<f32>(smoothstep(0.0, heavens.cloud_softness, inside), inside);
+}
+
+// The noise the field is drawn from, read where it lies `at`, in tiles, repeating every tile.
+// `cloud_at` reads it twice and blends the two reads, so the clouds never show where it repeats.
+fn cloud_noise(at: vec2<f32>) -> f32 {
+    return textureSampleLevel(cloud_picture, cloud_sampler, at, 0.0).r;
 }
 @fragment
 fn fragment(@location(0) way: vec3<f32>, @location(1) uv: vec2<f32>) -> @location(0) vec4<f32> {

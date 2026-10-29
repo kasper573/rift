@@ -195,13 +195,9 @@ pub fn light(world: &mut World, area: &Area, daylight: Daylight, scenery: Scener
             * sky::ambient_at(daylight, elevation, area.weather.clouds, area.weather.water),
         ..default()
     };
-    world.resource_scope(|world, mut sheet: Mut<CloudSheet>| {
-        sheet.cover(
-            area.weather.clouds,
-            area.weather.water,
-            &mut world.resource_mut::<Assets<Image>>(),
-        );
-    });
+    world
+        .resource_mut::<CloudSheet>()
+        .cover(area.weather.clouds, area.weather.water);
     let shining = sun.map(|sun| sky::shining(sun, area.weather.clouds, area.weather.water));
     if let (Some(sun), Some(shining), Some(entity)) = (sun, shining, scenery.sun) {
         if let Some(mut light) = world.get_mut::<DirectionalLight>(entity) {
@@ -229,6 +225,7 @@ pub fn light(world: &mut World, area: &Area, daylight: Daylight, scenery: Scener
                     / (SUN_LUX * sky::clouded(area.weather.clouds, area.weather.water)),
                 -lights::toward(sun.elevation, sun.azimuth),
                 sky::night(daylight, sun),
+                area.weather.clouds,
                 drifted,
             );
             light_dome(world, dome, heavens);

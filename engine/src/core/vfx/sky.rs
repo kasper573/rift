@@ -13,7 +13,7 @@ use bevy::render::render_resource::{
 };
 use bevy::shader::Shader;
 
-use crate::core::render::world::clouds::{CLOUD_BASE, CLOUD_TILE};
+use crate::core::render::world::clouds::{self, CLOUD_BASE, CLOUD_TILE, SECOND_SHIFT, SOFTNESS};
 
 use super::render::{ParamsUniform, SiteUniform, VfxShaderKey};
 
@@ -39,8 +39,9 @@ pub struct SkyMaterial {
 /// The sky's lights as the sky header reads them: the unit way toward the light the world is lit
 /// by (the sun, or by night the full moon), how much of it shines (none below the horizon), its
 /// colour, the unit way toward the moon, how far into the night the sky is, 0 day to 1 full night,
-/// and the field of cloud: the height it lies at, the ground a tile of it covers and how far the
-/// wind has carried it.
+/// and the field of cloud: the height it lies at, the ground a tile of it covers, how far the
+/// wind has carried it, where in its noise cloud begins and how far past that it is thick, and how
+/// its second read is carried, turned and scaled from its first.
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
 pub struct Heavens {
     pub toward: Vec3,
@@ -51,6 +52,10 @@ pub struct Heavens {
     pub cloud_base: f32,
     pub cloud_tile: f32,
     pub drift: Vec2,
+    pub cloud_edge: f32,
+    pub cloud_softness: f32,
+    pub cloud_shift: Vec2,
+    pub cloud_second: Mat2,
 }
 
 impl Default for Heavens {
@@ -64,6 +69,10 @@ impl Default for Heavens {
             cloud_base: CLOUD_BASE.0,
             cloud_tile: CLOUD_TILE.0,
             drift: Vec2::ZERO,
+            cloud_edge: clouds::edge(0.0),
+            cloud_softness: SOFTNESS,
+            cloud_shift: SECOND_SHIFT,
+            cloud_second: clouds::second_read(),
         }
     }
 }
@@ -126,13 +135,14 @@ pub fn dome(meshes: &mut Assets<Mesh>, material: Handle<SkyMaterial>) -> impl Bu
 impl Heavens {
     /// The world lit from `toward` in `color`, `strength` times as strong as the full sun, shining
     /// fully once the light clears the horizon; the moon standing toward `moon`, `night` of the
-    /// way into the night, and the clouds carried `drift` along.
+    /// way into the night, and the clouds covering `clouds` of the sky, carried `drift` along.
     pub fn new(
         toward: Vec3,
         color: Color,
         strength: f32,
         moon: Vec3,
         night: f32,
+        clouds: f32,
         drift: Vec2,
     ) -> Heavens {
         let linear = color.to_linear() * strength;
@@ -143,6 +153,7 @@ impl Heavens {
             moon,
             night,
             drift,
+            cloud_edge: clouds::edge(clouds),
             ..Heavens::default()
         }
     }

@@ -1,6 +1,6 @@
 use std::f32::consts::TAU;
 
-use driver::{Player, UiTarget, content, held_in_stance, holding, input_name};
+use driver::{Player, UiTarget, content, hand_name, held_in_stance, holding, input_name};
 use engine::core::math::{Offset, Pos, WindowPx};
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::input::map::InputAction;
@@ -87,7 +87,7 @@ fn play(shoot: &mut Shoot) {
     me.wait_until("the sword to be taken off", |snapshot| {
         holding(snapshot, "rusty_sword") == 1
     });
-    hands(&mut me, shield);
+    hands(&mut me);
     me.caption(&format!(
         "{} brings the card in front, and {} flicks away what's in front",
         input_name(InputAction::InspectItem),
@@ -172,7 +172,7 @@ fn play(shoot: &mut Shoot) {
 
 /// Gear in hand: what the equipment window's hands show as a sword, a dagger beside it, and a
 /// greatsword that takes both are worn in turn.
-fn hands(me: &mut Star, shield: &str) {
+fn hands(me: &mut Star) {
     me.caption("The equipment window shows your hands: a sword takes the main hand");
     me.act_on_ui(InputAction::UseItem, outside_card(SWORD));
     me.wait_until("the sword in hand", |snapshot| wears(snapshot, SWORD));
@@ -199,15 +199,17 @@ fn hands(me: &mut Star, shield: &str) {
     me.wait_until("the greatsword back in the bag", |snapshot| {
         holding(snapshot, GREATSWORD) == 1
     });
-    me.caption("Anything held goes in any hand: a shield dropped on the main hand is held there");
-    me.carry_onto(outside_card(shield), UiTarget::starting("Empty: "));
-    me.wait_until("the shield in the main hand", |snapshot| {
-        holds_in(snapshot, shield, HandIndex::MAIN)
+    me.caption("Anything held goes in any hand: a sword dropped on the off hand is held there");
+    let model = me.settled().me.expect("the player").appearance.model;
+    let off_hand = format!("Empty: {}", hand_name(model, HandIndex::OFF));
+    me.carry_onto(outside_card(SWORD), UiTarget::text(&off_hand));
+    me.wait_until("the sword in the off hand", |snapshot| {
+        holds_in(snapshot, SWORD, HandIndex::OFF)
     });
     me.hold();
-    me.act_on_ui(InputAction::UseItem, outside_card(shield));
-    me.wait_until("the shield back in the bag", |snapshot| {
-        holding(snapshot, shield) == 1
+    me.act_on_ui(InputAction::UseItem, outside_card(SWORD));
+    me.wait_until("the sword back in the bag", |snapshot| {
+        holding(snapshot, SWORD) == 1
     });
 }
 

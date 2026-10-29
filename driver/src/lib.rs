@@ -12,8 +12,8 @@ mod seen;
 mod server;
 
 pub use content::{
-    area_named, content, east_of, ground_near, held_in_stance, hunting_ground, id, initial_spawn,
-    input_name, input_names, lamps_near, marker_at, open_ground_beside, pack_ground,
+    area_named, content, east_of, ground_near, hand_name, held_in_stance, hunting_ground, id,
+    initial_spawn, input_name, input_names, lamps_near, marker_at, open_ground_beside, pack_ground,
     pictured_ground, props_near, resident_home,
 };
 pub use desktop::{BUDGET, WaitBudget};
