@@ -4,7 +4,9 @@
 //! `shot <game folder> <shot.json> <out.png>`. The shot names its area, the lens the picture is
 //! taken through, its eye and target set above the ground beneath them, and each body standing on
 //! the ground in it: its model, where it stands, the spot it faces, the items in its hands, and the
-//! moment it holds of its stance's idle or of another clip its skeleton plays.
+//! moment it holds of its stance's idle or of another clip its skeleton plays. A shot may stand at
+//! an hour of the day, and film the day turning from it: a picture a frame into the folder `out`
+//! names, `0000.png` on.
 
 use std::collections::BTreeMap;
 use std::path::PathBuf;
@@ -38,7 +40,7 @@ use engine::systems::actor::skeleton::Clip;
 use engine::systems::actor::stance::{self, HandIndex};
 use engine::systems::actor::{Action, Appearance, ModelDef, Motion, Pose, appearance, render};
 use engine::systems::area::scenery;
-use engine::systems::area::{self, AreaDef, Kept, Pictured};
+use engine::systems::area::{self, Area, AreaDef, Kept, Pictured};
 use engine::systems::item::{ItemDef, Wear};
 use serde::Deserialize;
 
@@ -54,7 +56,20 @@ struct Shot {
     width: u32,
     height: u32,
     lens: Lens,
+    /// The hour the area stands at, its light as authored when unset.
+    #[serde(default)]
+    hour: Option<f32>,
+    #[serde(default)]
+    film: Option<Film>,
     bodies: Vec<Standing>,
+}
+
+/// The day turning `hours` on from the shot's hour over `frames` pictures.
+#[derive(Deserialize, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+struct Film {
+    hours: f32,
+    frames: u32,
 }
 
 #[derive(Deserialize, Clone, Copy)]
@@ -113,6 +128,15 @@ struct Taking {
     out: PathBuf,
     image: Handle<Image>,
     stage: Stage,
+    stood: Option<Stood>,
+    frame: u32,
+}
+
+/// The area as it stands for the picture, for the day to turn over it.
+struct Stood {
+    area: Arc<Area>,
+    scenery: scenery::Scenery,
+    camera: Entity,
 }
 
 enum Stage {
@@ -121,6 +145,9 @@ enum Stage {
     Settling(u32),
     Reading(Entity),
 }
+
+/// Frames a picture settles for once the hour turns, for the light to reach every pass.
+const TURNING: u32 = 2;
 
 struct Body {
     rig: Entity,
@@ -158,6 +185,9 @@ fn main() {
     )
     .unwrap_or_else(|report| panic!("{report}"));
     let out = PathBuf::from(out);
+    if shot.film.is_some() {
+        std::fs::create_dir_all(&out).expect("a folder to film into");
+    }
     let mut shot = Some(shot);
     App::new()
         .add_plugins(
@@ -198,6 +228,8 @@ fn main() {
                 out: out.clone(),
                 image,
                 stage: Stage::Empty,
+                stood: None,
+                frame: 0,
             });
         })
         .add_systems(Update, step)
@@ -210,8 +242,10 @@ fn step(world: &mut World) {
         let taking = &mut *taking;
         match &mut taking.stage {
             Stage::Empty => {
-                if let Some(bodies) = set_up(world, &content, &taking.shot, &taking.image) {
+                if let Some((bodies, stood)) = set_up(world, &content, &taking.shot, &taking.image)
+                {
                     taking.stage = Stage::Standing(bodies);
+                    taking.stood = Some(stood);
                 }
             }
             Stage::Standing(bodies) => {
@@ -243,9 +277,27 @@ fn step(world: &mut World) {
                     return;
                 };
                 let pixels = read.0.remove(index).1;
-                save(pixels, taking.shot.width, taking.shot.height, &taking.out);
-                println!("{}", taking.out.display());
-                world.write_message(AppExit::Success);
+                let Some(film) = taking.shot.film else {
+                    save(pixels, taking.shot.width, taking.shot.height, &taking.out);
+                    println!("{}", taking.out.display());
+                    world.write_message(AppExit::Success);
+                    return;
+                };
+                let path = taking.out.join(format!("{:04}.png", taking.frame));
+                save(pixels, taking.shot.width, taking.shot.height, &path);
+                taking.frame += 1;
+                if taking.frame >= film.frames {
+                    println!("{}", taking.out.display());
+                    world.write_message(AppExit::Success);
+                    return;
+                }
+                let start = taking.shot.hour.expect("a filmed shot stands at an hour");
+                let hour = start + film.hours * taking.frame as f32 / film.frames as f32;
+                let stood = taking.stood.as_ref().expect("a filmed shot stood");
+                let daylight = Daylight::Hour(hour.rem_euclid(24.0));
+                world.insert_resource(daylight);
+                scenery::light(world, &stood.area, daylight, stood.scenery, stood.camera);
+                taking.stage = Stage::Settling(SETTLE - TURNING);
             }
         }
     });
@@ -258,7 +310,7 @@ fn set_up(
     content: &Content,
     shot: &Shot,
     image: &Handle<Image>,
-) -> Option<Vec<Body>> {
+) -> Option<(Vec<Body>, Stood)> {
     let area_id = content
         .by_path::<AreaDef>(&shot.area)
         .unwrap_or_else(|| panic!("no area {}", shot.area));
@@ -282,14 +334,21 @@ fn set_up(
         ))
         .id();
     let stood = scenery::spawn(world, content, &picture.area, default());
-    scenery::light(world, &picture.area, Daylight::Fixed, stood, camera);
+    let daylight = shot.hour.map_or(Daylight::Fixed, Daylight::Hour);
+    world.insert_resource(daylight);
+    scenery::light(world, &picture.area, daylight, stood, camera);
     world.insert_resource(scenery::climate(&picture.area));
-    Some(
-        shot.bodies
-            .iter()
-            .map(|standing| stand(world, content, &picture.area.heights, standing))
-            .collect(),
-    )
+    let bodies = shot
+        .bodies
+        .iter()
+        .map(|standing| stand(world, content, &picture.area.heights, standing))
+        .collect();
+    let stood = Stood {
+        area: picture.area,
+        scenery: stood,
+        camera,
+    };
+    Some((bodies, stood))
 }
 
 fn loaded(content: &Content, model: ModelId) -> &ActorModel {

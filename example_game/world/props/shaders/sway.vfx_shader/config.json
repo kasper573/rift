@@ -1,0 +1,13 @@
+{
+  "name": "Sway",
+  "stage": "prop",
+  "params": [
+    {
+      "name": "suppleness",
+      "kind": "number",
+      "default": 0.25,
+      "min": 0.0,
+      "max": 2.0
+    }
+  ]
+}

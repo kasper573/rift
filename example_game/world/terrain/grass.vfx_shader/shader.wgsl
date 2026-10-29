@@ -13,5 +13,5 @@ fn vfx(uv: vec2<f32>) -> vec4<f32> {
         return lit;
     }
     let up = uv.y * uv.y;
-    return vec4<f32>(mix(lit.rgb, mix(lit.rgb, params.tip.rgb, 0.7), up), lit.a);
+    return vec4<f32>(mix(lit.rgb, mix(lit.rgb, params.tip.rgb * light(), 0.7), up), lit.a);
 }

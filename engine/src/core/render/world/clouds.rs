@@ -1,45 +1,157 @@
-//! The shadows of clouds drifting over the ground: a sheet of cloud that tiles, lit where the sky
-//! is clear and darker under a cloud, laid over the sun and carried along by the wind.
+//! The clouds over an area: one field of cloud lying over the world at the clouds' height,
+//! carried along by the wind and as thick as the weather's cover, which the sky paints the clouds
+//! from, and laid over the sun along its rays, so the ground lies darker under every cloud
+//! overhead, where the light's rays carry its shadow.
 
 use bevy::asset::RenderAssetUsages;
+use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::DirectionalLightTexture;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
 use crate::core::units::Meters;
 
-/// How much ground one tile of the sheet covers.
+/// How much ground one tile of the field covers, the field repeating past it.
 pub const CLOUD_TILE: Meters = Meters(260.0);
+/// The height the field of cloud lies at.
+pub const CLOUD_BASE: Meters = Meters(150.0);
+/// How much ground the field's shadows reach over round where they are laid, repeating past it.
+pub const SHADOW_SPAN: Meters = Meters(512.0);
+/// The lowest a light stands over the horizon, in degrees, for the field to cast its shadows.
+pub const LOWEST_LIGHT: f32 = 2.0;
 /// How fast the clouds drift for a full wind.
 pub const CLOUD_SPEED: f32 = 2.5;
-/// How much of the sun a cloud takes.
-const CLOUD_SHADE: f32 = 0.45;
+/// How much of the sun a cloud takes, from fair-weather cloud to storm cloud.
+const FAIR_SHADE: f32 = 0.35;
+const STORM_SHADE: f32 = 0.9;
+/// Texels a side of the field and of its shadows.
 const SHEET: u32 = 256;
+const SHADOWS: u32 = 256;
+/// How far the light and the clouds travel before the shadows are laid anew: well within the span
+/// they reach over, so the ground never sees where they repeat.
+const RELAID_AFTER: Meters = Meters(32.0);
 /// Cloud cells across a tile at the coarsest; each octave doubles.
 const CELLS: u32 = 4;
 const OCTAVES: u32 = 5;
-/// Where, in the noise's range, cloud begins and is thick.
-const CLEAR: f32 = 0.5;
-const THICK: f32 = 0.68;
+/// Where, in the noise's range, cloud begins under a clear sky and under a full cover, and how
+/// far past that it is thick.
+const CLEAR_SKY: f32 = 0.8;
+const FULL_COVER: f32 = 0.2;
+const SOFTNESS: f32 = 0.16;
 
-/// The one sheet of cloud every sun carries.
+/// The one field of cloud every sky paints and every sun casts: `field`, in each texel how cloudy
+/// the sky is there in red and the noise the field is drawn from in green, at the cover it was
+/// last drawn for; and `shadows`, how much of the light reaches the ground through it, laid along
+/// the light's rays as the light and the drift last stood.
 #[derive(Resource)]
-pub struct CloudSheet(Handle<Image>);
+pub struct CloudSheet {
+    field: Handle<Image>,
+    shadows: Handle<Image>,
+    noise: Vec<f32>,
+    cloud: Vec<f32>,
+    weather: (f32, f32),
+    laid: Option<Laid>,
+}
 
 impl FromWorld for CloudSheet {
     fn from_world(world: &mut World) -> CloudSheet {
-        CloudSheet(world.resource_mut::<Assets<Image>>().add(sheet()))
+        let noise: Vec<f32> = (0..SHEET * SHEET)
+            .map(|texel| {
+                noise(Vec2::new((texel % SHEET) as f32, (texel / SHEET) as f32) / SHEET as f32)
+            })
+            .collect();
+        let weather = (0.0, 0.0);
+        let cloud = cloudiness(&noise, weather.0);
+        let mut images = world.resource_mut::<Assets<Image>>();
+        let field = images.add(field(&noise, &cloud));
+        let shadows = images.add(picture(
+            SHADOWS,
+            vec![255; (SHADOWS * SHADOWS * 4) as usize],
+        ));
+        CloudSheet {
+            field,
+            shadows,
+            noise,
+            cloud,
+            weather,
+            laid: None,
+        }
     }
 }
 
 impl CloudSheet {
-    /// The sheet laid over a sun, tiled over the ground.
+    /// The field's shadows laid over a sun.
     pub fn over_sun(&self) -> DirectionalLightTexture {
         DirectionalLightTexture {
-            image: self.0.clone(),
+            image: self.shadows.clone(),
             tiled: true,
         }
     }
+
+    /// The field as the sky reads it.
+    pub fn field(&self) -> Handle<Image> {
+        self.field.clone()
+    }
+
+    /// Thickens or thins the field to cover `clouds` of the sky, 0 none and 1 all of it, its
+    /// shadows as dark as cloud holding `water` casts.
+    pub fn cover(&mut self, clouds: f32, water: f32, images: &mut Assets<Image>) {
+        if self.weather == (clouds, water) {
+            return;
+        }
+        self.weather = (clouds, water);
+        self.cloud = cloudiness(&self.noise, clouds);
+        self.laid = None;
+        if let Some(mut image) = images.get_mut(&self.field) {
+            *image = field(&self.noise, &self.cloud);
+        }
+    }
+
+    /// Lays the field's shadows along the rays of a light standing as `light` does, the field
+    /// carried `drift` along the ground, and returns where the light stands to cast them. The
+    /// shadows are laid anew only once the light has turned far enough to slip them a texel, or
+    /// it and the clouds have travelled `RELAID_AFTER` since; until then the light is carried
+    /// along with the clouds, so the shadows last laid fall where the clouds have drifted since.
+    pub fn lay(&mut self, light: Transform, drift: Vec2, images: &mut Assets<Image>) -> Transform {
+        let laid = match self.laid.filter(|laid| laid.holds(light, drift)) {
+            Some(laid) => laid,
+            None => {
+                self.paint_shadows(light, drift, images);
+                Laid { light, drift }
+            }
+        };
+        self.laid = Some(laid);
+        let carried = drift - laid.drift;
+        Transform {
+            translation: laid.light.translation + Vec3::new(carried.x, 0.0, carried.y),
+            ..light
+        }
+    }
+
+    fn paint_shadows(&self, light: Transform, drift: Vec2, images: &mut Assets<Image>) {
+        let shade = shade(self.weather.1);
+        let toward = light.back().as_vec3();
+        let data = (0..SHADOWS * SHADOWS)
+            .flat_map(|texel| {
+                let uv = (Vec2::new((texel % SHADOWS) as f32, (texel / SHADOWS) as f32) + 0.5)
+                    / SHADOWS as f32;
+                let near =
+                    light.transform_point(Vec3::new(1.0 - 2.0 * uv.x, 2.0 * uv.y - 1.0, 0.0));
+                let over = near + toward * (CLOUD_BASE.0 - near.y) / toward.y;
+                let at = (Vec2::new(over.x, over.z) - drift) / CLOUD_TILE.0;
+                let lit = 1.0 - shade * sampled(&self.cloud, at);
+                [lit, lit, lit, 1.0].map(|value| (value * 255.0) as u8)
+            })
+            .collect();
+        if let Some(mut image) = images.get_mut(&self.shadows) {
+            *image = picture(SHADOWS, data);
+        }
+    }
+}
+
+/// How much of the sun a cloud holding `water` takes.
+pub fn shade(water: f32) -> f32 {
+    FAIR_SHADE + (STORM_SHADE - FAIR_SHADE) * water.clamp(0.0, 1.0)
 }
 
 /// How far the clouds have drifted on `wind` after `seconds`.
@@ -47,29 +159,84 @@ pub fn drift(wind: Vec2, seconds: f32) -> Vec2 {
     wind * CLOUD_SPEED * seconds
 }
 
-/// The sheet: how much of the sun reaches the ground, 1 under a clear sky, less under cloud,
-/// drawn from a few octaves of noise that wrap, so the sheet tiles without a seam.
-fn sheet() -> Image {
-    let mut data = Vec::with_capacity((SHEET * SHEET * 4) as usize);
-    for row in 0..SHEET {
-        for column in 0..SHEET {
-            let at = Vec2::new(column as f32, row as f32) / SHEET as f32;
-            let cloud = smoothstep(CLEAR, THICK, noise(at));
-            let lit = ((1.0 - CLOUD_SHADE * cloud) * 255.0) as u8;
-            data.extend([lit, lit, lit, 255]);
-        }
+/// Where the shadows were last laid: along the rays of `light`, the field carried `drift`.
+#[derive(Clone, Copy)]
+struct Laid {
+    light: Transform,
+    drift: Vec2,
+}
+
+impl Laid {
+    /// Whether the shadows laid here still fall true under `light` with the field carried `drift`.
+    fn holds(&self, light: Transform, drift: Vec2) -> bool {
+        let slip = CLOUD_BASE.0 * (lean(self.light) - lean(light)).length();
+        let travelled =
+            self.light.translation.distance(light.translation) + self.drift.distance(drift);
+        slip < SHADOW_SPAN.0 / SHADOWS as f32 && travelled < RELAID_AFTER.0
     }
-    Image::new(
+}
+
+/// How far a light's rays run along the ground for every metre they fall.
+fn lean(light: Transform) -> Vec2 {
+    let toward = light.back();
+    Vec2::new(toward.x, toward.z) / toward.y
+}
+
+/// How cloudy the sky is at each texel of the noise under `clouds`.
+fn cloudiness(noise: &[f32], clouds: f32) -> Vec<f32> {
+    let clear = CLEAR_SKY + (FULL_COVER - CLEAR_SKY) * clouds.clamp(0.0, 1.0);
+    noise
+        .iter()
+        .map(|&noise| smoothstep(clear, clear + SOFTNESS, noise))
+        .collect()
+}
+
+/// The field as the sky reads it: how cloudy the sky is, and the noise it is drawn from.
+fn field(noise: &[f32], cloud: &[f32]) -> Image {
+    let data = cloud
+        .iter()
+        .zip(noise)
+        .flat_map(|(&cloud, &noise)| [cloud, noise, 0.0, 1.0].map(|value| (value * 255.0) as u8))
+        .collect();
+    picture(SHEET, data)
+}
+
+/// The field's cloudiness at `at`, in tiles, blended between texels and repeating every tile.
+fn sampled(cloud: &[f32], at: Vec2) -> f32 {
+    let texel = at * SHEET as f32 - 0.5;
+    let corner = texel.floor();
+    let t = texel - corner;
+    let value = |dx: i32, dy: i32| {
+        let x = (corner.x as i32 + dx).rem_euclid(SHEET as i32) as usize;
+        let y = (corner.y as i32 + dy).rem_euclid(SHEET as i32) as usize;
+        cloud[y * SHEET as usize + x]
+    };
+    let low = value(0, 0) + (value(1, 0) - value(0, 0)) * t.x;
+    let high = value(0, 1) + (value(1, 1) - value(0, 1)) * t.x;
+    low + (high - low) * t.y
+}
+
+/// A square picture `size` texels a side, repeating every way and blended between texels.
+fn picture(size: u32, data: Vec<u8>) -> Image {
+    let mut image = Image::new(
         Extent3d {
-            width: SHEET,
-            height: SHEET,
+            width: size,
+            height: size,
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
         data,
         TextureFormat::Rgba8Unorm,
         RenderAssetUsages::RENDER_WORLD,
-    )
+    );
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor {
+        address_mode_u: ImageAddressMode::Repeat,
+        address_mode_v: ImageAddressMode::Repeat,
+        mag_filter: ImageFilterMode::Linear,
+        min_filter: ImageFilterMode::Linear,
+        ..default()
+    });
+    image
 }
 
 /// Octaves of value noise over the unit square, each wrapping at its edges, in 0..1.

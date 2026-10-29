@@ -67,6 +67,7 @@ pub fn place_prop(
         at,
         yaw,
         scale: 1.0,
+        sunk: Meters::default(),
     });
     let label = format!(
         "Place {} in {}",
@@ -127,6 +128,7 @@ pub fn ghost(editor: &Editor, view_key: &str, frame: &AreaFrame) -> Option<Ghost
         at: snap(ground, fine),
         yaw: view.place_yaw,
         scale: 1.0,
+        sunk: Meters::default(),
     };
     Some(Ghost {
         model: def.model.path(),

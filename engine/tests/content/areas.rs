@@ -3,7 +3,7 @@ use engine::core::ground::{self as ground, GroundSize, Heightfield, Paint};
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::units::{GROUND_ORIGIN, Meters};
 use engine::core::vfx::shader::Stage;
-use engine::systems::area::scenery::Sources;
+use engine::systems::area::scenery::{Sources, prop_transform};
 use engine::systems::area::{self, AreaDef, AreaId};
 use serde_json::{Value, json};
 use testkit::{Game, Map, path};
@@ -85,6 +85,37 @@ fn a_props_footprint_blocks_the_ground_under_it_and_a_scatter_strews_the_same_pr
     let again = field().load();
     let again = area::load(&again, area_id(&again, "field"));
     assert_eq!(again.props, field_area.props, "the same seed strews alike");
+}
+
+#[test]
+fn a_prop_stands_on_the_ground_under_it_sunk_as_deep_as_it_is_placed() {
+    let content = game()
+        .prop("boulder", json!({ "type": "none" }))
+        .area(
+            "hill",
+            &Map::open(8, 8),
+            json!([
+                { "type": "prop", "prop": path("prop", "boulder"), "at": { "x": 2.0, "y": 3.0 } },
+                { "type": "prop", "prop": path("prop", "boulder"), "at": { "x": 7.0, "y": 3.0 }, "sunk": 1.5 },
+            ]),
+        )
+        .part("area", "hill", "height.png", hill().encode())
+        .load();
+    let hill_area = area::load(&content, area_id(&content, "hill"));
+
+    let standing: Vec<f32> = hill_area
+        .props
+        .iter()
+        .map(|placed| prop_transform(&hill_area.heights, placed).translation.y)
+        .collect();
+    let expected = [0.0, 3.0 - 1.5];
+    assert!(
+        standing
+            .iter()
+            .zip(expected)
+            .all(|(stands, ground)| (stands - ground).abs() < 0.01),
+        "a prop stands on the ground, a sunk one that far under it: {standing:?}"
+    );
 }
 
 #[test]

@@ -5,14 +5,16 @@
 
 use bevy::asset::RenderAssetUsages;
 use bevy::color::Mix;
-use bevy::gltf::{Gltf, GltfMesh, GltfNode};
+use bevy::gltf::{Gltf, GltfMaterial, GltfMesh, GltfNode};
+use bevy::light::NotShadowCaster;
 use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
-use bevy::platform::collections::HashSet;
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 
 use crate::core::ground::{Heightfield, SAMPLES_PER_METER};
 use crate::core::math::{Pos, Rng};
 use crate::core::units::{GROUND_ORIGIN, Meters};
+use crate::core::vfx::cover::CoverMaterial;
 
 /// Cells of paint along a chunk's side; a chunk is one mesh, culled as one.
 pub const CHUNK_CELLS: u32 = 16;
@@ -46,10 +48,12 @@ pub struct BladeShape {
     pub height: f32,
 }
 
-/// A piece of a prop's model as it is copied: its mesh, placed by its node's transform.
+/// A piece of a prop's model as it is copied: its mesh, placed by its node's transform, and the
+/// material the model draws it with.
 pub struct Piece {
     pub mesh: Mesh,
     pub transform: Transform,
+    pub material: Option<Handle<GltfMaterial>>,
 }
 
 /// Where a strewn copy of a prop stands, the colour it is tinted, how heavily its cell is painted
@@ -278,20 +282,47 @@ pub fn strew_places(patch: &Patch, spread: &Spread, seed: u64) -> Vec<Place> {
         .collect()
 }
 
-/// The `pieces` of a prop copied to every place: positions and normals carried through the
-/// piece's and the copy's transforms, the piece's uv kept, its colours (white where it has none)
-/// tinted by the place's, and every vertex marked how far up the prop it stands. None when there
-/// is nothing to copy.
-pub fn strewn(pieces: &[Piece], places: &[Place]) -> Option<Mesh> {
-    let placed: Vec<PieceVertices> = pieces.iter().filter_map(piece_vertices).collect();
+/// The `pieces` of a prop copied to every place, a mesh for each material the model draws them
+/// with: positions and normals carried through the piece's and the copy's transforms, the
+/// piece's uv kept, its colours (white where it has none) tinted by the place's, and every vertex
+/// marked how far up the whole prop it stands. Empty when there is nothing to copy.
+pub fn strewn(pieces: &[Piece], places: &[Place]) -> Vec<(Option<Handle<GltfMaterial>>, Mesh)> {
+    let placed: Vec<(&Piece, PieceVertices)> = pieces
+        .iter()
+        .filter_map(|piece| Some((piece, piece_vertices(piece)?)))
+        .collect();
     if placed.is_empty() || places.is_empty() {
-        return None;
+        return Vec::new();
     }
     let height = placed
         .iter()
-        .flat_map(|piece| piece.positions.iter().map(|position| position.y))
+        .flat_map(|(_, piece)| piece.positions.iter().map(|position| position.y))
         .fold(0.0f32, f32::max)
         .max(1e-3);
+    let mut materials: Vec<Option<Handle<GltfMaterial>>> = Vec::new();
+    for (piece, _) in &placed {
+        if !materials.contains(&piece.material) {
+            materials.push(piece.material.clone());
+        }
+    }
+    materials
+        .into_iter()
+        .filter_map(|material| {
+            let drawn: Vec<&PieceVertices> = placed
+                .iter()
+                .filter(|(piece, _)| piece.material == material)
+                .map(|(_, vertices)| vertices)
+                .collect();
+            Some((material, copied(&drawn, places, height)?))
+        })
+        .collect()
+}
+
+/// The pieces copied to every place, each vertex marked how far up `height` it stands.
+fn copied(placed: &[&PieceVertices], places: &[Place], height: f32) -> Option<Mesh> {
+    if placed.is_empty() {
+        return None;
+    }
     let mut positions = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
@@ -299,7 +330,7 @@ pub fn strewn(pieces: &[Piece], places: &[Place]) -> Option<Mesh> {
     let mut colors = Vec::new();
     let mut indices = Vec::new();
     for place in places {
-        for piece in &placed {
+        for piece in placed {
             let base = positions.len() as u32;
             for (position, normal) in piece.positions.iter().zip(&piece.normals) {
                 positions.push(place.transform.transform_point(*position).to_array());
@@ -341,27 +372,89 @@ pub fn strewn(pieces: &[Piece], places: &[Place]) -> Option<Mesh> {
     ))
 }
 
-/// A chunk whose prop has loaded gets its mesh and keeps its material.
+/// The cover materials standing in for a chunk's own under each texture a prop's material
+/// draws with, shared by every chunk alike.
+#[derive(Resource, Default)]
+pub(super) struct TexturedCovers(
+    HashMap<(AssetId<CoverMaterial>, AssetId<Image>), Handle<CoverMaterial>>,
+);
+
+/// The assets a strewn prop is drawn from.
+#[derive(bevy::ecs::system::SystemParam)]
+pub(super) struct StrewnAssets<'w> {
+    gltfs: Res<'w, Assets<Gltf>>,
+    nodes: Res<'w, Assets<GltfNode>>,
+    gltf_meshes: Res<'w, Assets<GltfMesh>>,
+    meshes: ResMut<'w, Assets<Mesh>>,
+    gltf_materials: Res<'w, Assets<GltfMaterial>>,
+    covers: ResMut<'w, Assets<CoverMaterial>>,
+    textured: ResMut<'w, TexturedCovers>,
+}
+
+/// A chunk whose prop has loaded gets a mesh for each of the prop's materials, drawn with the
+/// chunk's material in that material's texture, so a copy keeps the shapes its texture cuts out.
 pub(super) fn strew_loaded(
-    gltfs: Res<Assets<Gltf>>,
-    nodes: Res<Assets<GltfNode>>,
-    gltf_meshes: Res<Assets<GltfMesh>>,
-    mut meshes: ResMut<Assets<Mesh>>,
-    waiting: Query<(Entity, &Strewing)>,
+    mut assets: StrewnAssets,
+    waiting: Query<(Entity, &Strewing, &MeshMaterial3d<CoverMaterial>)>,
     mut commands: Commands,
 ) {
-    for (entity, strewing) in &waiting {
-        let Some(gltf) = gltfs.get(&strewing.gltf) else {
+    for (entity, strewing, cover) in &waiting {
+        let Some(gltf) = assets.gltfs.get(&strewing.gltf) else {
             continue;
         };
-        let Some(pieces) = pieces_of(gltf, &nodes, &gltf_meshes, &meshes) else {
+        let Some(pieces) = pieces_of(gltf, &assets.nodes, &assets.gltf_meshes, &assets.meshes)
+        else {
             continue;
         };
-        let mut chunk = commands.entity(entity);
-        chunk.remove::<Strewing>();
-        if let Some(mesh) = strewn(&pieces, &strewing.places) {
-            chunk.insert(Mesh3d(meshes.add(mesh)));
+        commands.entity(entity).remove::<Strewing>();
+        for (index, (material, mesh)) in strewn(&pieces, &strewing.places).into_iter().enumerate() {
+            let texture = material.and_then(|material| {
+                assets
+                    .gltf_materials
+                    .get(&material)?
+                    .base_color_texture
+                    .clone()
+            });
+            let drawn = match texture {
+                Some(texture) => assets.textured_cover(&cover.0, texture),
+                None => cover.0.clone(),
+            };
+            let mesh = Mesh3d(assets.meshes.add(mesh));
+            if index == 0 {
+                commands
+                    .entity(entity)
+                    .insert((mesh, MeshMaterial3d(drawn)));
+            } else {
+                commands.spawn((
+                    mesh,
+                    MeshMaterial3d(drawn),
+                    Transform::default(),
+                    Visibility::default(),
+                    NotShadowCaster,
+                    ChildOf(entity),
+                ));
+            }
         }
+    }
+}
+
+impl StrewnAssets<'_> {
+    fn textured_cover(
+        &mut self,
+        cover: &Handle<CoverMaterial>,
+        texture: Handle<Image>,
+    ) -> Handle<CoverMaterial> {
+        let key = (cover.id(), texture.id());
+        if let Some(textured) = self.textured.0.get(&key) {
+            return textured.clone();
+        }
+        let Some(mut material) = self.covers.get(cover).cloned() else {
+            return cover.clone();
+        };
+        material.base.base_color_texture = Some(texture);
+        let textured = self.covers.add(material);
+        self.textured.0.insert(key, textured.clone());
+        textured
     }
 }
 
@@ -428,6 +521,7 @@ fn pieces_of(
                 pieces.push(Piece {
                     mesh: meshes.get(&primitive.mesh)?.clone(),
                     transform,
+                    material: primitive.material.clone(),
                 });
             }
         }

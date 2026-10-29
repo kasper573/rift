@@ -15,7 +15,7 @@ use crate::core::math::Rgba;
 pub type VfxShaderId = ContentId<VfxShaderDef>;
 
 /// The bytes the parameter uniform spans, however few parameters a shader declares.
-pub const PARAMS_BYTES: usize = 128;
+pub const PARAMS_BYTES: usize = 256;
 
 /// A shader a game ships: the WGSL part of its bundle, `shader.wgsl`, defining
 /// `fn vfx(uv: vec2<f32>) -> vec4<f32>`, the stage it runs on, and the parameters it reads from
@@ -32,8 +32,8 @@ pub struct VfxShaderDef {
 }
 
 /// Where a shader runs: in the material of the thing it plays on, as a decal on the ground under
-/// it, on a quad facing the camera at it, over the whole screen, in the text of a plate, or as the
-/// cover a terrain grows or lies under.
+/// it, on a quad facing the camera at it, over the whole screen, in the text of a plate, as the
+/// cover a terrain grows or lies under, in a material of a prop, or over an area's whole sky.
 #[derive(
     JsonSchema,
     Clone,
@@ -55,6 +55,8 @@ pub enum Stage {
     Screen,
     Text,
     Cover,
+    Prop,
+    Sky,
 }
 
 impl Stage {
@@ -69,7 +71,7 @@ impl Stage {
             ),
             Stage::Screen => site == SiteKind::Screen,
             Stage::Text => site == SiteKind::Text,
-            Stage::Cover => false,
+            Stage::Cover | Stage::Prop | Stage::Sky => false,
         }
     }
 
@@ -254,6 +256,54 @@ impl VfxShaderDef {
         self.params.iter().find(|param| param.name == name)
     }
 
+    /// Checks a value filled in for the parameter `name` at `at`: one the shader declares, of its
+    /// kind and within its range; a value left to whoever plays the shader is `None`.
+    pub fn check_fill(
+        &self,
+        check: &mut RowCheck,
+        at: &str,
+        name: &str,
+        value: Option<&ParamValue>,
+    ) {
+        let Some(declared) = self.param(name) else {
+            check.error(
+                at,
+                "unknown shader parameter",
+                name,
+                format!(
+                    "one of {}",
+                    self.params
+                        .iter()
+                        .map(|param| param.name.as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                ),
+            );
+            return;
+        };
+        let Some(value) = value else {
+            return;
+        };
+        if value.kind() != declared.kind {
+            check.error(
+                at,
+                "wrong parameter kind",
+                value.kind().label(),
+                format!("a {}", declared.kind.label()),
+            );
+        }
+        if let (ParamValue::Number(number), Some((min, max))) = (value, declared.range())
+            && (*number < min || *number > max)
+        {
+            check.error(
+                at,
+                "parameter out of range",
+                number,
+                format!("{min}..{max}"),
+            );
+        }
+    }
+
     pub fn layout(&self) -> Vec<ParamSlot> {
         layout(&self.params)
     }
@@ -268,7 +318,10 @@ impl VfxShaderDef {
     /// Whether the composed shader is WESL, importing the engine's own shader libraries, rather
     /// than plain WGSL.
     pub fn composes_wesl(&self) -> bool {
-        matches!(self.stage, Stage::Surface | Stage::Cover)
+        matches!(
+            self.stage,
+            Stage::Surface | Stage::Cover | Stage::Prop | Stage::Sky
+        )
     }
 
     /// The source goes first so its lines keep their numbers in what the validator reports; a WESL
@@ -346,6 +399,27 @@ pub fn prelude_names() -> Vec<String> {
         "wind_lean".to_owned(),
         "tread_push".to_owned(),
         "lean".to_owned(),
+        "position".to_owned(),
+        "local".to_owned(),
+        "origin".to_owned(),
+        "size".to_owned(),
+        "tint".to_owned(),
+        "screen_right".to_owned(),
+        "screen_up".to_owned(),
+        "light".to_owned(),
+        "albedo".to_owned(),
+        "normal".to_owned(),
+        "toward_eye".to_owned(),
+        "look".to_owned(),
+        "light_way".to_owned(),
+        "light_color".to_owned(),
+        "moon_way".to_owned(),
+        "night".to_owned(),
+        "cloud_base".to_owned(),
+        "cloud_drift".to_owned(),
+        "cloud_at".to_owned(),
+        "eye".to_owned(),
+        "sky_light".to_owned(),
     ];
     for line in PRELUDE.lines() {
         let declared = line
@@ -559,6 +633,10 @@ const QUAD_HEADER: &str = include_str!("quad.wgsl");
 const SURFACE_HEADER: &str = include_str!("surface.wesl");
 const COVER_HEADER: &str = include_str!("cover.wesl");
 const COVER_CHECK_HEADER: &str = include_str!("cover_check.wgsl");
+const PROP_HEADER: &str = include_str!("prop.wesl");
+const PROP_CHECK_HEADER: &str = include_str!("prop_check.wgsl");
+const SKY_HEADER: &str = include_str!("sky.wesl");
+const SKY_CHECK_HEADER: &str = include_str!("sky_check.wgsl");
 const WEATHER_HELPERS: &str = include_str!("weather.wgsl");
 
 fn quad_header(group: u32) -> String {
@@ -570,6 +648,8 @@ impl Stage {
         match self {
             Stage::Surface => SURFACE_HEADER.to_owned(),
             Stage::Cover => format!("{COVER_HEADER}\n{WEATHER_HELPERS}"),
+            Stage::Prop => format!("{PROP_HEADER}\n{WEATHER_HELPERS}"),
+            Stage::Sky => format!("{SKY_HEADER}\n{WEATHER_HELPERS}"),
             Stage::Ground | Stage::Billboard => quad_header(WORLD_GROUP),
             Stage::Screen | Stage::Text => quad_header(PRESENT_GROUP),
         }
@@ -580,6 +660,8 @@ impl Stage {
     fn check_header(self) -> String {
         match self {
             Stage::Cover => format!("{COVER_CHECK_HEADER}\n{WEATHER_HELPERS}"),
+            Stage::Prop => format!("{PROP_CHECK_HEADER}\n{WEATHER_HELPERS}"),
+            Stage::Sky => format!("{SKY_CHECK_HEADER}\n{WEATHER_HELPERS}"),
             _ => quad_header(WORLD_GROUP),
         }
     }
@@ -587,7 +669,7 @@ impl Stage {
     /// The functions a shader of the stage must define.
     fn required_functions(self) -> &'static [&'static str] {
         match self {
-            Stage::Cover => &["vfx", "sway"],
+            Stage::Cover | Stage::Prop => &["vfx", "sway"],
             _ => &["vfx"],
         }
     }

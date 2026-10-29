@@ -1,7 +1,7 @@
-// The weather as the engine tells a cover shader of it: the wind as a direction scaled by its
-// strength (calm at 0, a gale at 1), the time, how far through its day the game is (0 midnight,
-// 0.5 noon; noon when the game keeps no clock), how much cloud covers the sky (0 clear, 1
-// overcast), and the bodies treading through the cover, each a ground point (x east, y south) and
+// The weather as the engine tells a shader of it: the wind as a direction scaled by its strength
+// (calm at 0, a gale at 1), the time, how far through its day the game is (0 midnight, 0.5 noon;
+// noon when the game keeps no clock), how much cloud covers the sky (0 none, 1 clouded over) and
+// how much water it holds (0 fair-weather cloud, 1 storm cloud), and the bodies treading through the cover, each a ground point (x east, y south) and
 // the radius it flattens. `wind_lean` and `tread_push` turn those into the metres a blade's tip
 // shifts, and `lean` bends a vertex of a blade that far, by how high up the blade it stands.
 // The engine paints the weather into a picture a texel per value, and `read_weather` reads it
@@ -14,7 +14,8 @@ struct Weather {
     time: f32,
     treads: u32,
     daylight: f32,
-    overcast: f32,
+    clouds: f32,
+    water: f32,
     tread: array<vec4<f32>, TREADS>,
 }
 
@@ -29,7 +30,8 @@ fn read_weather() {
     weather.time = blowing.z;
     weather.treads = min(u32(blowing.w), TREADS);
     weather.daylight = sky.x;
-    weather.overcast = sky.y;
+    weather.clouds = sky.y;
+    weather.water = sky.z;
     for (var i = 0u; i < weather.treads; i++) {
         weather.tread[i] = textureLoad(weather_picture, vec2<i32>(i32(i) + 2, 0), 0);
     }

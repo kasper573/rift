@@ -91,6 +91,10 @@ fn play(shoot: &mut Shoot) {
         |_| Some(resident_home("island", "grisha").at + Offset::new(2.0, 2.0)),
         |_| false,
     );
+    me.caption(
+        "Each ground lays a picture of its own over the land, as the path does its packed dirt",
+    );
+    me.caption("The bushes sway in the wind, and the sun glows through their leaves");
     me.hold();
     me.caption("Behind the cottage a standing stone looks out over the sea");
     me.walk_near(north_of_the_cottage());

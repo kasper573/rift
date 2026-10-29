@@ -6,6 +6,10 @@
     72,
     255
   ],
+  "picture": {
+    "image": "world/terrain/dirt.png",
+    "tile": 3.0
+  },
   "surface": "world/surface/sand.surface.json",
   "walk": "walkable"
 }

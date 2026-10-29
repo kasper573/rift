@@ -212,7 +212,8 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
             layers.clone(),
             ChildOf(root),
         ));
-        let atmosphere = sky::atmosphere(&mut world.resource_mut::<Assets<ScatteringMedium>>());
+        let atmosphere =
+            sky::atmosphere(&mut world.resource_mut::<Assets<ScatteringMedium>>(), 0.0);
         world.spawn((atmosphere, layers.clone(), ChildOf(root)));
         let distance = radius / (FOV.radians().0 / 2.0).sin() * 1.1;
         let (sin_p, cos_p) = PITCH.radians().0.sin_cos();

@@ -5,6 +5,7 @@ mod chat;
 mod combat;
 mod come_back_later;
 mod conversation;
+mod daylight;
 mod deploy;
 mod effects;
 mod explore;
@@ -38,6 +39,7 @@ pub const CHAPTERS: &[Chapter] = &[
     sign_in::CHAPTER,
     explore::CHAPTER,
     camera::CHAPTER,
+    daylight::CHAPTER,
     soundscape::CHAPTER,
     combat::CHAPTER,
     skills::CHAPTER,

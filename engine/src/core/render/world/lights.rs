@@ -4,7 +4,7 @@
 use bevy::light::{CascadeShadowConfigBuilder, DirectionalLight, PointLight, VolumetricLight};
 use bevy::prelude::*;
 
-use super::clouds::CLOUD_TILE;
+use super::clouds::{LOWEST_LIGHT, SHADOW_SPAN};
 use crate::core::geometry::Degrees;
 use crate::core::time::Seconds;
 
@@ -49,16 +49,26 @@ pub fn sun(color: Color, illuminance: f32, elevation: Degrees, azimuth: Degrees)
     )
 }
 
-/// Where a sun `elevation` above the horizon at `azimuth` clockwise from north shines from, its
-/// sheet of cloud laid over the ground a tile wide and carried `clouds` along.
-pub fn sun_transform(elevation: Degrees, azimuth: Degrees, clouds: Vec2) -> Transform {
+/// Where a sun `elevation` above the horizon at `azimuth` clockwise from north shines from, the
+/// field of cloud's shadows laid over the ground round `over` along its rays, squeezed across them
+/// as the light sinks so they reach as far at every hour. A light on the horizon shines from a
+/// little over it, for the clouds to cast shadows at all.
+pub fn sun_transform(elevation: Degrees, azimuth: Degrees, over: Vec2) -> Transform {
+    let elevation = Degrees(elevation.0.max(LOWEST_LIGHT));
+    let toward_sun = toward(elevation, azimuth);
+    let over = Vec3::new(over.x, 0.0, over.y);
+    let span = SHADOW_SPAN.0 / 2.0;
+    let slant = elevation.radians().0.sin();
+    Transform::from_translation(over + toward_sun * 50.0)
+        .looking_at(over, Vec3::Y)
+        .with_scale(Vec3::new(span, span * slant, span))
+}
+
+/// The unit way toward a light `elevation` above the horizon at `azimuth` clockwise from north.
+pub fn toward(elevation: Degrees, azimuth: Degrees) -> Vec3 {
     let (sin_e, cos_e) = elevation.radians().0.sin_cos();
     let (sin_a, cos_a) = azimuth.radians().0.sin_cos();
-    let toward_sun = Vec3::new(sin_a * cos_e, sin_e, -cos_a * cos_e);
-    let under = Vec3::new(clouds.x, 0.0, clouds.y);
-    Transform::from_translation(under + toward_sun * 50.0)
-        .looking_at(under, Vec3::Y)
-        .with_scale(Vec3::splat(CLOUD_TILE.0 / 2.0))
+    Vec3::new(sin_a * cos_e, sin_e, -cos_a * cos_e)
 }
 
 /// A point light `intensity` units bright reaching `radius` metres.

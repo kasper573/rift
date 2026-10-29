@@ -40,15 +40,18 @@ impl Plugin for WorldScenePlugin {
         bevy::asset::embedded_asset!(app, "fade.wesl");
         bevy::asset::embedded_asset!(app, "fade_prepass.wesl");
         bevy::asset::embedded_asset!(app, "decal.wesl");
+        bevy::asset::embedded_asset!(app, "ground.wesl");
         app.add_plugins((
             MaterialPlugin::<material::WorldMaterial>::default(),
             MaterialPlugin::<decal::DecalMaterial>::default(),
+            MaterialPlugin::<terrain::GroundMaterial>::default(),
             HierarchyPropagatePlugin::<RenderLayers>::new(PostUpdate),
             body::BodyPlugin,
             layers::JointLayersPlugin,
         ))
         .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP })
         .init_resource::<material::MaterialCache>()
+        .init_resource::<cover::TexturedCovers>()
         .init_resource::<clouds::CloudSheet>()
         .init_resource::<decal::DecalMesh>()
         .init_resource::<super::GroundHeights>()
@@ -62,6 +65,7 @@ impl Plugin for WorldScenePlugin {
                 mannequin::hold,
                 fade::fade_occluders.run_if(resource_exists::<CameraRig>),
                 cover::strew_loaded,
+                terrain::stack_pictures,
             ),
         )
         .add_systems(

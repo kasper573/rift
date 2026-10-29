@@ -2,6 +2,7 @@ pub mod blueprint;
 pub mod lighting;
 pub mod object;
 pub mod prop;
+pub mod prop_material;
 pub mod render;
 pub mod scene;
 pub mod scenery;
@@ -70,6 +71,7 @@ pub fn register(app: &mut App) {
 pub fn content(registry: &mut ContentRegistry) {
     registry
         .bundle::<PropDef>()
+        .file::<prop_material::PropMaterialDef>()
         .file::<TerrainDef>()
         .named::<TerrainDef>()
         .file::<SurfaceDef>()
@@ -82,6 +84,9 @@ pub fn content(registry: &mut ContentRegistry) {
         .json_part(scene::json_part(BlueprintDef::TABLE))
         .hook(LoadStep::Files, prop::check_fitted)
         .hook(LoadStep::Across, terrain::check_all)
+        .hook(LoadStep::Across, terrain::check_pictures)
+        .hook(LoadStep::Across, prop_material::check_all)
+        .hook(LoadStep::Across, lighting::check_dome)
         .hook(LoadStep::Expand, flatten_all)
         .hook(LoadStep::Assemble, build_all)
         .hook(LoadStep::Across, world_map::check_all);
@@ -767,6 +772,7 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
                         at: PROP_STAGE.bounds().center(),
                         yaw: Degrees(0.0),
                         scale: 1.0,
+                        sunk: Meters::default(),
                     }),
                 ))],
                 _ => Vec::new(),

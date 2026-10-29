@@ -10,6 +10,7 @@ use bevy::light::NotShadowCaster;
 use bevy::light::atmosphere::ScatteringMedium;
 use bevy::prelude::*;
 
+use super::lighting::DomeLook;
 use super::prop::PropId;
 use super::terrain::{CoverPiece, PieceShape};
 use super::{Area, Lighting, PointLightDef, PropPlacement};
@@ -24,25 +25,28 @@ use crate::core::render::present::AreaGrade;
 use crate::core::render::world::clouds::{self, CloudSheet};
 use crate::core::render::world::cover;
 use crate::core::render::world::fade::Fades;
-use crate::core::render::world::lights::{self, AMBIENT_NITS, Flicker};
-use crate::core::render::world::material::{WorldMaterial, world_material};
+use crate::core::render::world::lights::{self, AMBIENT_NITS, Flicker, SUN_LUX};
+use crate::core::render::world::material::{MaterialLook, MaterialLooks};
 use crate::core::render::world::sky::{self, Daylight, SunLight};
-use crate::core::render::world::terrain;
-use crate::core::render::{FullPicture, world_point};
+use crate::core::render::world::terrain::{self, GroundLayer, GroundMaterial};
+use crate::core::render::{camera, world_point};
 use crate::core::time::Seconds;
 use crate::core::units::{MeterSize, Meters};
 use crate::core::vfx::ParamFill;
 use crate::core::vfx::cover::{self as cover_vfx, Climate, CoverMaterial};
-use crate::core::vfx::render::{self as vfx_render, ParamsUniform, Run, SiteFrame};
+use crate::core::vfx::render::{self as vfx_render, ParamsUniform, Run, SiteFrame, SiteUniform};
 use crate::core::vfx::shader::Stage;
+use crate::core::vfx::sky::{self as sky_vfx, Heavens, SkyMaterial};
 
 /// An area's scenery as it stands in a world: everything hangs under `root`, the terrain mesh is
-/// `terrain`, and `sun` is the directional light when the area has one.
+/// `terrain`, `sun` is the directional light when the area has one, the sun by day and the full
+/// moon by night, and `sky` the dome its sky is painted on when the area paints one.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Scenery {
     pub root: Entity,
     pub terrain: Entity,
     pub sun: Option<Entity>,
+    pub sky: Option<Entity>,
 }
 
 /// Stands `area` in the world on `layers`, with its terrain, covers, props, lights, sun, sky and
@@ -65,10 +69,20 @@ pub fn spawn(world: &mut World, content: &Content, area: &Area, layers: RenderLa
             ))
             .id()
     });
+    let mut dome = None;
     if area.lighting.sky.is_air() {
-        let atmosphere = sky::atmosphere(&mut world.resource_mut::<Assets<ScatteringMedium>>());
+        let humidity = humidity(area);
+        let atmosphere = sky::atmosphere(
+            &mut world.resource_mut::<Assets<ScatteringMedium>>(),
+            humidity,
+        );
         world.spawn((atmosphere, ChildOf(root)));
-        world.spawn((sky::air(area.size.bounds()), ChildOf(root)));
+        world.spawn((sky::air(area.size.bounds(), humidity), ChildOf(root)));
+        dome = area
+            .lighting
+            .dome
+            .as_ref()
+            .and_then(|look| spawn_dome(world, content, look, root));
     }
     let terrain = spawn_terrain(world, content, area, root);
     spawn_covers(world, content, area, root);
@@ -79,7 +93,12 @@ pub fn spawn(world: &mut World, content: &Content, area: &Area, layers: RenderLa
     for light in &area.lights {
         spawn_light(world, &area.heights, light, &mut rng, root);
     }
-    Scenery { root, terrain, sun }
+    Scenery {
+        root,
+        terrain,
+        sun,
+        sky: dome,
+    }
 }
 
 /// The files the scenery of an area is made from beyond the area itself, each with what it held
@@ -103,9 +122,17 @@ impl Sources {
                 PieceShape::Blade { .. } => None,
             }));
         }
+        if let Some(dome) = &area.lighting.dome {
+            files.push(dome.shader.path(content));
+        }
         for prop in props {
+            let def = prop.get(content);
             files.push(prop.path(content));
-            files.push(prop.get(content).model.as_str());
+            files.push(def.model.as_str());
+            for material in def.materials.values() {
+                files.push(material.path(content));
+                files.push(material.get(content).shader.path(content));
+            }
         }
         let hashes = &content.built::<FileHashes>().0;
         Sources(
@@ -123,16 +150,28 @@ impl Sources {
     }
 }
 
-/// Whether every cover shader `area`'s terrains draw with is compiled, so the scenery can stand
+/// Whether every shader `area`'s covers and props draw with is compiled, so the scenery can stand
 /// whole: the shaders follow the content into the world a frame behind it.
 pub fn shaders_ready(world: &World, content: &Content, area: &Area) -> bool {
-    area.terrains.iter().all(|terrain| {
+    let covers = area.terrains.iter().all(|terrain| {
         terrain
             .get(content)
             .cover
             .as_ref()
             .is_none_or(|cover| vfx_render::compiled_shader(world, cover.shader).is_some())
-    })
+    });
+    let sky = area
+        .lighting
+        .dome
+        .as_ref()
+        .is_none_or(|dome| vfx_render::compiled_shader(world, dome.shader).is_some());
+    covers
+        && sky
+        && area.props.iter().all(|placed| {
+            placed.prop.get(content).materials.values().all(|material| {
+                vfx_render::compiled_shader(world, material.get(content).shader).is_some()
+            })
+        })
 }
 
 pub fn despawn(world: &mut World, scenery: Scenery) {
@@ -141,7 +180,8 @@ pub fn despawn(world: &mut World, scenery: Scenery) {
     }
 }
 
-/// Lights `area` for the hour under its weather: its sun turned and coloured, its clouds carried
+/// Lights `area` for the hour under its weather: its sun turned and coloured, or by night the full
+/// moon in its place, the eye opened to how strongly it shines, its clouds carried
 /// on by the wind, and the ambient light, the haze of the sun as it shines and the area's sky put
 /// on `camera`; cheap enough to do every frame.
 pub fn light(world: &mut World, area: &Area, daylight: Daylight, scenery: Scenery, camera: Entity) {
@@ -149,23 +189,109 @@ pub fn light(world: &mut World, area: &Area, daylight: Daylight, scenery: Scener
     let elevation = sun.map(|sun| sun.elevation);
     let ambient = AmbientLight {
         color: area.lighting.ambient.color(),
-        brightness: AMBIENT_NITS * sky::ambient_at(daylight, elevation, area.weather.overcast),
+        brightness: AMBIENT_NITS
+            * sky::ambient_at(daylight, elevation, area.weather.clouds, area.weather.water),
         ..default()
     };
-    if let (Some(sun), Some(entity)) = (sun, scenery.sun) {
+    world.resource_scope(|world, mut sheet: Mut<CloudSheet>| {
+        sheet.cover(
+            area.weather.clouds,
+            area.weather.water,
+            &mut world.resource_mut::<Assets<Image>>(),
+        );
+    });
+    let shining = sun.map(|sun| sky::shining(sun, area.weather.clouds, area.weather.water));
+    if let (Some(sun), Some(shining), Some(entity)) = (sun, shining, scenery.sun) {
         if let Some(mut light) = world.get_mut::<DirectionalLight>(entity) {
-            light.color = sun.color;
-            light.illuminance = sun.illuminance;
+            light.color = shining.color;
+            light.illuminance = shining.illuminance;
         }
         let drifted = clouds::drift(climate(area).wind, world.resource::<Time>().elapsed_secs());
+        let center = area.size.bounds().center();
+        let placed = lights::sun_transform(
+            shining.elevation,
+            shining.azimuth,
+            Vec2::new(center.x, center.y),
+        );
+        let cast = world.resource_scope(|world, mut sheet: Mut<CloudSheet>| {
+            sheet.lay(placed, drifted, &mut world.resource_mut::<Assets<Image>>())
+        });
         if let Some(mut transform) = world.get_mut::<Transform>(entity) {
-            *transform = lights::sun_transform(sun.elevation, sun.azimuth, drifted);
+            *transform = cast;
+        }
+        if let Some(dome) = scenery.sky {
+            let heavens = Heavens::new(
+                placed.back().as_vec3(),
+                shining.color,
+                shining.illuminance
+                    / (SUN_LUX * sky::clouded(area.weather.clouds, area.weather.water)),
+                -lights::toward(sun.elevation, sun.azimuth),
+                sky::night(daylight, sun),
+                drifted,
+            );
+            light_dome(world, dome, heavens);
         }
     }
+    let mut tone = area.lighting.grade.tone();
+    if let Some(shining) = shining {
+        tone.exposure.0 += sky::adaptation(daylight, shining).0;
+    }
     if let Ok(mut camera) = world.get_entity_mut(camera) {
-        camera.insert((ambient, sky::haze(sun, area.lighting.sky)));
+        camera.insert((
+            ambient,
+            sky::haze(sun, area.lighting.sky, humidity(area)),
+            camera::grading(tone),
+        ));
     }
     sky::show(world, camera, area.lighting.sky);
+}
+
+/// How moist the area's air is under its weather.
+fn humidity(area: &Area) -> f32 {
+    sky::humidity(area.weather.clouds, area.weather.water)
+}
+
+/// The dome the area's sky is painted on, its shader filled with the look's parameters.
+fn spawn_dome(
+    world: &mut World,
+    content: &Content,
+    look: &DomeLook,
+    root: Entity,
+) -> Option<Entity> {
+    let shader = vfx_render::compiled_shader(world, look.shader)?;
+    let params = ParamsUniform::pack(look.shader.get(content), |name| {
+        look.params.get(name).copied()
+    });
+    let material = SkyMaterial {
+        site: SiteUniform::default(),
+        params,
+        weather: world.resource::<cover_vfx::WeatherImage>().0.clone(),
+        heavens: Heavens::default(),
+        clouds: world.resource::<CloudSheet>().field(),
+        shader,
+    };
+    let material = world.resource_mut::<Assets<SkyMaterial>>().add(material);
+    let dome = sky_vfx::dome(&mut world.resource_mut::<Assets<Mesh>>(), material);
+    Some(world.spawn((dome, ChildOf(root))).id())
+}
+
+/// Tells the sky on `dome` where its lights stand, how deep the night is and how the field of cloud
+/// lies.
+fn light_dome(world: &mut World, dome: Entity, heavens: Heavens) {
+    let Some(handle) = world
+        .get::<MeshMaterial3d<SkyMaterial>>(dome)
+        .map(|material| material.0.clone())
+    else {
+        return;
+    };
+    let mut materials = world.resource_mut::<Assets<SkyMaterial>>();
+    if materials
+        .get(&handle)
+        .is_some_and(|sky| sky.heavens != heavens)
+        && let Some(mut sky) = materials.get_mut(&handle)
+    {
+        sky.heavens = heavens;
+    }
 }
 
 fn sun_at(area: &Area, daylight: Daylight) -> Option<SunLight> {
@@ -175,7 +301,8 @@ fn sun_at(area: &Area, daylight: Daylight) -> Option<SunLight> {
             sun.elevation,
             sun.azimuth,
             sun.color.color(),
-            area.weather.overcast,
+            area.weather.clouds,
+            area.weather.water,
         )
     })
 }
@@ -185,7 +312,8 @@ pub fn climate(area: &Area) -> Climate {
     let (sin, cos) = area.weather.wind.direction.radians().0.sin_cos();
     Climate {
         wind: Vec2::new(sin, -cos) * area.weather.wind.strength,
-        overcast: area.weather.overcast,
+        clouds: area.weather.clouds,
+        water: area.weather.water,
     }
 }
 
@@ -197,45 +325,68 @@ pub fn grade(lighting: &Lighting) -> AreaGrade {
     }
 }
 
-/// The ground's mesh: `heights` coloured by `paint` with the area's terrains, blended between the
-/// paint's pixels so a boundary softens over a half metre.
-pub fn terrain_mesh(content: &Content, area: &Area, heights: &Heightfield, paint: &Paint) -> Mesh {
-    let palette: Vec<[f32; 3]> = area
-        .terrains
-        .iter()
-        .map(|terrain| {
-            let color = terrain.get(content).color.color().to_linear();
-            [color.red, color.green, color.blue]
-        })
-        .collect();
-    let last = palette.len().saturating_sub(1);
-    terrain::mesh(heights, |column, row| {
-        let mut color = [0.0, 0.0, 0.0, 1.0];
-        for share in paint.blend_at(Heightfield::sample_pos(column, row)) {
-            let swatch = palette[usize::from(share.terrain).min(last)];
-            for channel in 0..3 {
-                color[channel] += swatch[channel] * share.weight;
-            }
-        }
-        color
-    })
+/// Lays `scenery`'s ground anew on `heights` painted with `paint`, as a stroke shapes it.
+pub fn lay_ground(world: &mut World, scenery: Scenery, heights: &Heightfield, paint: &Paint) {
+    let mesh = world
+        .resource_mut::<Assets<Mesh>>()
+        .add(terrain::mesh(heights));
+    let Ok(mut ground) = world.get_entity_mut(scenery.terrain) else {
+        return;
+    };
+    ground.insert(Mesh3d(mesh));
+    let Some(material) = ground
+        .get::<MeshMaterial3d<GroundMaterial>>()
+        .map(|material| material.0.clone())
+    else {
+        return;
+    };
+    world.resource_scope(|world, mut images: Mut<Assets<Image>>| {
+        let mut materials = world.resource_mut::<Assets<GroundMaterial>>();
+        terrain::repaint(&material, paint, &mut materials, &mut images);
+    });
 }
 
+/// The ground on the area's heights, painted with its terrains.
 fn spawn_terrain(world: &mut World, content: &Content, area: &Area, root: Entity) -> Entity {
-    let mesh = terrain_mesh(content, area, &area.heights, &area.paint);
-    let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
-    let full = *world.resource::<FullPicture>();
-    let material = world
-        .resource_mut::<Assets<WorldMaterial>>()
-        .add(world_material(StandardMaterial::default(), full));
+    let mesh = world
+        .resource_mut::<Assets<Mesh>>()
+        .add(terrain::mesh(&area.heights));
+    let layers = ground_layers(content, area);
+    let (material, pictures) = world.resource_scope(|world, mut images: Mut<Assets<Image>>| {
+        terrain::ground_material(
+            &layers,
+            &area.paint,
+            world.resource::<AssetServer>(),
+            &mut images,
+        )
+    });
+    let material = world.resource_mut::<Assets<GroundMaterial>>().add(material);
     world
         .spawn((
             Mesh3d(mesh),
             MeshMaterial3d(material),
+            pictures,
             Transform::default(),
             ChildOf(root),
         ))
         .id()
+}
+
+/// Each of the area's terrains as the ground is painted with it.
+fn ground_layers(content: &Content, area: &Area) -> Vec<GroundLayer> {
+    area.terrains
+        .iter()
+        .map(|terrain| {
+            let def = terrain.get(content);
+            GroundLayer {
+                color: def.color.color().to_linear(),
+                picture: def
+                    .picture
+                    .as_ref()
+                    .map(|picture| (picture.image.path(), picture.tile)),
+            }
+        })
+        .collect()
 }
 
 /// Each terrain with a cover gets it laid over the whole area, a mesh per chunk and piece
@@ -437,7 +588,7 @@ fn chunk_seed(seed: u64, parts: [u64; 4]) -> u64 {
 /// The transform a prop placed at `placed` stands with on `heights`.
 pub fn prop_transform(heights: &Heightfield, placed: &PropPlacement) -> Transform {
     Transform {
-        translation: world_point(placed.at, heights.height_at(placed.at)),
+        translation: world_point(placed.at, heights.height_at(placed.at) - placed.sunk),
         rotation: Quat::from_rotation_y(-placed.yaw.radians().0),
         scale: Vec3::splat(placed.scale),
     }
@@ -454,9 +605,26 @@ fn spawn_prop(
     let scene = world
         .resource::<AssetServer>()
         .load(GltfAssetLabel::Scene(0).from_asset(def.model.path()));
+    let looks = MaterialLooks(
+        def.materials
+            .iter()
+            .filter_map(|(name, material)| {
+                let material = material.get(content);
+                Some(MaterialLook {
+                    material: name.clone(),
+                    shader: vfx_render::compiled_shader(world, material.shader)?,
+                    params: ParamsUniform::pack(material.shader.get(content), |param| {
+                        material.params.get(param).copied()
+                    }),
+                    translucency: material.translucency,
+                })
+            })
+            .collect(),
+    );
     let mut prop = world.spawn((
         WorldAssetRoot(scene),
         prop_transform(heights, placed),
+        looks,
         ChildOf(root),
     ));
     if def.fade {

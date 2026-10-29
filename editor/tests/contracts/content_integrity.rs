@@ -6,6 +6,7 @@ use engine::core::audio::playback::SFX_CLIP;
 use engine::core::babble::BABBLE_LETTERS;
 use engine::core::content::{ContentFile, fields_file};
 use engine::core::vfx::VfxDef;
+use engine::core::vfx::shader::Stage;
 use engine::field;
 use engine::systems::actor::ModelDef;
 use engine::systems::npc::NpcDef;
@@ -41,6 +42,7 @@ fn camp() -> Game {
             json!({ "type": "box", "width": 1.0, "depth": 1.0 }),
         )
         .item("cap", json!({ "kind": { "type": "resource" } }))
+        .shader_on("bark", Stage::Prop)
 }
 
 #[test]

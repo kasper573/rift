@@ -3861,6 +3861,7 @@ dependencies = [
  "glam 0.32.1",
  "gloo-net",
  "gltf",
+ "image",
  "js-sys",
  "jsonc-parser",
  "jsonwebtoken",

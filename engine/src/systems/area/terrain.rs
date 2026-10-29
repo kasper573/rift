@@ -4,32 +4,49 @@ use serde::{Deserialize, Serialize};
 use crate::core::audio::playback::SfxId;
 use std::collections::BTreeMap;
 
-use crate::core::content::media::GltfInfos;
+use crate::core::assets::ImageRef;
+use crate::core::content::media::{GltfInfos, ImageSizes};
 use crate::core::content::{
     ContentFile, ContentId, Loading, NamedContent, Nearby, RowCheck, serial,
 };
 use crate::core::ground;
 use crate::core::math::Rgba;
+use crate::core::render::world::terrain::GROUND_PICTURE;
 use crate::core::units::Meters;
 use crate::core::vfx::shader::Stage;
-use crate::core::vfx::{ParamFill, ParamValue, VfxShaderId};
+use crate::core::vfx::{ParamFill, VfxShaderId};
 use crate::systems::area::prop::PropId;
 
 pub type TerrainId = ContentId<TerrainDef>;
 pub type SurfaceId = ContentId<SurfaceDef>;
 
-/// A terrain the ground is painted with: one flat colour, the surface it sounds like underfoot,
-/// and whether anyone walks on it.
+/// A terrain the ground is painted with: its colour, under a picture if it has one, the surface
+/// it sounds like underfoot, and whether anyone walks on it.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TerrainDef {
     pub name: String,
     pub color: Rgba,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub picture: Option<GroundPicture>,
     pub surface: SurfaceId,
     pub walk: Walk,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cover: Option<Cover>,
 }
+
+/// A picture laid over a terrain's ground, repeating every `tile` metres, its shades multiplied
+/// into the terrain's colour: the cracks of dry earth, the ripples of sand.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GroundPicture {
+    pub image: ImageRef,
+    pub tile: Meters,
+}
+
+/// How far a ground's picture may stretch before it repeats.
+pub const SMALLEST_TILE: Meters = Meters(0.5);
+pub const LARGEST_TILE: Meters = Meters(64.0);
 
 /// What a ground grows or lies under where it is painted, from heavily to not at all as the
 /// material blends into others: a shader of the cover stage, with the parameters the ground fills
@@ -153,6 +170,7 @@ impl ContentFile for TerrainDef {
         Ok(TerrainDef {
             name: near.name(),
             color: Rgba::from([106, 143, 59, 255]),
+            picture: None,
             surface: near.file()?,
             walk: Walk::Walkable,
             cover: None,
@@ -161,6 +179,15 @@ impl ContentFile for TerrainDef {
 
     fn check(&self, cx: &mut RowCheck) {
         cx.text("/name", &self.name, 1, 60);
+        if let Some(picture) = &self.picture {
+            cx.range(
+                "/picture/tile",
+                picture.tile.0,
+                SMALLEST_TILE.0,
+                LARGEST_TILE.0,
+                "m",
+            );
+        }
         if let Some(cover) = &self.cover {
             if let Some(level) = cover.sheet.and_then(|sheet| sheet.level) {
                 cx.range(
@@ -221,6 +248,29 @@ impl ContentFile for TerrainDef {
     }
 }
 
+/// Every ground's picture is the size the ground draws its pictures at.
+pub fn check_pictures(loading: &mut Loading) {
+    let content = loading.content();
+    let sizes = content.built::<ImageSizes>();
+    for (id, terrain) in loading.rows::<TerrainDef>(&content) {
+        let Some(picture) = &terrain.picture else {
+            continue;
+        };
+        let mut check = RowCheck::default();
+        if let Some(&size) = sizes.0.get(picture.image.as_str())
+            && size != (GROUND_PICTURE, GROUND_PICTURE)
+        {
+            check.error(
+                "/picture/image",
+                "wrong size",
+                format!("{} × {} pixels", size.0, size.1),
+                format!("{GROUND_PICTURE} × {GROUND_PICTURE} pixels"),
+            );
+        }
+        loading.row_errors(id, check);
+    }
+}
+
 /// Every ground's cover names a shader of the cover stage, fills only the parameters it declares,
 /// each with a value of its kind and within its range, and grows no thicker than the engine
 /// draws: at a full ratio a piece's copies per square metre, counted over the ground a copy
@@ -262,44 +312,11 @@ pub fn check_all(loading: &mut Loading) {
             }
         }
         for (name, fill) in &cover.params {
-            let Some(declared) = shader.params.iter().find(|param| &param.name == name) else {
-                check.error(
-                    format!("/cover/params/{name}"),
-                    "unknown shader parameter",
-                    name,
-                    format!(
-                        "one of {}",
-                        shader
-                            .params
-                            .iter()
-                            .map(|param| param.name.as_str())
-                            .collect::<Vec<_>>()
-                            .join(", ")
-                    ),
-                );
-                continue;
+            let value = match fill {
+                ParamFill::Value(value) => Some(value),
+                ParamFill::Param { .. } => None,
             };
-            let ParamFill::Value(value) = fill else {
-                continue;
-            };
-            if value.kind() != declared.kind {
-                check.error(
-                    format!("/cover/params/{name}"),
-                    "wrong parameter kind",
-                    value.kind().label(),
-                    format!("a {}", declared.kind.label()),
-                );
-            }
-            if let (ParamValue::Number(number), Some((min, max))) = (value, declared.range())
-                && (*number < min || *number > max)
-            {
-                check.error(
-                    format!("/cover/params/{name}"),
-                    "parameter out of range",
-                    number,
-                    format!("{min}..{max}"),
-                );
-            }
+            shader.check_fill(&mut check, &format!("/cover/params/{name}"), name, value);
         }
         loading.row_errors(id, check);
     }

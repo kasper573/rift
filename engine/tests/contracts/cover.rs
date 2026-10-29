@@ -238,8 +238,9 @@ fn strewn_copies_of_a_prop_stand_where_the_paint_puts_them_marked_how_far_up_the
         )
         .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, vec![[1.0, 0.5, 1.0, 1.0]; 3]),
         transform: Transform::from_scale(Vec3::splat(0.5)),
+        material: None,
     };
-    let mesh = strewn(&[stem], &places).expect("copies");
+    let (_, mesh) = strewn(&[stem], &places).pop().expect("copies");
     assert_eq!(mesh.count_vertices(), places.len() * 3);
     for (copy_colors, place) in colors(&mesh).chunks(3).zip(&places) {
         let tint = place.tint.to_f32_array();

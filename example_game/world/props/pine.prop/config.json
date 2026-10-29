@@ -3,5 +3,8 @@
     "type": "circle",
     "radius": 0.5
   },
-  "fade": true
+  "fade": true,
+  "materials": {
+    "style": "world/props/materials/pine.prop_material.json"
+  }
 }

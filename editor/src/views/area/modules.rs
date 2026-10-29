@@ -427,6 +427,7 @@ pub fn module_template(
             at: at.ok_or_else(placed)?,
             yaw: Degrees::default(),
             scale: 1.0,
+            sunk: Meters::default(),
         }),
         AreaModuleKind::Scatter => AreaModule::Scatter(Scatter {
             props: vec![reader.id_of(named).ok_or_else(unnamed)?],

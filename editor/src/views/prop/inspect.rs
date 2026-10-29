@@ -80,7 +80,7 @@ fn model_card(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef) {
                     format!("{:.2} × {:.2} × {:.2} m", size.x, size.z, size.y),
                 );
                 budget(ui, "triangles", info.triangles, MAX_PROP_TRIANGLES);
-                budget(ui, "materials", info.materials, MAX_PROP_MATERIALS);
+                budget(ui, "materials", info.materials.len(), MAX_PROP_MATERIALS);
                 if let Some(weight) = weight {
                     form::kv(ui, "weight", |ui| {
                         let ink = if weight > MAX_PROP_BYTES {

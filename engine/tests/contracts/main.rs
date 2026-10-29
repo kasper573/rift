@@ -1,6 +1,7 @@
 mod babble;
 mod backoff;
 mod clock;
+mod clouds;
 mod combat;
 mod commands;
 mod conversation;

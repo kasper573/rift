@@ -9,17 +9,21 @@ use crate::core::render::world::sky::Daylight;
 use crate::core::time::{DayOrigin, Seconds, UnixMillis, server_now};
 use crate::systems::GameSettings;
 
-/// The weather an area stands in, fixed for the area: its wind, and how much cloud covers its
-/// sky. What grows and hangs in the area sways with the wind, the sky and the light dim under
-/// the cloud, and shaders read both through the engine.
+/// The weather an area stands in, fixed for the area: its wind, how much cloud covers its sky
+/// and how much water the cloud holds. What grows and hangs in the area sways with the wind, the
+/// clouds drift with it and cast their shadows, the sky and the light dim under them, the more so
+/// the wetter they are, and shaders read all of it through the engine.
 #[derive(JsonSchema, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Weather {
     #[serde(default, skip_serializing_if = "Wind::is_calm")]
     pub wind: Wind,
-    /// 0 a clear sky, 1 wholly overcast.
+    /// 0 no cloud, 1 wholly clouded over.
     #[serde(default, skip_serializing_if = "serial::is_zero_f32")]
-    pub overcast: f32,
+    pub clouds: f32,
+    /// 0 soft white fair-weather cloud, 1 dark storm cloud.
+    #[serde(default, skip_serializing_if = "serial::is_zero_f32")]
+    pub water: f32,
 }
 
 /// A game's day and night: a world starts at `start` o'clock and the whole cycle turns once every
@@ -81,7 +85,8 @@ pub struct Wind {
 impl Weather {
     pub const STILL: Weather = Weather {
         wind: Wind::CALM,
-        overcast: 0.0,
+        clouds: 0.0,
+        water: 0.0,
     };
 
     /// A light breeze from the south-west under a clear sky, as a day outside has.
@@ -91,12 +96,13 @@ impl Weather {
                 direction: Degrees(240.0),
                 strength: 0.35,
             },
-            overcast: 0.0,
+            clouds: 0.0,
+            water: 0.0,
         }
     }
 
     pub fn is_still(&self) -> bool {
-        self.wind.is_calm() && self.overcast == 0.0
+        self.wind.is_calm() && self.clouds == 0.0 && self.water == 0.0
     }
 
     pub fn check(&self, pointer: &str, cx: &mut RowCheck) {
@@ -115,11 +121,18 @@ impl Weather {
             "of a gale",
         );
         cx.range(
-            format!("{pointer}/overcast"),
-            self.overcast,
+            format!("{pointer}/clouds"),
+            self.clouds,
             0.0,
             1.0,
             "of the sky clouded over",
+        );
+        cx.range(
+            format!("{pointer}/water"),
+            self.water,
+            0.0,
+            1.0,
+            "of the way from fair-weather cloud to storm cloud",
         );
     }
 }

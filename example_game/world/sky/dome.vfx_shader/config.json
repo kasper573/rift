@@ -1,0 +1,219 @@
+{
+  "name": "Sky dome",
+  "stage": "sky",
+  "params": [
+    {
+      "name": "shadow",
+      "kind": "color",
+      "default": [
+        176,
+        186,
+        228,
+        255
+      ]
+    },
+    {
+      "name": "streak",
+      "kind": "color",
+      "default": [
+        255,
+        255,
+        255,
+        255
+      ]
+    },
+    {
+      "name": "height",
+      "kind": "number",
+      "default": 70.0,
+      "min": 5.0,
+      "max": 1000.0
+    },
+    {
+      "name": "reach",
+      "kind": "number",
+      "default": 2500.0,
+      "min": 200.0,
+      "max": 20000.0
+    },
+    {
+      "name": "billow",
+      "kind": "number",
+      "default": 55.0,
+      "min": 4.0,
+      "max": 400.0
+    },
+    {
+      "name": "fringe",
+      "kind": "number",
+      "default": 0.6,
+      "min": 0.0,
+      "max": 1.0
+    },
+    {
+      "name": "thickness",
+      "kind": "number",
+      "default": 0.4,
+      "min": 0.0,
+      "max": 4.0
+    },
+    {
+      "name": "sun",
+      "kind": "number",
+      "default": 1.0,
+      "min": 0.0,
+      "max": 4.0
+    },
+    {
+      "name": "sky",
+      "kind": "number",
+      "default": 1.0,
+      "min": 0.0,
+      "max": 4.0
+    },
+    {
+      "name": "bands",
+      "kind": "number",
+      "default": 0.7,
+      "min": 0.0,
+      "max": 1.0
+    },
+    {
+      "name": "streaks",
+      "kind": "number",
+      "default": 0.0,
+      "min": 0.0,
+      "max": 1.0
+    },
+    {
+      "name": "streak_turn",
+      "kind": "number",
+      "default": 35.0,
+      "min": 0.0,
+      "max": 360.0
+    },
+    {
+      "name": "day_zenith",
+      "kind": "color",
+      "default": [
+        150,
+        205,
+        240,
+        255
+      ]
+    },
+    {
+      "name": "day_horizon",
+      "kind": "color",
+      "default": [
+        215,
+        240,
+        245,
+        255
+      ]
+    },
+    {
+      "name": "day",
+      "kind": "number",
+      "default": 0.0,
+      "min": 0.0,
+      "max": 1.0
+    },
+    {
+      "name": "day_light",
+      "kind": "number",
+      "default": 1.0,
+      "min": 0.0,
+      "max": 4.0
+    },
+    {
+      "name": "night_zenith",
+      "kind": "color",
+      "default": [
+        10,
+        18,
+        46,
+        255
+      ]
+    },
+    {
+      "name": "night_horizon",
+      "kind": "color",
+      "default": [
+        36,
+        52,
+        96,
+        255
+      ]
+    },
+    {
+      "name": "night_light",
+      "kind": "number",
+      "default": 1.0,
+      "min": 0.0,
+      "max": 8.0
+    },
+    {
+      "name": "stars",
+      "kind": "number",
+      "default": 1.0,
+      "min": 0.0,
+      "max": 8.0
+    },
+    {
+      "name": "star_count",
+      "kind": "number",
+      "default": 0.3,
+      "min": 0.0,
+      "max": 1.0
+    },
+    {
+      "name": "milky_way",
+      "kind": "number",
+      "default": 1.0,
+      "min": 0.0,
+      "max": 4.0
+    },
+    {
+      "name": "moon",
+      "kind": "color",
+      "default": [
+        236,
+        240,
+        255,
+        255
+      ]
+    },
+    {
+      "name": "moon_size",
+      "kind": "number",
+      "default": 3.0,
+      "min": 0.2,
+      "max": 20.0
+    },
+    {
+      "name": "moon_glow",
+      "kind": "number",
+      "default": 1.0,
+      "min": 0.0,
+      "max": 4.0
+    },
+    {
+      "name": "dusk",
+      "kind": "color",
+      "default": [
+        255,
+        150,
+        90,
+        255
+      ]
+    },
+    {
+      "name": "dusk_glow",
+      "kind": "number",
+      "default": 0.25,
+      "min": 0.0,
+      "max": 4.0
+    }
+  ]
+}

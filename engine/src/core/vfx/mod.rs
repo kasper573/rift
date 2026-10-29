@@ -2,6 +2,7 @@ pub mod cover;
 pub mod play;
 pub mod render;
 pub mod shader;
+pub mod sky;
 
 pub use play::{LayerTime, sprite_cell};
 pub use shader::{
@@ -29,7 +30,7 @@ use crate::core::units::Meters;
 
 pub type VfxId = ContentId<VfxDef>;
 
-pub const MAX_PARAMS: usize = 8;
+pub const MAX_PARAMS: usize = 32;
 pub const MAX_LAYERS: usize = 16;
 
 /// How long a layer may run or wait: within a minute, and long enough to be seen.

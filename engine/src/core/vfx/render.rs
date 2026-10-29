@@ -59,6 +59,7 @@ impl Plugin for VfxMaterialsPlugin {
             .add_plugins(MaterialPlugin::<VfxWorldMaterial>::default())
             .add_plugins(MaterialPlugin::<SurfaceMaterial>::default())
             .add_plugins(MaterialPlugin::<super::cover::CoverMaterial>::default())
+            .add_plugins(MaterialPlugin::<super::sky::SkyMaterial>::default())
             .init_resource::<VfxShaders>()
             .init_resource::<VfxAssets>()
             .init_resource::<super::cover::WeatherImage>()
@@ -589,7 +590,12 @@ impl SiteFrame {
     /// they are, a quad in the world with its margin.
     pub fn overscan(&self, stage: Stage) -> Vec2 {
         match stage {
-            Stage::Screen | Stage::Text | Stage::Surface | Stage::Cover => Vec2::ONE,
+            Stage::Screen
+            | Stage::Text
+            | Stage::Surface
+            | Stage::Cover
+            | Stage::Prop
+            | Stage::Sky => Vec2::ONE,
             Stage::Ground | Stage::Billboard => quad_overscan(self.metres(stage)),
         }
     }
@@ -697,6 +703,17 @@ impl ParamsUniform {
     }
 }
 
+impl ParamsUniform {
+    /// The parameters bit for bit, so materials filled alike can be told apart from others.
+    pub fn bits(&self) -> [u32; PARAMS_BYTES / 4] {
+        let mut bits = [0; PARAMS_BYTES / 4];
+        for (word, value) in self.words.iter().flat_map(Vec4::to_array).enumerate() {
+            bits[word] = value.to_bits();
+        }
+        bits
+    }
+}
+
 impl Default for ParamsUniform {
     fn default() -> ParamsUniform {
         ParamsUniform {
@@ -711,14 +728,14 @@ impl Default for ParamsUniform {
 pub struct VfxShaderKey(Uuid);
 
 impl VfxShaderKey {
-    pub(super) fn of(shader: &Handle<Shader>) -> VfxShaderKey {
+    pub fn of(shader: &Handle<Shader>) -> VfxShaderKey {
         VfxShaderKey(match shader.id() {
             AssetId::Uuid { uuid } => uuid,
             AssetId::Index { .. } => Uuid::nil(),
         })
     }
 
-    pub(super) fn handle(self) -> Handle<Shader> {
+    pub fn handle(self) -> Handle<Shader> {
         Handle::Uuid(self.0, PhantomData)
     }
 }
@@ -1072,7 +1089,7 @@ fn piece_for(world: &mut World, stage: Stage, sheet: Option<Handle<Image>>) -> E
         .spawn((VfxPiece { stage }, Transform::default(), Visibility::Hidden))
         .id();
     match stage {
-        Stage::Cover => {}
+        Stage::Cover | Stage::Prop | Stage::Sky => {}
         Stage::Screen | Stage::Text => {
             let material = world
                 .resource_mut::<Assets<VfxMaterial>>()

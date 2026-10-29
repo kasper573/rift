@@ -1,3 +1,5 @@
+use std::collections::BTreeMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -10,28 +12,32 @@ use crate::core::content::{
 use crate::core::geometry::Degrees;
 use crate::core::math::{Offset, Pos, Rect, Rng};
 use crate::core::units::Meters;
+use crate::systems::area::prop_material::PropMaterialId;
 
 pub type PropId = ContentId<PropDef>;
 
-pub const MAX_PROP_BYTES: FileSize = FileSize::kib(2 * 1024);
-pub const MAX_PROP_TRIANGLES: usize = 2000;
-pub const MAX_PROP_MATERIALS: usize = 1;
+pub const MAX_PROP_BYTES: FileSize = FileSize::kib(4 * 1024);
+pub const MAX_PROP_TRIANGLES: usize = 16_000;
+pub const MAX_PROP_MATERIALS: usize = 2;
 pub const MIN_POLYGON_POINTS: usize = 3;
 pub const MAX_POLYGON_POINTS: usize = 64;
 /// How many props an area stands at most, scattered ones included: a draw budget.
 pub const MAX_PROPS: usize = 2000;
 pub const MAX_SCATTERED: u32 = 500;
 pub const MAX_DENSITY: f32 = 2.0;
-pub const MIN_SCALE: f32 = 0.5;
-pub const MAX_SCALE: f32 = 2.0;
+pub const MIN_SCALE: f32 = 0.25;
+pub const MAX_SCALE: f32 = 8.0;
+/// How deep a prop may be sunk into the ground.
+pub const MAX_SUNK: Meters = Meters(8.0);
 
 pub const PROP_GLB: PartSpec = PartSpec::File {
     name: "model",
     exts: &["glb"],
 };
 
-/// A thing standing in the world: a glTF model, the ground it takes up, and how it is drawn when it
-/// comes between the camera and a player.
+/// A thing standing in the world: a glTF model, the ground it takes up, how it is drawn when it
+/// comes between the camera and a player, and the game's own materials drawing those of its
+/// model's materials it names.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PropDef {
@@ -42,6 +48,9 @@ pub struct PropDef {
     pub fade: bool,
     #[serde(default = "serial::yes", skip_serializing_if = "serial::is_true")]
     pub shadow: bool,
+    /// Keyed by the name of a material of the model.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub materials: BTreeMap<String, PropMaterialId>,
 }
 
 /// The ground a prop takes up, in its own metres around its origin; nobody walks there.
@@ -84,6 +93,16 @@ impl Bundle for PropDef {
             if let Some(info) = parts.gltf_info(glb) {
                 let mut cx = RowCheck::default();
                 check_mesh(&info, parts.weight(glb), &mut cx);
+                for name in self.materials.keys() {
+                    if !info.materials.contains(name) {
+                        cx.error(
+                            format!("/materials/{name}"),
+                            "no such material",
+                            name,
+                            format!("one of the model's: {}", info.materials.join(", ")),
+                        );
+                    }
+                }
                 parts.config_errors(cx);
             }
         }
@@ -104,6 +123,7 @@ impl ContentFile for PropDef {
             footprint: Footprint::None,
             fade: false,
             shadow: true,
+            materials: BTreeMap::new(),
         })
     }
 
@@ -195,7 +215,8 @@ impl Footprint {
     }
 }
 
-/// A prop standing in an area.
+/// A prop standing in an area, `sunk` that far into the ground under it, as a boulder bedded in
+/// a hillside is.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PropPlacement {
@@ -211,6 +232,8 @@ pub struct PropPlacement {
         skip_serializing_if = "serial::is_one_f32"
     )]
     pub scale: f32,
+    #[serde(default, skip_serializing_if = "Meters::is_zero")]
+    pub sunk: Meters,
 }
 
 impl PropPlacement {
@@ -221,6 +244,13 @@ impl PropPlacement {
             MIN_SCALE,
             MAX_SCALE,
             "times the model's size,",
+        );
+        cx.range(
+            format!("{pointer}/sunk"),
+            self.sunk.0,
+            0.0,
+            MAX_SUNK.0,
+            "m into the ground",
         );
     }
 }
@@ -318,6 +348,7 @@ impl Scatter {
                     at,
                     yaw,
                     scale,
+                    sunk: Meters::default(),
                 })
             })
             .collect()
@@ -366,7 +397,7 @@ fn check_mesh(info: &GltfInfo, weight: Option<FileSize>, cx: &mut RowCheck) {
         );
     }
     cx.range("", info.triangles, 1, MAX_PROP_TRIANGLES, "triangles");
-    cx.range("", info.materials, 0, MAX_PROP_MATERIALS, "materials");
+    cx.range("", info.materials.len(), 0, MAX_PROP_MATERIALS, "materials");
 }
 
 fn inside_polygon(points: &[Pos<Meters>], point: Pos<Meters>) -> bool {

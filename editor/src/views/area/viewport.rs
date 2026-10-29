@@ -348,31 +348,18 @@ impl Viewport {
         };
         match &request.stroke {
             Some(stroke) if self.stroke != Some(stroke.revision) => {
-                let mesh = scenery::terrain_mesh(
-                    &request.content,
-                    &stood.area,
-                    &stroke.heights,
-                    &stroke.paint,
-                );
-                let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
-                if let Ok(mut terrain) = world.get_entity_mut(stood.scenery.terrain) {
-                    terrain.insert(Mesh3d(mesh));
-                }
+                scenery::lay_ground(world, stood.scenery, &stroke.heights, &stroke.paint);
                 self.stroke = Some(stroke.revision);
             }
             Some(_) => {}
             None => {
                 if self.stroke.take().is_some() {
-                    let mesh = scenery::terrain_mesh(
-                        &request.content,
-                        &stood.area,
+                    scenery::lay_ground(
+                        world,
+                        stood.scenery,
                         &stood.area.heights,
                         &stood.area.paint,
                     );
-                    let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
-                    if let Ok(mut terrain) = world.get_entity_mut(stood.scenery.terrain) {
-                        terrain.insert(Mesh3d(mesh));
-                    }
                 }
             }
         }

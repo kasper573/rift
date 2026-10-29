@@ -18,7 +18,8 @@ use crate::core::units::Meters;
 pub struct GltfInfo {
     pub bounds: MeshBounds,
     pub triangles: usize,
-    pub materials: usize,
+    /// The name of each material, in the order the file lists them; unnamed ones are empty.
+    pub materials: Vec<String>,
     /// Whether any mesh is skinned to joints.
     pub skinned: bool,
     /// The nodes the skins bind their meshes to, by index in the tree.
@@ -345,7 +346,10 @@ pub fn inspect(bytes: &[u8]) -> Result<GltfInfo, String> {
             max: Vec3::ZERO,
         }),
         triangles,
-        materials: document.materials().count(),
+        materials: document
+            .materials()
+            .map(|material| material.name().unwrap_or_default().to_owned())
+            .collect(),
         skinned: document.skins().next().is_some(),
         skin_joints: {
             let mut joints: Vec<usize> = document

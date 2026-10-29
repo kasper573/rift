@@ -30,6 +30,12 @@ pub struct Meters(pub f32);
 #[schemars(extend("x-unit" = "EV"))]
 pub struct Stops(pub f32);
 
+impl Stops {
+    pub fn is_zero(&self) -> bool {
+        self.0 == 0.0
+    }
+}
+
 pub type CellPos = euclid::default::Point2D<i32>;
 pub type GridSize = euclid::default::Size2D<u32>;
 
@@ -45,6 +51,10 @@ pub struct MetersPerSec(pub Meters);
 impl Meters {
     pub fn ratio(self, other: Meters) -> f32 {
         self.0 / other.0
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.0 == 0.0
     }
 }
 

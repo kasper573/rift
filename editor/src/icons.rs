@@ -13,6 +13,7 @@ use engine::systems::actor::{MaterialDef, ModelDef, ModelPartDef};
 use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::PropDef;
+use engine::systems::area::prop_material::PropMaterialDef;
 use engine::systems::area::terrain::{SurfaceDef, TerrainDef};
 use engine::systems::area::world_map::WorldMapDef;
 use engine::systems::attention::AttentionDef;
@@ -155,6 +156,7 @@ impl KindFamily {
             AreaDef::TABLE
             | BlueprintDef::TABLE
             | PropDef::TABLE
+            | PropMaterialDef::TABLE
             | TerrainDef::TABLE
             | SurfaceDef::TABLE
             | WorldMapDef::TABLE => KindFamily::World,
@@ -201,6 +203,7 @@ pub fn of_table(table: &str) -> KindIcon {
         AreaDef::TABLE => KindIcon::plain(phosphor::MAP_TRIFOLD),
         BlueprintDef::TABLE => KindIcon::plain(phosphor::STAMP),
         PropDef::TABLE => KindIcon::plain(phosphor::TREE).unpictured(),
+        PropMaterialDef::TABLE => KindIcon::plain(phosphor::PAINT_BRUSH),
         TerrainDef::TABLE => KindIcon::plain(phosphor::SQUARES_FOUR).unpictured(),
         SurfaceDef::TABLE => KindIcon::plain(phosphor::FOOTPRINTS),
         WorldMapDef::TABLE => KindIcon::plain(phosphor::GLOBE_HEMISPHERE_WEST),

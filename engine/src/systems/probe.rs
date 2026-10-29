@@ -21,6 +21,7 @@ use crate::core::math::{Offset, Pos, Rect, Size, WindowPx};
 use crate::core::platform::ClientPlatform;
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::render::world::layers::Layered;
+use crate::core::render::world::sky::Daylight;
 use crate::core::render::{self, CameraRig, GroundHeights, Pointed, ground_height, world_point};
 use crate::core::time::{self, PlaybackRate, Seconds};
 use crate::core::units::{GROUND_ORIGIN, Meters};
@@ -113,6 +114,7 @@ pub struct ProbeSnapshot {
     pub skills: Option<ProbeSkills>,
     pub soundscape: ProbeSoundscape,
     pub transition: ScreenTransitionPhase,
+    pub daylight: Daylight,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug)]
@@ -732,6 +734,10 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         covered: covered(world),
         soundscape: soundscape(world),
         transition: world.resource::<ActiveTransition>().phase(),
+        daylight: world
+            .get_resource::<Daylight>()
+            .copied()
+            .unwrap_or_default(),
         view,
         area,
     }

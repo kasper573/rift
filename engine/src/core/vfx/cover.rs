@@ -61,7 +61,8 @@ pub(super) struct Weather {
     time: f32,
     treads: u32,
     daylight: f32,
-    overcast: f32,
+    clouds: f32,
+    water: f32,
     tread: [Vec4; TREADS],
 }
 
@@ -72,7 +73,8 @@ impl Default for Weather {
             time: 0.0,
             treads: 0,
             daylight: 0.5,
-            overcast: 0.0,
+            clouds: 0.0,
+            water: 0.0,
             tread: [Vec4::ZERO; TREADS],
         }
     }
@@ -94,12 +96,12 @@ impl Weather {
     }
 
     /// The weather laid out as the header's `read_weather` reads it: the wind, the moment and
-    /// the count of treads in the first texel, the daylight and the cloud in the second, then a
-    /// texel a tread.
+    /// the count of treads in the first texel, the daylight, the cloud and its water in the
+    /// second, then a texel a tread.
     fn texels(&self) -> Vec<u8> {
         let mut texels = vec![
             Vec4::new(self.wind.x, self.wind.y, self.time, self.treads as f32),
-            Vec4::new(self.daylight, self.overcast, 0.0, 0.0),
+            Vec4::new(self.daylight, self.clouds, self.water, 0.0),
         ];
         texels.extend(self.tread);
         texels
@@ -111,12 +113,13 @@ impl Weather {
 }
 
 /// The weather over the shown area as the client draws it: the wind as a direction over the
-/// ground (x east, y south) scaled by its strength, from calm at 0 to a gale at 1, and how much
-/// cloud covers the sky.
+/// ground (x east, y south) scaled by its strength, from calm at 0 to a gale at 1, how much cloud
+/// covers the sky and how much water the cloud holds.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct Climate {
     pub wind: Vec2,
-    pub overcast: f32,
+    pub clouds: f32,
+    pub water: f32,
 }
 
 /// A body that bends the cover it walks through, `radius` metres around its feet.
@@ -147,10 +150,10 @@ impl MaterialExtension for CoverVfx {
     }
 }
 
-/// The material a ground's cover is drawn with: the ground's own colour under the shader, seen
-/// from both sides, blended so a sheet can fade at its edge.
 /// A cover's material, coloured by its vertices: blended, for a sheet or blades that write no
-/// depth and take no ink, or masked, for strewn props that stand solid like any other.
+/// depth and take no ink, or masked, for strewn props that stand solid like any other. Both of a
+/// face's sides are drawn and lit alike by the normal its piece carries, never turned over on the
+/// far side, since foliage points its normals where its light should fall rather than off its faces.
 pub fn material(
     site: SiteUniform,
     params: ParamsUniform,
@@ -164,7 +167,7 @@ pub fn material(
             perceptual_roughness: 1.0,
             metallic: 0.0,
             reflectance: 0.0,
-            double_sided: true,
+            double_sided: false,
             cull_mode: None,
             alpha_mode,
             ..default()
@@ -225,7 +228,8 @@ pub(super) fn blow(
         weather.daylight = daylight.share();
     }
     if let Some(climate) = climate {
-        weather.overcast = climate.overcast;
+        weather.clouds = climate.clouds;
+        weather.water = climate.water;
         weather.wind = climate.wind;
     }
     weather.time = time.elapsed_secs();

@@ -3,10 +3,12 @@
 // the paint. The shader says how a vertex moves (`sway`, from the weather the engine tells it of)
 // and what colour a pixel is (`vfx`), where `sample` is the cover lit in the ground's colour,
 // `light` the light falling there (what a white face would be lit to, for a shader that paints
-// in colours of its own), `weight` how heavily the material is painted there, `tip` how far up a blade or a strewn prop
-// the point stands, 0 at its root and 1 at its top, `depth` how many metres of ground lie under a
-// sheet laid at a level, `piece` which of the cover's pieces the point belongs to (0 on a sheet)
-// and `seed` a number of the blade's or the copy's own, 0 on a sheet. The cover's colours come
+// in colours of its own), `albedo` the cover's own colour unlit, as its texture paints it without
+// its vertices' colours, `weight` how heavily the material is painted there, `tip` how far up a
+// blade or a strewn prop the point stands, 0 at its root and 1 at its top, `position` where it
+// stands in the world, `depth` how many metres of ground lie under a sheet laid at a level,
+// `piece` which of the cover's pieces the point belongs to (0 on a sheet) and `seed` a number of
+// the blade's or the copy's own, 0 on a sheet. The cover's colours come
 // from its vertices: a blade's own, a copy's tint over its prop's, a sheet's ground colour.
 @if(PREPASS_PIPELINE)
 import bevy_pbr::prepass::io::{Vertex, VertexOutput, FragmentOutput, decompress_vertex};
@@ -16,17 +18,19 @@ import bevy_pbr::render::{mesh_functions, view_transformations::position_world_t
 @if(PREPASS_PIPELINE)
 import engine::core::render::world::prepass_write::prepass_output;
 @else
-import engine::core::render::world::shade::lit_color;
+import bevy_pbr::render::{pbr_fragment::pbr_input_from_standard_material, pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing}};
 
 @group(3) @binding(100) var<uniform> site: Site;
 @group(3) @binding(101) var<uniform> params: Params;
 
 var<private> lit: vec4<f32>;
 var<private> shine: vec3<f32>;
+var<private> own: vec4<f32>;
 var<private> painted: f32;
 var<private> up: f32;
 var<private> salt: f32;
 var<private> part: u32;
+var<private> spot: vec3<f32>;
 
 fn sample(at: vec2<f32>) -> vec4<f32> {
     return lit;
@@ -34,6 +38,10 @@ fn sample(at: vec2<f32>) -> vec4<f32> {
 
 fn light() -> vec3<f32> {
     return shine;
+}
+
+fn albedo() -> vec4<f32> {
+    return own;
 }
 
 fn weight() -> f32 {
@@ -54,6 +62,10 @@ fn seed() -> f32 {
 
 fn piece() -> u32 {
     return part;
+}
+
+fn position() -> vec3<f32> {
+    return spot;
 }
 
 fn mark(uv_b: vec2<f32>) {
@@ -81,6 +93,7 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
         mark(vertex.uv_b);
         out.uv_b = vertex.uv_b;
     }
+    spot = placed.xyz;
     read_weather();
     let world = vec4<f32>(sway(placed.xyz, up), 1.0);
     out.world_position = world;
@@ -122,11 +135,20 @@ fn fragment(in: VertexOutput) {}
 @else
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
-    lit = lit_color(in, is_front);
-    shine = lit.rgb;
+    var pbr_input = pbr_input_from_standard_material(in, is_front);
+    let base = alpha_discard(
+        pbr_input.material.flags,
+        pbr_input.material.alpha_cutoff,
+        pbr_input.material.base_color
+    );
+    var tinted = vec4<f32>(1.0);
     @if(VERTEX_COLORS) {
-        shine = lit.rgb / max(in.color.rgb, vec3<f32>(0.001));
+        tinted = in.color;
     }
+    own = vec4<f32>(base.rgb / max(tinted.rgb, vec3<f32>(0.001)), base.a);
+    pbr_input.material.base_color = vec4<f32>(1.0, 1.0, 1.0, base.a);
+    shine = apply_pbr_lighting(pbr_input).rgb;
+    lit = vec4<f32>(shine * base.rgb, base.a);
     painted = 1.0;
     up = 0.0;
     salt = 0.0;
@@ -138,8 +160,9 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     @if(VERTEX_UVS_B) {
         mark(in.uv_b);
     }
+    spot = in.world_position.xyz;
     read_weather();
     var out: FragmentOutput;
-    out.color = vfx(uv);
+    out.color = main_pass_post_lighting_processing(pbr_input, vfx(uv));
     return out;
 }

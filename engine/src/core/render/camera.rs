@@ -14,7 +14,7 @@ use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapterInfo;
 use bevy::render::settings::Backends;
-use bevy::render::view::{ColorGrading, ColorGradingGlobal};
+use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
 use bevy::window::PrimaryWindow;
 use serde::{Deserialize, Serialize};
 
@@ -103,19 +103,49 @@ pub fn picture() -> impl Bundle {
             ..Bloom::NATURAL
         },
         Tonemapping::AcesFitted,
-        ColorGrading {
-            global: ColorGradingGlobal {
-                exposure: EXPOSURE.0,
-                post_saturation: SATURATION,
-                ..default()
-            },
-            ..default()
-        },
+        grading(Tone::NEUTRAL),
         DebandDither::Enabled,
         Smaa {
             preset: SmaaPreset::Ultra,
         },
     )
+}
+
+/// How a picture is finished beside the engine's own finish: opened `exposure` brighter, its
+/// colours `saturation` times as saturated, its midtones `contrast` times as contrasted and its
+/// light warmed toward amber by `warmth`, or cooled toward blue below 0.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Tone {
+    pub exposure: Stops,
+    pub saturation: f32,
+    pub contrast: f32,
+    pub warmth: f32,
+}
+
+impl Tone {
+    pub const NEUTRAL: Tone = Tone {
+        exposure: Stops(0.0),
+        saturation: 1.0,
+        contrast: 1.0,
+        warmth: 0.0,
+    };
+}
+
+/// The grading a picture finished in `tone` is drawn through.
+pub fn grading(tone: Tone) -> ColorGrading {
+    ColorGrading {
+        global: ColorGradingGlobal {
+            exposure: EXPOSURE.0 + tone.exposure.0,
+            post_saturation: SATURATION * tone.saturation,
+            temperature: tone.warmth,
+            ..default()
+        },
+        midtones: ColorGradingSection {
+            contrast: tone.contrast,
+            ..default()
+        },
+        ..default()
+    }
 }
 
 /// Every new picture gets the shafts and what settles it over the frames, where the GPU draws the
