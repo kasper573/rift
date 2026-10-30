@@ -47,6 +47,10 @@ dist out="target/dist" *parts="desktop web profiling":
       esac
     done
     rm -rf "$out" && mkdir -p "$out"
+    # One build for every binary: each target's build script caches whether the tree was dirty
+    # when it last ran, so left to themselves the server and the browser client can disagree.
+    dirty=$(git status --porcelain --untracked-files=no)
+    export RIFT_BUILD="${RIFT_BUILD:-$(git rev-parse --short=8 HEAD)${dirty:+-dirty}}"
     if [[ $parts == *" desktop "* ]]; then
       cargo build --release -p editor -p engine -p cli --bin editor --bin game-server --bin desktop-client --bin rift
       for binary in editor game-server desktop-client rift; do
