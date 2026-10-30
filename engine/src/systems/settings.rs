@@ -14,7 +14,7 @@ use crate::core::geometry::Degrees;
 use crate::core::math::{Pos, Size, WindowPx};
 use crate::core::platform::{ClientPlatform, Platform};
 use crate::core::render::transition::{ScreenTransition, ScreenTransitionPreference};
-use crate::core::render::video::VideoPreferences;
+use crate::core::render::video::{AmbientOcclusionQuality, VideoPreferences};
 use crate::core::render::{CameraPreferences, FullPicture};
 use crate::core::text::LettersPerSecond;
 use crate::systems::hud::HudWindow;
@@ -187,7 +187,7 @@ fn show_settings(ui: &mut Ui, settings: &mut Mut<UserSettings>, offered: VideoOf
 }
 
 fn show_video(ui: &mut Ui, settings: &mut Mut<UserSettings>, offered: VideoOffered) {
-    let mut fullscreen = settings.window.fullscreen;
+    let mut fullscreen = settings.window.fullscreen && offered.window;
     if supported_only(ui, offered.window, |ui| {
         ui.checkbox(&mut fullscreen, "Fullscreen")
     })
@@ -195,7 +195,7 @@ fn show_video(ui: &mut Ui, settings: &mut Mut<UserSettings>, offered: VideoOffer
     {
         settings.window.fullscreen = fullscreen;
     }
-    let mut vsync = settings.window.vsync;
+    let mut vsync = settings.window.vsync && offered.window;
     if supported_only(ui, offered.window, |ui| {
         ui.checkbox(&mut vsync, "VSync").on_hover_text(
             "Each frame waits for the display's refresh: less heat and power, a little more delay",
@@ -213,7 +213,7 @@ fn show_video(ui: &mut Ui, settings: &mut Mut<UserSettings>, offered: VideoOffer
     {
         settings.video.bloom = bloom;
     }
-    let mut light_shafts = settings.video.light_shafts;
+    let mut light_shafts = settings.video.light_shafts && offered.full_picture;
     if supported_only(ui, offered.full_picture, |ui| {
         ui.checkbox(&mut light_shafts, "Light shafts")
             .on_hover_text("The sun's rays show in the air")
@@ -230,7 +230,11 @@ fn show_video(ui: &mut Ui, settings: &mut Mut<UserSettings>, offered: VideoOffer
         }
         ui.end_row();
         let label = ui.add_enabled(offered.full_picture, egui::Label::new("Ambient occlusion"));
-        let current = settings.video.ambient_occlusion;
+        let current = if offered.full_picture {
+            settings.video.ambient_occlusion
+        } else {
+            AmbientOcclusionQuality::Off
+        };
         if let Some(occlusion) = supported_only(ui, offered.full_picture, |ui| {
             picker(ui, "ambient occlusion", current, label.id)
         }) {
@@ -247,7 +251,7 @@ fn show_video(ui: &mut Ui, settings: &mut Mut<UserSettings>, offered: VideoOffer
 }
 
 /// `add`'s controls, dimmed and locked with the reason on hover where the platform can't honour
-/// them.
+/// them, in which case they must show what is drawn: off.
 fn supported_only<R>(ui: &mut Ui, supported: bool, add: impl FnOnce(&mut Ui) -> R) -> R {
     let shown = ui.add_enabled_ui(supported, add);
     shown
