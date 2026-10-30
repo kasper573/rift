@@ -2,12 +2,14 @@
 //! ambient glow, and up to a few point lights, some of which flicker.
 
 use bevy::light::{
-    CascadeShadowConfigBuilder, DirectionalLight, PointLight, SunDisk, VolumetricLight,
+    CascadeShadowConfig, CascadeShadowConfigBuilder, DirectionalLight, PointLight, SunDisk,
+    VolumetricLight,
 };
 use bevy::prelude::*;
 
 use super::clouds::{LOWEST_LIGHT, SHADOW_SPAN};
 use crate::core::geometry::Degrees;
+use crate::core::render::video::{ShadowQuality, VideoPreferences};
 use crate::core::time::Seconds;
 
 /// The sun's illuminance in lux: with the camera's exposure, a white face square to the sun is
@@ -36,22 +38,32 @@ pub fn sun(color: Color, illuminance: f32, elevation: Degrees, azimuth: Degrees)
             color,
             illuminance,
             shadow_maps_enabled: true,
-            soft_shadow_size: Some(SUN_WIDTH),
+            soft_shadow_size: soft_shadows(ShadowQuality::High),
             ..default()
         },
-        CascadeShadowConfigBuilder {
-            num_cascades: 2,
-            maximum_distance: SHADOW_REACH,
-            first_cascade_far_bound: NEAR_SHADOWS,
-            ..default()
-        }
-        .build(),
+        shadow_cascades(ShadowQuality::High),
         VolumetricLight,
         // The light stands a little over the horizon when its sun or moon has sunk to it, so the
         // sky draws them where they truly stand rather than leaving it to the light.
         SunDisk::OFF,
         sun_transform(elevation, azimuth, Vec2::ZERO),
     )
+}
+
+/// Every sun and moon casts its shadows as the player's video preferences ask, anew whenever they
+/// change.
+pub(super) fn cast_shadows(
+    video: Res<VideoPreferences>,
+    mut lights: Query<(&mut DirectionalLight, &mut CascadeShadowConfig)>,
+) {
+    for (mut light, mut cascades) in &mut lights {
+        if !light.is_added() && !video.is_changed() {
+            continue;
+        }
+        light.shadow_maps_enabled = video.shadows != ShadowQuality::Off;
+        light.soft_shadow_size = soft_shadows(video.shadows);
+        *cascades = shadow_cascades(video.shadows);
+    }
 }
 
 /// Where a sun `elevation` above the horizon at `azimuth` clockwise from north shines from, the
@@ -104,4 +116,18 @@ pub(super) fn flicker(time: Res<Time>, mut lights: Query<(&Flicker, &mut PointLi
             (t.sin() * 0.5 + (t * 2.3 + 1.7).sin() * 0.3 + (t * 5.1).sin() * 0.2) * 0.5 + 0.5;
         light.intensity = flicker.full * (1.0 - flicker.amount * wave);
     }
+}
+
+fn soft_shadows(quality: ShadowQuality) -> Option<f32> {
+    (quality == ShadowQuality::High).then_some(SUN_WIDTH)
+}
+
+fn shadow_cascades(quality: ShadowQuality) -> CascadeShadowConfig {
+    CascadeShadowConfigBuilder {
+        num_cascades: if quality == ShadowQuality::High { 2 } else { 1 },
+        maximum_distance: SHADOW_REACH,
+        first_cascade_far_bound: NEAR_SHADOWS,
+        ..default()
+    }
+    .build()
 }

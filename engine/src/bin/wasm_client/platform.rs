@@ -35,6 +35,10 @@ impl Platform for WebPlatform {
         plugins
     }
 
+    fn owns_window(&self) -> bool {
+        false
+    }
+
     fn sync_window(&self, window: &mut Window) {
         let Some(web) = web_sys::window() else {
             return;

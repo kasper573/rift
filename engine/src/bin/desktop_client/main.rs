@@ -4,7 +4,7 @@ mod store;
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
-use bevy::window::{PresentMode, Window};
+use bevy::window::Window;
 use engine::core::platform::{SignIn, StartParams, exit_when_stdin_closes};
 use engine::systems::launch::{
     AuthMode, BUILD_INFO_FLAG, CLIENT_ENV_PREFIX, ClientConfig, LaunchSettings, build_info_line,
@@ -50,11 +50,8 @@ fn main() {
     app.run();
 }
 
-// Frames go out without waiting on the display's refresh. A desktop may hold that wait up, as some
-// do for tens of milliseconds at every mouse press and release, and the whole frame would wait too.
 fn window() -> Window {
     Window {
-        present_mode: PresentMode::AutoNoVsync,
         desired_maximum_frame_latency: Some(FRAMES_IN_FLIGHT),
         ..Default::default()
     }

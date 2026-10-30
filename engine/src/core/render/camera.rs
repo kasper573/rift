@@ -4,12 +4,12 @@
 //! projection of the rig, so the probe, the plates and the picking all project the way the camera
 //! draws.
 
-use bevy::anti_alias::smaa::{Smaa, SmaaPreset};
+use bevy::anti_alias::smaa::Smaa;
 use bevy::anti_alias::taa::TemporalAntiAliasing;
 use bevy::camera::Hdr;
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::light::{ShadowFilteringMethod, VolumetricFog};
-use bevy::pbr::{ScreenSpaceAmbientOcclusion, ScreenSpaceAmbientOcclusionQualityLevel};
+use bevy::pbr::ScreenSpaceAmbientOcclusion;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapterInfo;
@@ -22,6 +22,7 @@ use crate::core::geometry::{Degrees, Radians};
 use crate::core::ground::{HIGHEST, Heightfield, LOWEST};
 use crate::core::gui;
 use crate::core::math::{Pos, Rect};
+use crate::core::render::video::VideoPreferences;
 use crate::core::time::Seconds;
 use crate::core::units::{Meters, Stops};
 
@@ -51,10 +52,11 @@ pub struct WorldCamera;
 pub struct WorldPicture;
 
 /// Whether the GPU draws the full picture: the sky scattering the sun's light and lighting the
-/// world, the sun's shafts in the air, and the picture settling over the frames by temporal
-/// anti-aliasing and the temporal shadow filter, which the clearings' frame-stepped dither relies
-/// on to read as a translucency. GL has no compute shaders for the sky, cannot read the depth
-/// the shafts are marched against, and binds a texture with one sampler where the temporal pass
+/// world, the sun's shafts in the air, creases shaded by ambient occlusion, and the picture
+/// settling over the frames by temporal anti-aliasing and the temporal shadow filter, which the
+/// clearings' frame-stepped dither relies on to read as a translucency. GL has no compute shaders
+/// for the sky, cannot read the depth the shafts are marched against, has too few storage
+/// textures for the occlusion, and binds a texture with one sampler where the temporal pass
 /// samples its history two ways, so there the picture is drawn plain: the authored ambient alone
 /// lights what the sun does not, the shadows take a gaussian filter and the dither stands still.
 #[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
@@ -83,31 +85,21 @@ const AIR_COLOR: Color = Color::srgb(0.55, 0.72, 1.0);
 
 /// How every camera that draws the world finishes its picture: in a high range of light, the air
 /// lit by the sun's shafts, creases shaded by what stands around them, soft shadows, and where
-/// the GPU draws the full picture (`finish_pictures`) under the sky's own scattering and lighting
+/// the GPU draws the full picture (`finish_new_picture`) under the sky's own scattering and lighting
 /// and all of it settled over the frames by temporal anti-aliasing; then what the light catches
 /// blooms over its rim, the light is opened up and mapped to the screen's range by a filmic
 /// curve, which deepens the shade and lifts the light, dithered
 /// against banding, and smoothed once more by morphological anti-aliasing over the finished
-/// picture, which takes the clearings along with the geometry's edges.
+/// picture, which takes the clearings along with the geometry's edges. The shafts, the shaded
+/// creases, the bloom and the smoothing are drawn as the player's `VideoPreferences` ask.
 pub fn picture() -> impl Bundle {
     (
         WorldPicture,
         Hdr,
         Msaa::Off,
-        ScreenSpaceAmbientOcclusion {
-            quality_level: ScreenSpaceAmbientOcclusionQualityLevel::High,
-            ..default()
-        },
-        Bloom {
-            intensity: BLOOM,
-            ..Bloom::NATURAL
-        },
         Tonemapping::AcesFitted,
         grading(Tone::NEUTRAL),
         DebandDither::Enabled,
-        Smaa {
-            preset: SmaaPreset::Ultra,
-        },
     )
 }
 
@@ -148,30 +140,71 @@ pub fn grading(tone: Tone) -> ColorGrading {
     }
 }
 
-/// Every new picture gets the shafts and what settles it over the frames, where the GPU draws the
-/// full picture, and a gaussian shadow filter where it does not; the sky it sees is the shown
-/// area's (`sky::show`).
-pub(super) fn finish_pictures(
+/// A new picture is finished at once, before it draws a frame: what settles it over the frames
+/// where the GPU draws the full picture, a gaussian shadow filter where it does not, and the rest
+/// as the player's video preferences ask. The sky it sees is the shown area's (`sky::show`).
+pub(super) fn finish_new_picture(
+    add: On<Add<WorldPicture>>,
     full: Res<FullPicture>,
-    pictures: Query<Entity, Added<WorldPicture>>,
+    video: Res<VideoPreferences>,
     mut commands: Commands,
 ) {
+    let mut picture = commands.entity(add.entity);
+    if full.0 {
+        picture.insert((
+            TemporalAntiAliasing::default(),
+            ShadowFilteringMethod::Temporal,
+        ));
+    } else {
+        picture.insert(ShadowFilteringMethod::Gaussian);
+    }
+    finish(&mut picture, *full, *video);
+}
+
+/// Every picture is finished anew as the player's video preferences change.
+pub(super) fn refinish_pictures(
+    full: Res<FullPicture>,
+    video: Res<VideoPreferences>,
+    pictures: Query<Entity, With<WorldPicture>>,
+    mut commands: Commands,
+) {
+    if !video.is_changed() {
+        return;
+    }
     for picture in &pictures {
-        let mut picture = commands.entity(picture);
-        if full.0 {
-            picture.insert((
-                VolumetricFog {
-                    ambient_color: AIR_COLOR,
-                    ambient_intensity: AIR_GLOW,
-                    jitter: 0.5,
-                    step_count: AIR_STEPS,
-                },
-                TemporalAntiAliasing::default(),
-                ShadowFilteringMethod::Temporal,
-            ));
-        } else {
-            picture.insert(ShadowFilteringMethod::Gaussian);
-        }
+        finish(&mut commands.entity(picture), *full, *video);
+    }
+}
+
+fn finish(picture: &mut EntityCommands, full: FullPicture, video: VideoPreferences) {
+    match video.ambient_occlusion.level().filter(|_| full.0) {
+        Some(quality_level) => picture.insert(ScreenSpaceAmbientOcclusion {
+            quality_level,
+            ..default()
+        }),
+        None => picture.remove::<ScreenSpaceAmbientOcclusion>(),
+    };
+    if video.bloom {
+        picture.insert(Bloom {
+            intensity: BLOOM,
+            ..Bloom::NATURAL
+        });
+    } else {
+        picture.remove::<Bloom>();
+    }
+    match video.anti_aliasing.preset() {
+        Some(preset) => picture.insert(Smaa { preset }),
+        None => picture.remove::<Smaa>(),
+    };
+    if full.0 && video.light_shafts {
+        picture.insert(VolumetricFog {
+            ambient_color: AIR_COLOR,
+            ambient_intensity: AIR_GLOW,
+            jitter: 0.5,
+            step_count: AIR_STEPS,
+        });
+    } else {
+        picture.remove::<VolumetricFog>();
     }
 }
 

@@ -424,6 +424,10 @@ pub struct ProbeUiElement {
     pub click_through: bool,
     pub in_world: bool,
     pub slider: Option<f32>,
+    /// Whether a checkbox is ticked; none for anything else.
+    pub checked: Option<bool>,
+    /// The text of the label that names the element, as a form's label names the field beside it.
+    pub labelled_by: Option<String>,
     #[schemars(with = "RectSchema")]
     pub rect: Rect<WindowPx>,
 }
@@ -1422,6 +1426,14 @@ fn ui(world: &mut World) -> Vec<ProbeUiElement> {
                 .then(|| node.numeric_value())
                 .flatten()
                 .map(|value| value as f32);
+            let checked = node
+                .toggled()
+                .map(|toggled| toggled == accesskit::Toggled::True);
+            let labelled_by = node
+                .labelled_by()
+                .iter()
+                .find_map(|by| labels.get(by))
+                .map(|label| label.to_string());
             let editable = role == accesskit::Role::TextInput;
             if text.is_none() && image.is_none() && !editable && slider.is_none() {
                 return None;
@@ -1435,6 +1447,8 @@ fn ui(world: &mut World) -> Vec<ProbeUiElement> {
                 click_through: float::layer_at(&gui, rect.center()) != Some(widget.layer_id),
                 in_world: world_layers.contains(widget.layer_id),
                 slider,
+                checked,
+                labelled_by,
                 rect: window_rect(rect),
             })
         })

@@ -26,6 +26,7 @@ use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapterInfo;
 
 use super::camera::{self, CameraRig, FullPicture};
+use super::video::VideoPreferences;
 
 /// The width of each cascade of the sun's shadow map in texels.
 const SHADOW_MAP: usize = 4096;
@@ -51,6 +52,7 @@ impl Plugin for WorldScenePlugin {
             layers::JointLayersPlugin,
         ))
         .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP })
+        .init_resource::<VideoPreferences>()
         .init_resource::<material::MaterialCache>()
         .init_resource::<cover::TexturedCovers>()
         .init_resource::<cover::CopyMeshes>()
@@ -59,10 +61,12 @@ impl Plugin for WorldScenePlugin {
         .init_resource::<super::GroundHeights>()
         .add_observer(material::dress_scenes)
         .add_observer(mannequin::start)
+        .add_observer(camera::finish_new_picture)
         .add_systems(
             Update,
             (
-                camera::finish_pictures,
+                camera::refinish_pictures,
+                lights::cast_shadows,
                 lights::flicker,
                 mannequin::hold,
                 fade::fade_occluders.run_if(resource_exists::<CameraRig>),

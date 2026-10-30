@@ -34,5 +34,6 @@ mod summon;
 mod travel;
 mod typewriter;
 mod vfx;
+mod video;
 mod view;
 mod walking;

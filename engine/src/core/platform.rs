@@ -73,6 +73,9 @@ pub trait Platform: Send + Sync + 'static {
     fn load(&self, key: &str) -> Option<String>;
     fn save(&self, key: &str, value: &str);
     fn sync_window(&self, window: &mut Window);
+    /// Whether the client draws in a window of its own, whose screen mode and refresh are the
+    /// player's to set, rather than in a canvas the page around it sizes.
+    fn owns_window(&self) -> bool;
     /// The engine's default plugins as this platform runs them.
     fn engine(&self, plugins: PluginGroupBuilder) -> PluginGroupBuilder;
     fn get(&self, url: String) -> LocalFuture<Result<Vec<u8>, FetchFailure>>;

@@ -3,6 +3,7 @@ mod icons;
 pub mod pick;
 pub mod present;
 pub mod transition;
+pub mod video;
 pub mod world;
 
 pub use camera::{

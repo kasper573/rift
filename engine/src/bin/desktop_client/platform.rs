@@ -61,6 +61,10 @@ impl Platform for DesktopPlatform {
 
     fn sync_window(&self, _window: &mut Window) {}
 
+    fn owns_window(&self) -> bool {
+        true
+    }
+
     // Rendering a frame alongside the next update puts the interface on screen a frame later,
     // trailing the system cursor, and the client's frames are cheap enough to render in turn.
     fn engine(&self, plugins: PluginGroupBuilder) -> PluginGroupBuilder {

@@ -3,6 +3,7 @@ use std::iter;
 use ui::egui;
 
 use bevy::prelude::*;
+use bevy::window::{MonitorSelection, PresentMode, PrimaryWindow, WindowMode};
 use serde::{Deserialize, Serialize};
 use strum::VariantArray;
 use ui::egui::Ui;
@@ -12,8 +13,9 @@ use crate::core::audio::mix::{AudioCategory, AudioFader, AudioMix, AudioVolume};
 use crate::core::geometry::Degrees;
 use crate::core::math::{Pos, Size, WindowPx};
 use crate::core::platform::{ClientPlatform, Platform};
-use crate::core::render::CameraPreferences;
 use crate::core::render::transition::{ScreenTransition, ScreenTransitionPreference};
+use crate::core::render::video::VideoPreferences;
+use crate::core::render::{CameraPreferences, FullPicture};
 use crate::core::text::LettersPerSecond;
 use crate::systems::hud::HudWindow;
 use crate::systems::input::map::{InputAction, KeyGesture};
@@ -28,7 +30,7 @@ const FORM_SPACING: egui::Vec2 = egui::Vec2::new(16.0, 8.0);
 pub(crate) fn plugin(app: &mut App) {
     let settings = UserSettings::load(&*app.world().resource::<ClientPlatform>().0);
     app.insert_resource(settings)
-        .add_systems(Update, (persist, apply));
+        .add_systems(Update, (persist, apply, apply_video));
 }
 
 #[derive(Resource, Serialize, Deserialize, Default)]
@@ -45,6 +47,10 @@ pub(crate) struct UserSettings {
     skills: SkillSettings,
     #[serde(default)]
     camera: CameraSettings,
+    #[serde(default)]
+    video: VideoPreferences,
+    #[serde(default)]
+    window: WindowSettings,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -94,13 +100,25 @@ impl HudWindow for SettingsWindow {
         WINDOW_SIZE
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
+        let offered = VideoOffered {
+            full_picture: world.resource::<FullPicture>().0,
+            window: world.resource::<ClientPlatform>().0.owns_window(),
+        };
         sheet::scroll(ui, egui::ScrollArea::vertical().auto_shrink(false), |ui| {
-            show_settings(ui, &mut world.resource_mut::<UserSettings>())
+            show_settings(ui, &mut world.resource_mut::<UserSettings>(), offered)
         });
     }
 }
 
-fn show_settings(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
+/// The video settings this client can honour beside those every client can; the rest show, locked.
+#[derive(Clone, Copy)]
+struct VideoOffered {
+    /// The light shafts and the ambient occlusion, which only the full picture draws.
+    full_picture: bool,
+    window: bool,
+}
+
+fn show_settings(ui: &mut Ui, settings: &mut Mut<UserSettings>, offered: VideoOffered) {
     ui.spacing_mut().slider_width = SLIDER_WIDTH;
     sheet::section(ui, "Interface");
     let mut snapping = settings.snapping_enabled();
@@ -125,7 +143,10 @@ fn show_settings(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
         text_speed_slider(ui, settings, label.id);
         ui.end_row();
         let label = ui.label("Area transition");
-        transition_picker(ui, settings, label.id);
+        let current = settings.screen_transition();
+        if let Some(transition) = picker(ui, "area transition", current, label.id) {
+            settings.set_screen_transition(transition);
+        }
         ui.end_row();
     });
     ui.add_space(8.0);
@@ -147,6 +168,9 @@ fn show_settings(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
         ui.end_row();
     });
     ui.add_space(8.0);
+    sheet::section(ui, "Video");
+    show_video(ui, settings, offered);
+    ui.add_space(8.0);
     sheet::section(ui, "Audio");
     form(ui, "audio", |ui| {
         for fader in iter::once(AudioFader::Master).chain(
@@ -160,6 +184,76 @@ fn show_settings(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
             ui.end_row();
         }
     });
+}
+
+fn show_video(ui: &mut Ui, settings: &mut Mut<UserSettings>, offered: VideoOffered) {
+    let mut fullscreen = settings.window.fullscreen;
+    if supported_only(ui, offered.window, |ui| {
+        ui.checkbox(&mut fullscreen, "Fullscreen")
+    })
+    .changed()
+    {
+        settings.window.fullscreen = fullscreen;
+    }
+    let mut vsync = settings.window.vsync;
+    if supported_only(ui, offered.window, |ui| {
+        ui.checkbox(&mut vsync, "VSync").on_hover_text(
+            "Each frame waits for the display's refresh: less heat and power, a little more delay",
+        )
+    })
+    .changed()
+    {
+        settings.window.vsync = vsync;
+    }
+    let mut bloom = settings.video.bloom;
+    if ui
+        .checkbox(&mut bloom, "Bloom")
+        .on_hover_text("What the light catches glows over its rim")
+        .changed()
+    {
+        settings.video.bloom = bloom;
+    }
+    let mut light_shafts = settings.video.light_shafts;
+    if supported_only(ui, offered.full_picture, |ui| {
+        ui.checkbox(&mut light_shafts, "Light shafts")
+            .on_hover_text("The sun's rays show in the air")
+    })
+    .changed()
+    {
+        settings.video.light_shafts = light_shafts;
+    }
+    ui.add_space(4.0);
+    form(ui, "video", |ui| {
+        let label = ui.label("Shadows");
+        if let Some(shadows) = picker(ui, "shadows", settings.video.shadows, label.id) {
+            settings.video.shadows = shadows;
+        }
+        ui.end_row();
+        let label = ui.add_enabled(offered.full_picture, egui::Label::new("Ambient occlusion"));
+        let current = settings.video.ambient_occlusion;
+        if let Some(occlusion) = supported_only(ui, offered.full_picture, |ui| {
+            picker(ui, "ambient occlusion", current, label.id)
+        }) {
+            settings.video.ambient_occlusion = occlusion;
+        }
+        ui.end_row();
+        let label = ui.label("Anti-aliasing");
+        let current = settings.video.anti_aliasing;
+        if let Some(anti_aliasing) = picker(ui, "anti-aliasing", current, label.id) {
+            settings.video.anti_aliasing = anti_aliasing;
+        }
+        ui.end_row();
+    });
+}
+
+/// `add`'s controls, dimmed and locked with the reason on hover where the platform can't honour
+/// them.
+fn supported_only<R>(ui: &mut Ui, supported: bool, add: impl FnOnce(&mut Ui) -> R) -> R {
+    let shown = ui.add_enabled_ui(supported, add);
+    shown
+        .response
+        .on_disabled_hover_text("Not supported on this platform");
+    shown.inner
 }
 
 fn form(ui: &mut Ui, id: &str, add: impl FnOnce(&mut Ui)) {
@@ -184,21 +278,24 @@ fn text_speed_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: egui:
     });
 }
 
-fn transition_picker(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: egui::Id) {
-    let current = settings.screen_transition();
+/// A choice among every variant of `T`, answering the one picked when it isn't `current`.
+fn picker<T: VariantArray + AsRef<str> + Copy + PartialEq>(
+    ui: &mut Ui,
+    id: &str,
+    current: T,
+    label: egui::Id,
+) -> Option<T> {
     let mut picked = current;
-    controls::combo("area transition")
+    controls::combo(id)
         .selected_text(current.as_ref())
         .show_ui(ui, |ui| {
-            for &transition in ScreenTransition::VARIANTS {
-                ui.selectable_value(&mut picked, transition, transition.as_ref());
+            for &variant in T::VARIANTS {
+                ui.selectable_value(&mut picked, variant, variant.as_ref());
             }
         })
         .response
         .labelled_by(label);
-    if picked != current {
-        settings.set_screen_transition(picked);
-    }
+    (picked != current).then_some(picked)
 }
 
 fn fader_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, fader: AudioFader, label: egui::Id) {
@@ -407,6 +504,18 @@ fn default_turn_speed() -> Degrees {
     CameraPreferences::default().turn_speed
 }
 
+/// The window's screen mode and refresh, on a platform where the window is the client's own.
+#[derive(Serialize, Deserialize, Default)]
+struct WindowSettings {
+    #[serde(default)]
+    fullscreen: bool,
+    /// Off unless asked for, so frames go out without waiting on the display's refresh: a desktop
+    /// may hold that wait up, as some do for tens of milliseconds at every mouse press and
+    /// release, and the whole frame would wait too.
+    #[serde(default)]
+    vsync: bool,
+}
+
 #[derive(Serialize, Deserialize, Default)]
 struct ScreenSettings {
     #[serde(default)]
@@ -443,4 +552,34 @@ fn apply(
             .0
             .clamp(TURN_SPEEDS.0, TURN_SPEEDS.1),
     );
+}
+
+fn apply_video(
+    settings: Res<UserSettings>,
+    mut video: ResMut<VideoPreferences>,
+    platform: Res<ClientPlatform>,
+    window: Option<Single<&mut Window, With<PrimaryWindow>>>,
+) {
+    if !settings.is_changed() {
+        return;
+    }
+    video.set_if_neq(settings.video);
+    if let Some(mut window) = window.filter(|_| platform.0.owns_window()) {
+        let mode = if settings.window.fullscreen {
+            WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+        } else {
+            WindowMode::Windowed
+        };
+        let present_mode = if settings.window.vsync {
+            PresentMode::AutoVsync
+        } else {
+            PresentMode::AutoNoVsync
+        };
+        if window.mode != mode {
+            window.mode = mode;
+        }
+        if window.present_mode != present_mode {
+            window.present_mode = present_mode;
+        }
+    }
 }
