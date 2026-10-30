@@ -40,7 +40,7 @@ pub enum ShadowQuality {
     Off,
     /// Hard shadows from a single cascade.
     Low,
-    /// Soft shadows from two cascades, the finer near the camera.
+    /// Soft shadows from two cascades where the platform draws two, the finer near the camera.
     #[default]
     High,
 }

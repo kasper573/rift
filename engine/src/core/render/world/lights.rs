@@ -5,6 +5,7 @@ use bevy::light::{
     CascadeShadowConfig, CascadeShadowConfigBuilder, DirectionalLight, PointLight, SunDisk,
     VolumetricLight,
 };
+use bevy::pbr::MAX_CASCADES_PER_LIGHT;
 use bevy::prelude::*;
 
 use super::clouds::{LOWEST_LIGHT, SHADOW_SPAN};
@@ -122,9 +123,12 @@ fn soft_shadows(quality: ShadowQuality) -> Option<f32> {
     (quality == ShadowQuality::High).then_some(SUN_WIDTH)
 }
 
+/// The cascades `quality` asks for, as many as the platform draws: one that draws fewer draws only
+/// the nearest, which would leave everything past it unshadowed.
 fn shadow_cascades(quality: ShadowQuality) -> CascadeShadowConfig {
+    let wanted = if quality == ShadowQuality::High { 2 } else { 1 };
     CascadeShadowConfigBuilder {
-        num_cascades: if quality == ShadowQuality::High { 2 } else { 1 },
+        num_cascades: wanted.min(MAX_CASCADES_PER_LIGHT),
         maximum_distance: SHADOW_REACH,
         first_cascade_far_bound: NEAR_SHADOWS,
         ..default()
