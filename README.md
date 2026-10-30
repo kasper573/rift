@@ -1,10 +1,12 @@
 # rift
 
-A game engine and editor for online RPGs, written in Rust on [Bevy](https://bevyengine.org/).
+An mmorpg engine and editor, written in Rust on [Bevy](https://bevyengine.org/).
 
 The engine plays whatever game folder it's given: the same server and clients run any game, without a
 rebuild. It's released as binaries, and a game is made, played, tested and hosted with those binaries
 alone.
+
+> An example game is available at http://k573.dev
 
 ## What's here
 
