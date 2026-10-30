@@ -21,15 +21,30 @@ use sim::{Bench, load};
 const MAX_AREAS: usize = 5000;
 const MEASURE: usize = 200;
 
-/// The server bench on the crowd, or on `game` followed by the client and memory benches. Fails
-/// naming what the memory bench saw grow.
-pub fn run(game: Option<&Path>, spread: bool) -> Result<(), String> {
+/// A part of the bench on a game.
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum BenchPart {
+    /// The server's capacity.
+    Server,
+    /// The desktop client's frame rate.
+    Client,
+    /// Whether the client and the server hold their memory level as a player plays.
+    Memory,
+}
+
+/// The server bench on the crowd, or on `game` followed by the client and memory benches, or only
+/// the parts named. Fails naming what the memory bench saw grow.
+pub fn run(game: Option<&Path>, spread: bool, only: &[BenchPart]) -> Result<(), String> {
+    let runs = |part| only.is_empty() || only.contains(&part);
     let layout = if spread {
         sim::Layout::Distributed
     } else {
         sim::Layout::Congested
     };
     match game {
+        None if only.iter().any(|&part| part != BenchPart::Server) => {
+            Err("the client and memory benches play a game: name one".to_owned())
+        }
         None => {
             let folder = tempfile::tempdir().expect("a folder to write the crowd into");
             testkit::crowd().write_to(folder.path());
@@ -38,9 +53,17 @@ pub fn run(game: Option<&Path>, spread: bool) -> Result<(), String> {
         }
         Some(game) => {
             let content = load(game);
-            server(&content, layout);
-            client::run(game, &content);
-            memory::run(game, &content)
+            if runs(BenchPart::Server) {
+                server(&content, layout);
+            }
+            if runs(BenchPart::Client) {
+                client::run(game, &content);
+            }
+            if runs(BenchPart::Memory) {
+                memory::run(game, &content)
+            } else {
+                Ok(())
+            }
         }
     }
 }

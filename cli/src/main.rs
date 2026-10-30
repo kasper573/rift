@@ -43,6 +43,9 @@ enum Command {
         /// Spreads the server bench's players over the area rather than crowding them on its spawn.
         #[arg(long)]
         spread: bool,
+        /// Runs only these parts of the bench, each named once.
+        #[arg(long, value_enum)]
+        only: Vec<bench::BenchPart>,
     },
     /// Simulated players against a running game server that takes any account's sign-in:
     /// COUNT of them, or as many as it holds within its tick budget.
@@ -92,8 +95,8 @@ fn main() {
         Command::Format { game } => check::format(&game),
         Command::Ask { game } => ask::run(&game),
         Command::Render(Render::Area { game, shot, out }) => render::area(&game, &shot, &out),
-        Command::Bench { game, spread } => {
-            if let Err(failure) = bench::run(game.as_deref(), spread) {
+        Command::Bench { game, spread, only } => {
+            if let Err(failure) = bench::run(game.as_deref(), spread, &only) {
                 eprintln!("{failure}");
                 std::process::exit(1);
             }
