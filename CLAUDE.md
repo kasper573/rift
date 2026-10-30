@@ -64,13 +64,6 @@ Code must not depend on arbitrary game content, so the same server and client ca
 
 3. The ui crate is the interface the editor and the game share: its look and every general-purpose egui component (fields, chips, cards, panels, menus, dialogs, floating labels, painted patterns, wording helpers). A component that isn't about one mechanic or one editor view lives there, so the game and the editor never draw the same thing two ways; a crate's own UI code keeps only what is about its domain. The editor and the engine reach egui and its extension crates only through ui's re-exports (`ui::egui`, `ui::egui_dock`, …), so they always build against the versions ui is built on; bevy_egui stays their own dependency, as the host that runs egui inside bevy.
 
-## Comments
-
-- The default mindset should be: Do not write comments. Write code that is self explanatory.
-- The only exception is: You need to explain WHY, not WHAT some code does. However, even then, you should consider refactoring the code so both the WHAT and the WHY becomes obvious. Only use comments as a final excape hatch.
-- Never use comments as a way to give feedback to the prompter. This means comments should never refer to prompt specific details. Comments should be timeless and not rely on the reader being the person who prompted you to do some work.
-- Don't scatter duplicate comments describing how a specific mechanism works all over the codebase. Keep it in one place, ideally at the implementation of that mechanism. A common source of this type of bad hygiene is re-explaining a mechanism in the workflow, in env files, in call sites, and finally also in the source code implementation of the mechanism.
-
 ## Tests
 
 - The suite is a set of contracts: each test states a scenario we want to support and asserts it through what a player, a designer or the loader sees and does (a mechanic's outcome, what lands in the files, what a view shows, what the loader accepts or refuses). Never through a helper, an intermediate state or the code's structure, which a refactor must be free to change.
