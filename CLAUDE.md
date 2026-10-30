@@ -79,9 +79,9 @@ Code must not depend on arbitrary game content, so the same server and client ca
 - Tests never read a shipped game (the editor's templates). A test declares the small game it needs in code with `testkit::Game`, only the files it reads, and loads it through the real loader; `engine_rows()` and `whole()` exist for the few tests about the whole game contract. The templates are checked by `just lint`, through `rift check`.
 - Mechanics run in `testkit::Sim`: a bare world holding the test's game, stepped through only the real engine systems the test adds, in the server's order, with the clock advanced by the test rather than waited on. Never reimplement or stub a system to make a test pass. When a mechanic can't be exercised without the whole server or client, it isn't modular enough: refactor it until it can.
 
-## Builds on this machine
+## Builds
 
-- Run every cargo build or test inside a memory-capped scope so a runaway compile kills only itself, never the session that spawned it: `systemd-run --user --scope -q -p MemoryMax=22G -p MemorySwapMax=0 cargo …` (the recipes in the Justfile run plain cargo; wrap the `just` call the same way). A process that exceeds the cap dies with "Killed"; rerun it with fewer jobs (`CARGO_BUILD_JOBS=8`) rather than lifting the cap.
+- Run every cargo build or test inside a memory-capped scope of its own, so a runaway compile is killed alone and never takes the session that spawned it down with it: on Linux, `systemd-run --user --scope -q -p MemoryMax=<cap> -p MemorySwapMax=0 cargo …` (the recipes in the Justfile run plain cargo; wrap the `just` call the same way). The cap is yours to choose for the machine you are on: assume the machine is yours alone, so the cap need only leave the session enough to survive, and take less when you know it is shared, such as with other agents at work on it. A process over the cap dies with "Killed"; rerun it with fewer jobs (`CARGO_BUILD_JOBS`) rather than squeezing the session.
 - Clean up unused cargo build output: `target/` grows by tens of gigabytes across profiles and feature sets and the disk is shared with everything else here. After a task, `cargo clean -p <crate>` for crates whose artifacts are stale, or `cargo clean` outright when `du -sh target` passes 50 GB.
 
 ## Verification
