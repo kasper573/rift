@@ -90,5 +90,11 @@ Before you start work on a task run benchmarks via `just bench` and save the res
 
 After you finish the task:
 
-- `cargo fmt` · `cargo clippy --all-targets` (no warnings) · `cargo build` · `just lint` · `just test` · `just dist`
+- `cargo fmt` · `just lint` (clippy among it, no warnings) · `just test` · `just dist`, and `just smoke target/dist` when the change reaches the website or the browser client.
 - Run benchmarks again and compare the results to the previous run. If there is a significant regression, investigate and fix it.
+
+`just lint` and `just test` build the dev profile, and `just dist` and the benches release, so the two
+sides can build at once, each in a scope of its own, when memory allows both. While iterating, build only
+the dist parts the work needs (`just dist target/dist desktop`, without the browser client's slow
+whole-program optimisation), and bench only the parts a change can move (`rift bench <game> --only …`);
+the whole dist belongs to the final verification.

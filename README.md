@@ -141,6 +141,7 @@ Then:
 just editor           # build editor, game-server and desktop-client, and open the editor
 just editor ~/my-game # …on a game folder
 just dist             # this machine's binaries, as a release lays them out, in target/dist
+just dist target/dist desktop # …only some of its parts: desktop, web, profiling
 just bench            # the server bench on the generated game
 just lint             # rustfmt, clippy, the repo's own lints, and `rift check` on the editor's templates
 just test             # every crate's tests

@@ -23,10 +23,11 @@ env:
 jobs:
   lint:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
-      # Unoptimized: lint doesn't ship.
-      CARGO_PROFILE_RELEASE_OPT_LEVEL: "0"
+      # Unoptimized, with line tables alone: nothing lint builds ships or is stepped through.
+      CARGO_PROFILE_DEV_OPT_LEVEL: "0"
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
@@ -38,10 +39,11 @@ jobs:
 
   test:
     runs-on: ubuntu-24.04
-    timeout-minutes: 30
+    timeout-minutes: 60
     env:
-      # Unoptimized: the tests don't ship.
-      CARGO_PROFILE_RELEASE_OPT_LEVEL: "0"
+      # Unoptimized, with line tables alone: the tests neither ship nor are stepped through.
+      CARGO_PROFILE_DEV_OPT_LEVEL: "0"
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
       - uses: ./.github/actions/setup
