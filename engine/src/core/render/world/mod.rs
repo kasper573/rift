@@ -80,7 +80,8 @@ impl Plugin for WorldScenePlugin {
             PostUpdate,
             cover::cull_strewn_chunks
                 .after(bevy::camera::visibility::VisibilitySystems::UpdateFrusta)
-                .before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
+                .after(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate)
+                .before(bevy::camera::visibility::VisibilitySystems::CheckVisibility),
         )
         .add_systems(
             PostUpdate,

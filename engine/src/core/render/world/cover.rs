@@ -445,16 +445,11 @@ pub(super) fn strew_loaded(
                 Some(texture) => assets.textured_cover(&strewing.material, texture),
                 None => strewing.material.clone(),
             };
-            // Copies hang under a node per chunk rather than straight under the piece: a node
-            // whose transform is set has all its children visited, and the area's root is set
-            // whenever anything under it moves, so a piece's thousands of copies would otherwise
-            // be walked every frame.
             for places in &strewing.chunks {
                 let chunk = commands
                     .spawn((
                         StrewnChunk {
                             bounds: enclosing(places, &bounds),
-                            drawn: true,
                         },
                         Transform::default(),
                         Visibility::default(),
@@ -486,53 +481,38 @@ pub(super) fn strew_loaded(
 #[derive(Component)]
 pub(super) struct StrewnChunk {
     bounds: Aabb,
-    drawn: bool,
 }
 
-/// Disables the copies of every chunk no camera sees and enables those of every chunk one comes to
-/// see. A hidden entity still costs every frame's visibility and extraction a look, and an area
-/// holds far more copies than a view takes in, so the unseen leave every query instead.
+/// Disables every chunk no camera sees, copies and all, and enables every chunk one comes to see.
+/// A hidden entity still costs every frame's visibility and extraction a look, and an area holds
+/// far more copies than a view takes in, so the unseen leave every query instead. Propagation
+/// passes a disabled entity over, so this runs once the frame's propagation is done, and a copy
+/// keeps where it stood and whether it showed as it was disabled: a cover must not move or hide
+/// while it stands.
 pub(super) fn cull_strewn_chunks(
     cameras: Query<(&Camera, &Frustum), With<Camera3d>>,
-    mut chunks: Query<(&mut StrewnChunk, &GlobalTransform, &Children)>,
+    chunks: Query<(Entity, &StrewnChunk, &GlobalTransform, Has<Disabled>)>,
     mut commands: Commands,
 ) {
-    for (mut chunk, placed, copies) in &mut chunks {
+    for (entity, chunk, placed, disabled) in &chunks {
         let seen = cameras.iter().all(|(camera, _)| !camera.is_active)
             || cameras.iter().any(|(camera, frustum)| {
                 camera.is_active
                     && frustum.intersects_obb(&chunk.bounds, &placed.affine(), true, false)
             });
-        if seen == chunk.drawn {
-            continue;
-        }
-        chunk.drawn = seen;
-        if seen {
-            for copy in copies {
+        match (seen, disabled) {
+            (true, true) => {
                 commands
-                    .entity(*copy)
-                    .remove::<Disabled>()
-                    .queue(repropagate);
+                    .entity(entity)
+                    .remove_recursive::<Children, Disabled>();
             }
-        } else {
-            commands.insert_batch(
-                copies
-                    .iter()
-                    .map(|copy| (copy, Disabled))
-                    .collect::<Vec<_>>(),
-            );
+            (false, false) => {
+                commands
+                    .entity(entity)
+                    .insert_recursive::<Children>(Disabled);
+            }
+            _ => {}
         }
-    }
-}
-
-/// Has a copy that was disabled learn again where it stands and whether it shows, which
-/// propagation passed it over for meanwhile, or never told it if it was disabled as it came.
-fn repropagate(mut copy: EntityWorldMut) {
-    if let Some(mut transform) = copy.get_mut::<Transform>() {
-        transform.set_changed();
-    }
-    if let Some(mut visibility) = copy.get_mut::<Visibility>() {
-        visibility.set_changed();
     }
 }
 

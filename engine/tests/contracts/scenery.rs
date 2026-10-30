@@ -1,3 +1,4 @@
+use std::any::TypeId;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -5,8 +6,9 @@ use std::time::{Duration, Instant};
 use bevy::animation::AnimationPlugin;
 use bevy::asset::AssetPlugin;
 use bevy::camera::CameraProjection;
-use bevy::camera::visibility::{RenderLayers, VisibilityPlugin};
+use bevy::camera::visibility::{RenderLayers, VisibilityPlugin, VisibleEntities};
 use bevy::ecs::entity_disabling::Disabled;
+use bevy::ecs::query::Allow;
 use bevy::gltf::{Gltf, GltfPlugin};
 use bevy::light::atmosphere::ScatteringMedium;
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
@@ -198,7 +200,7 @@ fn a_camera_draws_the_strewn_copies_it_sees_and_passes_over_the_rest() {
     stand(&mut app, &area);
     for corner in [first, second, first] {
         look_down_on(&mut app, camera, corner);
-        let copies = drawn_copies(&mut app);
+        let copies = drawn_copies(&mut app, camera);
         let (near, far): (Vec<_>, Vec<_>) = copies
             .iter()
             .partition(|(at, _)| at.with_y(0.0).distance(corner) < 1.5);
@@ -231,12 +233,18 @@ fn look_down_on(app: &mut App, camera: Entity, corner: Vec3) {
     }
 }
 
-/// Where every strewn copy stands, and whether the camera draws it.
-fn drawn_copies(app: &mut App) -> Vec<(Vec3, bool)> {
+/// Where every strewn copy stands, and whether `camera` draws it.
+fn drawn_copies(app: &mut App, camera: Entity) -> Vec<(Vec3, bool)> {
     let world = app.world_mut();
+    let drawn: Vec<Entity> = world
+        .get::<VisibleEntities>(camera)
+        .expect("the camera lists what it draws")
+        .iter(TypeId::of::<Mesh3d>())
+        .copied()
+        .collect();
     world
-        .query_filtered::<(&GlobalTransform, &ViewVisibility, Has<Disabled>), With<MeshMaterial3d<CoverMaterial>>>()
+        .query_filtered::<(Entity, &GlobalTransform), (With<MeshMaterial3d<CoverMaterial>>, Allow<Disabled>)>()
         .iter(world)
-        .map(|(placed, seen, disabled)| (placed.translation(), seen.get() && !disabled))
+        .map(|(copy, placed)| (placed.translation(), drawn.contains(&copy)))
         .collect()
 }
