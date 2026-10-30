@@ -205,8 +205,11 @@ fn layers_image(layers: &[GroundLayer], places: &[u32]) -> Image {
 fn stack(side: u32, pictures: &[RgbaImage]) -> Image {
     let white = RgbaImage::from_pixel(side, side, image::Rgba([255; 4]));
     let levels = side.max(1).ilog2() + 1;
+    let layers = array_layers(pictures.len() as u32 + 1);
+    let padding = layers as usize - pictures.len() - 1;
     let data = std::iter::once(&white)
         .chain(pictures)
+        .chain(std::iter::repeat_n(&white, padding))
         .flat_map(|picture| {
             (0..levels).scan(picture.clone(), |level, _| {
                 let bytes = level.as_raw().clone();
@@ -221,7 +224,7 @@ fn stack(side: u32, pictures: &[RgbaImage]) -> Image {
         Extent3d {
             width: side,
             height: side,
-            depth_or_array_layers: pictures.len() as u32 + 1,
+            depth_or_array_layers: layers,
         },
         TextureDimension::D2,
         data,
@@ -365,4 +368,15 @@ pub fn patch(heights: &Heightfield, at: Vec2, size: Vec2, yaw: f32, lift: f32) -
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
     .with_inserted_indices(Indices::U32(indices))
+}
+
+/// The fewest layers, at least `needed`, that a texture array can have everywhere: GL can only
+/// view a texture the way it was made, and wgpu makes one of a single layer a plain texture and
+/// one of six layers, or of a multiple of six, a cube, so those counts take an unused layer more.
+fn array_layers(needed: u32) -> u32 {
+    let mut layers = needed.max(2);
+    while layers.is_multiple_of(6) {
+        layers += 1;
+    }
+    layers
 }
