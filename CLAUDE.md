@@ -79,11 +79,23 @@ Code must not depend on arbitrary game content, so the same server and client ca
 
 ## Time efficiency
 
-Spend the task's time working, not waiting on builds, runs and CI:
+Treat the task's time as its scarcest resource, and every wait as a cost to cut. Before each step, ask what
+it will make you wait for, whether all of that is needed for what you are about to learn, and what else
+you could do while it runs. This is a way of working for every phase of a task, not a checklist: the
+examples below show the thinking, and the same thinking applies to whatever a task brings.
 
-- Start what takes minutes (a dist, a bench, a CI run) in the background, and do the work that doesn't depend on it meanwhile.
-- Build only what the next step runs. `just dist target/dist desktop` leaves out the browser client, whose whole-program optimisation takes most of a dist's time, and the profiling build; add `web` or `profiling` when the step runs them. `rift bench <game> --only …` runs only the parts a change can move. The whole dist and every bench part belong to the final verification.
-- `just lint` and `just test` build the dev profile, and `just dist` and the benches release, so the two can build at once, each in a scope of its own, when memory allows both.
+- Never sit idle on something slow. Start it in the background and do the work that doesn't depend on it:
+  a dist, a bench or a CI run is time to write the next change, read code, or prepare what follows.
+- Build and run only what the next question needs. Every binary, every bench part or the whole suite
+  answers questions you aren't asking yet. Here, `just dist target/dist desktop` leaves out the browser
+  client, whose whole-program optimisation is most of a dist's time, and `rift bench <game> --only …` runs
+  only the parts a change can move. The whole set belongs to the final verification.
+- Use what sits idle. Work that doesn't contend can run at once: here, `just lint` and `just test` build
+  the dev profile and `just dist` and the benches release, so they don't wait on each other's build, as
+  long as memory allows both.
+- When something keeps costing time, remove the cause rather than paying it again: a recipe that builds
+  too much, a missing switch, a check that could be narrower. Tooling that spares every later task the
+  same wait is worth adding.
 
 ## Verification
 
