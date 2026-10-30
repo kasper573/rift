@@ -18,7 +18,9 @@ import bevy_pbr::render::{mesh_functions, view_transformations::position_world_t
 @if(PREPASS_PIPELINE)
 import engine::core::render::world::prepass_write::prepass_output;
 @else
-import bevy_pbr::render::{pbr_fragment::pbr_input_from_standard_material, pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing}};
+import bevy_pbr::render::{pbr_fragment::pbr_input_from_standard_material, pbr_functions::{alpha_discard, main_pass_post_lighting_processing}};
+@if(!PREPASS_PIPELINE)
+import engine::core::render::world::shade::lighting;
 
 @group(3) @binding(100) var<uniform> site: Site;
 @group(3) @binding(101) var<uniform> params: Params;
@@ -170,7 +172,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     }
     own = vec4<f32>(base.rgb / max(tinted.rgb, vec3<f32>(0.001)), base.a);
     pbr_input.material.base_color = vec4<f32>(1.0, 1.0, 1.0, base.a);
-    shine = apply_pbr_lighting(pbr_input).rgb;
+    shine = lighting(pbr_input).rgb;
     lit = vec4<f32>(shine * base.rgb, base.a);
     painted = 1.0;
     up = 0.0;

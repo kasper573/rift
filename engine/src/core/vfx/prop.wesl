@@ -21,7 +21,9 @@ import bevy_pbr::render::pbr_prepass_functions;
 @if(PREPASS_PIPELINE)
 import engine::core::render::world::prepass_write::prepass_output;
 @else
-import bevy_pbr::render::{pbr_fragment::pbr_input_from_standard_material, pbr_functions::{alpha_discard, apply_pbr_lighting, main_pass_post_lighting_processing}};
+import bevy_pbr::render::{pbr_fragment::pbr_input_from_standard_material, pbr_functions::{alpha_discard, main_pass_post_lighting_processing}};
+@if(!PREPASS_PIPELINE)
+import engine::core::render::world::shade::lighting;
 
 @group(3) @binding(101) var<uniform> params: Params;
 @group(3) @binding(103) var<uniform> site: Site;
@@ -173,7 +175,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     facing = pbr_input.N;
     eye_way = pbr_input.V;
     pbr_input.material.base_color = vec4<f32>(1.0, 1.0, 1.0, base.a);
-    shine = apply_pbr_lighting(pbr_input).rgb;
+    shine = lighting(pbr_input).rgb;
     lit = vec4<f32>(shine * base.rgb, base.a);
     read_weather();
     var uv = vec2<f32>(0.5);

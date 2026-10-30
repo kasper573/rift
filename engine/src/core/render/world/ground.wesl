@@ -1,8 +1,9 @@
 import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
     pbr_fragment::pbr_input_from_standard_material,
-    pbr_functions::{apply_pbr_lighting, main_pass_post_lighting_processing},
+    pbr_functions::main_pass_post_lighting_processing,
 };
+import engine::core::render::world::shade::lighting;
 import engine::core::render::world::terrain::Ground;
 
 @group(3) @binding(100) var pictures: texture_2d_array<f32>;
@@ -16,7 +17,7 @@ fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> Fragment
     var pbr_input = pbr_input_from_standard_material(in, is_front);
     pbr_input.material.base_color = vec4<f32>(painted(in.world_position.xz), 1.0);
     var out: FragmentOutput;
-    out.color = main_pass_post_lighting_processing(pbr_input, apply_pbr_lighting(pbr_input));
+    out.color = main_pass_post_lighting_processing(pbr_input, lighting(pbr_input));
     return out;
 }
 
