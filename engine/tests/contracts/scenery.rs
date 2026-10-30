@@ -6,6 +6,7 @@ use bevy::animation::AnimationPlugin;
 use bevy::asset::AssetPlugin;
 use bevy::camera::CameraProjection;
 use bevy::camera::visibility::{RenderLayers, VisibilityPlugin};
+use bevy::ecs::entity_disabling::Disabled;
 use bevy::gltf::{Gltf, GltfPlugin};
 use bevy::light::atmosphere::ScatteringMedium;
 use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
@@ -191,35 +192,51 @@ fn however_thickly_a_prop_is_strewn_its_copies_hold_no_more_mesh_than_one() {
 fn a_camera_draws_the_strewn_copies_it_sees_and_passes_over_the_rest() {
     let folder = tempfile::tempdir().expect("a scratch folder");
     let (mut app, area) = client(field(0.0016), folder.path());
-    let corner = Vec3::new(2.0, 0.0, 2.0);
+    let camera = app.world_mut().spawn(Camera3d::default()).id();
+    let (first, second) = (Vec3::new(2.0, 0.0, 2.0), Vec3::new(14.0, 0.0, 14.0));
+    look_down_on(&mut app, camera, first);
+    stand(&mut app, &area);
+    for corner in [first, second, first] {
+        look_down_on(&mut app, camera, corner);
+        let copies = drawn_copies(&mut app);
+        let (near, far): (Vec<_>, Vec<_>) = copies
+            .iter()
+            .partition(|(at, _)| at.with_y(0.0).distance(corner) < 1.5);
+        assert!(
+            !near.is_empty() && near.iter().all(|(_, shown)| *shown),
+            "every copy under the camera is drawn: {near:?}"
+        );
+        assert!(
+            far.iter()
+                .any(|(at, shown)| at.with_y(0.0).distance(corner) > 12.0 && !*shown),
+            "copies across the field, out of the camera's view, are passed over"
+        );
+    }
+}
+
+/// Points `camera` straight down at `corner` from a few metres up, and lets the world see it.
+fn look_down_on(app: &mut App, camera: Entity, corner: Vec3) {
     let eye = Transform::from_translation(corner + Vec3::Y * 6.0).looking_at(corner, Vec3::Z);
     let lens = PerspectiveProjection {
         fov: 0.5,
         ..Default::default()
     };
-    app.world_mut().spawn((
-        Camera3d::default(),
+    app.world_mut().entity_mut(camera).insert((
         lens.compute_frustum(&GlobalTransform::from(eye)),
         Projection::Perspective(lens),
         eye,
     ));
-    stand(&mut app, &area);
+    for _ in 0..3 {
+        app.update();
+    }
+}
+
+/// Where every strewn copy stands, and whether the camera draws it.
+fn drawn_copies(app: &mut App) -> Vec<(Vec3, bool)> {
     let world = app.world_mut();
-    let copies: Vec<(Vec3, bool)> = world
-        .query_filtered::<(&GlobalTransform, &InheritedVisibility), With<MeshMaterial3d<CoverMaterial>>>()
+    world
+        .query_filtered::<(&GlobalTransform, &ViewVisibility, Has<Disabled>), With<MeshMaterial3d<CoverMaterial>>>()
         .iter(world)
-        .map(|(placed, shown)| (placed.translation(), shown.get()))
-        .collect();
-    let (near, far): (Vec<_>, Vec<_>) = copies
-        .iter()
-        .partition(|(at, _)| at.with_y(0.0).distance(corner) < 1.5);
-    assert!(
-        !near.is_empty() && near.iter().all(|(_, shown)| *shown),
-        "every copy under the camera is drawn: {near:?}"
-    );
-    assert!(
-        far.iter()
-            .any(|(at, shown)| at.with_y(0.0).distance(corner) > 12.0 && !*shown),
-        "copies across the field, out of the camera's view, are passed over"
-    );
+        .map(|(placed, seen, disabled)| (placed.translation(), seen.get() && !disabled))
+        .collect()
 }

@@ -8,6 +8,7 @@
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::primitives::{Aabb, Frustum, MeshAabb};
 use bevy::color::Mix;
+use bevy::ecs::entity_disabling::Disabled;
 use bevy::gltf::{Gltf, GltfMaterial, GltfMesh, GltfNode};
 use bevy::light::NotShadowCaster;
 use bevy::mesh::{Indices, MeshTag, PrimitiveTopology, VertexAttributeValues};
@@ -453,6 +454,7 @@ pub(super) fn strew_loaded(
                     .spawn((
                         StrewnChunk {
                             bounds: enclosing(places, &bounds),
+                            drawn: true,
                         },
                         Transform::default(),
                         Visibility::default(),
@@ -484,24 +486,53 @@ pub(super) fn strew_loaded(
 #[derive(Component)]
 pub(super) struct StrewnChunk {
     bounds: Aabb,
+    drawn: bool,
 }
 
-/// Hides every chunk of strewn copies no camera sees, so its copies are passed over unculled.
+/// Disables the copies of every chunk no camera sees and enables those of every chunk one comes to
+/// see. A hidden entity still costs every frame's visibility and extraction a look, and an area
+/// holds far more copies than a view takes in, so the unseen leave every query instead.
 pub(super) fn cull_strewn_chunks(
     cameras: Query<(&Camera, &Frustum), With<Camera3d>>,
-    mut chunks: Query<(&StrewnChunk, &GlobalTransform, &mut Visibility)>,
+    mut chunks: Query<(&mut StrewnChunk, &GlobalTransform, &Children)>,
+    mut commands: Commands,
 ) {
-    for (chunk, placed, mut visibility) in &mut chunks {
+    for (mut chunk, placed, copies) in &mut chunks {
         let seen = cameras.iter().all(|(camera, _)| !camera.is_active)
             || cameras.iter().any(|(camera, frustum)| {
                 camera.is_active
                     && frustum.intersects_obb(&chunk.bounds, &placed.affine(), true, false)
             });
-        visibility.set_if_neq(if seen {
-            Visibility::Inherited
+        if seen == chunk.drawn {
+            continue;
+        }
+        chunk.drawn = seen;
+        if seen {
+            for copy in copies {
+                commands
+                    .entity(*copy)
+                    .remove::<Disabled>()
+                    .queue(repropagate);
+            }
         } else {
-            Visibility::Hidden
-        });
+            commands.insert_batch(
+                copies
+                    .iter()
+                    .map(|copy| (copy, Disabled))
+                    .collect::<Vec<_>>(),
+            );
+        }
+    }
+}
+
+/// Has a copy that was disabled learn again where it stands and whether it shows, which
+/// propagation passed it over for meanwhile, or never told it if it was disabled as it came.
+fn repropagate(mut copy: EntityWorldMut) {
+    if let Some(mut transform) = copy.get_mut::<Transform>() {
+        transform.set_changed();
+    }
+    if let Some(mut visibility) = copy.get_mut::<Visibility>() {
+        visibility.set_changed();
     }
 }
 
