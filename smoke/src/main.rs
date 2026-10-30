@@ -11,6 +11,7 @@ use std::sync::mpsc::channel;
 use std::time::{Duration, Instant};
 
 use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
+use chromiumoxide::handler::viewport::Viewport;
 use chromiumoxide::{Browser, BrowserConfig, Page};
 use engine::core::content::FilesystemFolder;
 use engine::core::time::UtcHour;
@@ -126,7 +127,7 @@ const BLANK: f32 = 0.9;
 /// What a software renderer needs to load the game and draw it.
 const DRAWN_WITHIN: Duration = Duration::from_secs(300);
 const READY_WITHIN: Duration = Duration::from_secs(120);
-const VIEWPORT: (u32, u32) = (1280, 720);
+const VIEWPORT: (u32, u32) = (800, 600);
 
 /// A player on the site's play page in Chrome, signed in as the seeded player.
 struct Player {
@@ -141,6 +142,11 @@ impl Player {
             BrowserConfig::builder()
                 .new_headless_mode()
                 .window_size(VIEWPORT.0, VIEWPORT.1)
+                .viewport(Some(Viewport {
+                    width: VIEWPORT.0,
+                    height: VIEWPORT.1,
+                    ..Viewport::default()
+                }))
                 // The same software renderer everywhere, so every machine draws the snapshot alike.
                 .args([
                     "--use-angle=swiftshader",
