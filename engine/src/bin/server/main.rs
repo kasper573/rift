@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use axum::extract::State;
-use axum::http::{HeaderMap, StatusCode, header};
+use axum::http::{HeaderMap, Method, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use bevy_app::App;
@@ -38,6 +38,7 @@ use engine::systems::{
 };
 use metrics::{counter, gauge, histogram};
 use renet2::{ConnectionConfig, DisconnectReason, RenetServer, ServerEvent};
+use tower_http::cors::{Any, CorsLayer};
 use transport::WsTransport;
 
 service::heap_profiling!();
@@ -624,7 +625,13 @@ async fn serve_http(
             .route(TEST_CHARACTER_ROUTE, post(test_character))
             .route(STAGING_ROUTE, post(stage_scene));
     }
-    let router = service::track(router.with_state(http), metrics);
+    // A browser client plays from the game's site, another origin. Nothing here reads a cookie (a
+    // bearer token signs a session in, and the content is public), so any site may call it.
+    let browsers = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods([Method::GET, Method::POST])
+        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
+    let router = service::track(router.with_state(http).layer(browsers), metrics);
     ctrlc::set_handler(|| std::process::exit(0)).expect("install stop handler");
     axum::serve(listener, router).await.expect("axum serves");
 }

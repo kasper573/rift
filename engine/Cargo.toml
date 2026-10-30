@@ -152,6 +152,7 @@ metrics = "0.24"
 oidc = { path = "../oidc" }
 service = { path = "../service" }
 tokio.workspace = true
+tower-http = { workspace = true, features = ["cors"] }
 ureq = { workspace = true, features = ["rustls", "platform-verifier"] }
 tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
