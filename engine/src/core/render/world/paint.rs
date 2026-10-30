@@ -2,6 +2,8 @@
 //! and where a layer is metal, the surface it lays, baked once for each way of painting it and
 //! shared by every mesh painted alike.
 
+use std::sync::LazyLock;
+
 use bevy::asset::RenderAssetUsages;
 use bevy::ecs::system::SystemParam;
 use bevy::platform::collections::HashMap;
@@ -183,9 +185,8 @@ pub fn bake(base: &Image, layers: &[(&Image, &PaintLayer)]) -> Option<Image> {
         };
         masks.push(index);
     }
-    let linear: Vec<f32> = (0..=255u8)
-        .map(|byte| to_linear(byte as f32 / 255.0))
-        .collect();
+    let linear = &*LINEAR;
+    let srgb = &*SRGB;
     let colours: Vec<[f32; 3]> = layers
         .iter()
         .map(|(_, layer)| layer.colour.0.map(|byte| linear[byte as usize]))
@@ -201,7 +202,7 @@ pub fn bake(base: &Image, layers: &[(&Image, &PaintLayer)]) -> Option<Image> {
             }
         }
         for (byte, mixed) in pixel.iter_mut().zip(mixed) {
-            *byte = (to_srgb(mixed) * 255.0).round() as u8;
+            *byte = srgb[(mixed.clamp(0.0, 1.0) * SRGB_STEPS as f32).round() as usize];
         }
     }
     Some(Image::new(
@@ -267,6 +268,22 @@ pub fn surface(base: &Image, layers: &[(&Image, &PaintLayer)]) -> Option<Image> 
         RenderAssetUsages::RENDER_WORLD,
     ))
 }
+
+/// Linear light for every sRGB byte.
+static LINEAR: LazyLock<[f32; 256]> =
+    LazyLock::new(|| std::array::from_fn(|byte| to_linear(byte as f32 / 255.0)));
+
+// A bake converts every pixel of a texture back to sRGB, and `powf` runs in software on the web,
+// where that took longer than all else an arrival does.
+const SRGB_STEPS: usize = u16::MAX as usize;
+
+/// The sRGB byte for linear light in steps of `1 / SRGB_STEPS`, fine enough that every byte comes
+/// back from light as it went in.
+static SRGB: LazyLock<Vec<u8>> = LazyLock::new(|| {
+    (0..=SRGB_STEPS)
+        .map(|step| (to_srgb(step as f32 / SRGB_STEPS as f32) * 255.0).round() as u8)
+        .collect()
+});
 
 fn to_linear(srgb: f32) -> f32 {
     if srgb <= 0.04045 {
