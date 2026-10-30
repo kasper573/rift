@@ -635,9 +635,11 @@ pub fn pose(world: &mut World) {
         let player = world.get::<Body>(entity).and_then(Body::player);
         let scale = model.scale();
         if let Some(mut transform) = world.get_mut::<Transform>(entity) {
-            transform.translation = world_point(at.0, ground);
-            transform.rotation = facing_rotation(facing);
-            transform.scale = Vec3::splat(scale);
+            transform.set_if_neq(Transform {
+                translation: world_point(at.0, ground),
+                rotation: facing_rotation(facing),
+                scale: Vec3::splat(scale),
+            });
         }
         let Some(player) = player else {
             continue;

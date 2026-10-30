@@ -10,6 +10,8 @@ pub struct Billboard;
 pub(super) fn face_camera(rig: Res<CameraRig>, mut boards: Query<&mut Transform, With<Billboard>>) {
     let facing = rig.transform().rotation;
     for mut transform in &mut boards {
-        transform.rotation = facing;
+        if transform.rotation != facing {
+            transform.rotation = facing;
+        }
     }
 }
