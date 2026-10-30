@@ -16,7 +16,10 @@ use engine::systems::staging::Staging;
 use super::client::{arrived, away_from, settled_in_world, staged};
 use super::playtest::Playtest;
 
-const WARM_UP: usize = 3;
+// The caches and pools sized to the busiest moment fill over a varying number of crossings, the
+// graphics driver's command memory slowest of all, so the visits are measured once a round trip
+// grows the client by no more than the measured ones may on average; one that never settles leaks.
+const MOST_WARM_UPS: usize = 12;
 const ROUND_TRIPS: usize = 4;
 // Long enough for an arrival's loading to pass, and for the allocator to hand back what the loading
 // churned through.
@@ -38,13 +41,28 @@ pub fn run(game: &Path, content: &Content) -> Result<(), String> {
         println!("[memory-bench] not benched: no warp out of the spawn area");
         return Ok(());
     };
-    for _ in 0..WARM_UP {
+    let mut warm = settle(&mut me);
+    let mut warm_ups = 0;
+    loop {
+        if warm_ups == MOST_WARM_UPS {
+            return Err(format!(
+                "[memory-bench] memory never settles: client {:.0} MB after {MOST_WARM_UPS} round trips",
+                warm.client.megabytes()
+            ));
+        }
+        let before = warm;
         for place in [away, home] {
             cross_into(&mut me, place);
-            settle(&mut me);
+            warm = settle(&mut me);
+        }
+        warm_ups += 1;
+        let allowed = slack(before.client).0 / ROUND_TRIPS as u64;
+        if warm.client.0 <= before.client.0 + allowed {
+            break;
         }
     }
-    let mut visits: Vec<(Place, Reading)> = vec![(home, settle(&mut me))];
+    println!("[memory-bench] settled after {warm_ups} round trips");
+    let mut visits: Vec<(Place, Reading)> = vec![(home, warm)];
     for _ in 0..ROUND_TRIPS {
         for place in [away, home] {
             cross_into(&mut me, place);
@@ -120,7 +138,7 @@ fn read(me: &mut Playtest) -> Reading {
 }
 
 fn grown(what: &str, first: Bytes, last: Bytes) -> Option<String> {
-    let slack = SLACK_LEAST.max(Bytes((first.0 as f64 * SLACK_SHARE) as u64));
+    let slack = slack(first);
     (last.0 > first.0 + slack.0).then(|| {
         format!(
             "{what}: {:.0} MB, from {:.0} MB (at most {:.0} MB more)",
@@ -129,6 +147,10 @@ fn grown(what: &str, first: Bytes, last: Bytes) -> Option<String> {
             slack.megabytes()
         )
     })
+}
+
+fn slack(held: Bytes) -> Bytes {
+    SLACK_LEAST.max(Bytes((held.0 as f64 * SLACK_SHARE) as u64))
 }
 
 fn gpu_grown(what: &str, first: Bytes, last: Bytes) -> Option<String> {
