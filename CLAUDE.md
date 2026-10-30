@@ -77,6 +77,14 @@ Code must not depend on arbitrary game content, so the same server and client ca
 - Run every cargo build or test inside a memory-capped scope of its own, so a runaway compile is killed alone and never takes the session that spawned it down with it: on Linux, `systemd-run --user --scope -q -p MemoryMax=<cap> -p MemorySwapMax=0 cargo …` (the recipes in the Justfile run plain cargo; wrap the `just` call the same way). The cap is yours to choose for the machine you are on: assume the machine is yours alone, so the cap need only leave the session enough to survive, and take less when you know it is shared, such as with other agents at work on it. A process over the cap dies with "Killed"; rerun it with fewer jobs (`CARGO_BUILD_JOBS`) rather than squeezing the session.
 - Clean up unused cargo build output: `target/` grows by tens of gigabytes across profiles and feature sets and the disk is shared with everything else here. After a task, `cargo clean -p <crate>` for crates whose artifacts are stale, or `cargo clean` outright when `du -sh target` passes 50 GB.
 
+## Time efficiency
+
+Spend the task's time working, not waiting on builds, runs and CI:
+
+- Start what takes minutes (a dist, a bench, a CI run) in the background, and do the work that doesn't depend on it meanwhile.
+- Build only what the next step runs. `just dist target/dist desktop` leaves out the browser client, whose whole-program optimisation takes most of a dist's time, and the profiling build; add `web` or `profiling` when the step runs them. `rift bench <game> --only …` runs only the parts a change can move. The whole dist and every bench part belong to the final verification.
+- `just lint` and `just test` build the dev profile, and `just dist` and the benches release, so the two can build at once, each in a scope of its own, when memory allows both.
+
 ## Verification
 
 Before you start work on a task run benchmarks via `just bench` and save the results to a temporary file.
@@ -85,9 +93,3 @@ After you finish the task:
 
 - `cargo fmt` · `just lint` (clippy among it, no warnings) · `just test` · `just dist`, and `just smoke target/dist` when the change reaches the website or the browser client.
 - Run benchmarks again and compare the results to the previous run. If there is a significant regression, investigate and fix it.
-
-`just lint` and `just test` build the dev profile, and `just dist` and the benches release, so the two
-sides can build at once, each in a scope of its own, when memory allows both. While iterating, build only
-the dist parts the work needs (`just dist target/dist desktop`, without the browser client's slow
-whole-program optimisation), and bench only the parts a change can move (`rift bench <game> --only …`);
-the whole dist belongs to the final verification.
