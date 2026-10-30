@@ -415,9 +415,9 @@ pub(super) struct StrewnAssets<'w> {
     copies: ResMut<'w, CopyMeshes>,
 }
 
-/// A piece whose prop has loaded gets a copy of the prop at every place, an instance of each of
-/// the prop's meshes drawn with the piece's material in that mesh's texture, so a copy keeps the
-/// shapes its texture cuts out.
+/// A piece whose prop has loaded gets its chunks, each to strew a copy of the prop at every one of
+/// its places once a camera first sees it: an instance of each of the prop's meshes drawn with the
+/// piece's material in that mesh's texture, so a copy keeps the shapes its texture cuts out.
 pub(super) fn strew_loaded(
     mut assets: StrewnAssets,
     waiting: Query<(Entity, &Strewing)>,
@@ -445,56 +445,62 @@ pub(super) fn strew_loaded(
                 Some(texture) => assets.textured_cover(&strewing.material, texture),
                 None => strewing.material.clone(),
             };
-            for places in &strewing.chunks {
-                let chunk = commands
-                    .spawn((
+            let chunks: Vec<_> = strewing
+                .chunks
+                .iter()
+                .map(|places| {
+                    (
                         StrewnChunk {
                             bounds: enclosing(places, &bounds),
+                            unstrewn: Some(Unstrewn {
+                                places: places.clone(),
+                                mesh: mesh.clone(),
+                                material: drawn.clone(),
+                                bounds,
+                            }),
                         },
                         Transform::default(),
                         Visibility::default(),
                         ChildOf(entity),
-                    ))
-                    .id();
-                let copies: Vec<_> = places
-                    .iter()
-                    .map(|place| {
-                        (
-                            Mesh3d(mesh.clone()),
-                            MeshMaterial3d(drawn.clone()),
-                            place.transform,
-                            place.tag(),
-                            bounds,
-                            NotShadowCaster,
-                            ChildOf(chunk),
-                        )
-                    })
-                    .collect();
-                commands.spawn_batch(copies);
-            }
+                    )
+                })
+                .collect();
+            commands.spawn_batch(chunks);
         }
     }
 }
 
 /// A chunk of a piece's strewn copies, culled as one by [`cull_strewn_chunks`]: a view sees only a
 /// few of an area's chunks, and the copies of the rest are too many to test one by one each frame.
+/// Its copies are strewn only once a camera first sees it, so an area's ground stands at once
+/// however thickly it is strewn, and ground nobody looks at costs nothing.
 #[derive(Component)]
 pub(super) struct StrewnChunk {
     bounds: Aabb,
+    unstrewn: Option<Unstrewn>,
 }
 
-/// Disables every chunk no camera sees, copies and all, and enables every chunk one comes to see.
-/// A hidden entity still costs every frame's visibility and extraction a look, and an area holds
-/// far more copies than a view takes in, so the unseen leave every query instead. Propagation
-/// passes a disabled entity over, so this runs once the frame's propagation is done, and a copy
-/// keeps where it stood and whether it showed as it was disabled: a cover must not move or hide
-/// while it stands.
+/// The copies a chunk strews when it is first seen: a copy of `mesh` within `bounds` at every
+/// place, drawn with `material`.
+struct Unstrewn {
+    places: Vec<Place>,
+    mesh: Handle<Mesh>,
+    material: Handle<CoverMaterial>,
+    bounds: Aabb,
+}
+
+/// Disables every chunk no camera sees, copies and all, and enables every chunk one comes to see,
+/// strewing its copies the first time. A hidden entity still costs every frame's visibility and
+/// extraction a look, and an area holds far more copies than a view takes in, so the unseen leave
+/// every query instead. Propagation passes a disabled entity over, so this runs once the frame's
+/// propagation is done, and a copy keeps where it stood and whether it showed as it was disabled:
+/// a cover must not move or hide while it stands.
 pub(super) fn cull_strewn_chunks(
     cameras: Query<(&Camera, &Frustum), With<Camera3d>>,
-    chunks: Query<(Entity, &StrewnChunk, &GlobalTransform, Has<Disabled>)>,
+    mut chunks: Query<(Entity, &mut StrewnChunk, &GlobalTransform, Has<Disabled>)>,
     mut commands: Commands,
 ) {
-    for (entity, chunk, placed, disabled) in &chunks {
+    for (entity, mut chunk, placed, disabled) in &mut chunks {
         let seen = cameras.iter().all(|(camera, _)| !camera.is_active)
             || cameras.iter().any(|(camera, frustum)| {
                 camera.is_active
@@ -512,6 +518,24 @@ pub(super) fn cull_strewn_chunks(
                     .insert_recursive::<Children>(Disabled);
             }
             _ => {}
+        }
+        if seen && let Some(unstrewn) = chunk.unstrewn.take() {
+            let copies: Vec<_> = unstrewn
+                .places
+                .iter()
+                .map(|place| {
+                    (
+                        Mesh3d(unstrewn.mesh.clone()),
+                        MeshMaterial3d(unstrewn.material.clone()),
+                        place.transform,
+                        place.tag(),
+                        unstrewn.bounds,
+                        NotShadowCaster,
+                        ChildOf(entity),
+                    )
+                })
+                .collect();
+            commands.spawn_batch(copies);
         }
     }
 }

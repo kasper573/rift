@@ -48,7 +48,7 @@ pub struct RigReady {
 /// A skin's scene, hidden until its meshes are bound to the rig and painted: at rest until then,
 /// it would stand apart from a rig already moving.
 #[derive(Component)]
-struct SkinOf {
+pub(super) struct SkinOf {
     body: Entity,
     paint: Option<Paint>,
     spawned: bool,

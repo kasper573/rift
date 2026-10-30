@@ -16,8 +16,7 @@ use bevy::prelude::*;
 use bevy::shader::Shader;
 use bevy::world_serialization::WorldSerializationPlugin;
 use engine::core::content::Content;
-use engine::core::render::world::WorldScenePlugin;
-use engine::core::render::world::cover::Strewing;
+use engine::core::render::world::{self, WorldScenePlugin};
 use engine::core::vfx::cover::CoverMaterial;
 use engine::core::vfx::render::VfxMaterialsPlugin;
 use engine::core::vfx::shader::Stage;
@@ -121,11 +120,8 @@ fn stand(app: &mut App, area: &Area) -> scenery::Scenery {
     let content = app.world().resource::<Content>().clone();
     let stood = scenery::spawn(app.world_mut(), &content, area, RenderLayers::default());
     assert!(
-        settle(app, |app| {
-            let world = app.world_mut();
-            world.query::<&Strewing>().iter(world).next().is_none()
-        }),
-        "the strewn props load"
+        settle(app, |app| !world::readying(app.world_mut())),
+        "the scenery stands whole"
     );
     stood
 }
@@ -210,7 +206,7 @@ fn a_camera_draws_the_strewn_copies_it_sees_and_passes_over_the_rest() {
         );
         assert!(
             far.iter()
-                .any(|(at, shown)| at.with_y(0.0).distance(corner) > 12.0 && !*shown),
+                .all(|(at, shown)| at.with_y(0.0).distance(corner) < 12.0 || !*shown),
             "copies across the field, out of the camera's view, are passed over"
         );
     }

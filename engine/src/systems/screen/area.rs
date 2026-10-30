@@ -18,6 +18,7 @@ use crate::core::platform::ClientPlatform;
 use crate::core::render::transition::{
     self, ActiveTransition, ScreenTransitionPhase, WorldViewSystems,
 };
+use crate::core::render::world::readying;
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::core::time::Seconds;
 use crate::core::units::Meters;
@@ -98,7 +99,7 @@ pub fn carry_view_across(world: &mut World) {
             }
             (Some(pose), None, _) => (Some(pose), Some(Held::new(now, pose))),
             (Some(pose), Some(held), _) => {
-                let drawable = area::render::shown(world) == Some(pose.area);
+                let drawable = area::render::shown(world) == Some(pose.area) && !readying(world);
                 if now - held.since > ARRIVAL_PATIENCE || (drawable && held.rendered) {
                     reveal(world, pose);
                     (Some(pose), None)

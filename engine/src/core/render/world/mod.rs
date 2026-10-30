@@ -24,6 +24,7 @@ use bevy::pbr::MaterialPlugin;
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapterInfo;
+use bevy::world_serialization::{WorldAssetRoot, WorldInstance, WorldInstanceSpawner};
 
 use super::camera::{self, CameraRig, FullPicture};
 use super::video::VideoPreferences;
@@ -96,6 +97,37 @@ impl Plugin for WorldScenePlugin {
         let full = FullPicture::on(app.world().get_resource::<RenderAdapterInfo>());
         app.insert_resource(full);
     }
+}
+
+/// Whether anything the world draws is still on its way to standing: a model loading or not yet
+/// spawned, a ground's pictures, a strewn prop, or a body's skin waiting on its rig or its paint.
+/// A view is shown only once nothing is, so it is first seen whole.
+pub fn readying(world: &mut World) -> bool {
+    let waiting = world
+        .query_filtered::<(), Or<(
+            With<cover::Strewing>,
+            With<terrain::GroundPictures>,
+            With<body::SkinOf>,
+        )>>()
+        .iter(world)
+        .next()
+        .is_some();
+    let models: Vec<_> = world
+        .query::<(&WorldAssetRoot, Option<&WorldInstance>)>()
+        .iter(world)
+        .map(|(root, instance)| (root.0.id(), instance.map(|instance| **instance)))
+        .collect();
+    let (Some(assets), Some(spawner)) = (
+        world.get_resource::<AssetServer>(),
+        world.get_resource::<WorldInstanceSpawner>(),
+    ) else {
+        return waiting;
+    };
+    waiting
+        || models.into_iter().any(|(model, instance)| {
+            !assets.load_state(model).is_failed()
+                && instance.is_none_or(|instance| !spawner.instance_is_ready(instance))
+        })
 }
 
 /// The assets of a kind dropped since last asked, so what a cache made from them can go too.
