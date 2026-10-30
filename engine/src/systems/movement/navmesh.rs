@@ -65,6 +65,7 @@ impl NavMesh {
             .flat_map(|(index, outline)| {
                 fan(outline).map(move |corners| Triangle {
                     corners,
+                    bounds: Rect::from_points(corners),
                     polygon: index,
                 })
             })
@@ -275,9 +276,10 @@ impl NavMesh {
 
     /// The triangles of the polygons `kept`, cut down to the convex `clip`.
     fn clipped(&self, clip: &[Pos<Meters>], kept: impl Fn(usize) -> bool) -> Vec<[Pos<Meters>; 3]> {
+        let reach = Rect::from_points(clip);
         self.triangles
             .iter()
-            .filter(|triangle| kept(triangle.polygon))
+            .filter(|triangle| triangle.bounds.intersects(&reach) && kept(triangle.polygon))
             .flat_map(|triangle| {
                 let piece = clip_polygon(&triangle.corners, clip);
                 fan(&piece).collect::<Vec<_>>()
@@ -288,6 +290,7 @@ impl NavMesh {
 
 struct Triangle {
     corners: [Pos<Meters>; 3],
+    bounds: Rect<Meters>,
     polygon: usize,
 }
 
