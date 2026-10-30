@@ -22,11 +22,12 @@ editor *folder:
     cargo build --release -p editor -p engine --bin editor --bin game-server --bin desktop-client
     target/release/editor {{folder}}
 
-# Shrunk with z + LTO + strip for mobile Safari's per-tab memory. wasm-bindgen's version must match
-# the `wasm-bindgen` crate's.
+# Built for speed, as the browser runs the client's every frame on one thread; its download is small
+# beside a game's content. LTO is thin: whole-program LTO at this level outgrows a CI runner's memory.
+# wasm-bindgen's version must match the `wasm-bindgen` crate's.
 [doc("The browser client as a release ships it, into target/wasm.")]
 wasm:
-    CARGO_PROFILE_RELEASE_OPT_LEVEL=z CARGO_PROFILE_RELEASE_STRIP=symbols CARGO_PROFILE_RELEASE_LTO=true \
+    CARGO_PROFILE_RELEASE_STRIP=symbols CARGO_PROFILE_RELEASE_LTO=thin \
       cargo build --release -p engine --bin wasm-client --target wasm32-unknown-unknown
     rm -rf target/wasm
     wasm-bindgen --target web --no-typescript --out-name rift --out-dir target/wasm target/wasm32-unknown-unknown/release/wasm-client.wasm
