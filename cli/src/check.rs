@@ -3,10 +3,15 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
-use engine::core::content::{Content, FilesystemFolder, LoadWarnings, write};
+use engine::core::assets::AssetKind;
+use engine::core::content::gltf;
+use engine::core::content::{
+    Content, ContentFile, FileHash, FilesystemFolder, FolderReader, LoadWarnings, list_files, write,
+};
 use engine::systems::actor::model::{ActorModel, ModelDef};
 use engine::systems::actor::skeleton::{SkeletonDef, SkeletonId};
 use engine::systems::actor::stance;
+use engine::systems::area::prop::{Footprint, ModelHash, PropDef};
 use engine::systems::item::ItemDef;
 use engine::systems::{GameSettings, load_content, registry};
 use walkdir::WalkDir;
@@ -33,6 +38,7 @@ pub fn run(game: &Path) {
 /// Rewrites every file of the game that doesn't read as the editor writes it, as the editor writes
 /// it: what each holds stays, only its layout changes.
 pub fn format(game: &Path) {
+    let models = externalize_models(game);
     let content = load_content(Arc::new(FilesystemFolder(game.to_path_buf())), "format")
         .unwrap_or_else(|report| panic!("{report}"));
     let rewritten = as_the_editor_writes(game, content);
@@ -40,10 +46,82 @@ pub fn format(game: &Path) {
         fs::write(game.join(file), rewritten.editors(file)).expect("a rewritten file of the game");
     }
     println!(
-        "{}: {} file(s) rewritten as the editor writes them",
+        "{}: {} file(s) rewritten as the editor writes them, {models} model(s) with their images \
+         taken out beside them",
         game.display(),
         rewritten.differing.len()
     );
+}
+
+/// Takes the images kept inside every bundle's model out beside it, as the editor writes a model,
+/// where the bundle's type keeps images; a prop's footprint fitted to the model stays fitted, as
+/// the mesh is as it was. How many models kept any.
+fn externalize_models(game: &Path) -> usize {
+    let folder = FilesystemFolder(game.to_path_buf());
+    let types = registry().file_types();
+    let (listing, _) = list_files(&folder, &types);
+    let mut taken_out = 0;
+    let mut refitted_props: Vec<(String, FileHash)> = Vec::new();
+    for (table, bundles) in &listing.content {
+        let textures = types
+            .iter()
+            .find(|ty| ty.table == *table)
+            .and_then(|ty| ty.parts.iter().copied().find(|spec| spec.keyed_as("png")));
+        let Some(textures) = textures else {
+            continue;
+        };
+        for bundle in bundles {
+            let Some(parts) = listing.parts.get(bundle) else {
+                continue;
+            };
+            for part in parts
+                .iter()
+                .filter(|part| AssetKind::of(part) == Some(AssetKind::Model))
+            {
+                let path = game.join(bundle).join(part);
+                let bytes = fs::read(&path).expect("a model of the game");
+                let Ok(taken) = gltf::externalize(&bytes, textures) else {
+                    continue;
+                };
+                if taken.images.is_empty() {
+                    continue;
+                }
+                for (image, bytes) in &taken.images {
+                    let at = game.join(bundle).join(image);
+                    if let Some(parent) = at.parent() {
+                        fs::create_dir_all(parent).expect("a folder for the model's images");
+                    }
+                    fs::write(at, bytes).expect("an image of the game");
+                }
+                if *table == PropDef::TABLE {
+                    refitted_props.push((bundle.clone(), FileHash::of(&taken.glb)));
+                }
+                fs::write(path, taken.glb).expect("a model of the game");
+                taken_out += 1;
+            }
+        }
+    }
+    if !refitted_props.is_empty() {
+        let reader = FolderReader::new(registry(), Arc::new(folder));
+        for (bundle, model) in refitted_props {
+            let Ok(mut prop) = reader.read::<PropDef>(&bundle) else {
+                continue;
+            };
+            let Footprint::Polygon {
+                fitted_to: Some(fitted),
+                ..
+            } = &mut prop.footprint
+            else {
+                continue;
+            };
+            *fitted = ModelHash(model.hash);
+            let written = reader.write(&bundle, &prop).expect("a prop writes");
+            for (file, bytes) in written.files {
+                fs::write(game.join(file), bytes).expect("a prop of the game");
+            }
+        }
+    }
+    taken_out
 }
 
 fn problems(game: &Path) -> Vec<String> {

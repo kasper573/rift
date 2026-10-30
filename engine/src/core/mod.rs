@@ -8,6 +8,7 @@ pub mod gui;
 pub mod interpolate;
 pub mod math;
 pub mod net;
+pub mod pace;
 pub mod platform;
 pub mod render;
 pub mod script;

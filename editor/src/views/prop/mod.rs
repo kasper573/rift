@@ -16,7 +16,7 @@ use engine::core::geometry::Radians;
 use engine::core::math::Pos;
 use engine::core::units::Meters;
 use engine::systems::area::prop::{
-    Footprint, MAX_POLYGON_POINTS, MIN_POLYGON_POINTS, ModelHash, PropDef,
+    Footprint, MAX_POLYGON_POINTS, MIN_POLYGON_POINTS, ModelHash, PROP_TEXTURES, PropDef,
 };
 use engine::systems::area::{Picture, Pictured};
 use ui::egui::{self, Ui};
@@ -182,24 +182,28 @@ pub fn replace_model(editor: &mut Editor, key: &str, bytes: Vec<u8>) -> bool {
     let Some(Ok(row)) = editor.read::<PropDef>(key) else {
         return false;
     };
-    if let Err(error) = gltf::inspect(&bytes) {
-        editor.toast(format!("Not a glTF binary: {error}"));
-        return false;
-    }
+    let taken = match gltf::externalize(&bytes, PROP_TEXTURES) {
+        Ok(taken) => taken,
+        Err(error) => {
+            editor.toast(format!("Not a glTF binary: {error}"));
+            return false;
+        }
+    };
     let mut edit = ContentEdit::new(format!("Replace {}'s model", shown_path(key)));
+    let mut refitted = None;
     if let Footprint::Polygon {
         fitted_to: Some(_), ..
     } = &row.footprint
     {
-        let refitted = gltf::triangles(&bytes)
+        let points = gltf::triangles(&taken.glb)
             .ok()
             .map(|triangles| gltf::footing(&triangles, knee_of(&triangles)))
             .filter(|points| points.len() >= MIN_POLYGON_POINTS);
         let mut prop = (*row).clone();
-        prop.footprint = match refitted {
+        prop.footprint = match points {
             Some(points) => Footprint::Polygon {
                 points: thinned(points, MAX_POLYGON_POINTS),
-                fitted_to: Some(ModelHash(crate::project::files::hash(&bytes))),
+                fitted_to: Some(ModelHash(crate::project::files::hash(&taken.glb))),
             },
             None => {
                 editor.toast(format!(
@@ -215,15 +219,38 @@ pub fn replace_model(editor: &mut Editor, key: &str, bytes: Vec<u8>) -> bool {
                 }
             }
         };
-        let Some(project) = editor.project.as_ref() else {
-            return false;
-        };
-        if let Err(reason) = edit.write_content(project, key, &prop) {
-            editor.toast(reason);
-            return false;
-        }
+        refitted = Some(prop);
     }
-    edit.write(row.model.path(), bytes.into());
+    let Some(project) = editor.project.as_ref() else {
+        return false;
+    };
+    if let Some(prop) = &refitted
+        && let Err(reason) = edit.write_content(project, key, prop)
+    {
+        editor.toast(reason);
+        return false;
+    }
+    let model = row.model.path();
+    let bundle = format!(
+        "{}/",
+        model.rsplit_once('/').map_or("", |(bundle, _)| bundle)
+    );
+    let old_textures: Vec<String> = project
+        .files
+        .paths_under(&bundle)
+        .filter(|path| {
+            path.strip_prefix(&bundle)
+                .is_some_and(|part| PROP_TEXTURES.matches(part))
+        })
+        .cloned()
+        .collect();
+    for path in old_textures {
+        edit.remove(path);
+    }
+    for (part, image) in taken.images {
+        edit.write(format!("{bundle}{part}"), image.into());
+    }
+    edit.write(model, taken.glb.into());
     editor.apply(edit)
 }
 

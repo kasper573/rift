@@ -9,12 +9,15 @@ use clap::{CommandFactory, Parser};
 use editor::app::{EditorLaunch, EditorPlugin};
 use editor::scenes::SceneStep;
 use engine::core::assets::SyncedFiles;
+use engine::core::assets::loader::PngLoader;
 use engine::core::audio::playback::SfxPlugin;
 use engine::core::babble::BabblePlugin;
 use engine::core::math::Rng;
+use engine::core::pace::Pace;
 use engine::core::render::world::WorldScenePlugin;
 use engine::core::text::StyledTextPlugin;
 use engine::core::vfx::render::VfxMaterialsPlugin;
+use engine::systems::area::scenery::SceneryPlugin;
 use engine::systems::launch;
 use strum::VariantNames;
 
@@ -85,8 +88,11 @@ fn main() {
                 })
                 .set(ImagePlugin::default_nearest()),
         )
+        .register_asset_loader(PngLoader {
+            pace: Pace::whole(),
+        })
         .add_plugins((SfxPlugin, StyledTextPlugin, BabblePlugin))
-        .add_plugins((WorldScenePlugin, VfxMaterialsPlugin))
+        .add_plugins((WorldScenePlugin, VfxMaterialsPlugin, SceneryPlugin))
         .add_plugins(EditorPlugin { launch })
         .run();
 }

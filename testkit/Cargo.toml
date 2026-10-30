@@ -10,6 +10,7 @@ bevy_ecs.workspace = true
 bevy_math.workspace = true
 bevy_replicon = { workspace = true, features = ["server"] }
 bevy_time = { workspace = true, features = ["std"] }
+gltf = { version = "1.4", default-features = false, features = ["names", "utils"] }
 hound = "3.5"
 png = "0.18"
 serde_json.workspace = true

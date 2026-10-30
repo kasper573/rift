@@ -376,7 +376,7 @@ impl ContentFile for ItemDef {
 }
 
 /// Every item's icon and card art are the size their slots and cards draw.
-pub fn check_pictures(loading: &mut Loading) {
+pub async fn check_pictures(loading: &mut Loading) {
     let content = loading.content();
     let sizes = content.built::<ImageSizes>();
     for (id, item) in loading.rows::<ItemDef>(&content) {
@@ -402,7 +402,7 @@ pub fn check_pictures(loading: &mut Loading) {
 
 /// Every look of a worn item is on a skeleton that has the item's slot, one look a skeleton, and
 /// lays parts made on that skeleton in colours of its tints.
-pub fn check_looks(loading: &mut Loading) {
+pub async fn check_looks(loading: &mut Loading) {
     let content = loading.content();
     for (id, item) in loading.rows::<ItemDef>(&content) {
         let Some(Wear::Worn { slot, looks }) = item.wear() else {

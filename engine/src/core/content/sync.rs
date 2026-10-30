@@ -10,7 +10,7 @@ use futures_timer::Delay;
 use futures_util::{StreamExt, stream};
 use serde::{Deserialize, Serialize};
 
-use super::load::{ContentFolder, FileHashes, MemoryFolder};
+use super::load::{ContentFolder, FileHash, FileHashes, FolderEntry, MemoryFolder};
 use super::store::ContentStore;
 use super::table::Content;
 use crate::core::math::Rng;
@@ -25,6 +25,13 @@ pub struct Manifest {
     pub name: String,
     pub rows: FileStamp,
     pub index: FileStamp,
+}
+
+impl Manifest {
+    /// Whether both name the same content, whatever build serves it.
+    pub fn same_content(&self, other: &Manifest) -> bool {
+        self.rows == other.rows && self.index == other.index
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -161,6 +168,8 @@ impl Counted {
     }
 }
 
+/// Where a sync stands. `Building` is not the sync's own: whoever loads the synced content reports
+/// that through the same status, so one card tells the whole way to the game.
 #[derive(Clone, Debug, PartialEq, Eq, Default)]
 pub enum SyncPhase {
     #[default]
@@ -170,6 +179,7 @@ pub enum SyncPhase {
         updating: bool,
     },
     Done,
+    Building,
 }
 
 #[derive(Clone, Default)]
@@ -180,7 +190,7 @@ impl SyncStatus {
         self.0.lock().expect("sync status lock").clone()
     }
 
-    fn update(&self, change: impl FnOnce(&mut SyncProgress)) {
+    pub fn update(&self, change: impl FnOnce(&mut SyncProgress)) {
         change(&mut self.0.lock().expect("sync status lock"));
     }
 }
@@ -201,7 +211,7 @@ pub struct SyncedContent {
 }
 
 impl SyncedContent {
-    pub fn folder(&self) -> MemoryFolder {
+    pub fn folder(&self) -> SyncedFolder {
         let files: BTreeMap<String, Arc<[u8]>> = self
             .rows
             .iter()
@@ -209,14 +219,24 @@ impl SyncedContent {
             .chain(self.assets.iter())
             .map(|(path, bytes)| (path.clone(), bytes.clone()))
             .collect();
-        MemoryFolder {
-            name: format!("the synced content of {}", self.manifest.name),
-            files,
+        SyncedFolder {
+            files: MemoryFolder {
+                name: format!("the synced content of {}", self.manifest.name),
+                files,
+            },
+            checked: self
+                .index
+                .files
+                .iter()
+                .map(|file| {
+                    let hash = FileHash {
+                        hash: file.hash.clone(),
+                        size: file.size,
+                    };
+                    (file.path.clone(), hash)
+                })
+                .collect(),
         }
-    }
-
-    pub fn same_as(&self, other: &SyncedContent) -> bool {
-        self.manifest.rows == other.manifest.rows && self.manifest.index == other.manifest.index
     }
 
     pub fn changed_assets(&self, before: &SyncedContent) -> Vec<String> {
@@ -232,6 +252,32 @@ impl SyncedContent {
             .filter(|file| old.get(file.path.as_str()) != Some(&file.hash.as_str()))
             .map(|file| file.path.clone())
             .collect()
+    }
+}
+
+/// The synced content as a folder. Its media files are the ones this build's loader checked where
+/// they were served, as the index the server built says, and every one matched its hash on
+/// arrival.
+pub struct SyncedFolder {
+    files: MemoryFolder,
+    checked: HashMap<String, FileHash>,
+}
+
+impl ContentFolder for SyncedFolder {
+    fn name(&self) -> String {
+        self.files.name()
+    }
+
+    fn entries(&self, dir: &str) -> Vec<FolderEntry> {
+        self.files.entries(dir)
+    }
+
+    fn read(&self, file: &str) -> io::Result<Vec<u8>> {
+        self.files.read(file)
+    }
+
+    fn checked(&self, file: &str) -> Option<FileHash> {
+        self.checked.get(file).cloned()
     }
 }
 
@@ -285,10 +331,8 @@ pub fn unpack_rows(bundle: &[u8]) -> io::Result<Vec<(String, Vec<u8>)>> {
 }
 
 fn stamp_of(bytes: &[u8]) -> FileStamp {
-    FileStamp {
-        hash: blake3::hash(bytes).to_hex().to_string(),
-        size: bytes.len() as u64,
-    }
+    let FileHash { hash, size } = FileHash::of(bytes);
+    FileStamp { hash, size }
 }
 
 fn rows_bundle(rows: &[(String, Vec<u8>)]) -> io::Result<Vec<u8>> {
@@ -442,7 +486,7 @@ impl Run<'_> {
         self.store
             .read(hash)
             .await
-            .filter(|bytes| blake3::hash(bytes).to_hex().as_str() == hash)
+            .filter(|bytes| FileHash::of(bytes).hash == hash)
             .map(Arc::from)
     }
 
@@ -470,7 +514,7 @@ impl Run<'_> {
             };
             let failed = match future::or(self.source.get(path), timeout).await {
                 Ok(bytes) => match expected_hash {
-                    Some(hash) if blake3::hash(&bytes).to_hex().as_str() != hash => {
+                    Some(hash) if FileHash::of(&bytes).hash != *hash => {
                         "a corrupt file arrived".to_owned()
                     }
                     _ => return Ok(bytes),

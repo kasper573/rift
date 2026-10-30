@@ -4,7 +4,7 @@
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 
-use super::scenery::{self, Scenery};
+use super::scenery::{self, Scenery, SceneryPlugin};
 use super::{AreaId, AreaObject, AreaTag};
 use crate::core::content::Content;
 use crate::core::math::{Pos, Rect};
@@ -21,7 +21,8 @@ pub struct AreaRenderPlugin;
 
 impl Plugin for AreaRenderPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ShownArea>()
+        app.add_plugins(SceneryPlugin)
+            .init_resource::<ShownArea>()
             .init_resource::<Daylight>()
             .add_systems(
                 Update,

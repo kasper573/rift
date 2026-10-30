@@ -817,7 +817,7 @@ pub fn of_in<'c>(content: &'c Content, world: &World, entity: Entity) -> Option<
     Some(load(content, area))
 }
 
-fn flatten_all(loading: &mut Loading) {
+async fn flatten_all(loading: &mut Loading) {
     let content = loading.content();
     let mut placed: Vec<Vec<Flattened>> = content.ids::<AreaDef>().map(|_| Vec::new()).collect();
     let mut placements: Vec<Vec<PlacedBlueprint>> =
@@ -853,11 +853,12 @@ fn flatten_all(loading: &mut Loading) {
     loading.built(PlacedBlueprints(placements));
 }
 
-fn build_all(loading: &mut Loading) {
+async fn build_all(loading: &mut Loading) {
     let content = loading.content();
     let mut areas: Vec<Option<Arc<Area>>> = content.ids::<AreaDef>().map(|_| None).collect();
     let mut reported: BTreeSet<(String, String)> = BTreeSet::new();
     for (id, def) in loading.rows::<AreaDef>(&content) {
+        loading.breathe().await;
         let modules = placed(&content, id);
         for module in modules {
             let (file, pointer) = module.site(&content, id);

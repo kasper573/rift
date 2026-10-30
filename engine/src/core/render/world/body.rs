@@ -14,6 +14,7 @@ use super::material::WorldMaterial;
 use super::paint::{Paint, Painter, Paints};
 use super::rig_clip::{GltfClips, GltfClipsLoader, PendingClips, make_pending};
 use crate::core::content::gltf::NodeTree;
+use crate::core::pace::Pace;
 
 /// What a body is drawn as: the joints of its rig at rest, and the skins bound to them.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -192,12 +193,21 @@ pub struct BodyPlugin;
 
 impl Plugin for BodyPlugin {
     fn build(&self, app: &mut App) {
+        let pace = app.world_mut().get_resource_or_init::<Pace>().clone();
         app.init_resource::<Paints>()
             .init_resource::<PendingClips>()
             .init_asset::<GltfClips>()
-            .register_asset_loader(GltfClipsLoader)
+            .register_asset_loader(GltfClipsLoader { pace })
             .add_observer(stand)
-            .add_systems(Update, (bind, make_pending, super::paint::forget_dropped));
+            .add_systems(
+                Update,
+                (
+                    super::paint::advance_bakes.before(bind),
+                    bind,
+                    make_pending,
+                    super::paint::forget_dropped,
+                ),
+            );
     }
 }
 

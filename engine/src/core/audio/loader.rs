@@ -1,13 +1,10 @@
 use std::io::Cursor;
-use std::time::Duration;
 
 use bevy::asset::io::Reader;
 use bevy::asset::{AssetLoader, LoadContext};
-use bevy::platform::time::Instant;
 use bevy::reflect::TypePath;
 use bevy_kira_audio::AudioSource;
 use bevy_kira_audio::prelude::{Frame, StaticSoundData, StaticSoundSettings};
-use futures_timer::Delay;
 use symphonia::core::codecs::CodecParameters;
 use symphonia::core::codecs::audio::AudioDecoder;
 use symphonia::core::errors::Error;
@@ -15,12 +12,7 @@ use symphonia::core::formats::{FormatReader, TrackType};
 use symphonia::core::io::MediaSourceStream;
 
 use crate::core::assets::AssetKind;
-
-// Decoding a whole track at once holds the thread for hundreds of milliseconds, and on the web that
-// thread also feeds the audio output and runs the frame that asked for the sound, so decoding hands
-// the thread back before every slice, the first included. Waiting on a timer rather than merely
-// yielding is what returns control to the browser's event loop.
-const SLICE: Duration = Duration::from_millis(4);
+use crate::core::pace::Pace;
 
 pub struct DecodedAudio {
     pub sample_rate: u32,
@@ -128,8 +120,11 @@ pub fn decode(encoded: Vec<u8>) -> Result<DecodedAudio, Error> {
     Ok(decoding.finish())
 }
 
+/// Reads a sound whole, decoding it at `pace`: a long piece decodes over many frames.
 #[derive(TypePath)]
-pub struct AudioLoader;
+pub struct AudioLoader {
+    pub pace: Pace,
+}
 
 impl AssetLoader for AudioLoader {
     type Asset = AudioSource;
@@ -145,15 +140,8 @@ impl AssetLoader for AudioLoader {
         let mut encoded = Vec::new();
         reader.read_to_end(&mut encoded).await?;
         let mut decoding = Decoding::start(encoded)?;
-        let mut slice_end = Instant::now();
-        loop {
-            if Instant::now() >= slice_end {
-                Delay::new(Duration::ZERO).await;
-                slice_end = Instant::now() + SLICE;
-            }
-            if !decoding.step()? {
-                break;
-            }
+        while decoding.step()? {
+            self.pace.breathe().await;
         }
         Ok(AudioSource {
             sound: decoding.finish().into_sound()?,

@@ -3,7 +3,6 @@
 
 use std::borrow::Cow;
 
-use rayon::prelude::*;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumString, VariantArray};
@@ -261,13 +260,12 @@ impl BustFigures {
 }
 
 /// Measures every bust's figure, and holds the cast of busts to its download budget.
-fn build_all(loading: &mut Loading) {
+async fn build_all(loading: &mut Loading) {
     let content = loading.content();
     let rows = loading.rows::<BustDef>(&content);
     let folder = loading.folder();
-    let measured: Vec<(BustId, Option<BustFigure>, FileSize)> = rows
-        .par_iter()
-        .map(|(id, def)| {
+    let measured: Vec<(BustId, Option<BustFigure>, FileSize)> = loading
+        .each(rows, |(id, def)| {
             let files: Vec<Vec<u8>> = def
                 .all()
                 .filter_map(|face| folder.read(&face.path()).ok())
@@ -287,9 +285,9 @@ fn build_all(loading: &mut Loading) {
                 .zip(right.reduce(f32::max))
                 .map(|(left, right)| BustFigure { left, right });
             let weight = FileSize(files.iter().map(Vec::len).sum());
-            (*id, figure, weight)
+            (id, figure, weight)
         })
-        .collect();
+        .await;
     let mut figures: Vec<Option<BustFigure>> = content.ids::<BustDef>().map(|_| None).collect();
     let mut total = 0;
     let mut over = false;

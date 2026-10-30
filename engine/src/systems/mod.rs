@@ -342,6 +342,8 @@ pub fn client_app(
     };
 
     let mut app = App::new();
+    let pace = crate::core::pace::Pace::framed();
+    app.insert_resource(pace.clone());
     let files = SyncedFiles::default();
     app.insert_resource(files.clone());
     app.insert_resource(Rng::from_entropy());
@@ -363,7 +365,8 @@ pub fn client_app(
                 })
                 .set(ImagePlugin::default_nearest()),
         ),
-    );
+    )
+    .register_asset_loader(crate::core::assets::loader::PngLoader { pace });
     // The client shows a world the server plays out in real time, so a frame however long moves it
     // on by all the time the frame took, as the server's world moved on, rather than by the most the
     // engine otherwise lets one frame take.
@@ -458,16 +461,12 @@ pub fn load_making(
     )
 }
 
-pub fn install_content(world: &mut World, synced: SyncedContent) -> Result<(), LoadReport> {
-    let before = world.get_resource::<SyncedContent>();
-    if before.is_some_and(|before| before.same_as(&synced)) {
-        return Ok(());
-    }
-    let content = load_content(
-        std::sync::Arc::new(synced.folder()),
-        "the content did not load",
-    )?;
-    let changed = before.map(|before| synced.changed_assets(before));
+/// Puts `content`, loaded from `synced`, into a client's world, and has the assets the sync changed
+/// read again.
+pub fn install_content(world: &mut World, synced: SyncedContent, content: Content) {
+    let changed = world
+        .get_resource::<SyncedContent>()
+        .map(|before| synced.changed_assets(before));
     world
         .resource::<SyncedFiles>()
         .replace(synced.assets.clone());
@@ -484,7 +483,6 @@ pub fn install_content(world: &mut World, synced: SyncedContent) -> Result<(), L
     world.insert_resource(content.built::<GameSettings>().clone());
     world.insert_resource(input::map::InputMap::new(&content));
     world.insert_resource(synced);
-    Ok(())
 }
 
 /// A whole game: the tables it's made of, its settings, every row the engine itself requires, and
@@ -600,7 +598,7 @@ impl Settings for GameSettings {
     }
 }
 
-fn check_settings(loading: &mut Loading) {
+async fn check_settings(loading: &mut Loading) {
     let content = loading.content();
     let settings = content.built::<GameSettings>();
     if let Some(cycle) = &settings.daylight {

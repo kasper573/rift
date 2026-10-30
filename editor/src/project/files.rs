@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock, OnceLock};
 
 use engine::core::content::files::{self, GameFile};
-use engine::core::content::{MemoryFolder, SETTINGS_FILE, table_of};
+use engine::core::content::{FileHash, MemoryFolder, SETTINGS_FILE, table_of};
 use engine::systems::registry;
 use walkdir::WalkDir;
 
@@ -386,7 +386,7 @@ impl FolderIndex {
 }
 
 pub fn hash(bytes: &[u8]) -> String {
-    blake3::hash(bytes).to_hex().to_string()
+    FileHash::of(bytes).hash
 }
 
 pub fn json_bytes(value: &serde_json::Value) -> FileBytes {

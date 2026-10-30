@@ -137,7 +137,7 @@ impl Thumbnails {
                 .iter()
                 .map(|layer| Some((images.get(layer.mask.as_str())?, layer)))
                 .collect::<Option<Vec<_>>>()?;
-            bake(base, &layers)?.try_into_dynamic().ok()
+            bake(base, &layers)?.colour.try_into_dynamic().ok()
         });
         let max_side = ctx.input(|i| i.max_texture_side) as u32;
         let thumb = baked.map(|image| {

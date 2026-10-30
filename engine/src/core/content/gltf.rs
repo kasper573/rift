@@ -9,6 +9,8 @@ use bevy::math::{Mat4, Quat, Vec3};
 use gltf::json;
 use gltf::json::validation::{Checked, USize64};
 
+use super::bundle::PartSpec;
+use super::files::valid_name;
 use crate::core::geometry::Degrees;
 use crate::core::math::Pos;
 use crate::core::time::Seconds;
@@ -29,6 +31,105 @@ pub struct GltfInfo {
     pub binds: Vec<(usize, Mat4)>,
     pub tree: NodeTree,
     pub clips: Vec<GltfClip>,
+    /// Every image the model draws with, as the file holds it.
+    pub images: Vec<GltfImage>,
+}
+
+/// An image of a glTF binary: kept inside the file, or a file beside it, by its path from the
+/// model's folder.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GltfImage {
+    Embedded,
+    File(String),
+}
+
+/// A glTF binary with the images it kept inside taken out of it, each a PNG file of its own.
+pub struct Externalized {
+    pub glb: Vec<u8>,
+    /// Each image taken out, by its path from the model's folder, as the model now names it.
+    pub images: Vec<(String, Vec<u8>)>,
+}
+
+/// Takes every image kept inside `bytes` out into a PNG file of its own, kept as `images` keeps
+/// files and named after the image, so the model reads them from beside it; a model keeping none
+/// comes back as it is.
+pub fn externalize(bytes: &[u8], images: PartSpec) -> Result<Externalized, String> {
+    let gltf = gltf::Gltf::from_slice(bytes).map_err(|error| error.to_string())?;
+    let blob = gltf.blob.unwrap_or_default();
+    let mut root = gltf.document.into_json();
+    let mut taken = Vec::new();
+    let mut names: Vec<String> = Vec::new();
+    let mut dropped = Vec::new();
+    for (index, image) in root.images.iter_mut().enumerate() {
+        let Some(view) = image.buffer_view.take() else {
+            continue;
+        };
+        let mime = image.mime_type.as_ref().map_or("", |mime| mime.0.as_str());
+        if mime != "image/png" {
+            return Err(format!("image {index} is {mime:?}, not a PNG"));
+        }
+        let (offset, length) = span_of(&root.buffer_views[view.value()]);
+        let data = blob
+            .get(offset..offset + length)
+            .ok_or_else(|| format!("image {index} lies outside the binary"))?;
+        let name = image_file_name(image.name.as_deref(), index, &names);
+        let path = images.named(&name, "png");
+        names.push(name);
+        image.uri = Some(path.clone());
+        image.mime_type = None;
+        taken.push((path, data.to_vec()));
+        dropped.push(view.value());
+    }
+    if taken.is_empty() {
+        return Ok(Externalized {
+            glb: bytes.to_vec(),
+            images: taken,
+        });
+    }
+    let mut bin = Vec::new();
+    let mut kept = Vec::new();
+    let mut renumbered: Vec<Option<json::Index<json::buffer::View>>> = Vec::new();
+    for (index, view) in root.buffer_views.iter().enumerate() {
+        if dropped.contains(&index) {
+            renumbered.push(None);
+            continue;
+        }
+        while !bin.len().is_multiple_of(4) {
+            bin.push(0);
+        }
+        let (offset, length) = span_of(view);
+        let data = blob
+            .get(offset..offset + length)
+            .ok_or_else(|| format!("buffer view {index} lies outside the binary"))?;
+        renumbered.push(Some(json::Index::new(kept.len() as u32)));
+        kept.push(json::buffer::View {
+            byte_offset: Some(USize64::from(bin.len())),
+            ..view.clone()
+        });
+        bin.extend_from_slice(data);
+    }
+    let renumber = |view: &mut json::Index<json::buffer::View>| -> Result<(), String> {
+        *view = renumbered[view.value()]
+            .ok_or_else(|| "an image's bytes are read as data too".to_owned())?;
+        Ok(())
+    };
+    for accessor in &mut root.accessors {
+        if let Some(view) = &mut accessor.buffer_view {
+            renumber(view)?;
+        }
+        if let Some(sparse) = &mut accessor.sparse {
+            renumber(&mut sparse.indices.buffer_view)?;
+            renumber(&mut sparse.values.buffer_view)?;
+        }
+    }
+    root.buffer_views = kept;
+    if let Some(buffer) = root.buffers.first_mut() {
+        buffer.byte_length = USize64::from(bin.len());
+    }
+    Ok(Externalized {
+        glb: glb(&root, bin),
+        images: taken,
+    })
 }
 
 /// Every node of a glTF binary by its index there, each with its name, its parent and its rest
@@ -363,7 +464,52 @@ pub fn inspect(bytes: &[u8]) -> Result<GltfInfo, String> {
         binds: binds_of(&document, blob),
         tree: tree_of(&document),
         clips,
+        images: document
+            .images()
+            .map(|image| match image.source() {
+                gltf::image::Source::Uri { uri, .. } if !uri.starts_with("data:") => {
+                    GltfImage::File(uri.to_owned())
+                }
+                gltf::image::Source::Uri { .. } | gltf::image::Source::View { .. } => {
+                    GltfImage::Embedded
+                }
+            })
+            .collect(),
     })
+}
+
+fn span_of(view: &json::buffer::View) -> (usize, usize) {
+    (
+        view.byte_offset.map_or(0, |offset| offset.0 as usize),
+        view.byte_length.0 as usize,
+    )
+}
+
+/// A file name for the image at `index` of a model, from the image's own name where it has one
+/// and unlike every name in `taken`.
+fn image_file_name(name: Option<&str>, index: usize, taken: &[String]) -> String {
+    let mut slug = String::new();
+    for c in name.unwrap_or_default().to_ascii_lowercase().chars() {
+        if c.is_ascii_alphanumeric() || c == '_' {
+            slug.push(c);
+        } else if !slug.ends_with('-') {
+            slug.push('-');
+        }
+    }
+    let slug: String = slug.trim_matches('-').chars().take(60).collect();
+    let base = if valid_name(&slug) {
+        slug
+    } else {
+        format!("image-{}", index + 1)
+    };
+    let mut candidate = base.clone();
+    for n in 2.. {
+        if !taken.contains(&candidate) {
+            return candidate;
+        }
+        candidate = format!("{base}-{n}");
+    }
+    unreachable!("a free name comes up")
 }
 
 fn binds_of(document: &gltf::Document, blob: Option<&[u8]>) -> Vec<(usize, Mat4)> {
@@ -522,10 +668,39 @@ impl ClipKeys {
     }
 }
 
-/// The keyframes of the animation at `index` among those of the glTF binary `bytes`. A cubic
-/// spline is read through its keys, as straight blends between them.
+/// The keyframes of the animation at `index` among those of the glTF binary `bytes`.
 pub fn clip_keys(bytes: &[u8], index: usize) -> Result<ClipKeys, String> {
-    let gltf = gltf::Gltf::from_slice(bytes).map_err(|error| error.to_string())?;
+    ClipLibrary::read(bytes)?.keys(index)
+}
+
+/// A glTF binary read once, for its tree and the keyframes of each of its clips: a library of many
+/// clips is parsed once, not once a clip.
+pub struct ClipLibrary {
+    gltf: gltf::Gltf,
+}
+
+impl ClipLibrary {
+    pub fn read(bytes: &[u8]) -> Result<ClipLibrary, String> {
+        let gltf = gltf::Gltf::from_slice(bytes).map_err(|error| error.to_string())?;
+        Ok(ClipLibrary { gltf })
+    }
+
+    pub fn tree(&self) -> NodeTree {
+        tree_of(&self.gltf.document)
+    }
+
+    pub fn clips(&self) -> usize {
+        self.gltf.document.animations().len()
+    }
+
+    /// The keyframes of the clip at `index`. A cubic spline is read through its keys, as straight
+    /// blends between them.
+    pub fn keys(&self, index: usize) -> Result<ClipKeys, String> {
+        clip_keys_of(&self.gltf, index)
+    }
+}
+
+fn clip_keys_of(gltf: &gltf::Gltf, index: usize) -> Result<ClipKeys, String> {
     let blob = gltf.blob.as_deref();
     let animation = gltf
         .document

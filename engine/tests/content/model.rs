@@ -7,7 +7,7 @@ use bevy_math::{Mat4, Quat, Vec3};
 use engine::core::content::{LoadReport, fields_file};
 use engine::core::geometry::Degrees;
 use engine::core::math::Rgb;
-use engine::core::render::world::paint::{PaintLayer, bake, surface};
+use engine::core::render::world::paint::{PaintLayer, bake};
 use engine::core::units::Meters;
 use engine::systems::actor::appearance::look;
 use engine::systems::actor::render;
@@ -398,8 +398,17 @@ fn a_painted_texture_lays_each_colour_as_thick_as_its_mask_is_bright() {
     let red = layer(0, [255, 0, 0]);
     let blue = layer(1, [0, 0, 255]);
     let painted = bake(&base, &[(&mask, &red), (&mask, &blue)]).expect("it bakes");
+    assert!(
+        painted.surface.is_none(),
+        "no metal layer leaves the surface as it is"
+    );
     assert_eq!(
-        painted.data.expect("pixels").chunks(4).collect::<Vec<_>>(),
+        painted
+            .colour
+            .data
+            .expect("pixels")
+            .chunks(4)
+            .collect::<Vec<_>>(),
         [
             [128, 128, 128, 255],
             [255, 0, 0, 255],
@@ -412,7 +421,7 @@ fn a_painted_texture_lays_each_colour_as_thick_as_its_mask_is_bright() {
     let half = image(&[[128, 0, 0, 255]]);
     let black = image(&[[0, 0, 0, 255]]);
     let painted = bake(&black, &[(&half, &layer(0, [255, 255, 255]))]).expect("it bakes");
-    let [r, g, b, _] = painted.data.expect("pixels")[..] else {
+    let [r, g, b, _] = painted.colour.data.expect("pixels")[..] else {
         panic!("one pixel");
     };
     assert!(
@@ -426,15 +435,14 @@ fn a_painted_texture_lays_each_colour_as_thick_as_its_mask_is_bright() {
         "a mask of another size paints nothing"
     );
 
-    assert!(
-        surface(&base, &[(&mask, &red), (&mask, &blue)]).is_none(),
-        "no metal layer leaves the surface as it is"
-    );
     let steel = PaintLayer {
         metal: true,
         ..layer(0, [200, 200, 200])
     };
-    let surface = surface(&base, &[(&mask, &steel), (&mask, &blue)]).expect("a metal surface");
+    let surface = bake(&base, &[(&mask, &steel), (&mask, &blue)])
+        .expect("it bakes")
+        .surface
+        .expect("a metal surface");
     let pixels: Vec<_> = surface
         .data
         .expect("pixels")

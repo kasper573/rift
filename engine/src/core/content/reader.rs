@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use std::io;
 use std::sync::Arc;
 
-use super::files::{Listing, list, table_of};
+use super::files::{Listing, list_files, table_of};
 use super::fresh::Nearby;
 use super::id::{ContentId, ContentScope, with_content};
 use super::load::{
@@ -43,7 +43,7 @@ pub type Unreadable = Vec<LoadError>;
 
 impl FolderReader {
     pub fn new(registry: &'static ContentRegistry, folder: Arc<dyn ContentFolder>) -> FolderReader {
-        let (listing, errors) = list(folder.as_ref(), &registry.file_types());
+        let (listing, errors) = list_files(folder.as_ref(), &registry.file_types());
         let scope = listing_scope(registry, &listing);
         FolderReader {
             registry,
@@ -255,7 +255,7 @@ impl FolderReader {
     /// The pixels of the image at `path`, when the folder holds one that decodes.
     pub fn image_size(&self, path: &str) -> Option<(u32, u32)> {
         let bytes = self.folder.read(path).ok()?;
-        super::media::image_size(path, &bytes)
+        super::media::image_size(path, None, &bytes)
     }
 
     /// The files a fresh content file of `table` at `path` is kept in, written as the game writes

@@ -249,7 +249,7 @@ impl ContentFile for TerrainDef {
 }
 
 /// Every ground's picture is the size the ground draws its pictures at.
-pub fn check_pictures(loading: &mut Loading) {
+pub async fn check_pictures(loading: &mut Loading) {
     let content = loading.content();
     let sizes = content.built::<ImageSizes>();
     for (id, terrain) in loading.rows::<TerrainDef>(&content) {
@@ -275,7 +275,7 @@ pub fn check_pictures(loading: &mut Loading) {
 /// each with a value of its kind and within its range, and grows no thicker than the engine
 /// draws: at a full ratio a piece's copies per square metre, counted over the ground a copy
 /// covers, stay within the budget of its shape.
-pub fn check_all(loading: &mut Loading) {
+pub async fn check_all(loading: &mut Loading) {
     let content = loading.content();
     let models = content.built::<GltfInfos>();
     let prop_bounds = |prop: PropId| {

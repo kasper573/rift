@@ -186,7 +186,7 @@ impl Skeletons {
 
 /// Builds every skeleton, holds each part's meshes to its skeleton's rig and builds, and builds
 /// every model from parts of its skeleton.
-pub fn build_all(loading: &mut Loading) {
+pub async fn build_all(loading: &mut Loading) {
     let content = loading.content();
     let infos = content.built::<GltfInfos>();
     let hashes = content.built::<FileHashes>();
@@ -197,6 +197,7 @@ pub fn build_all(loading: &mut Loading) {
         .map(|(id, _)| id)
         .collect();
     for (id, part) in loading.rows::<ModelPartDef>(&content) {
+        loading.breathe().await;
         if !loaded_skeletons.contains(&part.skeleton) {
             loading.fail(id);
             continue;
@@ -220,6 +221,7 @@ pub fn build_all(loading: &mut Loading) {
         .collect();
     let mut models: Vec<Option<ActorModel>> = content.ids::<ModelDef>().map(|_| None).collect();
     for (id, def) in loading.rows::<ModelDef>(&content) {
+        loading.breathe().await;
         // A skeleton or part that did not load was refused at its own file already.
         if !loaded_skeletons.contains(&def.skeleton)
             || !def.parts.iter().all(|part| built_parts.contains(part))

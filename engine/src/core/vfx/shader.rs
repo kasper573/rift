@@ -569,10 +569,11 @@ pub fn check_param_name(check: &mut RowCheck, pointer: &str, name: &str) {
     }
 }
 
-pub fn compile_all(loading: &mut Loading) {
+pub async fn compile_all(loading: &mut Loading) {
     let content = loading.content();
     let mut compiled = HashMap::new();
     for (id, def) in loading.rows::<VfxShaderDef>(&content) {
+        loading.breathe().await;
         let file = shader_file(id.path(&content));
         let source = match loading.read_text(&file) {
             Ok(source) => source,

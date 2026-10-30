@@ -53,7 +53,7 @@ pub fn register(app: &mut App) {
 }
 
 /// The ranks an npc holds its skills at lie within those skills' ranks.
-pub fn check_all(loading: &mut Loading) {
+pub async fn check_all(loading: &mut Loading) {
     let content = loading.content();
     for (id, def) in loading.rows::<NpcDef>(&content) {
         let mut check = RowCheck::default();

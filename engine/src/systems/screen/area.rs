@@ -23,7 +23,7 @@ use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::core::time::Seconds;
 use crate::core::units::Meters;
 use crate::systems::actor::Actor;
-use crate::systems::area::{self, AreaId, AreaTag};
+use crate::systems::area::{self, AreaId, AreaTag, scenery};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::movement::RenderPosition;
 use crate::systems::player::session::{self, MyCharacter};
@@ -99,7 +99,9 @@ pub fn carry_view_across(world: &mut World) {
             }
             (Some(pose), None, _) => (Some(pose), Some(Held::new(now, pose))),
             (Some(pose), Some(held), _) => {
-                let drawable = area::render::shown(world) == Some(pose.area) && !readying(world);
+                let drawable = area::render::shown(world) == Some(pose.area)
+                    && !scenery::standing(world)
+                    && !readying(world);
                 if now - held.since > ARRIVAL_PATIENCE || (drawable && held.rendered) {
                     reveal(world, pose);
                     (Some(pose), None)

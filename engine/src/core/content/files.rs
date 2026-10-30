@@ -305,7 +305,7 @@ pub fn bundle_tables(types: &[FileType]) -> Vec<&'static str> {
 /// Walks the whole folder, sorting every file by what its name says, and reports every file and
 /// folder that says nothing it may hold, every case clash, and every bundle's missing or stray
 /// parts.
-pub fn list(folder: &dyn ContentFolder, types: &[FileType]) -> (Listing, Vec<LoadError>) {
+pub fn list_files(folder: &dyn ContentFolder, types: &[FileType]) -> (Listing, Vec<LoadError>) {
     let mut listing = Listing::default();
     let mut errors = Vec::new();
     walk(folder, "", types, &mut listing, &mut errors);

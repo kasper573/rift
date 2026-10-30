@@ -27,6 +27,19 @@ use crate::core::vfx::shader::PARAMS_BYTES;
 
 pub type WorldMaterial = ExtendedMaterial<StandardMaterial, WorldLook>;
 
+/// The textures a material draws with, as a glTF model sets them.
+pub fn textures(material: &StandardMaterial) -> impl Iterator<Item = &Handle<Image>> {
+    [
+        &material.base_color_texture,
+        &material.emissive_texture,
+        &material.metallic_roughness_texture,
+        &material.normal_map_texture,
+        &material.occlusion_texture,
+    ]
+    .into_iter()
+    .flatten()
+}
+
 /// How the world draws a mesh beyond its standard material: its fade, whether the picture it is
 /// drawn in settles over the frames, which the clearing's dither steps on for (it stands still
 /// otherwise), and the game's shader when one draws the mesh, with its parameters, the weather it

@@ -35,6 +35,12 @@ pub const PROP_GLB: PartSpec = PartSpec::File {
     exts: &["glb"],
 };
 
+/// The images the model draws with, each a PNG the model names by its path from the bundle.
+pub const PROP_TEXTURES: PartSpec = PartSpec::Keyed {
+    folder: "textures",
+    exts: &["png"],
+};
+
 /// A thing standing in the world: a glTF model, the ground it takes up, how it is drawn when it
 /// comes between the camera and a player, and the game's own materials drawing those of its
 /// model's materials it names.
@@ -85,7 +91,7 @@ pub enum Footprint {
 pub struct ModelHash(pub String);
 
 impl Bundle for PropDef {
-    const PARTS: &'static [PartSpec] = &[PROP_GLB];
+    const PARTS: &'static [PartSpec] = &[PROP_GLB, PROP_TEXTURES];
 
     fn read_parts(&mut self, parts: &mut Parts) {
         if let Some(glb) = parts.required(PROP_GLB) {
@@ -357,7 +363,7 @@ impl Scatter {
 
 /// A polygon fitted to a model that has changed since is reported at the prop: its points no longer
 /// follow the mesh.
-pub fn check_fitted(loading: &mut Loading) {
+pub async fn check_fitted(loading: &mut Loading) {
     let content = loading.content();
     let hashes = content.built::<FileHashes>();
     for (id, def) in loading.rows::<PropDef>(&content) {

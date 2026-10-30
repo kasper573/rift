@@ -5,19 +5,22 @@ use bevy::tasks::{IoTaskPool, Task, block_on, futures_lite::future};
 use bevy_egui::EguiPrimaryContextPass;
 use ui::ink;
 
-use super::{ClientScreen, Notice, Retry, notice_screen, pace_as_before, pace_slowly};
+use super::{
+    ClientScreen, Notice, Retry, notice_screen, pace_as_before, pace_eagerly, pace_slowly,
+};
 use crate::core::content::sync::{
     ContentSource, Counted, SyncError, SyncPhase, SyncPolicy, SyncProgress, SyncStatus,
     SyncedContent, sync,
 };
-use crate::core::content::version;
+use crate::core::content::{Content, load_paced, version};
 use crate::core::gui::{self, Band};
 use crate::core::math::Rng;
 use crate::core::net::auth::Credentials;
+use crate::core::pace::Pace;
 use crate::core::platform::{ClientPlatform, FetchFailure, LocalFuture, Platform, StartParams};
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::time::Seconds;
-use crate::systems::install_content;
+use crate::systems::{install_content, registry};
 use ui::words;
 
 pub struct LoadingPlugin;
@@ -40,11 +43,20 @@ impl Plugin for LoadingPlugin {
     }
 }
 
+/// The sync under way; its task brings nothing when the content installed already is what the
+/// server serves.
 #[derive(Resource)]
 struct Syncing {
-    task: Task<Result<SyncedContent, SyncError>>,
+    task: Task<Result<Option<Brought>, SyncError>>,
     status: SyncStatus,
     retry: Retry,
+    building: bool,
+}
+
+/// New content, synced and loaded.
+struct Brought {
+    synced: SyncedContent,
+    content: Content,
 }
 
 #[derive(Resource, Clone, PartialEq)]
@@ -83,7 +95,6 @@ impl ContentSource for ServerContent {
 
 fn begin(world: &mut World) {
     world.remove_resource::<LoadingFailure>();
-    pace_slowly(world);
     start(world, Retry::default());
 }
 
@@ -95,8 +106,13 @@ fn forget(world: &mut World) {
 }
 
 fn start(world: &mut World, retry: Retry) {
+    pace_slowly(world);
     let platform = world.resource::<ClientPlatform>().0.clone();
     let base = world.resource::<StartParams>().game_server_url.clone();
+    let installed = world
+        .get_resource::<SyncedContent>()
+        .map(|synced| synced.manifest.clone());
+    let pace = world.resource::<Pace>().clone();
     let status = SyncStatus::default();
     let task = IoTaskPool::get().spawn_local({
         let status = status.clone();
@@ -106,20 +122,35 @@ fn start(world: &mut World, retry: Retry) {
                 base,
             };
             let store = platform.content_store();
-            sync(
+            let synced = sync(
                 &source,
                 &*store,
                 version::build(),
                 SyncPolicy::default(),
-                status,
+                status.clone(),
+            )
+            .await?;
+            if installed.is_some_and(|installed| installed.same_content(&synced.manifest)) {
+                return Ok(None);
+            }
+            status.update(|progress| progress.phase = SyncPhase::Building);
+            let content = load_paced(
+                registry(),
+                Arc::new(synced.folder()),
+                version::build(),
+                "the content did not load",
+                &pace,
             )
             .await
+            .map_err(|report| SyncError::Failed(report.to_string()))?;
+            Ok(Some(Brought { synced, content }))
         }
     });
     world.insert_resource(Syncing {
         task,
         status,
         retry,
+        building: false,
     });
 }
 
@@ -135,20 +166,24 @@ fn poll(world: &mut World) {
         return;
     };
     match block_on(future::poll_once(&mut syncing.task)) {
-        None => world.insert_resource(syncing),
-        Some(Ok(synced)) => {
-            world.resource_mut::<Shown>().progress = syncing.status.latest();
-            match install_content(world, synced) {
-                Ok(()) => {
-                    let next = if world.contains_resource::<Credentials>() {
-                        ClientScreen::Connecting
-                    } else {
-                        ClientScreen::SigningIn
-                    };
-                    world.resource_mut::<NextState<ClientScreen>>().set(next);
-                }
-                Err(report) => fail(world, report.to_string(), now, syncing.retry),
+        None => {
+            if !syncing.building && syncing.status.latest().phase == SyncPhase::Building {
+                syncing.building = true;
+                pace_eagerly(world);
             }
+            world.insert_resource(syncing);
+        }
+        Some(Ok(brought)) => {
+            world.resource_mut::<Shown>().progress = syncing.status.latest();
+            if let Some(Brought { synced, content }) = brought {
+                install_content(world, synced, content);
+            }
+            let next = if world.contains_resource::<Credentials>() {
+                ClientScreen::Connecting
+            } else {
+                ClientScreen::SigningIn
+            };
+            world.resource_mut::<NextState<ClientScreen>>().set(next);
         }
         Some(Err(SyncError::OtherBuild { server })) => {
             world.resource_mut::<Shown>().progress = syncing.status.latest();
@@ -273,7 +308,7 @@ fn card_model(
                 ));
             }
         }
-        SyncPhase::Done => {
+        SyncPhase::Done | SyncPhase::Building => {
             lines.push("Content checked".to_owned());
             lines.push(
                 if progress.fetched.files_total == 0 && !progress.rows_changed {
@@ -282,7 +317,9 @@ fn card_model(
                     "Downloaded".to_owned()
                 },
             );
-            if signed_in {
+            if progress.phase == SyncPhase::Building {
+                lines.push("Building the game…".to_owned());
+            } else if signed_in {
                 lines.push("Joining".to_owned());
             }
         }

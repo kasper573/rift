@@ -102,7 +102,7 @@ fn client(game: Game, folder: &Path) -> (App, Arc<Area>) {
     .init_asset::<StandardMaterial>()
     .init_asset::<ScatteringMedium>()
     .init_asset::<SkinnedMeshInverseBindposes>()
-    .add_plugins((VfxMaterialsPlugin, WorldScenePlugin))
+    .add_plugins((VfxMaterialsPlugin, WorldScenePlugin, scenery::SceneryPlugin))
     .insert_resource(content);
     app.finish();
     app.cleanup();
@@ -116,11 +116,13 @@ fn client(game: Game, folder: &Path) -> (App, Arc<Area>) {
     (app, area)
 }
 
-fn stand(app: &mut App, area: &Area) -> scenery::Scenery {
+fn stand(app: &mut App, area: &Arc<Area>) -> scenery::Scenery {
     let content = app.world().resource::<Content>().clone();
     let stood = scenery::spawn(app.world_mut(), &content, area, RenderLayers::default());
     assert!(
-        settle(app, |app| !world::readying(app.world_mut())),
+        settle(app, |app| {
+            !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
+        }),
         "the scenery stands whole"
     );
     stood

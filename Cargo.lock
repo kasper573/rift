@@ -9516,6 +9516,7 @@ dependencies = [
  "bevy_replicon",
  "bevy_time",
  "engine",
+ "gltf",
  "hound",
  "png",
  "serde_json",

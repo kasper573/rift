@@ -317,7 +317,7 @@ pub fn materialize(
     }
 }
 
-pub fn check_all(loading: &mut Loading) {
+pub async fn check_all(loading: &mut Loading) {
     let content = loading.content();
     for (id, snapshot) in loading.rows::<CharacterSnapshot>(&content) {
         let mut check = RowCheck::default();

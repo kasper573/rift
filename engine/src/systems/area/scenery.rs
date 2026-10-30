@@ -2,7 +2,10 @@
 //! grow, its props as scenes on the ground, its point lights, its sun, the sky its sun lights and
 //! the air over it, every one a child of one root. The client stands the area the player is in;
 //! the editor stands the area it edits, on render layers of its own, and both light it alike for
-//! the hour.
+//! the hour. The props stand a few a frame, through `SceneryPlugin`, so their models load as the
+//! frames keep coming.
+
+use std::sync::Arc;
 
 use bevy::app::Propagate;
 use bevy::camera::primitives::MeshAabb;
@@ -22,6 +25,7 @@ use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::ground::{Heightfield, Paint};
 use crate::core::math::Pos;
 use crate::core::math::Rng;
+use crate::core::pace::Pace;
 use crate::core::render::present::AreaGrade;
 use crate::core::render::world::clouds::{self, CloudSheet};
 use crate::core::render::world::cover;
@@ -50,14 +54,32 @@ pub struct Scenery {
     pub sky: Option<Entity>,
 }
 
-/// Stands `area` in the world on `layers`, with its terrain, covers, props, lights, sun, sky and
-/// air.
-pub fn spawn(world: &mut World, content: &Content, area: &Area, layers: RenderLayers) -> Scenery {
+pub struct SceneryPlugin;
+
+impl Plugin for SceneryPlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<Pace>().add_systems(Update, stand_props);
+    }
+}
+
+/// Stands `area` in the world on `layers`, with its terrain, covers, lights, sun, sky and air at
+/// once, and its props over the frames that follow.
+pub fn spawn(
+    world: &mut World,
+    content: &Content,
+    area: &Arc<Area>,
+    layers: RenderLayers,
+) -> Scenery {
     let root = world
         .spawn((
             Transform::default(),
             Visibility::default(),
             Propagate(layers),
+            StandingProps {
+                content: content.clone(),
+                area: area.clone(),
+                next: 0,
+            },
         ))
         .id();
     let sun = area.lighting.sun.map(|sun| {
@@ -88,9 +110,6 @@ pub fn spawn(world: &mut World, content: &Content, area: &Area, layers: RenderLa
     }
     let terrain = spawn_terrain(world, content, area, root);
     spawn_covers(world, content, area, root);
-    for placed in &area.props {
-        spawn_prop(world, content, &area.heights, placed, root);
-    }
     let mut rng = Rng::from_entropy();
     for light in &area.lights {
         spawn_light(world, &area.heights, light, &mut rng, root);
@@ -174,6 +193,69 @@ pub fn shaders_ready(world: &World, content: &Content, area: &Area) -> bool {
                 vfx_render::compiled_shader(world, material.get(content).shader).is_some()
             })
         })
+}
+
+/// Whether any scenery's props are still standing up.
+pub fn standing(world: &mut World) -> bool {
+    world
+        .query_filtered::<(), With<StandingProps>>()
+        .iter(world)
+        .next()
+        .is_some()
+}
+
+/// The props of an area still to stand under its root.
+#[derive(Component)]
+struct StandingProps {
+    content: Content,
+    area: Arc<Area>,
+    next: usize,
+}
+
+/// How many props stand in one frame where frames are paced, and among them how many whose model
+/// no earlier prop asked for: a model's load falls on the frames after the prop that starts it.
+const PROPS_PER_FRAME: usize = 16;
+const FRESH_MODELS_PER_FRAME: usize = 1;
+
+fn stand_props(world: &mut World) {
+    let roots: Vec<Entity> = world
+        .query_filtered::<Entity, With<StandingProps>>()
+        .iter(world)
+        .collect();
+    let framed = world.resource::<Pace>().is_framed();
+    for root in roots {
+        let Some(mut standing) = world.entity_mut(root).take::<StandingProps>() else {
+            continue;
+        };
+        let (mut stood, mut fresh) = (0, 0);
+        while let Some(placed) = standing.area.props.get(standing.next) {
+            if framed {
+                if stood == PROPS_PER_FRAME {
+                    break;
+                }
+                let model = placed.prop.get(&standing.content).model.path();
+                let scene = GltfAssetLabel::Scene(0).from_asset(model);
+                if world.resource::<AssetServer>().get_path_id(scene).is_none() {
+                    if fresh == FRESH_MODELS_PER_FRAME {
+                        break;
+                    }
+                    fresh += 1;
+                }
+            }
+            spawn_prop(
+                world,
+                &standing.content,
+                &standing.area.heights,
+                placed,
+                root,
+            );
+            standing.next += 1;
+            stood += 1;
+        }
+        if standing.next < standing.area.props.len() {
+            world.entity_mut(root).insert(standing);
+        }
+    }
 }
 
 pub fn despawn(world: &mut World, scenery: Scenery) {

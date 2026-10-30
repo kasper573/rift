@@ -54,7 +54,7 @@ impl ContentFile for PropMaterialDef {
 
 /// Every prop material names a shader of the prop stage and fills only the parameters it
 /// declares, each with a value of its kind and within its range.
-pub fn check_all(loading: &mut Loading) {
+pub async fn check_all(loading: &mut Loading) {
     let content = loading.content();
     for (id, material) in loading.rows::<PropMaterialDef>(&content) {
         let mut check = RowCheck::default();

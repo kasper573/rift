@@ -172,7 +172,7 @@ impl Lighting {
 
 /// Every area's sky dome is painted by a shader of the sky stage, filled only with the parameters
 /// it declares, each with a value of its kind and within its range.
-pub fn check_dome(loading: &mut Loading) {
+pub async fn check_dome(loading: &mut Loading) {
     let content = loading.content();
     for (id, area) in loading.rows::<AreaDef>(&content) {
         let Some(dome) = &area.lighting.dome else {

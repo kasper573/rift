@@ -73,6 +73,12 @@ impl PartSpec {
         }
     }
 
+    /// Whether this is a folder of `.ext` files: where a file of that kind made for the bundle
+    /// goes.
+    pub fn keyed_as(&self, ext: &str) -> bool {
+        matches!(*self, PartSpec::Keyed { exts, .. } if exts.contains(&ext))
+    }
+
     pub fn describe(&self) -> String {
         match self {
             PartSpec::File { name, exts } => format!("{name}.{}", exts.join("|")),
@@ -123,14 +129,24 @@ impl<'a> Parts<'a> {
     pub fn image_size(&self, part: &str) -> Option<(u32, u32)> {
         let path = self.path(part);
         let bytes = self.folder.read(&path).ok()?;
-        super::media::image_size(&path, &bytes)
+        let checked = self.folder.checked(&path);
+        super::media::image_size(
+            &path,
+            checked.as_ref().map(|file| file.hash.as_str()),
+            &bytes,
+        )
     }
 
     /// What the model at `part` holds, when it reads.
     pub fn gltf_info(&self, part: &str) -> Option<GltfInfo> {
         let path = self.path(part);
         let bytes = self.folder.read(&path).ok()?;
-        super::media::gltf_info(&path, &bytes)
+        let checked = self.folder.checked(&path);
+        super::media::gltf_info(
+            &path,
+            checked.as_ref().map(|file| file.hash.as_str()),
+            &bytes,
+        )
     }
 
     /// How much the file at `part` weighs.

@@ -6,3 +6,8 @@ retry = 10
 
 [http]
 multiplexing = false
+
+# Every browser the client targets runs Wasm SIMD, and decoding and hashing content gain the most
+# from it.
+[target.wasm32-unknown-unknown]
+rustflags = ["-C", "target-feature=+simd128"]

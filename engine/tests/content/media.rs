@@ -1,5 +1,7 @@
+use engine::core::content::gltf::externalize;
+use engine::systems::area::prop::{PROP_GLB, PROP_TEXTURES};
 use serde_json::json;
-use testkit::{Game, glb, part_file, path, png, wav};
+use testkit::{Game, glb, glb_naming_image, glb_with_image_inside, part_file, path, png, wav};
 
 /// The rule and file of every error the game is refused for.
 fn refusals(game: Game) -> Vec<(&'static str, String)> {
@@ -45,6 +47,37 @@ fn a_model_that_does_not_read_as_a_gltf_binary_is_refused() {
         .model("orc", 1.0, json!([]))
         .file(&part_file("orc"), cut);
     assert_eq!(refusals(game), [("unreadable model", part_file("orc"))]);
+}
+
+#[test]
+fn a_models_images_are_png_files_beside_it_that_the_game_holds_never_kept_inside() {
+    let model = format!("{}/model.glb", path("prop", "oak"));
+    let oak = || Game::new().prop("oak", json!({ "type": "none" }));
+    let with_model = |game: Game, glb: Vec<u8>| game.part("prop", "oak", "model.glb", glb);
+    let bark = png(2, 2);
+
+    let inside = with_model(oak(), glb_with_image_inside("Oak Bark", &bark));
+    assert_eq!(refusals(inside), [("embedded image", model.clone())]);
+
+    let naming = with_model(oak(), glb_naming_image("textures/oak-bark.png"));
+    assert_eq!(refusals(naming), [("missing image", model.clone())]);
+    with_model(oak(), glb_naming_image("textures/oak-bark.png"))
+        .part("prop", "oak", "textures/oak-bark.png", bark.clone())
+        .load();
+
+    let taken = externalize(&glb_with_image_inside("Oak Bark", &bark), PROP_TEXTURES)
+        .expect("the image comes out");
+    assert_eq!(
+        taken.images,
+        [("textures/oak-bark.png".to_owned(), bark)],
+        "the image comes out as a PNG part named after it"
+    );
+    let mut externalized = with_model(oak(), taken.glb);
+    for (part, bytes) in taken.images {
+        externalized = externalized.part("prop", "oak", &part, bytes);
+    }
+    externalized.load();
+    assert_eq!(PROP_GLB.named("", "glb"), "model.glb");
 }
 
 #[test]

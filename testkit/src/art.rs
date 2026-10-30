@@ -2,9 +2,12 @@ use std::io::Cursor;
 
 use bevy_math::{Quat, Vec3};
 use engine::core::content::gltf::{
-    NodeTree, Rest, TreeNode, placeholder_body, placeholder_mesh, placeholder_rig, posed_body,
+    NodeTree, Rest, TreeNode, glb as write_glb, placeholder_body, placeholder_mesh,
+    placeholder_rig, posed_body,
 };
 use engine::core::time::Seconds;
+use gltf::json;
+use gltf::json::validation::USize64;
 
 /// A PNG of `width` × `height` transparent pixels: an image a row can name, the right size and no
 /// more.
@@ -30,6 +33,54 @@ pub fn pose_glb(tree: &NodeTree, name: &str, turns: &[(&str, Quat)]) -> Vec<u8> 
 /// A glTF binary of one triangle animated by `clips`, each named and as long as given.
 pub fn glb(clips: &[(&str, Seconds)]) -> Vec<u8> {
     placeholder_rig(clips)
+}
+
+/// A glTF binary of nothing to look at, keeping the PNG `png` inside it as its image `name`.
+pub fn glb_with_image_inside(name: &str, png: &[u8]) -> Vec<u8> {
+    let (mut root, mut bin) = opened(placeholder_rig(&[]));
+    while !bin.len().is_multiple_of(4) {
+        bin.push(0);
+    }
+    let view = root.push(json::buffer::View {
+        buffer: json::Index::new(0),
+        byte_length: USize64::from(png.len()),
+        byte_offset: Some(USize64::from(bin.len())),
+        byte_stride: None,
+        extensions: None,
+        extras: Default::default(),
+        name: None,
+        target: None,
+    });
+    bin.extend_from_slice(png);
+    root.buffers[0].byte_length = USize64::from(bin.len());
+    root.push(json::Image {
+        buffer_view: Some(view),
+        mime_type: Some(json::image::MimeType("image/png".to_owned())),
+        name: Some(name.to_owned()),
+        uri: None,
+        extensions: None,
+        extras: Default::default(),
+    });
+    write_glb(&root, bin)
+}
+
+/// A glTF binary of nothing to look at whose one image is the file at `uri` beside it.
+pub fn glb_naming_image(uri: &str) -> Vec<u8> {
+    let (mut root, bin) = opened(placeholder_rig(&[]));
+    root.push(json::Image {
+        buffer_view: None,
+        mime_type: None,
+        name: None,
+        uri: Some(uri.to_owned()),
+        extensions: None,
+        extras: Default::default(),
+    });
+    write_glb(&root, bin)
+}
+
+fn opened(glb: Vec<u8>) -> (json::Root, Vec<u8>) {
+    let read = gltf::Gltf::from_slice(&glb).expect("a placeholder reads");
+    (read.document.into_json(), read.blob.unwrap_or_default())
 }
 
 /// A glTF binary of `triangles` triangles animated by `clips`: a model as heavy as a test wants.

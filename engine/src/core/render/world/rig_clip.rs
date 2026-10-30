@@ -19,6 +19,7 @@ use bevy::reflect::{FromReflect, GetTypeRegistration, Typed};
 
 use crate::core::content::gltf::{self, ClipKeys, Keys, NodeTree};
 use crate::core::content::retarget;
+use crate::core::pace::Pace;
 
 /// A glTF file's tree of nodes and every clip it holds, read whole.
 #[derive(Asset, TypePath)]
@@ -27,10 +28,12 @@ pub struct GltfClips {
     pub clips: Vec<ClipKeys>,
 }
 
-/// Reads a glTF binary's clips whole when they are asked for as such: it claims no extension, so a
-/// glTF loaded as anything else is read as the renderer reads it.
+/// Reads a glTF binary's clips whole when they are asked for as such, a clip at a time at `pace`:
+/// it claims no extension, so a glTF loaded as anything else is read as the renderer reads it.
 #[derive(TypePath)]
-pub struct GltfClipsLoader;
+pub struct GltfClipsLoader {
+    pub pace: Pace,
+}
 
 impl AssetLoader for GltfClipsLoader {
     type Asset = GltfClips;
@@ -47,13 +50,14 @@ impl AssetLoader for GltfClipsLoader {
         reader.read_to_end(&mut bytes).await?;
         let unreadable =
             |error: String| std::io::Error::new(std::io::ErrorKind::InvalidData, error);
-        let info = gltf::inspect(&bytes).map_err(unreadable)?;
-        let clips = (0..info.clips.len())
-            .map(|index| gltf::clip_keys(&bytes, index))
-            .collect::<Result<_, _>>()
-            .map_err(unreadable)?;
+        let library = gltf::ClipLibrary::read(&bytes).map_err(unreadable)?;
+        let mut clips = Vec::with_capacity(library.clips());
+        for index in 0..library.clips() {
+            self.pace.breathe().await;
+            clips.push(library.keys(index).map_err(unreadable)?);
+        }
         Ok(GltfClips {
-            tree: info.tree,
+            tree: library.tree(),
             clips,
         })
     }
@@ -122,14 +126,19 @@ pub fn rig_clip(
     clip
 }
 
-/// Makes every pending clip whose file has been read, and gives up on one whose file can't be.
+/// Makes the pending clips whose files have been read, as many as the frame's slice allows, and
+/// gives up on one whose file can't be.
 pub fn make_pending(
     mut pending: ResMut<PendingClips>,
     files: Res<Assets<GltfClips>>,
     assets: Res<AssetServer>,
     mut clips: ResMut<Assets<AnimationClip>>,
+    pace: Res<Pace>,
 ) {
     pending.0.retain(|waiting| {
+        if pace.spent() {
+            return true;
+        }
         if assets.load_state(&waiting.file).is_failed() {
             warn!("could not read the clips of {:?}", waiting.file.path());
             return false;

@@ -43,7 +43,7 @@ pub fn register(app: &mut App) {
 
 /// Every vfx plays on sites its layers' stages take: a script names the site it plays a vfx on, the
 /// engine's fixtures and a status effect's vfx play on actors.
-pub fn check_sites(loading: &mut Loading) {
+pub async fn check_sites(loading: &mut Loading) {
     let content = loading.content();
     let mut played: Vec<(VfxId, &[SiteKind], String)> = Vec::new();
     for (id, script) in loading.rows::<ScriptDef>(&content) {

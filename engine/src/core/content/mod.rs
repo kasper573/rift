@@ -21,9 +21,9 @@ pub mod version;
 pub use bundle::{Bundle, PartSpec, Parts};
 pub use check::RowCheck;
 pub use files::{
-    CONFIG_FILE, FIXTURES_DIR, GameFile, GameFiles, NOTE_EXTENSION, SETTINGS_FILE, Shape,
-    bundle_of, bundle_tables, content_path, fields_file, name_of, numbered, parent_of, table_of,
-    valid_name,
+    CONFIG_FILE, FIXTURES_DIR, FileType, GameFile, GameFiles, Listing, NOTE_EXTENSION,
+    SETTINGS_FILE, Shape, bundle_of, bundle_tables, content_path, fields_file, list_files, name_of,
+    numbered, parent_of, table_of, valid_name,
 };
 pub use fixture::Fixture;
 pub use fresh::Nearby;
@@ -32,7 +32,7 @@ pub use key::key_of;
 pub use load::{
     CheckedFiles, ContentFolder, ContentRegistry, FileHash, FileHashes, FileWriter,
     FilesystemFolder, FolderEntry, JsonPart, LoadStep, LoadWarnings, Loading, MemoryFolder,
-    Reference, Settings, load, pointer_of, valid_key, write,
+    Reference, Settings, load, load_paced, pointer_of, valid_key, write,
 };
 pub use reader::{FolderReader, Unreadable, WrittenFiles};
 pub use report::{ContentProblem, ErrorPlace, LoadError, LoadReport, MISSING_FILE};

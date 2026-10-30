@@ -1,6 +1,7 @@
 mod areas;
 mod blueprints;
 mod files;
+mod image;
 mod load_errors;
 mod media;
 mod model;

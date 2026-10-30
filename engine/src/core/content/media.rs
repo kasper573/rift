@@ -1,11 +1,9 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::io::Cursor;
 use std::sync::{LazyLock, Mutex};
 
-use rayon::prelude::*;
-
-use super::gltf::{self, GltfInfo};
-use super::load::{FileHashes, Loading};
+use super::gltf::{self, GltfImage, GltfInfo};
+use super::load::{FileHash, FileHashes, Loading};
 use super::report::{ContentProblem, ErrorPlace};
 use crate::core::assets::AssetKind;
 use crate::core::audio;
@@ -35,15 +33,16 @@ struct MediaProblem {
 
 /// Every media file is decoded whole, as the game decodes it, so a file damaged anywhere fails the
 /// load rather than showing nothing in play.
-pub fn check_media(loading: &mut Loading) {
+pub async fn check_media(loading: &mut Loading) {
     let mut paths: Vec<String> = loading.media().to_vec();
     paths.extend(loading.media_parts());
     let folder = loading.folder();
     let hashes = loading.content().built::<FileHashes>().0.clone();
-    let checked: Vec<(String, MediaCheck)> = paths
-        .into_par_iter()
-        .map(|path| {
+    let checked: Vec<(String, MediaCheck)> = loading
+        .each(paths, |path| {
+            let checked_already = folder.checked(&path).is_some();
             let read = || match folder.read(&path) {
+                Ok(bytes) if checked_already => measure(&path, &bytes),
                 Ok(bytes) => decode(&path, &bytes),
                 Err(error) => Err(MediaProblem {
                     rule: "unreadable file",
@@ -57,7 +56,7 @@ pub fn check_media(loading: &mut Loading) {
             };
             (path, check)
         })
-        .collect();
+        .await;
     let mut sizes = HashMap::new();
     let mut models = HashMap::new();
     for (path, result) in checked {
@@ -66,6 +65,9 @@ pub fn check_media(loading: &mut Loading) {
                 sizes.insert(path, size);
             }
             Ok(Decoded::Model(info)) => {
+                for problem in image_problems(&path, &info, &hashes) {
+                    loading.file_error(path.clone(), ErrorPlace::WholeFile, problem);
+                }
                 models.insert(path, info);
             }
             Ok(Decoded::Plain) => {}
@@ -78,6 +80,53 @@ pub fn check_media(loading: &mut Loading) {
     }
     loading.built(ImageSizes(sizes));
     loading.built(GltfInfos(models));
+}
+
+/// What a model's images must be: PNG files beside it that the game holds, never kept inside it,
+/// so each is read at its own pace and only when the model is drawn.
+fn image_problems(
+    model: &str,
+    info: &GltfInfo,
+    held: &BTreeMap<String, FileHash>,
+) -> Vec<ContentProblem> {
+    let folder = model.rsplit_once('/').map_or("", |(folder, _)| folder);
+    let mut problems = Vec::new();
+    let embedded = info
+        .images
+        .iter()
+        .filter(|image| **image == GltfImage::Embedded)
+        .count();
+    if embedded > 0 {
+        problems.push(ContentProblem::new(
+            "embedded image",
+            format!(
+                "{embedded} {} kept inside the model",
+                if embedded == 1 { "image" } else { "images" }
+            ),
+            "the model's images as PNG files beside it, each named by its path from the model's folder",
+        ));
+    }
+    for image in &info.images {
+        let GltfImage::File(uri) = image else {
+            continue;
+        };
+        let path = if folder.is_empty() {
+            uri.clone()
+        } else {
+            format!("{folder}/{uri}")
+        };
+        let held = !uri.contains("..")
+            && AssetKind::of(uri) == Some(AssetKind::Image)
+            && held.contains_key(&path);
+        if !held {
+            problems.push(ContentProblem::new(
+                "missing image",
+                format!("the model names {uri}"),
+                "a PNG file beside the model that the game holds, as a part of its bundle",
+            ));
+        }
+    }
+    problems
 }
 
 /// Decoding the same bytes again finds the same, so each is decoded once per process however often
@@ -98,46 +147,40 @@ fn remembered(hash: &str, decode: impl FnOnce() -> MediaCheck) -> MediaCheck {
     check
 }
 
-/// The size in pixels of the image at `path` of `bytes`, when it decodes.
-pub(super) fn image_size(path: &str, bytes: &[u8]) -> Option<(u32, u32)> {
-    match decoded(path, bytes)? {
+/// The size in pixels of the image at `path` of `bytes`, hashed `hash` when known, when it
+/// decodes.
+pub(super) fn image_size(path: &str, hash: Option<&str>, bytes: &[u8]) -> Option<(u32, u32)> {
+    match decoded(path, hash, bytes)? {
         Decoded::Image(size) => Some(size),
         _ => None,
     }
 }
 
-/// What the model at `path` of `bytes` holds, when it reads.
-pub fn gltf_info(path: &str, bytes: &[u8]) -> Option<GltfInfo> {
-    match decoded(path, bytes)? {
+/// What the model at `path` of `bytes`, hashed `hash` when known, holds, when it reads.
+pub fn gltf_info(path: &str, hash: Option<&str>, bytes: &[u8]) -> Option<GltfInfo> {
+    match decoded(path, hash, bytes)? {
         Decoded::Model(info) => Some(info),
         _ => None,
     }
 }
 
-fn decoded(path: &str, bytes: &[u8]) -> Option<Decoded> {
-    let hash = blake3::hash(bytes).to_hex();
-    remembered(hash.as_str(), || decode(path, bytes)).ok()
+fn decoded(path: &str, hash: Option<&str>, bytes: &[u8]) -> Option<Decoded> {
+    let hash = hash.map_or_else(|| FileHash::of(bytes).hash, str::to_owned);
+    remembered(&hash, || decode(path, bytes)).ok()
 }
 
 /// Why the media file at `path` of `bytes` does not decode, when it does not.
 pub(super) fn problem_of(path: &str, bytes: &[u8]) -> Option<ContentProblem> {
-    let hash = blake3::hash(bytes).to_hex();
-    remembered(hash.as_str(), || decode(path, bytes))
+    remembered(&FileHash::of(bytes).hash, || decode(path, bytes))
         .err()
         .map(|problem| ContentProblem::new(problem.rule, problem.found, problem.expected))
 }
 
 fn decode(path: &str, bytes: &[u8]) -> MediaCheck {
     match AssetKind::of(path) {
-        Some(AssetKind::Image) => {
-            decode_png(bytes)
-                .map(Decoded::Image)
-                .map_err(|found| MediaProblem {
-                    rule: "unreadable image",
-                    found,
-                    expected: "a PNG that decodes",
-                })
-        }
+        Some(AssetKind::Image) => decode_png(bytes)
+            .map(Decoded::Image)
+            .map_err(unreadable_image),
         Some(AssetKind::Audio) => audio::loader::decode(bytes.to_vec())
             .and_then(audio::loader::DecodedAudio::into_sound)
             .map(|_| Decoded::Plain)
@@ -156,6 +199,26 @@ fn decode(path: &str, bytes: &[u8]) -> MediaCheck {
                 })
         }
         None => Ok(Decoded::Plain),
+    }
+}
+
+/// What a media file this build's loader already checked finds, read only as far as the game
+/// needs of it: an image's size from its header, a model's measure, nothing of a sound or a font.
+fn measure(path: &str, bytes: &[u8]) -> MediaCheck {
+    match AssetKind::of(path) {
+        Some(AssetKind::Image) => png_size(bytes)
+            .map(Decoded::Image)
+            .map_err(unreadable_image),
+        Some(AssetKind::Model) => decode(path, bytes),
+        Some(AssetKind::Audio) | None => Ok(Decoded::Plain),
+    }
+}
+
+fn unreadable_image(found: String) -> MediaProblem {
+    MediaProblem {
+        rule: "unreadable image",
+        found,
+        expected: "a PNG that decodes",
     }
 }
 
@@ -200,6 +263,14 @@ pub fn visible_columns(bytes: &[u8]) -> Result<Option<VisiblePixelColumns>, Stri
         last,
         image_width: frame.width,
     }))
+}
+
+fn png_size(bytes: &[u8]) -> Result<(u32, u32), String> {
+    let reader = png::Decoder::new(Cursor::new(bytes))
+        .read_info()
+        .map_err(|error| error.to_string())?;
+    let info = reader.info();
+    Ok((info.width, info.height))
 }
 
 fn decode_png(bytes: &[u8]) -> Result<(u32, u32), String> {

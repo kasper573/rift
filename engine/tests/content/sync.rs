@@ -38,7 +38,7 @@ fn a_first_visit_fetches_everything_keeping_only_it_and_a_later_visit_only_the_m
     server.forget_requests();
     let again = run(&server, &store).expect("the next visit syncs");
     assert_eq!(server.requests.borrow().as_slice(), ["/content/manifest"]);
-    assert!(again.same_as(&synced));
+    assert!(again.manifest.same_content(&synced.manifest));
     assert_eq!(again.assets.len(), synced.assets.len());
 }
 
@@ -183,7 +183,7 @@ fn a_deploy_fetches_only_what_changed_and_drops_what_it_replaced() {
         v2.changed_assets(&v1),
         std::slice::from_ref(&old_sound.path)
     );
-    assert!(!v2.same_as(&v1));
+    assert!(!v2.manifest.same_content(&v1.manifest));
     let kept: HashSet<String> = store.hashes().into_iter().collect();
     assert!(!kept.contains(&old_sound.hash));
     assert!(!kept.contains(&v1.manifest.rows.hash));

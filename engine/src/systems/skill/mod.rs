@@ -773,7 +773,7 @@ fn used_rank(cx: &FlowCx) -> Rank {
 
 /// The rules a skill's script keeps: an active skill answers `used` and no aspect event, a passive
 /// one the other way around.
-pub fn check_all(loading: &mut Loading) {
+pub async fn check_all(loading: &mut Loading) {
     let content = loading.content();
     let scripts = content.built::<RiftScripts>();
     for (id, def) in loading.rows::<SkillDef>(&content) {

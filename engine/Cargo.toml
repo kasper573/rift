@@ -66,7 +66,6 @@ bevy = { workspace = true, features = [
     "bevy_text",
     "bevy_window",
     "hdr",
-    "png",
     "webgl2",
     "web",
 ] }
@@ -175,6 +174,7 @@ tempfile = "3"
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 bevy = { workspace = true, features = ["reflect_auto_register"] }
 getrandom = { version = "0.4", features = ["wasm_js"] }
+blake3 = { version = "1", features = ["wasm32_simd"] }
 
 [lints]
 workspace = true

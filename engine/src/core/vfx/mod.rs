@@ -448,7 +448,7 @@ impl VfxDef {
     }
 }
 
-fn check_all(loading: &mut Loading) {
+async fn check_all(loading: &mut Loading) {
     let content = loading.content();
     let sizes = content.built::<ImageSizes>();
     for (id, def) in loading.rows::<VfxDef>(&content) {

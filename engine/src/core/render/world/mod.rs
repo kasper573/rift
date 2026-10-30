@@ -100,8 +100,9 @@ impl Plugin for WorldScenePlugin {
 }
 
 /// Whether anything the world draws is still on its way to standing: a model loading or not yet
-/// spawned, a ground's pictures, a strewn prop, or a body's skin waiting on its rig or its paint.
-/// A view is shown only once nothing is, so it is first seen whole.
+/// spawned, a texture a model draws with still decoding, a ground's pictures, a strewn prop, or a
+/// body's skin waiting on its rig or its paint. A view is shown only once nothing is, so it is
+/// first seen whole.
 pub fn readying(world: &mut World) -> bool {
     let waiting = world
         .query_filtered::<(), Or<(
@@ -117,9 +118,20 @@ pub fn readying(world: &mut World) -> bool {
         .iter(world)
         .map(|(root, instance)| (root.0.id(), instance.map(|instance| **instance)))
         .collect();
-    let (Some(assets), Some(spawner)) = (
+    let mut dressed = world.query::<&MeshMaterial3d<material::WorldMaterial>>();
+    let textures: Vec<Handle<Image>> = match world.get_resource::<Assets<material::WorldMaterial>>()
+    {
+        Some(materials) => dressed
+            .iter(world)
+            .filter_map(|dressed| materials.get(&dressed.0))
+            .flat_map(|material| material::textures(&material.base).cloned())
+            .collect(),
+        None => Vec::new(),
+    };
+    let (Some(assets), Some(spawner), Some(images)) = (
         world.get_resource::<AssetServer>(),
         world.get_resource::<WorldInstanceSpawner>(),
+        world.get_resource::<Assets<Image>>(),
     ) else {
         return waiting;
     };
@@ -128,6 +140,9 @@ pub fn readying(world: &mut World) -> bool {
             !assets.load_state(model).is_failed()
                 && instance.is_none_or(|instance| !spawner.instance_is_ready(instance))
         })
+        || textures
+            .iter()
+            .any(|texture| images.get(texture).is_none() && !assets.load_state(texture).is_failed())
 }
 
 /// The assets of a kind dropped since last asked, so what a cache made from them can go too.
