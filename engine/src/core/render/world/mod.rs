@@ -78,6 +78,12 @@ impl Plugin for WorldScenePlugin {
         )
         .add_systems(
             PostUpdate,
+            cover::cull_strewn_chunks
+                .after(bevy::camera::visibility::VisibilitySystems::UpdateFrusta)
+                .before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate),
+        )
+        .add_systems(
+            PostUpdate,
             (decal::lay_decals, billboard::face_camera)
                 .run_if(resource_exists::<CameraRig>)
                 .after(camera::place)

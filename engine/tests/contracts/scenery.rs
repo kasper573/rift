@@ -4,9 +4,11 @@ use std::time::{Duration, Instant};
 
 use bevy::animation::AnimationPlugin;
 use bevy::asset::AssetPlugin;
-use bevy::camera::visibility::RenderLayers;
+use bevy::camera::CameraProjection;
+use bevy::camera::visibility::{RenderLayers, VisibilityPlugin};
 use bevy::gltf::{Gltf, GltfPlugin};
 use bevy::light::atmosphere::ScatteringMedium;
+use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
 use bevy::shader::Shader;
 use bevy::world_serialization::WorldSerializationPlugin;
@@ -89,12 +91,15 @@ fn client(game: Game, folder: &Path) -> (App, Arc<Area>) {
         WorldSerializationPlugin,
         AnimationPlugin,
         GltfPlugin::default(),
+        TransformPlugin,
+        VisibilityPlugin,
     ))
     .init_asset::<Shader>()
     .init_asset::<Mesh>()
     .init_asset::<Image>()
     .init_asset::<StandardMaterial>()
     .init_asset::<ScatteringMedium>()
+    .init_asset::<SkinnedMeshInverseBindposes>()
     .add_plugins((VfxMaterialsPlugin, WorldScenePlugin))
     .insert_resource(content);
     app.finish();
@@ -179,5 +184,42 @@ fn however_thickly_a_prop_is_strewn_its_copies_hold_no_more_mesh_than_one() {
         (thick.meshes, thick.vertices),
         (sparse.meshes, sparse.vertices),
         "the copies share their prop's mesh"
+    );
+}
+
+#[test]
+fn a_camera_draws_the_strewn_copies_it_sees_and_passes_over_the_rest() {
+    let folder = tempfile::tempdir().expect("a scratch folder");
+    let (mut app, area) = client(field(0.0016), folder.path());
+    let corner = Vec3::new(2.0, 0.0, 2.0);
+    let eye = Transform::from_translation(corner + Vec3::Y * 6.0).looking_at(corner, Vec3::Z);
+    let lens = PerspectiveProjection {
+        fov: 0.5,
+        ..Default::default()
+    };
+    app.world_mut().spawn((
+        Camera3d::default(),
+        lens.compute_frustum(&GlobalTransform::from(eye)),
+        Projection::Perspective(lens),
+        eye,
+    ));
+    stand(&mut app, &area);
+    let world = app.world_mut();
+    let copies: Vec<(Vec3, bool)> = world
+        .query_filtered::<(&GlobalTransform, &InheritedVisibility), With<MeshMaterial3d<CoverMaterial>>>()
+        .iter(world)
+        .map(|(placed, shown)| (placed.translation(), shown.get()))
+        .collect();
+    let (near, far): (Vec<_>, Vec<_>) = copies
+        .iter()
+        .partition(|(at, _)| at.with_y(0.0).distance(corner) < 1.5);
+    assert!(
+        !near.is_empty() && near.iter().all(|(_, shown)| *shown),
+        "every copy under the camera is drawn: {near:?}"
+    );
+    assert!(
+        far.iter()
+            .any(|(at, shown)| at.with_y(0.0).distance(corner) > 12.0 && !*shown),
+        "copies across the field, out of the camera's view, are passed over"
     );
 }

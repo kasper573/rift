@@ -6,7 +6,7 @@
 //! stands; the rest of its marks and its tint ride on its tag.
 
 use bevy::asset::RenderAssetUsages;
-use bevy::camera::primitives::{Aabb, MeshAabb};
+use bevy::camera::primitives::{Aabb, Frustum, MeshAabb};
 use bevy::color::Mix;
 use bevy::gltf::{Gltf, GltfMaterial, GltfMesh, GltfNode};
 use bevy::light::NotShadowCaster;
@@ -450,7 +450,14 @@ pub(super) fn strew_loaded(
             // be walked every frame.
             for places in &strewing.chunks {
                 let chunk = commands
-                    .spawn((Transform::default(), Visibility::default(), ChildOf(entity)))
+                    .spawn((
+                        StrewnChunk {
+                            bounds: enclosing(places, &bounds),
+                        },
+                        Transform::default(),
+                        Visibility::default(),
+                        ChildOf(entity),
+                    ))
                     .id();
                 let copies: Vec<_> = places
                     .iter()
@@ -470,6 +477,55 @@ pub(super) fn strew_loaded(
             }
         }
     }
+}
+
+/// A chunk of a piece's strewn copies, culled as one by [`cull_strewn_chunks`]: a view sees only a
+/// few of an area's chunks, and the copies of the rest are too many to test one by one each frame.
+#[derive(Component)]
+pub(super) struct StrewnChunk {
+    bounds: Aabb,
+}
+
+/// Hides every chunk of strewn copies no camera sees, so its copies are passed over unculled.
+pub(super) fn cull_strewn_chunks(
+    cameras: Query<(&Camera, &Frustum), With<Camera3d>>,
+    mut chunks: Query<(&StrewnChunk, &GlobalTransform, &mut Visibility)>,
+) {
+    for (chunk, placed, mut visibility) in &mut chunks {
+        let seen = cameras.iter().all(|(camera, _)| !camera.is_active)
+            || cameras.iter().any(|(camera, frustum)| {
+                camera.is_active
+                    && frustum.intersects_obb(&chunk.bounds, &placed.affine(), true, false)
+            });
+        visibility.set_if_neq(if seen {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        });
+    }
+}
+
+/// The box around every copy at `places` of a mesh within `bounds`.
+fn enclosing(places: &[Place], bounds: &Aabb) -> Aabb {
+    let (low, high) = places
+        .iter()
+        .flat_map(|place| {
+            let matrix = place.transform.to_matrix();
+            corners(bounds).map(move |corner| matrix.transform_point3(corner))
+        })
+        .fold(
+            (Vec3::splat(f32::INFINITY), Vec3::splat(f32::NEG_INFINITY)),
+            |(low, high), point| (low.min(point), high.max(point)),
+        );
+    Aabb::from_min_max(low, high)
+}
+
+fn corners(bounds: &Aabb) -> impl Iterator<Item = Vec3> {
+    let (center, half) = (Vec3::from(bounds.center), Vec3::from(bounds.half_extents));
+    (0..8).map(move |corner| {
+        let side = |bit: u32| if corner & bit == 0 { -1.0 } else { 1.0 };
+        center + half * Vec3::new(side(1), side(2), side(4))
+    })
 }
 
 impl StrewnAssets<'_> {
