@@ -77,26 +77,6 @@ Code must not depend on arbitrary game content, so the same server and client ca
 - Run every cargo build or test inside a memory-capped scope of its own, so a runaway compile is killed alone and never takes the session that spawned it down with it: on Linux, `systemd-run --user --scope -q -p MemoryMax=<cap> -p MemorySwapMax=0 cargo …` (the recipes in the Justfile run plain cargo; wrap the `just` call the same way). The cap is yours to choose for the machine you are on: assume the machine is yours alone, so the cap need only leave the session enough to survive, and take less when you know it is shared, such as with other agents at work on it. A process over the cap dies with "Killed"; rerun it with fewer jobs (`CARGO_BUILD_JOBS`) rather than squeezing the session.
 - Clean up unused cargo build output: `target/` grows by tens of gigabytes across profiles and feature sets and the disk is shared with everything else here. After a task, `cargo clean -p <crate>` for crates whose artifacts are stale, or `cargo clean` outright when `du -sh target` passes 50 GB.
 
-## Time efficiency
-
-Treat the task's time as its scarcest resource, and every wait as a cost to cut. Before each step, ask what
-it will make you wait for, whether all of that is needed for what you are about to learn, and what else
-you could do while it runs. This is a way of working for every phase of a task, not a checklist: the
-examples below show the thinking, and the same thinking applies to whatever a task brings.
-
-- Never sit idle on something slow. Start it in the background and do the work that doesn't depend on it:
-  a dist, a bench or a CI run is time to write the next change, read code, or prepare what follows.
-- Build and run only what the next question needs. Every binary, every bench part or the whole suite
-  answers questions you aren't asking yet. Here, `just dist target/dist desktop` leaves out the browser
-  client, whose whole-program optimisation is most of a dist's time, and `rift bench <game> --only …` runs
-  only the parts a change can move. The whole set belongs to the final verification.
-- Use what sits idle. Work that doesn't contend can run at once: here, `just lint` and `just test` build
-  the dev profile and `just dist` and the benches release, so they don't wait on each other's build, as
-  long as memory allows both.
-- When something keeps costing time, remove the cause rather than paying it again: a recipe that builds
-  too much, a missing switch, a check that could be narrower. Tooling that spares every later task the
-  same wait is worth adding.
-
 ## Verification
 
 Before you start work on a task run benchmarks via `just bench` and save the results to a temporary file.
