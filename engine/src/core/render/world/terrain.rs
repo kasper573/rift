@@ -220,18 +220,18 @@ fn stack(side: u32, pictures: &[RgbaImage]) -> Image {
         })
         .flatten()
         .collect();
-    let mut image = Image::new(
+    let mut image = Image::new_uninit(
         Extent3d {
             width: side,
             height: side,
             depth_or_array_layers: layers,
         },
         TextureDimension::D2,
-        data,
         TextureFormat::Rgba8UnormSrgb,
         RenderAssetUsages::RENDER_WORLD,
     );
     image.texture_descriptor.mip_level_count = levels;
+    image.data = Some(data);
     image.data_order = TextureDataOrder::LayerMajor;
     image.texture_view_descriptor = Some(TextureViewDescriptor {
         dimension: Some(TextureViewDimension::D2Array),
