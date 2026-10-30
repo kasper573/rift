@@ -24,7 +24,10 @@ profiling = ["bevy/debug", "bevy/trace_chrome"]
 # crates (bevy's render stack, egui, web-sys, kira, …) also compile natively — wasm imports become
 # panicking stubs and the linker strips what the native binaries never call.
 [dependencies]
+# `multi_threaded` on the web too, where everything still runs on one thread: without it bevy
+# propagates every transform in the world every frame, rather than only those under a change.
 bevy = { workspace = true, features = [
+    "multi_threaded",
     "async_executor",
     "bevy_asset",
     "bevy_log",
@@ -143,7 +146,7 @@ wgpu = { workspace = true, features = ["counters"] }
 # Native-only: crates the server, desktop and lint binaries need that have no wasm build (tokio, axum, …),
 # plus the desktop windowing features the client code needs to compile natively.
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-bevy = { workspace = true, features = ["x11", "multi_threaded"] }
+bevy = { workspace = true, features = ["x11"] }
 axum.workspace = true
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 ctrlc.workspace = true
