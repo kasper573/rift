@@ -91,9 +91,11 @@ jobs:
           name: archives-${{ matrix.platform }}
           path: target/archives/
           compression-level: 0
+          retention-days: 1
 
   # One release per push to main, tagged by its day and commit, holding every platform's archives.
-  # Releases are never replaced or deleted, so a game pinned to any of them keeps working.
+  # Releases are never replaced. Older ones are thinned out as the README's retention schedule promises,
+  # and only once a newer release is out.
   release:
     needs: [lint, test, binaries]
     if: ${{ github.ref == 'refs/heads/main' }}
@@ -116,3 +118,22 @@ jobs:
           gh release create "$tag" archives/* --target "$GITHUB_SHA" \
             --title "rift $tag" \
             --notes "Every binary of rift, built from $GITHUB_SHA: an archive per binary and platform, and the browser client's wasm-client.tar.gz. Extract any of them into one folder to use them together."
+      - name: Prune old releases
+        shell: bash
+        run: |
+          gh release list --exclude-drafts --limit 1000 --json tagName,publishedAt --jq '
+            sort_by(.publishedAt) | reverse
+            | reduce .[] as $release ({kept: {}, pruned: []};
+                ($release.publishedAt[:10]) as $day
+                | ($release.publishedAt[:7]) as $month
+                | ((now - ($release.publishedAt | fromdateiso8601)) / 86400) as $age_days
+                | (if $age_days < 2 then true
+                   elif $age_days < 30 then .kept[$day] | not
+                   else .kept[$month] | not end) as $keep
+                | .kept[$day] = true
+                | .kept[$month] = true
+                | if $keep then . else .pruned += [$release.tagName] end)
+            | .pruned[]' |
+            while read -r tag; do
+              gh release delete "$tag" --cleanup-tag --yes
+            done

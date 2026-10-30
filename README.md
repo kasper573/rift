@@ -25,7 +25,13 @@ alone.
 ## Releases
 
 Every push to `main` publishes a release, tagged by its day and commit (`2026.10.29-a06ecda6`). Releases
-are never replaced, so a game can pin one and move on when it chooses. Each release holds an archive per
+are never replaced, and each publish thins out the older ones, deleting them along with their tags:
+
+- every release less than 2 days old stays;
+- from 2 to 30 days old, only the last release of each day stays;
+- after that, only the last release of each month stays.
+
+A game pins a release and moves on when it chooses, within that schedule. Each release holds an archive per
 binary and platform, `<binary>-<platform>.tar.gz` (`.zip` on Windows), each holding just the binary:
 
 | Binary | Platforms | What it is |
