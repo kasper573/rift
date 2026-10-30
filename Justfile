@@ -74,6 +74,11 @@ archives platform binaries="target/dist" out="target/archives":
 bench *args: dist
     target/dist/rift bench {{args}}
 
+[doc("Signs a player in on the website and checks the browser client draws the game, on the binaries folder BINARIES, else a fresh `just dist`.")]
+smoke binaries="":
+    {{ if binaries == "" { "just dist" } else { "true" } }}
+    cargo run --release --quiet -p smoke -- {{ if binaries == "" { "target/dist" } else { quote(binaries) } }}
+
 [doc("game-server-profiling on a generated game under load, sampled by perf into target/profile.")]
 profile *args: dist
     target/dist/rift profile --out target/profile {{args}}

@@ -137,7 +137,7 @@ pub(crate) async fn sign_out(State(app): State<Arc<App>>, jar: CookieJar) -> Res
 
 /// Where the site signs its visitors in and out. The keys and the token endpoint are what the
 /// web-server itself reaches; the other pages are what a browser opens.
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct SignInSettings {
     pub issuer: IssuerUrl,
     pub client_id: ClientId,

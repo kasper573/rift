@@ -1,0 +1,24 @@
+[package]
+name = "smoke"
+version.workspace = true
+edition.workspace = true
+description = "The website and the browser client smoke-tested together from a binaries folder"
+publish = false
+
+[dependencies]
+chromiumoxide = "0.9"
+engine = { path = "../engine" }
+futures = "0.3"
+image = { version = "0.25", default-features = false, features = ["png"] }
+oauth2-test-server = "0.2.3"
+oidc = { path = "../oidc" }
+openidconnect = "4"
+serde.workspace = true
+serde_json.workspace = true
+tempfile = "3"
+tokio.workspace = true
+ureq.workspace = true
+web-server = { path = "../web-server" }
+
+[lints]
+workspace = true

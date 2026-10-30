@@ -74,12 +74,15 @@ jobs:
         with:
           deps: dist
           cache: dist-${{ matrix.platform }}
-          recipes: dist wasm archives
+          recipes: dist wasm archives smoke
       - name: Build the binaries
         shell: bash
         run: |
           just dist target/dist
           just archives "${{ matrix.platform }}" target/dist target/archives
+      - name: Smoke-test the website and the browser client
+        if: ${{ matrix.platform == 'linux-x86_64' }}
+        run: just smoke target/dist
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         if: ${{ github.ref == 'refs/heads/main' }}
         with:

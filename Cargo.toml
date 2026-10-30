@@ -10,6 +10,7 @@ members = [
     "oidc",
     "service",
     "web-server",
+    "smoke",
 ]
 
 [workspace.package]

@@ -11,7 +11,7 @@ use std::time::Duration;
 use axum::Router;
 use axum::routing::get;
 use openidconnect::RedirectUrl;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use service::GameInfo;
 use tower_http::services::ServeDir;
 
@@ -20,7 +20,7 @@ pub const ENV_PREFIX: &str = "RIFT_WEB_SERVER_";
 /// The prefix of the sign-in settings the site hands desktop clients in their `rift.env`.
 pub const DESKTOP_SIGN_IN_ENV_PREFIX: &str = "RIFT_WEB_SERVER_DESKTOP_AUTH_";
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize)]
 pub struct WebServerConfig {
     pub bind: IpAddr,
     pub port: u16,

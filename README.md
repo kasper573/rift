@@ -17,6 +17,7 @@ alone.
 | [`oidc/`](oidc), [`service/`](service) | Sign-in through any OpenID Connect provider, and what the HTTP services share: metrics and profiles. |
 | [`ui/`](ui) | The interface the editor and the game share: colors, shapes, text roles, fonts and every general-purpose egui component, so both look and behave alike. |
 | [`bevy/`](bevy) | Bevy plugins that know nothing of rift: a server-authoritative terminal. |
+| [`smoke/`](smoke) | The website and the browser client, smoke-tested together: a player signs in through a stand-in identity provider and the canvas must come to look like `smoke/snapshot.png`. |
 | [`testkit/`](testkit) | What the tests and the server bench stand on: small games declared in code, and a bare world of only the systems a test runs. |
 
 ## Releases
@@ -50,6 +51,7 @@ rift ask <game>                      # the probe's questions about the game itse
 rift render area <game> <shot> <out> # a picture of an area, drawn off screen through the world's own camera
 rift bench                           # the server's capacity, on a large game generated in code
 rift bench <game>                    # …on the game, then the desktop client's frame rate and memory (Linux)
+rift bench <game> --only memory      # …only the parts named: server, client, memory
 rift loadtest --http <url> --ws <url> [count]
 rift profile --out <dir> [game]      # game-server-profiling under load, sampled by perf (Linux)
 rift schema probe                    # the JSON Schema of the desktop client's probe
@@ -142,6 +144,7 @@ just dist             # this machine's binaries, as a release lays them out, in 
 just bench            # the server bench on the generated game
 just lint             # rustfmt, clippy, the repo's own lints, and `rift check` on the editor's templates
 just test             # every crate's tests
+just smoke            # sign in on the website and see the browser client draw the game (Chrome)
 ```
 
 ## Tests
