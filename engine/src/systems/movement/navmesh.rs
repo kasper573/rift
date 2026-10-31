@@ -1,3 +1,5 @@
+use std::ops::Range;
+
 use glam::Vec2;
 use polyanya::{Coords, Layer, Mesh, Polygon, Triangulation, Vertex};
 use rayon::prelude::*;
@@ -16,11 +18,51 @@ pub const AGENT_RADIUS: Meters = Meters(0.35);
 pub struct NavMesh {
     bounds: Rect<Meters>,
     mesh: Mesh,
-    polygons: Vec<Vec<Pos<Meters>>>,
+    /// Every polygon's corners one after another, each going round counter-clockwise: polygon `i`
+    /// holds those from `starts[i]` up to `starts[i + 1]`.
+    corners: Vec<Pos<Meters>>,
+    starts: Vec<u32>,
     islands: Vec<Island>,
-    triangles: Vec<Triangle>,
-    /// The triangles by the ground they cover, so a clip passes over only those near it.
+    /// The polygons by the ground they cover, so a clip or a search passes over only those near it.
     index: SpatialIndex,
+    by_area: ByArea,
+}
+
+/// The polygons island by island, each with the ground of every one up to it, so a draw by area
+/// halves its way to a polygon rather than weighing them all.
+struct ByArea {
+    polygons: Vec<u32>,
+    reach: Vec<f64>,
+    /// Where each island's polygons lie among them.
+    islands: Vec<Range<usize>>,
+}
+
+impl ByArea {
+    fn of<'a>(islands: &[Island], outline: impl Fn(usize) -> &'a [Pos<Meters>]) -> ByArea {
+        let mut polygons: Vec<u32> = (0..islands.len() as u32).collect();
+        polygons.sort_by_key(|&polygon| islands[polygon as usize].0);
+        let mut total = 0.0;
+        let reach: Vec<f64> = polygons
+            .iter()
+            .map(|&polygon| {
+                total += f64::from(area(outline(polygon as usize)));
+                total
+            })
+            .collect();
+        let count = islands.iter().map(|island| island.0 + 1).max().unwrap_or(0);
+        let ranges = (0..count)
+            .map(|island| {
+                let start = polygons.partition_point(|&p| islands[p as usize].0 < island);
+                let end = polygons.partition_point(|&p| islands[p as usize].0 <= island);
+                start..end
+            })
+            .collect();
+        ByArea {
+            polygons,
+            reach,
+            islands: ranges,
+        }
+    }
 }
 
 /// A stretch of ground connected within itself and cut off from the rest.
@@ -51,42 +93,38 @@ impl NavMesh {
         mesh.reorder_neighbors_ccw_and_fix_corners();
         mesh.update_is_one_way();
         mesh.merge_polygons();
+        fit(&mut mesh.layers[0]);
         mesh.search_delta = LOCATE_FUZZ / (LOCATE_RINGS - 1) as f32;
         mesh.search_steps = LOCATE_RINGS;
         mesh.bake();
         let layer = &mesh.layers[0];
-        let polygons: Vec<Vec<Pos<Meters>>> = layer
-            .polygons
-            .iter()
-            .map(|polygon| {
+        let mut corners: Vec<Pos<Meters>> = Vec::new();
+        let mut starts: Vec<u32> = Vec::with_capacity(layer.polygons.len() + 1);
+        for polygon in &layer.polygons {
+            starts.push(corners.len() as u32);
+            corners.extend(
                 polygon
                     .vertices
                     .iter()
-                    .map(|&vertex| pos(layer.vertices[vertex as usize].coords))
-                    .collect()
-            })
-            .collect();
+                    .map(|&vertex| pos(layer.vertices[vertex as usize].coords)),
+            );
+        }
+        starts.push(corners.len() as u32);
         let islands = islands(layer);
-        let triangles: Vec<Triangle> = polygons
-            .iter()
-            .enumerate()
-            .flat_map(|(index, outline)| {
-                fan(outline).map(move |corners| Triangle {
-                    corners,
-                    bounds: Rect::from_points(corners),
-                    polygon: index,
-                })
-            })
-            .collect();
-        let mut index = SpatialIndex::new(TRIANGLE_CELL);
-        index.refile(triangles.iter().map(|triangle| triangle.bounds));
+        let outline =
+            |polygon: usize| &corners[starts[polygon] as usize..starts[polygon + 1] as usize];
+        let count = starts.len() - 1;
+        let mut index = SpatialIndex::new(POLYGON_CELL);
+        index.refile((0..count).map(|polygon| Rect::from_points(outline(polygon))));
+        let by_area = ByArea::of(&islands, outline);
         NavMesh {
             bounds,
             mesh,
-            polygons,
+            corners,
+            starts,
             islands,
-            triangles,
             index,
+            by_area,
         }
     }
 
@@ -95,12 +133,12 @@ impl NavMesh {
     }
 
     pub fn is_empty(&self) -> bool {
-        self.polygons.is_empty()
+        self.polygon_count() == 0
     }
 
     /// The convex polygons the mesh is made of, each going round counter-clockwise.
     pub fn polygons(&self) -> impl Iterator<Item = &[Pos<Meters>]> {
-        self.polygons.iter().map(Vec::as_slice)
+        (0..self.polygon_count()).map(|polygon| self.outline(polygon))
     }
 
     pub fn walkable(&self, at: Pos<Meters>) -> bool {
@@ -132,21 +170,14 @@ impl NavMesh {
     fn pieces_within(&self, bounds: Rect<Meters>) -> impl Iterator<Item = Vec<Pos<Meters>>> + '_ {
         let clip = corners(bounds);
         self.polygons_within(bounds).filter_map(move |polygon| {
-            let piece = clip_polygon(&self.polygons[polygon], &clip);
+            let piece = clip_polygon(self.outline(polygon), &clip);
             (area(&piece) > AREA_EPSILON).then_some(piece)
         })
     }
 
-    /// The polygons with a triangle filed within `reach`, each once.
+    /// The polygons that may reach into `reach`, each once.
     fn polygons_within(&self, reach: Rect<Meters>) -> impl Iterator<Item = usize> + '_ {
-        let mut polygons: Vec<usize> = self
-            .index
-            .within(reach)
-            .map(|triangle| self.triangles[triangle].polygon)
-            .collect();
-        polygons.sort_unstable();
-        polygons.dedup();
-        polygons.into_iter()
+        self.index.within(reach)
     }
 
     /// The corners of the shortest walk from `from` to `to`, `to` last, or none when no walk leads
@@ -165,7 +196,7 @@ impl NavMesh {
         if self.walkable(at) {
             return Some(at);
         }
-        let mut within = TRIANGLE_CELL;
+        let mut within = POLYGON_CELL;
         loop {
             let reach = Rect::from_points([
                 at - Offset::new(within.0, within.0),
@@ -173,7 +204,7 @@ impl NavMesh {
             ]);
             let found = self
                 .polygons_within(reach)
-                .flat_map(|polygon| edges(&self.polygons[polygon]))
+                .flat_map(|polygon| edges(self.outline(polygon)))
                 .map(|(a, b)| closest_on_segment(a, b, at))
                 .min_by(|a, b| a.distance(at).0.total_cmp(&b.distance(at).0));
             match found {
@@ -224,11 +255,7 @@ impl NavMesh {
         rng: &mut Rng,
         fits: impl Fn(Pos<Meters>) -> bool,
     ) -> Option<Pos<Meters>> {
-        draw(
-            rng,
-            self.triangles.iter().map(|triangle| triangle.corners),
-            fits,
-        )
+        self.draw_by_area(rng, 0..self.by_area.polygons.len(), fits)
     }
 
     pub fn random_point_within(
@@ -248,14 +275,7 @@ impl NavMesh {
         fits: impl Fn(Pos<Meters>) -> bool,
     ) -> Option<Pos<Meters>> {
         let island = self.island(from)?;
-        draw(
-            rng,
-            self.triangles
-                .iter()
-                .filter(|triangle| self.islands[triangle.polygon] == island)
-                .map(|triangle| triangle.corners),
-            fits,
-        )
+        self.draw_by_area(rng, self.by_area.islands[island.0].clone(), fits)
     }
 
     pub fn random_reachable_within(
@@ -313,25 +333,62 @@ impl NavMesh {
             .or_else(|| self.mesh.get_closest_point(at))
     }
 
-    /// The triangles of the polygons `kept`, cut down to the convex `clip`.
+    /// The polygons `kept`, cut down to the convex `clip`, as triangles.
     fn clipped(&self, clip: &[Pos<Meters>], kept: impl Fn(usize) -> bool) -> Vec<[Pos<Meters>; 3]> {
         let reach = Rect::from_points(clip);
-        self.index
-            .within(reach)
-            .map(|index| &self.triangles[index])
-            .filter(|triangle| triangle.bounds.intersects(&reach) && kept(triangle.polygon))
-            .flat_map(|triangle| {
-                let piece = clip_polygon(&triangle.corners, clip);
+        self.polygons_within(reach)
+            .filter(|&polygon| kept(polygon))
+            .flat_map(|polygon| {
+                let piece = clip_polygon(self.outline(polygon), clip);
                 fan(&piece).collect::<Vec<_>>()
             })
             .collect()
     }
-}
 
-struct Triangle {
-    corners: [Pos<Meters>; 3],
-    bounds: Rect<Meters>,
-    polygon: usize,
+    fn polygon_count(&self) -> usize {
+        self.starts.len().saturating_sub(1)
+    }
+
+    fn outline(&self, polygon: usize) -> &[Pos<Meters>] {
+        &self.corners[self.starts[polygon] as usize..self.starts[polygon + 1] as usize]
+    }
+
+    /// A point that `fits` on the polygons at `range` of those by area, each spot as likely as any
+    /// other of the same size.
+    fn draw_by_area(
+        &self,
+        rng: &mut Rng,
+        range: Range<usize>,
+        fits: impl Fn(Pos<Meters>) -> bool,
+    ) -> Option<Pos<Meters>> {
+        let by_area = &self.by_area;
+        let (start, end) = (range.start, range.end);
+        if start >= end {
+            return None;
+        }
+        let floor = if start == 0 {
+            0.0
+        } else {
+            by_area.reach[start - 1]
+        };
+        let ceiling = by_area.reach[end - 1];
+        if ceiling - floor <= f64::from(AREA_EPSILON) {
+            return None;
+        }
+        for _ in 0..DRAWS {
+            let target = floor + f64::from(rng.rand_float()) * (ceiling - floor);
+            let index = (start
+                + by_area.reach[start..end].partition_point(|&reach| reach < target))
+            .min(end - 1);
+            let polygon = by_area.polygons[index] as usize;
+            if let Some(point) = point_in_outline(rng, self.outline(polygon))
+                && fits(point)
+            {
+                return Some(point);
+            }
+        }
+        None
+    }
 }
 
 /// How far off a point may lie and still be found on the mesh, so a walk ending on a polygon's edge
@@ -343,7 +400,7 @@ const LOCATE_RINGS: u32 = 3;
 const POLYGON_BITS: u32 = 0x00FF_FFFF;
 const AREA_EPSILON: f32 = 1e-6;
 const DRAWS: usize = 32;
-const TRIANGLE_CELL: Meters = Meters(16.0);
+const POLYGON_CELL: Meters = Meters(16.0);
 const CIRCLE_SIDES: usize = 24;
 /// The ground is triangulated in tiles no wider than this, each on a core of its own: growing an
 /// outline and triangulating cost more per outline the more there are, and a wide area holds
@@ -354,6 +411,18 @@ const TILE_SIDE: Meters = Meters(200.0);
 /// cut the same outline at the same seam, so their vertices there differ by the rounding alone,
 /// far under a millimetre.
 const SEAM_SNAP: f32 = 1e-3;
+
+/// The layer's lists trimmed to what they hold: built by pushing, they keep room for as much again.
+fn fit(layer: &mut Layer) {
+    for vertex in &mut layer.vertices {
+        vertex.polygons.shrink_to_fit();
+    }
+    for polygon in &mut layer.polygons {
+        polygon.vertices.shrink_to_fit();
+    }
+    layer.vertices.shrink_to_fit();
+    layer.polygons.shrink_to_fit();
+}
 
 /// `ground` less the obstacles grown by `radius`, as one layer of convex polygons: triangulated
 /// tile by tile, in parallel, each tile given every obstacle reaching into it, then joined along
@@ -671,12 +740,31 @@ fn draw(
         let index = weighted
             .partition_point(|(_, cumulative)| *cumulative < target)
             .min(weighted.len() - 1);
-        let [a, b, c] = weighted[index].0;
-        let (r1, r2) = (rng.rand_float().sqrt(), rng.rand_float());
-        let point = a + (b - a) * (r1 * (1.0 - r2)) + (c - a) * (r1 * r2);
+        let point = point_in(rng, weighted[index].0);
         if fits(point) {
             return Some(point);
         }
     }
     None
+}
+
+/// A point in the convex outline, each spot as likely as any other of the same size.
+fn point_in_outline(rng: &mut Rng, outline: &[Pos<Meters>]) -> Option<Pos<Meters>> {
+    let total = area(outline);
+    let target = rng.rand_float() * total;
+    let mut covered = 0.0;
+    let mut last = None;
+    for corners in fan(outline) {
+        last = Some(corners);
+        covered += area(&corners);
+        if covered >= target {
+            break;
+        }
+    }
+    last.map(|corners| point_in(rng, corners))
+}
+
+fn point_in(rng: &mut Rng, [a, b, c]: [Pos<Meters>; 3]) -> Pos<Meters> {
+    let (r1, r2) = (rng.rand_float().sqrt(), rng.rand_float());
+    a + (b - a) * (r1 * (1.0 - r2)) + (c - a) * (r1 * r2)
 }

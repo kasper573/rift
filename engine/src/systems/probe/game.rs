@@ -77,8 +77,6 @@ pub enum ProbeQuestion {
         goal: Pos<Meters>,
         spacing: Meters,
     },
-    /// Every walkable point of the area on whole metres. Answered with a list of positions.
-    Lattice { area: AreaId },
     /// Whether `at` lies in a safe zone. Answered with a boolean.
     Safe {
         area: AreaId,
@@ -306,7 +304,6 @@ fn answer_in_scope(content: &Content, question: &ProbeQuestion) -> Option<Value>
             });
             json(&reached)
         }
-        &ProbeQuestion::Lattice { area } => json(&lattice(content, area)),
         &ProbeQuestion::Safe { area, at } => json(&area::load(content, area).safe(at)),
         &ProbeQuestion::Pictured { area, at } => json(&pictured(content, area, at)),
     };
@@ -452,17 +449,6 @@ fn area_of(content: &Content, id: AreaId) -> ProbeArea {
 
 fn mesh(content: &Content, area: AreaId) -> &crate::systems::movement::NavMesh {
     &area::load(content, area).mesh
-}
-
-fn lattice(content: &Content, area: AreaId) -> Vec<Pos<Meters>> {
-    let mesh = mesh(content, area);
-    let bounds = mesh.bounds();
-    let (min, max) = (bounds.min(), bounds.max());
-    let xs = (min.x.ceil() as i32)..=(max.x.floor() as i32);
-    let ys = (min.y.ceil() as i32)..=(max.y.floor() as i32);
-    ys.flat_map(|y| xs.clone().map(move |x| Pos::new(x as f32, y as f32)))
-        .filter(|point| mesh.walkable(*point))
-        .collect()
 }
 
 fn pictured(content: &Content, id: AreaId, at: Pos<Meters>) -> bool {
