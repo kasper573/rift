@@ -125,17 +125,21 @@ enum CarriedTarget {
     Point(Pos<Meters>),
 }
 
+/// What a world owns that may change hands: its actors and drops, where they stand and whether
+/// they're pulled.
+type Standing = QueryState<
+    (Entity, &'static Position, Option<&'static Pulled>),
+    (
+        Or<(With<Actor>, With<DroppedItem>)>,
+        With<GlobalId>,
+        Without<Ghost>,
+    ),
+>;
+
 /// The queries a departure scan runs, kept so a tick doesn't match archetypes afresh.
 #[derive(Resource)]
 struct Scans {
-    standing: QueryState<
-        (Entity, &'static Position, Option<&'static Pulled>),
-        (
-            Or<(With<Actor>, With<DroppedItem>)>,
-            With<GlobalId>,
-            Without<Ghost>,
-        ),
-    >,
+    standing: Standing,
     sessions: dialogue::Sessions,
     pulled: QueryState<Entity, With<Pulled>>,
 }

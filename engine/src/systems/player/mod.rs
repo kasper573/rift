@@ -176,6 +176,13 @@ pub fn def(content: &Content) -> &PlayerDef {
 #[derive(Resource, Default)]
 pub struct Players(pub HashMap<ClientId, Entity>);
 
+/// Whether anyone plays a character in this world.
+pub fn any_playing(world: &World) -> bool {
+    world
+        .get_resource::<Players>()
+        .is_some_and(|players| !players.0.is_empty())
+}
+
 pub(crate) fn sender_player(world: &World, sender: Sender) -> Option<Entity> {
     conn_player(world, sender.entity()?)
 }

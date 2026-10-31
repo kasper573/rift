@@ -1,6 +1,7 @@
+use bevy_app::Main;
 use bevy_ecs::message::{Message, MessageCursor, MessageRegistry, Messages, message_update_system};
 use bevy_ecs::prelude::*;
-use bevy_ecs::schedule::{IntoScheduleConfigs, ScheduleLabel, SingleThreadedExecutor, SystemSet};
+use bevy_ecs::schedule::{IntoScheduleConfigs, SingleThreadedExecutor, SystemSet};
 use bevy_ecs::system::ScheduleSystem;
 use bevy_replicon::prelude::ToClients;
 use bevy_time::Time;
@@ -13,16 +14,13 @@ use engine::systems::{TICK_HZ, area_state, plug_ins};
 use crate::notices::{self, Notified};
 
 /// A bare world holding a game's content, its clocks, its dice, and what an area's server keeps
-/// besides, stepped tick by tick through only the systems a test adds, in the order it adds them.
-/// Messages last two ticks, as the server's do.
+/// besides, stepped tick by tick through only the systems a test adds, in the order it adds them,
+/// as the server's main schedule, so the server's own stepping of worlds steps it too. Messages
+/// last two ticks, as the server's do.
 pub struct Sim {
     pub world: World,
-    schedule: Schedule,
     steps: usize,
 }
-
-#[derive(ScheduleLabel, Clone, Debug, PartialEq, Eq, Hash)]
-struct Tick;
 
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 struct Step(usize);
@@ -40,18 +38,15 @@ impl Sim {
         area_state(&mut world, &content);
         MessageRegistry::register_message::<ToClients<NotificationSent>>(&mut world);
         world.init_resource::<Notified>();
-        let mut schedule = Schedule::new(Tick);
+        let mut schedule = Schedule::new(Main);
         schedule.set_executor(SingleThreadedExecutor::new());
         schedule.add_systems(
-            (notices::collect, message_update_system)
+            (advance_time, notices::collect, message_update_system)
                 .chain()
                 .in_set(Step(0)),
         );
-        Sim {
-            world,
-            schedule,
-            steps: 0,
-        }
+        world.add_schedule(schedule);
+        Sim { world, steps: 0 }
     }
 
     /// The file of `Row`'s type the test declared as `name`.
@@ -68,8 +63,10 @@ impl Sim {
         let previous = Step(self.steps);
         self.steps += 1;
         let step = Step(self.steps);
-        self.schedule.configure_sets(step.after(previous));
-        self.schedule.add_systems(systems.chain().in_set(step));
+        self.world.schedule_scope(Main, |_, schedule| {
+            schedule.configure_sets(step.after(previous));
+            schedule.add_systems(systems.chain().in_set(step));
+        });
         self
     }
 
@@ -88,13 +85,12 @@ impl Sim {
         cursor.read(messages).cloned().collect()
     }
 
-    /// One tick: the clocks move on by the server's tick, then every added system runs once.
+    /// One tick: the wall clock moves on by the server's tick, then every added system runs
+    /// once, the world's time moving on with them.
     pub fn tick(&mut self) {
-        let period = TICK_HZ.period();
-        self.world.resource_mut::<Time>().advance_by(period);
         let mut clock = self.world.resource_mut::<WallClock>();
-        clock.now = clock.now.after(Seconds(period.as_secs_f32()));
-        self.schedule.run(&mut self.world);
+        clock.now = clock.now.after(Seconds(TICK_HZ.period().as_secs_f32()));
+        self.world.run_schedule(Main);
     }
 
     /// Ticks for up to `seconds` until `done` holds, and tells whether it did.
@@ -120,6 +116,10 @@ impl Sim {
         clock.now = clock.now.after(Seconds(seconds));
         self.run(0.5);
     }
+}
+
+fn advance_time(mut time: ResMut<Time>) {
+    time.advance_by(TICK_HZ.period());
 }
 
 // Tests hold on any seed: the one drawn shows in a failing test's output, to play it out again.

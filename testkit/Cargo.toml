@@ -6,6 +6,7 @@ description = "What the engine's tests and its server bench stand on: a game of 
 
 [dependencies]
 engine = { path = "../engine" }
+bevy_app.workspace = true
 bevy_ecs.workspace = true
 bevy_math.workspace = true
 bevy_replicon = { workspace = true, features = ["server"] }

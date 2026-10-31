@@ -455,15 +455,7 @@ pub fn client_app(
 /// The worlds, not the owning `App`s, are stepped because `App` is `!Send` while `World` is `Send`;
 /// for these single-schedule headless apps `run_schedule(Main)` + `clear_trackers` is what
 /// `App::update` does.
-pub fn step_areas(worlds: &mut [&mut World], clock: WallClock) {
-    use rayon::prelude::*;
-
-    worlds
-        .par_iter_mut()
-        .for_each(|world| step_area(world, clock));
-}
-
-/// One tick of one area's world, as [`step_areas`] steps each.
+/// One tick of one area's world, as [`worlds::tick`] steps each awake one.
 pub fn step_area(world: &mut World, clock: WallClock) {
     world.insert_resource(clock);
     world.run_schedule(bevy_app::Main);

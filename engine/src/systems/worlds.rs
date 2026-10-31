@@ -2,6 +2,7 @@
 //! then handed what crosses between them.
 
 use bevy_ecs::prelude::World;
+use rayon::prelude::*;
 
 use crate::core::content::Content;
 use crate::core::math::Pos;
@@ -10,7 +11,7 @@ use crate::core::units::Meters;
 use crate::systems::area::{self, AreaDef, AreaId, Cell, Cells};
 use crate::systems::handoff::{self, Moved};
 use crate::systems::script::Place;
-use crate::systems::{mirror, step_areas};
+use crate::systems::{mirror, player, step_area};
 
 #[derive(Clone)]
 pub struct Worlds {
@@ -80,6 +81,16 @@ impl Worlds {
         self.starts[place.area.index()] + cells.at(place.at).0 as usize
     }
 
+    /// The worlds of the cells beside `world`'s in its area.
+    pub fn beside(&self, world: usize) -> impl Iterator<Item = usize> + use<> {
+        let copy = self.starts.partition_point(|&start| start <= world) - 1;
+        let (_, cells) = self.areas[copy];
+        let start = self.starts[copy];
+        cells
+            .beside(Cell((world - start) as u32))
+            .map(move |cell| start + cell.0 as usize)
+    }
+
     /// Whether any area runs as more than one cell, so some world borders on another.
     pub fn has_borders(&self) -> bool {
         self.areas.iter().any(|(_, cells)| cells.count() > 1)
@@ -114,11 +125,34 @@ impl Worlds {
     }
 }
 
-/// One tick of every world, as the server steps them: each on its own, across all cores, then the
-/// ghosts of what stands near a border handed to the cells beside it, and what stands deep in
-/// another cell handed over to it; the players whose connections must follow their characters.
+/// One tick of the worlds that are awake, as the server steps them: each on its own, across all
+/// cores, then the ghosts of what stands near a border handed to the cells beside it, and what
+/// stands deep in another cell handed over to it; the players whose connections must follow
+/// their characters. A world sleeps while nobody plays in it or beside it and no mail waits for
+/// it: a cell with no one to see it stands still until someone comes.
 pub fn tick(worlds: &Worlds, views: &mut [&mut World], clock: WallClock) -> Vec<Moved> {
-    step_areas(views, clock);
+    let awake = awake(worlds, views);
+    views
+        .par_iter_mut()
+        .zip(&awake)
+        .filter(|(_, awake)| **awake)
+        .for_each(|(world, _)| step_area(world, clock));
     mirror::exchange(worlds, views);
     handoff::handoff(worlds, views)
+}
+
+/// The worlds to step this tick: those played in, those beside one played in, whose actors the
+/// players there see as ghosts, and those with mail to land.
+fn awake(worlds: &Worlds, views: &[&mut World]) -> Vec<bool> {
+    let played: Vec<bool> = views
+        .iter()
+        .map(|world| player::any_playing(world))
+        .collect();
+    (0..views.len())
+        .map(|index| {
+            played[index]
+                || mirror::has_mail(views[index])
+                || worlds.beside(index).any(|beside| played[beside])
+        })
+        .collect()
 }

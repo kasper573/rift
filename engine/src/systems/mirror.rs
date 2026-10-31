@@ -137,6 +137,13 @@ pub fn ghost_played_by(world: &World, client: ClientId) -> Option<Entity> {
         .map(|(entity, _)| entity)
 }
 
+/// Whether neighbours posted anything this world has yet to land.
+pub fn has_mail(world: &World) -> bool {
+    world
+        .get_resource::<Inbox>()
+        .is_some_and(|inbox| !inbox.0.is_empty())
+}
+
 /// Lands what neighbours posted to this world's own entities since the last exchange.
 pub fn deliver(world: &mut World) {
     let letters = std::mem::take(&mut world.resource_mut::<Inbox>().0);

@@ -38,16 +38,20 @@ pub fn run(game: &Path, content: &Content) {
         spawn.size.width, spawn.size.height
     );
     println!(
-        "[scale-bench] {:>5} {:>11} {:>6} {:>7} | {:>14} {:>9} | {:>14} {:>14} {:>9} | {:>6} {:>9} {:>8}",
+        "[scale-bench] {:>5} {:>11} {:>6} {:>7} | {:>14} {:>10} {:>9} | {:>14} {:>10} {:>9} | {:>11} {:>11} {:>11} | {:>6} {:>9} {:>8}",
         "areas",
         "ground",
         "npcs",
         "players",
         "one area: core",
+        "every core",
         "heap",
         "many: one core",
         "every core",
         "heap",
+        "25% dormant",
+        "50% dormant",
+        "75% dormant",
         "fps",
         "client",
         "gpu"
@@ -69,18 +73,38 @@ pub fn run(game: &Path, content: &Content) {
         };
         let players = PLAYERS_PER_AREA * tiles;
         let one = server(1, players, &larger, Cores::One, MEASURE);
+        let one_every_core = server(1, players, &larger, Cores::Every, MEASURE);
         let many_one_core = server(tiles, PLAYERS_PER_AREA, content, Cores::One, MEASURE);
         let many_every_core = server(tiles, PLAYERS_PER_AREA, content, Cores::Every, MEASURE);
+        let dormant: Vec<f64> = [0.25, 0.5, 0.75]
+            .into_iter()
+            .map(|dormant| {
+                let awake = 1.0 - dormant;
+                served_in(
+                    1,
+                    (players as f32 * awake).ceil() as usize,
+                    &larger,
+                    Cores::Every,
+                    MEASURE,
+                    awake,
+                )
+                .tick_ms
+            })
+            .collect();
         let seen = client(folder.path(), &larger);
         println!(
-            "[scale-bench] {tiles:>5} {:>11} {:>6} {players:>7} | {:>11.2} ms {:>6.0} MB | {:>11.2} ms {:>11.2} ms {:>6.0} MB | {:>6.0} {:>6.0} MB {:>5.0} MB",
+            "[scale-bench] {tiles:>5} {:>11} {:>6} {players:>7} | {:>11.2} ms {:>7.2} ms {:>6.0} MB | {:>11.2} ms {:>7.2} ms {:>6.0} MB | {:>8.2} ms {:>8.2} ms {:>8.2} ms | {:>6.0} {:>6.0} MB {:>5.0} MB",
             format!("{}×{} m", spawn.size.width * side, spawn.size.height * side),
             super::npcs_per_area(&larger),
             one.tick_ms,
+            one_every_core.tick_ms,
             one.heap.megabytes(),
             many_one_core.tick_ms,
             many_every_core.tick_ms,
             many_one_core.heap.megabytes(),
+            dormant[0],
+            dormant[1],
+            dormant[2],
             seen.fps,
             seen.client.megabytes(),
             seen.gpu.megabytes(),
@@ -173,8 +197,20 @@ struct Served {
 /// The mean tick of `areas` of the content's spawn area with `players` each, and the heap they
 /// hold.
 fn server(areas: usize, players: usize, content: &Content, cores: Cores, ticks: usize) -> Served {
+    served_in(areas, players, content, cores, ticks, 1.0)
+}
+
+/// As [`server`], with the players in the first `awake` share of each area's cells alone.
+fn served_in(
+    areas: usize,
+    players: usize,
+    content: &Content,
+    cores: Cores,
+    ticks: usize,
+    awake: f32,
+) -> Served {
     let before = heap();
-    let mut bench = Bench::with_players(areas, players, Layout::Distributed, content);
+    let mut bench = Bench::with_players_in(areas, players, Layout::Distributed, content, awake);
     bench.connect();
     for _ in 0..sim::WARMUP {
         step(&mut bench, cores);

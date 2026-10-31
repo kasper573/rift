@@ -57,6 +57,22 @@ impl Cells {
         })
     }
 
+    /// The cells beside `cell`, corners included: those whose ground a halo narrower than a cell
+    /// reaches into from it.
+    pub fn beside(&self, cell: Cell) -> impl Iterator<Item = Cell> + use<> {
+        let (columns, rows) = (self.columns as i64, self.rows as i64);
+        let (column, row) = (
+            (cell.0 % self.columns) as i64,
+            (cell.0 / self.columns) as i64,
+        );
+        (-1..=1)
+            .flat_map(move |dr| (-1..=1).map(move |dc| (row + dr, column + dc)))
+            .filter(move |&(r, c)| {
+                (r, c) != (row, column) && (0..rows).contains(&r) && (0..columns).contains(&c)
+            })
+            .map(move |(r, c)| Cell((r * columns + c) as u32))
+    }
+
     pub fn rect(&self, cell: Cell) -> Rect<Meters> {
         let (column, row) = (cell.0 % self.columns, cell.0 / self.columns);
         let origin = Pos::new(

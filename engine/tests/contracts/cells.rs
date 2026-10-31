@@ -1,16 +1,18 @@
 use bevy_ecs::prelude::*;
+use bevy_time::Time;
 use engine::core::math::Pos;
+use engine::core::time::WallClock;
 use engine::systems::actor::Actor;
 use engine::systems::area::{AreaDef, Cell};
 use engine::systems::combat;
-use engine::systems::handoff::{self, Moved};
+use engine::systems::handoff::Moved;
 use engine::systems::identity::{self, GlobalId, Named};
 use engine::systems::mirror::{self, Ghost};
 use engine::systems::movement::{Position, position};
 use engine::systems::npc::{self, Npc, NpcDef};
 use engine::systems::player::{ClientId, Players};
 use engine::systems::stat::{self, Stats};
-use engine::systems::worlds::Worlds;
+use engine::systems::worlds::{self, Worlds};
 use serde_json::json;
 use testkit::{Game, Map, Sim};
 
@@ -20,14 +22,14 @@ use testkit::{Game, Map, Sim};
 #[test]
 fn an_actor_near_a_border_is_a_ghost_next_door_and_a_blow_on_the_ghost_lands_on_it() {
     let content = Game::new()
-        .area("plain", &Map::open(500, 500), json!([]))
+        .area("plain", &Map::open(500, 250), json!([]))
         .hero("plain", 150.0, 150.0)
         .npc("brute", 25.0, json!([]))
         .vfx("damage_taken")
         .shader("damage_pop")
         .load();
     let worlds = Worlds::of(&content);
-    assert_eq!(worlds.len(), 4, "a 500 m area is four cells of 250 m");
+    assert_eq!(worlds.len(), 2, "a 500 m strip is two cells of 250 m");
 
     let mut west = Sim::new(content.clone());
     let mut east = Sim::new(content);
@@ -47,6 +49,7 @@ fn an_actor_near_a_border_is_a_ghost_next_door_and_a_blow_on_the_ghost_lands_on_
                     .chain(),
             );
     }
+    west.join(1);
     let area = east.id::<AreaDef>("plain");
     let brute = east.id::<NpcDef>("brute");
     let at = Pos::new(270.0, 150.0);
@@ -86,7 +89,7 @@ fn an_actor_near_a_border_is_a_ghost_next_door_and_a_blow_on_the_ghost_lands_on_
 #[test]
 fn an_actor_deep_in_the_next_cell_changes_hands_as_it_stands() {
     let content = Game::new()
-        .area("plain", &Map::open(500, 500), json!([]))
+        .area("plain", &Map::open(500, 250), json!([]))
         .hero("plain", 280.0, 150.0)
         .npc("brute", 25.0, json!([]))
         .vfx("damage_taken")
@@ -172,7 +175,7 @@ fn an_actor_deep_in_the_next_cell_changes_hands_as_it_stands() {
 #[test]
 fn a_pull_on_a_ghost_hands_it_over_though_it_stands_shallow() {
     let content = Game::new()
-        .area("plain", &Map::open(500, 500), json!([]))
+        .area("plain", &Map::open(500, 250), json!([]))
         .hero("plain", 150.0, 150.0)
         .npc("brute", 25.0, json!([]))
         .vfx("damage_taken")
@@ -190,6 +193,7 @@ fn a_pull_on_a_ghost_hands_it_over_though_it_stands_shallow() {
             .mirror::<Npc>()
             .add((identity::name_replicated, mirror::deliver).chain());
     }
+    west.join(1);
     let area = east.id::<AreaDef>("plain");
     let brute = east.id::<NpcDef>("brute");
     let at = Pos::new(262.0, 150.0);
@@ -215,15 +219,56 @@ fn a_pull_on_a_ghost_hands_it_over_though_it_stands_shallow() {
     assert!(owned(&east.world, name).is_none(), "the east let it go");
 }
 
-fn tick(worlds: &Worlds, west: &mut Sim, east: &mut Sim) {
-    west.tick();
-    east.tick();
-    mirror::exchange(worlds, &mut [&mut west.world, &mut east.world]);
+/// A cell nobody plays in or beside stands still, its clock with it, until someone comes: a
+/// player beside it wakes it, as their view reaches into it.
+#[test]
+fn a_cell_nobody_plays_in_or_beside_stands_still_until_someone_comes() {
+    let content = Game::new()
+        .area("plain", &Map::open(750, 250), json!([]))
+        .hero("plain", 100.0, 125.0)
+        .load();
+    let worlds = Worlds::of(&content);
+    assert_eq!(worlds.len(), 3, "a 750 m strip is three cells of 250 m");
+    let mut cells: Vec<Sim> = (0..3)
+        .map(|cell| {
+            let mut sim = Sim::new(content.clone());
+            sim.serve("plain")
+                .in_cell(Cell(cell))
+                .mirror::<Position>()
+                .add(identity::name_replicated);
+            sim
+        })
+        .collect();
+    let hero = cells[0].join(1);
+    let clock = *cells[0].world.resource::<WallClock>();
+    let elapsed = |sim: &Sim| sim.world.resource::<Time>().elapsed();
+
+    let before: Vec<_> = cells.iter().map(elapsed).collect();
+    let mut views: Vec<&mut World> = cells.iter_mut().map(|sim| &mut sim.world).collect();
+    worlds::tick(&worlds, &mut views, clock);
+    assert!(elapsed(&cells[0]) > before[0], "the cell played in steps");
+    assert!(elapsed(&cells[1]) > before[1], "the cell beside steps");
+    assert_eq!(elapsed(&cells[2]), before[2], "the far cell stands still");
+
+    cells[0].world.get_mut::<Position>(hero).unwrap().pos = Pos::new(400.0, 125.0);
+    let before: Vec<_> = cells.iter().map(elapsed).collect();
+    let mut views: Vec<&mut World> = cells.iter_mut().map(|sim| &mut sim.world).collect();
+    worlds::tick(&worlds, &mut views, clock);
+    let mut views: Vec<&mut World> = cells.iter_mut().map(|sim| &mut sim.world).collect();
+    worlds::tick(&worlds, &mut views, clock);
+    assert!(
+        elapsed(&cells[2]) > before[2],
+        "the far cell wakes once the player plays beside it"
+    );
+}
+
+fn tick(worlds: &Worlds, west: &mut Sim, east: &mut Sim) -> Vec<Moved> {
+    let clock = *west.world.resource::<WallClock>();
+    worlds::tick(worlds, &mut [&mut west.world, &mut east.world], clock)
 }
 
 fn hand_over(worlds: &Worlds, west: &mut Sim, east: &mut Sim) -> Vec<Moved> {
-    tick(worlds, west, east);
-    handoff::handoff(worlds, &mut [&mut west.world, &mut east.world])
+    tick(worlds, west, east)
 }
 
 fn owned(world: &World, name: GlobalId) -> Option<Entity> {
