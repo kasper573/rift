@@ -16,7 +16,9 @@ use bevy::prelude::*;
 use bevy::shader::Shader;
 use bevy::world_serialization::WorldSerializationPlugin;
 use engine::core::content::Content;
+use engine::core::math::Pos;
 use engine::core::render::world::{self, WorldScenePlugin};
+use engine::core::units::{MeterSize, Meters};
 use engine::core::vfx::cover::CoverMaterial;
 use engine::core::vfx::render::VfxMaterialsPlugin;
 use engine::core::vfx::shader::Stage;
@@ -119,6 +121,13 @@ fn client(game: Game, folder: &Path) -> (App, Arc<Area>) {
 fn stand(app: &mut App, area: &Arc<Area>) -> scenery::Scenery {
     let content = app.world().resource::<Content>().clone();
     let stood = scenery::spawn(app.world_mut(), &content, area, RenderLayers::default());
+    let bounds = area.size.bounds();
+    scenery::view_from(
+        app.world_mut(),
+        stood,
+        bounds.center(),
+        Meters(bounds.size.width.hypot(bounds.size.height)),
+    );
     assert!(
         settle(app, |app| {
             !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
@@ -153,6 +162,47 @@ fn settle(app: &mut App, done: impl Fn(&mut App) -> bool) -> bool {
         app.update();
     }
     true
+}
+
+/// What stands of an area follows the view: its props stand within the view's reach and go as
+/// the view leaves them behind, and its ground stands finer near the view than far from it, so
+/// a long field costs what the view takes in, not what the field holds.
+#[test]
+fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves() {
+    let folder = tempfile::tempdir().expect("a scratch folder");
+    let game = Game::new()
+        .prop("tuft", json!({ "type": "none" }))
+        .area(
+            "field",
+            &Map::open(512, 16),
+            json!((0..8).map(|index| json!({ "type": "prop", "prop": path("prop", "tuft"), "at": { "x": 488.0 + index as f32, "y": 8.0 } })).collect::<Vec<_>>()),
+        );
+    let (mut app, area) = client(game, folder.path());
+    let content = app.world().resource::<Content>().clone();
+    let stood = scenery::spawn(app.world_mut(), &content, &area, RenderLayers::default());
+    let reach = Meters(64.0);
+    scenery::view_from(app.world_mut(), stood, Pos::new(16.0, 8.0), reach);
+    assert!(settle(&mut app, |app| !scenery::standing(app.world_mut())));
+    let west = held(&app);
+    let (columns, rows) = area.heights.samples();
+    assert!(
+        west.vertices < (columns * rows) as usize,
+        "the ground stands coarser far from the view: {} vertices for {} samples",
+        west.vertices,
+        columns * rows
+    );
+
+    scenery::view_from(app.world_mut(), stood, Pos::new(496.0, 8.0), reach);
+    assert!(settle(&mut app, |app| !scenery::standing(app.world_mut())));
+    let east = held(&app);
+    assert!(
+        east.entities > west.entities,
+        "the tufts stand once the view reaches them: {east:?} over {west:?}"
+    );
+
+    scenery::view_from(app.world_mut(), stood, Pos::new(16.0, 8.0), reach);
+    assert!(settle(&mut app, |app| !scenery::standing(app.world_mut())));
+    assert_eq!(held(&app), west, "back west, the tufts are gone again");
 }
 
 #[test]

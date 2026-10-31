@@ -24,6 +24,7 @@ use engine::core::render::world::mannequin::mannequin;
 use engine::core::render::world::rig_clip;
 use engine::core::render::world::sky::Daylight;
 use engine::core::time::Seconds;
+use engine::core::units::Meters;
 use engine::systems::actor::Action;
 use engine::systems::actor::layering::{self, Layering};
 use engine::systems::actor::model::{ActorModel, ModelId};
@@ -181,6 +182,10 @@ struct Viewport {
     cast: Option<(Vec<Standing>, Vec<Entity>)>,
 }
 
+/// How far around the camera's target the covers, props and lights stand, in the camera's
+/// distance from it: the ground it takes in, and as far again around.
+const VIEW_REACH_PER_DISTANCE: f32 = 4.0;
+
 struct Stood {
     scenery: Scenery,
     made: u64,
@@ -330,6 +335,14 @@ impl Viewport {
             self.stroke = None;
         }
         world.insert_resource(scenery::climate(&area));
+        if let Some(stood) = &self.stood {
+            scenery::view_from(
+                world,
+                stood.scenery,
+                request.camera.target,
+                Meters(request.camera.distance.0 * VIEW_REACH_PER_DISTANCE),
+            );
+        }
         let ground = area.heights.height_at(request.camera.target);
         if let Some(mut transform) = world.get_mut::<Transform>(self.camera) {
             *transform = request.camera.transform(ground);

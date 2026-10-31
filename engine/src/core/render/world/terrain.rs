@@ -1,4 +1,4 @@
-//! The ground as one mesh: a vertex at every height sample, painted by the ground material with
+//! The ground as meshes of its chunks, a vertex at every height sample a chunk keeps, painted by the ground material with
 //! the terrains laid there, each its colour under the picture it repeats over the ground, blended
 //! across the paint's pixels as the paint blends; and its heights as a picture, for what a shader
 //! settles on the ground.
@@ -285,36 +285,73 @@ pub fn height_image(heights: &Heightfield) -> Image {
     )
 }
 
-/// The terrain's mesh, in the world's metres from the ground's corner.
-pub fn mesh(heights: &Heightfield) -> Mesh {
-    let (columns, rows) = heights.samples();
-    let step = 1.0 / SAMPLES_PER_METER as f32;
-    let mut positions = Vec::with_capacity((columns * rows) as usize);
+/// The mesh of the chunk of ground `columns`×`rows` samples from sample `first`, taking every
+/// `stride`-th sample, in the world's metres from the ground's corner, with a skirt hanging from
+/// its edges so a coarser chunk beside it shows no gap where their heights differ.
+pub fn chunk(
+    heights: &Heightfield,
+    first: (u32, u32),
+    columns: u32,
+    rows: u32,
+    stride: u32,
+) -> Mesh {
+    let step = stride as f32 / SAMPLES_PER_METER as f32;
+    let (across, down) = (columns.div_ceil(stride) + 1, rows.div_ceil(stride) + 1);
+    let last = (first.0 + columns, first.1 + rows);
+    let sample_at = |column: u32, row: u32| {
+        (
+            (first.0 + column * stride).min(last.0),
+            (first.1 + row * stride).min(last.1),
+        )
+    };
+    let skirt = 2 * (across + down);
+    let mut positions = Vec::with_capacity((across * down + skirt) as usize);
     let mut normals = Vec::with_capacity(positions.capacity());
     let mut uvs = Vec::with_capacity(positions.capacity());
-    for row in 0..rows {
-        for column in 0..columns {
-            let x = GROUND_ORIGIN.x + column as f32 * step;
-            let z = GROUND_ORIGIN.y + row as f32 * step;
-            positions.push([x, heights.sample(column, row).0, z]);
+    for row in 0..down {
+        for column in 0..across {
+            let (c, r) = sample_at(column, row);
+            let at = Heightfield::sample_pos(c, r);
+            positions.push([at.x, heights.sample(c, r).0, at.y]);
             let east =
-                heights.sample(column + 1, row).0 - heights.sample(column.saturating_sub(1), row).0;
+                heights.sample(c + stride, r).0 - heights.sample(c.saturating_sub(stride), r).0;
             let south =
-                heights.sample(column, row + 1).0 - heights.sample(column, row.saturating_sub(1)).0;
+                heights.sample(c, r + stride).0 - heights.sample(c, r.saturating_sub(stride)).0;
             normals.push(Vec3::new(-east, 2.0 * step, -south).normalize().to_array());
             uvs.push([
-                column as f32 / (columns - 1).max(1) as f32,
-                row as f32 / (rows - 1).max(1) as f32,
+                column as f32 / (across - 1).max(1) as f32,
+                row as f32 / (down - 1).max(1) as f32,
             ]);
         }
     }
-    let mut indices = Vec::with_capacity(((columns - 1) * (rows - 1) * 6) as usize);
-    for row in 0..rows - 1 {
-        for column in 0..columns - 1 {
-            let corner = row * columns + column;
-            let (east, south, far) = (corner + 1, corner + columns, corner + columns + 1);
+    let mut indices = Vec::with_capacity((((across - 1) * (down - 1) + skirt) * 6) as usize);
+    for row in 0..down - 1 {
+        for column in 0..across - 1 {
+            let corner = row * across + column;
+            let (east, south, far) = (corner + 1, corner + across, corner + across + 1);
             indices.extend([corner, south, east, east, south, far]);
         }
+    }
+    let rim: Vec<u32> = (0..across)
+        .chain((1..down).map(|row| row * across + across - 1))
+        .chain(
+            (0..across - 1)
+                .rev()
+                .map(|column| (down - 1) * across + column),
+        )
+        .chain((1..down - 1).rev().map(|row| row * across))
+        .collect();
+    let hem = positions.len() as u32;
+    for &vertex in &rim {
+        let [x, y, z] = positions[vertex as usize];
+        positions.push([x, y - SKIRT, z]);
+        normals.push(normals[vertex as usize]);
+        uvs.push(uvs[vertex as usize]);
+    }
+    for (index, &vertex) in rim.iter().enumerate() {
+        let next = rim[(index + 1) % rim.len()];
+        let (low, low_next) = (hem + index as u32, hem + ((index + 1) % rim.len()) as u32);
+        indices.extend([vertex, low, next, next, low, low_next]);
     }
     Mesh::new(
         PrimitiveTopology::TriangleList,
@@ -325,6 +362,10 @@ pub fn mesh(heights: &Heightfield) -> Mesh {
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
     .with_inserted_indices(Indices::U32(indices))
 }
+
+/// How far a chunk's skirt hangs below its edge: past any height step between the samples a
+/// coarser neighbour skips.
+const SKIRT: f32 = 4.0;
 
 /// A patch of ground `size` metres across, centred on `at` and turned by `yaw`, as a grid of
 /// quads half a metre apart laid `lift` above the terrain, for what is drawn on the ground. Its uv

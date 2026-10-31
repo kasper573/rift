@@ -153,6 +153,13 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
                 if scenery::shaders_ready(world, &content, &area) {
                     let layers = RenderLayers::from_layers(&[LAYER]);
                     let stood = scenery::spawn(world, &content, &area, layers);
+                    let bounds = area.size.bounds();
+                    scenery::view_from(
+                        world,
+                        stood,
+                        bounds.center(),
+                        Meters(bounds.size.width.hypot(bounds.size.height)),
+                    );
                     scenery::light(world, &area, Daylight::Fixed, stood, drawing.camera);
                     drawing.scenery = Some(stood);
                     drawing.frames = 0;
