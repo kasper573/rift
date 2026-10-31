@@ -11,5 +11,5 @@
     "day_length": 1200.0,
     "start": 10.0
   },
-  "spatial_partition_cell_size": 256.0
+  "spatial_partition_cell_size": 128.0
 }
