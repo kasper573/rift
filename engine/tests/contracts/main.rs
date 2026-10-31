@@ -28,6 +28,7 @@ mod scenery;
 mod shop;
 mod sight;
 mod skills;
+mod sleep;
 mod snapshot;
 mod spacing;
 mod staging;

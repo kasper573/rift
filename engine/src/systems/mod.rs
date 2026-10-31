@@ -33,6 +33,7 @@ pub mod script;
 pub mod settings;
 pub mod shop;
 pub mod skill;
+pub mod sleep;
 pub mod staging;
 pub mod stat;
 pub mod status;
@@ -141,6 +142,7 @@ pub fn area_state(world: &mut World, content: &Content) {
     world.init_resource::<dialogue::StepCounter>();
     world.init_resource::<visibility::Sights>();
     world.init_resource::<crate::core::chunk::ChunkIndex>();
+    world.insert_resource(sleep::Sleep::of(content));
     MessageRegistry::register_message::<combat::Died>(world);
     MessageRegistry::register_message::<rewards::KillCredited>(world);
     world.add_observer(player::greet);
@@ -239,7 +241,7 @@ pub fn server_app(
             )
                 .chain(),
         )
-        .add_systems(First, advance_replication_clock)
+        .add_systems(First, (advance_replication_clock, sleep::settle))
         .add_systems(
             PostUpdate,
             movement::file_by_chunk.before(ServerSystems::Send),

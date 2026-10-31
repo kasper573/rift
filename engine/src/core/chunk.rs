@@ -38,6 +38,15 @@ impl Chunk {
         )
     }
 
+    /// The chunks holding any ground within `reach` of any of this one's, and maybe corner chunks
+    /// that hold none.
+    pub fn within(self, reach: Meters) -> impl Iterator<Item = Chunk> + use<> {
+        let span = (reach.0 / CHUNK_SIDE.0).ceil() as i32;
+        (self.row - span..=self.row + span).flat_map(move |row| {
+            (self.column - span..=self.column + span).map(move |column| Chunk { column, row })
+        })
+    }
+
     /// The chunks holding any ground within `reach` of `at`, and maybe a corner chunk that holds
     /// none.
     pub fn around(at: Pos<Meters>, reach: Meters) -> impl Iterator<Item = Chunk> + use<> {

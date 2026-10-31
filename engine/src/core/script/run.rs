@@ -2,6 +2,7 @@ use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use std::time::Duration;
 
+use bevy_ecs::entity_disabling::Disabled;
 use bevy_ecs::prelude::*;
 use bevy_platform::collections::HashMap;
 use bevy_time::Time;
@@ -425,7 +426,7 @@ pub fn tick<V: Vocabulary>(world: &mut World) {
         return;
     }
     let now = world.resource::<Time>().elapsed();
-    let tick = {
+    let (tick, due) = {
         let mut instances = world.resource_mut::<Instances<V>>();
         instances.tick += 1;
         let tick = instances.tick;
@@ -444,14 +445,28 @@ pub fn tick<V: Vocabulary>(world: &mut World) {
             })
             .collect();
         due.sort_by_key(|key| key.flow);
+        (tick, due)
+    };
+    // A disabled owner is asleep: its flows wait, due, until it wakes.
+    let due: Vec<FlowKey<V>> = due
+        .into_iter()
+        .filter(|key| {
+            key.owner.entity().is_none_or(|owner| {
+                world
+                    .get_entity(owner)
+                    .map_or(true, |owner| !owner.contains::<Disabled>())
+            })
+        })
+        .collect();
+    {
+        let mut instances = world.resource_mut::<Instances<V>>();
         for key in due {
             instances.queue.push_back(Queued::Resume {
                 key,
                 answer: Answer::Output(super::NEXT),
             });
         }
-        tick
-    };
+    }
     let clock = TickClock { tick, now };
     let mut rounds = 0;
     loop {

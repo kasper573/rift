@@ -83,8 +83,8 @@ impl Bench {
         Bench::with_players_in(areas, players, layout, content, 1.0)
     }
 
-    /// As [`Bench::with_players`], with the players in the first `share` of each area's cells
-    /// alone, the rest left to nobody.
+    /// As [`Bench::with_players`], with the players in the first `share` of each area's ground
+    /// alone, a band across it from its first row, the rest left to nobody.
     pub fn with_players_in(
         areas: usize,
         players: usize,
@@ -94,13 +94,13 @@ impl Bench {
     ) -> Bench {
         let spawn = content.built::<GameSettings>().initial_spawn;
         let cells = area::cells(content, spawn.area);
-        let peopled = ((cells.count() as f32 * share).ceil() as usize).max(1);
+        let peopled = area::load(content, spawn.area).size.height * share;
         let characters: Vec<Option<(CharacterSnapshot, Place)>> = {
             let mut all = play::characters_in(content, spawn.area);
             if layout == Layout::Congested {
                 all.retain(|(_, start)| cells.at(start.at) == cells.at(spawn.at));
             }
-            all.retain(|(_, start)| (cells.at(start.at).0 as usize) < peopled);
+            all.retain(|(_, start)| start.at.y < peopled);
             if all.is_empty() {
                 vec![None]
             } else {
