@@ -177,7 +177,7 @@ pub fn shift_tree(node: &mut SceneNode, dx: f32, dy: f32) {
                 shift_tree(child, dx, dy);
             }
         }
-        SceneNode::Module(module) => shapes::shift(&mut module.module, dx, dy),
+        SceneNode::Module(module) => module.module.shift(dx, dy),
     }
 }
 

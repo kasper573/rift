@@ -600,7 +600,7 @@ pub fn move_parts_in_place(
     let count = placement_count(&frame.content, &place.blueprint);
     nodes::change_scene(editor, &place.blueprint, |scene| {
         for part in parts {
-            shapes::shift(&mut nodes::module_node_mut(scene, part)?.module, bx, by);
+            nodes::module_node_mut(scene, part)?.module.shift(bx, by);
         }
         Some(format!(
             "Move {} parts of {} · {count}",

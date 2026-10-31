@@ -342,6 +342,36 @@ impl AreaModule {
         }
     }
 
+    /// Moves what places the module on the ground by `dx`, `dy`, snapped to sixteenths of a metre.
+    pub fn shift(&mut self, dx: f32, dy: f32) {
+        let moved = |at: Pos<Meters>| Pos::new(sixteenth(at.x + dx), sixteenth(at.y + dy));
+        let moved_rect = |rect: Rect<Meters>| Rect::new(moved(rect.origin), rect.size);
+        match self {
+            AreaModule::Object(object) => {
+                object.shape = match object.shape {
+                    ObjectShape::Point(at) => ObjectShape::Point(moved(at)),
+                    ObjectShape::Rect(rect) => ObjectShape::Rect(moved_rect(rect)),
+                };
+            }
+            AreaModule::Soundscape(soundscape) => {
+                soundscape.shape = match soundscape.shape {
+                    SoundscapeShape::Rect(rect) => SoundscapeShape::Rect(moved_rect(rect)),
+                    SoundscapeShape::Ellipse(rect) => SoundscapeShape::Ellipse(moved_rect(rect)),
+                };
+            }
+            AreaModule::SafeZone(zone) => zone.rect = moved_rect(zone.rect),
+            AreaModule::Prop(prop) => prop.at = moved(prop.at),
+            AreaModule::Scatter(scatter) => scatter.region = moved_rect(scatter.region),
+            AreaModule::Light(light) => light.at = moved(light.at),
+            AreaModule::Blueprint(placement) => placement.at = moved(placement.at),
+            AreaModule::Resident(resident) => resident.at = moved(resident.at),
+            AreaModule::Population(population) => {
+                population.roams = population.roams.map(moved_rect)
+            }
+            AreaModule::Script(_) => {}
+        }
+    }
+
     fn check(&self, pointer: &str, cx: &mut RowCheck) {
         match self {
             AreaModule::Population(population) => cx.range(
@@ -1315,4 +1345,8 @@ pub fn check_place(content: &Content, place: script::Place) -> Result<(), Conten
 
 fn describe_point(at: Pos<Meters>) -> String {
     format!("{:.2}, {:.2}", at.x, at.y)
+}
+
+pub fn sixteenth(v: f32) -> f32 {
+    (v * 16.0).round() / 16.0
 }

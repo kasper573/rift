@@ -5,7 +5,7 @@ use engine::core::math::{Offset, Pos, Rect, Size};
 use engine::core::units::Meters;
 use engine::systems::area::prop::Scatter;
 use engine::systems::area::scene::SceneNode;
-use engine::systems::area::{AreaModule, ObjectShape};
+use engine::systems::area::{AreaModule, ObjectShape, sixteenth};
 
 use crate::project::IdPaths;
 
@@ -46,34 +46,6 @@ pub fn cell_rect(at: Pos<Meters>) -> Rect<Meters> {
     Rect::new(at - Offset::new(0.5, 0.5), Size::splat(1.0))
 }
 
-/// Moves what places `module` on the map by `dx`, `dy`, snapped to sixteenths of a metre.
-pub fn shift(module: &mut AreaModule, dx: f32, dy: f32) {
-    let moved = |at: Pos<Meters>| Pos::new(sixteenth(at.x + dx), sixteenth(at.y + dy));
-    let moved_rect = |rect: Rect<Meters>| Rect::new(moved(rect.origin), rect.size);
-    match module {
-        AreaModule::Object(object) => {
-            object.shape = match object.shape {
-                ObjectShape::Point(at) => ObjectShape::Point(moved(at)),
-                ObjectShape::Rect(rect) => ObjectShape::Rect(moved_rect(rect)),
-            };
-        }
-        AreaModule::Soundscape(soundscape) => {
-            soundscape.shape = match soundscape.shape {
-                SoundscapeShape::Rect(rect) => SoundscapeShape::Rect(moved_rect(rect)),
-                SoundscapeShape::Ellipse(rect) => SoundscapeShape::Ellipse(moved_rect(rect)),
-            };
-        }
-        AreaModule::SafeZone(zone) => zone.rect = moved_rect(zone.rect),
-        AreaModule::Prop(prop) => prop.at = moved(prop.at),
-        AreaModule::Scatter(scatter) => scatter.region = moved_rect(scatter.region),
-        AreaModule::Light(light) => light.at = moved(light.at),
-        AreaModule::Blueprint(placement) => placement.at = moved(placement.at),
-        AreaModule::Resident(resident) => resident.at = moved(resident.at),
-        AreaModule::Population(population) => population.roams = population.roams.map(moved_rect),
-        AreaModule::Script(_) => {}
-    }
-}
-
 /// Sizes the box of `module` `w` by `h`, snapped to sixteenths of a metre, when it has one.
 pub fn resize(module: &mut AreaModule, w: f32, h: f32) {
     let size = Size::new(sixteenth(w.max(0.0625)), sixteenth(h.max(0.0625)));
@@ -102,10 +74,6 @@ pub fn turn(module: &mut AreaModule, clockwise: bool) {
         AreaModule::Resident(resident) => resident.facing = turned(resident.facing),
         _ => {}
     }
-}
-
-pub fn sixteenth(v: f32) -> f32 {
-    (v * 16.0).round() / 16.0
 }
 
 /// What a module is, said by what it names.

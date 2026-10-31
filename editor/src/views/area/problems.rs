@@ -131,7 +131,7 @@ pub fn move_there(editor: &mut Editor, bundle: &str, node: &str, to: Pos<Meters>
     nodes::change_scene(editor, bundle, |scene| {
         let module = &mut nodes::module_node_mut(scene, node)?.module;
         let from = super::shapes::bounds(module, None)?.center();
-        super::shapes::shift(module, to.x - from.x, to.y - from.y);
+        module.shift(to.x - from.x, to.y - from.y);
         Some(format!(
             "Move {} to {:.2}, {:.2}",
             reader

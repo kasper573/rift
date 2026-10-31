@@ -380,7 +380,7 @@ pub fn overlay(editor: &mut Editor, painter: &egui::Painter, view_key: &str, fra
         let ghosts = nodes::modules(&ghost.nodes);
         for module in &ghosts {
             let mut placed = module.module().clone();
-            shapes::shift(&mut placed, at.x, at.y);
+            placed.shift(at.x, at.y);
             if let Some(bounds) = shapes::bounds(&placed, None) {
                 let kind = placed.kind();
                 let color = super::overlays::module_color(Some(kind));

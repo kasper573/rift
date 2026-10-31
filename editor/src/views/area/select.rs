@@ -1,8 +1,8 @@
 use engine::core::content::table_of;
 use engine::core::math::{Offset, Pos, Rect};
 use engine::core::units::Meters;
-use engine::systems::area::AreaModule;
 use engine::systems::area::scene::SceneNode;
+use engine::systems::area::{AreaModule, sixteenth};
 use engine::systems::script::Variable;
 use std::collections::BTreeMap;
 use ui::egui;
@@ -463,7 +463,7 @@ fn finish_select_drag(
             let reader = frame.reader.clone();
             nodes::change_scene(editor, &frame.bundle, |scene| {
                 let module = &mut nodes::module_node_mut(scene, &part)?.module;
-                shapes::shift(module, new_min.x - min.x, new_min.y - min.y);
+                module.shift(new_min.x - min.x, new_min.y - min.y);
                 shapes::resize(module, w, h);
                 Some(format!("Resize {}", shapes::label(module, reader.as_ref())))
             });
@@ -498,10 +498,6 @@ pub(super) fn snapped_delta(from: Pos<Meters>, to: Pos<Meters>, fine: bool) -> (
     }
 }
 
-fn sixteenth(v: f32) -> f32 {
-    (v * 16.0).round() / 16.0
-}
-
 pub fn move_selection(editor: &mut Editor, frame: &AreaFrame, dx: f32, dy: f32) {
     if let Some(place) = frame.in_place.last().cloned() {
         let parts = placement::selected_in_place(editor, &place.blueprint);
@@ -517,7 +513,7 @@ pub fn move_selection(editor: &mut Editor, frame: &AreaFrame, dx: f32, dy: f32) 
     let reader = frame.reader.clone();
     nodes::change_scene(editor, &frame.bundle, |scene| {
         for node in &moved {
-            shapes::shift(&mut nodes::module_node_mut(scene, node)?.module, dx, dy);
+            nodes::module_node_mut(scene, node)?.module.shift(dx, dy);
         }
         Some(match moved.as_slice() {
             [one] => format!(
