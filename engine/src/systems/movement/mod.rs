@@ -135,6 +135,50 @@ impl Path {
         Some(corners)
     }
 
+    /// The path led on to `goal` from a little short of its end, when the goal has drifted by
+    /// little beside what is left to walk: the walk keeps its route and is routed afresh only over
+    /// its last stretch, twice the drift long, so chasing a goal on the move costs a short route
+    /// a time rather than a whole one.
+    fn amended(
+        &self,
+        mesh: &NavMesh,
+        at: Pos<Meters>,
+        goal: Pos<Meters>,
+    ) -> Option<Vec<Pos<Meters>>> {
+        let end = self.end()?;
+        let drift = end.distance(goal);
+        if drift.0 > self.length_from(at).0 * DRIFT_SHARE {
+            return None;
+        }
+        let mut lead = Meters(drift.0 * 2.0);
+        let mut from = end;
+        for (kept, &corner) in self.corners.iter().enumerate().skip(1) {
+            let stretch = from.distance(corner);
+            if stretch >= lead {
+                let cut = from.toward(corner, lead);
+                let mut corners = mesh.route(cut, goal)?;
+                corners.reverse();
+                corners.push(cut);
+                corners.extend(&self.corners[kept..]);
+                return Some(corners);
+            }
+            lead -= stretch;
+            from = corner;
+        }
+        None
+    }
+
+    /// What is left to walk from `at`.
+    fn length_from(&self, at: Pos<Meters>) -> Meters {
+        let mut from = at;
+        let mut length = Meters(0.0);
+        for &corner in self.corners.iter().rev() {
+            length = length + from.distance(corner);
+            from = corner;
+        }
+        length
+    }
+
     /// How many corners a walk from `at` reaches before it passes `goal`.
     fn segment_through(&self, at: Pos<Meters>, goal: Pos<Meters>) -> Option<usize> {
         let mut from = at;
@@ -155,6 +199,10 @@ impl Path {
 
 /// How far from a walk's line a goal may lie and still count as on its way.
 const ON_THE_WAY: Meters = Meters(1e-3);
+/// How far a goal may drift, as a share of what is left to walk, before the walk is routed afresh
+/// from where the actor stands: a walk led on to a drifted goal is at most twice the drift longer
+/// than the shortest, so this bounds the detour to a fifth of the walk.
+const DRIFT_SHARE: f32 = 0.1;
 
 /// Where an actor's walk ends. An actor walks for as long as it has one, along a [`Path`] planned to
 /// it whenever the path ends elsewhere. Only a player's goes out, for its own client to follow.
@@ -337,6 +385,9 @@ fn plan_on(
 ) -> Option<Vec<Pos<Meters>>> {
     if let Some(kept) = path.and_then(|path| path.through(at, goal)) {
         return Some(kept);
+    }
+    if let Some(led_on) = path.and_then(|path| path.amended(mesh, at, goal)) {
+        return Some(led_on);
     }
     let mut corners = mesh.route(at, goal)?;
     corners.reverse();

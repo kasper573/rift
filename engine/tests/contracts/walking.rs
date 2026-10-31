@@ -113,6 +113,27 @@ fn a_point_on_the_way_ends_the_walk_there() {
 }
 
 #[test]
+fn a_goal_that_drifts_a_little_as_the_walk_goes_is_walked_on_to_without_a_pause() {
+    let end = Offset::new(8.0, 0.0);
+    let drifted = Offset::new(8.0, 0.4);
+    let mut walk = Walk::start().toward(end);
+    let mut ticks = 0;
+    let trail = walk.trail_while(|walk| {
+        ticks += 1;
+        if ticks == 10 {
+            walk.ask(drifted);
+        }
+    });
+
+    assert_arrives(&trail, drifted, "a goal drifted a little");
+    let arrived = arrival(&trail);
+    assert!(
+        trail[..=arrived].windows(2).all(|pair| pair[0] != pair[1]),
+        "paused on the way to the drifted goal"
+    );
+}
+
+#[test]
 fn turning_back_mid_walk_turns_at_once() {
     let mut walk = Walk::start().toward(Offset::new(6.0, 0.0));
     walk.ticks(3);
