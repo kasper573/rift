@@ -2,7 +2,7 @@
 name = "web-server"
 version.workspace = true
 edition.workspace = true
-description = "The website of a game: its pages, the browser client, sign-in, and the desktop client's downloads"
+description = "The website of a game: its pages, sign-in, and the desktop client's downloads"
 
 [dependencies]
 askama.workspace = true

@@ -119,7 +119,7 @@ pub struct Note {
     pub y: f32,
 }
 
-pub async fn check_all(loading: &mut Loading) {
+pub fn check_all(loading: &mut Loading) {
     let content = loading.content();
     for (id, def) in loading.rows::<WorldMapDef>(&content) {
         for (area, card) in &def.cards {

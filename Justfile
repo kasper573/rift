@@ -9,7 +9,6 @@ lint:
     cargo fmt --check
     cargo run --quiet -p engine --bin lint
     cargo clippy --all-targets -- -D warnings
-    cargo clippy -p engine --lib --bin wasm-client --target wasm32-unknown-unknown -- -D warnings
     cargo run --quiet -p cli --bin rift -- check editor/templates/new_game
 
 # Every test lives in a tests/ folder; the libs' and bins' own test harnesses would build for nothing.
@@ -22,19 +21,9 @@ editor *folder:
     cargo build --release -p editor -p engine --bin editor --bin game-server --bin desktop-client
     target/release/editor {{folder}}
 
-# Built for speed, as the browser runs the client's every frame on one thread; its download is small
-# beside a game's content. LTO is thin: whole-program LTO at this level outgrows a CI runner's memory.
-# wasm-bindgen's version must match the `wasm-bindgen` crate's.
-[doc("The browser client as a release ships it, into target/wasm.")]
-wasm:
-    CARGO_PROFILE_RELEASE_STRIP=symbols CARGO_PROFILE_RELEASE_LTO=thin \
-      cargo build --release -p engine --bin wasm-client --target wasm32-unknown-unknown
-    rm -rf target/wasm
-    wasm-bindgen --target web --no-typescript --out-name rift --out-dir target/wasm target/wasm32-unknown-unknown/release/wasm-client.wasm
-
 # Frame pointers give perf whole call stacks without copying each sampled stack; the profiling
 # build keeps the symbols the release binaries are stripped of.
-[doc("The running platform's binaries as a release lays them out, into OUT: a binaries folder. PARTS narrows it to some of desktop (editor, game-server, desktop-client, rift), web (web-server, the browser client) and profiling (game-server-profiling); the last two build on Linux only.")]
+[doc("The running platform's binaries as a release lays them out, into OUT: a binaries folder. PARTS narrows it to some of desktop (editor, game-server, desktop-client, rift), web (web-server) and profiling (game-server-profiling); the last two build on Linux only.")]
 dist out="target/dist" *parts="desktop web profiling":
     #!/usr/bin/env bash
     set -euo pipefail
@@ -48,7 +37,7 @@ dist out="target/dist" *parts="desktop web profiling":
     done
     rm -rf "$out" && mkdir -p "$out"
     # One build for every binary: each target's build script caches whether the tree was dirty
-    # when it last ran, so left to themselves the server and the browser client can disagree.
+    # when it last ran, so left to themselves the server and the client can disagree.
     dirty=$(git status --porcelain --untracked-files=no)
     export RIFT_BUILD="${RIFT_BUILD:-$(git rev-parse --short=8 HEAD)${dirty:+-dirty}}"
     if [[ $parts == *" desktop "* ]]; then
@@ -60,8 +49,6 @@ dist out="target/dist" *parts="desktop web profiling":
     if [ {{quote(os())}} = linux ] && [[ $parts == *" web "* ]]; then
       cargo build --release -p web-server
       cp target/release/web-server "$out/"
-      just wasm
-      tar -czf "$out/wasm-client.tar.gz" -C target/wasm .
     fi
     if [ {{quote(os())}} = linux ] && [[ $parts == *" profiling "* ]]; then
       RUSTFLAGS="-C force-frame-pointers=yes" cargo build --profile profiling --features profiling -p engine --bin game-server
@@ -82,7 +69,6 @@ archives platform binaries="target/dist" out="target/archives":
     cd {{quote(binaries)}}
     for file in *; do
       case "$file" in
-        wasm-client.tar.gz) cp "$file" "$out/" ;;
         *.exe) 7z a -tzip -bso0 -bsp0 "$(cygpath -w "$out/${file%.exe}-{{platform}}.zip")" "$file" ;;
         *) tar -czf "$out/$file-{{platform}}.tar.gz" "$file" ;;
       esac
@@ -93,7 +79,7 @@ archives platform binaries="target/dist" out="target/archives":
 bench *args: (dist "target/desktop" "desktop")
     target/desktop/rift bench {{args}}
 
-[doc("Signs a player in on the website and checks the browser client draws the game, on the binaries folder BINARIES, else a fresh `just dist`.")]
+[doc("Starts the desktop client from the rift.env the website hands out and checks it draws the game, on the binaries folder BINARIES, else a fresh `just dist`.")]
 smoke binaries="":
     {{ if binaries == "" { "just dist" } else { "true" } }}
     cargo run --release --quiet -p smoke -- {{ if binaries == "" { "target/dist" } else { quote(binaries) } }}

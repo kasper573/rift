@@ -14,7 +14,6 @@ use crate::core::geometry::Radians;
 use crate::core::gui::{self, Band};
 use crate::core::interpolate::RenderValueSystems;
 use crate::core::math::Pos;
-use crate::core::platform::ClientPlatform;
 use crate::core::render::transition::{
     self, ActiveTransition, ScreenTransitionPhase, WorldViewSystems,
 };
@@ -132,16 +131,9 @@ pub fn carry_view_across(world: &mut World) {
     *world.resource_mut::<Crossing>() = Crossing { last_seen, held };
 }
 
-/// Shows the area the character stands in, and tells whoever follows the client's status, a
-/// screen reader among them, where the player has arrived.
 fn reveal(world: &mut World, pose: Pose) {
     transition::reveal(world, pose.at);
     world.write_message(AreaDrawn);
-    let content = world.resource::<Content>().clone();
-    world
-        .resource::<ClientPlatform>()
-        .0
-        .announce(&pose.area.get(&content).name);
 }
 
 fn restart_patience(world: &mut World) {

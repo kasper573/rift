@@ -32,7 +32,7 @@ pub use key::key_of;
 pub use load::{
     CheckedFiles, ContentFolder, ContentRegistry, FileHash, FileHashes, FileWriter,
     FilesystemFolder, FolderEntry, JsonPart, LoadPurpose, LoadStep, LoadWarnings, Loading,
-    MemoryFolder, Reference, Settings, load, load_paced, pointer_of, valid_key, write,
+    MemoryFolder, Reference, Settings, load, pointer_of, valid_key, write,
 };
 pub use reader::{FolderReader, Unreadable, WrittenFiles};
 pub use report::{ContentProblem, ErrorPlace, LoadError, LoadReport, MISSING_FILE};

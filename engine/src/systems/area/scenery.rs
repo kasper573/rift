@@ -30,7 +30,6 @@ use crate::core::geometry::Radians;
 use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::ground::{Heightfield, Paint, SAMPLES_PER_METER};
 use crate::core::math::{Pos, Rect, Rng, Size};
-use crate::core::pace::Pace;
 use crate::core::render::present::AreaGrade;
 use crate::core::render::world::clouds::{self, CloudSheet};
 use crate::core::render::world::cover;
@@ -60,13 +59,21 @@ pub struct Scenery {
     pub sky: Option<Entity>,
 }
 
-pub struct SceneryPlugin;
+/// Stands scenery as the view moves: a few pieces a frame where `paced`, so the frames of a client
+/// at play keep coming, else whatever the view takes in at once.
+pub struct SceneryPlugin {
+    pub paced: bool,
+}
 
 impl Plugin for SceneryPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Pace>().add_systems(Update, stream);
+        app.insert_resource(Paced(self.paced))
+            .add_systems(Update, stream);
     }
 }
+
+#[derive(Resource)]
+struct Paced(bool);
 
 /// Stands `area` in the world on `layers`: its sun, sky and air at once, and its ground, covers,
 /// props and lights as the view comes to them, from where [`view_from`] says it is.
@@ -316,7 +323,7 @@ const PLACEMENT_CELL: Meters = Meters(32.0);
 /// How far past its reach the view keeps what stands, so pacing back and forth over the edge
 /// stands nothing twice.
 const KEEP_SHARE: f32 = 1.25;
-/// How much stands in one frame where frames are paced, and among the props how many whose model
+/// How much stands in one frame where scenery is paced, and among the props how many whose model
 /// no earlier prop asked for: a model's load falls on the frames after the prop that starts it.
 const CHUNKS_PER_FRAME: usize = 4;
 const COVERS_PER_FRAME: usize = 16;
@@ -328,7 +335,7 @@ fn stream(world: &mut World) {
         .query_filtered::<Entity, With<Streaming>>()
         .iter(world)
         .collect();
-    let framed = world.resource::<Pace>().is_framed();
+    let framed = world.resource::<Paced>().0;
     for root in roots {
         let Some(mut streaming) = world.entity_mut(root).take::<Streaming>() else {
             continue;

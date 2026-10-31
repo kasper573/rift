@@ -124,7 +124,7 @@ fn entry_rows(ui: &mut Ui, world: &mut World, log: &QuestLog, entry: &Entry) {
         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
             if entry.timed {
                 let left = Countdown::Left
-                    .label(log, entry.quest, super::card::clock_now(world))
+                    .label(log, entry.quest, super::card::clock_now())
                     .unwrap_or_default();
                 ui.label(TextRole::Small.rich(left).color(ink::INK3));
             }
@@ -144,7 +144,7 @@ fn entry_rows(ui: &mut Ui, world: &mut World, log: &QuestLog, entry: &Entry) {
             Count::Hidden => String::new(),
             Count::Fixed(count) => count.clone(),
             Count::Live(shows) => shows
-                .label(log, entry.quest, super::card::clock_now(world))
+                .label(log, entry.quest, super::card::clock_now())
                 .unwrap_or_default(),
         };
         ui.horizontal(|ui| {

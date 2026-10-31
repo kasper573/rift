@@ -1,6 +1,6 @@
 //! Textures painted for a body: a base texture with colours laid over it wherever masks mark them,
-//! and where a layer is metal, the surface it lays, baked once for each way of painting it, a
-//! slice of a frame at a time, and shared by every mesh painted alike.
+//! and where a layer is metal, the surface it lays, baked once for each way of painting it, off the
+//! main thread, and shared by every mesh painted alike.
 
 use std::sync::LazyLock;
 
@@ -9,10 +9,11 @@ use bevy::ecs::system::SystemParam;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
+use rayon::prelude::*;
 
 use super::material::{METAL_ROUGHNESS, METALLIC, ROUGHNESS, WorldMaterial};
 use crate::core::math::Rgb;
-use crate::core::pace::Pace;
 
 /// A texture painted from `base` and `layers`, laid in order.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -52,31 +53,21 @@ enum PaintState {
         base: Handle<Image>,
         masks: Vec<Handle<Image>>,
     },
-    Baking(Bake),
+    Baking(Task<Baked>),
     Done(Painted),
     Failed,
 }
 
-/// Bakes every paint whose images have loaded, as far as the frame's slice allows.
-pub(super) fn advance_bakes(
-    mut paints: ResMut<Paints>,
-    mut images: ResMut<Assets<Image>>,
-    pace: Res<Pace>,
-) {
+/// Takes in every paint whose bake has finished.
+pub(super) fn advance_bakes(mut paints: ResMut<Paints>, mut images: ResMut<Assets<Image>>) {
     for baking in paints.baked.values_mut() {
-        if let PaintState::Baking(bake) = baking {
-            loop {
-                if pace.spent() {
-                    return;
-                }
-                if let Some(baked) = bake.step() {
-                    *baking = PaintState::Done(Painted {
-                        colour: images.add(baked.colour),
-                        surface: baked.surface.map(|surface| images.add(surface)),
-                    });
-                    break;
-                }
-            }
+        if let PaintState::Baking(task) = baking
+            && let Some(baked) = block_on(future::poll_once(task))
+        {
+            *baking = PaintState::Done(Painted {
+                colour: images.add(baked.colour),
+                surface: baked.surface.map(|surface| images.add(surface)),
+            });
         }
     }
 }
@@ -140,7 +131,9 @@ impl Painter<'_> {
                     .zip(layers)
                     .and_then(|(base, layers)| Bake::start(base, &layers));
                 *baking = match started {
-                    Some(bake) => PaintState::Baking(bake),
+                    Some(bake) => PaintState::Baking(
+                        AsyncComputeTaskPool::get().spawn(async { bake.finish() }),
+                    ),
                     None => {
                         warn!("could not paint {}: its masks do not fit it", paint.base);
                         PaintState::Failed
@@ -194,21 +187,14 @@ pub struct Baked {
     pub surface: Option<Image>,
 }
 
-/// Bakes a paint whole.
 pub fn bake(base: &Image, layers: &[(&Image, &PaintLayer)]) -> Option<Baked> {
-    let mut bake = Bake::start(base, layers)?;
-    loop {
-        if let Some(baked) = bake.step() {
-            return Some(baked);
-        }
-    }
+    Some(Bake::start(base, layers)?.finish())
 }
 
-/// A paint baking a band of rows at a time, so a bake can take a slice of every frame.
+/// A paint's pixels read from its images, ready to bake apart from them.
 pub struct Bake {
     width: u32,
     height: u32,
-    row: u32,
     colour: Vec<u8>,
     surface: Option<Vec<u8>>,
     masks: Vec<Vec<u8>>,
@@ -223,9 +209,6 @@ struct Laid {
     colour: [f32; 3],
     metal: bool,
 }
-
-/// How many pixels a step bakes.
-const STEP_PIXELS: u32 = 16 * 1024;
 
 impl Bake {
     /// Begins baking `layers` over `base`: none when a mask is not the size of the base.
@@ -265,7 +248,6 @@ impl Bake {
         Some(Bake {
             width,
             height,
-            row: 0,
             colour: base.into_raw(),
             surface,
             masks,
@@ -273,57 +255,49 @@ impl Bake {
         })
     }
 
-    /// Bakes the next band of rows; the textures once the last is baked, after which the bake is
-    /// spent.
-    pub fn step(&mut self) -> Option<Baked> {
-        let rows = (STEP_PIXELS / self.width.max(1)).max(1);
-        let from = self.row;
-        let to = (from + rows).min(self.height);
-        self.row = to;
-        let range = (from * self.width * 4) as usize..(to * self.width * 4) as usize;
-        let first = (from * self.width) as usize;
+    /// Bakes every row, across the threads.
+    pub fn finish(mut self) -> Baked {
+        let width = self.width as usize;
         let srgb = &*SRGB;
-        let surface = self
-            .surface
-            .as_mut()
-            .map(|surface| &mut surface[range.clone()]);
-        let mut surface = surface
-            .map(|surface| surface.as_chunks_mut::<4>().0.iter_mut())
-            .into_iter()
-            .flatten();
-        for (offset, pixel) in self.colour[range]
-            .as_chunks_mut::<4>()
-            .0
-            .iter_mut()
-            .enumerate()
-        {
-            let index = first + offset;
-            let mut mixed = [pixel[0], pixel[1], pixel[2]].map(|byte| LINEAR[byte as usize]);
-            let mut metal = 0.0f32;
-            for layer in &self.layers {
-                let bright = self.masks[layer.mask][index * 4 + layer.channel] as f32 / 255.0;
-                let amount = if layer.inverted { 1.0 - bright } else { bright };
-                for (mixed, colour) in mixed.iter_mut().zip(layer.colour) {
-                    *mixed += (colour - *mixed) * amount;
+        let (masks, layers) = (&self.masks, &self.layers);
+        let paint_row = |row: usize, colour: &mut [u8], surface: Option<&mut [u8]>| {
+            let mut surface = surface
+                .map(|surface| surface.as_chunks_mut::<4>().0.iter_mut())
+                .into_iter()
+                .flatten();
+            for (offset, pixel) in colour.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+                let index = row * width + offset;
+                let mut mixed = [pixel[0], pixel[1], pixel[2]].map(|byte| LINEAR[byte as usize]);
+                let mut metal = 0.0f32;
+                for layer in layers {
+                    let bright = masks[layer.mask][index * 4 + layer.channel] as f32 / 255.0;
+                    let amount = if layer.inverted { 1.0 - bright } else { bright };
+                    for (mixed, colour) in mixed.iter_mut().zip(layer.colour) {
+                        *mixed += (colour - *mixed) * amount;
+                    }
+                    let target = if layer.metal { 1.0 } else { 0.0 };
+                    metal += (target - metal) * amount;
                 }
-                let target = if layer.metal { 1.0 } else { 0.0 };
-                metal += (target - metal) * amount;
+                for (byte, mixed) in pixel.iter_mut().zip(mixed) {
+                    *byte = srgb[(mixed.clamp(0.0, 1.0) * SRGB_STEPS as f32).round() as usize];
+                }
+                if let Some(pixel) = surface.next() {
+                    let roughness = ROUGHNESS + (METAL_ROUGHNESS - ROUGHNESS) * metal;
+                    *pixel = [
+                        0,
+                        (roughness * 255.0).round() as u8,
+                        (METALLIC * metal * 255.0).round() as u8,
+                        255,
+                    ];
+                }
             }
-            for (byte, mixed) in pixel.iter_mut().zip(mixed) {
-                *byte = srgb[(mixed.clamp(0.0, 1.0) * SRGB_STEPS as f32).round() as usize];
-            }
-            if let Some(pixel) = surface.next() {
-                let roughness = ROUGHNESS + (METAL_ROUGHNESS - ROUGHNESS) * metal;
-                *pixel = [
-                    0,
-                    (roughness * 255.0).round() as u8,
-                    (METALLIC * metal * 255.0).round() as u8,
-                    255,
-                ];
-            }
-        }
-        if to < self.height {
-            return None;
+        };
+        let rows = self.colour.par_chunks_mut(width * 4).enumerate();
+        match self.surface.as_mut() {
+            Some(surface) => rows
+                .zip(surface.par_chunks_mut(width * 4))
+                .for_each(|((row, colour), surface)| paint_row(row, colour, Some(surface))),
+            None => rows.for_each(|(row, colour)| paint_row(row, colour, None)),
         }
         let image = |data: Vec<u8>, format: TextureFormat| {
             Image::new(
@@ -338,16 +312,12 @@ impl Bake {
                 RenderAssetUsages::RENDER_WORLD,
             )
         };
-        Some(Baked {
-            colour: image(
-                std::mem::take(&mut self.colour),
-                TextureFormat::Rgba8UnormSrgb,
-            ),
+        Baked {
+            colour: image(self.colour, TextureFormat::Rgba8UnormSrgb),
             surface: self
                 .surface
-                .take()
                 .map(|surface| image(surface, TextureFormat::Rgba8Unorm)),
-        })
+        }
     }
 }
 
@@ -355,8 +325,8 @@ impl Bake {
 static LINEAR: LazyLock<[f32; 256]> =
     LazyLock::new(|| std::array::from_fn(|byte| to_linear(byte as f32 / 255.0)));
 
-// A bake converts every pixel of a texture back to sRGB, and `powf` runs in software on the web,
-// where that took longer than all else an arrival does.
+// A bake converts every pixel of a texture back to sRGB, and a table lookup is far cheaper than a
+// `powf` per channel.
 const SRGB_STEPS: usize = u16::MAX as usize;
 
 /// The sRGB byte for linear light in steps of `1 / SRGB_STEPS`, fine enough that every byte comes

@@ -2,13 +2,11 @@
 name = "smoke"
 version.workspace = true
 edition.workspace = true
-description = "The website and the browser client smoke-tested together from a binaries folder"
+description = "The website, the game server and the desktop client smoke-tested together from a binaries folder"
 publish = false
 
 [dependencies]
-chromiumoxide = "0.9"
 engine = { path = "../engine" }
-futures = "0.3"
 image = { version = "0.25", default-features = false, features = ["png"] }
 oauth2-test-server = "0.2.3"
 oidc = { path = "../oidc" }

@@ -2,7 +2,7 @@
 name = "engine"
 version.workspace = true
 edition.workspace = true
-description = "The engine: the isomorphic simulation library and its server, browser and desktop clients"
+description = "The engine: the simulation library and its server and desktop client"
 
 # Built with `--profile profiling --features profiling`, it is game-server-profiling.
 [[bin]]
@@ -13,19 +13,10 @@ path = "src/bin/server/main.rs"
 name = "desktop-client"
 path = "src/bin/desktop_client/main.rs"
 
-[[bin]]
-name = "wasm-client"
-path = "src/bin/wasm_client/main.rs"
-
 [features]
 profiling = ["bevy/debug", "bevy/trace_chrome"]
 
-# One dependency set for every target keeps the source tree free of #[cfg] gates: the browser-only
-# crates (bevy's render stack, egui, web-sys, kira, …) also compile natively — wasm imports become
-# panicking stubs and the linker strips what the native binaries never call.
 [dependencies]
-# `multi_threaded` on the web too, where everything still runs on one thread: without it bevy
-# propagates every transform in the world every frame, rather than only those under a change.
 bevy = { workspace = true, features = [
     "multi_threaded",
     "async_executor",
@@ -66,8 +57,7 @@ bevy = { workspace = true, features = [
     "bevy_text",
     "bevy_window",
     "hdr",
-    "webgl2",
-    "web",
+    "x11",
 ] }
 ui = { path = "../ui" }
 bevy_terminal = { path = "../bevy/terminal" }
@@ -89,15 +79,13 @@ bevy_kira_audio = { version = "0.27", default-features = false }
 kira = { version = "0.12", default-features = false, features = ["symphonia"] }
 base64 = "0.23"
 symphonia = { version = "0.6", default-features = false, features = ["flac", "wav", "pcm"] }
-futures-timer = { version = "3", features = ["wasm-bindgen"] }
+futures-timer = "3"
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 derive_more = { version = "2", features = ["add", "add_assign"] }
 euclid = { version = "0.22", features = ["serde"] }
 fixedbitset = "0.5"
 oorandom = "11"
 getrandom = "0.4"
-gloo-net = { version = "0.7", default-features = false, features = ["http"] }
-console_error_panic_hook = "0.1"
 rayon.workspace = true
 strum = { workspace = true, features = ["derive"] }
 strsim.workspace = true
@@ -116,36 +104,12 @@ png = "0.18"
 tar = "0.4"
 flate2 = "1"
 postcard = { version = "1", features = ["alloc"] }
-wasm-bindgen = "0.2"
-wasm-bindgen-futures = "0.4"
-js-sys = "0.3"
-web-sys = { version = "0.3", features = [
-    "Window",
-    "Document",
-    "Element",
-    "HtmlCanvasElement",
-    "Storage",
-    "WebSocket",
-    "BinaryType",
-    "MessageEvent",
-    "Cache",
-    "CacheStorage",
-    "Request",
-    "Response",
-    "Location",
-    "Node",
-] }
 gltf = { version = "1.4", default-features = false, features = ["names", "utils"] }
 polyanya = "0.17"
 glam = "0.32"
 bevy_skeleton_modifiers = { version = "0.1.1", default-features = false }
-image = { version = "0.25", default-features = false }
+image = { version = "0.25", default-features = false, features = ["png"] }
 wgpu = { workspace = true, features = ["counters"] }
-
-# Native-only: crates the server, desktop and lint binaries need that have no wasm build (tokio, axum, …),
-# plus the desktop windowing features the client code needs to compile natively.
-[target.'cfg(not(target_arch = "wasm32"))'.dependencies]
-bevy = { workspace = true, features = ["x11"] }
 axum.workspace = true
 tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 ctrlc.workspace = true
@@ -154,7 +118,6 @@ metrics = "0.24"
 oidc = { path = "../oidc" }
 service = { path = "../service" }
 tokio.workspace = true
-tower-http = { workspace = true, features = ["cors"] }
 ureq = { workspace = true, features = ["rustls", "platform-verifier"] }
 tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
@@ -168,13 +131,6 @@ proc-macro2 = { workspace = true, features = ["span-locations"] }
 [dev-dependencies]
 testkit = { path = "../testkit" }
 tempfile = "3"
-
-# Wasm-only features: `reflect_auto_register`'s #[used] registration slices defeat --gc-sections,
-# so enabling it natively would drag the whole (unused) render stack into the server binary.
-[target.'cfg(target_arch = "wasm32")'.dependencies]
-bevy = { workspace = true, features = ["reflect_auto_register"] }
-getrandom = { version = "0.4", features = ["wasm_js"] }
-blake3 = { version = "1", features = ["wasm32_simd"] }
 
 [lints]
 workspace = true

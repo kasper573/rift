@@ -364,7 +364,7 @@ impl Scatter {
 
 /// A polygon fitted to a model that has changed since is reported at the prop: its points no longer
 /// follow the mesh.
-pub async fn check_fitted(loading: &mut Loading) {
+pub fn check_fitted(loading: &mut Loading) {
     let content = loading.content();
     let hashes = content.built::<FileHashes>();
     for (id, def) in loading.rows::<PropDef>(&content) {

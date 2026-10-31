@@ -1,4 +1,3 @@
-use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::io::{self, Write};
 use std::ops::Bound;
@@ -8,14 +7,16 @@ use std::time::Duration;
 use bevy::tasks::futures_lite::future;
 use bevy_ecs::prelude::Resource;
 use futures_timer::Delay;
+use futures_util::future::BoxFuture;
 use futures_util::{StreamExt, stream};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use super::load::{ContentFolder, FileHash, FileHashes, FolderEntry, entries_in};
-use super::store::{ContentStore, StoreReader};
+use super::store::ContentStore;
 use super::table::Content;
 use crate::core::math::Rng;
-use crate::core::platform::{FetchFailure, LocalFuture};
+use crate::core::os::FetchFailure;
 use crate::core::time::{Backoff, Seconds};
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -105,8 +106,8 @@ impl ServedContent {
     }
 }
 
-pub trait ContentSource {
-    fn get(&self, path: &str) -> LocalFuture<Result<Vec<u8>, FetchFailure>>;
+pub trait ContentSource: Sync {
+    fn get(&self, path: &str) -> BoxFuture<'static, Result<Vec<u8>, FetchFailure>>;
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -211,14 +212,13 @@ pub struct SyncedContent {
     pub memory_only: bool,
 }
 
-/// The synced assets as they are read: from the store, by the hash the index files each under,
-/// where the store is read from any thread; held in memory where it isn't, and the ones the
-/// store couldn't keep.
+/// The synced assets as they are read: from the store, by the hash the index files each under, and
+/// held in memory those the store couldn't keep.
 #[derive(Clone, Default)]
 pub struct SyncedAssets {
     hashes: Arc<HashMap<String, String>>,
     held: Arc<HashMap<String, Arc<[u8]>>>,
-    reader: Option<Arc<dyn StoreReader>>,
+    reader: Option<ContentStore>,
 }
 
 impl SyncedAssets {
@@ -341,7 +341,7 @@ impl ContentFolder for SyncedFolder {
 
 pub async fn sync(
     source: &dyn ContentSource,
-    store: &dyn ContentStore,
+    store: &ContentStore,
     build: &str,
     policy: SyncPolicy,
     status: SyncStatus,
@@ -351,7 +351,7 @@ pub async fn sync(
         store,
         policy,
         status,
-        rng: RefCell::new(Rng::from_entropy()),
+        rng: Mutex::new(Rng::from_entropy()),
     };
     let mut restarts = 0;
     loop {
@@ -417,10 +417,10 @@ fn rows_bundle(rows: &[(String, Vec<u8>)]) -> io::Result<Vec<u8>> {
 
 struct Run<'a> {
     source: &'a dyn ContentSource,
-    store: &'a dyn ContentStore,
+    store: &'a ContentStore,
     policy: SyncPolicy,
     status: SyncStatus,
-    rng: RefCell<Rng>,
+    rng: Mutex<Rng>,
 }
 
 enum Attempt {
@@ -450,7 +450,7 @@ impl Run<'_> {
         if manifest.build != build {
             return Err(Attempt::OtherBuild(manifest.build));
         }
-        let stored: HashSet<String> = self.store.list().await.into_iter().collect();
+        let stored: HashSet<String> = self.store.list().into_iter().collect();
         let index = self.obtain(&manifest.index.hash, &stored).await?;
         let index: FileIndex = serde_json::from_slice(&index)
             .map_err(|error| Attempt::Failed(format!("the file index did not parse: {error}")))?;
@@ -471,24 +471,19 @@ impl Run<'_> {
             progress.files_in_index = index.files.len();
             progress.read = Counted::of(&kept);
         });
-        let reader = self.store.reader();
         let mut held: HashMap<String, Arc<[u8]>> = HashMap::new();
-        let mut reads = stream::iter(kept)
-            .map(|file| async move { (self.read_verified(&file.hash).await, file) })
-            .buffer_unordered(self.policy.at_once);
-        while let Some((read, file)) = reads.next().await {
-            match read {
-                Some(bytes) => {
+        let spoilt: Vec<IndexedFile> = kept
+            .into_par_iter()
+            .filter(|file| {
+                let intact = self.read_verified(&file.hash).is_some();
+                if intact {
                     self.status
                         .update(|progress| progress.read.advance(file.size));
-                    if reader.is_none() {
-                        held.insert(file.path, bytes);
-                    }
                 }
-                None => missing.push(file),
-            }
-        }
-        drop(reads);
+                !intact
+            })
+            .collect();
+        missing.extend(spoilt);
 
         self.status.update(|progress| {
             progress.phase = SyncPhase::Downloading {
@@ -507,7 +502,7 @@ impl Run<'_> {
             .buffer_unordered(self.policy.at_once);
         while let Some(fetched) = downloads.next().await {
             let (path, bytes, kept) = fetched?;
-            if !kept || reader.is_none() {
+            if !kept {
                 held.insert(path, bytes);
             }
         }
@@ -521,7 +516,7 @@ impl Run<'_> {
             .collect();
         for hash in &stored {
             if !keep.contains(hash.as_str()) {
-                self.store.remove(hash).await;
+                self.store.remove(hash);
             }
         }
         self.status
@@ -539,7 +534,7 @@ impl Run<'_> {
             assets: SyncedAssets {
                 hashes: Arc::new(hashes),
                 held: Arc::new(held),
-                reader,
+                reader: Some(self.store.clone()),
             },
             memory_only: self.memory_only(),
         })
@@ -551,17 +546,16 @@ impl Run<'_> {
 
     async fn obtain(&self, hash: &str, stored: &HashSet<String>) -> Result<Arc<[u8]>, Attempt> {
         if stored.contains(hash)
-            && let Some(bytes) = self.read_verified(hash).await
+            && let Some(bytes) = self.read_verified(hash)
         {
             return Ok(bytes);
         }
         self.fetch_file(hash).await.map(|(bytes, _)| bytes)
     }
 
-    async fn read_verified(&self, hash: &str) -> Option<Arc<[u8]>> {
+    fn read_verified(&self, hash: &str) -> Option<Arc<[u8]>> {
         self.store
             .read(hash)
-            .await
             .filter(|bytes| FileHash::of(bytes).hash == hash)
             .map(Arc::from)
     }
@@ -571,7 +565,7 @@ impl Run<'_> {
             self.fetch_with_retries(&format!("/content/files/{hash}"), Some(hash))
                 .await?,
         );
-        let kept = !self.memory_only() && self.store.write(hash, bytes.clone()).await.is_ok();
+        let kept = !self.memory_only() && self.store.write(hash, &bytes).is_ok();
         if !kept {
             self.status.update(|progress| progress.memory_only = true);
         }
@@ -606,10 +600,13 @@ impl Run<'_> {
                 return Err(Attempt::Failed(format!("{path}: {failed}")));
             }
             self.status.update(|progress| progress.retrying += 1);
-            let wait = self
-                .policy
-                .backoff
-                .after(failures, &mut self.rng.borrow_mut());
+            let wait = self.policy.backoff.after(
+                failures,
+                &mut self
+                    .rng
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner()),
+            );
             Delay::new(wait.into()).await;
             self.status.update(|progress| progress.retrying -= 1);
         }

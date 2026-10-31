@@ -2,13 +2,10 @@
 //! websocket sockets and holds them idle. The server must take any account's sign-in (its auth
 //! `fake`).
 //!
-//! Each client drives renet2's core directly over a plain WebSocket — the same netcode-free transport
-//! the browser and the server use — so there is no client cap. Without a count it root-finds the
+//! Each client drives renet2's core directly over the client's own WebSocket transport, so there is
+//! no client cap. Without a count it root-finds the
 //! player count whose server tick hits the budget, using the same projection as the area benchmark.
 
-use std::cell::{Cell, RefCell};
-use std::io::ErrorKind;
-use std::net::TcpStream;
 use std::time::{Duration, Instant};
 
 use bevy_app::{App, Update};
@@ -18,15 +15,12 @@ use bevy_replicon_renet2::RenetChannelsExt;
 use bevy_state::prelude::*;
 use engine::core::content::sync::Manifest;
 use engine::core::net::SessionRequest;
-use engine::core::net::transport::{ClientSocket, SocketClientPlugin};
-use engine::core::platform::{ServerSocket, SocketState};
+use engine::core::net::transport::{ClientSocket, ServerSocket, SocketClientPlugin};
 use engine::systems::TICK_HZ;
 use engine::systems::launch::{TICK_METRIC, fake_token};
 use engine::systems::player::JoinRequest;
 use engine::systems::player::session::{self, ClientSessionPlugin};
 use renet2::{ConnectionConfig, RenetClient};
-use tungstenite::Message;
-use tungstenite::stream::MaybeTlsStream;
 
 use crate::search::{BUDGET_MS, Search};
 
@@ -215,7 +209,7 @@ fn connected_count(clients: &[App]) -> usize {
 
 fn build_client(http_url: &str, ws_url: &str, index: usize) -> Option<App> {
     let ticket = fetch_ticket(http_url, &format!("loadtest-{index}"))?;
-    let socket = WsSocket::connect(ws_url, &ticket)?;
+    let socket = ServerSocket::open(&format!("{ws_url}/?ticket={ticket}"));
 
     let mut app = App::new();
     app.add_plugins((bevy_time::TimePlugin, bevy_state::app::StatesPlugin));
@@ -230,7 +224,7 @@ fn build_client(http_url: &str, ws_url: &str, index: usize) -> Option<App> {
     };
     // The websocket is reliable+ordered (TCP), matching the server side.
     app.insert_resource(RenetClient::new(config, true));
-    app.insert_non_send(ClientSocket(Box::new(socket)));
+    app.insert_non_send(ClientSocket(socket));
     app.finish();
     app.cleanup();
     Some(app)
@@ -254,61 +248,6 @@ fn fetch_ticket(http_url: &str, account: &str) -> Option<String> {
         .send(serde_json::to_string(&request).ok()?)
         .ok()?;
     Some(response.body_mut().read_to_string().ok()?.trim().to_owned())
-}
-
-struct WsSocket {
-    ws: RefCell<tungstenite::WebSocket<MaybeTlsStream<TcpStream>>>,
-    state: Cell<SocketState>,
-}
-
-impl WsSocket {
-    fn connect(ws_url: &str, ticket: &str) -> Option<WsSocket> {
-        let (ws, _response) = tungstenite::connect(format!("{ws_url}/?ticket={ticket}"))
-            .map_err(|error| eprintln!("[ws] connect: {error}"))
-            .ok()?;
-        if let MaybeTlsStream::Plain(tcp) = ws.get_ref() {
-            tcp.set_nonblocking(true).ok()?;
-        }
-        Some(WsSocket {
-            ws: RefCell::new(ws),
-            state: Cell::new(SocketState::Open),
-        })
-    }
-}
-
-impl ServerSocket for WsSocket {
-    fn recv(&self) -> Option<Vec<u8>> {
-        match self.ws.borrow_mut().read() {
-            Ok(Message::Binary(data)) => Some(data.to_vec()),
-            Ok(Message::Close(_)) => {
-                self.state.set(SocketState::Closed);
-                None
-            }
-            Ok(_) => None,
-            Err(tungstenite::Error::Io(error)) if error.kind() == ErrorKind::WouldBlock => None,
-            Err(_) => {
-                self.state.set(SocketState::Closed);
-                None
-            }
-        }
-    }
-
-    fn send(&self, packet: &[u8]) {
-        match self
-            .ws
-            .borrow_mut()
-            .send(Message::Binary(packet.to_vec().into()))
-        {
-            Ok(()) => {}
-            // A non-blocking write that couldn't flush fully is buffered for the next send.
-            Err(tungstenite::Error::Io(error)) if error.kind() == ErrorKind::WouldBlock => {}
-            Err(_) => self.state.set(SocketState::Closed),
-        }
-    }
-
-    fn state(&self) -> SocketState {
-        self.state.get()
-    }
 }
 
 // Once the server's welcome arrives (`MyClient` set), announce the join exactly as the real client

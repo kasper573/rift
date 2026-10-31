@@ -221,6 +221,14 @@ pub struct LocalClock {
 }
 
 impl LocalClock {
+    /// This machine's clock, in its time zone.
+    pub fn of_this_machine() -> LocalClock {
+        LocalClock {
+            now: std::time::SystemTime::now().into(),
+            utc_offset: Seconds(chrono::Local::now().offset().local_minus_utc() as f32),
+        }
+    }
+
     pub fn label(self, at: UnixMillis) -> String {
         let local = |time: UnixMillis| {
             let millis = time.0 as i64 + self.utc_offset.millis().0 as i64;

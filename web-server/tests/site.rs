@@ -20,7 +20,7 @@ const GAME: &str = "Lantern Isle";
 const RELEASE: &str = "2026.10.29-abcdef12";
 
 #[tokio::test(flavor = "multi_thread")]
-async fn a_visitor_signs_in_plays_as_their_account_and_signs_out() {
+async fn a_visitor_signs_in_as_their_account_and_signs_out() {
     for account_page in [Some(ACCOUNT_PAGE), None] {
         let provider = start_provider().await;
         let site = site(&provider, account_page).await;
@@ -30,7 +30,7 @@ async fn a_visitor_signs_in_plays_as_their_account_and_signs_out() {
         assert!(landing.body.contains(&format!("<title>{GAME}</title>")));
         assert!(!landing.body.contains(ACCOUNT));
 
-        let asked = visitor.get(&site, "/auth/sign-in?return=/play").await;
+        let asked = visitor.get(&site, "/auth/sign-in?return=/downloads").await;
         assert_eq!(asked.status, StatusCode::SEE_OTHER);
         let authorization = asked.location();
         assert!(authorization.starts_with(&provider.endpoints.authorize));
@@ -47,13 +47,12 @@ async fn a_visitor_signs_in_plays_as_their_account_and_signs_out() {
         let callback = back.strip_prefix(SITE).expect("back to the site");
 
         let signed_in = visitor.get(&site, callback).await;
-        assert_eq!(signed_in.location(), "/play");
+        assert_eq!(signed_in.location(), "/downloads");
 
-        let play = visitor.get(&site, "/play").await;
-        assert!(play.body.contains("data-access-token="), "{}", play.body);
-        assert!(play.body.contains(ACCOUNT));
+        let downloads = visitor.get(&site, "/downloads").await;
+        assert!(downloads.body.contains(ACCOUNT), "{}", downloads.body);
         assert_eq!(
-            play.body.contains(&format!("href=\"{ACCOUNT_PAGE}\"")),
+            downloads.body.contains(&format!("href=\"{ACCOUNT_PAGE}\"")),
             account_page.is_some()
         );
 
@@ -61,8 +60,8 @@ async fn a_visitor_signs_in_plays_as_their_account_and_signs_out() {
         let logout = signed_out.location();
         assert!(logout.starts_with(END_SESSION), "{logout}");
         assert!(logout.contains("id_token_hint="));
-        let after = visitor.get(&site, "/play").await;
-        assert!(!after.body.contains("data-access-token="));
+        let after = visitor.get(&site, "/downloads").await;
+        assert!(!after.body.contains(ACCOUNT));
     }
 }
 
@@ -185,7 +184,6 @@ async fn site(provider: &OAuthTestServer, account_page: Option<&str>) -> Router 
     };
     let metadata = serde_json::to_value(registration).expect("a registration");
     let client = provider.register_client(metadata).await.client_id;
-    let wasm = std::env::temp_dir();
     web_server::router(Site {
         config: WebServerConfig {
             bind: "127.0.0.1".parse().expect("an address"),
@@ -196,7 +194,6 @@ async fn site(provider: &OAuthTestServer, account_page: Option<&str>) -> Router 
             game_server_internal_url: "http://game-server:9998".to_owned(),
             downloads_url: "https://releases.test/download".to_owned(),
             release: RELEASE.to_owned(),
-            wasm_dir: wasm,
         },
         sign_in: SignInSettings {
             issuer: IssuerUrl::new(provider.issuer().to_owned()).expect("a url"),

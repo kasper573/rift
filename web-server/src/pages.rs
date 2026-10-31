@@ -14,20 +14,6 @@ pub(crate) async fn landing(State(app): State<Arc<App>>, jar: CookieJar) -> Resp
     })
 }
 
-pub(crate) async fn play(State(app): State<Arc<App>>, jar: CookieJar) -> Response {
-    let nav = app.nav(&jar, "/play").await;
-    let access_token = nav
-        .user
-        .as_ref()
-        .and_then(|_| jar.get("token").map(|cookie| cookie.value().to_owned()));
-    page(Play {
-        nav,
-        access_token,
-        game_server_url: app.config.game_server_url.clone(),
-        game_server_ws_url: app.config.game_server_ws_url.clone(),
-    })
-}
-
 pub(crate) async fn downloads(State(app): State<Arc<App>>, jar: CookieJar) -> Response {
     let platforms = PLATFORMS
         .iter()
@@ -112,15 +98,6 @@ struct Nav {
 #[template(path = "landing.html")]
 struct Landing {
     nav: Nav,
-}
-
-#[derive(Template)]
-#[template(path = "play.html")]
-struct Play {
-    nav: Nav,
-    access_token: Option<String>,
-    game_server_url: String,
-    game_server_ws_url: String,
 }
 
 #[derive(Template)]

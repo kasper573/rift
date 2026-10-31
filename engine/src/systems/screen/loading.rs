@@ -1,26 +1,23 @@
 use std::sync::Arc;
 
 use bevy::prelude::*;
-use bevy::tasks::{IoTaskPool, Task, block_on, futures_lite::future};
+use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
 use bevy_egui::EguiPrimaryContextPass;
 use ui::ink;
 
-use super::{
-    ClientScreen, Notice, Retry, notice_screen, pace_as_before, pace_eagerly, pace_slowly,
-};
+use super::{ClientScreen, Notice, Retry, notice_screen, pace_as_before, pace_slowly};
 use crate::core::content::sync::{
-    ContentSource, Counted, SyncError, SyncPhase, SyncPolicy, SyncProgress, SyncStatus,
-    SyncedContent, sync,
+    ContentSource, SyncError, SyncPhase, SyncPolicy, SyncProgress, SyncStatus, SyncedContent, sync,
 };
-use crate::core::content::{Content, LoadPurpose, load_paced, version};
+use crate::core::content::{Content, LoadPurpose, version};
 use crate::core::gui::{self, Band};
 use crate::core::math::Rng;
 use crate::core::net::auth::Credentials;
-use crate::core::pace::Pace;
-use crate::core::platform::{ClientPlatform, FetchFailure, LocalFuture, Platform, StartParams};
+use crate::core::os::{FetchFailure, Http, Profile, StartParams};
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::time::Seconds;
-use crate::systems::{install_content, registry};
+use crate::systems::{install_content, load_content};
+use futures_util::future::BoxFuture;
 use ui::words;
 
 pub struct LoadingPlugin;
@@ -50,7 +47,6 @@ struct Syncing {
     task: Task<Result<Option<Brought>, SyncError>>,
     status: SyncStatus,
     retry: Retry,
-    building: bool,
 }
 
 /// New content, synced and loaded.
@@ -69,7 +65,6 @@ struct LoadingFailure {
 struct Shown {
     progress: SyncProgress,
     card: Option<CardModel>,
-    announced: Option<String>,
 }
 
 #[derive(Clone, PartialEq)]
@@ -77,19 +72,18 @@ struct CardModel {
     title: String,
     lines: Vec<String>,
     notes: Vec<String>,
-    // Shown but never announced: it counts down every second.
     retry_in: Option<String>,
     veiled: bool,
 }
 
 struct ServerContent {
-    platform: Arc<dyn Platform>,
+    http: Http,
     base: String,
 }
 
 impl ContentSource for ServerContent {
-    fn get(&self, path: &str) -> LocalFuture<Result<Vec<u8>, FetchFailure>> {
-        self.platform.get(format!("{}{path}", self.base))
+    fn get(&self, path: &str) -> BoxFuture<'static, Result<Vec<u8>, FetchFailure>> {
+        Box::pin(self.http.get(format!("{}{path}", self.base)))
     }
 }
 
@@ -107,24 +101,20 @@ fn forget(world: &mut World) {
 
 fn start(world: &mut World, retry: Retry) {
     pace_slowly(world);
-    let platform = world.resource::<ClientPlatform>().0.clone();
+    let http = world.resource::<Http>().clone();
+    let store = world.resource::<Profile>().content_store();
     let base = world.resource::<StartParams>().game_server_url.clone();
     let installed = world
         .get_resource::<SyncedContent>()
         .map(|synced| synced.manifest.clone());
-    let pace = world.resource::<Pace>().clone();
     let status = SyncStatus::default();
-    let task = IoTaskPool::get().spawn_local({
+    let task = AsyncComputeTaskPool::get().spawn({
         let status = status.clone();
         async move {
-            let source = ServerContent {
-                platform: platform.clone(),
-                base,
-            };
-            let store = platform.content_store();
+            let source = ServerContent { http, base };
             let synced = sync(
                 &source,
-                &*store,
+                &store,
                 version::build(),
                 SyncPolicy::default(),
                 status.clone(),
@@ -134,15 +124,11 @@ fn start(world: &mut World, retry: Retry) {
                 return Ok(None);
             }
             status.update(|progress| progress.phase = SyncPhase::Building);
-            let content = load_paced(
-                registry(),
+            let content = load_content(
                 Arc::new(synced.folder()),
-                version::build(),
                 "the content did not load",
                 LoadPurpose::Play,
-                &pace,
             )
-            .await
             .map_err(|report| SyncError::Failed(report.to_string()))?;
             Ok(Some(Brought { synced, content }))
         }
@@ -151,7 +137,6 @@ fn start(world: &mut World, retry: Retry) {
         task,
         status,
         retry,
-        building: false,
     });
 }
 
@@ -167,13 +152,7 @@ fn poll(world: &mut World) {
         return;
     };
     match block_on(future::poll_once(&mut syncing.task)) {
-        None => {
-            if !syncing.building && syncing.status.latest().phase == SyncPhase::Building {
-                syncing.building = true;
-                pace_eagerly(world);
-            }
-            world.insert_resource(syncing);
-        }
+        None => world.insert_resource(syncing),
         Some(Ok(brought)) => {
             world.resource_mut::<Shown>().progress = syncing.status.latest();
             if let Some(Brought { synced, content }) = brought {
@@ -188,15 +167,15 @@ fn poll(world: &mut World) {
         }
         Some(Err(SyncError::OtherBuild { server })) => {
             world.resource_mut::<Shown>().progress = syncing.status.latest();
-            if let Err(reason) = world.resource::<ClientPlatform>().0.relaunch(&server) {
-                world.insert_resource(LoadingFailure {
-                    reason,
-                    retry: Retry {
-                        due: None,
-                        ..syncing.retry
-                    },
-                });
-            }
+            world.insert_resource(LoadingFailure {
+                reason: format!(
+                    "The server runs build {server}. Start a desktop client of that build to play."
+                ),
+                retry: Retry {
+                    due: None,
+                    ..syncing.retry
+                },
+            });
         }
         Some(Err(SyncError::Failed(reason))) => {
             world.resource_mut::<Shown>().progress = syncing.status.latest();
@@ -232,15 +211,6 @@ fn show(world: &mut World) {
         && window.title != model.title
     {
         window.title = model.title.clone();
-    }
-    let status = {
-        let shown = world.resource::<Shown>();
-        announcement(&model, &shown.progress)
-    };
-    let mut shown = world.resource_mut::<Shown>();
-    if shown.announced.as_ref() != Some(&status) {
-        shown.announced = Some(status.clone());
-        world.resource::<ClientPlatform>().0.announce(&status);
     }
     world.resource_mut::<Shown>().card = Some(model);
 }
@@ -354,34 +324,6 @@ fn card_model(
         retry_in,
         veiled,
     }
-}
-
-/// What a screen reader hears: the card's words, with transfers rounded to quarters so the status
-/// changes a few times, not every frame.
-fn announcement(model: &CardModel, progress: &SyncProgress) -> String {
-    let quarter = |counted: Counted| {
-        let done = counted.bytes * 4 / counted.bytes_total.max(1);
-        format!("{}%", done.min(4) * 25)
-    };
-    let mut parts = vec![model.title.clone()];
-    if model.retry_in.is_some() {
-        parts.extend(model.lines.iter().cloned());
-    } else {
-        match progress.phase {
-            SyncPhase::Reading if progress.read.bytes_total > 0 => {
-                parts.push(format!(
-                    "reading from this device, {}",
-                    quarter(progress.read)
-                ));
-            }
-            SyncPhase::Downloading { .. } if progress.fetched.bytes_total > 0 => {
-                parts.push(format!("downloading, {}", quarter(progress.fetched)));
-            }
-            _ => parts.extend(model.lines.iter().cloned()),
-        }
-    }
-    parts.extend(model.notes.iter().cloned());
-    parts.join(". ")
 }
 
 fn loading_card(world: &mut World) {

@@ -975,7 +975,7 @@ pub fn refresh(world: &mut World, logs: &mut QueryState<Entity, With<QuestLog>>)
     }
 }
 
-pub async fn check_all(loading: &mut Loading) {
+pub fn check_all(loading: &mut Loading) {
     let content = loading.content();
     for (id, quest) in loading.rows::<QuestDef>(&content) {
         let key = id.path(&content);

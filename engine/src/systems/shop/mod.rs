@@ -418,7 +418,7 @@ pub fn refresh(world: &mut World, visits: &mut QueryState<Entity, With<ShopVisit
     }
 }
 
-pub async fn check_all(loading: &mut Loading) {
+pub fn check_all(loading: &mut Loading) {
     let content = loading.content();
     let shops = loading.rows::<ShopDef>(&content);
     for &(id, shop) in &shops {

@@ -1,4 +1,5 @@
 mod game;
+mod socket;
 
 pub use game::{
     ProbeArea, ProbeBinding, ProbeBindings, ProbeGame, ProbeGesture, ProbeInterfaceIcon, ProbeItem,
@@ -16,6 +17,7 @@ use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::{MouseButtonInput, MouseWheel};
 use bevy::prelude::*;
 use bevy::render::renderer::RenderDevice;
+use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 use bevy::window::{CursorOptions, PrimaryWindow};
 use bevy_egui::{EguiOutput, EguiPostUpdateSet, PrimaryEguiContext};
 use schemars::JsonSchema;
@@ -31,7 +33,6 @@ use crate::core::math::{
     MatrixSchema, Offset, OffsetSchema, Pos, PosSchema, Rect, RectSchema, Size, SizeSchema,
     WindowPx,
 };
-use crate::core::platform::ClientPlatform;
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::render::world::layers::Layered;
 use crate::core::render::world::sky::Daylight;
@@ -66,21 +67,13 @@ use crate::systems::skill::{self, Rank, SkillId, bar::SlotReport};
 use crate::systems::stat::{StatKind, Stats};
 use crate::systems::status::{self, StatusCategory, StatusEffectId};
 
-/// How a driver asks the client what it shows: the frame after a driver asks for a snapshot answers
-/// it. Every other question is about the game, which the channel is told of once it is loaded, and
-/// answers on its own with [`answer`].
-pub trait ProbeChannel {
-    fn awaited(&self) -> bool;
-    fn deliver(&self, snapshot: &str);
-    fn know(&self, content: &Content);
-}
-
-/// Whether the probe's question `line` asks for a snapshot, which only a frame answers.
-pub fn asks_for_snapshot(line: &str) -> bool {
-    matches!(
-        serde_json::from_str::<ProbeQuestion>(line),
-        Ok(ProbeQuestion::Snapshot)
-    )
+/// The probe's question `line`, where it is one only a frame answers.
+fn frame_question(line: &str) -> Option<socket::FrameQuestion> {
+    match serde_json::from_str::<ProbeQuestion>(line) {
+        Ok(ProbeQuestion::Snapshot) => Some(socket::FrameQuestion::Snapshot),
+        Ok(ProbeQuestion::Picture { path }) => Some(socket::FrameQuestion::Picture(path)),
+        _ => None,
+    }
 }
 
 /// The probe's question `line`, read against the game it names places of.
@@ -123,8 +116,10 @@ struct ProbeProtocol {
     batch: Vec<serde_json::Value>,
 }
 
-pub fn install(app: &mut App, channel: impl ProbeChannel + 'static) {
-    app.insert_non_send(Probe(Box::new(channel)))
+/// Answers the driver at `driver`: the frame after it asks for a snapshot answers it, and every
+/// other question is about the game, answered on its own once the game is loaded.
+pub fn install(app: &mut App, driver: std::net::SocketAddr) {
+    app.insert_non_send(Probe(socket::ProbeSocket::connect(driver)))
         .init_resource::<ProbeInputSeen>()
         .init_resource::<TerrainSent>()
         .init_resource::<DrawnUi>()
@@ -643,7 +638,7 @@ pub struct ProbeVoice {
     pub heard: f32,
 }
 
-struct Probe(Box<dyn ProbeChannel>);
+struct Probe(socket::ProbeSocket);
 
 #[derive(Resource, Default)]
 struct DrawnUi(Option<accesskit::TreeUpdate>);
@@ -738,15 +733,40 @@ fn publish(world: &mut World) {
         let content = world.resource::<Content>().clone();
         world.non_send::<Probe>().0.know(&content);
     }
-    if !world.non_send::<Probe>().0.awaited() {
-        return;
+    let asked = world.non_send::<Probe>().0.asked();
+    let answers = world.non_send::<Probe>().0.answers();
+    let mut snapshotted: Option<String> = None;
+    for question in asked {
+        match question {
+            socket::FrameQuestion::Snapshot => {
+                let json = match &snapshotted {
+                    Some(json) => json.clone(),
+                    None => {
+                        let snapshot = snapshot(world);
+                        let scope = ContentScope::of(world.resource::<Content>());
+                        let (json, _) = with_content(scope, || {
+                            serde_json::to_string(&snapshot).expect("a serializable snapshot")
+                        });
+                        snapshotted.insert(json).clone()
+                    }
+                };
+                answers.give(&json);
+            }
+            socket::FrameQuestion::Picture(path) => {
+                let answers = answers.clone();
+                world.spawn(Screenshot::primary_window()).observe(
+                    move |captured: On<ScreenshotCaptured>| {
+                        let written = captured
+                            .image
+                            .clone()
+                            .try_into_dynamic()
+                            .is_ok_and(|picture| picture.to_rgb8().save(&path).is_ok());
+                        answers.give(&written.to_string());
+                    },
+                );
+            }
+        }
     }
-    let snapshot = snapshot(world);
-    let scope = ContentScope::of(world.resource::<Content>());
-    let (json, _) = with_content(scope, || {
-        serde_json::to_string(&snapshot).expect("a serializable snapshot")
-    });
-    world.non_send::<Probe>().0.deliver(&json);
 }
 
 fn snapshot(world: &mut World) -> ProbeSnapshot {
@@ -1016,7 +1036,7 @@ fn quests(world: &World, seen: Entity) -> Option<ProbeQuests> {
     let content = world.resource::<Content>();
     let log = world.get::<QuestLog>(seen)?;
     let inventory = world.get::<Inventory>(seen);
-    let now = world.resource::<ClientPlatform>().0.local_clock().now;
+    let now = time::LocalClock::of_this_machine().now;
     Some(ProbeQuests {
         active: log
             .active

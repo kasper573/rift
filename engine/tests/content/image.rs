@@ -5,7 +5,6 @@ use bevy::image::{Image, ImageLoaderSettings};
 use bevy::prelude::*;
 use bevy::render::render_resource::TextureFormat;
 use engine::core::assets::loader::PngLoader;
-use engine::core::pace::Pace;
 use testkit::png;
 
 #[test]
@@ -22,9 +21,7 @@ fn a_png_loads_as_an_rgba_image_of_its_size_in_srgb_unless_asked_for_linear_ligh
         },
     ))
     .init_asset::<Image>()
-    .register_asset_loader(PngLoader {
-        pace: Pace::whole(),
-    });
+    .register_asset_loader(PngLoader);
     let assets = app.world().resource::<AssetServer>();
     let face: Handle<Image> = assets.load("face.png");
     let mask: Handle<Image> = assets

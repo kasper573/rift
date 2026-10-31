@@ -29,12 +29,8 @@ pub struct SfxPlugin;
 
 impl Plugin for SfxPlugin {
     fn build(&self, app: &mut App) {
-        let pace = app
-            .world_mut()
-            .get_resource_or_init::<crate::core::pace::Pace>()
-            .clone();
         app.add_plugins(bevy_kira_audio::AudioPlugin)
-            .register_asset_loader(AudioLoader { pace })
+            .register_asset_loader(AudioLoader)
             .init_resource::<Listener>()
             .init_resource::<AudioMix>()
             .init_resource::<Catalog>()

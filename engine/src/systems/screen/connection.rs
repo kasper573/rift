@@ -16,7 +16,8 @@ use crate::core::math::Rng;
 use crate::core::net::SessionRequest;
 use crate::core::net::auth::Credentials;
 use crate::core::net::transport::ClientSocket;
-use crate::core::platform::{ClientPlatform, FetchFailure, StartParams};
+use crate::core::net::transport::ServerSocket;
+use crate::core::os::{FetchFailure, Http, StartParams};
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::time::Seconds;
 
@@ -61,12 +62,12 @@ fn begin_session(world: &mut World) {
         rows,
     })
     .expect("a session request serializes");
-    let fetch = world.resource::<ClientPlatform>().0.post(
+    let fetch = world.resource::<Http>().post(
         format!("{game_server_url}/session"),
         credentials.authorization,
         body,
     );
-    let task = IoTaskPool::get().spawn_local(fetch);
+    let task = IoTaskPool::get().spawn(fetch);
     world.insert_resource(PendingSession { task });
 }
 
@@ -107,10 +108,7 @@ fn connect(world: &mut World, ticket: &str) {
         ConnectionConfig::from_channels(channels.server_configs(), channels.client_configs());
     let ws_url = world.resource::<StartParams>().game_server_ws_url.clone();
     let client = RenetClient::new(connection_config, true);
-    let socket = world
-        .resource::<ClientPlatform>()
-        .0
-        .connect(&format!("{ws_url}/?ticket={ticket}"));
+    let socket = ServerSocket::open(&format!("{ws_url}/?ticket={ticket}"));
     world.insert_resource(client);
     world.insert_non_send(ClientSocket(socket));
     info!("connection opened");
@@ -143,10 +141,6 @@ fn lost(world: &mut World) {
     let retry = *world.resource::<Retry>();
     let next = retry.failed(now, &mut world.resource_mut::<Rng>());
     world.insert_resource(next);
-    world
-        .resource::<ClientPlatform>()
-        .0
-        .announce("Connection lost. Reconnecting…");
 }
 
 fn connection_lost(world: &mut World) {

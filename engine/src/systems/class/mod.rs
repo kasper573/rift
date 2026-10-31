@@ -246,7 +246,7 @@ pub fn grant_xp(world: &mut World, entity: Entity, amount: u32) {
     }
 }
 
-pub async fn check_all(loading: &mut Loading) {
+pub fn check_all(loading: &mut Loading) {
     let content = loading.content();
     for (id, def) in loading.rows::<ClassDef>(&content) {
         let mut check = RowCheck::default();

@@ -18,7 +18,6 @@ use ui::face;
 use crate::core::gui::Band;
 use crate::core::math::Rng;
 use crate::core::net::auth::Credentials;
-use crate::core::pace::Pace;
 use crate::core::time::{Backoff, Seconds};
 use crate::systems::player::{JoinRequest, session};
 use ui::dialog;
@@ -82,21 +81,8 @@ impl Plugin for ClientScreenPlugin {
             connection::ConnectionPlugin,
             area::AreaScreenPlugin,
         ))
-        .add_systems(First, pace_frames)
         .add_systems(Update, (connection::poll_session, drive, announce).chain());
     }
-}
-
-/// How much of a frame paced work may take: most of one while a card is all there is to draw,
-/// little of one while the world plays.
-const LOADING_SLICE: Duration = Duration::from_millis(32);
-const PLAYING_SLICE: Duration = Duration::from_millis(4);
-
-fn pace_frames(screen: Res<State<ClientScreen>>, pace: Res<Pace>) {
-    pace.frame_begins(match screen.get() {
-        ClientScreen::Area => PLAYING_SLICE,
-        _ => LOADING_SLICE,
-    });
 }
 
 fn drive(
@@ -211,13 +197,6 @@ fn pace_slowly(world: &mut World) {
         focused_mode: UpdateMode::reactive_low_power(WAITING_FRAME),
         unfocused_mode: UpdateMode::reactive_low_power(WAITING_FRAME),
     });
-}
-
-/// A screen with paced work on its own thread wants every frame it can get: each is a slice of
-/// that work.
-fn pace_eagerly(world: &mut World) {
-    remember_pace(world);
-    world.insert_resource(WinitSettings::continuous());
 }
 
 fn remember_pace(world: &mut World) {

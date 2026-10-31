@@ -9,10 +9,11 @@ use super::{ClientScreen, note, pace_as_before, pace_slowly, panel, system_scree
 use crate::core::content::Content;
 use crate::core::gui::{self, Band};
 use crate::core::net::auth::Credentials;
-use crate::core::platform::{ProviderPage, SignIn, StartParams};
+use crate::core::os::{SignIn, StartParams, sign_in_in_browser};
 use crate::systems::GameSettings;
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::launch::fake_token;
+use oidc::AuthorizationPage;
 
 pub struct SignInPlugin;
 
@@ -41,11 +42,11 @@ struct AccountName(String);
 #[derive(Resource)]
 struct Waiting {
     task: Task<Result<String, String>>,
-    page: ProviderPage,
+    page: AuthorizationPage,
 }
 
 enum Choice {
-    Open(ProviderPage),
+    Open(AuthorizationPage),
     Cancel,
     Account(String),
 }
@@ -70,7 +71,7 @@ fn sign_in_screen(world: &mut World) {
         panel(ui, &game, |ui| match (&sign_in, waiting) {
             (_, Some(page)) => browser_waits(ui, page),
             (SignIn::AnyAccount, None) => any_account(ui, &mut name, failure.as_deref(), submit),
-            (SignIn::Provider(_), None) => provider(ui, failure.as_deref()),
+            (SignIn::Browser(_), None) => provider(ui, failure.as_deref()),
             (SignIn::Token(_), None) => {
                 if let Some(failure) = &failure {
                     ui.label(failure);
@@ -84,8 +85,8 @@ fn sign_in_screen(world: &mut World) {
     world.resource_mut::<AccountName>().0 = name;
     match choice {
         Some(Choice::Open(page)) => {
-            if let SignIn::Provider(provider) = sign_in {
-                let task = IoTaskPool::get().spawn_local(provider.sign_in(page));
+            if let SignIn::Browser(browser) = sign_in {
+                let task = IoTaskPool::get().spawn(sign_in_in_browser(&browser, page));
                 world.remove_resource::<SignInFailure>();
                 world.insert_resource(Waiting { task, page });
             }
@@ -105,17 +106,17 @@ fn provider(ui: &mut egui::Ui, failure: Option<&str>) -> Option<Choice> {
         ui.label(failure);
     }
     if controls::primary(ui, "Sign in").clicked() {
-        return Some(Choice::Open(ProviderPage::SignIn));
+        return Some(Choice::Open(AuthorizationPage::SignIn));
     }
     controls::button(ui, "Create account")
         .clicked()
-        .then_some(Choice::Open(ProviderPage::CreateAccount))
+        .then_some(Choice::Open(AuthorizationPage::SignUp))
 }
 
-fn browser_waits(ui: &mut egui::Ui, page: ProviderPage) -> Option<Choice> {
+fn browser_waits(ui: &mut egui::Ui, page: AuthorizationPage) -> Option<Choice> {
     ui.label(match page {
-        ProviderPage::SignIn => "Continue in your browser to sign in.",
-        ProviderPage::CreateAccount => "Continue in your browser to create your account.",
+        AuthorizationPage::SignIn => "Continue in your browser to sign in.",
+        AuthorizationPage::SignUp => "Continue in your browser to create your account.",
     });
     controls::button(ui, "Cancel")
         .clicked()

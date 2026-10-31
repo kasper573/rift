@@ -62,11 +62,7 @@ impl Plugin for WorldRenderPlugin {
         .add_systems(Startup, present::setup)
         .add_systems(
             Update,
-            (
-                (present::match_display, present::fit).chain(),
-                icons::keep_icons_resident,
-                camera::ease,
-            ),
+            (present::fit, icons::keep_icons_resident, camera::ease),
         )
         .add_systems(
             PostUpdate,

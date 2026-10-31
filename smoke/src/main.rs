@@ -1,29 +1,28 @@
-//! The website and the browser client, smoke-tested together from a binaries folder: a player
-//! seeded in a stand-in identity provider signs in on the site of a game server and plays, and
-//! the canvas must come to look like the trusted snapshot of the game's first view.
+//! The website, the game server and the desktop client smoke-tested together from a binaries
+//! folder: a player seeded in a stand-in identity provider starts the desktop client from a folder
+//! holding the `rift.env` the site hands out, and the window must come to look like the trusted
+//! snapshot of the game's first view.
 
-use std::io::{BufRead, BufReader};
-use std::net::{IpAddr, Ipv4Addr, TcpListener};
+use std::io::{BufRead, BufReader, Read, Write};
+use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
 use std::sync::mpsc::channel;
 use std::time::{Duration, Instant};
 
-use chromiumoxide::cdp::browser_protocol::page::CaptureScreenshotFormat;
-use chromiumoxide::handler::viewport::Viewport;
-use chromiumoxide::{Browser, BrowserConfig, Page};
-use engine::core::content::FilesystemFolder;
+use engine::core::content::{Content, ContentScope, FilesystemFolder, with_content};
 use engine::core::time::UtcHour;
 use engine::systems::launch::{
-    self, AuthMode, ReadyLine, SERVER_ENV_PREFIX, ServerConfig, ServerDaylight, ServerReady,
+    self, AuthMode, CLIENT_ENV_PREFIX, ReadyLine, SERVER_ENV_PREFIX, ServerConfig, ServerDaylight,
+    ServerReady,
 };
 use engine::systems::player::SpawnPolicy;
+use engine::systems::probe::ProbeSnapshot;
 use engine::systems::{GameSettings, load_content};
-use futures::StreamExt;
 use image::imageops::FilterType;
 use image::{RgbImage, RgbaImage};
-use oauth2_test_server::{IssuerConfig, OAuthTestServer};
+use oauth2_test_server::{IssuerConfig, JwtOptionsBuilder, OAuthTestServer};
 use openidconnect::{
     AuthUrl, ClientId, EndSessionUrl, IssuerUrl, JsonWebKeySetUrl, RedirectUrl, TokenUrl,
 };
@@ -59,17 +58,25 @@ async fn main() {
             })
             .expect("a registration"),
         )
+        .await;
+    let token = provider
+        .generate_token(
+            &client,
+            JwtOptionsBuilder::default()
+                .user_id(PLAYER)
+                .scope("openid profile")
+                .expires_in(3600)
+                .build(),
+        )
         .await
-        .client_id;
+        .access_token;
     let sign_in = oidc::TokenCheckSettings {
         issuer: provider.issuer().to_owned(),
-        client_id: client.clone(),
+        client_id: client.client_id.clone(),
         jwks_uri: provider.endpoints.jwks.clone(),
     };
 
     let (_game_server, game_server) = game_server(&binaries.join("game-server"), &sign_in);
-    let wasm = scratch.path().join("wasm");
-    unpack(&binaries.join("wasm-client.tar.gz"), &wasm);
     // Held until now so the servers started before the site's don't take its port for their own.
     drop(reserved);
     let _web_server = web_server(
@@ -77,139 +84,158 @@ async fn main() {
         &site,
         site_port,
         game_server,
-        &wasm,
         &provider,
-        &client,
+        &client.client_id,
     );
 
-    let player = Player::sign_in(&site).await;
-    player.arrive(&spawn_area()).await;
+    let folder = scratch.path().join("player");
+    std::fs::create_dir_all(&folder).expect("the player's folder");
+    std::fs::copy(
+        binaries.join("desktop-client"),
+        folder.join("desktop-client"),
+    )
+    .expect("the desktop client in the player's folder");
+    let rift_env = ureq::get(format!("{site}/rift.env"))
+        .call()
+        .expect("the site hands out rift.env")
+        .body_mut()
+        .read_to_string()
+        .expect("rift.env reads");
+    std::fs::write(folder.join(launch::SETTINGS_FILE), rift_env).expect("rift.env saved");
+
+    let display = Display::start();
+    let driver = TcpListener::bind((LOCALHOST, 0)).expect("a port for the probe");
+    let _client = desktop_client(
+        &folder,
+        &token,
+        &display,
+        driver.local_addr().expect("a bound port"),
+    );
+    let mut probe = Probe::accept(&driver);
+    let content = game_content();
+    probe.arrive(&content);
+
+    let pictures = scratch.path().join("pictures");
+    std::fs::create_dir_all(&pictures).expect("a folder for pictures");
     if taking_snapshot {
-        let settled = player.settled().await;
+        let settled = probe.settled(&pictures);
         settled.save(snapshot_path()).expect("the snapshot written");
         println!(
-            "the settled canvas is the new snapshot, {}: look at it before trusting it",
+            "the settled window is the new snapshot, {}: look at it before trusting it",
             snapshot_path().display()
         );
-    } else {
-        let snapshot = image::open(snapshot_path())
-            .expect("the trusted snapshot: take it with --snapshot")
-            .to_rgba8();
-        let (resemblance, seen) = player.until_alike(&snapshot).await;
-        if resemblance < LOOKS_ALIKE {
-            let kept = std::path::absolute("target/smoke/seen.png").expect("a path");
-            std::fs::create_dir_all(kept.parent().expect("a folder")).expect("target/smoke");
-            seen.save(&kept).expect("the canvas as seen");
-            eprintln!(
-                "the canvas never came to look like the snapshot (resemblance {resemblance:.2}, \
-                 wanted {LOOKS_ALIKE}): the closest it came is in {}, the snapshot in {}",
-                kept.display(),
-                snapshot_path().display()
-            );
-            std::process::exit(1);
-        }
-        println!(
-            "the seeded player signed in and the browser client drew the game (resemblance {resemblance:.2})"
-        );
+        return;
     }
-    player.leave().await;
+    let snapshot = image::open(snapshot_path())
+        .expect("the trusted snapshot: take it with --snapshot")
+        .to_rgba8();
+    let (resemblance, seen) = probe.until_alike(&snapshot, &pictures);
+    if resemblance < LOOKS_ALIKE {
+        let kept = std::path::absolute("target/smoke/seen.png").expect("a path");
+        std::fs::create_dir_all(kept.parent().expect("a folder")).expect("target/smoke");
+        seen.save(&kept).expect("the window as seen");
+        eprintln!(
+            "the window never came to look like the snapshot (resemblance {resemblance:.2}, \
+             wanted {LOOKS_ALIKE}): the closest it came is in {}, the snapshot in {}",
+            kept.display(),
+            snapshot_path().display()
+        );
+        std::process::exit(1);
+    }
+    println!(
+        "the seeded player joined from the site's rift.env and the desktop client drew the game \
+         (resemblance {resemblance:.2})"
+    );
 }
 
 const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 const PLAYER: &str = "smoke";
 const SEED: u64 = 7;
 /// "The same picture", tolerant of those around the player moving and of how a rasterizer rounds;
-/// a blank, dark or world-less canvas falls well short of it.
+/// a blank, dark or world-less window falls well short of it.
 const LOOKS_ALIKE: f32 = 0.95;
-/// How alike two looks a second apart must be for the canvas to count as still.
+/// How alike two looks a second apart must be for the window to count as still.
 const STILL: f32 = 0.97;
-/// How long the canvas must stay still to count as settled.
+/// How long the window must stay still to count as settled.
 const SETTLED_FOR: u32 = 10;
 /// How much of a picture one colour may fill before it counts as blank.
 const BLANK: f32 = 0.9;
 /// What a software renderer needs to load the game and draw it.
 const DRAWN_WITHIN: Duration = Duration::from_secs(300);
 const READY_WITHIN: Duration = Duration::from_secs(120);
-const VIEWPORT: (u32, u32) = (800, 600);
+const SCREEN: (u32, u32) = (1280, 720);
+/// The software rasterizer every machine has, so every machine draws the snapshot alike.
+const RASTERIZER: &str = "llvmpipe";
 
-/// A player on the site's play page in Chrome, signed in as the seeded player.
-struct Player {
-    browser: Browser,
-    page: Page,
-    events: tokio::task::JoinHandle<()>,
+/// The desktop client's probe, as its driver.
+struct Probe {
+    questions: TcpStream,
+    answers: BufReader<TcpStream>,
 }
 
-impl Player {
-    async fn sign_in(site: &str) -> Player {
-        let (browser, mut handler) = Browser::launch(
-            BrowserConfig::builder()
-                .new_headless_mode()
-                .window_size(VIEWPORT.0, VIEWPORT.1)
-                .viewport(Some(Viewport {
-                    width: VIEWPORT.0,
-                    height: VIEWPORT.1,
-                    ..Viewport::default()
-                }))
-                // The same software renderer everywhere, so every machine draws the snapshot alike.
-                .args([
-                    "--use-angle=swiftshader",
-                    "--enable-unsafe-swiftshader",
-                    "--mute-audio",
-                ])
-                .build()
-                .expect("a browser configuration"),
-        )
-        .await
-        .expect("Chrome runs: the smoke test plays the browser client in it");
-        let events = tokio::spawn(async move { while handler.next().await.is_some() {} });
-        let page = browser
-            .new_page(format!("{site}/play"))
-            .await
-            .expect("the play page");
-        page.find_element("button")
-            .await
-            .expect("the sign-in button")
-            .click()
-            .await
-            .expect("a click");
-        page.wait_for_navigation().await.expect("back on the site");
-        Player {
-            browser,
-            page,
-            events,
+impl Probe {
+    fn accept(driver: &TcpListener) -> Probe {
+        let (stream, _) = driver
+            .accept()
+            .expect("the desktop client's probe connects");
+        let answers = BufReader::new(stream.try_clone().expect("a second handle on the probe"));
+        Probe {
+            questions: stream,
+            answers,
         }
     }
 
-    /// Waits for the client to announce the player's arrival in `area`, which it does once the
-    /// game's content is loaded and the area is drawn.
-    async fn arrive(&self, area: &str) {
+    fn ask(&mut self, question: &serde_json::Value) -> String {
+        writeln!(self.questions, "{question}").expect("the probe takes a question");
+        let mut answer = String::new();
+        self.answers
+            .read_line(&mut answer)
+            .expect("the probe answers");
+        assert!(!answer.is_empty(), "the desktop client hung up");
+        answer
+    }
+
+    fn snapshot(&mut self, content: &Content) -> ProbeSnapshot {
+        let answer = self.ask(&serde_json::json!({ "ask": "snapshot" }));
+        let (snapshot, _) = with_content(ContentScope::of(content), || {
+            serde_json::from_str(&answer).expect("a snapshot")
+        });
+        snapshot
+    }
+
+    /// Waits for the player to stand in the game's spawn area, which they do once its content is
+    /// loaded and the area is drawn.
+    fn arrive(&mut self, content: &Content) {
+        let area = content.built::<GameSettings>().initial_spawn.area;
         let deadline = Instant::now() + DRAWN_WITHIN;
         loop {
-            if let Some(crash) = crash(&self.page).await {
-                panic!("the browser client crashed: {crash}");
-            }
-            let status = match self.page.find_element("#sync-status").await {
-                Ok(element) => element.inner_text().await.ok().flatten(),
-                Err(_) => None,
-            };
-            if status.as_deref() == Some(area) {
+            let snapshot = self.snapshot(content);
+            if snapshot.me.is_some() && snapshot.area == Some(area) {
                 return;
             }
             assert!(
                 Instant::now() < deadline,
-                "the player never arrived in {area:?}; the client last said {status:?}"
+                "the player never arrived in the spawn area"
             );
-            tokio::time::sleep(Duration::from_millis(500)).await;
+            std::thread::sleep(Duration::from_millis(500));
         }
     }
 
-    /// Watches the canvas until it looks like `snapshot`, or the time runs out; answers how close
+    /// The window as it shows now.
+    fn look(&mut self, pictures: &Path) -> RgbaImage {
+        let path = pictures.join("look.png");
+        let answer = self.ask(&serde_json::json!({ "ask": "picture", "path": path }));
+        assert_eq!(answer.trim(), "true", "the client pictured its window");
+        image::open(&path).expect("a picture").to_rgba8()
+    }
+
+    /// Watches the window until it looks like `snapshot`, or the time runs out; answers how close
     /// it came, and the look that came closest.
-    async fn until_alike(&self, snapshot: &RgbaImage) -> (f32, RgbaImage) {
+    fn until_alike(&mut self, snapshot: &RgbaImage, pictures: &Path) -> (f32, RgbaImage) {
         let deadline = Instant::now() + DRAWN_WITHIN;
         let mut closest: Option<(f32, RgbaImage)> = None;
         while Instant::now() < deadline {
-            let seen = self.look().await;
+            let seen = self.look(pictures);
             let alike = resemblance(&seen, snapshot);
             if closest.as_ref().is_none_or(|(best, _)| alike >= *best) {
                 closest = Some((alike, seen));
@@ -217,73 +243,58 @@ impl Player {
             if alike >= LOOKS_ALIKE {
                 break;
             }
-            tokio::time::sleep(Duration::from_secs(1)).await;
+            std::thread::sleep(Duration::from_secs(1));
         }
-        closest.expect("a look at the canvas")
+        closest.expect("a look at the window")
     }
 
-    /// Watches the canvas until the picture holds still, as it does once the view's reveal has
+    /// Watches the window until the picture holds still, as it does once the view's reveal has
     /// played.
-    async fn settled(&self) -> RgbaImage {
+    fn settled(&mut self, pictures: &Path) -> RgbaImage {
         let deadline = Instant::now() + DRAWN_WITHIN;
-        let mut last = self.look().await;
+        let mut last = self.look(pictures);
         let mut still = 0;
         while still < SETTLED_FOR {
             assert!(
                 Instant::now() < deadline,
-                "the canvas never settled on a picture"
+                "the window never settled on a picture"
             );
-            tokio::time::sleep(Duration::from_secs(1)).await;
-            let seen = self.look().await;
+            std::thread::sleep(Duration::from_secs(1));
+            let seen = self.look(pictures);
             let held = resemblance(&seen, &last) >= STILL && !blank(&seen);
             still = if held { still + 1 } else { 0 };
             last = seen;
         }
         last
     }
+}
 
-    /// The canvas as it shows now. A page that reports the client crashed fails at once.
-    async fn look(&self) -> RgbaImage {
-        loop {
-            if let Some(crash) = crash(&self.page).await {
-                panic!("the browser client crashed: {crash}");
-            }
-            if let Some(seen) = canvas(&self.page).await {
-                return seen;
-            }
-            tokio::time::sleep(Duration::from_millis(200)).await;
+/// A private X display for the client's window, gone when dropped.
+struct Display {
+    _server: Running,
+    number: String,
+}
+
+impl Display {
+    fn start() -> Display {
+        let mut server = Command::new("Xvfb")
+            .args(["-displayfd", "1", "-screen", "0"])
+            .arg(format!("{}x{}x24", SCREEN.0, SCREEN.1))
+            .stdout(Stdio::piped())
+            .spawn()
+            .expect("Xvfb runs: the smoke test draws the client on a display of its own");
+        let mut number = String::new();
+        let mut stdout = server.stdout.take().expect("a piped stdout");
+        let mut byte = [0];
+        while stdout.read(&mut byte).is_ok_and(|read| read == 1) && byte[0] != b'\n' {
+            number.push(char::from(byte[0]));
+        }
+        assert!(!number.is_empty(), "Xvfb named its display");
+        Display {
+            _server: Running(server),
+            number,
         }
     }
-
-    async fn leave(mut self) {
-        self.browser.close().await.expect("Chrome closes");
-        self.events.abort();
-    }
-}
-
-async fn canvas(page: &Page) -> Option<RgbaImage> {
-    let png = page
-        .find_element("#glcanvas")
-        .await
-        .ok()?
-        .screenshot(CaptureScreenshotFormat::Png)
-        .await
-        .ok()?;
-    Some(
-        image::load_from_memory(&png)
-            .expect("a screenshot")
-            .to_rgba8(),
-    )
-}
-
-/// What the page's error log shows, which it shows only when the client panicked or failed to
-/// start.
-async fn crash(page: &Page) -> Option<String> {
-    let log = page.find_element("#error-log").await.ok()?;
-    if log.attribute("hidden").await.ok()?.is_some() {
-        return None;
-    }
-    log.inner_text().await.ok()?
 }
 
 /// How alike two pictures are, from 0 to 1: one less their mean difference in colour, seen small
@@ -334,16 +345,13 @@ fn snapshot_path() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("snapshot.png")
 }
 
-/// The area a new player arrives in.
-fn spawn_area() -> String {
-    let content = load_content(
+fn game_content() -> Content {
+    load_content(
         Arc::new(FilesystemFolder(game())),
         "smoke",
         engine::core::content::LoadPurpose::Play,
     )
-    .unwrap_or_else(|report| panic!("the game loads: {report}"));
-    let area = content.built::<GameSettings>().initial_spawn.area;
-    area.get(&content).name.clone()
+    .unwrap_or_else(|report| panic!("the game loads: {report}"))
 }
 
 /// The game a new project starts from: a whole game, as a player sees one.
@@ -366,6 +374,31 @@ impl Drop for Running {
         let _ = self.0.kill();
         let _ = self.0.wait();
     }
+}
+
+/// The desktop client in `folder`, as its player starts it there, but signed in as `token`,
+/// drawing on `display` and answering the probe's driver at `driver`.
+fn desktop_client(
+    folder: &Path,
+    token: &str,
+    display: &Display,
+    driver: std::net::SocketAddr,
+) -> Running {
+    let binary = folder.join("desktop-client");
+    let probe = driver.to_string();
+    Running(
+        Command::new(&binary)
+            .current_dir(folder)
+            .env_remove("WAYLAND_DISPLAY")
+            .env("DISPLAY", format!(":{}", display.number))
+            .env("WGPU_ADAPTER_NAME", RASTERIZER)
+            .env(format!("{CLIENT_ENV_PREFIX}ACCESS_TOKEN"), token)
+            .env(format!("{CLIENT_ENV_PREFIX}PROBE"), probe)
+            .env(format!("{CLIENT_ENV_PREFIX}EXIT_ON_STDIN_EOF"), "true")
+            .stdin(Stdio::piped())
+            .spawn()
+            .unwrap_or_else(|error| panic!("{} doesn't run: {error}", binary.display())),
+    )
 }
 
 /// The game server on the game, taking the seeded player's tokens, once players can connect.
@@ -417,7 +450,6 @@ fn web_server(
     site: &str,
     port: u16,
     game_server: ServerReady,
-    wasm: &Path,
     provider: &OAuthTestServer,
     client: &str,
 ) -> Running {
@@ -431,7 +463,6 @@ fn web_server(
         game_server_internal_url: game_server_url,
         downloads_url: format!("{site}/no-downloads"),
         release: "smoke".to_owned(),
-        wasm_dir: wasm.to_path_buf(),
     };
     let sign_in = SignInSettings {
         issuer: IssuerUrl::new(provider.issuer().to_owned()).expect("a url"),
@@ -465,16 +496,4 @@ fn web_server(
         std::thread::sleep(Duration::from_millis(200));
     }
     running
-}
-
-fn unpack(archive: &Path, into: &Path) {
-    std::fs::create_dir_all(into).expect("a folder for the browser client");
-    let unpacked = Command::new("tar")
-        .arg("-xzf")
-        .arg(archive)
-        .arg("-C")
-        .arg(into)
-        .status()
-        .expect("tar runs");
-    assert!(unpacked.success(), "{} unpacks", archive.display());
 }

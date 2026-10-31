@@ -392,7 +392,7 @@ pub struct ScriptSite {
     pub pointer: String,
 }
 
-pub async fn build_all(loading: &mut Loading) {
+pub fn build_all(loading: &mut Loading) {
     let content = loading.content();
     let mut all = HashMap::new();
     let mut errors: Vec<(ScriptSite, ScriptError)> = Vec::new();
@@ -417,18 +417,12 @@ pub async fn build_all(loading: &mut Loading) {
         }
     };
     bind_table::<NpcDef>(loading, &mut bind);
-    loading.breathe().await;
     bind_table::<ItemDef>(loading, &mut bind);
-    loading.breathe().await;
     bind_table::<QuestDef>(loading, &mut bind);
-    loading.breathe().await;
     bind_table::<ShopDef>(loading, &mut bind);
-    loading.breathe().await;
     bind_table::<SkillDef>(loading, &mut bind);
-    loading.breathe().await;
     bind_table::<StatusEffectDef>(loading, &mut bind);
     for (id, _) in loading.rows::<AreaDef>(&content) {
-        loading.breathe().await;
         let key = id.path(&content);
         let placed = area::placed(&content, id);
         let scene = scene_file(key);
@@ -631,7 +625,7 @@ pub fn spawn_stateless(world: &mut World) {
     }
 }
 
-pub async fn check_all(loading: &mut Loading) {
+pub fn check_all(loading: &mut Loading) {
     let content = loading.content();
     let scripts = content.built::<RiftScripts>();
     let thorough = loading.thorough();
@@ -765,7 +759,7 @@ pub async fn check_all(loading: &mut Loading) {
 
 /// What a whole game must do with its quests and shops: offer and take back every quest, from an
 /// owner placed somewhere, and open every shop.
-pub async fn check_reached(loading: &mut Loading) {
+pub fn check_reached(loading: &mut Loading) {
     let content = loading.content();
     let scripts = content.built::<RiftScripts>();
     for (id, _) in loading.rows::<ShopDef>(&content) {

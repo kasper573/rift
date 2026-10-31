@@ -260,34 +260,32 @@ impl BustFigures {
 }
 
 /// Measures every bust's figure, and holds the cast of busts to its download budget.
-async fn build_all(loading: &mut Loading) {
+fn build_all(loading: &mut Loading) {
     let content = loading.content();
     let rows = loading.rows::<BustDef>(&content);
     let folder = loading.folder();
-    let measured: Vec<(BustId, Option<BustFigure>, FileSize)> = loading
-        .each(rows, |(id, def)| {
-            let files: Vec<Vec<u8>> = def
-                .all()
-                .filter_map(|face| folder.read(&face.path()).ok())
-                .collect();
-            let spans: Vec<VisiblePixelColumns> = files
-                .iter()
-                .filter_map(|bytes| visible_columns(bytes).ok().flatten())
-                .collect();
-            let left = spans
-                .iter()
-                .map(|span| span.first as f32 / span.image_width as f32);
-            let right = spans
-                .iter()
-                .map(|span| (span.last + 1) as f32 / span.image_width as f32);
-            let figure = left
-                .reduce(f32::min)
-                .zip(right.reduce(f32::max))
-                .map(|(left, right)| BustFigure { left, right });
-            let weight = FileSize(files.iter().map(Vec::len).sum());
-            (id, figure, weight)
-        })
-        .await;
+    let measured: Vec<(BustId, Option<BustFigure>, FileSize)> = loading.each(rows, |(id, def)| {
+        let files: Vec<Vec<u8>> = def
+            .all()
+            .filter_map(|face| folder.read(&face.path()).ok())
+            .collect();
+        let spans: Vec<VisiblePixelColumns> = files
+            .iter()
+            .filter_map(|bytes| visible_columns(bytes).ok().flatten())
+            .collect();
+        let left = spans
+            .iter()
+            .map(|span| span.first as f32 / span.image_width as f32);
+        let right = spans
+            .iter()
+            .map(|span| (span.last + 1) as f32 / span.image_width as f32);
+        let figure = left
+            .reduce(f32::min)
+            .zip(right.reduce(f32::max))
+            .map(|(left, right)| BustFigure { left, right });
+        let weight = FileSize(files.iter().map(Vec::len).sum());
+        (id, figure, weight)
+    });
     let mut figures: Vec<Option<BustFigure>> = content.ids::<BustDef>().map(|_| None).collect();
     let mut total = 0;
     let mut over = false;

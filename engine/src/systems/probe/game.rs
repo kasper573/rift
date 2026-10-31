@@ -33,6 +33,9 @@ use crate::systems::skill::{SkillDef, SkillId};
 pub enum ProbeQuestion {
     /// Answered with a [`super::ProbeSnapshot`] of a frame after the question.
     Snapshot,
+    /// The window as drawn a frame after the question, written as a PNG at `path`. Answered with
+    /// a boolean: whether it was written.
+    Picture { path: std::path::PathBuf },
     /// Answered with [`ProbeGame`].
     Game,
     /// Each question about the game in turn, in one line rather than one each. Answered with a
@@ -278,7 +281,7 @@ pub fn answer(content: &Content, question: &ProbeQuestion) -> Option<String> {
 
 fn answer_in_scope(content: &Content, question: &ProbeQuestion) -> Option<Value> {
     let answer = match question {
-        ProbeQuestion::Snapshot => return None,
+        ProbeQuestion::Snapshot | ProbeQuestion::Picture { .. } => return None,
         ProbeQuestion::Game => json(&game(content)),
         ProbeQuestion::Batch { questions } => Value::Array(
             questions

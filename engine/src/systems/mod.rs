@@ -63,7 +63,7 @@ use crate::core::interpolate::SnapshotPlugin;
 use crate::core::math::{Rect, Rng};
 use crate::core::net::auth::Credentials;
 use crate::core::net::transport::SocketClientPlugin;
-use crate::core::platform::{ClientPlatform, Platform, SignIn, StartParams};
+use crate::core::os::{Http, Profile, SignIn, StartParams};
 use crate::core::render::WorldRenderPlugin;
 use crate::core::text::StyledTextPlugin;
 use crate::core::time::{DayClock, Hertz, Seconds, WallClock};
@@ -365,7 +365,8 @@ pub fn from_client<M: Message>(world: &mut World, conn: Entity, message: M) {
 }
 
 pub fn client_app(
-    platform: std::sync::Arc<dyn Platform>,
+    profile: Profile,
+    http: Http,
     params: StartParams,
     window: bevy::window::Window,
 ) -> App {
@@ -373,12 +374,10 @@ pub fn client_app(
 
     let credentials = match &params.sign_in {
         SignIn::Token(token) => Some(Credentials::from_access_token(token)),
-        SignIn::AnyAccount | SignIn::Provider(_) => None,
+        SignIn::AnyAccount | SignIn::Browser(_) => None,
     };
 
     let mut app = App::new();
-    let pace = crate::core::pace::Pace::framed();
-    app.insert_resource(pace.clone());
     let files = SyncedFiles::default();
     app.insert_resource(files.clone());
     app.insert_resource(Rng::from_entropy());
@@ -387,21 +386,22 @@ pub fn client_app(
         bevy::asset::io::AssetSourceId::Default,
         files.source(),
     )
+    // Rendering a frame alongside the next update puts the interface on screen a frame later,
+    // trailing the system cursor, and the client's frames are cheap enough to render in turn.
     .add_plugins(
-        platform.engine(
-            DefaultPlugins
-                .set(bevy::log::LogPlugin {
-                    filter: format!("{},symphonia=warn", bevy::log::DEFAULT_FILTER),
-                    ..default()
-                })
-                .set(WindowPlugin {
-                    primary_window: Some(window),
-                    ..default()
-                })
-                .set(ImagePlugin::default_nearest()),
-        ),
+        DefaultPlugins
+            .set(bevy::log::LogPlugin {
+                filter: format!("{},symphonia=warn", bevy::log::DEFAULT_FILTER),
+                ..default()
+            })
+            .set(WindowPlugin {
+                primary_window: Some(window),
+                ..default()
+            })
+            .set(ImagePlugin::default_nearest())
+            .disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>(),
     )
-    .register_asset_loader(crate::core::assets::loader::PngLoader { pace });
+    .register_asset_loader(crate::core::assets::loader::PngLoader);
     // The client shows a world the server plays out in real time, so a frame however long moves it
     // on by all the time the frame took, as the server's world moved on, rather than by the most the
     // engine otherwise lets one frame take.
@@ -409,7 +409,8 @@ pub fn client_app(
         .resource_mut::<Time<Virtual>>()
         .set_max_delta(std::time::Duration::MAX);
     app.insert_resource(params)
-        .insert_resource(ClientPlatform(platform))
+        .insert_resource(profile)
+        .insert_resource(http)
         .add_plugins((
             GuiPlugin,
             StyledTextPlugin,
@@ -628,7 +629,7 @@ impl Settings for GameSettings {
     }
 }
 
-async fn check_settings(loading: &mut Loading) {
+fn check_settings(loading: &mut Loading) {
     let content = loading.content();
     let settings = content.built::<GameSettings>();
     if let Some(cycle) = &settings.daylight {

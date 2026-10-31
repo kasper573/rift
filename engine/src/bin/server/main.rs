@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
 
 use axum::extract::State;
-use axum::http::{HeaderMap, Method, StatusCode, header};
+use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use bevy_app::App;
@@ -23,7 +23,7 @@ use engine::core::content::{
 use engine::core::math::Rng;
 use engine::core::net::auth::TokenClaims;
 use engine::core::net::{MAX_MESSAGE_BYTES, SessionRequest};
-use engine::core::platform::StdinClosed;
+use engine::core::os::StdinClosed;
 use engine::core::time::{UtcHour, WallClock};
 use engine::systems::account::{AccountId, Identity};
 use engine::systems::area::{self, transition};
@@ -42,7 +42,6 @@ use engine::systems::{
 };
 use metrics::{counter, gauge, histogram};
 use renet2::{ConnectionConfig, DisconnectReason, RenetServer, ServerEvent};
-use tower_http::cors::{Any, CorsLayer};
 use transport::WsTransport;
 
 service::heap_profiling!();
@@ -698,13 +697,7 @@ async fn serve_http(
             .route(TEST_CHARACTER_ROUTE, post(test_character))
             .route(STAGING_ROUTE, post(stage_scene));
     }
-    // A browser client plays from the game's site, another origin. Nothing here reads a cookie (a
-    // bearer token signs a session in, and the content is public), so any site may call it.
-    let browsers = CorsLayer::new()
-        .allow_origin(Any)
-        .allow_methods([Method::GET, Method::POST])
-        .allow_headers([header::CONTENT_TYPE, header::AUTHORIZATION]);
-    let router = service::track(router.with_state(http).layer(browsers), metrics);
+    let router = service::track(router.with_state(http), metrics);
     ctrlc::set_handler(|| std::process::exit(0)).expect("install stop handler");
     axum::serve(listener, router).await.expect("axum serves");
 }
@@ -771,7 +764,7 @@ async fn session(State(http): State<Http>, headers: HeaderMap, body: String) -> 
         return (StatusCode::CONFLICT, "the server serves other content").into_response();
     }
 
-    // The ticket is the renet client id. The browser opens `wss://host/?ticket=<id>`; the WebSocket
+    // The ticket is the renet client id. The client opens `wss://host/?ticket=<id>`; the WebSocket
     // handshake claims it single-use. Unguessable in 2^64, ~30s expiry, only ever sent over TLS.
     let client_id = getrandom::u64().expect("os entropy for a session ticket");
     http.sessions.put(client_id, identity);

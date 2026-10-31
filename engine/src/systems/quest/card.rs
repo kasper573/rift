@@ -12,7 +12,6 @@ use super::{
 };
 use crate::core::content::Content;
 use crate::core::gui::ImageSource;
-use crate::core::platform::ClientPlatform;
 use crate::core::time::UnixMillis;
 use crate::systems::dialogue::stage::{self, DockedPanel, PanelChrome, PanelHead};
 use crate::systems::dialogue::{ChoiceReveal, Conversation, ConversationPanel};
@@ -393,8 +392,8 @@ impl Countdown {
     }
 }
 
-pub(super) fn clock_now(world: &World) -> UnixMillis {
-    world.resource::<ClientPlatform>().0.local_clock().now
+pub(super) fn clock_now() -> UnixMillis {
+    crate::core::time::LocalClock::of_this_machine().now
 }
 
 pub(super) fn time_left(content: &Content, log: &QuestLog, quest: QuestId, now: UnixMillis) -> f32 {

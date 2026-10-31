@@ -21,28 +21,21 @@ runs:
       run: |
         echo "RUSTUP_HOME=$RUNNER_TEMP/rustup" >> "$GITHUB_ENV"
         RUSTUP_HOME="$RUNNER_TEMP/rustup" rustup toolchain install --no-self-update
-    - name: Install wasm-bindgen-cli matching the lockfile
-      if: runner.os == 'Linux' && inputs.deps == 'dist'
-      shell: bash
-      # `just wasm` post-processes the client with `wasm-bindgen`, whose version must match the
-      # `wasm-bindgen` crate exactly; grab that prebuilt release rather than compiling the CLI.
-      run: |
-        version=$(awk '/^name = "wasm-bindgen"$/{getline; gsub(/version = "|"/, ""); print}' Cargo.lock)
-        curl -sSfL "https://github.com/rustwasm/wasm-bindgen/releases/download/${version}/wasm-bindgen-${version}-x86_64-unknown-linux-musl.tar.gz" | tar -xz -C /tmp
-        sudo install "/tmp/wasm-bindgen-${version}-x86_64-unknown-linux-musl/wasm-bindgen" /usr/local/bin/wasm-bindgen
-        wasm-bindgen --version
     - name: Install Linux system libraries
       if: runner.os == 'Linux'
       shell: bash
-      # The one system C library a `-sys` crate links that cargo can't supply (the one platform-specific
-      # place, per the repo's platform rule): alsa, for kira's cpal backend (the client audio code
-      # compiles natively too), found through pkg-config; the windowing and graphics libraries load at
-      # runtime. Drop the runner's microsoft/azure apt sources first — unused, and they 403
+      # The one system C library a `-sys` crate links that cargo can't supply: alsa, for kira's cpal
+      # backend, found through pkg-config; the windowing and graphics libraries load at runtime. A dist
+      # job also smoke-tests the desktop client, which draws on a virtual display with the software
+      # Vulkan rasterizer. Drop the runner's microsoft/azure apt sources first — unused, and they 403
       # intermittently.
       run: |
         sudo rm -f /etc/apt/sources.list.d/microsoft* /etc/apt/sources.list.d/azure*
         sudo apt-get update
         sudo apt-get install -y pkg-config libasound2-dev
+        if [ "${{ inputs.deps }}" = dist ]; then
+          sudo apt-get install -y xvfb mesa-vulkan-drivers
+        fi
     - name: Key the build cache by the recipes
       id: recipes
       shell: bash

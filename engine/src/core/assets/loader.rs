@@ -1,6 +1,3 @@
-//! PNG files read as images at a pace: a row at a time, breathing between rows, so a large
-//! texture decodes over many frames on the one thread a browser gives the client.
-
 use std::io::{self, Cursor};
 
 use bevy::asset::io::Reader;
@@ -9,13 +6,9 @@ use bevy::image::{Image, ImageLoaderSettings};
 use bevy::reflect::TypePath;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use crate::core::pace::Pace;
-
 /// Reads a PNG as an image of RGBA bytes, in sRGB unless its settings ask for linear light.
 #[derive(TypePath)]
-pub struct PngLoader {
-    pub pace: Pace,
-}
+pub struct PngLoader;
 
 impl AssetLoader for PngLoader {
     type Asset = Image;
@@ -52,7 +45,6 @@ impl AssetLoader for PngLoader {
                     )));
                 }
             }
-            self.pace.breathe().await;
         }
         let format = if settings.is_srgb {
             TextureFormat::Rgba8UnormSrgb

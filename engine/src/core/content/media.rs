@@ -33,30 +33,28 @@ struct MediaProblem {
 
 /// Every media file is decoded whole, as the game decodes it, so a file damaged anywhere fails the
 /// load rather than showing nothing in play.
-pub async fn check_media(loading: &mut Loading) {
+pub fn check_media(loading: &mut Loading) {
     let mut paths: Vec<String> = loading.media().to_vec();
     paths.extend(loading.media_parts());
     let folder = loading.folder();
     let hashes = loading.content().built::<FileHashes>().0.clone();
-    let checked: Vec<(String, MediaCheck)> = loading
-        .each(paths, |path| {
-            let checked_already = folder.checked(&path).is_some();
-            let read = || match folder.read(&path) {
-                Ok(bytes) if checked_already => measure(&path, &bytes),
-                Ok(bytes) => decode(&path, &bytes),
-                Err(error) => Err(MediaProblem {
-                    rule: "unreadable file",
-                    found: error.to_string(),
-                    expected: "a readable file",
-                }),
-            };
-            let check = match hashes.get(&path) {
-                Some(hashed) => remembered(&hashed.hash, read),
-                None => read(),
-            };
-            (path, check)
-        })
-        .await;
+    let checked: Vec<(String, MediaCheck)> = loading.each(paths, |path| {
+        let checked_already = folder.checked(&path).is_some();
+        let read = || match folder.read(&path) {
+            Ok(bytes) if checked_already => measure(&path, &bytes),
+            Ok(bytes) => decode(&path, &bytes),
+            Err(error) => Err(MediaProblem {
+                rule: "unreadable file",
+                found: error.to_string(),
+                expected: "a readable file",
+            }),
+        };
+        let check = match hashes.get(&path) {
+            Some(hashed) => remembered(&hashed.hash, read),
+            None => read(),
+        };
+        (path, check)
+    });
     let mut sizes = HashMap::new();
     let mut models = HashMap::new();
     for (path, result) in checked {

@@ -4,7 +4,6 @@ mod pages;
 pub use auth::SignInSettings;
 
 use std::net::IpAddr;
-use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -13,7 +12,6 @@ use axum::routing::get;
 use openidconnect::RedirectUrl;
 use serde::{Deserialize, Serialize};
 use service::GameInfo;
-use tower_http::services::ServeDir;
 
 pub const ENV_PREFIX: &str = "RIFT_WEB_SERVER_";
 
@@ -25,7 +23,7 @@ pub struct WebServerConfig {
     pub bind: IpAddr,
     pub port: u16,
     pub redirect_uri: RedirectUrl,
-    /// The game server as browsers and desktop clients reach it.
+    /// The game server as desktop clients reach it.
     pub game_server_url: String,
     pub game_server_ws_url: String,
     /// The same game server as the web-server itself reaches it.
@@ -34,7 +32,6 @@ pub struct WebServerConfig {
     pub downloads_url: String,
     /// The engine release the site serves, whose desktop client it offers.
     pub release: String,
-    pub wasm_dir: PathBuf,
 }
 
 /// Everything the site is made from.
@@ -58,7 +55,6 @@ pub async fn router(site: Site) -> Router {
         .host_str()
         .expect("a redirect uri with a host")
         .to_owned();
-    let wasm_dir = config.wasm_dir.clone();
     let app = Arc::new(App {
         auth: auth::Auth::new(sign_in, config.redirect_uri.clone()).await,
         domain,
@@ -68,7 +64,6 @@ pub async fn router(site: Site) -> Router {
     });
     Router::new()
         .route("/", get(pages::landing))
-        .route("/play", get(pages::play))
         .route("/downloads", get(pages::downloads))
         .route("/rift.env", get(pages::rift_env))
         .route("/auth/sign-in", get(auth::sign_in))
@@ -76,7 +71,6 @@ pub async fn router(site: Site) -> Router {
         .route("/auth-callback", get(auth::callback))
         .route("/site.css", get(pages::css))
         .route("/favicon.png", get(pages::favicon))
-        .nest_service("/wasm", ServeDir::new(wasm_dir))
         .with_state(app)
 }
 

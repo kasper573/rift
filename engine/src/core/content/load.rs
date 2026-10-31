@@ -1,15 +1,13 @@
 use std::any::{Any, TypeId};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt::Display;
-use std::future::Future;
 use std::io;
 use std::marker::PhantomData;
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
-use std::pin::Pin;
 use std::sync::{Arc, OnceLock};
 
-use bevy::tasks::block_on;
+use rayon::prelude::*;
 use schemars::JsonSchema;
 use schemars::generate::SchemaSettings;
 use serde::Serialize;
@@ -32,7 +30,6 @@ use super::table::{
     Table,
 };
 use super::version::ContentVersion;
-use crate::core::pace::Pace;
 
 // The steps a load runs its hooks at, in order.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -53,10 +50,8 @@ pub enum LoadStep {
     Compile,
 }
 
-/// A step of a load: an `async fn(&mut Loading)` that breathes between the pieces of its work, so a
-/// paced load never holds a frame.
-type Hook =
-    Box<dyn for<'a> Fn(&'a mut Loading) -> Pin<Box<dyn Future<Output = ()> + 'a>> + Send + Sync>;
+/// A step of a load.
+type Hook = Box<dyn Fn(&mut Loading) + Send + Sync>;
 type FixtureCheck = Box<dyn Fn(&mut Loading, bool) + Send + Sync>;
 struct FixtureEntry {
     table: &'static str,
@@ -344,18 +339,9 @@ impl ContentRegistry {
 
     pub fn hook<F>(&mut self, step: LoadStep, hook: F) -> &mut ContentRegistry
     where
-        F: AsyncFn(&mut Loading) + Send + Sync + 'static,
+        F: Fn(&mut Loading) + Send + Sync + 'static,
     {
-        let hook = Arc::new(hook);
-        self.hooks.push((
-            step,
-            Box::new(
-                move |loading: &mut Loading| -> Pin<Box<dyn Future<Output = ()> + '_>> {
-                    let hook = Arc::clone(&hook);
-                    Box::pin(async move { hook(loading).await })
-                },
-            ),
-        ));
+        self.hooks.push((step, Box::new(hook)));
         self
     }
 
@@ -736,26 +722,6 @@ pub fn load(
     outcome: &str,
     purpose: LoadPurpose,
 ) -> Result<Content, LoadReport> {
-    block_on(load_paced(
-        registry,
-        folder,
-        build,
-        outcome,
-        purpose,
-        &Pace::whole(),
-    ))
-}
-
-/// Loads the game in `folder` at `pace`: whole, or a slice of every frame where the load must
-/// leave the frames to whatever else draws them.
-pub async fn load_paced(
-    registry: &ContentRegistry,
-    folder: Arc<dyn ContentFolder>,
-    build: &str,
-    outcome: &str,
-    purpose: LoadPurpose,
-    pace: &Pace,
-) -> Result<Content, LoadReport> {
     let version = registry.version();
     let (listing, errors) = super::files::list_files(folder.as_ref(), &registry.file_types());
     let mut loading = Loading {
@@ -768,25 +734,24 @@ pub async fn load_paced(
         indexes: HashMap::new(),
         failed: HashSet::new(),
         media: Vec::new(),
-        pace: pace.clone(),
         purpose,
     };
-    loading.parse(registry, None).await;
-    loading.check_rows(registry).await;
-    loading.run_hooks(registry, LoadStep::Rows).await;
-    loading.hash_files().await;
-    loading.run_hooks(registry, LoadStep::Files).await;
-    loading.run_hooks(registry, LoadStep::Expand).await;
-    loading.run_hooks(registry, LoadStep::Assemble).await;
-    loading.run_hooks(registry, LoadStep::Across).await;
+    loading.parse(registry, None);
+    loading.check_rows(registry);
+    loading.run_hooks(registry, LoadStep::Rows);
+    loading.hash_files();
+    loading.run_hooks(registry, LoadStep::Files);
+    loading.run_hooks(registry, LoadStep::Expand);
+    loading.run_hooks(registry, LoadStep::Assemble);
+    loading.run_hooks(registry, LoadStep::Across);
     loading.check_fixtures(registry);
     if loading.has_settings(registry) {
-        loading.run_hooks(registry, LoadStep::Settings).await;
+        loading.run_hooks(registry, LoadStep::Settings);
     }
     loading.check_version(registry, &version);
     loading.built(version.clone());
     if loading.errors.is_empty() {
-        loading.run_hooks(registry, LoadStep::Compile).await;
+        loading.run_hooks(registry, LoadStep::Compile);
     }
     if loading.errors.is_empty() {
         let mut warnings = std::mem::take(&mut loading.warnings);
@@ -846,16 +811,15 @@ pub(super) fn check_files(
         indexes: HashMap::new(),
         failed: HashSet::new(),
         media: Vec::new(),
-        pace: Pace::whole(),
         purpose: LoadPurpose::Check,
     };
-    block_on(loading.parse(registry, Some(&contents)));
+    loading.parse(registry, Some(&contents));
     let misread: HashSet<String> = loading
         .failed
         .iter()
         .map(|(_, path)| path.clone())
         .collect();
-    block_on(loading.check_rows(registry));
+    loading.check_rows(registry);
     let named = loading.media.clone();
     for file in parts.into_iter().chain(named) {
         if let Ok(bytes) = loading.read(&file)
@@ -913,7 +877,6 @@ pub struct Loading {
     failed: HashSet<(&'static str, String)>,
     /// Every media file outside the bundles that content names, sorted.
     media: Vec<String>,
-    pace: Pace,
     purpose: LoadPurpose,
 }
 
@@ -924,20 +887,13 @@ impl Loading {
         self.purpose == LoadPurpose::Check
     }
 
-    /// Lets the frame go when the load's slice of it is used up: a hook breathes between the
-    /// pieces of its work.
-    pub async fn breathe(&self) {
-        self.pace.breathe().await;
-    }
-
-    /// `work` on every item, at the load's pace: across every thread at once in a whole load,
-    /// one after another with breaths between them in a paced one.
-    pub async fn each<T, R>(&self, items: Vec<T>, work: impl Fn(T) -> R + Send + Sync) -> Vec<R>
+    /// `work` on every item, across the threads.
+    pub fn each<T, R>(&self, items: Vec<T>, work: impl Fn(T) -> R + Send + Sync) -> Vec<R>
     where
         T: Send,
         R: Send,
     {
-        self.pace.each(items, work).await
+        items.into_par_iter().map(work).collect()
     }
 
     pub fn content(&mut self) -> Content {
@@ -1115,7 +1071,7 @@ impl Loading {
 
     /// Parses every content file, or only the content in `only` and the settings when it holds
     /// them.
-    async fn parse(&mut self, registry: &ContentRegistry, only: Option<&HashSet<String>>) {
+    fn parse(&mut self, registry: &ContentRegistry, only: Option<&HashSet<String>>) {
         let scope = listing_scope(registry, &self.listing);
         self.builder.built(self.listing.files());
 
@@ -1133,13 +1089,11 @@ impl Loading {
             .collect();
         let root = self.folder.clone();
         let listing = self.listing.clone();
-        let parsed: Vec<(usize, String, ParsedFile)> = self
-            .each(jobs, |(index, path)| {
-                let loader = registry.row_loaders()[index].as_ref();
-                let parsed = parse_file(registry, loader, &root, &listing, &scope, &path);
-                (index, path, parsed)
-            })
-            .await;
+        let parsed: Vec<(usize, String, ParsedFile)> = self.each(jobs, |(index, path)| {
+            let loader = registry.row_loaders()[index].as_ref();
+            let parsed = parse_file(registry, loader, &root, &listing, &scope, &path);
+            (index, path, parsed)
+        });
 
         let mut rows: Vec<Vec<(String, Box<dyn Any + Send + Sync>)>> =
             registry.row_loaders().iter().map(|_| Vec::new()).collect();
@@ -1199,12 +1153,11 @@ impl Loading {
         self.snapshot = None;
     }
 
-    async fn check_rows(&mut self, registry: &ContentRegistry) {
+    fn check_rows(&mut self, registry: &ContentRegistry) {
         let content = self.content();
         let mut errors: Vec<(&'static str, String, RowCheck)> = Vec::new();
         for loader in registry.row_loaders() {
             loader.check_rows(&content, &mut errors);
-            self.breathe().await;
         }
         for (table, path, check) in errors {
             let file = fields_file(&path);
@@ -1215,7 +1168,7 @@ impl Loading {
         }
     }
 
-    async fn hash_files(&mut self) {
+    fn hash_files(&mut self) {
         let mut files: Vec<String> = Vec::new();
         if self.listing.settings {
             files.push(SETTINGS_FILE.to_owned());
@@ -1230,15 +1183,13 @@ impl Loading {
         }
         files.extend(self.media.iter().cloned());
         let root = self.folder.clone();
-        let hashed: Vec<(String, io::Result<FileHash>)> = self
-            .each(files, |file| {
-                let hashed = match root.checked(&file) {
-                    Some(checked) => Ok(checked),
-                    None => root.read(&file).map(|bytes| FileHash::of(&bytes)),
-                };
-                (file, hashed)
-            })
-            .await;
+        let hashed: Vec<(String, io::Result<FileHash>)> = self.each(files, |file| {
+            let hashed = match root.checked(&file) {
+                Some(checked) => Ok(checked),
+                None => root.read(&file).map(|bytes| FileHash::of(&bytes)),
+            };
+            (file, hashed)
+        });
         let mut hashes = BTreeMap::new();
         for (file, hashed) in hashed {
             match hashed {
@@ -1261,9 +1212,9 @@ impl Loading {
             .is_some_and(|loader| loader.built(&self.content()))
     }
 
-    async fn run_hooks(&mut self, registry: &ContentRegistry, step: LoadStep) {
+    fn run_hooks(&mut self, registry: &ContentRegistry, step: LoadStep) {
         for (_, hook) in registry.hooks.iter().filter(|(at, _)| *at == step) {
-            hook(self).await;
+            hook(self);
         }
     }
 
@@ -1975,7 +1926,7 @@ impl<G: Settings> SettingsLoader for SettingsOf<G> {
     }
 }
 
-async fn module_rules<Row: ModuleSet>(loading: &mut Loading) {
+fn module_rules<Row: ModuleSet>(loading: &mut Loading) {
     let content = loading.content();
     let mut errors: Vec<(ContentId<Row>, usize, String)> = Vec::new();
     with_content(ContentScope::of(&content), || {

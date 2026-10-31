@@ -136,7 +136,7 @@ impl Page {
                 .and_then(|seen| world.get::<Inventory>(seen))
                 .cloned()
                 .unwrap_or_else(Inventory::empty),
-            now: super::card::clock_now(world),
+            now: super::card::clock_now(),
             selected: world.resource::<Browse>().of(tab),
         }
     }

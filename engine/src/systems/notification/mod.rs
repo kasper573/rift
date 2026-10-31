@@ -464,7 +464,7 @@ pub fn play_sound(
     }
 }
 
-pub async fn check_all(loading: &mut Loading) {
+pub fn check_all(loading: &mut Loading) {
     let content = loading.content();
     for (id, def) in loading.rows::<NotificationDef>(&content) {
         let mut check = RowCheck::default();

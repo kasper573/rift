@@ -9,7 +9,6 @@ use ui::{panel, sheet};
 use super::{
     HistoryEntry, HistoryMark, HistoryNews, HistoryRecord, HistoryTopic, KEPT, RecordTally,
 };
-use crate::core::platform::ClientPlatform;
 use crate::core::text::{self, StyledLine, StyledSpan, TextLook};
 use crate::core::time::LocalClock;
 use crate::systems::hud::{self, HudWindow};
@@ -122,7 +121,7 @@ impl HudWindow for HistoryWindow {
             InterfaceSound::UiPage.play(world);
         }
         let rows = rows(world, tab);
-        let clock = world.resource::<ClientPlatform>().0.local_clock();
+        let clock = LocalClock::of_this_machine();
         let area = egui::ScrollArea::vertical()
             .id_salt(("history", tab.title()))
             .stick_to_bottom(true)

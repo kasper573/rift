@@ -13,7 +13,6 @@ use engine::core::assets::loader::PngLoader;
 use engine::core::audio::playback::SfxPlugin;
 use engine::core::babble::BabblePlugin;
 use engine::core::math::Rng;
-use engine::core::pace::Pace;
 use engine::core::render::world::WorldScenePlugin;
 use engine::core::text::StyledTextPlugin;
 use engine::core::vfx::render::VfxMaterialsPlugin;
@@ -88,11 +87,13 @@ fn main() {
                 })
                 .set(ImagePlugin::default_nearest()),
         )
-        .register_asset_loader(PngLoader {
-            pace: Pace::whole(),
-        })
+        .register_asset_loader(PngLoader)
         .add_plugins((SfxPlugin, StyledTextPlugin, BabblePlugin))
-        .add_plugins((WorldScenePlugin, VfxMaterialsPlugin, SceneryPlugin))
+        .add_plugins((
+            WorldScenePlugin,
+            VfxMaterialsPlugin,
+            SceneryPlugin { paced: false },
+        ))
         .add_plugins(EditorPlugin { launch })
         .run();
 }

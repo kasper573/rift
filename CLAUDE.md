@@ -12,7 +12,7 @@
 - The engine ships as binaries, and a game uses it through them alone: their settings, the desktop client's probe, and `rift`. A game needs no other interface, so anything a game must do with the engine goes through one of these.
 - Runtimes speak only protocols and know no infrastructure: sign-in is OpenID Connect with every endpoint configured, metrics are Prometheus exposition, profiles are pprof over HTTP, logs go to stdout. Nothing in the code, docs or configuration names an identity provider, a proxy, an observability product or a host.
 - The desktop client's probe is a public protocol, and `rift schema probe` its schema. When a consumer needs to see something the probe doesn't report, extend the probe (`engine/src/systems/probe/`), never another channel.
-- While we currently deploy only to web for the forseeable future, the deploy target must still be abstracted away. Do not hard couple the codebase with any specific platform or environment. Ideally you only use abstractions provided by bevy and don't have to worry about this. But if you physically cannot avoid platform specific code, you must encapsulate it behind a single platform adapter so that it's easy to swap out the implementation for a different platform in the future.
+- The engine targets native desktop: the server and the desktop client. There is no browser client and no platform adapter; code uses the operating system's facilities (threads, files, sockets) directly. What differs between desktop operating systems stays inside well established crates and bevy.
 
 ## Code style
 
@@ -83,5 +83,5 @@ Before you start work on a task run benchmarks via `just bench` and save the res
 
 After you finish the task:
 
-- `cargo fmt` · `just lint` (clippy among it, no warnings) · `just test` · `just dist`, and `just smoke target/dist` when the change reaches the website or the browser client.
+- `cargo fmt` · `just lint` (clippy among it, no warnings) · `just test` · `just dist`, and `just smoke target/dist` when the change reaches the website or the desktop client.
 - Run benchmarks again and compare the results to the previous run. If there is a significant regression, investigate and fix it.

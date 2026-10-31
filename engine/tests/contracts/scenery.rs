@@ -110,7 +110,11 @@ fn client(game: Game, folder: &Path) -> (App, Arc<Area>) {
     .init_asset::<StandardMaterial>()
     .init_asset::<ScatteringMedium>()
     .init_asset::<SkinnedMeshInverseBindposes>()
-    .add_plugins((VfxMaterialsPlugin, WorldScenePlugin, scenery::SceneryPlugin))
+    .add_plugins((
+        VfxMaterialsPlugin,
+        WorldScenePlugin,
+        scenery::SceneryPlugin { paced: false },
+    ))
     .insert_resource(content);
     app.finish();
     app.cleanup();

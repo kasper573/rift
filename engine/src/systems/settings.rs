@@ -12,7 +12,7 @@ use ui::{controls, face, sheet};
 use crate::core::audio::mix::{AudioCategory, AudioFader, AudioMix, AudioVolume};
 use crate::core::geometry::Degrees;
 use crate::core::math::{Pos, Size, WindowPx};
-use crate::core::platform::{ClientPlatform, Platform};
+use crate::core::os::Profile;
 use crate::core::render::transition::{ScreenTransition, ScreenTransitionPreference};
 use crate::core::render::video::{AmbientOcclusionQuality, VideoPreferences};
 use crate::core::render::{CameraPreferences, FullPicture};
@@ -28,7 +28,7 @@ const LABEL_WIDTH: f32 = 100.0;
 const FORM_SPACING: egui::Vec2 = egui::Vec2::new(16.0, 8.0);
 
 pub(crate) fn plugin(app: &mut App) {
-    let settings = UserSettings::load(&*app.world().resource::<ClientPlatform>().0);
+    let settings = UserSettings::load(app.world().resource::<Profile>());
     app.insert_resource(settings)
         .add_systems(Update, (persist, apply, apply_video));
 }
@@ -102,7 +102,6 @@ impl HudWindow for SettingsWindow {
     fn show(&self, ui: &mut Ui, world: &mut World) {
         let offered = VideoOffered {
             full_picture: world.resource::<FullPicture>().0,
-            window: world.resource::<ClientPlatform>().0.owns_window(),
         };
         sheet::scroll(ui, egui::ScrollArea::vertical().auto_shrink(false), |ui| {
             show_settings(ui, &mut world.resource_mut::<UserSettings>(), offered)
@@ -115,7 +114,6 @@ impl HudWindow for SettingsWindow {
 struct VideoOffered {
     /// The light shafts and the ambient occlusion, which only the full picture draws.
     full_picture: bool,
-    window: bool,
 }
 
 fn show_settings(ui: &mut Ui, settings: &mut Mut<UserSettings>, offered: VideoOffered) {
@@ -187,21 +185,17 @@ fn show_settings(ui: &mut Ui, settings: &mut Mut<UserSettings>, offered: VideoOf
 }
 
 fn show_video(ui: &mut Ui, settings: &mut Mut<UserSettings>, offered: VideoOffered) {
-    let mut fullscreen = settings.window.fullscreen && offered.window;
-    if supported_only(ui, offered.window, |ui| {
-        ui.checkbox(&mut fullscreen, "Fullscreen")
-    })
-    .changed()
-    {
+    let mut fullscreen = settings.window.fullscreen;
+    if ui.checkbox(&mut fullscreen, "Fullscreen").changed() {
         settings.window.fullscreen = fullscreen;
     }
-    let mut vsync = settings.window.vsync && offered.window;
-    if supported_only(ui, offered.window, |ui| {
-        ui.checkbox(&mut vsync, "VSync").on_hover_text(
+    let mut vsync = settings.window.vsync;
+    if ui
+        .checkbox(&mut vsync, "VSync")
+        .on_hover_text(
             "Each frame waits for the display's refresh: less heat and power, a little more delay",
         )
-    })
-    .changed()
+        .changed()
     {
         settings.window.vsync = vsync;
     }
@@ -250,13 +244,13 @@ fn show_video(ui: &mut Ui, settings: &mut Mut<UserSettings>, offered: VideoOffer
     });
 }
 
-/// `add`'s controls, dimmed and locked with the reason on hover where the platform can't honour
-/// them, in which case they must show what is drawn: off.
+/// `add`'s controls, dimmed and locked with the reason on hover where the graphics driver can't
+/// honour them, in which case they must show what is drawn: off.
 fn supported_only<R>(ui: &mut Ui, supported: bool, add: impl FnOnce(&mut Ui) -> R) -> R {
     let shown = ui.add_enabled_ui(supported, add);
     shown
         .response
-        .on_disabled_hover_text("Not supported on this platform");
+        .on_disabled_hover_text("Not supported by this graphics driver");
     shown.inner
 }
 
@@ -419,9 +413,9 @@ impl UserSettings {
         };
     }
 
-    fn load(platform: &dyn Platform) -> UserSettings {
-        let mut settings: UserSettings = platform
-            .load(KEY)
+    fn load(profile: &Profile) -> UserSettings {
+        let mut settings: UserSettings = profile
+            .settings()
             .and_then(|json| serde_json::from_str(&json).ok())
             .unwrap_or_default();
         settings.ui.snap = settings.ui.snap.filter(|snap| snap.0 > 0.0);
@@ -429,14 +423,13 @@ impl UserSettings {
         settings
     }
 
-    fn save(&self, platform: &dyn Platform) {
+    fn save(&self, profile: &Profile) {
         if let Ok(json) = serde_json::to_string_pretty(self) {
-            platform.save(KEY, &json);
+            profile.save_settings(&json);
         }
     }
 }
 
-const KEY: &str = "rift.user_settings";
 pub const DEFAULT_SNAP: WindowPx = WindowPx(16.0);
 
 #[derive(Serialize, Deserialize)]
@@ -530,9 +523,9 @@ struct ScreenSettings {
 
 /// Saved on change rather than at each place that changes a setting. The initial load counts as a
 /// change too, harmlessly writing back what was just read.
-fn persist(settings: Res<UserSettings>, platform: Res<ClientPlatform>) {
+fn persist(settings: Res<UserSettings>, profile: Res<Profile>) {
     if settings.is_changed() {
-        settings.save(&*platform.0);
+        settings.save(&profile);
     }
 }
 
@@ -561,14 +554,13 @@ fn apply(
 fn apply_video(
     settings: Res<UserSettings>,
     mut video: ResMut<VideoPreferences>,
-    platform: Res<ClientPlatform>,
     window: Option<Single<&mut Window, With<PrimaryWindow>>>,
 ) {
     if !settings.is_changed() {
         return;
     }
     video.set_if_neq(settings.video);
-    if let Some(mut window) = window.filter(|_| platform.0.owns_window()) {
+    if let Some(mut window) = window {
         let mode = if settings.window.fullscreen {
             WindowMode::BorderlessFullscreen(MonitorSelection::Current)
         } else {

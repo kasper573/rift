@@ -16,10 +16,10 @@ use bevy::animation::animation_curves::{
 use bevy::animation::gltf_curves::SteppedKeyframeCurve;
 use bevy::prelude::*;
 use bevy::reflect::{FromReflect, GetTypeRegistration, Typed};
+use rayon::prelude::*;
 
 use crate::core::content::gltf::{self, ClipKeys, Keys, NodeTree};
 use crate::core::content::retarget;
-use crate::core::pace::Pace;
 
 /// A glTF file's tree of nodes and every clip it holds, read whole.
 #[derive(Asset, TypePath)]
@@ -28,12 +28,10 @@ pub struct GltfClips {
     pub clips: Vec<ClipKeys>,
 }
 
-/// Reads a glTF binary's clips whole when they are asked for as such, a clip at a time at `pace`:
-/// it claims no extension, so a glTF loaded as anything else is read as the renderer reads it.
+/// Reads a glTF binary's clips whole when they are asked for as such: it claims no extension, so a
+/// glTF loaded as anything else is read as the renderer reads it.
 #[derive(TypePath)]
-pub struct GltfClipsLoader {
-    pub pace: Pace,
-}
+pub struct GltfClipsLoader;
 
 impl AssetLoader for GltfClipsLoader {
     type Asset = GltfClips;
@@ -51,11 +49,10 @@ impl AssetLoader for GltfClipsLoader {
         let unreadable =
             |error: String| std::io::Error::new(std::io::ErrorKind::InvalidData, error);
         let library = gltf::ClipLibrary::read(&bytes).map_err(unreadable)?;
-        let mut clips = Vec::with_capacity(library.clips());
-        for index in 0..library.clips() {
-            self.pace.breathe().await;
-            clips.push(library.keys(index).map_err(unreadable)?);
-        }
+        let clips = (0..library.clips())
+            .map(|index| library.keys(index))
+            .collect::<Result<_, _>>()
+            .map_err(unreadable)?;
         Ok(GltfClips {
             tree: library.tree(),
             clips,
@@ -126,32 +123,39 @@ pub fn rig_clip(
     clip
 }
 
-/// Makes the pending clips whose files have been read, as many as the frame's slice allows, and
-/// gives up on one whose file can't be.
+/// Makes the pending clips whose files have been read, across the threads, and gives up on one
+/// whose file can't be.
 pub fn make_pending(
     mut pending: ResMut<PendingClips>,
     files: Res<Assets<GltfClips>>,
     assets: Res<AssetServer>,
     mut clips: ResMut<Assets<AnimationClip>>,
-    pace: Res<Pace>,
 ) {
-    pending.0.retain(|waiting| {
-        if pace.spent() {
-            return true;
-        }
-        if assets.load_state(&waiting.file).is_failed() {
-            warn!("could not read the clips of {:?}", waiting.file.path());
-            return false;
-        }
-        let Some(file) = files.get(&waiting.file) else {
-            return true;
-        };
-        if let Some(keys) = file.clips.get(waiting.animation) {
-            let made = animation_clip(&waiting.rig, &(waiting.make)(&file.tree, keys));
-            let _ = clips.insert(waiting.clip.id(), made);
-        }
-        false
-    });
+    let (read, waiting): (Vec<Pending>, Vec<Pending>) = std::mem::take(&mut pending.0)
+        .into_iter()
+        .filter(|waiting| {
+            let failed = assets.load_state(&waiting.file).is_failed();
+            if failed {
+                warn!("could not read the clips of {:?}", waiting.file.path());
+            }
+            !failed
+        })
+        .partition(|waiting| files.contains(&waiting.file));
+    pending.0 = waiting;
+    let made: Vec<(Handle<AnimationClip>, AnimationClip)> = read
+        .into_par_iter()
+        .filter_map(|read| {
+            let file = files.get(&read.file)?;
+            let keys = file.clips.get(read.animation)?;
+            Some((
+                read.clip,
+                animation_clip(&read.rig, &(read.make)(&file.tree, keys)),
+            ))
+        })
+        .collect();
+    for (clip, made) in made {
+        let _ = clips.insert(clip.id(), made);
+    }
 }
 
 /// `keys`, keyframes for the joints of `rig` by index, as a clip moving those joints of a body

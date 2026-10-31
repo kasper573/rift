@@ -12,14 +12,14 @@ alone.
 
 | Folder | What it is |
 | --- | --- |
-| [`engine/`](engine) | The engine: the simulation the server and clients share, the game server, and the browser (wasm) and desktop clients. |
+| [`engine/`](engine) | The engine: the simulation the server and client share, the game server, and the desktop client. |
 | [`editor/`](editor) | The editor: opens a game folder, edits it through the engine's own loader and writer, and play-tests it on the engine's binaries. New games start from its templates. |
 | [`cli/`](cli) | `rift`, the command line tool: checks, renders, benches, load tests and profiles a game. |
-| [`web-server/`](web-server) | A game's website: its pages, the browser client, sign-in, and the desktop client's downloads. |
+| [`web-server/`](web-server) | A game's website: its pages, sign-in, and the desktop client's downloads. |
 | [`oidc/`](oidc), [`service/`](service) | Sign-in through any OpenID Connect provider, and what the HTTP services share: metrics and profiles. |
 | [`ui/`](ui) | The interface the editor and the game share: colors, shapes, text roles, fonts and every general-purpose egui component, so both look and behave alike. |
 | [`bevy/`](bevy) | Bevy plugins that know nothing of rift: a server-authoritative terminal. |
-| [`smoke/`](smoke) | The website and the browser client, smoke-tested together: a player signs in through a stand-in identity provider and the canvas must come to look like `smoke/snapshot.png`. |
+| [`smoke/`](smoke) | The website, the game server and the desktop client, smoke-tested together: a player of a stand-in identity provider starts the client from the `rift.env` the site hands out, and its window must come to look like `smoke/snapshot.png`. |
 | [`testkit/`](testkit) | What the tests and the server bench stand on: small games declared in code, and a bare world of only the systems a test runs. |
 
 ## Releases
@@ -42,9 +42,6 @@ binary and platform, `<binary>-<platform>.tar.gz` (`.zip` on Windows), each hold
 | `rift` | Linux, Windows, macOS | The command line tool. |
 | `web-server` | Linux | A game's website. |
 | `game-server-profiling` | Linux | `game-server` with the symbols and frame pointers a sampling profiler reads. |
-
-`wasm-client.tar.gz` holds the browser client, the `.wasm` and its JavaScript glue, which `web-server`
-serves at `/wasm`.
 
 Archives extracted into one folder make a **binaries folder**: `editor` and `rift` find `game-server`,
 `desktop-client` and `game-server-profiling` beside themselves. `just dist` builds this machine's
@@ -106,8 +103,8 @@ required unless it says otherwise, and a binary refuses to start without one.
 - **`desktop-client`** reads `RIFT_CLIENT_*`: the game server (`GAME_SERVER_URL`, `GAME_SERVER_WS_URL`),
   `AUTH`, `PROFILE_DIR`, `EXIT_ON_STDIN_EOF` and, optionally, `ACCESS_TOKEN` and `PROBE`.
 - **`web-server`** reads `RIFT_WEB_SERVER_*`: `BIND`, `PORT`, `REDIRECT_URI`, the game server as
-  browsers reach it (`GAME_SERVER_URL`, `GAME_SERVER_WS_URL`) and as it reaches it itself
-  (`GAME_SERVER_INTERNAL_URL`), `WASM_DIR`, and the release whose desktop client its downloads offer
+  desktop clients reach it (`GAME_SERVER_URL`, `GAME_SERVER_WS_URL`) and as it reaches it itself
+  (`GAME_SERVER_INTERNAL_URL`), and the release whose desktop client its downloads offer
   (`DOWNLOADS_URL`, `RELEASE`). The `rift.env` it serves to desktop clients points them at its game
   server and at the sign-in pages in `RIFT_WEB_SERVER_DESKTOP_AUTH_*` (`CLIENT_ID`,
   `AUTHORIZATION_URI`, `SIGN_UP_URI`, `TOKEN_URI`). The site is named after the game its game server
@@ -128,8 +125,8 @@ The runtimes know no infrastructure, only protocols:
   servers serve them beside their own routes.
 - **Logs** go to stdout.
 - **The probe.** A desktop client started with `RIFT_CLIENT_PROBE=<host:port>` connects there and
-  answers questions about what it shows, one JSON line each: a frame's snapshot, or where the game's
-  things are and how its ground walks. `rift ask <game>` answers the questions about the game
+  answers questions about what it shows, one JSON line each: a frame's snapshot, a picture of its
+  window, or where the game's things are and how its ground walks. `rift ask <game>` answers the questions about the game
   itself the same way, without a client, and `rift schema probe` prints the protocol's schema.
 - **Test routes.** A game server with `TEST_CHARACTERS` set hands the game's test characters out
   over HTTP, to whoever drives it: `/test/character` makes the asking account's next sign-in play
@@ -141,7 +138,7 @@ The runtimes know no infrastructure, only protocols:
 One-time setup:
 
 - [Rust](https://rustup.rs/) — rustup installs the repo's pinned toolchain on first build
-- `wasm-bindgen-cli` for building the browser client: `cargo install wasm-bindgen-cli --locked`
+- `Xvfb` and a Vulkan driver with the `llvmpipe` software rasterizer (Mesa's lavapipe), for `just smoke`
 - `perf`, for `just profile`
 - `weston`, `Xwayland`, `xdotool` and a PulseAudio-compatible sound server, for `rift bench <game>`
 
@@ -155,7 +152,7 @@ just dist target/dist desktop # …only some of its parts: desktop, web, profili
 just bench            # the server bench on the generated game
 just lint             # rustfmt, clippy, the repo's own lints, and `rift check` on the editor's templates
 just test             # every crate's tests
-just smoke            # sign in on the website and see the browser client draw the game (Chrome)
+just smoke            # start the desktop client from the website's rift.env and see it draw the game
 ```
 
 ## Tests

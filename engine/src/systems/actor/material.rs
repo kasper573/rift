@@ -118,7 +118,7 @@ impl ContentFile for MaterialDef {
 
 /// Every tint a material's masks paint is one of its skeleton's, and every mask is the size of
 /// its base.
-pub async fn check_all(loading: &mut Loading) {
+pub fn check_all(loading: &mut Loading) {
     let content = loading.content();
     let sizes = content.built::<ImageSizes>();
     for (id, material) in loading.rows::<MaterialDef>(&content) {

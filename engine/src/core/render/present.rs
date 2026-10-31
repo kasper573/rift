@@ -14,7 +14,6 @@ use bevy::window::PrimaryWindow;
 
 use super::camera::{self, WorldCamera};
 use super::transition::{ActiveTransition, CutUniform};
-use crate::core::platform::ClientPlatform;
 use crate::core::time::Seconds;
 
 /// Window pixels to a pixel of the world's picture.
@@ -189,13 +188,6 @@ pub(crate) fn world_texture(world: &World) -> Option<Handle<Image>> {
     world
         .get_resource::<WorldTargets>()
         .map(|targets| targets.live.clone())
-}
-
-pub(super) fn match_display(
-    mut window: Single<&mut Window, With<PrimaryWindow>>,
-    platform: Res<ClientPlatform>,
-) {
-    platform.0.sync_window(&mut window);
 }
 
 pub(super) fn fit(
