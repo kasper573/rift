@@ -28,7 +28,11 @@ pub struct Island(usize);
 
 impl NavMesh {
     /// `bounds` less each obstacle, every outline grown by `radius` and the bounds shrunk by it, so
-    /// a point on the mesh is a place a body of that radius fits.
+    /// a point on the mesh is a place a body of that radius fits, give or take a tenth of the
+    /// radius: a grown outline keeps only the points that each add more ground than an eighth of
+    /// the radius squared, which on the smallest outline lets a body a tenth of its radius in,
+    /// lost on it, and spares the mesh most of the points a rounded outline or a run of blocked
+    /// cells brings.
     pub fn build(
         bounds: Rect<Meters>,
         obstacles: impl IntoIterator<Item = Vec<Pos<Meters>>>,
@@ -36,6 +40,7 @@ impl NavMesh {
     ) -> NavMesh {
         let mut triangulation = Triangulation::from_outer_edges(&corners(bounds).map(vec2));
         triangulation.set_agent_radius(radius.0);
+        triangulation.set_agent_radius_simplification(radius.0 * radius.0 / 8.0);
         triangulation.agent_radius_on_outer_edge(true);
         triangulation.add_obstacles(
             obstacles

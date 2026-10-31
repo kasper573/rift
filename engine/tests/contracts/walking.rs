@@ -158,8 +158,11 @@ fn a_walk_over_open_ground_keeps_to_the_straight_line() {
     }
 }
 
+/// A walk keeps a body out of what blocks, give or take a tenth of its radius, and through a
+/// notch the body fits with that much to spare.
 #[test]
 fn a_walk_goes_round_what_blocks_and_through_a_notch_a_body_fits() {
+    const GIVE: f32 = AGENT_RADIUS.0 / 10.0;
     let boulder = Walk::among(
         json!({ "type": "circle", "radius": 1.0 }),
         json!([{ "type": "prop", "prop": path("prop", "block"), "at": { "x": 7.0, "y": 7.0 } }]),
@@ -172,12 +175,12 @@ fn a_walk_goes_round_what_blocks_and_through_a_notch_a_body_fits() {
     for at in &boulder {
         let gap = (Pos::new(2.0, 7.0) + *at).distance(center);
         assert!(
-            gap >= Meters(1.0 + AGENT_RADIUS.0 - 0.01),
+            gap >= Meters(1.0 + AGENT_RADIUS.0 - GIVE),
             "{at:?} is {gap:?} from the boulder's middle"
         );
     }
 
-    let edge = Offset::new(5.0 - 1.0 - AGENT_RADIUS.0 + 0.03, 0.0);
+    let edge = Offset::new(5.0 - 1.0 - AGENT_RADIUS.0 + GIVE, 0.0);
     let hair_off = Walk::among(
         json!({ "type": "circle", "radius": 1.0 }),
         json!([{ "type": "prop", "prop": path("prop", "block"), "at": { "x": 7.0, "y": 7.0 } }]),
