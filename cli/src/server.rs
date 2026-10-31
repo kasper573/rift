@@ -50,10 +50,6 @@ impl GameServer {
         format!("http://{LOCALHOST}:{}", self.ready.http)
     }
 
-    pub fn ws_url(&self) -> String {
-        format!("ws://{LOCALHOST}:{}", self.ready.ws)
-    }
-
     pub fn memory(&self) -> Bytes {
         resident(self.process.id())
     }

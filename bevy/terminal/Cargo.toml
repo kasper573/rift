@@ -2,18 +2,14 @@
 name = "bevy_terminal"
 version.workspace = true
 edition.workspace = true
-description = "Server-authoritative terminal with slash commands for bevy_replicon apps"
+description = "Server-authoritative terminal with slash commands for networked bevy apps, over any transport"
 repository = "https://github.com/kasper573/rift"
 authors = ["kasper573"]
 
 [dependencies]
 bevy_app = { workspace = true }
 bevy_ecs = { workspace = true }
-bevy_replicon = { workspace = true, features = ["client", "server"] }
 serde = { workspace = true }
-
-[dev-dependencies]
-bevy_state = { workspace = true }
 
 [lints]
 workspace = true

@@ -7,7 +7,7 @@ use bevy_app::App;
 use bevy_ecs::message::{MessageCursor, Messages};
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryState;
-use bevy_replicon::prelude::Replicated;
+use bevy_replication::Replicated;
 use bevy_time::Time;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};

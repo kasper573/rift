@@ -1,235 +1,196 @@
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr, UdpSocket};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
-use engine::systems::account::Identity;
-use futures_util::{SinkExt, StreamExt};
-use renet2::RenetServer;
-use serde::Deserialize;
-use tokio::net::{TcpListener, TcpStream};
-use tokio::runtime::Handle;
-use tokio::sync::mpsc;
-use tokio_tungstenite::accept_hdr_async;
-use tokio_tungstenite::tungstenite::Message;
-use tokio_tungstenite::tungstenite::handshake::server::{Request, Response};
-use tokio_tungstenite::tungstenite::http::StatusCode;
+use engine::core::net::transport::{PROTOCOL_ID, connection_config, netcode_now};
+use renet2::{ClientId, NetworkInfo, RenetServer, ServerEvent};
+use renet2_netcode::{
+    ConnectToken, NETCODE_KEY_BYTES, NativeSocket, NetcodeServerTransport, ServerAuthentication,
+    ServerSetupConfig, generate_random_bytes,
+};
 
-use crate::Sessions;
-
-/// renet2's core has no connection timeout, so we keep WebSocket connections honest at the transport
-/// layer: ping every `PING_INTERVAL`, and reap a connection that sends nothing (not even a pong) for
-/// `IDLE_TIMEOUT`. Without this an unclean drop — a backgrounded mobile tab, a lock screen, a network
-/// switch that never sends a TCP FIN — would leave a zombie connection (and its character) forever, so
-/// a reconnect would re-attach to the stale character instead of spawning fresh.
-const PING_INTERVAL: Duration = Duration::from_secs(5);
-const IDLE_TIMEOUT: Duration = Duration::from_secs(15);
-
-/// Drives renet2's transport-agnostic core directly over plain WebSockets, with no netcode layer,
-/// so no connection cap but `max_clients`, a soft resource limit. TLS is terminated by the reverse
-/// proxy and the user is already authenticated by the ticket, so netcode's encryption and
-/// anti-spoof challenge would add nothing here.
+/// Every client's connection: netcode over UDP, admitting only the clients that hold a connect
+/// token this server minted, encrypting their packets and dropping those that fall silent.
 ///
-/// Each renet packet is one binary WebSocket frame; renet still owns channels and reliability. The
-/// accept loop and per-connection reader/writer tasks run on the shared tokio runtime and reach the
-/// single-threaded game loop only through these channels, so the loop never blocks on IO.
-pub struct WsTransport {
-    local_addr: SocketAddr,
-    events: mpsc::UnboundedReceiver<Event>,
-    senders: HashMap<u64, mpsc::UnboundedSender<Vec<u8>>>,
-    identities: HashMap<u64, Identity>,
-    max_clients: usize,
+/// One netcode server holds at most `SHARD_CLIENTS` clients, so the transport runs as many as
+/// `max_clients` needs, each on a UDP port of its own, consecutive from the first port.
+pub struct UdpTransport {
+    shards: Vec<Shard>,
+    /// Which shard each connected client plays through.
+    clients: HashMap<ClientId, usize>,
+    load: Load,
 }
 
-enum Event {
-    Connected {
-        client: u64,
-        identity: Identity,
-        out: mpsc::UnboundedSender<Vec<u8>>,
-    },
-    Packet {
-        client: u64,
-        data: Vec<u8>,
-    },
-    Disconnected {
-        client: u64,
-    },
+/// Mints the connect tokens the session endpoint hands out, each for one client of this server
+/// process alone, as its key is drawn anew at every start, on the least loaded shard.
+#[derive(Clone)]
+pub struct TokenMinter {
+    key: [u8; NETCODE_KEY_BYTES],
+    shards: Vec<SocketAddr>,
+    load: Load,
 }
 
-impl WsTransport {
+impl UdpTransport {
     pub fn bind(
-        addr: SocketAddr,
-        sessions: Sessions,
+        bind: SocketAddr,
+        public_ip: IpAddr,
         max_clients: usize,
-        runtime: Handle,
-    ) -> WsTransport {
-        let listener = runtime
-            .block_on(TcpListener::bind(addr))
-            .unwrap_or_else(|error| panic!("cannot bind websocket {addr}: {error}"));
-        let local_addr = listener.local_addr().expect("bound websocket address");
-        let (events_tx, events) = mpsc::unbounded_channel();
-        runtime.spawn(accept(listener, sessions, events_tx));
-        WsTransport {
-            local_addr,
-            events,
-            senders: HashMap::new(),
-            identities: HashMap::new(),
-            max_clients,
-        }
-    }
-
-    pub fn local_addr(&self) -> SocketAddr {
-        self.local_addr
-    }
-
-    /// Applies every connect, packet, and disconnect that arrived since the last tick to the renet
-    /// server. renet has no internal timeout, so a closed socket (the `Disconnected` event) is the
-    /// sole liveness signal — it must reach `remove_connection` or the connection lingers forever.
-    pub fn update(&mut self, server: &mut RenetServer) {
-        while let Ok(event) = self.events.try_recv() {
-            match event {
-                Event::Connected {
-                    client,
-                    identity,
-                    out,
-                } => {
-                    if self.senders.len() >= self.max_clients {
-                        continue; // server full: dropping `out` closes the writer task's socket
-                    }
-                    self.senders.insert(client, out);
-                    self.identities.insert(client, identity);
-                    server.add_connection(client, true);
-                }
-                Event::Packet { client, data } => {
-                    let _ = server.process_packet_from(&data, client);
-                }
-                Event::Disconnected { client } => {
-                    self.senders.remove(&client);
-                    self.identities.remove(&client);
-                    server.remove_connection(client);
-                }
-            }
-        }
-    }
-
-    pub fn take_identity(&mut self, client: u64) -> Option<Identity> {
-        self.identities.remove(&client)
-    }
-
-    pub fn send(&mut self, server: &mut RenetServer) {
-        for client in server.clients_id() {
-            let Some(out) = self.senders.get(&client) else {
-                continue;
+    ) -> (UdpTransport, TokenMinter) {
+        let key = generate_random_bytes();
+        let count = max_clients.div_ceil(SHARD_CLIENTS).max(1);
+        let mut shards = Vec::with_capacity(count);
+        let mut public = Vec::with_capacity(count);
+        for index in 0..count {
+            let port = match bind.port() {
+                0 => 0,
+                first => first + index as u16,
             };
-            if let Ok(packets) = server.get_packets_to_send(client) {
-                for packet in packets {
-                    if out.send(packet.clone()).is_err() {
-                        break; // writer task gone; the reader will report the disconnect
-                    }
-                }
-            }
+            let address = SocketAddr::new(bind.ip(), port);
+            let socket = UdpSocket::bind(address)
+                .unwrap_or_else(|error| panic!("cannot bind {address}: {error}"));
+            let local = socket.local_addr().expect("a bound udp address");
+            let reached_at = SocketAddr::new(public_ip, local.port());
+            let setup = ServerSetupConfig {
+                current_time: netcode_now(),
+                max_token_lifetime: TOKEN_LIFETIME.as_secs() as u16,
+                max_clients: (max_clients - index * SHARD_CLIENTS).min(SHARD_CLIENTS),
+                protocol_id: PROTOCOL_ID,
+                socket_addresses: vec![vec![reached_at]],
+                authentication: ServerAuthentication::Secure { private_key: key },
+            };
+            let socket = NativeSocket::new(socket).expect("a non-blocking udp socket");
+            shards.push(Shard {
+                server: RenetServer::new(connection_config()),
+                transport: NetcodeServerTransport::new(setup, socket)
+                    .expect("the netcode transport starts"),
+                local,
+            });
+            public.push(reached_at);
         }
-    }
-}
-
-async fn accept(listener: TcpListener, sessions: Sessions, events: mpsc::UnboundedSender<Event>) {
-    loop {
-        let Ok((stream, _)) = listener.accept().await else {
-            continue;
+        let load = Load(Arc::new((0..count).map(|_| AtomicUsize::new(0)).collect()));
+        let transport = UdpTransport {
+            shards,
+            clients: HashMap::new(),
+            load: load.clone(),
         };
-        tokio::spawn(serve(stream, sessions.clone(), events.clone()));
-    }
-}
-
-// The handshake callback's `Result<Response, ErrorResponse>` is tungstenite's signature; its `Err`
-// variant is a whole HTTP response, so it cannot be shrunk here.
-#[expect(clippy::result_large_err)]
-async fn serve(stream: TcpStream, sessions: Sessions, events: mpsc::UnboundedSender<Event>) {
-    if stream.set_nodelay(true).is_err() {
-        return;
-    }
-    // Claim the single-use ticket inside the handshake callback, so two sockets bearing the same
-    // ticket can never both become a connection (the second `take` returns `None` and is rejected).
-    let mut claimed: Option<(u64, Identity)> = None;
-    let handshake = accept_hdr_async(
-        stream,
-        |request: &Request, response: Response| match ticket(request)
-            .and_then(|id| sessions.take(id).map(|identity| (id, identity)))
-        {
-            Some(pair) => {
-                claimed = Some(pair);
-                Ok(response)
-            }
-            None => Err(Response::builder()
-                .status(StatusCode::UNAUTHORIZED)
-                .body(Some("invalid or expired ticket".to_owned()))
-                .expect("reject response")),
-        },
-    )
-    .await;
-    let (Ok(ws), Some((client, identity))) = (handshake, claimed) else {
-        return;
-    };
-
-    let (out_tx, mut out_rx) = mpsc::unbounded_channel::<Vec<u8>>();
-    if events
-        .send(Event::Connected {
-            client,
-            identity,
-            out: out_tx,
-        })
-        .is_err()
-    {
-        return;
+        let minter = TokenMinter {
+            key,
+            shards: public,
+            load,
+        };
+        (transport, minter)
     }
 
-    let (mut sink, mut incoming) = ws.split();
-    tokio::spawn(async move {
-        let mut ping = tokio::time::interval(PING_INTERVAL);
-        ping.tick().await; // the first tick fires immediately; skip it
-        loop {
-            let outcome = tokio::select! {
-                data = out_rx.recv() => match data {
-                    Some(data) => sink.send(Message::Binary(data.into())).await,
-                    None => break, // transport dropped the sender on disconnect
-                },
-                _ = ping.tick() => sink.send(Message::Ping(Vec::new().into())).await,
-            };
-            if outcome.is_err() {
-                break;
-            }
-        }
-        let _ = sink.close().await;
-    });
+    /// The port of the first shard, which the others follow when the first port was chosen.
+    pub fn first_port(&self) -> u16 {
+        self.shards[0].local.port()
+    }
 
-    loop {
-        match tokio::time::timeout(IDLE_TIMEOUT, incoming.next()).await {
-            Ok(Some(Ok(Message::Binary(data)))) => {
-                if events
-                    .send(Event::Packet {
-                        client,
-                        data: data.to_vec(),
-                    })
-                    .is_err()
-                {
-                    break;
+    /// Takes in what arrived since the last tick, and what connected and disconnected.
+    pub fn update(&mut self, delta: Duration) -> Vec<ServerEvent> {
+        let mut events = Vec::new();
+        for (index, shard) in self.shards.iter_mut().enumerate() {
+            shard.server.update(delta);
+            if let Err(errors) = shard.transport.update(delta, &mut shard.server) {
+                for error in errors {
+                    eprintln!("udp transport: {error}");
                 }
             }
-            // A pong (or any other frame) is proof of life; only its arrival matters, not its payload.
-            Ok(Some(Ok(_))) => {}
-            // Clean close, socket error, end of stream, or no frame within the idle timeout: all dead.
-            Ok(Some(Err(_))) | Ok(None) | Err(_) => break,
+            while let Some(event) = shard.server.get_event() {
+                match event {
+                    ServerEvent::ClientConnected { client_id } => {
+                        self.clients.insert(client_id, index);
+                    }
+                    ServerEvent::ClientDisconnected { client_id, .. } => {
+                        self.clients.remove(&client_id);
+                    }
+                }
+                events.push(event);
+            }
+            self.load.0[index].store(shard.server.connected_clients(), Ordering::Relaxed);
+        }
+        events
+    }
+
+    pub fn receive(&mut self, client: ClientId, channel: u8) -> Option<Vec<u8>> {
+        let message = self.server_of(client)?.receive_message(client, channel)?;
+        Some(message.to_vec())
+    }
+
+    pub fn send(&mut self, client: ClientId, channel: u8, message: Vec<u8>) {
+        if let Some(server) = self.server_of(client) {
+            server.send_message(client, channel, message);
         }
     }
-    let _ = events.send(Event::Disconnected { client });
+
+    pub fn disconnect(&mut self, client: ClientId) {
+        if let Some(server) = self.server_of(client) {
+            server.disconnect(client);
+        }
+    }
+
+    pub fn network_info(&mut self, client: ClientId) -> Option<NetworkInfo> {
+        self.server_of(client)?.network_info(client).ok()
+    }
+
+    pub fn disconnect_all(&mut self) {
+        for shard in &mut self.shards {
+            shard.transport.disconnect_all(&mut shard.server);
+        }
+    }
+
+    pub fn send_packets(&mut self) {
+        for shard in &mut self.shards {
+            shard.transport.send_packets(&mut shard.server);
+        }
+    }
+
+    fn server_of(&mut self, client: ClientId) -> Option<&mut RenetServer> {
+        let shard = *self.clients.get(&client)?;
+        Some(&mut self.shards[shard].server)
+    }
 }
 
-fn ticket(request: &Request) -> Option<u64> {
-    serde_urlencoded::from_str::<TicketQuery>(request.uri().query()?)
-        .ok()
-        .map(|query| query.ticket)
+impl TokenMinter {
+    pub fn mint(&self, client_id: u64) -> ConnectToken {
+        let shard = (0..self.shards.len())
+            .min_by_key(|&index| self.load.0[index].load(Ordering::Relaxed))
+            .expect("a transport has a shard");
+        self.load.0[shard].fetch_add(1, Ordering::Relaxed);
+        ConnectToken::generate(
+            netcode_now(),
+            PROTOCOL_ID,
+            TOKEN_LIFETIME.as_secs(),
+            client_id,
+            SILENCE_TIMEOUT.as_secs() as i32,
+            0,
+            vec![self.shards[shard]],
+            None,
+            &self.key,
+        )
+        .expect("a connect token for one address")
+    }
 }
 
-#[derive(Deserialize)]
-struct TicketQuery {
-    ticket: u64,
+/// How long a session's connect token takes a client to use.
+pub const TOKEN_LIFETIME: Duration = Duration::from_secs(30);
+
+/// The most clients one netcode server holds.
+const SHARD_CLIENTS: usize = 1024;
+
+/// How long a connection may hear nothing before it ends: a client that vanished without a word
+/// (a crash, a network switch) must not leave its character standing in the world for long.
+const SILENCE_TIMEOUT: Duration = Duration::from_secs(15);
+
+struct Shard {
+    server: RenetServer,
+    transport: NetcodeServerTransport,
+    local: SocketAddr,
 }
+
+/// How many clients each shard holds, as of its last update and the tokens minted since, so
+/// tokens spread over the shards.
+#[derive(Clone)]
+struct Load(Arc<Vec<AtomicUsize>>);

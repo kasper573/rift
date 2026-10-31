@@ -1,6 +1,8 @@
+use bevy_app::App;
 use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::*;
-use bevy_terminal::TerminalSaid;
+use bevy_replication::{AppMessageExt, ClientLink, FromClient, ToClient};
+use bevy_terminal::{TerminalInput, TerminalLine, TerminalSaid};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -18,6 +20,27 @@ use crate::systems::script::{Condition, EffectCall, Reach, RiftScripting, Runner
 use crate::systems::text::{self, LineText, Span};
 use crate::systems::visibility::{self, VIEW_DISTANCE};
 
+pub fn register(app: &mut App) {
+    bevy_terminal::register(app, &[], |world, conn, line| {
+        world.write_message(ToClient {
+            client: conn,
+            message: line,
+        });
+    });
+    app.add_client_message::<TerminalInput>()
+        .add_server_message::<TerminalLine>();
+}
+
+pub fn hear(world: &mut World) {
+    let typed: Vec<FromClient<TerminalInput>> = world
+        .resource_mut::<Messages<FromClient<TerminalInput>>>()
+        .drain()
+        .collect();
+    for typed in typed {
+        bevy_terminal::hear(world, typed.client, &typed.message);
+    }
+}
+
 pub fn rebroadcast(world: &mut World) {
     let saids: Vec<TerminalSaid> = world
         .resource_mut::<Messages<TerminalSaid>>()
@@ -33,7 +56,7 @@ pub fn rebroadcast(world: &mut World) {
                     .map(|client| format!("player {}", client.0))
             })
             .unwrap_or_else(|| "player".to_owned());
-        bevy_terminal::broadcast(world, format!("{name}: {}", said.text));
+        broadcast(world, format!("{name}: {}", said.text));
     }
 }
 
@@ -91,7 +114,7 @@ pub fn say(world: &mut World, speaker: Entity, text: LineText, within: Meters) {
         .map(|name| name.name.clone())
         .unwrap_or_default();
     let words = text.words(world.resource::<InputMap>());
-    bevy_terminal::broadcast(world, format!("{name}: {words}"));
+    broadcast(world, format!("{name}: {words}"));
     let kind = match world.get::<Npc>(speaker) {
         Some(npc) => NotificationKind::Speech { speaker: npc.def },
         None => NotificationKind::Narration {
@@ -126,4 +149,12 @@ pub fn say(world: &mut World, speaker: Entity, text: LineText, within: Meters) {
             Notification::new(kind.clone(), text.clone()),
         );
     }
+}
+
+fn broadcast(world: &mut World, text: String) {
+    let conns: Vec<Entity> = world
+        .query_filtered::<Entity, With<ClientLink>>()
+        .iter(world)
+        .collect();
+    bevy_terminal::broadcast(world, &conns, text);
 }

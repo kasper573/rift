@@ -8,7 +8,7 @@ use bevy_app::App;
 use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::prelude::*;
 use bevy_ecs::world::DeferredWorld;
-use bevy_replicon::prelude::{ClientId as Sender, Replicated};
+use bevy_replication::Replicated;
 use bevy_time::Time;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -36,11 +36,11 @@ use crate::systems::script::{EventKind, Place};
 use crate::systems::shop::{self, ShopLedger};
 use crate::systems::skill::{BasicAttack, Hotbar, Learned};
 use crate::systems::stat::{self, Immortal, Stats};
-use crate::systems::visibility::{self, OwnedBy};
+use crate::systems::visibility;
 use crate::systems::{GameSettings, WorldArea, belongings, drain_requests, notification};
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::{Channel, ClientMessageAppExt, ServerMessageAppExt};
+    use bevy_replication::AppMessageExt;
 
     use crate::systems::mirror::AppMirrorExt;
 
@@ -48,10 +48,10 @@ pub fn register(app: &mut App) {
         .replicate::<Xp>()
         .replicate_private::<CommandLock>()
         .replicate_private::<ArrivalHold>()
-        .add_client_message::<JoinRequest>(Channel::Ordered)
-        .add_client_message::<RespawnRequest>(Channel::Ordered)
-        .add_client_message::<AreaDrawn>(Channel::Ordered)
-        .add_server_message::<Welcome>(Channel::Ordered);
+        .add_client_message::<JoinRequest>()
+        .add_client_message::<RespawnRequest>()
+        .add_client_message::<AreaDrawn>()
+        .add_server_message::<Welcome>();
 }
 
 #[derive(
@@ -204,10 +204,6 @@ pub fn any_connected(world: &World) -> bool {
         .is_some_and(|connected| connected.0 > 0)
 }
 
-pub(crate) fn sender_player(world: &World, sender: Sender) -> Option<Entity> {
-    conn_player(world, sender.entity()?)
-}
-
 pub fn commands_locked(world: &World, player: Entity) -> bool {
     world.get::<CommandLock>(player).is_some() || arriving(world, player)
 }
@@ -228,7 +224,7 @@ pub(crate) fn player_requests<M: Message>(
     mut answer: impl FnMut(&mut World, Entity, M) -> Result<(), String>,
 ) {
     for request in drain_requests::<M>(world) {
-        let Some(player) = sender_player(world, request.client_id) else {
+        let Some(player) = conn_player(world, request.client) else {
             continue;
         };
         if commanding && !may_command(world, player) {
@@ -242,7 +238,7 @@ pub(crate) fn player_requests<M: Message>(
 
 pub fn arrival_holds(world: &mut World) {
     for request in drain_requests::<AreaDrawn>(world) {
-        if let Some(player) = sender_player(world, request.client_id)
+        if let Some(player) = conn_player(world, request.client)
             && let Ok(mut player) = world.get_entity_mut(player)
         {
             player.remove::<ArrivalHold>();
@@ -325,9 +321,7 @@ pub fn join(world: &mut World) {
     }
     let area = area::load(&content, zone);
     for request in requests {
-        let Some(client_entity) = request.client_id.entity() else {
-            continue;
-        };
+        let client_entity = request.client;
         let Some(&client) = world.get::<ClientId>(client_entity) else {
             continue;
         };
@@ -473,7 +467,6 @@ pub(crate) fn furnish(
             speed: MetersPerSec::default(),
         },
         hitbox,
-        OwnedBy(client),
         PlayedBy { client },
         HeardMove::default(),
         ArrivalHold {

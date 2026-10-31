@@ -1,6 +1,7 @@
 pub mod assets;
 pub mod audio;
 pub mod babble;
+pub mod chunk;
 pub mod content;
 pub mod geometry;
 pub mod ground;

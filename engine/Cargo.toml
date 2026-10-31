@@ -68,8 +68,7 @@ slotmap.workspace = true
 smallvec.workspace = true
 bevy_egui.workspace = true
 accesskit = "0.24"
-bevy_replicon = { workspace = true, features = ["client", "server"] }
-bevy_state.workspace = true
+bevy_replication.workspace = true
 bevy_time = { workspace = true, features = ["std"] }
 bevy_input = { workspace = true, features = ["serialize"] }
 bevy_math = { workspace = true, features = ["serialize"] }
@@ -90,7 +89,7 @@ rayon.workspace = true
 strum = { workspace = true, features = ["derive"] }
 strsim.workspace = true
 renet2.workspace = true
-bevy_replicon_renet2.workspace = true
+renet2_netcode.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 serde_path_to_error = "0.1"
@@ -103,7 +102,7 @@ naga = { version = "30", features = ["wgsl-in"] }
 png = "0.18"
 tar = "0.4"
 flate2 = "1"
-postcard = { version = "1", features = ["alloc"] }
+postcard.workspace = true
 gltf = { version = "1.4", default-features = false, features = ["names", "utils"] }
 polyanya = "0.17"
 glam = "0.32"
@@ -111,7 +110,6 @@ bevy_skeleton_modifiers = { version = "0.1.1", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }
 wgpu = { workspace = true, features = ["counters"] }
 axum.workspace = true
-tokio-tungstenite = { version = "0.30", default-features = false, features = ["handshake"] }
 ctrlc.workspace = true
 opener = "0.9"
 metrics = "0.24"
@@ -119,11 +117,9 @@ oidc = { path = "../oidc" }
 service = { path = "../service" }
 tokio.workspace = true
 ureq = { workspace = true, features = ["rustls", "platform-verifier"] }
-tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 blocking = "1"
 walkdir = "2"
-serde_urlencoded = "0.7"
 cargo_metadata = "0.23"
 syn = { workspace = true, features = ["visit"] }
 proc-macro2 = { workspace = true, features = ["span-locations"] }

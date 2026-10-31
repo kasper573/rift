@@ -17,7 +17,7 @@ use crate::systems::attention::AttentionId;
 use crate::systems::item::{
     ExchangeRefusal, Inventory, ItemCategory, ItemDef, ItemId, ItemModuleKind, ItemStack,
 };
-use crate::systems::player::sender_player;
+use crate::systems::player::conn_player;
 use crate::systems::script::{
     self, Condition, EffectCall, EventKind, FlowKey, Line, Owner, Reach, RiftEvent, RiftInstances,
     RiftScripting, RunnerKind, ScriptModule, ScriptedRow, condition, effect as effects,
@@ -29,11 +29,11 @@ pub type ShopId = ContentId<ShopDef>;
 const BUYBACK_KEPT: usize = 12;
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::{Channel, ClientMessageAppExt};
+    use bevy_replication::AppMessageExt;
 
     use crate::systems::mirror::AppMirrorExt;
     app.replicate_private::<ShopView>()
-        .add_client_message::<ShopRequest>(Channel::Ordered);
+        .add_client_message::<ShopRequest>();
 }
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
@@ -388,7 +388,7 @@ pub fn ledger(world: &World, player: Entity) -> ShopLedger {
 
 pub fn requests(world: &mut World) {
     for request in drain_requests::<ShopRequest>(world) {
-        let Some(player) = sender_player(world, request.client_id) else {
+        let Some(player) = conn_player(world, request.client) else {
             continue;
         };
         if !bound(world, player) {

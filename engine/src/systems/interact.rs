@@ -20,11 +20,11 @@ use crate::systems::script::{self, EventKind, Procedure, RiftEvent, RiftInstance
 use crate::systems::{actor, dialogue, stat, visibility};
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::{Channel, ClientMessageAppExt};
+    use bevy_replication::AppMessageExt;
 
     use crate::systems::mirror::AppMirrorExt;
     app.replicate::<Interactive>()
-        .add_mapped_client_message::<InteractRequest>(Channel::Ordered);
+        .add_mapped_client_message::<InteractRequest>();
 }
 
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, IntoStaticStr)]

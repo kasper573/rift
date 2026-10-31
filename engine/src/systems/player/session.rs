@@ -1,9 +1,7 @@
 use bevy_app::{App, Plugin, PreUpdate, Update};
 use bevy_ecs::prelude::*;
-use bevy_replicon::client::ClientSystems;
-use bevy_replicon::prelude::{AuthMethod, ClientState, RepliconPlugins, RepliconSharedPlugin};
-use bevy_replicon::shared::server_entity_map::ServerEntityMap;
-use bevy_state::prelude::{OnEnter, OnExit};
+use bevy_ecs::schedule::common_conditions::resource_removed;
+use bevy_replication::{ClientReplicationPlugin, ClientSystems, ServerLink};
 use bevy_time::Time;
 
 use super::{ClientId, PlayedBy, Welcome};
@@ -15,11 +13,7 @@ pub struct ClientSessionPlugin;
 
 impl Plugin for ClientSessionPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(
-            bevy_app::PluginGroup::build(RepliconPlugins).set(RepliconSharedPlugin {
-                auth_method: AuthMethod::None,
-            }),
-        );
+        app.add_plugins(ClientReplicationPlugin);
         crate::systems::protocol(app);
         app.add_plugins(identity::ClientIdentityPlugin);
         app.init_resource::<MyClient>()
@@ -29,14 +23,12 @@ impl Plugin for ClientSessionPlugin {
         app.add_systems(Update, record_welcome);
         app.add_systems(
             PreUpdate,
-            track_character
-                .in_set(WorldViewSystems)
-                .after(ClientSystems::Receive),
-        );
-        app.add_systems(OnEnter(ClientState::Disconnected), forget_me);
-        app.add_systems(
-            OnExit(ClientState::Connected),
-            drop_replicated.before(ClientSystems::Reset),
+            (
+                track_character
+                    .in_set(WorldViewSystems)
+                    .after(ClientSystems::Receive),
+                forget_me.run_if(resource_removed::<ServerLink>),
+            ),
         );
     }
 }
@@ -99,22 +91,6 @@ fn track_character(
     });
     if mine.0 != my_character {
         mine.0 = my_character;
-    }
-}
-
-/// A connection's world ends with it: the next server (the same one restarted, or another after a
-/// deploy) numbers its entities afresh, so nothing of the old one may stay to be mistaken for new.
-fn drop_replicated(world: &mut World) {
-    let entities: Vec<Entity> = world
-        .resource::<ServerEntityMap>()
-        .to_client()
-        .values()
-        .copied()
-        .collect();
-    for entity in entities {
-        if let Ok(entity) = world.get_entity_mut(entity) {
-            entity.despawn();
-        }
     }
 }
 

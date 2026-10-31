@@ -34,7 +34,8 @@ pub fn run(game: Option<&Path>, out: &Path) {
         &ServerConfig {
             bind: LOCALHOST,
             port: 0,
-            ws_port: 0,
+            udp_port: 0,
+            public_ip: LOCALHOST,
             max_clients: MAX_CLIENTS,
             content_dir: absolute(&game),
             player_spawn_policy: SpawnPolicy::Dist,
@@ -47,7 +48,7 @@ pub fn run(game: Option<&Path>, out: &Path) {
             exit_on_stdin_eof: true,
         },
     );
-    let mut load = loadtest::run_dyn(&server.http_url(), &server.ws_url());
+    let mut load = loadtest::run_dyn(&server.http_url());
 
     let samples = out.join("perf.data");
     println!("[profile] sampling the server for {SAMPLED:?}");

@@ -190,7 +190,6 @@ async fn site(provider: &OAuthTestServer, account_page: Option<&str>) -> Router 
             port: 0,
             redirect_uri: RedirectUrl::new(format!("{SITE}/auth-callback")).expect("a url"),
             game_server_url: "https://game-server.site.test".to_owned(),
-            game_server_ws_url: "wss://game-server.site.test".to_owned(),
             game_server_internal_url: "http://game-server:9998".to_owned(),
             downloads_url: "https://releases.test/download".to_owned(),
             release: RELEASE.to_owned(),

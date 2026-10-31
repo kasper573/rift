@@ -10,12 +10,12 @@ use bevy_ecs::entity::EntityHashMap;
 use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryState;
+use bevy_ecs::schedule::common_conditions::resource_removed;
 use bevy_ecs::world::{DeferredWorld, EntityWorldMut};
 use bevy_platform::collections::HashMap;
-use bevy_replicon::client::{ClientSystems, Remote};
-use bevy_replicon::prelude::{AppRuleExt, ClientState, Replicated};
-use bevy_replicon::shared::replication::registry::ReplicationRegistry;
-use bevy_state::prelude::OnExit;
+use bevy_replication::{
+    AppReplicationExt, ClientSystems, Remote, Replicated, ReplicatedDespawn, ServerLink,
+};
 use bevy_time::Time;
 use serde::{Deserialize, Serialize};
 
@@ -147,17 +147,16 @@ pub struct ClientIdentityPlugin;
 impl Plugin for ClientIdentityPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Switching>()
-            .init_resource::<ReplicationRegistry>()
+            .insert_resource(ReplicatedDespawn(vanish))
             .add_systems(
                 PreUpdate,
-                settle
-                    .after(ClientSystems::Receive)
-                    .before(WorldViewSystems),
-            )
-            .add_systems(OnExit(ClientState::Connected), forget_lingering);
-        app.world_mut()
-            .resource_mut::<ReplicationRegistry>()
-            .despawn = |_, entity| vanish(entity);
+                (
+                    settle
+                        .after(ClientSystems::Receive)
+                        .before(WorldViewSystems),
+                    forget_lingering.run_if(resource_removed::<ServerLink>),
+                ),
+            );
     }
 }
 

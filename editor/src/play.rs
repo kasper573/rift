@@ -932,7 +932,8 @@ fn spawn_server(binaries: &Path, folder: &Path, sender: Sender<OutputLine>) -> i
     let config = ServerConfig {
         bind: LOCALHOST,
         port: 0,
-        ws_port: 0,
+        udp_port: 0,
+        public_ip: LOCALHOST,
         max_clients: 8,
         content_dir: folder.to_path_buf(),
         player_spawn_policy: SpawnPolicy::Map,
@@ -960,7 +961,6 @@ fn spawn_client(
     std::fs::create_dir_all(&profile)?;
     let config = ClientConfig {
         game_server_url: format!("http://{LOCALHOST}:{}", ports.http),
-        game_server_ws_url: format!("ws://{LOCALHOST}:{}", ports.ws),
         auth: launch::AuthMode::Fake,
         access_token: Some(fake_token(character)),
         profile_dir: profile,

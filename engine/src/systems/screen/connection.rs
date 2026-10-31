@@ -1,9 +1,6 @@
 use bevy::prelude::*;
 use bevy::tasks::{IoTaskPool, Task, block_on, futures_lite::future};
 use bevy_egui::EguiPrimaryContextPass;
-use bevy_replicon::prelude::RepliconChannels;
-use bevy_replicon_renet2::RenetChannelsExt;
-use renet2::{ConnectionConfig, RenetClient};
 use ui::egui;
 use ui::ink;
 
@@ -15,8 +12,7 @@ use crate::core::gui::{self, Band};
 use crate::core::math::Rng;
 use crate::core::net::SessionRequest;
 use crate::core::net::auth::Credentials;
-use crate::core::net::transport::ClientSocket;
-use crate::core::net::transport::ServerSocket;
+use crate::core::net::transport::{Connection, read_token};
 use crate::core::os::{FetchFailure, Http, StartParams};
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::time::Seconds;
@@ -76,10 +72,15 @@ pub(super) fn poll_session(world: &mut World) {
         return;
     };
     match block_on(future::poll_once(&mut pending.task)) {
-        Some(Ok(ticket)) => {
-            connect(world, ticket.trim());
-            world.insert_resource(Announce);
-        }
+        Some(Ok(token)) => match read_token(&token).map(Connection::open) {
+            Some(Ok(connection)) => {
+                world.insert_resource(connection);
+                world.insert_resource(Announce);
+                info!("connection opened");
+            }
+            Some(Err(error)) => error!("could not open a connection: {error}"),
+            None => error!("the server handed out no connect token"),
+        },
         Some(Err(FetchFailure::Status { status: 401, body })) => {
             info!("the server refused the sign-in: {body}");
             world.remove_resource::<Credentials>();
@@ -100,18 +101,6 @@ pub(super) fn poll_session(world: &mut World) {
         Some(Err(error)) => error!("could not open a session: {error}"),
         None => world.insert_resource(pending),
     }
-}
-
-fn connect(world: &mut World, ticket: &str) {
-    let channels = world.resource::<RepliconChannels>();
-    let connection_config =
-        ConnectionConfig::from_channels(channels.server_configs(), channels.client_configs());
-    let ws_url = world.resource::<StartParams>().game_server_ws_url.clone();
-    let client = RenetClient::new(connection_config, true);
-    let socket = ServerSocket::open(&format!("{ws_url}/?ticket={ticket}"));
-    world.insert_resource(client);
-    world.insert_non_send(ClientSocket(socket));
-    info!("connection opened");
 }
 
 /// Whether the screen hides the world, decided as it opens: a transition already under way

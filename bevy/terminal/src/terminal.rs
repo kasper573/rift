@@ -1,9 +1,6 @@
 use bevy_app::App;
-use bevy_ecs::message::{Message, Messages};
+use bevy_ecs::message::Message;
 use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::{
-    Channel, ClientId, ConnectedClient, FromClient, SendTargets, ToClients,
-};
 use serde::{Deserialize, Serialize};
 
 use crate::command::{self, TerminalCommand, TerminalCommands};
@@ -31,22 +28,18 @@ pub struct TerminalSaid {
     pub text: String,
 }
 
-pub fn register(app: &mut App, commands: &[TerminalCommand]) {
-    use bevy_replicon::prelude::{ClientMessageAppExt, ServerMessageAppExt};
+/// Carries a line to the connection `conn` names: the app's transport, whatever it is.
+pub type DeliverTerminalLine = fn(&mut World, Entity, TerminalLine);
 
+pub fn register(app: &mut App, commands: &[TerminalCommand], deliver: DeliverTerminalLine) {
     app.insert_resource(TerminalCommands::new(commands))
-        .add_message::<TerminalSaid>()
-        .add_client_message::<TerminalInput>(Channel::Ordered)
-        .add_server_message::<TerminalLine>(Channel::Ordered);
+        .insert_resource(Outlet(deliver))
+        .add_message::<TerminalSaid>();
 }
 
-pub fn broadcast(world: &mut World, text: impl Into<String>) {
+pub fn broadcast(world: &mut World, conns: &[Entity], text: impl Into<String>) {
     let text = text.into();
-    let conns: Vec<Entity> = world
-        .query_filtered::<Entity, With<ConnectedClient>>()
-        .iter(world)
-        .collect();
-    for conn in conns {
+    for &conn in conns {
         send(world, conn, &text, LineTone::Said);
     }
 }
@@ -59,43 +52,35 @@ pub fn reply_failure(world: &mut World, conn: Entity, text: impl Into<String>) {
     send(world, conn, &text.into(), LineTone::Failed);
 }
 
-pub fn ingest(world: &mut World) {
-    let requests: Vec<FromClient<TerminalInput>> = world
-        .resource_mut::<Messages<FromClient<TerminalInput>>>()
-        .drain()
-        .collect();
-    for request in requests {
-        let Some(conn) = request.client_id.entity() else {
-            continue;
-        };
-        let text: String = request
-            .message
-            .text
-            .trim()
-            .chars()
-            .take(MAX_INPUT_LEN)
-            .collect();
-        if text.is_empty() {
-            continue;
-        }
-        if let Some(line) = text.strip_prefix('/') {
-            command::run(world, conn, line);
-        } else {
-            world.write_message(TerminalSaid { conn, text });
-        }
+/// Takes in what the connection `conn` typed: a command runs and replies to it, and anything
+/// else is said, for the app to pass on as it sees fit.
+pub fn hear(world: &mut World, conn: Entity, input: &TerminalInput) {
+    let text: String = input.text.trim().chars().take(MAX_INPUT_LEN).collect();
+    if text.is_empty() {
+        return;
+    }
+    if let Some(line) = text.strip_prefix('/') {
+        command::run(world, conn, line);
+    } else {
+        world.write_message(TerminalSaid { conn, text });
     }
 }
 
 const MAX_INPUT_LEN: usize = 256;
 
+#[derive(Resource)]
+struct Outlet(DeliverTerminalLine);
+
 fn send(world: &mut World, conn: Entity, text: &str, tone: LineTone) {
+    let deliver = world.resource::<Outlet>().0;
     for line in text.lines() {
-        world.write_message(ToClients {
-            targets: SendTargets::Single(ClientId::Client(conn)),
-            message: TerminalLine {
+        deliver(
+            world,
+            conn,
+            TerminalLine {
                 text: line.to_owned(),
                 tone,
             },
-        });
+        );
     }
 }

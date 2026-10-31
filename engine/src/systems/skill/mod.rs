@@ -53,7 +53,7 @@ pub const HOTBAR_SLOTS: u32 = 40;
 pub const AREA_TARGETS: usize = 8;
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::{Channel, ClientMessageAppExt};
+    use bevy_replication::AppMessageExt;
 
     use crate::systems::mirror::AppMirrorExt;
     app.replicate_private::<Learned>()
@@ -61,11 +61,11 @@ pub fn register(app: &mut App) {
         .replicate_private::<Hotbar>()
         .replicate_private::<BasicAttack>()
         .replicate_private::<ResetPrompt>()
-        .add_mapped_client_message::<UseSkillRequest>(Channel::Ordered)
-        .add_client_message::<LearnSkillsRequest>(Channel::Ordered)
-        .add_client_message::<AssignHotbarRequest>(Channel::Ordered)
-        .add_client_message::<AssignBasicAttackRequest>(Channel::Ordered)
-        .add_client_message::<ResetAnswerRequest>(Channel::Ordered);
+        .add_mapped_client_message::<UseSkillRequest>()
+        .add_client_message::<LearnSkillsRequest>()
+        .add_client_message::<AssignHotbarRequest>()
+        .add_client_message::<AssignBasicAttackRequest>()
+        .add_client_message::<ResetAnswerRequest>();
 }
 
 /// Every request a client may send about its skills, answered in one place.

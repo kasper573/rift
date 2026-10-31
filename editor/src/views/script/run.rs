@@ -12,7 +12,7 @@ use ui::theme;
 use bevy::ecs::message::{MessageCursor, Messages};
 use bevy::prelude::{Entity, World};
 use bevy::time::TimeUpdateStrategy;
-use bevy_replicon::prelude::{ClientId as Sender, SendTargets, ToClients};
+use bevy_replication::ToClient;
 use engine::core::content::{Content, ContentFile, ContentScope, FolderReader};
 use engine::core::math::Pos;
 use engine::core::script::{FlowSteering, Pause, RunnerKindDef, Value as ScriptValue, ValueType};
@@ -117,7 +117,7 @@ pub struct ScriptRun {
     owner: Owner,
     subject: Entity,
     conn: Entity,
-    cursor: MessageCursor<ToClients<NotificationSent>>,
+    cursor: MessageCursor<ToClient<NotificationSent>>,
     traced: usize,
     pub visited: Vec<String>,
     pub log: Vec<RunLogLine>,
@@ -1311,13 +1311,11 @@ impl ScriptRun {
         let notices: Vec<RunLogLine> = {
             let messages = self
                 .world
-                .resource::<Messages<ToClients<NotificationSent>>>();
+                .resource::<Messages<ToClient<NotificationSent>>>();
             let (conn, inputs) = (self.conn, &self.inputs);
             self.cursor
                 .read(messages)
-                .filter(|message| {
-                    matches!(message.targets, SendTargets::Single(Sender::Client(sent)) if sent == conn)
-                })
+                .filter(|message| message.client == conn)
                 .map(|message| {
                     let text = message.message.notification.text.words(inputs);
                     RunLogLine::Note(format!("notice: {text}"))

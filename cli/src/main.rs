@@ -55,9 +55,6 @@ enum Command {
         /// The game server's HTTP address.
         #[arg(long)]
         http: String,
-        /// The game server's WebSocket address.
-        #[arg(long)]
-        ws: String,
         count: Option<usize>,
     },
     /// Samples game-server-profiling playing the crowd, or GAME, under load, with perf, into OUT:
@@ -112,7 +109,7 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        Command::Loadtest { http, ws, count } => loadtest::run(&http, &ws, count),
+        Command::Loadtest { http, count } => loadtest::run(&http, count),
         Command::Profile { game, out } => profile::run(game.as_deref(), &out),
         Command::Schema(Schema::Probe) => println!("{}", engine::systems::probe::schema()),
         Command::Schema(Schema::Server) => println!("{}", engine::systems::launch::server_schema()),

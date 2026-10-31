@@ -51,9 +51,9 @@ const CENTRE_BELOW: f32 = 0.15;
 const CENTRE_GAP: f32 = 16.0;
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::*;
-    app.add_mapped_server_message::<NotificationSent>(Channel::Ordered)
-        .add_server_message::<SoundPlayed>(Channel::Ordered);
+    use bevy_replication::AppMessageExt;
+    app.add_mapped_server_message::<NotificationSent>()
+        .add_server_message::<SoundPlayed>();
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

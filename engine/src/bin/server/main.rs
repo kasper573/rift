@@ -2,9 +2,10 @@ mod transport;
 
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::sync::{Arc, Mutex};
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Instant, SystemTime};
 
 use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
@@ -12,17 +13,16 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use bevy_app::App;
 use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::{ConnectedClient, RepliconChannels};
-use bevy_replicon::shared::backend::server_messages::ServerMessages;
-use bevy_replicon_renet2::RenetChannelsExt;
+use bevy_replication::ClientLink;
 use engine::core::content::id::Leaf;
 use engine::core::content::sync::{ServedContent, well_formed_hash};
 use engine::core::content::{
     Content, ContentScope, FilesystemFolder, LoadPurpose, version, with_content,
 };
 use engine::core::math::Rng;
+use engine::core::net::SessionRequest;
 use engine::core::net::auth::TokenClaims;
-use engine::core::net::{MAX_MESSAGE_BYTES, SessionRequest};
+use engine::core::net::transport::{STREAM, token_text};
 use engine::core::os::StdinClosed;
 use engine::core::time::{UtcHour, WallClock};
 use engine::systems::account::{AccountId, Identity};
@@ -37,16 +37,12 @@ use engine::systems::player::{ClientId, SpawnPolicy, SpawnRules};
 use engine::systems::script::Place;
 use engine::systems::staging::{self, STAGING_ROUTE, Staging};
 use engine::systems::worlds::{self, Worlds};
-use engine::systems::{
-    GameSettings, REPLICATION_INTERVAL, TICK_HZ, load_content, server_app, start_server,
-};
+use engine::systems::{GameSettings, TICK_HZ, load_content, server_app, start_server};
 use metrics::{counter, gauge, histogram};
-use renet2::{ConnectionConfig, DisconnectReason, RenetServer, ServerEvent};
-use transport::WsTransport;
+use renet2::{DisconnectReason, ServerEvent};
+use transport::{TOKEN_LIFETIME, TokenMinter, UdpTransport};
 
 service::heap_profiling!();
-
-const TOKEN_EXPIRE: Duration = Duration::from_secs(30);
 
 fn main() {
     if std::env::args().any(|arg| arg == BUILD_INFO_FLAG) {
@@ -56,12 +52,10 @@ fn main() {
     let launch = LaunchSettings::of_this_binary();
     let mut config: ServerConfig = launch.get(SERVER_ENV_PREFIX);
     config.content_dir = launch.path(&config.content_dir);
-    let stdin = config.exit_on_stdin_eof.then(StdinClosed::watch);
+    let stop = Stop::watch(config.exit_on_stdin_eof);
     let http_bind = SocketAddr::new(config.bind, config.port);
-    let ws_bind = SocketAddr::new(config.bind, config.ws_port);
+    let udp_bind = SocketAddr::new(config.bind, config.udp_port);
 
-    // One multi-threaded tokio runtime backs both the HTTP API and the WebSocket transport's
-    // accept/read/write tasks, for as long as the simulation runs.
     let runtime = tokio::runtime::Runtime::new().expect("tokio runtime");
 
     let content = load_content(
@@ -91,8 +85,10 @@ fn main() {
     let sessions = Sessions::default();
     let online = Online::default();
     let (stage_sender, stages) = channel();
+    let (transport, minter) = UdpTransport::bind(udp_bind, config.public_ip, config.max_clients);
     let http = Http {
         sessions: sessions.clone(),
+        minter,
         auth: match config.auth {
             AuthMode::Oidc => Auth::Oidc(verifier(launch.get(oidc::ENV_PREFIX))),
             AuthMode::Fake => Auth::Fake,
@@ -152,24 +148,18 @@ fn main() {
         }),
     };
     worlds.reach(lobby.spawn);
-    let transport = WsTransport::bind(
-        ws_bind,
-        sessions,
-        config.max_clients,
-        runtime.handle().clone(),
-    );
     // Opened only once players can connect, so a passing health check means the game is playable.
     runtime.spawn(api);
 
     let ready = ReadyLine {
         ready: ServerReady {
             http: http_addr.port(),
-            ws: transport.local_addr().port(),
+            udp: transport.first_port(),
         },
         build: BuildInfo::current(),
     };
     println!("{}", serde_json::to_string(&ready).expect("a ready line"));
-    simulate(worlds, transport, lobby, stages, reset, stdin);
+    simulate(worlds, transport, sessions, lobby, stages, reset, stop);
     runtime.shutdown_background();
 }
 
@@ -226,15 +216,15 @@ struct Lobby {
 impl Lobby {
     fn admit(
         &mut self,
-        account: Option<AccountId>,
+        account: AccountId,
         conns: &HashMap<u64, Conn>,
         worlds: usize,
     ) -> (ClientId, usize, Option<JoinAs>) {
         let mut accounts = self.online.0.lock().expect("online lock");
-        // Another tab of this account is already connected: share its player id and join in
-        // whichever area that player currently occupies, so both sockets drive the one character
-        // (last input wins).
-        if let Some(&client) = account.as_ref().and_then(|account| accounts.get(account)) {
+        // Another client of this account is already connected: share its player id and join in
+        // whichever area that player currently occupies, so both connections drive the one
+        // character (last input wins).
+        if let Some(&client) = accounts.get(&account) {
             let world = conns
                 .values()
                 .find(|conn| conn.client == client)
@@ -243,14 +233,11 @@ impl Lobby {
         }
         let client = ClientId(self.next_client);
         self.next_client += 1;
-        let join_as = account.as_ref().and_then(|account| {
-            self.test_characters
-                .as_ref()
-                .and_then(|characters| characters.take(account))
-        });
-        if let Some(account) = account {
-            accounts.insert(account, client);
-        }
+        let join_as = self
+            .test_characters
+            .as_ref()
+            .and_then(|characters| characters.take(&account));
+        accounts.insert(account, client);
         let world = match (&join_as, self.policy) {
             (Some(join_as), _) => self.cells.world_of(join_as.start),
             (None, SpawnPolicy::Dist) => {
@@ -274,47 +261,39 @@ impl Lobby {
 
 fn simulate(
     mut worlds: Cellar,
-    mut transport: WsTransport,
+    mut transport: UdpTransport,
+    sessions: Sessions,
     mut lobby: Lobby,
     stages: Receiver<StageAsked>,
     reset: UtcHour,
-    stdin: Option<StdinClosed>,
+    stop: Stop,
 ) {
-    let (connection_config, client_channels) = {
-        let channels = worlds
-            .app(lobby.spawn)
-            .world()
-            .resource::<RepliconChannels>();
-        let config =
-            ConnectionConfig::from_channels(channels.server_configs(), channels.client_configs());
-        (config, channels.client_channels().len())
-    };
-    let mut server = RenetServer::new(connection_config);
     let mut conns: HashMap<u64, Conn> = HashMap::new();
-    let mut transfers: Vec<Transfer> = Vec::new();
-    let mut tick = 0u64;
     let frame = TICK_HZ.period();
     let mut last = Instant::now();
     loop {
-        if stdin.as_ref().is_some_and(StdinClosed::is_closed) {
+        // A server told to stop says goodbye, so its players' clients know at once rather than
+        // once it falls silent, and reconnect to whatever comes after it.
+        if stop.asked() {
+            transport.disconnect_all();
             return;
         }
         let started = Instant::now();
         let dt = started - last;
         last = started;
-        tick += 1;
 
-        server.update(dt);
-        transport.update(&mut server);
-
-        while let Some(event) = server.get_event() {
+        for event in transport.update(dt) {
             match event {
                 ServerEvent::ClientConnected { client_id } => {
                     counter!("rift_client_connections_opened_total").increment(1);
-                    let identity = transport.take_identity(client_id);
-                    let account = identity.as_ref().map(|identity| identity.id.clone());
-                    let (client, world, join_as) = lobby.admit(account, &conns, worlds.count());
-                    let entity = spawn_conn(worlds.app(world), client, client_id, identity);
+                    let Some(identity) = sessions.take(client_id) else {
+                        transport.disconnect(client_id);
+                        continue;
+                    };
+                    let (client, world, join_as) =
+                        lobby.admit(identity.id.clone(), &conns, worlds.count());
+                    let entity =
+                        spawn_conn(worlds.app(world), client, ClientLink::default(), identity);
                     if let Some(join_as) = join_as {
                         worlds
                             .app(world)
@@ -346,14 +325,11 @@ fn simulate(
 
         for (&network_id, conn) in &conns {
             let world = worlds.app(conn.world).world_mut();
-            for channel in 0..client_channels as u8 {
-                while let Some(message) = server.receive_message(network_id, channel) {
-                    world.resource_mut::<ServerMessages>().insert_received(
-                        conn.entity,
-                        channel,
-                        message,
-                    );
-                }
+            let mut link = world
+                .get_mut::<ClientLink>(conn.entity)
+                .expect("a connection's link");
+            while let Some(bytes) = transport.receive(network_id, STREAM) {
+                link.receive(bytes);
             }
         }
 
@@ -366,40 +342,32 @@ fn simulate(
             worlds.reach(conn.world);
         }
         let mut views = worlds.views();
-        for moved in worlds::tick(&lobby.cells, &mut views, wall_clock(reset)) {
-            transfers.push(Transfer {
-                client: moved.client,
-                dest: moved.to,
-                departed_tick: tick,
-                traveler: None,
-            });
+        let moved = worlds::tick(&lobby.cells, &mut views, wall_clock(reset));
+        for moved in moved {
+            move_client(&mut worlds, &mut conns, moved.client, moved.to);
         }
+        travel(&mut worlds, &mut conns, &lobby.cells);
 
-        begin_transfers(&mut worlds, &lobby.cells, &mut transfers, tick);
-
-        for app in worlds.made() {
-            let world = app.world_mut();
-            let sent: Vec<_> = world
-                .resource_mut::<ServerMessages>()
-                .drain_sent()
-                .collect();
-            for (entity, channel, message) in sent {
-                if let Some(&Wire(network_id)) = world.get::<Wire>(entity) {
-                    server.send_message(network_id, channel as u8, message);
-                }
+        for (&network_id, conn) in &conns {
+            let world = worlds.app(conn.world).world_mut();
+            let mut link = world
+                .get_mut::<ClientLink>(conn.entity)
+                .expect("a connection's link");
+            if link.misbehaved() {
+                transport.disconnect(network_id);
+            }
+            for bytes in link.take_outgoing() {
+                transport.send(network_id, STREAM, bytes);
             }
         }
-
-        finish_transfers(&mut worlds, &mut conns, &mut transfers, tick);
-
-        transport.send(&mut server);
+        transport.send_packets();
 
         counter!("rift_ticks_total").increment(1);
         histogram!(TICK_METRIC).record(started.elapsed().as_secs_f64());
         histogram!("rift_tick_interval_seconds").record(dt.as_secs_f64());
         gauge!("rift_clients_connected").set(conns.len() as f64);
         record_ecs_metrics(&mut worlds);
-        record_network_metrics(&server, &conns);
+        record_network_metrics(&mut transport, &conns);
 
         if let Some(remaining) = frame.checked_sub(started.elapsed()) {
             std::thread::sleep(remaining);
@@ -467,12 +435,12 @@ fn record_ecs_metrics(worlds: &mut Cellar) {
     gauge!("rift_tables").set(tables as f64);
 }
 
-fn record_network_metrics(server: &RenetServer, conns: &HashMap<u64, Conn>) {
+fn record_network_metrics(transport: &mut UdpTransport, conns: &HashMap<u64, Conn>) {
     let mut sent_per_sec = 0.0;
     let mut received_per_sec = 0.0;
     let mut max_packet_loss = 0.0;
     for &network_id in conns.keys() {
-        if let Ok(info) = server.network_info(network_id) {
+        if let Some(info) = transport.network_info(network_id) {
             sent_per_sec += info.bytes_sent_per_second;
             received_per_sec += info.bytes_received_per_second;
             max_packet_loss = f64::max(max_packet_loss, info.packet_loss);
@@ -497,14 +465,35 @@ fn disconnect_code(reason: &DisconnectReason) -> &'static str {
     }
 }
 
+/// What tells the server to stop: a termination signal, or its stdin closing when it watches it.
+struct Stop {
+    signalled: Arc<AtomicBool>,
+    stdin: Option<StdinClosed>,
+}
+
+impl Stop {
+    fn watch(stdin: bool) -> Stop {
+        let signalled = Arc::new(AtomicBool::new(false));
+        let raise = signalled.clone();
+        ctrlc::set_handler(move || raise.store(true, Ordering::Relaxed))
+            .expect("install stop handler");
+        Stop {
+            signalled,
+            stdin: stdin.then(StdinClosed::watch),
+        }
+    }
+
+    fn asked(&self) -> bool {
+        self.signalled.load(Ordering::Relaxed)
+            || self.stdin.as_ref().is_some_and(StdinClosed::is_closed)
+    }
+}
+
 struct Conn {
     world: usize,
     entity: Entity,
     client: ClientId,
 }
-
-#[derive(Component)]
-struct Wire(u64);
 
 // Logged, so whatever happened can be played out again.
 fn seeded(configured: Option<u64>) -> u64 {
@@ -515,104 +504,38 @@ fn seeded(configured: Option<u64>) -> u64 {
 
 /// The whole connection bundle is spawned in one call so `Add` observers on any of its
 /// components (e.g. greeting) observe the complete connection, `Identity` included.
-fn spawn_conn(
-    app: &mut App,
-    client: ClientId,
-    network_id: u64,
-    identity: Option<Identity>,
-) -> Entity {
-    let world = app.world_mut();
-    let base = (
-        ConnectedClient {
-            max_size: MAX_MESSAGE_BYTES,
-        },
-        client,
-        Wire(network_id),
-    );
-    match identity {
-        Some(identity) => world.spawn((base, identity)).id(),
-        None => world.spawn(base).id(),
+fn spawn_conn(app: &mut App, client: ClientId, link: ClientLink, identity: Identity) -> Entity {
+    app.world_mut().spawn((link, client, identity)).id()
+}
+
+/// Every travelling player's character placed in the world of the place it is bound for, its
+/// connections with it.
+fn travel(worlds: &mut Cellar, conns: &mut HashMap<u64, Conn>, cells: &Worlds) {
+    let travelers: Vec<_> = worlds
+        .made()
+        .flat_map(|app| transition::departing(app.world_mut()))
+        .collect();
+    for traveler in travelers {
+        let dest = cells.world_of(Place {
+            area: traveler.dest_area,
+            at: traveler.dest,
+        });
+        move_client(worlds, conns, traveler.client, dest);
+        transition::arrive(worlds.app(dest).world_mut(), traveler);
     }
 }
 
-/// A client (and all its connections) that left its world and is waiting to be re-created in the
-/// destination world: a player whose character warped to another area. Leaving blinds the
-/// connections to the source world, and the wait lets the resulting despawns reach them first, so
-/// their replication state is empty before the destination's fresh snapshot arrives over the same
-/// connections — no entity-id or tick collision between the two worlds. The wait is one
-/// replication period (not one tick): a world only replicates every `REPLICATION_INTERVAL` ticks,
-/// so the despawns aren't guaranteed sent until then.
-struct Transfer {
-    client: ClientId,
-    dest: usize,
-    departed_tick: u64,
-    /// The character to place on arrival; none when it already stands there, handed over by
-    /// its cell's world, and only the connection follows.
-    traveler: Option<Box<transition::Traveler>>,
-}
-
-/// Phase 1: take everyone leaving their world this tick out of it, and queue the move.
-fn begin_transfers(worlds: &mut Cellar, cells: &Worlds, transfers: &mut Vec<Transfer>, tick: u64) {
-    for app in worlds.made() {
-        for traveler in transition::departing(app.world_mut()) {
-            transfers.push(Transfer {
-                client: traveler.client,
-                dest: cells.world_of(Place {
-                    area: traveler.dest_area,
-                    at: traveler.dest,
-                }),
-                departed_tick: tick,
-                traveler: Some(Box::new(traveler)),
-            });
-        }
-    }
-}
-
-/// Phase 2: once the source world's despawns have been sent (a replication period after departing) —
-/// move every socket of the client to the destination world and re-create the player there.
-fn finish_transfers(
-    worlds: &mut Cellar,
-    conns: &mut HashMap<u64, Conn>,
-    transfers: &mut Vec<Transfer>,
-    tick: u64,
-) {
-    let mut index = 0;
-    while index < transfers.len() {
-        if tick < transfers[index].departed_tick + REPLICATION_INTERVAL {
-            index += 1;
-            continue;
-        }
-        let Transfer {
-            client,
-            dest,
-            traveler,
-            ..
-        } = transfers.remove(index);
-        let movers: Vec<(u64, usize, Entity)> = conns
-            .iter()
-            .filter(|(_, conn)| conn.client == client)
-            .map(|(&network_id, conn)| (network_id, conn.world, conn.entity))
-            .collect();
-        if movers.is_empty() {
-            continue;
-        }
-        for (network_id, world, entity) in movers {
-            let identity = worlds.app(world).world().get::<Identity>(entity).cloned();
-            worlds.app(world).world_mut().despawn(entity);
-            worlds.reach(dest);
-            let entity = spawn_conn(worlds.app(dest), client, network_id, identity);
-            conns.insert(
-                network_id,
-                Conn {
-                    world: dest,
-                    entity,
-                    client,
-                },
-            );
-        }
-        if let Some(traveler) = traveler {
-            transition::arrive(worlds.app(dest).world_mut(), *traveler);
-        }
+/// Every connection of `client` handed over to the world `dest`, which shows them that world
+/// afresh.
+fn move_client(worlds: &mut Cellar, conns: &mut HashMap<u64, Conn>, client: ClientId, dest: usize) {
+    worlds.reach(dest);
+    for conn in conns.values_mut().filter(|conn| conn.client == client) {
+        let mut leaving = worlds.app(conn.world).world_mut().entity_mut(conn.entity);
+        let identity = leaving.take::<Identity>().expect("a connection's identity");
+        let link = leaving.take::<ClientLink>().expect("a connection's link");
+        leaving.despawn();
+        conn.world = dest;
+        conn.entity = spawn_conn(worlds.app(dest), client, link.hand_over(), identity);
     }
 }
 
@@ -628,9 +551,7 @@ impl Sessions {
     fn put(&self, client_id: u64, identity: Identity) {
         let mut map = self.0.lock().expect("sessions lock");
         let now = Instant::now();
-        map.retain(|_, pending| {
-            now.duration_since(pending.minted) < TOKEN_EXPIRE + Duration::from_secs(5)
-        });
+        map.retain(|_, pending| now.duration_since(pending.minted) < TOKEN_LIFETIME);
         map.insert(
             client_id,
             Pending {
@@ -675,6 +596,7 @@ enum Auth {
 #[derive(Clone)]
 struct Http {
     sessions: Sessions,
+    minter: TokenMinter,
     auth: Auth,
     test_characters: Option<TestCharacters>,
     served: Arc<ServedContent>,
@@ -698,7 +620,6 @@ async fn serve_http(
             .route(STAGING_ROUTE, post(stage_scene));
     }
     let router = service::track(router.with_state(http), metrics);
-    ctrlc::set_handler(|| std::process::exit(0)).expect("install stop handler");
     axum::serve(listener, router).await.expect("axum serves");
 }
 
@@ -764,16 +685,14 @@ async fn session(State(http): State<Http>, headers: HeaderMap, body: String) -> 
         return (StatusCode::CONFLICT, "the server serves other content").into_response();
     }
 
-    // The ticket is the renet client id. The client opens `wss://host/?ticket=<id>`; the WebSocket
-    // handshake claims it single-use. Unguessable in 2^64, ~30s expiry, only ever sent over TLS.
-    let client_id = getrandom::u64().expect("os entropy for a session ticket");
+    let client_id = getrandom::u64().expect("os entropy for a client id");
     http.sessions.put(client_id, identity);
     (
         [
             (header::CONTENT_TYPE, "text/plain"),
             (header::CACHE_CONTROL, "no-store"),
         ],
-        client_id.to_string(),
+        token_text(&http.minter.mint(client_id)),
     )
         .into_response()
 }

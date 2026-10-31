@@ -1,6 +1,6 @@
 use bevy_ecs::message::{MessageCursor, Messages};
 use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::{ClientId as Sender, SendTargets, ToClients};
+use bevy_replication::ToClient;
 use engine::core::content::Content;
 use engine::systems::notification::{
     Notification, NotificationDef, NotificationKind, NotificationSent,
@@ -59,18 +59,16 @@ impl Sim {
 /// Keeps every notification sent, as messages last only two ticks.
 #[derive(Resource, Default)]
 pub(crate) struct Notified {
-    cursor: MessageCursor<ToClients<NotificationSent>>,
+    cursor: MessageCursor<ToClient<NotificationSent>>,
     seen: Vec<(Entity, NotificationSent)>,
 }
 
 pub(crate) fn collect(world: &mut World) {
     world.resource_scope(|world, mut notified: Mut<Notified>| {
-        let messages = world.resource::<Messages<ToClients<NotificationSent>>>();
+        let messages = world.resource::<Messages<ToClient<NotificationSent>>>();
         let Notified { cursor, seen } = &mut *notified;
         for message in cursor.read(messages) {
-            if let SendTargets::Single(Sender::Client(conn)) = message.targets {
-                seen.push((conn, message.message.clone()));
-            }
+            seen.push((message.client, message.message.clone()));
         }
     });
 }

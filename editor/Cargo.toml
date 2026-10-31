@@ -13,7 +13,7 @@ engine = { path = "../engine" }
 ui = { path = "../ui" }
 bevy = { workspace = true, features = ["x11", "multi_threaded"] }
 bevy_egui.workspace = true
-bevy_replicon = { workspace = true, features = ["server"] }
+bevy_replication.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 schemars = "1"

@@ -29,7 +29,6 @@ fn main() {
     let params = StartParams {
         sign_in,
         game_server_url: config.game_server_url,
-        game_server_ws_url: config.game_server_ws_url,
     };
     let profile = Profile(settings.path(&config.profile_dir));
     let mut app = client_app(profile, http, params, window());

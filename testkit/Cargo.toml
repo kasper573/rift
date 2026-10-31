@@ -9,7 +9,7 @@ engine = { path = "../engine" }
 bevy_app.workspace = true
 bevy_ecs.workspace = true
 bevy_math.workspace = true
-bevy_replicon = { workspace = true, features = ["server"] }
+bevy_replication.workspace = true
 bevy_time = { workspace = true, features = ["std"] }
 gltf = { version = "1.4", default-features = false, features = ["names", "utils"] }
 hound = "3.5"

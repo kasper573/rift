@@ -16,6 +16,7 @@ use bevy_ecs::query::QueryState;
 use bevy_time::Time;
 use serde::{Deserialize, Serialize};
 
+use crate::core::chunk::{Chunk, InChunk};
 use crate::core::content::Content;
 use crate::core::geometry::Radians;
 use crate::core::interpolate::{Interpolate, InterpolatePlugin, Jumps, RenderValueSystems};
@@ -23,20 +24,20 @@ use crate::core::math::{Offset, Pos};
 use crate::core::time::Seconds;
 use crate::core::units::{MeterPos, Meters, MetersPerSec};
 use crate::systems::actor::{Action, Actor, ActorModel, appearance, held, set_facing};
-use crate::systems::player::{may_command, sender_player};
+use crate::systems::player::{conn_player, may_command};
 use crate::systems::stat::{self, StatKind};
 use crate::systems::{area, drain_requests, reach};
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::{Channel, ClientMessageAppExt};
+    use bevy_replication::AppMessageExt;
 
     use crate::systems::mirror::AppMirrorExt;
 
     app.replicate::<Position>()
-        .replicate_private_filtered::<MoveTarget, With<HeardMove>>()
+        .replicate_private_while::<MoveTarget, HeardMove>()
         .replicate_private::<HeardMove>()
         .mirror::<Spot>()
-        .add_client_message::<MoveRequest>(Channel::Ordered);
+        .add_client_message::<MoveRequest>();
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -73,6 +74,19 @@ pub struct HeardMove(pub MoveSeq);
 
 pub fn position(world: &World, entity: Entity) -> Option<Pos<Meters>> {
     world.get::<Position>(entity).map(|p| p.pos)
+}
+
+/// Files every entity that moved under the chunk it now stands in.
+pub fn file_by_chunk(
+    mut commands: Commands,
+    moved: Query<(Entity, &Position, Option<&InChunk>), Changed<Position>>,
+) {
+    for (entity, position, filed) in &moved {
+        let chunk = Chunk::at(position.pos);
+        if filed.map(|filed| filed.0) != Some(chunk) {
+            commands.entity(entity).insert(InChunk(chunk));
+        }
+    }
 }
 
 pub struct MovementRenderPlugin;
@@ -213,7 +227,7 @@ pub struct MoveTarget {
 
 pub fn move_request(world: &mut World) {
     for request in drain_requests::<MoveRequest>(world) {
-        let Some(player) = sender_player(world, request.client_id) else {
+        let Some(player) = conn_player(world, request.client) else {
             continue;
         };
         if let Some(mut heard) = world.get_mut::<HeardMove>(player) {

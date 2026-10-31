@@ -127,7 +127,7 @@ pub struct ReadyLine {
 #[derive(Clone, Copy, Serialize, Deserialize, JsonSchema)]
 pub struct ServerReady {
     pub http: u16,
-    pub ws: u16,
+    pub udp: u16,
 }
 
 /// What a server that hands out test characters takes at [`TEST_CHARACTER_ROUTE`], from the
@@ -143,7 +143,12 @@ pub struct TestCharacterRequest {
 pub struct ServerConfig {
     pub bind: IpAddr,
     pub port: u16,
-    pub ws_port: u16,
+    /// The first of the ports players' clients connect to play at, one for every 1024 of
+    /// `max_clients`, each the port after the last; 0 takes any free ones.
+    pub udp_port: u16,
+    /// The address players reach this machine at, which the connect tokens it hands out name, so
+    /// a client that came by another address can't connect.
+    pub public_ip: IpAddr,
     pub max_clients: usize,
     pub content_dir: PathBuf,
     pub player_spawn_policy: SpawnPolicy,
@@ -175,7 +180,6 @@ pub enum AuthMode {
 #[derive(Serialize, Deserialize, Debug, PartialEq)]
 pub struct ClientConfig {
     pub game_server_url: String,
-    pub game_server_ws_url: String,
     pub auth: AuthMode,
     /// Signs in as this token, without asking the player.
     pub access_token: Option<String>,

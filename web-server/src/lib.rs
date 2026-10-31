@@ -25,7 +25,6 @@ pub struct WebServerConfig {
     pub redirect_uri: RedirectUrl,
     /// The game server as desktop clients reach it.
     pub game_server_url: String,
-    pub game_server_ws_url: String,
     /// The same game server as the web-server itself reaches it.
     pub game_server_internal_url: String,
     /// Where releases are downloaded from: a release's archives are at `<downloads_url>/<release>/`.

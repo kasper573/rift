@@ -3,7 +3,7 @@ use std::time::Duration;
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_kira_audio::prelude::AudioSource;
-use bevy_replicon::prelude::AppRuleExt;
+use bevy_replication::AppReplicationExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

@@ -17,8 +17,8 @@ pub const KEPT: usize = 500;
 const MERGE_WITHIN: Seconds = Seconds(10.0);
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::*;
-    app.add_server_message::<HistoryNews>(Channel::Ordered);
+    use bevy_replication::AppMessageExt;
+    app.add_server_message::<HistoryNews>();
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]

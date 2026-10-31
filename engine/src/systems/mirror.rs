@@ -11,12 +11,8 @@ use bevy_ecs::change_detection::{ComponentTicks, Tick};
 use bevy_ecs::entity::{EntityHashMap, EntityMapper};
 use bevy_ecs::prelude::*;
 use bevy_platform::collections::HashMap;
-use bevy_replicon::prelude::{AppRuleExt, Replicated};
-use bevy_replicon::shared::replication::registry::receive_fns::MutWrite;
-use bevy_replicon::shared::replication::rules::filter::FilterRules;
+use bevy_replication::{AppReplicationExt, Replicable, Replicated};
 use rayon::prelude::*;
-use serde::Serialize;
-use serde::de::DeserializeOwned;
 
 use crate::core::content::Content;
 use crate::core::math::Pos;
@@ -183,29 +179,16 @@ pub fn deliver(world: &mut World) {
 /// it doesn't own is mirrored too, so a ghost shows as its owner does.
 pub trait AppMirrorExt {
     /// Replicated to clients and mirrored into ghosts.
-    fn replicate<C>(&mut self) -> &mut Self
-    where
-        C: Component<Mutability: MutWrite<C>> + Serialize + DeserializeOwned + Clone;
+    fn replicate<C: Replicable + Clone>(&mut self) -> &mut Self;
 
     /// Replicated once to clients, and mirrored into ghosts.
-    fn replicate_once<C>(&mut self) -> &mut Self
-    where
-        C: Component<Mutability: MutWrite<C>> + Serialize + DeserializeOwned + Clone;
-
-    /// Replicated to clients where `F` holds, and mirrored into ghosts.
-    fn replicate_filtered<C, F: FilterRules>(&mut self) -> &mut Self
-    where
-        C: Component<Mutability: MutWrite<C>> + Serialize + DeserializeOwned + Clone;
+    fn replicate_once<C: Replicable + Clone>(&mut self) -> &mut Self;
 
     /// Told to an entity's own client alone, which no neighbour reads.
-    fn replicate_private<C>(&mut self) -> &mut Self
-    where
-        C: Component<Mutability: MutWrite<C>> + Serialize + DeserializeOwned;
+    fn replicate_private<C: Replicable>(&mut self) -> &mut Self;
 
-    /// Told to an entity's own client alone, where `F` holds.
-    fn replicate_private_filtered<C, F: FilterRules>(&mut self) -> &mut Self
-    where
-        C: Component<Mutability: MutWrite<C>> + Serialize + DeserializeOwned;
+    /// Told to an entity's own client alone, while the entity has an `M` too.
+    fn replicate_private_while<C: Replicable, M: Component>(&mut self) -> &mut Self;
 
     /// Mirrored into ghosts without reaching clients: what the server reads of its neighbours'
     /// entities.
@@ -213,46 +196,22 @@ pub trait AppMirrorExt {
 }
 
 impl AppMirrorExt for App {
-    fn replicate<C>(&mut self) -> &mut Self
-    where
-        C: Component<Mutability: MutWrite<C>> + Serialize + DeserializeOwned + Clone,
-    {
-        AppRuleExt::replicate::<C>(self);
+    fn replicate<C: Replicable + Clone>(&mut self) -> &mut Self {
+        AppReplicationExt::replicate::<C>(self);
         self.mirror::<C>()
     }
 
-    fn replicate_once<C>(&mut self) -> &mut Self
-    where
-        C: Component<Mutability: MutWrite<C>> + Serialize + DeserializeOwned + Clone,
-    {
-        AppRuleExt::replicate_once::<C>(self);
+    fn replicate_once<C: Replicable + Clone>(&mut self) -> &mut Self {
+        AppReplicationExt::replicate_once::<C>(self);
         self.mirror::<C>()
     }
 
-    fn replicate_filtered<C, F: FilterRules>(&mut self) -> &mut Self
-    where
-        C: Component<Mutability: MutWrite<C>> + Serialize + DeserializeOwned + Clone,
-    {
-        AppRuleExt::replicate_filtered::<C, F>(self);
-        self.mirror::<C>()
+    fn replicate_private<C: Replicable>(&mut self) -> &mut Self {
+        AppReplicationExt::replicate_private::<C>(self)
     }
 
-    fn replicate_private<C>(&mut self) -> &mut Self
-    where
-        C: Component<Mutability: MutWrite<C>> + Serialize + DeserializeOwned,
-    {
-        AppRuleExt::replicate::<C>(self);
-        visibility::keep_private::<C>(self);
-        self
-    }
-
-    fn replicate_private_filtered<C, F: FilterRules>(&mut self) -> &mut Self
-    where
-        C: Component<Mutability: MutWrite<C>> + Serialize + DeserializeOwned,
-    {
-        AppRuleExt::replicate_filtered::<C, F>(self);
-        visibility::keep_private::<C>(self);
-        self
+    fn replicate_private_while<C: Replicable, M: Component>(&mut self) -> &mut Self {
+        AppReplicationExt::replicate_private_while::<C, M>(self)
     }
 
     fn mirror<C: Component + Clone>(&mut self) -> &mut Self {

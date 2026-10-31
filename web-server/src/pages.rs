@@ -39,7 +39,6 @@ pub(crate) async fn rift_env(State(app): State<Arc<App>>) -> Response {
     let file = RiftEnv {
         domain: &app.domain,
         game_server_url: &app.config.game_server_url,
-        game_server_ws_url: &app.config.game_server_ws_url,
         sign_in: &app.desktop_sign_in,
     };
     match file.render() {
@@ -113,7 +112,6 @@ struct Downloads {
 struct RiftEnv<'a> {
     domain: &'a str,
     game_server_url: &'a str,
-    game_server_ws_url: &'a str,
     sign_in: &'a oidc::BrowserSignInSettings,
 }
 

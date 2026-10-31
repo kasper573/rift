@@ -186,7 +186,7 @@ fn measure(bench: &mut Bench) -> Timings {
 fn step(bench: &mut Bench) {
     let clock = bench.play();
     bench.tick(clock);
-    bench.acknowledge_sent();
+    bench.send_out();
 }
 
 fn npcs_per_area(content: &Content) -> usize {

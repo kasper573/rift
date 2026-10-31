@@ -11,7 +11,7 @@ use bevy_ecs::entity::{Entity, MapEntities};
 use bevy_ecs::message::Message;
 use bevy_ecs::query::{QueryState, With, Without};
 use bevy_ecs::world::World;
-use bevy_replicon::prelude::Replicated;
+use bevy_replication::Replicated;
 use bevy_time::Time;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
@@ -52,18 +52,18 @@ const PICK_REACH: Meters = Meters(0.5);
 const PICKUP_RANGE: Meters = Meters(1.0);
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::{Channel, ClientMessageAppExt, ServerMessageAppExt};
+    use bevy_replication::AppMessageExt;
 
     use crate::systems::mirror::AppMirrorExt;
 
     app.replicate_private::<Inventory>()
         .replicate::<DroppedItem>()
         .replicate::<Reservation>()
-        .add_client_message::<UseItemRequest>(Channel::Ordered)
-        .add_client_message::<DropItemRequest>(Channel::Ordered)
-        .add_mapped_client_message::<PickupRequest>(Channel::Ordered)
-        .add_mapped_server_message::<ItemConsumed>(Channel::Ordered)
-        .add_mapped_server_message::<ItemsDropped>(Channel::Ordered);
+        .add_client_message::<UseItemRequest>()
+        .add_client_message::<DropItemRequest>()
+        .add_mapped_client_message::<PickupRequest>()
+        .add_mapped_server_message::<ItemConsumed>()
+        .add_mapped_server_message::<ItemsDropped>();
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]

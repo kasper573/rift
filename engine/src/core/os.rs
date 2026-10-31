@@ -12,7 +12,6 @@ use crate::core::content::store::ContentStore;
 pub struct StartParams {
     pub sign_in: SignIn,
     pub game_server_url: String,
-    pub game_server_ws_url: String,
 }
 
 #[derive(Clone)]

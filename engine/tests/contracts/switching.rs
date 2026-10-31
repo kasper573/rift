@@ -97,7 +97,7 @@ fn client() -> App {
     app
 }
 
-/// A server's despawn, as replicon lands it on the client.
+/// A server's despawn, as the client lands it.
 fn vanish(world: &mut World, entity: Entity) {
     identity::vanish(world.entity_mut(entity));
 }

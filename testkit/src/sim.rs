@@ -3,7 +3,7 @@ use bevy_ecs::message::{Message, MessageCursor, MessageRegistry, Messages, messa
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::{IntoScheduleConfigs, SingleThreadedExecutor, SystemSet};
 use bevy_ecs::system::ScheduleSystem;
-use bevy_replicon::prelude::ToClients;
+use bevy_replication::ToClient;
 use bevy_time::Time;
 use engine::core::content::{Content, ContentFile, ContentId};
 use engine::core::math::Rng;
@@ -36,7 +36,7 @@ impl Sim {
         });
         plug_ins(&mut world);
         area_state(&mut world, &content);
-        MessageRegistry::register_message::<ToClients<NotificationSent>>(&mut world);
+        MessageRegistry::register_message::<ToClient<NotificationSent>>(&mut world);
         world.init_resource::<Notified>();
         let mut schedule = Schedule::new(Main);
         schedule.set_executor(SingleThreadedExecutor::new());

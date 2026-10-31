@@ -10,7 +10,6 @@ use ui::float;
 use bevy::prelude::*;
 use bevy::winit::{UpdateMode, WinitSettings};
 use connection::{Announce, PendingSession};
-use renet2::RenetClient;
 use ui::controls;
 use ui::egui::{TextStyle, Ui};
 use ui::face;
@@ -18,6 +17,7 @@ use ui::face;
 use crate::core::gui::Band;
 use crate::core::math::Rng;
 use crate::core::net::auth::Credentials;
+use crate::core::net::transport::Connection;
 use crate::core::time::{Backoff, Seconds};
 use crate::systems::player::{JoinRequest, session};
 use ui::dialog;
@@ -87,7 +87,7 @@ impl Plugin for ClientScreenPlugin {
 
 fn drive(
     pending: Option<Res<PendingSession>>,
-    client: Option<Res<RenetClient>>,
+    connection: Option<Res<Connection>>,
     scene: Res<State<ClientScreen>>,
     mut next: ResMut<NextState<ClientScreen>>,
 ) {
@@ -96,9 +96,13 @@ fn drive(
     {
         return;
     }
-    let connected = client.as_ref().is_some_and(|client| client.is_connected());
-    let attempting =
-        pending.is_some() || client.as_ref().is_some_and(|client| client.is_connecting());
+    let connected = connection
+        .as_ref()
+        .is_some_and(|connection| connection.is_connected());
+    let attempting = pending.is_some()
+        || connection
+            .as_ref()
+            .is_some_and(|connection| connection.is_connecting());
     let target = if connected {
         ClientScreen::Area
     } else if attempting {

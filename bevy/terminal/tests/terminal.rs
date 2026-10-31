@@ -1,12 +1,8 @@
 use bevy_app::App;
 use bevy_ecs::message::Messages;
 use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::{
-    ClientId, ConnectedClient, FromClient, RepliconSharedPlugin, SendTargets, ToClients,
-};
-use bevy_state::app::StatesPlugin;
 use bevy_terminal::{
-    CommandCtx, LineTone, TerminalCommand, TerminalInput, TerminalLine, TerminalSaid, ingest,
+    CommandCtx, LineTone, TerminalCommand, TerminalInput, TerminalLine, TerminalSaid, hear,
     register,
 };
 
@@ -25,23 +21,28 @@ fn shout(_world: &mut World, ctx: &CommandCtx) -> Result<String, String> {
 
 fn server(commands: &[TerminalCommand]) -> App {
     let mut app = App::new();
-    app.add_plugins((StatesPlugin, RepliconSharedPlugin::default()));
-    register(&mut app, commands);
+    register(&mut app, commands, |world, conn, line| {
+        world.resource_mut::<Delivered>().0.push((conn, line));
+    });
+    app.init_resource::<Delivered>();
     app
 }
 
+#[derive(Resource, Default)]
+struct Delivered(Vec<(Entity, TerminalLine)>);
+
 fn connect(world: &mut World) -> Entity {
-    world.spawn(ConnectedClient { max_size: 1200 }).id()
+    world.spawn_empty().id()
 }
 
 fn send(world: &mut World, conn: Entity, text: &str) {
-    world.write_message(FromClient {
-        client_id: ClientId::Client(conn),
-        message: TerminalInput {
+    hear(
+        world,
+        conn,
+        &TerminalInput {
             text: text.to_owned(),
         },
-    });
-    ingest(world);
+    );
 }
 
 fn said(world: &mut World) -> Vec<TerminalSaid> {
@@ -52,14 +53,7 @@ fn said(world: &mut World) -> Vec<TerminalSaid> {
 }
 
 fn replies(world: &mut World) -> Vec<(Entity, TerminalLine)> {
-    world
-        .resource_mut::<Messages<ToClients<TerminalLine>>>()
-        .drain()
-        .map(|sent| match sent.targets {
-            SendTargets::Single(ClientId::Client(conn)) => (conn, sent.message),
-            other => panic!("reply addressed to {other:?}"),
-        })
-        .collect()
+    std::mem::take(&mut world.resource_mut::<Delivered>().0)
 }
 
 fn line(text: &str, tone: LineTone) -> TerminalLine {

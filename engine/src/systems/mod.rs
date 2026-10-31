@@ -46,7 +46,7 @@ pub mod worlds;
 use bevy_app::App;
 use bevy_ecs::message::{Message, Messages};
 use bevy_ecs::prelude::{Entity, Res, ResMut, Resource, World};
-use bevy_replicon::prelude::FromClient;
+use bevy_replication::FromClient;
 use schemars::JsonSchema;
 
 use crate::core::assets::SyncedFiles;
@@ -62,7 +62,7 @@ use crate::core::gui::GuiPlugin;
 use crate::core::interpolate::SnapshotPlugin;
 use crate::core::math::{Rect, Rng};
 use crate::core::net::auth::Credentials;
-use crate::core::net::transport::SocketClientPlugin;
+use crate::core::net::transport::ClientTransportPlugin;
 use crate::core::os::{Http, Profile, SignIn, StartParams};
 use crate::core::render::WorldRenderPlugin;
 use crate::core::text::StyledTextPlugin;
@@ -104,7 +104,7 @@ pub fn protocol(app: &mut App) {
     quest::register(app);
     player::register(app);
     reach::register(app);
-    bevy_terminal::register(app, &[]);
+    chat::register(app);
     vfx::register(app);
     plug_ins(app.world_mut());
 }
@@ -140,6 +140,7 @@ pub fn area_state(world: &mut World, content: &Content) {
     world.init_resource::<skill::reset::PendingResets>();
     world.init_resource::<dialogue::StepCounter>();
     world.init_resource::<visibility::Sights>();
+    world.init_resource::<crate::core::chunk::ChunkIndex>();
     MessageRegistry::register_message::<combat::Died>(world);
     MessageRegistry::register_message::<rewards::KillCredited>(world);
     world.add_observer(player::greet);
@@ -198,9 +199,7 @@ pub fn server_app(
 ) -> App {
     use bevy_app::{First, PostUpdate, Startup, Update};
     use bevy_ecs::schedule::{IntoScheduleConfigs, Schedules, SingleThreadedExecutor};
-    use bevy_replicon::prelude::{AuthMethod, RepliconSharedPlugin, ServerState};
-    use bevy_replicon::server::{ServerSystems, increment_tick};
-    use bevy_state::prelude::in_state;
+    use bevy_replication::{ServerReplicationPlugin, ServerSystems};
 
     let mut app = App::new();
     let settings = content.built::<GameSettings>();
@@ -214,7 +213,7 @@ pub fn server_app(
             .map(|cycle| cycle.course(daylight, clock.now)),
     ));
     app.insert_resource(input::map::InputMap::new(content));
-    app.add_plugins((bevy_time::TimePlugin, bevy_state::app::StatesPlugin));
+    app.add_plugins(bevy_time::TimePlugin);
     // Every tick steps the same span of game time however long it took, so a seeded world plays out
     // alike tick for tick.
     app.insert_resource(bevy_time::TimeUpdateStrategy::ManualDuration(
@@ -222,18 +221,8 @@ pub fn server_app(
     ));
     app.insert_resource(Rng::for_world(rng_seed, ordinal));
     app.insert_resource(identity::Names::for_world(ordinal));
-    app.add_plugins(
-        bevy_app::PluginGroup::build(bevy_replicon::prelude::RepliconPlugins)
-            .set(RepliconSharedPlugin {
-                auth_method: AuthMethod::None,
-            })
-            // No tick schedule: we drive replication ourselves at REPLICATION_INTERVAL via
-            // `on_replication_tick`, rather than letting replicon tick every frame.
-            .set(bevy_replicon::server::ServerPlugin {
-                tick_schedule: None,
-                ..Default::default()
-            }),
-    );
+    app.add_plugins(ServerReplicationPlugin)
+        .configure_sets(PostUpdate, ServerSystems::Send.run_if(on_replication_tick));
     protocol(&mut app);
     mirror::register(&mut app);
     visibility::register(&mut app);
@@ -253,10 +242,7 @@ pub fn server_app(
         .add_systems(First, advance_replication_clock)
         .add_systems(
             PostUpdate,
-            increment_tick
-                .in_set(ServerSystems::IncrementTick)
-                .run_if(in_state(ServerState::Running))
-                .run_if(on_replication_tick),
+            movement::file_by_chunk.before(ServerSystems::Send),
         )
         .add_systems(
             Update,
@@ -321,13 +307,12 @@ pub fn server_app(
                     combat::defeats,
                     skill::hotbar::settle_basic_attack,
                     actor::settle,
-                    bevy_terminal::ingest,
+                    chat::hear,
                     chat::rebroadcast,
                     belongings::notify_changes,
                     history::backfill,
                     attention::update.run_if(on_replication_tick),
                     identity::name_replicated.run_if(on_replication_tick),
-                    visibility::update.run_if(on_replication_tick),
                 )
                     .chain(),
             )
@@ -344,22 +329,14 @@ pub fn server_app(
 }
 
 pub fn start_server(app: &mut App) {
-    use bevy_replicon::prelude::ServerState;
-    use bevy_state::prelude::NextState;
-
     app.finish();
     app.cleanup();
-    app.world_mut()
-        .resource_mut::<NextState<ServerState>>()
-        .set(ServerState::Running);
     app.update();
 }
 
 pub fn from_client<M: Message>(world: &mut World, conn: Entity, message: M) {
-    use bevy_replicon::prelude::{ClientId, FromClient};
-
     world.write_message(FromClient {
-        client_id: ClientId::Client(conn),
+        client: conn,
         message,
     });
 }
@@ -414,7 +391,7 @@ pub fn client_app(
         .add_plugins((
             GuiPlugin,
             StyledTextPlugin,
-            SocketClientPlugin,
+            ClientTransportPlugin,
             SnapshotPlugin {
                 period: REPLICATION_PERIOD,
             },

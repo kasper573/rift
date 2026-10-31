@@ -12,7 +12,8 @@ fn server_config(rng_seed: Option<u64>) -> ServerConfig {
     ServerConfig {
         bind: IpAddr::V4(Ipv4Addr::LOCALHOST),
         port: 4000,
-        ws_port: 4001,
+        udp_port: 4001,
+        public_ip: IpAddr::V4(Ipv4Addr::new(203, 0, 113, 7)),
         max_clients: 8,
         content_dir: PathBuf::from("/games/example"),
         player_spawn_policy: SpawnPolicy::Dist,
@@ -42,7 +43,6 @@ fn a_binarys_config_reads_back_from_the_env_written_for_it() {
     }
     let config = ClientConfig {
         game_server_url: "http://127.0.0.1:4000".to_owned(),
-        game_server_ws_url: "ws://127.0.0.1:4001".to_owned(),
         auth: AuthMode::Oidc,
         access_token: Some("a.b.c".to_owned()),
         profile_dir: PathBuf::from("/profiles/tester"),
@@ -58,7 +58,6 @@ fn a_binarys_config_reads_back_from_the_env_written_for_it() {
 fn client_config() -> ClientConfig {
     ClientConfig {
         game_server_url: "https://game-server.example".to_owned(),
-        game_server_ws_url: "wss://game-server.example".to_owned(),
         auth: AuthMode::Oidc,
         access_token: None,
         profile_dir: PathBuf::from("profile"),

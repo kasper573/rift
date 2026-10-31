@@ -18,7 +18,7 @@ alone.
 | [`web-server/`](web-server) | A game's website: its pages, sign-in, and the desktop client's downloads. |
 | [`oidc/`](oidc), [`service/`](service) | Sign-in through any OpenID Connect provider, and what the HTTP services share: metrics and profiles. |
 | [`ui/`](ui) | The interface the editor and the game share: colors, shapes, text roles, fonts and every general-purpose egui component, so both look and behave alike. |
-| [`bevy/`](bevy) | Bevy plugins that know nothing of rift: a server-authoritative terminal. |
+| [`bevy/`](bevy) | Bevy plugins that know nothing of rift: entity replication and a server-authoritative terminal. |
 | [`smoke/`](smoke) | The website, the game server and the desktop client, smoke-tested together: a player of a stand-in identity provider starts the client from the `rift.env` the site hands out, and its window must come to look like `smoke/snapshot.png`. |
 | [`testkit/`](testkit) | What the tests and the server bench stand on: small games declared in code, and a bare world of only the systems a test runs. |
 
@@ -93,17 +93,18 @@ sync the changed files and rejoin.
 Every binary reads its settings from the environment, over a `rift.env` file beside it. Each setting is
 required unless it says otherwise, and a binary refuses to start without one.
 
-- **`game-server`** reads `RIFT_GAME_SERVER_*`: where it listens (`BIND`, `PORT`, `WS_PORT`), the game
+- **`game-server`** reads `RIFT_GAME_SERVER_*`: where it listens (`BIND`, `PORT` for HTTP, `UDP_PORT`
+  for play), the address players reach the machine at (`PUBLIC_IP`), the game
   folder (`CONTENT_DIR`), `MAX_CLIENTS`, `PLAYER_SPAWN_POLICY` (`map` or `dist`), `PLAYER_IMMORTAL`,
   `DAYLIGHT` (`turning`, or `still`, which holds the game's day at its start hour for tests that
   compare how the world looks), `DAILY_RESET_UTC_HOUR`, `AUTH` (`oidc`, or `fake`, which takes a token's claims without checking
   its signature, so an unsigned JWT signs in any account), `TEST_CHARACTERS`, `EXIT_ON_STDIN_EOF`
   and, optionally, `RNG_SEED`. Started on port 0 it picks free ports, and prints them on stdout
   once players can connect.
-- **`desktop-client`** reads `RIFT_CLIENT_*`: the game server (`GAME_SERVER_URL`, `GAME_SERVER_WS_URL`),
+- **`desktop-client`** reads `RIFT_CLIENT_*`: the game server (`GAME_SERVER_URL`),
   `AUTH`, `PROFILE_DIR`, `EXIT_ON_STDIN_EOF` and, optionally, `ACCESS_TOKEN` and `PROBE`.
 - **`web-server`** reads `RIFT_WEB_SERVER_*`: `BIND`, `PORT`, `REDIRECT_URI`, the game server as
-  desktop clients reach it (`GAME_SERVER_URL`, `GAME_SERVER_WS_URL`) and as it reaches it itself
+  desktop clients reach it (`GAME_SERVER_URL`) and as it reaches it itself
   (`GAME_SERVER_INTERNAL_URL`), and the release whose desktop client its downloads offer
   (`DOWNLOADS_URL`, `RELEASE`). The `rift.env` it serves to desktop clients points them at its game
   server and at the sign-in pages in `RIFT_WEB_SERVER_DESKTOP_AUTH_*` (`CLIENT_ID`,
@@ -120,6 +121,11 @@ The runtimes know no infrastructure, only protocols:
   Each binary reads the ones it uses. A token is taken when its audience holds the client or the
   client is its authorized party, and an account is named by `preferred_username`, else `name`, else
   `sub`.
+- **Play is netcode over UDP.** A client posts its access token to the game server's `/session`
+  and gets a connect token for `PUBLIC_IP` and one of its UDP ports (`UDP_PORT` and the ports after
+  it, one for every 1024 of `MAX_CLIENTS`), good for one connection within half a minute;
+  the connection is encrypted, and ends once it falls silent for a few seconds. Whatever stands
+  between players and the server must pass those UDP ports through as they are.
 - **Metrics** are served in the Prometheus exposition format at `/metrics`, and **profiles** in pprof's
   format at `/debug/pprof/profile?seconds=N` (CPU) and `/debug/pprof/heap`, on Linux and macOS. Both
   servers serve them beside their own routes.

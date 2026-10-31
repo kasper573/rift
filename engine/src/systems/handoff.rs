@@ -6,7 +6,7 @@
 
 use bevy_ecs::prelude::*;
 use bevy_platform::collections::HashMap;
-use bevy_replicon::prelude::Replicated;
+use bevy_replication::Replicated;
 
 use crate::core::geometry::Radians;
 use crate::core::math::Pos;

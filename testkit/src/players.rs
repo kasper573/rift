@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use bevy_ecs::message::Message;
 use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::FromClient;
+use bevy_replication::FromClient;
 use engine::core::content::Content;
 use engine::core::math::Pos;
 use engine::core::units::Meters;

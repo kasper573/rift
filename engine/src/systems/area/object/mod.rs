@@ -247,7 +247,7 @@ pub fn spawn_all(world: &mut World) {
             },
         ));
         if object.look.is_some() || object.title.is_some() || interactive.is_some() {
-            entity.insert(bevy_replicon::prelude::Replicated);
+            entity.insert(bevy_replication::Replicated);
         }
         if let Some(title) = &object.title {
             entity.insert(ActorName {

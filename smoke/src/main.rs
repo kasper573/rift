@@ -406,7 +406,8 @@ fn game_server(binary: &Path, sign_in: &oidc::TokenCheckSettings) -> (Running, S
     let config = ServerConfig {
         bind: LOCALHOST,
         port: 0,
-        ws_port: 0,
+        udp_port: 0,
+        public_ip: LOCALHOST,
         max_clients: 8,
         content_dir: std::path::absolute(game()).expect("the game"),
         player_spawn_policy: SpawnPolicy::Map,
@@ -459,7 +460,6 @@ fn web_server(
         port,
         redirect_uri: RedirectUrl::new(format!("{site}/auth-callback")).expect("a url"),
         game_server_url: game_server_url.clone(),
-        game_server_ws_url: format!("ws://{LOCALHOST}:{}", game_server.ws),
         game_server_internal_url: game_server_url,
         downloads_url: format!("{site}/no-downloads"),
         release: "smoke".to_owned(),

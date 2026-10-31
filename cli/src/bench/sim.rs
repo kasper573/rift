@@ -1,14 +1,10 @@
-use std::collections::HashMap;
 use std::path::Path;
 use std::sync::Arc;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::ConnectedClient;
-use bevy_replicon::shared::backend::channels::{ClientChannel, ServerChannel};
-use bevy_replicon::shared::backend::server_messages::ServerMessages;
+use bevy_replication::ClientLink;
 use engine::core::content::{Content, FilesystemFolder};
-use engine::core::net::MAX_MESSAGE_BYTES;
 use engine::core::time::{Seconds, UnixMillis, UtcHour, WallClock};
 use engine::systems::area::{self, Cell};
 use engine::systems::handoff::Moved;
@@ -174,16 +170,12 @@ impl Bench {
                 continue;
             };
             let conn = self.rosters[from].remove(slot);
-            let connected = self.worlds[from]
-                .world()
-                .get::<ConnectedClient>(conn)
-                .is_some();
-            self.worlds[from].world_mut().despawn(conn);
+            let mut leaving = self.worlds[from].world_mut().entity_mut(conn);
+            let link = leaving.take::<ClientLink>();
+            leaving.despawn();
             let mut conn = self.worlds[to].world_mut().spawn(client);
-            if connected {
-                conn.insert(ConnectedClient {
-                    max_size: MAX_MESSAGE_BYTES,
-                });
+            if let Some(link) = link {
+                conn.insert(link.hand_over());
             }
             let conn = conn.id();
             self.rosters[to].push(conn);
@@ -194,9 +186,7 @@ impl Bench {
         for (app, roster) in self.worlds.iter_mut().zip(&self.rosters) {
             let world = app.world_mut();
             for &conn in roster {
-                world.entity_mut(conn).insert(ConnectedClient {
-                    max_size: MAX_MESSAGE_BYTES,
-                });
+                world.entity_mut(conn).insert(ClientLink::default());
             }
         }
     }
@@ -211,24 +201,13 @@ impl Bench {
         clock_after(self.ticks)
     }
 
-    /// What the wire and the clients do with the server's outgoing messages: they go out, and
-    /// every mutate message comes back acknowledged, as a client acknowledges each one it
-    /// receives. Left unacknowledged, the server would resend every changed component each
-    /// replication tick and keep the bookkeeping for all of them, a load no connected client puts
-    /// on it.
-    pub fn acknowledge_sent(&mut self) {
+    /// What the wire does with every client's stream: it goes out, as it must, or it would pile
+    /// up in memory as no connected client lets it.
+    pub fn send_out(&mut self) {
         for app in &mut self.worlds {
-            let mut messages = app.world_mut().resource_mut::<ServerMessages>();
-            let mut acks: HashMap<Entity, Vec<u8>> = HashMap::new();
-            for (client, channel, message) in messages.drain_sent() {
-                if channel == usize::from(ServerChannel::Mutations) {
-                    acks.entry(client)
-                        .or_default()
-                        .extend_from_slice(&message[MUTATE_INDEX]);
-                }
-            }
-            for (client, ack) in acks {
-                messages.insert_received(client, ClientChannel::MutationAcks, ack);
+            let world = app.world_mut();
+            for mut link in world.query::<&mut ClientLink>().iter_mut(world) {
+                link.take_outgoing();
             }
         }
     }
@@ -245,10 +224,6 @@ pub fn load(content_dir: &Path) -> Content {
         std::process::exit(2);
     })
 }
-
-/// Where a mutate message carries its index, which is what an acknowledgement quotes: right after
-/// the flags byte.
-const MUTATE_INDEX: std::ops::Range<usize> = 1..3;
 
 fn build_world(
     layout: Layout,

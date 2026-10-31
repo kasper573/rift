@@ -35,11 +35,11 @@ use crate::systems::text::LineText;
 use bust::Expression;
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::{Channel, ClientMessageAppExt};
+    use bevy_replication::AppMessageExt;
 
     use crate::systems::mirror::AppMirrorExt;
     app.replicate_private::<Conversation>()
-        .add_client_message::<ConversationRequest>(Channel::Ordered);
+        .add_client_message::<ConversationRequest>();
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]

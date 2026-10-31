@@ -48,7 +48,8 @@ impl Playtest {
             &ServerConfig {
                 bind: LOCALHOST,
                 port: 0,
-                ws_port: 0,
+                udp_port: 0,
+                public_ip: LOCALHOST,
                 max_clients: 8,
                 content_dir: absolute(game),
                 player_spawn_policy: SpawnPolicy::Map,
@@ -75,7 +76,6 @@ impl Playtest {
         let listener = TcpListener::bind((LOCALHOST, 0)).expect("a probe port");
         let config = ClientConfig {
             game_server_url: server.http_url(),
-            game_server_ws_url: server.ws_url(),
             auth: AuthMode::Fake,
             access_token: Some(launch::fake_token(ACCOUNT)),
             profile_dir: folder.path().join("profile"),

@@ -232,7 +232,7 @@ fn step(bench: &mut Bench, cores: Cores) {
         Cores::One => bench.tick_on(one_core(), clock),
         Cores::Every => bench.tick(clock),
     }
-    bench.acknowledge_sent();
+    bench.send_out();
 }
 
 fn one_core() -> &'static rayon::ThreadPool {

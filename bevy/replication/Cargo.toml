@@ -1,0 +1,18 @@
+[package]
+name = "bevy_replication"
+version.workspace = true
+edition.workspace = true
+description = "Server-authoritative replication for bevy: one reliable ordered stream per client, built for every client in parallel, scoped by pluggable interest"
+repository = "https://github.com/kasper573/rift"
+authors = ["kasper573"]
+
+[dependencies]
+bevy_app = { workspace = true }
+bevy_ecs = { workspace = true }
+bevy_platform = { workspace = true }
+postcard = { workspace = true }
+rayon = { workspace = true }
+serde = { workspace = true }
+
+[lints]
+workspace = true

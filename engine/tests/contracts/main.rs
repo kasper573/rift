@@ -26,6 +26,7 @@ mod reach;
 mod safe_zone;
 mod scenery;
 mod shop;
+mod sight;
 mod skills;
 mod snapshot;
 mod spacing;

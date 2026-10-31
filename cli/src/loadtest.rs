@@ -1,53 +1,46 @@
-//! Load generator: connects headless replicon clients to an already-running real server over real
-//! websocket sockets and holds them idle. The server must take any account's sign-in (its auth
-//! `fake`).
-//!
-//! Each client drives renet2's core directly over the client's own WebSocket transport, so there is
-//! no client cap. Without a count it root-finds the
-//! player count whose server tick hits the budget, using the same projection as the area benchmark.
+//! Load generator: connects headless clients to an already-running real server over the client's
+//! own transport and holds them idle. The server must take any account's sign-in (its auth
+//! `fake`). Without a count it root-finds the player count whose server tick hits the budget,
+//! using the same projection as the area benchmark.
 
 use std::time::{Duration, Instant};
 
 use bevy_app::{App, Update};
 use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::*;
-use bevy_replicon_renet2::RenetChannelsExt;
-use bevy_state::prelude::*;
 use engine::core::content::sync::Manifest;
 use engine::core::net::SessionRequest;
-use engine::core::net::transport::{ClientSocket, ServerSocket, SocketClientPlugin};
+use engine::core::net::transport::{ClientTransportPlugin, Connection, read_token};
 use engine::systems::TICK_HZ;
 use engine::systems::launch::{TICK_METRIC, fake_token};
 use engine::systems::player::JoinRequest;
 use engine::systems::player::session::{self, ClientSessionPlugin};
-use renet2::{ConnectionConfig, RenetClient};
 
 use crate::search::{BUDGET_MS, Search};
 
 /// Search clamp for the player root-find; the real limit is the server's client cap or its tick time.
 const MAX_PLAYERS: usize = 50_000;
-/// Open this many sockets before pumping, so already-connected clients keep draining while we connect.
+/// Open this many connections before pumping, so already-connected clients keep draining while we connect.
 const CONNECT_BATCH: usize = 100;
 /// Let the server settle at a new player count before sampling its tick.
 const STABILIZE: Duration = Duration::from_secs(2);
 /// Sample the server tick over this window.
 const WINDOW: Duration = Duration::from_secs(3);
 
-pub fn run(http_url: &str, ws_url: &str, count: Option<usize>) {
+pub fn run(http_url: &str, count: Option<usize>) {
     match count {
         None => {
-            run_dyn(http_url, ws_url);
+            run_dyn(http_url);
         }
-        Some(count) => run_fixed(http_url, ws_url, count),
+        Some(count) => run_fixed(http_url, count),
     }
 }
 
-fn run_fixed(http_url: &str, ws_url: &str, count: usize) {
-    println!("[loadtest] connecting {count} clients to {ws_url} (fake tokens via {http_url})");
+fn run_fixed(http_url: &str, count: usize) {
+    println!("[loadtest] connecting {count} clients to {http_url} (fake tokens)");
     let started = Instant::now();
     let mut clients: Vec<App> = Vec::new();
     let mut next_id = 0usize;
-    set_player_count(&mut clients, http_url, ws_url, &mut next_id, count);
+    set_player_count(&mut clients, http_url, &mut next_id, count);
     println!(
         "[loadtest] opened {}/{count} in {:.1}s — holding (Ctrl-C to stop)",
         connected_count(&clients),
@@ -70,24 +63,24 @@ fn run_fixed(http_url: &str, ws_url: &str, count: usize) {
 /// Root-find the highest player count the server sustains within the tick budget, using the same
 /// projection the area benchmark uses. Each probe adjusts the live client pool to the target count
 /// (connect or disconnect) rather than restarting, so the search converges in a handful of probes.
-pub fn run_dyn(http_url: &str, ws_url: &str) -> Pool {
-    println!("[loadtest] root-finding the {BUDGET_MS:.0}ms/tick player equilibrium ({ws_url})");
+pub fn run_dyn(http_url: &str) -> Pool {
+    println!("[loadtest] root-finding the {BUDGET_MS:.0}ms/tick player equilibrium ({http_url})");
     let mut clients: Vec<App> = Vec::new();
     let mut next_id = 0usize;
     let mut search = Search::up_to(MAX_PLAYERS);
     let mut next = Some(1usize);
     while let Some(target) = next {
-        set_player_count(&mut clients, http_url, ws_url, &mut next_id, target);
+        set_player_count(&mut clients, http_url, &mut next_id, target);
         let live = connected_count(&clients);
         let ms = measure_tick_ms(http_url, &mut clients, WINDOW);
         let verdict = if ms <= BUDGET_MS { "ok" } else { "over" };
         println!("[loadtest]   {live:>6} players  →  server {ms:6.2}ms/tick  {verdict}");
 
         next = search.next_after(live, ms);
-        // Couldn't OPEN as many sockets as asked (not merely "not all connected yet") while still under
-        // budget: the limit is the machine's or server's connection ceiling, not tick time, and that
-        // count is the answer. Compare opened sockets, not `live`, so a slow handshake isn't mistaken
-        // for a ceiling.
+        // Couldn't OPEN as many connections as asked (not merely "not all connected yet") while still
+        // under budget: the limit is the machine's or server's connection ceiling, not tick time, and
+        // that count is the answer. Compare opened connections, not `live`, so a slow handshake isn't
+        // mistaken for a ceiling.
         if clients.len() < target && ms < BUDGET_MS {
             println!("[loadtest] connection ceiling at {live} players (could not open more)");
             break;
@@ -98,7 +91,7 @@ pub fn run_dyn(http_url: &str, ws_url: &str) -> Pool {
             println!(
                 "[loadtest] equilibrium: ~{players} concurrent players sustained at {ms:.1}ms/tick (budget {BUDGET_MS:.0}ms)"
             );
-            set_player_count(&mut clients, http_url, ws_url, &mut next_id, players);
+            set_player_count(&mut clients, http_url, &mut next_id, players);
         }
         None => println!("[loadtest] the first probe already exceeded the budget"),
     }
@@ -116,17 +109,11 @@ impl Pool {
 }
 
 /// Brings the live client pool to exactly `target` players: drops surplus clients (each dropped
-/// websocket closes, which the server sees as a disconnect) or opens new ones. New clients connect in
-/// batches, pumping the pool between batches so already-connected sockets keep draining; a batch that
+/// connection says goodbye, which the server sees as a disconnect) or opens new ones. New clients
+/// connect in batches, pumping the pool between batches so already-connected ones keep draining; a batch that
 /// opens nothing means a connection ceiling was hit. Fake ids are monotonic so a reconnecting slot is
 /// never mistaken for a still-connected account.
-fn set_player_count(
-    clients: &mut Vec<App>,
-    http_url: &str,
-    ws_url: &str,
-    next_id: &mut usize,
-    target: usize,
-) {
+fn set_player_count(clients: &mut Vec<App>, http_url: &str, next_id: &mut usize, target: usize) {
     clients.truncate(target);
     while clients.len() < target {
         let want = CONNECT_BATCH.min(target - clients.len());
@@ -134,7 +121,7 @@ fn set_player_count(
         for _ in 0..want {
             let id = *next_id;
             *next_id += 1;
-            if let Some(app) = build_client(http_url, ws_url, id) {
+            if let Some(app) = build_client(http_url, id) {
                 clients.push(app);
             }
         }
@@ -199,38 +186,29 @@ fn connected_count(clients: &[App]) -> usize {
     clients
         .iter()
         .filter(|app| {
-            matches!(
-                app.world().resource::<State<ClientState>>().get(),
-                ClientState::Connected
-            )
+            app.world()
+                .get_resource::<Connection>()
+                .is_some_and(Connection::is_connected)
         })
         .count()
 }
 
-fn build_client(http_url: &str, ws_url: &str, index: usize) -> Option<App> {
-    let ticket = fetch_ticket(http_url, &format!("loadtest-{index}"))?;
-    let socket = ServerSocket::open(&format!("{ws_url}/?ticket={ticket}"));
+fn build_client(http_url: &str, index: usize) -> Option<App> {
+    let token = fetch_token(http_url, &format!("loadtest-{index}"))?;
+    let connection = Connection::open(read_token(&token)?).ok()?;
 
     let mut app = App::new();
-    app.add_plugins((bevy_time::TimePlugin, bevy_state::app::StatesPlugin));
-    app.add_plugins(ClientSessionPlugin);
-    app.add_plugins(SocketClientPlugin);
+    app.add_plugins(bevy_time::TimePlugin);
+    app.add_plugins((ClientSessionPlugin, ClientTransportPlugin));
     app.init_resource::<Joined>();
     app.add_systems(Update, announce_join);
-
-    let config = {
-        let channels = app.world().resource::<RepliconChannels>();
-        ConnectionConfig::from_channels(channels.server_configs(), channels.client_configs())
-    };
-    // The websocket is reliable+ordered (TCP), matching the server side.
-    app.insert_resource(RenetClient::new(config, true));
-    app.insert_non_send(ClientSocket(socket));
+    app.insert_resource(connection);
     app.finish();
     app.cleanup();
     Some(app)
 }
 
-fn fetch_ticket(http_url: &str, account: &str) -> Option<String> {
+fn fetch_token(http_url: &str, account: &str) -> Option<String> {
     let manifest = ureq::get(format!("{http_url}/content/manifest"))
         .call()
         .ok()?
@@ -247,11 +225,11 @@ fn fetch_ticket(http_url: &str, account: &str) -> Option<String> {
         .header("Content-Type", "application/json")
         .send(serde_json::to_string(&request).ok()?)
         .ok()?;
-    Some(response.body_mut().read_to_string().ok()?.trim().to_owned())
+    response.body_mut().read_to_string().ok()
 }
 
 // Once the server's welcome arrives (`MyClient` set), announce the join exactly as the real client
-// does — without it the socket connects but no player character is ever spawned server-side, so the
+// does — without it the client connects but no player character is ever spawned server-side, so the
 // simulation runs with zero real players.
 #[derive(Resource, Default)]
 struct Joined(bool);

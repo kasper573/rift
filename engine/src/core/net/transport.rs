@@ -1,171 +1,164 @@
-use std::io::ErrorKind;
-use std::sync::mpsc::{Receiver, Sender, TryRecvError, channel};
-use std::sync::{Arc, Mutex};
-use std::time::Duration;
+//! How a client and its server carry their replication stream: one reliable ordered renet2
+//! channel each way, over UDP, with netcode connecting, encrypting and timing out every
+//! connection on the strength of a connect token the server's session endpoint hands out.
 
+use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket};
+use std::time::{Duration, SystemTime};
+
+use base64::Engine;
+use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use bevy::prelude::*;
-use bevy_replicon_renet2::RepliconRenetClientPlugin;
-use bevy_replicon_renet2::renet2::{RenetClient, RenetClientPlugin, RenetReceive, RenetSend};
-use tungstenite::Message;
-use tungstenite::stream::MaybeTlsStream;
+use bevy_replication::{ClientSystems, ServerLink};
+use renet2::{ChannelConfig, ConnectionConfig, RenetClient, SendType};
+use renet2_netcode::{ClientAuthentication, ConnectToken, NativeSocket, NetcodeClientTransport};
 
-pub struct ClientSocket(pub ServerSocket);
+/// Names this game's protocol in every connect token; the session endpoint already refuses
+/// clients of another build, so it tells nothing more apart.
+pub const PROTOCOL_ID: u64 = u64::from_le_bytes(*b"rift\0\0\0\x01");
 
-/// Carries renet2 over a socket the platform opened, with no netcode layer: the socket itself is
-/// what connects and disconnects the client.
-pub struct SocketClientPlugin;
+/// The one channel each way, which the whole stream travels.
+pub const STREAM: u8 = 0;
 
-impl Plugin for SocketClientPlugin {
+pub fn connection_config() -> ConnectionConfig {
+    let stream = || {
+        vec![ChannelConfig {
+            channel_id: STREAM,
+            max_memory_usage_bytes: STREAM_MEMORY,
+            send_type: SendType::ReliableOrdered {
+                resend_time: RESEND_AFTER,
+            },
+        }]
+    };
+    ConnectionConfig::from_channels(stream(), stream())
+}
+
+/// A connect token as the session endpoint hands it out: its netcode bytes, in base64.
+pub fn token_text(token: &ConnectToken) -> String {
+    let mut bytes = Vec::new();
+    token
+        .write(&mut bytes)
+        .expect("a connect token writes to memory");
+    URL_SAFE_NO_PAD.encode(bytes)
+}
+
+pub fn read_token(text: &str) -> Option<ConnectToken> {
+    let bytes = URL_SAFE_NO_PAD.decode(text.trim()).ok()?;
+    ConnectToken::read(&mut bytes.as_slice()).ok()
+}
+
+/// The time netcode reckons connect tokens by, on server and client alike.
+pub fn netcode_now() -> Duration {
+    SystemTime::now()
+        .duration_since(SystemTime::UNIX_EPOCH)
+        .expect("the clock is past 1970")
+}
+
+/// The client's connection to its server, from the moment it holds a connect token until the
+/// connection ends. While it is connected, the replication stream runs through its `ServerLink`.
+#[derive(Resource)]
+pub struct Connection {
+    client: RenetClient,
+    transport: NetcodeClientTransport,
+}
+
+impl Connection {
+    pub fn open(token: ConnectToken) -> std::io::Result<Connection> {
+        let any_port = match token.server_addresses.iter().flatten().next() {
+            Some(SocketAddr::V6(_)) => SocketAddr::from((Ipv6Addr::UNSPECIFIED, 0)),
+            _ => SocketAddr::from((Ipv4Addr::UNSPECIFIED, 0)),
+        };
+        let socket =
+            NativeSocket::new(UdpSocket::bind(any_port)?).map_err(std::io::Error::other)?;
+        let transport = NetcodeClientTransport::new(
+            netcode_now(),
+            ClientAuthentication::Secure {
+                connect_token: token,
+            },
+            socket,
+        )
+        .map_err(std::io::Error::other)?;
+        Ok(Connection {
+            client: RenetClient::new(connection_config(), false),
+            transport,
+        })
+    }
+
+    pub fn is_connected(&self) -> bool {
+        self.client.is_connected()
+    }
+
+    pub fn is_connecting(&self) -> bool {
+        self.client.is_connecting()
+    }
+}
+
+/// A connection let go of says goodbye, so the server lets its player go at once rather than
+/// after the connection falls silent.
+impl Drop for Connection {
+    fn drop(&mut self) {
+        self.transport.disconnect();
+    }
+}
+
+/// Carries the replication stream between the `Connection` and the `ServerLink`, which stands
+/// while the connection is up; a connection that ends takes both with it.
+pub struct ClientTransportPlugin;
+
+impl Plugin for ClientTransportPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(RepliconRenetClientPlugin)
-            .add_systems(
-                PreUpdate,
-                receive
-                    .in_set(RenetReceive)
-                    .after(RenetClientPlugin::update_system),
-            )
-            .add_systems(PostUpdate, send.in_set(RenetSend));
+        app.add_systems(PreUpdate, receive.before(ClientSystems::Receive))
+            .add_systems(PostUpdate, send.after(ClientSystems::Send));
     }
 }
 
-fn receive(
-    mut commands: Commands,
-    socket: Option<NonSend<ClientSocket>>,
-    client: Option<ResMut<RenetClient>>,
-) {
-    let (Some(socket), Some(mut client)) = (socket, client) else {
+fn receive(world: &mut World) {
+    let delta = world.resource::<Time<Real>>().delta();
+    let Some(mut connection) = world.get_resource_mut::<Connection>() else {
         return;
     };
-    while let Some(packet) = socket.0.recv() {
-        client.process_packet(&packet);
-    }
-    match socket.0.state() {
-        SocketState::Open if client.is_connecting() => client.set_connected(),
-        // renet has no internal timeout, so a closed socket is the only liveness signal. The
-        // connection ends with its resources: replicon starts a connection when a client resource is
-        // added, so the next one must not overwrite this one.
-        SocketState::Closed => {
-            commands.remove_resource::<RenetClient>();
-            commands.queue(|world: &mut World| {
-                world.remove_non_send::<ClientSocket>();
-            });
+    let Connection { client, transport } = &mut *connection;
+    client.update(delta);
+    let updated = transport.update(delta, client);
+    if client.is_disconnected() {
+        if let Err(error) = updated {
+            info!("connection ended: {error}");
         }
-        SocketState::Connecting | SocketState::Open => {}
+        world.remove_resource::<Connection>();
+        world.remove_resource::<ServerLink>();
+        return;
+    }
+    if !client.is_connected() {
+        return;
+    }
+    let mut received = Vec::new();
+    while let Some(bytes) = client.receive_message(STREAM) {
+        received.push(bytes.to_vec());
+    }
+    let mut link = world.get_resource_or_init::<ServerLink>();
+    for bytes in received {
+        link.receive(bytes);
     }
 }
 
-fn send(socket: Option<NonSend<ClientSocket>>, client: Option<ResMut<RenetClient>>) {
-    let (Some(socket), Some(mut client)) = (socket, client) else {
+fn send(world: &mut World) {
+    let outgoing = world
+        .get_resource_mut::<ServerLink>()
+        .map(|mut link| link.take_outgoing())
+        .unwrap_or_default();
+    let Some(mut connection) = world.get_resource_mut::<Connection>() else {
         return;
     };
-    for packet in client.get_packets_to_send() {
-        socket.0.send(packet);
+    let Connection { client, transport } = &mut *connection;
+    for bytes in outgoing {
+        client.send_message(STREAM, bytes);
+    }
+    if let Err(error) = transport.send_packets(client) {
+        info!("connection ended: {error}");
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SocketState {
-    Connecting,
-    Open,
-    Closed,
-}
+/// How much of the stream may wait unacknowledged before the connection gives up: far more than
+/// a client is ever sent at once, as a player arriving among a crowd is.
+const STREAM_MEMORY: usize = 32 * 1024 * 1024;
 
-/// Carries opaque renet packets over a WebSocket on a thread of its own, with no netcode layer, so
-/// frames are buffered and drained each tick.
-pub struct ServerSocket {
-    incoming: Mutex<Receiver<Vec<u8>>>,
-    outgoing: Sender<Vec<u8>>,
-    state: Arc<Mutex<SocketState>>,
-}
-
-impl ServerSocket {
-    pub fn open(url: &str) -> ServerSocket {
-        let (incoming_tx, incoming) = channel();
-        let (outgoing, outgoing_rx) = channel();
-        let state = Arc::new(Mutex::new(SocketState::Connecting));
-        std::thread::spawn({
-            let state = state.clone();
-            let url = url.to_owned();
-            move || drive(&url, &state, &incoming_tx, &outgoing_rx)
-        });
-        ServerSocket {
-            incoming: Mutex::new(incoming),
-            outgoing,
-            state,
-        }
-    }
-
-    pub fn recv(&self) -> Option<Vec<u8>> {
-        self.incoming.lock().expect("socket lock").try_recv().ok()
-    }
-
-    pub fn send(&self, packet: &[u8]) {
-        if self.state() == SocketState::Open {
-            let _ = self.outgoing.send(packet.to_vec());
-        }
-    }
-
-    pub fn state(&self) -> SocketState {
-        *self.state.lock().expect("socket state lock")
-    }
-}
-
-fn drive(
-    url: &str,
-    state: &Mutex<SocketState>,
-    incoming: &Sender<Vec<u8>>,
-    outgoing: &Receiver<Vec<u8>>,
-) {
-    let set = |to: SocketState| *state.lock().expect("socket state lock") = to;
-    let Ok((mut ws, _)) = tungstenite::connect(url).map_err(|error| eprintln!("{url}: {error}"))
-    else {
-        return set(SocketState::Closed);
-    };
-    let polling = match ws.get_ref() {
-        MaybeTlsStream::Plain(tcp) => tcp.set_read_timeout(Some(READ_POLL)),
-        MaybeTlsStream::Rustls(stream) => stream.sock.set_read_timeout(Some(READ_POLL)),
-        _ => Ok(()),
-    };
-    if polling.is_err() {
-        return set(SocketState::Closed);
-    }
-    set(SocketState::Open);
-    let closed = || set(SocketState::Closed);
-    loop {
-        loop {
-            match outgoing.try_recv() {
-                Ok(packet) => match ws.send(Message::Binary(packet.into())) {
-                    Ok(()) => {}
-                    Err(tungstenite::Error::Io(error)) if retryable(&error) => {}
-                    Err(_) => return closed(),
-                },
-                Err(TryRecvError::Empty) => break,
-                Err(TryRecvError::Disconnected) => return closed(),
-            }
-        }
-        let _ = ws.flush();
-        match ws.read() {
-            Ok(Message::Binary(data)) => {
-                if incoming.send(data.to_vec()).is_err() {
-                    return closed();
-                }
-            }
-            Ok(Message::Close(_)) => return closed(),
-            Ok(_) => {}
-            Err(tungstenite::Error::Io(error)) if retryable(&error) => {}
-            Err(_) => return closed(),
-        }
-    }
-}
-
-// A socket call with a timeout fails as interrupted when the process is stopped and resumed (a
-// debugger, a suspended terminal job), so that is no more the connection's end than a poll that
-// found nothing.
-fn retryable(error: &std::io::Error) -> bool {
-    matches!(
-        error.kind(),
-        ErrorKind::WouldBlock | ErrorKind::TimedOut | ErrorKind::Interrupted
-    )
-}
-
-const READ_POLL: Duration = Duration::from_millis(1);
+const RESEND_AFTER: Duration = Duration::from_millis(200);
