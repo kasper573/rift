@@ -177,11 +177,12 @@ pub struct GameSettings {
     /// Without one the game has no clock: every area's light stands as authored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daylight: Option<area::DayCycle>,
-    /// The server partitions an area into square cells of this size, each stepped as a world of
-    /// its own on a core of its own, seeing as far past its edges as the content reaches; an area
-    /// that fits in one cell runs as one world. A small cell spreads a crowded area over more
-    /// cores but holds more of its neighbours, so the best size for a game's content is what
-    /// `rift bench <game> --only cells` measures.
+    /// The server partitions an area into cells about this size, as many as its ground holds of
+    /// it, evened out over the ground, each stepped as a world of its own on a core of its own,
+    /// seeing as far past its edges as the content reaches; an area about this size or smaller
+    /// runs as one world. A small cell spreads a crowded area over more cores but holds more of
+    /// its neighbours, so the best size for a game's content is what `rift bench <game> --only
+    /// cells` measures.
     pub spatial_partition_cell_size: Meters,
 }
 

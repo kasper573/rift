@@ -50,6 +50,9 @@ pub struct Pulled(pub usize);
 /// Hands every actor or drop standing deep in another cell, or pulled by one, over to that
 /// cell's world, and tells which players' connections must follow.
 pub fn handoff(worlds: &Worlds, apps: &mut [&mut World]) -> Vec<Moved> {
+    if !worlds.has_borders() {
+        return Vec::new();
+    }
     let mut moved = Vec::new();
     for from in 0..apps.len() {
         for (to, carried) in departing(worlds, from, apps[from]) {
@@ -122,28 +125,49 @@ enum CarriedTarget {
     Point(Pos<Meters>),
 }
 
-fn departing(worlds: &Worlds, index: usize, world: &mut World) -> Vec<(usize, Carried)> {
-    let mut sessions = world.query::<(Entity, &ConversationSession)>();
-    let held = dialogue::counterparts(world, &mut sessions);
-    let pulled: Vec<Entity> = world
-        .query_filtered::<Entity, With<Pulled>>()
-        .iter(world)
-        .collect();
-    let leaving: Vec<(Entity, usize)> = world
-        .query_filtered::<(Entity, &Position, Option<&Pulled>), (
+/// The queries a departure scan runs, kept so a tick doesn't match archetypes afresh.
+#[derive(Resource)]
+struct Scans {
+    standing: QueryState<
+        (Entity, &'static Position, Option<&'static Pulled>),
+        (
             Or<(With<Actor>, With<DroppedItem>)>,
             With<GlobalId>,
             Without<Ghost>,
-        )>()
-        .iter(world)
-        .filter(|(entity, ..)| !held.contains(entity))
-        .filter_map(|(entity, position, pulled)| {
-            let to = worlds
-                .beyond(index, position.pos)
-                .or(pulled.map(|pulled| pulled.0))?;
-            Some((entity, to))
-        })
-        .collect();
+        ),
+    >,
+    sessions: dialogue::Sessions,
+    pulled: QueryState<Entity, With<Pulled>>,
+}
+
+impl FromWorld for Scans {
+    fn from_world(world: &mut World) -> Scans {
+        Scans {
+            standing: world.query_filtered(),
+            sessions: world.query(),
+            pulled: world.query_filtered(),
+        }
+    }
+}
+
+fn departing(worlds: &Worlds, index: usize, world: &mut World) -> Vec<(usize, Carried)> {
+    world.get_resource_or_init::<Scans>();
+    let (leaving, pulled) = world.resource_scope(|world, mut scans: Mut<Scans>| {
+        let held = dialogue::counterparts(world, &mut scans.sessions);
+        let pulled: Vec<Entity> = scans.pulled.iter(world).collect();
+        let leaving: Vec<(Entity, usize)> = scans
+            .standing
+            .iter(world)
+            .filter(|(entity, ..)| !held.contains(entity))
+            .filter_map(|(entity, position, pulled)| {
+                let to = worlds
+                    .beyond(index, position.pos)
+                    .or(pulled.map(|pulled| pulled.0))?;
+                Some((entity, to))
+            })
+            .collect();
+        (leaving, pulled)
+    });
     for entity in pulled {
         world.entity_mut(entity).remove::<Pulled>();
     }

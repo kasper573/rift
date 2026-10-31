@@ -20,14 +20,14 @@ use testkit::{Game, Map, Sim};
 #[test]
 fn an_actor_near_a_border_is_a_ghost_next_door_and_a_blow_on_the_ghost_lands_on_it() {
     let content = Game::new()
-        .area("plain", &Map::open(300, 300), json!([]))
+        .area("plain", &Map::open(500, 500), json!([]))
         .hero("plain", 150.0, 150.0)
         .npc("brute", 25.0, json!([]))
         .vfx("damage_taken")
         .shader("damage_pop")
         .load();
     let worlds = Worlds::of(&content);
-    assert_eq!(worlds.len(), 4, "a 300 m area is four cells");
+    assert_eq!(worlds.len(), 4, "a 500 m area is four cells of 250 m");
 
     let mut west = Sim::new(content.clone());
     let mut east = Sim::new(content);
@@ -86,7 +86,7 @@ fn an_actor_near_a_border_is_a_ghost_next_door_and_a_blow_on_the_ghost_lands_on_
 #[test]
 fn an_actor_deep_in_the_next_cell_changes_hands_as_it_stands() {
     let content = Game::new()
-        .area("plain", &Map::open(300, 300), json!([]))
+        .area("plain", &Map::open(500, 500), json!([]))
         .hero("plain", 280.0, 150.0)
         .npc("brute", 25.0, json!([]))
         .vfx("damage_taken")
@@ -123,7 +123,7 @@ fn an_actor_deep_in_the_next_cell_changes_hands_as_it_stands() {
         .expect("the brute is named");
     let hero_name = *east.world.get::<GlobalId>(hero).expect("the hero is named");
 
-    let deep_in_the_west = Pos::new(230.0, 150.0);
+    let deep_in_the_west = Pos::new(220.0, 150.0);
     east.world.get_mut::<Position>(brute).unwrap().pos = deep_in_the_west;
     east.world.get_mut::<Position>(hero).unwrap().pos = deep_in_the_west;
     let moved = hand_over(&worlds, &mut west, &mut east);
@@ -172,7 +172,7 @@ fn an_actor_deep_in_the_next_cell_changes_hands_as_it_stands() {
 #[test]
 fn a_pull_on_a_ghost_hands_it_over_though_it_stands_shallow() {
     let content = Game::new()
-        .area("plain", &Map::open(300, 300), json!([]))
+        .area("plain", &Map::open(500, 500), json!([]))
         .hero("plain", 150.0, 150.0)
         .npc("brute", 25.0, json!([]))
         .vfx("damage_taken")
