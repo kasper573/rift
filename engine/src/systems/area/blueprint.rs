@@ -27,7 +27,7 @@ pub type BlueprintId = ContentId<BlueprintDef>;
 /// Placements nest at most this deep.
 pub const MAX_DEPTH: usize = 8;
 pub const MAX_PARTS: usize = 4096;
-/// How many modules an area holds flattened, per cell of its ground.
+/// How many modules an area holds flattened, per square of its ground.
 pub const MAX_AREA_PARTS: usize = 65_536;
 pub const MAX_VARIABLES: usize = 32;
 

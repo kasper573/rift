@@ -78,6 +78,10 @@ use scene::{SCENE, scene_file};
 
 pub type AreaId = ContentId<AreaDef>;
 
+/// The square of ground an area's budgets count over: the largest an area was when they were set,
+/// so a wider area holds as much on every such square.
+pub const BUDGET_SQUARE: Meters = Meters(256.0);
+
 pub const MAX_POPULATION: u32 = 500;
 
 pub fn register(app: &mut App) {
@@ -902,17 +906,18 @@ async fn flatten_all(loading: &mut Loading) {
     for (id, def) in loading.rows::<AreaDef>(&content) {
         let mut errors = Vec::new();
         let flattening = blueprint::flatten(&content, &def.scene, &mut errors);
-        let cells = cells_over(&content, def.size.meters()).count();
-        if flattening.modules.len() > blueprint::MAX_AREA_PARTS * cells {
+        let squares = budget_squares(def.size.meters());
+        if flattening.modules.len() > blueprint::MAX_AREA_PARTS * squares {
             errors.push(FlattenError {
                 at: FlattenAt::Area(String::new()),
                 problem: ContentProblem::new(
                     "too many parts",
                     format!("{} modules after flattening", flattening.modules.len()),
                     format!(
-                        "at most {} a cell, {} for this area",
+                        "at most {} a {} m square of ground, {} for this area",
                         blueprint::MAX_AREA_PARTS,
-                        blueprint::MAX_AREA_PARTS * cells
+                        BUDGET_SQUARE.0,
+                        blueprint::MAX_AREA_PARTS * squares
                     ),
                 ),
             });
@@ -998,7 +1003,7 @@ pub(super) struct Ground {
 /// what stands and shines on it. With it, the problems of too much standing or shining there.
 fn build_area(content: &Content, ground: &Ground, modules: &[Flattened]) -> (Area, RowCheck) {
     let mut check = RowCheck::default();
-    let cells = cells_over(content, ground.size.meters()).count();
+    let squares = budget_squares(ground.size.meters());
     let safe_zones: Vec<Rect<Meters>> = modules
         .iter()
         .filter_map(|placed| match &placed.module {
@@ -1025,7 +1030,7 @@ fn build_area(content: &Content, ground: &Ground, modules: &[Flattened]) -> (Are
             }
             _ => {}
         }
-        if props.len() > MAX_PROPS * cells
+        if props.len() > MAX_PROPS * squares
             && matches!(placed.module, AreaModule::Prop(_) | AreaModule::Scatter(_))
         {
             check.error(
@@ -1033,8 +1038,9 @@ fn build_area(content: &Content, ground: &Ground, modules: &[Flattened]) -> (Are
                 "too many props",
                 format!("{} props standing in the area", props.len()),
                 format!(
-                    "at most {MAX_PROPS} props a cell, {} for this area, scattered ones counted",
-                    MAX_PROPS * cells
+                    "at most {MAX_PROPS} props a {} m square of ground, {} for this area, scattered ones counted",
+                    BUDGET_SQUARE.0,
+                    MAX_PROPS * squares
                 ),
             );
         }
@@ -1429,4 +1435,10 @@ fn describe_point(at: Pos<Meters>) -> String {
 
 pub fn sixteenth(v: f32) -> f32 {
     (v * 16.0).round() / 16.0
+}
+
+/// How many squares of ground `size` holds, for its budgets: at least one.
+fn budget_squares(size: Size<Meters>) -> usize {
+    let squares = size.width * size.height / (BUDGET_SQUARE.0 * BUDGET_SQUARE.0);
+    squares.ceil().max(1.0) as usize
 }

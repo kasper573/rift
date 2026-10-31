@@ -21,7 +21,8 @@ pub const MAX_PROP_TRIANGLES: usize = 16_000;
 pub const MAX_PROP_MATERIALS: usize = 2;
 pub const MIN_POLYGON_POINTS: usize = 3;
 pub const MAX_POLYGON_POINTS: usize = 64;
-/// How many props a cell of an area stands at most, scattered ones included: a draw budget.
+/// How many props an area stands at most on a square of its ground, scattered ones included: a
+/// draw budget.
 pub const MAX_PROPS: usize = 2000;
 pub const MAX_SCATTERED: u32 = 500;
 pub const MAX_DENSITY: f32 = 2.0;
