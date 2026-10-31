@@ -47,7 +47,8 @@ async fn main() {
         ..IssuerConfig::default()
     })
     .await;
-    let site_port = free_port();
+    let reserved = TcpListener::bind((LOCALHOST, 0)).expect("a free port");
+    let site_port = reserved.local_addr().expect("a bound port").port();
     let site = format!("http://{LOCALHOST}:{site_port}");
     let client = provider
         .register_client(
@@ -69,6 +70,8 @@ async fn main() {
     let (_game_server, game_server) = game_server(&binaries.join("game-server"), &sign_in);
     let wasm = scratch.path().join("wasm");
     unpack(&binaries.join("wasm-client.tar.gz"), &wasm);
+    // Held until now so the servers started before the site's don't take its port for their own.
+    drop(reserved);
     let _web_server = web_server(
         &binaries.join("web-server"),
         &site,
@@ -333,8 +336,12 @@ fn snapshot_path() -> PathBuf {
 
 /// The area a new player arrives in.
 fn spawn_area() -> String {
-    let content = load_content(Arc::new(FilesystemFolder(game())), "smoke")
-        .unwrap_or_else(|report| panic!("the game loads: {report}"));
+    let content = load_content(
+        Arc::new(FilesystemFolder(game())),
+        "smoke",
+        engine::core::content::LoadPurpose::Play,
+    )
+    .unwrap_or_else(|report| panic!("the game loads: {report}"));
     let area = content.built::<GameSettings>().initial_spawn.area;
     area.get(&content).name.clone()
 }
@@ -458,14 +465,6 @@ fn web_server(
         std::thread::sleep(Duration::from_millis(200));
     }
     running
-}
-
-/// A port nothing listens on now, for a server whose address must be known before it starts.
-fn free_port() -> u16 {
-    TcpListener::bind((LOCALHOST, 0))
-        .and_then(|listener| listener.local_addr())
-        .expect("a free port")
-        .port()
 }
 
 fn unpack(archive: &Path, into: &Path) {
