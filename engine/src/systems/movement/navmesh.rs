@@ -3,6 +3,7 @@ use polyanya::{Coords, Mesh, Triangulation};
 
 use crate::core::geometry::corners;
 use crate::core::math::{Offset, Pos, Rect, Rng};
+use crate::core::spatial::SpatialIndex;
 use crate::core::units::{MeterPos, Meters};
 
 /// The ground every walker's body takes, so it keeps this far from what blocks and from the others.
@@ -17,6 +18,8 @@ pub struct NavMesh {
     polygons: Vec<Vec<Pos<Meters>>>,
     islands: Vec<Island>,
     triangles: Vec<Triangle>,
+    /// The triangles by the ground they cover, so a clip passes over only those near it.
+    index: SpatialIndex,
 }
 
 /// A stretch of ground connected within itself and cut off from the rest.
@@ -59,7 +62,7 @@ impl NavMesh {
             })
             .collect();
         let islands = islands(layer);
-        let triangles = polygons
+        let triangles: Vec<Triangle> = polygons
             .iter()
             .enumerate()
             .flat_map(|(index, outline)| {
@@ -70,12 +73,15 @@ impl NavMesh {
                 })
             })
             .collect();
+        let mut index = SpatialIndex::new(TRIANGLE_CELL);
+        index.refile(triangles.iter().map(|triangle| triangle.bounds));
         NavMesh {
             bounds,
             mesh,
             polygons,
             islands,
             triangles,
+            index,
         }
     }
 
@@ -277,8 +283,9 @@ impl NavMesh {
     /// The triangles of the polygons `kept`, cut down to the convex `clip`.
     fn clipped(&self, clip: &[Pos<Meters>], kept: impl Fn(usize) -> bool) -> Vec<[Pos<Meters>; 3]> {
         let reach = Rect::from_points(clip);
-        self.triangles
-            .iter()
+        self.index
+            .within(reach)
+            .map(|index| &self.triangles[index])
             .filter(|triangle| triangle.bounds.intersects(&reach) && kept(triangle.polygon))
             .flat_map(|triangle| {
                 let piece = clip_polygon(&triangle.corners, clip);
@@ -303,6 +310,7 @@ const LOCATE_RINGS: u32 = 3;
 const POLYGON_BITS: u32 = 0x00FF_FFFF;
 const AREA_EPSILON: f32 = 1e-6;
 const DRAWS: usize = 32;
+const TRIANGLE_CELL: Meters = Meters(16.0);
 const CIRCLE_SIDES: usize = 24;
 
 fn vec2(at: Pos<Meters>) -> Vec2 {

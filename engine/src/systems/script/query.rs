@@ -6,7 +6,7 @@ use strum::{EnumDiscriminants, EnumString, IntoStaticStr, VariantArray};
 
 use super::{Condition, RiftScripting};
 use crate::core::content::Content;
-use crate::core::math::Pos;
+use crate::core::math::{Pos, Rect, Size};
 use crate::core::script::{Compiler, Eval, FlowCx, QueryDef, ScriptFault, Value, ValueType};
 use crate::core::spatial::SpatialIndex;
 use crate::core::time::{Seconds, WallClock};
@@ -149,12 +149,13 @@ pub fn take_tick_roster(world: &mut World, query: &mut RosterQuery) {
     listed.sort_by_key(|entry| (!entry.character, entry.pack));
     let characters = listed.iter().take_while(|entry| entry.character).count();
     let mut roster = world.resource_mut::<TickRoster>();
+    let spot = |entry: &Listed| Rect::new(entry.at, Size::zero());
     roster
         .character_spots
-        .refile(listed[..characters].iter().map(|entry| entry.at));
+        .refile(listed[..characters].iter().map(spot));
     roster
         .npc_spots
-        .refile(listed[characters..].iter().map(|entry| entry.at));
+        .refile(listed[characters..].iter().map(spot));
     roster.listed = listed;
     roster.characters = characters;
 }

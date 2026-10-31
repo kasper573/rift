@@ -268,6 +268,7 @@ pub fn register(app: &mut App) {
 /// Readies a world to hold ghosts and post to their owners.
 pub fn prepare(world: &mut World) {
     world.init_resource::<Mirrors>();
+    world.init_resource::<Scans>();
     world.init_resource::<Exchanged>();
     world.init_resource::<Outbox>();
     world.init_resource::<Inbox>();
@@ -306,7 +307,7 @@ pub fn exchange(worlds: &Worlds, apps: &mut [&mut World]) {
         return;
     }
     let standing: Vec<Standing> = apps
-        .par_iter()
+        .par_iter_mut()
         .enumerate()
         .map(|(index, world)| standing_in_halos(worlds, index, world))
         .collect();
@@ -391,6 +392,27 @@ struct Mirrors(Vec<MirrorFns>);
 #[derive(Resource, Default)]
 struct Exchanged(Option<Tick>);
 
+/// What a world owns that its neighbours may see: its named, replicated entities and where they
+/// stand.
+type Owned =
+    QueryState<(Entity, &'static GlobalId, &'static Position), (With<Replicated>, Without<Ghost>)>;
+
+/// The queries an exchange runs, kept so a tick doesn't match archetypes afresh.
+#[derive(Resource)]
+struct Scans {
+    owned: Owned,
+    ghosts: QueryState<(Entity, &'static Ghost, &'static GlobalId)>,
+}
+
+impl FromWorld for Scans {
+    fn from_world(world: &mut World) -> Scans {
+        Scans {
+            owned: world.query_filtered(),
+            ghosts: world.query(),
+        }
+    }
+}
+
 /// Maps the owner's entities to this world's: what the owner names, this world holds under the
 /// same name, or not at all.
 struct Across {
@@ -425,16 +447,15 @@ struct GhostUpdate {
 /// Who a world owns within each neighbour's halo, by neighbour.
 type Standing = Vec<(usize, Vec<(Entity, GlobalId)>)>;
 
-fn standing_in_halos(worlds: &Worlds, index: usize, world: &World) -> Standing {
+fn standing_in_halos(worlds: &Worlds, index: usize, world: &mut World) -> Standing {
     let mut halos: HashMap<usize, Vec<(Entity, GlobalId)>> = HashMap::default();
-    let mut owned = world
-        .try_query_filtered::<(Entity, &GlobalId, &Position), (With<Replicated>, Without<Ghost>)>()
-        .expect("prepare registers what the halo is scanned by");
-    for (entity, &id, position) in owned.iter(world) {
-        for neighbour in worlds.around(index, position.pos) {
-            halos.entry(neighbour).or_default().push((entity, id));
+    world.resource_scope(|world, mut scans: Mut<Scans>| {
+        for (entity, &id, position) in scans.owned.iter(world) {
+            for neighbour in worlds.around(index, position.pos) {
+                halos.entry(neighbour).or_default().push((entity, id));
+            }
         }
-    }
+    });
     halos.into_iter().collect()
 }
 
@@ -454,12 +475,14 @@ fn settle_ghosts(world: &mut World, arriving: Standing) -> Vec<(usize, Vec<Globa
         listed.insert(owner, held.into_iter().map(|(_, id)| id).collect());
         spawned.push((owner, fresh));
     }
-    let gone: Vec<Entity> = world
-        .query::<(Entity, &Ghost, &GlobalId)>()
-        .iter(world)
-        .filter(|(_, ghost, id)| listed.get(&ghost.owner).is_none_or(|ids| !ids.contains(id)))
-        .map(|(entity, _, _)| entity)
-        .collect();
+    let gone: Vec<Entity> = world.resource_scope(|world, mut scans: Mut<Scans>| {
+        scans
+            .ghosts
+            .iter(world)
+            .filter(|(_, ghost, id)| listed.get(&ghost.owner).is_none_or(|ids| !ids.contains(id)))
+            .map(|(entity, _, _)| entity)
+            .collect()
+    });
     for entity in gone {
         world.despawn(entity);
     }
