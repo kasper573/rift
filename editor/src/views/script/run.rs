@@ -1187,10 +1187,7 @@ fn locate_owner(
                 .map(|(entity, _)| entity);
             let entity = match found {
                 Some(entity) => entity,
-                None => {
-                    let pack = npc::next_pack(world);
-                    npc::spawn(world, def, at, area_id, pack)
-                }
+                None => npc::spawn(world, def, at, area_id, None),
             };
             Owner::Entity(RunnerKind::Npc, entity)
         }

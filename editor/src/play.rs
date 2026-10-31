@@ -37,6 +37,7 @@ use ui::input;
 
 const SERVER: &str = "game-server";
 const CLIENT: &str = "desktop-client";
+const RIFT: &str = "rift";
 const READY_WITHIN: Duration = Duration::from_secs(30);
 const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
@@ -881,6 +882,50 @@ fn editor_folder(editor: &Editor) -> PathBuf {
         .as_ref()
         .map(|project| project.root.clone())
         .unwrap_or_default()
+}
+
+/// `rift bench <game> --only cells` on the project as saved, its lines read as they come.
+pub struct CellsRun {
+    process: Process,
+    lines: ChannelInbox<OutputLine>,
+}
+
+impl CellsRun {
+    pub fn start(editor: &Editor) -> Result<CellsRun, String> {
+        let rift = binaries_folder(editor).join(RIFT);
+        if !rift.exists() {
+            return Err(format!("{RIFT} is not beside {SERVER}: {}", rift.display()));
+        }
+        let game = editor
+            .project
+            .as_ref()
+            .ok_or("no game is open")?
+            .root
+            .clone();
+        let (sender, receiver) = channel();
+        let mut command = Command::new(rift);
+        command.arg("bench").arg(&game).arg("--only").arg("cells");
+        let process = spawn(command, RIFT, sender).map_err(|error| error.to_string())?;
+        Ok(CellsRun {
+            process,
+            lines: ChannelInbox::new(receiver),
+        })
+    }
+
+    /// The lines printed since last asked, and the exit code once it has exited.
+    pub fn poll(&mut self) -> (Vec<OutputLine>, Option<i32>) {
+        let lines = self.lines.drain();
+        if self.process.exited.is_none()
+            && let Ok(Some(status)) = self.process.child.try_wait()
+        {
+            self.process.exited = Some(status.code().unwrap_or(-1));
+        }
+        (lines, self.process.exited)
+    }
+
+    pub fn cancel(&mut self) {
+        let _ = self.process.child.start_kill();
+    }
 }
 
 fn spawn_server(binaries: &Path, folder: &Path, sender: Sender<OutputLine>) -> io::Result<Process> {

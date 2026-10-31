@@ -249,6 +249,15 @@ pub enum ModalDialog {
     RenameNode(RenameNodeDialog),
     LinkNode(LinkNodeDialog),
     Import(crate::import::ImportDialog),
+    CellsBench(CellsBenchDialog),
+}
+
+/// `rift bench --only cells` on the game, running or done, and the side it found.
+pub struct CellsBenchDialog {
+    pub run: play::CellsRun,
+    pub rows: Vec<String>,
+    pub result: Option<Meters>,
+    pub exit: Option<i32>,
 }
 
 pub struct PickRowDialog {

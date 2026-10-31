@@ -9,6 +9,7 @@ use ui::theme;
 use ui::words;
 
 use engine::core::content::{ContentFile, SETTINGS_FILE, fields_file, version};
+use engine::core::units::Meters;
 use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::player::PlayerDef;
@@ -18,9 +19,11 @@ use ui::egui::{Context, RichText, Ui};
 use ui::glyph::{self, Mark};
 use ui::sheet;
 
+use super::row_form::settings;
 use super::{content_tree, unused_dialog, widgets};
 use crate::app::{
-    CloseThen, ConfirmAction, Editor, ModalDialog, NewGameDialog, NewGameSource, PickRowThen,
+    CellsBenchDialog, CloseThen, ConfirmAction, Editor, ModalDialog, NewGameDialog, NewGameSource,
+    PickRowThen,
 };
 use crate::icons;
 use crate::keymap::{EditorKey, KeyScope};
@@ -52,6 +55,97 @@ pub fn show(editor: &mut Editor, ctx: &Context) {
     keep.extend(opened);
     editor.dialogs = keep;
 }
+
+fn cells_bench(
+    editor: &mut Editor,
+    ctx: &Context,
+    mut dialog: CellsBenchDialog,
+) -> Option<ModalDialog> {
+    let (lines, exit) = dialog.run.poll();
+    for line in lines {
+        if let Some(row) = line.text.strip_prefix(CELLS_BENCH_TAG) {
+            match row
+                .strip_prefix("RESULT ")
+                .and_then(|result| result.split(' ').next())
+                .and_then(|size| size.parse::<f32>().ok())
+            {
+                Some(size) => dialog.result = Some(Meters(size)),
+                None => dialog.rows.push(row.to_owned()),
+            }
+        }
+        editor.output.say(line.tag, line.text);
+    }
+    dialog.exit = exit;
+    let mut outcome = None;
+    let mut pressed = dialog::Keys::default();
+    dialog::card(ctx, "cells-bench", 640.0, |ui| {
+        pressed = dialog::keys(ui);
+        dialog::title(ui, "Measuring the cell size");
+        ui.label(theme::muted(
+            "The spawn area grown four by four, stepped as one area on one core, at each size the cells could have.",
+        ));
+        ui.add_space(6.0);
+        for row in &dialog.rows {
+            ui.monospace(row);
+        }
+        match (dialog.exit, dialog.result) {
+            (None, _) => {
+                ui.horizontal(|ui| {
+                    ui.spinner();
+                    ui.label(theme::muted("Measuring; a few minutes."));
+                });
+            }
+            (Some(_), Some(size)) => {
+                ui.label(format!("The cell size for this game: {} m.", size.0));
+            }
+            (Some(code), None) => {
+                ui.label(theme::muted(format!(
+                    "rift exited with code {code} without a result; its output is in the output panel."
+                )));
+            }
+        }
+        ui.add_space(10.0);
+        ui.horizontal(|ui| match (dialog.exit, dialog.result) {
+            (None, _) => {
+                if ui.button("Cancel").clicked() {
+                    outcome = Some(None);
+                }
+            }
+            (Some(_), Some(size)) => {
+                if controls::primary(ui, format!("Apply {} m", size.0)).clicked() {
+                    outcome = Some(Some(size));
+                }
+                if ui.button("Discard").clicked() {
+                    outcome = Some(None);
+                }
+            }
+            (Some(_), None) => {
+                if ui.button("Close").clicked() {
+                    outcome = Some(None);
+                }
+            }
+        });
+    });
+    if pressed.cancel {
+        outcome = Some(None);
+    }
+    match outcome {
+        Some(Some(size)) => {
+            settings::set_cell_size(editor, size);
+            None
+        }
+        Some(None) => {
+            dialog.run.cancel();
+            None
+        }
+        None => {
+            ctx.request_repaint_after(std::time::Duration::from_millis(200));
+            Some(ModalDialog::CellsBench(dialog))
+        }
+    }
+}
+
+const CELLS_BENCH_TAG: &str = "[cells-bench] ";
 
 fn new_game(editor: &mut Editor, ctx: &Context, mut dialog: NewGameDialog) -> Option<ModalDialog> {
     let mut outcome = None;
@@ -581,6 +675,7 @@ fn one(editor: &mut Editor, ctx: &Context, dialog: ModalDialog) -> Option<ModalD
         }
         ModalDialog::Import(dialog) => crate::import::dialog(editor, ctx, dialog),
         ModalDialog::FindUnused(dialog) => unused_dialog::find_unused_dialog(editor, ctx, dialog),
+        ModalDialog::CellsBench(dialog) => cells_bench(editor, ctx, dialog),
         ModalDialog::Binaries => {
             let mut open = true;
             dialog::card(ctx, "binaries", 560.0, |ui| {
