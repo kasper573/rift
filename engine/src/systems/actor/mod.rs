@@ -36,6 +36,7 @@ use crate::core::time::PlaybackRate;
 use crate::core::units::{MeterPos, Meters, MetersPerSec};
 use crate::systems::area::AreaObject;
 use crate::systems::dialogue;
+use crate::systems::mirror::Ghost;
 use crate::systems::movement::{self, Path, Position, RenderPosition};
 use crate::systems::skill::Cooldowns;
 use crate::systems::stat::{self, Stats};
@@ -239,13 +240,16 @@ pub fn set_facing(actor: &mut Mut<Actor>, facing: Radians, action: Action) {
     }
 }
 
-pub type Situations = QueryState<(
-    Entity,
-    &'static mut Actor,
-    Option<&'static Stats>,
-    Option<&'static Playing>,
-    Has<Path>,
-)>;
+pub type Situations = QueryState<
+    (
+        Entity,
+        &'static mut Actor,
+        Option<&'static Stats>,
+        Option<&'static Playing>,
+        Has<Path>,
+    ),
+    Without<Ghost>,
+>;
 
 /// Picks every actor's action from its state: dead, playing, walking, in conversation, or idle.
 /// Two in conversation face each other.

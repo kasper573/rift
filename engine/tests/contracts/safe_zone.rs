@@ -197,7 +197,7 @@ fn border(modules: Value) -> Sim {
 fn spawn(sim: &mut Sim, key: &str, at: Pos<Meters>) -> Entity {
     let area = sim.id::<AreaDef>("border");
     let def = sim.id::<NpcDef>(key);
-    npc::spawn(&mut sim.world, def, at, area, npc::Pack(u32::MAX))
+    npc::spawn(&mut sim.world, def, at, area, None)
 }
 
 fn on_safe_ground(world: &World, entity: Entity) -> bool {

@@ -12,7 +12,9 @@ use engine::core::net::MAX_MESSAGE_BYTES;
 use engine::core::time::{Seconds, UnixMillis, UtcHour, WallClock};
 use engine::systems::area::{self, Cell};
 use engine::systems::launch::ServerDaylight;
+use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::player::{ClientId, JoinRequest, SpawnPolicy, SpawnRules};
+use engine::systems::script::Place;
 use engine::systems::worlds::{self, Worlds};
 use engine::systems::{GameSettings, TICK_HZ, from_client, load_content, server_app, start_server};
 use strum::AsRefStr;
@@ -77,26 +79,41 @@ impl Bench {
         Bench::with_players(areas, PLAYERS_PER_AREA, layout, content)
     }
 
-    /// `areas` of the spawn area, each with `players` playing in it.
+    /// `areas` of the spawn area, each with `players` playing in it: each as one of the test
+    /// characters in turn, in the world of the cell its character starts in. Crowded players
+    /// play only the characters starting in the spawn's cell; spread ones all of them.
     pub fn with_players(areas: usize, players: usize, layout: Layout, content: &Content) -> Bench {
         let spawn = content.built::<GameSettings>().initial_spawn;
-        let cells = area::load(content, spawn.area).cells;
+        let cells = area::cells(content, spawn.area);
+        let characters: Vec<Option<(CharacterSnapshot, Place)>> = {
+            let mut all = play::characters_in(content, spawn.area);
+            if layout == Layout::Congested {
+                all.retain(|(_, start)| cells.at(start.at) == cells.at(spawn.at));
+            }
+            if all.is_empty() {
+                vec![None]
+            } else {
+                all.into_iter().map(Some).collect()
+            }
+        };
+        let cell_of = |character: &Option<(CharacterSnapshot, Place)>| {
+            character
+                .as_ref()
+                .map_or(cells.at(spawn.at), |(_, start)| cells.at(start.at))
+        };
+        let mut joining: Vec<Vec<Option<(CharacterSnapshot, Place)>>> =
+            vec![Vec::new(); areas * cells.count()];
+        for copy in 0..areas {
+            for index in 0..players {
+                let character = characters[index % characters.len()].clone();
+                joining[copy * cells.count() + cell_of(&character).0 as usize].push(character);
+            }
+        }
         let (worlds, rosters) = Worlds::copies(content, spawn.area, areas)
             .iter()
+            .zip(joining)
             .enumerate()
-            .map(|(ordinal, (_, cell))| {
-                let copy = ordinal / cells.count();
-                // Crowded players all join the spawn's cell; spread ones share the cells out.
-                let joining = match layout {
-                    Layout::Congested if cells.at(spawn.at) == cell => players,
-                    Layout::Congested => 0,
-                    Layout::Distributed => {
-                        let share = players / cells.count();
-                        share
-                            + usize::from(cell.0 as usize == copy % cells.count())
-                                * (players - share * cells.count())
-                    }
-                };
+            .map(|(ordinal, ((_, cell), joining))| {
                 build_world(layout, content, cell, ordinal as u64, joining)
             })
             .unzip();
@@ -185,7 +202,7 @@ fn build_world(
     content: &Content,
     cell: Cell,
     ordinal: u64,
-    players: usize,
+    players: Vec<Option<(CharacterSnapshot, Place)>>,
 ) -> (App, Vec<Entity>) {
     let mut app = server_app(
         content.built::<GameSettings>().initial_spawn.area,
@@ -202,12 +219,13 @@ fn build_world(
     });
     start_server(&mut app);
 
-    let zone = content.built::<GameSettings>().initial_spawn.area;
     let world = app.world_mut();
-    let mut roster = Vec::with_capacity(players);
-    for index in 0..players {
+    let mut roster = Vec::with_capacity(players.len());
+    for (index, character) in players.iter().enumerate() {
         let conn = world.spawn(ClientId(index as u32 + 1)).id();
-        play::join_as(world, content, zone, conn, index);
+        if let Some(character) = character {
+            play::join_as(world, conn, character);
+        }
         from_client(world, conn, JoinRequest);
         roster.push(conn);
     }

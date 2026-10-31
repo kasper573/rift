@@ -163,9 +163,7 @@ pub struct WorldCell(pub area::Cell);
 pub fn world_rect(world: &World) -> Rect<Meters> {
     let content = world.resource::<Content>();
     let area = world.resource::<WorldArea>().0;
-    area::load(content, area)
-        .cells
-        .rect(world.resource::<WorldCell>().0)
+    area::cells(content, area).rect(world.resource::<WorldCell>().0)
 }
 
 #[derive(JsonSchema, Resource, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -178,6 +176,12 @@ pub struct GameSettings {
     /// Without one the game has no clock: every area's light stands as authored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daylight: Option<area::DayCycle>,
+    /// The server partitions an area into square cells of this size, each stepped as a world of
+    /// its own on a core of its own, seeing as far past its edges as the content reaches; an area
+    /// that fits in one cell runs as one world. A small cell spreads a crowded area over more
+    /// cores but holds more of its neighbours, so the best size for a game's content is what
+    /// `rift bench <game> --only cells` measures.
+    pub spatial_partition_cell_size: Meters,
 }
 
 pub fn server_app(
@@ -255,7 +259,11 @@ pub fn server_app(
             Update,
             (
                 (
-                    (status::expire, status::aspect::settle, status::aspect::tick).chain(),
+                    (
+                        mirror::deliver,
+                        (status::expire, status::aspect::settle, status::aspect::tick).chain(),
+                    )
+                        .chain(),
                     vfx::expire,
                     player::arrival_holds,
                     combat::regen,
@@ -645,6 +653,21 @@ async fn check_settings(loading: &mut Loading) {
             area::IslandSite::Scene(file, pointer) => loading.json_error(&file, &pointer, problem),
             area::IslandSite::Spawn => loading.json_error(SETTINGS_FILE, "/initial_spawn", problem),
         }
+    }
+    let (halo, reached_by) = mirror::halo(&content);
+    if settings.spatial_partition_cell_size < halo {
+        loading.json_error(
+            SETTINGS_FILE,
+            "/spatial_partition_cell_size",
+            ContentProblem::new(
+                "too short",
+                format!("{} m", settings.spatial_partition_cell_size.0),
+                format!(
+                    "at least {} m, as far as {reached_by}: what a world sees past its cell",
+                    halo.0
+                ),
+            ),
+        );
     }
 }
 

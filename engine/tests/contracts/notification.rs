@@ -10,7 +10,7 @@ use engine::systems::history::{History, HistoryTopic};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::movement::{self, position};
 use engine::systems::notification::{self, Notification, NotificationKind, NotificationSent};
-use engine::systems::npc::{self, NpcDef, Pack};
+use engine::systems::npc::{self, NpcDef};
 use engine::systems::player::{AreaDrawn, commands_locked};
 use engine::systems::quest::{self, QuestDef};
 use engine::systems::status::{self, StatusEffectDef};
@@ -85,13 +85,7 @@ fn a_character_speaks_to_players_on_its_errand_from_its_own_body() {
 
     let area = sim.id::<AreaDef>("island");
     let def = sim.id::<NpcDef>("chief");
-    let chief = npc::spawn(
-        &mut sim.world,
-        def,
-        at + Offset::new(2.0, 0.0),
-        area,
-        Pack(u32::MAX),
-    );
+    let chief = npc::spawn(&mut sim.world, def, at + Offset::new(2.0, 0.0), area, None);
     sim.run(0.5);
 
     let said: Vec<NotificationSent> = sim
@@ -252,13 +246,7 @@ fn a_hit_pops_its_amount_out_of_the_one_struck_for_everyone_who_sees_it() {
     let at = position(&sim.world, player).expect("position");
     let area = sim.id::<AreaDef>("island");
     let def = sim.id::<NpcDef>("dummy");
-    let dummy = npc::spawn(
-        &mut sim.world,
-        def,
-        at + Offset::new(1.0, 0.0),
-        area,
-        Pack(u32::MAX),
-    );
+    let dummy = npc::spawn(&mut sim.world, def, at + Offset::new(1.0, 0.0), area, None);
     sim.world.entity_mut(dummy).insert(Attitude::Hostile);
     sim.run(0.5);
     sim.forget_notified();

@@ -28,8 +28,10 @@ use crate::systems::actor::{
 use crate::systems::area::{self, AreaId, AreaModule, AreaTag, Wild};
 use crate::systems::combat::{Attitude, Dead, Died};
 use crate::systems::dialogue::bust::BustId;
+use crate::systems::identity::{GlobalId, Names};
 use crate::systems::interact::Interactive;
 use crate::systems::item::{ItemId, Reservation, Wear};
+use crate::systems::mirror::Ghost;
 use crate::systems::movement::{self, NavMesh, Position, Spot, Spots, position};
 use crate::systems::script::condition::CompiledCondition;
 use crate::systems::script::query::{Among, TickRoster};
@@ -153,8 +155,9 @@ pub struct Npc {
     pub def: NpcId,
 }
 
+/// The npcs spawned together, named from their world's pool so no two packs of an area are alike.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub struct Pack(pub u32);
+pub struct Pack(pub GlobalId);
 
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Home(pub Pos<Meters>);
@@ -346,13 +349,8 @@ impl NpcDef {
     }
 }
 
-#[derive(Resource, Default)]
-struct NextPack(u32);
-
 pub fn next_pack(world: &mut World) -> Pack {
-    let mut next = world.get_resource_or_init::<NextPack>();
-    next.0 += 1;
-    Pack(next.0)
+    Pack(world.resource_mut::<Names>().give())
 }
 
 /// Spawns the npcs placed in this world's cell: a resident at its spot, a population where its
@@ -362,7 +360,7 @@ pub fn spawn_all(world: &mut World) {
     let area_id = world.resource::<WorldArea>().0;
     let mine = world.resource::<WorldCell>().0;
     let area = area::load(&content, area_id);
-    let cells = area.cells;
+    let cells = area::cells(&content, area_id);
     for module in area::modules(&content, area_id) {
         match module {
             AreaModule::Population(population) => {
@@ -391,7 +389,7 @@ pub fn spawn_all(world: &mut World) {
                 let pack = next_pack(world);
                 let mesh = &area::load(&content, area_id).mesh;
                 let at = movement::place_beside(world, area_id, mesh, resident.at);
-                let entity = spawn(world, resident.npc, at, area_id, pack);
+                let entity = spawn(world, resident.npc, at, area_id, Some(pack));
                 world.entity_mut(entity).insert(Home(resident.at));
                 if let Some(mut actor) = world.get_mut::<Actor>(entity) {
                     actor.facing = resident.facing.radians();
@@ -422,7 +420,7 @@ fn spawn_wild(
             roaming_spot(mesh, &mut rng, spots, area_id, roams)
         })
         .expect("validated at startup: populations have ground outside the safe zones");
-    let entity = spawn(world, npc, at, area_id, pack);
+    let entity = spawn(world, npc, at, area_id, Some(pack));
     match roams {
         Some(bounds) => world.entity_mut(entity).insert((Wild, Roams(bounds))),
         None => world.entity_mut(entity).insert(Wild),
@@ -436,9 +434,17 @@ pub fn spawn_actor(world: &mut World, def: &NpcDef, at: Pos<Meters>, area: AreaI
     world.spawn(actor_bundle(&content, def, at, area)).id()
 }
 
-pub fn spawn(world: &mut World, def: NpcId, at: Pos<Meters>, area: AreaId, pack: Pack) -> Entity {
+/// Spawns an npc of `def` at `at`, in `pack` or one of its own.
+pub fn spawn(
+    world: &mut World,
+    def: NpcId,
+    at: Pos<Meters>,
+    area: AreaId,
+    pack: Option<Pack>,
+) -> Entity {
     let content = world.resource::<Content>().clone();
     let row = def.get(&content);
+    let pack = pack.unwrap_or_else(|| next_pack(world));
     let mut entity = world.spawn((
         actor_bundle(&content, row, at, area),
         Npc { def },
@@ -662,7 +668,7 @@ fn roaming_spot(
     draw(&|at| spots.crowding(area, at, None) == 0).or_else(|| draw(&|_| true))
 }
 
-type NpcIds = QueryState<Entity, With<Npc>>;
+type NpcIds = QueryState<Entity, (With<Npc>, Without<Ghost>)>;
 
 pub fn run_respawn(world: &mut World, npcs: &mut NpcIds) {
     let content = world.resource::<Content>().clone();

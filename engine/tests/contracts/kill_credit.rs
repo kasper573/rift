@@ -4,7 +4,7 @@ use engine::core::time::Seconds;
 use engine::systems::area::AreaDef;
 use engine::systems::combat;
 use engine::systems::movement::position;
-use engine::systems::npc::{self, NpcDef, Pack};
+use engine::systems::npc::{self, NpcDef};
 use engine::systems::rewards::{self, KillCredited};
 use engine::systems::{item, stat};
 use serde_json::json;
@@ -54,7 +54,7 @@ fn brute(sim: &mut Sim, near: Entity) -> Entity {
     let at = position(&sim.world, near).expect("player position");
     let area = sim.id::<AreaDef>("field");
     let brute = sim.id::<NpcDef>("brute");
-    npc::spawn(&mut sim.world, brute, at, area, Pack(u32::MAX))
+    npc::spawn(&mut sim.world, brute, at, area, None)
 }
 
 fn kill(sim: &mut Sim, victim: Entity, killer: Entity) {

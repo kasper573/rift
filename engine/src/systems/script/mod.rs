@@ -542,7 +542,7 @@ fn bind_table<Row: ScriptedRow>(
     }
 }
 
-fn owner_site(content: &Content, row: OwnerRow) -> ScriptSite {
+pub fn owner_site(content: &Content, row: OwnerRow) -> ScriptSite {
     let path = match row.kind {
         RunnerKind::Area | RunnerKind::Object => {
             let area: AreaId = row.id();
@@ -596,7 +596,7 @@ pub fn spawn_stateless(world: &mut World) {
     let content = world.resource::<Content>().clone();
     let area = world.resource::<WorldArea>().0;
     let mine = world.resource::<WorldCell>().0;
-    let cells = area::load(&content, area).cells;
+    let cells = area::cells(&content, area);
     let mut instances = world.resource_mut::<RiftInstances>();
     for (row, procedures) in scripts.owners() {
         let owner = match row.kind {

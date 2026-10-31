@@ -18,15 +18,17 @@ use rayon::prelude::*;
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 
+use crate::core::content::Content;
+use crate::core::time::Seconds;
 use crate::core::units::Meters;
 use crate::systems::identity::{GlobalId, Named};
 use crate::systems::movement::Position;
-use crate::systems::visibility;
+use crate::systems::script::event::RiftEvent;
+use crate::systems::script::{RiftScripts, owner_site};
+use crate::systems::skill::SkillDef;
+use crate::systems::status::StatusEffectId;
 use crate::systems::worlds::Worlds;
-
-/// How far past its cell's edge a world sees: at least as far as a client sees, and as far as any
-/// script or skill reaches.
-pub const HALO: Meters = Meters(32.0);
+use crate::systems::{combat, stat, status, visibility};
 
 /// Stands in for an entity the world at `owner` plays.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -36,6 +38,98 @@ pub struct Ghost {
 
 pub fn is_ghost(world: &World, entity: Entity) -> bool {
     world.get::<Ghost>(entity).is_some()
+}
+
+/// How far past its cell's edge a world sees, and what reaches that far: as far as a client sees,
+/// a skill lands or a script's event listens, so nothing acts on what it can't hold. A script's
+/// scan, whose distance is an expression, reaches at most this far past its cell.
+pub fn halo(content: &Content) -> (Meters, String) {
+    let mut floor = (visibility::VIEW_DISTANCE, "a client sees".to_owned());
+    let mut raise = |reach: Meters, by: String| {
+        if reach > floor.0 {
+            floor = (reach, by);
+        }
+    };
+    for (id, skill) in content.table::<SkillDef>().iter() {
+        let reach = skill.range.map_or(0.0, |range| range.0)
+            + skill.area.as_ref().map_or(0.0, |area| area.reach().0);
+        raise(Meters(reach), format!("{} reaches", id.path(content)));
+    }
+    for (row, procedures) in content.built::<RiftScripts>().owners() {
+        for procedure in procedures {
+            for (_, event) in &procedure.entries {
+                if let RiftEvent::CameNear { within, .. } | RiftEvent::Heard { within, .. } = event
+                {
+                    raise(
+                        *within,
+                        format!(
+                            "{} listens in {}",
+                            procedure.label,
+                            owner_site(content, *row).file
+                        ),
+                    );
+                }
+            }
+        }
+    }
+    floor
+}
+
+/// What lands on an actor from another world: dealt to its ghost here, applied by its owner on
+/// the next tick as if dealt there.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Effect {
+    Inflict {
+        damage: f32,
+    },
+    Heal {
+        amount: f32,
+    },
+    Status {
+        effect: StatusEffectId,
+        power: f32,
+        lasts: Option<Seconds>,
+    },
+}
+
+/// Posts `effect` to the owner of `target` when `target` is a ghost here, from `by` as the owner
+/// knows it; false when `target` is this world's own to act on.
+pub fn post(world: &mut World, target: Entity, by: Option<Entity>, effect: Effect) -> bool {
+    let Some(ghost) = world.get::<Ghost>(target).copied() else {
+        return false;
+    };
+    let named = world.resource::<Named>();
+    let Some(to) = named.name(target) else {
+        return true;
+    };
+    let letter = Letter {
+        to,
+        by: by.and_then(|by| named.name(by)),
+        effect,
+    };
+    world.resource_mut::<Outbox>().0.push((ghost.owner, letter));
+    true
+}
+
+/// Lands what neighbours posted to this world's own entities since the last exchange.
+pub fn deliver(world: &mut World) {
+    let letters = std::mem::take(&mut world.resource_mut::<Inbox>().0);
+    for letter in letters {
+        let named = world.resource::<Named>();
+        let Some(to) = named.get(letter.to) else {
+            continue;
+        };
+        let by = letter.by.and_then(|by| named.get(by));
+        match letter.effect {
+            Effect::Inflict { damage } => combat::inflict(world, to, by, damage),
+            Effect::Heal { amount } => stat::heal(world, to, amount),
+            Effect::Status {
+                effect,
+                power,
+                lasts,
+            } => status::apply(world, to, effect, power, lasts),
+        }
+    }
 }
 
 /// How each system declares what of its entities leaves their world: to the clients that see them,
@@ -116,36 +210,46 @@ impl AppMirrorExt for App {
     }
 
     fn mirror<C: Component + Clone>(&mut self) -> &mut Self {
-        self.world_mut()
-            .get_resource_or_init::<Mirrors>()
-            .0
-            .push(MirrorFns {
-                changed: |world, entity, since| {
-                    let entity = world.entity(entity);
-                    let component = entity.get::<C>()?;
-                    let changed = since.is_none_or(|(last_run, this_run)| {
-                        entity
-                            .get_change_ticks::<C>()
-                            .is_some_and(|ticks: ComponentTicks| {
-                                ticks.is_changed(last_run, this_run)
-                            })
-                    });
-                    changed.then(|| Box::new(component.clone()) as Part)
-                },
-                apply: |world, entity, part, named| {
-                    let mut component = *part.downcast::<C>().expect("the part registered as C");
-                    C::map_entities(&mut component, named);
-                    world.entity_mut(entity).insert(component);
-                },
-            });
+        add::<C>(self.world_mut());
         self
     }
 }
 
 pub fn register(app: &mut App) {
-    app.init_resource::<Mirrors>();
-    app.init_resource::<Exchanged>();
-    app.world_mut().register_component::<Ghost>();
+    prepare(app.world_mut());
+}
+
+/// Readies a world to hold ghosts and post to their owners.
+pub fn prepare(world: &mut World) {
+    world.init_resource::<Mirrors>();
+    world.init_resource::<Exchanged>();
+    world.init_resource::<Outbox>();
+    world.init_resource::<Inbox>();
+    world.register_component::<Ghost>();
+    world.register_component::<GlobalId>();
+    world.register_component::<Position>();
+    world.register_component::<Replicated>();
+}
+
+/// Adds `C` to what a world's ghosts carry of their owners.
+pub fn add<C: Component + Clone>(world: &mut World) {
+    world.get_resource_or_init::<Mirrors>().0.push(MirrorFns {
+        changed: |world, entity, since| {
+            let entity = world.entity(entity);
+            let component = entity.get::<C>()?;
+            let changed = since.is_none_or(|(last_run, this_run)| {
+                entity
+                    .get_change_ticks::<C>()
+                    .is_some_and(|ticks: ComponentTicks| ticks.is_changed(last_run, this_run))
+            });
+            changed.then(|| Box::new(component.clone()) as Part)
+        },
+        apply: |world, entity, part, named| {
+            let mut component = *part.downcast::<C>().expect("the part registered as C");
+            C::map_entities(&mut component, named);
+            world.entity_mut(entity).insert(component);
+        },
+    });
 }
 
 /// Hands every world the ghosts of what its neighbours own within its halo: first who stands
@@ -193,13 +297,34 @@ pub fn exchange(worlds: &Worlds, apps: &mut [&mut World]) {
     apps.par_iter_mut()
         .zip(incoming)
         .for_each(|(world, incoming)| apply(world, incoming));
+    let mut posted: Vec<Vec<Letter>> = (0..count).map(|_| Vec::new()).collect();
     for world in apps.iter_mut() {
         let tick = world.change_tick();
         world.resource_mut::<Exchanged>().0 = Some(tick);
+        for (owner, letter) in std::mem::take(&mut world.resource_mut::<Outbox>().0) {
+            posted[owner].push(letter);
+        }
+    }
+    for (world, letters) in apps.iter_mut().zip(posted) {
+        world.resource_mut::<Inbox>().0.extend(letters);
     }
 }
 
 type Part = Box<dyn Any + Send + Sync>;
+
+struct Letter {
+    to: GlobalId,
+    by: Option<GlobalId>,
+    effect: Effect,
+}
+
+/// What this world posted to its neighbours this tick, by the world it goes to.
+#[derive(Resource, Default)]
+struct Outbox(Vec<(usize, Letter)>);
+
+/// What neighbours posted to this world, landed by `deliver`.
+#[derive(Resource, Default)]
+struct Inbox(Vec<Letter>);
 
 /// The ticks a change is looked for between, or none to take a component as it stands.
 type Since = Option<(Tick, Tick)>;
@@ -255,9 +380,9 @@ fn standing_in_halos(worlds: &Worlds, index: usize, world: &World) -> Standing {
     let mut halos: HashMap<usize, Vec<(Entity, GlobalId)>> = HashMap::default();
     let mut owned = world
         .try_query_filtered::<(Entity, &GlobalId, &Position), (With<Replicated>, Without<Ghost>)>()
-        .expect("GlobalId, Position, Replicated and Ghost are registered in every world");
+        .expect("prepare registers what the halo is scanned by");
     for (entity, &id, position) in owned.iter(world) {
-        for neighbour in worlds.around(index, position.pos, HALO) {
+        for neighbour in worlds.around(index, position.pos) {
             halos.entry(neighbour).or_default().push((entity, id));
         }
     }

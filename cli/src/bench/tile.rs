@@ -1,7 +1,8 @@
 //! A game whose spawn area is laid out again and again, side by side, into one larger area: its
 //! ground, and everything its scene holds with it, so a larger area carries what as many areas
 //! would. A tile's residents are npcs of their own, copies of the first tile's, and its named
-//! objects are named apart, as an area holds each of those once.
+//! objects are named apart, as an area holds each of those once, and its test characters start
+//! on it, copies of the first tile's.
 
 use std::collections::BTreeMap;
 use std::fs;
@@ -9,24 +10,40 @@ use std::path::Path;
 use std::sync::Arc;
 
 use engine::core::content::{
-    Content, ContentFile, FilesystemFolder, FolderReader, content_path, name_of, parent_of,
+    Content, ContentFile, FilesystemFolder, FolderReader, WrittenFiles, content_path, name_of,
+    parent_of,
 };
 use engine::core::ground::{GroundSize, Heightfield, Paint, SAMPLES_PER_METER};
+use engine::core::math::Pos;
 use engine::core::script::VarValue;
+use engine::core::units::Meters;
 use engine::systems::area::scene::{SceneFolder, SceneNode};
 use engine::systems::area::{AreaDef, AreaModule};
 use engine::systems::npc::{NpcDef, NpcId};
+use engine::systems::player::snapshot::{CharacterSnapshot, CharacterStart, start_of};
+use engine::systems::script::Place;
 use engine::systems::{GameSettings, registry};
+
+/// Sets the cell size of the game written at `into`, whose content is `content`.
+pub fn with_cell_size(into: &Path, content: &Content, size: Meters) -> Result<(), String> {
+    let mut settings = content.built::<GameSettings>().clone();
+    settings.spatial_partition_cell_size = size;
+    let files = reader_of(into).write_settings(&settings);
+    write(
+        into,
+        files.map(|files| WrittenFiles {
+            files,
+            removed: Vec::new(),
+        }),
+    )
+}
 
 /// Writes into `into` the game at `game` with its spawn area laid out `side` by `side` times.
 pub fn tiled(game: &Path, content: &Content, side: u32, into: &Path) -> Result<(), String> {
     copy_folder(game, into)?;
-    let area_path = content
-        .built::<GameSettings>()
-        .initial_spawn
-        .area
-        .path(content)
-        .to_owned();
+    let spawn = content.built::<GameSettings>().initial_spawn;
+    let area_path = spawn.area.path(content).to_owned();
+    let tile_size = spawn.area.get(content).size;
     let tiles: Vec<(u32, u32)> = (0..side)
         .flat_map(|row| (0..side).map(move |column| (column, row)))
         .collect();
@@ -53,6 +70,34 @@ pub fn tiled(game: &Path, content: &Content, side: u32, into: &Path) -> Result<(
                 .map_err(|errors| format!("{npc} doesn't read: {} problem(s)", errors.len()))?;
             write(into, reader.write(&copy, &def))?;
             copies.insert((tile, npc.clone()), copy);
+        }
+    }
+    let characters: Vec<&str> = content
+        .table::<CharacterSnapshot>()
+        .ids()
+        .filter(|&id| start_of(content, id.get(content)).area == spawn.area)
+        .map(|id| id.path(content))
+        .collect();
+    for &tile in tiles.iter().skip(1) {
+        for character in &characters {
+            let copy = content_path(
+                parent_of(character),
+                &format!("{}-{}-{}", name_of(character), tile.0, tile.1),
+                CharacterSnapshot::TABLE,
+                CharacterSnapshot::SHAPE,
+            );
+            let mut snapshot: CharacterSnapshot = reader.read(character).map_err(|errors| {
+                format!("{character} doesn't read: {} problem(s)", errors.len())
+            })?;
+            let start = start_of(content, &snapshot);
+            snapshot.start = CharacterStart::At(Place {
+                area: start.area,
+                at: Pos::new(
+                    start.at.x + (tile.0 * tile_size.width) as f32,
+                    start.at.y + (tile.1 * tile_size.height) as f32,
+                ),
+            });
+            write(into, reader.write(&copy, &snapshot))?;
         }
     }
 
@@ -172,10 +217,7 @@ fn reader_of(folder: &Path) -> FolderReader {
     FolderReader::new(registry(), Arc::new(FilesystemFolder(folder.to_path_buf())))
 }
 
-fn write(
-    into: &Path,
-    written: std::io::Result<engine::core::content::WrittenFiles>,
-) -> Result<(), String> {
+fn write(into: &Path, written: std::io::Result<WrittenFiles>) -> Result<(), String> {
     let written = written.map_err(|error| error.to_string())?;
     for (path, bytes) in written.files {
         let file = into.join(path);

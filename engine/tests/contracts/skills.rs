@@ -8,7 +8,7 @@ use engine::systems::combat::{self, AttackRequest, Attitude};
 use engine::systems::equipment::{self, Equipment, EquipmentPlace, UnequipRequest};
 use engine::systems::item::{self, ItemDef, UseItemRequest};
 use engine::systems::movement::{self, position};
-use engine::systems::npc::{self, NpcDef, Pack};
+use engine::systems::npc::{self, NpcDef};
 use engine::systems::skill::{
     self, AssignBasicAttackRequest, AssignHotbarRequest, BasicAttack, BasicAttackPick, CastAim,
     Hotbar, HotbarEntry, HotbarSlot, LearnSkillsRequest, Learned, Rank, ResetAnswerRequest,
@@ -600,7 +600,7 @@ fn dummy(sim: &mut Sim, player: Entity, offset: Offset<Meters>) -> Entity {
     let at: Pos<Meters> = position(&sim.world, player).expect("the player") + offset;
     let area = sim.id::<AreaDef>("yard");
     let def = sim.id::<NpcDef>("dummy");
-    let dummy = npc::spawn(&mut sim.world, def, at, area, Pack(u32::MAX));
+    let dummy = npc::spawn(&mut sim.world, def, at, area, None);
     sim.world.entity_mut(dummy).insert(Attitude::Hostile);
     sim.tick();
     dummy

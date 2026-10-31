@@ -214,7 +214,7 @@ pub fn spawn_all(world: &mut World) {
     let content = world.resource::<Content>().clone();
     let scripts = world.resource::<script::RiftScripts>().clone();
     let mine = world.resource::<WorldCell>().0;
-    let cells = area::load(&content, zone).cells;
+    let cells = area::cells(&content, zone);
     for (index, object) in area::objects(area::placed(&content, zone)) {
         if cells.at(object.shape.center()) != mine {
             continue;

@@ -14,7 +14,7 @@ use engine::systems::combat::{self, AttackRequest, Attitude};
 use engine::systems::equipment::{self, Equipment, EquipmentPlace, HoldRequest};
 use engine::systems::item::{self, DroppedItem, Inventory, ItemDef, ItemId};
 use engine::systems::movement::{self, position};
-use engine::systems::npc::{self, NpcDef, Pack};
+use engine::systems::npc::{self, NpcDef};
 use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs};
 use engine::systems::skill::{self, SkillDef};
 use engine::systems::stat::{self, StatKind};
@@ -549,7 +549,7 @@ fn foe(sim: &mut Sim, near: Entity, name: &str) -> Entity {
     let at = position(&sim.world, near).expect("a position") + Offset::<Meters>::new(1.0, 0.0);
     let area = sim.id::<AreaDef>("field");
     let def = sim.id::<NpcDef>(name);
-    let foe = npc::spawn(&mut sim.world, def, at, area, Pack(u32::MAX));
+    let foe = npc::spawn(&mut sim.world, def, at, area, None);
     sim.world.entity_mut(foe).insert(Attitude::Hostile);
     foe
 }

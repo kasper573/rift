@@ -3,6 +3,7 @@ use bevy_ecs::prelude::*;
 use super::{StatKind, Stats, base, effective};
 use crate::core::vfx::VfxSite;
 use crate::systems::actor::Hurt;
+use crate::systems::mirror::{self, Effect, Ghost};
 use crate::systems::notification;
 use crate::systems::vfx::{VfxFixture, VfxShaderFixture, fixture};
 
@@ -64,6 +65,9 @@ pub fn apply_damage(world: &mut World, entity: Entity, amount: f32) {
 /// A heal that lands as an event, shown where it lands; the slow trickle of regeneration is
 /// `regenerate`.
 pub fn heal(world: &mut World, entity: Entity, amount: f32) {
+    if mirror::post(world, entity, None, Effect::Heal { amount }) {
+        return;
+    }
     if is_dead(world, entity) || amount <= 0.0 {
         return;
     }
@@ -92,7 +96,10 @@ pub fn revive(world: &mut World, entity: Entity) {
     set_health(world, entity, |_, max| max);
 }
 
-pub fn settle_health(world: &mut World, living: &mut QueryState<Entity, With<Stats>>) {
+pub fn settle_health(
+    world: &mut World,
+    living: &mut QueryState<Entity, (With<Stats>, Without<Ghost>)>,
+) {
     let entities: Vec<Entity> = living.iter(world).collect();
     for entity in entities {
         set_health(world, entity, |health, _| health);

@@ -7,15 +7,15 @@ use engine::systems::area::{AreaDef, AreaId};
 use engine::systems::combat::{self, AttackRequest, Attitude};
 use engine::systems::movement::{self, MoveRequest, MoveSeq, SPACING, moving, position};
 use engine::systems::npc::body::{self, Act, Priority};
-use engine::systems::npc::{self, Npc, NpcDef, Pack};
+use engine::systems::npc::{self, Npc, NpcDef};
 use engine::systems::script::{self, Place};
 use engine::systems::stat::StatKind;
 use engine::systems::{actor, skill, stat};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, path};
 
-const FIGHTERS: Pack = Pack(1);
-const VICTIMS: Pack = Pack(2);
+const FIGHTERS: u32 = 1;
+const VICTIMS: u32 = 2;
 /// How far a brute strikes from, the `range` of its stats.
 const REACH: Meters = Meters(1.5);
 
@@ -409,10 +409,11 @@ impl Arena {
         self.brute(at, VICTIMS)
     }
 
-    fn brute(&mut self, at: Pos<Meters>, pack: Pack) -> Entity {
+    fn brute(&mut self, at: Pos<Meters>, pack: u32) -> Entity {
         let area = self.area;
         let def = self.sim.id::<NpcDef>("brute");
-        let brute = npc::spawn(self.world(), def, at, area, pack);
+        let pack = self.sim.pack(pack);
+        let brute = npc::spawn(self.world(), def, at, area, Some(pack));
         self.world().entity_mut(brute).insert(Attitude::Hostile);
         brute
     }
@@ -421,7 +422,8 @@ impl Arena {
     fn post(&mut self, at: Pos<Meters>) -> Entity {
         let area = self.area;
         let def = self.sim.id::<NpcDef>("post");
-        let post = npc::spawn(self.world(), def, at, area, FIGHTERS);
+        let pack = self.sim.pack(FIGHTERS);
+        let post = npc::spawn(self.world(), def, at, area, Some(pack));
         self.world().entity_mut(post).insert(Attitude::Hostile);
         post
     }

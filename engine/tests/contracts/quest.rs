@@ -823,7 +823,7 @@ fn slay(sim: &mut Sim, player: Entity, key: &str) {
     let at = movement::position(&sim.world, player).expect("player position");
     let area = sim.world.resource::<engine::systems::WorldArea>().0;
     let def = sim.id::<npc::NpcDef>(key);
-    let victim = npc::spawn(&mut sim.world, def, at, area, npc::Pack(u32::MAX));
+    let victim = npc::spawn(&mut sim.world, def, at, area, None);
     item::reserve(
         &mut sim.world,
         victim,

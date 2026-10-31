@@ -147,12 +147,6 @@ fn sim() -> Sim {
     npc::spawn_all(&mut sim.world);
     let raider = sim.id::<NpcDef>("raider");
     let area = sim.id::<AreaDef>("yard");
-    npc::spawn(
-        &mut sim.world,
-        raider,
-        Pos::new(18.0, 7.0),
-        area,
-        npc::Pack(u32::MAX),
-    );
+    npc::spawn(&mut sim.world, raider, Pos::new(18.0, 7.0), area, None);
     sim
 }

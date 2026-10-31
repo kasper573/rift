@@ -16,6 +16,7 @@ pub struct Worlds {
     areas: Vec<(AreaId, Cells)>,
     /// Where each area's cells start in the list.
     starts: Vec<usize>,
+    halo: Meters,
 }
 
 impl Worlds {
@@ -24,25 +25,35 @@ impl Worlds {
         Worlds::over(
             content
                 .ids::<AreaDef>()
-                .map(|id| (id, area::load(content, id).cells))
+                .map(|id| (id, area::cells(content, id)))
                 .collect(),
+            mirror::halo(content).0,
         )
     }
 
     /// `count` copies of `area`, each with every cell of its own, as a bench steps them.
     pub fn copies(content: &Content, area: AreaId, count: usize) -> Worlds {
-        let cells = area::load(content, area).cells;
-        Worlds::over(vec![(area, cells); count])
+        let cells = area::cells(content, area);
+        Worlds::over(vec![(area, cells); count], mirror::halo(content).0)
     }
 
-    fn over(areas: Vec<(AreaId, Cells)>) -> Worlds {
+    fn over(areas: Vec<(AreaId, Cells)>, halo: Meters) -> Worlds {
         let mut starts = Vec::with_capacity(areas.len());
         let mut next = 0;
         for (_, cells) in &areas {
             starts.push(next);
             next += cells.count();
         }
-        Worlds { areas, starts }
+        Worlds {
+            areas,
+            starts,
+            halo,
+        }
+    }
+
+    /// How far past its cell's edge every world sees.
+    pub fn halo(&self) -> Meters {
+        self.halo
     }
 
     pub fn len(&self) -> usize {
@@ -73,14 +84,10 @@ impl Worlds {
         self.areas.iter().any(|(_, cells)| cells.count() > 1)
     }
 
-    /// The worlds of the same area as `world`, other than it, whose cell lies within `reach` of
-    /// `at`: where what `world` owns at `at` is held as a ghost.
-    pub fn around(
-        &self,
-        world: usize,
-        at: Pos<Meters>,
-        reach: Meters,
-    ) -> impl Iterator<Item = usize> {
+    /// The worlds of the same area as `world`, other than it, whose halo reaches `at`: where what
+    /// `world` owns at `at` is held as a ghost.
+    pub fn around(&self, world: usize, at: Pos<Meters>) -> impl Iterator<Item = usize> {
+        let reach = self.halo;
         let copy = self.starts.partition_point(|&start| start <= world) - 1;
         let (_, cells) = self.areas[copy];
         let start = self.starts[copy];

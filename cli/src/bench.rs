@@ -35,12 +35,18 @@ pub enum BenchPart {
     /// How the server and the client fare as the spawn area grows, against as many areas holding
     /// the same; run only when named, as it plays the game at every size.
     Scale,
+    /// The server's tick on the spawn area grown large, at each size the game's cells could have:
+    /// what to set `spatial_partition_cell_size` to; run only when named.
+    Cells,
 }
 
 /// The server bench on the crowd, or on `game` followed by the client and memory benches, or only
 /// the parts named. Fails naming what the memory bench saw grow.
 pub fn run(game: Option<&Path>, spread: bool, only: &[BenchPart]) -> Result<(), String> {
-    let runs = |part| (only.is_empty() && part != BenchPart::Scale) || only.contains(&part);
+    let runs = |part| {
+        (only.is_empty() && !matches!(part, BenchPart::Scale | BenchPart::Cells))
+            || only.contains(&part)
+    };
     let layout = if spread {
         sim::Layout::Distributed
     } else {
@@ -66,6 +72,9 @@ pub fn run(game: Option<&Path>, spread: bool, only: &[BenchPart]) -> Result<(), 
             }
             if runs(BenchPart::Scale) {
                 scale::run(game, &content);
+            }
+            if runs(BenchPart::Cells) {
+                scale::cells(game, &content);
             }
             if runs(BenchPart::Memory) {
                 memory::run(game, &content)

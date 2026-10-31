@@ -6,7 +6,7 @@ use engine::systems::area::{AreaDef, AreaTag};
 use engine::systems::combat::{self, AttackRequest, Attitude};
 use engine::systems::item::{self, DroppedItem, Inventory, ItemDef, PickupRequest, Reservation};
 use engine::systems::movement::{self, MoveRequest, MoveSeq, Position, position};
-use engine::systems::npc::{self, NpcDef, Pack};
+use engine::systems::npc::{self, NpcDef};
 use engine::systems::reach;
 use engine::systems::stat::{self, StatKind};
 use engine::systems::{actor, skill};
@@ -109,7 +109,7 @@ fn yard() -> Sim {
 fn brute(sim: &mut Sim, at: Pos<Meters>) -> Entity {
     let area = sim.id::<AreaDef>("yard");
     let brute = sim.id::<NpcDef>("brute");
-    let brute = npc::spawn(&mut sim.world, brute, at, area, Pack(u32::MAX));
+    let brute = npc::spawn(&mut sim.world, brute, at, area, None);
     sim.world.entity_mut(brute).insert(Attitude::Hostile);
     brute
 }

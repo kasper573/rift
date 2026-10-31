@@ -200,7 +200,7 @@ pub fn summon(
             &region.mesh,
             ring(region, at, index, count),
         );
-        let summon = super::spawn(world, npc, spot, tag.area, pack);
+        let summon = super::spawn(world, npc, spot, tag.area, Some(pack));
         world
             .entity_mut(summon)
             .insert((Summoned { with }, Home(spot)));

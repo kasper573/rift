@@ -11,25 +11,26 @@ use engine::systems::movement::Position;
 use engine::systems::npc::Npc;
 use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, start_of};
 use engine::systems::player::{ClientId, Players};
+use engine::systems::script::Place;
 use engine::systems::skill::{CastAim, Hotbar, HotbarEntry, SkillDef, Targeting, UseSkillRequest};
 
 /// Ticks between one player's casts: two seconds at the server's rate.
 pub const CAST_EVERY: usize = 60;
 
-/// The test characters that start in `zone`, cycled through as the roster joins; a content with
-/// none leaves every player the fresh character a join makes.
-pub fn join_as(world: &mut World, content: &Content, zone: AreaId, conn: Entity, index: usize) {
-    let characters: Vec<&CharacterSnapshot> = content
+/// The test characters that start in `zone`, and where; a content with none leaves every player
+/// the fresh character a join makes.
+pub fn characters_in(content: &Content, zone: AreaId) -> Vec<(CharacterSnapshot, Place)> {
+    content
         .table::<CharacterSnapshot>()
         .ids()
         .map(|id| id.get(content))
-        .filter(|snapshot| start_of(content, snapshot).area == zone)
-        .collect();
-    if characters.is_empty() {
-        return;
-    }
-    let snapshot = characters[index % characters.len()].clone();
-    let start = start_of(content, &snapshot);
+        .map(|snapshot| (snapshot.clone(), start_of(content, snapshot)))
+        .filter(|(_, start)| start.area == zone)
+        .collect()
+}
+
+pub fn join_as(world: &mut World, conn: Entity, character: &(CharacterSnapshot, Place)) {
+    let (snapshot, start) = character.clone();
     world.entity_mut(conn).insert(JoinAs { snapshot, start });
 }
 

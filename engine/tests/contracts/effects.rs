@@ -13,7 +13,7 @@ use engine::systems::combat::{self, Attitude};
 use engine::systems::equipment::{self, EquipmentPlace, UnequipRequest};
 use engine::systems::item::{self, Inventory, ItemDef, ItemStack, UseItemRequest};
 use engine::systems::movement::{self, position};
-use engine::systems::npc::{self, NpcDef, Pack};
+use engine::systems::npc::{self, NpcDef};
 use engine::systems::skill::{
     self, AssignBasicAttackRequest, AssignHotbarRequest, CastAim, Hotbar, HotbarEntry, HotbarSlot,
     Rank, SkillDef, UseSkillRequest,
@@ -245,7 +245,7 @@ fn an_area_skill_leaves_its_status_on_everyone_it_hit() {
         roamer,
         aimed + Offset::new(0.0, 1.0),
         area,
-        Pack(7),
+        None,
     );
     sim.run(0.5);
     let burning = sim.id::<StatusEffectDef>("burning");
@@ -522,7 +522,7 @@ fn cast_fireball(sim: &mut Sim, at: Pos<Meters>) {
 fn dummy(sim: &mut Sim, at: Pos<Meters>) -> Entity {
     let area = sim.id::<AreaDef>("clinic");
     let def = sim.id::<NpcDef>("dummy");
-    let dummy = npc::spawn(&mut sim.world, def, at, area, Pack(u32::MAX));
+    let dummy = npc::spawn(&mut sim.world, def, at, area, None);
     sim.world.entity_mut(dummy).insert(Attitude::Hostile);
     sim.tick();
     dummy

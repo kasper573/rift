@@ -27,6 +27,7 @@ pub type BlueprintId = ContentId<BlueprintDef>;
 /// Placements nest at most this deep.
 pub const MAX_DEPTH: usize = 8;
 pub const MAX_PARTS: usize = 4096;
+/// How many modules an area holds flattened, per cell of its ground.
 pub const MAX_AREA_PARTS: usize = 65_536;
 pub const MAX_VARIABLES: usize = 32;
 
@@ -461,16 +462,6 @@ pub fn flatten_kept(
                 chain: Vec::new(),
             }),
         }
-    }
-    if out.len() > MAX_AREA_PARTS {
-        errors.push(FlattenError {
-            at: FlattenAt::Area(String::new()),
-            problem: ContentProblem::new(
-                "too many parts",
-                format!("{} modules after flattening", out.len()),
-                format!("at most {MAX_AREA_PARTS} per area"),
-            ),
-        });
     }
     Flattening {
         modules: out,

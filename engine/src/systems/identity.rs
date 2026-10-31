@@ -86,6 +86,10 @@ impl Named {
         self.by_name.get(&id).copied()
     }
 
+    pub fn name(&self, entity: Entity) -> Option<GlobalId> {
+        self.by_entity.get(&entity).copied()
+    }
+
     pub fn by_entity(&self) -> Arc<EntityHashMap<GlobalId>> {
         self.by_entity.clone()
     }

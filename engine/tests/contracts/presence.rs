@@ -7,7 +7,7 @@ use engine::systems::combat::{self, AttackRequest};
 use engine::systems::item::{ItemDef, ItemKind};
 use engine::systems::memory::{self, MemoryDef};
 use engine::systems::movement::{self, position};
-use engine::systems::npc::{self, NpcDef, Pack};
+use engine::systems::npc::{self, NpcDef};
 use engine::systems::player::ClientId;
 use engine::systems::script;
 use engine::systems::script::condition;
@@ -172,5 +172,5 @@ fn spawn(sim: &mut Sim, key: &str, near: Entity, offset: Offset<Meters>) -> Enti
     let at: Pos<Meters> = position(&sim.world, near).expect("a position") + offset;
     let area = sim.id::<AreaDef>("arena");
     let def = sim.id::<NpcDef>(key);
-    npc::spawn(&mut sim.world, def, at, area, Pack(u32::MAX))
+    npc::spawn(&mut sim.world, def, at, area, None)
 }

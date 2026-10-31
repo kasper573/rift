@@ -238,17 +238,21 @@ impl Content {
         self.table::<Row>().id_of(path)
     }
 
-    pub fn built<T: Any + Send + Sync>(&self) -> &T {
+    /// What was built into this content as `T`, if it was: a build that failed leaves none.
+    pub fn try_built<T: Any + Send + Sync>(&self) -> Option<&T> {
         self.0
             .built
             .get(&TypeId::of::<T>())
             .and_then(|built| built.downcast_ref())
-            .unwrap_or_else(|| {
-                panic!(
-                    "{} was never built into this content",
-                    std::any::type_name::<T>()
-                )
-            })
+    }
+
+    pub fn built<T: Any + Send + Sync>(&self) -> &T {
+        self.try_built().unwrap_or_else(|| {
+            panic!(
+                "{} was never built into this content",
+                std::any::type_name::<T>()
+            )
+        })
     }
 
     /// The path of every content file and media file. Content put together without the loader

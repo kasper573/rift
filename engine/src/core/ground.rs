@@ -12,9 +12,10 @@ use crate::core::geometry::Degrees;
 use crate::core::math::{Pos, Rect, Size};
 use crate::core::units::{CellPos, GROUND_ORIGIN, GridSize, MeterSize, Meters};
 
-pub const MAX_SIDE: u32 = 256;
+/// The ground is held whole, its height and paint maps with it, so an area spans at most this.
+pub const MAX_SIDE: u32 = 4096;
 pub const MIN_SIDE: u32 = 8;
-pub const MAX_CELLS: u32 = 65_536;
+pub const MAX_CELLS: u32 = MAX_SIDE * MAX_SIDE;
 /// The terrains one area's paint can name: a byte per half metre.
 pub const MAX_TERRAINS: usize = 256;
 pub const SAMPLES_PER_METER: u32 = 2;

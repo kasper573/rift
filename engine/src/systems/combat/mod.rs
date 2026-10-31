@@ -2,7 +2,7 @@ pub mod effects;
 pub mod render;
 
 use bevy_app::App;
-use bevy_ecs::entity::MapEntities;
+use bevy_ecs::entity::{EntityMapper, MapEntities};
 use bevy_ecs::prelude::*;
 use bevy_time::Time;
 use schemars::JsonSchema;
@@ -15,6 +15,7 @@ use crate::core::time::Seconds;
 use crate::core::units::Meters;
 use crate::core::vfx::VfxSite;
 use crate::systems::actor::{self, Actor};
+use crate::systems::mirror::{self, Effect, Ghost};
 use crate::systems::npc::Pack;
 use crate::systems::player::{self, PlayedBy, player_requests, session};
 use crate::systems::reach;
@@ -104,8 +105,18 @@ pub fn enemy_at(world: &mut World, pointed: &Pointed) -> Option<Entity> {
 }
 
 #[derive(Component, Clone, Debug, PartialEq)]
+#[component(map_entities)]
 pub struct Attackers {
     pub ids: Vec<Entity>,
+}
+
+impl MapEntities for Attackers {
+    fn map_entities<E: EntityMapper>(&mut self, mapper: &mut E) {
+        self.ids.retain_mut(|id| {
+            *id = mapper.get_mapped(*id);
+            *id != Entity::PLACEHOLDER
+        });
+    }
 }
 
 #[derive(Message, Clone, Debug, PartialEq)]
@@ -140,7 +151,7 @@ pub fn regen(world: &mut World) {
         last.0 = now;
     }
     let players: Vec<Entity> = world
-        .query_filtered::<Entity, With<PlayedBy>>()
+        .query_filtered::<Entity, (With<PlayedBy>, Without<Ghost>)>()
         .iter(world)
         .collect();
     for player in players {
@@ -164,6 +175,9 @@ pub fn request(world: &mut World) {
 }
 
 pub fn inflict(world: &mut World, target: Entity, attacker: Option<Entity>, damage: f32) {
+    if mirror::post(world, target, attacker, Effect::Inflict { damage }) {
+        return;
+    }
     if !stat::stands(world, target) || player::arriving(world, target) {
         return;
     }
@@ -182,7 +196,7 @@ pub fn inflict(world: &mut World, target: Entity, attacker: Option<Entity>, dama
 pub fn defeats(world: &mut World) {
     let time = Seconds(world.resource::<Time>().elapsed_secs());
     let fallen: Vec<Entity> = world
-        .query_filtered::<(Entity, &Stats), Without<Dead>>()
+        .query_filtered::<(Entity, &Stats), (Without<Dead>, Without<Ghost>)>()
         .iter(world)
         .filter(|(_, stats)| stat::dead(stats))
         .map(|(entity, _)| entity)

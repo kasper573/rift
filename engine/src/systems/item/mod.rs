@@ -9,7 +9,7 @@ use bevy_app::App;
 use bevy_ecs::component::Component;
 use bevy_ecs::entity::{Entity, MapEntities};
 use bevy_ecs::message::Message;
-use bevy_ecs::query::{QueryState, With};
+use bevy_ecs::query::{QueryState, With, Without};
 use bevy_ecs::world::World;
 use bevy_replicon::prelude::Replicated;
 use bevy_time::Time;
@@ -32,6 +32,7 @@ use crate::systems::actor::skeleton::{Colours, EquipmentSlot, LocalOffset, Local
 use crate::systems::actor::stance::StanceId;
 use crate::systems::area::{self, AreaId, AreaTag, PropId};
 use crate::systems::equipment;
+use crate::systems::mirror::Ghost;
 use crate::systems::movement::{Position, position};
 use crate::systems::npc::Npc;
 use crate::systems::player::{ClientId, PlayedBy, Players, player_requests};
@@ -821,10 +822,9 @@ pub fn pickups(world: &mut World, intents: &mut reach::Intents) {
     }
 }
 
-pub fn expire_drops(
-    world: &mut World,
-    drops: &mut QueryState<(Entity, &'static Reservation), With<DroppedItem>>,
-) {
+type OwnedDrops = QueryState<(Entity, &'static Reservation), (With<DroppedItem>, Without<Ghost>)>;
+
+pub fn expire_drops(world: &mut World, drops: &mut OwnedDrops) {
     let now = Seconds(world.resource::<Time>().elapsed_secs());
     let stale: Vec<Entity> = drops
         .iter(world)

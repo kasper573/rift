@@ -5,7 +5,7 @@ use engine::core::units::Meters;
 use engine::systems::area::AreaDef;
 use engine::systems::combat::{self, AttackRequest, Attitude};
 use engine::systems::movement::{self, position};
-use engine::systems::npc::{self, NpcDef, Pack};
+use engine::systems::npc::{self, NpcDef};
 use engine::systems::stat::{self, StatKind};
 use engine::systems::{actor, script, skill};
 use serde_json::json;
@@ -219,7 +219,7 @@ fn brute(sim: &mut Sim, player: Entity, offset: Offset<Meters>) -> Entity {
     let at: Pos<Meters> = position(&sim.world, player).expect("the player") + offset;
     let area = sim.id::<AreaDef>("field");
     let brute = sim.id::<NpcDef>("brute");
-    let brute = npc::spawn(&mut sim.world, brute, at, area, Pack(u32::MAX));
+    let brute = npc::spawn(&mut sim.world, brute, at, area, None);
     sim.world.entity_mut(brute).insert(Attitude::Hostile);
     brute
 }

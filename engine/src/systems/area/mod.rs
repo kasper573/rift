@@ -16,6 +16,22 @@ pub mod world_map;
 
 pub use blueprint::{BlueprintDef, Flattened, PlacedBlueprint, Placement};
 pub use cells::{Cell, Cells};
+
+/// How the server cuts `area` into the cells it runs, by the game's settings.
+pub fn cells(content: &Content, area: AreaId) -> Cells {
+    cells_over(content, load(content, area).size)
+}
+
+/// The cells over `size` by the game's settings; one cell while the settings aren't loaded, as
+/// nothing runs on a game whose settings failed.
+fn cells_over(content: &Content, size: Size<Meters>) -> Cells {
+    let side = content
+        .try_built::<GameSettings>()
+        .map_or(size.width.max(size.height), |settings| {
+            settings.spatial_partition_cell_size.0
+        });
+    Cells::over(size, Meters(side))
+}
 pub use lighting::{Lighting, PointLightDef};
 pub use object::{AreaObject, ObjectDef, ObjectShape};
 pub use prop::{Footprint, PropDef, PropId, PropPlacement, Scatter};
@@ -55,7 +71,7 @@ use crate::systems::movement;
 use crate::systems::movement::NavMesh;
 use crate::systems::npc::NpcId;
 use crate::systems::script::{self, Condition, OwnerRow, Reach, RiftScripts, ScriptModule};
-use blueprint::FlattenAt;
+use blueprint::{FlattenAt, FlattenError};
 use lighting::MAX_LIGHTS;
 use prop::MAX_PROPS;
 use scene::{SCENE, scene_file};
@@ -631,7 +647,6 @@ pub fn walkable(world: &World, at: Pos<Meters>) -> bool {
 /// it, and what it sounds like.
 pub struct Area {
     pub size: Size<Meters>,
-    pub cells: Cells,
     pub max_slope: Degrees,
     pub terrains: Vec<TerrainId>,
     pub heights: Heightfield,
@@ -863,6 +878,21 @@ async fn flatten_all(loading: &mut Loading) {
     for (id, def) in loading.rows::<AreaDef>(&content) {
         let mut errors = Vec::new();
         let flattening = blueprint::flatten(&content, &def.scene, &mut errors);
+        let cells = cells_over(&content, def.size.meters()).count();
+        if flattening.modules.len() > blueprint::MAX_AREA_PARTS * cells {
+            errors.push(FlattenError {
+                at: FlattenAt::Area(String::new()),
+                problem: ContentProblem::new(
+                    "too many parts",
+                    format!("{} modules after flattening", flattening.modules.len()),
+                    format!(
+                        "at most {} a cell, {} for this area",
+                        blueprint::MAX_AREA_PARTS,
+                        blueprint::MAX_AREA_PARTS * cells
+                    ),
+                ),
+            });
+        }
         let places_a_failed_blueprint = flattening
             .placements
             .iter()
@@ -941,6 +971,7 @@ pub(super) struct Ground {
 /// what stands and shines on it. With it, the problems of too much standing or shining there.
 fn build_area(content: &Content, ground: &Ground, modules: &[Flattened]) -> (Area, RowCheck) {
     let mut check = RowCheck::default();
+    let cells = cells_over(content, ground.size.meters()).count();
     let safe_zones: Vec<Rect<Meters>> = modules
         .iter()
         .filter_map(|placed| match &placed.module {
@@ -967,21 +998,23 @@ fn build_area(content: &Content, ground: &Ground, modules: &[Flattened]) -> (Are
             }
             _ => {}
         }
-        if props.len() > MAX_PROPS
+        if props.len() > MAX_PROPS * cells
             && matches!(placed.module, AreaModule::Prop(_) | AreaModule::Scatter(_))
         {
             check.error(
                 module_pointer(placed, ""),
                 "too many props",
                 format!("{} props standing in the area", props.len()),
-                format!("at most {MAX_PROPS} props in an area, scattered ones counted"),
+                format!(
+                    "at most {MAX_PROPS} props a cell, {} for this area, scattered ones counted",
+                    MAX_PROPS * cells
+                ),
             );
         }
     }
     let walk = walk::meshes(content, ground, &props, &safe_zones);
     let area = Area {
         size: ground.size.meters(),
-        cells: Cells::over(ground.size.meters()),
         max_slope: ground.max_slope,
         terrains: ground.terrains.clone(),
         heights: ground.heights.clone(),

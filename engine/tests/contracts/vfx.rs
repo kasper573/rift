@@ -10,7 +10,7 @@ use engine::systems::area::AreaDef;
 use engine::systems::class::{self, NodeKey};
 use engine::systems::combat::{self, Attitude};
 use engine::systems::movement::{self, position};
-use engine::systems::npc::{self, NpcDef, Pack};
+use engine::systems::npc::{self, NpcDef};
 use engine::systems::skill::{self, CastAim, Rank, SkillDef, UseSkillRequest};
 use engine::systems::stat::{self, StatKind};
 use engine::systems::visibility::Presence;
@@ -372,7 +372,7 @@ fn dummy_toward(sim: &mut Sim, player: Entity, east: f32) -> Entity {
     let at = position(&sim.world, player).expect("position") + Offset::new(east, 0.0);
     let area = sim.id::<AreaDef>("arena");
     let dummy = sim.id::<NpcDef>("dummy");
-    let dummy = npc::spawn(&mut sim.world, dummy, at, area, Pack(u32::MAX));
+    let dummy = npc::spawn(&mut sim.world, dummy, at, area, None);
     sim.world.entity_mut(dummy).insert(Attitude::Hostile);
     sim.tick();
     dummy

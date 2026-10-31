@@ -26,6 +26,7 @@ use crate::core::vfx::{
 use crate::systems::WorldArea;
 use crate::systems::area::{AreaObject, AreaTag};
 use crate::systems::mirror::AppMirrorExt;
+use crate::systems::mirror::Ghost;
 use crate::systems::movement::{Position, position};
 use crate::systems::player::PlayedBy;
 use crate::systems::script::effect::RiftEffect;
@@ -173,7 +174,10 @@ pub fn spawn_for(
     ))
 }
 
-pub fn expire(world: &mut World, instances: &mut QueryState<(Entity, &VfxInstance)>) {
+pub fn expire(
+    world: &mut World,
+    instances: &mut QueryState<(Entity, &VfxInstance), Without<Ghost>>,
+) {
     let now = world.resource::<WallClock>().now;
     let done: Vec<Entity> = instances
         .iter(world)

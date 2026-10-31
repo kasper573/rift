@@ -9,6 +9,7 @@ use crate::core::vfx::VfxSite;
 use crate::systems::actor::Actor;
 use crate::systems::equipment::Equipment;
 use crate::systems::item::{Inventory, ItemId, ItemKind};
+use crate::systems::mirror::Ghost;
 use crate::systems::notification;
 use crate::systems::script::effect::Audience;
 use crate::systems::script::event::RiftEvent;
@@ -72,7 +73,7 @@ type Stirred = Or<(
 
 /// Brings every actor whose statuses, gear, bag or learning changed to the aspects it should have:
 /// a new one activates, one no longer wanted deactivates, and a status applied again does both.
-pub fn settle(world: &mut World, stirred: &mut QueryState<Entity, Stirred>) {
+pub fn settle(world: &mut World, stirred: &mut QueryState<Entity, (Stirred, Without<Ghost>)>) {
     let actors: Vec<Entity> = stirred.iter(world).collect();
     for actor in actors {
         let wanted = desired(world, actor);

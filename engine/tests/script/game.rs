@@ -11,7 +11,7 @@ use engine::systems::combat::{self, AttackRequest};
 use engine::systems::dialogue::{self, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::movement::{self, position};
-use engine::systems::npc::{self, NpcDef, Pack};
+use engine::systems::npc::{self, NpcDef};
 use engine::systems::script::{
     self, EventKind, Owner, Procedure, RiftInstances, RunnerKind, ScriptModule,
 };
@@ -90,7 +90,8 @@ pub fn spawn(sim: &mut Sim, key: &str, near: Entity, offset: Offset<Meters>, pac
     let at: Pos<Meters> = position(&sim.world, near).expect("a position") + offset;
     let area = sim.id::<AreaDef>("field");
     let def = sim.id::<NpcDef>(key);
-    npc::spawn(&mut sim.world, def, at, area, Pack(pack))
+    let pack = sim.pack(pack);
+    npc::spawn(&mut sim.world, def, at, area, Some(pack))
 }
 
 /// A plain fighter beside `beside`, running only `modules`.
