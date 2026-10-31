@@ -60,6 +60,7 @@ rift render area <game> <shot> <out> # a picture of an area, drawn off screen th
 rift bench                           # the server's capacity, on a large game generated in code
 rift bench <game>                    # …on the game, then the desktop client's frame rate and memory (Linux)
 rift bench <game> --only memory      # …only the parts named: server, client, memory
+rift bench <game> --only scale       # …the spawn area grown side by side, against as many areas: run only when named
 rift loadtest --http <url> --ws <url> [count]
 rift profile --out <dir> [game]      # game-server-profiling under load, sampled by perf (Linux)
 rift schema probe                    # the JSON Schema of the desktop client's probe

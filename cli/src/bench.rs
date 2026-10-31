@@ -3,7 +3,9 @@ mod desktop;
 mod memory;
 mod play;
 mod playtest;
+mod scale;
 mod sim;
+mod tile;
 
 use std::path::Path;
 use std::time::Instant;
@@ -30,12 +32,15 @@ pub enum BenchPart {
     Client,
     /// Whether the client and the server hold their memory level as a player plays.
     Memory,
+    /// How the server and the client fare as the spawn area grows, against as many areas holding
+    /// the same; run only when named, as it plays the game at every size.
+    Scale,
 }
 
 /// The server bench on the crowd, or on `game` followed by the client and memory benches, or only
 /// the parts named. Fails naming what the memory bench saw grow.
 pub fn run(game: Option<&Path>, spread: bool, only: &[BenchPart]) -> Result<(), String> {
-    let runs = |part| only.is_empty() || only.contains(&part);
+    let runs = |part| (only.is_empty() && part != BenchPart::Scale) || only.contains(&part);
     let layout = if spread {
         sim::Layout::Distributed
     } else {
@@ -58,6 +63,9 @@ pub fn run(game: Option<&Path>, spread: bool, only: &[BenchPart]) -> Result<(), 
             }
             if runs(BenchPart::Client) {
                 client::run(game, &content);
+            }
+            if runs(BenchPart::Scale) {
+                scale::run(game, &content);
             }
             if runs(BenchPart::Memory) {
                 memory::run(game, &content)

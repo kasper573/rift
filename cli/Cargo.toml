@@ -30,6 +30,7 @@ tungstenite = { version = "0.30", features = ["rustls-tls-native-roots"] }
 ureq = { workspace = true, features = ["rustls", "platform-verifier"] }
 sysinfo = { version = "0.40.0", default-features = false, features = ["system"] }
 walkdir = "2"
+tikv-jemalloc-ctl = { version = "0.7", features = ["stats"] }
 
 [lints]
 workspace = true

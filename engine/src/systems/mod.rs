@@ -422,18 +422,20 @@ pub fn client_app(
 /// for these single-schedule headless apps `run_schedule(Main)` + `clear_trackers` is what
 /// `App::update` does.
 pub fn step_areas(apps: &mut [App], clock: WallClock) {
-    use bevy_app::Main;
     use rayon::prelude::*;
 
     apps.iter_mut()
         .map(App::world_mut)
         .collect::<Vec<_>>()
         .into_par_iter()
-        .for_each(|world| {
-            world.insert_resource(clock);
-            world.run_schedule(Main);
-            world.clear_trackers();
-        });
+        .for_each(|world| step_area(world, clock));
+}
+
+/// One tick of one area's world, as [`step_areas`] steps each.
+pub fn step_area(world: &mut World, clock: WallClock) {
+    world.insert_resource(clock);
+    world.run_schedule(bevy_app::Main);
+    world.clear_trackers();
 }
 
 pub fn load_content(

@@ -2940,6 +2940,7 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "testkit",
+ "tikv-jemalloc-ctl",
  "tungstenite 0.30.0",
  "ureq",
  "walkdir",

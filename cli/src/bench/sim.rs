@@ -71,8 +71,13 @@ pub struct Bench {
 
 impl Bench {
     pub fn new(areas: usize, layout: Layout, content: &Content) -> Bench {
+        Bench::with_players(areas, PLAYERS_PER_AREA, layout, content)
+    }
+
+    /// `areas` of the spawn area, each with `players` playing in it.
+    pub fn with_players(areas: usize, players: usize, layout: Layout, content: &Content) -> Bench {
         let (worlds, rosters) = (0..areas)
-            .map(|ordinal| build_world(layout, content, ordinal as u64))
+            .map(|ordinal| build_world(layout, content, ordinal as u64, players))
             .unzip();
         Bench {
             worlds,
@@ -141,7 +146,12 @@ pub fn load(content_dir: &Path) -> Content {
 /// the flags byte.
 const MUTATE_INDEX: std::ops::Range<usize> = 1..3;
 
-fn build_world(layout: Layout, content: &Content, ordinal: u64) -> (App, Vec<Entity>) {
+fn build_world(
+    layout: Layout,
+    content: &Content,
+    ordinal: u64,
+    players: usize,
+) -> (App, Vec<Entity>) {
     let mut app = server_app(
         content.built::<GameSettings>().initial_spawn.area,
         ordinal,
@@ -158,8 +168,8 @@ fn build_world(layout: Layout, content: &Content, ordinal: u64) -> (App, Vec<Ent
 
     let zone = content.built::<GameSettings>().initial_spawn.area;
     let world = app.world_mut();
-    let mut roster = Vec::with_capacity(PLAYERS_PER_AREA);
-    for index in 0..PLAYERS_PER_AREA {
+    let mut roster = Vec::with_capacity(players);
+    for index in 0..players {
         let conn = world.spawn(ClientId(index as u32 + 1)).id();
         play::join_as(world, content, zone, conn, index);
         from_client(world, conn, JoinRequest);
