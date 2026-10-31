@@ -40,7 +40,7 @@ binary and platform, `<binary>-<platform>.tar.gz` (`.zip` on Windows), each hold
 | `desktop-client` | Linux, Windows, macOS | The game, for players. |
 | `editor` | Linux, Windows, macOS | Makes and changes games. |
 | `rift` | Linux, Windows, macOS | The command line tool. |
-| `web-server` | Linux | A game's website. |
+| `web-server` | Linux, Windows, macOS | A game's website. |
 | `game-server-profiling` | Linux | `game-server` with the symbols and frame pointers a sampling profiler reads. |
 
 Archives extracted into one folder make a **binaries folder**: `editor` and `rift` find `game-server`,
@@ -154,7 +154,7 @@ Then:
 just editor           # build editor, game-server and desktop-client, and open the editor
 just editor ~/my-game # …on a game folder
 just dist             # this machine's binaries, as a release lays them out, in target/dist
-just dist target/dist desktop # …only some of its parts: desktop, web, profiling
+just dist target/dist profiling # …and game-server-profiling, on Linux
 just bench            # the server bench on the generated game
 just lint             # rustfmt, clippy, the repo's own lints, and `rift check` on the editor's templates
 just test             # every crate's tests

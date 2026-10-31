@@ -80,7 +80,7 @@ jobs:
       - name: Build the binaries
         shell: bash
         run: |
-          just dist target/dist
+          just dist target/dist profiling
           just archives "${{ matrix.platform }}" target/dist target/archives
       - name: Smoke-test the website, the game server and the desktop client
         if: ${{ matrix.platform == 'linux-x86_64' }}
