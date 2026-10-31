@@ -49,13 +49,17 @@ pub struct Pulled(pub usize);
 
 /// Hands every actor or drop of an awake world standing deep in another cell, or pulled by one, over to that
 /// cell's world, and tells which players' connections must follow.
-pub fn handoff(worlds: &Worlds, apps: &mut [&mut World], wake: &[Wake]) -> Vec<Moved> {
+pub fn handoff(worlds: &Worlds, apps: &mut [Option<&mut World>], wake: &[Wake]) -> Vec<Moved> {
     if !worlds.has_borders() {
         return Vec::new();
     }
+    let made: Vec<bool> = apps.iter().map(Option::is_some).collect();
     let mut moved = Vec::new();
     for from in (0..apps.len()).filter(|&from| wake[from].awake()) {
-        for (to, carried) in departing(worlds, from, apps[from]) {
+        let Some(world) = apps[from].as_deref_mut() else {
+            continue;
+        };
+        for (to, carried) in departing(worlds, from, world, &made) {
             if let Carried::Player(player) = &carried {
                 moved.push(Moved {
                     client: player.client,
@@ -63,7 +67,12 @@ pub fn handoff(worlds: &Worlds, apps: &mut [&mut World], wake: &[Wake]) -> Vec<M
                     to,
                 });
             }
-            arrive(apps[to], carried);
+            arrive(
+                apps[to]
+                    .as_deref_mut()
+                    .expect("departures go to made worlds"),
+                carried,
+            );
         }
     }
     moved
@@ -154,7 +163,14 @@ impl FromWorld for Scans {
     }
 }
 
-fn departing(worlds: &Worlds, index: usize, world: &mut World) -> Vec<(usize, Carried)> {
+/// Who leaves the world this tick, and for which: those standing deep in another cell or pulled
+/// by one, but for a cell whose world isn't made yet, where they wait at the border.
+fn departing(
+    worlds: &Worlds,
+    index: usize,
+    world: &mut World,
+    made: &[bool],
+) -> Vec<(usize, Carried)> {
     world.get_resource_or_init::<Scans>();
     let (leaving, pulled) = world.resource_scope(|world, mut scans: Mut<Scans>| {
         let held = dialogue::counterparts(world, &mut scans.sessions);
@@ -167,7 +183,7 @@ fn departing(worlds: &Worlds, index: usize, world: &mut World) -> Vec<(usize, Ca
                 let to = worlds
                     .beyond(index, position.pos)
                     .or(pulled.map(|pulled| pulled.0))?;
-                Some((entity, to))
+                made[to].then_some((entity, to))
             })
             .collect();
         (leaving, pulled)

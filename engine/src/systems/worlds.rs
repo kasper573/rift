@@ -91,6 +91,19 @@ impl Worlds {
             .map(move |cell| start + cell.0 as usize)
     }
 
+    /// The worlds a tick may touch on account of a client connected to `world`: its own, those
+    /// beside it, which wake, and those beside them, which the actors of a waking world may walk
+    /// into or post to.
+    pub fn reached_from(&self, world: usize) -> impl Iterator<Item = usize> + use<> {
+        let mut reached: Vec<usize> = std::iter::once(world)
+            .chain(self.beside(world))
+            .flat_map(|near| std::iter::once(near).chain(self.beside(near)))
+            .collect();
+        reached.sort_unstable();
+        reached.dedup();
+        reached.into_iter()
+    }
+
     /// Whether any area runs as more than one cell, so some world borders on another.
     pub fn has_borders(&self) -> bool {
         self.areas.iter().any(|(_, cells)| cells.count() > 1)
@@ -130,14 +143,16 @@ impl Worlds {
 /// stands deep in another cell handed over to it; the players whose connections must follow
 /// their characters. A world sleeps while no client is connected to it or a cell beside it and
 /// no mail waits for it: a cell with no one to see it stands still, untouched, until someone
-/// comes.
-pub fn tick(worlds: &Worlds, views: &mut [&mut World], clock: WallClock) -> Vec<Moved> {
+/// comes. A cell whose world isn't made yet sleeps; [`Worlds::reached_from`] says which must be
+/// made for a client's.
+pub fn tick(worlds: &Worlds, views: &mut [Option<&mut World>], clock: WallClock) -> Vec<Moved> {
     let wake = wake(worlds, views);
     views
         .par_iter_mut()
         .zip(&wake)
         .filter(|(_, wake)| wake.awake())
-        .for_each(|(world, _)| step_area(world, clock));
+        .filter_map(|(world, _)| world.as_deref_mut())
+        .for_each(|world| step_area(world, clock));
     mirror::exchange(worlds, views, &wake);
     handoff::handoff(worlds, views, &wake)
 }
@@ -162,26 +177,29 @@ impl Wake {
 /// The worlds to step this tick: those a client is connected to, those beside one, whose actors
 /// the players there see as ghosts, and those with mail to land. A world that falls asleep is
 /// marked so, so the tick it wakes in knows.
-fn wake(worlds: &Worlds, views: &mut [&mut World]) -> Vec<Wake> {
+fn wake(worlds: &Worlds, views: &mut [Option<&mut World>]) -> Vec<Wake> {
     let connected: Vec<bool> = views
         .iter()
-        .map(|world| player::any_connected(world))
+        .map(|world| world.as_deref().is_some_and(player::any_connected))
         .collect();
     (0..views.len())
         .map(|index| {
+            let Some(world) = views[index].as_deref_mut() else {
+                return Wake::Asleep;
+            };
             let awake = connected[index]
-                || mirror::has_mail(views[index])
+                || mirror::has_mail(world)
                 || worlds.beside(index).any(|beside| connected[beside]);
-            let slept = views[index].contains_resource::<Slept>();
+            let slept = world.contains_resource::<Slept>();
             match (awake, slept) {
                 (true, false) => Wake::Awake,
                 (true, true) => {
-                    views[index].remove_resource::<Slept>();
+                    world.remove_resource::<Slept>();
                     Wake::Woken
                 }
                 (false, slept) => {
                     if !slept {
-                        views[index].insert_resource(Slept);
+                        world.insert_resource(Slept);
                     }
                     Wake::Asleep
                 }

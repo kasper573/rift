@@ -126,24 +126,28 @@ fn main() {
     };
     let reset = config.daily_reset_utc_hour;
     let rng_seed = seeded(config.rng_seed);
-    let worlds: Vec<App> = cells
-        .iter()
-        .enumerate()
-        .map(|(ordinal, (area, cell))| {
+    let daylight = config.daylight;
+    let places: Vec<_> = cells.iter().collect();
+    let mut worlds = Cellar {
+        apps: places.iter().map(|_| None).collect(),
+        cells: cells.clone(),
+        make: Box::new(move |ordinal| {
+            let (area, cell) = places[ordinal];
             let mut app = server_app(
                 area,
                 cell,
                 ordinal as u64,
                 rng_seed,
                 wall_clock(reset),
-                config.daylight,
+                daylight,
                 &content,
             );
             app.insert_resource(rules);
             start_server(&mut app);
             app
-        })
-        .collect();
+        }),
+    };
+    worlds.reach(lobby.spawn);
     let transport = WsTransport::bind(
         ws_bind,
         sessions,
@@ -163,6 +167,45 @@ fn main() {
     println!("{}", serde_json::to_string(&ready).expect("a ready line"));
     simulate(worlds, transport, lobby, stages, reset, stdin);
     runtime.shutdown_background();
+}
+
+/// The world of every cell of every area, each made when a client first comes within reach of it:
+/// a land of many cells costs only the worlds its players have come near.
+struct Cellar {
+    apps: Vec<Option<App>>,
+    cells: Worlds,
+    make: Box<dyn Fn(usize) -> App>,
+}
+
+impl Cellar {
+    /// The world of cell `index`, made now if it wasn't.
+    fn app(&mut self, index: usize) -> &mut App {
+        let make = &self.make;
+        self.apps[index].get_or_insert_with(|| make(index))
+    }
+
+    /// Makes every world a tick may touch on account of a client in `world`.
+    fn reach(&mut self, world: usize) {
+        for index in self.cells.reached_from(world) {
+            self.app(index);
+        }
+    }
+
+    fn count(&self) -> usize {
+        self.apps.len()
+    }
+
+    fn made(&mut self) -> impl Iterator<Item = &mut App> {
+        self.apps.iter_mut().flatten()
+    }
+
+    /// Every cell's world as a tick takes them, none for those not made.
+    fn views(&mut self) -> Vec<Option<&mut World>> {
+        self.apps
+            .iter_mut()
+            .map(|app| app.as_mut().map(App::world_mut))
+            .collect()
+    }
 }
 
 struct Lobby {
@@ -226,7 +269,7 @@ impl Lobby {
 }
 
 fn simulate(
-    mut worlds: Vec<App>,
+    mut worlds: Cellar,
     mut transport: WsTransport,
     mut lobby: Lobby,
     stages: Receiver<StageAsked>,
@@ -234,7 +277,10 @@ fn simulate(
     stdin: Option<StdinClosed>,
 ) {
     let (connection_config, client_channels) = {
-        let channels = worlds[0].world().resource::<RepliconChannels>();
+        let channels = worlds
+            .app(lobby.spawn)
+            .world()
+            .resource::<RepliconChannels>();
         let config =
             ConnectionConfig::from_channels(channels.server_configs(), channels.client_configs());
         (config, channels.client_channels().len())
@@ -263,10 +309,14 @@ fn simulate(
                     counter!("rift_client_connections_opened_total").increment(1);
                     let identity = transport.take_identity(client_id);
                     let account = identity.as_ref().map(|identity| identity.id.clone());
-                    let (client, world, join_as) = lobby.admit(account, &conns, worlds.len());
-                    let entity = spawn_conn(&mut worlds[world], client, client_id, identity);
+                    let (client, world, join_as) = lobby.admit(account, &conns, worlds.count());
+                    let entity = spawn_conn(worlds.app(world), client, client_id, identity);
                     if let Some(join_as) = join_as {
-                        worlds[world].world_mut().entity_mut(entity).insert(join_as);
+                        worlds
+                            .app(world)
+                            .world_mut()
+                            .entity_mut(entity)
+                            .insert(join_as);
                     }
                     conns.insert(
                         client_id,
@@ -281,7 +331,7 @@ fn simulate(
                     counter!("rift_client_connections_closed_total", "code" => disconnect_code(&reason))
                         .increment(1);
                     if let Some(conn) = conns.remove(&client_id) {
-                        worlds[conn.world].world_mut().despawn(conn.entity);
+                        worlds.app(conn.world).world_mut().despawn(conn.entity);
                         if !conns.values().any(|other| other.client == conn.client) {
                             lobby.leave(conn.client);
                         }
@@ -291,7 +341,7 @@ fn simulate(
         }
 
         for (&network_id, conn) in &conns {
-            let world = worlds[conn.world].world_mut();
+            let world = worlds.app(conn.world).world_mut();
             for channel in 0..client_channels as u8 {
                 while let Some(message) = server.receive_message(network_id, channel) {
                     world.resource_mut::<ServerMessages>().insert_received(
@@ -308,7 +358,10 @@ fn simulate(
             let _ = asked.answer.send(staged);
         }
 
-        let mut views: Vec<&mut World> = worlds.iter_mut().map(App::world_mut).collect();
+        for conn in conns.values() {
+            worlds.reach(conn.world);
+        }
+        let mut views = worlds.views();
         for moved in worlds::tick(&lobby.cells, &mut views, wall_clock(reset)) {
             transfers.push(Transfer {
                 client: moved.client,
@@ -320,7 +373,7 @@ fn simulate(
 
         begin_transfers(&mut worlds, &lobby.cells, &mut transfers, tick);
 
-        for app in worlds.iter_mut() {
+        for app in worlds.made() {
             let world = app.world_mut();
             let sent: Vec<_> = world
                 .resource_mut::<ServerMessages>()
@@ -341,7 +394,7 @@ fn simulate(
         histogram!(TICK_METRIC).record(started.elapsed().as_secs_f64());
         histogram!("rift_tick_interval_seconds").record(dt.as_secs_f64());
         gauge!("rift_clients_connected").set(conns.len() as f64);
-        record_ecs_metrics(&worlds);
+        record_ecs_metrics(&mut worlds);
         record_network_metrics(&server, &conns);
 
         if let Some(remaining) = frame.checked_sub(started.elapsed()) {
@@ -358,7 +411,7 @@ struct StageAsked {
 }
 
 fn stage(
-    worlds: &mut [App],
+    worlds: &mut Cellar,
     conns: &HashMap<u64, Conn>,
     online: &Online,
     asked: &StageAsked,
@@ -374,7 +427,11 @@ fn stage(
         .values()
         .find(|conn| conn.client == client)
         .ok_or("the account's character is between areas")?;
-    staging::stage(worlds[conn.world].world_mut(), conn.entity, asked.staging)
+    staging::stage(
+        worlds.app(conn.world).world_mut(),
+        conn.entity,
+        asked.staging,
+    )
 }
 
 fn wall_clock(reset: UtcHour) -> WallClock {
@@ -384,7 +441,8 @@ fn wall_clock(reset: UtcHour) -> WallClock {
     }
 }
 
-fn record_ecs_metrics(worlds: &[App]) {
+fn record_ecs_metrics(worlds: &mut Cellar) {
+    let worlds: Vec<&mut App> = worlds.made().collect();
     gauge!("rift_worlds").set(worlds.len() as f64);
     let mut entities = 0usize;
     let mut components = 0usize;
@@ -490,8 +548,8 @@ struct Transfer {
 }
 
 /// Phase 1: take everyone leaving their world this tick out of it, and queue the move.
-fn begin_transfers(worlds: &mut [App], cells: &Worlds, transfers: &mut Vec<Transfer>, tick: u64) {
-    for app in worlds.iter_mut() {
+fn begin_transfers(worlds: &mut Cellar, cells: &Worlds, transfers: &mut Vec<Transfer>, tick: u64) {
+    for app in worlds.made() {
         for traveler in transition::departing(app.world_mut()) {
             transfers.push(Transfer {
                 client: traveler.client,
@@ -509,7 +567,7 @@ fn begin_transfers(worlds: &mut [App], cells: &Worlds, transfers: &mut Vec<Trans
 /// Phase 2: once the source world's despawns have been sent (a replication period after departing) —
 /// move every socket of the client to the destination world and re-create the player there.
 fn finish_transfers(
-    worlds: &mut [App],
+    worlds: &mut Cellar,
     conns: &mut HashMap<u64, Conn>,
     transfers: &mut Vec<Transfer>,
     tick: u64,
@@ -535,9 +593,10 @@ fn finish_transfers(
             continue;
         }
         for (network_id, world, entity) in movers {
-            let identity = worlds[world].world().get::<Identity>(entity).cloned();
-            worlds[world].world_mut().despawn(entity);
-            let entity = spawn_conn(&mut worlds[dest], client, network_id, identity);
+            let identity = worlds.app(world).world().get::<Identity>(entity).cloned();
+            worlds.app(world).world_mut().despawn(entity);
+            worlds.reach(dest);
+            let entity = spawn_conn(worlds.app(dest), client, network_id, identity);
             conns.insert(
                 network_id,
                 Conn {
@@ -548,7 +607,7 @@ fn finish_transfers(
             );
         }
         if let Some(traveler) = traveler {
-            transition::arrive(worlds[dest].world_mut(), *traveler);
+            transition::arrive(worlds.app(dest).world_mut(), *traveler);
         }
     }
 }

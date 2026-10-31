@@ -143,14 +143,22 @@ impl Bench {
 
     /// One tick of every world, as the server steps them.
     pub fn tick(&mut self, clock: WallClock) {
-        let mut views: Vec<&mut World> = self.worlds.iter_mut().map(App::world_mut).collect();
+        let mut views: Vec<Option<&mut World>> = self
+            .worlds
+            .iter_mut()
+            .map(|app| Some(app.world_mut()))
+            .collect();
         let moved = worlds::tick(&self.cells, &mut views, clock);
         self.follow(moved);
     }
 
     /// One tick on `pool`'s threads alone.
     pub fn tick_on(&mut self, pool: &rayon::ThreadPool, clock: WallClock) {
-        let mut views: Vec<&mut World> = self.worlds.iter_mut().map(App::world_mut).collect();
+        let mut views: Vec<Option<&mut World>> = self
+            .worlds
+            .iter_mut()
+            .map(|app| Some(app.world_mut()))
+            .collect();
         let moved = pool.install(|| worlds::tick(&self.cells, &mut views, clock));
         self.follow(moved);
     }

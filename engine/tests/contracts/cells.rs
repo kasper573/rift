@@ -267,7 +267,8 @@ fn a_walk_over_a_border_carries_on_into_the_next_cell() {
     let clock = *cells[0].world.resource::<WallClock>();
     let mut trail = Vec::new();
     for _ in 0..600 {
-        let mut views: Vec<&mut World> = cells.iter_mut().map(|sim| &mut sim.world).collect();
+        let mut views: Vec<Option<&mut World>> =
+            cells.iter_mut().map(|sim| Some(&mut sim.world)).collect();
         let moved = worlds::tick(&worlds, &mut views, clock);
         follow(&mut cells, moved);
         let at = cells
@@ -312,7 +313,8 @@ fn a_cell_nobody_plays_in_or_beside_stands_still_until_someone_comes() {
     let elapsed = |sim: &Sim| sim.world.resource::<Time>().elapsed();
 
     let before: Vec<_> = cells.iter().map(elapsed).collect();
-    let mut views: Vec<&mut World> = cells.iter_mut().map(|sim| &mut sim.world).collect();
+    let mut views: Vec<Option<&mut World>> =
+        cells.iter_mut().map(|sim| Some(&mut sim.world)).collect();
     worlds::tick(&worlds, &mut views, clock);
     assert!(elapsed(&cells[0]) > before[0], "the cell played in steps");
     assert!(elapsed(&cells[1]) > before[1], "the cell beside steps");
@@ -321,7 +323,8 @@ fn a_cell_nobody_plays_in_or_beside_stands_still_until_someone_comes() {
     cells[0].world.get_mut::<Position>(hero).unwrap().pos = Pos::new(400.0, 125.0);
     let before: Vec<_> = cells.iter().map(elapsed).collect();
     for _ in 0..2 {
-        let mut views: Vec<&mut World> = cells.iter_mut().map(|sim| &mut sim.world).collect();
+        let mut views: Vec<Option<&mut World>> =
+            cells.iter_mut().map(|sim| Some(&mut sim.world)).collect();
         let moved = worlds::tick(&worlds, &mut views, clock);
         follow(&mut cells, moved);
     }
@@ -329,6 +332,42 @@ fn a_cell_nobody_plays_in_or_beside_stands_still_until_someone_comes() {
         elapsed(&cells[2]) > before[2],
         "the far cell wakes once the player plays beside it"
     );
+}
+
+/// A cell whose world isn't made yet sleeps: what walks deep toward it waits at the border, in
+/// the world it stands in.
+#[test]
+fn what_walks_toward_a_cell_not_made_yet_waits_at_the_border() {
+    let content = Game::new()
+        .area("plain", &Map::open(500, 250), json!([]))
+        .hero("plain", 150.0, 150.0)
+        .npc("brute", 25.0, json!([]))
+        .load();
+    let worlds = Worlds::of(&content);
+    let mut west = Sim::new(content);
+    west.serve("plain")
+        .in_cell(Cell(0))
+        .mirror::<Position>()
+        .add((identity::name_replicated, mirror::deliver).chain());
+    west.join(1);
+    let area = west.id::<AreaDef>("plain");
+    let brute = west.id::<NpcDef>("brute");
+    let deep_in_the_east = Pos::new(300.0, 150.0);
+    let brute = npc::spawn(&mut west.world, brute, deep_in_the_east, area, None);
+    let clock = *west.world.resource::<WallClock>();
+    for _ in 0..2 {
+        worlds::tick(&worlds, &mut [Some(&mut west.world), None], clock);
+    }
+    let name = *west
+        .world
+        .get::<GlobalId>(brute)
+        .expect("the brute is named");
+    assert_eq!(
+        owned(&west.world, name),
+        Some(brute),
+        "the west keeps the brute"
+    );
+    assert_eq!(position(&west.world, brute), Some(deep_in_the_east));
 }
 
 /// A cell that sleeps while what a ghost stands for changes shows it as it now stands once it
@@ -375,7 +414,8 @@ fn a_woken_cell_shows_what_changed_while_it_slept() {
     );
     let clock = *cells[1].world.resource::<WallClock>();
     let step = |cells: &mut Vec<Sim>| {
-        let mut views: Vec<&mut World> = cells.iter_mut().map(|sim| &mut sim.world).collect();
+        let mut views: Vec<Option<&mut World>> =
+            cells.iter_mut().map(|sim| Some(&mut sim.world)).collect();
         let moved = worlds::tick(&worlds, &mut views, clock);
         follow(cells, moved);
     };
@@ -433,7 +473,11 @@ fn follow(cells: &mut [Sim], moved: Vec<Moved>) {
 
 fn tick(worlds: &Worlds, west: &mut Sim, east: &mut Sim) -> Vec<Moved> {
     let clock = *west.world.resource::<WallClock>();
-    worlds::tick(worlds, &mut [&mut west.world, &mut east.world], clock)
+    worlds::tick(
+        worlds,
+        &mut [Some(&mut west.world), Some(&mut east.world)],
+        clock,
+    )
 }
 
 fn hand_over(worlds: &Worlds, west: &mut Sim, east: &mut Sim) -> Vec<Moved> {
