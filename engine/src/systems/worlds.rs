@@ -1,7 +1,7 @@
 //! The worlds a server runs: every cell of every area, in one list, stepped together each tick and
 //! then handed what crosses between them.
 
-use bevy_ecs::prelude::World;
+use bevy_ecs::prelude::{Resource, World};
 use rayon::prelude::*;
 
 use crate::core::content::Content;
@@ -129,30 +129,67 @@ impl Worlds {
 /// cores, then the ghosts of what stands near a border handed to the cells beside it, and what
 /// stands deep in another cell handed over to it; the players whose connections must follow
 /// their characters. A world sleeps while no client is connected to it or a cell beside it and
-/// no mail waits for it: a cell with no one to see it stands still until someone comes.
+/// no mail waits for it: a cell with no one to see it stands still, untouched, until someone
+/// comes.
 pub fn tick(worlds: &Worlds, views: &mut [&mut World], clock: WallClock) -> Vec<Moved> {
-    let awake = awake(worlds, views);
+    let wake = wake(worlds, views);
     views
         .par_iter_mut()
-        .zip(&awake)
-        .filter(|(_, awake)| **awake)
+        .zip(&wake)
+        .filter(|(_, wake)| wake.awake())
         .for_each(|(world, _)| step_area(world, clock));
-    mirror::exchange(worlds, views);
-    handoff::handoff(worlds, views)
+    mirror::exchange(worlds, views, &wake);
+    handoff::handoff(worlds, views, &wake)
+}
+
+/// How a world stands in a tick.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Wake {
+    /// Stepped and exchanged with as it was the tick before.
+    Awake,
+    /// Awake after sleeping: what changed beside it while it slept, it hasn't seen.
+    Woken,
+    /// Left as it stands.
+    Asleep,
+}
+
+impl Wake {
+    pub fn awake(self) -> bool {
+        self != Wake::Asleep
+    }
 }
 
 /// The worlds to step this tick: those a client is connected to, those beside one, whose actors
-/// the players there see as ghosts, and those with mail to land.
-fn awake(worlds: &Worlds, views: &mut [&mut World]) -> Vec<bool> {
+/// the players there see as ghosts, and those with mail to land. A world that falls asleep is
+/// marked so, so the tick it wakes in knows.
+fn wake(worlds: &Worlds, views: &mut [&mut World]) -> Vec<Wake> {
     let connected: Vec<bool> = views
-        .iter_mut()
+        .iter()
         .map(|world| player::any_connected(world))
         .collect();
     (0..views.len())
         .map(|index| {
-            connected[index]
+            let awake = connected[index]
                 || mirror::has_mail(views[index])
-                || worlds.beside(index).any(|beside| connected[beside])
+                || worlds.beside(index).any(|beside| connected[beside]);
+            let slept = views[index].contains_resource::<Slept>();
+            match (awake, slept) {
+                (true, false) => Wake::Awake,
+                (true, true) => {
+                    views[index].remove_resource::<Slept>();
+                    Wake::Woken
+                }
+                (false, slept) => {
+                    if !slept {
+                        views[index].insert_resource(Slept);
+                    }
+                    Wake::Asleep
+                }
+            }
         })
         .collect()
 }
+
+/// Marks a world that slept through a tick.
+#[derive(Resource)]
+struct Slept;

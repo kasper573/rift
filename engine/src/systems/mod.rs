@@ -133,6 +133,7 @@ pub fn area_state(world: &mut World, content: &Content) {
     insert_content(world, content);
     world.init_resource::<script::RiftInstances>();
     world.init_resource::<player::Players>();
+    world.init_resource::<player::Connected>();
     world.init_resource::<movement::Spots>();
     world.init_resource::<area::transition::Departures>();
     world.init_resource::<combat::RegenAt>();

@@ -32,7 +32,7 @@ use crate::systems::script::event::RiftEvent;
 use crate::systems::script::{RiftScripts, owner_site};
 use crate::systems::skill::SkillDef;
 use crate::systems::status::StatusEffectId;
-use crate::systems::worlds::Worlds;
+use crate::systems::worlds::{Wake, Worlds};
 use crate::systems::{class, combat, stat, status, visibility};
 
 /// Stands in for an entity the world at `owner` plays.
@@ -299,9 +299,11 @@ pub fn add<C: Component + Clone>(world: &mut World) {
     });
 }
 
-/// Hands every world the ghosts of what its neighbours own within its halo: first who stands
+/// Hands every awake world the ghosts of what its neighbours own within its halo: first who stands
 /// there, so each world spawns the ghosts it lacks and drops those gone, then what changed of each.
-pub fn exchange(worlds: &Worlds, apps: &mut [&mut World]) {
+/// A sleeping world is left as it stands: what it owns stands still, so its ghosts elsewhere stay
+/// as they are, and it is caught up whole on the tick it wakes.
+pub fn exchange(worlds: &Worlds, apps: &mut [&mut World], wake: &[Wake]) {
     let count = apps.len();
     if !worlds.has_borders() {
         return;
@@ -309,7 +311,13 @@ pub fn exchange(worlds: &Worlds, apps: &mut [&mut World]) {
     let standing: Vec<Standing> = apps
         .par_iter_mut()
         .enumerate()
-        .map(|(index, world)| standing_in_halos(worlds, index, world))
+        .map(|(index, world)| {
+            if wake[index].awake() {
+                standing_in_halos(worlds, index, world, wake)
+            } else {
+                Vec::new()
+            }
+        })
         .collect();
     let mut arriving: Vec<Standing> = vec![Vec::new(); count];
     for (owner, halos) in standing.iter().enumerate() {
@@ -320,7 +328,14 @@ pub fn exchange(worlds: &Worlds, apps: &mut [&mut World]) {
     let fresh: Vec<Vec<(usize, Vec<GlobalId>)>> = apps
         .par_iter_mut()
         .zip(arriving)
-        .map(|(world, arriving)| settle_ghosts(world, arriving))
+        .zip(wake)
+        .map(|((world, arriving), own)| {
+            if own.awake() {
+                settle_ghosts(world, arriving, wake)
+            } else {
+                Vec::new()
+            }
+        })
         .collect();
     let mut new_for: Vec<Vec<(usize, Vec<GlobalId>)>> = vec![Vec::new(); count];
     for (neighbour, spawned) in fresh.into_iter().enumerate() {
@@ -333,7 +348,7 @@ pub fn exchange(worlds: &Worlds, apps: &mut [&mut World]) {
         .par_iter()
         .zip(&standing)
         .zip(&new_for)
-        .map(|((world, halos), new_for)| gather(&views, world, halos, new_for))
+        .map(|((world, halos), new_for)| gather(&views, world, halos, new_for, wake))
         .collect();
     let mut incoming: Vec<Vec<Halo>> = (0..count).map(|_| Vec::new()).collect();
     for halos in updates {
@@ -343,9 +358,14 @@ pub fn exchange(worlds: &Worlds, apps: &mut [&mut World]) {
     }
     apps.par_iter_mut()
         .zip(incoming)
-        .for_each(|(world, incoming)| apply(world, incoming));
+        .zip(wake)
+        .filter(|(_, wake)| wake.awake())
+        .for_each(|((world, incoming), _)| apply(world, incoming));
     let mut posted: Vec<Vec<Letter>> = (0..count).map(|_| Vec::new()).collect();
     for (index, world) in apps.iter_mut().enumerate() {
+        if !wake[index].awake() {
+            continue;
+        }
         let tick = world.change_tick();
         world.resource_mut::<Exchanged>().0 = Some(tick);
         for (owner, mut letter) in std::mem::take(&mut world.resource_mut::<Outbox>().0) {
@@ -354,7 +374,9 @@ pub fn exchange(worlds: &Worlds, apps: &mut [&mut World]) {
         }
     }
     for (world, letters) in apps.iter_mut().zip(posted) {
-        world.resource_mut::<Inbox>().0.extend(letters);
+        if !letters.is_empty() {
+            world.resource_mut::<Inbox>().0.extend(letters);
+        }
     }
 }
 
@@ -447,12 +469,15 @@ struct GhostUpdate {
 /// Who a world owns within each neighbour's halo, by neighbour.
 type Standing = Vec<(usize, Vec<(Entity, GlobalId)>)>;
 
-fn standing_in_halos(worlds: &Worlds, index: usize, world: &mut World) -> Standing {
+/// Who a world owns within each awake neighbour's halo, by neighbour.
+fn standing_in_halos(worlds: &Worlds, index: usize, world: &mut World, wake: &[Wake]) -> Standing {
     let mut halos: HashMap<usize, Vec<(Entity, GlobalId)>> = HashMap::default();
     world.resource_scope(|world, mut scans: Mut<Scans>| {
         for (entity, &id, position) in scans.owned.iter(world) {
             for neighbour in worlds.around(index, position.pos) {
-                halos.entry(neighbour).or_default().push((entity, id));
+                if wake[neighbour].awake() {
+                    halos.entry(neighbour).or_default().push((entity, id));
+                }
             }
         }
     });
@@ -460,8 +485,12 @@ fn standing_in_halos(worlds: &Worlds, index: usize, world: &mut World) -> Standi
 }
 
 /// Spawns a ghost for every named entity the world lacks and despawns those their owner no longer
-/// lists; the names spawned, by owner.
-fn settle_ghosts(world: &mut World, arriving: Standing) -> Vec<(usize, Vec<GlobalId>)> {
+/// lists, keeping those of a sleeping owner as they stand; the names spawned, by owner.
+fn settle_ghosts(
+    world: &mut World,
+    arriving: Standing,
+    wake: &[Wake],
+) -> Vec<(usize, Vec<GlobalId>)> {
     let mut spawned = Vec::new();
     let mut listed: HashMap<usize, Vec<GlobalId>> = HashMap::default();
     for (owner, held) in arriving {
@@ -479,7 +508,10 @@ fn settle_ghosts(world: &mut World, arriving: Standing) -> Vec<(usize, Vec<Globa
         scans
             .ghosts
             .iter(world)
-            .filter(|(_, ghost, id)| listed.get(&ghost.owner).is_none_or(|ids| !ids.contains(id)))
+            .filter(|(_, ghost, id)| {
+                wake[ghost.owner].awake()
+                    && listed.get(&ghost.owner).is_none_or(|ids| !ids.contains(id))
+            })
             .map(|(entity, _, _)| entity)
             .collect()
     });
@@ -489,11 +521,15 @@ fn settle_ghosts(world: &mut World, arriving: Standing) -> Vec<(usize, Vec<Globa
     spawned
 }
 
+/// What changed of each ghost a neighbour holds of this world's entities, whole for those it
+/// spawned this tick and for every one of a neighbour just woken, which missed what changed while
+/// it slept.
 fn gather(
     views: &[&World],
     world: &World,
     halos: &Standing,
     new_for: &[(usize, Vec<GlobalId>)],
+    wake: &[Wake],
 ) -> Vec<(usize, Halo)> {
     let mirrors = world.resource::<Mirrors>();
     let since = world
@@ -513,7 +549,7 @@ fn gather(
             let ghosts = held
                 .iter()
                 .filter_map(|&(entity, id)| {
-                    let whole = fresh.contains(&id);
+                    let whole = wake[*neighbour] == Wake::Woken || fresh.contains(&id);
                     let parts: Vec<(usize, Part)> = mirrors
                         .0
                         .iter()

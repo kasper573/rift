@@ -31,7 +31,7 @@ use crate::systems::shop::ShopVisit;
 use crate::systems::stat::{self, Immortal, Stats};
 use crate::systems::status::Statuses;
 use crate::systems::visibility::Presence;
-use crate::systems::worlds::Worlds;
+use crate::systems::worlds::{Wake, Worlds};
 
 /// A player whose character changed hands this tick: its connection follows, from the world it
 /// played in to the one its character now stands in.
@@ -47,14 +47,14 @@ pub struct Moved {
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Pulled(pub usize);
 
-/// Hands every actor or drop standing deep in another cell, or pulled by one, over to that
+/// Hands every actor or drop of an awake world standing deep in another cell, or pulled by one, over to that
 /// cell's world, and tells which players' connections must follow.
-pub fn handoff(worlds: &Worlds, apps: &mut [&mut World]) -> Vec<Moved> {
+pub fn handoff(worlds: &Worlds, apps: &mut [&mut World], wake: &[Wake]) -> Vec<Moved> {
     if !worlds.has_borders() {
         return Vec::new();
     }
     let mut moved = Vec::new();
-    for from in 0..apps.len() {
+    for from in (0..apps.len()).filter(|&from| wake[from].awake()) {
         for (to, carried) in departing(worlds, from, apps[from]) {
             if let Carried::Player(player) = &carried {
                 moved.push(Moved {

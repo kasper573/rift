@@ -331,6 +331,89 @@ fn a_cell_nobody_plays_in_or_beside_stands_still_until_someone_comes() {
     );
 }
 
+/// A cell that sleeps while what a ghost stands for changes shows it as it now stands once it
+/// wakes.
+#[test]
+fn a_woken_cell_shows_what_changed_while_it_slept() {
+    let content = Game::new()
+        .area("plain", &Map::open(750, 250), json!([]))
+        .hero("plain", 400.0, 125.0)
+        .npc("brute", 25.0, json!([]))
+        .vfx("damage_taken")
+        .shader("damage_pop")
+        .load();
+    let worlds = Worlds::of(&content);
+    let mut cells: Vec<Sim> = (0..3)
+        .map(|cell| {
+            let mut sim = Sim::new(content.clone());
+            sim.serve("plain")
+                .in_cell(Cell(cell))
+                .mirror::<Position>()
+                .mirror::<Actor>()
+                .mirror::<Stats>()
+                .mirror::<Npc>()
+                .add(
+                    (
+                        identity::name_replicated,
+                        mirror::deliver,
+                        stat::settle_health,
+                    )
+                        .chain(),
+                );
+            sim
+        })
+        .collect();
+    let hero = cells[1].join(1);
+    let area = cells[1].id::<AreaDef>("plain");
+    let brute = cells[1].id::<NpcDef>("brute");
+    let brute = npc::spawn(
+        &mut cells[1].world,
+        brute,
+        Pos::new(490.0, 125.0),
+        area,
+        None,
+    );
+    let clock = *cells[1].world.resource::<WallClock>();
+    let step = |cells: &mut Vec<Sim>| {
+        let mut views: Vec<&mut World> = cells.iter_mut().map(|sim| &mut sim.world).collect();
+        let moved = worlds::tick(&worlds, &mut views, clock);
+        follow(cells, moved);
+    };
+    step(&mut cells);
+    step(&mut cells);
+    let name = *cells[1]
+        .world
+        .get::<GlobalId>(brute)
+        .expect("the brute is named");
+    assert!(
+        ghost_of(&cells[2].world, name).is_some(),
+        "a ghost of the brute in the east"
+    );
+
+    cells[1].world.get_mut::<Position>(hero).unwrap().pos = Pos::new(100.0, 125.0);
+    step(&mut cells);
+    step(&mut cells);
+    combat::inflict(&mut cells[1].world, brute, None, 10.0);
+    step(&mut cells);
+    let ghost = ghost_of(&cells[2].world, name).expect("the east keeps its ghost while it sleeps");
+    assert_eq!(
+        stat::current_health(&cells[2].world, ghost),
+        25.0,
+        "the sleeping east saw nothing"
+    );
+
+    let hero = hero_in(&cells[0]);
+    cells[0].world.get_mut::<Position>(hero).unwrap().pos = Pos::new(400.0, 125.0);
+    step(&mut cells);
+    step(&mut cells);
+    let ghost = ghost_of(&cells[2].world, name).expect("a ghost of the brute in the east");
+    assert_eq!(
+        stat::current_health(&cells[2].world, ghost),
+        15.0,
+        "woken, the east shows the blow"
+    );
+}
+
 /// Moves each client's connection after its character, as the server does.
 fn follow(cells: &mut [Sim], moved: Vec<Moved>) {
     for Moved { client, from, to } in moved {
@@ -369,4 +452,8 @@ fn ghost_of(world: &World, name: GlobalId) -> Option<Entity> {
         .resource::<Named>()
         .get(name)
         .filter(|&entity| world.get::<Ghost>(entity).is_some())
+}
+
+fn hero_in(sim: &Sim) -> Entity {
+    sim.world.resource::<Players>().0[&ClientId(1)]
 }

@@ -5,7 +5,9 @@ pub mod widget;
 use std::collections::HashMap;
 
 use bevy_app::App;
+use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::prelude::*;
+use bevy_ecs::world::DeferredWorld;
 use bevy_replicon::prelude::{ClientId as Sender, Replicated};
 use bevy_time::Time;
 use schemars::JsonSchema;
@@ -66,8 +68,27 @@ pub fn register(app: &mut App) {
     Debug,
     Default,
 )]
-#[component(immutable)]
+#[component(immutable, on_add = ClientId::connect, on_remove = ClientId::disconnect)]
 pub struct ClientId(pub u32);
+
+impl ClientId {
+    fn connect(mut world: DeferredWorld, _: HookContext) {
+        if let Some(mut connected) = world.get_resource_mut::<Connected>() {
+            connected.0 += 1;
+        }
+    }
+
+    fn disconnect(mut world: DeferredWorld, _: HookContext) {
+        if let Some(mut connected) = world.get_resource_mut::<Connected>() {
+            connected.0 -= 1;
+        }
+    }
+}
+
+/// How many clients are connected to a server's world, playing a character or about to: counted
+/// as connections come and go, so whether anyone is there is known without a look at the world.
+#[derive(Resource, Default)]
+pub struct Connected(usize);
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PlayedBy {
@@ -177,21 +198,10 @@ pub fn def(content: &Content) -> &PlayerDef {
 pub struct Players(pub HashMap<ClientId, Entity>);
 
 /// Whether any client is connected to this world, playing a character or about to.
-pub fn any_connected(world: &mut World) -> bool {
-    world.get_resource_or_init::<Connections>();
-    world.resource_scope(|world, mut connections: Mut<Connections>| {
-        connections.0.iter(world).next().is_some()
-    })
-}
-
-/// The connections' query, kept so a tick doesn't match archetypes afresh.
-#[derive(Resource)]
-struct Connections(QueryState<(), With<ClientId>>);
-
-impl FromWorld for Connections {
-    fn from_world(world: &mut World) -> Connections {
-        Connections(world.query_filtered())
-    }
+pub fn any_connected(world: &World) -> bool {
+    world
+        .get_resource::<Connected>()
+        .is_some_and(|connected| connected.0 > 0)
 }
 
 pub(crate) fn sender_player(world: &World, sender: Sender) -> Option<Entity> {
