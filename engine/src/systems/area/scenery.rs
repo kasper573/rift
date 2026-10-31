@@ -11,6 +11,7 @@ use std::sync::Arc;
 use bevy::app::Propagate;
 use bevy::camera::primitives::MeshAabb;
 use bevy::camera::visibility::RenderLayers;
+use bevy::gltf::Gltf;
 use bevy::light::NotShadowCaster;
 use bevy::light::atmosphere::ScatteringMedium;
 use bevy::platform::collections::HashMap;
@@ -106,7 +107,7 @@ pub fn spawn(
             .and_then(|look| spawn_dome(world, content, look, root));
     }
     let terrain = spawn_terrain(world, content, area, root);
-    let covers = cover_layers(world, content, area, root);
+    let covers = cover_layers(world, content, area);
     let mut props = SpatialIndex::new(PLACEMENT_CELL);
     props.refile(
         area.props
@@ -255,15 +256,27 @@ struct Stood {
 }
 
 /// A cover a terrain grows, ready to stand chunk by chunk: its slot among the area's terrains, its
-/// pieces with how each is spread, the material its sheets and blades are drawn with, and the
-/// cover's seed.
+/// pieces, the material its sheets and blades are drawn with, and the cover's seed.
 struct CoverLayer {
     slot: usize,
     seed: u64,
     sheet_level: Option<f32>,
     ground_color: LinearRgba,
-    pieces: Vec<(Option<CoverPiece>, cover::Spread)>,
+    pieces: Vec<LayerPiece>,
     blended: Handle<CoverMaterial>,
+}
+
+/// A piece of a cover as its layer stands it: its shape (none for the sheet) and how it is
+/// spread, and for a prop the model it strews and the material its copies are drawn with.
+struct LayerPiece {
+    shape: Option<CoverPiece>,
+    spread: cover::Spread,
+    strewn: Option<Strewn>,
+}
+
+struct Strewn {
+    gltf: Handle<Gltf>,
+    material: Handle<CoverMaterial>,
 }
 
 /// A chunk of the ground at a level of detail: the node of the quadtree over the samples it is,
@@ -887,15 +900,8 @@ fn ground_layers(content: &Content, area: &Area) -> Vec<GroundLayer> {
 
 /// Each terrain with a cover, readied to lay it chunk by chunk as the view comes: the material
 /// its sheets and blades are drawn with, through the terrain's cover shader with the area as its
-/// site, and its pieces with how each is spread. A prop piece's copies stand over the whole area
-/// at once and wait for the prop to load, a chunk at a time as a camera first sees it.
-fn cover_layers(
-    world: &mut World,
-    content: &Content,
-    area: &Area,
-    root: Entity,
-) -> Vec<CoverLayer> {
-    let (columns, rows) = area.paint.pixels();
+/// site, and its pieces with how each is spread, a prop piece with its model loading.
+fn cover_layers(world: &mut World, content: &Content, area: &Area) -> Vec<CoverLayer> {
     let bounds = area.size.bounds();
     let site = PlacedShape {
         at: Pos::new(
@@ -946,28 +952,21 @@ fn cover_layers(
                 ))
         };
         let blended = material(world, None);
-        let share = |column: u32, row: u32| {
-            if usize::from(area.paint.index(column, row)) == slot {
-                1.0
-            } else {
-                0.0
-            }
-        };
         let ground_color = ground.color.color().to_linear();
-        let pieces: Vec<(Option<CoverPiece>, cover::Spread)> = std::iter::once((
-            None,
-            cover::Spread {
+        let sheet = cover_def.sheet.map(|_| LayerPiece {
+            shape: None,
+            spread: cover::Spread {
                 piece: 0,
                 per_square_meter: 0.0,
                 size: (1.0, 1.0),
                 color: (ground_color, ground_color),
             },
-        ))
-        .filter(|_| cover_def.sheet.is_some())
-        .chain(cover_def.pieces.iter().enumerate().map(|(index, piece)| {
-            (
-                Some(piece.clone()),
-                cover::Spread {
+            strewn: None,
+        });
+        let pieces: Vec<LayerPiece> = sheet
+            .into_iter()
+            .chain(cover_def.pieces.iter().enumerate().map(|(index, piece)| {
+                let spread = cover::Spread {
                     piece: index as u32,
                     per_square_meter: piece.per_square_meter(piece.shape.base_area(prop_bounds)),
                     size: (piece.size.min, piece.size.max),
@@ -975,61 +974,23 @@ fn cover_layers(
                         piece.color.from.color().to_linear(),
                         piece.color.to.color().to_linear(),
                     ),
-                },
-            )
-        }))
-        .collect();
-        for (piece, spread) in &pieces {
-            let Some(PieceShape::Prop { prop }) = piece.as_ref().map(|piece| &piece.shape) else {
-                continue;
-            };
-            let mut chunks = Vec::new();
-            for chunk_row in 0..rows.div_ceil(cover::CHUNK_CELLS) {
-                for chunk_column in 0..columns.div_ceil(cover::CHUNK_CELLS) {
-                    let first = (
-                        chunk_column * cover::CHUNK_CELLS,
-                        chunk_row * cover::CHUNK_CELLS,
-                    );
-                    let patch = cover::Patch {
-                        heights: &area.heights,
-                        first,
-                        columns: cover::CHUNK_CELLS.min(columns - first.0),
-                        rows: cover::CHUNK_CELLS.min(rows - first.1),
-                        share: &share,
-                    };
-                    let seed = chunk_seed(
-                        cover_def.seed,
-                        [
-                            slot as u64,
-                            u64::from(spread.piece),
-                            u64::from(chunk_row),
-                            u64::from(chunk_column),
-                        ],
-                    );
-                    let places = cover::strew_places(&patch, spread, seed);
-                    if !places.is_empty() {
-                        chunks.push(places);
-                    }
+                };
+                let strewn = match &piece.shape {
+                    PieceShape::Prop { prop } => Some(Strewn {
+                        gltf: world
+                            .resource::<AssetServer>()
+                            .load(prop.get(content).model.path()),
+                        material: material(world, Some(&spread)),
+                    }),
+                    PieceShape::Blade { .. } => None,
+                };
+                LayerPiece {
+                    shape: Some(piece.clone()),
+                    spread,
+                    strewn,
                 }
-            }
-            if chunks.is_empty() {
-                continue;
-            }
-            let gltf = world
-                .resource::<AssetServer>()
-                .load(prop.get(content).model.path());
-            let material = material(world, Some(spread));
-            world.spawn((
-                cover::Strewing {
-                    gltf,
-                    chunks,
-                    material,
-                },
-                Transform::default(),
-                Visibility::default(),
-                ChildOf(root),
-            ));
-        }
+            }))
+            .collect();
         layers.push(CoverLayer {
             slot,
             seed: cover_def.seed,
@@ -1045,8 +1006,8 @@ fn cover_layers(
     layers
 }
 
-/// A chunk of a cover's sheet or blades, stood under `root`: none where the chunk holds nothing of
-/// the piece, or the piece is a prop, whose copies stand through the strewing.
+/// A chunk of a cover's piece, stood under `root`: its sheet or blades, or for a prop the copies
+/// it strews once the prop has loaded; none where the chunk holds nothing of the piece.
 fn spawn_cover_chunk(
     world: &mut World,
     streaming: &Streaming,
@@ -1072,7 +1033,11 @@ fn spawn_cover_chunk(
         rows: cover::CHUNK_CELLS.min(rows - first.1),
         share: &share,
     };
-    let (shape, spread) = &layer.pieces[piece];
+    let LayerPiece {
+        shape,
+        spread,
+        strewn,
+    } = &layer.pieces[piece];
     let seed = chunk_seed(
         layer.seed,
         [
@@ -1093,7 +1058,27 @@ fn spawn_cover_chunk(
             spread,
             seed,
         ),
-        Some(PieceShape::Prop { .. }) => None,
+        Some(PieceShape::Prop { .. }) => {
+            let Strewn { gltf, material } = strewn.as_ref()?;
+            let places = cover::strew_places(&patch, spread, seed);
+            if places.is_empty() {
+                return None;
+            }
+            return Some(
+                world
+                    .spawn((
+                        cover::Strewing {
+                            gltf: gltf.clone(),
+                            places,
+                            material: material.clone(),
+                        },
+                        Transform::default(),
+                        Visibility::default(),
+                        ChildOf(root),
+                    ))
+                    .id(),
+            );
+        }
     }?;
     let bounds = mesh.get_aabb()?;
     let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);

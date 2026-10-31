@@ -28,10 +28,16 @@ use testkit::{Game, Map, path};
 
 /// A field whose turf is strewn with pebbles, `ratio` of the ground under them.
 fn field(ratio: f32) -> Game {
+    strewn_field(ratio, &Map::open(16, 16), json!([]))
+}
+
+/// A game whose field is `map` with `scene` on it, its turf strewn with pebbles at `ratio`.
+fn strewn_field(ratio: f32, map: &Map, scene: serde_json::Value) -> Game {
     Game::new()
         .shader_on("meadow", Stage::Cover)
         .prop("pebble", json!({ "type": "none" }))
-        .area("field", &Map::open(16, 16), json!([]))
+        .prop("tuft", json!({ "type": "none" }))
+        .area("field", map, scene)
         .edit("terrain", testkit::TURF, |row| {
             row["cover"] = json!({
                 "shader": path("vfx_shader", "meadow"),
@@ -164,25 +170,26 @@ fn settle(app: &mut App, done: impl Fn(&mut App) -> bool) -> bool {
     true
 }
 
-/// What stands of an area follows the view: its props stand within the view's reach and go as
-/// the view leaves them behind, and its ground stands finer near the view than far from it, so
-/// a long field costs what the view takes in, not what the field holds.
+/// What stands of an area follows the view: its props and the copies its covers strew stand
+/// within the view's reach and go as the view leaves them behind, and its ground stands finer
+/// near the view than far from it, so a long field costs what the view takes in, not what the
+/// field holds.
 #[test]
 fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves() {
     let folder = tempfile::tempdir().expect("a scratch folder");
-    let game = Game::new()
-        .prop("tuft", json!({ "type": "none" }))
-        .area(
-            "field",
-            &Map::open(512, 16),
-            json!((0..8).map(|index| json!({ "type": "prop", "prop": path("prop", "tuft"), "at": { "x": 488.0 + index as f32, "y": 8.0 } })).collect::<Vec<_>>()),
-        );
+    let game = strewn_field(
+        0.0016,
+        &Map::open(512, 16),
+        json!((0..8).map(|index| json!({ "type": "prop", "prop": path("prop", "tuft"), "at": { "x": 488.0 + index as f32, "y": 8.0 } })).collect::<Vec<_>>()),
+    );
     let (mut app, area) = client(game, folder.path());
     let content = app.world().resource::<Content>().clone();
     let stood = scenery::spawn(app.world_mut(), &content, &area, RenderLayers::default());
     let reach = Meters(64.0);
     scenery::view_from(app.world_mut(), stood, Pos::new(16.0, 8.0), reach);
-    assert!(settle(&mut app, |app| !scenery::standing(app.world_mut())));
+    assert!(settle(&mut app, |app| {
+        !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
+    }));
     let west = held(&app);
     let (columns, rows) = area.heights.samples();
     assert!(
@@ -191,18 +198,54 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
         west.vertices,
         columns * rows
     );
+    assert_eq!(
+        (
+            tufts_standing(&mut app),
+            pebbles_between(&mut app, 256.0, 480.0)
+        ),
+        (0, 0),
+        "nothing stands far east of the view"
+    );
 
     scenery::view_from(app.world_mut(), stood, Pos::new(496.0, 8.0), reach);
-    assert!(settle(&mut app, |app| !scenery::standing(app.world_mut())));
-    let east = held(&app);
+    assert!(settle(&mut app, |app| {
+        !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
+    }));
+    assert_eq!(
+        tufts_standing(&mut app),
+        8,
+        "the tufts stand once the view reaches them"
+    );
     assert!(
-        east.entities > west.entities,
-        "the tufts stand once the view reaches them: {east:?} over {west:?}"
+        pebbles_between(&mut app, 432.0, 480.0) > 0,
+        "the pebbles strewn east stand once the view reaches them"
     );
 
     scenery::view_from(app.world_mut(), stood, Pos::new(16.0, 8.0), reach);
-    assert!(settle(&mut app, |app| !scenery::standing(app.world_mut())));
+    assert!(settle(&mut app, |app| {
+        !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
+    }));
     assert_eq!(held(&app), west, "back west, the tufts are gone again");
+}
+
+/// How many of the tufts stand, each at its own place along the middle of the field.
+fn tufts_standing(app: &mut App) -> usize {
+    placed(app, |at| at.z == 8.0 && (488.0..496.0).contains(&at.x))
+}
+
+/// How many pebbles stand between `from` and `to` along the field: whatever stands with a place
+/// of its own there, as the ground, the covers and their chunks stand at the origin.
+fn pebbles_between(app: &mut App, from: f32, to: f32) -> usize {
+    placed(app, |at| at.x > from && at.x < to && at.z != 8.0)
+}
+
+fn placed(app: &mut App, at: impl Fn(Vec3) -> bool) -> usize {
+    let world = app.world_mut();
+    world
+        .query::<&Transform>()
+        .iter(world)
+        .filter(|placed| at(placed.translation))
+        .count()
 }
 
 #[test]

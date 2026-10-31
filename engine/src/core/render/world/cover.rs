@@ -70,12 +70,12 @@ pub struct Place {
     pub seed: f32,
 }
 
-/// A piece of a cover waiting for the prop it strews to load: where every copy stands, chunk by
-/// chunk, and the material that draws them.
+/// A chunk of a cover's piece waiting for the prop it strews to load: where every copy in the
+/// chunk stands, and the material that draws them.
 #[derive(Component)]
 pub struct Strewing {
     pub gltf: Handle<Gltf>,
-    pub chunks: Vec<Vec<Place>>,
+    pub places: Vec<Place>,
     pub material: Handle<CoverMaterial>,
 }
 
@@ -415,8 +415,8 @@ pub(super) struct StrewnAssets<'w> {
     copies: ResMut<'w, CopyMeshes>,
 }
 
-/// A piece whose prop has loaded gets its chunks, each to strew a copy of the prop at every one of
-/// its places once a camera first sees it: an instance of each of the prop's meshes drawn with the
+/// A chunk whose prop has loaded gets, for each of the prop's meshes, a chunk of copies to strew
+/// at every one of its places once a camera first sees it: an instance of the mesh drawn with the
 /// piece's material in that mesh's texture, so a copy keeps the shapes its texture cuts out.
 pub(super) fn strew_loaded(
     mut assets: StrewnAssets,
@@ -445,35 +445,28 @@ pub(super) fn strew_loaded(
                 Some(texture) => assets.textured_cover(&strewing.material, texture),
                 None => strewing.material.clone(),
             };
-            let chunks: Vec<_> = strewing
-                .chunks
-                .iter()
-                .map(|places| {
-                    (
-                        StrewnChunk {
-                            bounds: enclosing(places, &bounds),
-                            unstrewn: Some(Unstrewn {
-                                places: places.clone(),
-                                mesh: mesh.clone(),
-                                material: drawn.clone(),
-                                bounds,
-                            }),
-                        },
-                        Transform::default(),
-                        Visibility::default(),
-                        ChildOf(entity),
-                    )
-                })
-                .collect();
-            commands.spawn_batch(chunks);
+            commands.spawn((
+                StrewnChunk {
+                    bounds: enclosing(&strewing.places, &bounds),
+                    unstrewn: Some(Unstrewn {
+                        places: strewing.places.clone(),
+                        mesh,
+                        material: drawn,
+                        bounds,
+                    }),
+                },
+                Transform::default(),
+                Visibility::default(),
+                ChildOf(entity),
+            ));
         }
     }
 }
 
-/// A chunk of a piece's strewn copies, culled as one by [`cull_strewn_chunks`]: a view sees only a
-/// few of an area's chunks, and the copies of the rest are too many to test one by one each frame.
-/// Its copies are strewn only once a camera first sees it, so an area's ground stands at once
-/// however thickly it is strewn, and ground nobody looks at costs nothing.
+/// A chunk of a piece's strewn copies of one of its prop's meshes, culled as one by
+/// [`cull_strewn_chunks`]: a view sees only a few of the chunks standing around it, and the copies
+/// of the rest are too many to test one by one each frame. Its copies are strewn only once a
+/// camera first sees it, so ground nobody looks at costs nothing however thickly it is strewn.
 #[derive(Component)]
 pub(super) struct StrewnChunk {
     bounds: Aabb,

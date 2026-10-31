@@ -17,9 +17,11 @@ use super::client::{arrived, away_from, settled_in_world, staged};
 use super::playtest::Playtest;
 
 // The caches and pools sized to the busiest moment fill over a varying number of crossings, the
-// graphics driver's command memory slowest of all, so the visits are measured once a round trip
-// grows the client by no more than the measured ones may on average; one that never settles leaks.
+// graphics driver's command memory slowest of all, so the visits are measured once a few round
+// trips in a row grow the client by no more than the measured ones may on average: one quiet
+// trip proves nothing while the pools still fill. One that never settles leaks.
 const MOST_WARM_UPS: usize = 12;
+const QUIET_ROUND_TRIPS: usize = 2;
 const ROUND_TRIPS: usize = 4;
 // Long enough for an arrival's loading to pass, and for the allocator to hand back what the loading
 // churned through.
@@ -30,8 +32,11 @@ const STILL: Duration = Duration::from_secs(20);
 // it ever recorded, which only fills up over dozens of crossings.
 const SLACK_SHARE: f64 = 0.05;
 const SLACK_LEAST: Bytes = Bytes(64 * 1024 * 1024);
-// What the GPU's buffers and textures may differ by from visit to visit, as a frame's draws differ.
-const GPU_SLACK: Bytes = Bytes(256 * 1024);
+// What the GPU's buffers and textures may differ by from visit to visit: a frame's draws differ,
+// and the meshes stand in slabs that grow by half when what a visit stands outgrows one, which
+// differs with where the view is from, so a visit may hold a slab's growth more than another.
+const GPU_SLACK_SHARE: f64 = 0.02;
+const GPU_SLACK_LEAST: Bytes = Bytes(256 * 1024);
 
 /// Fails naming what grew.
 pub fn run(game: &Path, content: &Content) -> Result<(), String> {
@@ -43,6 +48,7 @@ pub fn run(game: &Path, content: &Content) -> Result<(), String> {
     };
     let mut warm = settle(&mut me);
     let mut warm_ups = 0;
+    let mut quiet = 0;
     loop {
         if warm_ups == MOST_WARM_UPS {
             return Err(format!(
@@ -57,7 +63,12 @@ pub fn run(game: &Path, content: &Content) -> Result<(), String> {
         }
         warm_ups += 1;
         let allowed = slack(before.client).0 / ROUND_TRIPS as u64;
-        if warm.client.0 <= before.client.0 + allowed {
+        quiet = if warm.client.0 <= before.client.0 + allowed {
+            quiet + 1
+        } else {
+            0
+        };
+        if quiet == QUIET_ROUND_TRIPS {
             break;
         }
     }
@@ -154,10 +165,11 @@ fn slack(held: Bytes) -> Bytes {
 }
 
 fn gpu_grown(what: &str, first: Bytes, last: Bytes) -> Option<String> {
-    (last.0 > first.0 + GPU_SLACK.0).then(|| {
+    let slack = GPU_SLACK_LEAST.max(Bytes((first.0 as f64 * GPU_SLACK_SHARE) as u64));
+    (last.0 > first.0 + slack.0).then(|| {
         format!(
             "{what}: {} bytes, from {} bytes (at most {} more)",
-            last.0, first.0, GPU_SLACK.0
+            last.0, first.0, slack.0
         )
     })
 }
