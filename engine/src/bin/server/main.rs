@@ -17,7 +17,9 @@ use bevy_replicon::shared::backend::server_messages::ServerMessages;
 use bevy_replicon_renet2::RenetChannelsExt;
 use engine::core::content::id::Leaf;
 use engine::core::content::sync::{ServedContent, well_formed_hash};
-use engine::core::content::{Content, ContentScope, FilesystemFolder, version, with_content};
+use engine::core::content::{
+    Content, ContentScope, FilesystemFolder, LoadPurpose, version, with_content,
+};
 use engine::core::math::Rng;
 use engine::core::net::auth::TokenClaims;
 use engine::core::net::{MAX_MESSAGE_BYTES, SessionRequest};
@@ -66,11 +68,14 @@ fn main() {
     let content = load_content(
         Arc::new(FilesystemFolder(config.content_dir.clone())),
         "the server did not start",
+        LoadPurpose::Play,
     )
     .unwrap_or_else(|report| {
         eprint!("{report}");
         std::process::exit(2);
     });
+    // Built up front, as a build in the middle of play would stall every world for its length.
+    area::lay_all_meshes(&content);
     let settings = content.built::<GameSettings>();
     let served = ServedContent::new(
         &content,

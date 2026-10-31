@@ -197,7 +197,7 @@ pub fn summon(
         let spot = movement::place_beside(
             world,
             tag.area,
-            &region.mesh,
+            region.mesh(),
             ring(region, at, index, count),
         );
         let summon = super::spawn(world, npc, spot, tag.area, Some(pack));
@@ -231,5 +231,5 @@ pub fn dismiss(world: &mut World, summons: &mut QueryState<(Entity, &'static Sum
 fn ring(region: &area::Area, at: Pos<Meters>, index: u32, count: u32) -> Pos<Meters> {
     let angle = std::f32::consts::TAU * index as f32 / count as f32;
     let spot = at + Offset::new(angle.cos() * RING.0, angle.sin() * RING.0);
-    region.mesh.nearest(spot).unwrap_or(at)
+    region.mesh().nearest(spot).unwrap_or(at)
 }

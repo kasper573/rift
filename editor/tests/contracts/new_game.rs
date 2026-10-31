@@ -46,6 +46,7 @@ fn new_game_from_a_game_copies_its_whole_folder_but_what_is_hidden() {
     let loaded = engine::systems::load_content(
         std::sync::Arc::new(engine::core::content::FilesystemFolder(copy)),
         "cargo test failed",
+        engine::core::content::LoadPurpose::Check,
     );
     if let Err(report) = loaded {
         panic!("the copy loads with this build:\n{report}");

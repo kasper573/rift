@@ -176,6 +176,7 @@ pub fn area(folder: &Path, shot: &Path, out: &Path) {
     let content = engine::systems::load_content(
         Arc::new(FilesystemFolder(folder.clone())),
         "the game did not load",
+        engine::core::content::LoadPurpose::Play,
     )
     .unwrap_or_else(|report| panic!("{report}"));
     let out = out.to_path_buf();

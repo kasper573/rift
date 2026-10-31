@@ -345,7 +345,7 @@ fn skill_setup(
         snapshot.bag.push(ItemStack::new(stack.item, stack.count));
     }
     let area = area::load(content, spawn.area);
-    let free = |at: Pos<Meters>| area.mesh.nearest(at).unwrap_or(at);
+    let free = |at: Pos<Meters>| area.mesh().nearest(at).unwrap_or(at);
     let caster = join(world, snapshot.clone(), spawn, ClientId(1))?.actor;
     let ally = || {
         let mut friend =

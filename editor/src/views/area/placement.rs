@@ -860,7 +860,7 @@ pub fn return_door(editor: &mut Editor, frame: &AreaSnapshot, node: &str) {
     let there = area::load(&content, there_id);
     let door_bounds = object.shape.bounds();
     let back_to = here
-        .mesh
+        .mesh()
         .nearest_where(door_bounds.center(), movement::SPACING, |at| {
             !door_bounds.contains(at)
         });
@@ -869,7 +869,7 @@ pub fn return_door(editor: &mut Editor, frame: &AreaSnapshot, node: &str) {
         return;
     };
     let Some(beside_arrival) = there
-        .mesh
+        .mesh()
         .nearest_where(target_at, movement::SPACING, |at| {
             at.distance(target_at) >= movement::SPACING
         })

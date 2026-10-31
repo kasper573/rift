@@ -319,9 +319,10 @@ pub fn materialize(
 
 pub async fn check_all(loading: &mut Loading) {
     let content = loading.content();
+    let thorough = loading.thorough();
     for (id, snapshot) in loading.rows::<CharacterSnapshot>(&content) {
         let mut check = RowCheck::default();
-        check_start(&content, snapshot, &mut check);
+        check_start(&content, snapshot, thorough, &mut check);
         check_bag(&content, snapshot, &mut check);
         check_equipment(&content, snapshot, &mut check);
         check_skills(&content, snapshot, &mut check);
@@ -407,9 +408,17 @@ fn quest_log(content: &Content, snapshot: &CharacterSnapshot, clock: WallClock) 
     log
 }
 
-fn check_start(content: &Content, snapshot: &CharacterSnapshot, check: &mut RowCheck) {
+/// Whether the snapshot starts where the game holds a character to start; on the ground there,
+/// when `thorough`.
+fn check_start(
+    content: &Content,
+    snapshot: &CharacterSnapshot,
+    thorough: bool,
+    check: &mut RowCheck,
+) {
     let start = start_of(content, snapshot);
     if let CharacterStart::At(place) = snapshot.start
+        && thorough
         && let Err(problem) = area::check_place(content, place)
     {
         check.problem("/start", problem);

@@ -11,7 +11,7 @@ use crate::core::units::Meters;
 use crate::systems::area::{self, AreaDef, AreaId, Cell, Cells};
 use crate::systems::handoff::{self, Moved};
 use crate::systems::script::Place;
-use crate::systems::{mirror, player, step_area};
+use crate::systems::{WorldArea, mirror, player, step_area};
 
 #[derive(Clone)]
 pub struct Worlds {
@@ -147,6 +147,14 @@ impl Worlds {
 /// made for a client's.
 pub fn tick(worlds: &Worlds, views: &mut [Option<&mut World>], clock: WallClock) -> Vec<Moved> {
     let wake = wake(worlds, views);
+    // A world stepping beside others must not be the one to build its area's meshes: waiting on
+    // the build's threads, it could take up the step of another world of the area, which would
+    // wait on the very build it is in.
+    for world in views.iter().zip(&wake).filter(|(_, wake)| wake.awake()) {
+        if let (Some(world), _) = world {
+            area::load(world.resource::<Content>(), world.resource::<WorldArea>().0).lay_meshes();
+        }
+    }
     views
         .par_iter_mut()
         .zip(&wake)

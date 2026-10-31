@@ -6,7 +6,8 @@ use std::sync::Arc;
 use engine::core::assets::AssetKind;
 use engine::core::content::gltf;
 use engine::core::content::{
-    Content, ContentFile, FileHash, FilesystemFolder, FolderReader, LoadWarnings, list_files, write,
+    Content, ContentFile, FileHash, FilesystemFolder, FolderReader, LoadPurpose, LoadWarnings,
+    list_files, write,
 };
 use engine::systems::actor::model::{ActorModel, ModelDef};
 use engine::systems::actor::skeleton::{SkeletonDef, SkeletonId};
@@ -39,8 +40,12 @@ pub fn run(game: &Path) {
 /// it: what each holds stays, only its layout changes.
 pub fn format(game: &Path) {
     let models = externalize_models(game);
-    let content = load_content(Arc::new(FilesystemFolder(game.to_path_buf())), "format")
-        .unwrap_or_else(|report| panic!("{report}"));
+    let content = load_content(
+        Arc::new(FilesystemFolder(game.to_path_buf())),
+        "format",
+        LoadPurpose::Play,
+    )
+    .unwrap_or_else(|report| panic!("{report}"));
     let rewritten = as_the_editor_writes(game, content);
     for file in &rewritten.differing {
         fs::write(game.join(file), rewritten.editors(file)).expect("a rewritten file of the game");
@@ -126,7 +131,11 @@ fn externalize_models(game: &Path) -> usize {
 
 fn problems(game: &Path) -> Vec<String> {
     let mut out = Vec::new();
-    let content = match load_content(Arc::new(FilesystemFolder(game.to_path_buf())), "check") {
+    let content = match load_content(
+        Arc::new(FilesystemFolder(game.to_path_buf())),
+        "check",
+        LoadPurpose::Check,
+    ) {
         Ok(content) => content,
         Err(report) => {
             out.push(format!("does not load:\n{report}"));

@@ -93,10 +93,11 @@ pub fn population_places(
     );
     (0..count)
         .filter_map(|_| match population.roams {
-            Some(bounds) => area
-                .wild_mesh
-                .random_point_within(&mut rng, bounds, |_| true),
-            None => area.wild_mesh.random_point(&mut rng, |_| true),
+            Some(bounds) => {
+                area.mesh_for(true, false)
+                    .random_point_within(&mut rng, bounds, |_| true)
+            }
+            None => area.mesh_for(true, false).random_point(&mut rng, |_| true),
         })
         .collect()
 }

@@ -238,6 +238,7 @@ pub fn load(content_dir: &Path) -> Content {
     load_content(
         Arc::new(FilesystemFolder(content_dir.to_path_buf())),
         "the program stopped",
+        engine::core::content::LoadPurpose::Play,
     )
     .unwrap_or_else(|report| {
         eprint!("{report}");

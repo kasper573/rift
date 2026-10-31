@@ -1267,7 +1267,7 @@ fn tile_facts(map: &OpenWorldMap, hit: &MapTileHit) -> String {
     let info = &atlas.areas[&id];
     let cell = snap(hit.at);
     let loaded = area::load(&map.content, id);
-    let walkable = if loaded.mesh.walkable(cell) {
+    let walkable = if loaded.mesh().walkable(cell) {
         "walkable"
     } else {
         "not walkable"

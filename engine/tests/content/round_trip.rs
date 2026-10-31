@@ -77,6 +77,7 @@ fn load(registry: &ContentRegistry, folder: &Path) -> Content {
         Arc::new(FilesystemFolder(folder.to_path_buf())),
         version::build(),
         "the written folder did not load",
+        engine::core::content::LoadPurpose::Check,
     )
     .unwrap_or_else(|report| panic!("{report}"))
 }

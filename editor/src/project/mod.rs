@@ -19,8 +19,8 @@ use std::time::{Duration, Instant, SystemTime};
 use engine::core::content::ErrorPlace::WholeFile;
 use engine::core::content::{
     CheckedFiles, Content, ContentFile, ContentId, ContentNames, ContentProblem, FolderReader,
-    LoadError, LoadReport, MISSING_FILE, NamedContent, ReadRow, SETTINGS_FILE, Unreadable,
-    parent_of, table_of,
+    LoadError, LoadPurpose, LoadReport, MISSING_FILE, NamedContent, ReadRow, SETTINGS_FILE,
+    Unreadable, parent_of, table_of,
 };
 use engine::systems::{self, GameSettings};
 
@@ -437,7 +437,7 @@ impl Project {
     /// quests and shops out of a player's reach.
     pub fn unplayable(&self) -> Option<LoadReport> {
         let folder = Arc::new(self.files.folder(&self.name()));
-        systems::load_content(folder, "it can't be played yet").err()
+        systems::load_content(folder, "it can't be played yet", LoadPurpose::Check).err()
     }
 
     pub fn loads(&self) -> bool {

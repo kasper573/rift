@@ -55,8 +55,8 @@ use crate::core::audio::soundscape::SoundscapePlugin;
 use crate::core::babble::BabblePlugin;
 use crate::core::content::sync::SyncedContent;
 use crate::core::content::{
-    Content, ContentFolder, ContentProblem, ContentRegistry, ContentVersion, LoadReport, Loading,
-    MODULES, SETTINGS_FILE, Settings,
+    Content, ContentFolder, ContentProblem, ContentRegistry, ContentVersion, LoadPurpose,
+    LoadReport, Loading, MODULES, SETTINGS_FILE, Settings,
 };
 use crate::core::gui::GuiPlugin;
 use crate::core::interpolate::SnapshotPlugin;
@@ -466,16 +466,18 @@ pub fn step_area(world: &mut World, clock: WallClock) {
 pub fn load_content(
     folder: std::sync::Arc<dyn ContentFolder>,
     outcome: &str,
+    purpose: LoadPurpose,
 ) -> Result<Content, LoadReport> {
     crate::core::content::load(
         registry(),
         folder,
         crate::core::content::version::build(),
         outcome,
+        purpose,
     )
 }
 
-/// Loads a game still being made, through `making_registry`.
+/// Loads a game still being made, through `making_registry`, held to every rule.
 pub fn load_making(
     folder: std::sync::Arc<dyn ContentFolder>,
     outcome: &str,
@@ -485,6 +487,7 @@ pub fn load_making(
         folder,
         crate::core::content::version::build(),
         outcome,
+        LoadPurpose::Check,
     )
 }
 
@@ -635,19 +638,8 @@ async fn check_settings(loading: &mut Loading) {
             loading.json_error(SETTINGS_FILE, &error.pointer, error.problem);
         }
     }
-    if let Err(problem) = area::check_place(&content, settings.initial_spawn) {
-        loading.json_error(
-            SETTINGS_FILE,
-            "/initial_spawn",
-            ContentProblem::new(problem.rule, problem.found, problem.expected)
-                .near(problem.nearest),
-        );
-    }
-    for (site, problem) in area::check_islands(&content, settings.initial_spawn) {
-        match site {
-            area::IslandSite::Scene(file, pointer) => loading.json_error(&file, &pointer, problem),
-            area::IslandSite::Spawn => loading.json_error(SETTINGS_FILE, "/initial_spawn", problem),
-        }
+    if loading.thorough() {
+        check_reach(loading, &content, settings.initial_spawn);
     }
     let (halo, reached_by) = mirror::halo(&content);
     if settings.spatial_partition_cell_size < halo {
@@ -663,6 +655,25 @@ async fn check_settings(loading: &mut Loading) {
                 ),
             ),
         );
+    }
+}
+
+/// Whether the initial spawn stands on ground, and everything placed in an area stands where the
+/// spawn or a warp into it reaches.
+fn check_reach(loading: &mut Loading, content: &Content, spawn: script::Place) {
+    if let Err(problem) = area::check_place(content, spawn) {
+        loading.json_error(
+            SETTINGS_FILE,
+            "/initial_spawn",
+            ContentProblem::new(problem.rule, problem.found, problem.expected)
+                .near(problem.nearest),
+        );
+    }
+    for (site, problem) in area::check_islands(content, spawn) {
+        match site {
+            area::IslandSite::Scene(file, pointer) => loading.json_error(&file, &pointer, problem),
+            area::IslandSite::Spawn => loading.json_error(SETTINGS_FILE, "/initial_spawn", problem),
+        }
     }
 }
 

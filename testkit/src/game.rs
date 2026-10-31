@@ -677,6 +677,7 @@ impl Game {
             Arc::new(self.folder()),
             version::build(),
             "the test game did not load",
+            engine::core::content::LoadPurpose::Check,
         )
     }
 

@@ -448,7 +448,7 @@ fn area_of(content: &Content, id: AreaId) -> ProbeArea {
 }
 
 fn mesh(content: &Content, area: AreaId) -> &crate::systems::movement::NavMesh {
-    &area::load(content, area).mesh
+    area::load(content, area).mesh()
 }
 
 fn pictured(content: &Content, id: AreaId, at: Pos<Meters>) -> bool {

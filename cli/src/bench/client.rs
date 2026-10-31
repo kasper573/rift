@@ -143,7 +143,7 @@ fn walkable_near(
     from: Place,
     within: std::ops::Range<Meters>,
 ) -> Option<Pos<Meters>> {
-    let mesh = &area::load(content, from.area).mesh;
+    let mesh = area::load(content, from.area).mesh();
     let start = mesh.nearest(from.at)?;
     let reach = within.end.0.ceil() as i32;
     (-reach..=reach)

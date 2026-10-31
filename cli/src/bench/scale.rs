@@ -270,6 +270,7 @@ fn loaded(game: &Path) -> Option<Content> {
     engine::systems::load_content(
         std::sync::Arc::new(engine::core::content::FilesystemFolder(game.to_path_buf())),
         "the larger area did not load",
+        engine::core::content::LoadPurpose::Play,
     )
     .map_err(|report| eprint!("{report}"))
     .ok()

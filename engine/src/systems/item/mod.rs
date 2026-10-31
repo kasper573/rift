@@ -972,9 +972,9 @@ fn collect(world: &mut World, player: Entity, item: Entity) {
 
 fn scatter_pos(from: Pos<Meters>, index: usize, count: usize, area: &area::Area) -> Pos<Meters> {
     if count == 1 {
-        return area.mesh.nearest(from).unwrap_or(from);
+        return area.mesh().nearest(from).unwrap_or(from);
     }
     let angle = std::f32::consts::TAU * index as f32 / count as f32;
     let spread = from + Offset::new(angle.cos() * DROP_RADIUS.0, angle.sin() * DROP_RADIUS.0);
-    area.mesh.nearest(spread).unwrap_or(from)
+    area.mesh().nearest(spread).unwrap_or(from)
 }

@@ -53,7 +53,7 @@ pub(super) fn overlay_navmesh(painter: &egui::Painter, frame: &AreaFrame) {
     let canvas = &frame.canvas;
     let area = frame.area();
     let outline = EStroke::new(1.0, ink::wash(theme::BLOCKED, 0.43));
-    for polygon in area.mesh.polygons() {
+    for polygon in area.mesh().polygons() {
         painter.add(egui::Shape::closed_line(canvas.closed(polygon), outline));
     }
     for zone in &area.safe_zones {

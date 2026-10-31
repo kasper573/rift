@@ -1364,7 +1364,7 @@ fn apply_moment(
     let beside_party = moment.party(sheet, parties, quest).and_then(|party| {
         let (content, _) = parties?;
         let home = area::residence(content, party.npc?)?;
-        let beside = area::load(content, home.area).mesh.nearest_where(
+        let beside = area::load(content, home.area).mesh().nearest_where(
             home.at,
             movement::SPACING,
             |at| at.distance(home.at) >= movement::SPACING,

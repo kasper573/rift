@@ -1079,7 +1079,7 @@ fn start_run(
     let snapshot = snapshot_for(&content, setup.character.as_deref(), &project.reader())?;
     let area = area::load(&content, area_id);
     let at = area
-        .mesh
+        .mesh()
         .nearest(near)
         .unwrap_or_else(|| area.fallback_spawn());
     let joined = live::join(

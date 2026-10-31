@@ -390,7 +390,7 @@ pub fn spawn_all(world: &mut World) {
                     continue;
                 }
                 let pack = next_pack(world);
-                let mesh = &area::load(&content, area_id).mesh;
+                let mesh = area::load(&content, area_id).mesh();
                 let at = movement::place_beside(world, area_id, mesh, resident.at);
                 let entity = spawn(world, resident.npc, at, area_id, Some(pack));
                 world.entity_mut(entity).insert(Home(resident.at));
@@ -416,7 +416,7 @@ fn spawn_wild(
     roams: Option<Rect<Meters>>,
     pack: Pack,
 ) {
-    let mesh = &area::load(content, area_id).wild_mesh;
+    let mesh = area::load(content, area_id).mesh_for(true, false);
     let at = world
         .resource_scope(|world, mut rng: Mut<Rng>| {
             let spots = world.resource::<Spots>();

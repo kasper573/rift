@@ -634,6 +634,7 @@ pub fn spawn_stateless(world: &mut World) {
 pub async fn check_all(loading: &mut Loading) {
     let content = loading.content();
     let scripts = content.built::<RiftScripts>();
+    let thorough = loading.thorough();
     for (row, procedures) in scripts.owners() {
         let label = procedures
             .first()
@@ -643,7 +644,7 @@ pub async fn check_all(loading: &mut Loading) {
         let may_do = scripts.may_do(*row);
         for reach in &may_do.reaches {
             match reach {
-                Reach::Warp(place) => {
+                Reach::Warp(place) if thorough => {
                     if let Err(problem) = area::check_place(&content, *place) {
                         loading.json_error(
                             &site.file,

@@ -12,7 +12,7 @@ use crate::core::content::sync::{
     ContentSource, Counted, SyncError, SyncPhase, SyncPolicy, SyncProgress, SyncStatus,
     SyncedContent, sync,
 };
-use crate::core::content::{Content, load_paced, version};
+use crate::core::content::{Content, LoadPurpose, load_paced, version};
 use crate::core::gui::{self, Band};
 use crate::core::math::Rng;
 use crate::core::net::auth::Credentials;
@@ -139,6 +139,7 @@ fn start(world: &mut World, retry: Retry) {
                 Arc::new(synced.folder()),
                 version::build(),
                 "the content did not load",
+                LoadPurpose::Play,
                 &pace,
             )
             .await

@@ -150,8 +150,8 @@ impl MeterSize for Size<Meters> {
 
 pub trait GridDims {
     fn cells(self) -> impl Iterator<Item = CellPos>;
-    /// The index of the cell under `at`, none off the grid.
-    fn index_of(self, at: Pos<Meters>) -> Option<usize>;
+    /// The cell under `at`, none off the grid.
+    fn cell_under(self, at: Pos<Meters>) -> Option<CellPos>;
 }
 
 impl GridDims for GridSize {
@@ -160,8 +160,9 @@ impl GridDims for GridSize {
         (0..h).flat_map(move |y| (0..w).map(move |x| CellPos::new(x, y)))
     }
 
-    fn index_of(self, at: Pos<Meters>) -> Option<usize> {
-        CellPos::new(at.x.round() as i32, at.y.round() as i32).index(self)
+    fn cell_under(self, at: Pos<Meters>) -> Option<CellPos> {
+        let cell = CellPos::new(at.x.round() as i32, at.y.round() as i32);
+        cell.index(self).map(|_| cell)
     }
 }
 

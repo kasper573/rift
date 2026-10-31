@@ -719,13 +719,31 @@ pub trait Settings: DeserializeOwned + Serialize + JsonSchema + Send + Sync + 's
     fn content_version(&self) -> &ContentVersion;
 }
 
+/// What a game is loaded for.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LoadPurpose {
+    /// To play it, trusting it was checked: the checks that would build what play builds only
+    /// once it needs it are left out.
+    Play,
+    /// To hold it to every rule, however much the checks build.
+    Check,
+}
+
 pub fn load(
     registry: &ContentRegistry,
     folder: Arc<dyn ContentFolder>,
     build: &str,
     outcome: &str,
+    purpose: LoadPurpose,
 ) -> Result<Content, LoadReport> {
-    block_on(load_paced(registry, folder, build, outcome, &Pace::whole()))
+    block_on(load_paced(
+        registry,
+        folder,
+        build,
+        outcome,
+        purpose,
+        &Pace::whole(),
+    ))
 }
 
 /// Loads the game in `folder` at `pace`: whole, or a slice of every frame where the load must
@@ -735,6 +753,7 @@ pub async fn load_paced(
     folder: Arc<dyn ContentFolder>,
     build: &str,
     outcome: &str,
+    purpose: LoadPurpose,
     pace: &Pace,
 ) -> Result<Content, LoadReport> {
     let version = registry.version();
@@ -750,6 +769,7 @@ pub async fn load_paced(
         failed: HashSet::new(),
         media: Vec::new(),
         pace: pace.clone(),
+        purpose,
     };
     loading.parse(registry, None).await;
     loading.check_rows(registry).await;
@@ -827,6 +847,7 @@ pub(super) fn check_files(
         failed: HashSet::new(),
         media: Vec::new(),
         pace: Pace::whole(),
+        purpose: LoadPurpose::Check,
     };
     block_on(loading.parse(registry, Some(&contents)));
     let misread: HashSet<String> = loading
@@ -893,9 +914,16 @@ pub struct Loading {
     /// Every media file outside the bundles that content names, sorted.
     media: Vec<String>,
     pace: Pace,
+    purpose: LoadPurpose,
 }
 
 impl Loading {
+    /// Whether the load runs the checks that build what play builds only once it needs it, such
+    /// as where every area walks.
+    pub fn thorough(&self) -> bool {
+        self.purpose == LoadPurpose::Check
+    }
+
     /// Lets the frame go when the load's slice of it is used up: a hook breathes between the
     /// pieces of its work.
     pub async fn breathe(&self) {

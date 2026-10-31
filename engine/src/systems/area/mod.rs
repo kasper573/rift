@@ -640,7 +640,7 @@ pub fn walkable(world: &World, at: Pos<Meters>) -> bool {
     crate::systems::player::session::my_character(world)
         .map(|me| me.id())
         .and_then(|entity| of(world, entity))
-        .is_some_and(|area| area.mesh.walkable(at))
+        .is_some_and(|area| area.mesh().walkable(at))
 }
 
 /// An area as the game plays it: its ground, where it walks and flies, what stands and shines on
@@ -653,16 +653,14 @@ pub struct Area {
     pub paint: Paint,
     pub lighting: Lighting,
     pub weather: Weather,
-    pub mesh: Arc<NavMesh>,
-    pub wild_mesh: Arc<NavMesh>,
-    pub airspace: Arc<NavMesh>,
-    pub wild_airspace: Arc<NavMesh>,
     pub safe_zones: Vec<Rect<Meters>>,
-    pub footsteps: Vec<Option<SfxId>>,
     pub soundscape: Vec<SoundscapeZone>,
     /// Every prop standing in the area, scattered ones expanded.
     pub props: Vec<PropPlacement>,
     pub lights: Vec<PointLightDef>,
+    underfoot: Vec<walk::Underfoot>,
+    footprints: Vec<Vec<Pos<Meters>>>,
+    meshes: walk::Meshes,
 }
 
 impl Area {
@@ -670,14 +668,23 @@ impl Area {
         self.safe_zones.iter().any(|zone| zone.contains(at))
     }
 
+    /// The ground everyone walks.
+    pub fn mesh(&self) -> &NavMesh {
+        self.mesh_for(false, false)
+    }
+
     /// The mesh an actor moves on: the ground or, flying, the air, each cut around the safe zones
-    /// for the wild.
+    /// for the wild; with no safe zone the wild moves on everyone's. Built the first time it's
+    /// asked for.
     pub fn mesh_for(&self, wild: bool, flies: bool) -> &NavMesh {
-        match (wild, flies) {
-            (false, false) => &self.mesh,
-            (true, false) => &self.wild_mesh,
-            (false, true) => &self.airspace,
-            (true, true) => &self.wild_airspace,
+        walk::mesh(self, wild && !self.safe_zones.is_empty(), flies)
+    }
+
+    /// Builds every mesh actors move on in the area now, rather than when one is first asked for
+    /// and the build holds up whatever asked.
+    pub fn lay_meshes(&self) {
+        for (wild, flies) in [(false, false), (true, false), (false, true), (true, true)] {
+            self.mesh_for(wild, flies);
         }
     }
 
@@ -687,12 +694,12 @@ impl Area {
     }
 
     pub fn footstep_at(&self, at: Pos<Meters>) -> Option<&SfxId> {
-        let i = self.size.grid().index_of(at)?;
-        self.footsteps[i].as_ref()
+        let cell = self.size.grid().cell_under(at)?;
+        Some(&self.underfoot_of(self.paint.dominant(cell)).footstep)
     }
 
     pub fn fallback_spawn(&self) -> Pos<Meters> {
-        self.mesh
+        self.mesh()
             .nearest(self.center())
             .unwrap_or_else(|| self.center())
     }
@@ -703,12 +710,29 @@ impl Area {
             (self.size.height / 2.0).floor(),
         )
     }
+
+    /// What the terrain painted with `index` is underfoot; past the area's terrains, its last.
+    fn underfoot_of(&self, index: u8) -> &walk::Underfoot {
+        &self.underfoot[usize::from(index).min(self.underfoot.len() - 1)]
+    }
 }
 
 pub struct Areas(Vec<Option<Arc<Area>>>);
 
 pub fn load(content: &Content, area: AreaId) -> &Area {
     shared(content, area)
+}
+
+/// Builds the meshes of every area that loaded now, side by side, rather than each when it's
+/// first asked for.
+pub fn lay_all_meshes(content: &Content) {
+    use rayon::prelude::*;
+    content
+        .built::<Areas>()
+        .0
+        .par_iter()
+        .flatten()
+        .for_each(|area| area.lay_meshes());
 }
 
 /// The area at `area` when it loaded, to keep beside the content it came from.
@@ -946,7 +970,10 @@ async fn build_all(loading: &mut Loading) {
         check_bounds(&content, ground.size, modules, &mut check);
         let (area, budget) = build_area(&content, &ground, modules);
         check.extend(budget);
-        check_placed(&content, id, &area, modules, &mut check);
+        check_placed(&content, id, modules, &mut check);
+        if loading.thorough() {
+            check_footing(&content, id, &area, modules, &mut check);
+        }
         let scene = scene_file(id.path(&content));
         for error in check.into_errors() {
             loading.json_error(&scene, &error.pointer, error.problem);
@@ -1012,7 +1039,6 @@ fn build_area(content: &Content, ground: &Ground, modules: &[Flattened]) -> (Are
             );
         }
     }
-    let walk = walk::meshes(content, ground, &props, &safe_zones);
     let area = Area {
         size: ground.size.meters(),
         max_slope: ground.max_slope,
@@ -1021,12 +1047,7 @@ fn build_area(content: &Content, ground: &Ground, modules: &[Flattened]) -> (Are
         paint: ground.paint.clone(),
         lighting: ground.lighting.clone(),
         weather: ground.weather,
-        mesh: walk.walk,
-        wild_mesh: walk.wild,
-        airspace: walk.airspace,
-        wild_airspace: walk.wild_airspace,
         safe_zones,
-        footsteps: walk.footsteps,
         soundscape: modules
             .iter()
             .filter_map(|placed| match &placed.module {
@@ -1034,8 +1055,11 @@ fn build_area(content: &Content, ground: &Ground, modules: &[Flattened]) -> (Are
                 _ => None,
             })
             .collect(),
+        underfoot: walk::underfoot(content, &ground.terrains),
+        footprints: walk::footprints(content, &props),
         props,
         lights,
+        meshes: walk::Meshes::default(),
     };
     (area, check)
 }
@@ -1089,7 +1113,60 @@ fn check_bounds(content: &Content, size: GroundSize, modules: &[Flattened], chec
     }
 }
 
-fn check_placed(
+fn check_placed(content: &Content, id: AreaId, modules: &[Flattened], check: &mut RowCheck) {
+    let mut names: Vec<(String, String)> = Vec::new();
+    let mut seen_residents: Vec<NpcId> = Vec::new();
+    for placed in modules {
+        let site = |field: &str| module_pointer(placed, field);
+        match &placed.module {
+            AreaModule::Object(ObjectDef {
+                name: Some(name), ..
+            }) => {
+                if let Some((_, first)) = names.iter().find(|(n, _)| n.eq_ignore_ascii_case(name)) {
+                    check.error(
+                        site(""),
+                        "duplicate name",
+                        format!("{name}, from {} and {}", first, placed.describe(content)),
+                        "object names unique in the area ignoring case",
+                    );
+                } else {
+                    names.push((name.clone(), placed.describe(content)));
+                }
+            }
+            AreaModule::Resident(resident) => {
+                if seen_residents.contains(&resident.npc) {
+                    check.error(
+                        site(""),
+                        "resident twice",
+                        format!("{} in {}", resident.npc.path(content), id.path(content)),
+                        "each npc resident once per area",
+                    );
+                }
+                seen_residents.push(resident.npc);
+            }
+            _ => {}
+        }
+    }
+    let warps: Vec<(u32, &ObjectDef, String)> = warp_objects(content, id)
+        .into_iter()
+        .map(|(index, object)| (index, object, object.display_name(index)))
+        .collect();
+    for (index, (object_index, object, name)) in warps.iter().enumerate() {
+        for (_, other, other_name) in &warps[index + 1..] {
+            if object.shape.overlaps(&other.shape) {
+                check.error(
+                    module_pointer(&modules[*object_index as usize], ""),
+                    "warp objects overlap",
+                    format!("{name} and {other_name}"),
+                    "warp objects that never overlap",
+                );
+            }
+        }
+    }
+}
+
+/// Whether everything placed in the area that stands on its ground has ground to stand on.
+fn check_footing(
     content: &Content,
     id: AreaId,
     area: &Area,
@@ -1106,29 +1183,14 @@ fn check_placed(
             .find(|(_, object, _)| object.shape.covers(at))
             .map(|(_, _, name)| name.clone())
     };
-    let nearest_ground = |at: Pos<Meters>| area.mesh.nearest(at).map(describe_point);
-    let mut names: Vec<(String, String)> = Vec::new();
-    let mut seen_residents: Vec<NpcId> = Vec::new();
+    let mesh = area.mesh();
+    let nearest_ground = |at: Pos<Meters>| mesh.nearest(at).map(describe_point);
     for placed in modules {
         let site = |field: &str| module_pointer(placed, field);
         match &placed.module {
             AreaModule::Object(object) => {
-                if let Some(name) = &object.name {
-                    if let Some((_, first)) =
-                        names.iter().find(|(n, _)| n.eq_ignore_ascii_case(name))
-                    {
-                        check.error(
-                            site(""),
-                            "duplicate name",
-                            format!("{name}, from {} and {}", first, placed.describe(content)),
-                            "object names unique in the area ignoring case",
-                        );
-                    } else {
-                        names.push((name.clone(), placed.describe(content)));
-                    }
-                }
                 if let ObjectShape::Point(at) = object.shape
-                    && !area.mesh.walkable(at)
+                    && !mesh.walkable(at)
                 {
                     check.problem(
                         site("/shape"),
@@ -1143,16 +1205,7 @@ fn check_placed(
             }
             AreaModule::Resident(resident) => {
                 let key = resident.npc.path(content);
-                if seen_residents.contains(&resident.npc) {
-                    check.error(
-                        site(""),
-                        "resident twice",
-                        format!("{key} in {}", id.path(content)),
-                        "each npc resident once per area",
-                    );
-                }
-                seen_residents.push(resident.npc);
-                if !area.mesh.walkable(resident.at) {
+                if !mesh.walkable(resident.at) {
                     check.problem(
                         site("/at"),
                         ContentProblem::new(
@@ -1175,9 +1228,10 @@ fn check_placed(
                 }
             }
             AreaModule::Population(population) => {
+                let wild = area.mesh_for(true, false);
                 let has_ground = match population.roams {
-                    Some(bounds) => area.wild_mesh.covers(bounds),
-                    None => !area.wild_mesh.is_empty(),
+                    Some(bounds) => wild.covers(bounds),
+                    None => !wild.is_empty(),
                 };
                 if !has_ground {
                     check.error(
@@ -1191,29 +1245,18 @@ fn check_placed(
             _ => {}
         }
     }
-    for (index, (object_index, object, name)) in warps.iter().enumerate() {
-        let pointer = module_pointer(&modules[*object_index as usize], "");
+    for (object_index, object, name) in &warps {
         let covered = match object.shape {
-            ObjectShape::Point(at) => area.mesh.walkable(at),
-            ObjectShape::Rect(rect) => area.mesh.covers(rect),
+            ObjectShape::Point(at) => mesh.walkable(at),
+            ObjectShape::Rect(rect) => mesh.covers(rect),
         };
         if !covered {
             check.error(
-                pointer.clone(),
+                module_pointer(&modules[*object_index as usize], ""),
                 "warp object has no ground",
                 name.clone(),
                 "a warp object covering some walkable ground",
             );
-        }
-        for (_, other, other_name) in &warps[index + 1..] {
-            if object.shape.overlaps(&other.shape) {
-                check.error(
-                    pointer.clone(),
-                    "warp objects overlap",
-                    format!("{name} and {other_name}"),
-                    "warp objects that never overlap",
-                );
-            }
         }
     }
 }
@@ -1244,7 +1287,7 @@ pub fn check_islands(content: &Content, spawn: script::Place) -> Vec<(IslandSite
         let mut entrances: Vec<(Option<u32>, Pos<Meters>)> = warps
             .iter()
             .flat_map(|(index, object)| {
-                area.mesh
+                area.mesh()
                     .ground_within(object.shape.bounds())
                     .into_iter()
                     .map(move |at| (Some(*index), at))
@@ -1265,13 +1308,13 @@ pub fn check_islands(content: &Content, spawn: script::Place) -> Vec<(IslandSite
         let reaches = |at: Pos<Meters>, except: Option<u32>| {
             entrances.iter().any(|(index, entrance)| {
                 except.is_none_or(|except| *index != Some(except))
-                    && area.mesh.connects(*entrance, at)
+                    && area.mesh().connects(*entrance, at)
             })
         };
         let scene = scene_file(id.path(content));
         let mut report = |site: IslandSite, what: String, at: Pos<Meters>| {
             let nearest = area
-                .mesh
+                .mesh()
                 .nearest_where(at, movement::SPACING, |point| reaches(point, None));
             problems.push((
                 site,
@@ -1290,7 +1333,7 @@ pub fn check_islands(content: &Content, spawn: script::Place) -> Vec<(IslandSite
                 |field: &str| IslandSite::Scene(scene.clone(), module_pointer(placed, field));
             match &placed.module {
                 AreaModule::Resident(resident) => {
-                    if area.mesh.walkable(resident.at) && !reaches(resident.at, None) {
+                    if area.mesh().walkable(resident.at) && !reaches(resident.at, None) {
                         report(
                             site("/at"),
                             resident.npc.path(content).to_owned(),
@@ -1300,7 +1343,7 @@ pub fn check_islands(content: &Content, spawn: script::Place) -> Vec<(IslandSite
                 }
                 AreaModule::Population(population) => {
                     let region = population.roams.unwrap_or(area.size.bounds());
-                    let ground = area.mesh.ground_within(region);
+                    let ground = area.mesh().ground_within(region);
                     if let Some(first) = ground.first()
                         && !ground.iter().any(|at| reaches(*at, None))
                     {
@@ -1309,7 +1352,7 @@ pub fn check_islands(content: &Content, spawn: script::Place) -> Vec<(IslandSite
                 }
                 AreaModule::Object(object) if several => {
                     let index = index as u32;
-                    let ground = area.mesh.ground_within(object.shape.bounds());
+                    let ground = area.mesh().ground_within(object.shape.bounds());
                     if warps.iter().any(|(warp, _)| *warp == index)
                         && let Some(first) = ground.first()
                         && !ground.iter().any(|at| reaches(*at, Some(index)))
@@ -1322,10 +1365,10 @@ pub fn check_islands(content: &Content, spawn: script::Place) -> Vec<(IslandSite
         }
         if spawn.area == id
             && several
-            && area.mesh.walkable(spawn.at)
-            && !entrances
-                .iter()
-                .any(|(index, entrance)| index.is_some() && area.mesh.connects(*entrance, spawn.at))
+            && area.mesh().walkable(spawn.at)
+            && !entrances.iter().any(|(index, entrance)| {
+                index.is_some() && area.mesh().connects(*entrance, spawn.at)
+            })
         {
             report(IslandSite::Spawn, "the initial spawn".to_owned(), spawn.at);
         }
@@ -1346,7 +1389,7 @@ pub fn check_place(content: &Content, place: script::Place) -> Result<(), Conten
     let warps = warp_objects(content, place.area);
     let problem = |rule: &'static str, found: String| {
         let nearest = area
-            .mesh
+            .mesh()
             .nearest_where(place.at, movement::SPACING, |at| {
                 !warps.iter().any(|(_, object)| object.shape.covers(at))
             })
@@ -1358,7 +1401,7 @@ pub fn check_place(content: &Content, place: script::Place) -> Result<(), Conten
         )
         .near(nearest)
     };
-    if !area.mesh.walkable(place.at) {
+    if !area.mesh().walkable(place.at) {
         return Err(problem(
             "not walkable",
             format!("{key} {}", describe_point(place.at)),

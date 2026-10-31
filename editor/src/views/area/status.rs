@@ -59,7 +59,7 @@ pub(super) fn status_bar(
         ));
         if frame.in_map(ground) {
             let area = frame.area();
-            let mut what = if area.mesh.walkable(ground) {
+            let mut what = if area.mesh().walkable(ground) {
                 "walkable".to_owned()
             } else {
                 "blocked".to_owned()
