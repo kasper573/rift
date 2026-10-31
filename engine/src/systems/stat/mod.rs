@@ -101,7 +101,7 @@ pub type StatSource = fn(&World, Entity, &mut Vec<Stat>);
 pub struct Sources(Vec<StatSource>);
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::*;
+    use crate::systems::mirror::AppMirrorExt;
     app.replicate::<Stats>();
 }
 

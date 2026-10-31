@@ -41,15 +41,15 @@ use crate::systems::skill::{self, Rank, SkillId};
 use crate::systems::stat::Stats;
 use crate::systems::status::Statuses;
 use crate::systems::visibility::{self, Presence};
-use crate::systems::{WorldArea, dialogue};
+use crate::systems::{WorldArea, WorldCell, dialogue};
 
 pub type NpcId = ContentId<NpcDef>;
 
 const CORPSE_LINGER: Seconds = Seconds(5.0);
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::*;
-    app.replicate_once::<Npc>();
+    use crate::systems::mirror::AppMirrorExt;
+    app.replicate_once::<Npc>().mirror::<Pack>();
 }
 
 /// The ranks an npc holds its skills at lie within those skills' ranks.
@@ -355,12 +355,23 @@ pub fn next_pack(world: &mut World) -> Pack {
     Pack(next.0)
 }
 
+/// Spawns the npcs placed in this world's cell: a resident at its spot, a population where its
+/// roaming ground is, or the area's middle when it roams anywhere.
 pub fn spawn_all(world: &mut World) {
     let content = world.resource::<Content>().clone();
     let area_id = world.resource::<WorldArea>().0;
+    let mine = world.resource::<WorldCell>().0;
+    let area = area::load(&content, area_id);
+    let cells = area.cells;
     for module in area::modules(&content, area_id) {
         match module {
             AreaModule::Population(population) => {
+                let anchor = population
+                    .roams
+                    .map_or_else(|| area.center(), |roams| roams.center());
+                if cells.at(anchor) != mine {
+                    continue;
+                }
                 let pack = next_pack(world);
                 for _ in 0..population.count {
                     spawn_wild(
@@ -374,6 +385,9 @@ pub fn spawn_all(world: &mut World) {
                 }
             }
             AreaModule::Resident(resident) => {
+                if cells.at(resident.at) != mine {
+                    continue;
+                }
                 let pack = next_pack(world);
                 let mesh = &area::load(&content, area_id).mesh;
                 let at = movement::place_beside(world, area_id, mesh, resident.at);

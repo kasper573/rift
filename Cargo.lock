@@ -2931,6 +2931,7 @@ dependencies = [
  "bevy_time",
  "clap",
  "engine",
+ "rayon",
  "renet2",
  "schemars 1.2.3",
  "serde",

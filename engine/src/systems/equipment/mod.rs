@@ -16,7 +16,9 @@ use crate::systems::player::player_requests;
 use crate::systems::script::condition;
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::*;
+    use bevy_replicon::prelude::{Channel, ClientMessageAppExt};
+
+    use crate::systems::mirror::AppMirrorExt;
     app.replicate::<Equipment>()
         .add_client_message::<UnequipRequest>(Channel::Ordered)
         .add_client_message::<HoldRequest>(Channel::Ordered);

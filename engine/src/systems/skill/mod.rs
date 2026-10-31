@@ -53,12 +53,14 @@ pub const HOTBAR_SLOTS: u32 = 40;
 pub const AREA_TARGETS: usize = 8;
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::*;
-    app.replicate::<Learned>()
-        .replicate::<Cooldowns>()
-        .replicate::<Hotbar>()
-        .replicate::<BasicAttack>()
-        .replicate::<ResetPrompt>()
+    use bevy_replicon::prelude::{Channel, ClientMessageAppExt};
+
+    use crate::systems::mirror::AppMirrorExt;
+    app.replicate_private::<Learned>()
+        .replicate_private::<Cooldowns>()
+        .replicate_private::<Hotbar>()
+        .replicate_private::<BasicAttack>()
+        .replicate_private::<ResetPrompt>()
         .add_mapped_client_message::<UseSkillRequest>(Channel::Ordered)
         .add_client_message::<LearnSkillsRequest>(Channel::Ordered)
         .add_client_message::<AssignHotbarRequest>(Channel::Ordered)

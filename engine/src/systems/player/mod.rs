@@ -38,12 +38,14 @@ use crate::systems::visibility::{self, OwnedBy};
 use crate::systems::{GameSettings, WorldArea, belongings, drain_requests, notification};
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::*;
+    use bevy_replicon::prelude::{Channel, ClientMessageAppExt, ServerMessageAppExt};
+
+    use crate::systems::mirror::AppMirrorExt;
 
     app.replicate_once::<PlayedBy>()
         .replicate::<Xp>()
-        .replicate::<CommandLock>()
-        .replicate::<ArrivalHold>()
+        .replicate_private::<CommandLock>()
+        .replicate_private::<ArrivalHold>()
         .add_client_message::<JoinRequest>(Channel::Ordered)
         .add_client_message::<RespawnRequest>(Channel::Ordered)
         .add_client_message::<AreaDrawn>(Channel::Ordered)
@@ -345,10 +347,12 @@ fn spawn_position(
     match policy {
         SpawnPolicy::Map if spawn.area == zone => spawn.at,
         SpawnPolicy::Map => fallback(),
-        SpawnPolicy::Dist => area
-            .mesh
-            .random_point(&mut world.resource_mut::<Rng>(), |_| true)
-            .unwrap_or_else(fallback),
+        SpawnPolicy::Dist => {
+            let within = crate::systems::world_rect(world);
+            area.mesh
+                .random_point_within(&mut world.resource_mut::<Rng>(), within, |_| true)
+                .unwrap_or_else(fallback)
+        }
     }
 }
 

@@ -6,7 +6,7 @@ use std::collections::BTreeMap;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
-use bevy_replicon::prelude::{AppRuleExt, Replicated};
+use bevy_replicon::prelude::Replicated;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::VariantArray;
@@ -25,6 +25,7 @@ use crate::core::vfx::{
 };
 use crate::systems::WorldArea;
 use crate::systems::area::{AreaObject, AreaTag};
+use crate::systems::mirror::AppMirrorExt;
 use crate::systems::movement::{Position, position};
 use crate::systems::player::PlayedBy;
 use crate::systems::script::effect::RiftEffect;

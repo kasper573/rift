@@ -47,8 +47,10 @@ pub type QuestId = ContentId<QuestDef>;
 pub const QUEST_LOG_CAP: usize = 20;
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::*;
-    app.replicate::<QuestLog>()
+    use bevy_replicon::prelude::{Channel, ClientMessageAppExt};
+
+    use crate::systems::mirror::AppMirrorExt;
+    app.replicate_private::<QuestLog>()
         .add_client_message::<QuestRequest>(Channel::Ordered);
 }
 

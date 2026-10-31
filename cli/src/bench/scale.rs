@@ -6,11 +6,12 @@
 //! An area grows until the engine refuses to load one that large.
 
 use std::path::Path;
+use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use engine::core::content::Content;
 use engine::core::units::Bytes;
-use engine::systems::{GameSettings, step_area, step_areas};
+use engine::systems::GameSettings;
 
 use super::client::settled_in_world;
 use super::playtest::Playtest;
@@ -117,14 +118,20 @@ fn server(areas: usize, players: usize, content: &Content, cores: Cores) -> Serv
 fn step(bench: &mut Bench, cores: Cores) {
     let clock = bench.play();
     match cores {
-        Cores::One => {
-            for app in &mut bench.worlds {
-                step_area(app.world_mut(), clock);
-            }
-        }
-        Cores::Every => step_areas(&mut bench.worlds, clock),
+        Cores::One => bench.tick_on(one_core(), clock),
+        Cores::Every => bench.tick(clock),
     }
     bench.acknowledge_sent();
+}
+
+fn one_core() -> &'static rayon::ThreadPool {
+    static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+    POOL.get_or_init(|| {
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(1)
+            .build()
+            .expect("a one-thread pool")
+    })
 }
 
 struct Seen {

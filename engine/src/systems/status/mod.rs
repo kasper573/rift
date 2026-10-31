@@ -25,8 +25,8 @@ use crate::systems::script::{RunnerKind, ScriptModule, ScriptedRow};
 pub type StatusEffectId = ContentId<StatusEffectDef>;
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::*;
-    app.replicate::<Statuses>().replicate::<Boosts>();
+    use crate::systems::mirror::AppMirrorExt;
+    app.replicate::<Statuses>().replicate_private::<Boosts>();
 }
 
 /// A buff or debuff an actor carries for a while: the row says how it looks and sounds coming,

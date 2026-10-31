@@ -15,7 +15,7 @@ use engine::core::units::{MeterPos, Meters};
 use engine::core::vfx::VfxInstance;
 use engine::systems::actor::plate::{self, PlateLabel};
 use engine::systems::actor::{Action, Actor, Appearance, ModelId};
-use engine::systems::area::{self, AreaId, AreaModule};
+use engine::systems::area::{self, AreaId, AreaModule, Cell};
 use engine::systems::class::ClassDef;
 use engine::systems::item::{ItemDef, ItemId, ItemKind, ItemStack};
 use engine::systems::launch::ServerDaylight;
@@ -256,9 +256,18 @@ impl LiveWorld {
     }
 }
 
-/// A server world over `content` opened on `area`, where nobody dies and nobody has joined yet.
+/// A server world over `content` opened on `area`'s first cell, where nobody dies and nobody has
+/// joined yet.
 pub fn sandbox(content: &Content, area: AreaId, seed: u64, clock: WallClock) -> World {
-    let mut app = server_app(area, 0, seed, clock, ServerDaylight::Turning, content);
+    let mut app = server_app(
+        area,
+        Cell(0),
+        0,
+        seed,
+        clock,
+        ServerDaylight::Turning,
+        content,
+    );
     app.insert_resource(SpawnRules {
         policy: SpawnPolicy::Map,
         immortal: true,

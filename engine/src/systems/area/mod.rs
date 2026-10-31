@@ -1,4 +1,5 @@
 pub mod blueprint;
+pub mod cells;
 pub mod lighting;
 pub mod object;
 pub mod prop;
@@ -14,6 +15,7 @@ pub mod weather;
 pub mod world_map;
 
 pub use blueprint::{BlueprintDef, Flattened, PlacedBlueprint, Placement};
+pub use cells::{Cell, Cells};
 pub use lighting::{Lighting, PointLightDef};
 pub use object::{AreaObject, ObjectDef, ObjectShape};
 pub use prop::{Footprint, PropDef, PropId, PropPlacement, Scatter};
@@ -63,7 +65,7 @@ pub type AreaId = ContentId<AreaDef>;
 pub const MAX_POPULATION: u32 = 500;
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::*;
+    use crate::systems::mirror::AppMirrorExt;
     app.replicate_once::<AreaTag>();
     object::register(app);
 }
@@ -629,6 +631,7 @@ pub fn walkable(world: &World, at: Pos<Meters>) -> bool {
 /// it, and what it sounds like.
 pub struct Area {
     pub size: Size<Meters>,
+    pub cells: Cells,
     pub max_slope: Degrees,
     pub terrains: Vec<TerrainId>,
     pub heights: Heightfield,
@@ -978,6 +981,7 @@ fn build_area(content: &Content, ground: &Ground, modules: &[Flattened]) -> (Are
     let walk = walk::meshes(content, ground, &props, &safe_zones);
     let area = Area {
         size: ground.size.meters(),
+        cells: Cells::over(ground.size.meters()),
         max_slope: ground.max_slope,
         terrains: ground.terrains.clone(),
         heights: ground.heights.clone(),

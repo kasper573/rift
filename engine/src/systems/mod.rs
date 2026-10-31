@@ -11,12 +11,14 @@ pub mod equipment;
 pub mod frame_rate;
 pub mod history;
 pub mod hud;
+pub mod identity;
 pub mod input;
 pub mod interact;
 pub mod interface;
 pub mod item;
 pub mod launch;
 pub mod memory;
+pub mod mirror;
 pub mod movement;
 pub mod notification;
 pub mod npc;
@@ -38,6 +40,7 @@ pub mod text;
 pub mod vfx;
 pub mod view;
 pub mod visibility;
+pub mod worlds;
 
 use bevy_app::App;
 use bevy_ecs::message::{Message, Messages};
@@ -56,13 +59,14 @@ use crate::core::content::{
 };
 use crate::core::gui::GuiPlugin;
 use crate::core::interpolate::SnapshotPlugin;
-use crate::core::math::Rng;
+use crate::core::math::{Rect, Rng};
 use crate::core::net::auth::Credentials;
 use crate::core::net::transport::SocketClientPlugin;
 use crate::core::platform::{ClientPlatform, Platform, SignIn, StartParams};
 use crate::core::render::WorldRenderPlugin;
 use crate::core::text::StyledTextPlugin;
 use crate::core::time::{DayClock, Hertz, Seconds, WallClock};
+use crate::core::units::Meters;
 use crate::core::vfx::render::VfxRenderPlugin;
 use crate::systems::area::AreaId;
 use crate::systems::player::PlayerDefId;
@@ -76,8 +80,10 @@ pub const REPLICATION_INTERVAL: u64 = 3;
 pub const REPLICATION_PERIOD: Seconds = Seconds(REPLICATION_INTERVAL as f32 / TICK_HZ.0);
 
 pub fn protocol(app: &mut App) {
+    identity::register(app);
     actor::register(app);
     crate::core::babble::register(app);
+    mirror::AppMirrorExt::mirror::<crate::core::babble::Babbler>(app);
     notification::register(app);
     area::register(app);
     attention::register(app);
@@ -149,6 +155,19 @@ fn insert_content(world: &mut World, content: &Content) {
 #[derive(Resource, Clone, Copy)]
 pub struct WorldArea(pub AreaId);
 
+/// The cell of its area this world runs.
+#[derive(Resource, Clone, Copy)]
+pub struct WorldCell(pub area::Cell);
+
+/// The ground this world owns: its cell's rect of its area.
+pub fn world_rect(world: &World) -> Rect<Meters> {
+    let content = world.resource::<Content>();
+    let area = world.resource::<WorldArea>().0;
+    area::load(content, area)
+        .cells
+        .rect(world.resource::<WorldCell>().0)
+}
+
 #[derive(JsonSchema, Resource, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GameSettings {
@@ -163,6 +182,7 @@ pub struct GameSettings {
 
 pub fn server_app(
     area: AreaId,
+    cell: area::Cell,
     ordinal: u64,
     rng_seed: u64,
     clock: WallClock,
@@ -178,6 +198,7 @@ pub fn server_app(
     let mut app = App::new();
     let settings = content.built::<GameSettings>();
     app.insert_resource(WorldArea(area));
+    app.insert_resource(WorldCell(cell));
     app.insert_resource(settings.clone());
     app.insert_resource(clock);
     app.insert_resource(DayClock(
@@ -193,6 +214,7 @@ pub fn server_app(
         TICK_HZ.period(),
     ));
     app.insert_resource(Rng::for_world(rng_seed, ordinal));
+    app.insert_resource(identity::Names::for_world(ordinal));
     app.add_plugins(
         bevy_app::PluginGroup::build(bevy_replicon::prelude::RepliconPlugins)
             .set(RepliconSharedPlugin {
@@ -206,6 +228,7 @@ pub fn server_app(
             }),
     );
     protocol(&mut app);
+    mirror::register(&mut app);
     visibility::register(&mut app);
     area_state(app.world_mut(), content);
     // Seed the phase by the world's ordinal so worlds replicate on different ticks, spreading the
@@ -292,6 +315,7 @@ pub fn server_app(
                     belongings::notify_changes,
                     history::backfill,
                     attention::update.run_if(on_replication_tick),
+                    identity::name_replicated.run_if(on_replication_tick),
                     visibility::update.run_if(on_replication_tick),
                 )
                     .chain(),
@@ -421,13 +445,11 @@ pub fn client_app(
 /// The worlds, not the owning `App`s, are stepped because `App` is `!Send` while `World` is `Send`;
 /// for these single-schedule headless apps `run_schedule(Main)` + `clear_trackers` is what
 /// `App::update` does.
-pub fn step_areas(apps: &mut [App], clock: WallClock) {
+pub fn step_areas(worlds: &mut [&mut World], clock: WallClock) {
     use rayon::prelude::*;
 
-    apps.iter_mut()
-        .map(App::world_mut)
-        .collect::<Vec<_>>()
-        .into_par_iter()
+    worlds
+        .par_iter_mut()
         .for_each(|world| step_area(world, clock));
 }
 

@@ -11,8 +11,8 @@ use std::path::Path;
 use std::time::Instant;
 
 use engine::core::content::Content;
+use engine::systems::GameSettings;
 use engine::systems::area::{self, AreaModule};
-use engine::systems::{GameSettings, step_areas};
 
 use crate::search::{BUDGET_MS, Search};
 use sim::{Bench, load};
@@ -176,7 +176,7 @@ fn measure(bench: &mut Bench) -> Timings {
 /// uses, so the benchmark's capacity reflects the threaded server.
 fn step(bench: &mut Bench) {
     let clock = bench.play();
-    step_areas(&mut bench.worlds, clock);
+    bench.tick(clock);
     bench.acknowledge_sent();
 }
 

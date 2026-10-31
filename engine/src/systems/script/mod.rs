@@ -26,9 +26,8 @@ use crate::core::script::{
     TextDef, Vocabulary, compile::compile_row,
 };
 use crate::core::units::Meters;
-use crate::systems::WorldArea;
 use crate::systems::area::scene::scene_file;
-use crate::systems::area::{self, AreaDef, AreaId, AreaModule, AreaObject};
+use crate::systems::area::{self, AreaDef, AreaId, AreaModule, AreaObject, Cell};
 use crate::systems::class::{ClassDef, ClassId};
 use crate::systems::dialogue::bust::Expression;
 use crate::systems::dialogue::{self, ChoiceReveal};
@@ -42,6 +41,7 @@ use crate::systems::skill::{SkillDef, SkillId};
 use crate::systems::stat::StatKind;
 use crate::systems::status::{StatusEffectDef, StatusEffectId};
 use crate::systems::text::{self, Span};
+use crate::systems::{WorldArea, WorldCell};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RiftScripting;
@@ -593,16 +593,27 @@ pub fn run_tick(world: &mut World) {
 
 pub fn spawn_stateless(world: &mut World) {
     let scripts = world.resource::<RiftScripts>().clone();
+    let content = world.resource::<Content>().clone();
     let area = world.resource::<WorldArea>().0;
+    let mine = world.resource::<WorldCell>().0;
+    let cells = area::load(&content, area).cells;
     let mut instances = world.resource_mut::<RiftInstances>();
     for (row, procedures) in scripts.owners() {
         let owner = match row.kind {
-            RunnerKind::Area if row.row == area.raw() => Owner::Row(RunnerKind::Area, row.row),
-            RunnerKind::Blueprint if row.row == area.raw() => Owner::Row(
-                RunnerKind::Blueprint,
-                row.object
-                    .expect("a placement's owner row names its ordinal"),
-            ),
+            // The area's own scripts run in its first cell.
+            RunnerKind::Area if row.row == area.raw() && mine == Cell(0) => {
+                Owner::Row(RunnerKind::Area, row.row)
+            }
+            RunnerKind::Blueprint if row.row == area.raw() => {
+                let ordinal = row
+                    .object
+                    .expect("a placement's owner row names its ordinal");
+                let placed = cells.at(area::placements(&content, area)[ordinal as usize].at);
+                if placed != mine {
+                    continue;
+                }
+                Owner::Row(RunnerKind::Blueprint, ordinal)
+            }
             RunnerKind::Item
             | RunnerKind::Quest
             | RunnerKind::Shop

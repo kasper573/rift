@@ -10,8 +10,10 @@ use bevy_replicon::shared::backend::server_messages::ServerMessages;
 use engine::core::content::{Content, FilesystemFolder};
 use engine::core::net::MAX_MESSAGE_BYTES;
 use engine::core::time::{Seconds, UnixMillis, UtcHour, WallClock};
+use engine::systems::area::{self, Cell};
 use engine::systems::launch::ServerDaylight;
 use engine::systems::player::{ClientId, JoinRequest, SpawnPolicy, SpawnRules};
+use engine::systems::worlds::{self, Worlds};
 use engine::systems::{GameSettings, TICK_HZ, from_client, load_content, server_app, start_server};
 use strum::AsRefStr;
 
@@ -64,6 +66,7 @@ impl Layout {
 /// Areas of the content's spawn area, each with its players, stepped as the server steps its own.
 pub struct Bench {
     pub worlds: Vec<App>,
+    cells: Worlds,
     rosters: Vec<Vec<Entity>>,
     content: Content,
     ticks: usize,
@@ -76,15 +79,46 @@ impl Bench {
 
     /// `areas` of the spawn area, each with `players` playing in it.
     pub fn with_players(areas: usize, players: usize, layout: Layout, content: &Content) -> Bench {
-        let (worlds, rosters) = (0..areas)
-            .map(|ordinal| build_world(layout, content, ordinal as u64, players))
+        let spawn = content.built::<GameSettings>().initial_spawn;
+        let cells = area::load(content, spawn.area).cells;
+        let (worlds, rosters) = Worlds::copies(content, spawn.area, areas)
+            .iter()
+            .enumerate()
+            .map(|(ordinal, (_, cell))| {
+                let copy = ordinal / cells.count();
+                // Crowded players all join the spawn's cell; spread ones share the cells out.
+                let joining = match layout {
+                    Layout::Congested if cells.at(spawn.at) == cell => players,
+                    Layout::Congested => 0,
+                    Layout::Distributed => {
+                        let share = players / cells.count();
+                        share
+                            + usize::from(cell.0 as usize == copy % cells.count())
+                                * (players - share * cells.count())
+                    }
+                };
+                build_world(layout, content, cell, ordinal as u64, joining)
+            })
             .unzip();
         Bench {
             worlds,
+            cells: Worlds::copies(content, spawn.area, areas),
             rosters,
             content: content.clone(),
             ticks: 0,
         }
+    }
+
+    /// One tick of every world, as the server steps them.
+    pub fn tick(&mut self, clock: WallClock) {
+        let mut views: Vec<&mut World> = self.worlds.iter_mut().map(App::world_mut).collect();
+        worlds::tick(&self.cells, &mut views, clock);
+    }
+
+    /// One tick on `pool`'s threads alone.
+    pub fn tick_on(&mut self, pool: &rayon::ThreadPool, clock: WallClock) {
+        let mut views: Vec<&mut World> = self.worlds.iter_mut().map(App::world_mut).collect();
+        pool.install(|| worlds::tick(&self.cells, &mut views, clock));
     }
 
     pub fn connect(&mut self) {
@@ -149,11 +183,13 @@ const MUTATE_INDEX: std::ops::Range<usize> = 1..3;
 fn build_world(
     layout: Layout,
     content: &Content,
+    cell: Cell,
     ordinal: u64,
     players: usize,
 ) -> (App, Vec<Entity>) {
     let mut app = server_app(
         content.built::<GameSettings>().initial_spawn.area,
+        cell,
         ordinal,
         SEED,
         CLOCK,

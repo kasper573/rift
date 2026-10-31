@@ -9,6 +9,7 @@ name = "rift"
 path = "src/main.rs"
 
 [dependencies]
+rayon = { workspace = true }
 engine = { path = "../engine" }
 testkit = { path = "../testkit" }
 service = { path = "../service" }

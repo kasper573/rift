@@ -29,8 +29,10 @@ pub type ShopId = ContentId<ShopDef>;
 const BUYBACK_KEPT: usize = 12;
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::*;
-    app.replicate::<ShopView>()
+    use bevy_replicon::prelude::{Channel, ClientMessageAppExt};
+
+    use crate::systems::mirror::AppMirrorExt;
+    app.replicate_private::<ShopView>()
         .add_client_message::<ShopRequest>(Channel::Ordered);
 }
 

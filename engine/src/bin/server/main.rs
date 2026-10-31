@@ -24,17 +24,19 @@ use engine::core::net::{MAX_MESSAGE_BYTES, SessionRequest};
 use engine::core::platform::StdinClosed;
 use engine::core::time::{UtcHour, WallClock};
 use engine::systems::account::{AccountId, Identity};
-use engine::systems::area::{self, AreaDef, AreaId, transition};
+use engine::systems::area::{self, transition};
 use engine::systems::launch::{
     AuthMode, BUILD_INFO_FLAG, BuildInfo, LaunchSettings, ReadyLine, SERVER_ENV_PREFIX,
-    ServerConfig, ServerDaylight, ServerReady, TEST_CHARACTER_ROUTE, TICK_METRIC,
-    TestCharacterRequest, build_info_line,
+    ServerConfig, ServerReady, TEST_CHARACTER_ROUTE, TICK_METRIC, TestCharacterRequest,
+    build_info_line,
 };
 use engine::systems::player::snapshot::{self, CharacterSnapshot, JoinAs};
 use engine::systems::player::{ClientId, SpawnPolicy, SpawnRules};
+use engine::systems::script::Place;
 use engine::systems::staging::{self, STAGING_ROUTE, Staging};
+use engine::systems::worlds::{self, Worlds};
 use engine::systems::{
-    GameSettings, REPLICATION_INTERVAL, TICK_HZ, load_content, server_app, start_server, step_areas,
+    GameSettings, REPLICATION_INTERVAL, TICK_HZ, load_content, server_app, start_server,
 };
 use metrics::{counter, gauge, histogram};
 use renet2::{ConnectionConfig, DisconnectReason, RenetServer, ServerEvent};
@@ -106,8 +108,10 @@ fn main() {
         .block_on(tokio::net::TcpListener::bind(http_bind))
         .unwrap_or_else(|error| panic!("cannot bind {http_bind}: {error}"));
     let http_addr = listener.local_addr().expect("bound http address");
+    let cells = Worlds::of(&content);
     let lobby = Lobby {
-        spawn: settings.initial_spawn.area,
+        spawn: cells.world_of(settings.initial_spawn),
+        cells: cells.clone(),
         policy: config.player_spawn_policy,
         online,
         test_characters: http.test_characters.clone(),
@@ -122,19 +126,22 @@ fn main() {
     };
     let reset = config.daily_reset_utc_hour;
     let rng_seed = seeded(config.rng_seed);
-    let worlds: Vec<App> = content
-        .ids::<AreaDef>()
+    let worlds: Vec<App> = cells
+        .iter()
         .enumerate()
-        .map(|(ordinal, id)| {
-            build_world(
-                id,
-                &content,
-                rules,
-                rng_seed,
+        .map(|(ordinal, (area, cell))| {
+            let mut app = server_app(
+                area,
+                cell,
                 ordinal as u64,
+                rng_seed,
                 wall_clock(reset),
                 config.daylight,
-            )
+                &content,
+            );
+            app.insert_resource(rules);
+            start_server(&mut app);
+            app
         })
         .collect();
     let transport = WsTransport::bind(
@@ -159,7 +166,9 @@ fn main() {
 }
 
 struct Lobby {
-    spawn: AreaId,
+    /// The world of the game's initial spawn.
+    spawn: usize,
+    cells: Worlds,
     policy: SpawnPolicy,
     online: Online,
     test_characters: Option<TestCharacters>,
@@ -179,11 +188,11 @@ impl Lobby {
         // whichever area that player currently occupies, so both sockets drive the one character
         // (last input wins).
         if let Some(&client) = account.as_ref().and_then(|account| accounts.get(account)) {
-            let area = conns
+            let world = conns
                 .values()
                 .find(|conn| conn.client == client)
-                .map_or(self.spawn.index(), |conn| conn.area);
-            return (client, area, None);
+                .map_or(self.spawn, |conn| conn.world);
+            return (client, world, None);
         }
         let client = ClientId(self.next_client);
         self.next_client += 1;
@@ -195,16 +204,16 @@ impl Lobby {
         if let Some(account) = account {
             accounts.insert(account, client);
         }
-        let area = match (&join_as, self.policy) {
-            (Some(join_as), _) => join_as.start.area.index(),
+        let world = match (&join_as, self.policy) {
+            (Some(join_as), _) => self.cells.world_of(join_as.start),
             (None, SpawnPolicy::Dist) => {
-                let area = self.next_dealt % worlds;
+                let world = self.next_dealt % worlds;
                 self.next_dealt += 1;
-                area
+                world
             }
-            (None, SpawnPolicy::Map) => self.spawn.index(),
+            (None, SpawnPolicy::Map) => self.spawn,
         };
-        (client, area, join_as)
+        (client, world, join_as)
     }
 
     fn leave(&self, client: ClientId) {
@@ -254,15 +263,15 @@ fn simulate(
                     counter!("rift_client_connections_opened_total").increment(1);
                     let identity = transport.take_identity(client_id);
                     let account = identity.as_ref().map(|identity| identity.id.clone());
-                    let (client, area, join_as) = lobby.admit(account, &conns, worlds.len());
-                    let entity = spawn_conn(&mut worlds[area], client, client_id, identity);
+                    let (client, world, join_as) = lobby.admit(account, &conns, worlds.len());
+                    let entity = spawn_conn(&mut worlds[world], client, client_id, identity);
                     if let Some(join_as) = join_as {
-                        worlds[area].world_mut().entity_mut(entity).insert(join_as);
+                        worlds[world].world_mut().entity_mut(entity).insert(join_as);
                     }
                     conns.insert(
                         client_id,
                         Conn {
-                            area,
+                            world,
                             entity,
                             client,
                         },
@@ -272,7 +281,7 @@ fn simulate(
                     counter!("rift_client_connections_closed_total", "code" => disconnect_code(&reason))
                         .increment(1);
                     if let Some(conn) = conns.remove(&client_id) {
-                        worlds[conn.area].world_mut().despawn(conn.entity);
+                        worlds[conn.world].world_mut().despawn(conn.entity);
                         if !conns.values().any(|other| other.client == conn.client) {
                             lobby.leave(conn.client);
                         }
@@ -282,7 +291,7 @@ fn simulate(
         }
 
         for (&network_id, conn) in &conns {
-            let world = worlds[conn.area].world_mut();
+            let world = worlds[conn.world].world_mut();
             for channel in 0..client_channels as u8 {
                 while let Some(message) = server.receive_message(network_id, channel) {
                     world.resource_mut::<ServerMessages>().insert_received(
@@ -299,9 +308,10 @@ fn simulate(
             let _ = asked.answer.send(staged);
         }
 
-        step_areas(&mut worlds, wall_clock(reset));
+        let mut views: Vec<&mut World> = worlds.iter_mut().map(App::world_mut).collect();
+        worlds::tick(&lobby.cells, &mut views, wall_clock(reset));
 
-        begin_transfers(&mut worlds, &mut transfers, tick);
+        begin_transfers(&mut worlds, &lobby.cells, &mut transfers, tick);
 
         for app in worlds.iter_mut() {
             let world = app.world_mut();
@@ -357,7 +367,7 @@ fn stage(
         .values()
         .find(|conn| conn.client == client)
         .ok_or("the account's character is between areas")?;
-    staging::stage(worlds[conn.area].world_mut(), conn.entity, asked.staging)
+    staging::stage(worlds[conn.world].world_mut(), conn.entity, asked.staging)
 }
 
 fn wall_clock(reset: UtcHour) -> WallClock {
@@ -419,7 +429,7 @@ fn disconnect_code(reason: &DisconnectReason) -> &'static str {
 }
 
 struct Conn {
-    area: usize,
+    world: usize,
     entity: Entity,
     client: ClientId,
 }
@@ -432,21 +442,6 @@ fn seeded(configured: Option<u64>) -> u64 {
     let seed = configured.unwrap_or_else(Rng::random_seed);
     println!("rng seed {seed}");
     seed
-}
-
-fn build_world(
-    area: AreaId,
-    content: &Content,
-    rules: SpawnRules,
-    rng_seed: u64,
-    ordinal: u64,
-    clock: WallClock,
-    daylight: ServerDaylight,
-) -> App {
-    let mut app = server_app(area, ordinal, rng_seed, clock, daylight, content);
-    app.insert_resource(rules);
-    start_server(&mut app);
-    app
 }
 
 /// The whole connection bundle is spawned in one call so `Add` observers on any of its
@@ -486,12 +481,15 @@ struct Transfer {
 }
 
 /// Phase 1: take everyone leaving their world this tick out of it, and queue the move.
-fn begin_transfers(worlds: &mut [App], transfers: &mut Vec<Transfer>, tick: u64) {
+fn begin_transfers(worlds: &mut [App], cells: &Worlds, transfers: &mut Vec<Transfer>, tick: u64) {
     for app in worlds.iter_mut() {
         for traveler in transition::departing(app.world_mut()) {
             transfers.push(Transfer {
                 client: traveler.client,
-                dest: traveler.dest_area.index(),
+                dest: cells.world_of(Place {
+                    area: traveler.dest_area,
+                    at: traveler.dest,
+                }),
                 departed_tick: tick,
                 traveler: Box::new(traveler),
             });
@@ -522,19 +520,19 @@ fn finish_transfers(
         let movers: Vec<(u64, usize, Entity)> = conns
             .iter()
             .filter(|(_, conn)| conn.client == client)
-            .map(|(&network_id, conn)| (network_id, conn.area, conn.entity))
+            .map(|(&network_id, conn)| (network_id, conn.world, conn.entity))
             .collect();
         if movers.is_empty() {
             continue;
         }
-        for (network_id, area, entity) in movers {
-            let identity = worlds[area].world().get::<Identity>(entity).cloned();
-            worlds[area].world_mut().despawn(entity);
+        for (network_id, world, entity) in movers {
+            let identity = worlds[world].world().get::<Identity>(entity).cloned();
+            worlds[world].world_mut().despawn(entity);
             let entity = spawn_conn(&mut worlds[dest], client, network_id, identity);
             conns.insert(
                 network_id,
                 Conn {
-                    area: dest,
+                    world: dest,
                     entity,
                     client,
                 },

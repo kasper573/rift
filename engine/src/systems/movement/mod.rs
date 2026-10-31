@@ -28,11 +28,14 @@ use crate::systems::stat::{self, StatKind};
 use crate::systems::{area, drain_requests, reach};
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::*;
+    use bevy_replicon::prelude::{Channel, ClientMessageAppExt};
+
+    use crate::systems::mirror::AppMirrorExt;
 
     app.replicate::<Position>()
-        .replicate_filtered::<MoveTarget, With<HeardMove>>()
-        .replicate::<HeardMove>()
+        .replicate_private_filtered::<MoveTarget, With<HeardMove>>()
+        .replicate_private::<HeardMove>()
+        .mirror::<Spot>()
         .add_client_message::<MoveRequest>(Channel::Ordered);
 }
 

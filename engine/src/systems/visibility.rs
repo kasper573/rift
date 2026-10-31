@@ -2,29 +2,24 @@ use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryState;
 use bevy_replicon::prelude::{
-    AppVisibilityExt, FilterScope, Replicated, ScopeLifetime, SendTargets, ToClients,
-    VisibilityFilter,
+    AppVisibilityExt, FilterScope, Replicated, ScopeLifetime, SendTargets, SingleComponent,
+    ToClients, VisibilityFilter,
 };
 use bevy_replicon::server::visibility::client_visibility::ClientVisibility;
 use bevy_replicon::server::visibility::filters_mask::FilterBit;
 use bevy_replicon::server::visibility::registry::FilterRegistry;
 use bevy_replicon::shared::replication::registry::ReplicationRegistry;
+use bevy_replicon::shared::replication::registry::receive_fns::MutWrite;
 use bevy_replicon::shared::replication::visibility::VisibilityScope;
 use fixedbitset::FixedBitSet;
 
 use crate::core::math::Pos;
 use crate::core::units::Meters;
 use crate::systems::area::{AreaId, AreaTag};
-use crate::systems::attention::Attention;
-use crate::systems::dialogue::Conversation;
-use crate::systems::item::Inventory;
-use crate::systems::movement::{HeardMove, MoveTarget, Position, position};
-use crate::systems::player::{ArrivalHold, ClientId, CommandLock, PlayedBy, Players};
-use crate::systems::quest::QuestLog;
+use crate::systems::mirror::AppMirrorExt;
+use crate::systems::movement::{Position, position};
+use crate::systems::player::{ClientId, PlayedBy, Players};
 use crate::systems::script::condition::CompiledCondition;
-use crate::systems::shop::ShopView;
-use crate::systems::skill::{BasicAttack, Cooldowns, Hotbar, Learned, ResetPrompt};
-use crate::systems::status::Boosts;
 
 pub const VIEW_DISTANCE: Meters = Meters(24.0);
 // Compared against squared distance to avoid a per-pair `sqrt`. Exact: `VIEW_DISTANCE` is a perfect
@@ -32,6 +27,7 @@ pub const VIEW_DISTANCE: Meters = Meters(24.0);
 const VIEW_DISTANCE_SQ: f32 = VIEW_DISTANCE.0 * VIEW_DISTANCE.0;
 
 pub fn register(app: &mut App) {
+    app.mirror::<Presence>();
     app.add_visibility_filter::<OwnedBy>();
     app.init_resource::<ScopeBits>();
     app.add_observer(grant_hidden_slots);
@@ -194,37 +190,46 @@ impl VisibilityFilter for OwnedBy {
     }
 }
 
-/// What a character carries that only its own client is told of: its bag, its dealings, its
-/// skills, its boosts and what holds it. Two tuples, as replicon scopes at most ten components at
-/// once.
+/// What a character carries that only its own client is told of: whatever a system declares
+/// private, before this world's visibility is registered.
 pub struct OwnersOnly;
 
-type Dealings = (
-    Inventory,
-    Conversation,
-    CommandLock,
-    ArrivalHold,
-    Attention,
-    ShopView,
-    QuestLog,
-    MoveTarget,
-    HeardMove,
-);
+pub fn keep_private<C: Component<Mutability: MutWrite<C>>>(app: &mut App) {
+    let mut private = app.world_mut().get_resource_or_init::<Private>();
+    assert!(
+        !private.scoped,
+        "{} is declared private after visibility was registered",
+        std::any::type_name::<C>()
+    );
+    private.scopes.push(SingleComponent::<C>::visibility_scope);
+}
 
-type Skills = (Learned, Cooldowns, Hotbar, BasicAttack, ResetPrompt, Boosts);
+#[derive(Resource, Default)]
+struct Private {
+    scopes: Vec<fn(&mut World, &mut ReplicationRegistry) -> VisibilityScope>,
+    scoped: bool,
+}
 
 impl FilterScope for OwnersOnly {
     fn visibility_scope(world: &mut World, registry: &mut ReplicationRegistry) -> VisibilityScope {
-        match (
-            Dealings::visibility_scope(world, registry),
-            Skills::visibility_scope(world, registry),
-        ) {
-            (VisibilityScope::Components(mut hidden), VisibilityScope::Components(more)) => {
-                hidden |= &more;
-                VisibilityScope::Components(hidden)
-            }
-            (scope, _) => scope,
+        let scopes = {
+            let mut private = world.get_resource_or_init::<Private>();
+            private.scoped = true;
+            std::mem::take(&mut private.scopes)
+        };
+        let mut masks = scopes
+            .into_iter()
+            .filter_map(|scope| match scope(world, registry) {
+                VisibilityScope::Components(mask) => Some(mask),
+                _ => None,
+            });
+        let mut hidden = masks
+            .next()
+            .expect("a private component declared before visibility");
+        for mask in masks {
+            hidden |= &mask;
         }
+        VisibilityScope::Components(hidden)
     }
 }
 

@@ -19,7 +19,9 @@ use crate::systems::script::{self, EventKind, Procedure, RiftEvent, RiftInstance
 use crate::systems::{actor, dialogue, stat, visibility};
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::*;
+    use bevy_replicon::prelude::{Channel, ClientMessageAppExt};
+
+    use crate::systems::mirror::AppMirrorExt;
     app.replicate::<Interactive>()
         .add_mapped_client_message::<InteractRequest>(Channel::Ordered);
 }

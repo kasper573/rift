@@ -51,9 +51,11 @@ const PICK_REACH: Meters = Meters(0.5);
 const PICKUP_RANGE: Meters = Meters(1.0);
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::*;
+    use bevy_replicon::prelude::{Channel, ClientMessageAppExt, ServerMessageAppExt};
 
-    app.replicate::<Inventory>()
+    use crate::systems::mirror::AppMirrorExt;
+
+    app.replicate_private::<Inventory>()
         .replicate::<DroppedItem>()
         .replicate::<Reservation>()
         .add_client_message::<UseItemRequest>(Channel::Ordered)

@@ -30,7 +30,7 @@ use crate::systems::stat::{Stat, Stats};
 use crate::systems::vfx::{self, VfxFixture, VfxShaderFixture};
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::*;
+    use crate::systems::mirror::AppMirrorExt;
     app.replicate::<Class>();
 }
 

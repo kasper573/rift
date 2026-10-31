@@ -8,7 +8,6 @@ use serde::{Deserialize, Serialize};
 use crate::core::content::Content;
 use crate::core::math::{Offset, Pos, Rect, Size};
 use crate::core::units::Meters;
-use crate::systems::WorldArea;
 use crate::systems::actor::Name as ActorName;
 use crate::systems::area::PropId;
 use crate::systems::area::{self, AreaId, AreaTag};
@@ -22,9 +21,10 @@ use crate::systems::script::{
     ScriptModule,
 };
 use crate::systems::visibility::Presence;
+use crate::systems::{WorldArea, WorldCell};
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::*;
+    use crate::systems::mirror::AppMirrorExt;
     app.replicate_once::<AreaObject>();
 }
 
@@ -213,7 +213,12 @@ pub fn spawn_all(world: &mut World) {
     let zone = world.resource::<WorldArea>().0;
     let content = world.resource::<Content>().clone();
     let scripts = world.resource::<script::RiftScripts>().clone();
+    let mine = world.resource::<WorldCell>().0;
+    let cells = area::load(&content, zone).cells;
     for (index, object) in area::objects(area::placed(&content, zone)) {
+        if cells.at(object.shape.center()) != mine {
+            continue;
+        }
         let index = index as usize;
         let owner_row = OwnerRow::of_object(zone, index as u32);
         let procedures = scripts.of(owner_row).to_vec();

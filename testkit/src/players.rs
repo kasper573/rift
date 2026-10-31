@@ -5,13 +5,14 @@ use engine::core::content::Content;
 use engine::core::math::Pos;
 use engine::core::units::Meters;
 use engine::systems::area::AreaDef;
+use engine::systems::area::Cell;
 use engine::systems::area::transition::{self, Crossing};
 use engine::systems::memory::{self, MemoryDef};
 use engine::systems::player::snapshot::JoinAs;
 use engine::systems::player::{
     self, AreaDrawn, ClientId, JoinRequest, PlayedBy, Players, SpawnPolicy, SpawnRules,
 };
-use engine::systems::{GameSettings, WorldArea, from_client};
+use engine::systems::{GameSettings, WorldArea, WorldCell, from_client};
 
 use crate::Sim;
 
@@ -28,6 +29,7 @@ impl Sim {
         let world = &mut self.world;
         world.insert_resource(settings);
         world.insert_resource(WorldArea(area));
+        world.insert_resource(WorldCell(Cell(0)));
         world.insert_resource(SpawnRules {
             policy: SpawnPolicy::Map,
             immortal: true,

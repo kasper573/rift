@@ -23,9 +23,12 @@ use crate::systems::stat::{self, Stats};
 use crate::systems::vfx::{self, VfxFixture};
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::*;
+    use bevy_replicon::prelude::{Channel, ClientMessageAppExt};
+
+    use crate::systems::mirror::AppMirrorExt;
     app.add_mapped_client_message::<AttackRequest>(Channel::Ordered)
-        .replicate::<Attitude>();
+        .replicate::<Attitude>()
+        .mirror::<Attackers>();
 }
 
 #[derive(JsonSchema, Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]

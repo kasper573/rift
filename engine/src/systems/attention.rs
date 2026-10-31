@@ -18,8 +18,9 @@ const REFRESH_ROUNDS: u32 = 3;
 const MARKED_RANGE: Meters = Meters(visibility::VIEW_DISTANCE.0 + 4.0);
 
 pub fn register(app: &mut App) {
-    use bevy_replicon::prelude::*;
-    app.replicate::<Attention>().replicate::<StatusBadges>();
+    use crate::systems::mirror::AppMirrorExt;
+    app.replicate_private::<Attention>()
+        .replicate::<StatusBadges>();
 }
 
 pub type AttentionId = ContentId<AttentionDef>;
