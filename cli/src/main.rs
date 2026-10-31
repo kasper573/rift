@@ -2,6 +2,8 @@ mod ask;
 mod bench;
 mod binaries;
 mod check;
+mod folder;
+mod landscape;
 mod loadtest;
 mod profile;
 mod render;
@@ -68,6 +70,15 @@ enum Command {
     /// Prints the JSON Schema of a protocol the binaries speak.
     #[command(subcommand)]
     Schema(Schema),
+    /// Lays out an area of GAME from noise, as a landscape starts: its ground rising and falling,
+    /// painted by height from the lowest terrain given to the highest, strewn with props and
+    /// roamed by npcs as asked. Writes the area's bundle at AREA, a path in the game folder.
+    Landscape {
+        game: PathBuf,
+        area: String,
+        #[command(flatten)]
+        land: landscape::Land,
+    },
 }
 
 #[derive(Subcommand)]
@@ -105,5 +116,11 @@ fn main() {
         Command::Profile { game, out } => profile::run(game.as_deref(), &out),
         Command::Schema(Schema::Probe) => println!("{}", engine::systems::probe::schema()),
         Command::Schema(Schema::Server) => println!("{}", engine::systems::launch::server_schema()),
+        Command::Landscape { game, area, land } => {
+            if let Err(failure) = landscape::run(&game, &area, &land) {
+                eprintln!("{failure}");
+                std::process::exit(1);
+            }
+        }
     }
 }

@@ -7,22 +7,20 @@
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
-use std::sync::Arc;
 
-use engine::core::content::{
-    Content, ContentFile, FilesystemFolder, FolderReader, WrittenFiles, content_path, name_of,
-    parent_of,
-};
+use engine::core::content::{Content, ContentFile, WrittenFiles, content_path, name_of, parent_of};
 use engine::core::ground::{GroundSize, Heightfield, Paint, SAMPLES_PER_METER};
 use engine::core::math::Pos;
 use engine::core::script::VarValue;
 use engine::core::units::Meters;
+use engine::systems::GameSettings;
 use engine::systems::area::scene::{SceneFolder, SceneNode};
 use engine::systems::area::{AreaDef, AreaModule};
 use engine::systems::npc::{NpcDef, NpcId};
 use engine::systems::player::snapshot::{CharacterSnapshot, CharacterStart, start_of};
 use engine::systems::script::Place;
-use engine::systems::{GameSettings, registry};
+
+use crate::folder::{reader_of, write};
 
 /// Sets the cell size of the game written at `into`, whose content is `content`.
 pub fn with_cell_size(into: &Path, content: &Content, size: Meters) -> Result<(), String> {
@@ -211,25 +209,6 @@ fn for_each_module(nodes: &mut [SceneNode], visit: &mut impl FnMut(&mut AreaModu
             SceneNode::Module(module) => visit(&mut module.module),
         }
     }
-}
-
-fn reader_of(folder: &Path) -> FolderReader {
-    FolderReader::new(registry(), Arc::new(FilesystemFolder(folder.to_path_buf())))
-}
-
-fn write(into: &Path, written: std::io::Result<WrittenFiles>) -> Result<(), String> {
-    let written = written.map_err(|error| error.to_string())?;
-    for (path, bytes) in written.files {
-        let file = into.join(path);
-        if let Some(parent) = file.parent() {
-            fs::create_dir_all(parent).map_err(|error| error.to_string())?;
-        }
-        fs::write(&file, bytes).map_err(|error| format!("{}: {error}", file.display()))?;
-    }
-    for path in written.removed {
-        let _ = fs::remove_file(into.join(path));
-    }
-    Ok(())
 }
 
 fn copy_folder(from: &Path, to: &Path) -> Result<(), String> {

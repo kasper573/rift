@@ -32,6 +32,7 @@ ureq = { workspace = true, features = ["rustls", "platform-verifier"] }
 sysinfo = { version = "0.40.0", default-features = false, features = ["system"] }
 walkdir = "2"
 tikv-jemalloc-ctl = { version = "0.7", features = ["stats"] }
+noise = "0.9"
 
 [lints]
 workspace = true
