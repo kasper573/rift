@@ -11,6 +11,7 @@ use engine::core::content::{Content, FilesystemFolder};
 use engine::core::net::MAX_MESSAGE_BYTES;
 use engine::core::time::{Seconds, UnixMillis, UtcHour, WallClock};
 use engine::systems::area::{self, Cell};
+use engine::systems::handoff::Moved;
 use engine::systems::launch::ServerDaylight;
 use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::player::{ClientId, JoinRequest, SpawnPolicy, SpawnRules};
@@ -129,13 +130,42 @@ impl Bench {
     /// One tick of every world, as the server steps them.
     pub fn tick(&mut self, clock: WallClock) {
         let mut views: Vec<&mut World> = self.worlds.iter_mut().map(App::world_mut).collect();
-        worlds::tick(&self.cells, &mut views, clock);
+        let moved = worlds::tick(&self.cells, &mut views, clock);
+        self.follow(moved);
     }
 
     /// One tick on `pool`'s threads alone.
     pub fn tick_on(&mut self, pool: &rayon::ThreadPool, clock: WallClock) {
         let mut views: Vec<&mut World> = self.worlds.iter_mut().map(App::world_mut).collect();
-        pool.install(|| worlds::tick(&self.cells, &mut views, clock));
+        let moved = pool.install(|| worlds::tick(&self.cells, &mut views, clock));
+        self.follow(moved);
+    }
+
+    /// Moves the connection of every player whose character changed hands to the world it now
+    /// stands in, as the server does.
+    fn follow(&mut self, moved: Vec<Moved>) {
+        for Moved { client, from, to } in moved {
+            let Some(slot) = self.rosters[from]
+                .iter()
+                .position(|&conn| self.worlds[from].world().get::<ClientId>(conn) == Some(&client))
+            else {
+                continue;
+            };
+            let conn = self.rosters[from].remove(slot);
+            let connected = self.worlds[from]
+                .world()
+                .get::<ConnectedClient>(conn)
+                .is_some();
+            self.worlds[from].world_mut().despawn(conn);
+            let mut conn = self.worlds[to].world_mut().spawn(client);
+            if connected {
+                conn.insert(ConnectedClient {
+                    max_size: MAX_MESSAGE_BYTES,
+                });
+            }
+            let conn = conn.id();
+            self.rosters[to].push(conn);
+        }
     }
 
     pub fn connect(&mut self) {

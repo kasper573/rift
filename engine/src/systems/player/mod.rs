@@ -414,39 +414,51 @@ pub(crate) fn place(
     at: Pos<Meters>,
     state: CharacterState,
 ) -> Entity {
+    let entity = world.spawn_empty().id();
+    furnish(world, entity, client, zone, at, state);
+    entity
+}
+
+/// Makes `entity` the character of `client` standing at `at` in `zone`, as `state` has it: what
+/// [`place`] does to a new entity, and a handoff to one taken up under a name.
+pub(crate) fn furnish(
+    world: &mut World,
+    entity: Entity,
+    client: ClientId,
+    zone: AreaId,
+    at: Pos<Meters>,
+    state: CharacterState,
+) {
     let content = world.resource::<Content>().clone();
     let hitbox = Hitbox(ActorModel::get(&content, state.appearance.model).hitbox());
     let now = Seconds(world.resource::<Time>().elapsed_secs());
-    let entity = world
-        .spawn((
-            Replicated,
-            Position::at(at),
-            Spot { area: zone, at },
-            AreaTag { area: zone },
-            Actor {
-                facing: Radians::SOUTH,
-                action: Action::Idle,
-                pose: Pose::Idle,
-                attack_rate: PlaybackRate::default(),
-                speed: MetersPerSec::default(),
-            },
-            hitbox,
-            OwnedBy(client),
-            PlayedBy { client },
-            HeardMove::default(),
-            ArrivalHold {
-                until: now + ARRIVAL_PATIENCE,
-            },
-            state,
-        ))
-        .id();
+    world.entity_mut(entity).insert((
+        Replicated,
+        Position::at(at),
+        Spot { area: zone, at },
+        AreaTag { area: zone },
+        Actor {
+            facing: Radians::SOUTH,
+            action: Action::Idle,
+            pose: Pose::Idle,
+            attack_rate: PlaybackRate::default(),
+            speed: MetersPerSec::default(),
+        },
+        hitbox,
+        OwnedBy(client),
+        PlayedBy { client },
+        HeardMove::default(),
+        ArrivalHold {
+            until: now + ARRIVAL_PATIENCE,
+        },
+        state,
+    ));
     let belongings = belongings::of(world, entity);
     world.entity_mut(entity).insert(belongings);
     if world.resource::<SpawnRules>().immortal {
         world.entity_mut(entity).insert(Immortal);
     }
     world.resource_mut::<Players>().0.insert(client, entity);
-    entity
 }
 
 pub fn respawn(world: &mut World) {

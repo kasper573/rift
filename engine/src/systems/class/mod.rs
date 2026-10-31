@@ -19,6 +19,7 @@ use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFa
 use crate::core::vfx::VfxSite;
 use crate::systems::actor::ModelId;
 use crate::systems::dialogue::bust::BustId;
+use crate::systems::mirror::{self, Effect};
 use crate::systems::notification;
 use crate::systems::player::Xp;
 use crate::systems::script::{
@@ -222,6 +223,9 @@ pub fn points_to_spend(world: &World, entity: Entity) -> SkillPoints {
 }
 
 pub fn grant_xp(world: &mut World, entity: Entity, amount: u32) {
+    if mirror::post(world, entity, None, Effect::Xp { amount }) {
+        return;
+    }
     let before = level(world, entity);
     if let Some(mut xp) = world.get_mut::<Xp>(entity) {
         xp.gain(amount);

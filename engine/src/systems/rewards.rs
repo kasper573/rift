@@ -3,17 +3,21 @@ use bevy_ecs::prelude::*;
 use bevy_time::Time;
 
 use crate::core::content::Content;
-use crate::core::math::Rng;
+use crate::core::math::{Pos, Rng};
 use crate::core::time::Seconds;
+use crate::core::units::Meters;
 use crate::systems::combat::Died;
 use crate::systems::item::{ItemId, Reservation, credited, scatter_drop};
+use crate::systems::mirror::{self, Effect};
+use crate::systems::movement::position;
 use crate::systems::npc::{Npc, NpcId};
 use crate::systems::visibility::Presence;
 
 #[derive(Message, Clone, Copy, Debug, PartialEq)]
 pub struct KillCredited {
     pub npc: NpcId,
-    pub victim: Entity,
+    /// Where the npc fell.
+    pub at: Pos<Meters>,
     pub credited: Entity,
 }
 
@@ -33,12 +37,11 @@ pub fn grant(world: &mut World, mut deaths: Local<MessageCursor<Died>>) {
                 .get::<Reservation>(died.entity)
                 .and_then(|reservation| reservation.holder(now));
             let rewardee = credited(world, died.entity, now);
-            if let Some(credited) = rewardee {
-                world.write_message(KillCredited {
-                    npc,
-                    victim: died.entity,
-                    credited,
-                });
+            if let Some(credited) = rewardee
+                && let Some(at) = position(world, died.entity)
+                && !mirror::post(world, credited, None, Effect::Kill { npc, at })
+            {
+                world.write_message(KillCredited { npc, at, credited });
             }
             let Some(loot) = npc.get(&content).loot() else {
                 continue;

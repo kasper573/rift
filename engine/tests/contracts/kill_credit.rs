@@ -15,6 +15,7 @@ fn a_kill_credits_the_player_who_reserved_it_once_and_an_unreserved_one_nobody()
     let (mut sim, player) = field();
     let victim = brute(&mut sim, player);
     item::reserve(&mut sim.world, victim, player, Seconds(0.0));
+    let fell_at = position(&sim.world, victim).expect("the brute stands somewhere");
     kill(&mut sim, victim, player);
 
     let credited = credits(&mut sim, 3);
@@ -23,7 +24,7 @@ fn a_kill_credits_the_player_who_reserved_it_once_and_an_unreserved_one_nobody()
         credited,
         vec![KillCredited {
             npc: sim.id::<NpcDef>("brute"),
-            victim,
+            at: fell_at,
             credited: player,
         }]
     );

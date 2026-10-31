@@ -19,6 +19,8 @@ use crate::core::content::{
 };
 use crate::core::geometry::Radians;
 use crate::core::math::{Percent, Pos, Rect, Rng};
+use crate::core::script::compile::ProcedureId;
+use crate::core::script::value::Value;
 use crate::core::time::{PlaybackRate, Seconds};
 use crate::core::units::{MeterPos, Meters, MetersPerSec};
 use crate::systems::actor::held::{self, Held};
@@ -44,6 +46,7 @@ use crate::systems::stat::Stats;
 use crate::systems::status::Statuses;
 use crate::systems::visibility::{self, Presence};
 use crate::systems::{WorldArea, WorldCell, dialogue};
+use bevy_platform::collections::HashMap;
 
 pub type NpcId = ContentId<NpcDef>;
 
@@ -442,10 +445,28 @@ pub fn spawn(
     area: AreaId,
     pack: Option<Pack>,
 ) -> Entity {
+    let pack = pack.unwrap_or_else(|| next_pack(world));
+    let entity = world.spawn_empty().id();
+    furnish(world, entity, def, at, area, pack, HashMap::new());
+    entity
+}
+
+/// Makes `entity` an npc of `def` standing at `at`, in `pack`, its scripts started with their
+/// state as `scripts` holds it: what [`spawn`] does to a new entity, and a handoff to one taken
+/// up under a name.
+pub fn furnish(
+    world: &mut World,
+    entity: Entity,
+    def: NpcId,
+    at: Pos<Meters>,
+    area: AreaId,
+    pack: Pack,
+    scripts: HashMap<ProcedureId, Vec<Value>>,
+) {
     let content = world.resource::<Content>().clone();
     let row = def.get(&content);
-    let pack = pack.unwrap_or_else(|| next_pack(world));
-    let mut entity = world.spawn((
+    let mut entity_mut = world.entity_mut(entity);
+    entity_mut.insert((
         actor_bundle(&content, row, at, area),
         Npc { def },
         pack,
@@ -456,11 +477,16 @@ pub fn spawn(
         },
     ));
     if let Some(babble) = row.voice() {
-        entity.insert(Babbler(babble));
+        entity_mut.insert(Babbler(babble));
     }
-    let entity = entity.id();
-    start_scripts(world, entity, def);
-    entity
+    start_scripts(world, entity, def, scripts);
+}
+
+/// The state of the npc's scripts as it stands, to furnish it with elsewhere.
+pub fn script_state(world: &World, npc: Entity) -> HashMap<ProcedureId, Vec<Value>> {
+    world
+        .resource::<RiftInstances>()
+        .state_of(Owner::Entity(RunnerKind::Npc, npc))
 }
 
 pub fn despawn(world: &mut World, npc: Entity) {
@@ -633,7 +659,12 @@ fn actor_bundle(content: &Content, def: &NpcDef, at: Pos<Meters>, area: AreaId) 
     )
 }
 
-fn start_scripts(world: &mut World, entity: Entity, def: NpcId) {
+fn start_scripts(
+    world: &mut World,
+    entity: Entity,
+    def: NpcId,
+    state: HashMap<ProcedureId, Vec<Value>>,
+) {
     let procedures = world
         .resource::<RiftScripts>()
         .of(OwnerRow::of_row(def))
@@ -649,7 +680,7 @@ fn start_scripts(world: &mut World, entity: Entity, def: NpcId) {
         }
     }
     let mut instances = world.resource_mut::<RiftInstances>();
-    instances.spawn_owner(owner, procedures);
+    instances.spawn_owner_with(owner, procedures, state);
     instances.raise(owner, EventKind::Started, None, Vec::new(), |_| true);
 }
 
@@ -714,7 +745,7 @@ pub fn run_respawn(world: &mut World, npcs: &mut NpcIds) {
                 .insert((Attitude::Friendly, body::Body::default(), Near::default()))
                 .remove::<Reservation>()
                 .insert(Statuses::default());
-            start_scripts(world, id, npc);
+            start_scripts(world, id, npc, HashMap::new());
         }
     });
 }

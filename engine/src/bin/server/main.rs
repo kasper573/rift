@@ -309,7 +309,14 @@ fn simulate(
         }
 
         let mut views: Vec<&mut World> = worlds.iter_mut().map(App::world_mut).collect();
-        worlds::tick(&lobby.cells, &mut views, wall_clock(reset));
+        for moved in worlds::tick(&lobby.cells, &mut views, wall_clock(reset)) {
+            transfers.push(Transfer {
+                client: moved.client,
+                dest: moved.to,
+                departed_tick: tick,
+                traveler: None,
+            });
+        }
 
         begin_transfers(&mut worlds, &lobby.cells, &mut transfers, tick);
 
@@ -477,7 +484,9 @@ struct Transfer {
     client: ClientId,
     dest: usize,
     departed_tick: u64,
-    traveler: Box<transition::Traveler>,
+    /// The character to place on arrival; none when it already stands there, handed over by
+    /// its cell's world, and only the connection follows.
+    traveler: Option<Box<transition::Traveler>>,
 }
 
 /// Phase 1: take everyone leaving their world this tick out of it, and queue the move.
@@ -491,7 +500,7 @@ fn begin_transfers(worlds: &mut [App], cells: &Worlds, transfers: &mut Vec<Trans
                     at: traveler.dest,
                 }),
                 departed_tick: tick,
-                traveler: Box::new(traveler),
+                traveler: Some(Box::new(traveler)),
             });
         }
     }
@@ -538,7 +547,9 @@ fn finish_transfers(
                 },
             );
         }
-        transition::arrive(worlds[dest].world_mut(), *traveler);
+        if let Some(traveler) = traveler {
+            transition::arrive(worlds[dest].world_mut(), *traveler);
+        }
     }
 }
 

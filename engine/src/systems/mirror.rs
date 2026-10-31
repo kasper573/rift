@@ -19,16 +19,21 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use crate::core::content::Content;
+use crate::core::math::Pos;
 use crate::core::time::Seconds;
 use crate::core::units::Meters;
+use crate::systems::handoff::Pulled;
 use crate::systems::identity::{GlobalId, Named};
 use crate::systems::movement::Position;
+use crate::systems::npc::NpcId;
+use crate::systems::player::{ClientId, PlayedBy};
+use crate::systems::rewards::KillCredited;
 use crate::systems::script::event::RiftEvent;
 use crate::systems::script::{RiftScripts, owner_site};
 use crate::systems::skill::SkillDef;
 use crate::systems::status::StatusEffectId;
 use crate::systems::worlds::Worlds;
-use crate::systems::{combat, stat, status, visibility};
+use crate::systems::{class, combat, stat, status, visibility};
 
 /// Stands in for an entity the world at `owner` plays.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq)]
@@ -90,6 +95,17 @@ pub enum Effect {
         power: f32,
         lasts: Option<Seconds>,
     },
+    /// Asks the owner to hand the target over to the world that posts, where someone in reach
+    /// of its ghost wants to deal with it.
+    Pull,
+    Xp {
+        amount: u32,
+    },
+    /// The target's character is credited with a kill of `npc` that fell at `at`.
+    Kill {
+        npc: NpcId,
+        at: Pos<Meters>,
+    },
 }
 
 /// Posts `effect` to the owner of `target` when `target` is a ghost here, from `by` as the owner
@@ -105,10 +121,20 @@ pub fn post(world: &mut World, target: Entity, by: Option<Entity>, effect: Effec
     let letter = Letter {
         to,
         by: by.and_then(|by| named.name(by)),
+        from: None,
         effect,
     };
     world.resource_mut::<Outbox>().0.push((ghost.owner, letter));
     true
+}
+
+/// The ghost of `client`'s character, when its owner is a neighbour and it stands within reach.
+pub fn ghost_played_by(world: &World, client: ClientId) -> Option<Entity> {
+    world
+        .try_query_filtered::<(Entity, &PlayedBy), With<Ghost>>()?
+        .iter(world)
+        .find(|(_, played)| played.client == client)
+        .map(|(entity, _)| entity)
 }
 
 /// Lands what neighbours posted to this world's own entities since the last exchange.
@@ -128,6 +154,19 @@ pub fn deliver(world: &mut World) {
                 power,
                 lasts,
             } => status::apply(world, to, effect, power, lasts),
+            Effect::Pull => {
+                if let Some(from) = letter.from {
+                    world.entity_mut(to).insert(Pulled(from));
+                }
+            }
+            Effect::Xp { amount } => class::grant_xp(world, to, amount),
+            Effect::Kill { npc, at } => {
+                world.write_message(KillCredited {
+                    npc,
+                    at,
+                    credited: to,
+                });
+            }
         }
     }
 }
@@ -298,10 +337,11 @@ pub fn exchange(worlds: &Worlds, apps: &mut [&mut World]) {
         .zip(incoming)
         .for_each(|(world, incoming)| apply(world, incoming));
     let mut posted: Vec<Vec<Letter>> = (0..count).map(|_| Vec::new()).collect();
-    for world in apps.iter_mut() {
+    for (index, world) in apps.iter_mut().enumerate() {
         let tick = world.change_tick();
         world.resource_mut::<Exchanged>().0 = Some(tick);
-        for (owner, letter) in std::mem::take(&mut world.resource_mut::<Outbox>().0) {
+        for (owner, mut letter) in std::mem::take(&mut world.resource_mut::<Outbox>().0) {
+            letter.from = Some(index);
             posted[owner].push(letter);
         }
     }
@@ -315,6 +355,8 @@ type Part = Box<dyn Any + Send + Sync>;
 struct Letter {
     to: GlobalId,
     by: Option<GlobalId>,
+    /// The world that posted, set as the letter goes out.
+    from: Option<usize>,
     effect: Effect,
 }
 

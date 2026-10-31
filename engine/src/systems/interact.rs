@@ -13,6 +13,7 @@ use crate::core::units::Meters;
 use crate::systems::attention::{AttentionId, AttentionMark};
 use crate::systems::combat::Attitude;
 use crate::systems::interface::CursorShape;
+use crate::systems::mirror::{self, Effect};
 use crate::systems::player::{player_requests, session};
 use crate::systems::reach::{self, Pursuit, ReachAct, ReachTarget};
 use crate::systems::script::{self, EventKind, Procedure, RiftEvent, RiftInstances};
@@ -117,6 +118,7 @@ pub fn interactions(world: &mut World, intents: &mut reach::Intents) {
         match reach::pursue(world, player, interaction.reach) {
             Pursuit::Approaching => {}
             Pursuit::Lost => reach::forget(world, player),
+            Pursuit::Arrived if mirror::post(world, target, Some(player), Effect::Pull) => {}
             Pursuit::Arrived => {
                 reach::forget(world, player);
                 respond(world, player, target);

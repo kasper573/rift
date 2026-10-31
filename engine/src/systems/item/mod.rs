@@ -32,7 +32,7 @@ use crate::systems::actor::skeleton::{Colours, EquipmentSlot, LocalOffset, Local
 use crate::systems::actor::stance::StanceId;
 use crate::systems::area::{self, AreaId, AreaTag, PropId};
 use crate::systems::equipment;
-use crate::systems::mirror::Ghost;
+use crate::systems::mirror::{self, Effect, Ghost};
 use crate::systems::movement::{Position, position};
 use crate::systems::npc::Npc;
 use crate::systems::player::{ClientId, PlayedBy, Players, player_requests};
@@ -814,6 +814,7 @@ pub fn pickups(world: &mut World, intents: &mut reach::Intents) {
         match reach::pursue(world, player, PICKUP_RANGE) {
             Pursuit::Approaching => {}
             Pursuit::Lost => reach::forget(world, player),
+            Pursuit::Arrived if mirror::post(world, target, Some(player), Effect::Pull) => {}
             Pursuit::Arrived => {
                 collect(world, player, target);
                 reach::forget(world, player);
@@ -859,9 +860,16 @@ pub fn reserve(world: &mut World, npc: Entity, attacker: Entity, now: Seconds) {
     }
 }
 
+/// The character credited with the victim's fall: the one that held it, as this world holds it,
+/// a ghost when its owner is a neighbour.
 pub fn credited(world: &World, victim: Entity, now: Seconds) -> Option<Entity> {
     let client = world.get::<Reservation>(victim)?.holder(now)?;
-    world.resource::<Players>().0.get(&client).copied()
+    world
+        .resource::<Players>()
+        .0
+        .get(&client)
+        .copied()
+        .or_else(|| mirror::ghost_played_by(world, client))
 }
 
 pub fn scatter_drop(

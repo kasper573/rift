@@ -21,14 +21,14 @@ use crate::core::content::{
 };
 use crate::core::math::{Percent, Rng};
 use crate::core::time::{GameDay, Seconds, UnixMillis, WallClock};
-use crate::systems::area::{self, AreaDef, AreaId};
+use crate::systems::area::{self, AreaDef, AreaId, AreaTag};
 use crate::systems::attention::{AttentionId, AttentionMark};
 use crate::systems::class;
 use crate::systems::dialogue::{self, ChoiceReveal, Revealable};
 use crate::systems::history::{HistoryTopic, RecordTally};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::item::{
-    INVENTORY_MAX, Inventory, ItemDef, ItemId, ItemModuleKind, ItemStack, scatter_drop,
+    INVENTORY_MAX, Inventory, ItemDef, ItemId, ItemModuleKind, ItemStack, scatter_at,
 };
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::npc::NpcId;
@@ -1327,13 +1327,17 @@ fn credit_kill(world: &mut World, kill: KillCredited) {
     for notification in counted {
         notification::notify(world, player, notification);
     }
-    if let Some(client) = world.get::<PlayedBy>(player).map(|owner| owner.client) {
-        scatter_drop(
+    if let Some(client) = world.get::<PlayedBy>(player).map(|owner| owner.client)
+        && let Some(area) = world.get::<AreaTag>(player).map(|tag| tag.area)
+    {
+        scatter_at(
             world,
-            kill.victim,
+            kill.at,
+            area,
             &drops,
             Some(client),
             Some(Presence::For(client)),
+            None,
         );
     }
 }

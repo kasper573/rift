@@ -8,6 +8,7 @@ use crate::core::math::Pos;
 use crate::core::time::WallClock;
 use crate::core::units::Meters;
 use crate::systems::area::{self, AreaDef, AreaId, Cell, Cells};
+use crate::systems::handoff::{self, Moved};
 use crate::systems::script::Place;
 use crate::systems::{mirror, step_areas};
 
@@ -84,6 +85,21 @@ impl Worlds {
         self.areas.iter().any(|(_, cells)| cells.count() > 1)
     }
 
+    /// The world of the cell `at` lies in, when it lies deeper into that cell than half the halo
+    /// past `world`'s own: where an actor of `world` standing there changes hands. Half the halo
+    /// keeps an actor pacing a border from changing hands back and forth.
+    pub fn beyond(&self, world: usize, at: Pos<Meters>) -> Option<usize> {
+        let copy = self.starts.partition_point(|&start| start <= world) - 1;
+        let (_, cells) = self.areas[copy];
+        let start = self.starts[copy];
+        let own = cells.rect(Cell((world - start) as u32));
+        let past = (own.origin.x - at.x)
+            .max(at.x - own.max().x)
+            .max(own.origin.y - at.y)
+            .max(at.y - own.max().y);
+        (past > self.halo.0 / 2.0).then(|| start + cells.at(at).0 as usize)
+    }
+
     /// The worlds of the same area as `world`, other than it, whose halo reaches `at`: where what
     /// `world` owns at `at` is held as a ghost.
     pub fn around(&self, world: usize, at: Pos<Meters>) -> impl Iterator<Item = usize> {
@@ -99,8 +115,10 @@ impl Worlds {
 }
 
 /// One tick of every world, as the server steps them: each on its own, across all cores, then the
-/// ghosts of what stands near a border handed to the cells beside it.
-pub fn tick(worlds: &Worlds, views: &mut [&mut World], clock: WallClock) {
+/// ghosts of what stands near a border handed to the cells beside it, and what stands deep in
+/// another cell handed over to it; the players whose connections must follow their characters.
+pub fn tick(worlds: &Worlds, views: &mut [&mut World], clock: WallClock) -> Vec<Moved> {
     step_areas(views, clock);
     mirror::exchange(worlds, views);
+    handoff::handoff(worlds, views)
 }

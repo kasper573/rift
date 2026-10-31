@@ -9,6 +9,7 @@ pub mod combat;
 pub mod dialogue;
 pub mod equipment;
 pub mod frame_rate;
+pub mod handoff;
 pub mod history;
 pub mod hud;
 pub mod identity;
