@@ -176,11 +176,22 @@ pub fn def(content: &Content) -> &PlayerDef {
 #[derive(Resource, Default)]
 pub struct Players(pub HashMap<ClientId, Entity>);
 
-/// Whether anyone plays a character in this world.
-pub fn any_playing(world: &World) -> bool {
-    world
-        .get_resource::<Players>()
-        .is_some_and(|players| !players.0.is_empty())
+/// Whether any client is connected to this world, playing a character or about to.
+pub fn any_connected(world: &mut World) -> bool {
+    world.get_resource_or_init::<Connections>();
+    world.resource_scope(|world, mut connections: Mut<Connections>| {
+        connections.0.iter(world).next().is_some()
+    })
+}
+
+/// The connections' query, kept so a tick doesn't match archetypes afresh.
+#[derive(Resource)]
+struct Connections(QueryState<(), With<ClientId>>);
+
+impl FromWorld for Connections {
+    fn from_world(world: &mut World) -> Connections {
+        Connections(world.query_filtered())
+    }
 }
 
 pub(crate) fn sender_player(world: &World, sender: Sender) -> Option<Entity> {

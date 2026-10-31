@@ -128,8 +128,8 @@ impl Worlds {
 /// One tick of the worlds that are awake, as the server steps them: each on its own, across all
 /// cores, then the ghosts of what stands near a border handed to the cells beside it, and what
 /// stands deep in another cell handed over to it; the players whose connections must follow
-/// their characters. A world sleeps while nobody plays in it or beside it and no mail waits for
-/// it: a cell with no one to see it stands still until someone comes.
+/// their characters. A world sleeps while no client is connected to it or a cell beside it and
+/// no mail waits for it: a cell with no one to see it stands still until someone comes.
 pub fn tick(worlds: &Worlds, views: &mut [&mut World], clock: WallClock) -> Vec<Moved> {
     let awake = awake(worlds, views);
     views
@@ -141,18 +141,18 @@ pub fn tick(worlds: &Worlds, views: &mut [&mut World], clock: WallClock) -> Vec<
     handoff::handoff(worlds, views)
 }
 
-/// The worlds to step this tick: those played in, those beside one played in, whose actors the
-/// players there see as ghosts, and those with mail to land.
-fn awake(worlds: &Worlds, views: &[&mut World]) -> Vec<bool> {
-    let played: Vec<bool> = views
-        .iter()
-        .map(|world| player::any_playing(world))
+/// The worlds to step this tick: those a client is connected to, those beside one, whose actors
+/// the players there see as ghosts, and those with mail to land.
+fn awake(worlds: &Worlds, views: &mut [&mut World]) -> Vec<bool> {
+    let connected: Vec<bool> = views
+        .iter_mut()
+        .map(|world| player::any_connected(world))
         .collect();
     (0..views.len())
         .map(|index| {
-            played[index]
+            connected[index]
                 || mirror::has_mail(views[index])
-                || worlds.beside(index).any(|beside| played[beside])
+                || worlds.beside(index).any(|beside| connected[beside])
         })
         .collect()
 }

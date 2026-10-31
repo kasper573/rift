@@ -252,14 +252,32 @@ fn a_cell_nobody_plays_in_or_beside_stands_still_until_someone_comes() {
 
     cells[0].world.get_mut::<Position>(hero).unwrap().pos = Pos::new(400.0, 125.0);
     let before: Vec<_> = cells.iter().map(elapsed).collect();
-    let mut views: Vec<&mut World> = cells.iter_mut().map(|sim| &mut sim.world).collect();
-    worlds::tick(&worlds, &mut views, clock);
-    let mut views: Vec<&mut World> = cells.iter_mut().map(|sim| &mut sim.world).collect();
-    worlds::tick(&worlds, &mut views, clock);
+    for _ in 0..2 {
+        let mut views: Vec<&mut World> = cells.iter_mut().map(|sim| &mut sim.world).collect();
+        let moved = worlds::tick(&worlds, &mut views, clock);
+        follow(&mut cells, moved);
+    }
     assert!(
         elapsed(&cells[2]) > before[2],
         "the far cell wakes once the player plays beside it"
     );
+}
+
+/// Moves each client's connection after its character, as the server does.
+fn follow(cells: &mut [Sim], moved: Vec<Moved>) {
+    for Moved { client, from, to } in moved {
+        let conns: Vec<Entity> = cells[from]
+            .world
+            .query::<(Entity, &ClientId)>()
+            .iter(&cells[from].world)
+            .filter(|(_, id)| **id == client)
+            .map(|(conn, _)| conn)
+            .collect();
+        for conn in conns {
+            cells[from].world.despawn(conn);
+        }
+        cells[to].connect(client.0);
+    }
 }
 
 fn tick(worlds: &Worlds, west: &mut Sim, east: &mut Sim) -> Vec<Moved> {
