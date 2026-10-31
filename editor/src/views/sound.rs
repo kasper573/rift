@@ -12,6 +12,7 @@ use engine::core::audio::playback::{self, PlaySfx, SfxDef, SfxPlace};
 use engine::core::audio::soundscape::{SoundscapeChannel, SoundscapeLayer, SoundscapeZone};
 use engine::core::babble::{BabbleDef, BabbleRank, Babbling};
 use engine::core::content::Content;
+use engine::core::content::sync::SyncedAssets;
 use engine::core::math::Pos;
 use engine::core::text::{StyledLine, Typewriter};
 use engine::core::units::Meters;
@@ -130,7 +131,9 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
             .keys()
             .filter_map(|path| Some((path.clone(), project.files.get(path)?.clone())))
             .collect();
-        world.resource::<SyncedFiles>().replace(assets);
+        world
+            .resource::<SyncedFiles>()
+            .replace(SyncedAssets::held(assets));
         if let Some((_, before)) = &views.synced {
             let server = world.resource::<AssetServer>();
             for (path, hash) in &hashes {

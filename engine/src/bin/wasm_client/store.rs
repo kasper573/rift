@@ -1,6 +1,6 @@
 use std::sync::Arc;
 
-use engine::core::content::store::ContentStore;
+use engine::core::content::store::{ContentStore, StoreReader};
 use engine::core::platform::LocalFuture;
 use wasm_bindgen::JsCast;
 use wasm_bindgen_futures::JsFuture;
@@ -61,6 +61,10 @@ impl ContentStore for WebStore {
                 let _ = JsFuture::from(cache.delete_with_str(&key)).await;
             }
         })
+    }
+
+    fn reader(&self) -> Option<Arc<dyn StoreReader>> {
+        None
     }
 }
 

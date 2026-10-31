@@ -197,9 +197,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
             world.resource_mut::<Assets<Image>>().add(image)
         };
         let layers = RenderLayers::from_layers(&[LAYER]);
-        let scene = world
-            .resource::<AssetServer>()
-            .load(GltfAssetLabel::Scene(0).from_asset(path));
+        let scene = engine::core::assets::model_scene(world.resource::<AssetServer>(), path);
         let root = world
             .spawn((
                 WorldAssetRoot(scene),

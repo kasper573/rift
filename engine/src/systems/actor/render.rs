@@ -20,6 +20,7 @@ use super::skeleton::{Cue, GroupName, Hand, LocalOffset, LocalTurn, SkeletonId};
 use super::skeleton::{EquipmentSlot, GestureName};
 use super::stance::{self, HandIndex, PropHand};
 use super::{Action, Actor, ActorModel, Appearance, Hurt, ModelId, Motion, Playing, Pose};
+use crate::core::assets;
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
 use crate::core::content::Content;
 use crate::core::content::gltf::NodeTree;
@@ -832,9 +833,7 @@ pub fn hang(world: &mut World) {
             };
             let look = def.look.get(&content);
             let placed = held_at(model, &hands[hand.index()], grip);
-            let scene = world
-                .resource::<AssetServer>()
-                .load(GltfAssetLabel::Scene(0).from_asset(look.model.path()));
+            let scene = assets::model_scene(world.resource::<AssetServer>(), look.model.path());
             let prop = world
                 .spawn((
                     HeldProp,

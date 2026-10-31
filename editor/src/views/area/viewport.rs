@@ -392,9 +392,10 @@ impl Viewport {
                 if let Some((_, entity)) = self.ghost.take() {
                     world.despawn(entity);
                 }
-                let scene = world
-                    .resource::<AssetServer>()
-                    .load(GltfAssetLabel::Scene(0).from_asset(ghost.model.clone()));
+                let scene = engine::core::assets::model_scene(
+                    world.resource::<AssetServer>(),
+                    ghost.model.clone(),
+                );
                 let entity = world
                     .spawn((WorldAssetRoot(scene), ghost.transform, ChildOf(self.root)))
                     .id();
@@ -567,9 +568,10 @@ fn hang_props(world: &mut World) {
             .iter()
             .zip(joints.into_iter().flatten())
             .map(|(prop, joint)| {
-                let scene = world
-                    .resource::<AssetServer>()
-                    .load(GltfAssetLabel::Scene(0).from_asset(prop.model.clone()));
+                let scene = engine::core::assets::model_scene(
+                    world.resource::<AssetServer>(),
+                    prop.model.clone(),
+                );
                 world
                     .spawn((
                         WorldAssetRoot(scene),

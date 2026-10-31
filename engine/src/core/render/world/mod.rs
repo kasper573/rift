@@ -128,10 +128,9 @@ pub fn readying(world: &mut World) -> bool {
             .collect(),
         None => Vec::new(),
     };
-    let (Some(assets), Some(spawner), Some(images)) = (
+    let (Some(assets), Some(spawner)) = (
         world.get_resource::<AssetServer>(),
         world.get_resource::<WorldInstanceSpawner>(),
-        world.get_resource::<Assets<Image>>(),
     ) else {
         return waiting;
     };
@@ -142,7 +141,7 @@ pub fn readying(world: &mut World) -> bool {
         })
         || textures
             .iter()
-            .any(|texture| images.get(texture).is_none() && !assets.load_state(texture).is_failed())
+            .any(|texture| assets.load_state(texture).is_loading())
 }
 
 /// The assets of a kind dropped since last asked, so what a cache made from them can go too.

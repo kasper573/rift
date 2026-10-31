@@ -659,43 +659,13 @@ impl ContentFolder for MemoryFolder {
         self.name.clone()
     }
 
-    /// Seeks from entry to entry in the sorted paths, so a folder costs what it holds directly
-    /// rather than what the whole folder holds.
     fn entries(&self, dir: &str) -> Vec<FolderEntry> {
-        let prefix = if dir.is_empty() {
-            String::new()
-        } else {
-            format!("{dir}/")
-        };
-        let mut entries = Vec::new();
-        let mut from = prefix.clone();
-        while let Some((path, _)) = self
-            .files
-            .range::<str, _>((Bound::Included(from.as_str()), Bound::Unbounded))
-            .next()
-        {
-            let Some(rest) = path.strip_prefix(&prefix) else {
-                break;
-            };
-            match rest.split_once('/') {
-                Some((name, _)) => {
-                    entries.push(FolderEntry {
-                        name: name.to_owned(),
-                        dir: true,
-                    });
-                    // Past every path inside it: '0' is the character after '/'.
-                    from = format!("{prefix}{name}0");
-                }
-                None => {
-                    entries.push(FolderEntry {
-                        name: rest.to_owned(),
-                        dir: false,
-                    });
-                    from = format!("{path}\0");
-                }
-            }
-        }
-        entries
+        entries_in(dir, |from| {
+            self.files
+                .range::<str, _>((Bound::Included(from), Bound::Unbounded))
+                .next()
+                .map(|(path, _)| path.clone())
+        })
     }
 
     fn read(&self, file: &str) -> io::Result<Vec<u8>> {
@@ -704,6 +674,45 @@ impl ContentFolder for MemoryFolder {
             .map(|bytes| bytes.to_vec())
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("missing {file}")))
     }
+}
+
+/// The entries of `dir` among sorted paths, `next_path` giving the first path at or after one:
+/// it seeks from entry to entry, so a folder costs what it holds directly rather than what the
+/// whole folder holds.
+pub(crate) fn entries_in(
+    dir: &str,
+    next_path: impl Fn(&str) -> Option<String>,
+) -> Vec<FolderEntry> {
+    let prefix = if dir.is_empty() {
+        String::new()
+    } else {
+        format!("{dir}/")
+    };
+    let mut entries = Vec::new();
+    let mut from = prefix.clone();
+    while let Some(path) = next_path(&from) {
+        let Some(rest) = path.strip_prefix(&prefix) else {
+            break;
+        };
+        match rest.split_once('/') {
+            Some((name, _)) => {
+                entries.push(FolderEntry {
+                    name: name.to_owned(),
+                    dir: true,
+                });
+                // Past every path inside it: '0' is the character after '/'.
+                from = format!("{prefix}{name}0");
+            }
+            None => {
+                entries.push(FolderEntry {
+                    name: rest.to_owned(),
+                    dir: false,
+                });
+                from = format!("{path}\0");
+            }
+        }
+    }
+    entries
 }
 
 pub trait Settings: DeserializeOwned + Serialize + JsonSchema + Send + Sync + 'static {

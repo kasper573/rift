@@ -1,9 +1,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use engine::core::content::store::ContentStore;
+use engine::core::content::store::{ContentStore, StoreReader};
 use engine::core::platform::LocalFuture;
 
+#[derive(Clone)]
 pub struct FileStore {
     dir: PathBuf,
 }
@@ -28,7 +29,7 @@ impl ContentStore for FileStore {
     }
 
     fn read(&self, hash: &str) -> LocalFuture<Option<Vec<u8>>> {
-        Box::pin(std::future::ready(std::fs::read(self.dir.join(hash)).ok()))
+        Box::pin(std::future::ready(StoreReader::read(self, hash)))
     }
 
     fn write(&self, hash: &str, bytes: Arc<[u8]>) -> LocalFuture<Result<(), String>> {
@@ -45,5 +46,15 @@ impl ContentStore for FileStore {
     fn remove(&self, hash: &str) -> LocalFuture<()> {
         let _ = std::fs::remove_file(self.dir.join(hash));
         Box::pin(std::future::ready(()))
+    }
+
+    fn reader(&self) -> Option<Arc<dyn StoreReader>> {
+        Some(Arc::new(self.clone()))
+    }
+}
+
+impl StoreReader for FileStore {
+    fn read(&self, hash: &str) -> Option<Vec<u8>> {
+        std::fs::read(self.dir.join(hash)).ok()
     }
 }

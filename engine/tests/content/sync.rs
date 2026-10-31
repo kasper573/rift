@@ -17,6 +17,8 @@ use crate::support::game;
 
 const FILES: &str = "/content/files/";
 
+/// The assets are read from the store as they are asked for, so one the store loses after the
+/// sync reads as missing, and reads again once it is back.
 #[test]
 fn a_first_visit_fetches_everything_keeping_only_it_and_a_later_visit_only_the_manifest() {
     let server = FakeServer::new(served(sounding()));
@@ -40,6 +42,16 @@ fn a_first_visit_fetches_everything_keeping_only_it_and_a_later_visit_only_the_m
     assert_eq!(server.requests.borrow().as_slice(), ["/content/manifest"]);
     assert!(again.manifest.same_content(&synced.manifest));
     assert_eq!(again.assets.len(), synced.assets.len());
+
+    let file = &again.index.files[0];
+    let bytes = again.assets.read(&file.path).expect("the asset reads");
+    store.drop_entry(&file.hash);
+    assert!(
+        again.assets.read(&file.path).is_none(),
+        "lost from the store"
+    );
+    store.put(&file.hash, &bytes);
+    assert_eq!(again.assets.read(&file.path).as_deref(), Some(&bytes[..]));
 }
 
 #[test]
@@ -110,7 +122,9 @@ fn a_bad_hash_is_fetched_again() {
         .count();
     assert_eq!(fetched_twice, 2);
     assert_eq!(
-        blake3::hash(&synced.assets[&file.path]).to_hex().as_str(),
+        blake3::hash(&synced.assets.read(&file.path).expect("the asset reads"))
+            .to_hex()
+            .as_str(),
         file.hash
     );
 
@@ -119,7 +133,9 @@ fn a_bad_hash_is_fetched_again() {
     let synced = run(&server, &store).expect("a corrupt stored file is refetched");
     assert_eq!(server.requested_hashes(), std::slice::from_ref(&file.hash));
     assert_eq!(
-        blake3::hash(&synced.assets[&file.path]).to_hex().as_str(),
+        blake3::hash(&synced.assets.read(&file.path).expect("the asset reads"))
+            .to_hex()
+            .as_str(),
         file.hash
     );
     let repaired = block_on(store.read(&file.hash)).expect("stored again");
@@ -200,6 +216,14 @@ fn a_store_that_refuses_writes_keeps_the_visit_in_memory() {
     assert!(synced.memory_only);
     assert_eq!(synced.assets.len(), synced.index.files.len());
     assert!(store.hashes().is_empty());
+    assert!(
+        synced
+            .index
+            .files
+            .iter()
+            .all(|file| synced.assets.read(&file.path).is_some()),
+        "every asset reads from memory"
+    );
 }
 
 #[test]

@@ -97,7 +97,7 @@ fn dress_drop(
         return;
     };
     let look = dropped.item.get(&content).look.get(&content);
-    let scene = assets.load(GltfAssetLabel::Scene(0).from_asset(look.model.path()));
+    let scene = crate::core::assets::model_scene(&assets, look.model.path());
     commands.entity(add.entity).insert((
         WorldAssetRoot(scene),
         Transform::default(),

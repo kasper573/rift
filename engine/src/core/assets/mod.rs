@@ -1,7 +1,6 @@
 pub mod loader;
 
 use std::borrow::Cow;
-use std::collections::HashMap;
 use std::fmt::{Display, Formatter};
 use std::path::Path;
 use std::sync::{Arc, RwLock};
@@ -10,7 +9,12 @@ use bevy::asset::io::{
     AssetReader, AssetReaderError, AssetSourceBuilder, ErasedAssetReader, PathStream, Reader,
     VecReader,
 };
-use bevy::prelude::Resource;
+use bevy::asset::{AssetPath, AssetServer, RenderAssetUsages};
+use bevy::gltf::{Gltf, GltfAssetLabel, GltfLoaderSettings};
+use bevy::prelude::{Handle, Resource};
+use bevy::world_serialization::WorldAsset;
+
+use crate::core::content::sync::SyncedAssets;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 use strum::{EnumString, IntoStaticStr, VariantArray};
@@ -119,11 +123,32 @@ impl Display for FileSize {
     }
 }
 
+/// A model's scene as a prop, an item or what a figure holds is drawn: its textures stand on the
+/// GPU alone, as nothing reads them back, where a skin's are read for its paint.
+pub fn model_scene(
+    assets: &AssetServer,
+    model: impl Into<AssetPath<'static>>,
+) -> Handle<WorldAsset> {
+    assets
+        .load_builder()
+        .with_settings(drawn_only)
+        .load(GltfAssetLabel::Scene(0).from_asset(model))
+}
+
+/// A model as a whole, loaded as [`model_scene`] loads it.
+pub fn model(assets: &AssetServer, model: impl Into<AssetPath<'static>>) -> Handle<Gltf> {
+    assets.load_builder().with_settings(drawn_only).load(model)
+}
+
+fn drawn_only(settings: &mut GltfLoaderSettings) {
+    settings.load_materials = RenderAssetUsages::RENDER_WORLD;
+}
+
 #[derive(Resource, Clone, Default)]
-pub struct SyncedFiles(Arc<RwLock<HashMap<String, Arc<[u8]>>>>);
+pub struct SyncedFiles(Arc<RwLock<SyncedAssets>>);
 
 impl SyncedFiles {
-    pub fn replace(&self, files: HashMap<String, Arc<[u8]>>) {
+    pub fn replace(&self, files: SyncedAssets) {
         *self.0.write().expect("synced files lock") = files;
     }
 
@@ -134,8 +159,7 @@ impl SyncedFiles {
 
     /// The bytes of the file at `path` from the game folder, when it is there.
     pub fn bytes(&self, path: &str) -> Option<Arc<[u8]>> {
-        let files = self.0.read().expect("synced files lock");
-        files.get(path).cloned()
+        self.0.read().expect("synced files lock").read(path)
     }
 
     fn get(&self, path: &Path) -> Option<Arc<[u8]>> {

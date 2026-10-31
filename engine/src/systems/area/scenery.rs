@@ -21,6 +21,7 @@ use super::lighting::DomeLook;
 use super::prop::PropId;
 use super::terrain::{CoverPiece, PieceShape};
 use super::{Area, Lighting, PointLightDef, PropPlacement};
+use crate::core::assets;
 use crate::core::content::media::GltfInfos;
 use crate::core::content::{Content, FileHash, FileHashes};
 use crate::core::geometry::Radians;
@@ -977,9 +978,10 @@ fn cover_layers(world: &mut World, content: &Content, area: &Area) -> Vec<CoverL
                 };
                 let strewn = match &piece.shape {
                     PieceShape::Prop { prop } => Some(Strewn {
-                        gltf: world
-                            .resource::<AssetServer>()
-                            .load(prop.get(content).model.path()),
+                        gltf: assets::model(
+                            world.resource::<AssetServer>(),
+                            prop.get(content).model.path(),
+                        ),
                         material: material(world, Some(&spread)),
                     }),
                     PieceShape::Blade { .. } => None,
@@ -1125,9 +1127,7 @@ fn spawn_prop(
     root: Entity,
 ) -> Entity {
     let def = placed.prop.get(content);
-    let scene = world
-        .resource::<AssetServer>()
-        .load(GltfAssetLabel::Scene(0).from_asset(def.model.path()));
+    let scene = assets::model_scene(world.resource::<AssetServer>(), def.model.path());
     let looks = MaterialLooks(
         def.materials
             .iter()
