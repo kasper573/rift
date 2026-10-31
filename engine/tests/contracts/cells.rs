@@ -8,9 +8,9 @@ use engine::systems::combat;
 use engine::systems::handoff::Moved;
 use engine::systems::identity::{self, GlobalId, Named};
 use engine::systems::mirror::{self, Ghost};
-use engine::systems::movement::{Position, position};
+use engine::systems::movement::{self, MoveRequest, MoveSeq, Position, position};
 use engine::systems::npc::{self, Npc, NpcDef};
-use engine::systems::player::{ClientId, Players};
+use engine::systems::player::{ArrivalHold, ClientId, Players};
 use engine::systems::stat::{self, Stats};
 use engine::systems::worlds::{self, Worlds};
 use serde_json::json;
@@ -217,6 +217,74 @@ fn a_pull_on_a_ghost_hands_it_over_though_it_stands_shallow() {
     let brute = owned(&west.world, name).expect("the west owns the brute");
     assert_eq!(position(&west.world, brute), Some(at));
     assert!(owned(&east.world, name).is_none(), "the east let it go");
+}
+
+/// A player walking over a border walks on without a stop: the world next door takes the
+/// character up mid-walk, the connection follows, and the walk ends where it was asked to.
+#[test]
+fn a_walk_over_a_border_carries_on_into_the_next_cell() {
+    let content = Game::new()
+        .area("plain", &Map::open(500, 250), json!([]))
+        .hero("plain", 230.0, 150.0)
+        .load();
+    let worlds = Worlds::of(&content);
+    let mut cells: Vec<Sim> = (0..2)
+        .map(|cell| {
+            let mut sim = Sim::new(content.clone());
+            sim.serve("plain")
+                .in_cell(Cell(cell))
+                .mirror::<Position>()
+                .mirror::<Actor>()
+                .accept::<MoveRequest>()
+                .add(
+                    (
+                        identity::name_replicated,
+                        mirror::deliver,
+                        movement::move_request,
+                        movement::advance,
+                    )
+                        .chain(),
+                );
+            sim
+        })
+        .collect();
+    let hero = cells[0].join(1);
+    cells[0].world.entity_mut(hero).remove::<ArrivalHold>();
+    cells[0].tick();
+    let name = *cells[0]
+        .world
+        .get::<GlobalId>(hero)
+        .expect("the hero is named");
+    let goal = Pos::new(300.0, 150.0);
+    let conn = cells[0].conn(1);
+    cells[0].send(
+        conn,
+        MoveRequest {
+            pos: goal,
+            seq: MoveSeq(1),
+        },
+    );
+    let clock = *cells[0].world.resource::<WallClock>();
+    let mut trail = Vec::new();
+    for _ in 0..600 {
+        let mut views: Vec<&mut World> = cells.iter_mut().map(|sim| &mut sim.world).collect();
+        let moved = worlds::tick(&worlds, &mut views, clock);
+        follow(&mut cells, moved);
+        let at = cells
+            .iter()
+            .find_map(|sim| owned(&sim.world, name).and_then(|hero| position(&sim.world, hero)))
+            .expect("the hero is owned by one cell");
+        trail.push(at);
+    }
+    assert_eq!(
+        trail.last(),
+        Some(&goal),
+        "walked on to {goal:?}: {trail:?}"
+    );
+    assert!(
+        owned(&cells[1].world, name).is_some(),
+        "the east owns the hero at the end"
+    );
 }
 
 /// A cell nobody plays in or beside stands still, its clock with it, until someone comes: a

@@ -6,6 +6,8 @@
 //! props and lights stand within the view's reach alone, a few a frame through `SceneryPlugin`
 //! as the view moves, so an area costs what the view takes in, however far it stretches.
 
+use std::collections::{BTreeMap, BTreeSet};
+use std::ops::Bound;
 use std::sync::Arc;
 
 use bevy::app::Propagate;
@@ -158,45 +160,61 @@ pub struct Sources(Vec<(String, FileHash)>);
 
 impl Sources {
     pub fn of(content: &Content, area: &Area) -> Sources {
-        let mut files: Vec<&str> = Vec::new();
-        let mut props: Vec<PropId> = area.props.iter().map(|placed| placed.prop).collect();
+        let mut files: BTreeSet<&str> = BTreeSet::new();
+        let mut props = props_of(area);
         for terrain in &area.terrains {
-            files.push(terrain.path(content));
+            files.insert(terrain.path(content));
             let Some(cover) = &terrain.get(content).cover else {
                 continue;
             };
-            files.push(cover.shader.path(content));
+            files.insert(cover.shader.path(content));
             props.extend(cover.pieces.iter().filter_map(|piece| match piece.shape {
                 PieceShape::Prop { prop } => Some(prop),
                 PieceShape::Blade { .. } => None,
             }));
         }
         if let Some(dome) = &area.lighting.dome {
-            files.push(dome.shader.path(content));
+            files.insert(dome.shader.path(content));
         }
         for prop in props {
             let def = prop.get(content);
-            files.push(prop.path(content));
-            files.push(def.model.as_str());
+            files.insert(prop.path(content));
+            files.insert(def.model.as_str());
             for material in def.materials.values() {
-                files.push(material.path(content));
-                files.push(material.get(content).shader.path(content));
+                files.insert(material.path(content));
+                files.insert(material.get(content).shader.path(content));
             }
         }
         let hashes = &content.built::<FileHashes>().0;
-        Sources(
-            hashes
-                .iter()
-                .filter(|(path, _)| {
-                    files.iter().any(|file| {
+        let held: BTreeMap<String, FileHash> = files
+            .iter()
+            .flat_map(|&file| {
+                let end = file_bound(file);
+                hashes
+                    .range::<str, _>((Bound::Included(file), Bound::Excluded(end.as_str())))
+                    .filter(move |(path, _)| {
                         path.strip_prefix(file)
                             .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
                     })
-                })
-                .map(|(path, hash)| (path.clone(), hash.clone()))
-                .collect(),
-        )
+            })
+            .map(|(path, hash)| (path.clone(), hash.clone()))
+            .collect();
+        Sources(held.into_iter().collect())
     }
+}
+
+/// The path just past every part of `file`'s bundle in path order: after `file` itself and
+/// `file/…` comes the next character above the separator.
+fn file_bound(file: &str) -> String {
+    format!("{file}0")
+}
+
+/// The props standing in the area, each once.
+fn props_of(area: &Area) -> Vec<PropId> {
+    let mut props: Vec<PropId> = area.props.iter().map(|placed| placed.prop).collect();
+    props.sort_unstable();
+    props.dedup();
+    props
 }
 
 /// Whether every shader `area`'s covers and props draw with is compiled, so the scenery can stand
@@ -216,8 +234,8 @@ pub fn shaders_ready(world: &World, content: &Content, area: &Area) -> bool {
         .is_none_or(|dome| vfx_render::compiled_shader(world, dome.shader).is_some());
     covers
         && sky
-        && area.props.iter().all(|placed| {
-            placed.prop.get(content).materials.values().all(|material| {
+        && props_of(area).iter().all(|prop| {
+            prop.get(content).materials.values().all(|material| {
                 vfx_render::compiled_shader(world, material.get(content).shader).is_some()
             })
         })
