@@ -1,8 +1,9 @@
 use glam::Vec2;
-use polyanya::{Coords, Mesh, Triangulation};
+use polyanya::{Coords, Layer, Mesh, Polygon, Triangulation, Vertex};
+use rayon::prelude::*;
 
 use crate::core::geometry::corners;
-use crate::core::math::{Offset, Pos, Rect, Rng};
+use crate::core::math::{Offset, Pos, Rect, Rng, Size};
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::{MeterPos, Meters};
 
@@ -29,27 +30,26 @@ pub struct Island(usize);
 impl NavMesh {
     /// `bounds` less each obstacle, every outline grown by `radius` and the bounds shrunk by it, so
     /// a point on the mesh is a place a body of that radius fits, give or take a tenth of the
-    /// radius: a grown outline keeps only the points that each add more ground than an eighth of
-    /// the radius squared, which on the smallest outline lets a body a tenth of its radius in,
-    /// lost on it, and spares the mesh most of the points a rounded outline or a run of blocked
-    /// cells brings.
+    /// radius: a grown outline keeps only the points that each add more ground than a sixteenth
+    /// of the radius squared, which lets a body a tenth of its radius in at most between the
+    /// points kept round an outline its own size, and spares the mesh most of the points a
+    /// rounded outline or a run of blocked cells brings.
     pub fn build(
         bounds: Rect<Meters>,
         obstacles: impl IntoIterator<Item = Vec<Pos<Meters>>>,
         radius: Meters,
     ) -> NavMesh {
-        let mut triangulation = Triangulation::from_outer_edges(&corners(bounds).map(vec2));
-        triangulation.set_agent_radius(radius.0);
-        triangulation.set_agent_radius_simplification(radius.0 * radius.0 / 8.0);
-        triangulation.agent_radius_on_outer_edge(true);
-        triangulation.add_obstacles(
-            obstacles
-                .into_iter()
-                .filter(|outline| outline.len() >= 3)
-                .map(|outline| outline.into_iter().map(vec2).collect::<Vec<_>>()),
-        );
-        triangulation.prebuild();
-        let mut mesh = triangulation.as_navmesh();
+        let obstacles: Vec<Vec<Pos<Meters>>> = obstacles
+            .into_iter()
+            .filter(|outline| outline.len() >= 3)
+            .collect();
+        let ground = bounds.inflate(-radius.0, -radius.0);
+        let mut mesh = Mesh {
+            layers: vec![triangulate(ground, &obstacles, radius)],
+            ..Default::default()
+        };
+        mesh.reorder_neighbors_ccw_and_fix_corners();
+        mesh.update_is_one_way();
         mesh.merge_polygons();
         mesh.search_delta = LOCATE_FUZZ / (LOCATE_RINGS - 1) as f32;
         mesh.search_steps = LOCATE_RINGS;
@@ -118,19 +118,35 @@ impl NavMesh {
 
     /// Whether some of the mesh lies within `bounds`.
     pub fn covers(&self, bounds: Rect<Meters>) -> bool {
-        !self.ground_within(bounds).is_empty()
+        self.pieces_within(bounds).next().is_some()
     }
 
     /// A point on each piece of the mesh within `bounds`, one per polygon the bounds cut.
     pub fn ground_within(&self, bounds: Rect<Meters>) -> Vec<Pos<Meters>> {
-        let clip = corners(bounds);
-        self.polygons
-            .iter()
-            .filter_map(|outline| {
-                let piece = clip_polygon(outline, &clip);
-                (area(&piece) > AREA_EPSILON).then(|| centroid(&piece))
-            })
+        self.pieces_within(bounds)
+            .map(|piece| centroid(&piece))
             .collect()
+    }
+
+    /// Each polygon's part within `bounds`, of those the bounds cut.
+    fn pieces_within(&self, bounds: Rect<Meters>) -> impl Iterator<Item = Vec<Pos<Meters>>> + '_ {
+        let clip = corners(bounds);
+        self.polygons_within(bounds).filter_map(move |polygon| {
+            let piece = clip_polygon(&self.polygons[polygon], &clip);
+            (area(&piece) > AREA_EPSILON).then_some(piece)
+        })
+    }
+
+    /// The polygons with a triangle filed within `reach`, each once.
+    fn polygons_within(&self, reach: Rect<Meters>) -> impl Iterator<Item = usize> + '_ {
+        let mut polygons: Vec<usize> = self
+            .index
+            .within(reach)
+            .map(|triangle| self.triangles[triangle].polygon)
+            .collect();
+        polygons.sort_unstable();
+        polygons.dedup();
+        polygons.into_iter()
     }
 
     /// The corners of the shortest walk from `from` to `to`, `to` last, or none when no walk leads
@@ -149,11 +165,23 @@ impl NavMesh {
         if self.walkable(at) {
             return Some(at);
         }
-        self.polygons
-            .iter()
-            .flat_map(|outline| edges(outline))
-            .map(|(a, b)| closest_on_segment(a, b, at))
-            .min_by(|a, b| a.distance(at).0.total_cmp(&b.distance(at).0))
+        let mut within = TRIANGLE_CELL;
+        loop {
+            let reach = Rect::from_points([
+                at - Offset::new(within.0, within.0),
+                at + Offset::new(within.0, within.0),
+            ]);
+            let found = self
+                .polygons_within(reach)
+                .flat_map(|polygon| edges(&self.polygons[polygon]))
+                .map(|(a, b)| closest_on_segment(a, b, at))
+                .min_by(|a, b| a.distance(at).0.total_cmp(&b.distance(at).0));
+            match found {
+                Some(point) if point.distance(at) <= within => return Some(point),
+                _ if reach.contains_rect(&self.bounds) => return found,
+                _ => within = Meters(within.0 * 2.0),
+            }
+        }
     }
 
     /// The nearest point on the mesh that `fits`, searched along rings `step` apart around `at`, so
@@ -317,6 +345,169 @@ const AREA_EPSILON: f32 = 1e-6;
 const DRAWS: usize = 32;
 const TRIANGLE_CELL: Meters = Meters(16.0);
 const CIRCLE_SIDES: usize = 24;
+/// The ground is triangulated in tiles no wider than this, each on a core of its own: growing an
+/// outline and triangulating cost more per outline the more there are, and a wide area holds
+/// outlines by the hundred thousand, while a tile this size holds a few hundred, enough work to be
+/// worth a core.
+const TILE_SIDE: Meters = Meters(200.0);
+/// How far off a seam a vertex may land through the arithmetic and still be the seam's: both tiles
+/// cut the same outline at the same seam, so their vertices there differ by the rounding alone,
+/// far under a millimetre.
+const SEAM_SNAP: f32 = 1e-3;
+
+/// `ground` less the obstacles grown by `radius`, as one layer of convex polygons: triangulated
+/// tile by tile, in parallel, each tile given every obstacle reaching into it, then joined along
+/// the seams, where both tiles hold the same vertices.
+fn triangulate(ground: Rect<Meters>, obstacles: &[Vec<Pos<Meters>>], radius: Meters) -> Layer {
+    if ground.is_empty() {
+        return Layer::default();
+    }
+    let columns = (ground.size.width / TILE_SIDE.0).ceil().max(1.0) as usize;
+    let rows = (ground.size.height / TILE_SIDE.0).ceil().max(1.0) as usize;
+    let tile: Size<Meters> = Size::new(
+        ground.size.width / columns as f32,
+        ground.size.height / rows as f32,
+    );
+    let seam_x = |column: usize| {
+        if column == columns {
+            ground.max().x
+        } else {
+            ground.min().x + tile.width * column as f32
+        }
+    };
+    let seam_y = |row: usize| {
+        if row == rows {
+            ground.max().y
+        } else {
+            ground.min().y + tile.height * row as f32
+        }
+    };
+    let reaches: Vec<Rect<Meters>> = obstacles
+        .iter()
+        .map(|outline| Rect::from_points(outline).inflate(radius.0, radius.0))
+        .collect();
+    let tiles: Vec<Layer> = (0..rows * columns)
+        .into_par_iter()
+        .map(|index| {
+            let (row, column) = (index / columns, index % columns);
+            let rect = Rect::from_points([
+                Pos::new(seam_x(column), seam_y(row)),
+                Pos::new(seam_x(column + 1), seam_y(row + 1)),
+            ]);
+            let mut triangulation = Triangulation::from_outer_edges(&corners(rect).map(vec2));
+            triangulation.set_agent_radius(radius.0);
+            triangulation.set_agent_radius_simplification(radius.0 * radius.0 / 16.0);
+            triangulation.agent_radius_on_outer_edge(false);
+            triangulation.add_obstacles(
+                obstacles
+                    .iter()
+                    .zip(&reaches)
+                    .filter(|(_, reach)| reach.intersects(&rect))
+                    .map(|(outline, _)| outline.iter().copied().map(vec2).collect::<Vec<_>>()),
+            );
+            triangulation.as_layer()
+        })
+        .collect();
+    let seams_x: Vec<f32> = (1..columns).map(seam_x).collect();
+    let seams_y: Vec<f32> = (1..rows).map(seam_y).collect();
+    joined(tiles, &seams_x, &seams_y)
+}
+
+/// The tiles as one layer: every vertex on a seam snapped onto it and shared by the tiles meeting
+/// there, so the polygons on both sides neighbour each other through it.
+fn joined(tiles: Vec<Layer>, seams_x: &[f32], seams_y: &[f32]) -> Layer {
+    let mut vertices: Vec<Vertex> = Vec::new();
+    let mut polygons: Vec<Polygon> = Vec::new();
+    for layer in tiles {
+        let (first_vertex, first_polygon) = (vertices.len() as u32, polygons.len() as u32);
+        polygons.extend(layer.polygons.into_iter().map(|polygon| {
+            Polygon::new(
+                polygon.vertices.iter().map(|v| v + first_vertex).collect(),
+                polygon.is_one_way,
+            )
+        }));
+        vertices.extend(layer.vertices.into_iter().map(|vertex| {
+            let mut coords = vertex.coords;
+            if let Some(seam) = seams_x.iter().find(|x| (coords.x - *x).abs() <= SEAM_SNAP) {
+                coords.x = *seam;
+            }
+            if let Some(seam) = seams_y.iter().find(|y| (coords.y - *y).abs() <= SEAM_SNAP) {
+                coords.y = *seam;
+            }
+            Vertex::new(
+                coords,
+                vertex
+                    .polygons
+                    .iter()
+                    .map(|p| {
+                        if *p == u32::MAX {
+                            *p
+                        } else {
+                            p + first_polygon
+                        }
+                    })
+                    .collect(),
+            )
+        }));
+    }
+    let mut parent: Vec<usize> = (0..vertices.len()).collect();
+    fn root(parent: &mut [usize], mut index: usize) -> usize {
+        while parent[index] != index {
+            parent[index] = parent[parent[index]];
+            index = parent[index];
+        }
+        index
+    }
+    let same_along = |seams: &[f32], across: fn(&Vertex) -> f32, along: fn(&Vertex) -> f32| {
+        let mut pairs: Vec<(usize, usize)> = Vec::new();
+        for seam in seams {
+            let mut on_it: Vec<usize> = (0..vertices.len())
+                .filter(|&index| across(&vertices[index]) == *seam)
+                .collect();
+            on_it.sort_by(|a, b| along(&vertices[*a]).total_cmp(&along(&vertices[*b])));
+            pairs.extend(
+                on_it
+                    .windows(2)
+                    .filter(|pair| {
+                        along(&vertices[pair[1]]) - along(&vertices[pair[0]]) <= SEAM_SNAP
+                    })
+                    .map(|pair| (pair[0], pair[1])),
+            );
+        }
+        pairs
+    };
+    let mut pairs = same_along(seams_x, |v| v.coords.x, |v| v.coords.y);
+    pairs.extend(same_along(seams_y, |v| v.coords.y, |v| v.coords.x));
+    for (a, b) in pairs {
+        let (a, b) = (root(&mut parent, a), root(&mut parent, b));
+        if a != b {
+            parent[a] = b;
+        }
+    }
+    let mut renumbered: Vec<Option<u32>> = vec![None; vertices.len()];
+    let mut shared: Vec<Vertex> = Vec::new();
+    for (index, vertex) in vertices.into_iter().enumerate() {
+        let root = root(&mut parent, index);
+        match renumbered[root] {
+            Some(kept) => shared[kept as usize]
+                .polygons
+                .extend(vertex.polygons.into_iter().filter(|p| *p != u32::MAX)),
+            None => {
+                renumbered[root] = Some(shared.len() as u32);
+                shared.push(vertex);
+            }
+        }
+    }
+    for polygon in &mut polygons {
+        for vertex in &mut polygon.vertices {
+            *vertex = renumbered[root(&mut parent, *vertex as usize)].expect("a renumbered vertex");
+        }
+    }
+    let mut layer = Layer::default();
+    layer.vertices = shared;
+    layer.polygons = polygons;
+    layer
+}
 
 fn vec2(at: Pos<Meters>) -> Vec2 {
     Vec2::new(at.x, at.y)

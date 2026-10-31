@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use super::Ground;
 use super::prop::PropPlacement;
 use super::terrain::{TerrainDef, Walk};
@@ -9,11 +11,12 @@ use crate::core::units::{Cell, CellPos, GridDims, GridSize, Meters};
 use crate::systems::movement::{AGENT_RADIUS, NavMesh};
 
 /// Where an area walks and flies, for everyone and for the wild, and what it sounds like underfoot.
+/// With no safe zone the wild walks and flies the same ground as everyone, on the same mesh.
 pub struct WalkMeshes {
-    pub walk: NavMesh,
-    pub wild: NavMesh,
-    pub airspace: NavMesh,
-    pub wild_airspace: NavMesh,
+    pub walk: Arc<NavMesh>,
+    pub wild: Arc<NavMesh>,
+    pub airspace: Arc<NavMesh>,
+    pub wild_airspace: Arc<NavMesh>,
     pub footsteps: Vec<Option<SfxId>>,
 }
 
@@ -64,11 +67,25 @@ pub(super) fn meshes(
         .iter()
         .map(|index| Some(terrain_of(*index).surface.get(content).footstep))
         .collect();
+    let walk = Arc::new(NavMesh::build(bounds, ground.iter().cloned(), AGENT_RADIUS));
+    let airspace = Arc::new(NavMesh::build(bounds, [], AGENT_RADIUS));
+    let (wild, wild_airspace) = if zones.is_empty() {
+        (walk.clone(), airspace.clone())
+    } else {
+        (
+            Arc::new(NavMesh::build(
+                bounds,
+                ground.iter().chain(&zones).cloned(),
+                AGENT_RADIUS,
+            )),
+            Arc::new(NavMesh::build(bounds, zones.iter().cloned(), AGENT_RADIUS)),
+        )
+    };
     WalkMeshes {
-        walk: NavMesh::build(bounds, ground.iter().cloned(), AGENT_RADIUS),
-        wild: NavMesh::build(bounds, ground.iter().chain(&zones).cloned(), AGENT_RADIUS),
-        airspace: NavMesh::build(bounds, [], AGENT_RADIUS),
-        wild_airspace: NavMesh::build(bounds, zones.iter().cloned(), AGENT_RADIUS),
+        walk,
+        wild,
+        airspace,
+        wild_airspace,
         footsteps,
     }
 }

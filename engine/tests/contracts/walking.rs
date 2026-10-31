@@ -158,6 +158,58 @@ fn a_walk_over_open_ground_keeps_to_the_straight_line() {
     }
 }
 
+/// A ground far wider than a field walks as one: a walk across it is the straight line where
+/// nothing blocks, and goes round a boulder wherever on it one stands.
+#[test]
+fn a_wide_ground_walks_as_one_wherever_a_boulder_stands() {
+    const GIVE: f32 = AGENT_RADIUS.0 / 10.0;
+    let wide = || Map::open(500, 250);
+    for end in [Offset::new(480.0, 0.0), Offset::new(480.0, 230.0)] {
+        let open = Walk::on(
+            Game::new()
+                .area("field", &wide(), json!([]))
+                .hero("field", 10.0, 10.0),
+        )
+        .toward(end)
+        .trail_to_rest();
+        assert_arrives(&open, end, "across the open ground");
+        assert_keeps_to_the_line(&open, end);
+    }
+
+    let boulders: Vec<Pos<Meters>> = (2..=18)
+        .map(|n| Pos::new(25.0 * n as f32 + 0.3 * (n % 4) as f32, 125.0))
+        .collect();
+    let placed: Vec<Value> = boulders
+        .iter()
+        .map(|at| json!({ "type": "prop", "prop": path("prop", "block"), "at": { "x": at.x, "y": at.y } }))
+        .collect();
+    let start = Pos::new(10.0, 125.0);
+    let end = Offset::new(480.0, 0.0);
+    let strewn = Walk::over(
+        wide(),
+        json!({ "type": "circle", "radius": 1.0 }),
+        Value::Array(placed),
+        start,
+    )
+    .toward(end)
+    .trail_to_rest();
+    assert_arrives(&strewn, end, "past every boulder");
+    let closest = strewn
+        .iter()
+        .inspect(|at| assert!(at.y.abs() <= 2.0, "{at:?} strays from the boulders' line"))
+        .flat_map(|at| {
+            boulders
+                .iter()
+                .map(move |boulder| (start + *at).distance(*boulder))
+        })
+        .min_by(|a, b| a.0.total_cmp(&b.0))
+        .expect("a trail");
+    assert!(
+        closest >= Meters(1.0 + AGENT_RADIUS.0 - GIVE),
+        "came within {closest:?} of a boulder's middle"
+    );
+}
+
 /// A walk keeps a body out of what blocks, give or take a tenth of its radius, and through a
 /// notch the body fits with that much to spare.
 #[test]
@@ -310,10 +362,14 @@ impl Walk {
 
     /// A walk on a field where props with `footprint` stand as `placed`.
     fn among(footprint: Value, placed: Value, from: Pos<Meters>) -> Walk {
+        Walk::over(Map::open(15, 15), footprint, placed, from)
+    }
+
+    fn over(map: Map, footprint: Value, placed: Value, from: Pos<Meters>) -> Walk {
         Walk::on(
             Game::new()
                 .prop("block", footprint)
-                .area("field", &Map::open(15, 15), placed)
+                .area("field", &map, placed)
                 .hero("field", from.x, from.y),
         )
     }
@@ -374,6 +430,19 @@ impl Walk {
         self.trail_while(|_| {})
     }
 
+    /// The walk's trail until it stands still, however long it takes.
+    fn trail_to_rest(&mut self) -> Vec<Offset<Meters>> {
+        let mut trail = Vec::new();
+        loop {
+            self.sim.tick();
+            let at = self.at();
+            if trail.last() == Some(&at) {
+                return trail;
+            }
+            trail.push(at);
+        }
+    }
+
     fn trail_while(&mut self, mut each_tick: impl FnMut(&mut Walk)) -> Vec<Offset<Meters>> {
         (0..TICKS)
             .map(|_| {
@@ -429,12 +498,15 @@ fn assert_arrives(trail: &[Offset<Meters>], end: Offset<Meters>, what: &str) {
     );
 }
 
+/// Positions are single floats, so a walk strays from its line by their precision at the
+/// distance it covers, a few millimetres over hundreds of metres.
 fn assert_keeps_to_the_line(trail: &[Offset<Meters>], end: Offset<Meters>) {
     let length = end.length();
+    let give = 1e-3 + length * 1e-5;
     for at in trail {
         let off = (at.x * end.y - at.y * end.x).abs() / length;
         assert!(
-            off <= 1e-3,
+            off <= give,
             "{at:?} strays {off} from the line toward {end:?}"
         );
     }
