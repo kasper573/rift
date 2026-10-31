@@ -12,6 +12,7 @@ pub mod pace;
 pub mod platform;
 pub mod render;
 pub mod script;
+pub mod spatial;
 pub mod text;
 pub mod time;
 pub mod units;

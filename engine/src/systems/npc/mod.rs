@@ -32,7 +32,7 @@ use crate::systems::interact::Interactive;
 use crate::systems::item::{ItemId, Reservation, Wear};
 use crate::systems::movement::{self, NavMesh, Position, Spot, Spots, position};
 use crate::systems::script::condition::CompiledCondition;
-use crate::systems::script::query::TickRoster;
+use crate::systems::script::query::{Among, TickRoster};
 use crate::systems::script::{
     EventKind, Owner, OwnerRow, Reach, RiftEvent, RiftInstances, RiftScripts, RunnerKind,
     ScriptModule, ScriptedRow, area_owner,
@@ -153,7 +153,7 @@ pub struct Npc {
     pub def: NpcId,
 }
 
-#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Component, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct Pack(pub u32);
 
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
@@ -515,7 +515,7 @@ pub fn approach(world: &mut World) {
             let Owner::Entity(RunnerKind::Npc, npc) = owner else {
                 return None;
             };
-            let listed = roster.iter().find(|listed| listed.entity == npc)?;
+            let listed = roster.get(npc)?;
             if listed.dead {
                 return None;
             }
@@ -542,7 +542,7 @@ pub fn approach(world: &mut World) {
         .into_iter()
         .map(|watcher| {
             let mut now: Vec<Entity> = roster
-                .iter()
+                .near(Among::Anyone, watcher.at, watcher.reach)
                 .filter(|listed| {
                     listed.entity != watcher.npc
                         && listed.area == watcher.area

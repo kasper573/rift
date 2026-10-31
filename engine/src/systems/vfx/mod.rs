@@ -28,7 +28,7 @@ use crate::systems::area::{AreaObject, AreaTag};
 use crate::systems::movement::{Position, position};
 use crate::systems::player::PlayedBy;
 use crate::systems::script::effect::RiftEffect;
-use crate::systems::script::query::{RiftQueryKind, TickRoster};
+use crate::systems::script::query::{Among, RiftQueryKind, TickRoster};
 use crate::systems::script::{Condition, EffectCall, Reach, RiftScripting, RunnerKind, ScriptDef};
 use crate::systems::skill::{self, SkillDef};
 use crate::systems::status::StatusEffectDef;
@@ -139,14 +139,16 @@ fn reached(
     struck: Option<&[Entity]>,
 ) -> Vec<(Entity, Pos<Meters>)> {
     let area = world.resource::<WorldArea>().0;
-    world
+    let mut reached: Vec<(Entity, Pos<Meters>)> = world
         .get_resource::<TickRoster>()
         .into_iter()
-        .flat_map(TickRoster::iter)
+        .flat_map(|roster| roster.near(Among::Anyone, footprint.at, footprint.reach()))
         .filter(|listed| listed.area == area && !listed.dead && footprint.contains(listed.at))
         .filter(|listed| struck.is_none_or(|struck| struck.contains(&listed.entity)))
         .map(|listed| (listed.entity, listed.at))
-        .collect()
+        .collect();
+    reached.sort_unstable_by_key(|(entity, _)| *entity);
+    reached
 }
 
 /// Plays a vfx on one player's screen or interface, shown to that player alone.

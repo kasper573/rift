@@ -8,6 +8,7 @@ use super::{Condition, RiftScripting};
 use crate::core::content::Content;
 use crate::core::math::Pos;
 use crate::core::script::{Compiler, Eval, FlowCx, QueryDef, ScriptFault, Value, ValueType};
+use crate::core::spatial::SpatialIndex;
 use crate::core::time::{Seconds, WallClock};
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::area::transition::Discovered;
@@ -28,48 +29,35 @@ use crate::systems::status::{self, StatusCategory, StatusEffectDef, StatusEffect
 use crate::systems::visibility::{self, Presence};
 
 /// Who stood where as the tick began. Every script in a tick counts the same actors, whatever order
-/// the scripts run in.
-#[derive(Resource, Default)]
+/// the scripts run in. Each is filed by the cell of the ground it stands in, so a query near a spot
+/// passes over only those standing in the cells around it.
+#[derive(Resource)]
 pub struct TickRoster {
     listed: Vec<Listed>,
     characters: usize,
-    character_bounds: Option<Bounds>,
-    npc_bounds: Option<Bounds>,
+    /// The characters' spots and the npcs' apart, so a scan for one kind reaching none ends at
+    /// once.
+    character_spots: SpatialIndex,
+    npc_spots: SpatialIndex,
 }
 
-#[derive(Clone, Copy)]
-struct Bounds {
-    min: Pos<Meters>,
-    max: Pos<Meters>,
-}
-
-impl Bounds {
-    fn around(listed: &[Listed]) -> Option<Bounds> {
-        let mut entries = listed.iter();
-        let first = entries.next()?.at;
-        Some(entries.fold(
-            Bounds {
-                min: first,
-                max: first,
-            },
-            |bounds, entry| Bounds {
-                min: Pos::new(bounds.min.x.min(entry.at.x), bounds.min.y.min(entry.at.y)),
-                max: Pos::new(bounds.max.x.max(entry.at.x), bounds.max.y.max(entry.at.y)),
-            },
-        ))
-    }
-
-    fn reaches(self, from: Pos<Meters>, within: Meters) -> bool {
-        from.x + within.0 >= self.min.x
-            && from.x - within.0 <= self.max.x
-            && from.y + within.0 >= self.min.y
-            && from.y - within.0 <= self.max.y
+impl Default for TickRoster {
+    fn default() -> TickRoster {
+        TickRoster {
+            listed: Vec::new(),
+            characters: 0,
+            character_spots: SpatialIndex::new(SPOT_CELL),
+            npc_spots: SpatialIndex::new(SPOT_CELL),
+        }
     }
 }
+
+const SPOT_CELL: Meters = Meters(16.0);
 
 #[derive(Clone, Copy)]
 pub struct Listed {
     pub entity: Entity,
+    pub pack: Option<Pack>,
     pub at: Pos<Meters>,
     pub area: AreaId,
     pub npc: Option<NpcId>,
@@ -84,24 +72,46 @@ impl TickRoster {
         self.listed.iter()
     }
 
-    pub fn among(&self, among: Among) -> &[Listed] {
-        match among {
-            Among::Characters => &self.listed[..self.characters],
-            Among::Npcs => &self.listed[self.characters..],
-            Among::Anyone | Among::Attackers | Among::PackAttackers => &self.listed,
-        }
+    /// The actors `among` that may stand within `within` of `from`, in no particular order: every
+    /// one that does, and some a little farther.
+    pub fn near(
+        &self,
+        among: Among,
+        from: Pos<Meters>,
+        within: Meters,
+    ) -> impl Iterator<Item = &Listed> {
+        let characters = matches!(
+            among,
+            Among::Characters | Among::Anyone | Among::Attackers | Among::PackAttackers
+        );
+        let npcs = among != Among::Characters;
+        characters
+            .then(|| self.character_spots.near(from, within))
+            .into_iter()
+            .flatten()
+            .chain(
+                npcs.then(|| {
+                    self.npc_spots
+                        .near(from, within)
+                        .map(|index| index + self.characters)
+                })
+                .into_iter()
+                .flatten(),
+            )
+            .map(|index| &self.listed[index])
     }
 
-    fn may_reach(&self, among: Among, from: Pos<Meters>, within: Meters) -> bool {
-        let reaches =
-            |bounds: Option<Bounds>| bounds.is_some_and(|bounds| bounds.reaches(from, within));
-        match among {
-            Among::Characters => reaches(self.character_bounds),
-            Among::Npcs => reaches(self.npc_bounds),
-            Among::Anyone | Among::Attackers | Among::PackAttackers => {
-                reaches(self.character_bounds) || reaches(self.npc_bounds)
-            }
-        }
+    /// The npcs of `pack`, or every packless npc: the npcs are listed pack by pack.
+    pub fn pack(&self, pack: Option<Pack>) -> &[Listed] {
+        let npcs = &self.listed[self.characters..];
+        let start = npcs.partition_point(|listed| listed.pack < pack);
+        let end = npcs.partition_point(|listed| listed.pack <= pack);
+        &npcs[start..end]
+    }
+
+    /// The actor `entity` as the tick began.
+    pub fn get(&self, entity: Entity) -> Option<&Listed> {
+        self.listed.iter().find(|listed| listed.entity == entity)
     }
 }
 
@@ -111,6 +121,7 @@ type RosterQuery = QueryState<
         &'static Position,
         &'static AreaTag,
         Option<&'static Npc>,
+        Option<&'static Pack>,
         Option<&'static Stats>,
         Has<PlayedBy>,
         Has<ArrivalHold>,
@@ -123,8 +134,9 @@ pub fn take_tick_roster(world: &mut World, query: &mut RosterQuery) {
     let mut listed = std::mem::take(&mut world.get_resource_or_init::<TickRoster>().listed);
     listed.clear();
     listed.extend(query.iter(world).map(
-        |(entity, at, tag, npc, stats, character, held, presence)| Listed {
+        |(entity, at, tag, npc, pack, stats, character, held, presence)| Listed {
             entity,
+            pack: pack.copied(),
             at: at.pos,
             area: tag.area,
             npc: npc.map(|npc| npc.def),
@@ -134,11 +146,15 @@ pub fn take_tick_roster(world: &mut World, query: &mut RosterQuery) {
             presence,
         },
     ));
-    listed.sort_by_key(|entry| !entry.character);
+    listed.sort_by_key(|entry| (!entry.character, entry.pack));
     let characters = listed.iter().take_while(|entry| entry.character).count();
     let mut roster = world.resource_mut::<TickRoster>();
-    roster.character_bounds = Bounds::around(&listed[..characters]);
-    roster.npc_bounds = Bounds::around(&listed[characters..]);
+    roster
+        .character_spots
+        .refile(listed[..characters].iter().map(|entry| entry.at));
+    roster
+        .npc_spots
+        .refile(listed[characters..].iter().map(|entry| entry.at));
     roster.listed = listed;
     roster.characters = characters;
 }
@@ -884,12 +900,13 @@ pub fn around<'w>(
     npc: Option<NpcId>,
     within: Meters,
 ) -> impl Iterator<Item = (Entity, Meters)> + 'w {
-    let scan = Scan::of(world, cx, among, within);
-    let candidates: &'w [Listed] = match &scan {
-        Some(scan) => scan.roster.among(among),
-        None => &[],
-    };
-    candidates.iter().filter_map(move |listed| {
+    let scan = Scan::of(world, cx, among);
+    let candidates = scan
+        .as_ref()
+        .map(|scan| (scan.roster, scan.from))
+        .into_iter()
+        .flat_map(move |(roster, from)| roster.near(among, from, within));
+    candidates.filter_map(move |listed| {
         let scan = scan.as_ref()?;
         let fits = listed.entity != scan.owner
             && listed.area == scan.area
@@ -927,14 +944,11 @@ struct Scan<'w> {
 }
 
 impl<'w> Scan<'w> {
-    fn of(world: &'w World, cx: &FlowCx, among: Among, within: Meters) -> Option<Scan<'w>> {
+    fn of(world: &'w World, cx: &FlowCx, among: Among) -> Option<Scan<'w>> {
         let owner = cx.owner?;
         let from = movement::position(world, owner)?;
         let area = world.get::<AreaTag>(owner)?.area;
         let roster = world.get_resource::<TickRoster>()?;
-        if !roster.may_reach(among, from, within) {
-            return None;
-        }
         let shelter =
             area::wild(world, owner).then(|| area::load(world.resource::<Content>(), area));
         let attackers: Vec<Entity> = match among {
@@ -945,9 +959,9 @@ impl<'w> Scan<'w> {
             Among::PackAttackers => {
                 let pack = world.get::<Pack>(owner).copied();
                 roster
+                    .pack(pack)
                     .iter()
-                    .filter(|listed| listed.npc.is_some() && listed.area == area)
-                    .filter(|listed| world.get::<Pack>(listed.entity).copied() == pack)
+                    .filter(|listed| listed.area == area)
                     .flat_map(|listed| {
                         world
                             .get::<Attackers>(listed.entity)

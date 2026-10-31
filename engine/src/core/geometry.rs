@@ -149,7 +149,10 @@ impl Shape {
             Shape::Rect { width, height } => {
                 Meters((width.0 * width.0 + height.0 * height.0).sqrt() / 2.0)
             }
-            Shape::Cone { length, .. } | Shape::Line { length, .. } => length,
+            Shape::Cone { length, .. } => length,
+            Shape::Line { length, width } => {
+                Meters((length.0 * length.0 + width.0 * width.0 / 4.0).sqrt())
+            }
         }
     }
 

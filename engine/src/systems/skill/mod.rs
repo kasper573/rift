@@ -42,7 +42,7 @@ use crate::systems::item::{ItemId, ItemKind, ItemStack};
 use crate::systems::movement;
 use crate::systems::npc::{Npc, NpcDef};
 use crate::systems::script::event::{USED_POINT, USED_RANK, USED_TARGET};
-use crate::systems::script::query::TickRoster;
+use crate::systems::script::query::{Among, TickRoster};
 use crate::systems::script::{
     Condition, EventKind, OwnerRow, RiftScripts, RunnerKind, ScriptModule, ScriptedRow,
 };
@@ -723,7 +723,7 @@ pub fn targets(world: &World, cx: &FlowCx, skill: SkillId) -> Vec<Entity> {
                 return Vec::new();
             };
             let mut inside: Vec<(Entity, Meters)> = roster
-                .iter()
+                .near(Among::Anyone, footprint.at, footprint.reach())
                 .filter(|listed| listed.area == area && footprint.contains(listed.at))
                 .filter(|listed| casting::fits(world, caster, listed.entity, def.target))
                 .map(|listed| (listed.entity, listed.at.distance(footprint.at)))
