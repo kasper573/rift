@@ -9,7 +9,7 @@ use bevy_time::Time;
 use super::{ClientId, PlayedBy, Welcome};
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::time::{DayClock, Seconds, ServerClock};
-use crate::systems::stat;
+use crate::systems::{identity, stat};
 
 pub struct ClientSessionPlugin;
 
@@ -21,6 +21,7 @@ impl Plugin for ClientSessionPlugin {
             }),
         );
         crate::systems::protocol(app);
+        app.add_plugins(identity::ClientIdentityPlugin);
         app.init_resource::<MyClient>()
             .init_resource::<ServerClock>()
             .init_resource::<DayClock>()

@@ -24,6 +24,7 @@ use crate::core::time::Seconds;
 use crate::core::units::Meters;
 use crate::systems::actor::Actor;
 use crate::systems::area::{self, AreaId, AreaTag, scenery};
+use crate::systems::identity::GlobalId;
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::movement::RenderPosition;
 use crate::systems::player::session::{self, MyCharacter};
@@ -63,7 +64,7 @@ struct Crossing {
 
 #[derive(Clone, Copy)]
 struct Pose {
-    character: Entity,
+    character: GlobalId,
     at: Pos<Meters>,
     heading: Radians,
     area: AreaId,
@@ -163,7 +164,7 @@ impl Held {
 fn pose_of(world: &World, character: Entity) -> Option<Pose> {
     let entity = world.get_entity(character).ok()?;
     Some(Pose {
-        character,
+        character: *entity.get::<GlobalId>()?,
         at: entity.get::<RenderPosition>()?.0,
         heading: entity.get::<Actor>()?.facing,
         area: entity.get::<AreaTag>()?.area,
