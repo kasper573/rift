@@ -24,7 +24,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::interpolate::RenderValueSystems;
 use crate::core::math::Rng;
-use crate::core::time::Seconds;
+use crate::core::units::Seconds;
 pub use world::clouds::CloudLook;
 pub use world::fade::ClearingLook;
 pub use world::lights::LightLook;

@@ -5,10 +5,38 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::channel;
 use std::time::Duration;
 
+use engine::core::time::UtcHour;
 use engine::core::units::Bytes;
-use engine::systems::launch::{self, ReadyLine, SERVER_ENV_PREFIX, ServerConfig, ServerReady};
+use engine::systems::launch::{
+    self, AuthMode, ReadyLine, SERVER_ENV_PREFIX, ServerConfig, ServerDaylight, ServerReady,
+};
+use engine::systems::player::SpawnPolicy;
 
 pub const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+
+// Runs play out alike, so they compare.
+pub const SEED: u64 = 1931;
+
+/// A server playing `game` on any free ports, as the benches run it: seeded, its players
+/// immortal and signed in without asking, its day turning. A bench says what else it needs.
+pub fn bench_config(game: &Path) -> ServerConfig {
+    ServerConfig {
+        bind: LOCALHOST,
+        port: 0,
+        udp_port: 0,
+        public_ip: LOCALHOST,
+        max_clients: 8,
+        content_dir: absolute(game),
+        player_spawn_policy: SpawnPolicy::Map,
+        player_immortal: true,
+        daylight: ServerDaylight::Turning,
+        rng_seed: Some(SEED),
+        daily_reset_utc_hour: UtcHour::MIDNIGHT,
+        auth: AuthMode::Fake,
+        test_characters: true,
+        exit_on_stdin_eof: true,
+    }
+}
 
 /// A game server process, stopped when dropped.
 pub struct GameServer {

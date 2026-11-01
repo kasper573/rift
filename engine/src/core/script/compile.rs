@@ -18,7 +18,7 @@ use super::{
 };
 use crate::core::content::id::nearest;
 use crate::core::content::{Content, ContentFile, ContentId};
-use crate::core::time::Seconds;
+use crate::core::units::Seconds;
 
 pub type Eval = Box<dyn Fn(&World, &FlowCx) -> Value + Send + Sync>;
 pub type EffectCall<V> =
@@ -157,10 +157,6 @@ impl<V: Vocabulary> Procedure<V> {
             .filter(|(_, event)| event.kind() == kind)
             .map(|(node, event)| (*node, event))
             .collect()
-    }
-
-    pub fn answers(&self, kind: <V::Event as EventDef<V>>::Kind) -> bool {
-        self.entries.iter().any(|(_, event)| event.kind() == kind)
     }
 
     pub fn run_entry(&self) -> Option<StepIndex> {

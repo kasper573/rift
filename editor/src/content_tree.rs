@@ -604,7 +604,7 @@ pub(crate) fn folder_title(folder: &str) -> &str {
 
 /// Reveals the file of the active tab, once each time a tab becomes active.
 fn reveal_active_tab(editor: &mut Editor) {
-    let Some(tab) = super::active_tab(editor) else {
+    let Some(tab) = crate::tabs::active_tab(editor) else {
         return;
     };
     let path = match &tab {

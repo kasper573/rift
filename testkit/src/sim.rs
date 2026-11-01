@@ -8,7 +8,8 @@ use bevy_time::Time;
 use engine::core::content::{Content, ContentFile, ContentId};
 use engine::core::math::Rng;
 use engine::core::tick::{self, Planners, Tick};
-use engine::core::time::{Seconds, UnixMillis, UtcHour, WallClock};
+use engine::core::time::{UnixMillis, UtcHour, WallClock};
+use engine::core::units::Seconds;
 use engine::systems::notification::NotificationSent;
 use engine::systems::{TICK_HZ, area_state, plug_ins};
 

@@ -8,14 +8,14 @@ use super::stance::StanceId;
 use super::{Action, Actor, ActorModel, Appearance, Pose};
 use crate::core::audio::playback::SfxId;
 use crate::core::content::{Content, serial};
-use crate::core::geometry::Radians;
 use crate::core::math::Rng;
 use crate::core::script::{Answer, Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
-use crate::core::time::{Millis, PlaybackRate, UnixMillis, WallClock};
+use crate::core::time::{UnixMillis, WallClock};
+use crate::core::units::{Millis, PlaybackRate, Radians};
 use crate::systems::script::effect::{self as effects, Audience};
 use crate::systems::script::event::NPC;
 use crate::systems::script::{
-    Condition, EffectCall, FlowKey, Reach, RiftInstances, RiftScripting, RunnerKind,
+    Condition, EffectCall, EffectReach, FlowKey, RiftInstances, RiftScripting, RunnerKind,
 };
 use crate::systems::stat::{self, StatKind};
 use crate::systems::{movement, notification};
@@ -191,8 +191,8 @@ impl EffectDef<RiftScripting> for Animate {
             EffectStep::Pause
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Animates]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Animates]
     }
 }
 
@@ -280,8 +280,8 @@ impl EffectDef<RiftScripting> for SetStance {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Animates]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Animates]
     }
 }
 
@@ -331,8 +331,8 @@ impl EffectDef<RiftScripting> for SetPose {
             }
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Animates]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Animates]
     }
 }
 

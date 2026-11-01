@@ -18,6 +18,7 @@ use engine::systems::actor::{Action, Motion, Pose};
 use engine::systems::dialogue::bust::GenericExpression;
 use strum::VariantArray;
 use ui::egui::{self, RichText, Ui, Vec2};
+use ui::input::NumberField;
 use ui::{chip, controls, form, panel, theme, words};
 
 use super::preview::{self, PreviewPlays};
@@ -147,7 +148,7 @@ pub fn set_cell(
         None => None,
     };
     let label = format!("Set {} for {}", row.label(), cell_label(cell.as_ref()));
-    super::change(editor, key, &label, |skeleton| {
+    super::edits::change(editor, key, &label, |skeleton| {
         if stance.is_some_and(|stance| skeleton.set(stance).is_none()) && !is_first(skeleton, build)
         {
             return Err("a build's stance columns are the skeleton's".to_owned());
@@ -162,7 +163,7 @@ pub fn add_stance_column(editor: &mut Editor, key: &str, stance: &str) -> bool {
         editor.toast(format!("{stance} is not a stance"));
         return false;
     };
-    super::change(editor, key, "Add a stance column", |skeleton| {
+    super::edits::change(editor, key, "Add a stance column", |skeleton| {
         if skeleton.stances.iter().any(|set| set.stance == id) {
             return Err("the skeleton has a set for that stance already".to_owned());
         }
@@ -192,7 +193,7 @@ pub fn fill(
     if count == 0 {
         return 0;
     }
-    super::change(
+    super::edits::change(
         editor,
         key,
         &format!("Fill {build} from file names"),
@@ -245,7 +246,7 @@ fn fills(
         for (from, to) in replace.iter().filter(|(from, _)| !from.is_empty()) {
             path = path.replace(from.as_str(), to);
         }
-        let file = engine::core::assets::ModelRef::new(path);
+        let file = engine::core::content::ModelRef::new(path);
         let rewritten = match clip.take() {
             Some(take) => Clip::Take {
                 file,
@@ -813,7 +814,7 @@ fn picker(
             .desired_width(f32::INFINITY),
     );
     let filter = filter.clone();
-    let found: Vec<_> = super::matching(rigging, &filter).collect();
+    let found: Vec<_> = super::pickers::matching(rigging, &filter).collect();
     ui.label(theme::faint(format!(
         "{} play on this skeleton",
         words::counted(found.len(), "clip")
@@ -884,7 +885,7 @@ fn playing(
     let held = def.cues_of(&clip).to_vec();
     let scrub = &mut editor.views.skeleton.views.view_mut(key).preview.scrub;
     if let Some(cues) = cues::timeline(ui, scrub, found.length.millis(), &held, true) {
-        super::set_cues(editor, key, &clip, cues);
+        super::edits::set_cues(editor, key, &clip, cues);
     }
     if row.is_some_and(SetRow::strikes) && !held.iter().any(|cue| cue.apex) {
         ui.colored_label(
@@ -912,14 +913,7 @@ fn pace(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, clip: &C
     let dragged = ui
         .horizontal(|ui| {
             ui.label(theme::muted("pace · m/s"));
-            let dragged = ui
-                .add(
-                    egui::DragValue::new(&mut value)
-                        .speed(0.01)
-                        .range(0.01..=20.0)
-                        .fixed_decimals(2),
-                )
-                .changed();
+            let dragged = NumberField::new(&mut value).range(0.01..=20.0).show(ui);
             if held.is_none() {
                 ui.label(theme::faint("none yet: a gait must state one"));
             }
@@ -932,7 +926,7 @@ fn pace(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, clip: &C
          it. A body plays the gait nearest its speed, sped up or slowed to cover it exactly.",
     );
     if dragged {
-        super::set_pace(editor, key, clip, MetersPerSec(Meters(value)));
+        super::edits::set_pace(editor, key, clip, MetersPerSec(Meters(value)));
     }
 }
 

@@ -1,5 +1,5 @@
-use engine::core::assets::{AssetKind, AudioRef};
 use engine::core::audio::mix::AudioCategory;
+use engine::core::content::{AssetKind, AudioRef};
 use engine::systems::area::{SoundChannel, SoundscapeDef};
 use ui::egui::{Align, Layout, Ui};
 use ui::form;

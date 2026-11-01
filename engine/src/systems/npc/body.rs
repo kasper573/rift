@@ -19,7 +19,7 @@ use crate::systems::movement::{self, Approach, ApproachPlan, NavMesh};
 use crate::systems::npc::{Home, Npc, Roams};
 use crate::systems::script::event::NPC;
 use crate::systems::script::{
-    Condition, EffectCall, EffectLook, FlowKey, Place, Reach, RiftInstances, RiftScripting,
+    Condition, EffectCall, EffectLook, EffectReach, FlowKey, Place, RiftInstances, RiftScripting,
     RunnerKind, query,
 };
 use crate::systems::{dialogue, reach, skill, stat};
@@ -566,8 +566,8 @@ impl EffectDef<RiftScripting> for Wander {
             doing(world, npc, Act::Wander { leash }, priority).then_some(EffectStep::Done)
         })))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Walks]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Walks]
     }
 }
 
@@ -617,8 +617,8 @@ impl EffectDef<RiftScripting> for WalkTo {
             EffectStep::Pause
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Walks]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Walks]
     }
 }
 
@@ -658,8 +658,8 @@ impl EffectDef<RiftScripting> for Attack {
             EffectStep::Pause
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Targets]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Targets]
     }
 }
 
@@ -687,7 +687,7 @@ impl EffectDef<RiftScripting> for Stop {
             doing(world, npc, Act::Stop, priority).then_some(EffectStep::Done)
         })))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
         Vec::new()
     }
 }
@@ -740,7 +740,7 @@ impl EffectDef<RiftScripting> for FaceToward {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
         Vec::new()
     }
 }

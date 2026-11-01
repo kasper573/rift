@@ -17,7 +17,7 @@ use crate::core::content::{Content, RowCheck};
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
 use crate::systems::item::{ItemId, Wear, WornLook};
 use crate::systems::script::event::NPC;
-use crate::systems::script::{EffectCall, Reach, RiftScripting, RunnerKind};
+use crate::systems::script::{EffectCall, EffectReach, RiftScripting, RunnerKind};
 
 /// An actor's own look without its gear: a model, parts of the model's skeleton laid over the
 /// model's, and colours painted over the model's.
@@ -260,7 +260,7 @@ impl EffectDef<RiftScripting> for SetAppearance {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
         Vec::new()
     }
 }

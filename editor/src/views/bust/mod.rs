@@ -1,6 +1,7 @@
 //! The bust view: the faces of one individual's portrait as cards, PNGs dropped on it adding or
 //! replacing faces, and a picked face inspected beside them.
 
+pub mod face_files;
 pub mod faces;
 pub mod inspect;
 
@@ -16,7 +17,7 @@ use ui::theme;
 use crate::app::Editor;
 use crate::project::RowSelection;
 use crate::project::files::content_of;
-use crate::shell::row_form;
+use crate::row_form;
 use crate::tabs::shown_path;
 use crate::views::ViewMap;
 
@@ -57,11 +58,11 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         {
             inspect::show(editor, ui, &selection);
         } else {
-            crate::shell::row_form::usages::show_usages_grouped(editor, ui, key, true);
+            crate::row_form::usages::show_usages_grouped(editor, ui, key, true);
         }
     });
     egui::Frame::new()
-        .inner_margin(crate::shell::VIEW_PADDING)
+        .inner_margin(crate::widgets::VIEW_PADDING)
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
             ui.label(theme::mono(shown_path(key)).color(theme::CODE));

@@ -22,7 +22,7 @@ use super::atlas::{AtlasSource, AtlasWarp, WorldAtlas};
 use super::filters::{self, ColorRanges};
 use super::interact::{self, MapDrag};
 use super::{
-    MAX_ZOOM, MIN_ZOOM, MapLayers, MapPart, MapTileHit, OpenWorldMap, region_color, shows_areas,
+    MAX_ZOOM, MIN_ZOOM, MapGroundHit, MapLayers, MapPart, OpenWorldMap, region_color, shows_areas,
 };
 use crate::app::Editor;
 use crate::keymap::EditorKey;
@@ -84,11 +84,11 @@ impl MapCanvas {
         topmost_card_at(&self.cards, p)
     }
 
-    pub(crate) fn tile_at(&self, atlas: &WorldAtlas, p: Pos2) -> Option<MapTileHit> {
+    pub(crate) fn ground_at(&self, atlas: &WorldAtlas, p: Pos2) -> Option<MapGroundHit> {
         let card = self.card(self.card_at(p)?)?;
         let size = atlas.size(card.area);
         let rel = (p - card.art.min) / card.art.size().max(Vec2::splat(1.0));
-        Some(MapTileHit {
+        Some(MapGroundHit {
             area: atlas.key(card.area).to_owned(),
             at: Pos::new(rel.x * size.width, rel.y * size.height),
         })
@@ -305,7 +305,7 @@ fn draw_card(editor: &mut Editor, painter: &Painter, drawing: &Drawing, card: &M
             if dimmed { theme::PANEL } else { theme::RAISED },
         );
     }
-    let px_per_tile = card.art.width() / info.size.width.max(1.0);
+    let px_per_metre = card.art.width() / info.size.width.max(1.0);
     painter.rect_filled(card.art, 2.0, theme::INPUT);
     if let Some(project) = editor.project.as_ref()
         && project.content.is_some()
@@ -316,7 +316,7 @@ fn draw_card(editor: &mut Editor, painter: &Painter, drawing: &Drawing, card: &M
                 let canvas = Viewport {
                     screen: card.art,
                     center: Pos::new(info.size.width / 2.0 - 0.5, info.size.height / 2.0 - 0.5),
-                    zoom: px_per_tile / PX_PER_METER,
+                    zoom: px_per_metre / PX_PER_METER,
                 };
                 art.draw(
                     &painter.with_clip_rect(card.art),
@@ -347,11 +347,11 @@ fn draw_card(editor: &mut Editor, painter: &Painter, drawing: &Drawing, card: &M
             None => paint::hatched(painter, card.art, NO_VALUE, 8.0),
         }
     }
-    let on_art = |at: Pos<Meters>| card.art.min + Vec2::new(at.x, at.y) * px_per_tile;
+    let on_art = |at: Pos<Meters>| card.art.min + Vec2::new(at.x, at.y) * px_per_metre;
     if drawing.zoomed {
         for door in &info.doors {
             painter.rect_stroke(
-                Rect::from_center_size(on_art(door.at), Vec2::splat(px_per_tile.max(4.0))),
+                Rect::from_center_size(on_art(door.at), Vec2::splat(px_per_metre.max(4.0))),
                 1.0,
                 Stroke::new(1.5, ROUTE),
                 StrokeKind::Outside,
@@ -673,7 +673,7 @@ fn status(editor: &mut Editor, map: &OpenWorldMap, canvas: &MapCanvas, overlays:
             let hover = canvas
                 .response
                 .hover_pos()
-                .and_then(|p| canvas.tile_at(atlas, p));
+                .and_then(|p| canvas.ground_at(atlas, p));
             match hover {
                 Some(hit) => vec![
                     format!(
@@ -682,7 +682,7 @@ fn status(editor: &mut Editor, map: &OpenWorldMap, canvas: &MapCanvas, overlays:
                         hit.at.x.floor(),
                         hit.at.y.floor()
                     ),
-                    tile_facts(map, &hit),
+                    ground_facts(map, &hit),
                     "right-click a spot to play there".to_owned(),
                 ],
                 None => vec![
@@ -1259,13 +1259,13 @@ fn world_summary(atlas: &WorldAtlas) -> String {
     )
 }
 
-fn tile_facts(map: &OpenWorldMap, hit: &MapTileHit) -> String {
+fn ground_facts(map: &OpenWorldMap, hit: &MapGroundHit) -> String {
     let atlas = &map.atlas;
     let Some(id) = atlas.id(&hit.area) else {
         return String::new();
     };
     let info = &atlas.areas[&id];
-    let cell = snap(hit.at);
+    let cell = snap(hit.at, false);
     let loaded = area::load(&map.content, id);
     let walkable = if loaded.mesh().walkable(cell) {
         "walkable"

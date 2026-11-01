@@ -19,7 +19,7 @@ use super::skeleton::{
 };
 use super::stance::StanceId;
 use super::{Action, Pose};
-use crate::core::assets::FileSize;
+use crate::core::content::FileSize;
 use crate::core::content::gltf::{self, GltfInfo};
 use crate::core::content::media::GltfInfos;
 use crate::core::content::{
@@ -28,8 +28,7 @@ use crate::core::content::{
 };
 use crate::core::geometry::Capsule;
 use crate::core::render::world::body::{Figure, Skin};
-use crate::core::time::{Millis, PlaybackRate, Seconds};
-use crate::core::units::{Meters, MetersPerSec};
+use crate::core::units::{Meters, MetersPerSec, Millis, PlaybackRate, Seconds};
 
 pub type ModelId = ContentId<ModelDef>;
 

@@ -7,9 +7,9 @@ use bevy_replication::AppReplicationExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::assets::AudioRef;
 use crate::core::audio::mix::AudioCategory;
 use crate::core::audio::playback::{HushVoice, PlayClip, SfxPlace, SfxTune};
+use crate::core::content::AudioRef;
 use crate::core::content::{
     Bundle, Content, ContentFile, ContentId, ContentProblem, ContentRegistry, ErrorPlace,
     FileWriter, MISSING_FILE, Nearby, PartSpec, Parts, RowCheck, Shape,
@@ -19,7 +19,7 @@ use crate::core::text::{
     LettersPerSecond, StyledLine, TextPiece, TextVoice, Typewriter, TypewriterReveal,
     advance_typewriters, reveal_times,
 };
-use crate::core::time::{Hertz, PlaybackRate, Seconds};
+use crate::core::units::{Hertz, PlaybackRate, Seconds};
 
 pub type BabbleId = ContentId<BabbleDef>;
 pub type BabbleBankId = ContentId<BabbleBankDef>;

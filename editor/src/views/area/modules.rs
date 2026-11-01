@@ -6,9 +6,8 @@ use ui::theme;
 use engine::core::audio::mix::AudioCategory;
 use engine::core::audio::soundscape::SoundscapeShape;
 use engine::core::content::{FolderReader, Nearby};
-use engine::core::geometry::Degrees;
 use engine::core::math::{Pos, Rect, Rgb, Size};
-use engine::core::units::Meters;
+use engine::core::units::{Degrees, Meters};
 use engine::systems::actor::Pose;
 use engine::systems::area::blueprint::Placement;
 use engine::systems::area::lighting::PointLightDef;
@@ -21,14 +20,13 @@ use engine::systems::area::{
 use engine::systems::script::{Place, ScriptModule};
 use ui::egui::{Pos2, RichText, Ui, Vec2};
 
-use super::select::snap_to;
 use super::select::start_paste;
 use super::{AreaAction, AreaFrame, AreaTool, AreaViewState, nodes, pick, pins, placement, shapes};
 use crate::app::Editor;
 use crate::keymap::EditorKey;
 use crate::play;
-use crate::shell::widgets;
 use crate::tabs::file_title;
+use crate::widgets;
 
 #[derive(Clone, Copy)]
 pub struct AreaMenuAnchor {
@@ -41,7 +39,7 @@ pub(super) fn context_menu_at(editor: &mut Editor, view_key: &str, frame: &AreaF
         return;
     };
     let view = editor.views.area.view_mut(view_key);
-    view.take_drag();
+    view.drag.take();
     let selecting = view.tool == AreaTool::Select;
     if selecting
         && let Some(hit) = frame.hit(ground)
@@ -134,7 +132,7 @@ pub(super) fn show_add_menu(ui: &mut Ui, editor: &mut Editor, view_key: &str, fr
     .open_memory(None)
     .show(|ui| {
         ui.set_min_width(220.0);
-        let spot = snap_to(ground, false);
+        let spot = crate::views::snap(ground, false);
         ui.label(RichText::new(format!("{}, {} m", spot.x, spot.y)).weak());
         let character =
             play::current_character(editor).unwrap_or_else(|| "a test character".to_owned());
@@ -297,13 +295,15 @@ pub(super) fn show_add_menu(ui: &mut Ui, editor: &mut Editor, view_key: &str, fr
             if let Some(area) = frame.area_id() {
                 let place = Place {
                     area,
-                    at: snap_to(ground, false),
+                    at: crate::views::snap(ground, false),
                 };
                 play::start(editor, Some(place));
             }
         }
         MenuAction::PlayFromStart => play::start(editor, None),
-        MenuAction::SetSpawn => pins::set_spawn(editor, &frame.bundle, snap_to(ground, false)),
+        MenuAction::SetSpawn => {
+            pins::set_spawn(editor, &frame.bundle, crate::views::snap(ground, false))
+        }
         MenuAction::Listen => {
             editor.views.area.view_mut(view_key).listener = Some(ground);
             pick::listen(editor, frame, ground);
@@ -468,7 +468,7 @@ pub(crate) fn add_module(
         ),
         _ => (frame.bundle.clone(), ground),
     };
-    let at = snap_to(ground, false);
+    let at = crate::views::snap(ground, false);
     let view = editor.views.area.view(view_key);
     let picked = match kind {
         AreaModuleKind::Blueprint => view.stamp().map(str::to_owned),

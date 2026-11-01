@@ -7,7 +7,7 @@ use strum::{EnumDiscriminants, EnumString, IntoStaticStr, VariantArray};
 use super::dialogue::DialogueNode;
 use super::expr::Expr;
 use super::{Arrow, EffectDef, ScriptId, VarValue, Vocabulary};
-use crate::core::time::Seconds;
+use crate::core::units::Seconds;
 
 pub const MAX_NODES: usize = 2_000;
 pub const MAX_SLOTS: usize = 32;

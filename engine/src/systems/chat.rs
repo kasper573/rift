@@ -16,7 +16,7 @@ use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::npc::Npc;
 use crate::systems::player::{self, ClientId, Players};
 use crate::systems::script::event::OBJECT_OR_NPC;
-use crate::systems::script::{Condition, EffectCall, Reach, RiftScripting, RunnerKind};
+use crate::systems::script::{Condition, EffectCall, EffectReach, RiftScripting, RunnerKind};
 use crate::systems::text::{self, LineText, Span};
 use crate::systems::visibility;
 
@@ -104,8 +104,8 @@ impl EffectDef<RiftScripting> for Say {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Says]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Says]
     }
 }
 

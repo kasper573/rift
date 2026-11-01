@@ -6,8 +6,8 @@ use ui::face::TextRole;
 use ui::float;
 use ui::{controls, glyph, ink, sheet};
 
-use crate::core::assets::ImageRef;
 use crate::core::content::Content;
+use crate::core::content::ImageRef;
 use crate::core::gui::ImageSource;
 use crate::core::text::{StyledLine, TextPiece};
 use crate::systems::actor::held::{self, Held};

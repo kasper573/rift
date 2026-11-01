@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 
 use engine::core::time::UtcHour;
 use engine::systems::launch::{
-    AuthMode, CLIENT_ENV_PREFIX, ClientConfig, LaunchSettings, SERVER_ENV_PREFIX, SETTINGS_FILE,
+    AuthMode, CLIENT_ENV_PREFIX, ClientConfig, LAUNCH_FILE, LaunchSettings, SERVER_ENV_PREFIX,
     ServerConfig, ServerDaylight, env_of,
 };
 use engine::systems::player::SpawnPolicy;
@@ -71,7 +71,7 @@ fn settings_file(folder: &Path, config: &ClientConfig) {
         .into_iter()
         .map(|(name, value)| format!("{name}={value}"))
         .collect();
-    std::fs::write(folder.join(SETTINGS_FILE), lines.join("\n")).expect("a settings file");
+    std::fs::write(folder.join(LAUNCH_FILE), lines.join("\n")).expect("a settings file");
 }
 
 #[test]

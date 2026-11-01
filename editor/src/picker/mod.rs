@@ -16,7 +16,7 @@ use ui::egui;
 use ui::menu;
 use ui::theme;
 
-use engine::core::assets::AssetKind;
+use engine::core::content::AssetKind;
 use engine::core::content::{ContentFile, ContentId, table_of};
 use engine::systems::area::prop::PropDef;
 use ui::egui::{Align, Color32, Layout, Rect, RichText, Sense, Stroke, Ui, Vec2};

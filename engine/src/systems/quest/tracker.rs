@@ -6,7 +6,7 @@ use ui::{ink, sheet, slip};
 
 use super::card::Countdown;
 use super::{Parties, QuestId, QuestLog, QuestResult, ready_mark};
-use crate::core::assets::ImageRef;
+use crate::core::content::ImageRef;
 use crate::core::content::{Content, Fixture};
 use crate::systems::hud::{self, HudWidget};
 use crate::systems::item::Inventory;

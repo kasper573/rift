@@ -20,15 +20,15 @@ use bevy_egui::EguiPrimaryContextPass;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::assets::ImageRef;
 use crate::core::audio::playback::{PlaySfx, SfxId, SfxPlace};
+use crate::core::content::ImageRef;
 use crate::core::content::{Content, ContentFile, ContentId, Fixture, Loading, Nearby, RowCheck};
 use crate::core::gui::{self, Band};
 use crate::core::math::{Pos, Rgba};
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault, ValueType};
 use crate::core::text::TextMotion;
-use crate::core::time::{Seconds, WallClock};
-use crate::core::units::Meters;
+use crate::core::time::WallClock;
+use crate::core::units::{Meters, Seconds};
 use crate::core::vfx::{VfxParams, VfxShaderId};
 use crate::systems::history::{self, HistoryEntry, HistoryMark, HistoryTopic, RecordTally};
 use crate::systems::interface::InterfaceSound;
@@ -36,7 +36,7 @@ use crate::systems::movement::position;
 use crate::systems::npc::{Npc, NpcDef, NpcId};
 use crate::systems::screen::ClientScreen;
 use crate::systems::script::effect::{self as effects, Audience};
-use crate::systems::script::{Condition, EffectCall, Reach, RiftScripting, condition};
+use crate::systems::script::{Condition, EffectCall, EffectReach, RiftScripting, condition};
 use crate::systems::text::{self, LineText, Span};
 use crate::systems::{GameSettings, visibility};
 
@@ -220,7 +220,7 @@ pub fn notify(
     }
 }
 
-pub fn record(world: &mut World, player: Entity, notification: &Notification) {
+fn record(world: &mut World, player: Entity, notification: &Notification) {
     if let Some(entry) = notification.history_entry(world.resource::<Content>()) {
         history::record(world, player, entry);
     }
@@ -427,8 +427,8 @@ impl EffectDef<RiftScripting> for Notify {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Notifies(self.notification)]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Notifies(self.notification)]
     }
 }
 

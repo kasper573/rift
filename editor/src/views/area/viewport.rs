@@ -14,7 +14,7 @@ use bevy::prelude::*;
 use bevy_egui::EguiUserTextures;
 use engine::core::audio::playback::{self, PlaySfx, SfxPlace};
 use engine::core::content::Content;
-use engine::core::ground::{Heightfield, Paint};
+use engine::core::ground::{Heightfield, PaintMap};
 use engine::core::render::world::body::{self, Body, Figure};
 use engine::core::render::world::layers::Layered;
 use engine::core::render::world::mannequin::Mannequin;
@@ -22,8 +22,8 @@ use engine::core::render::world::mannequin::mannequin;
 use engine::core::render::world::rig_clip;
 use engine::core::render::world::sky::Daylight;
 use engine::core::render::{Look, camera};
-use engine::core::time::Seconds;
 use engine::core::units::Meters;
+use engine::core::units::Seconds;
 use engine::systems::actor::Action;
 use engine::systems::actor::layering::{self, Layering};
 use engine::systems::actor::model::{ActorModel, ModelId};
@@ -62,7 +62,7 @@ pub struct Request {
 pub struct StrokeTerrain {
     pub revision: u64,
     pub heights: Arc<Heightfield>,
-    pub paint: Arc<Paint>,
+    pub paint: Arc<PaintMap>,
 }
 
 /// A prop following the pointer before it is placed.
@@ -166,7 +166,6 @@ pub struct Viewports {
     shown: HashMap<String, RenderedView>,
     requests: Vec<Request>,
     layers: Vec<usize>,
-    mirrored: Option<u64>,
 }
 
 struct RenderedView {
@@ -230,13 +229,8 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
             viewport.despawn(world);
         }
     }
-    let Some((content, generation)) = loaded else {
-        viewports.mirrored = None;
+    if loaded.is_none() {
         return;
-    };
-    if viewports.mirrored != Some(generation) {
-        world.insert_resource(content.clone());
-        viewports.mirrored = Some(generation);
     }
     for request in requests {
         let viewport = viewports

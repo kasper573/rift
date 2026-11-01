@@ -1,7 +1,7 @@
 //! The look page: the model on the stage in a chosen stance, playing what its skeleton gives a
 //! chosen action, pose, move or gesture, its hitbox round it.
 
-use engine::core::time::Millis;
+use engine::core::units::Millis;
 use engine::systems::actor::model::ModelDef;
 use engine::systems::actor::skeleton::{Clip, Cue};
 use engine::systems::actor::stance::StanceDef;
@@ -22,6 +22,15 @@ use crate::views::stage;
 pub struct Shown {
     pub motion: Motion,
     pub pose: Pose,
+}
+
+impl Default for Shown {
+    fn default() -> Shown {
+        Shown {
+            motion: Motion::Action(Action::Idle),
+            pose: Pose::Idle,
+        }
+    }
 }
 
 impl Shown {
@@ -214,10 +223,7 @@ impl Scene {
             motion: Motion::Gesture(name),
             pose: Pose::Idle,
         }));
-        let shown = Shown {
-            motion: view.motion.clone(),
-            pose: view.pose,
-        };
+        let shown = view.shown.clone();
         let resolved = model.resolve(stance_id, &shown.motion, shown.pose, 0);
         let playing = Some(Playing {
             clip: StageClip::played(skeleton, resolved.played),
@@ -268,8 +274,7 @@ fn pickers(editor: &mut Editor, ui: &mut Ui, key: &str, scene: &Scene) {
     let view = editor.views.model.view_mut(key);
     if stance != scene.stance || shown != scene.shown {
         view.stance = stance;
-        view.motion = shown.motion;
-        view.pose = shown.pose;
+        view.shown = shown;
         view.scrub.restart();
     }
 }

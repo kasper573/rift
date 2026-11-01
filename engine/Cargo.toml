@@ -2,19 +2,11 @@
 name = "engine"
 version.workspace = true
 edition.workspace = true
-description = "The engine: the simulation library and its server and desktop client"
-
-# Built with `--profile profiling --features profiling`, it is game-server-profiling.
-[[bin]]
-name = "game-server"
-path = "src/bin/server/main.rs"
+description = "The engine: the simulation library and its desktop client"
 
 [[bin]]
 name = "desktop-client"
-path = "src/bin/desktop_client/main.rs"
-
-[features]
-profiling = ["bevy/debug", "bevy/trace_chrome"]
+path = "src/main.rs"
 
 [dependencies]
 bevy = { workspace = true, features = [
@@ -82,7 +74,6 @@ futures-timer = "3"
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 derive_more = { version = "2", features = ["add", "add_assign"] }
 euclid = { version = "0.22", features = ["serde"] }
-fixedbitset = "0.5"
 oorandom = "11"
 getrandom = "0.4"
 num_cpus = "1"
@@ -110,24 +101,17 @@ glam = "0.32"
 bevy_skeleton_modifiers = { version = "0.1.1", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }
 wgpu = { workspace = true, features = ["counters"] }
-axum.workspace = true
-ctrlc.workspace = true
 opener = "0.9"
-metrics = "0.24"
 oidc = { path = "../oidc" }
 service = { path = "../service" }
-tokio.workspace = true
 ureq = { workspace = true, features = ["rustls", "platform-verifier"] }
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 blocking = "1"
-walkdir = "2"
-cargo_metadata = "0.23"
-syn = { workspace = true, features = ["visit"] }
-proc-macro2 = { workspace = true, features = ["span-locations"] }
 arc-swap.workspace = true
 
 [dev-dependencies]
 testkit = { path = "../testkit" }
+walkdir = "2"
 tempfile = "3"
 
 [lints]

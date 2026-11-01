@@ -6,13 +6,13 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use engine::core::assets::ModelRef;
+use engine::core::content::ModelRef;
 use engine::core::content::gltf::NodeTree;
 use engine::systems::actor::skeleton::{JointName, SkeletonDef, SourceRig};
 use ui::egui::{self, RichText, Ui, Vec2};
 use ui::{controls, form, panel, theme, words};
 
-use super::rigging::{self, JointFile, Rigging};
+use super::rigging::{self, JointFile, Rigging, Tops};
 use crate::app::Editor;
 
 #[derive(Default)]
@@ -113,14 +113,7 @@ fn our_rig(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, riggi
     let Some(tree) = &rigging.joints else {
         return;
     };
-    let tops: Vec<usize> = (0..tree.nodes.len())
-        .filter(|&node| tree.nodes[node].parent.is_none())
-        .collect();
-    let Some(&body) = tops.iter().max_by_key(|&&top| {
-        tree.joints()
-            .filter(|&joint| tree.descends(joint, top))
-            .count()
-    }) else {
+    let Some(Tops { body, hung }) = Tops::of(tree) else {
         return;
     };
     ui.label(theme::muted(format!(
@@ -128,7 +121,7 @@ fn our_rig(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, riggi
         tree.nodes[body].name
     )));
     let mut hangs = def.rig.hangs.clone();
-    for &top in tops.iter().filter(|&&top| top != body) {
+    for &top in &hung {
         let name = JointName::new(tree.nodes[top].name.clone());
         let mut on = hangs.get(&name).cloned();
         ui.horizontal(|ui| {
@@ -150,7 +143,7 @@ fn our_rig(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, riggi
             None => hangs.remove(&name),
         };
     }
-    if tops.len() > 1 {
+    if !hung.is_empty() {
         ui.horizontal(|ui| {
             if ui
                 .button("Guess where they hang")
@@ -161,11 +154,7 @@ fn our_rig(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, riggi
             {
                 let Editor { project, views, .. } = &mut *editor;
                 if let Some(project) = project.as_ref() {
-                    hangs = rigging::guess_hangs(
-                        &def.rig.files,
-                        &project.files,
-                        &mut views.skeleton.gltfs,
-                    );
+                    hangs = rigging::guess_hangs(&def.rig.files, &project.files, &mut views.gltfs);
                 }
             }
         });
@@ -176,7 +165,7 @@ fn our_rig(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, riggi
         );
     }
     if hangs != def.rig.hangs {
-        super::change(editor, key, "Hang the rig's tops", |skeleton| {
+        super::edits::change(editor, key, "Hang the rig's tops", |skeleton| {
             skeleton.rig.hangs = hangs;
             Ok(())
         });
@@ -236,7 +225,7 @@ fn sources(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, riggi
         );
     }
     if let Some(index) = removed {
-        super::change(editor, key, "Remove a source rig", |skeleton| {
+        super::edits::change(editor, key, "Remove a source rig", |skeleton| {
             skeleton.sources.remove(index);
             Ok(())
         });
@@ -262,11 +251,7 @@ fn pairs(
     source: &SourceRig,
     rig: Option<&NodeTree>,
 ) {
-    let ours: Vec<String> = rig.map_or_else(Vec::new, |rig| {
-        rig.joints()
-            .map(|joint| rig.nodes[joint].name.clone())
-            .collect()
-    });
+    let ours = rig.map_or_else(Vec::new, rigging::joint_names);
     let mut changed = source.pairs.clone();
     ui.horizontal(|ui| {
         ui.label(RichText::new(format!("{} · joint pairs", source.name)).strong());
@@ -304,25 +289,16 @@ fn pairs(
                     chosen = Some((!lit).then(|| his.0.clone()));
                 }
                 let mut pair = changed.get(his).cloned();
-                let filter_id = ui.make_persistent_id(("pair-filter", key, index, his.as_str()));
-                controls::combo(("pair", key, index, his.as_str()))
-                    .selected_text(
-                        pair.as_ref()
-                            .map_or("none".to_owned(), |joint| joint.0.clone()),
-                    )
-                    .width(150.0)
-                    .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
-                    .show_ui(ui, |ui| {
-                        let mut filter: String = ui
-                            .data_mut(|data| data.get_temp(filter_id))
-                            .unwrap_or_default();
-                        ui.add(
-                            egui::TextEdit::singleline(&mut filter)
-                                .hint_text("filter")
-                                .desired_width(140.0),
-                        )
-                        .request_focus();
-                        ui.data_mut(|data| data.insert_temp(filter_id, filter.clone()));
+                let selected = pair
+                    .as_ref()
+                    .map_or("none".to_owned(), |joint| joint.0.clone());
+                controls::filtered_combo(
+                    ui,
+                    ("pair", key, index, his.as_str()),
+                    selected,
+                    150.0,
+                    "filter",
+                    |ui, filter| {
                         let filter = filter.to_lowercase();
                         let mut picked = ui.selectable_value(&mut pair, None, "none").clicked();
                         for joint in ours
@@ -337,10 +313,9 @@ fn pairs(
                                 )
                                 .clicked();
                         }
-                        if picked {
-                            ui.close();
-                        }
-                    });
+                        picked
+                    },
+                );
                 match pair {
                     Some(pair) => changed.insert(his.clone(), pair),
                     None => changed.remove(his),
@@ -376,7 +351,7 @@ pub fn set_pairs(
     index: usize,
     pairs: BTreeMap<JointName, JointName>,
 ) -> bool {
-    super::change(editor, key, "Pair joints", |skeleton| {
+    super::edits::change(editor, key, "Pair joints", |skeleton| {
         let source = skeleton
             .sources
             .get_mut(index)
@@ -414,7 +389,7 @@ fn clips(ui: &mut Ui, def: &SkeletonDef, rigging: &Rigging) {
             "{} move a joint no rig has:",
             words::counted(rigging.strays.len(), "clip")
         )));
-        for (clip, joint) in rigging.strays.iter().take(super::MAX_LISTED) {
+        for (clip, joint) in rigging.strays.iter().take(super::pickers::MAX_LISTED) {
             ui.colored_label(theme::DANGER, format!("{clip} moves {joint}"));
         }
     }
@@ -474,7 +449,7 @@ fn picker_window(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef)
         let Some(project) = project.as_ref() else {
             return;
         };
-        rigging::joint_files(&project.files, &mut views.skeleton.gltfs)
+        rigging::joint_files(&project.files, &mut views.gltfs)
     };
     let mut open = true;
     let mut read = false;
@@ -621,7 +596,7 @@ fn apply(
                 return;
             };
             let joints = joints_of(path);
-            super::change(editor, key, "Read a source rig's joints", |skeleton| {
+            super::edits::change(editor, key, "Read a source rig's joints", |skeleton| {
                 let source = skeleton
                     .sources
                     .get_mut(index)
@@ -644,9 +619,9 @@ fn read_our_rig(editor: &mut Editor, key: &str, files: Vec<ModelRef>) -> bool {
         let Some(project) = project.as_ref() else {
             return false;
         };
-        rigging::guess_hangs(&files, &project.files, &mut views.skeleton.gltfs)
+        rigging::guess_hangs(&files, &project.files, &mut views.gltfs)
     };
-    super::change(editor, key, "Read our rig", |skeleton| {
+    super::edits::change(editor, key, "Read our rig", |skeleton| {
         skeleton.rig.files = files;
         skeleton.rig.hangs = hangs;
         Ok(())
@@ -655,7 +630,7 @@ fn read_our_rig(editor: &mut Editor, key: &str, files: Vec<ModelRef>) -> bool {
 
 /// Adds a source rig named `name` of `joints`, none of them paired yet.
 pub fn add_source(editor: &mut Editor, key: &str, name: String, joints: Vec<JointName>) -> bool {
-    super::change(editor, key, &format!("Add source rig {name}"), |skeleton| {
+    super::edits::change(editor, key, &format!("Add source rig {name}"), |skeleton| {
         if skeleton.sources.iter().any(|source| source.name == name) {
             return Err(format!("there is a source rig named {name} already"));
         }

@@ -11,7 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::egui;
 
-use crate::core::assets::ImageRef;
+use crate::core::content::ImageRef;
 use crate::core::content::{
     Content, ContentFile, ContentId, Loading, NamedContent, Nearby, RowCheck,
 };
@@ -22,7 +22,7 @@ use crate::systems::dialogue::bust::BustId;
 use crate::systems::notification;
 use crate::systems::player::Xp;
 use crate::systems::script::{
-    Condition, EffectCall, EventKind, Reach, RiftInstances, RiftScripting, area_owner,
+    Condition, EffectCall, EffectReach, EventKind, RiftInstances, RiftScripting, area_owner,
     effect as effects,
 };
 use crate::systems::skill::{self, Learned, SkillDef};
@@ -309,8 +309,8 @@ impl EffectDef<RiftScripting> for GrantXp {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::GrantsXp]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::GrantsXp]
     }
 }
 

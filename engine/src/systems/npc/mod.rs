@@ -21,11 +21,10 @@ use crate::core::content::{
     Content, ContentFile, ContentId, ContentProblem, Loading, ModuleRule, ModuleSet, NamedContent,
     Nearby, RowCheck, serial,
 };
-use crate::core::geometry::Radians;
 use crate::core::ground::TileAt;
-use crate::core::math::{Percent, Pos, Rect, Rng};
-use crate::core::time::{self, PlaybackRate, Seconds};
-use crate::core::units::{MeterPos, Meters, MetersPerSec};
+use crate::core::math::{Pos, Rect, Rng};
+use crate::core::time;
+use crate::core::units::{MeterPos, Meters, MetersPerSec, Percent, PlaybackRate, Radians, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::actor::held::{self, Held};
 use crate::systems::actor::{
@@ -41,7 +40,7 @@ use crate::systems::movement::{self, NavMesh, Position, Spot, Spots, position};
 use crate::systems::script::condition::CompiledCondition;
 use crate::systems::script::query::{Among, TickRoster};
 use crate::systems::script::{
-    EventKind, Owner, OwnerRow, Reach, RiftEvent, RiftInstances, RiftScripts, RunnerKind,
+    EffectReach, EventKind, Owner, OwnerRow, RiftEvent, RiftInstances, RiftScripts, RunnerKind,
     ScriptModule, ScriptedRow, area_owner,
 };
 use crate::systems::skill::{self, Rank, SkillId};
@@ -151,7 +150,7 @@ pub fn can_be_fought(scripts: &RiftScripts, npc: NpcId) -> bool {
     scripts
         .may_do(OwnerRow::of_row(npc))
         .reaches
-        .contains(&Reach::Hostile)
+        .contains(&EffectReach::Hostile)
 }
 
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]

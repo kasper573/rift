@@ -21,7 +21,8 @@ use crate::core::gui::Band;
 use crate::core::math::Rng;
 use crate::core::net::auth::Credentials;
 use crate::core::net::transport::Connection;
-use crate::core::time::{Backoff, Seconds};
+use crate::core::time::Backoff;
+use crate::core::units::Seconds;
 use ui::dialog;
 
 const NOTICE_WIDTH: f32 = 356.0;

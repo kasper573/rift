@@ -24,17 +24,21 @@ use ui::glyph::{self, Mark};
 
 use super::graph::ScriptGraphAction;
 use super::nodes::{self, SpeakerKind};
-use super::{RenameNodeDialog, ScriptDoc, ScriptRef, select_nodes, write};
+use super::{
+    RenameNodeDialog, ScriptDoc, ScriptRef,
+    edit::{select_nodes, write},
+};
 use crate::app::{BottomTab, Editor};
+use crate::browser::{self, RowMenu};
 use crate::forms::{self, FieldHole, FormAction, FormChange, FormCx, FormHoles, HoleRequest};
 use crate::keymap::EditorKey;
 use crate::modal::ModalDialog;
 use crate::project::files::content_of;
 use crate::project::{Project, RowSelection};
-use crate::shell::browser::{self, RowMenu};
-use crate::shell::{row_form, widgets};
+use crate::row_form;
 use crate::tabs::file_title;
 use crate::tabs::shown_path;
+use crate::widgets;
 use crate::{condition, picker, rows, schema, spans, thumbs};
 
 pub fn show(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, selection: &RowSelection) {
@@ -65,8 +69,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, selection: &RowSe
             }
             many => {
                 breadcrumb(ui, &format!("{} › {} nodes", doc.at.title(), many.len()));
-                panel::tile(true).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
+                panel::card(ui, true, |ui| {
                     panel::title(ui, &format!("{} nodes", many.len()));
                     for name in many {
                         if let (Some(node), Some(project)) =
@@ -81,7 +84,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, selection: &RowSe
                     }
                     ui.add_space(6.0);
                     if controls::danger(ui, "Delete these nodes").clicked() {
-                        super::delete_nodes(editor, doc, many.to_vec());
+                        super::edit::delete_nodes(editor, doc, many.to_vec());
                     }
                 });
             }
@@ -106,7 +109,7 @@ pub fn script_row(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
     super::sync_with_content(editor);
     let key = doc.at.key.clone();
     if let Some(folder) = ui::panel::breadcrumb(ui, &key, file_title(&key)) {
-        crate::shell::content_tree::reveal(editor, &folder);
+        crate::content_tree::reveal(editor, &folder);
     }
     ui.add_space(4.0);
     let shapes = editor.shapes.clone();
@@ -117,45 +120,43 @@ pub fn script_row(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
     let mut picked = None;
     let changed = {
         let mut cx = doc.form_cx(editor, root, &mut actions);
-        panel::tile(false)
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                panel::header(ui, shown_path(&key), what, |ui| {
-                    let menu = RowMenu::of(&key);
-                    picked = browser::row_menu(ui, &menu, false);
-                });
-                let mut changed = FormChange::default();
-                form::kv(ui, "runs on", |ui| {
-                    let path = field!(ScriptDef, runs_on);
-                    changed |= forms::of_type(ui, &mut cx, &mut script.runs_on, path);
-                });
-                let variables = script.variables.len();
-                form::kv_text(
-                    ui,
-                    "variables",
-                    if variables == 0 {
-                        "none".to_owned()
-                    } else {
-                        variables.to_string()
-                    },
-                );
-                form::kv(ui, "state", |ui| {
-                    let path = field!(ScriptDef, state);
-                    changed |= forms::of_type(ui, &mut cx, &mut script.state, path);
-                });
-                form::kv(ui, "locals", |ui| {
-                    let path = field!(ScriptDef, locals);
-                    changed |= forms::of_type(ui, &mut cx, &mut script.locals, path);
-                });
-                let returns = doc
-                    .nodes()
-                    .values()
-                    .any(|node| matches!(node, Node::Return { value: Some(_) }));
-                form::kv_text(ui, "returns", if returns { "a value" } else { "nothing" });
-                form::kv_text(ui, "nodes", nodes_line(doc));
-                changed
-            })
-            .inner
+        panel::card(ui, false, |ui| {
+            panel::header(ui, shown_path(&key), what, |ui| {
+                let menu = RowMenu::of(&key);
+                picked = browser::row_menu(ui, &menu, false);
+            });
+            let mut changed = FormChange::default();
+            form::kv(ui, "runs on", |ui| {
+                let path = field!(ScriptDef, runs_on);
+                changed |= forms::of_type(ui, &mut cx, &mut script.runs_on, path);
+            });
+            let variables = script.variables.len();
+            form::kv_text(
+                ui,
+                "variables",
+                if variables == 0 {
+                    "none".to_owned()
+                } else {
+                    variables.to_string()
+                },
+            );
+            form::kv(ui, "state", |ui| {
+                let path = field!(ScriptDef, state);
+                changed |= forms::of_type(ui, &mut cx, &mut script.state, path);
+            });
+            form::kv(ui, "locals", |ui| {
+                let path = field!(ScriptDef, locals);
+                changed |= forms::of_type(ui, &mut cx, &mut script.locals, path);
+            });
+            let returns = doc
+                .nodes()
+                .values()
+                .any(|node| matches!(node, Node::Return { value: Some(_) }));
+            form::kv_text(ui, "returns", if returns { "a value" } else { "nothing" });
+            form::kv_text(ui, "nodes", nodes_line(doc));
+            changed
+        })
+        .inner
     };
     for action in actions {
         act(editor, action, doc);
@@ -284,8 +285,7 @@ fn variables_section(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
                 .filter(|(_, node)| nodes::node_vars(&doc.reader, node).contains(name))
                 .map(|(node_name, _)| node_name.clone())
                 .collect();
-            panel::tile(false).show(ui, |ui| {
-                ui.set_width(ui.available_width());
+            panel::card(ui, false, |ui| {
                 panel::header(ui, name, "", |ui| {
                     if ui.button("Remove the variable").clicked() {
                         script.variables.remove(name);
@@ -532,65 +532,63 @@ fn node_inspector(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, name: &str)
     let title = super::graph::card_title(name, &node);
     let changed = {
         let mut cx = doc.form_cx(editor, root, &mut actions);
-        panel::tile(true)
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                panel::header(ui, &title, "", |ui| {
-                    if ui
-                        .add(widgets::shortcut_button("Rename…", EditorKey::Rename))
-                        .clicked()
-                    {
-                        rename = true;
-                        ui.close();
-                    }
-                    if ui
-                        .add(widgets::shortcut_button("Duplicate", EditorKey::Duplicate))
-                        .clicked()
-                    {
-                        duplicate = true;
-                        ui.close();
-                    }
-                    if ui
-                        .add(widgets::shortcut_button("Delete", EditorKey::Delete))
-                        .clicked()
-                    {
-                        delete = true;
-                        ui.close();
-                    }
-                });
-                let mut changed = FormChange::default();
-                match &mut draft {
-                    Node::On { event, .. } => {
-                        changed = on_form(ui, &mut cx, &doc.reader, event, &path);
-                    }
-                    Node::Dialogue(_) => {}
-                    other => {
-                        if let Some((schema, hidden)) = nodes::form_fields(other) {
-                            cx.holes = Some(node_holes(doc, schema, other, &path));
-                            let hidden: Vec<&str> = hidden.iter().map(String::as_str).collect();
-                            changed = forms::variant_of_type(
-                                ui,
-                                &mut cx,
-                                nodes::node_root(),
-                                schema,
-                                other,
-                                &path,
-                                &hidden,
-                            );
-                        }
+        panel::card(ui, true, |ui| {
+            panel::header(ui, &title, "", |ui| {
+                if ui
+                    .add(widgets::shortcut_button("Rename…", EditorKey::Rename))
+                    .clicked()
+                {
+                    rename = true;
+                    ui.close();
+                }
+                if ui
+                    .add(widgets::shortcut_button("Duplicate", EditorKey::Duplicate))
+                    .clicked()
+                {
+                    duplicate = true;
+                    ui.close();
+                }
+                if ui
+                    .add(widgets::shortcut_button("Delete", EditorKey::Delete))
+                    .clicked()
+                {
+                    delete = true;
+                    ui.close();
+                }
+            });
+            let mut changed = FormChange::default();
+            match &mut draft {
+                Node::On { event, .. } => {
+                    changed = on_form(ui, &mut cx, &doc.reader, event, &path);
+                }
+                Node::Dialogue(_) => {}
+                other => {
+                    if let Some((schema, hidden)) = nodes::form_fields(other) {
+                        cx.holes = Some(node_holes(doc, schema, other, &path));
+                        let hidden: Vec<&str> = hidden.iter().map(String::as_str).collect();
+                        changed = forms::variant_of_type(
+                            ui,
+                            &mut cx,
+                            nodes::node_root(),
+                            schema,
+                            other,
+                            &path,
+                            &hidden,
+                        );
                     }
                 }
-                if !nodes::is_dialogue(&node) {
-                    go_to = arrows_rows(ui, &outs, &unwired);
-                }
-                hole_requests = cx
-                    .holes
-                    .take()
-                    .map(|holes| holes.requests)
-                    .unwrap_or_default();
-                changed
-            })
-            .inner
+            }
+            if !nodes::is_dialogue(&node) {
+                go_to = arrows_rows(ui, &outs, &unwired);
+            }
+            hole_requests = cx
+                .holes
+                .take()
+                .map(|holes| holes.requests)
+                .unwrap_or_default();
+            changed
+        })
+        .inner
     };
     for action in actions {
         act(editor, action, doc);
@@ -665,7 +663,7 @@ fn node_inspector(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, name: &str)
         );
     }
     if delete {
-        super::delete_nodes(editor, doc, vec![name.to_owned()]);
+        super::edit::delete_nodes(editor, doc, vec![name.to_owned()]);
         return;
     }
     if !hole_requests.is_empty() {
@@ -919,21 +917,19 @@ fn memory_row_card(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, memory: &s
         };
         let mut cx = FormCx::new(project, schema, shapes, form, &mut actions)
             .editing(MemoryDef::TABLE, Some(memory));
-        panel::tile(false)
-            .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                panel::header(ui, shown_path(memory), "row", |ui| {
-                    if ui.button("Open the row").clicked() {
-                        cx.actions.push(FormAction::OpenRow {
-                            table: MemoryDef::TABLE.to_owned(),
-                            key: memory.to_owned(),
-                        });
-                        ui.close();
-                    }
-                });
-                forms::of_type(ui, &mut cx, &mut row, "")
-            })
-            .inner
+        panel::card(ui, false, |ui| {
+            panel::header(ui, shown_path(memory), "row", |ui| {
+                if ui.button("Open the row").clicked() {
+                    cx.actions.push(FormAction::OpenRow {
+                        table: MemoryDef::TABLE.to_owned(),
+                        key: memory.to_owned(),
+                    });
+                    ui.close();
+                }
+            });
+            forms::of_type(ui, &mut cx, &mut row, "")
+        })
+        .inner
     };
     for action in actions {
         act(editor, action, doc);
@@ -958,14 +954,12 @@ fn keeps_cards(ui: &mut Ui, doc: &ScriptDoc) {
             "values that last one flow".to_owned(),
         ),
     ] {
-        panel::tile(false).show(ui, |ui| {
-            ui.set_width(ui.available_width());
+        panel::card(ui, false, |ui| {
             panel::title(ui, title);
             ui.label(theme::muted(format!("{names} · {sentence}")).size(13.0));
         });
     }
-    panel::tile(false).show(ui, |ui| {
-        ui.set_width(ui.available_width());
+    panel::card(ui, false, |ui| {
         panel::title(ui, "variables");
         let text = format!("{} · each runner's values", names_of(&script.variables));
         ui.label(theme::muted(text).size(13.0));
@@ -1007,8 +1001,7 @@ fn bounds_card(ui: &mut Ui, doc: &ScriptDoc, name: &str, node: &Node) {
     } else {
         (body.len() + 1) * at_most as usize
     };
-    panel::tile(false).show(ui, |ui| {
-        ui.set_width(ui.available_width());
+    panel::card(ui, false, |ui| {
         panel::subtitled(ui, "bounds", "compiler");
         form::kv_text(ui, "steps", format!("at most {steps} between two waits"));
         form::kv_text(
@@ -1085,8 +1078,7 @@ fn dialogue_form(
     let count = node.lines.len();
     for (index, line) in node.lines.iter_mut().enumerate() {
         let line_path = format!("{path}/lines/{index}");
-        panel::tile(false).show(ui, |ui| {
-            ui.set_width(ui.available_width());
+        panel::card(ui, false, |ui| {
             let title = format!("line {}", index + 1);
             if count > 1 {
                 panel::header(ui, &title, "", |ui| {
@@ -1154,7 +1146,7 @@ fn dialogue_form(
         .clicked()
     {
         let mut dialogue = Node::Dialogue(node.clone());
-        super::add_choice(&mut dialogue);
+        super::edit::add_choice(&mut dialogue);
         if let Node::Dialogue(added) = dialogue {
             *node = added;
         }
@@ -1207,8 +1199,7 @@ fn choice_card(ui: &mut Ui, cx: &mut FormCx, choice: &mut Choice, at: &ChoiceAt)
     let mut changed = FormChange::default();
     let mut menu = ChoiceMenu::default();
     let mut go: Option<String> = None;
-    panel::tile(false).show(ui, |ui| {
-        ui.set_width(ui.available_width());
+    panel::card(ui, false, |ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
             ui.menu_button(Mark::More.text(16.0).color(theme::FAINT), |ui| {
                 if index > 0 && ui.button("Move up").clicked() {

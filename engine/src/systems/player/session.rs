@@ -6,7 +6,8 @@ use bevy_time::Time;
 
 use super::{ClientId, PlayedBy, Welcome};
 use crate::core::render::transition::WorldViewSystems;
-use crate::core::time::{DayClock, Seconds, ServerClock};
+use crate::core::time::{DayClock, ServerClock};
+use crate::core::units::Seconds;
 use crate::systems::{identity, stat};
 
 pub struct ClientSessionPlugin;

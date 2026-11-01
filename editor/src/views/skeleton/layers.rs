@@ -6,18 +6,17 @@
 use std::collections::BTreeMap;
 
 use engine::core::content::gltf::NodeTree;
-use engine::core::geometry::Radians;
 use engine::core::render::world::layers::Gait;
-use engine::core::time::{Hertz, Seconds};
-use engine::core::units::Meters;
+use engine::core::units::{Hertz, Meters, Radians, Seconds};
 use engine::systems::actor::Action;
 use engine::systems::actor::skeleton::{GroupName, JointName, Layer, Leg, SkeletonDef};
 use strum::VariantArray;
 use ui::egui::{self, RichText, Ui, Vec2};
+use ui::input::NumberField;
 use ui::{chip, controls, form, panel, sheet, theme};
 
 use super::preview;
-use super::rigging::Rigging;
+use super::rigging::{Rigging, joint_names};
 use crate::app::Editor;
 use crate::project::ContentEdit;
 use crate::tabs::shown_path;
@@ -123,12 +122,6 @@ fn stage(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigging
     form::hint(ui, hint);
 }
 
-fn joint_names(rig: &NodeTree) -> Vec<String> {
-    rig.joints()
-        .map(|joint| rig.nodes[joint].name.clone())
-        .collect()
-}
-
 /// The joint new roots, layers and legs start from: picked here, or clicked on the stage.
 fn joint_picker(editor: &mut Editor, ui: &mut Ui, key: &str, rig: &NodeTree) -> Option<String> {
     let names = joint_names(rig);
@@ -211,7 +204,7 @@ fn groups(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rig: &
          resting clip. No joint is in two groups.",
     );
     if let Some(groups) = changed {
-        super::set_groups(editor, key, groups);
+        super::edits::set_groups(editor, key, groups);
     }
 }
 
@@ -223,18 +216,12 @@ fn easing(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
         .num_columns(2)
         .spacing(Vec2::new(10.0, 6.0))
         .show(ui, |ui| {
-            number(ui, "turn · s", &mut edited.turn.0, 0.005, 0.0..=2.0);
-            number(
-                ui,
-                "crossfade · s",
-                &mut edited.crossfade.0,
-                0.005,
-                0.0..=2.0,
-            );
-            number(ui, "clasp · s", &mut edited.clasp.0, 0.005, 0.0..=2.0);
+            number(ui, "turn · s", &mut edited.turn.0, 0.0..=2.0);
+            number(ui, "crossfade · s", &mut edited.crossfade.0, 0.0..=2.0);
+            number(ui, "clasp · s", &mut edited.clasp.0, 0.0..=2.0);
         });
     if edited != def.easing {
-        super::change(editor, key, "Change the easing", |skeleton| {
+        super::edits::change(editor, key, "Change the easing", |skeleton| {
             skeleton.easing = edited;
             Ok(())
         });
@@ -476,13 +463,13 @@ fn fields(ui: &mut Ui, key: &str, rig: &NodeTree, from: &Option<String>, layer: 
                         }
                     });
                 ui.end_row();
-                number(ui, "stride · m", &mut stride.0, 0.01, 0.05..=4.0);
-                number(ui, "lift · m", &mut lift.0, 0.005, 0.0..=1.0);
-                number(ui, "step · s", &mut step.0, 0.005, 0.01..=2.0);
-                number(ui, "lead · strides", lead, 0.01, 0.0..=2.0);
-                number(ui, "most rise · m", &mut most_rise.0, 0.01, 0.0..=2.0);
-                number(ui, "most tilt", most_tilt, 0.01, 0.0..=2.0);
-                number(ui, "settle · s", &mut settle.0, 0.005, 0.0..=2.0);
+                number(ui, "stride · m", &mut stride.0, 0.05..=4.0);
+                number(ui, "lift · m", &mut lift.0, 0.0..=1.0);
+                number(ui, "step · s", &mut step.0, 0.01..=2.0);
+                number(ui, "lead · strides", lead, 0.0..=2.0);
+                number(ui, "most rise · m", &mut most_rise.0, 0.0..=2.0);
+                number(ui, "most tilt", most_tilt, 0.0..=2.0);
+                number(ui, "settle · s", &mut settle.0, 0.0..=2.0);
                 ui.label(theme::muted("legs"));
                 ui.vertical(|ui| {
                     let mut removed = None;
@@ -527,9 +514,9 @@ fn fields(ui: &mut Ui, key: &str, rig: &NodeTree, from: &Option<String>, layer: 
                 ui.label(theme::muted("follows the path"));
                 ui.checkbox(follow, "");
                 ui.end_row();
-                number(ui, "stiffness", stiffness, 0.01, 0.0..=4.0);
-                number(ui, "drag", drag, 0.01, 0.0..=1.0);
-                number(ui, "gravity", gravity, 0.05, 0.0..=10.0);
+                number(ui, "stiffness", stiffness, 0.0..=4.0);
+                number(ui, "drag", drag, 0.0..=1.0);
+                number(ui, "gravity", gravity, 0.0..=10.0);
             }
             Layer::Wave {
                 from,
@@ -541,9 +528,9 @@ fn fields(ui: &mut Ui, key: &str, rig: &NodeTree, from: &Option<String>, layer: 
                 ui.label(theme::muted("from"));
                 joint_field(ui, "wave-from", from);
                 ui.end_row();
-                number(ui, "amplitude · rad", &mut amplitude.0, 0.01, 0.0..=1.5);
-                number(ui, "hz", &mut hz.0, 0.01, 0.05..=10.0);
-                number(ui, "lag", lag, 0.01, 0.0..=4.0);
+                number(ui, "amplitude · rad", &mut amplitude.0, 0.0..=1.5);
+                number(ui, "hz", &mut hz.0, 0.05..=10.0);
+                number(ui, "lag", lag, 0.0..=4.0);
             }
             Layer::Squash {
                 joint,
@@ -556,10 +543,10 @@ fn fields(ui: &mut Ui, key: &str, rig: &NodeTree, from: &Option<String>, layer: 
                 ui.label(theme::muted("joint"));
                 joint_field(ui, "squash-joint", joint);
                 ui.end_row();
-                number(ui, "by speed", by_speed, 0.005, 0.0..=1.0);
-                number(ui, "on step", on_step, 0.005, 0.0..=1.0);
-                number(ui, "ease · s", &mut ease.0, 0.01, 0.0..=2.0);
-                number(ui, "most · share", most, 0.01, 0.0..=0.95);
+                number(ui, "by speed", by_speed, 0.0..=1.0);
+                number(ui, "on step", on_step, 0.0..=1.0);
+                number(ui, "ease · s", &mut ease.0, 0.0..=2.0);
+                number(ui, "most · share", most, 0.0..=0.95);
             }
         });
     let during = match layer {
@@ -583,19 +570,8 @@ fn fields(ui: &mut Ui, key: &str, rig: &NodeTree, from: &Option<String>, layer: 
     });
 }
 
-fn number(
-    ui: &mut Ui,
-    label: &str,
-    value: &mut f32,
-    speed: f64,
-    range: std::ops::RangeInclusive<f32>,
-) {
+fn number(ui: &mut Ui, label: &str, value: &mut f32, range: std::ops::RangeInclusive<f32>) {
     ui.label(theme::muted(label));
-    ui.add(
-        egui::DragValue::new(value)
-            .speed(speed)
-            .range(range)
-            .fixed_decimals(3),
-    );
+    NumberField::new(value).range(range).show(ui);
     ui.end_row();
 }

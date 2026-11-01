@@ -58,18 +58,34 @@ impl From<&VfxParam> for ParamSpec {
     }
 }
 
-/// The parameters the row `table/key` declares, when it reads.
-pub fn params_of(project: &Project, table: &str, key: &str) -> Vec<ParamSpec> {
-    match table {
-        VfxShaderDef::TABLE => project.read::<VfxShaderDef>(key).map_or_else(
+/// What declares parameters: a vfx, or a shader a vfx layers.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum ParamOwner {
+    Vfx,
+    Shader,
+}
+
+impl ParamOwner {
+    pub fn of_table(table: &str) -> Option<ParamOwner> {
+        match table {
+            VfxDef::TABLE => Some(ParamOwner::Vfx),
+            VfxShaderDef::TABLE => Some(ParamOwner::Shader),
+            _ => None,
+        }
+    }
+}
+
+/// The parameters the `owner` row at `key` declares, when it reads.
+pub fn params_of(project: &Project, owner: ParamOwner, key: &str) -> Vec<ParamSpec> {
+    match owner {
+        ParamOwner::Shader => project.read::<VfxShaderDef>(key).map_or_else(
             |_| Vec::new(),
             |shader| shader.params.iter().map(ParamSpec::from).collect(),
         ),
-        VfxDef::TABLE => project.read::<VfxDef>(key).map_or_else(
+        ParamOwner::Vfx => project.read::<VfxDef>(key).map_or_else(
             |_| Vec::new(),
             |vfx| vfx.params.iter().map(ParamSpec::from).collect(),
         ),
-        _ => Vec::new(),
     }
 }
 
@@ -128,7 +144,7 @@ pub fn param_fill(
         .and_then(|fill| serde_json::from_value::<ParamFill>(fill.clone()).ok());
     let bindable: Vec<String> = match (&cx.row_table, &cx.row_key) {
         (Some(table), Some(key)) if table == VfxDef::TABLE => {
-            params_of(cx.project, VfxDef::TABLE, key)
+            params_of(cx.project, ParamOwner::Vfx, key)
                 .into_iter()
                 .filter(|own| own.kind == spec.kind)
                 .map(|own| own.name)

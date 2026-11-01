@@ -2660,7 +2660,6 @@ dependencies = [
  "engine",
  "noise",
  "rayon",
- "schemars 1.2.3",
  "serde",
  "serde_json",
  "service",
@@ -3640,7 +3639,6 @@ version = "0.1.0"
 dependencies = [
  "accesskit",
  "arc-swap",
- "axum",
  "base64 0.23.1",
  "bevy",
  "bevy_app",
@@ -3656,14 +3654,11 @@ dependencies = [
  "bevy_time",
  "blake3",
  "blocking",
- "cargo_metadata",
  "chrono",
- "ctrlc",
  "derive_more",
  "dotenvy",
  "envy",
  "euclid",
- "fixedbitset 0.5.7",
  "flate2",
  "futures-timer",
  "futures-util",
@@ -3673,7 +3668,6 @@ dependencies = [
  "image",
  "jsonc-parser",
  "kira",
- "metrics",
  "naga",
  "num_cpus",
  "oidc",
@@ -3682,7 +3676,6 @@ dependencies = [
  "png",
  "polyanya",
  "postcard",
- "proc-macro2",
  "rayon",
  "renet2",
  "renet2_netcode",
@@ -3696,11 +3689,9 @@ dependencies = [
  "strsim",
  "strum",
  "symphonia",
- "syn 3.0.9",
  "tar",
  "tempfile",
  "testkit",
- "tokio",
  "ui",
  "ureq",
  "walkdir",
@@ -4165,6 +4156,28 @@ dependencies = [
  "memchr",
  "pin-project-lite",
  "slab",
+]
+
+[[package]]
+name = "game-server"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "bevy",
+ "bevy_app",
+ "bevy_ecs",
+ "bevy_replication",
+ "blocking",
+ "ctrlc",
+ "engine",
+ "getrandom 0.4.3",
+ "metrics",
+ "oidc",
+ "renet2",
+ "renet2_netcode",
+ "serde_json",
+ "service",
+ "tokio",
 ]
 
 [[package]]
@@ -5535,6 +5548,16 @@ name = "linebender_resource_handle"
 version = "0.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "d4a5ff6bcca6c4867b1c4fd4ef63e4db7436ef363e0ad7531d1558856bae64f4"
+
+[[package]]
+name = "lint"
+version = "0.1.0"
+dependencies = [
+ "cargo_metadata",
+ "proc-macro2",
+ "syn 3.0.9",
+ "walkdir",
+]
 
 [[package]]
 name = "linux-raw-sys"

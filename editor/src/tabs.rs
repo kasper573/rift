@@ -1,3 +1,4 @@
+use crate::app::Editor;
 use engine::core::content::{
     ContentFile, Fixture, NOTE_EXTENSION, SETTINGS_FILE, fields_file, table_of,
 };
@@ -239,4 +240,19 @@ pub(crate) fn file_title(path: &str) -> &str {
 /// them ends in, since its type already says what it is.
 pub fn shown_path(path: &str) -> &str {
     path.strip_suffix(".json").unwrap_or(path)
+}
+
+pub fn active_tab(editor: &Editor) -> Option<EditorTab> {
+    editor
+        .dock
+        .focused_leaf()
+        .and_then(|path| editor.dock.leaf(path).ok())
+        .and_then(|leaf| leaf.tabs().get(leaf.active.0).cloned())
+        .or_else(|| {
+            editor
+                .dock
+                .iter_leaves()
+                .next()
+                .and_then(|(_, leaf)| leaf.tabs.get(leaf.active.0).cloned())
+        })
 }

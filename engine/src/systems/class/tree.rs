@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use strum::{IntoStaticStr, VariantArray};
 use ui::egui::{Pos2, Rect, Vec2};
 
-use crate::core::assets::ImageRef;
+use crate::core::content::ImageRef;
 use crate::core::content::{ContentNames, ContentProblem, RowCheck, id};
 use crate::systems::script::{Condition, condition};
 use crate::systems::skill::{Rank, SkillId};

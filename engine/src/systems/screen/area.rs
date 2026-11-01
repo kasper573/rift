@@ -10,7 +10,6 @@ use ui::ink::Ground;
 use super::ClientScreen;
 use crate::core::audio::soundscape::Soundscape;
 use crate::core::content::Content;
-use crate::core::geometry::Radians;
 use crate::core::gui::{self, Band};
 use crate::core::interpolate::RenderValueSystems;
 use crate::core::math::Pos;
@@ -19,8 +18,8 @@ use crate::core::render::transition::{
 };
 use crate::core::render::world::readying;
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
-use crate::core::time::{self, Seconds};
-use crate::core::units::Meters;
+use crate::core::time;
+use crate::core::units::{Meters, Radians, Seconds};
 use crate::systems::actor::Actor;
 use crate::systems::area::{self, AreaId, AreaTag, scenery};
 use crate::systems::identity::GlobalId;

@@ -17,10 +17,10 @@ use ui::egui::{self, Sense, Ui, Vec2};
 use ui::{card, chip, form, panel, sheet, theme};
 
 use super::area::camera;
-use super::stage::{self, StagePicture};
+use super::stage::{self, StagePicture, StageToggle};
 use crate::app::Editor;
-use crate::shell::row_form;
-use crate::shell::row_form::usages;
+use crate::row_form;
+use crate::row_form::usages;
 use crate::tabs::shown_path;
 use crate::thumbs::ProjectImages;
 
@@ -88,7 +88,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         .filter(|page| pages.contains(page))
         .unwrap_or_default();
     egui::Frame::new()
-        .inner_margin(crate::shell::VIEW_PADDING)
+        .inner_margin(crate::widgets::VIEW_PADDING)
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
             let view = editor.views.item.view_mut(key);
@@ -97,31 +97,22 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
                 ItemPage::Worn => view.worn.stage.is_some(),
                 ItemPage::Wield | ItemPage::Look => true,
             };
-            let toggles = &mut editor.views.toggles;
-            let (picked, ()) = egui::containers::Sides::new()
-                .shrink_left()
-                .truncate()
-                .show(
-                    ui,
-                    |ui| {
-                        ui.label(theme::mono(shown_path(key)).color(theme::CODE));
-                        ui.add_space(8.0);
-                        let mut picked = None;
-                        for other in pages {
-                            if chip::mode(ui, other.label(), page == *other).clicked() {
-                                picked = Some(*other);
-                            }
-                        }
-                        ui.add_space(8.0);
-                        ui.label(theme::faint(item_card::kind(&row).word()));
-                        picked
-                    },
-                    |ui| {
-                        if staged {
-                            stage::toggle(ui, "turning", &mut toggles.turning);
-                        }
-                    },
-                );
+            let picked = stage::bar(
+                ui,
+                key,
+                &mut editor.views.toggles,
+                if staged { &[StageToggle::Turning] } else { &[] },
+                |ui| {
+                    let picked = pages
+                        .iter()
+                        .filter(|other| chip::mode(ui, other.label(), page == **other).clicked())
+                        .last()
+                        .copied();
+                    ui.add_space(8.0);
+                    ui.label(theme::faint(item_card::kind(&row).word()));
+                    picked
+                },
+            );
             if let Some(picked) = picked {
                 editor.views.item.view_mut(key).page = picked;
             }
@@ -230,10 +221,7 @@ fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef) {
         ui.add_space(8.0);
     }
     let checks = pictures(editor, key);
-    panel::tile(false).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        panel::title(ui, "Pictures");
-        ui.add_space(4.0);
+    panel::titled_card(ui, false, "Pictures", |ui| {
         for check in &checks {
             let thumb = editor.thumb(&ctx, &check.path);
             form::kv(ui, check.field, |ui| {
@@ -267,30 +255,25 @@ fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef) {
         }
     });
     ui.add_space(8.0);
-    panel::tile(false).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        panel::title(ui, "Look");
-        ui.add_space(4.0);
-        match look_path(editor, row) {
-            Some(look) => {
-                ui.horizontal(|ui| {
-                    let side = Vec2::splat(64.0);
-                    match editor.form.prop_thumbnails.thumbnail(&look) {
-                        Some(texture) => {
-                            ui.image(egui::load::SizedTexture::new(texture, side));
-                        }
-                        None => {
-                            let (rect, _) = ui.allocate_exact_size(side, Sense::hover());
-                            ui.painter().rect_filled(rect, 3.0, theme::INPUT);
-                            ui.ctx().request_repaint();
-                        }
+    panel::titled_card(ui, false, "Look", |ui| match look_path(editor, row) {
+        Some(look) => {
+            ui.horizontal(|ui| {
+                let side = Vec2::splat(64.0);
+                match editor.form.prop_thumbnails.thumbnail(&look) {
+                    Some(texture) => {
+                        ui.image(egui::load::SizedTexture::new(texture, side));
                     }
-                    ui.label(theme::mono(shown_path(&look)).size(13.0));
-                });
-            }
-            None => {
-                ui.colored_label(theme::DANGER, "the look names no prop that loads");
-            }
+                    None => {
+                        let (rect, _) = ui.allocate_exact_size(side, Sense::hover());
+                        ui.painter().rect_filled(rect, 3.0, theme::INPUT);
+                        ui.ctx().request_repaint();
+                    }
+                }
+                ui.label(theme::mono(shown_path(&look)).size(13.0));
+            });
+        }
+        None => {
+            ui.colored_label(theme::DANGER, "the look names no prop that loads");
         }
     });
     ui.add_space(8.0);

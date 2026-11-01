@@ -4,11 +4,12 @@
 //! has a wide land to fill in rather than a flat one.
 
 use std::path::Path;
+use std::str::FromStr;
 
 use clap::Args;
-use engine::core::content::ContentFile;
 use engine::core::content::fresh::Nearby;
-use engine::core::ground::{GroundSize, Heightfield, Paint};
+use engine::core::content::{ContentFile, FolderReader};
+use engine::core::ground::{GroundSize, Heightfield, PaintMap};
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::units::Meters;
 use engine::systems::area::prop::{PropId, ScaleRange, Scatter};
@@ -48,10 +49,78 @@ pub struct Land {
     /// of one of the terrains given, PROP a prop file's path, and after another colon the scale
     /// the copies range over as MIN-MAX.
     #[arg(long = "scatter")]
-    pub scatters: Vec<String>,
+    pub scatters: Vec<ScatterArg>,
     /// Npcs roaming the land: NPC:PER_SQUARE_KILOMETER, with NPC an npc file's path.
     #[arg(long = "population")]
-    pub populations: Vec<String>,
+    pub populations: Vec<PopulationArg>,
+}
+
+/// A `--scatter` as it is written, TERRAIN:PROP:PER_SQUARE_METER with the scale MIN-MAX optional.
+#[derive(Clone, Debug)]
+pub struct ScatterArg {
+    terrain: usize,
+    prop: String,
+    per_square_meter: f32,
+    scale: ScaleRange,
+}
+
+impl FromStr for ScatterArg {
+    type Err = String;
+
+    fn from_str(spec: &str) -> Result<ScatterArg, String> {
+        let mut parts = spec.split(':');
+        let (Some(terrain), Some(prop), Some(density)) = (parts.next(), parts.next(), parts.next())
+        else {
+            return Err(format!(
+                "a scatter is TERRAIN:PROP:PER_SQUARE_METER, not {spec}"
+            ));
+        };
+        let scale = match parts.next() {
+            None => ScaleRange::default(),
+            Some(range) => {
+                let (min, max) = range
+                    .split_once('-')
+                    .ok_or_else(|| format!("a scale range is MIN-MAX, not {range}"))?;
+                ScaleRange {
+                    min: min.parse().map_err(|_| format!("{min} is not a scale"))?,
+                    max: max.parse().map_err(|_| format!("{max} is not a scale"))?,
+                }
+            }
+        };
+        Ok(ScatterArg {
+            terrain: terrain
+                .parse()
+                .map_err(|_| format!("{terrain} is not the index of a terrain"))?,
+            prop: prop.to_owned(),
+            per_square_meter: density
+                .parse()
+                .map_err(|_| format!("{density} is not a density"))?,
+            scale,
+        })
+    }
+}
+
+/// A `--population` as it is written, NPC:PER_SQUARE_KILOMETER.
+#[derive(Clone, Debug)]
+pub struct PopulationArg {
+    npc: String,
+    per_square_kilometer: f32,
+}
+
+impl FromStr for PopulationArg {
+    type Err = String;
+
+    fn from_str(spec: &str) -> Result<PopulationArg, String> {
+        let (npc, density) = spec
+            .split_once(':')
+            .ok_or_else(|| format!("a population is NPC:PER_SQUARE_KILOMETER, not {spec}"))?;
+        Ok(PopulationArg {
+            npc: npc.to_owned(),
+            per_square_kilometer: density
+                .parse()
+                .map_err(|_| format!("{density} is not a density"))?,
+        })
+    }
 }
 
 pub fn run(game: &Path, area_path: &str, land: &Land) -> Result<(), String> {
@@ -65,17 +134,17 @@ pub fn run(game: &Path, area_path: &str, land: &Land) -> Result<(), String> {
     area.terrains = land
         .terrains
         .iter()
-        .map(|path| reader.from_json::<TerrainId>(&serde_json::Value::String(path.clone())))
+        .map(|path| reader.id_at::<TerrainId>(path))
         .collect::<Result<_, _>>()?;
     let scatters: Vec<ScatterSpec> = land
         .scatters
         .iter()
-        .map(|spec| ScatterSpec::parse(spec, &reader, land.terrains.len()))
+        .map(|arg| ScatterSpec::resolve(arg, &reader, land.terrains.len()))
         .collect::<Result<_, _>>()?;
     let populations: Vec<PopulationSpec> = land
         .populations
         .iter()
-        .map(|spec| PopulationSpec::parse(spec, &reader))
+        .map(|arg| PopulationSpec::resolve(arg, &reader))
         .collect::<Result<_, _>>()?;
 
     area.heights = heights(area.size, land);
@@ -115,9 +184,9 @@ fn heights(size: GroundSize, land: &Land) -> Heightfield {
 }
 
 /// Each terrain over as much ground as the next, from the lowest ground up.
-fn paint(size: GroundSize, heights: &Heightfield, terrains: usize) -> Paint {
+fn paint(size: GroundSize, heights: &Heightfield, terrains: usize) -> PaintMap {
     let (columns, rows) = size.paint_pixels();
-    let at_pixel = |column: u32, row: u32| heights.height_at(Paint::pixel_pos(column, row)).0;
+    let at_pixel = |column: u32, row: u32| heights.height_at(PaintMap::pixel_pos(column, row)).0;
     let mut sorted: Vec<f32> = (0..rows)
         .flat_map(|row| (0..columns).map(move |column| at_pixel(column, row)))
         .collect();
@@ -125,7 +194,7 @@ fn paint(size: GroundSize, heights: &Heightfield, terrains: usize) -> Paint {
     let bands: Vec<f32> = (1..terrains)
         .map(|band| sorted[band * sorted.len() / terrains])
         .collect();
-    Paint::from_fn(size, |column, row| {
+    PaintMap::from_fn(size, |column, row| {
         let height = at_pixel(column, row);
         bands.iter().take_while(|&&from| height >= from).count() as u8
     })
@@ -184,52 +253,29 @@ struct ScatterSpec {
 }
 
 impl ScatterSpec {
-    fn parse(
-        spec: &str,
-        reader: &engine::core::content::FolderReader,
+    fn resolve(
+        arg: &ScatterArg,
+        reader: &FolderReader,
         terrains: usize,
     ) -> Result<ScatterSpec, String> {
-        let mut parts = spec.split(':');
-        let (terrain, prop, density) = (parts.next(), parts.next(), parts.next());
-        let (Some(terrain), Some(prop), Some(density)) = (terrain, prop, density) else {
+        if arg.terrain >= terrains {
             return Err(format!(
-                "a scatter is TERRAIN:PROP:PER_SQUARE_METER, not {spec}"
-            ));
-        };
-        let terrain: usize = terrain
-            .parse()
-            .map_err(|_| format!("{terrain} is not the index of a terrain"))?;
-        if terrain >= terrains {
-            return Err(format!(
-                "terrain {terrain} is not among the {terrains} given"
+                "terrain {} is not among the {terrains} given",
+                arg.terrain
             ));
         }
-        let scale = match parts.next() {
-            None => ScaleRange::default(),
-            Some(range) => {
-                let (min, max) = range
-                    .split_once('-')
-                    .ok_or_else(|| format!("a scale range is MIN-MAX, not {range}"))?;
-                ScaleRange {
-                    min: min.parse().map_err(|_| format!("{min} is not a scale"))?,
-                    max: max.parse().map_err(|_| format!("{max} is not a scale"))?,
-                }
-            }
-        };
         Ok(ScatterSpec {
-            terrain: terrain as u8,
-            prop: reader.from_json(&serde_json::Value::String(prop.to_owned()))?,
-            per_square_meter: density
-                .parse()
-                .map_err(|_| format!("{density} is not a density"))?,
-            scale,
-            label: format!("{prop} on terrain {terrain}"),
+            terrain: arg.terrain as u8,
+            prop: reader.id_at(&arg.prop)?,
+            per_square_meter: arg.per_square_meter,
+            scale: arg.scale,
+            label: format!("{} on terrain {}", arg.prop, arg.terrain),
         })
     }
 
     /// A scatter over every block, a quarter of a wavelength across, where the terrain covers
     /// most of the ground.
-    fn folder(&self, size: GroundSize, paint: &Paint, land: &Land) -> SceneNode {
+    fn folder(&self, size: GroundSize, paint: &PaintMap, land: &Land) -> SceneNode {
         let children = blocks(size, land.wavelength / 4.0)
             .into_iter()
             .filter(|block| mostly(paint, block, self.terrain))
@@ -253,7 +299,7 @@ impl ScatterSpec {
 }
 
 /// Whether `terrain` is painted over more than half of `block`.
-fn mostly(paint: &Paint, block: &Rect<Meters>, terrain: u8) -> bool {
+fn mostly(paint: &PaintMap, block: &Rect<Meters>, terrain: u8) -> bool {
     let (first_column, first_row) = paint.pixel_at(block.origin);
     let (last_column, last_row) = paint.pixel_at(Pos::new(block.max_x(), block.max_y()));
     let (columns, rows) = paint.pixels();
@@ -277,19 +323,11 @@ struct PopulationSpec {
 }
 
 impl PopulationSpec {
-    fn parse(
-        spec: &str,
-        reader: &engine::core::content::FolderReader,
-    ) -> Result<PopulationSpec, String> {
-        let (npc, density) = spec
-            .split_once(':')
-            .ok_or_else(|| format!("a population is NPC:PER_SQUARE_KILOMETER, not {spec}"))?;
+    fn resolve(arg: &PopulationArg, reader: &FolderReader) -> Result<PopulationSpec, String> {
         Ok(PopulationSpec {
-            npc: reader.from_json(&serde_json::Value::String(npc.to_owned()))?,
-            per_square_kilometer: density
-                .parse()
-                .map_err(|_| format!("{density} is not a density"))?,
-            label: npc.to_owned(),
+            npc: reader.id_at(&arg.npc)?,
+            per_square_kilometer: arg.per_square_kilometer,
+            label: arg.npc.clone(),
         })
     }
 

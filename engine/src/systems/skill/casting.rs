@@ -23,7 +23,7 @@ use crate::systems::player::{self, player_requests};
 use crate::systems::reach::{self, Pursuit, PursuitPlan, ReachAct, ReachIntent, ReachTarget};
 use crate::systems::script::effect::{self as effects, Audience};
 use crate::systems::script::{
-    Condition, EffectCall, EventKind, Owner, Reach, RiftInstances, RiftScripting, RunnerKind,
+    Condition, EffectCall, EffectReach, EventKind, Owner, RiftInstances, RiftScripting, RunnerKind,
     condition, event,
 };
 use crate::systems::{notification, stat, visibility};
@@ -351,7 +351,7 @@ impl EffectDef<RiftScripting> for UseSkill {
             }
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Casts(self.skill)]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Casts(self.skill)]
     }
 }

@@ -1,7 +1,7 @@
 use bevy_math::{Quat, Vec3};
 use engine::core::content::gltf::{ClipKeys, Keys, NodeKeys, NodeTree, Rest, TreeNode};
 use engine::core::content::retarget;
-use engine::core::time::Seconds;
+use engine::core::units::Seconds;
 
 /// His rig, at `scale` times our size: a root, hips above it and an arm off the hips.
 fn his(scale: f32) -> NodeTree {

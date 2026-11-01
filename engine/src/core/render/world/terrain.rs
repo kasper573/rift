@@ -16,7 +16,7 @@ use image::RgbaImage;
 use image::imageops::{self, FilterType};
 
 use super::material::{SurfaceFinish, dielectric, embedded};
-use crate::core::ground::{Heightfield, Paint, SAMPLES_PER_METER};
+use crate::core::ground::{Heightfield, PaintMap, SAMPLES_PER_METER};
 use crate::core::units::{GROUND_ORIGIN, Meters};
 
 pub type GroundMaterial = ExtendedMaterial<StandardMaterial, GroundLook>;
@@ -120,7 +120,7 @@ pub struct ChunkSamples {
 /// chunks beside it.
 pub fn chunk_material(
     ground: &GroundMaterial,
-    paint: &Paint,
+    paint: &PaintMap,
     chunk: ChunkSamples,
     images: &mut Assets<Image>,
 ) -> GroundMaterial {
@@ -139,7 +139,7 @@ pub fn chunk_material(
 /// Lays `paint` anew under the chunk `material` draws.
 pub fn repaint_chunk(
     material: &mut GroundMaterial,
-    paint: &Paint,
+    paint: &PaintMap,
     chunk: ChunkSamples,
     images: &mut Assets<Image>,
 ) {
@@ -209,7 +209,7 @@ pub(super) fn stack_pictures(
 
 /// The paint under a chunk, a pixel per `stride` of the paint's from a pixel before the chunk's
 /// first sample to one past its last, each the terrain at the middle of the pixels it stands for.
-fn chunk_paint(paint: &Paint, chunk: ChunkSamples) -> (Image, PaintGrid) {
+fn chunk_paint(paint: &PaintMap, chunk: ChunkSamples) -> (Image, PaintGrid) {
     let stride = chunk.stride.max(1);
     let across = chunk.side.div_ceil(stride) + 2;
     let first = (

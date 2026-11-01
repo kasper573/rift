@@ -5,10 +5,9 @@
 use std::sync::Arc;
 
 use bevy::prelude::{Ray3d, Transform, Vec2, Vec3};
-use engine::core::geometry::{Degrees, Radians};
 use engine::core::math::{Pos, Rect};
 use engine::core::render::camera::{View, ground_hit, world_point};
-use engine::core::units::{MeterPos, MeterSize, Meters};
+use engine::core::units::{Degrees, MeterPos, MeterSize, Meters, Radians};
 use engine::systems::area::Area;
 use serde::{Deserialize, Serialize};
 use ui::egui::{PointerButton, Pos2, Rect as ERect, Response, Ui};
@@ -222,9 +221,9 @@ impl AreaCanvas {
         1.0 / self.camera.metres_per_pixel(self.screen.height())
     }
 
-    /// The ground the canvas may show anything of.
-    pub fn visible(&self) -> Rect<Meters> {
-        self.area.size.bounds().inflate(4.0, 4.0)
+    /// Whether any of `ground` is within the camera's window.
+    pub fn sees(&self, ground: Rect<Meters>) -> bool {
+        self.screen.intersects(self.rect(ground))
     }
 
     /// The box on the screen around a rectangle of ground.

@@ -6,9 +6,9 @@ use bevy::prelude::*;
 use bevy_egui::input::egui_wants_any_keyboard_input;
 
 use super::map::{self, InputAction};
-use crate::core::geometry::Degrees;
 use crate::core::gui;
 use crate::core::render::{CameraFraming, CameraRig};
+use crate::core::units::Degrees;
 use crate::systems::screen::ClientScreen;
 
 /// How far the camera turns for a pixel of middle-button drag.

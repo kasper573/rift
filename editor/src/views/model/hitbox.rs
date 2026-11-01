@@ -9,6 +9,7 @@ use engine::core::math::{Offset, Pos};
 use engine::core::units::Meters;
 use engine::systems::actor::model::{HITBOX_HEIGHTS, HITBOX_RADII};
 use ui::egui::{self, Pos2, Response, Stroke, Ui, Vec2};
+use ui::input::NumberField;
 use ui::{form, theme};
 
 use super::super::area::camera::AreaCanvas;
@@ -185,12 +186,7 @@ pub fn fields(ui: &mut Ui, hitbox: Capsule) -> Option<Capsule> {
         ("height · m", &mut edited.height, HITBOX_HEIGHTS),
     ] {
         form::kv(ui, label, |ui| {
-            ui.add(
-                egui::DragValue::new(&mut value.0)
-                    .speed(0.005)
-                    .range(range)
-                    .fixed_decimals(3),
-            );
+            NumberField::new(&mut value.0).range(range).show(ui);
         });
     }
     form::hint(

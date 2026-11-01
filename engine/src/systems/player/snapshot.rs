@@ -6,7 +6,8 @@ use crate::core::content::{
     Content, ContentFile, ContentProblem, Loading, NamedContent, Nearby, RowCheck, id, serial,
 };
 use crate::core::script::{Value, ValueType};
-use crate::core::time::{Seconds, WallClock};
+use crate::core::time::WallClock;
+use crate::core::units::Seconds;
 use crate::systems::GameSettings;
 use crate::systems::actor::{ActorModel, Appearance, Name, appearance};
 use crate::systems::area::{self, AreaId, transition::Discovered};

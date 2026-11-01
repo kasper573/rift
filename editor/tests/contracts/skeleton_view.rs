@@ -2,11 +2,9 @@ use std::collections::BTreeMap;
 
 use editor::app::Editor;
 use editor::views::skeleton::{self, SkeletonPage, rigs, sets};
-use engine::core::assets::ModelRef;
-use engine::core::geometry::Degrees;
+use engine::core::content::ModelRef;
 use engine::core::render::world::layers::Gait;
-use engine::core::time::{Millis, Seconds};
-use engine::core::units::{Meters, MetersPerSec};
+use engine::core::units::{Degrees, Meters, MetersPerSec, Millis, Seconds};
 use engine::systems::actor::skeleton::{
     BuildName, Clip, ClipCell, ClipOrder, ClipRef, Cue, Hand, JointName, Layer, Leg, LocalOffset,
     LocalTurn, MoveName, SkeletonDef,
@@ -40,7 +38,7 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
     let slash = sets::SetRow::Move(MoveName::new("slash"));
 
     let slash_clip = file_clip(&clip("slash"));
-    assert!(skeleton::set_cues(
+    assert!(skeleton::edits::set_cues(
         &mut editor,
         &key,
         &slash_clip,
@@ -53,7 +51,7 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
     );
 
     let walk_clip = file_clip(&clip("walk"));
-    assert!(skeleton::set_pace(
+    assert!(skeleton::edits::set_pace(
         &mut editor,
         &key,
         &walk_clip,
@@ -147,7 +145,7 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
         clasp: None,
     });
     hands.swap(0, 2);
-    assert!(skeleton::set_hands(&mut editor, &key, hands));
+    assert!(skeleton::edits::set_hands(&mut editor, &key, hands));
     assert_eq!(
         hand_joints(&skeleton_of(&mut editor, &key)),
         vec!["body", "hand.l", "hand.r"],
@@ -157,7 +155,12 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
     gripped.offset = LocalOffset([Meters(0.05), Meters(0.0), Meters(-0.02)]);
     gripped.turn = LocalTurn([Degrees(0.0), Degrees(90.0), Degrees(-90.0)]);
     gripped.mirrored = !gripped.mirrored;
-    assert!(skeleton::set_hand(&mut editor, &key, 2, gripped.clone()));
+    assert!(skeleton::edits::set_hand(
+        &mut editor,
+        &key,
+        2,
+        gripped.clone()
+    ));
     assert_eq!(
         skeleton_of(&mut editor, &key).hands[2],
         gripped,
@@ -180,11 +183,11 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
         during: vec![Action::Walk],
     };
     assert!(
-        !skeleton::set_layers(&mut editor, &key, vec![feet(["hand.r", "body"])]),
+        !skeleton::edits::set_layers(&mut editor, &key, vec![feet(["hand.r", "body"])]),
         "a leg is a chain down the tree"
     );
     assert!(skeleton_of(&mut editor, &key).layers.is_empty());
-    assert!(skeleton::set_layers(
+    assert!(skeleton::edits::set_layers(
         &mut editor,
         &key,
         vec![feet(["body", "hand.r"])]

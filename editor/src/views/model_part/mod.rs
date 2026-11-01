@@ -5,7 +5,7 @@ pub mod fit;
 
 use std::sync::Arc;
 
-use engine::core::assets::FileSize;
+use engine::core::content::FileSize;
 use engine::core::content::media::GltfInfos;
 use engine::core::content::{Content, ContentFile};
 use engine::core::render::world::body::{Figure, Skin};
@@ -18,10 +18,9 @@ use ui::egui::{self, Ui, Vec2};
 use ui::{chip, form, panel, theme};
 
 use super::area::viewport::StageClip;
-use super::stage;
+use super::stage::{self, StageToggle};
 use crate::app::Editor;
-use crate::shell::row_form;
-use crate::tabs::shown_path;
+use crate::row_form;
 
 pub struct ModelPartView {
     /// The mesh shown: the one cut for this build, or with `None` the one every build wears.
@@ -41,7 +40,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         inspect(editor, ui, key, &row);
     });
     egui::Frame::new()
-        .inner_margin(crate::shell::VIEW_PADDING)
+        .inner_margin(crate::widgets::VIEW_PADDING)
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
             mesh_bar(editor, ui, key, &row);
@@ -87,19 +86,25 @@ pub(crate) fn rig_idle_clip(skeleton: &BuiltSkeleton) -> Option<StageClip> {
 
 fn mesh_bar(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelPartDef) {
     let shown = editor.views.model_part.view(key).mesh.clone();
-    ui.horizontal(|ui| {
-        ui.label(theme::mono(shown_path(key)).color(theme::CODE));
-        ui.add_space(8.0);
-        for (build, _) in row.meshes() {
-            let label = build.map_or("every build", BuildName::as_str);
-            if chip::mode(ui, label, shown.as_ref() == build).clicked() {
-                editor.views.model_part.view_mut(key).mesh = build.cloned();
-            }
-        }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            stage::toggle(ui, "turning", &mut editor.views.toggles.turning);
-        });
-    });
+    let picked = stage::bar(
+        ui,
+        key,
+        &mut editor.views.toggles,
+        &[StageToggle::Turning],
+        |ui| {
+            row.meshes()
+                .map(|(build, _)| build)
+                .filter(|build| {
+                    let label = build.map_or("every build", BuildName::as_str);
+                    chip::mode(ui, label, shown.as_ref() == *build).clicked()
+                })
+                .last()
+                .map(|build| build.cloned())
+        },
+    );
+    if let Some(mesh) = picked {
+        editor.views.model_part.view_mut(key).mesh = mesh;
+    }
 }
 
 /// Stands `skin` on the rig of `skeleton` in the middle of a stage over `size`, in its idle clip.
@@ -147,10 +152,7 @@ fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelPartDef) {
             (mesh.as_str().to_owned(), triangles, weight)
         })
         .collect();
-    panel::tile(false).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        panel::title(ui, "Meshes");
-        ui.add_space(4.0);
+    panel::titled_card(ui, false, "Meshes", |ui| {
         for (file, triangles, weight) in &meshes {
             form::kv(ui, file, |ui| {
                 if let Some(triangles) = triangles {
@@ -177,5 +179,5 @@ fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelPartDef) {
         );
     });
     ui.add_space(8.0);
-    crate::shell::row_form::usages::show_usages_grouped(editor, ui, key, true);
+    crate::row_form::usages::show_usages_grouped(editor, ui, key, true);
 }

@@ -1,7 +1,7 @@
 use bevy_math::{Quat, Vec3};
 use engine::core::content::LoadReport;
 use engine::core::content::gltf::{NodeTree, Rest, TreeNode};
-use engine::core::time::Seconds;
+use engine::core::units::Seconds;
 use engine::systems::actor::model::Skeletons;
 use serde_json::{Value, json};
 use testkit::{

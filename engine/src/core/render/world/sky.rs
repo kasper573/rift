@@ -18,11 +18,10 @@ use serde::{Deserialize, Serialize};
 
 use super::clouds;
 use super::lights;
-use crate::core::geometry::Degrees;
 use crate::core::math::{Rect, Rgb};
 use crate::core::render::Look;
 use crate::core::render::camera::FullPicture;
-use crate::core::units::{Meters, Stops};
+use crate::core::units::{Degrees, Meters, Stops};
 
 /// How far into the air the haze is worked out, in metres of the world.
 const HAZE_REACH: f32 = 600.0;

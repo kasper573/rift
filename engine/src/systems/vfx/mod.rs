@@ -12,14 +12,14 @@ use serde::{Deserialize, Serialize};
 use strum::VariantArray;
 
 use crate::core::content::{Content, Fixture, Loading, RowCheck};
-use crate::core::geometry::{PlacedShape, Radians, Shape, facing_from};
+use crate::core::geometry::{PlacedShape, Shape, facing_from};
 use crate::core::math::Pos;
 use crate::core::script::Node;
 use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, Eval, Expr, FlowCx, NEXT, ScriptFault, ValueType,
 };
-use crate::core::time::{Seconds, WallClock};
-use crate::core::units::Meters;
+use crate::core::time::WallClock;
+use crate::core::units::{Meters, Radians, Seconds};
 use crate::core::vfx::{
     ParamKind, ParamValue, SiteKind, VfxDef, VfxId, VfxInstance, VfxParams, VfxSite, WidgetName,
 };
@@ -29,7 +29,9 @@ use crate::systems::movement::{Position, position};
 use crate::systems::player::PlayedBy;
 use crate::systems::script::effect::RiftEffect;
 use crate::systems::script::query::{Among, RiftQueryKind, TickRoster};
-use crate::systems::script::{Condition, EffectCall, Reach, RiftScripting, RunnerKind, ScriptDef};
+use crate::systems::script::{
+    Condition, EffectCall, EffectReach, RiftScripting, RunnerKind, ScriptDef,
+};
 use crate::systems::skill::{self, SkillDef};
 use crate::systems::status::StatusEffectDef;
 use crate::systems::visibility::Presence;
@@ -365,8 +367,8 @@ impl EffectDef<RiftScripting> for PlayVfx {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::ShowsVfx]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::ShowsVfx]
     }
 }
 

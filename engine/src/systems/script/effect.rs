@@ -3,7 +3,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{EnumDiscriminants, EnumString, IntoStaticStr};
 
-use super::{Condition, Reach, RiftScripting};
+use super::{Condition, EffectReach, RiftScripting};
 use crate::core::audio::playback::SfxId;
 use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, Eval, FlowCx, NEXT, REFUSED, ScriptFault, ValueType,
@@ -69,7 +69,7 @@ macro_rules! effects {
             fn look<'c>(&'c self, cx: &mut Compiler<'c, RiftScripting>) -> Result<Option<EffectLook>, ScriptFault> {
                 match self { $(RiftEffect::$variant(e) => e.look(cx),)* }
             }
-            fn reach(&self, cx: &Compiler<RiftScripting>) -> Vec<Reach> {
+            fn reach(&self, cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
                 match self { $(RiftEffect::$variant(e) => e.reach(cx),)* }
             }
         }
@@ -221,9 +221,9 @@ impl EffectDef<RiftScripting> for PlaySound {
             EffectStep::Done
         }))
     }
-    fn reach(&self, cx: &Compiler<RiftScripting>) -> Vec<Reach> {
+    fn reach(&self, cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
         cx.peek_audio(&self.sfx)
-            .map(Reach::Plays)
+            .map(EffectReach::Plays)
             .into_iter()
             .collect()
     }

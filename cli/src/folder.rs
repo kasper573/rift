@@ -5,11 +5,22 @@ use std::fs;
 use std::path::Path;
 use std::sync::Arc;
 
-use engine::core::content::{FilesystemFolder, FolderReader, WrittenFiles};
-use engine::systems::registry;
+use engine::core::content::{
+    Content, FilesystemFolder, FolderReader, LoadPurpose, LoadReport, WrittenFiles,
+};
+use engine::systems::{load_content, registry};
 
 pub fn reader_of(folder: &Path) -> FolderReader {
     FolderReader::new(registry(), Arc::new(FilesystemFolder(folder.to_path_buf())))
+}
+
+/// The game in `folder` loaded for `purpose`, `outcome` naming what the load is for.
+pub fn load(folder: &Path, outcome: &str, purpose: LoadPurpose) -> Result<Content, LoadReport> {
+    load_content(
+        Arc::new(FilesystemFolder(folder.to_path_buf())),
+        outcome,
+        purpose,
+    )
 }
 
 /// Lands what a write produced in the folder at `into`.

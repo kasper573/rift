@@ -1,5 +1,5 @@
 use bevy_ecs::prelude::*;
-use engine::core::time::Seconds;
+use engine::core::units::Seconds;
 use engine::systems::actor::skeleton::EquipmentSlot;
 use engine::systems::equipment::{self, Equipment, EquipmentPlace, UnequipRequest};
 use engine::systems::item::{self, DropItemRequest, ItemDef, UseItemRequest};

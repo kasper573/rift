@@ -9,17 +9,17 @@ use super::scene::{self, Holes, ModuleNode, SCENE, SCENE_FILE, SceneNode, scene_
 use super::{AreaId, AreaModule, ObjectShape};
 use crate::core::audio::soundscape::SoundscapeShape;
 use crate::core::content::id::{Leaf, in_scope, nearest, nearest_path, read_aside};
+use crate::core::content::is_device;
 use crate::core::content::load::{ParseError, parse_value, shape_problem};
 use crate::core::content::locate::{escape, unescape};
 use crate::core::content::{
     Bundle, CONFIG_FILE, Content, ContentFile, ContentId, ContentProblem, ContentScope, FileWriter,
-    Nearby, PartSpec, Parts, RowCheck, Shape, serial, valid_key, with_content,
+    Nearby, PartSpec, Parts, RowCheck, Shape, serial, with_content,
 };
-use crate::core::geometry::Degrees;
 use crate::core::ground::GroundSize;
 use crate::core::math::{Pos, Rect};
 use crate::core::script::{VarValue, Variable, VariableType, Vocabulary};
-use crate::core::units::Meters;
+use crate::core::units::{Degrees, Meters};
 use crate::systems::script::{Place, RiftScripting, ScriptModule};
 
 pub type BlueprintId = ContentId<BlueprintDef>;
@@ -69,7 +69,7 @@ impl ContentFile for BlueprintDef {
             "variables",
         );
         for name in self.variables.keys() {
-            if !(1..=40).contains(&name.len()) || !valid_key(name) {
+            if !(1..=40).contains(&name.len()) || !valid_variable(name) {
                 cx.error(
                     format!("/variables/{}", escape(name)),
                     "out of range",
@@ -909,4 +909,12 @@ pub fn place(module: &mut AreaModule, at: Pos<Meters>, yaw: Degrees) {
         }
         AreaModule::Blueprint(_) | AreaModule::Script(_) => {}
     }
+}
+
+fn valid_variable(name: &str) -> bool {
+    !name.starts_with('-')
+        && name
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
+        && !is_device(name)
 }

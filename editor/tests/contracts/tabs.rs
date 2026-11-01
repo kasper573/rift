@@ -3,7 +3,6 @@ use std::sync::Arc;
 use editor::app::Editor;
 use editor::project::Project;
 use editor::schema::SchemaShapes;
-use editor::shell;
 use editor::tabs::{DockRequest, EditorTab};
 use editor::user::{EditorSettings, UserFolder};
 use engine::core::content::ContentFile;
@@ -54,7 +53,7 @@ fn previewing_an_open_tab_shows_it_and_spares_the_preview() {
     keep(&mut editor, item("a"));
     preview(&mut editor, item("b"));
     preview(&mut editor, item("a"));
-    assert_eq!(shell::active_tab(&editor), Some(item("a")));
+    assert_eq!(editor::tabs::active_tab(&editor), Some(item("a")));
     preview(&mut editor, item("c"));
 
     assert_eq!(tabs(&editor), vec![item("a"), item("c")]);
@@ -101,12 +100,12 @@ fn a_tab_asking_for_focus_takes_it_from_the_other_side_of_a_split() {
     let surface = editor.dock.main_surface_mut();
     let [left, _] = surface.split_right(NodeIndex::root(), 0.5, vec![item("b")]);
     surface.set_focused_node(left);
-    assert_eq!(shell::active_tab(&editor), Some(item("a")));
+    assert_eq!(editor::tabs::active_tab(&editor), Some(item("a")));
 
     editor.dock_requests.push(DockRequest::Focus(item("b")));
     editor.serve_dock_requests();
 
-    assert_eq!(shell::active_tab(&editor), Some(item("b")));
+    assert_eq!(editor::tabs::active_tab(&editor), Some(item("b")));
 }
 
 fn editor(scratch: &tempfile::TempDir) -> Editor {

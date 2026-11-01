@@ -9,8 +9,8 @@ use ui::face::Face;
 
 use super::rows::{self, Clock, Fades, Move, NoticePlace, Presence};
 use super::{Notification, NotificationKind, NotificationSent};
-use crate::core::assets::ImageRef;
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
+use crate::core::content::ImageRef;
 use crate::core::gui;
 use crate::core::math::Rgba;
 use crate::core::text::{self, TextMotion, TextShadow};

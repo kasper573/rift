@@ -2,67 +2,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::math::{Offset, Pos, Rect};
-use crate::core::units::{MeterPos, Meters};
-
-#[derive(
-    JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd,
-)]
-#[schemars(extend("x-unit" = "°"))]
-pub struct Degrees(pub f32);
-
-#[derive(
-    JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd,
-)]
-#[schemars(extend("x-unit" = "rad"))]
-pub struct Radians(pub f32);
+use crate::core::units::{Degrees, MeterPos, Meters, Radians};
 
 const OUTLINE_STEPS: usize = 40;
-
-impl Degrees {
-    pub fn radians(self) -> Radians {
-        Radians(self.0.to_radians())
-    }
-
-    pub fn is_zero(&self) -> bool {
-        self.0 == 0.0
-    }
-
-    /// The angle as whole quarter turns, when it is one: a placement turns only by right angles,
-    /// so what it places keeps its rectangles square to the world.
-    pub fn quarter_turns(self) -> Option<u8> {
-        let quarters = self.0 / 90.0;
-        let whole = quarters.round();
-        ((quarters - whole).abs() < 1e-4).then(|| whole.rem_euclid(4.0) as u8)
-    }
-
-    /// `offset` turned by the angle about the origin; a right angle turns it exactly.
-    pub fn rotate(self, offset: Offset<Meters>) -> Offset<Meters> {
-        let Offset { x, y, .. } = offset;
-        match self.quarter_turns() {
-            Some(0) => offset,
-            Some(1) => Offset::new(-y, x),
-            Some(2) => Offset::new(-x, -y),
-            Some(3) => Offset::new(y, -x),
-            _ => {
-                let (sin, cos) = self.radians().0.sin_cos();
-                Offset::new(x * cos - y * sin, x * sin + y * cos)
-            }
-        }
-    }
-}
-
-impl Radians {
-    /// Toward +y, which the camera looks down on: the way everyone first stands.
-    pub const SOUTH: Radians = Radians(std::f32::consts::FRAC_PI_2);
-
-    pub fn of(heading: Offset<Meters>) -> Radians {
-        Radians(heading.y.atan2(heading.x))
-    }
-
-    pub fn heading(self) -> Offset<Meters> {
-        Offset::new(self.0.cos(), self.0.sin())
-    }
-}
 
 /// The corners of a rectangle, going round it.
 pub fn corners(rect: Rect<Meters>) -> [Pos<Meters>; 4] {
@@ -84,12 +26,7 @@ pub struct Capsule {
     pub height: Meters,
 }
 
-impl Capsule {
-    /// Whether a point on the ground lies under the capsule standing at `at`.
-    pub fn covers(self, at: Pos<Meters>, point: Pos<Meters>) -> bool {
-        (point - at).length() <= self.radius.0
-    }
-}
+impl Capsule {}
 
 /// A region in metres, laid down at a point and turned toward a heading: the circle and the
 /// rectangle sit centred on the point, the cone's apex and the line's start are the point.

@@ -1,4 +1,4 @@
-use engine::core::assets::FileSize;
+use engine::core::content::FileSize;
 use engine::core::content::NOTE_EXTENSION;
 use ui::egui;
 use ui::egui::{Align, Layout, Sense, Ui};

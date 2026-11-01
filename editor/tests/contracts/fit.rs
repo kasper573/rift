@@ -1,6 +1,6 @@
 use editor::app::Editor;
 use editor::project::RowSelection;
-use editor::shell::row_form;
+use editor::row_form;
 use editor::views::script::inspect;
 use editor::views::script::{ScriptDoc, ScriptRow};
 use serde_json::json;

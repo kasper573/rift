@@ -4,7 +4,7 @@ mod params;
 mod preview;
 mod shader_code;
 
-pub use params::{ParamSpec, param_fill, params_of, shader_params};
+pub use params::{ParamOwner, ParamSpec, param_fill, params_of, shader_params};
 pub use preview::VfxViews;
 
 use std::sync::Arc;
@@ -14,15 +14,16 @@ use ui::sheet;
 use ui::theme;
 
 use engine::core::content::{ContentFile, ContentScope, ErrorPlace, fields_file, rescoped};
-use engine::core::time::Seconds;
+use engine::core::units::Seconds;
 use engine::core::vfx::{ParamFill, VfxDef, VfxLayer, VfxShaderDef, shader_file};
 use ui::egui::{Color32, FontId, Ui, Vec2 as EVec2};
 
 use self::preview::preview;
 use crate::app::Editor;
 use crate::project::ContentEdit;
-use crate::shell::{row_form, widgets};
+use crate::row_form;
 use crate::tabs::file_title;
+use crate::widgets;
 
 const FORM_WIDTH: f32 = 440.0;
 const COLUMN_GAP: f32 = 16.0;
@@ -39,7 +40,7 @@ pub(crate) fn show_vfx(editor: &mut Editor, ui: &mut Ui, key: &str) {
         return;
     }
     let vfx = project.read::<VfxDef>(key).ok();
-    let specs = params_of(project, VfxDef::TABLE, key);
+    let specs = params_of(project, ParamOwner::Vfx, key);
     let reader = project.reader();
     let (layers, inside) = match (editor.loaded(), vfx) {
         (Some(content), Some(vfx)) => {

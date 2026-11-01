@@ -8,14 +8,13 @@ use crate::core::math::Pos;
 use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, Eval, FlowCx, NEXT, REFUSED, ScriptFault, ValueType,
 };
-use crate::core::time::Seconds;
-use crate::core::units::{MeterPos, Meters};
+use crate::core::units::{MeterPos, Meters, Seconds};
 use crate::systems::area::{AreaId, AreaTag};
 use crate::systems::equipment;
 use crate::systems::movement::{Position, position};
 use crate::systems::player::PlayedBy;
 use crate::systems::script::{
-    Condition, EffectCall, Place, Reach, RiftScripting, effect as effects,
+    Condition, EffectCall, EffectReach, Place, RiftScripting, effect as effects,
 };
 use crate::systems::visibility::Presence;
 
@@ -180,11 +179,11 @@ impl EffectDef<RiftScripting> for Items {
             effects::settle(world, cx, &refused, outcome)
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
         self.take
             .iter()
-            .map(|stack| Reach::Takes(stack.item))
-            .chain(self.give.iter().map(|stack| Reach::Gives(stack.item)))
+            .map(|stack| EffectReach::Takes(stack.item))
+            .chain(self.give.iter().map(|stack| EffectReach::Gives(stack.item)))
             .collect()
     }
 }
@@ -208,8 +207,8 @@ impl EffectDef<RiftScripting> for UseItem {
             effects::settle(world, cx, &refused, outcome)
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Takes(self.item)]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Takes(self.item)]
     }
 }
 
@@ -232,7 +231,7 @@ impl EffectDef<RiftScripting> for Equip {
             effects::settle(world, cx, &refused, outcome)
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
         Vec::new()
     }
 }
@@ -256,7 +255,7 @@ impl EffectDef<RiftScripting> for Unequip {
             effects::settle(world, cx, &refused, outcome)
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
         Vec::new()
     }
 }
@@ -282,8 +281,8 @@ impl EffectDef<RiftScripting> for DropItems {
             effects::settle(world, cx, &refused, outcome)
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Drops(self.item)]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Drops(self.item)]
     }
 }
 
@@ -320,10 +319,10 @@ impl EffectDef<RiftScripting> for SpawnGroundItems {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
         self.items
             .iter()
-            .map(|stack| Reach::Drops(stack.item))
+            .map(|stack| EffectReach::Drops(stack.item))
             .collect()
     }
 }
@@ -361,7 +360,7 @@ impl EffectDef<RiftScripting> for ClearGroundItems {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
         Vec::new()
     }
 }
@@ -389,10 +388,15 @@ impl EffectDef<RiftScripting> for MoveItems {
             effects::settle(world, cx, &refused, outcome)
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
         self.items
             .iter()
-            .flat_map(|stack| [Reach::Takes(stack.item), Reach::Gives(stack.item)])
+            .flat_map(|stack| {
+                [
+                    EffectReach::Takes(stack.item),
+                    EffectReach::Gives(stack.item),
+                ]
+            })
             .collect()
     }
 }

@@ -192,8 +192,8 @@ fn client(game: &Path, content: &Content) -> Seen {
 }
 
 fn loaded(game: &Path) -> Option<Content> {
-    engine::systems::load_content(
-        std::sync::Arc::new(engine::core::content::FilesystemFolder(game.to_path_buf())),
+    crate::folder::load(
+        game,
         "the larger area did not load",
         engine::core::content::LoadPurpose::Play,
     )

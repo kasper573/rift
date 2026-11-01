@@ -5,8 +5,8 @@ use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::assets::ImageRef;
 use crate::core::chunk::{CHUNK_SIDE, ChunkIndex};
+use crate::core::content::ImageRef;
 use crate::core::content::{ContentFile, ContentId, Fixture, Nearby};
 use crate::core::par;
 use crate::core::tick::{Cached, Planner};

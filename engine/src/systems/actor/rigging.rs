@@ -16,8 +16,7 @@ use super::{Action, Motion, Pose};
 use crate::core::content::RowCheck;
 use crate::core::content::gltf::{GltfInfo, NodeTree, REST_SHIFT, REST_TURN, Rest, TreeNode};
 use crate::core::content::retarget;
-use crate::core::time::Seconds;
-use crate::core::units::MetersPerSec;
+use crate::core::units::{MetersPerSec, Seconds};
 
 /// A skeleton put together: our rig, every clip it names as it plays, and what each hand's clasp
 /// turns.

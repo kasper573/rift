@@ -14,7 +14,7 @@ use crate::systems::npc::NpcId;
 use crate::systems::player::{ClientId, PlayedBy};
 use crate::systems::script::event::NPC;
 use crate::systems::script::{
-    Condition, EffectCall, EffectLook, Reach, RiftScripting, RunnerKind, effect as effects,
+    Condition, EffectCall, EffectLook, EffectReach, RiftScripting, RunnerKind, effect as effects,
 };
 use crate::systems::stat;
 use crate::systems::visibility::Presence;
@@ -105,10 +105,10 @@ impl EffectDef<RiftScripting> for SetAttitude {
             (world.get::<Attitude>(npc) == Some(&attitude)).then_some(EffectStep::Done)
         })))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
         vec![match self.attitude {
-            Attitude::Hostile => Reach::Hostile,
-            Attitude::Friendly => Reach::Friendly,
+            Attitude::Hostile => EffectReach::Hostile,
+            Attitude::Friendly => EffectReach::Friendly,
         }]
     }
 }
@@ -154,8 +154,8 @@ impl EffectDef<RiftScripting> for SpawnNpcs {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Spawns(self.npc)]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Spawns(self.npc)]
     }
 }
 
@@ -181,8 +181,8 @@ impl EffectDef<RiftScripting> for Despawn {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Despawns]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Despawns]
     }
 }
 

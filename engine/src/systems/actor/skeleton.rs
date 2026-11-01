@@ -11,18 +11,16 @@ use serde::{Deserialize, Serialize};
 
 use super::stance::StanceId;
 use super::{Action, Motion, Pose};
-use crate::core::assets::ModelRef;
 use crate::core::audio::playback::SfxId;
-use crate::core::content::gltf::{Fit, Misfit};
+use crate::core::content::ModelRef;
+use crate::core::content::gltf::Misfit;
 use crate::core::content::{
     ContentFile, ContentId, ContentProblem, ModuleRule, ModuleSet, NamedContent, Nearby, RowCheck,
     serial,
 };
-use crate::core::geometry::{Degrees, Radians};
 use crate::core::math::{Rgb, Rng};
 use crate::core::render::world::layers::Gait;
-use crate::core::time::{Hertz, Millis, Seconds};
-use crate::core::units::{Meters, MetersPerSec};
+use crate::core::units::{Degrees, Hertz, Meters, MetersPerSec, Millis, Radians, Seconds};
 
 pub type SkeletonId = ContentId<SkeletonDef>;
 
@@ -1512,14 +1510,6 @@ fn clip_pointer(entry: &str, clip: &ClipRef) -> String {
         ClipRef::Whole(_) => entry.to_owned(),
         ClipRef::Grouped { .. } => format!("{entry}/clip"),
     }
-}
-
-/// The fit of a skin to a skeleton's rig, as one line per joint that does not fit.
-pub fn fit_problems(fit: &Fit, file: &str, skeleton: &str) -> Vec<ContentProblem> {
-    fit.misfits
-        .iter()
-        .map(|misfit| misfit_problem(file, skeleton, misfit))
-        .collect()
 }
 
 /// Every move and gesture some skeleton's set declares: the only ones a script may ask for.

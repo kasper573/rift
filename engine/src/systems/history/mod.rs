@@ -7,7 +7,8 @@ use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::time::{Seconds, UnixMillis, WallClock};
+use crate::core::time::{UnixMillis, WallClock};
+use crate::core::units::Seconds;
 use crate::systems::GameSettings;
 use crate::systems::player::{ClientId, PlayedBy, Players};
 use crate::systems::text::LineText;

@@ -120,6 +120,11 @@ impl FolderReader {
         self.within(|| parse_value::<T>(json).map_err(|error| error.to_string()))
     }
 
+    /// The id of type `T` that the file at `path` stands for among the folder's paths.
+    pub fn id_at<T: DeserializeOwned>(&self, path: &str) -> Result<T, String> {
+        self.from_json(&serde_json::Value::String(path.to_owned()))
+    }
+
     /// `value` as JSON, its ids written as the paths they stand for among the folder's.
     pub fn to_json<T: serde::Serialize>(&self, value: &T) -> Result<serde_json::Value, String> {
         with_content(self.listed.scope.clone(), || super::serial::json_of(value))

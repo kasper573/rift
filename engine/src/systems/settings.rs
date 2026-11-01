@@ -10,13 +10,13 @@ use ui::egui::Ui;
 use ui::{controls, face, sheet};
 
 use crate::core::audio::mix::{AudioCategory, AudioFader, AudioMix, AudioVolume};
-use crate::core::geometry::Degrees;
-use crate::core::math::{Pos, Size, WindowPx};
+use crate::core::math::{Pos, Size};
 use crate::core::os::Profile;
 use crate::core::render::transition::{ScreenTransition, ScreenTransitionPreference};
 use crate::core::render::video::{AmbientOcclusionQuality, VideoPreferences};
 use crate::core::render::{CameraPreferences, FullPicture};
 use crate::core::text::LettersPerSecond;
+use crate::core::units::{Degrees, WindowPx};
 use crate::systems::hud::HudWindow;
 use crate::systems::input::map::{InputAction, KeyGesture};
 use crate::systems::interface::InterfaceIcon;

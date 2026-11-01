@@ -15,7 +15,8 @@ use crate::core::net::auth::Credentials;
 use crate::core::net::transport::{Connection, read_token};
 use crate::core::os::{FetchFailure, Http, StartParams};
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
-use crate::core::time::{self, Seconds};
+use crate::core::time;
+use crate::core::units::Seconds;
 use crate::systems::player::{JoinRequest, session};
 
 pub struct ConnectionPlugin;

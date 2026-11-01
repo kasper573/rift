@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use ui::egui;
 
-use engine::core::audio::loader;
+use engine::core::content::sound;
 
 use std::sync::mpsc::TryRecvError;
 
@@ -103,7 +103,7 @@ impl WaveformCache {
 }
 
 fn analyse(bytes: &[u8]) -> Option<Waveform> {
-    let decoded = loader::decode(bytes.to_vec()).ok()?;
+    let decoded = sound::decode(bytes.to_vec()).ok()?;
     let channels = decoded.channels.max(1);
     let frames = decoded.samples.len() / channels;
     let ms = (frames as f64 * 1000.0 / decoded.sample_rate.max(1) as f64).round() as u32;

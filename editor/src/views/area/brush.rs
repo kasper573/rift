@@ -4,7 +4,7 @@
 
 use std::sync::Arc;
 
-use engine::core::ground::{Heightfield, Paint, SAMPLES_PER_METER};
+use engine::core::ground::{Heightfield, PaintMap, SAMPLES_PER_METER};
 use engine::core::math::{Offset, Pos};
 use engine::core::units::{MeterPos, Meters};
 use engine::systems::area::AreaDef;
@@ -86,7 +86,7 @@ pub enum SculptMode {
 /// numbered at every change, and the height a flatten stroke pulls toward.
 pub struct Stroke {
     pub heights: Arc<Heightfield>,
-    pub paint: Arc<Paint>,
+    pub paint: Arc<PaintMap>,
     /// The area's terrains, with the one a paint stroke lays added when the area lacked it.
     pub terrains: Vec<TerrainId>,
     pub revision: u64,
@@ -186,7 +186,7 @@ pub fn sculpt(
 
 /// Lays the terrain `index` under the brush at `at`: wholly where the brush is strong, and
 /// dithered toward its rim as its falloff weakens, so a painted edge frays instead of cutting.
-pub fn paint(paint: &mut Paint, brush: &Brush, index: u8, at: Pos<Meters>) {
+pub fn paint(paint: &mut PaintMap, brush: &Brush, index: u8, at: Pos<Meters>) {
     let (columns, rows) = paint.pixels();
     let half = 0.5 / SAMPLES_PER_METER as f32;
     for (column, row, distance) in under((columns, rows), brush, at + Offset::new(-half, -half)) {

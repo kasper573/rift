@@ -1,0 +1,14 @@
+[package]
+name = "lint"
+version.workspace = true
+edition.workspace = true
+description = "The repo's own lints: layering, standalone crates and JSON by literal key"
+
+[dependencies]
+cargo_metadata = "0.23"
+proc-macro2 = { workspace = true, features = ["span-locations"] }
+syn = { workspace = true, features = ["visit"] }
+walkdir = "2"
+
+[lints]
+workspace = true

@@ -1,4 +1,4 @@
-use engine::core::assets::AssetKind;
+use engine::core::content::AssetKind;
 
 use super::{Candidate, Category, Dragged, Pick, PickLayout, PickSource};
 use crate::forms::FormCx;

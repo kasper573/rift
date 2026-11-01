@@ -5,7 +5,7 @@ use engine::core::content::gltf::{
     NodeTree, Rest, TreeNode, glb as write_glb, placeholder_body, placeholder_mesh,
     placeholder_rig, posed_body,
 };
-use engine::core::time::Seconds;
+use engine::core::units::Seconds;
 use gltf::json;
 use gltf::json::validation::USize64;
 

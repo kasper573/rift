@@ -21,11 +21,11 @@ use ui::egui::{
 use ui::face::{self, TextRole};
 use ui::{controls, ink, sheet, slip};
 
-use crate::core::assets::ImageRef;
+use crate::core::content::ImageRef;
 use crate::core::content::{Content, Fixture};
 use crate::core::gui::{self, Band, ImageSource, WidgetRects};
-use crate::core::math::WindowPx;
 use crate::core::text::{self, StyledLine, TextLook};
+use crate::core::units::WindowPx;
 use crate::systems::input::map::{self, InputAction, InputMap};
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::{self, Inventory};

@@ -30,13 +30,17 @@ const STILL: Duration = Duration::from_secs(20);
 // What the process may keep beyond what the game holds: what its allocator holds on to, and the
 // command memory the graphics driver keeps for each of wgpu's pooled command encoders at the most
 // it ever recorded, which only fills up over dozens of crossings.
-const SLACK_SHARE: f64 = 0.05;
-const SLACK_LEAST: Bytes = Bytes(64 * 1024 * 1024);
+const PROCESS_SLACK: Slack = Slack {
+    share: 0.05,
+    least: Bytes(64 * 1024 * 1024),
+};
 // What the GPU's buffers and textures may differ by from visit to visit: a frame's draws differ,
 // and the meshes stand in slabs that grow by half when what a visit stands outgrows one, which
 // differs with where the view is from, so a visit may hold a slab's growth more than another.
-const GPU_SLACK_SHARE: f64 = 0.02;
-const GPU_SLACK_LEAST: Bytes = Bytes(256 * 1024);
+const GPU_SLACK: Slack = Slack {
+    share: 0.02,
+    least: Bytes(256 * 1024),
+};
 
 /// Fails naming what grew.
 pub fn run(game: &Path, content: &Content) -> Result<(), String> {
@@ -62,7 +66,7 @@ pub fn run(game: &Path, content: &Content) -> Result<(), String> {
             warm = settle(&mut me);
         }
         warm_ups += 1;
-        let allowed = slack(before.client).0 / ROUND_TRIPS as u64;
+        let allowed = PROCESS_SLACK.of(before.client).0 / ROUND_TRIPS as u64;
         quiet = if warm.client.0 <= before.client.0 + allowed {
             quiet + 1
         } else {
@@ -95,9 +99,24 @@ pub fn run(game: &Path, content: &Content) -> Result<(), String> {
         let (first, last) = (held[0], held[held.len() - 1]);
         let name = &place.area.get(content).name;
         report(&format!("{name}, visit by visit"), &held);
-        broken.extend(grown(&format!("{name}: client"), first.client, last.client));
-        broken.extend(grown(&format!("{name}: server"), first.server, last.server));
-        broken.extend(gpu_grown(&format!("{name}: gpu"), first.gpu, last.gpu));
+        broken.extend(grown(
+            &format!("{name}: client"),
+            first.client,
+            last.client,
+            PROCESS_SLACK,
+        ));
+        broken.extend(grown(
+            &format!("{name}: server"),
+            first.server,
+            last.server,
+            PROCESS_SLACK,
+        ));
+        broken.extend(grown(
+            &format!("{name}: gpu"),
+            first.gpu,
+            last.gpu,
+            GPU_SLACK,
+        ));
     }
     report(
         &format!("standing still for {STILL:?}"),
@@ -107,11 +126,13 @@ pub fn run(game: &Path, content: &Content) -> Result<(), String> {
         "standing still: client",
         still.0.client,
         still.1.client,
+        PROCESS_SLACK,
     ));
     broken.extend(grown(
         "standing still: server",
         still.0.server,
         still.1.server,
+        PROCESS_SLACK,
     ));
     if !broken.is_empty() {
         return Err(format!(
@@ -148,11 +169,11 @@ fn read(me: &mut Playtest) -> Reading {
     }
 }
 
-fn grown(what: &str, first: Bytes, last: Bytes) -> Option<String> {
-    let slack = slack(first);
+fn grown(what: &str, first: Bytes, last: Bytes, allowed: Slack) -> Option<String> {
+    let slack = allowed.of(first);
     (last.0 > first.0 + slack.0).then(|| {
         format!(
-            "{what}: {:.0} MB, from {:.0} MB (at most {:.0} MB more)",
+            "{what}: {:.2} MB, from {:.2} MB (at most {:.2} MB more)",
             last.megabytes(),
             first.megabytes(),
             slack.megabytes()
@@ -160,18 +181,17 @@ fn grown(what: &str, first: Bytes, last: Bytes) -> Option<String> {
     })
 }
 
-fn slack(held: Bytes) -> Bytes {
-    SLACK_LEAST.max(Bytes((held.0 as f64 * SLACK_SHARE) as u64))
+/// How much a reading may grow by: a share of what was held, but never less than a floor.
+#[derive(Clone, Copy)]
+struct Slack {
+    share: f64,
+    least: Bytes,
 }
 
-fn gpu_grown(what: &str, first: Bytes, last: Bytes) -> Option<String> {
-    let slack = GPU_SLACK_LEAST.max(Bytes((first.0 as f64 * GPU_SLACK_SHARE) as u64));
-    (last.0 > first.0 + slack.0).then(|| {
-        format!(
-            "{what}: {} bytes, from {} bytes (at most {} more)",
-            last.0, first.0, slack.0
-        )
-    })
+impl Slack {
+    fn of(self, held: Bytes) -> Bytes {
+        self.least.max(Bytes((held.0 as f64 * self.share) as u64))
+    }
 }
 
 fn report(what: &str, held: &[Reading]) {

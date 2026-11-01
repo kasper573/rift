@@ -9,13 +9,14 @@ use ui::ink;
 use ui::theme;
 
 use engine::core::audio::soundscape::EDGE_FALLOFF;
+use engine::core::math::Rect;
 use engine::core::units::MeterSize;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::PropDef;
 use engine::systems::area::{AreaModule, AreaModuleKind, Pictured};
 use ui::egui::{Color32, Pos2, Rect as ERect, Stroke as EStroke, Vec2};
 
-use super::{AreaFrame, AreaTool, place, selected_parts, shapes};
+use super::{AreaFrame, AreaTool, selected_parts, shapes};
 use crate::app::Editor;
 use crate::forms;
 
@@ -53,6 +54,9 @@ pub(super) fn overlay_navmesh(painter: &egui::Painter, frame: &AreaFrame) {
     let area = frame.area();
     let outline = EStroke::new(1.0, ink::wash(theme::BLOCKED, 0.43));
     for polygon in area.mesh().polygons() {
+        if !canvas.sees(Rect::from_points(polygon.iter().copied())) {
+            continue;
+        }
         painter.add(egui::Shape::closed_line(canvas.closed(polygon), outline));
     }
     for zone in &area.safe_zones {
@@ -87,6 +91,9 @@ pub(super) fn overlay_contours(
             Color32::from_rgba_unmultiplied(255, 255, 255, 70)
         };
         for [from, to] in &contour.segments {
+            if !canvas.sees(Rect::from_points([*from, *to])) {
+                continue;
+            }
             painter.line_segment(
                 [canvas.to_screen(*from), canvas.to_screen(*to)],
                 EStroke::new(1.0, color),
@@ -105,10 +112,10 @@ pub(super) fn overlay_contours(
 /// Every prop the area stands, scattered ones too, as its footprint and the outline the navmesh
 /// keeps clear of it.
 pub(super) fn overlay_footprints(painter: &egui::Painter, frame: &AreaFrame) {
-    let color = ink::wash(module_color(Some(AreaModuleKind::Prop)), 0.6);
+    let color = ink::wash(module_color(AreaModuleKind::Prop), 0.6);
     for prop in &frame.area().props {
         let def = prop.prop.get(&frame.content);
-        place::draw_footprint(
+        shapes::draw_footprint(
             painter,
             &frame.canvas,
             &def.footprint,
@@ -120,18 +127,18 @@ pub(super) fn overlay_footprints(painter: &egui::Painter, frame: &AreaFrame) {
     }
 }
 
-pub(crate) fn module_color(kind: Option<AreaModuleKind>) -> Color32 {
+pub(crate) fn module_color(kind: AreaModuleKind) -> Color32 {
     match kind {
-        Some(AreaModuleKind::Object) => Color32::from_rgb(255, 200, 80),
-        Some(AreaModuleKind::SafeZone) => Color32::from_rgb(90, 160, 255),
-        Some(AreaModuleKind::Soundscape) => Color32::from_rgb(170, 110, 255),
-        Some(AreaModuleKind::Prop) => Color32::from_rgb(140, 220, 140),
-        Some(AreaModuleKind::Scatter) => Color32::from_rgb(110, 190, 110),
-        Some(AreaModuleKind::Light) => Color32::from_rgb(255, 240, 160),
-        Some(AreaModuleKind::Blueprint) => Color32::from_rgb(90, 220, 220),
-        Some(AreaModuleKind::Population) => Color32::from_rgb(255, 120, 120),
-        Some(AreaModuleKind::Resident) => Color32::from_rgb(255, 160, 200),
-        _ => Color32::from_gray(200),
+        AreaModuleKind::Object => Color32::from_rgb(255, 200, 80),
+        AreaModuleKind::SafeZone => Color32::from_rgb(90, 160, 255),
+        AreaModuleKind::Soundscape => Color32::from_rgb(170, 110, 255),
+        AreaModuleKind::Prop => Color32::from_rgb(140, 220, 140),
+        AreaModuleKind::Scatter => Color32::from_rgb(110, 190, 110),
+        AreaModuleKind::Light => Color32::from_rgb(255, 240, 160),
+        AreaModuleKind::Blueprint => Color32::from_rgb(90, 220, 220),
+        AreaModuleKind::Population => Color32::from_rgb(255, 120, 120),
+        AreaModuleKind::Resident => Color32::from_rgb(255, 160, 200),
+        AreaModuleKind::Script => Color32::from_gray(200),
     }
 }
 
@@ -159,7 +166,6 @@ pub(super) fn overlay_modules(
     }
     let view = editor.views.area.view(view_key);
     let editing = view.in_place.first().cloned();
-    let visible = canvas.visible();
     let hovered = match view.tool {
         AreaTool::Select | AreaTool::Module => frame.hit_pointer(),
         _ => None,
@@ -172,7 +178,7 @@ pub(super) fn overlay_modules(
         let Some(bounds) = frame.bounds_of(node) else {
             continue;
         };
-        if !visible.intersects(&bounds) {
+        if !canvas.sees(bounds) {
             continue;
         }
         let kind = module.kind();
@@ -202,7 +208,7 @@ pub(super) fn overlay_modules(
         if kind == AreaModuleKind::Blueprint && !is_selected && !is_hovered {
             continue;
         }
-        let color = module_color(Some(kind));
+        let color = module_color(kind);
         let dim = editing.as_ref().is_some_and(|e| *e != node.pointer);
         let alpha = if dim {
             0.24
@@ -228,7 +234,7 @@ pub(super) fn overlay_modules(
                     .and_then(|path| frame.content.by_path::<PropDef>(path))
                     .map(|id| id.get(&frame.content));
                 match def {
-                    Some(def) => place::draw_footprint(
+                    Some(def) => shapes::draw_footprint(
                         painter,
                         &frame.canvas,
                         &def.footprint,

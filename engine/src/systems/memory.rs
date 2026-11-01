@@ -8,8 +8,11 @@ use crate::core::content::{Content, ContentFile, ContentId, NamedContent, Nearby
 use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault, Value, ValueType,
 };
-use crate::core::time::{GameDay, Seconds, UnixMillis, WallClock};
-use crate::systems::script::{Condition, EffectCall, Reach, RiftScripting, effect as effects};
+use crate::core::time::{GameDay, UnixMillis, WallClock};
+use crate::core::units::Seconds;
+use crate::systems::script::{
+    Condition, EffectCall, EffectReach, RiftScripting, effect as effects,
+};
 
 pub type MemoryId = ContentId<MemoryDef>;
 
@@ -198,8 +201,8 @@ impl EffectDef<RiftScripting> for Remember {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Remembers(self.memory)]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Remembers(self.memory)]
     }
 }
 
@@ -223,10 +226,10 @@ impl EffectDef<RiftScripting> for Forget {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
         self.memories
             .iter()
-            .map(|memory| Reach::Remembers(*memory))
+            .map(|memory| EffectReach::Remembers(*memory))
             .collect()
     }
 }

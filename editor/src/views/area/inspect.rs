@@ -9,11 +9,10 @@ use ui::sheet;
 use ui::theme;
 
 use engine::core::content::{Content, ContentFile, FolderReader, table_of};
-use engine::core::geometry::Degrees;
 use engine::core::ground::GroundSize;
 use engine::core::math::{Pos, Rng};
 use engine::core::script::VariableType;
-use engine::core::units::{MeterSize, Meters};
+use engine::core::units::{Degrees, MeterSize, Meters};
 use engine::systems::area::TerrainDef;
 use engine::systems::area::prop::PropDef;
 use strum::VariantArray;
@@ -37,8 +36,9 @@ use crate::app::Editor;
 use crate::forms::{self, FieldHole, FormAction, FormCx, FormHoles, HoleRequest};
 use crate::keymap::EditorKey;
 use crate::project::{ContentEdit, IdPaths, RowSelection};
-use crate::shell::{row_form, widgets};
+use crate::row_form;
 use crate::tabs::file_title;
+use crate::widgets;
 use crate::{picker, rows, schema};
 
 /// The view's inspector: a paste or a pick under way, the selected nodes, the blueprint parts
@@ -288,8 +288,7 @@ fn folder_card(editor: &mut Editor, ui: &mut Ui, snapshot: &super::AreaSnapshot,
             .size(13.0),
     );
     ui.add_space(4.0);
-    panel::tile(true).show(ui, |ui| {
-        ui.set_width(ui.available_width());
+    panel::card(ui, true, |ui| {
         let state = if flags.hidden.on() { "hidden" } else { "" };
         panel::subtitled(ui, &format!("folder {label}"), state);
         ui.add_space(4.0);
@@ -358,8 +357,7 @@ enum FolderAction {
 }
 
 fn tool_card(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {
-    panel::tile(true).show(ui, |ui| {
-        ui.set_width(ui.available_width());
+    panel::card(ui, true, |ui| {
         ui.horizontal(|ui| {
             ui.label(theme::strong(title).monospace());
         });
@@ -594,8 +592,7 @@ fn show_parts(editor: &mut Editor, ui: &mut Ui, view_key: &str, selection: &RowS
             );
             ui.label(theme::muted(spans(&draft.nodes, &selected, reader.as_ref())).size(12.5));
             ui.add_space(4.0);
-            panel::tile(true).show(ui, |ui| {
-                ui.set_width(ui.available_width());
+            panel::card(ui, true, |ui| {
                 panel::header(ui, &format!("{} modules", selected.len()), "", |ui| {
                     if ui.button("Copy").clicked() {
                         out.actions.push(super::AreaAction::Copy);
@@ -708,8 +705,7 @@ fn module_inspector(
         return false;
     };
     let mut changed = false;
-    panel::tile(true).show(ui, |ui| {
-        ui.set_width(ui.available_width());
+    panel::card(ui, true, |ui| {
         panel::header(ui, &shown_kind, "", |ui| {
             if ui.button("Copy").clicked() {
                 out.actions.push(super::AreaAction::Copy);
@@ -760,10 +756,7 @@ fn module_inspector(
                 && !def.variables.is_empty()
             {
                 sheet::section(ui, &format!("Values · {}", file_title(&placed)));
-                panel::tile(false).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    panel::title(ui, "values");
-                    ui.add_space(4.0);
+                panel::titled_card(ui, false, "values", |ui| {
                     changed |= placement::placement_card(ui, cx, placement, &def, &path);
                 });
             }
@@ -846,7 +839,7 @@ fn module_fields(ui: &mut Ui, cx: &mut FormCx, module: &mut AreaModule, path: &s
 fn object_scripts(ui: &mut Ui, cx: &mut FormCx, object: &mut ObjectDef, node: &str) -> bool {
     let path = format!("{node}{}", field!(ObjectDef, scripts));
     let held = cx.runner.replace(RunnerKind::Object);
-    let changed = crate::shell::row_form::scripts::script_cards(
+    let changed = crate::row_form::scripts::script_cards(
         ui,
         cx,
         AreaDef::TABLE,
@@ -1017,7 +1010,7 @@ fn object_extras(
     out: &mut Followups,
     node: &str,
 ) {
-    let destinations = placement::warp_destinations(object, paths);
+    let destinations = super::warps::warp_destinations(object, paths);
     if destinations.is_empty() {
         return;
     }

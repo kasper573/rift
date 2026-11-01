@@ -11,10 +11,9 @@ use super::clouds::{LOWEST_LIGHT, SHADOW_SPAN};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::geometry::Degrees;
 use crate::core::render::Look;
 use crate::core::render::video::{ShadowQuality, VideoPreferences};
-use crate::core::time::Seconds;
+use crate::core::units::{Degrees, Seconds};
 
 /// How strong the world's lights are, and how soft the sun's shadows.
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]

@@ -5,8 +5,8 @@ use ui::egui::{Color32, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2};
 use ui::face::TextRole;
 use ui::{controls, ink, sheet};
 
-use crate::core::assets::ImageRef;
 use crate::core::content::Content;
+use crate::core::content::ImageRef;
 use crate::core::gui::ImageSource;
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::systems::hud::{self, Carried, HudWindow};

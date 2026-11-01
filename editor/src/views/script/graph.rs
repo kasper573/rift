@@ -23,8 +23,8 @@ use ui::ink;
 use super::ScriptDoc;
 use super::nodes::{self, NodePort, NodeText, SummaryPiece, SummaryTone};
 use crate::keymap::EditorKey;
-use crate::shell::widgets;
 use crate::spans;
+use crate::widgets;
 
 const COLUMN: f32 = 240.0;
 pub(crate) const CARD: f32 = 176.0;

@@ -1,7 +1,6 @@
 use bevy_ecs::prelude::*;
 use engine::core::math::{Offset, Pos};
-use engine::core::time::Seconds;
-use engine::core::units::Meters;
+use engine::core::units::{Meters, Seconds};
 use engine::systems::area::{AreaDef, AreaTag};
 use engine::systems::combat::{self, AttackRequest, Attitude};
 use engine::systems::item::{self, DroppedItem, Inventory, ItemDef, PickupRequest, Reservation};

@@ -8,7 +8,7 @@ use bevy::animation::transition::AnimationTransitions;
 use bevy::prelude::*;
 
 use super::body::{Body, RigReady};
-use crate::core::time::Seconds;
+use crate::core::units::Seconds;
 
 /// The clip a body stands in, and the moment of it the body is held at when it is not left to loop.
 #[derive(Component, Clone, Debug)]

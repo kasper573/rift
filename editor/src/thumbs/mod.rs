@@ -8,7 +8,7 @@ use bevy::asset::RenderAssetUsages;
 use bevy::prelude::*;
 use bevy::render::gpu_readback::ReadbackComplete;
 
-use engine::core::assets::ImageRef;
+use engine::core::content::ImageRef;
 use engine::core::gui::{GuiImage, ImageSource};
 use engine::core::render::SurfaceFinish;
 use engine::core::render::world::paint::{Paint, bake};

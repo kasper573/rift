@@ -91,7 +91,7 @@ fn joint_rows(editor: &mut Editor, row: &ModelPartDef, mesh: &str) -> Option<Vec
         .clone()?;
     let info = {
         let Editor { project, views, .. } = &mut *editor;
-        views.skeleton.gltfs.info(&project.as_ref()?.files, mesh)?
+        views.gltfs.info(&project.as_ref()?.files, mesh)?
     };
     let fit = fit_skin(&rig, &info);
     let rig_name = format!("the rig of {}", name_of(&skeleton_path));

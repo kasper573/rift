@@ -8,33 +8,29 @@ use ui::words;
 use engine::core::content::{
     Content, ContentFile, ContentScope, FolderReader, name_of, rescoped, table_of,
 };
-use engine::core::geometry::Degrees;
 use engine::core::math::{Pos, Rect};
 use engine::core::script::VariableType;
-use engine::core::units::{MeterPos, Meters};
+use engine::core::units::{Degrees, Meters};
 use engine::systems::area::blueprint::{
     self, BlueprintDef, BlueprintId, Flattened, PlacedBlueprint, Placement,
 };
-use engine::systems::area::object::{ObjectDef, ObjectShape};
 use engine::systems::area::scene::{ModuleNode, SceneFolder, SceneNode};
 use engine::systems::area::{self, AreaDef, AreaId, AreaModule};
-use engine::systems::movement;
-use engine::systems::script::{Place, VarValue, Variable, condition};
+use engine::systems::script::{VarValue, Variable, condition};
 use serde_json::Value;
 use ui::controls;
 use ui::egui::{RichText, Stroke as EStroke, Ui, Vec2};
 use ui::glyph::{self, Mark};
 
 use super::inspect::Followups;
-use super::stamp::object_names;
 use super::{AreaFrame, AreaSnapshot, nodes, shapes};
 use crate::app::Editor;
 use crate::forms::{self, FormCx};
 use crate::keymap::EditorKey;
 use crate::modal::{ModalDialog, PickRowDialog, PickRowThen};
-use crate::project::{IdPaths, Project, RowSelection};
+use crate::project::{Project, RowSelection};
+use crate::schema;
 use crate::tabs::file_title;
-use crate::{rows, schema};
 
 /// What each placement of a scene covers on the map, by its node's pointer: the modules it brings,
 /// placed.
@@ -216,35 +212,6 @@ pub(super) fn short_value(value: &VarValue, project: &Project) -> String {
         format!("{}…", text.chars().take(40).collect::<String>())
     } else {
         text
-    }
-}
-
-/// Every place the object's scripts lead to, by the path of its area and its ground.
-pub(crate) fn warp_destinations(
-    object: &ObjectDef,
-    paths: &impl IdPaths,
-) -> Vec<(String, Pos<Meters>)> {
-    object
-        .scripts
-        .iter()
-        .flat_map(|script| script.values.values())
-        .filter_map(|value| match value {
-            VarValue::Place(place) => Some((paths.path_of(place.area)?.to_owned(), place.at)),
-            _ => None,
-        })
-        .collect()
-}
-
-/// Points every place the object's scripts name at `to`, so a copy of a warp leads there instead.
-fn redirect_places(object: &mut ObjectDef, to: Place) {
-    for value in object
-        .scripts
-        .iter_mut()
-        .flat_map(|script| script.values.values_mut())
-    {
-        if let VarValue::Place(place) = value {
-            *place = to;
-        }
     }
 }
 
@@ -557,7 +524,7 @@ pub(crate) fn overlay_in_place(
             continue;
         };
         let is_selected = selected.contains(&part.part);
-        let color = super::overlays::module_color(Some(part.module.kind()));
+        let color = super::overlays::module_color(part.module.kind());
         let width = if is_selected { 2.0 } else { 1.0 };
         painter.add(egui::Shape::closed_line(
             canvas.outline(bounds),
@@ -821,89 +788,4 @@ fn chain_to(
             chain.insert(0, from.to_owned());
             Some(chain)
         })
-}
-
-/// Adds an object to the area the warp object at `node` leads to, on the nearest walkable cell
-/// beside its arrival, with the object's scripts pointed back here, so the player can come back.
-pub(crate) fn return_door(editor: &mut Editor, frame: &AreaSnapshot, node: &str) {
-    let area_key = &frame.bundle;
-    let Some(AreaModule::Object(object)) = frame.module(node) else {
-        return;
-    };
-    let Some((target_area, target_at)) = warp_destinations(object, frame.reader.as_ref())
-        .into_iter()
-        .next()
-    else {
-        editor.toast("The object has no warp to return from");
-        return;
-    };
-    let Some(content) = editor.project.as_ref().and_then(|p| p.content.clone()) else {
-        return;
-    };
-    let Some(here_id) = content.by_path::<AreaDef>(area_key) else {
-        return;
-    };
-    let Some(there_id) = content.by_path::<AreaDef>(&target_area) else {
-        return;
-    };
-    let here = area::load(&content, here_id);
-    let there = area::load(&content, there_id);
-    let door_bounds = object.shape.bounds();
-    let back_to = here
-        .mesh()
-        .nearest_where(door_bounds.center(), movement::SPACING, |at| {
-            !door_bounds.contains(at)
-        });
-    let Some(back_to) = back_to else {
-        editor.toast("No walkable cell outside the door to come back to");
-        return;
-    };
-    let Some(beside_arrival) = there
-        .mesh()
-        .nearest_where(target_at, movement::SPACING, |at| {
-            at.distance(target_at) >= movement::SPACING
-        })
-    else {
-        editor.toast("The destination has no walkable cell beside the arrival for a door back");
-        return;
-    };
-    let mut names = object_names(area::placed(&content, there_id));
-    let Some(here_in_files) = frame.reader.id_of::<AreaDef>(area_key) else {
-        return;
-    };
-    let name = rows::free_name(
-        &format!("{}_back", object.name.as_deref().unwrap_or("door")),
-        &names,
-    );
-    names.insert(name.clone());
-    let mut door = ObjectDef {
-        name: Some(name),
-        title: None,
-        shape: ObjectShape::Point(beside_arrival),
-        look: None,
-        shown: None,
-        scripts: object.scripts.clone(),
-    };
-    redirect_places(
-        &mut door,
-        Place {
-            area: here_in_files,
-            at: back_to,
-        },
-    );
-    let door = SceneNode::Module(ModuleNode::new(AreaModule::Object(door)));
-    let applied = nodes::change_scene(editor, &target_area, |scene| {
-        nodes::SceneTree::new(scene).append("", vec![door]);
-        Some(format!(
-            "Return door from {} to {}",
-            file_title(&target_area),
-            file_title(area_key)
-        ))
-    });
-    if applied {
-        editor.toast(format!(
-            "Added a door back in {target_area} at {:.1}, {:.1}",
-            beside_arrival.x, beside_arrival.y
-        ));
-    }
 }

@@ -28,9 +28,8 @@ use crate::forms::{self, FormCx, FormState};
 use crate::icons::{self, IconTone};
 use crate::keymap::EditorKey;
 use crate::project::{ContentEdit, RowSelection};
+use crate::row_form::tune::{self, SfxTuneField, sfx_tune_field};
 use crate::schema::{self, SchemaKind};
-use crate::shell;
-use crate::shell::row_form::tune::{self, SfxTuneField, sfx_tune_field};
 use crate::tabs::shown_path;
 use crate::tabs::{EditorTab, file_title};
 use crate::user::SpreadsheetView;
@@ -744,7 +743,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, table: &str) {
         }
     });
     egui::Frame::new()
-        .inner_margin(shell::CONTENT_PADDING)
+        .inner_margin(crate::widgets::CONTENT_PADDING)
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
             sheet(editor, ui, table);
@@ -1204,7 +1203,7 @@ fn table_body(
             .find(|row| row.key == hit.key)
             .map_or(hit.key.clone(), |row| row.file.clone());
         if !editable {
-            shell::content_tree::reveal(editor, &file);
+            crate::content_tree::reveal(editor, &file);
         }
         editor.select(RowSelection {
             table: table.to_owned(),
@@ -1350,7 +1349,7 @@ fn edit_cell(
         .inner;
     if !actions.is_empty() {
         for action in actions {
-            crate::shell::row_form::act(editor, action, table, &row.key);
+            crate::row_form::act(editor, action, table, &row.key);
         }
         return CellEdit::Done;
     }

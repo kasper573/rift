@@ -4,7 +4,7 @@ use bevy_ecs::entity::Entity;
 use engine::core::math::{Offset, Pos};
 use engine::core::units::{MeterPos, Meters};
 use engine::systems::actor::{Action, Actor};
-use engine::systems::movement::{self, AGENT_RADIUS, HeardMove, MoveRequest, MoveSeq, position};
+use engine::systems::movement::{self, Bodies, HeardMove, MoveRequest, MoveSeq, position};
 use engine::systems::player::CommandLock;
 use serde_json::{Value, json};
 use strum::VariantArray;
@@ -162,7 +162,8 @@ fn a_walk_over_open_ground_keeps_to_the_straight_line() {
 /// wherever the rock lies, even straddling a seam of the ground unevenly.
 #[test]
 fn a_wide_ground_walks_as_one_wherever_a_boulder_or_a_rock_stands() {
-    const GIVE: f32 = AGENT_RADIUS.0 / 10.0;
+    let radius = radius();
+    let give = radius / 10.0;
     let wide = || Map::open(500, 250);
     for end in [Offset::new(480.0, 0.0), Offset::new(480.0, 230.0)] {
         let open = Walk::on(
@@ -205,7 +206,7 @@ fn a_wide_ground_walks_as_one_wherever_a_boulder_or_a_rock_stands() {
         .min_by(|a, b| a.0.total_cmp(&b.0))
         .expect("a trail");
     assert!(
-        closest >= Meters(1.0 + AGENT_RADIUS.0 - GIVE),
+        closest >= Meters(1.0 + radius - give),
         "came within {closest:?} of a boulder's middle"
     );
 
@@ -232,7 +233,7 @@ fn a_wide_ground_walks_as_one_wherever_a_boulder_or_a_rock_stands() {
     assert_arrives(&past_the_rock, end, "round the rock");
     for at in &past_the_rock {
         assert!(
-            at.y >= -GIVE && at.y <= 10.0 + AGENT_RADIUS.0 + GIVE,
+            at.y >= -give && at.y <= 10.0 + radius + give,
             "{at:?} goes round the rock the long way"
         );
     }
@@ -242,7 +243,8 @@ fn a_wide_ground_walks_as_one_wherever_a_boulder_or_a_rock_stands() {
 /// notch the body fits with that much to spare.
 #[test]
 fn a_walk_goes_round_what_blocks_and_through_a_notch_a_body_fits() {
-    const GIVE: f32 = AGENT_RADIUS.0 / 10.0;
+    let radius = radius();
+    let give = radius / 10.0;
     let boulder = Walk::among(
         json!({ "type": "circle", "radius": 1.0 }),
         json!([{ "type": "prop", "prop": path("prop", "block"), "at": { "x": 7.0, "y": 7.0 } }]),
@@ -255,12 +257,12 @@ fn a_walk_goes_round_what_blocks_and_through_a_notch_a_body_fits() {
     for at in &boulder {
         let gap = (Pos::new(2.0, 7.0) + *at).distance(center);
         assert!(
-            gap >= Meters(1.0 + AGENT_RADIUS.0 - GIVE),
+            gap >= Meters(1.0 + radius - give),
             "{at:?} is {gap:?} from the boulder's middle"
         );
     }
 
-    let edge = Offset::new(5.0 - 1.0 - AGENT_RADIUS.0 + GIVE, 0.0);
+    let edge = Offset::new(5.0 - 1.0 - radius + give, 0.0);
     let hair_off = Walk::among(
         json!({ "type": "circle", "radius": 1.0 }),
         json!([{ "type": "prop", "prop": path("prop", "block"), "at": { "x": 7.0, "y": 7.0 } }]),
@@ -290,10 +292,10 @@ fn a_walk_goes_round_what_blocks_and_through_a_notch_a_body_fits() {
             .iter()
             .any(|at| at.x + 7.0 <= 1.0 || at.x + 7.0 >= 13.0)
     };
-    let through = wall(2.0 * AGENT_RADIUS.0 + 0.3);
+    let through = wall(2.0 * radius + 0.3);
     assert_arrives(&through, Offset::new(0.0, 8.0), "through the notch");
     assert!(!round_the_end(&through), "went round the wall's end");
-    let around = wall(2.0 * AGENT_RADIUS.0 - 0.1);
+    let around = wall(2.0 * radius - 0.1);
     assert_arrives(&around, Offset::new(0.0, 8.0), "round the wall");
     assert!(
         round_the_end(&around),
@@ -549,4 +551,15 @@ fn waypoints(end: Offset<Meters>) -> Vec<Offset<Meters>> {
         .collect();
     points.push(end);
     points
+}
+
+/// The radius of the test game's bodies, as its player's model is.
+fn radius() -> f32 {
+    let game = Game::new()
+        .area("field", &Map::open(4, 4), json!([]))
+        .hero("field", 1.0, 1.0);
+    Bodies::of(&game.load())
+        .expect("the test game knows its bodies")
+        .radius
+        .0
 }

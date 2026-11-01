@@ -1,5 +1,5 @@
 use engine::core::content::{Content, LoadReport, write};
-use engine::core::ground::{self as ground, GroundSize, Heightfield, MIN_SIDE, Paint, TileAt};
+use engine::core::ground::{self as ground, GroundSize, Heightfield, MIN_SIDE, PaintMap, TileAt};
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::units::{GROUND_ORIGIN, Meters};
 use engine::core::vfx::shader::Stage;
@@ -227,7 +227,7 @@ fn an_areas_heights_and_paint_write_back_as_they_were_read() {
         width: 8,
         height: 8,
     };
-    let paint = Paint::from_fn(size, |column, row| u8::from(column < 4 && row < 4));
+    let paint = PaintMap::from_fn(size, |column, row| u8::from(column < 4 && row < 4));
     let game = game()
         .area("hill", &Map::open(8, 8), json!([]))
         .part("area", "hill", "height/0_0.png", tile(&hill()))
@@ -287,7 +287,7 @@ fn an_areas_heights_and_paint_write_back_as_they_were_read() {
             ridge.set_sample(column, row, Meters((column % 7) as f32 * 0.25));
         }
     }
-    let striped = Paint::from_fn(wide, |column, _| (column / 100 % 2) as u8);
+    let striped = PaintMap::from_fn(wide, |column, _| (column / 100 % 2) as u8);
     let ridge_game = wide.each_tile().fold(
         crate::support::game()
             .area("ridge", &Map::open(300, 20), json!([]))
@@ -328,7 +328,7 @@ fn an_areas_heights_and_paint_write_back_as_they_were_read() {
     assert_eq!(read.heights.height_at(seam), ridge.height_at(seam));
 }
 
-fn tile_paint(paint: &Paint) -> Vec<u8> {
+fn tile_paint(paint: &PaintMap) -> Vec<u8> {
     paint
         .encode_tile(TileAt { column: 0, row: 0 })
         .expect("paint that isn't plain")
@@ -339,7 +339,7 @@ fn overview(heights: &Heightfield) -> Vec<u8> {
     heights.encode_overview().expect("heights that aren't flat")
 }
 
-fn overview_paint(paint: &Paint) -> Vec<u8> {
+fn overview_paint(paint: &PaintMap) -> Vec<u8> {
     paint.encode_overview().expect("paint that isn't plain")
 }
 

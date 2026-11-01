@@ -29,12 +29,12 @@ use crate::project::files::{FolderIndex, content_holding, folder_entry};
 use crate::project::{ContentEdit, FileBytes, Project, ProjectFiles};
 use crate::scene_graph;
 use crate::schema::{self, SchemaShapes};
-use crate::shell::widgets;
 use crate::tabs::shown_path;
 use crate::tabs::{EditorTab, file_title};
 use crate::usages::ContentUsage;
 use crate::views::area::{self as area, placement};
 use crate::views::script::nodes as script_nodes;
+use crate::widgets;
 
 /// What deleted files leave behind: the uses of one kind of a deleted file, and what becomes of
 /// them.
@@ -928,8 +928,7 @@ pub(crate) fn delete_body(editor: &mut Editor, ui: &mut Ui, dialog: &mut DeleteD
         .show(ui, |ui| {
             for (index, group) in dialog.groups.iter_mut().enumerate() {
                 let title = group_title(project, group);
-                panel::tile(false).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
+                panel::card(ui, false, |ui| {
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let candidates = candidates(&group.target);

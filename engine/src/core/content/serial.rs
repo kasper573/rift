@@ -126,10 +126,6 @@ pub fn is_false(flag: &bool) -> bool {
     !*flag
 }
 
-pub fn is_empty<T>(list: &[T]) -> bool {
-    list.is_empty()
-}
-
 pub fn one_f32() -> f32 {
     1.0
 }

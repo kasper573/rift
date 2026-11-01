@@ -1,16 +1,16 @@
-use engine::core::assets::FileSize;
+use engine::core::content::FileSize;
 use engine::core::content::media::GltfInfos;
 use engine::systems::area::prop::{
     Footprint, MAX_PROP_BYTES, MAX_PROP_MATERIALS, MAX_PROP_TRIANGLES, PropDef,
 };
-use engine::systems::movement::AGENT_RADIUS;
+use engine::systems::movement::Bodies;
 use ui::egui::{self, Ui, Vec2};
 use ui::{form, panel, theme};
 
 use super::footprint::FootprintKind;
 use crate::app::Editor;
+use crate::row_form::usages;
 use crate::rows;
-use crate::shell::row_form::usages;
 use crate::thumbs;
 
 pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef) {
@@ -42,8 +42,7 @@ fn model_card(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef) {
         .and_then(|project| project.files.get(&path))
         .map(|bytes| FileSize(bytes.len()));
     let flat_shaded = super::geometry(editor, key).map(|geometry| geometry.flat_shaded);
-    panel::tile(false).show(ui, |ui| {
-        ui.set_width(ui.available_width());
+    panel::card(ui, false, |ui| {
         panel::header(ui, "Model", "", |ui| {
             if ui.button("Replace model…").clicked() {
                 browse(editor, key);
@@ -118,9 +117,12 @@ fn footprint_card(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef) {
         .as_ref()
         .and_then(|project| project.files.hash_of(&row.model.path()))
         .map(str::to_owned);
+    let bodies = editor
+        .project
+        .as_ref()
+        .and_then(|project| Bodies::of(project.content.as_ref()?));
     let mut refit = false;
-    panel::tile(false).show(ui, |ui| {
-        ui.set_width(ui.available_width());
+    panel::card(ui, false, |ui| {
         panel::subtitled(ui, "Footprint", FootprintKind::of(&row.footprint).label());
         ui.add_space(4.0);
         if let Footprint::Polygon { points, fitted_to } = &row.footprint {
@@ -138,13 +140,15 @@ fn footprint_card(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef) {
                 }
             });
         }
-        form::hint(
-            ui,
-            &format!(
-                "Walkers keep {} m off the footprint, the dashed line round it.",
-                AGENT_RADIUS.0
-            ),
-        );
+        if let Some(bodies) = bodies {
+            form::hint(
+                ui,
+                &format!(
+                    "Walkers keep {} m off the footprint, the dashed line round it.",
+                    bodies.radius.0
+                ),
+            );
+        }
     });
     if refit {
         super::fit_to_mesh(editor, key);

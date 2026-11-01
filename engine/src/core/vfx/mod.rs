@@ -18,16 +18,16 @@ use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::assets::ImageRef;
+use crate::core::content::ImageRef;
 use crate::core::content::media::ImageSizes;
 use crate::core::content::{
     Content, ContentFile, ContentId, ContentRegistry, LoadStep, Loading, NamedContent, Nearby,
     RowCheck, serial,
 };
-use crate::core::geometry::{PlacedShape, Radians};
+use crate::core::geometry::PlacedShape;
 use crate::core::math::{FrameSize, Pos, Rgba};
-use crate::core::time::{Hertz, Seconds, UnixMillis};
-use crate::core::units::Meters;
+use crate::core::time::UnixMillis;
+use crate::core::units::{Hertz, Meters, Radians, Seconds};
 
 pub type VfxId = ContentId<VfxDef>;
 

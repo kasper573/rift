@@ -6,6 +6,8 @@ use bevy::image::{Image, ImageLoaderSettings};
 use bevy::reflect::TypePath;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
+use crate::core::content::AssetKind;
+
 /// Reads a PNG as an image of RGBA bytes, in sRGB unless its settings ask for linear light.
 #[derive(TypePath)]
 pub struct PngLoader;
@@ -67,6 +69,6 @@ impl AssetLoader for PngLoader {
     }
 
     fn extensions(&self) -> &[&str] {
-        &["png"]
+        AssetKind::Image.extensions()
     }
 }

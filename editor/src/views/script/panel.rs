@@ -11,8 +11,8 @@ use engine::core::script::{Expr, MayDo};
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::{self, AreaDef, AreaModule};
 use engine::systems::script::{
-    Node, OwnerRow, Place, Reach, RiftEffect, RiftScripting, RiftScripts, RunnerKind, ScriptDef,
-    VarValue,
+    EffectReach, Node, OwnerRow, Place, RiftEffect, RiftScripting, RiftScripts, RunnerKind,
+    ScriptDef, VarValue,
 };
 use engine::systems::stat::StatKind;
 use ui::egui::{RichText, Ui};
@@ -339,7 +339,7 @@ fn may_do_rows(content: &Content, doc: &ScriptDoc, may: &MayDo<RiftScripting>) -
         .reaches
         .iter()
         .filter_map(|r| match r {
-            Reach::OpensShop(shop) => Some(shown_path(shop.path(content)).to_owned()),
+            EffectReach::OpensShop(shop) => Some(shown_path(shop.path(content)).to_owned()),
             _ => None,
         })
         .collect();
@@ -365,7 +365,7 @@ fn may_do_rows(content: &Content, doc: &ScriptDoc, may: &MayDo<RiftScripting>) -
         .reaches
         .iter()
         .filter_map(|r| match r {
-            Reach::Warp(place) => Some(format!(
+            EffectReach::Warp(place) => Some(format!(
                 "the subject to area/{} · {} · sets its spawn point there",
                 place.area.path(content),
                 place_coords(place)
@@ -375,11 +375,11 @@ fn may_do_rows(content: &Content, doc: &ScriptDoc, may: &MayDo<RiftScripting>) -
         .collect();
     rows.push(MayRow::maybe("warps", &warps, "nowhere", " · "));
     let takes = unique(may.reaches.iter().filter_map(|r| match r {
-        Reach::Takes(item) => Some(stack_text(doc, Hands::Take, item.path(content))),
+        EffectReach::Takes(item) => Some(stack_text(doc, Hands::Take, item.path(content))),
         _ => None,
     }));
     let gives = unique(may.reaches.iter().filter_map(|r| match r {
-        Reach::Gives(item) => Some(stack_text(doc, Hands::Give, item.path(content))),
+        EffectReach::Gives(item) => Some(stack_text(doc, Hands::Give, item.path(content))),
         _ => None,
     }));
     if !takes.is_empty() || !gives.is_empty() {
@@ -403,7 +403,7 @@ fn may_do_rows(content: &Content, doc: &ScriptDoc, may: &MayDo<RiftScripting>) -
         });
     }
     let drops = unique(may.reaches.iter().filter_map(|r| match r {
-        Reach::Drops(item) => Some(item.path(content).to_owned()),
+        EffectReach::Drops(item) => Some(item.path(content).to_owned()),
         _ => None,
     }));
     if !drops.is_empty() {
@@ -413,7 +413,7 @@ fn may_do_rows(content: &Content, doc: &ScriptDoc, may: &MayDo<RiftScripting>) -
         ));
     }
     let memories = unique(may.reaches.iter().filter_map(|r| match r {
-        Reach::Remembers(memory) => Some(memory.path(content).to_owned()),
+        EffectReach::Remembers(memory) => Some(memory.path(content).to_owned()),
         _ => None,
     }));
     if !memories.is_empty() {
@@ -423,7 +423,7 @@ fn may_do_rows(content: &Content, doc: &ScriptDoc, may: &MayDo<RiftScripting>) -
         ));
     }
     let notices = unique(may.reaches.iter().filter_map(|r| match r {
-        Reach::Notifies(n) => Some(shown_path(n.path(content)).to_owned()),
+        EffectReach::Notifies(n) => Some(shown_path(n.path(content)).to_owned()),
         _ => None,
     }));
     if !notices.is_empty() {
@@ -432,12 +432,12 @@ fn may_do_rows(content: &Content, doc: &ScriptDoc, may: &MayDo<RiftScripting>) -
     let mut quests: Vec<(String, Vec<&str>)> = Vec::new();
     for reach in &may.reaches {
         let (verb, quest) = match reach {
-            Reach::Offers(q) => ("offers", q),
-            Reach::Accepts(q) => ("accepts", q),
-            Reach::TurnsIn(q) => ("turns in", q),
-            Reach::Fails(q) => ("fails", q),
-            Reach::Completes(q) => ("completes a task of", q),
-            Reach::Decides(q) => ("decides a path of", q),
+            EffectReach::Offers(q) => ("offers", q),
+            EffectReach::Accepts(q) => ("accepts", q),
+            EffectReach::TurnsIn(q) => ("turns in", q),
+            EffectReach::Fails(q) => ("fails", q),
+            EffectReach::Completes(q) => ("completes a task of", q),
+            EffectReach::Decides(q) => ("decides a path of", q),
             _ => continue,
         };
         let key = quest.path(content).to_owned();
@@ -466,29 +466,31 @@ fn may_do_rows(content: &Content, doc: &ScriptDoc, may: &MayDo<RiftScripting>) -
         rows.push(MayRow::present("quests", text));
     }
     let npcs = unique(may.reaches.iter().filter_map(|reach| match reach {
-        Reach::Spawns(npc) => Some(format!("spawns {}", shown_path(npc.path(content)))),
-        Reach::Hostile => Some("may turn hostile".to_owned()),
-        Reach::Friendly => Some("may turn friendly".to_owned()),
-        Reach::Despawns => Some("despawns".to_owned()),
-        Reach::Walks => Some("walks".to_owned()),
-        Reach::Targets | Reach::Damages => Some("attacks".to_owned()),
+        EffectReach::Spawns(npc) => Some(format!("spawns {}", shown_path(npc.path(content)))),
+        EffectReach::Hostile => Some("may turn hostile".to_owned()),
+        EffectReach::Friendly => Some("may turn friendly".to_owned()),
+        EffectReach::Despawns => Some("despawns".to_owned()),
+        EffectReach::Walks => Some("walks".to_owned()),
+        EffectReach::Targets | EffectReach::Damages => Some("attacks".to_owned()),
         _ => None,
     }));
     if !npcs.is_empty() {
         rows.push(MayRow::present("npcs", npcs.join(" · ")));
     }
     let stats = unique(may.reaches.iter().filter_map(|reach| match reach {
-        Reach::Heals => Some("heals".to_owned()),
-        Reach::Applies(effect) => Some(format!("applies {}", shown_path(effect.path(content)))),
-        Reach::Cleanses => Some("removes statuses".to_owned()),
-        Reach::Boosts(stat, _) => Some(format!("boosts {}", stat_name(*stat))),
-        Reach::GrantsXp => Some("grants xp".to_owned()),
-        Reach::Casts(skill) => Some(format!("casts {}", shown_path(skill.path(content)))),
-        Reach::ResetsSkills => Some("resets skills".to_owned()),
-        Reach::Animates => Some("plays an action".to_owned()),
-        Reach::ShowsVfx => Some("shows vfx".to_owned()),
-        Reach::Plays(sfx) => Some(format!("plays {}", shown_path(sfx.path(content)))),
-        Reach::Says => Some("says a chat line".to_owned()),
+        EffectReach::Heals => Some("heals".to_owned()),
+        EffectReach::Applies(effect) => {
+            Some(format!("applies {}", shown_path(effect.path(content))))
+        }
+        EffectReach::Cleanses => Some("removes statuses".to_owned()),
+        EffectReach::Boosts(stat, _) => Some(format!("boosts {}", stat_name(*stat))),
+        EffectReach::GrantsXp => Some("grants xp".to_owned()),
+        EffectReach::Casts(skill) => Some(format!("casts {}", shown_path(skill.path(content)))),
+        EffectReach::ResetsSkills => Some("resets skills".to_owned()),
+        EffectReach::Animates => Some("plays an action".to_owned()),
+        EffectReach::ShowsVfx => Some("shows vfx".to_owned()),
+        EffectReach::Plays(sfx) => Some(format!("plays {}", shown_path(sfx.path(content)))),
+        EffectReach::Says => Some("says a chat line".to_owned()),
         _ => None,
     }));
     if !stats.is_empty() {
@@ -504,7 +506,7 @@ fn may_do_rows(content: &Content, doc: &ScriptDoc, may: &MayDo<RiftScripting>) -
     if may
         .reaches
         .iter()
-        .any(|r| matches!(r, Reach::TurnsIn(_) | Reach::Offers(_)))
+        .any(|r| matches!(r, EffectReach::TurnsIn(_) | EffectReach::Offers(_)))
     {
         waits.push("the quest card".to_owned());
     }
@@ -572,7 +574,7 @@ fn stack_text(doc: &ScriptDoc, hands: Hands, item: &str) -> String {
 fn read_by_rows(content: &Content, may: &MayDo<RiftScripting>) -> Vec<(String, String)> {
     let mut rows = Vec::new();
     let warp = may.reaches.iter().find_map(|r| match r {
-        Reach::Warp(place) => Some(place),
+        EffectReach::Warp(place) => Some(place),
         _ => None,
     });
     if let Some(place) = warp {
@@ -588,7 +590,7 @@ fn read_by_rows(content: &Content, may: &MayDo<RiftScripting>) -> Vec<(String, S
         ));
     }
     let quests = unique(may.reaches.iter().filter_map(|r| match r {
-        Reach::Offers(q) | Reach::Accepts(q) | Reach::TurnsIn(q) => {
+        EffectReach::Offers(q) | EffectReach::Accepts(q) | EffectReach::TurnsIn(q) => {
             Some(q.path(content).to_owned())
         }
         _ => None,
@@ -604,7 +606,9 @@ fn read_by_rows(content: &Content, may: &MayDo<RiftScripting>) -> Vec<(String, S
         ));
     }
     let items = unique(may.reaches.iter().filter_map(|r| match r {
-        Reach::Takes(i) | Reach::Gives(i) | Reach::Drops(i) => Some(i.path(content).to_owned()),
+        EffectReach::Takes(i) | EffectReach::Gives(i) | EffectReach::Drops(i) => {
+            Some(i.path(content).to_owned())
+        }
         _ => None,
     }));
     if !items.is_empty() {
@@ -616,48 +620,52 @@ fn read_by_rows(content: &Content, may: &MayDo<RiftScripting>) -> Vec<(String, S
     rows
 }
 
-pub(crate) fn describe_reach(content: &Content, reach: &Reach) -> String {
+pub(crate) fn describe_reach(content: &Content, reach: &EffectReach) -> String {
     match reach {
-        Reach::Warp(place) => format!(
+        EffectReach::Warp(place) => format!(
             "warps to {} {}",
             place.area.path(content),
             place_coords(place)
         ),
-        Reach::Takes(item) => format!("takes {}", shown_path(item.path(content))),
-        Reach::Gives(item) => format!("gives {}", shown_path(item.path(content))),
-        Reach::Drops(item) => format!("drops {}", shown_path(item.path(content))),
-        Reach::Offers(quest) => format!("offers quest {}", shown_path(quest.path(content))),
-        Reach::Accepts(quest) => format!("accepts quest {}", shown_path(quest.path(content))),
-        Reach::TurnsIn(quest) => format!("turns in quest {}", shown_path(quest.path(content))),
-        Reach::Fails(quest) => format!("fails quest {}", shown_path(quest.path(content))),
-        Reach::Completes(quest) => {
+        EffectReach::Takes(item) => format!("takes {}", shown_path(item.path(content))),
+        EffectReach::Gives(item) => format!("gives {}", shown_path(item.path(content))),
+        EffectReach::Drops(item) => format!("drops {}", shown_path(item.path(content))),
+        EffectReach::Offers(quest) => format!("offers quest {}", shown_path(quest.path(content))),
+        EffectReach::Accepts(quest) => format!("accepts quest {}", shown_path(quest.path(content))),
+        EffectReach::TurnsIn(quest) => {
+            format!("turns in quest {}", shown_path(quest.path(content)))
+        }
+        EffectReach::Fails(quest) => format!("fails quest {}", shown_path(quest.path(content))),
+        EffectReach::Completes(quest) => {
             format!("completes a task of {}", shown_path(quest.path(content)))
         }
-        Reach::Decides(quest) => format!("decides a path of {}", shown_path(quest.path(content))),
-        Reach::Remembers(memory) => format!("remembers {}", shown_path(memory.path(content))),
-        Reach::OpensShop(shop) => format!("opens shop {}", shown_path(shop.path(content))),
-        Reach::Spawns(npc) => format!("spawns {}", shown_path(npc.path(content))),
-        Reach::Hostile => "may turn hostile".to_owned(),
-        Reach::Friendly => "may turn friendly".to_owned(),
-        Reach::Despawns => "despawns".to_owned(),
-        Reach::Targets => "targets actors".to_owned(),
-        Reach::Walks => "walks".to_owned(),
-        Reach::Damages => "damages".to_owned(),
-        Reach::Heals => "heals".to_owned(),
-        Reach::Applies(effect) => format!("applies {}", shown_path(effect.path(content))),
-        Reach::Cleanses => "removes statuses".to_owned(),
-        Reach::Boosts(stat, _) => format!("boosts {}", stat_name(*stat)),
-        Reach::GrantsXp => "grants xp".to_owned(),
-        Reach::Casts(skill) => format!("casts {}", shown_path(skill.path(content))),
-        Reach::ResetsSkills => "resets skills".to_owned(),
-        Reach::Animates => "plays an action".to_owned(),
-        Reach::ShowsVfx => "shows vfx".to_owned(),
-        Reach::Notifies(notification) => {
+        EffectReach::Decides(quest) => {
+            format!("decides a path of {}", shown_path(quest.path(content)))
+        }
+        EffectReach::Remembers(memory) => format!("remembers {}", shown_path(memory.path(content))),
+        EffectReach::OpensShop(shop) => format!("opens shop {}", shown_path(shop.path(content))),
+        EffectReach::Spawns(npc) => format!("spawns {}", shown_path(npc.path(content))),
+        EffectReach::Hostile => "may turn hostile".to_owned(),
+        EffectReach::Friendly => "may turn friendly".to_owned(),
+        EffectReach::Despawns => "despawns".to_owned(),
+        EffectReach::Targets => "targets actors".to_owned(),
+        EffectReach::Walks => "walks".to_owned(),
+        EffectReach::Damages => "damages".to_owned(),
+        EffectReach::Heals => "heals".to_owned(),
+        EffectReach::Applies(effect) => format!("applies {}", shown_path(effect.path(content))),
+        EffectReach::Cleanses => "removes statuses".to_owned(),
+        EffectReach::Boosts(stat, _) => format!("boosts {}", stat_name(*stat)),
+        EffectReach::GrantsXp => "grants xp".to_owned(),
+        EffectReach::Casts(skill) => format!("casts {}", shown_path(skill.path(content))),
+        EffectReach::ResetsSkills => "resets skills".to_owned(),
+        EffectReach::Animates => "plays an action".to_owned(),
+        EffectReach::ShowsVfx => "shows vfx".to_owned(),
+        EffectReach::Notifies(notification) => {
             format!("notifies {}", shown_path(notification.path(content)))
         }
-        Reach::Says => "says".to_owned(),
-        Reach::Plays(sfx) => format!("plays {}", shown_path(sfx.path(content))),
-        Reach::Speaks(npc) => format!("speaks as {}", shown_path(npc.path(content))),
+        EffectReach::Says => "says".to_owned(),
+        EffectReach::Plays(sfx) => format!("plays {}", shown_path(sfx.path(content))),
+        EffectReach::Speaks(npc) => format!("speaks as {}", shown_path(npc.path(content))),
     }
 }
 

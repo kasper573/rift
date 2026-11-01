@@ -17,7 +17,7 @@ use crate::systems::staging::Staging;
 pub const BUILD_INFO_FLAG: &str = "--build-info";
 pub const SERVER_ENV_PREFIX: &str = "RIFT_GAME_SERVER_";
 pub const CLIENT_ENV_PREFIX: &str = "RIFT_CLIENT_";
-pub const SETTINGS_FILE: &str = "rift.env";
+pub const LAUNCH_FILE: &str = "rift.env";
 pub const TEST_CHARACTER_ROUTE: &str = "/test/character";
 /// The histogram of how long the server takes to step every world one tick.
 pub const TICK_METRIC: &str = "rift_tick_duration_seconds";
@@ -47,7 +47,7 @@ struct ServerProtocol {
     stage: Staging,
 }
 
-/// What a binary starts with: its environment, over the [`SETTINGS_FILE`] beside it.
+/// What a binary starts with: its environment, over the [`LAUNCH_FILE`] beside it.
 pub struct LaunchSettings {
     folder: PathBuf,
     vars: BTreeMap<String, String>,
@@ -64,7 +64,7 @@ impl LaunchSettings {
         folder: &Path,
         environment: impl IntoIterator<Item = (String, String)>,
     ) -> LaunchSettings {
-        let file = folder.join(SETTINGS_FILE);
+        let file = folder.join(LAUNCH_FILE);
         let mut vars = BTreeMap::new();
         match dotenvy::from_path_iter(&file) {
             Ok(lines) => {
@@ -90,7 +90,7 @@ impl LaunchSettings {
             .unwrap_or_else(|error| {
                 panic!(
                     "{prefix}* settings, from the environment or {}: {error}",
-                    self.folder.join(SETTINGS_FILE).display()
+                    self.folder.join(LAUNCH_FILE).display()
                 )
             })
     }

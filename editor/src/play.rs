@@ -30,12 +30,14 @@ use ui::egui::{RichText, Ui};
 use ui::glyph::{self, Mark};
 
 use crate::app::{BottomTab, Editor, content_version};
+use crate::content_tree;
 use crate::inbox::ChannelInbox;
 use crate::keymap::EditorKey;
 use crate::modal::ModalDialog;
 use crate::output_log::OutputLine;
 use crate::project::{EditRefusal, Project, problem_place};
-use crate::shell::{self, content_tree, widgets};
+use crate::shell;
+use crate::widgets;
 use ui::input;
 
 const SERVER: &str = "game-server";

@@ -18,7 +18,8 @@ use super::store::ContentStore;
 use super::table::Content;
 use crate::core::math::Rng;
 use crate::core::os::FetchFailure;
-use crate::core::time::{Backoff, Seconds};
+use crate::core::time::Backoff;
+use crate::core::units::Seconds;
 
 /// Where the server serves a content file by its hash.
 pub const FILES: &str = "/content/files/";
@@ -29,8 +30,8 @@ pub struct Manifest {
     pub build: String,
     pub content_version: String,
     pub name: String,
-    pub rows: FileStamp,
-    pub index: FileStamp,
+    pub rows: FileHash,
+    pub index: FileHash,
 }
 
 impl Manifest {
@@ -38,13 +39,6 @@ impl Manifest {
     pub fn same_content(&self, other: &Manifest) -> bool {
         self.rows == other.rows && self.index == other.index
     }
-}
-
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct FileStamp {
-    pub hash: String,
-    pub size: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -101,8 +95,8 @@ impl ServedContent {
             build: build.to_owned(),
             content_version: version.0.clone(),
             name: name.to_owned(),
-            rows: stamp_of(&bundle),
-            index: stamp_of(&index),
+            rows: FileHash::of(&bundle),
+            index: FileHash::of(&index),
         };
         files.insert(manifest.rows.hash.clone(), Arc::from(bundle));
         files.insert(manifest.index.hash.clone(), Arc::from(index));
@@ -417,11 +411,6 @@ pub fn unpack_rows(bundle: &[u8]) -> io::Result<Vec<(String, Vec<u8>)>> {
     Ok(files)
 }
 
-fn stamp_of(bytes: &[u8]) -> FileStamp {
-    let FileHash { hash, size } = FileHash::of(bytes);
-    FileStamp { hash, size }
-}
-
 fn rows_bundle(rows: &[(String, Vec<u8>)]) -> io::Result<Vec<u8>> {
     let mut archive = tar::Builder::new(Vec::new());
     for (path, bytes) in rows {
@@ -458,10 +447,7 @@ enum Attempt {
     Failed(String),
 }
 
-type Fetched = Result<(String, Arc<[u8]>, Kept), Attempt>;
-
-/// Whether the store keeps a fetched file, so it is read from there rather than held.
-type Kept = bool;
+type Fetched = Result<(String, Arc<[u8]>, bool), Attempt>;
 
 impl Run<'_> {
     async fn attempt(&self, build: &str) -> Result<SyncedContent, Attempt> {
@@ -598,7 +584,7 @@ impl Run<'_> {
             .map(Arc::from)
     }
 
-    async fn fetch_file(&self, hash: &str) -> Result<(Arc<[u8]>, Kept), Attempt> {
+    async fn fetch_file(&self, hash: &str) -> Result<(Arc<[u8]>, bool), Attempt> {
         let bytes: Arc<[u8]> = Arc::from(
             self.fetch_with_retries(&format!("{FILES}{hash}"), Some(hash))
                 .await?,

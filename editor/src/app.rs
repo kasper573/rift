@@ -29,9 +29,10 @@ use crate::project::journal::{RecoveryJournal, RecoveryJournalData, RecoveryJour
 use crate::project::lock::ProjectLock;
 use crate::project::watch::FolderWatcher;
 use crate::project::{AppliedStep, ContentEdit, EditRefusal, EditViewpoint, Project, RowSelection};
+use crate::row_form;
 use crate::scenes::{self, SceneStep};
 use crate::schema::SchemaShapes;
-use crate::shell::{self, row_form};
+use crate::shell;
 use crate::tabs::{self, DockRequest, EditorTab, TabOpening};
 use crate::thumbs::Thumbnail;
 use crate::user::{EditorSettings, UserFolder};
@@ -58,14 +59,16 @@ impl Plugin for EditorPlugin {
         let settings = user.load_settings();
         let mut editor = Editor::new(user, settings);
         editor.scene = self.launch.scene.clone();
-        editor.frame_log = self
+        if let Some(folder) = &self.launch.folder {
+            editor.open_folder(folder);
+        }
+        if let Some(log) = self
             .launch
             .frame_log
             .as_ref()
             .and_then(|path| File::create(path).ok())
-            .map(BufWriter::new);
-        if let Some(folder) = &self.launch.folder {
-            editor.open_folder(folder);
+        {
+            app.insert_resource(FrameLog(BufWriter::new(log)));
         }
         app.init_schedule(Background);
         app.world_mut()
@@ -86,6 +89,10 @@ impl Plugin for EditorPlugin {
 }
 
 const FRAME_RATE_MARGIN: f32 = 8.0;
+
+/// A line per frame: frame ms, ui ms, the active tab, entities, images, meshes.
+#[derive(Resource)]
+struct FrameLog(BufWriter<File>);
 
 /// Where the editor edits the world its views draw: a schedule of its own after `Update`, since
 /// an exclusive system sharing a schedule may despawn an entity between another system queueing a
@@ -115,7 +122,7 @@ pub struct Editor {
     pub journal: Option<RecoveryJournal>,
     pub dock: DockState<EditorTab>,
     pub bottom_tab: BottomTab,
-    pub content_tree: crate::shell::content_tree::ContentTree,
+    pub content_tree: crate::content_tree::ContentTree,
     pub status: StatusBar,
     pub last_refusal: Option<EditRefusal>,
     pub history_focus: Option<usize>,
@@ -137,7 +144,6 @@ pub struct Editor {
     pub pick: Option<PlacePick>,
     pub quit: bool,
     pub frame: u64,
-    pub frame_log: Option<BufWriter<File>>,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, IntoStaticStr)]
@@ -220,7 +226,6 @@ impl Editor {
             pick: None,
             quit: false,
             frame: 0,
-            frame_log: None,
         }
     }
 
@@ -562,7 +567,7 @@ impl Editor {
         self.preview_tab(EditorTab::Asset {
             path: path.to_owned(),
         });
-        crate::shell::content_tree::reveal(self, path);
+        crate::content_tree::reveal(self, path);
     }
 
     /// Opens the content file at `path` in its tab.
@@ -814,7 +819,7 @@ fn editor_ui(world: &mut World) {
         context.get_mut().clone()
     };
     let frame_ms = world.resource::<Time>().delta_secs() * 1000.0;
-    world.resource_scope(|world, mut editor: Mut<Editor>| {
+    let (ui_ms, tab) = world.resource_scope(|world, mut editor: Mut<Editor>| {
         editor.frame += 1;
         let started = Instant::now();
         shell::show(&mut editor, &ctx);
@@ -831,19 +836,23 @@ fn editor_ui(world: &mut World) {
             );
         }
         let ui_ms = started.elapsed().as_secs_f32() * 1000.0;
-        let tab = shell::active_tab(&editor).map(|tab| tab.title());
-        if let Some(log) = &mut editor.frame_log {
-            let entities = world.query::<Entity>().iter(world).count();
-            let images = world.resource::<Assets<Image>>().len();
-            let meshes = world.resource::<Assets<Mesh>>().len();
-            let _ = writeln!(
-                log,
-                "{frame_ms:.3}\t{ui_ms:.3}\t{}\t{entities}\t{images}\t{meshes}",
-                tab.unwrap_or_default()
-            )
-            .and_then(|()| log.flush());
-        }
+        (
+            ui_ms,
+            crate::tabs::active_tab(&editor).map(|tab| tab.title()),
+        )
     });
+    if world.contains_resource::<FrameLog>() {
+        let entities = world.query::<Entity>().iter(world).count();
+        let images = world.resource::<Assets<Image>>().len();
+        let meshes = world.resource::<Assets<Mesh>>().len();
+        let mut log = world.resource_mut::<FrameLog>();
+        let _ = writeln!(
+            log.0,
+            "{frame_ms:.3}\t{ui_ms:.3}\t{}\t{entities}\t{images}\t{meshes}",
+            tab.unwrap_or_default()
+        )
+        .and_then(|()| log.0.flush());
+    }
     if world.resource::<Editor>().quit {
         world.write_message(bevy::app::AppExit::Success);
     }

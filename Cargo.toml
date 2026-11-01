@@ -5,6 +5,8 @@ members = [
     "bevy/replication",
     "bevy/terminal",
     "engine",
+    "game-server",
+    "lint",
     "testkit",
     "editor",
     "cli",

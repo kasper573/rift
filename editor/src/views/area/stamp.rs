@@ -5,17 +5,16 @@ use ui::input;
 use ui::theme;
 
 use engine::core::content::{Content, ContentScope, FolderReader, parent_of, rescoped};
-use engine::core::geometry::Degrees;
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::script::VariableType;
-use engine::core::units::{MeterPos, Meters};
+use engine::core::units::{Degrees, MeterPos, Meters};
 use engine::systems::area::blueprint::{BlueprintDef, BlueprintId, Placement};
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{self, AreaModule};
 use engine::systems::script::VarValue;
 use ui::egui::{Color32, Pos2, Rect as ERect, Stroke as EStroke, Ui, Vec2};
 
-use super::{AreaFrame, AreaSnapshot, modules, select, shapes};
+use super::{AreaFrame, AreaSnapshot, modules, shapes};
 use crate::app::Editor;
 use crate::keymap::EditorKey;
 use crate::rows;
@@ -233,10 +232,7 @@ fn draw_blueprint_art(ui: &mut Ui, content: &Content, key: &str, into: ERect) {
         .iter()
         .filter_map(|placed| {
             let bounds = shapes::bounds(&placed.module, None)?;
-            Some((
-                bounds,
-                super::overlays::module_color(Some(placed.module.kind())),
-            ))
+            Some((bounds, super::overlays::module_color(placed.module.kind())))
         })
         .collect();
     let painter = ui.painter_at(into);
@@ -336,7 +332,7 @@ pub(crate) fn stamp_input(editor: &mut Editor, ui: &mut Ui, view_key: &str, fram
     let Some(ground) = frame.drag_ground() else {
         return;
     };
-    let at = select::snap_to(ground, alt);
+    let at = crate::views::snap(ground, alt);
     let values = stamp_values(editor, Some(&stamp));
     let footprint = stamp_footprint(editor, &frame.content, &frame.reader, &stamp, &values);
     let spacing = editor
@@ -348,14 +344,14 @@ pub(crate) fn stamp_input(editor: &mut Editor, ui: &mut Ui, view_key: &str, fram
     let step = spacing.unwrap_or(footprint.width.max(footprint.height).max(1.0));
     if response.drag_started_by(egui::PointerButton::Primary) || response.clicked() {
         let view = editor.views.area.view_mut(view_key);
-        view.set_drag(super::AreaDrag::Stamp {
+        view.drag = Some(super::AreaDrag::Stamp {
             placed: vec![at],
             last: at,
         });
     }
     if response.dragged_by(egui::PointerButton::Primary) {
         let view = editor.views.area.view_mut(view_key);
-        if let Some(super::AreaDrag::Stamp { placed, last }) = view.drag_mut()
+        if let Some(super::AreaDrag::Stamp { placed, last }) = view.drag.as_mut()
             && last.distance(at).0 >= step
         {
             placed.push(at);
@@ -364,7 +360,7 @@ pub(crate) fn stamp_input(editor: &mut Editor, ui: &mut Ui, view_key: &str, fram
     }
     if response.drag_stopped_by(egui::PointerButton::Primary) || response.clicked() {
         let view = editor.views.area.view_mut(view_key);
-        let Some(super::AreaDrag::Stamp { placed, .. }) = view.take_drag() else {
+        let Some(super::AreaDrag::Stamp { placed, .. }) = view.drag.take() else {
             return;
         };
         place_stamps(editor, frame, &stamp, &values, placed);
@@ -456,13 +452,13 @@ pub(crate) fn stamp_overlay(
         ));
         painter.circle_filled(canvas.to_screen(at), 3.0, color);
     };
-    if let Some(super::AreaDrag::Stamp { placed, .. }) = view.drag() {
+    if let Some(super::AreaDrag::Stamp { placed, .. }) = view.drag.as_ref() {
         for at in placed {
             draw_ghost(*at);
         }
     }
     if let Some(ground) = frame.pointer_ground {
-        let at = select::snap_to(ground, alt);
+        let at = crate::views::snap(ground, alt);
         draw_ghost(at);
         painter.text(
             canvas.to_screen(at) + Vec2::new(8.0, 8.0),

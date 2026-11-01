@@ -1,9 +1,8 @@
 use std::sync::Arc;
 
 use engine::core::content::{ContentFolder, FolderReader};
-use engine::core::geometry::Degrees;
 use engine::core::math::{Pos, Rect, Size};
-use engine::core::units::Meters;
+use engine::core::units::{Degrees, Meters};
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::{self, AreaDef, AreaModule};
 use serde_json::{Value, json};

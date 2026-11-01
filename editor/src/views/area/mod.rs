@@ -26,6 +26,7 @@ pub mod stamp;
 pub mod status;
 pub mod tools;
 pub mod viewport;
+pub mod warps;
 
 pub use resize::ResizeDialog;
 
@@ -42,10 +43,9 @@ use ui::words;
 use bevy::prelude::Transform;
 use engine::core::content::media::GltfInfos;
 use engine::core::content::{Content, ContentFile, FolderReader, table_of};
-use engine::core::geometry::Degrees;
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::render::{facing_rotation, world_point};
-use engine::core::units::{MeterSize, Meters};
+use engine::core::units::{Degrees, MeterSize, Meters};
 use engine::systems::actor::appearance::look;
 use engine::systems::actor::held;
 use engine::systems::actor::stance;
@@ -73,8 +73,8 @@ use crate::app::{BottomTab, Editor};
 use crate::keymap::EditorKey;
 use crate::play;
 use crate::project::{AreaCameraState, Project, RowSelection};
-use crate::shell::widgets;
 use crate::tabs::{EditorTab, file_title};
+use crate::widgets;
 
 /// The key of the view of an area or blueprint bundle.
 pub(crate) fn view_key(bundle: &str) -> String {
@@ -130,7 +130,7 @@ pub enum AreaTool {
 }
 
 /// What the view can draw over its picture.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AreaOverlay {
     Navmesh,
@@ -175,10 +175,7 @@ pub struct AreaViewState {
     pub in_place: Vec<String>,
     pub camera: OrbitCamera,
     pub tool: AreaTool,
-    pub overlay_navmesh: bool,
-    pub overlay_contours: bool,
-    pub overlay_footprints: bool,
-    pub overlay_modules: bool,
+    pub overlays: HashSet<AreaOverlay>,
     pub drag: Option<AreaDrag>,
     pub brush: Brush,
     pub sculpt: SculptMode,
@@ -212,21 +209,9 @@ impl AreaViewState {
     fn new(bundle: &str) -> AreaViewState {
         AreaViewState {
             bundle: bundle.to_owned(),
-            overlay_modules: true,
+            overlays: HashSet::from([AreaOverlay::Modules]),
             ..AreaViewState::default()
         }
-    }
-
-    pub fn drag(&self) -> Option<&AreaDrag> {
-        self.drag.as_ref()
-    }
-
-    pub(crate) fn drag_mut(&mut self) -> Option<&mut AreaDrag> {
-        self.drag.as_mut()
-    }
-
-    pub(crate) fn set_drag(&mut self, drag: AreaDrag) {
-        self.drag = Some(drag);
     }
 
     pub(crate) fn set_tool(&mut self, tool: AreaTool) {
@@ -235,21 +220,13 @@ impl AreaViewState {
     }
 
     pub fn toggle(&mut self, overlay: AreaOverlay) {
-        let flag = match overlay {
-            AreaOverlay::Navmesh => &mut self.overlay_navmesh,
-            AreaOverlay::Contours => &mut self.overlay_contours,
-            AreaOverlay::Footprints => &mut self.overlay_footprints,
-            AreaOverlay::Modules => &mut self.overlay_modules,
-        };
-        *flag = !*flag;
+        if !self.overlays.remove(&overlay) {
+            self.overlays.insert(overlay);
+        }
     }
 
     pub(crate) fn cancel_gesture(&mut self) -> bool {
         self.drag.take().is_some() | self.placing.take().is_some() | self.stroke.take().is_some()
-    }
-
-    pub(crate) fn take_drag(&mut self) -> Option<AreaDrag> {
-        self.drag.take()
     }
 
     /// The blueprint the Place tool stamps, when one is picked.
@@ -615,11 +592,12 @@ fn canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: AreaSnapsh
     }
     overlay_soundscape_reach(editor, &painter, &frame);
     let view = editor.views.area.view(view_key);
+    let shows = |overlay| view.overlays.contains(&overlay);
     let (navmesh, footprints, contours, modules) = (
-        view.overlay_navmesh,
-        view.overlay_footprints,
-        view.overlay_contours,
-        view.overlay_modules,
+        shows(AreaOverlay::Navmesh),
+        shows(AreaOverlay::Footprints),
+        shows(AreaOverlay::Contours),
+        shows(AreaOverlay::Modules),
     );
     if navmesh {
         overlay_navmesh(&painter, &frame);
@@ -808,21 +786,17 @@ fn locked_tip(editor: &Editor, view_key: &str, frame: &AreaFrame) {
 /// What a view shows of its bundle: the scene as the editor holds it, the picture it makes with
 /// what is hidden left out, and the placements being edited in place.
 pub struct AreaSnapshot {
-    /// Made anew only when what the snapshot holds is, so what is found from it may be kept
-    /// until this changes.
-    pub made: u64,
     pub content: Content,
     pub bundle: String,
-    pub pictured: Pictured,
-    pub picture: Arc<Picture>,
-    /// The bundle as its files read now, its ids those of `reader`.
-    pub def: nodes::SceneBundle,
-    pub reader: Arc<FolderReader>,
-    pub flags: Arc<SceneFlags>,
-    pub modules: Arc<nodes::SceneModules>,
-    pub in_place: Vec<placement::AreaPlacement>,
-    pub placement_bounds: Arc<HashMap<String, Rect<Meters>>>,
-    targets: Arc<[MapTarget]>,
+    parts: SnapshotParts,
+}
+
+impl Deref for AreaSnapshot {
+    type Target = SnapshotParts;
+
+    fn deref(&self) -> &SnapshotParts {
+        &self.parts
+    }
 }
 
 /// A module of the bundle, where the pointer finds it on the map: hovering asks of every one on
@@ -846,16 +820,19 @@ struct SnapshotCache {
 }
 
 #[derive(Clone)]
-struct SnapshotParts {
-    made: u64,
-    pictured: Pictured,
-    picture: Arc<Picture>,
-    def: nodes::SceneBundle,
-    reader: Arc<FolderReader>,
-    flags: Arc<SceneFlags>,
-    modules: Arc<nodes::SceneModules>,
-    in_place: Vec<placement::AreaPlacement>,
-    placement_bounds: Arc<HashMap<String, Rect<Meters>>>,
+pub struct SnapshotParts {
+    /// Made anew only when what the snapshot holds is, so what is found from it may be kept
+    /// until this changes.
+    pub made: u64,
+    pub pictured: Pictured,
+    pub picture: Arc<Picture>,
+    /// The bundle as its files read now, its ids those of `reader`.
+    pub def: nodes::SceneBundle,
+    pub reader: Arc<FolderReader>,
+    pub flags: Arc<SceneFlags>,
+    pub modules: Arc<nodes::SceneModules>,
+    pub in_place: Vec<placement::AreaPlacement>,
+    pub placement_bounds: Arc<HashMap<String, Rect<Meters>>>,
     targets: Arc<[MapTarget]>,
 }
 
@@ -941,18 +918,9 @@ impl AreaSnapshot {
 
     fn from_parts(content: Content, bundle: String, parts: SnapshotParts) -> Self {
         Self {
-            made: parts.made,
             content,
             bundle,
-            pictured: parts.pictured,
-            picture: parts.picture,
-            def: parts.def,
-            reader: parts.reader,
-            flags: parts.flags,
-            modules: parts.modules,
-            in_place: parts.in_place,
-            placement_bounds: parts.placement_bounds,
-            targets: parts.targets,
+            parts,
         }
     }
 
@@ -1382,6 +1350,6 @@ pub fn run_action(editor: &mut Editor, frame: &AreaSnapshot, action: AreaAction)
         AreaAction::GoTo(area, at) => open_area_at(editor, &area, Some(at), None),
         AreaAction::Unpack(node) => placement::unpack(editor, frame, &node),
         AreaAction::Replace(node) => placement::replace_dialog(editor, frame, &node),
-        AreaAction::ReturnDoor(node) => placement::return_door(editor, frame, &node),
+        AreaAction::ReturnDoor(node) => warps::return_door(editor, frame, &node),
     }
 }

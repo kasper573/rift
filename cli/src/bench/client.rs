@@ -10,7 +10,7 @@ use engine::core::render::transition::ScreenTransitionPhase;
 use engine::core::units::{MeterPos, Meters};
 use engine::systems::area;
 use engine::systems::probe::ProbeSnapshot;
-use engine::systems::script::{OwnerRow, Place, Reach, RiftScripts};
+use engine::systems::script::{EffectReach, OwnerRow, Place, RiftScripts};
 use engine::systems::staging::Staging;
 
 use super::playtest::Playtest;
@@ -75,7 +75,7 @@ pub fn away_from(me: &Playtest, home: Place) -> Option<Place> {
                 .reaches
         })
         .find_map(|reach| match reach {
-            Reach::Warp(to) if to.area != home.area => Some(to),
+            EffectReach::Warp(to) if to.area != home.area => Some(to),
             _ => None,
         })
 }

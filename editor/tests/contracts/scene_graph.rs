@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use editor::app::Editor;
 use editor::project::RowSelection;
-use editor::shell::tree::{DropAt, Toggle, TreeDrop, TreeSource};
+use editor::tree::{DropAt, Toggle, TreeDrop, TreeSource};
 use editor::user::TreeView;
 use editor::views::area::flags::{SceneFlags, SceneLevel};
 use editor::views::area::nodes::{self, Landing, NodeFlag, SceneTree};

@@ -10,7 +10,7 @@ use super::rows::{self, Clock, Fades, Move, NoticePlace, Presence, Swell};
 use super::{FeedRow, Notification, NotificationKind, NotificationSent};
 use crate::core::gui::{self, Band};
 use crate::core::text::{self, StyledLine, TextLook};
-use crate::core::time::Seconds;
+use crate::core::units::Seconds;
 use crate::systems::actor::plate;
 use crate::systems::history::RecordTally;
 use crate::systems::history::widget::tallied;

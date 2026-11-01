@@ -36,8 +36,7 @@ pub(crate) fn script_cards(
     let mut duplicate = None;
     for (index, module) in scripts.iter_mut().enumerate() {
         let module_path = format!("{path}/{index}");
-        ui::panel::tile(true).show(ui, |ui| {
-            ui.set_width(ui.available_width());
+        ui::panel::card(ui, true, |ui| {
             ui.horizontal(|ui| {
                 ui.label(theme::strong(ScriptModule::TAG).monospace());
                 ui.with_layout(Layout::right_to_left(Align::Center), |ui| {

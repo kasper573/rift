@@ -8,13 +8,13 @@ use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::shader::Shader;
 use bevy::world_serialization::WorldSerializationPlugin;
-use engine::core::geometry::Degrees;
 use engine::core::render::camera;
 use engine::core::render::video::{
     AmbientOcclusionQuality, AntiAliasingQuality, ShadowQuality, VideoPreferences,
 };
 use engine::core::render::world::WorldScenePlugin;
 use engine::core::render::world::lights;
+use engine::core::units::Degrees;
 use engine::core::vfx::render::VfxMaterialsPlugin;
 use strum::VariantArray;
 

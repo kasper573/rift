@@ -1,9 +1,9 @@
 //! What stands for a file wherever the editor lists one: a picture of what it holds when it has
 //! one, or else the icon of its kind.
 
-use engine::core::assets::{AssetKind, ImageRef};
 use engine::core::audio::playback::SfxDef;
 use engine::core::babble::{BabbleBankDef, BabbleDef};
+use engine::core::content::{AssetKind, ImageRef};
 use engine::core::content::{ContentFile, SETTINGS_FILE, table_of};
 use engine::core::vfx::VfxDef;
 use engine::core::vfx::shader::VfxShaderDef;

@@ -1,7 +1,7 @@
 use engine::core::audio::playback::{SFX_CLIP, SfxDef};
 use engine::core::babble::{BABBLE_LETTERS, BabbleBankDef, BabbleDef, LETTERS};
 use engine::core::content::{Content, ContentFile, MODULES, NamedContent};
-use engine::core::time::Seconds;
+use engine::core::units::Seconds;
 use engine::systems::GameSettings;
 use std::collections::{BTreeMap, HashMap};
 
@@ -19,7 +19,7 @@ use engine::systems::player::PlayerDef;
 use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::quest::card::{Moment, QuestCardLook};
 use engine::systems::quest::{self, Parties, QuestDef};
-use engine::systems::script::{Reach, RiftScripts};
+use engine::systems::script::{EffectReach, RiftScripts};
 use engine::systems::skill::SkillDef;
 use engine::systems::status::StatusEffectDef;
 use strum::VariantArray;
@@ -532,8 +532,8 @@ fn attitude(content: &Content, key: &str, npc: &NpcDef) -> Option<bool> {
         };
         for reach in scripts.may_do(bound.row).reaches {
             match reach {
-                Reach::Hostile => return Some(true),
-                Reach::Friendly => friendly = true,
+                EffectReach::Hostile => return Some(true),
+                EffectReach::Friendly => friendly = true,
                 _ => {}
             }
         }

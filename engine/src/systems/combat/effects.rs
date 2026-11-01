@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, FlowCx, NEXT, ScriptFault};
 use crate::systems::npc::Npc;
-use crate::systems::script::{Condition, EffectCall, Reach, RiftScripting, effect as effects};
+use crate::systems::script::{
+    Condition, EffectCall, EffectReach, RiftScripting, effect as effects,
+};
 use crate::systems::{combat, stat};
 
 /// Restores health up to the maximum.
@@ -73,8 +75,8 @@ impl EffectDef<RiftScripting> for Heal {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Heals]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Heals]
     }
 }
 
@@ -98,8 +100,8 @@ impl EffectDef<RiftScripting> for Damage {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Damages]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Damages]
     }
 }
 

@@ -4,53 +4,18 @@
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
 
-use engine::core::assets::{AssetKind, ModelRef};
+use engine::core::content::ModelRef;
 use engine::core::content::RowCheck;
 use engine::core::content::check::RowError;
-use engine::core::content::gltf::{self, GltfInfo, NodeTree};
-use engine::core::time::Seconds;
+use engine::core::content::gltf::{GltfInfo, NodeTree};
+use engine::core::units::Seconds;
 use engine::systems::actor::rigging::{hang, plays_on, read_joints, read_rig};
 use engine::systems::actor::skeleton::{
     Clip, JointName, MAX_CLIP, MIN_CLIP, Rig, SkeletonDef, SourceRig, TakeName,
 };
 
-use crate::project::ProjectFiles;
+use crate::project::{GltfCache, ProjectFiles};
 use crate::views::area::viewport::StageClip;
-
-/// Every glTF binary of the game folder the editor has read, by its path, with the hash of the
-/// bytes it was read from.
-#[derive(Default)]
-pub struct GltfCache(HashMap<String, (String, Option<Arc<GltfInfo>>)>);
-
-impl GltfCache {
-    /// The file at `path` as the loader reads it, when it reads.
-    pub fn info(&mut self, files: &ProjectFiles, path: &str) -> Option<Arc<GltfInfo>> {
-        let hash = files.hash_of(path)?;
-        if let Some((held, read)) = self.0.get(path)
-            && held == hash
-        {
-            return read.clone();
-        }
-        let read = files
-            .get(path)
-            .and_then(|bytes| gltf::inspect(bytes).ok())
-            .map(Arc::new);
-        self.0
-            .insert(path.to_owned(), (hash.to_owned(), read.clone()));
-        read
-    }
-
-    /// Every glTF binary of the game folder that reads, by its path.
-    pub fn every(&mut self, files: &ProjectFiles) -> Vec<(String, Arc<GltfInfo>)> {
-        let index = files.index();
-        index
-            .media
-            .iter()
-            .filter(|path| AssetKind::of(path) == Some(AssetKind::Model))
-            .filter_map(|path| Some((path.clone(), self.info(files, path)?)))
-            .collect()
-    }
-}
 
 /// A clip of the game folder that plays on a skeleton: an animation of a file, how long it plays,
 /// and the source rig it is made on when it is not ours.
@@ -169,17 +134,42 @@ pub(crate) fn rig_up(def: &SkeletonDef, files: &ProjectFiles, cache: &mut GltfCa
     }
 }
 
+/// The names of every joint of `tree`.
+pub(crate) fn joint_names(tree: &NodeTree) -> Vec<String> {
+    tree.joints()
+        .map(|joint| tree.nodes[joint].name.clone())
+        .collect()
+}
+
+/// The tops of a rig: the one that carries the body, and the others, which hang on it.
+pub(crate) struct Tops {
+    pub body: usize,
+    pub hung: Vec<usize>,
+}
+
+impl Tops {
+    /// The tops of `tree`, the body being the one with the most joints under it.
+    pub fn of(tree: &NodeTree) -> Option<Tops> {
+        let tops: Vec<usize> = (0..tree.nodes.len())
+            .filter(|&node| tree.nodes[node].parent.is_none())
+            .collect();
+        let body = *tops.iter().max_by_key(|&&top| {
+            tree.joints()
+                .filter(|&joint| tree.descends(joint, top))
+                .count()
+        })?;
+        let hung = tops.into_iter().filter(|&top| top != body).collect();
+        Some(Tops { body, hung })
+    }
+}
+
 /// Every glTF binary of the game folder that holds joints, with their names.
 pub(crate) fn joint_files(files: &ProjectFiles, cache: &mut GltfCache) -> Vec<JointFile> {
     cache
         .every(files)
         .into_iter()
         .filter_map(|(path, info)| {
-            let joints: Vec<String> = info
-                .tree
-                .joints()
-                .map(|joint| info.tree.nodes[joint].name.clone())
-                .collect();
+            let joints = joint_names(&info.tree);
             (!joints.is_empty()).then_some(JointFile { path, joints })
         })
         .collect()
@@ -200,22 +190,11 @@ pub(crate) fn guess_hangs(
     let Some(tree) = read_joints(&rig, &infos, &mut RowCheck::default()) else {
         return BTreeMap::new();
     };
-    let tops: Vec<usize> = (0..tree.nodes.len())
-        .filter(|&node| tree.nodes[node].parent.is_none())
-        .collect();
-    let Some((&body, others)) = tops
-        .iter()
-        .max_by_key(|&&top| {
-            tree.joints()
-                .filter(|&joint| tree.descends(joint, top))
-                .count()
-        })
-        .map(|body| (body, tops.iter().filter(|&&top| top != *body)))
-    else {
+    let Some(Tops { body, hung }) = Tops::of(&tree) else {
         return BTreeMap::new();
     };
     let mut hangs = BTreeMap::new();
-    for &top in others {
+    for top in hung {
         let under: Vec<&str> = tree
             .joints()
             .filter(|&joint| tree.descends(joint, top))

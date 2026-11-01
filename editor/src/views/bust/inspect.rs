@@ -15,12 +15,13 @@ use engine::systems::script::ScriptDef;
 use strum::VariantArray;
 use ui::egui::{RichText, Ui};
 
+use super::face_files;
 use super::faces::{self, BustFace, FaceLine};
 use crate::app::Editor;
 use crate::keymap::EditorKey;
 use crate::project::RowSelection;
-use crate::shell::widgets;
 use crate::tabs::shown_path;
+use crate::widgets;
 use ui::input::InputField;
 
 pub fn show(editor: &mut Editor, ui: &mut Ui, selection: &RowSelection) {
@@ -67,8 +68,7 @@ fn face_card(editor: &mut Editor, ui: &mut Ui, key: &str, face: &BustFace, faces
     let mut remove_with: Option<String> = None;
     let lines = faces::lines(editor, key);
     let uses_of_face = lines.iter().filter(|line| line.face == face.name).count();
-    panel::tile(true).show(ui, |ui| {
-        ui.set_width(ui.available_width());
+    panel::card(ui, true, |ui| {
         let kind = if face.own { "" } else { "generic" };
         if face.own {
             panel::header(ui, &face.name, kind, |ui| {
@@ -146,7 +146,7 @@ fn face_card(editor: &mut Editor, ui: &mut Ui, key: &str, face: &BustFace, faces
         editor.open_row(ScriptDef::TABLE, &script);
     }
     if let Some(wanted) = rename_to
-        && faces::rename(editor, key, face, &wanted)
+        && face_files::rename(editor, key, face, &wanted)
     {
         let view = editor.views.bust.views.view_mut(key);
         view.face = Some(wanted);
@@ -231,7 +231,7 @@ pub(crate) fn remove_face_dialog(editor: &mut Editor, ctx: &egui::Context, key: 
     };
     let view = editor.views.bust.views.view_mut(key);
     view.removing = None;
-    if apply && faces::remove(editor, key, &removing.face, &replacement) {
+    if apply && face_files::remove(editor, key, &removing.face, &replacement) {
         let view = editor.views.bust.views.view_mut(key);
         view.face = None;
         editor.select(RowSelection::row(BustDef::TABLE, key));

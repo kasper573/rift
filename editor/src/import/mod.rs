@@ -19,10 +19,10 @@ pub use fbx::glb_of_fbx;
 pub use gather::{Came, Failure, Found, Gathered, gather};
 
 use crate::app::Editor;
+use crate::content_tree;
 use crate::modal::ModalDialog;
 use crate::moves::file_name;
 use crate::project::{ContentEdit, FileBytes, ProjectFiles, files};
-use crate::shell::content_tree;
 
 pub struct ImportDialog {
     pub folder: String,

@@ -32,10 +32,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
     });
     if editor.views.model.view(key).hitbox_chosen {
         let mut sized = None;
-        panel::tile(false).show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            panel::title(ui, "Hitbox");
-            ui.add_space(4.0);
+        panel::titled_card(ui, false, "Hitbox", |ui| {
             sized = super::hitbox::fields(ui, row.hitbox);
         });
         if let Some(hitbox) = sized {
@@ -43,10 +40,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
         }
         ui.add_space(8.0);
     }
-    panel::tile(false).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        panel::title(ui, "Body");
-        ui.add_space(4.0);
+    panel::titled_card(ui, false, "Body", |ui| {
         form::kv_text(
             ui,
             "build",
@@ -87,5 +81,5 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
         }
     });
     ui.add_space(8.0);
-    crate::shell::row_form::usages::show_usages_grouped(editor, ui, key, true);
+    crate::row_form::usages::show_usages_grouped(editor, ui, key, true);
 }

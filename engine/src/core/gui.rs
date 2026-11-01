@@ -11,7 +11,7 @@ use strum::VariantArray;
 use ui::egui::load::SizedTexture;
 use ui::egui::{LayerId, Order};
 
-use crate::core::assets::ImageRef;
+use crate::core::content::ImageRef;
 
 /// Each band draws in its own egui order, so it stacks the same however the frame's systems run.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]

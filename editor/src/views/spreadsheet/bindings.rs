@@ -3,6 +3,8 @@ use bevy::input::mouse::MouseButton;
 use engine::systems::input::map::{
     InputAction, InputBinding, InputBindingKind, InputDef, KeyModifiers,
 };
+use serde::Deserialize;
+use serde::de::value::{Error as NameError, StrDeserializer};
 use serde_json::Value;
 use ui::chip;
 use ui::controls;
@@ -33,7 +35,7 @@ pub(super) fn names(value: &Value) -> String {
 /// The bindings of the action `row` is, each a chip, and a field that captures the next key or
 /// click as one more, of a kind the game reads for the action. Writes as it goes; Enter closes it.
 pub(super) fn cell(editor: &mut Editor, ui: &mut Ui, row: &SpreadsheetRow) -> CellEdit {
-    let Ok(action) = serde_json::from_value::<InputAction>(Value::String(row.key.clone())) else {
+    let Ok(action) = InputAction::deserialize(StrDeserializer::<NameError>::new(&row.key)) else {
         return CellEdit::Cancelled;
     };
     let Some(Ok(input)) = editor.read::<InputDef>(&row.file) else {
@@ -245,5 +247,5 @@ fn key_code(key: Key) -> Option<KeyCode> {
             }
         }
     };
-    serde_json::from_value(Value::String(name)).ok()
+    KeyCode::deserialize(StrDeserializer::<NameError>::new(&name)).ok()
 }

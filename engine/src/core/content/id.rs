@@ -255,7 +255,12 @@ impl ContentScope {
         Arc::make_mut(&mut self.paths).insert(TypeId::of::<Row>(), (Row::TABLE, paths));
     }
 
-    pub fn table_by_type(&mut self, type_id: TypeId, name: &'static str, paths: Vec<String>) {
+    pub(super) fn table_by_type(
+        &mut self,
+        type_id: TypeId,
+        name: &'static str,
+        paths: Vec<String>,
+    ) {
         Arc::make_mut(&mut self.paths).insert(type_id, (name, paths));
     }
 

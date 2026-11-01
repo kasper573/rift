@@ -14,11 +14,11 @@ use bevy::render::gpu_readback::ReadbackOnce;
 use bevy::render::render_resource::{TextureFormat, TextureUsages};
 use bevy_egui::{EguiTextureHandle, EguiUserTextures};
 use engine::core::content::media::GltfInfos;
-use engine::core::geometry::Degrees;
 use engine::core::render::Look;
 use engine::core::render::camera::{self as world_camera};
 use engine::core::render::world::lights;
 use engine::core::render::world::sky::{self, Sky};
+use engine::core::units::Degrees;
 use engine::systems::area::prop::PropDef;
 use ui::egui;
 

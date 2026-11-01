@@ -174,3 +174,7 @@ pub fn unreadable(ui: &mut Ui, path: &str, errors: &[LoadError]) {
         );
     }
 }
+
+/// The gutter every tab's content keeps from the tab body's edge, so views line up.
+pub(crate) const CONTENT_PADDING: egui::Margin = egui::Margin::symmetric(16, 10);
+pub(crate) const VIEW_PADDING: egui::Margin = egui::Margin::symmetric(12, 8);

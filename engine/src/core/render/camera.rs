@@ -19,13 +19,11 @@ use bevy::window::PrimaryWindow;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::geometry::{Degrees, Radians};
 use crate::core::ground::{HIGHEST, Heightfield, LOWEST};
 use crate::core::gui;
 use crate::core::math::{Pos, Rect, Rgb};
 use crate::core::render::video::VideoPreferences;
-use crate::core::time::Seconds;
-use crate::core::units::{Meters, Stops};
+use crate::core::units::{Degrees, Meters, Radians, Seconds, Stops};
 
 const NEAR: f32 = 0.5;
 /// How far a ray is followed through the world before it is given up as hitting nothing.

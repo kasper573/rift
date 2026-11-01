@@ -15,7 +15,7 @@ use bevy::window::PrimaryWindow;
 use super::Look;
 use super::camera::{self, WorldCamera};
 use super::transition::{ActiveTransition, CutUniform};
-use crate::core::time::Seconds;
+use crate::core::units::Seconds;
 
 pub(crate) const PRESENT_LAYER: usize = 1;
 

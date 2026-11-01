@@ -11,10 +11,8 @@ use gltf::json::validation::{Checked, USize64};
 
 use super::bundle::PartSpec;
 use super::files::valid_name;
-use crate::core::geometry::Degrees;
 use crate::core::math::Pos;
-use crate::core::time::Seconds;
-use crate::core::units::Meters;
+use crate::core::units::{Degrees, Meters, Seconds};
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct GltfInfo {
@@ -191,10 +189,6 @@ impl GltfInfo {
         self.clips.iter().find(|clip| clip.name == name)
     }
 
-    pub fn clip_names(&self) -> Vec<&str> {
-        self.clips.iter().map(|clip| clip.name.as_str()).collect()
-    }
-
     /// The joints of the tree: every node that draws no mesh.
     pub fn joints(&self) -> usize {
         self.tree.joints().count()
@@ -217,11 +211,6 @@ impl NodeTree {
         }
         path.reverse();
         path
-    }
-
-    /// The node at the path of names from the root.
-    pub fn at_path(&self, path: &[&str]) -> Option<usize> {
-        (0..self.nodes.len()).find(|&index| self.path(index) == path)
     }
 
     /// The first node named `name`.
@@ -1083,129 +1072,6 @@ pub fn posed_body(tree: &NodeTree, name: &str, length: Seconds, turns: &[(&str, 
         uri: None,
     });
     glb(&root, bin)
-}
-
-/// The glTF binary `bytes` cut to its tree of nodes at rest and the animations named in `keep`: no
-/// meshes, skins, materials or cameras, and only the data those animations read. A rig keeps none
-/// of its clips, a library of clips made on the rig keeps the ones a skeleton will name.
-pub fn cut(bytes: &[u8], keep: &[&str]) -> Result<Vec<u8>, String> {
-    let read = gltf::binary::Glb::from_slice(bytes).map_err(|error| error.to_string())?;
-    let mut root: json::Root =
-        json::deserialize::from_slice(&read.json).map_err(|error| error.to_string())?;
-    if let Some(needed) = root.extensions_required.first() {
-        return Err(format!("needs the glTF extension {needed}"));
-    }
-    let data: &[u8] = read.bin.as_deref().unwrap_or_default();
-    root.animations.retain(|animation| {
-        animation
-            .name
-            .as_deref()
-            .is_some_and(|name| keep.contains(&name))
-    });
-    for animation in &mut root.animations {
-        animation.channels.retain(|channel| {
-            channel.target.path != Checked::Valid(json::animation::Property::MorphTargetWeights)
-        });
-    }
-    let read_accessors: Vec<usize> = {
-        let mut read: Vec<usize> = root
-            .animations
-            .iter()
-            .flat_map(|animation| &animation.samplers)
-            .flat_map(|sampler| [sampler.input.value(), sampler.output.value()])
-            .collect();
-        read.sort_unstable();
-        read.dedup();
-        read
-    };
-    let mut views: Vec<usize> = Vec::new();
-    for &accessor in &read_accessors {
-        let accessor = root
-            .accessors
-            .get(accessor)
-            .ok_or("an animation reads an accessor the file lacks")?;
-        if accessor.sparse.is_some() {
-            return Err("an animation reads sparse data".to_owned());
-        }
-        let view = accessor
-            .buffer_view
-            .ok_or("an animation reads an accessor with no data")?;
-        views.push(view.value());
-    }
-    views.sort_unstable();
-    views.dedup();
-    let mut bin: Vec<u8> = Vec::new();
-    let mut kept_views = Vec::with_capacity(views.len());
-    for &view in &views {
-        let mut view = root
-            .buffer_views
-            .get(view)
-            .ok_or("an accessor reads a view the file lacks")?
-            .clone();
-        if view.buffer.value() != 0 {
-            return Err("animation data outside the file's own binary".to_owned());
-        }
-        let start = view.byte_offset.map_or(0, |offset| offset.0 as usize);
-        let end = start + view.byte_length.0 as usize;
-        let slice = data
-            .get(start..end)
-            .ok_or("a view runs past the file's binary")?;
-        while !bin.len().is_multiple_of(4) {
-            bin.push(0);
-        }
-        view.byte_offset = Some(USize64::from(bin.len()));
-        view.buffer = json::Index::new(0);
-        bin.extend_from_slice(slice);
-        kept_views.push(view);
-    }
-    let view_at = |old: usize| views.iter().position(|&kept| kept == old);
-    let accessor_at = |old: usize| read_accessors.iter().position(|&kept| kept == old);
-    let mut accessors = Vec::with_capacity(read_accessors.len());
-    for &old in &read_accessors {
-        let mut accessor = root.accessors[old].clone();
-        accessor.buffer_view = accessor
-            .buffer_view
-            .and_then(|view| view_at(view.value()))
-            .map(|view| json::Index::new(view as u32));
-        accessors.push(accessor);
-    }
-    for sampler in root
-        .animations
-        .iter_mut()
-        .flat_map(|animation| &mut animation.samplers)
-    {
-        for at in [&mut sampler.input, &mut sampler.output] {
-            let kept = accessor_at(at.value()).expect("every read accessor is kept");
-            *at = json::Index::new(kept as u32);
-        }
-    }
-    for node in &mut root.nodes {
-        node.mesh = None;
-        node.skin = None;
-        node.camera = None;
-        node.weights = None;
-    }
-    root.accessors = accessors;
-    root.buffer_views = kept_views;
-    root.meshes.clear();
-    root.skins.clear();
-    root.materials.clear();
-    root.textures.clear();
-    root.images.clear();
-    root.samplers.clear();
-    root.cameras.clear();
-    root.extensions_used.clear();
-    while bin.is_empty() || !bin.len().is_multiple_of(4) {
-        bin.push(0);
-    }
-    root.buffers = vec![json::Buffer {
-        byte_length: USize64::from(bin.len()),
-        extensions: None,
-        extras: Default::default(),
-        name: None,
-        uri: None,
-    }];
-    Ok(glb(&root, bin))
 }
 
 /// A skin binding `joints`, the nodes of `tree` in order, at their rest.

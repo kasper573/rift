@@ -1,11 +1,14 @@
+use super::camera::AreaCanvas;
 use engine::core::audio::soundscape::SoundscapeShape;
 use engine::core::content::name_of;
-use engine::core::geometry::Degrees;
 use engine::core::math::{Offset, Pos, Rect, Size};
-use engine::core::units::Meters;
+use engine::core::units::{Degrees, Meters};
+use engine::systems::area::prop::Footprint;
 use engine::systems::area::prop::Scatter;
 use engine::systems::area::scene::SceneNode;
 use engine::systems::area::{AreaModule, ObjectShape, sixteenth};
+use ui::egui;
+use ui::egui::Stroke as EStroke;
 
 use crate::project::IdPaths;
 
@@ -129,7 +132,7 @@ pub(crate) fn node_label(node: &SceneNode, paths: &impl IdPaths) -> String {
 /// where a point stands, or how big a shape is.
 pub(crate) fn node_detail(module: &AreaModule, paths: &impl IdPaths) -> String {
     if let AreaModule::Object(object) = module
-        && let Some((area, _)) = super::placement::warp_destinations(object, paths)
+        && let Some((area, _)) = super::warps::warp_destinations(object, paths)
             .into_iter()
             .next()
     {
@@ -188,4 +191,63 @@ fn sized_rect(module: &mut AreaModule) -> Option<&mut Rect<Meters>> {
         AreaModule::Population(population) => population.roams.as_mut(),
         _ => None,
     }
+}
+
+/// A prop's footprint on the ground and, outside it, the outline the navmesh keeps walkers clear
+/// of; a stake where the prop takes no ground.
+pub(crate) fn draw_footprint(
+    painter: &egui::Painter,
+    canvas: &AreaCanvas,
+    footprint: &Footprint,
+    at: Pos<Meters>,
+    yaw: Degrees,
+    scale: f32,
+    stroke: EStroke,
+) {
+    let outline = footprint.outline(at, yaw, scale);
+    if outline.len() >= 3 {
+        painter.add(egui::Shape::closed_line(canvas.closed(&outline), stroke));
+        let grown = grown(&outline, canvas.area().bodies.radius.0);
+        painter.add(egui::Shape::dashed_line(
+            &canvas.closed(&grown),
+            EStroke::new(1.0, ui::ink::wash(stroke.color, 0.5)),
+            4.0,
+            4.0,
+        ));
+    } else {
+        painter.add(egui::Shape::closed_line(canvas.circle(at, 0.25), stroke));
+    }
+    let heading = at + yaw.rotate(engine::core::math::Offset::new(0.0, -0.5));
+    painter.add(egui::Shape::line(canvas.polyline(&[at, heading]), stroke));
+}
+
+/// The polygon `outline` pushed out by `by` metres: each corner moved out along the bisector of
+/// its two edges, as far as a mitre there needs.
+fn grown(outline: &[Pos<Meters>], by: f32) -> Vec<Pos<Meters>> {
+    let count = outline.len();
+    if count < 3 {
+        return outline.to_vec();
+    }
+    let signed_area: f32 = (0..count)
+        .map(|i| {
+            let (a, b) = (outline[i], outline[(i + 1) % count]);
+            a.x * b.y - b.x * a.y
+        })
+        .sum();
+    let winding = if signed_area >= 0.0 { 1.0 } else { -1.0 };
+    let normal = |from: Pos<Meters>, to: Pos<Meters>| {
+        let edge = to - from;
+        let length = edge.length().max(f32::EPSILON);
+        engine::core::math::Offset::new(edge.y, -edge.x) * (winding / length)
+    };
+    (0..count)
+        .map(|i| {
+            let previous = outline[(i + count - 1) % count];
+            let here = outline[i];
+            let next = outline[(i + 1) % count];
+            let (before, after) = (normal(previous, here), normal(here, next));
+            let along = (1.0 + before.dot(after)).max(0.2);
+            here + (before + after) * (by / along)
+        })
+        .collect()
 }

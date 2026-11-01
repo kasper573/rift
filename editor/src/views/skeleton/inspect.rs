@@ -33,22 +33,16 @@ pub fn show(
     if let Some(content) = &content {
         chosen(editor, ui, key, def, content);
     }
-    panel::tile(false).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        panel::title(ui, "Rig");
-        ui.add_space(4.0);
+    panel::titled_card(ui, false, "Rig", |ui| {
         rig(ui, key, def, rigging, content.as_ref());
     });
     ui.add_space(8.0);
-    panel::tile(false).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        match page {
-            SkeletonPage::Rigs => sources(ui, def, rigging),
-            SkeletonPage::Sets => sets(editor, ui, content.as_ref(), def, rigging),
-            SkeletonPage::Hands => hand(editor, ui, key, def),
-            SkeletonPage::Body => body(ui, key, content.as_ref(), def),
-            SkeletonPage::Layers => layer(editor, ui, key, def, rigging),
-        }
+    panel::card(ui, false, |ui| match page {
+        SkeletonPage::Rigs => sources(ui, def, rigging),
+        SkeletonPage::Sets => sets(editor, ui, content.as_ref(), def, rigging),
+        SkeletonPage::Hands => hand(editor, ui, key, def),
+        SkeletonPage::Body => body(ui, key, content.as_ref(), def),
+        SkeletonPage::Layers => layer(editor, ui, key, def, rigging),
     });
 }
 
@@ -60,14 +54,11 @@ fn chosen(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, conten
                 return;
             };
             let mut edited = None;
-            panel::tile(false).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                panel::title(ui, &format!("Grip · {}", hand.name));
-                ui.add_space(4.0);
+            panel::titled_card(ui, false, &format!("Grip · {}", hand.name), |ui| {
                 edited = super::grips::fields(editor, ui, key, index, &def.hands);
             });
             if let Some(hand) = edited {
-                super::set_hand(editor, key, index, hand);
+                super::edits::set_hand(editor, key, index, hand);
             }
         }
         Some(Chosen::Hitbox) => {
@@ -78,12 +69,14 @@ fn chosen(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, conten
                 return;
             };
             let mut sized = None;
-            panel::tile(false).show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                panel::title(ui, &format!("Hitbox · {}", shown_path(&path)));
-                ui.add_space(4.0);
-                sized = hitbox::fields(ui, model.hitbox);
-            });
+            panel::titled_card(
+                ui,
+                false,
+                &format!("Hitbox · {}", shown_path(&path)),
+                |ui| {
+                    sized = hitbox::fields(ui, model.hitbox);
+                },
+            );
             if let Some(hitbox) = sized {
                 model::set_hitbox(editor, &path, hitbox);
             }
@@ -124,7 +117,7 @@ fn rig(ui: &mut Ui, key: &str, def: &SkeletonDef, rigging: &Rigging, content: Op
             "the skeleton did not load: its problems are in the output panel",
         );
     }
-    let wearers = super::wearers(content, key);
+    let wearers = super::pickers::wearers(content, key);
     let unfit: Vec<&str> = wearers
         .iter()
         .filter(|(_, model)| model.is_none())

@@ -1,4 +1,4 @@
-use engine::core::time::{Millis, Seconds};
+use engine::core::units::{Millis, Seconds};
 use engine::systems::actor::playing::Playing;
 use engine::systems::actor::skeleton::GestureName;
 use engine::systems::actor::{self, Appearance, ModelDef, Motion};

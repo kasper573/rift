@@ -13,12 +13,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{IntoStaticStr, VariantArray};
 
-use crate::core::assets::ImageRef;
 use crate::core::audio::playback::SfxId;
+use crate::core::content::ImageRef;
 use crate::core::content::{
     Content, ContentFile, ContentId, ModuleRule, ModuleSet, NamedContent, Nearby, RowCheck,
 };
-use crate::core::time::{Seconds, UnixMillis, WallClock};
+use crate::core::time::{UnixMillis, WallClock};
+use crate::core::units::Seconds;
 use crate::core::vfx::VfxId;
 use crate::systems::script::{RunnerKind, ScriptModule, ScriptedRow};
 

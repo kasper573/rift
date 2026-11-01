@@ -11,16 +11,15 @@ use kira::StartTime;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::assets::AudioRef;
 use crate::core::audio::decibels;
 use crate::core::audio::loader::AudioLoader;
 use crate::core::audio::mix::{AudioCategory, AudioMix};
+use crate::core::content::{AssetKind, AudioRef};
 use crate::core::content::{
     Bundle, Content, ContentFile, ContentId, FileWriter, Nearby, PartSpec, Parts, Shape,
 };
 use crate::core::math::{Pos, Rng, Size};
-use crate::core::time::{PlaybackRate, Seconds};
-use crate::core::units::Meters;
+use crate::core::units::{Meters, PlaybackRate, Seconds};
 
 const HALF_VIEW: Size<Meters> = Size::new(12.0, 9.0);
 const STACK_WINDOW: Seconds = Seconds(0.1);
@@ -59,13 +58,16 @@ pub type SfxId = ContentId<SfxDef>;
 pub struct SfxDef {
     #[serde(skip)]
     pub file: AudioRef,
+    /// How long the clip plays.
+    #[serde(skip)]
+    pub lasts: Seconds,
     pub volume: SfxScalar,
     pub pitch: SfxScalar,
 }
 
 pub const SFX_CLIP: PartSpec = PartSpec::File {
     name: "clip",
-    exts: &["wav", "flac"],
+    exts: AssetKind::Audio.extensions(),
 };
 
 impl ContentFile for SfxDef {
@@ -75,6 +77,7 @@ impl ContentFile for SfxDef {
     fn fresh(_: &Nearby) -> Result<SfxDef, String> {
         Ok(SfxDef {
             file: AudioRef::default(),
+            lasts: Seconds::default(),
             volume: SfxScalar::default(),
             pitch: SfxScalar::default(),
         })
@@ -87,6 +90,7 @@ impl Bundle for SfxDef {
     fn read_parts(&mut self, parts: &mut Parts) {
         if let Some(clip) = parts.required(SFX_CLIP) {
             self.file = AudioRef::new(parts.path(clip));
+            self.lasts = parts.sound_length(clip).unwrap_or_default();
         }
     }
 

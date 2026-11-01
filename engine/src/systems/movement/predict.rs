@@ -2,11 +2,9 @@ use bevy_ecs::prelude::*;
 use bevy_time::Time;
 
 use crate::core::content::Content;
-use crate::core::geometry::Radians;
 use crate::core::interpolate::{Jumps, Predicted};
 use crate::core::math::{Offset, Pos};
-use crate::core::time::Seconds;
-use crate::core::units::Meters;
+use crate::core::units::{Meters, Radians, Seconds};
 use crate::systems::actor::render::RenderActor;
 use crate::systems::actor::{Action, Actor};
 use crate::systems::movement::{

@@ -3,17 +3,15 @@ use std::path::Path;
 use std::process::{Command, Stdio};
 use std::time::Duration;
 
-use engine::core::time::UtcHour;
-use engine::systems::launch::{AuthMode, ServerConfig, ServerDaylight};
+use engine::systems::launch::ServerConfig;
 use engine::systems::player::SpawnPolicy;
 
 use crate::binaries::{self, GAME_SERVER_PROFILING};
 use crate::loadtest;
-use crate::server::{GameServer, LOCALHOST, absolute};
+use crate::server::{GameServer, bench_config};
 
 const SAMPLED: Duration = Duration::from_secs(20);
 const SAMPLE_HZ: &str = "999";
-const SEED: u64 = 1931;
 const MAX_CLIENTS: usize = 50_000;
 const LINE: usize = 160;
 
@@ -32,20 +30,10 @@ pub fn run(game: Option<&Path>, out: &Path) {
     let server = GameServer::start(
         &binaries::beside(GAME_SERVER_PROFILING),
         &ServerConfig {
-            bind: LOCALHOST,
-            port: 0,
-            udp_port: 0,
-            public_ip: LOCALHOST,
             max_clients: MAX_CLIENTS,
-            content_dir: absolute(&game),
             player_spawn_policy: SpawnPolicy::Dist,
-            player_immortal: true,
-            daylight: ServerDaylight::Turning,
-            rng_seed: Some(SEED),
-            daily_reset_utc_hour: UtcHour::MIDNIGHT,
-            auth: AuthMode::Fake,
             test_characters: false,
-            exit_on_stdin_eof: true,
+            ..bench_config(&game)
         },
     );
     let mut load = loadtest::run_dyn(&server.http_url());

@@ -1,11 +1,13 @@
+use engine::core::content::Content;
 use engine::core::content::{SETTINGS_FILE, name_of};
 use engine::core::math::Pos;
 use engine::core::units::Meters;
 use engine::systems::area::scene::SCENE_FILE;
-use engine::systems::area::{AreaDef, AreaModule};
+use engine::systems::area::{AreaDef, AreaId, AreaModule, check_place};
 use engine::systems::script::Place;
 use ui::egui;
 use ui::egui::{Color32, Pos2, Stroke as EStroke, Vec2};
+use ui::theme;
 
 use super::{AreaFrame, nodes};
 use crate::app::{Editor, PlacePick};
@@ -75,8 +77,37 @@ impl ArrivalPin {
     }
 }
 
+/// The ground under a pointer taken as a place in an area, with whether the game accepts it.
+pub(crate) struct PickedPlace {
+    pub at: Pos<Meters>,
+    pub verdict: Result<(), engine::core::content::ContentProblem>,
+}
+
+impl PickedPlace {
+    pub fn at(content: &Content, area: AreaId, ground: Pos<Meters>, fine: bool) -> PickedPlace {
+        let at = crate::views::snap(ground, fine);
+        let verdict = check_place(content, Place { area, at });
+        PickedPlace { at, verdict }
+    }
+
+    pub fn color(&self) -> Color32 {
+        if self.verdict.is_ok() {
+            Color32::from_rgb(255, 230, 120)
+        } else {
+            theme::DANGER
+        }
+    }
+
+    pub fn commit(self, editor: &mut Editor, area_key: &str) {
+        match self.verdict {
+            Ok(()) => commit_pick(editor, area_key, self.at),
+            Err(problem) => editor.toast(format!("{}: {}", problem.rule, problem.expected)),
+        }
+    }
+}
+
 /// Puts the place `at` in `area_key` where the place being picked goes, and ends the pick.
-pub(crate) fn commit_pick(editor: &mut Editor, area_key: &str, at: Pos<Meters>) {
+fn commit_pick(editor: &mut Editor, area_key: &str, at: Pos<Meters>) {
     let Some(PlacePick { file, pointer, .. }) = editor.pick.clone() else {
         return;
     };

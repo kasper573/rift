@@ -3,15 +3,14 @@ use std::collections::BTreeMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::assets::{FileSize, ModelRef};
 use crate::core::content::gltf::GltfInfo;
+use crate::core::content::{AssetKind, FileSize, ModelRef};
 use crate::core::content::{
     Bundle, ContentFile, ContentId, FileHashes, FileWriter, Loading, Nearby, PartSpec, Parts,
     RowCheck, Shape, serial,
 };
-use crate::core::geometry::Degrees;
 use crate::core::math::{Offset, Pos, Rect, Rng};
-use crate::core::units::Meters;
+use crate::core::units::{Degrees, Meters};
 use crate::systems::area::prop_material::PropMaterialId;
 
 pub type PropId = ContentId<PropDef>;
@@ -33,13 +32,13 @@ pub const MAX_SUNK: Meters = Meters(8.0);
 
 pub const PROP_GLB: PartSpec = PartSpec::File {
     name: "model",
-    exts: &["glb"],
+    exts: AssetKind::Model.extensions(),
 };
 
 /// The images the model draws with, each a PNG the model names by its path from the bundle.
 pub const PROP_TEXTURES: PartSpec = PartSpec::Keyed {
     folder: "textures",
-    exts: &["png"],
+    exts: AssetKind::Image.extensions(),
 };
 
 /// A thing standing in the world: a glTF model, the ground it takes up, how it is drawn when it

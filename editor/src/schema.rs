@@ -2,9 +2,9 @@ use std::any::TypeId;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{LazyLock, Mutex, OnceLock, PoisonError};
 
-use engine::core::assets::{AssetKind, AudioRef};
 use engine::core::content::fixture::FixtureLock;
 use engine::core::content::load::{ContentShapes, TableShape};
+use engine::core::content::{AssetKind, AudioRef};
 use engine::core::content::{
     Content, ContentFile, ContentScope, fields_file, locate, with_content,
 };

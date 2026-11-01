@@ -160,13 +160,8 @@ fn list(ui: &mut Ui, key: &str, names: Names) -> Option<Edited> {
             if response.lost_focus() && renamed.trim() != name && !renamed.trim().is_empty() {
                 edited = Some(Edited::Renamed(index, renamed.trim().to_owned()));
             }
-            if index > 0 && ui.small_button("↑").on_hover_text("earlier").clicked() {
-                edited = Some(Edited::Moved(index, index - 1));
-            }
-            if index + 1 < names.names.len()
-                && ui.small_button("↓").on_hover_text("later").clicked()
-            {
-                edited = Some(Edited::Moved(index, index + 1));
+            if let Some(to) = controls::reorder(ui, index, names.names.len()) {
+                edited = Some(Edited::Moved(index, to));
             }
             if controls::remove(ui, names.title).clicked() {
                 edited = Some(Edited::Removed(index));
@@ -210,7 +205,7 @@ fn apply<N: Clone>(
     field: impl FnOnce(&mut SkeletonDef) -> &mut Vec<N>,
     name: impl Fn(String) -> N,
 ) {
-    super::change(editor, key, &format!("Change the {what}"), |skeleton| {
+    super::edits::change(editor, key, &format!("Change the {what}"), |skeleton| {
         let list = field(skeleton);
         match edit {
             Edited::Renamed(index, to) => list[index] = name(to),
@@ -278,6 +273,7 @@ fn tints(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
     let mut tints = def.tints.clone();
     let mut removed = None;
     let mut moved = None;
+    let count = tints.len();
     for (index, tint) in tints.iter_mut().enumerate() {
         ui.horizontal(|ui| {
             let mut colour = egui::Color32::from(tint.colour);
@@ -295,11 +291,8 @@ fn tints(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
             {
                 tint.metal = !tint.metal;
             }
-            if index > 0 && ui.small_button("↑").on_hover_text("earlier").clicked() {
-                moved = Some((index, index - 1));
-            }
-            if ui.small_button("↓").on_hover_text("later").clicked() {
-                moved = Some((index, index + 1));
+            if let Some(to) = controls::reorder(ui, index, count) {
+                moved = Some((index, to));
             }
             if controls::remove(ui, "tint").clicked() {
                 removed = Some(index);
@@ -339,11 +332,11 @@ fn tints(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
     if let Some(index) = removed {
         tints.remove(index);
     }
-    if let Some((from, to)) = moved.filter(|(_, to)| *to < tints.len()) {
+    if let Some((from, to)) = moved {
         tints.swap(from, to);
     }
     if tints != def.tints {
-        super::change(editor, key, "Change the tints", |skeleton| {
+        super::edits::change(editor, key, "Change the tints", |skeleton| {
             skeleton.tints = tints;
             Ok(())
         });

@@ -71,8 +71,7 @@ fn moved_outside(editor: &mut Editor, ui: &mut Ui) {
         return;
     };
     let mut point = false;
-    panel::tile(true).show(ui, |ui| {
-        ui.set_width(ui.available_width());
+    panel::card(ui, true, |ui| {
         ui.label(theme::warn(summary).size(13.0));
         for step in moved.iter().take(SHOWN) {
             ui.label(

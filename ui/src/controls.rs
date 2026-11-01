@@ -134,6 +134,38 @@ pub fn combo(id_salt: impl egui::AsIdSalt) -> egui::ComboBox {
         })
 }
 
+/// A combo of `width` showing `selected`, whose rows `rows` draws for the filter typed above them,
+/// and returns whether one was picked, which closes it.
+pub fn filtered_combo(
+    ui: &mut Ui,
+    id: impl std::hash::Hash + std::fmt::Debug + Copy,
+    selected: impl Into<WidgetText>,
+    width: f32,
+    hint: &str,
+    rows: impl FnOnce(&mut Ui, &str) -> bool,
+) {
+    let filter_id = ui.make_persistent_id((&id, "filter"));
+    combo(id)
+        .selected_text(selected)
+        .width(width)
+        .close_behavior(egui::PopupCloseBehavior::CloseOnClickOutside)
+        .show_ui(ui, |ui| {
+            let mut filter: String = ui
+                .data_mut(|data| data.get_temp(filter_id))
+                .unwrap_or_default();
+            ui.add(
+                egui::TextEdit::singleline(&mut filter)
+                    .hint_text(hint)
+                    .desired_width(width - 20.0),
+            )
+            .request_focus();
+            ui.data_mut(|data| data.insert_temp(filter_id, filter.clone()));
+            if rows(ui, &filter) {
+                ui.close();
+            }
+        });
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pill {
     Gold,
@@ -247,6 +279,18 @@ pub fn keyed(ui: &mut Ui, label: &str, keys: Option<&str>, enabled: bool) -> Res
     } else {
         response
     }
+}
+
+/// Buttons moving the row at `index` of `len` earlier or later: the index it is moved to.
+pub fn reorder(ui: &mut Ui, index: usize, len: usize) -> Option<usize> {
+    let mut to = None;
+    if index > 0 && ui.small_button("↑").on_hover_text("earlier").clicked() {
+        to = Some(index - 1);
+    }
+    if index + 1 < len && ui.small_button("↓").on_hover_text("later").clicked() {
+        to = Some(index + 1);
+    }
+    to
 }
 
 /// A small cross that removes what it sits beside, saying `what` it does on hover.

@@ -10,8 +10,8 @@ use std::sync::{Arc, OnceLock};
 use rayon::prelude::*;
 use schemars::JsonSchema;
 use schemars::generate::SchemaSettings;
-use serde::Serialize;
 use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 
 use super::bundle::{Bundle, PartSpec, Parts};
 use super::check::RowCheck;
@@ -1249,7 +1249,8 @@ impl Loading {
 
 /// What a file held, as every file of a game is told apart: the hex of its BLAKE3 hash, and its
 /// size.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct FileHash {
     pub hash: String,
     pub size: u64,
@@ -1968,24 +1969,6 @@ fn module_rules<Row: ModuleSet>(loading: &mut Loading) {
             ),
         );
     }
-}
-
-pub const KEY_RULE: &str =
-    "1 to 64 of ASCII letters, digits, _ and -, not starting with -, not a Windows device name";
-
-pub fn valid_key(key: &str) -> bool {
-    const DEVICES: [&str; 22] = [
-        "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
-        "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
-    ];
-    (1..=64).contains(&key.len())
-        && !key.starts_with('-')
-        && key
-            .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || b == b'_' || b == b'-')
-        && !DEVICES
-            .iter()
-            .any(|device| device.eq_ignore_ascii_case(key))
 }
 
 pub struct FileWriter {

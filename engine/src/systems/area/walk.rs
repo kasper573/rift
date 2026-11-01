@@ -12,8 +12,8 @@ use crate::core::content::Content;
 use crate::core::geometry::corners;
 use crate::core::ground::{TILE_SIDE, TileAt};
 use crate::core::math::{Pos, Rect, Size};
-use crate::core::units::{Cell, CellPos, GridSize, MeterSize, Meters};
-use crate::systems::movement::{AGENT_RADIUS, NavMesh, TileLayer};
+use crate::core::units::{CellPos, GridSize, GroundCell, MeterSize, Meters};
+use crate::systems::movement::{NavMesh, TileLayer};
 
 /// What a terrain is underfoot: whether actors walk on it, and what a step on it sounds like.
 #[derive(Clone, Debug)]
@@ -153,7 +153,7 @@ fn kind(wild: bool, flies: bool) -> usize {
 fn triangulate(area: &Area, at: TileAt) -> [TileLayer; KINDS] {
     let size = area.heights.size();
     let tile = at.rect(size);
-    let reach = tile.inflate(AGENT_RADIUS.0, AGENT_RADIUS.0);
+    let reach = tile.inflate(area.bodies.radius.0, area.bodies.radius.0);
     let bounds = area.size.bounds();
     let mut ground: Vec<Vec<Pos<Meters>>> = area
         .footprint_index
@@ -174,7 +174,7 @@ fn triangulate(area: &Area, at: TileAt) -> [TileLayer; KINDS] {
     let mut wild_ground = ground.clone();
     wild_ground.extend(zones.iter().cloned());
     let lay = |obstacles: &[Vec<Pos<Meters>>]| {
-        NavMesh::triangulate(tile, bounds, obstacles, AGENT_RADIUS)
+        NavMesh::triangulate(tile, bounds, obstacles, area.bodies.radius)
     };
     [lay(&ground), lay(&wild_ground), lay(&[]), lay(&zones)]
 }

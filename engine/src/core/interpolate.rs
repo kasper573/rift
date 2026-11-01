@@ -1,3 +1,4 @@
+use crate::core::units::Seconds;
 use std::collections::VecDeque;
 use std::marker::PhantomData;
 
@@ -6,8 +7,6 @@ use bevy_ecs::component::Mutable;
 use bevy_ecs::prelude::*;
 use bevy_time::Time;
 use serde::{Deserialize, Serialize};
-
-use crate::core::time::Seconds;
 
 /// A client-side render value smoothly played back from a replicated [`Interpolate::Source`] that
 /// only updates every few ticks. Implement it on the component your renderers read (a sprite

@@ -15,7 +15,7 @@ use crate::systems::dialogue::{
 };
 use crate::systems::item::{Inventory, ItemStack};
 use crate::systems::script::{
-    Condition, EffectCall, Reach, RiftScripting, condition, effect as effects,
+    Condition, EffectCall, EffectReach, RiftScripting, condition, effect as effects,
 };
 use crate::systems::text::LineText;
 
@@ -149,8 +149,8 @@ impl EffectDef<RiftScripting> for OfferQuest {
             }
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Offers(self.quest)]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Offers(self.quest)]
     }
 }
 
@@ -173,8 +173,8 @@ impl EffectDef<RiftScripting> for AcceptQuest {
             effects::settle(world, cx, &refused, accepted)
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Accepts(self.quest)]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Accepts(self.quest)]
     }
 }
 
@@ -224,8 +224,8 @@ impl EffectDef<RiftScripting> for TurnIn {
             }
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::TurnsIn(self.quest)]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::TurnsIn(self.quest)]
     }
 }
 
@@ -247,8 +247,8 @@ impl EffectDef<RiftScripting> for FailQuest {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Fails(self.quest)]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Fails(self.quest)]
     }
 }
 
@@ -281,8 +281,8 @@ impl EffectDef<RiftScripting> for CompleteTask {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Completes(self.quest)]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Completes(self.quest)]
     }
 }
 
@@ -314,8 +314,8 @@ impl EffectDef<RiftScripting> for Decide {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Decides(self.quest)]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Decides(self.quest)]
     }
 }
 

@@ -21,7 +21,7 @@ use crate::systems::area::{self, AreaDef, AreaId, AreaModule, PropId};
 use crate::systems::input::map::{InputAction, InputBinding, InputMap, KeyModifiers};
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::{ItemDef, ItemId, Wear};
-use crate::systems::movement::SPACING;
+use crate::systems::movement::Bodies;
 use crate::systems::npc::{NpcDef, NpcId};
 use crate::systems::player::snapshot::CharacterSnapshot;
 use crate::systems::script::Place;
@@ -345,7 +345,9 @@ fn game(content: &Content) -> ProbeGame {
     ProbeGame {
         initial_spawn: content.built::<GameSettings>().initial_spawn,
         test_characters: content.ids::<CharacterSnapshot>().collect(),
-        spacing: SPACING,
+        spacing: Bodies::of(content)
+            .expect("a game that loaded knows its bodies")
+            .spacing(),
         areas: content
             .ids::<AreaDef>()
             .map(|area| area_of(content, area))

@@ -12,7 +12,8 @@ use super::load::{
 use super::locate::JsonIndex;
 use super::report::{ContentProblem, ErrorPlace, LoadError};
 use super::table::ContentFile;
-use crate::core::assets::FileSize;
+use crate::core::content::FileSize;
+use crate::core::units::Seconds;
 
 /// A type whose files are bundles: a folder of its `config.json` and the parts it declares, read and
 /// written with its fields. A part is never named from outside the bundle, so the bundle moves,
@@ -187,6 +188,18 @@ impl<'a> Parts<'a> {
         let bytes = self.folder.read(&path).ok()?;
         let checked = self.folder.checked(&path);
         super::media::gltf_info(
+            &path,
+            checked.as_ref().map(|file| file.hash.as_str()),
+            &bytes,
+        )
+    }
+
+    /// How long the sound at `part` plays, when it reads.
+    pub fn sound_length(&self, part: &str) -> Option<Seconds> {
+        let path = self.path(part);
+        let bytes = self.folder.read(&path).ok()?;
+        let checked = self.folder.checked(&path);
+        super::media::sound_length(
             &path,
             checked.as_ref().map(|file| file.hash.as_str()),
             &bytes,

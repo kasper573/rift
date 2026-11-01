@@ -8,7 +8,7 @@ use engine::systems::area::scene::{ModuleNode, SceneNode};
 use ui::egui;
 use ui::egui::{Stroke as EStroke, Ui, Vec2};
 
-use super::{AreaDrag, AreaFrame, AreaSnapshot, modules, place};
+use super::{AreaDrag, AreaFrame, AreaSnapshot, modules};
 use crate::app::Editor;
 use crate::keymap::EditorKey;
 use crate::tabs::file_title;
@@ -23,17 +23,20 @@ pub fn input(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame
         && let Some(ground) = frame.drag_ground()
     {
         let view = editor.views.area.view_mut(view_key);
-        view.set_drag(AreaDrag::Scatter {
-            from: place::snap(ground, fine),
+        view.drag = Some(AreaDrag::Scatter {
+            from: crate::views::snap(ground, fine),
         });
         return;
     }
     if response.drag_stopped_by(egui::PointerButton::Primary) {
         let view = editor.views.area.view_mut(view_key);
-        let Some(AreaDrag::Scatter { from }) = view.take_drag() else {
+        let Some(AreaDrag::Scatter { from }) = view.drag.take() else {
             return;
         };
-        let Some(to) = frame.drag_ground().map(|ground| place::snap(ground, fine)) else {
+        let Some(to) = frame
+            .drag_ground()
+            .map(|ground| crate::views::snap(ground, fine))
+        else {
             return;
         };
         let region = Rect::from_points([from, to]);
@@ -86,12 +89,12 @@ pub fn scatter(
 
 pub fn overlay(editor: &Editor, painter: &egui::Painter, view_key: &str, frame: &AreaFrame) {
     let view = editor.views.area.view(view_key);
-    let color = super::overlays::module_color(Some(engine::systems::area::AreaModuleKind::Scatter));
+    let color = super::overlays::module_color(engine::systems::area::AreaModuleKind::Scatter);
     let fine = painter.ctx().input(|i| EditorKey::Unsnapped.held(i));
-    if let Some(AreaDrag::Scatter { from }) = view.drag()
+    if let Some(AreaDrag::Scatter { from }) = view.drag.as_ref()
         && let Some(to) = frame.drag_ground()
     {
-        let region = Rect::from_points([*from, place::snap(to, fine)]);
+        let region = Rect::from_points([*from, crate::views::snap(to, fine)]);
         painter.add(egui::Shape::dashed_line(
             &frame.canvas.outline(region),
             EStroke::new(1.5, color),

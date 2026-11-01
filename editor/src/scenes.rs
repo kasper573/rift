@@ -28,13 +28,13 @@ use crate::views::character::CharacterSection;
 use crate::views::class;
 use crate::views::item::{self, ItemPage};
 use crate::views::model;
-use crate::views::script::{PendingScriptAction, ScriptRow};
+use crate::views::script::{ScriptRow, session::PendingScriptAction};
 use crate::views::skeleton::preview::PreviewPlays;
 use crate::views::skeleton::{self, SkeletonPage};
 use crate::views::world::{
     self, ColorBy, ColorField, MapLens, MapLook, MapPart, MapRoute, OpenWorldMap, arrange,
 };
-use crate::{import, rows, shell};
+use crate::{import, rows};
 
 #[derive(Clone, Debug, Deserialize, VariantNames)]
 #[serde(rename_all = "snake_case")]
@@ -267,7 +267,7 @@ fn last_opened_bundle(editor: &Editor) -> Option<String> {
             EditorTab::Area { key } | EditorTab::Blueprint { key } => Some(key.clone()),
             _ => None,
         })
-        .or_else(|| match shell::active_tab(editor)? {
+        .or_else(|| match crate::tabs::active_tab(editor)? {
             EditorTab::Area { key } | EditorTab::Blueprint { key } => Some(key),
             _ => None,
         })
@@ -486,7 +486,7 @@ fn sheet_step(editor: &mut Editor, step: &SheetStep) {
             EditorTab::Spreadsheet { table } => Some(table.clone()),
             _ => None,
         });
-    let active = match shell::active_tab(editor) {
+    let active = match crate::tabs::active_tab(editor) {
         Some(EditorTab::Spreadsheet { table }) => Some(table),
         _ => None,
     };
@@ -532,7 +532,7 @@ fn model_step(editor: &mut Editor, step: &ModelStep) {
         editor.open_tab(EditorTab::Model { key: key.clone() });
         return;
     }
-    let key = match shell::active_tab(editor) {
+    let key = match crate::tabs::active_tab(editor) {
         Some(EditorTab::Model { key }) => key,
         _ if editor.selection.table == ModelDef::TABLE && !editor.selection.keys.is_empty() => {
             editor.selection.keys[0].clone()
@@ -552,7 +552,7 @@ fn bust_step(editor: &mut Editor, step: &BustStep) {
         editor.open_tab(EditorTab::Bust { key: key.clone() });
         return;
     }
-    let Some(EditorTab::Bust { key }) = shell::active_tab(editor) else {
+    let Some(EditorTab::Bust { key }) = crate::tabs::active_tab(editor) else {
         return;
     };
     bust::ensure_view(editor, &key);
@@ -585,7 +585,7 @@ fn skeleton_step(editor: &mut Editor, step: &SkeletonStep) {
         skeleton::ensure_view(editor, key);
         return;
     }
-    let key = match shell::active_tab(editor) {
+    let key = match crate::tabs::active_tab(editor) {
         Some(EditorTab::Row { table, key }) if table == SkeletonDef::TABLE => key,
         _ if editor.selection.table == SkeletonDef::TABLE && !editor.selection.keys.is_empty() => {
             editor.selection.keys[0].clone()

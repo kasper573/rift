@@ -7,9 +7,6 @@ use crate::core::units::{MeterPos, Meters};
 use glam::Vec2;
 use polyanya::{Coords, Layer, Mesh, Polygon, Triangulation, Vertex};
 
-/// The ground every walker's body takes, so it keeps this far from what blocks and from the others.
-pub const AGENT_RADIUS: Meters = Meters(0.35);
-
 /// Where an area walks: its bounds less everything that blocks, each grown by the walker's radius,
 /// cut into convex polygons a straight line crosses freely and strung together where they share an
 /// edge. A point is walkable when a polygon holds it; two points connect when their polygons do.

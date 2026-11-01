@@ -7,10 +7,10 @@ use crate::core::content::Content;
 use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, Expr, NEXT, ScriptFault, ValueType,
 };
-use crate::core::time::Seconds;
+use crate::core::units::Seconds;
 use crate::systems::item::ItemId;
 use crate::systems::script::{
-    Condition, EffectCall, OwnerRow, Reach, RiftScripting, RiftScripts, RunnerKind,
+    Condition, EffectCall, EffectReach, OwnerRow, RiftScripting, RiftScripts, RunnerKind,
     effect as effects,
 };
 use crate::systems::skill::{SkillId, SkillKind};
@@ -87,8 +87,8 @@ impl EffectDef<RiftScripting> for ApplyStatus {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Applies(self.effect)]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Applies(self.effect)]
     }
 }
 
@@ -117,8 +117,8 @@ impl EffectDef<RiftScripting> for RemoveStatus {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Cleanses]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Cleanses]
     }
 }
 
@@ -142,8 +142,8 @@ impl EffectDef<RiftScripting> for Boost {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::Boosts(self.stat, constant(&self.by))]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::Boosts(self.stat, constant(&self.by))]
     }
 }
 
@@ -156,7 +156,7 @@ pub fn boosts_of(content: &Content, item: ItemId) -> Vec<(StatKind, Option<f32>)
         .reaches
         .iter()
         .filter_map(|reach| match reach {
-            Reach::Boosts(stat, by) => Some((*stat, *by)),
+            EffectReach::Boosts(stat, by) => Some((*stat, *by)),
             _ => None,
         })
         .collect()

@@ -36,15 +36,6 @@ pub fn dead(stats: &Stats) -> bool {
     stats.get(StatKind::Health) <= 0.0
 }
 
-pub fn fraction(world: &World, entity: Entity) -> f32 {
-    let max = max_health(world, entity);
-    if max <= 0.0 {
-        0.0
-    } else {
-        current_health(world, entity) / max
-    }
-}
-
 pub fn apply_damage(world: &mut World, entity: Entity, amount: f32) {
     if is_dead(world, entity) {
         return;

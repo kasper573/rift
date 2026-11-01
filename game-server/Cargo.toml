@@ -1,0 +1,34 @@
+[package]
+name = "game-server"
+version.workspace = true
+edition.workspace = true
+description = "The game server: plays a game's world for its clients and serves its content"
+
+[[bin]]
+name = "game-server"
+path = "src/main.rs"
+
+# Built with `--profile profiling --features profiling`, it is game-server-profiling.
+[features]
+profiling = ["bevy/debug", "bevy/trace_chrome"]
+
+[dependencies]
+engine = { path = "../engine" }
+oidc = { path = "../oidc" }
+service = { path = "../service" }
+bevy.workspace = true
+bevy_app.workspace = true
+bevy_ecs.workspace = true
+bevy_replication.workspace = true
+axum.workspace = true
+blocking = "1"
+ctrlc.workspace = true
+getrandom = "0.4"
+metrics = "0.24"
+renet2.workspace = true
+renet2_netcode.workspace = true
+serde_json.workspace = true
+tokio.workspace = true
+
+[lints]
+workspace = true

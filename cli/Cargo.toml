@@ -19,7 +19,6 @@ bevy_ecs.workspace = true
 bevy_replication.workspace = true
 bevy_time = { workspace = true, features = ["std"] }
 clap.workspace = true
-schemars = "1"
 serde.workspace = true
 serde_json.workspace = true
 strum = { workspace = true, features = ["derive"] }

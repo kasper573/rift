@@ -11,21 +11,20 @@ use std::sync::Arc;
 use engine::core::content::ContentFile;
 use engine::core::content::gltf::{self, Triangle};
 use engine::core::content::media::GltfInfos;
-use engine::core::geometry::Radians;
 use engine::core::math::Pos;
-use engine::core::units::Meters;
+use engine::core::units::{Meters, Radians};
 use engine::systems::area::prop::{
     Footprint, MAX_POLYGON_POINTS, MIN_POLYGON_POINTS, ModelHash, PROP_TEXTURES, PropDef,
 };
 use engine::systems::area::{Picture, Pictured};
 use ui::egui::{self, Ui};
-use ui::{chip, controls, theme};
+use ui::{chip, controls};
 
 use super::area::camera::OrbitCamera;
-use super::stage::{self, StagePicture};
+use super::stage::{self, StagePicture, StageToggle};
 use crate::app::Editor;
 use crate::project::ContentEdit;
-use crate::shell::row_form;
+use crate::row_form;
 use crate::tabs::shown_path;
 use crate::views::ViewMap;
 
@@ -67,7 +66,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         inspect::show(editor, ui, key, &row);
     });
     egui::Frame::new()
-        .inner_margin(crate::shell::VIEW_PADDING)
+        .inner_margin(crate::widgets::VIEW_PADDING)
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
             header(editor, ui, key, &row);
@@ -286,32 +285,46 @@ pub(super) fn picture(editor: &mut Editor, key: &str) -> Option<(u64, Arc<Pictur
         .of(&content, generation, Pictured::Prop(id))
 }
 
+enum HeaderAction {
+    Convert(footprint::FootprintKind),
+    Fit,
+}
+
 fn header(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef) {
-    ui.horizontal(|ui| {
-        ui.label(theme::mono(shown_path(key)).color(theme::CODE));
-        ui.add_space(8.0);
-        let current = footprint::FootprintKind::of(&row.footprint);
-        for kind in footprint::FootprintKind::ALL {
-            if chip::mode(ui, kind.label(), kind == current).clicked() && kind != current {
-                let bounds = model_bounds(editor, key);
-                shape(
-                    editor,
-                    key,
-                    footprint::converted(&row.footprint, bounds, kind),
-                );
-            }
+    let current = footprint::FootprintKind::of(&row.footprint);
+    let action = stage::bar(
+        ui,
+        key,
+        &mut editor.views.toggles,
+        &[StageToggle::Turning],
+        |ui| {
+            let converted = footprint::FootprintKind::ALL
+                .into_iter()
+                .filter(|kind| chip::mode(ui, kind.label(), *kind == current).clicked())
+                .last()
+                .filter(|kind| *kind != current)
+                .map(HeaderAction::Convert);
+            ui.add_space(8.0);
+            let fit = controls::button(ui, "Fit to mesh")
+                .on_hover_text("A polygon round the model's base, remembering the model it fits")
+                .clicked();
+            converted.or(fit.then_some(HeaderAction::Fit))
+        },
+    );
+    match action {
+        Some(HeaderAction::Convert(kind)) => {
+            let bounds = model_bounds(editor, key);
+            shape(
+                editor,
+                key,
+                footprint::converted(&row.footprint, bounds, kind),
+            );
         }
-        ui.add_space(8.0);
-        if controls::button(ui, "Fit to mesh")
-            .on_hover_text("A polygon round the model's base, remembering the model it fits")
-            .clicked()
-        {
+        Some(HeaderAction::Fit) => {
             fit_to_mesh(editor, key);
         }
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            stage::toggle(ui, "turning", &mut editor.views.toggles.turning);
-        });
-    });
+        None => {}
+    }
 }
 
 /// Takes the files dropped on the view: a glTF binary replaces the model.

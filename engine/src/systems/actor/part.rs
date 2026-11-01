@@ -9,8 +9,8 @@ use serde::{Deserialize, Serialize};
 
 use super::material::MaterialId;
 use super::skeleton::{BodyRegion, BuildName, SkeletonId};
-use crate::core::assets::{FileSize, ModelRef};
 use crate::core::content::{ContentFile, ContentId, Nearby};
+use crate::core::content::{FileSize, ModelRef};
 
 pub type ModelPartId = ContentId<ModelPartDef>;
 

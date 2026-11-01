@@ -9,7 +9,7 @@ use ui::panel;
 use ui::sheet;
 use ui::theme;
 
-use engine::core::assets::AssetKind;
+use engine::core::content::AssetKind;
 use engine::core::content::fixture::FixtureLock;
 use engine::core::content::{
     Content, ContentFile, LoadReport, fields_file, parent_of, with_content,
@@ -25,10 +25,10 @@ use ui::egui::Ui;
 use ui::glyph::{self, Mark};
 
 use crate::body_names::{self, NameChoice, NameKind};
+use crate::browser;
 use crate::keymap::EditorKey;
 use crate::project::{Project, ProjectFiles};
 use crate::schema::{self, KeptValues, SchemaKind, SchemaShapes, SchemaVariant};
-use crate::shell::browser;
 use crate::tabs::{file_title, shown_path};
 use crate::usages::ContentUsages;
 use crate::views::bust::faces;
@@ -779,7 +779,9 @@ fn params_map(ui: &mut Ui, cx: &mut FormCx, at: ParamsMapField, parent: &mut Val
         ui.label(theme::faint(format!("pick {sibling} first")).size(12.5));
         return changed;
     };
-    let specs = vfx::params_of(cx.project, &table, &owner);
+    let specs = vfx::ParamOwner::of_table(&table)
+        .map(|kind| vfx::params_of(cx.project, kind, &owner))
+        .unwrap_or_default();
     let value_schema = schema::resolve(cx.root, field)
         .get("additionalProperties")
         .unwrap_or(&Value::Null);
@@ -1246,8 +1248,7 @@ fn array(ui: &mut Ui, cx: &mut FormCx, items: &Value, value: &mut Value, path: &
                 .map(str::to_owned)
                 .collect();
             if boxed {
-                panel::tile(false).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
+                panel::card(ui, false, |ui| {
                     ui.horizontal(|ui| {
                         match schema::kind(cx.root, item_schema) {
                             SchemaKind::Union(variants) => {

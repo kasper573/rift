@@ -2,19 +2,19 @@ use std::collections::{BTreeMap, HashMap};
 use std::io::Cursor;
 use std::sync::{LazyLock, Mutex};
 
+use super::asset::AssetKind;
 use super::gltf::{self, GltfImage, GltfInfo};
 use super::load::{FileHash, FileHashes, Loading};
 use super::report::{ContentProblem, ErrorPlace};
-use crate::core::assets::AssetKind;
-use crate::core::audio;
+use crate::core::units::Seconds;
 
 pub struct ImageSizes(pub HashMap<String, (u32, u32)>);
 
 /// What the loader learnt of every model, by its path from the game folder.
 pub struct GltfInfos(pub HashMap<String, GltfInfo>);
 
-/// What decoding a media file found: an image's size, a model's measure, nothing more for a sound
-/// or a font, or why it does not decode.
+/// What decoding a media file found: an image's size, a model's measure, a sound's length, nothing
+/// more for a font, or why it does not decode.
 type MediaCheck = Result<Decoded, MediaProblem>;
 
 #[derive(Clone)]
@@ -22,6 +22,7 @@ enum Decoded {
     Plain,
     Image((u32, u32)),
     Model(GltfInfo),
+    Sound(Seconds),
 }
 
 #[derive(Clone)]
@@ -68,7 +69,7 @@ pub fn check_media(loading: &mut Loading) {
                 }
                 models.insert(path, info);
             }
-            Ok(Decoded::Plain) => {}
+            Ok(Decoded::Plain | Decoded::Sound(_)) => {}
             Err(problem) => loading.file_error(
                 path,
                 ErrorPlace::WholeFile,
@@ -154,6 +155,14 @@ pub(super) fn image_size(path: &str, hash: Option<&str>, bytes: &[u8]) -> Option
     }
 }
 
+/// How long the sound at `path` of `bytes`, hashed `hash` when known, plays, when it reads.
+pub(super) fn sound_length(path: &str, hash: Option<&str>, bytes: &[u8]) -> Option<Seconds> {
+    match decoded(path, hash, bytes)? {
+        Decoded::Sound(length) => Some(length),
+        _ => None,
+    }
+}
+
 /// What the model at `path` of `bytes`, hashed `hash` when known, holds, when it reads.
 pub fn gltf_info(path: &str, hash: Option<&str>, bytes: &[u8]) -> Option<GltfInfo> {
     match decoded(path, hash, bytes)? {
@@ -179,14 +188,13 @@ fn decode(path: &str, bytes: &[u8]) -> MediaCheck {
         Some(AssetKind::Image) => decode_png(bytes)
             .map(Decoded::Image)
             .map_err(unreadable_image),
-        Some(AssetKind::Audio) => audio::loader::decode(bytes.to_vec())
-            .and_then(audio::loader::DecodedAudio::into_sound)
-            .map(|_| Decoded::Plain)
-            .map_err(|error| MediaProblem {
-                rule: "unreadable sound",
-                found: error.to_string(),
-                expected: "a WAV or FLAC file of one or two channels that decodes",
-            }),
+        Some(AssetKind::Audio) => super::sound::decode(bytes.to_vec())
+            .and_then(|audio| {
+                let length = audio.length();
+                audio.into_sound()?;
+                Ok(Decoded::Sound(length))
+            })
+            .map_err(unreadable_sound),
         Some(AssetKind::Model) => {
             gltf::inspect(bytes)
                 .map(Decoded::Model)
@@ -201,14 +209,26 @@ fn decode(path: &str, bytes: &[u8]) -> MediaCheck {
 }
 
 /// What a media file this build's loader already checked finds, read only as far as the game
-/// needs of it: an image's size from its header, a model's measure, nothing of a sound or a font.
+/// needs of it: an image's size or a sound's length from its header, a model's measure, nothing of
+/// a font.
 fn measure(path: &str, bytes: &[u8]) -> MediaCheck {
     match AssetKind::of(path) {
         Some(AssetKind::Image) => png_size(bytes)
             .map(Decoded::Image)
             .map_err(unreadable_image),
+        Some(AssetKind::Audio) => super::sound::length(bytes)
+            .map(Decoded::Sound)
+            .map_err(unreadable_sound),
         Some(AssetKind::Model) => decode(path, bytes),
-        Some(AssetKind::Audio) | None => Ok(Decoded::Plain),
+        None => Ok(Decoded::Plain),
+    }
+}
+
+fn unreadable_sound(error: symphonia::core::errors::Error) -> MediaProblem {
+    MediaProblem {
+        rule: "unreadable sound",
+        found: error.to_string(),
+        expected: "a WAV or FLAC file of one or two channels that decodes",
     }
 }
 

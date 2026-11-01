@@ -6,11 +6,11 @@ use ui::theme;
 
 use bevy::asset::{AssetPath, AssetServer};
 use bevy::prelude::{Entity, World};
-use engine::core::assets::AssetKind;
 use engine::core::assets::SyncedFiles;
 use engine::core::audio::playback::{self, PlaySfx, SfxDef, SfxPlace};
 use engine::core::audio::soundscape::{SoundscapeChannel, SoundscapeLayer, SoundscapeZone};
 use engine::core::babble::{BabbleDef, BabbleRank, Babbling};
+use engine::core::content::AssetKind;
 use engine::core::content::Content;
 use engine::core::content::sync::SyncedAssets;
 use engine::core::math::Pos;
@@ -144,9 +144,6 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
             }
         }
         views.synced = Some((project.generation, hashes));
-        if let Some(content) = &project.content {
-            world.insert_resource(content.clone());
-        }
     }
     let Some(content) = &project.content else {
         return;

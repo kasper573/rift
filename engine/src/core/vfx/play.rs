@@ -2,8 +2,8 @@
 //! drawn: on the client's world and interface, and on the editor's stage.
 
 use super::{SpriteAnchor, SpritePlay, VfxLayer};
-use crate::core::math::{FrameSize, Pos, Rect, Size, WorldPx};
-use crate::core::time::{Hertz, Seconds};
+use crate::core::math::{FrameSize, Pos, Rect, Size};
+use crate::core::units::{Hertz, Seconds, WorldPx};
 
 /// A layer caught mid-run: the seconds since it began and how far through its duration it is.
 #[derive(Clone, Copy, Debug, PartialEq)]

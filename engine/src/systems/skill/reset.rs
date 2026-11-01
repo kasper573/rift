@@ -11,7 +11,7 @@ use crate::systems::history::{HistoryTopic, RecordTally};
 use crate::systems::notification::{self, Notification};
 use crate::systems::player::{self, player_requests};
 use crate::systems::script::{
-    Condition, EffectCall, FlowKey, Reach, RiftInstances, RiftScripting, effect as effects,
+    Condition, EffectCall, EffectReach, FlowKey, RiftInstances, RiftScripting, effect as effects,
 };
 use crate::systems::stat;
 use ui::words::counted;
@@ -78,8 +78,8 @@ impl EffectDef<RiftScripting> for ResetSkills {
             EffectStep::Pause
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::ResetsSkills]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::ResetsSkills]
     }
 }
 

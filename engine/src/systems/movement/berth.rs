@@ -2,7 +2,7 @@ use std::cmp::Ordering;
 
 use bevy_ecs::prelude::*;
 
-use super::spots::{SPACING, Spots, crowding, overlaps, spot_of};
+use super::spots::{Bodies, Spots, crowding, spot_of};
 use super::{MoveTarget, NavMesh, goto, mesh_in, moving, position, relocate, speed_of};
 use crate::core::math::{Offset, Pos};
 use crate::core::units::{MeterPos, Meters, MetersPerSec};
@@ -35,6 +35,7 @@ impl Aim {
     }
 
     fn sight(self, world: &World) -> Option<Sight> {
+        let bodies = *world.resource::<Bodies>();
         Some(match self {
             Aim::Point(point) => Sight {
                 origin: point,
@@ -42,6 +43,7 @@ impl Aim {
                 footing: None,
                 avoid: Vec::new(),
                 walking: false,
+                bodies,
             },
             Aim::Actor(actor) => {
                 let footing = position(world, actor)?;
@@ -51,6 +53,7 @@ impl Aim {
                     footing: Some(footing),
                     avoid: vec![footing],
                     walking: moving(world, actor),
+                    bodies,
                 }
             }
             Aim::Meeting(actor) => {
@@ -62,6 +65,7 @@ impl Aim {
                     footing: Some(footing),
                     avoid: vec![origin, footing],
                     walking: false,
+                    bodies,
                 }
             }
         })
@@ -110,7 +114,7 @@ impl ApproachPlan {
             return ApproachPlan::Unreachable;
         };
         let rooted = speed_of(world, entity) <= MetersPerSec(Meters(0.0));
-        let caught = sight.walking && sight.reaches(at, closing(reach));
+        let caught = sight.walking && sight.reaches(at, sight.closing(reach));
         let halt = moving(world, entity) && (rooted || caught);
         if (halt || !moving(world, entity)) && sight.reaches(at, reach) {
             let met = sight
@@ -121,7 +125,11 @@ impl ApproachPlan {
         if rooted {
             return ApproachPlan::Holding { halt };
         }
-        let reach = if sight.walking { closing(reach) } else { reach };
+        let reach = if sight.walking {
+            sight.closing(reach)
+        } else {
+            reach
+        };
         let kept = !halt
             && world
                 .get::<MoveTarget>(entity)
@@ -187,6 +195,7 @@ pub fn settle(world: &mut World, entity: Entity, aim: Aim, reach: Meters) {
 pub struct Berths {
     aimed_at: Option<Entity>,
     candidates: Vec<Candidate>,
+    bodies: Bodies,
 }
 
 impl Berths {
@@ -232,15 +241,17 @@ impl Berths {
             return Berths {
                 aimed_at,
                 candidates: Vec::new(),
+                bodies: sight.bodies,
             };
         };
         let Some(from) = mesh.island(at) else {
             return Berths {
                 aimed_at,
                 candidates: Vec::new(),
+                bodies: sight.bodies,
             };
         };
-        let mut candidates: Vec<Candidate> = around(sight.origin, reach)
+        let mut candidates: Vec<Candidate> = around(sight.origin, reach, sight.bodies)
             .filter(|&point| mesh.island(point) == Some(from))
             .map(|point| Candidate {
                 at: point,
@@ -252,6 +263,7 @@ impl Berths {
         Berths {
             aimed_at,
             candidates,
+            bodies: sight.bodies,
         }
     }
 
@@ -293,7 +305,7 @@ impl Berths {
     fn on_target(&self, world: &World, at: Pos<Meters>) -> bool {
         self.aimed_at
             .and_then(|actor| spot_of(world, actor))
-            .is_some_and(|spot| overlaps(spot.at, at))
+            .is_some_and(|spot| self.bodies.overlap(spot.at, at))
     }
 }
 
@@ -301,7 +313,8 @@ impl Berths {
 /// body fits beside those already there.
 pub fn place_beside(world: &World, area: AreaId, mesh: &NavMesh, spot: Pos<Meters>) -> Pos<Meters> {
     let spots = world.resource::<Spots>();
-    mesh.nearest_where(spot, SPACING, |at| spots.crowding(area, at, None) == 0)
+    let spacing = world.resource::<Bodies>().spacing();
+    mesh.nearest_where(spot, spacing, |at| spots.crowding(area, at, None) == 0)
         .unwrap_or(spot)
 }
 
@@ -330,10 +343,12 @@ pub fn vacant_near(world: &World, entity: Entity, spot: Pos<Meters>, reach: Mete
     let free = |point: Pos<Meters>| {
         mesh.island(point) == Some(from) && crowding(world, entity, point) == 0
     };
-    if around(spot, reach).any(free) {
+    let bodies = *world.resource::<Bodies>();
+    if around(spot, reach, bodies).any(free) {
         return spot;
     }
-    mesh.nearest_where(spot, SPACING, free).unwrap_or(spot)
+    mesh.nearest_where(spot, bodies.spacing(), free)
+        .unwrap_or(spot)
 }
 
 /// Whether the actor can walk from where it is to `point`.
@@ -342,12 +357,6 @@ pub fn reachable(world: &World, entity: Entity, point: Pos<Meters>) -> bool {
         return false;
     };
     mesh.connects(at, point)
-}
-
-/// How near an approacher closes on an actor walking away: a body's width inside its reach, but
-/// never onto the actor's body, so stopping takes the approacher no further than the reach.
-fn closing(reach: Meters) -> Meters {
-    Meters((reach.0 - SPACING.0).max(SPACING.0).min(reach.0))
 }
 
 fn halt_if(world: &mut World, entity: Entity, halt: bool) {
@@ -363,15 +372,25 @@ struct Sight {
     footing: Option<Pos<Meters>>,
     avoid: Vec<Pos<Meters>>,
     walking: bool,
+    bodies: Bodies,
 }
 
 impl Sight {
+    /// How near an approacher closes on an actor walking away: a body's width inside its reach,
+    /// but never onto the actor's body, so stopping takes the approacher no further than the reach.
+    fn closing(&self, reach: Meters) -> Meters {
+        let spacing = self.bodies.spacing();
+        Meters((reach.0 - spacing.0).max(spacing.0).min(reach.0))
+    }
+
     fn reaches(&self, point: Pos<Meters>, reach: Meters) -> bool {
         point.distance(self.origin) <= reach
     }
 
     fn avoided(&self, point: Pos<Meters>) -> bool {
-        self.avoid.iter().any(|&avoid| overlaps(avoid, point))
+        self.avoid
+            .iter()
+            .any(|&avoid| self.bodies.overlap(avoid, point))
     }
 
     fn berths(&self, point: Pos<Meters>, reach: Meters) -> bool {
@@ -397,14 +416,15 @@ impl Candidate {
 
 /// The spots within `reach` of `origin` where bodies stand without overlapping: the origin, then
 /// rings a body apart out to the reach.
-fn around(origin: Pos<Meters>, reach: Meters) -> impl Iterator<Item = Pos<Meters>> {
-    let rings = (reach.0 / SPACING.0).floor() as usize;
-    let outer = (reach.0 - SPACING.0 * rings as f32 > RING_FUZZ).then_some(reach.0 - RING_FUZZ);
+fn around(origin: Pos<Meters>, reach: Meters, bodies: Bodies) -> impl Iterator<Item = Pos<Meters>> {
+    let spacing = bodies.spacing().0;
+    let rings = (reach.0 / spacing).floor() as usize;
+    let outer = (reach.0 - spacing * rings as f32 > RING_FUZZ).then_some(reach.0 - RING_FUZZ);
     let radii = (1..=rings)
-        .map(move |ring| SPACING.0 * ring as f32)
+        .map(move |ring| spacing * ring as f32)
         .chain(outer);
     std::iter::once(origin).chain(radii.flat_map(move |radius| {
-        let count = ((std::f32::consts::TAU * radius / SPACING.0).floor() as usize).max(1);
+        let count = ((std::f32::consts::TAU * radius / spacing).floor() as usize).max(1);
         (0..count).map(move |index| {
             let angle = std::f32::consts::TAU * index as f32 / count as f32;
             origin + Offset::new(angle.cos() * radius, angle.sin() * radius)

@@ -7,7 +7,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::skeleton::{Colours, SkeletonDef, SkeletonId, TintName};
-use crate::core::assets::ImageRef;
+use crate::core::content::ImageRef;
 use crate::core::content::media::ImageSizes;
 use crate::core::content::{Content, ContentFile, ContentId, Loading, Nearby, RowCheck, serial};
 use crate::core::render::world::paint::{Paint, PaintLayer};

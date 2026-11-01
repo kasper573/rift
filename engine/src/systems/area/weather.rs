@@ -4,9 +4,9 @@ use serde::{Deserialize, Serialize};
 use bevy::prelude::*;
 
 use crate::core::content::{Content, RowCheck, serial};
-use crate::core::geometry::Degrees;
 use crate::core::render::world::sky::Daylight;
-use crate::core::time::{DayClock, DayCourse, Seconds, UnixMillis, server_now};
+use crate::core::time::{DayClock, DayCourse, UnixMillis, server_now};
+use crate::core::units::{Degrees, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::launch::ServerDaylight;
 

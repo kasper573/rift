@@ -30,22 +30,26 @@ use engine::core::math::Pos;
 use engine::core::render::Look;
 use engine::core::units::Meters;
 use engine::systems::GameSettings;
-use engine::systems::area::AreaDef;
+use engine::systems::area::{AreaDef, sixteenth};
 use engine::systems::script::Place;
 use ui::egui::Ui;
 
 use crate::app::{BottomTab, Editor};
 use crate::play;
 use crate::project::AreaCameraState;
-use crate::shell::row_form::preview::RowPreviewState;
-use crate::shell::row_form::usages;
-use crate::shell::{self};
+use crate::row_form::preview::RowPreviewState;
+use crate::row_form::usages;
+
 use crate::stage::Stages;
 use crate::tabs::EditorTab;
 
-/// Snaps a ground point to the half metre.
-pub(crate) fn snap(at: Pos<Meters>) -> Pos<Meters> {
-    area::select::snap_to(at, false)
+/// Snaps a ground point to the half metre, or the sixteenth when `fine`.
+pub(crate) fn snap(at: Pos<Meters>, fine: bool) -> Pos<Meters> {
+    if fine {
+        Pos::new(sixteenth(at.x), sixteenth(at.y))
+    } else {
+        Pos::new((at.x * 2.0).round() / 2.0, (at.y * 2.0).round() / 2.0)
+    }
 }
 
 #[derive(Component)]
@@ -53,6 +57,8 @@ pub(crate) struct EditorCamera;
 
 #[derive(Default)]
 pub struct EditorViews {
+    pub gltfs: crate::project::GltfCache,
+    shared_generation: Option<u64>,
     pub area: area::AreaViews,
     pub world: world::WorldView,
     pub script: script::ScriptViews,
@@ -99,19 +105,35 @@ pub(crate) fn read_shown<Row: ContentFile>(
     match editor.read::<Row>(key)? {
         Ok(row) => Some(row),
         Err(errors) => {
-            shell::widgets::unreadable(ui, key, &errors);
+            crate::widgets::unreadable(ui, key, &errors);
             None
         }
     }
 }
 
 pub fn sync(editor: &mut Editor, world: &mut World) {
+    share_content(editor, world);
     take_look(editor, world);
     sound::sync(editor, world);
     crate::stage::sync(editor, world);
     area::viewport::sync(editor, world);
     crate::thumbs::props::sync(editor, world);
     crate::thumbs::areas::sync(editor, world);
+}
+
+fn share_content(editor: &mut Editor, world: &mut World) {
+    let content = editor
+        .project
+        .as_ref()
+        .and_then(|project| Some((project.content.clone()?, project.generation)));
+    let Some((content, generation)) = content else {
+        editor.views.shared_generation = None;
+        return;
+    };
+    if editor.views.shared_generation != Some(generation) {
+        world.insert_resource(content);
+        editor.views.shared_generation = Some(generation);
+    }
 }
 
 /// The world draws as the open game looks.
@@ -130,7 +152,7 @@ fn take_look(editor: &Editor, world: &mut World) {
 }
 
 pub(crate) fn bottom_tabs(editor: &Editor) -> Vec<(BottomTab, String)> {
-    let mut tabs: Vec<BottomTab> = match shell::active_tab(editor) {
+    let mut tabs: Vec<BottomTab> = match crate::tabs::active_tab(editor) {
         Some(EditorTab::Area { .. }) | Some(EditorTab::Blueprint { .. }) => {
             let mut tabs = vec![BottomTab::Palette, BottomTab::Blueprints];
             if editor.views.sound.listening.is_some() {
@@ -148,7 +170,7 @@ pub(crate) fn bottom_tabs(editor: &Editor) -> Vec<(BottomTab, String)> {
     tabs.push(BottomTab::Output);
     tabs.into_iter()
         .map(|tab| {
-            let title = match (tab, shell::active_tab(editor)) {
+            let title = match (tab, crate::tabs::active_tab(editor)) {
                 (BottomTab::UsedBy, Some(EditorTab::Script(owner))) => format!(
                     "{}   {}",
                     tab.title(),
@@ -167,7 +189,7 @@ pub(crate) fn bottom_tabs(editor: &Editor) -> Vec<(BottomTab, String)> {
 }
 
 pub(crate) fn bottom_show(editor: &mut Editor, ui: &mut Ui, tab: BottomTab) {
-    match (shell::active_tab(editor), tab) {
+    match (crate::tabs::active_tab(editor), tab) {
         (
             Some(EditorTab::Area { key } | EditorTab::Blueprint { key }),
             BottomTab::Blueprints | BottomTab::Palette,
@@ -216,7 +238,7 @@ impl UsedBySubject {
 }
 
 fn used_by_subject(editor: &Editor) -> Option<UsedBySubject> {
-    match shell::active_tab(editor)? {
+    match crate::tabs::active_tab(editor)? {
         EditorTab::World | EditorTab::Rows { .. } | EditorTab::Spreadsheet { .. } => None,
         EditorTab::Asset { path } => Some(UsedBySubject::Asset { path }),
         tab => tab.row().map(|(_, key)| UsedBySubject::Row { key }),
@@ -238,7 +260,7 @@ pub(crate) fn play_here(editor: &mut Editor) {
         editor,
         Some(Place {
             area,
-            at: snap(hover.ground),
+            at: snap(hover.ground, false),
         }),
     );
 }

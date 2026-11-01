@@ -19,6 +19,32 @@ pub fn tile(selected: bool) -> egui::Frame {
         .inner_margin(egui::Margin::symmetric(10, 8))
 }
 
+/// A card across the width available, picked out when it is `selected`.
+pub fn card<R>(
+    ui: &mut Ui,
+    selected: bool,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> egui::InnerResponse<R> {
+    tile(selected).show(ui, |ui| {
+        ui.set_width(ui.available_width());
+        add(ui)
+    })
+}
+
+/// A card under its `name`.
+pub fn titled_card<R>(
+    ui: &mut Ui,
+    selected: bool,
+    name: &str,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> egui::InnerResponse<R> {
+    card(ui, selected, |ui| {
+        title(ui, name);
+        ui.add_space(4.0);
+        add(ui)
+    })
+}
+
 /// A card's look painted on a rect laid out by hand.
 pub fn paint_tile(painter: &Painter, rect: Rect, selected: bool) {
     let (fill, border) = card_ink(selected);

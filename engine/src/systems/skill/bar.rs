@@ -16,11 +16,12 @@ use super::{
     AssignBasicAttackRequest, AssignHotbarRequest, BasicAttack, BasicAttackPick, Cooldowns, Hotbar,
     HotbarEntry, HotbarSlot, Rank, SkillId, Targeting, UseSkillRequest, card, casting,
 };
-use crate::core::assets::ImageRef;
+use crate::core::content::ImageRef;
 use crate::core::content::{Content, Fixture};
 use crate::core::gui;
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
-use crate::core::time::{self, Seconds};
+use crate::core::time;
+use crate::core::units::Seconds;
 use crate::systems::equipment::{self, EquipmentPlace};
 use crate::systems::hud::{self, Carried, Confirm, HudWidget};
 use crate::systems::input::map::{

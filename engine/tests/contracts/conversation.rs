@@ -1,10 +1,9 @@
 use bevy_ecs::prelude::*;
 use engine::core::content::Fixture;
-use engine::core::geometry::Radians;
 use engine::core::math::{Offset, Pos};
 use engine::core::script::Value as Recalled;
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
-use engine::core::units::{MeterPos, Meters};
+use engine::core::units::{MeterPos, Meters, Radians};
 use engine::systems::actor::{self, Action, Actor};
 use engine::systems::attention::{self, Attention, AttentionId, AttentionMark};
 use engine::systems::dialogue::{self, Conversation, ConversationRequest};

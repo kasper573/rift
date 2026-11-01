@@ -13,18 +13,19 @@ use rayon::prelude::*;
 
 use crate::core::par;
 use crate::core::tick::{Cached, Planner};
+use crate::core::units::{Percent, Seconds};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{EnumDiscriminants, EnumString};
 
-use crate::core::assets::ImageRef;
 use crate::core::audio::playback::SfxId;
+use crate::core::content::ImageRef;
 use crate::core::content::{
     Content, ContentFile, ContentId, ContentProblem, Fixture, Loading, ModuleRule, ModuleSet,
     NamedContent, Nearby, RowCheck,
 };
-use crate::core::math::{Percent, Rng};
-use crate::core::time::{GameDay, Seconds, UnixMillis, WallClock};
+use crate::core::math::Rng;
+use crate::core::time::{GameDay, UnixMillis, WallClock};
 use crate::systems::GameSettings;
 use crate::systems::area::{self, AreaDef, AreaId, AreaTag};
 use crate::systems::attention::{AttentionId, AttentionMark};
@@ -39,8 +40,8 @@ use crate::systems::player::{PlayedBy, player_requests};
 use crate::systems::rewards::KillCredited;
 use crate::systems::script::condition::{self, CompiledCondition};
 use crate::systems::script::{
-    self, Condition, EventKind, Owner, OwnerRow, Reach, RiftInstances, RiftScripts, RunnerKind,
-    ScriptModule, ScriptedRow,
+    self, Condition, EffectReach, EventKind, Owner, OwnerRow, RiftInstances, RiftScripts,
+    RunnerKind, ScriptModule, ScriptedRow,
 };
 use crate::systems::text::{LineText, Span};
 use crate::systems::visibility::Presence;
@@ -543,10 +544,10 @@ fn quest_roles(scripts: &RiftScripts) -> Vec<(OwnerRow, QuestRole)> {
     for (owner, _) in scripts.owners() {
         for reach in scripts.may_do(*owner).reaches {
             match reach {
-                Reach::Offers(quest) | Reach::Accepts(quest) => {
+                EffectReach::Offers(quest) | EffectReach::Accepts(quest) => {
                     roles.push((*owner, QuestRole::Gives(quest)));
                 }
-                Reach::TurnsIn(quest) => roles.push((*owner, QuestRole::TurnsIn(quest))),
+                EffectReach::TurnsIn(quest) => roles.push((*owner, QuestRole::TurnsIn(quest))),
                 _ => {}
             }
         }
@@ -1486,8 +1487,8 @@ pub(crate) fn marks(
     let mut quests: Vec<(QuestId, bool, bool)> = Vec::new();
     for reach in &may_do.reaches {
         let (quest, gives, takes) = match reach {
-            Reach::Offers(quest) | Reach::Accepts(quest) => (*quest, true, false),
-            Reach::TurnsIn(quest) => (*quest, false, true),
+            EffectReach::Offers(quest) | EffectReach::Accepts(quest) => (*quest, true, false),
+            EffectReach::TurnsIn(quest) => (*quest, false, true),
             _ => continue,
         };
         match quests.iter_mut().find(|(known, ..)| *known == quest) {

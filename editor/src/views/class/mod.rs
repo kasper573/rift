@@ -16,9 +16,9 @@ use ui::egui::Ui;
 
 use crate::app::Editor;
 use crate::forms::{FormChange, FormCx};
+use crate::levels::{self, Level};
 use crate::project::{ContentEdit, RowSelection};
-use crate::shell::levels::{self, Level};
-use crate::shell::{self, row_form};
+use crate::row_form;
 use crate::tabs::shown_path;
 
 pub const TREE_PART: &str = "/tree/";
@@ -78,7 +78,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         ClassPage::Levels => {}
     }
     egui::Frame::new()
-        .inner_margin(shell::CONTENT_PADDING)
+        .inner_margin(crate::widgets::CONTENT_PADDING)
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
             page_body(editor, ui, key, page);

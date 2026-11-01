@@ -1,7 +1,8 @@
 use engine::core::content::Content;
 use engine::core::math::Pos;
 use engine::core::script::Value;
-use engine::core::time::{Seconds, UnixMillis, UtcHour, WallClock};
+use engine::core::time::{UnixMillis, UtcHour, WallClock};
+use engine::core::units::Seconds;
 use engine::systems::memory::{self, Memory, MemoryDef, MemoryId};
 use serde_json::json;
 use testkit::{Declared, Game, Map, Sim};

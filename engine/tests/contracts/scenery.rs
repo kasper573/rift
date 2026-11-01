@@ -38,6 +38,7 @@ fn strewn_field(ratio: f32, map: &Map, scene: serde_json::Value) -> Game {
         .prop("pebble", json!({ "type": "none" }))
         .prop("tuft", json!({ "type": "none" }))
         .area("field", map, scene)
+        .hero("field", 1.0, 1.0)
         .edit("terrain", testkit::TURF, |row| {
             row["cover"] = json!({
                 "shader": path("vfx_shader", "meadow"),

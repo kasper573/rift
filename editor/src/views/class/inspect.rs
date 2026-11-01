@@ -23,8 +23,8 @@ use super::{edit, node_of, select_node, write};
 use crate::app::Editor;
 use crate::forms::{self, FormChange, FormCx};
 use crate::project::RowSelection;
-use crate::shell::widgets;
 use crate::tabs::shown_path;
+use crate::widgets;
 use crate::{picker, schema, views};
 use ui::input::NumberField;
 
@@ -142,8 +142,7 @@ fn requirements(
     for (index, requirement) in requires.iter_mut().enumerate() {
         let item_path = format!("{path}/{index}");
         let kind = TypeTag::of(requirement).unwrap_or_default();
-        panel::tile(false).show(ui, |ui| {
-            ui.set_width(ui.available_width());
+        panel::card(ui, false, |ui| {
             ui.horizontal(|ui| {
                 widgets::badge(ui, &kind);
                 ui.label(theme::strong(schema::title(&kind)));

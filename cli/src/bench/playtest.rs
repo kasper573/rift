@@ -6,14 +6,11 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use engine::core::content::{Content, ContentScope, with_content};
-use engine::core::time::UtcHour;
 use engine::core::units::Bytes;
 use engine::systems::GameSettings;
 use engine::systems::launch::{
-    self, AuthMode, CLIENT_ENV_PREFIX, ClientConfig, ServerConfig, ServerDaylight,
-    TEST_CHARACTER_ROUTE, TestCharacterRequest,
+    self, AuthMode, CLIENT_ENV_PREFIX, ClientConfig, TEST_CHARACTER_ROUTE, TestCharacterRequest,
 };
-use engine::systems::player::SpawnPolicy;
 use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::probe::{ProbeQuestion, ProbeSnapshot};
 use engine::systems::staging::{STAGING_ROUTE, Staging};
@@ -22,9 +19,8 @@ use serde::de::DeserializeOwned;
 use tempfile::TempDir;
 
 use super::desktop::BenchDesktop;
-use super::sim::SEED;
 use crate::binaries::{self, DESKTOP_CLIENT, GAME_SERVER};
-use crate::server::{GameServer, LOCALHOST, absolute, resident};
+use crate::server::{GameServer, LOCALHOST, bench_config, resident};
 
 const ACCOUNT: &str = "bench";
 const CLIENT_LOG: &str = "client.log";
@@ -45,25 +41,7 @@ impl Playtest {
     /// bench's own.
     pub fn start(game: &Path, content: &Content) -> Playtest {
         let folder = tempfile::tempdir().expect("a folder for the client's profile and log");
-        let server = GameServer::start(
-            &binaries::beside(GAME_SERVER),
-            &ServerConfig {
-                bind: LOCALHOST,
-                port: 0,
-                udp_port: 0,
-                public_ip: LOCALHOST,
-                max_clients: 8,
-                content_dir: absolute(game),
-                player_spawn_policy: SpawnPolicy::Map,
-                player_immortal: true,
-                daylight: ServerDaylight::Turning,
-                rng_seed: Some(SEED),
-                daily_reset_utc_hour: UtcHour::MIDNIGHT,
-                auth: AuthMode::Fake,
-                test_characters: true,
-                exit_on_stdin_eof: true,
-            },
-        );
+        let server = GameServer::start(&binaries::beside(GAME_SERVER), &bench_config(game));
         let character = content
             .ids::<CharacterSnapshot>()
             .next()

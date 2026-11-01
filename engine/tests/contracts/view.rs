@@ -9,7 +9,6 @@ use bevy::time::TimeUpdateStrategy;
 use bevy::world_serialization::WorldSerializationPlugin;
 use engine::core::audio::playback::{PlaySfx, SfxDef, SfxId, SfxPlace};
 use engine::core::content::gltf::PLACEHOLDER_LIFT;
-use engine::core::geometry::{Degrees, Radians};
 use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER};
 use engine::core::math::Pos;
 use engine::core::render::camera::ground_hit;
@@ -18,8 +17,7 @@ use engine::core::render::world::layers::JointLayersPlugin;
 use engine::core::render::world::material::WorldMaterial;
 use engine::core::render::{Animator, CameraRig, capsule_hit, facing_rotation, world_point};
 use engine::core::text::Typewriter;
-use engine::core::time::PlaybackRate;
-use engine::core::units::{MeterPos, Meters, MetersPerSec};
+use engine::core::units::{Degrees, MeterPos, Meters, MetersPerSec, PlaybackRate, Radians};
 use engine::systems::actor::held::Held;
 use engine::systems::actor::render::{self, HeldProp, RenderActor};
 use engine::systems::actor::skeleton::GestureName;
@@ -471,7 +469,7 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
 
 #[test]
 fn a_looping_cells_clips_take_turns_each_as_the_one_before_plays_through() {
-    let clips: Vec<(&str, engine::core::time::Seconds)> = testkit::rig_clips()
+    let clips: Vec<(&str, engine::core::units::Seconds)> = testkit::rig_clips()
         .into_iter()
         .chain([("hum", CLIP.seconds()), ("tap", CLIP.seconds())])
         .collect();
@@ -562,7 +560,7 @@ fn a_looping_cells_clips_take_turns_each_as_the_one_before_plays_through() {
 
 #[test]
 fn a_standing_body_flinches_once_at_each_new_blow() {
-    let clips: Vec<(&str, engine::core::time::Seconds)> = testkit::rig_clips()
+    let clips: Vec<(&str, engine::core::units::Seconds)> = testkit::rig_clips()
         .into_iter()
         .chain([("flinch", CLIP.seconds())])
         .collect();
@@ -664,7 +662,7 @@ fn a_standing_body_flinches_once_at_each_new_blow() {
 
 #[test]
 fn a_body_talks_only_while_its_line_types_and_makes_the_gesture_it_is_said_with() {
-    let clips: Vec<(&str, engine::core::time::Seconds)> = testkit::rig_clips()
+    let clips: Vec<(&str, engine::core::units::Seconds)> = testkit::rig_clips()
         .into_iter()
         .chain([("cheer", CLIP.seconds())])
         .collect();
@@ -730,7 +728,7 @@ fn a_body_talks_only_while_its_line_types_and_makes_the_gesture_it_is_said_with(
         heard
     };
     let say = |app: &mut App, gesture: Option<&str>| {
-        let since = engine::core::time::Seconds(app.world().resource::<Time>().elapsed_secs());
+        let since = engine::core::units::Seconds(app.world().resource::<Time>().elapsed_secs());
         app.world_mut()
             .spawn((
                 Typewriter::default(),

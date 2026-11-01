@@ -1,12 +1,13 @@
 use editor::app::Editor;
+use editor::content_tree;
 use editor::modal::ModalDialog;
 use editor::moves;
 use editor::project::MovedOutside;
 use editor::project::watch::FolderChange;
 use editor::rows::{self, UsageDecision};
-use editor::shell::tree::TreeRow;
-use editor::shell::{content_tree, dialogs};
+use editor::shell::dialogs;
 use editor::tabs::EditorTab;
+use editor::tree::TreeRow;
 use editor::user::{TreeView, UserFolder};
 use editor::views::area::pins;
 use engine::core::content::Fixture;

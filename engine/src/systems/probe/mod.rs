@@ -28,18 +28,17 @@ use crate::core::audio::playback::Listener;
 use crate::core::audio::soundscape::{self, SoundscapeMixer, SoundscapeShape};
 use crate::core::chunk::Chunk;
 use crate::core::content::{Content, ContentScope, with_content};
-use crate::core::geometry::{Capsule, Radians};
+use crate::core::geometry::Capsule;
 use crate::core::gui::{self, GuiContext, WorldLayers};
 use crate::core::math::{
     MatrixSchema, Offset, OffsetSchema, Pos, PosSchema, Rect, RectSchema, Size, SizeSchema,
-    WindowPx,
 };
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::render::world::layers::Layered;
 use crate::core::render::world::sky::Daylight;
 use crate::core::render::{self, CameraRig, GroundHeights, Pointed, ground_height, world_point};
-use crate::core::time::{self, PlaybackRate, Seconds};
-use crate::core::units::{Bytes, MeterSize, Meters};
+use crate::core::time;
+use crate::core::units::{Bytes, MeterSize, Meters, PlaybackRate, Radians, Seconds, WindowPx};
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
 use crate::systems::actor::held::{self, Held};
 use crate::systems::actor::render::Puppet;
@@ -62,7 +61,7 @@ use crate::systems::npc::{Npc, NpcId};
 use crate::systems::player::{PlayedBy, commands_locked, session};
 use crate::systems::quest::{Parties, QuestId, QuestLog, QuestResult};
 use crate::systems::reach::Engaged;
-use crate::systems::script::{OwnerRow, Reach, RiftScripts};
+use crate::systems::script::{EffectReach, OwnerRow, RiftScripts};
 use crate::systems::shop::{self, ShopId};
 use crate::systems::skill::{self, Rank, SkillId, bar::SlotReport};
 use crate::systems::stat::{StatKind, Stats};
@@ -1363,7 +1362,7 @@ fn warps(world: &World, area: Option<AreaId>) -> Vec<ProbeWarp> {
                 .reaches
                 .iter()
                 .find_map(|reach| match reach {
-                    Reach::Warp(place) => Some(*place),
+                    EffectReach::Warp(place) => Some(*place),
                     _ => None,
                 })?;
             Some(ProbeWarp {

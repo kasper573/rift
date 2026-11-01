@@ -830,7 +830,7 @@ fn slay(sim: &mut Sim, player: Entity, key: &str) {
         &mut sim.world,
         victim,
         player,
-        engine::core::time::Seconds(0.0),
+        engine::core::units::Seconds(0.0),
     );
     combat::inflict(&mut sim.world, victim, Some(player), 1_000_000.0);
     sim.run(0.2);

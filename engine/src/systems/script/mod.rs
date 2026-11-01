@@ -247,7 +247,7 @@ impl TextDef<RiftScripting> for Vec<Span> {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub enum Reach {
+pub enum EffectReach {
     Warp(Place),
     Takes(ItemId),
     Gives(ItemId),
@@ -293,7 +293,7 @@ impl Vocabulary for RiftScripting {
     type Place = Place;
     type Row = RowRef;
     type Audio = SfxId;
-    type Reach = Reach;
+    type Reach = EffectReach;
 
     fn row_value(content: &Content, table: &str, key: &str) -> Option<RowRef> {
         Some(match table {
@@ -638,7 +638,7 @@ pub fn check_all(loading: &mut Loading) {
         let may_do = scripts.may_do(*row);
         for reach in &may_do.reaches {
             match reach {
-                Reach::Warp(place) if thorough => {
+                EffectReach::Warp(place) if thorough => {
                     if let Err(problem) = area::check_place(&content, *place) {
                         loading.json_error(
                             &site.file,
@@ -652,7 +652,7 @@ pub fn check_all(loading: &mut Loading) {
                         );
                     }
                 }
-                Reach::Speaks(npc) => {
+                EffectReach::Speaks(npc) => {
                     if content.table::<NpcDef>().get(*npc).is_none() {
                         continue;
                     }
@@ -768,7 +768,7 @@ pub fn check_reached(loading: &mut Loading) {
                 .may_do(*row)
                 .reaches
                 .iter()
-                .any(|reach| matches!(reach, Reach::OpensShop(shop) if *shop == id))
+                .any(|reach| matches!(reach, EffectReach::OpensShop(shop) if *shop == id))
         });
         if !opened {
             loading.row_error(

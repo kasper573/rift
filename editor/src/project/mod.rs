@@ -1,4 +1,5 @@
 pub mod files;
+mod gltfs;
 pub mod history;
 pub mod journal;
 pub mod lock;
@@ -7,6 +8,7 @@ mod typed;
 pub mod watch;
 
 pub use files::{DiskHashes, FileBytes, FileChange, ProjectFiles, hash, json_bytes};
+pub use gltfs::GltfCache;
 pub use history::{EditHistory, EditStep, RowSelection};
 pub use typed::IdPaths;
 

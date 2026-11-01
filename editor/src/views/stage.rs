@@ -5,13 +5,14 @@
 use std::sync::Arc;
 
 use engine::core::content::Content;
-use engine::core::geometry::{Degrees, Radians};
 use engine::core::math::{Offset, Pos};
-use engine::core::units::Meters;
+use engine::core::units::{Degrees, Meters, Radians};
 use engine::systems::area::scenery::Sources;
 use engine::systems::area::{self, Kept, PROP_STAGE, Picture, Pictured};
 use ui::egui::{self, Color32, Pos2, Rect, Stroke, Ui};
 use ui::{chip, theme};
+
+use crate::tabs::shown_path;
 
 use std::collections::BTreeMap;
 
@@ -101,6 +102,48 @@ pub fn toggle(ui: &mut Ui, label: &str, on: &mut bool) {
     if chip::toggle(ui, label, *on).clicked() {
         *on = !*on;
     }
+}
+
+/// What a stage can be asked to show, as a chip in its view's bar.
+#[derive(Clone, Copy)]
+pub enum StageToggle {
+    Turning,
+    Hitbox,
+    Grips,
+    Skeleton,
+}
+
+/// The bar over a stage view: the file's path, then what `left` adds and returns, with `shown`
+/// stage toggles flush right, the first rightmost.
+pub fn bar<T>(
+    ui: &mut Ui,
+    key: &str,
+    toggles: &mut StageToggles,
+    shown: &[StageToggle],
+    left: impl FnOnce(&mut Ui) -> T,
+) -> T {
+    let (taken, ()) = egui::containers::Sides::new()
+        .shrink_left()
+        .truncate()
+        .show(
+            ui,
+            |ui| {
+                ui.label(theme::mono(shown_path(key)).color(theme::CODE));
+                ui.add_space(8.0);
+                left(ui)
+            },
+            |ui| {
+                for toggle_of in shown {
+                    match toggle_of {
+                        StageToggle::Turning => toggle(ui, "turning", &mut toggles.turning),
+                        StageToggle::Hitbox => toggle(ui, "hitbox", &mut toggles.hitbox),
+                        StageToggle::Grips => toggle(ui, "grips", &mut toggles.grips),
+                        StageToggle::Skeleton => toggle(ui, "skeleton", &mut toggles.skeleton),
+                    }
+                }
+            },
+        );
+    taken
 }
 
 /// What a view's stage keeps from frame to frame: where its camera looks from, how far from there
@@ -207,7 +250,7 @@ impl Turntable {
 pub fn standing(
     body: engine::core::render::world::body::Figure,
     clip: Option<StageClip>,
-    held: Option<engine::core::time::Seconds>,
+    held: Option<engine::core::units::Seconds>,
     crossed: Vec<Cue>,
     props: Vec<StandingProp>,
 ) -> StandingActor {

@@ -15,7 +15,7 @@ use crate::core::content::Content;
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
 use crate::systems::item::ItemId;
 use crate::systems::script::event::NPC;
-use crate::systems::script::{EffectCall, Reach, RiftScripting, RunnerKind};
+use crate::systems::script::{EffectCall, EffectReach, RiftScripting, RunnerKind};
 
 /// The item each hand of a body shows; a two-hander sits under both hands it takes.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
@@ -63,7 +63,7 @@ impl EffectDef<RiftScripting> for SetHeld {
             EffectStep::Done
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
         Vec::new()
     }
 }

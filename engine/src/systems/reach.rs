@@ -178,12 +178,6 @@ pub fn attacking(world: &World, actor: Entity) -> Option<Entity> {
         .and_then(|intent| intent.target.actor())
 }
 
-pub fn intent(world: &World, actor: Entity, act: ReachAct) -> Option<Entity> {
-    current(world, actor)
-        .filter(|intent| intent.act == act)
-        .and_then(|intent| intent.target.actor())
-}
-
 /// Walks the actor into reach of what it intends to act on, by way of [`movement::approach`], and
 /// tells whether it's there. Two actors coming for each other meet between them, each covering the
 /// share of the gap its pace allows, rather than both heading for where the other stands.
@@ -331,8 +325,9 @@ fn meeting_point(
         return None;
     }
     let meeting = at.lerp(there, pace / (pace + theirs));
-    (meeting.distance(there) > movement::SPACING
-        && meeting.distance(at) > movement::SPACING
+    let spacing = world.resource::<movement::Bodies>().spacing();
+    (meeting.distance(there) > spacing
+        && meeting.distance(at) > spacing
         && movement::reachable(world, actor, meeting))
     .then_some(meeting)
 }

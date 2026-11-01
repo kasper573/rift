@@ -3,15 +3,48 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::world::DeferredWorld;
 use bevy_platform::collections::HashMap;
 
-use super::navmesh::AGENT_RADIUS;
 use crate::core::chunk::Chunk;
+use crate::core::content::Content;
 use crate::core::math::Pos;
 use crate::core::units::{MeterPos, Meters};
+use crate::systems::GameSettings;
+use crate::systems::actor::ModelDef;
 use crate::systems::area::{AreaId, AreaTag};
+use crate::systems::class::ClassDef;
+use crate::systems::player::PlayerDef;
 use crate::systems::stat;
 
-/// How far apart two bodies stand when they just touch.
-pub const SPACING: Meters = Meters(2.0 * AGENT_RADIUS.0);
+/// How much ground a walker's body takes: the walk mesh keeps its middle this far from what
+/// blocks, and walkers keep this far from each other's bodies. Every body walks as the body of the
+/// game's player does.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct Bodies {
+    pub radius: Meters,
+}
+
+impl Bodies {
+    /// The bodies of `content`'s game: the hitbox of the model its player's class wears, when
+    /// the settings, the player, its class and the model all loaded.
+    pub fn of(content: &Content) -> Option<Bodies> {
+        let player = content.try_built::<GameSettings>()?.player;
+        let class = content.table::<PlayerDef>().get(player)?.class;
+        let model = content.table::<ClassDef>().get(class)?.model;
+        let hitbox = content.table::<ModelDef>().get(model)?.hitbox;
+        Some(Bodies {
+            radius: hitbox.radius,
+        })
+    }
+
+    /// How far apart two bodies stand when they just touch.
+    pub fn spacing(self) -> Meters {
+        Meters(2.0 * self.radius.0)
+    }
+
+    /// Whether bodies resting at `a` and `b` would overlap; two just touching do not.
+    pub fn overlap(self, a: Pos<Meters>, b: Pos<Meters>) -> bool {
+        a.distance(b) < Meters(self.spacing().0 - TOUCH)
+    }
+}
 
 /// The one place an actor means to stand: where its walk ends while it walks, else where it stands.
 /// A spot never blocks a walk; it only steers where approaches, wanderers and placements choose to
@@ -24,28 +57,33 @@ pub struct Spot {
 }
 
 /// Every actor's [`Spot`] by area and chunk, kept in step with the spots as they come and go.
-#[derive(Resource, Default)]
-pub struct Spots(HashMap<AreaId, ChunkSpots>);
+#[derive(Resource)]
+pub struct Spots {
+    bodies: Bodies,
+    by_area: HashMap<AreaId, ChunkSpots>,
+}
 
 type ChunkSpots = HashMap<Chunk, Vec<(Entity, Pos<Meters>)>>;
 
 impl Spots {
+    pub fn new(bodies: Bodies) -> Spots {
+        Spots {
+            bodies,
+            by_area: HashMap::default(),
+        }
+    }
+
     /// How many bodies resting on their spots in `area` a body at `at` would overlap, `except` for
     /// one actor's own.
     pub fn crowding(&self, area: AreaId, at: Pos<Meters>, except: Option<Entity>) -> u16 {
-        self.0.get(&area).map_or(0, |spots| {
-            Chunk::around(at, SPACING)
+        self.by_area.get(&area).map_or(0, |spots| {
+            Chunk::around(at, self.bodies.spacing())
                 .filter_map(|chunk| spots.get(&chunk))
                 .flatten()
-                .filter(|(entity, spot)| Some(*entity) != except && overlaps(*spot, at))
+                .filter(|(entity, spot)| Some(*entity) != except && self.bodies.overlap(*spot, at))
                 .count() as u16
         })
     }
-}
-
-/// Whether bodies resting at `a` and `b` would overlap; two just touching do not.
-pub fn overlaps(a: Pos<Meters>, b: Pos<Meters>) -> bool {
-    a.distance(b) < Meters(SPACING.0 - TOUCH)
 }
 
 const TOUCH: f32 = 1e-3;
@@ -57,7 +95,7 @@ impl Spot {
         };
         world
             .resource_mut::<Spots>()
-            .0
+            .by_area
             .entry(spot.area)
             .or_default()
             .entry(Chunk::at(spot.at))
@@ -70,7 +108,7 @@ impl Spot {
             return;
         };
         let mut spots = world.resource_mut::<Spots>();
-        let Some(area) = spots.0.get_mut(&spot.area) else {
+        let Some(area) = spots.by_area.get_mut(&spot.area) else {
             return;
         };
         let chunk = Chunk::at(spot.at);
@@ -81,7 +119,7 @@ impl Spot {
             }
         }
         if area.is_empty() {
-            spots.0.remove(&spot.area);
+            spots.by_area.remove(&spot.area);
         }
     }
 }

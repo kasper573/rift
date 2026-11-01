@@ -11,7 +11,7 @@ use ui::egui::{self, RichText, Ui, Vec2};
 use ui::{chip, controls, form, panel, theme};
 
 use super::preview;
-use super::rigging::Rigging;
+use super::rigging::{Rigging, joint_names};
 use crate::app::Editor;
 
 const FIRST_HAND_NAMES: [&str; 2] = ["right", "left"];
@@ -105,22 +105,18 @@ fn list(
                 pick = Some(index);
             }
             ui.label(theme::faint(role));
-            if index > 0 && ui.small_button("↑").on_hover_text("earlier").clicked() {
-                moved = Some((index, index - 1));
-            }
-            if index + 1 < hands.len() && ui.small_button("↓").on_hover_text("later").clicked() {
-                moved = Some((index, index + 1));
+            if let Some(to) = controls::reorder(ui, index, hands.len()) {
+                moved = Some((index, to));
             }
             if controls::remove(ui, "hand").clicked() {
                 removed = Some(index);
             }
         });
     }
-    let first_joint = rigging.rig.as_ref().and_then(|rig| {
-        rig.joints()
-            .next()
-            .map(|joint| rig.nodes[joint].name.clone())
-    });
+    let first_joint = rigging
+        .rig
+        .as_ref()
+        .and_then(|rig| joint_names(rig).into_iter().next());
     if let Some(joint) = first_joint
         && ui.button("+ Add hand").clicked()
     {
@@ -136,7 +132,7 @@ fn list(
             mirrored: hands.len() == 1,
             clasp: None,
         });
-        if super::set_hands(editor, key, more) {
+        if super::edits::set_hands(editor, key, more) {
             pick = Some(hands.len());
             editor.views.skeleton.views.view_mut(key).hands.picking = Some(Picking::Joint);
         }
@@ -149,14 +145,14 @@ fn list(
     if let Some((from, to)) = moved {
         let mut order = hands.to_vec();
         order.swap(from, to);
-        if super::set_hands(editor, key, order) {
+        if super::edits::set_hands(editor, key, order) {
             pick = Some(to);
         }
     }
     if let Some(index) = removed {
         let mut fewer = hands.to_vec();
         fewer.remove(index);
-        super::set_hands(editor, key, fewer);
+        super::edits::set_hands(editor, key, fewer);
     }
     if let Some(index) = pick {
         let view = editor.views.skeleton.views.view_mut(key);
@@ -208,7 +204,7 @@ fn fields(
             ui.end_row();
             let mut clip: Option<Clip> = edited.clasp.as_ref().map(|clasp| clasp.clip.clone());
             ui.label(theme::muted("clasp"));
-            super::clip_picker(
+            super::pickers::clip_picker(
                 ui,
                 "",
                 ("hand-clasp", key),
@@ -248,7 +244,7 @@ fn fields(
     );
     editor.views.skeleton.views.view_mut(key).hands.picking = asked;
     if edited != *hand {
-        super::set_hand(editor, key, chosen, edited);
+        super::edits::set_hand(editor, key, chosen, edited);
     }
 }
 
@@ -276,5 +272,5 @@ fn pick(editor: &mut Editor, key: &str, chosen: usize, hand: &Hand, clicked: Str
         None => return,
     }
     editor.views.skeleton.views.view_mut(key).chosen = Some(super::Chosen::Grip(chosen));
-    super::set_hand(editor, key, chosen, edited);
+    super::edits::set_hand(editor, key, chosen, edited);
 }

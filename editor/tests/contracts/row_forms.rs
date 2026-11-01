@@ -3,7 +3,7 @@ use ui::egui;
 
 use editor::app::Editor;
 use editor::project::RowSelection;
-use editor::shell::row_form;
+use editor::row_form;
 use editor::views::class::TREE_PART;
 use editor::views::class::inspect as class_inspect;
 use editor::views::{character, spreadsheet};
@@ -17,7 +17,6 @@ use engine::systems::area::world_map::{WorldMap, WorldMapDef};
 use engine::systems::class::{AccessRequirement, ClassDef, NodeKey};
 use engine::systems::item::{ItemDef, ItemKind, ItemModule, Wear};
 use engine::systems::memory::{MemoryDef, Resets};
-use engine::systems::movement;
 use engine::systems::notification::{NotificationDef, NotificationDefKind};
 use engine::systems::npc::NpcDef;
 use engine::systems::player::snapshot::{CharacterSnapshot, CharacterStart};
@@ -157,8 +156,9 @@ fn a_test_character_set_up_for_a_quest_moment_starts_beside_whom_it_is_with() {
             panic!("{moment}: the character starts at a place");
         };
         let apart = start.at.distance(with);
+        let spacing = support::spacing(&editor);
         assert!(
-            apart >= movement::SPACING && apart <= Meters(movement::SPACING.0 * 3.0),
+            apart >= spacing && apart <= Meters(spacing.0 * 3.0),
             "{moment}: starts at {:?}, beside {with:?}",
             start.at
         );

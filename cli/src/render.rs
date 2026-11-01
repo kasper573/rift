@@ -19,8 +19,7 @@ use bevy::prelude::*;
 use bevy::render::gpu_readback::{ReadbackComplete, ReadbackOnce};
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
 use bevy::window::ExitCondition;
-use engine::core::content::{Content, FilesystemFolder};
-use engine::core::geometry::{Degrees, Radians};
+use engine::core::content::Content;
 use engine::core::ground::Heightfield;
 use engine::core::math::Pos;
 use engine::core::render::Look;
@@ -31,8 +30,7 @@ use engine::core::render::world::layers::Layered;
 use engine::core::render::world::mannequin::mannequin;
 use engine::core::render::world::rig_clip;
 use engine::core::render::world::sky::Daylight;
-use engine::core::time::Seconds;
-use engine::core::units::Meters;
+use engine::core::units::{Degrees, Meters, Radians, Seconds};
 use engine::core::vfx::render::VfxMaterialsPlugin;
 use engine::systems::GameSettings;
 use engine::systems::actor::layering::{self, Layering};
@@ -175,8 +173,8 @@ pub fn area(folder: &Path, shot: &Path, out: &Path) {
         shot.width.is_multiple_of(64),
         "a shot's width is a multiple of 64"
     );
-    let content = engine::systems::load_content(
-        Arc::new(FilesystemFolder(folder.clone())),
+    let content = crate::folder::load(
+        &folder,
         "the game did not load",
         engine::core::content::LoadPurpose::Play,
     )

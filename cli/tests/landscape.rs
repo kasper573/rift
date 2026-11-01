@@ -124,7 +124,7 @@ fn a_landscape_rises_over_its_relief_painted_in_bands_strewn_and_roamed_where_as
         let within: Vec<&(u32, u32)> = pixels
             .iter()
             .filter(|&&(column, row)| {
-                region.contains(engine::core::ground::Paint::pixel_pos(column, row))
+                region.contains(engine::core::ground::PaintMap::pixel_pos(column, row))
             })
             .collect();
         let turf = within
@@ -148,7 +148,7 @@ fn heights_where(area: &AreaDef, pixels: &[(u32, u32)], terrain: u8) -> (f32, f3
         .filter(|&&(column, row)| area.paint.index(column, row) == terrain)
         .map(|&(column, row)| {
             area.heights
-                .height_at(engine::core::ground::Paint::pixel_pos(column, row))
+                .height_at(engine::core::ground::PaintMap::pixel_pos(column, row))
                 .0
         })
         .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), height| {

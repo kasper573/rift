@@ -8,7 +8,7 @@ use ui::theme;
 
 use engine::core::script::Expr;
 use engine::core::text::{TextMotion, TextVoice};
-use engine::core::time::Millis;
+use engine::core::units::Millis;
 use engine::systems::input::map::InputAction;
 use engine::systems::text::{Fx, Ink, Span};
 use strum::VariantArray;

@@ -20,13 +20,13 @@ use super::canvas::{line_badge, viridis};
 use super::filters::{self, AreaRange, ColorField, ColorOf, ColorRanges, ColorShow, ColorTable};
 use super::{MapPart, OpenWorldMap, region_color, region_color_name, select};
 use crate::app::Editor;
+use crate::browser::{self, BrowserAction};
 use crate::keymap::EditorKey;
 use crate::project::{ContentEdit, RowSelection};
-use crate::shell::browser::{self, BrowserAction};
-use crate::shell::widgets;
 use crate::tabs::{EditorTab, shown_path};
 use crate::value;
 use crate::views::area as area_view;
+use crate::widgets;
 use ui::input::{InputField, NumberField};
 
 fn inspect_world(editor: &mut Editor, ui: &mut Ui) {
@@ -405,7 +405,7 @@ fn route_panel(editor: &mut Editor, ui: &mut Ui, atlas: &WorldAtlas) {
         }
     }
     ui.add_space(8.0);
-    sheet::section(ui, "Reach");
+    sheet::section(ui, "EffectReach");
     let unreached: Vec<&str> = atlas
         .areas
         .iter()
@@ -524,8 +524,7 @@ fn inspect_cards(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, cards: &[
     let mut next = map.layout.clone();
     let mut label: Option<String> = None;
     let mut open_area = false;
-    panel::tile(true).show(ui, |ui| {
-        ui.set_width(ui.available_width());
+    panel::card(ui, true, |ui| {
         panel::title(ui, &title);
         if cards.len() == 1 {
             form::kv(ui, "area", |ui| {
@@ -652,8 +651,7 @@ fn inspect_region(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, index: u
     let region = &map.layout.regions[index];
     let mut next = map.layout.clone();
     let mut label: Option<String> = None;
-    panel::tile(true).show(ui, |ui| {
-        ui.set_width(ui.available_width());
+    panel::card(ui, true, |ui| {
         panel::title(ui, &region.name);
         form::kv(ui, "name", |ui| {
             let id = ui.id().with(("region-name", index));

@@ -31,7 +31,7 @@ use crate::app::Editor;
 use crate::project::{ContentEdit, Project, RowSelection};
 use crate::views::navigation;
 
-const AREA_PX_PER_TILE: f32 = 2.0;
+const AREA_PX_PER_METER: f32 = 2.0;
 const MIN_FOOTPRINT: Vec2 = Vec2::new(62.5, 38.75);
 const NEW_CARD_SIZE: u32 = 100;
 const REGION_PAD: f32 = 24.0;
@@ -51,8 +51,8 @@ pub struct WorldView {
     pub route_from: Option<String>,
     pub quest_line: Option<String>,
     pub layers: MapLayers,
-    pub hover: Option<MapTileHit>,
-    pub menu_target: Option<MapTileHit>,
+    pub hover: Option<MapGroundHit>,
+    pub menu_target: Option<MapGroundHit>,
     pub pending_look: Option<MapLook>,
     atlas: Option<Arc<WorldAtlas>>,
     drag: Option<interact::MapDrag>,
@@ -65,7 +65,7 @@ pub struct MapRoute {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct MapTileHit {
+pub struct MapGroundHit {
     pub area: String,
     pub at: Pos<Meters>,
 }
@@ -341,7 +341,7 @@ fn laid_out(atlas: &WorldAtlas, stored: &WorldMapDef) -> WorldMapDef {
 }
 
 fn shows_areas(zoom: f32) -> bool {
-    zoom * PX_PER_METER > AREA_PX_PER_TILE
+    zoom * PX_PER_METER > AREA_PX_PER_METER
 }
 
 /// Gives every area among `copies`, each the path copied from and the path of its copy, a world

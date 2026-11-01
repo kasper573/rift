@@ -12,15 +12,17 @@ use crate::core::content::{
     Nearby, serial,
 };
 use crate::core::script::{Answer, Arrow, Compiler, EffectDef, EffectStep, ScriptFault, Value};
-use crate::core::time::{Seconds, UnixMillis, WallClock};
+use crate::core::time::{UnixMillis, WallClock};
+use crate::core::units::Seconds;
 use crate::systems::attention::AttentionId;
 use crate::systems::item::{
     ExchangeRefusal, Inventory, ItemCategory, ItemDef, ItemId, ItemModuleKind, ItemStack,
 };
 use crate::systems::player::conn_player;
 use crate::systems::script::{
-    self, Condition, EffectCall, EventKind, FlowKey, Line, Owner, Reach, RiftEvent, RiftInstances,
-    RiftScripting, RunnerKind, ScriptModule, ScriptedRow, condition, effect as effects,
+    self, Condition, EffectCall, EffectReach, EventKind, FlowKey, Line, Owner, RiftEvent,
+    RiftInstances, RiftScripting, RunnerKind, ScriptModule, ScriptedRow, condition,
+    effect as effects,
 };
 use crate::systems::{dialogue, drain_requests, notification};
 
@@ -249,8 +251,8 @@ impl EffectDef<RiftScripting> for OpenShop {
             }
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
-        vec![Reach::OpensShop(self.shop)]
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        vec![EffectReach::OpensShop(self.shop)]
     }
 }
 
@@ -531,7 +533,7 @@ pub(crate) fn marks(
     };
     let content = world.resource::<Content>();
     for reach in &may_do.reaches {
-        if let Reach::OpensShop(shop) = reach {
+        if let EffectReach::OpensShop(shop) = reach {
             let mark = shop.get(content).mark;
             for &player in viewers {
                 out(player, mark);

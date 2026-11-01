@@ -12,13 +12,14 @@ use ui::egui::{Align, Context, Layout, RichText, Ui};
 use ui::glyph::Mark;
 
 use super::report::{self, ReportAction};
-use super::widgets;
 use crate::app::{Editor, content_version};
 use crate::keymap::EditorKey;
 use crate::modal::{CloseThen, ModalDialog, NewGameDialog, NewGameSource};
 use crate::project::files::content_of;
 use crate::project::journal::RecoveryJournal;
-use crate::shell::{self};
+use crate::shell;
+use crate::widgets;
+
 use crate::tabs::shown_path;
 use crate::templates;
 use ui::form;

@@ -15,9 +15,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::chunk::CHUNK_SIDE;
 use crate::core::content::{ContentProblem, RowCheck, StoredPart};
-use crate::core::geometry::Degrees;
 use crate::core::math::{Pos, Rect, Size};
-use crate::core::units::{CellPos, GROUND_ORIGIN, GridDims, GridSize, MeterSize, Meters};
+use crate::core::units::{CellPos, Degrees, GROUND_ORIGIN, GridDims, GridSize, MeterSize, Meters};
 
 /// Positions on the ground are `f32` metres snapped to sixteenths, which stay exact up to here.
 pub const MAX_SIDE: u32 = 1 << 20;
@@ -177,13 +176,11 @@ fn plain_number(text: &str) -> Option<u32> {
 /// The height of the ground at every half metre of an area, as its `height/` tiles hold it:
 /// 16-bit grey from [`LOWEST`] to [`HIGHEST`]. Sample `(2x, 2y)` is the height at the centre of
 /// the metre cell `(x, y)`. Tiles share the samples on their seams.
-#[derive(Clone, Debug, Default)]
-pub struct Heightfield(Tiled<u16>);
+pub type Heightfield = GroundGrid<u16>;
 
 /// Which terrain paints every half metre of an area, as its `paint/` tiles hold it: a byte per
 /// pixel, the index of the terrain in the area's list.
-#[derive(Clone, Debug, Default)]
-pub struct Paint(Tiled<u8>);
+pub type PaintMap = GroundGrid<u8>;
 
 /// A terrain and how much of a point it covers, as the paint around the point blends.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -192,72 +189,21 @@ pub struct Share {
     pub weight: f32,
 }
 
-impl Heightfield {
+impl GroundGrid<u16> {
     pub fn flat(size: GroundSize) -> Heightfield {
-        Heightfield(Tiled::blank(TileGrid::samples(size)))
+        GroundGrid::blank(TileGrid::samples(size))
     }
 
     /// A heightfield of `size` whose sample `(column, row)` is `height(column, row)`.
     pub fn from_fn(size: GroundSize, height: impl Fn(u32, u32) -> Meters + Sync) -> Heightfield {
-        Heightfield(Tiled::filled(TileGrid::samples(size), |column, row| {
+        GroundGrid::filled(TileGrid::samples(size), |column, row| {
             level_of(height(column, row))
-        }))
-    }
-
-    pub fn size(&self) -> GroundSize {
-        self.0.grid.size
+        })
     }
 
     /// Samples across and down.
     pub fn samples(&self) -> (u32, u32) {
-        (self.0.grid.columns, self.0.grid.rows)
-    }
-
-    /// Keeps `part` as the tile at `at`, to read when the tile is first loaded.
-    pub fn store(&mut self, at: TileAt, part: StoredPart) {
-        self.0.store(at, part);
-    }
-
-    /// Reads the tile at `at` from its PNG, refusing one that isn't the tile's picture.
-    pub fn decode_tile(&mut self, at: TileAt, bytes: &[u8]) -> Result<(), ContentProblem> {
-        self.0.decode(at, bytes)
-    }
-
-    /// Reads the overview from its PNG, refusing one that isn't the ground's.
-    pub fn decode_overview(&mut self, bytes: &[u8]) -> Result<(), ContentProblem> {
-        self.0.decode_overview(bytes)
-    }
-
-    /// Whether the tile at `at` is loaded, so its samples answer exactly rather than from the
-    /// overview.
-    pub fn is_loaded(&self, at: TileAt) -> bool {
-        self.0.is_loaded(at)
-    }
-
-    /// Loads the tile at `at` from its file, unless it is loaded or has none; refuses a file that
-    /// isn't the tile's picture, leaving the tile as it was.
-    pub fn load(&self, at: TileAt) -> Result<(), ContentProblem> {
-        self.0.load(at)
-    }
-
-    /// Loads every tile, on every core: the problems of the tiles that don't load.
-    pub fn load_all(&self) -> Vec<(TileAt, ContentProblem)> {
-        self.0.load_all()
-    }
-
-    /// The tile at `at` as its PNG, none for a tile at ground level, which no file holds.
-    pub fn encode_tile(&self, at: TileAt) -> Option<Arc<[u8]>> {
-        self.0.encode(at)
-    }
-
-    /// The overview the tiles make as its PNG, none when the ground is flat.
-    pub fn encode_overview(&self) -> Option<Vec<u8>> {
-        self.0.encode_overview()
-    }
-
-    /// Whether the overview read says what the tiles say.
-    pub fn overview_is_current(&self) -> bool {
-        self.0.overview_is_current()
+        (self.grid.columns, self.grid.rows)
     }
 
     /// This heightfield over a terrain of `size`, kept from the top-left corner: what reaches past
@@ -269,7 +215,7 @@ impl Heightfield {
 
     /// Sets sample `(column, row)` to `height`, kept within the range the file holds.
     pub fn set_sample(&mut self, column: u32, row: u32, height: Meters) {
-        self.0.set(column, row, level_of(height));
+        self.put(column, row, level_of(height));
     }
 
     /// Where sample `(column, row)` lies on the ground.
@@ -284,7 +230,7 @@ impl Heightfield {
     /// Sample `(column, row)`, the nearest past the edge; the overview's nearest where its tile
     /// isn't loaded.
     pub fn sample(&self, column: u32, row: u32) -> Meters {
-        height_of(self.0.get(column, row))
+        height_of(self.value(column, row))
     }
 
     /// The ground's height at `at`, between the samples around it.
@@ -306,7 +252,7 @@ impl Heightfield {
     /// The steepest slope between neighbouring samples under each metre cell of the `size` cells
     /// from `origin`, row by row.
     pub fn steepest_in(&self, origin: CellPos, size: GridSize) -> Vec<Degrees> {
-        let samples = self.0.window(
+        let samples = self.window(
             (origin.x.max(0) as u32) * SAMPLES_PER_METER,
             (origin.y.max(0) as u32) * SAMPLES_PER_METER,
             size.width * SAMPLES_PER_METER + 1,
@@ -341,92 +287,35 @@ impl Heightfield {
 
     fn sample_space(&self, at: Pos<Meters>) -> (f32, f32) {
         let x = ((at.x - GROUND_ORIGIN.x) * SAMPLES_PER_METER as f32)
-            .clamp(0.0, self.0.grid.columns.saturating_sub(1) as f32);
+            .clamp(0.0, self.grid.columns.saturating_sub(1) as f32);
         let y = ((at.y - GROUND_ORIGIN.y) * SAMPLES_PER_METER as f32)
-            .clamp(0.0, self.0.grid.rows.saturating_sub(1) as f32);
+            .clamp(0.0, self.grid.rows.saturating_sub(1) as f32);
         (x, y)
     }
 }
 
-impl PartialEq for Heightfield {
-    fn eq(&self, other: &Heightfield) -> bool {
-        self.0 == other.0
-    }
-}
-
-impl Paint {
+impl GroundGrid<u8> {
     /// All the first terrain.
-    pub fn plain(size: GroundSize) -> Paint {
-        Paint(Tiled::blank(TileGrid::pixels(size)))
+    pub fn plain(size: GroundSize) -> PaintMap {
+        GroundGrid::blank(TileGrid::pixels(size))
     }
 
     /// A paint of `size` whose pixel `(column, row)` is the terrain `index(column, row)`.
-    pub fn from_fn(size: GroundSize, index: impl Fn(u32, u32) -> u8 + Sync) -> Paint {
-        Paint(Tiled::filled(TileGrid::pixels(size), index))
-    }
-
-    pub fn size(&self) -> GroundSize {
-        self.0.grid.size
+    pub fn from_fn(size: GroundSize, index: impl Fn(u32, u32) -> u8 + Sync) -> PaintMap {
+        GroundGrid::filled(TileGrid::pixels(size), index)
     }
 
     /// Pixels across and down.
     pub fn pixels(&self) -> (u32, u32) {
-        (self.0.grid.columns, self.0.grid.rows)
-    }
-
-    /// Keeps `part` as the tile at `at`, to read when the tile is first loaded.
-    pub fn store(&mut self, at: TileAt, part: StoredPart) {
-        self.0.store(at, part);
-    }
-
-    /// Reads the tile at `at` from its PNG, refusing one that isn't the tile's picture.
-    pub fn decode_tile(&mut self, at: TileAt, bytes: &[u8]) -> Result<(), ContentProblem> {
-        self.0.decode(at, bytes)
-    }
-
-    /// Reads the overview from its PNG, refusing one that isn't the ground's.
-    pub fn decode_overview(&mut self, bytes: &[u8]) -> Result<(), ContentProblem> {
-        self.0.decode_overview(bytes)
-    }
-
-    /// Whether the tile at `at` is loaded, so its pixels answer exactly rather than from the
-    /// overview.
-    pub fn is_loaded(&self, at: TileAt) -> bool {
-        self.0.is_loaded(at)
-    }
-
-    /// Loads the tile at `at` from its file, unless it is loaded or has none; refuses a file that
-    /// isn't the tile's picture, leaving the tile as it was.
-    pub fn load(&self, at: TileAt) -> Result<(), ContentProblem> {
-        self.0.load(at)
-    }
-
-    /// Loads every tile, on every core: the problems of the tiles that don't load.
-    pub fn load_all(&self) -> Vec<(TileAt, ContentProblem)> {
-        self.0.load_all()
-    }
-
-    /// The tile at `at` as its PNG, none for a tile all of the first terrain, which no file holds.
-    pub fn encode_tile(&self, at: TileAt) -> Option<Arc<[u8]>> {
-        self.0.encode(at)
-    }
-
-    /// The overview the tiles make as its PNG, none when the paint is plain.
-    pub fn encode_overview(&self) -> Option<Vec<u8>> {
-        self.0.encode_overview()
-    }
-
-    /// Whether the overview read says what the tiles say.
-    pub fn overview_is_current(&self) -> bool {
-        self.0.overview_is_current()
+        (self.grid.columns, self.grid.rows)
     }
 
     /// This paint over a ground of `size`, kept from the top-left corner: what reaches past the
     /// new edge is cut, and new ground is the first terrain.
-    pub fn resized(&self, size: GroundSize) -> Paint {
+    pub fn resized(&self, size: GroundSize) -> PaintMap {
         self.load_all();
         let (columns, rows) = self.pixels();
-        Paint::from_fn(size, |column, row| {
+        PaintMap::from_fn(size, |column, row| {
             if column < columns && row < rows {
                 self.index(column, row)
             } else {
@@ -437,7 +326,7 @@ impl Paint {
 
     /// Paints pixel `(column, row)` with the terrain `index`.
     pub fn set(&mut self, column: u32, row: u32, index: u8) {
-        self.0.set(column, row, index);
+        self.put(column, row, index);
     }
 
     /// The middle of pixel `(column, row)` on the ground.
@@ -452,7 +341,7 @@ impl Paint {
     /// The terrain painting pixel `(column, row)`, the nearest pixel past the edge; the
     /// overview's nearest where its tile isn't loaded.
     pub fn index(&self, column: u32, row: u32) -> u8 {
-        self.0.get(column, row)
+        self.value(column, row)
     }
 
     /// The terrain painting the half metre under `at`.
@@ -470,7 +359,7 @@ impl Paint {
     pub fn used(&self) -> Vec<u8> {
         self.load_all();
         let mut seen = [false; MAX_TERRAINS];
-        for slot in &self.0.tiles {
+        for slot in &self.tiles {
             match slot.tile() {
                 Some(tile) => {
                     for index in &tile.values {
@@ -521,37 +410,20 @@ impl Paint {
 
     /// The terrain painting most of the metre cell `cell`; of equals, the first.
     pub fn dominant(&self, cell: CellPos) -> u8 {
-        self.dominant_in(cell, GridSize::new(1, 1))[0]
+        dominant_of(cell, |column, row| self.value(column, row))
     }
 
     /// The terrain painting most of each metre cell of the `size` cells from `origin`, row by
     /// row; of equals, the first.
     pub fn dominant_in(&self, origin: CellPos, size: GridSize) -> Vec<u8> {
-        let pixels = self.0.window(
+        let pixels = self.window(
             (origin.x.max(0) as u32) * SAMPLES_PER_METER,
             (origin.y.max(0) as u32) * SAMPLES_PER_METER,
             size.width * SAMPLES_PER_METER,
             size.height * SAMPLES_PER_METER,
         );
         size.cells()
-            .map(|cell| {
-                let (column, row) = (
-                    cell.x as u32 * SAMPLES_PER_METER,
-                    cell.y as u32 * SAMPLES_PER_METER,
-                );
-                let mut counts = [0u32; MAX_TERRAINS];
-                for dy in 0..SAMPLES_PER_METER {
-                    for dx in 0..SAMPLES_PER_METER {
-                        counts[usize::from(pixels.at(column + dx, row + dy))] += 1;
-                    }
-                }
-                counts
-                    .iter()
-                    .enumerate()
-                    .rev()
-                    .max_by_key(|(_, count)| **count)
-                    .map_or(0, |(index, _)| index as u8)
-            })
+            .map(|cell| dominant_of(cell, |column, row| pixels.at(column, row)))
             .collect()
     }
 
@@ -560,16 +432,29 @@ impl Paint {
         let column = ((at.x - GROUND_ORIGIN.x) * SAMPLES_PER_METER as f32).floor();
         let row = ((at.y - GROUND_ORIGIN.y) * SAMPLES_PER_METER as f32).floor();
         (
-            (column.max(0.0) as u32).min(self.0.grid.columns.saturating_sub(1)),
-            (row.max(0.0) as u32).min(self.0.grid.rows.saturating_sub(1)),
+            (column.max(0.0) as u32).min(self.grid.columns.saturating_sub(1)),
+            (row.max(0.0) as u32).min(self.grid.rows.saturating_sub(1)),
         )
     }
 }
 
-impl PartialEq for Paint {
-    fn eq(&self, other: &Paint) -> bool {
-        self.0 == other.0
+fn dominant_of(cell: CellPos, pixel: impl Fn(u32, u32) -> u8) -> u8 {
+    let (column, row) = (
+        cell.x as u32 * SAMPLES_PER_METER,
+        cell.y as u32 * SAMPLES_PER_METER,
+    );
+    let mut counts = [0u32; MAX_TERRAINS];
+    for dy in 0..SAMPLES_PER_METER {
+        for dx in 0..SAMPLES_PER_METER {
+            counts[usize::from(pixel(column + dx, row + dy))] += 1;
+        }
     }
+    counts
+        .iter()
+        .enumerate()
+        .rev()
+        .max_by_key(|(_, count)| **count)
+        .map_or(0, |(index, _)| index as u8)
 }
 
 fn level_of(height: Meters) -> u16 {
@@ -582,62 +467,77 @@ fn height_of(level: u16) -> Meters {
     Meters((level as f32 - GROUND_LEVEL as f32) * STEP)
 }
 
-/// A value of the ground as its files hold it.
-trait Value: Copy + PartialEq + Send + Sync + std::fmt::Debug + 'static {
-    /// What the ground is where no file says otherwise.
-    const BLANK: Self;
-    const CHANNELS: Channels;
-    fn decode(bytes: Vec<u8>) -> Vec<Self>;
-    fn encode(values: &[Self]) -> Vec<u8>;
+/// The values a grid over the ground can hold, kept out of reach so the ground's two grids are the
+/// only ones.
+mod values {
+    use super::GROUND_LEVEL;
+
+    /// A value of the ground as its files hold it.
+    pub trait Value: Copy + PartialEq + Send + Sync + std::fmt::Debug + 'static {
+        /// What the ground is where no file says otherwise.
+        const BLANK: Self;
+        const CHANNELS: Channels;
+        fn decode(bytes: Vec<u8>) -> Vec<Self>;
+        fn encode(values: &[Self]) -> Vec<u8>;
+    }
+
+    impl Value for u16 {
+        const BLANK: u16 = GROUND_LEVEL;
+        const CHANNELS: Channels = Channels::Grey16;
+
+        fn decode(bytes: Vec<u8>) -> Vec<u16> {
+            bytes
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| u16::from_be_bytes(*pair))
+                .collect()
+        }
+
+        fn encode(values: &[u16]) -> Vec<u8> {
+            values
+                .iter()
+                .flat_map(|level| level.to_be_bytes())
+                .collect()
+        }
+    }
+
+    impl Value for u8 {
+        const BLANK: u8 = 0;
+        const CHANNELS: Channels = Channels::Grey8;
+
+        fn decode(bytes: Vec<u8>) -> Vec<u8> {
+            bytes
+        }
+
+        fn encode(values: &[u8]) -> Vec<u8> {
+            values.to_vec()
+        }
+    }
+
+    #[derive(Clone, Copy, PartialEq, Eq)]
+    pub enum Channels {
+        Grey16,
+        Grey8,
+    }
 }
 
-impl Value for u16 {
-    const BLANK: u16 = GROUND_LEVEL;
-    const CHANNELS: Channels = Channels::Grey16;
-
-    fn decode(bytes: Vec<u8>) -> Vec<u16> {
-        bytes
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|pair| u16::from_be_bytes(*pair))
-            .collect()
-    }
-
-    fn encode(values: &[u16]) -> Vec<u8> {
-        values
-            .iter()
-            .flat_map(|level| level.to_be_bytes())
-            .collect()
-    }
-}
-
-impl Value for u8 {
-    const BLANK: u8 = 0;
-    const CHANNELS: Channels = Channels::Grey8;
-
-    fn decode(bytes: Vec<u8>) -> Vec<u8> {
-        bytes
-    }
-
-    fn encode(values: &[u8]) -> Vec<u8> {
-        values.to_vec()
-    }
-}
+pub use values::Value as GroundValue;
+use values::{Channels, Value};
 
 /// A grid of values over the ground, held tile by tile with an overview of the whole. Copies
 /// share their tiles, so one copy's loading serves them all, and a copy that sets a value takes a
 /// tile of its own first.
 #[derive(Clone, Debug)]
-struct Tiled<T: Value> {
+pub struct GroundGrid<T: Value> {
     grid: TileGrid,
     overview: Option<Arc<Tile<T>>>,
     tiles: Vec<Arc<Slot<T>>>,
 }
 
-impl<T: Value> Default for Tiled<T> {
-    fn default() -> Tiled<T> {
-        Tiled {
+impl<T: Value> Default for GroundGrid<T> {
+    fn default() -> GroundGrid<T> {
+        GroundGrid {
             grid: TileGrid::default(),
             overview: None,
             tiles: Vec::new(),
@@ -698,16 +598,16 @@ impl<T: Value> Slot<T> {
     }
 }
 
-impl<T: Value> Tiled<T> {
-    fn blank(grid: TileGrid) -> Tiled<T> {
-        Tiled {
+impl<T: Value> GroundGrid<T> {
+    fn blank(grid: TileGrid) -> GroundGrid<T> {
+        GroundGrid {
             tiles: (0..grid.count()).map(|_| Arc::new(Slot::blank())).collect(),
             grid,
             overview: None,
         }
     }
 
-    fn filled(grid: TileGrid, value: impl Fn(u32, u32) -> T + Sync) -> Tiled<T> {
+    fn filled(grid: TileGrid, value: impl Fn(u32, u32) -> T + Sync) -> GroundGrid<T> {
         let tiles = (0..grid.count())
             .into_par_iter()
             .map(|index| {
@@ -727,28 +627,35 @@ impl<T: Value> Tiled<T> {
                 Arc::new(Slot::holding(Arc::new(tile), None))
             })
             .collect();
-        Tiled {
+        GroundGrid {
             grid,
             overview: None,
             tiles,
         }
     }
 
-    fn store(&mut self, at: TileAt, part: StoredPart) {
+    pub fn size(&self) -> GroundSize {
+        self.grid.size
+    }
+
+    /// Keeps `part` as the tile at `at`, to read when the tile is first loaded.
+    pub fn store(&mut self, at: TileAt, part: StoredPart) {
         self.tiles[self.grid.index(at)] = Arc::new(Slot {
             loaded: RwLock::new(None),
             stored: Some(part),
         });
     }
 
-    fn decode(&mut self, at: TileAt, bytes: &[u8]) -> Result<(), ContentProblem> {
+    /// Reads the tile at `at` from its PNG, refusing one that isn't the tile's picture.
+    pub fn decode_tile(&mut self, at: TileAt, bytes: &[u8]) -> Result<(), ContentProblem> {
         let tile = self.grid.decode_tile(at, bytes)?;
         let slot = &mut self.tiles[self.grid.index(at)];
         *slot = Arc::new(Slot::holding(Arc::new(tile), slot.stored.clone()));
         Ok(())
     }
 
-    fn decode_overview(&mut self, bytes: &[u8]) -> Result<(), ContentProblem> {
+    /// Reads the overview from its PNG, refusing one that isn't the ground's.
+    pub fn decode_overview(&mut self, bytes: &[u8]) -> Result<(), ContentProblem> {
         let (columns, rows) = self.grid.overview_dims();
         let picture = Picture::decode(bytes, columns, rows, T::CHANNELS)?;
         self.overview = Some(Arc::new(Tile {
@@ -760,11 +667,15 @@ impl<T: Value> Tiled<T> {
         Ok(())
     }
 
-    fn is_loaded(&self, at: TileAt) -> bool {
+    /// Whether the tile at `at` is loaded, so its values answer exactly rather than from the
+    /// overview.
+    pub fn is_loaded(&self, at: TileAt) -> bool {
         self.tiles[self.grid.index(at)].is_loaded()
     }
 
-    fn load(&self, at: TileAt) -> Result<(), ContentProblem> {
+    /// Loads the tile at `at` from its file, unless it is loaded or has none; refuses a file that
+    /// isn't the tile's picture, leaving the tile as it was.
+    pub fn load(&self, at: TileAt) -> Result<(), ContentProblem> {
         let slot = &self.tiles[self.grid.index(at)];
         let Some(stored) = &slot.stored else {
             return Ok(());
@@ -784,7 +695,8 @@ impl<T: Value> Tiled<T> {
         Ok(())
     }
 
-    fn load_all(&self) -> Vec<(TileAt, ContentProblem)> {
+    /// Loads every tile, on every core: the problems of the tiles that don't load.
+    pub fn load_all(&self) -> Vec<(TileAt, ContentProblem)> {
         (0..self.tiles.len())
             .into_par_iter()
             .filter_map(|index| {
@@ -802,9 +714,8 @@ impl<T: Value> Tiled<T> {
         })
     }
 
-    /// The tile's PNG: its file where it still has one, as a tile set since has not, else
-    /// encoded from its values; none for a blank tile.
-    fn encode(&self, at: TileAt) -> Option<Arc<[u8]>> {
+    /// The tile at `at` as its PNG, none for a blank tile, which no file holds.
+    pub fn encode_tile(&self, at: TileAt) -> Option<Arc<[u8]>> {
         let slot = &self.tiles[self.grid.index(at)];
         if let Some(stored) = &slot.stored {
             return stored.read().ok().map(Arc::from);
@@ -816,9 +727,8 @@ impl<T: Value> Tiled<T> {
         Some(tile.png())
     }
 
-    /// The overview's PNG: the file it was read from while it says what the tiles say, else
-    /// encoded from the tiles.
-    fn encode_overview(&self) -> Option<Vec<u8>> {
+    /// The overview the tiles make as its PNG, none when the ground is blank.
+    pub fn encode_overview(&self) -> Option<Vec<u8>> {
         let overview = self.overview_of_tiles()?;
         if let Some(held) = &self.overview
             && held.values == overview.values
@@ -834,7 +744,8 @@ impl<T: Value> Tiled<T> {
         ))
     }
 
-    fn overview_is_current(&self) -> bool {
+    /// Whether the overview read says what the tiles say.
+    pub fn overview_is_current(&self) -> bool {
         match (self.overview_of_tiles(), &self.overview) {
             (None, None) => true,
             (Some(made), Some(held)) => made.values == held.values,
@@ -853,7 +764,7 @@ impl<T: Value> Tiled<T> {
             .flat_map(|row| (0..columns).map(move |column| (column, row)))
             .map(|(column, row)| {
                 let (column, row) = self.grid.overview_source(column, row);
-                self.get(column, row)
+                self.value(column, row)
             })
             .collect();
         Some(Tile {
@@ -864,7 +775,7 @@ impl<T: Value> Tiled<T> {
         })
     }
 
-    /// The `columns` × `rows` values from `(column, row)`, row by row, each as [`Tiled::get`]
+    /// The `columns` × `rows` values from `(column, row)`, row by row, each as [`GroundGrid::value`]
     /// gives it, read a tile at a time.
     fn window(&self, column: u32, row: u32, columns: u32, rows: u32) -> Window<T> {
         let mut values = Vec::with_capacity((columns * rows) as usize);
@@ -902,7 +813,7 @@ impl<T: Value> Tiled<T> {
 
     /// The value at `(column, row)`, the nearest one past the edge: from its tile when that is
     /// loaded, else the overview's nearest, else blank.
-    fn get(&self, column: u32, row: u32) -> T {
+    fn value(&self, column: u32, row: u32) -> T {
         let column = column.min(self.grid.columns.saturating_sub(1));
         let row = row.min(self.grid.rows.saturating_sub(1));
         let at = TileAt {
@@ -933,7 +844,7 @@ impl<T: Value> Tiled<T> {
 
     /// Sets the value at `(column, row)` in every tile holding it, loading a tile first and
     /// taking a tile of this copy's own where one is shared with another.
-    fn set(&mut self, column: u32, row: u32, value: T) {
+    fn put(&mut self, column: u32, row: u32, value: T) {
         let grid = self.grid;
         for (index, local) in grid.holders(column, row) {
             let at = grid.at(index);
@@ -971,8 +882,8 @@ impl<T: Value> Tiled<T> {
     }
 }
 
-impl<T: Value> PartialEq for Tiled<T> {
-    fn eq(&self, other: &Tiled<T>) -> bool {
+impl<T: Value> PartialEq for GroundGrid<T> {
+    fn eq(&self, other: &GroundGrid<T>) -> bool {
         if self.grid != other.grid {
             return false;
         }
@@ -1159,12 +1070,6 @@ impl TileGrid {
         }
         holders
     }
-}
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Channels {
-    Grey16,
-    Grey8,
 }
 
 struct Picture {

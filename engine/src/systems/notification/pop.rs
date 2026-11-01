@@ -15,8 +15,8 @@ use crate::core::math::Rng;
 use crate::core::render::camera;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::window_point;
-use crate::core::time::{self, Seconds};
-use crate::core::units::Meters;
+use crate::core::time;
+use crate::core::units::{Meters, Seconds};
 use crate::core::vfx::render::{
     ParamsUniform, Run, SiteFrame, SiteTexture, compiled_shader, hide, present_shader, screen_piece,
 };

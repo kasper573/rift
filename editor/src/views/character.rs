@@ -14,15 +14,13 @@ use ui::theme;
 use engine::core::content::{Content, ContentFile, ContentId, FolderReader, fields_file};
 use engine::core::math::Pos;
 use engine::core::script::ValueType;
-use engine::core::time::Seconds;
-use engine::core::units::{MeterPos, Meters};
+use engine::core::units::{MeterPos, Meters, Seconds};
 use engine::field;
 use engine::systems::actor::Appearance;
 use engine::systems::area::{self, AreaDef};
 use engine::systems::class::{ClassDef, NodeKey, SkillTree};
 use engine::systems::item::{ItemDef, ItemStack};
 use engine::systems::memory::MemoryDef;
-use engine::systems::movement;
 use engine::systems::player::snapshot::{
     AtInitialSpawn, CharacterSnapshot, CharacterStart, MemoryValue, QuestState, SnapshotMemory,
     SnapshotQuest, SnapshotSkill, SnapshotSlot,
@@ -41,10 +39,10 @@ use ui::egui::{Align, Layout, Ui, Vec2};
 use ui::glyph::{self, Mark};
 
 use crate::app::{Editor, PlacePick};
+use crate::browser::BrowserAction;
 use crate::forms::{self, FormAction, FormChange, FormCx};
 use crate::project::ContentEdit;
-use crate::shell::browser::BrowserAction;
-use crate::shell::row_form;
+use crate::row_form;
 use crate::tabs::{EditorTab, file_title, shown_path};
 use crate::thumbs::areas::{self, AreaThumbnails};
 use crate::{picker, play, stage};
@@ -1115,8 +1113,7 @@ fn quests(
                         .map(|giver| format!("from {giver}"))
                         .unwrap_or_default(),
                 };
-                panel::tile(standing == Standing::Active).show(ui, |ui| {
-                    ui.set_width(ui.available_width());
+                panel::card(ui, standing == Standing::Active, |ui| {
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
                             ui.label(theme::mono(shown_path(&path)).size(13.0));
@@ -1368,11 +1365,11 @@ fn apply_moment(
     let beside_party = moment.party(sheet, parties, quest).and_then(|party| {
         let (content, _) = parties?;
         let home = area::residence(content, party.npc?)?;
-        let beside = area::load(content, home.area).mesh().nearest_where(
-            home.at,
-            movement::SPACING,
-            |at| at.distance(home.at) >= movement::SPACING,
-        )?;
+        let there = area::load(content, home.area);
+        let spacing = there.bodies.spacing();
+        let beside = there
+            .mesh()
+            .nearest_where(home.at, spacing, |at| at.distance(home.at) >= spacing)?;
         Some(Place {
             area: sheet.now(content, home.area)?,
             at: beside,

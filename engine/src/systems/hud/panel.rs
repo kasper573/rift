@@ -71,7 +71,7 @@ pub(crate) fn sheet_pose(
     (!clock.is_closed() || open).then(|| clock.pose())
 }
 
-pub(crate) fn motion_step(gui: &egui::Context) -> f32 {
+fn motion_step(gui: &egui::Context) -> f32 {
     gui.input(|input| input.unstable_dt).min(MAX_STEP)
 }
 

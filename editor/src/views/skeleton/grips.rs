@@ -5,38 +5,32 @@
 //! kept by a click and undone by Esc.
 
 use bevy::math::{EulerRot, Mat4, Quat, Vec3};
-use engine::core::geometry::Degrees;
-use engine::core::units::Meters;
+use engine::core::units::{Degrees, Meters};
 use engine::systems::actor::render;
 use engine::systems::actor::skeleton::{Hand, LocalOffset, LocalTurn};
 use ui::egui::{self, Pos2, Stroke, Ui, Vec2};
+use ui::input::NumberField;
 use ui::{form, theme};
 
-use super::Staged;
+use super::staging::Staged;
 use crate::app::Editor;
 use crate::keymap::EditorKey;
 
-/// The grip frame being moved or turned on a stage, or set by a number field being dragged, held
-/// here until it is kept so the file is written once rather than on every frame of the move.
+/// The grip frame being moved or turned on a stage, held here until it is kept so the file is
+/// written once rather than on every frame of the move.
 #[derive(Default)]
 pub struct Grips {
     grab: Option<Grab>,
-    dragged: Option<(usize, Hand)>,
 }
 
 impl Grips {
-    /// `hands` with the one being moved, turned or dragged as it stands so far.
+    /// `hands` with the one being moved or turned as it stands so far.
     pub fn working(&self, hands: &[Hand]) -> Vec<Hand> {
         let mut working = hands.to_vec();
-        let edited = match (&self.grab, &self.dragged) {
-            (Some(grab), _) => Some((grab.index, &grab.edited)),
-            (None, Some((index, hand))) => Some((*index, hand)),
-            (None, None) => None,
-        };
-        if let Some((index, hand)) = edited
-            && let Some(at) = working.get_mut(index)
+        if let Some(grab) = &self.grab
+            && let Some(at) = working.get_mut(grab.index)
         {
-            *at = hand.clone();
+            *at = grab.edited.clone();
         }
         working
     }
@@ -52,12 +46,6 @@ struct Grab {
     index: usize,
     hand: Hand,
     edited: Hand,
-}
-
-/// A hand's grip frame as its number fields leave it: still being dragged, or settled.
-enum Edited {
-    Dragging(Hand),
-    Settled(Hand),
 }
 
 /// What the pointer did to the grip frames this frame: picked a hand's, or took the click to keep a
@@ -90,7 +78,6 @@ pub(super) fn overlay(
     let grips = &mut editor.views.skeleton.views.view_mut(key).grips;
     if !shown {
         grips.grab = None;
-        grips.dragged = None;
         return touched;
     }
     if grips
@@ -132,7 +119,7 @@ pub(super) fn overlay(
 }
 
 /// The grip frame of the hand at `index` among `hands` as number fields, as the view's stage shows
-/// it, holding what a drag on one leaves until the drag lets go; gives the hand once it is settled.
+/// it; gives the hand once a field changed it.
 pub fn fields(
     editor: &mut Editor,
     ui: &mut Ui,
@@ -141,45 +128,12 @@ pub fn fields(
     hands: &[Hand],
 ) -> Option<Hand> {
     let working = editor.views.skeleton.views.view(key).grips.working(hands);
-    let edited = drag_fields(ui, working.get(index)?);
-    let grips = &mut editor.views.skeleton.views.view_mut(key).grips;
-    match edited? {
-        Edited::Dragging(hand) => {
-            grips.dragged = Some((index, hand));
-            None
-        }
-        Edited::Settled(hand) => {
-            grips.dragged = None;
-            Some(hand)
-        }
-    }
-}
-
-fn drag_fields(ui: &mut Ui, hand: &Hand) -> Option<Edited> {
-    let mut edited = hand.clone();
-    let mut responses = Vec::new();
+    let mut hand = working.get(index)?.clone();
     form::kv(ui, "offset · m", |ui| {
-        for axis in &mut edited.offset.0 {
-            responses.push(
-                ui.add(
-                    egui::DragValue::new(&mut axis.0)
-                        .speed(0.002)
-                        .fixed_decimals(3),
-                ),
-            );
-        }
+        offset_field(ui, &mut hand.offset);
     });
     form::kv(ui, "turn · °", |ui| {
-        for axis in &mut edited.turn.0 {
-            responses.push(
-                ui.add(
-                    egui::DragValue::new(&mut axis.0)
-                        .speed(0.5)
-                        .range(-180.0..=180.0)
-                        .fixed_decimals(1),
-                ),
-            );
-        }
+        turn_field(ui, &mut hand.turn);
     });
     form::hint(
         ui,
@@ -187,13 +141,21 @@ fn drag_fields(ui: &mut Ui, hand: &Hand) -> Option<Edited> {
          of the hand. G moves the grip frame on the stage, R \
          turns it, X, Y or Z keep it to one axis; click to keep, Esc to undo.",
     );
-    if responses.iter().any(egui::Response::drag_stopped) {
-        Some(Edited::Settled(edited))
-    } else if responses.iter().any(egui::Response::dragged) {
-        Some(Edited::Dragging(edited))
-    } else {
-        (edited != *hand).then_some(Edited::Settled(edited))
-    }
+    (hand != working[index]).then_some(hand)
+}
+
+/// A grip's offset in a joint's frame, typed as three numbers; whether they changed.
+pub(crate) fn offset_field(ui: &mut Ui, offset: &mut LocalOffset) -> bool {
+    let [x, y, z] = &mut offset.0;
+    NumberField::of([&mut x.0, &mut y.0, &mut z.0]).show(ui)
+}
+
+/// A grip's turn in a joint's frame, typed as three numbers; whether they changed.
+pub(crate) fn turn_field(ui: &mut Ui, turn: &mut LocalTurn) -> bool {
+    let [x, y, z] = &mut turn.0;
+    NumberField::of([&mut x.0, &mut y.0, &mut z.0])
+        .range(-180.0..=180.0)
+        .show(ui)
 }
 
 /// The chosen hand's grip frame drawn on its joint, moved or turned with the pointer once G or R
@@ -267,7 +229,7 @@ fn grab(
     }
     if keep {
         grips.grab = None;
-        super::set_hand(editor, key, index, edited);
+        super::edits::set_hand(editor, key, index, edited);
     } else if let Some(grab) = &mut grips.grab {
         grab.edited = edited;
     }

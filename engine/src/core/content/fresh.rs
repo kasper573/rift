@@ -1,7 +1,7 @@
 use super::files::{name_of, parent_of};
 use super::report::article;
 use super::{ContentFile, ContentId, FolderReader};
-use crate::core::assets::{AssetKind, AudioRef, ImageRef};
+use crate::core::content::{AssetKind, AudioRef, ImageRef};
 
 /// Where a content file is made fresh: the game around it, whose nearest files and media it names
 /// wherever it must name some, and the path it is made at.

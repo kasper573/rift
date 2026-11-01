@@ -7,7 +7,7 @@ exe := if os_family() == "windows" { ".exe" } else { "" }
 [doc("rustfmt, clippy, the repo's own lints, and `rift check` on the editor's templates.")]
 lint:
     cargo fmt --check
-    cargo run --quiet -p engine --bin lint
+    cargo run --quiet -p lint
     cargo clippy --all-targets -- -D warnings
     cargo run --quiet -p cli --bin rift -- check editor/templates/new_game
 
@@ -20,7 +20,7 @@ test:
 
 [doc("Builds the editor and the two game binaries it plays with, then opens it, on FOLDER if given.")]
 editor *folder:
-    cargo build --release -p editor -p engine --bin editor --bin game-server --bin desktop-client
+    cargo build --release -p editor -p engine -p game-server --bin editor --bin game-server --bin desktop-client
     target/release/editor {{folder}}
 
 # Frame pointers give perf whole call stacks without copying each sampled stack; the profiling
@@ -42,12 +42,12 @@ dist out="target/dist" *extras="":
     # when it last ran, so left to themselves the server and the client can disagree.
     dirty=$(git status --porcelain --untracked-files=no)
     export RIFT_BUILD="${RIFT_BUILD:-$(git rev-parse --short=8 HEAD)${dirty:+-dirty}}"
-    cargo build --release -p editor -p engine -p cli -p web-server --bin editor --bin game-server --bin desktop-client --bin rift --bin web-server
+    cargo build --release -p editor -p engine -p game-server -p cli -p web-server --bin editor --bin game-server --bin desktop-client --bin rift --bin web-server
     for binary in editor game-server desktop-client rift web-server; do
       cp "target/release/$binary{{exe}}" "$out/"
     done
     if [ {{quote(os())}} = linux ] && [[ $extras == *" profiling "* ]]; then
-      RUSTFLAGS="-C force-frame-pointers=yes" cargo build --profile profiling --features profiling -p engine --bin game-server
+      RUSTFLAGS="-C force-frame-pointers=yes" cargo build --profile profiling --features profiling -p game-server --bin game-server
       cp target/profiling/game-server "$out/game-server-profiling"
     fi
     if [ {{quote(os_family())}} != windows ]; then

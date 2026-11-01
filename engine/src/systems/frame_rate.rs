@@ -7,7 +7,7 @@ use bevy_egui::EguiPrimaryContextPass;
 use ui::egui::{Align2, Vec2};
 
 use crate::core::gui::{self, Band};
-use crate::core::time::{Hertz, Seconds};
+use crate::core::units::{Hertz, Seconds};
 use crate::systems::settings::UserSettings;
 
 /// The game's meter of how many frames it draws a second, shown while the player's settings ask.

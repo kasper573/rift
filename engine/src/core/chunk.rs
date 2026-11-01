@@ -78,11 +78,6 @@ impl ChunkIndex {
     pub fn around(&self, at: Pos<Meters>, reach: Meters) -> impl Iterator<Item = Entity> + '_ {
         Chunk::around(at, reach).flat_map(|chunk| self.in_chunk(chunk).iter().copied())
     }
-
-    /// The chunks someone stands in.
-    pub fn occupied(&self) -> impl Iterator<Item = Chunk> + '_ {
-        self.0.keys().copied()
-    }
 }
 
 fn file(mut world: DeferredWorld, context: HookContext) {

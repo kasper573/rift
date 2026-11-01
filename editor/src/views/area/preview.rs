@@ -12,7 +12,7 @@ use ui::sheet;
 use ui::theme;
 use ui::words;
 
-use super::{pins, select};
+use super::pins;
 use crate::app::Editor;
 use crate::clipboard::Clipboard;
 use crate::forms;
@@ -129,24 +129,16 @@ pub(crate) fn pick_preview(editor: &mut Editor, ui: &mut Ui) {
     let alt = ui.input(|i| EditorKey::Unsnapped.held(i));
     if let Some(pointer) = response.hover_pos() {
         let ground = canvas.to_ground(pointer);
-        let at = select::snap_to(ground, alt);
-        let place = Place { area: area_id, at };
-        let verdict = area::check_place(&content, place);
-        let (ok, why) = match &verdict {
+        let picked = pins::PickedPlace::at(&content, area_id, ground, alt);
+        let at = picked.at;
+        let (ok, why) = match &picked.verdict {
             Ok(()) => (true, "outside every warp object".to_owned()),
             Err(problem) => (false, problem.expected.clone()),
         };
         painter.circle_stroke(
             canvas.to_screen(at),
             5.0,
-            egui::Stroke::new(
-                2.0,
-                if ok {
-                    egui::Color32::from_rgb(255, 230, 120)
-                } else {
-                    theme::DANGER
-                },
-            ),
+            egui::Stroke::new(2.0, picked.color()),
         );
         response.clone().on_hover_ui(|ui| {
             ui.label(theme::strong(format!(
@@ -158,11 +150,7 @@ pub(crate) fn pick_preview(editor: &mut Editor, ui: &mut Ui) {
             ui.label(theme::muted(format!("{why} · click to pick")).size(12.0));
         });
         if response.clicked() {
-            if let Err(problem) = verdict {
-                editor.toast(format!("{}: {}", problem.rule, problem.expected));
-                return;
-            }
-            pins::commit_pick(editor, &area_key, at);
+            picked.commit(editor, &area_key);
         }
     }
     form::hint(

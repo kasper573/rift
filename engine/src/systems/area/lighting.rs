@@ -4,11 +4,10 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::content::{Loading, RowCheck, serial};
-use crate::core::geometry::Degrees;
 use crate::core::math::{Pos, Rgb};
 use crate::core::render::camera::Tone;
 use crate::core::render::world::sky::Sky;
-use crate::core::units::{Meters, Stops};
+use crate::core::units::{Degrees, Meters, Stops};
 use crate::core::vfx::shader::Stage;
 use crate::core::vfx::{ParamValue, VfxShaderId};
 use crate::systems::area::AreaDef;

@@ -1,6 +1,5 @@
 use editor::views::prop;
-use engine::core::time::Seconds;
-use engine::core::units::Meters;
+use engine::core::units::{Meters, Seconds};
 use engine::systems::area::prop::{Footprint, PropDef};
 use serde_json::json;
 use testkit::path;

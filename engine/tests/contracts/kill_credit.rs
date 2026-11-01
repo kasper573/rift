@@ -1,6 +1,6 @@
 use bevy_ecs::message::MessageCursor;
 use bevy_ecs::prelude::*;
-use engine::core::time::Seconds;
+use engine::core::units::Seconds;
 use engine::systems::area::AreaDef;
 use engine::systems::combat;
 use engine::systems::movement::position;

@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::audio::playback::SfxId;
 use std::collections::BTreeMap;
 
-use crate::core::assets::ImageRef;
+use crate::core::content::ImageRef;
 use crate::core::content::media::{GltfInfos, ImageSizes};
 use crate::core::content::{
     ContentFile, ContentId, Loading, NamedContent, Nearby, RowCheck, serial,

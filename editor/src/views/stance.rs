@@ -12,8 +12,8 @@ use ui::{controls, form, sheet, theme};
 
 use crate::app::Editor;
 use crate::project::ContentEdit;
-use crate::shell::row_form;
-use crate::shell::row_form::usages;
+use crate::row_form;
+use crate::row_form::usages;
 use crate::tabs::shown_path;
 
 /// Adds to the stance at `key` that beside an item of the stance at `with` it becomes the stance at
@@ -51,7 +51,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         usages::show_usages_grouped(editor, ui, key, true);
     });
     egui::Frame::new()
-        .inner_margin(crate::shell::VIEW_PADDING)
+        .inner_margin(crate::widgets::VIEW_PADDING)
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
             ui.label(theme::mono(shown_path(key)).color(theme::CODE));

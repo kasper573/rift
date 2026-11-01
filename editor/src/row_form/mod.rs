@@ -36,13 +36,13 @@ use self::rows::{fieldless_note, free_singles, show_rows};
 use self::scripts::{module_lines, script_module_body, script_summary, speaker_of, summary_of};
 use super::widgets;
 use crate::app::{Editor, PlacePick};
+use crate::browser::{self, RowMenu};
 use crate::clipboard::{Clipboard, ModuleClip};
 use crate::forms::{self, FormAction, FormChange, FormCx};
 use crate::keymap::EditorKey;
 use crate::modal::{ConfirmAction, ConfirmDialog, ModalDialog, TextComparison};
 use crate::project::{ContentEdit, Project, RowSelection};
 use crate::rows::new_file_into;
-use crate::shell::browser::{self, RowMenu};
 use crate::tabs::{file_title, shown_path};
 use crate::views::{class, skill, vfx};
 use crate::{make, schema, stage};
@@ -282,8 +282,7 @@ fn row_card(
     typed: &mut Option<TypedWrite>,
 ) -> FormChange {
     let mut changed = FormChange::default();
-    panel::tile(false).show(ui, |ui| {
-        ui.set_width(ui.available_width());
+    panel::card(ui, false, |ui| {
         let mut open_folder = None;
         panel::header_with(
             ui,
@@ -441,8 +440,7 @@ fn modules_column(
             } else {
                 summary_of(cx, module)
             };
-            panel::tile(is_selected).show(ui, |ui| {
-                ui.set_width(ui.available_width());
+            panel::card(ui, is_selected, |ui| {
                 let header = ui
                     .horizontal(|ui| {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -764,7 +762,7 @@ pub fn act(editor: &mut Editor, action: FormAction, table: &str, key: &str) {
             }
         }
         FormAction::RowAction(action) => browser::act(editor, table, key, action),
-        FormAction::Reveal { path } => crate::shell::content_tree::reveal(editor, &path),
+        FormAction::Reveal { path } => crate::content_tree::reveal(editor, &path),
         FormAction::NewScriptModule => {
             if let Err(error) = crate::rows::new_script_module(editor, table, key) {
                 editor.toast(error);

@@ -8,15 +8,15 @@ use engine::core::content::{
     CONFIG_FILE, Content, ContentFile, ContentId, ContentRegistry, LoadReport, MemoryFolder,
     SETTINGS_FILE, Shape, content_path, name_of, table_of, version,
 };
-use engine::core::geometry::Degrees;
-use engine::core::ground::{GroundSize, MIN_SIDE, Paint, SAMPLES_PER_METER};
+use engine::core::ground::{GroundSize, MIN_SIDE, PaintMap, SAMPLES_PER_METER};
 use engine::core::math::Rgb;
 use engine::core::render::{
     CameraFraming, ClearingLook, CloudLook, LightLook, Look, PictureGrade, SkyLook, SurfaceFinish,
     Zooms,
 };
-use engine::core::time::{Millis, Seconds};
+use engine::core::units::Degrees;
 use engine::core::units::{Meters, MetersPerSec, Stops};
+use engine::core::units::{Millis, Seconds};
 use engine::core::vfx::shader::{SHADER_SOURCE, Stage};
 use engine::systems::actor::Action;
 use engine::systems::area;
@@ -192,9 +192,12 @@ impl Game {
     }
 
     /// A playable character (its class, the model it starts as, and the player file) and settings that start every new
-    /// character at `x`, `y` in `area`.
+    /// character at `x`, `y` in `area`. Its body, which every walker's is, is 0.35 m round.
     pub fn hero(self, area: &str, x: f32, y: f32) -> Game {
         self.model("hero", 2.0, json!([]))
+            .edit("model", "hero", |model| {
+                model["hitbox"]["radius"] = json!(0.35)
+            })
             .row(
                 "class",
                 "hero",
@@ -646,7 +649,7 @@ impl Game {
         if !padded && !map.0.iter().any(|row| row.contains('#')) {
             return game;
         }
-        let paint = Paint::from_fn(size, |column, row| {
+        let paint = PaintMap::from_fn(size, |column, row| {
             let (x, y) = (
                 (column / SAMPLES_PER_METER) as usize,
                 (row / SAMPLES_PER_METER) as usize,

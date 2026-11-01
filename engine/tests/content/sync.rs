@@ -10,7 +10,8 @@ use engine::core::content::sync::{
 };
 use engine::core::content::version;
 use engine::core::os::FetchFailure;
-use engine::core::time::{Backoff, Seconds};
+use engine::core::time::Backoff;
+use engine::core::units::Seconds;
 use futures_util::future::BoxFuture;
 use serde_json::json;
 use testkit::{Game, Map, wav};

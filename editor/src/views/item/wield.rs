@@ -3,9 +3,8 @@
 //! table; the inspector says which skeletons show the item, which wear it unseen, and which have a
 //! set for its stance.
 
+use crate::views::skeleton::grips::{offset_field, turn_field};
 use engine::core::content::{ContentFile, NamedContent};
-use engine::core::geometry::Degrees;
-use engine::core::units::Meters;
 use engine::systems::actor::model::{ActorModel, Skeletons};
 use engine::systems::actor::render;
 use engine::systems::actor::skeleton::SkeletonDef;
@@ -120,31 +119,10 @@ fn fields(editor: &mut Editor, ui: &mut Ui, key: &str, stance_path: &str, grip: 
                 ui.end_row();
             }
             ui.label(theme::muted("grip · offset · m"));
-            ui.horizontal(|ui| {
-                for axis in &mut edited.offset.0 {
-                    let mut value = axis.0;
-                    ui.add(
-                        egui::DragValue::new(&mut value)
-                            .speed(0.002)
-                            .fixed_decimals(3),
-                    );
-                    *axis = Meters(value);
-                }
-            });
+            offset_field(ui, &mut edited.offset);
             ui.end_row();
             ui.label(theme::muted("grip · turn · °"));
-            ui.horizontal(|ui| {
-                for axis in &mut edited.turn.0 {
-                    let mut value = axis.0;
-                    ui.add(
-                        egui::DragValue::new(&mut value)
-                            .speed(0.5)
-                            .range(-180.0..=180.0)
-                            .fixed_decimals(1),
-                    );
-                    *axis = Degrees(value);
-                }
-            });
+            turn_field(ui, &mut edited.turn);
             ui.end_row();
             ui.label(theme::muted("alike across"));
             controls::combo(("wield-symmetry", key))
@@ -348,10 +326,7 @@ pub fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str) {
         return;
     };
     let def = stance.get(&content);
-    panel::tile(false).show(ui, |ui| {
-        ui.set_width(ui.available_width());
-        panel::title(ui, "Wield");
-        ui.add_space(4.0);
+    panel::titled_card(ui, false, "Wield", |ui| {
         form::kv_text(
             ui,
             "hands",

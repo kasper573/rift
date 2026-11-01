@@ -7,25 +7,24 @@ pub mod look;
 
 use engine::core::content::{Content, ContentFile};
 use engine::core::geometry::Capsule;
-use engine::core::time::Seconds;
+use engine::core::units::Seconds;
+use engine::systems::actor::ModelDef;
 use engine::systems::actor::model::ActorModel;
 use engine::systems::actor::skeleton::Cue;
-use engine::systems::actor::{Action, ModelDef, Motion, Pose};
 use ui::egui::{self, Ui, Vec2};
-use ui::{form, theme};
+use ui::form;
 
 use super::area::viewport::StageClip;
-use super::stage;
+use super::stage::{self, StageToggle};
 use crate::app::Editor;
 use crate::project::ContentEdit;
-use crate::shell::row_form;
+use crate::row_form;
 use crate::tabs::shown_path;
 
 pub struct ModelView {
     /// The stance the stage shows the model in, by its file's path.
     pub stance: Option<String>,
-    pub motion: Motion,
-    pub pose: Pose,
+    pub shown: look::Shown,
     pub scrub: super::cues::Scrub,
     pub stage: stage::StageState,
     pub hitbox: hitbox::HitboxHandles,
@@ -45,7 +44,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         inspect::show(editor, ui, key, &row);
     });
     egui::Frame::new()
-        .inner_margin(crate::shell::VIEW_PADDING)
+        .inner_margin(crate::widgets::VIEW_PADDING)
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
             page_bar(editor, ui, key);
@@ -55,14 +54,13 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
 }
 
 fn page_bar(editor: &mut Editor, ui: &mut Ui, key: &str) {
-    ui.horizontal(|ui| {
-        ui.label(theme::mono(shown_path(key)).color(theme::CODE));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            let toggles = &mut editor.views.toggles;
-            stage::toggle(ui, "turning", &mut toggles.turning);
-            stage::toggle(ui, "hitbox", &mut toggles.hitbox);
-        });
-    });
+    stage::bar(
+        ui,
+        key,
+        &mut editor.views.toggles,
+        &[StageToggle::Turning, StageToggle::Hitbox],
+        |_| {},
+    );
 }
 
 pub fn ensure_view(editor: &mut Editor, key: &str) {
@@ -75,8 +73,7 @@ pub fn ensure_view(editor: &mut Editor, key: &str) {
         key,
         ModelView {
             stance: None,
-            motion: Motion::Action(Action::Idle),
-            pose: Pose::Idle,
+            shown: look::Shown::default(),
             scrub: super::cues::Scrub::default(),
             stage: stage::StageState::framing(height.max(1.0) * 0.7),
             hitbox: hitbox::HitboxHandles::default(),

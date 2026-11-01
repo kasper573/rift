@@ -21,10 +21,10 @@ use crate::keymap::EditorKey;
 use crate::picker::Dragged;
 use crate::project::{Project, RowSelection};
 use crate::scene_graph;
-pub use crate::shell::tree::Toggle;
-use crate::shell::tree::{self, DropAt, RowToggles, ToggleState, TreeDrop, TreeRow, TreeSource};
-use crate::shell::widgets;
 use crate::tabs::file_title;
+pub use crate::tree::Toggle;
+use crate::tree::{self, DropAt, RowToggles, ToggleState, TreeDrop, TreeRow, TreeSource};
+use crate::widgets;
 
 /// What the scene graph's menus and keys ask for.
 #[derive(Clone, Debug)]
@@ -439,7 +439,7 @@ impl<'a> SceneSource<'a> {
                 _ => None,
             };
             let door = matches!(module, Some(AreaModule::Object(object))
-                if !super::placement::warp_destinations(object, self.snapshot.reader.as_ref()).is_empty());
+                if !super::warps::warp_destinations(object, self.snapshot.reader.as_ref()).is_empty());
             if ui
                 .add_enabled(door, egui::Button::new("Return door…"))
                 .clicked()

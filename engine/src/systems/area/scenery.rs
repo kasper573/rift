@@ -28,9 +28,8 @@ use super::{Area, Lighting, PointLightDef, PropPlacement};
 use crate::core::assets;
 use crate::core::content::media::GltfInfos;
 use crate::core::content::{Content, FileHash, FileHashes};
-use crate::core::geometry::Radians;
 use crate::core::geometry::{PlacedShape, Shape};
-use crate::core::ground::{Heightfield, OVERVIEW_STRIDE, Paint, SAMPLES_PER_METER, TileAt};
+use crate::core::ground::{Heightfield, OVERVIEW_STRIDE, PaintMap, SAMPLES_PER_METER, TileAt};
 use crate::core::math::{Pos, Rect, Rng, Size};
 use crate::core::render::camera::WorldPicture;
 use crate::core::render::present::AreaGrade;
@@ -43,8 +42,7 @@ use crate::core::render::world::sky::{self, Daylight, SunLight};
 use crate::core::render::world::terrain::{self, GroundLayer, GroundMaterial};
 use crate::core::render::{Look, camera, world_point};
 use crate::core::spatial::SpatialIndex;
-use crate::core::time::Seconds;
-use crate::core::units::{MeterSize, Meters};
+use crate::core::units::{MeterSize, Meters, Radians, Seconds};
 use crate::core::vfx::ParamFill;
 use crate::core::vfx::cover::{self as cover_vfx, Climate, CoverMaterial};
 use crate::core::vfx::render::{self as vfx_render, ParamsUniform, Run, SiteFrame, SiteUniform};
@@ -264,7 +262,7 @@ struct Streaming {
     content: Content,
     area: Arc<Area>,
     heights: Heightfield,
-    paint: Paint,
+    paint: PaintMap,
     terrain: Entity,
     covers: Vec<CoverLayer>,
     props: SpatialIndex,
@@ -643,7 +641,7 @@ fn stream_covers(
     let chunk_side = cover::CHUNK_CELLS as f32 / SAMPLES_PER_METER as f32;
     let chunk_bounds = |chunk: (u32, u32)| {
         Rect::new(
-            Paint::pixel_pos(chunk.0 * cover::CHUNK_CELLS, chunk.1 * cover::CHUNK_CELLS),
+            PaintMap::pixel_pos(chunk.0 * cover::CHUNK_CELLS, chunk.1 * cover::CHUNK_CELLS),
             Size::new(chunk_side, chunk_side),
         )
     };
@@ -950,7 +948,7 @@ pub fn grade(lighting: &Lighting) -> AreaGrade {
 }
 
 /// Lays `scenery`'s ground anew on `heights` painted with `paint`, as a stroke shapes it.
-pub fn lay_ground(world: &mut World, scenery: Scenery, heights: &Heightfield, paint: &Paint) {
+pub fn lay_ground(world: &mut World, scenery: Scenery, heights: &Heightfield, paint: &PaintMap) {
     let Some(mut streaming) = world.entity_mut(scenery.root).take::<Streaming>() else {
         return;
     };

@@ -1,15 +1,9 @@
-pub mod browser;
-pub mod content_tree;
 pub mod dialogs;
 pub mod history;
-pub mod levels;
 pub mod output;
 pub mod report;
-pub mod row_form;
 pub mod start;
-pub mod tree;
 pub mod unused_dialog;
-pub mod widgets;
 
 use std::mem;
 use std::path::Path;
@@ -39,12 +33,15 @@ use crate::keymap::EditorKey;
 use crate::modal::{CloseDialog, CloseThen, ModalDialog};
 use crate::play;
 use crate::project::{self, EditRefusal};
+use crate::tabs::active_tab;
 use crate::tabs::{DockRequest, EditorTab};
-use crate::views::script::{self, ScriptKeys};
+use crate::views::script::{self, keys::ScriptKeys};
 use crate::views::{
     self, area, bust, character, class, item, model, model_part, prop, skeleton, spreadsheet,
     stance, vfx, world,
 };
+use crate::widgets::CONTENT_PADDING;
+use crate::{content_tree, row_form, widgets};
 
 pub fn show(editor: &mut Editor, ctx: &Context) {
     editor.status.right.clear();
@@ -78,21 +75,6 @@ pub fn show(editor: &mut Editor, ctx: &Context) {
         }
         request_close(editor, CloseThen::Quit);
     }
-}
-
-pub fn active_tab(editor: &Editor) -> Option<EditorTab> {
-    editor
-        .dock
-        .focused_leaf()
-        .and_then(|path| editor.dock.leaf(path).ok())
-        .and_then(|leaf| leaf.tabs().get(leaf.active.0).cloned())
-        .or_else(|| {
-            editor
-                .dock
-                .iter_leaves()
-                .next()
-                .and_then(|(_, leaf)| leaf.tabs.get(leaf.active.0).cloned())
-        })
 }
 
 /// Acts on the editor's own keys pressed this frame. A field being typed into keeps the keys it
@@ -505,10 +487,6 @@ fn status_bar(editor: &mut Editor, root: &mut egui::Ui) {
 struct Viewer<'a> {
     editor: &'a mut Editor,
 }
-
-/// The gutter every tab's content keeps from the tab body's edge, so views line up.
-pub(crate) const CONTENT_PADDING: egui::Margin = egui::Margin::symmetric(16, 10);
-pub(crate) const VIEW_PADDING: egui::Margin = egui::Margin::symmetric(12, 8);
 
 impl TabViewer for Viewer<'_> {
     type Tab = EditorTab;

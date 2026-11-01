@@ -1,10 +1,11 @@
-use std::ops::Mul;
+use std::hash::{Hash, Hasher};
+use std::ops::{Div, Mul, Rem};
+use std::time::Duration;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::math::{Offset, Pos, Rect, Size, WorldPx};
-use crate::core::time::Seconds;
+use crate::core::math::{Offset, Pos, Rect, Rng, Size};
 
 #[derive(
     JsonSchema,
@@ -85,13 +86,13 @@ impl Mul<Seconds> for MetersPerSec {
 }
 
 /// A metre cell of an area's ground, the grain its terrain is painted and sloped at.
-pub trait Cell {
+pub trait GroundCell {
     fn center(self) -> Pos<Meters>;
     fn bounds(self) -> Rect<Meters>;
     fn index(self, size: GridSize) -> Option<usize>;
 }
 
-impl Cell for CellPos {
+impl GroundCell for CellPos {
     fn center(self) -> Pos<Meters> {
         Pos::new(self.x as f32, self.y as f32)
     }
@@ -166,31 +167,278 @@ impl GridDims for GridSize {
     }
 }
 
-#[derive(Clone, Copy)]
-pub struct PixelsPerTile {
-    x: euclid::Scale<f32, WorldPx, Meters>,
-    y: euclid::Scale<f32, WorldPx, Meters>,
+#[derive(
+    JsonSchema,
+    Serialize,
+    Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    PartialOrd,
+    derive_more::Add,
+    derive_more::AddAssign,
+    derive_more::Sub,
+    derive_more::SubAssign,
+)]
+#[schemars(extend("x-unit" = "s"))]
+pub struct Seconds(pub f32);
+
+#[derive(
+    JsonSchema,
+    Serialize,
+    Deserialize,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    PartialOrd,
+    derive_more::Add,
+    derive_more::AddAssign,
+    derive_more::Sub,
+    derive_more::SubAssign,
+)]
+#[schemars(extend("x-unit" = "ms"))]
+pub struct Millis(pub f32);
+
+#[derive(
+    JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd,
+)]
+pub struct PlaybackRate(pub f32);
+
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, PartialOrd)]
+#[schemars(extend("x-unit" = "Hz"))]
+pub struct Hertz(pub f32);
+
+impl Hertz {
+    pub fn period(self) -> Duration {
+        Duration::from_secs_f32(1.0 / self.0)
+    }
 }
 
-impl PixelsPerTile {
-    pub fn new(tile_size: Size<WorldPx>) -> PixelsPerTile {
-        PixelsPerTile {
-            x: euclid::Scale::new(1.0 / tile_size.width.max(1.0)),
-            y: euclid::Scale::new(1.0 / tile_size.height.max(1.0)),
+impl PlaybackRate {
+    pub fn at_least(self, floor: f32) -> PlaybackRate {
+        PlaybackRate(self.0.max(floor))
+    }
+}
+
+impl Div<PlaybackRate> for Seconds {
+    type Output = Seconds;
+    fn div(self, rate: PlaybackRate) -> Seconds {
+        Seconds(self.0 / rate.0)
+    }
+}
+
+impl Mul<PlaybackRate> for Millis {
+    type Output = Millis;
+    fn mul(self, rate: PlaybackRate) -> Millis {
+        Millis(self.0 * rate.0)
+    }
+}
+
+impl Rem for Millis {
+    type Output = Millis;
+    fn rem(self, other: Millis) -> Millis {
+        Millis(self.0 % other.0)
+    }
+}
+
+impl Hash for Seconds {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        // -0.0 equals 0.0, so both must hash alike.
+        (self.0 + 0.0).to_bits().hash(state);
+    }
+}
+
+impl Seconds {
+    /// Rounded up to whole minutes, for a countdown shown by the minute.
+    pub fn up_to_minute(self) -> Seconds {
+        Seconds((self.0 / 60.0).ceil() * 60.0)
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.0 == 0.0
+    }
+
+    pub fn millis(self) -> Millis {
+        Millis(self.0 * 1000.0)
+    }
+
+    pub fn min(self, other: Seconds) -> Seconds {
+        Seconds(self.0.min(other.0))
+    }
+
+    pub fn ratio(self, other: Seconds) -> f32 {
+        self.0 / other.0
+    }
+
+    pub fn in_words(self) -> String {
+        let exact = self.0.ceil().max(1.0) as u32;
+        let (_, small) = unit_pair(exact);
+        let rounded = exact.div_ceil(small.size) * small.size;
+        let (big, small) = unit_pair(rounded);
+        [
+            (rounded / big.size, big.name),
+            (rounded % big.size / small.size, small.name),
+        ]
+        .into_iter()
+        .filter(|&(count, _)| count > 0)
+        .map(|(count, name)| match count {
+            1 => format!("1 {name}"),
+            _ => format!("{count} {name}s"),
+        })
+        .collect::<Vec<_>>()
+        .join(" and ")
+    }
+}
+
+impl From<Seconds> for Duration {
+    fn from(seconds: Seconds) -> Duration {
+        Duration::from_secs_f32(seconds.0.max(0.0))
+    }
+}
+
+impl Mul<f32> for Seconds {
+    type Output = Seconds;
+    fn mul(self, factor: f32) -> Seconds {
+        Seconds(self.0 * factor)
+    }
+}
+
+impl Millis {
+    pub fn seconds(self) -> Seconds {
+        Seconds(self.0 / 1000.0)
+    }
+
+    pub fn min(self, other: Millis) -> Millis {
+        Millis(self.0.min(other.0))
+    }
+
+    pub fn max(self, other: Millis) -> Millis {
+        Millis(self.0.max(other.0))
+    }
+
+    pub fn ratio(self, other: Millis) -> f32 {
+        self.0 / other.0
+    }
+}
+
+#[derive(Clone, Copy)]
+struct TimeUnit {
+    size: u32,
+    name: &'static str,
+}
+
+const TIME_UNITS: [TimeUnit; 4] = [
+    TimeUnit {
+        size: 86_400,
+        name: "day",
+    },
+    TimeUnit {
+        size: 3_600,
+        name: "hour",
+    },
+    TimeUnit {
+        size: 60,
+        name: "minute",
+    },
+    TimeUnit {
+        size: 1,
+        name: "second",
+    },
+];
+
+fn unit_pair(seconds: u32) -> (TimeUnit, TimeUnit) {
+    let big = TIME_UNITS
+        .iter()
+        .position(|unit| seconds >= unit.size)
+        .unwrap_or(TIME_UNITS.len() - 1)
+        .min(TIME_UNITS.len() - 2);
+    (TIME_UNITS[big], TIME_UNITS[big + 1])
+}
+
+#[derive(
+    JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd,
+)]
+#[schemars(extend("x-unit" = "°"))]
+pub struct Degrees(pub f32);
+
+#[derive(
+    JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd,
+)]
+#[schemars(extend("x-unit" = "rad"))]
+pub struct Radians(pub f32);
+
+impl Degrees {
+    pub fn radians(self) -> Radians {
+        Radians(self.0.to_radians())
+    }
+
+    pub fn is_zero(&self) -> bool {
+        self.0 == 0.0
+    }
+
+    /// The angle as whole quarter turns, when it is one: a placement turns only by right angles,
+    /// so what it places keeps its rectangles square to the world.
+    pub fn quarter_turns(self) -> Option<u8> {
+        let quarters = self.0 / 90.0;
+        let whole = quarters.round();
+        ((quarters - whole).abs() < 1e-4).then(|| whole.rem_euclid(4.0) as u8)
+    }
+
+    /// `offset` turned by the angle about the origin; a right angle turns it exactly.
+    pub fn rotate(self, offset: Offset<Meters>) -> Offset<Meters> {
+        let Offset { x, y, .. } = offset;
+        match self.quarter_turns() {
+            Some(0) => offset,
+            Some(1) => Offset::new(-y, x),
+            Some(2) => Offset::new(-x, -y),
+            Some(3) => Offset::new(y, -x),
+            _ => {
+                let (sin, cos) = self.radians().0.sin_cos();
+                Offset::new(x * cos - y * sin, x * sin + y * cos)
+            }
         }
     }
+}
 
-    pub fn point(self, p: Pos<WorldPx>) -> Pos<Meters> {
-        Pos::new(
-            self.x.transform_point(p).x - 0.5,
-            self.y.transform_point(p).y - 0.5,
-        )
+impl Radians {
+    /// Toward +y, which the camera looks down on: the way everyone first stands.
+    pub const SOUTH: Radians = Radians(std::f32::consts::FRAC_PI_2);
+
+    pub fn of(heading: Offset<Meters>) -> Radians {
+        Radians(heading.y.atan2(heading.x))
     }
 
-    pub fn rect(self, r: Rect<WorldPx>) -> Rect<Meters> {
-        Rect::new(
-            self.point(r.origin),
-            Size::new(r.size.width * self.x.get(), r.size.height * self.y.get()),
-        )
+    pub fn heading(self) -> Offset<Meters> {
+        Offset::new(self.0.cos(), self.0.sin())
+    }
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+pub struct WorldPx(pub f32);
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd)]
+pub struct WindowPx(pub f32);
+
+#[derive(
+    JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, PartialOrd, Default,
+)]
+#[schemars(extend("x-unit" = "%"))]
+pub struct Percent(pub f32);
+
+impl Percent {
+    pub fn plus(self, other: Percent) -> Percent {
+        Percent(self.0 + other.0)
+    }
+
+    pub fn times(self, count: u32) -> Percent {
+        Percent(self.0 * count as f32)
+    }
+
+    pub fn rolled(self, rng: &mut Rng) -> bool {
+        rng.rand_float() * 100.0 < self.0
     }
 }

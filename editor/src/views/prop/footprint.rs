@@ -2,9 +2,8 @@
 //! handles, the grown outline walkers keep off beside it.
 
 use bevy::math::Vec3;
-use engine::core::geometry::Degrees;
 use engine::core::math::{Offset, Pos};
-use engine::core::units::Meters;
+use engine::core::units::{Degrees, Meters};
 use engine::systems::area::AreaModuleKind;
 use engine::systems::area::prop::{Footprint, MAX_POLYGON_POINTS, MIN_POLYGON_POINTS, PropDef};
 use ui::egui::{self, Sense, Shape, Stroke, Ui, Vec2};
@@ -12,7 +11,7 @@ use ui::theme;
 
 use super::super::area::camera::{self, AreaCanvas};
 use super::super::area::overlays::module_color;
-use super::super::area::place::draw_footprint;
+use super::super::area::shapes::draw_footprint;
 use super::super::stage;
 use crate::app::Editor;
 
@@ -110,7 +109,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef, size: Ve
     let camera = view.top;
     let canvas = AreaCanvas::new(rect, camera, picture.1.area.clone());
     let at = stage::center();
-    let color = module_color(Some(AreaModuleKind::Prop));
+    let color = module_color(AreaModuleKind::Prop);
     if let Some((min, max)) = bounds {
         let corners = [
             (min.x, min.z),

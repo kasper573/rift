@@ -1,7 +1,7 @@
 //! The turntable: the prop on its stage through the game's renderer, turning on its own until
 //! the pointer takes the camera.
 
-use engine::core::geometry::Degrees;
+use engine::core::units::Degrees;
 use engine::systems::area::AreaModuleKind;
 use engine::systems::area::prop::PropDef;
 use ui::egui::{self, Sense, Stroke, Ui, Vec2};
@@ -9,7 +9,7 @@ use ui::theme;
 
 use super::super::area::camera::{self, AreaCanvas};
 use super::super::area::overlays::module_color;
-use super::super::area::place::draw_footprint;
+use super::super::area::shapes::draw_footprint;
 use super::super::stage;
 use crate::app::Editor;
 
@@ -55,7 +55,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef, size: Ve
         stage::center(),
         Degrees(0.0),
         1.0,
-        Stroke::new(1.5, module_color(Some(AreaModuleKind::Prop))),
+        Stroke::new(1.5, module_color(AreaModuleKind::Prop)),
     );
     stage::request(editor, ui, &view_key, rect, camera, picture, Vec::new());
 }

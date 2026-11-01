@@ -6,16 +6,16 @@ use ui::menu;
 
 use super::canvas::{MapCanvas, corners};
 use super::{
-    GAP, MapPart, MapRoute, MapTileHit, OpenWorldMap, card_at, hundredths, move_card, select,
+    GAP, MapGroundHit, MapPart, MapRoute, OpenWorldMap, card_at, hundredths, move_card, select,
     selected, tidy_regions,
 };
 use crate::app::Editor;
 use crate::keymap::EditorKey;
 use crate::play;
 use crate::project::ContentEdit;
-use crate::shell::widgets;
 use crate::views::snap;
 use crate::views::{area as area_view, navigation};
+use crate::widgets;
 
 const SNAP_PX: f32 = 8.0;
 const DRAG_SLOP: f32 = 3.0;
@@ -162,7 +162,7 @@ pub fn run(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, canvas: &MapCan
     }
     let hover = response
         .hover_pos()
-        .and_then(|p| canvas.tile_at(&map.atlas, p));
+        .and_then(|p| canvas.ground_at(&map.atlas, p));
     editor.views.world.hover = hover.clone();
     if response.secondary_clicked() {
         editor.views.world.menu_target = hover.clone();
@@ -337,11 +337,11 @@ fn start_route(editor: &mut Editor, from: String) {
     editor.views.world.route_from = Some(from);
 }
 
-fn card_menu(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, hit: &MapTileHit) {
+fn card_menu(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, hit: &MapGroundHit) {
     let Some(id) = map.atlas.id(&hit.area) else {
         return;
     };
-    let cell = snap(hit.at);
+    let cell = snap(hit.at, false);
     let place = Place { area: id, at: cell };
     if area::load(&map.content, id).mesh().walkable(cell) {
         let character = play::current_character(editor).unwrap_or_else(|| "…".to_owned());
@@ -481,7 +481,7 @@ fn keys(
     ui: &Ui,
     map: &OpenWorldMap,
     canvas: &MapCanvas,
-    hover: Option<MapTileHit>,
+    hover: Option<MapGroundHit>,
 ) {
     let keys = WorldKeys::read(ui);
     let parts = selected(editor);
@@ -569,7 +569,9 @@ fn keys(
     }
     if keys.enter {
         match (&hover, canvas.hovered) {
-            (Some(hit), _) => area_view::open_area_at(editor, &hit.area, Some(snap(hit.at)), None),
+            (Some(hit), _) => {
+                area_view::open_area_at(editor, &hit.area, Some(snap(hit.at, false)), None)
+            }
             (None, Some(area)) => area_view::open_area_at(editor, map.atlas.key(area), None, None),
             (None, None) => {}
         }
@@ -577,13 +579,15 @@ fn keys(
     if keys.play
         && let Some(hit) = &hover
         && let Some(id) = map.atlas.id(&hit.area)
-        && area::load(&map.content, id).mesh().walkable(snap(hit.at))
+        && area::load(&map.content, id)
+            .mesh()
+            .walkable(snap(hit.at, false))
     {
         play::start(
             editor,
             Some(Place {
                 area: id,
-                at: snap(hit.at),
+                at: snap(hit.at, false),
             }),
         );
     }

@@ -34,11 +34,10 @@ use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumString, VariantArray};
 
 use crate::core::content::{ContentRegistry, LoadStep};
-use crate::core::geometry::{Capsule, Radians};
+use crate::core::geometry::Capsule;
 use crate::core::math::Pos;
 use crate::core::render::{Pointed, capsule_hit, ground_height, world_point};
-use crate::core::time::PlaybackRate;
-use crate::core::units::{MeterPos, Meters, MetersPerSec};
+use crate::core::units::{MeterPos, Meters, MetersPerSec, PlaybackRate, Radians};
 use crate::systems::area::AreaObject;
 use crate::systems::dialogue;
 use crate::systems::movement::{self, Path, Position, RenderPosition};

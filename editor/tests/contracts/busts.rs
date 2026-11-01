@@ -1,4 +1,5 @@
 use editor::app::Editor;
+use editor::views::bust::face_files;
 use editor::views::bust::faces::{self, BustFace};
 use engine::systems::dialogue::bust::{BustDef, GenericExpression};
 use serde_json::json;
@@ -46,7 +47,7 @@ fn renaming_an_own_face_moves_its_picture_and_the_game_still_loads() {
         .find(|face| face.name == "smug")
         .expect("smug");
 
-    assert!(faces::rename(
+    assert!(face_files::rename(
         &mut editor,
         &path("bust", "orc"),
         &smug,
@@ -70,7 +71,7 @@ fn a_face_keeps_its_name_when_asked_for_one_no_file_can_hold() {
 
     for wanted in ["grin!", "a/b", "happy (2) x"] {
         assert!(
-            !faces::rename(&mut editor, &path("bust", "orc"), &smug, wanted),
+            !face_files::rename(&mut editor, &path("bust", "orc"), &smug, wanted),
             "{wanted}"
         );
     }
@@ -93,8 +94,8 @@ fn removing_an_own_face_removes_its_picture_and_a_generic_face_stays() {
         .find(|face| face.name == "happy")
         .expect("a generic face");
 
-    assert!(faces::remove(&mut editor, &bust, smug, "happy"));
-    assert!(!faces::remove(&mut editor, &bust, happy, "sad"));
+    assert!(face_files::remove(&mut editor, &bust, smug, "happy"));
+    assert!(!face_files::remove(&mut editor, &bust, happy, "sad"));
 
     support::settled(&mut editor);
     assert_eq!(faces(&editor).len(), GenericExpression::VARIANTS.len());
@@ -124,7 +125,7 @@ fn renaming_a_face_leaves_the_lines_of_speakers_shown_in_another_bust_alone() {
         .find(|face| face.name == "smug")
         .expect("smug");
 
-    assert!(faces::rename(&mut editor, &grunt, &smug, "sly"));
+    assert!(face_files::rename(&mut editor, &grunt, &smug, "sly"));
 
     support::settled(&mut editor);
     let asked = |bust: &str| -> Vec<String> {

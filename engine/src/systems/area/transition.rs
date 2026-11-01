@@ -42,16 +42,13 @@ pub struct Traveler {
     pub state: CharacterState,
 }
 
-#[derive(Resource, Default)]
-pub struct Departures(pub Vec<Traveler>);
-
 pub fn departing(world: &mut World) -> Vec<Traveler> {
     let crossings: Vec<(Entity, Crossing)> = world
         .query::<(Entity, &Crossing)>()
         .iter(world)
         .map(|(entity, crossing)| (entity, *crossing))
         .collect();
-    let mut leaving: Vec<Traveler> = crossings
+    crossings
         .into_iter()
         .filter_map(|(entity, crossing)| {
             leave(
@@ -62,9 +59,7 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
                 crossing.dest,
             )
         })
-        .collect();
-    leaving.append(&mut world.resource_mut::<Departures>().0);
-    leaving
+        .collect()
 }
 
 pub fn leave(

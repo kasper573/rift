@@ -17,8 +17,8 @@ fn main() {
     let engine = metadata
         .packages
         .iter()
-        .find(|pkg| pkg.name == env!("CARGO_PKG_NAME"))
-        .expect("the lint's own package in the workspace");
+        .find(|pkg| pkg.name == "engine")
+        .expect("the engine package in the workspace");
     let src = engine
         .manifest_path
         .parent()
@@ -111,7 +111,7 @@ fn check_json_keys(name: &str, src: &Path, out: &mut Vec<String>) {
 /// The packages whose code reads and writes game content. Tests and the testkit declare their games
 /// as JSON literals, as the files hold them: the loader reads every one and refuses fields its
 /// types don't have, so a stale literal fails its test loudly.
-const CONTENT_CODE: &[&str] = &["engine", "editor", "cli"];
+const CONTENT_CODE: &[&str] = &["engine", "game-server", "editor", "cli"];
 
 /// The files that walk a JSON Schema, keyed by the package they are in.
 const SCHEMA_WALKERS: &[(&str, &str)] = &[("editor", "schema.rs"), ("editor", "forms.rs")];

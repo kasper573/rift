@@ -12,9 +12,8 @@ use bevy::shader::ShaderRef;
 
 use super::camera::GroundHeights;
 use super::terrain;
-use crate::core::geometry::Radians;
 use crate::core::math::Pos;
-use crate::core::units::Meters;
+use crate::core::units::{Meters, Radians};
 
 /// How far above the ground a decal is laid, so it draws over the terrain without fighting it.
 pub const LIFT: f32 = 0.03;

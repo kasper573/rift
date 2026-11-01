@@ -244,10 +244,6 @@ impl<V: Vocabulary> Instances<V> {
         self.ops.push_back(Op::BoxClosed { key });
     }
 
-    pub fn owners(&self) -> impl Iterator<Item = Owner<V>> + '_ {
-        self.instances.keys().copied()
-    }
-
     pub fn may_do(&self, owner: Owner<V>) -> Option<&MayDo<V>> {
         self.instances.get(&owner).map(|instance| &instance.may_do)
     }

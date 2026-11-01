@@ -18,7 +18,7 @@ use ui::egui::{Context, RichText, Ui};
 use ui::glyph::{self, Mark};
 use ui::sheet;
 
-use super::{content_tree, unused_dialog, widgets};
+use super::unused_dialog;
 use crate::app::Editor;
 use crate::icons;
 use crate::keymap::{EditorKey, KeyScope};
@@ -29,6 +29,8 @@ use crate::play;
 use crate::project::{ContentEdit, files};
 use crate::rows::{self, UsageDecision};
 use crate::shell::{self, start};
+use crate::{content_tree, widgets};
+
 use crate::tabs::shown_path;
 use crate::templates::{self, GameTemplate};
 use crate::views::area::{pick, placement, resize};

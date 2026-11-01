@@ -123,7 +123,7 @@ pub fn show(
             Some(index) => target
                 .is_none()
                 .then(|| (row.name.clone(), Exit::Choice(index))),
-            None => super::free_port_link(doc, &row.name),
+            None => super::edit::free_port_link(doc, &row.name),
         };
         actions.push(ScriptGraphAction::Palette(NodePaletteOpen {
             at: ui.max_rect().left_top() + egui::vec2(60.0 + row.depth as f32 * INDENT, 40.0),
@@ -132,7 +132,7 @@ pub fn show(
         }));
     }
     if keys.link {
-        super::link_by_name(editor, &owner, row.name.clone());
+        super::edit::link_by_name(editor, &owner, row.name.clone());
     }
     if keys.delete {
         match row.choice {
@@ -143,7 +143,7 @@ pub fn show(
                 {
                     dialogue.choices.remove(index);
                     let label = format!("Remove a choice in {}", doc.at.title());
-                    super::write(editor, doc, script, label);
+                    super::edit::write(editor, doc, script, label);
                 }
             }
             None => actions.push(ScriptGraphAction::Delete(vec![row.name.clone()])),

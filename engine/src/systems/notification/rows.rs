@@ -17,7 +17,7 @@ use ui::ink::Ground;
 use super::{NotificationSent, window_visible};
 use crate::core::gui::{self, Band, Tier};
 use crate::core::text::{self, KeyNames, StyledLine, TextLook, TextPiece, TextShadow};
-use crate::core::time::Seconds;
+use crate::core::units::Seconds;
 use crate::systems::GameSettings;
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::screen::ClientScreen;

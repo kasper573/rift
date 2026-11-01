@@ -13,7 +13,7 @@ use engine::systems::memory::MemoryDef;
 use engine::systems::npc::{self, NpcDef, NpcId};
 use engine::systems::quest::{Objective, QuestDef, QuestId};
 use engine::systems::script::{
-    Condition, OwnerRow, Reach, RiftQuery, RiftScripts, RunnerKind, ScriptDef, condition,
+    Condition, EffectReach, OwnerRow, RiftQuery, RiftScripts, RunnerKind, ScriptDef, condition,
 };
 use engine::systems::shop::ShopDef;
 use strum::VariantArray;
@@ -76,7 +76,7 @@ pub struct AtlasOwner {
     pub name: String,
     pub label: String,
     pub at: Option<Pos<Meters>>,
-    pub reaches: Vec<Reach>,
+    pub reaches: Vec<EffectReach>,
     pub opens: OpenTarget,
 }
 
@@ -387,7 +387,7 @@ impl WorldAtlas {
                 && owner
                     .reaches
                     .iter()
-                    .any(|reach| matches!(reach, Reach::Offers(_) | Reach::Accepts(_)))
+                    .any(|reach| matches!(reach, EffectReach::Offers(_) | EffectReach::Accepts(_)))
         })
     }
 
@@ -608,7 +608,7 @@ impl WorldAtlas {
             owner.reaches = scripts.may_do(row).reaches;
             let index = self.owners.len();
             for reach in &owner.reaches {
-                let Reach::Warp(place) = reach else {
+                let EffectReach::Warp(place) = reach else {
                     continue;
                 };
                 self.warps.push(AtlasWarp {
@@ -694,22 +694,22 @@ impl WorldAtlas {
             let by = |kind: AtlasSourceKind| source(kind, &owner.name, &owner.opens);
             for reach in &owner.reaches {
                 match reach {
-                    Reach::Warp(place) => found.push((
+                    EffectReach::Warp(place) => found.push((
                         AreaDef::TABLE,
                         place.area.path(content).to_owned(),
                         by(AtlasSourceKind::Warp),
                     )),
-                    Reach::Spawns(npc) => found.push((
+                    EffectReach::Spawns(npc) => found.push((
                         NpcDef::TABLE,
                         npc.path(content).to_owned(),
                         by(AtlasSourceKind::Spawns),
                     )),
-                    Reach::Gives(item) | Reach::Drops(item) => found.push((
+                    EffectReach::Gives(item) | EffectReach::Drops(item) => found.push((
                         ItemDef::TABLE,
                         item.path(content).to_owned(),
                         by(AtlasSourceKind::Gives),
                     )),
-                    Reach::OpensShop(shop) => {
+                    EffectReach::OpensShop(shop) => {
                         let shop_key = shop.path(content);
                         let opens = OpenTarget::Row {
                             table: ShopDef::TABLE,
@@ -728,7 +728,7 @@ impl WorldAtlas {
                             by(AtlasSourceKind::Opens),
                         ));
                     }
-                    Reach::Remembers(memory) => found.push((
+                    EffectReach::Remembers(memory) => found.push((
                         MemoryDef::TABLE,
                         memory.path(content).to_owned(),
                         by(AtlasSourceKind::Remembers),
@@ -736,12 +736,12 @@ impl WorldAtlas {
                     _ => {}
                 }
                 let (kind, quest) = match reach {
-                    Reach::Offers(quest) => (AtlasSourceKind::Offers, quest),
-                    Reach::Accepts(quest) => (AtlasSourceKind::Accepts, quest),
-                    Reach::TurnsIn(quest) => (AtlasSourceKind::TurnsIn, quest),
-                    Reach::Fails(quest) => (AtlasSourceKind::Fails, quest),
-                    Reach::Completes(quest) => (AtlasSourceKind::Completes, quest),
-                    Reach::Decides(quest) => (AtlasSourceKind::Decides, quest),
+                    EffectReach::Offers(quest) => (AtlasSourceKind::Offers, quest),
+                    EffectReach::Accepts(quest) => (AtlasSourceKind::Accepts, quest),
+                    EffectReach::TurnsIn(quest) => (AtlasSourceKind::TurnsIn, quest),
+                    EffectReach::Fails(quest) => (AtlasSourceKind::Fails, quest),
+                    EffectReach::Completes(quest) => (AtlasSourceKind::Completes, quest),
+                    EffectReach::Decides(quest) => (AtlasSourceKind::Decides, quest),
                     _ => continue,
                 };
                 let quest_key = quest.path(content);
@@ -813,7 +813,7 @@ impl WorldAtlas {
             let key = id.path(content).to_owned();
             let def = id.get(content);
             let mut steps = Vec::new();
-            let offering = |reach: &Reach| matches!(reach, Reach::Offers(quest) | Reach::Accepts(quest) if *quest == id);
+            let offering = |reach: &EffectReach| matches!(reach, EffectReach::Offers(quest) | EffectReach::Accepts(quest) if *quest == id);
             let giver = self.who_does(&offering);
             let offered = self.areas_where(&offering);
             if !offered.is_empty() {
@@ -850,13 +850,13 @@ impl WorldAtlas {
                     Objective::Task { label, .. } => (
                         label.clone(),
                         self.areas_where(
-                            &|reach| matches!(reach, Reach::Completes(quest) if *quest == id),
+                            &|reach| matches!(reach, EffectReach::Completes(quest) if *quest == id),
                         ),
                     ),
                     Objective::Decide { label, .. } => (
                         label.clone(),
                         self.areas_where(
-                            &|reach| matches!(reach, Reach::Decides(quest) if *quest == id),
+                            &|reach| matches!(reach, EffectReach::Decides(quest) if *quest == id),
                         ),
                     ),
                 };
@@ -866,7 +866,8 @@ impl WorldAtlas {
                     who: None,
                 });
             }
-            let turning_in = |reach: &Reach| matches!(reach, Reach::TurnsIn(quest) if *quest == id);
+            let turning_in =
+                |reach: &EffectReach| matches!(reach, EffectReach::TurnsIn(quest) if *quest == id);
             let turn_in = self.areas_where(&turning_in);
             if !turn_in.is_empty() {
                 steps.push(AtlasQuestStep {
@@ -875,8 +876,8 @@ impl WorldAtlas {
                     who: self.who_does(&turning_in),
                 });
             }
-            let failed =
-                self.areas_where(&|reach| matches!(reach, Reach::Fails(quest) if *quest == id));
+            let failed = self
+                .areas_where(&|reach| matches!(reach, EffectReach::Fails(quest) if *quest == id));
             if !failed.is_empty() {
                 steps.push(AtlasQuestStep {
                     kind: QuestStepKind::Failed,
@@ -952,14 +953,14 @@ impl WorldAtlas {
                     for owner in self
                         .owners
                         .iter()
-                        .filter(|owner| owner.reaches.contains(&Reach::Remembers(*memory)))
+                        .filter(|owner| owner.reaches.contains(&EffectReach::Remembers(*memory)))
                     {
                         for reach in &owner.reaches {
-                            if let Reach::Offers(other)
-                            | Reach::Accepts(other)
-                            | Reach::TurnsIn(other)
-                            | Reach::Completes(other)
-                            | Reach::Decides(other) = reach
+                            if let EffectReach::Offers(other)
+                            | EffectReach::Accepts(other)
+                            | EffectReach::TurnsIn(other)
+                            | EffectReach::Completes(other)
+                            | EffectReach::Decides(other) = reach
                                 && *other != id
                             {
                                 link(
@@ -977,10 +978,10 @@ impl WorldAtlas {
             owner
                 .reaches
                 .iter()
-                .any(|reach| matches!(reach, Reach::Offers(quest) | Reach::Accepts(quest) if *quest == id))
+                .any(|reach| matches!(reach, EffectReach::Offers(quest) | EffectReach::Accepts(quest) if *quest == id))
         }) {
             for reach in &owner.reaches {
-                if let Reach::Fails(other) = reach
+                if let EffectReach::Fails(other) = reach
                     && *other != id
                 {
                     link(*other, QuestLinkHow::Failed);
@@ -990,7 +991,7 @@ impl WorldAtlas {
         after
     }
 
-    fn areas_where(&self, pick: &dyn Fn(&Reach) -> bool) -> Vec<AreaId> {
+    fn areas_where(&self, pick: &dyn Fn(&EffectReach) -> bool) -> Vec<AreaId> {
         let areas: BTreeSet<AreaId> = self
             .owners
             .iter()
@@ -1000,7 +1001,7 @@ impl WorldAtlas {
         areas.into_iter().collect()
     }
 
-    fn who_does(&self, pick: &dyn Fn(&Reach) -> bool) -> Option<String> {
+    fn who_does(&self, pick: &dyn Fn(&EffectReach) -> bool) -> Option<String> {
         self.owners
             .iter()
             .find(|owner| owner.reaches.iter().any(pick))

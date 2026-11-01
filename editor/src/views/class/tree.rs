@@ -7,8 +7,8 @@ use ui::paint;
 use ui::theme;
 use ui::words;
 
-use engine::core::assets::{AssetKind, ImageRef};
 use engine::core::content::ContentFile;
+use engine::core::content::{AssetKind, ImageRef};
 use engine::systems::class::{
     AccessRequirement, BackdropFit, CanvasPoint, CanvasRect, ClassDef, NodeKey, SkillNode,
     SkillTree, TreeBackdrop,

@@ -1,7 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine::core::content::Content;
 use engine::core::math::Offset;
-use engine::core::time::{Seconds, WallClock};
+use engine::core::time::WallClock;
+use engine::core::units::Seconds;
 use engine::systems::dialogue::{self, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::item::{ItemDef, ItemStack};

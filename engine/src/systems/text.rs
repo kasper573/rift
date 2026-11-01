@@ -8,7 +8,7 @@ use ui::ink::Prose;
 
 use crate::core::script::{Expr, Value};
 use crate::core::text::{StyledLine, StyledSpan, TextMotion, TextPiece, TextVoice};
-use crate::core::time::{Millis, Seconds};
+use crate::core::units::{Millis, Seconds};
 use crate::systems::input::map::{self, InputAction, InputMap};
 use crate::systems::script::RiftScripting;
 

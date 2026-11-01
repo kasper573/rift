@@ -5,7 +5,7 @@ use engine::core::units::{MeterPos, Meters};
 use engine::systems::area::warp::warp;
 use engine::systems::area::{AreaDef, AreaId};
 use engine::systems::combat::{self, AttackRequest, Attitude};
-use engine::systems::movement::{self, MoveRequest, MoveSeq, Position, SPACING, moving, position};
+use engine::systems::movement::{self, MoveRequest, MoveSeq, Position, moving, position};
 use engine::systems::npc::body::{self, Act, Priority};
 use engine::systems::npc::{self, Npc, NpcDef};
 use engine::systems::script::{self, Place};
@@ -394,7 +394,7 @@ fn joiners_at_the_spawn_land_on_distinct_spots_around_it() {
     assert!(
         players
             .iter()
-            .all(|&player| at(world, player).distance(spawn) <= Meters(SPACING.0 + 1e-3)),
+            .all(|&player| at(world, player).distance(spawn) <= Meters(spacing(world) + 1e-3)),
         "{:?}",
         positions(world, &players)
     );
@@ -420,7 +420,7 @@ fn a_warp_onto_an_occupied_spot_lands_on_the_nearest_free_one() {
 
     let landed = at(&arena.sim.world, player);
     assert!(
-        (landed.distance(spot).0 - SPACING.0).abs() < 1e-3,
+        (landed.distance(spot).0 - spacing(&arena.sim.world)).abs() < 1e-3,
         "landed at {landed:?}, {spot:?} taken"
     );
 }
@@ -679,7 +679,7 @@ fn positions(world: &World, actors: &[Entity]) -> Vec<Pos<Meters>> {
 
 /// Whether the two bodies stand on one another, two just touching not counted.
 fn overlapping(world: &World, a: Entity, b: Entity) -> bool {
-    at(world, a).distance(at(world, b)) < Meters(SPACING.0 - 1e-3)
+    at(world, a).distance(at(world, b)) < Meters(spacing(world) - 1e-3)
 }
 
 fn overlapping_pairs(world: &World, actors: &[Entity]) -> usize {
@@ -697,4 +697,8 @@ fn in_reach(world: &World, actor: Entity, target: Entity) -> bool {
 
 fn in_reach_of(world: &World, actors: &[Entity], target: Entity) -> bool {
     actors.iter().all(|&actor| in_reach(world, actor, target))
+}
+
+fn spacing(world: &World) -> f32 {
+    world.resource::<movement::Bodies>().spacing().0
 }

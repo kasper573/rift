@@ -12,8 +12,7 @@ use bevy::prelude::{Quat, Transform};
 use engine::core::content::Content;
 use engine::core::math::Pos;
 use engine::core::render::camera::{ground_pos, world_point};
-use engine::core::time::Millis;
-use engine::core::units::Meters;
+use engine::core::units::{Meters, Millis};
 use engine::systems::actor::model::ActorModel;
 use engine::systems::actor::skeleton::{Clip, EquipmentSlot, SkeletonDef};
 use engine::systems::actor::stance::{self, HandIndex};
@@ -28,7 +27,11 @@ use super::super::area::viewport::StageLayers;
 use super::super::cues::{self, Scrub};
 use super::super::stage::{self, StageState};
 use super::rigging::{Playable, Rigging};
-use super::{Staged, body, clip_picker, hand_items, handles, place, pose_of, wearers};
+use super::{
+    body,
+    pickers::{clip_picker, hand_items, wearers},
+    staging::{Staged, handles, place, pose_of},
+};
 use crate::app::Editor;
 use crate::tabs::shown_path;
 

@@ -8,10 +8,12 @@ use editor::schema::SchemaShapes;
 use editor::user::{EditorSettings, UserFolder};
 use engine::core::content::Content;
 use engine::core::math::Pos;
+use engine::core::units::Meters;
 use engine::systems::GameSettings;
 use engine::systems::area::AreaModule;
 use engine::systems::area::object::{ObjectDef, ObjectShape};
 use engine::systems::area::scene::{ModuleNode, SceneFolder, SceneNode};
+use engine::systems::movement::Bodies;
 use serde_json::json;
 use testkit::{Game, Map};
 
@@ -249,4 +251,11 @@ fn texts_of(shape: &egui::Shape, texts: &mut Vec<(String, egui::Rect)>) {
         }
         _ => {}
     }
+}
+
+/// How far apart two bodies of the open game stand when they just touch.
+pub fn spacing(editor: &Editor) -> Meters {
+    Bodies::of(&editor.loaded().expect("the game loads"))
+        .expect("the game knows its bodies")
+        .spacing()
 }

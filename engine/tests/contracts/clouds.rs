@@ -1,7 +1,7 @@
 use bevy::prelude::*;
-use engine::core::geometry::Degrees;
 use engine::core::render::world::clouds::{self, CLOUD_TILE, CloudSheet};
 use engine::core::render::world::lights::sun_transform;
+use engine::core::units::Degrees;
 
 const CLOUDS: f32 = 0.5;
 const WATER: f32 = 0.0;

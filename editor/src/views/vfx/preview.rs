@@ -7,10 +7,9 @@ use ui::chip;
 use ui::egui;
 use ui::theme;
 
-use engine::core::geometry::{Degrees, PlacedShape, Shape};
+use engine::core::geometry::{PlacedShape, Shape};
 use engine::core::math::Pos;
-use engine::core::time::Seconds;
-use engine::core::units::Meters;
+use engine::core::units::{Degrees, Meters, Seconds};
 use engine::core::vfx::{ParamValue, VfxLayer, VfxParams};
 use engine::systems::actor::ModelDef;
 use strum::{EnumDiscriminants, IntoStaticStr, VariantArray};

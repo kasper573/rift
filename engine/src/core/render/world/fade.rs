@@ -14,8 +14,8 @@ use serde::{Deserialize, Serialize};
 use super::camera::CameraRig;
 use super::material::{FadeStyle, WorldMaterial};
 use crate::core::render::Look;
-use crate::core::time::Seconds;
 use crate::core::units::Meters;
+use crate::core::units::Seconds;
 
 /// How what hides the camera's subject clears away.
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]

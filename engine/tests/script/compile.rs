@@ -13,7 +13,8 @@ use engine::systems::notification::NotificationDef;
 use engine::systems::npc::NpcModule;
 use engine::systems::quest::QuestDef;
 use engine::systems::script::{
-    EventKind, ListedScriptModule, Place, Procedure, Reach, RiftScripting, RunnerKind, ScriptModule,
+    EffectReach, EventKind, ListedScriptModule, Place, Procedure, RiftScripting, RunnerKind,
+    ScriptModule,
 };
 use engine::systems::shop::ShopDef;
 use serde_json::{Value, json};
@@ -105,11 +106,11 @@ fn may_do_lists_exactly_what_a_script_reaches() {
     assert!(may_do.calls.is_empty());
     assert!(may_do.waits);
     let expected = [
-        Reach::Takes(gold),
-        Reach::Gives(pass),
-        Reach::Warp(place),
-        Reach::Remembers(bribed),
-        Reach::OpensShop(honesty_box),
+        EffectReach::Takes(gold),
+        EffectReach::Gives(pass),
+        EffectReach::Warp(place),
+        EffectReach::Remembers(bribed),
+        EffectReach::OpensShop(honesty_box),
     ];
     assert_eq!(may_do.reaches.len(), expected.len(), "{:?}", may_do.reaches);
     for reach in expected {
@@ -149,11 +150,11 @@ fn a_decision_reaches_as_deciding_a_path_not_completing_a_task() {
     let reaches = &procedures[0].may_do.reaches;
 
     assert!(
-        reaches.contains(&Reach::Decides(id::<QuestDef>("plea"))),
+        reaches.contains(&EffectReach::Decides(id::<QuestDef>("plea"))),
         "{reaches:?}"
     );
     assert!(
-        !reaches.contains(&Reach::Completes(id::<QuestDef>("plea"))),
+        !reaches.contains(&EffectReach::Completes(id::<QuestDef>("plea"))),
         "{reaches:?}"
     );
 }
@@ -186,7 +187,7 @@ fn an_if_always_taken_still_compiles_both_arrows() {
 
     let reaches = &procedures[0].may_do.reaches;
     for notification in ["gulls", "intro"] {
-        let notifies = Reach::Notifies(id::<NotificationDef>(notification));
+        let notifies = EffectReach::Notifies(id::<NotificationDef>(notification));
         assert!(reaches.contains(&notifies), "{reaches:?}");
     }
 }

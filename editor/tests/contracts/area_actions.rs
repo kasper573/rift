@@ -11,7 +11,6 @@ use engine::core::units::{MeterPos, Meters};
 use engine::systems::area::object::ObjectShape;
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{AreaDef, AreaModule};
-use engine::systems::movement;
 use serde_json::{Value, json};
 
 use crate::support::{self, Frames, area, key};
@@ -343,9 +342,9 @@ fn a_door_back_from_a_warps_destination_stands_beside_where_the_warp_lands() {
         panic!("one door back: {doors:?}");
     };
     let door = Pos::<Meters>::new(3.0, 3.0);
+    let spacing = support::spacing(&editor);
     assert!(
-        back.distance(door) >= movement::SPACING
-            && back.distance(door) <= Meters(movement::SPACING.0 * 3.0),
+        back.distance(door) >= spacing && back.distance(door) <= Meters(spacing.0 * 3.0),
         "{back:?}"
     );
 }

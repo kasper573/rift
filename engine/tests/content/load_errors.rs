@@ -1,5 +1,5 @@
 use engine::core::content::{ErrorPlace, Fixture, LoadReport, SETTINGS_FILE};
-use engine::core::ground::{GroundSize, Paint, TileAt};
+use engine::core::ground::{GroundSize, PaintMap, TileAt};
 use engine::core::vfx::Stage;
 use engine::systems::actor::model::MAX_CHARACTER_TRIANGLES;
 use engine::systems::area::AreaDef;
@@ -13,11 +13,7 @@ use crate::support::game;
 #[test]
 fn every_rule_names_its_file_line_pointer_and_nearest_value() {
     let report = game()
-        .edit_settings(|settings| {
-            settings["player"] = json!("heroo.player.json");
-            settings["initial_spawn"]["x"] = json!(40.0);
-            settings["initial_spawn"]["y"] = json!(40.0);
-        })
+        .edit_settings(|settings| settings["player"] = json!("heroo.player.json"))
         .sfx("slash")
         .row("sfx", "splash", json!({ "volume": 1.0, "pitch": 1.0 }))
         .file("apprentice.class.json", "{ \"name\": 3 }")
@@ -46,27 +42,9 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
         column,
         pointer: pointer.to_owned(),
     };
-    let named: Vec<(&str, ErrorPlace, &str, Option<&str>)> = report
-        .errors
-        .iter()
-        .map(|error| {
-            (
-                error.file.as_str(),
-                error.at.clone(),
-                error.problem.rule,
-                error.problem.nearest.as_deref(),
-            )
-        })
-        .collect();
     assert_eq!(
-        named,
+        named(&report),
         [
-            (
-                SETTINGS_FILE,
-                json(3, 20, "/initial_spawn"),
-                "not walkable",
-                Some("9.15, 7.15")
-            ),
             (
                 SETTINGS_FILE,
                 json(8, 13, "/player"),
@@ -98,12 +76,6 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
                 "start not known",
                 None,
             ),
-            (
-                "lost.test_character.json",
-                json(10, 12, "/start"),
-                "not walkable",
-                Some("9.15, 7.15"),
-            ),
             ("splash.sfx", ErrorPlace::WholeFile, "missing file", None),
         ],
         "{report}"
@@ -116,6 +88,40 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
     ] {
         assert!(text.contains(at), "the report says {at}:\n{text}");
     }
+
+    let unwalkable = game()
+        .edit_settings(|settings| {
+            settings["initial_spawn"]["x"] = json!(40.0);
+            settings["initial_spawn"]["y"] = json!(40.0);
+        })
+        .try_load()
+        .err()
+        .expect("refused");
+    assert_eq!(
+        named(&unwalkable),
+        [(
+            SETTINGS_FILE,
+            json(3, 20, "/initial_spawn"),
+            "not walkable",
+            Some("9.15, 7.15"),
+        )],
+        "{unwalkable}"
+    );
+}
+
+fn named(report: &LoadReport) -> Vec<(&str, ErrorPlace, &str, Option<&str>)> {
+    report
+        .errors
+        .iter()
+        .map(|error| {
+            (
+                error.file.as_str(),
+                error.at.clone(),
+                error.problem.rule,
+                error.problem.nearest.as_deref(),
+            )
+        })
+        .collect()
 }
 
 #[test]
@@ -185,7 +191,7 @@ fn an_areas_terrain_parts_are_held_to_its_size_and_depth() {
         width: 8,
         height: 8,
     };
-    let painted = Paint::from_fn(size, |column, _| u8::from(column < 8));
+    let painted = PaintMap::from_fn(size, |column, _| u8::from(column < 8));
     let tile = painted
         .encode_tile(TileAt { column: 0, row: 0 })
         .expect("paint that isn't plain")

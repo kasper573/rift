@@ -6,14 +6,13 @@ use bevy_kira_audio::prelude::{Audio, AudioControl, AudioInstance, AudioSource, 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::assets::AudioRef;
 use crate::core::audio::decibels;
 use crate::core::audio::mix::{AudioCategory, AudioMix};
 use crate::core::audio::playback::{Listener, PositionalAudio};
+use crate::core::content::AudioRef;
 use crate::core::content::serial;
 use crate::core::math::{Pos, Rect, Size};
-use crate::core::time::Seconds;
-use crate::core::units::Meters;
+use crate::core::units::{Meters, Seconds};
 
 pub const EDGE_FALLOFF: Meters = Meters(4.0);
 // The quickest the mix may swing from silence to full. Proximity drives every change, and this only

@@ -7,7 +7,8 @@ use crate::core::audio::playback::SfxId;
 use crate::core::content::Content;
 use crate::core::par;
 use crate::core::tick::{Cached, Planner};
-use crate::core::time::{Seconds, UnixMillis, WallClock};
+use crate::core::time::{UnixMillis, WallClock};
+use crate::core::units::Seconds;
 use crate::core::vfx::VfxSite;
 use crate::systems::actor::Actor;
 use crate::systems::equipment::Equipment;
@@ -18,9 +19,6 @@ use crate::systems::script::event::RiftEvent;
 use crate::systems::script::{EventKind, Owner, OwnerRow, RiftInstances, RiftScripts};
 use crate::systems::skill::{self, Learned, Rank, SkillId, SkillKind};
 use crate::systems::vfx::{self, VfxShaderFixture};
-
-/// How often a status's `during` sound repeats when no `during` vfx sets the pace.
-const DURING_SOUND_PERIOD: Seconds = Seconds(2.0);
 
 /// Where an actor's aspects come from: a status it carries, an item it wears or carries as a
 /// resource, a passive skill it knows. Each is a scripted row, active while that holds.
@@ -338,7 +336,7 @@ fn play_during(world: &mut World, actor: Entity, source: AspectSource, now: Unix
     }
     let next = match (shown, def.sfx.during) {
         (Some((_, lasts)), _) => Some(now.after(lasts)),
-        (None, Some(_)) => Some(now.after(DURING_SOUND_PERIOD)),
+        (None, Some(heard)) => Some(now.after(heard.get(&content).lasts)),
         (None, None) => None,
     };
     if let Some(mut aspects) = world.get_mut::<ActiveAspects>(actor)

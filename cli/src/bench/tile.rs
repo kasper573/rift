@@ -9,7 +9,7 @@ use std::fs;
 use std::path::Path;
 
 use engine::core::content::{Content, ContentFile, content_path, name_of, parent_of};
-use engine::core::ground::{GroundSize, Heightfield, Paint, SAMPLES_PER_METER};
+use engine::core::ground::{GroundSize, Heightfield, PaintMap, SAMPLES_PER_METER};
 use engine::core::math::Pos;
 use engine::core::script::VarValue;
 use engine::systems::GameSettings;
@@ -85,8 +85,7 @@ pub fn tiled(game: &Path, content: &Content, side: u32, into: &Path) -> Result<(
     }
 
     let reader = reader_of(into);
-    let npc_of =
-        |path: &str| reader.from_json::<NpcId>(&serde_json::Value::String(path.to_owned()));
+    let npc_of = |path: &str| reader.id_at::<NpcId>(path);
     let mut resident_copies = BTreeMap::new();
     for ((tile, npc), copy) in &copies {
         resident_copies.insert((*tile, npc_of(npc)?), npc_of(copy)?);
@@ -105,7 +104,7 @@ pub fn tiled(game: &Path, content: &Content, side: u32, into: &Path) -> Result<(
     tiled.heights = Heightfield::from_fn(size, |column, row| {
         area.heights.sample(column % columns, row % rows)
     });
-    tiled.paint = Paint::from_fn(size, |column, row| {
+    tiled.paint = PaintMap::from_fn(size, |column, row| {
         area.paint.index(column % columns, row % rows)
     });
     tiled.scene = Vec::with_capacity(tiles.len());

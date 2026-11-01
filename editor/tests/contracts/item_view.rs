@@ -1,6 +1,5 @@
 use editor::views::{item, stance};
-use engine::core::geometry::Degrees;
-use engine::core::units::Meters;
+use engine::core::units::{Degrees, Meters};
 use engine::systems::actor::skeleton::{LocalOffset, LocalTurn};
 use engine::systems::actor::stance::StanceDef;
 use engine::systems::item::{CARD_SIZE, Grip, ICON_SIZE, ItemDef, PropAxis, Wear};

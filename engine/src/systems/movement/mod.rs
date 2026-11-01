@@ -7,9 +7,9 @@ pub use berth::{
     Aim, Approach, ApproachPlan, Berths, approach, place_beside, reachable, relocate_beside,
     settle, vacant_near,
 };
-pub use navmesh::{AGENT_RADIUS, Island, NavMesh, TileLayer};
+pub use navmesh::{Island, NavMesh, TileLayer};
 pub use predict::request_walk;
-pub use spots::{SPACING, Spot, Spots, crowding, spot_of};
+pub use spots::{Bodies, Spot, Spots, crowding, spot_of};
 
 use bevy_app::{App, Plugin, Update};
 use bevy_ecs::prelude::*;
@@ -20,13 +20,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::chunk::{Chunk, InChunk};
 use crate::core::content::Content;
-use crate::core::geometry::Radians;
 use crate::core::interpolate::{Interpolate, InterpolatePlugin, Jumps, RenderValueSystems};
 use crate::core::math::{Offset, Pos};
 use crate::core::par;
 use crate::core::tick::{Cached, Planner};
-use crate::core::time::Seconds;
-use crate::core::units::{MeterPos, Meters, MetersPerSec};
+use crate::core::units::{MeterPos, Meters, MetersPerSec, Radians, Seconds};
 use crate::systems::actor::{Action, Actor, ActorModel, appearance, held, set_facing};
 use crate::systems::area::HeldMesh;
 use crate::systems::player::{conn_player, may_command};

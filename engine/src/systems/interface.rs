@@ -2,8 +2,8 @@ use bevy_ecs::world::World;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::assets::ImageRef;
 use crate::core::audio::playback::{PlaySfx, SfxDef, SfxPlace};
+use crate::core::content::ImageRef;
 use crate::core::content::{Content, ContentFile, Fixture, Nearby};
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]

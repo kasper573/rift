@@ -321,11 +321,11 @@ fn start_select_drag(
 }
 
 fn set_drag(editor: &mut Editor, view_key: &str, drag: AreaDrag) {
-    editor.views.area.view_mut(view_key).set_drag(drag);
+    editor.views.area.view_mut(view_key).drag = Some(drag);
 }
 
 pub(super) fn track_move(view: &mut AreaViewState, ground: Pos<Meters>) {
-    if let Some(AreaDrag::Move { from, moved }) = view.drag_mut()
+    if let Some(AreaDrag::Move { from, moved }) = view.drag.as_mut()
         && (ground.x - from.x).abs() + (ground.y - from.y).abs() > 0.25
     {
         *moved = true;
@@ -411,7 +411,7 @@ fn finish_select_drag(
     frame: &AreaFrame,
     modifiers: egui::Modifiers,
 ) {
-    let Some(drag) = editor.views.area.view_mut(view_key).take_drag() else {
+    let Some(drag) = editor.views.area.view_mut(view_key).drag.take() else {
         return;
     };
     let Some(ground) = frame.drag_ground() else {
@@ -449,7 +449,7 @@ fn finish_select_drag(
             start,
         } => {
             let (min, max) = (start.min(), start.max());
-            let edge = snap_to(
+            let edge = crate::views::snap(
                 ground + Offset::new(0.5, 0.5),
                 EditorKey::Unsnapped.held_among(modifiers),
             ) - Offset::new(0.5, 0.5);
@@ -470,23 +470,14 @@ fn finish_select_drag(
             });
         }
         AreaDrag::Pin { file, pointer } => {
-            let at = snap_to(ground, EditorKey::Unsnapped.held_among(modifiers));
+            let at = crate::views::snap(ground, EditorKey::Unsnapped.held_among(modifiers));
             pins::move_pin(editor, frame, &file, &pointer, at);
         }
         AreaDrag::InitialSpawn => {
-            let at = snap_to(ground, EditorKey::Unsnapped.held_among(modifiers));
+            let at = crate::views::snap(ground, EditorKey::Unsnapped.held_among(modifiers));
             pins::set_spawn(editor, &frame.bundle, at);
         }
         AreaDrag::Stamp { .. } => {}
-    }
-}
-
-/// Snaps a ground point to the half metre, or the sixteenth when `fine`.
-pub(crate) fn snap_to(p: Pos<Meters>, fine: bool) -> Pos<Meters> {
-    if fine {
-        Pos::new(sixteenth(p.x), sixteenth(p.y))
-    } else {
-        Pos::new((p.x * 2.0).round() / 2.0, (p.y * 2.0).round() / 2.0)
     }
 }
 

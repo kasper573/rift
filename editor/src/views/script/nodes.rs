@@ -7,8 +7,7 @@ use engine::core::script::{
     Arrow, DialogueNode, EffectDef, EventDef, Exit, Expr, Fill, NodeKind, REFUSED, RunnerKindDef,
     Target, VarValue,
 };
-use engine::core::time::Seconds;
-use engine::core::units::Meters;
+use engine::core::units::{Meters, Seconds};
 use engine::systems::dialogue::bust::Expression;
 use engine::systems::interact::Verb;
 use engine::systems::item::ItemStack;

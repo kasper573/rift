@@ -1,8 +1,7 @@
 use editor::views::area::brush::{Brush, SculptMode, Stroke, StrokeKind, commit};
 use editor::views::area::{AreaSnapshot, contours, nodes, place, scatter};
-use engine::core::geometry::Degrees;
 use engine::core::math::{Pos, Rect, Size};
-use engine::core::units::Meters;
+use engine::core::units::{Degrees, Meters};
 use engine::systems::area::{AreaDef, AreaModule, TerrainDef};
 use serde_json::json;
 use testkit::{Game, Map, path};

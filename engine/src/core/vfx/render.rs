@@ -35,7 +35,7 @@ use super::{
     VfxLayer, VfxParams, VfxShaderDef, VfxShaderId, VfxSite, sprite_cell,
 };
 use crate::core::content::Content;
-use crate::core::geometry::{PlacedShape, Radians, Shape};
+use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::gui::{self, Band, WidgetRects};
 use crate::core::math::{Pos, Rgba, Size};
 use crate::core::render::present::{self, PRESENT_LAYER, PresentScale};
@@ -45,8 +45,8 @@ use crate::core::render::world::decal::LIFT;
 use crate::core::render::world::material::WorldMaterial;
 use crate::core::render::world::terrain;
 use crate::core::render::{CameraRig, GroundHeights, ground_height, world_point};
-use crate::core::time::{Seconds, server_now};
-use crate::core::units::Meters;
+use crate::core::time::server_now;
+use crate::core::units::{Meters, Radians, Seconds};
 
 /// The materials every vfx stage and every cover is drawn with, the content's shaders compiled
 /// for them, and the weather the covers read: what any world that draws content needs, the

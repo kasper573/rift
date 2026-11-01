@@ -1,13 +1,12 @@
 use std::path::Path;
-use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_replication::ClientLink;
-use engine::core::content::{Content, FilesystemFolder};
-use engine::core::time::{Seconds, UnixMillis, UtcHour, WallClock};
-use engine::core::units::MeterPos;
+use engine::core::content::Content;
+use engine::core::time::{UnixMillis, UtcHour, WallClock};
+use engine::core::units::{MeterPos, Seconds};
 use engine::systems::area;
 use engine::systems::launch::ServerDaylight;
 use engine::systems::player::snapshot::CharacterSnapshot;
@@ -15,10 +14,11 @@ use engine::systems::player::{ClientId, JoinRequest, SpawnPolicy, SpawnRules};
 use engine::systems::region;
 use engine::systems::script::Place;
 use engine::systems::worlds;
-use engine::systems::{GameSettings, TICK_HZ, from_client, load_content, server_app, start_server};
+use engine::systems::{GameSettings, TICK_HZ, from_client, server_app, start_server};
 use strum::AsRefStr;
 
 use super::play;
+use crate::server::SEED;
 
 pub const PLAYERS_PER_AREA: usize = 25;
 
@@ -58,9 +58,6 @@ pub fn warm_up(bench: &mut Bench, mut step: impl FnMut(&mut Bench)) {
         step(bench);
     }
 }
-
-// Runs play out alike, so they compare.
-pub const SEED: u64 = 1931;
 
 /// How the area's players are positioned, which sets how much their areas-of-interest overlap. Maps
 /// directly onto the server's [`SpawnPolicy`], so the bench spreads players exactly as production does.
@@ -193,8 +190,8 @@ impl Bench {
 }
 
 pub fn load(content_dir: &Path) -> Content {
-    load_content(
-        Arc::new(FilesystemFolder(content_dir.to_path_buf())),
+    crate::folder::load(
+        content_dir,
         "the program stopped",
         engine::core::content::LoadPurpose::Play,
     )

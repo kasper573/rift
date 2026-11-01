@@ -6,10 +6,8 @@ use strum::{AsRefStr, EnumString, VariantArray};
 
 use super::camera::{self, View};
 use super::present;
-use crate::core::geometry::Radians;
 use crate::core::math::Pos;
-use crate::core::time::Seconds;
-use crate::core::units::Meters;
+use crate::core::units::{Meters, Radians, Seconds};
 
 #[derive(
     Serialize,

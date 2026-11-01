@@ -8,7 +8,7 @@ use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFa
 use crate::systems::npc::Npc;
 use crate::systems::player::SpawnPoint;
 use crate::systems::script::{
-    Condition, EffectCall, Fill, Place, Reach, RiftScripting, effect as effects,
+    Condition, EffectCall, EffectReach, Fill, Place, RiftScripting, effect as effects,
 };
 use crate::systems::{dialogue, movement, reach, region};
 
@@ -45,9 +45,9 @@ impl EffectDef<RiftScripting> for Warp {
             EffectStep::Done
         }))
     }
-    fn reach(&self, cx: &Compiler<RiftScripting>) -> Vec<Reach> {
+    fn reach(&self, cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
         cx.peek_place(&self.to)
-            .map(Reach::Warp)
+            .map(EffectReach::Warp)
             .into_iter()
             .collect()
     }

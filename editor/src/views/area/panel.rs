@@ -23,15 +23,16 @@ use super::nodes::SceneBundle;
 use super::scene_tree::{self, SceneAction, SceneNarrowing, SceneSource, Toggle};
 use super::{AreaSnapshot, nodes, placement, resize, shapes};
 use crate::app::Editor;
+use crate::content_tree;
 use crate::forms::{self, FormCx};
 use crate::keymap::EditorKey;
 use crate::modal::{ModalDialog, PickRowDialog, PickRowThen};
 use crate::project::files::content_of;
-use crate::shell::tree::{self, DropAt, TreeSource, TreeState};
-use crate::shell::widgets::{self, KindMark};
-use crate::shell::{content_tree, row_form};
+use crate::row_form;
 use crate::tabs::{EditorTab, file_title};
+use crate::tree::{self, DropAt, TreeSource, TreeState};
 use crate::views;
+use crate::widgets::{self, KindMark};
 use ui::draft;
 use ui::input::{self, InputField};
 
@@ -97,8 +98,7 @@ fn boxes(editor: &mut Editor, ui: &mut Ui, snapshot: &AreaSnapshot) {
     let mut renamed = None;
     let mut variables_changed = None;
     let mut actions = Vec::new();
-    panel::tile(false).show(ui, |ui| {
-        ui.set_width(ui.available_width());
+    panel::card(ui, false, |ui| {
         ui.horizontal(|ui| {
             let mark = if folded {
                 Mark::CaretRight

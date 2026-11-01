@@ -33,7 +33,7 @@ use engine::systems::quest::{
     ActiveQuest, FinishedQuest, QuestDef, QuestId, QuestLog, QuestResult,
 };
 use engine::systems::script::{
-    EventKind, FlowKey, FlowTrace, Node, Owner, Place, Reach, RiftInstances, RiftScripts,
+    EffectReach, EventKind, FlowKey, FlowTrace, Node, Owner, Place, RiftInstances, RiftScripts,
     RunnerKind, TraceStep,
 };
 use engine::systems::{self, GameSettings, TICK_HZ};
@@ -49,11 +49,11 @@ use crate::app::Editor;
 use crate::keymap::EditorKey;
 use crate::project::RowSelection;
 use crate::project::files::content_of;
-use crate::shell::widgets;
 use crate::stage::live;
 use crate::tabs::EditorTab;
 use crate::tabs::shown_path;
 use crate::views::character::Standing;
+use crate::widgets;
 use ui::input::{InputField, NumberField};
 
 const CLIENT: u32 = 1;
@@ -597,7 +597,7 @@ pub fn inspector(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) -> bool {
     };
     let bound = bindings(editor, doc);
     let setup = editor.views.script.setup_of(&row_key);
-    let reaches: Vec<Reach> = bound
+    let reaches: Vec<EffectReach> = bound
         .get(setup.owner)
         .or(bound.first())
         .map(|b| content.built::<RiftScripts>().may_do(b.row).reaches)
@@ -628,8 +628,7 @@ pub fn inspector(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) -> bool {
             .unwrap_or_default(),
     };
     sheet::section(ui, "Owner");
-    panel::tile(false).show(ui, |ui| {
-        ui.set_width(ui.available_width());
+    panel::card(ui, false, |ui| {
         panel::title(ui, &label);
         form::kv_text(ui, "state", state_names);
         form::kv_text(
@@ -679,8 +678,7 @@ fn character_card(
         .map(|class| class.get(content).levels.len())
         .unwrap_or(0);
     let area_key = run.area.path(content).to_owned();
-    panel::tile(false).show(ui, |ui| {
-        ui.set_width(ui.available_width());
+    panel::card(ui, false, |ui| {
         panel::title(ui, &name);
         form::kv(ui, "level", |ui| {
             let mut picked = level;
@@ -754,8 +752,7 @@ fn memories_card(ui: &mut Ui, run: &mut ScriptRun, content: &Content, read: &[St
     }
     let all: Vec<String> = content.table::<MemoryDef>().paths().to_vec();
     let mut add: Option<String> = None;
-    panel::tile(false).show(ui, |ui| {
-        ui.set_width(ui.available_width());
+    panel::card(ui, false, |ui| {
         panel::title(ui, "memories");
         if shown.is_empty() {
             ui.label(theme::muted("none set · unset reads as zero").size(13.0));
@@ -843,7 +840,7 @@ fn quests_card(
     ui: &mut Ui,
     run: &mut ScriptRun,
     content: &Content,
-    reaches: &[Reach],
+    reaches: &[EffectReach],
     open: &mut Option<EditorTab>,
 ) {
     let subject = run.subject;
@@ -855,12 +852,12 @@ fn quests_card(
     let mut shown: Vec<String> = reaches
         .iter()
         .filter_map(|reach| match reach {
-            Reach::Offers(q)
-            | Reach::Accepts(q)
-            | Reach::TurnsIn(q)
-            | Reach::Completes(q)
-            | Reach::Decides(q)
-            | Reach::Fails(q) => Some(q.path(content).to_owned()),
+            EffectReach::Offers(q)
+            | EffectReach::Accepts(q)
+            | EffectReach::TurnsIn(q)
+            | EffectReach::Completes(q)
+            | EffectReach::Decides(q)
+            | EffectReach::Fails(q) => Some(q.path(content).to_owned()),
             _ => None,
         })
         .collect();
@@ -882,8 +879,7 @@ fn quests_card(
     }
     let all: Vec<String> = content.table::<QuestDef>().paths().to_vec();
     let mut add: Option<String> = None;
-    panel::tile(false).show(ui, |ui| {
-        ui.set_width(ui.available_width());
+    panel::card(ui, false, |ui| {
         panel::title(ui, "quests");
         if shown.is_empty() {
             ui.label(theme::muted("none taken").size(13.0));
@@ -921,7 +917,7 @@ fn bag_card(
     ui: &mut Ui,
     run: &mut ScriptRun,
     content: &Content,
-    reaches: &[Reach],
+    reaches: &[EffectReach],
     open: &mut Option<EditorTab>,
 ) {
     let subject = run.subject;
@@ -933,7 +929,9 @@ fn bag_card(
     let mut shown: Vec<String> = reaches
         .iter()
         .filter_map(|reach| match reach {
-            Reach::Takes(i) | Reach::Gives(i) | Reach::Drops(i) => Some(i.path(content).to_owned()),
+            EffectReach::Takes(i) | EffectReach::Gives(i) | EffectReach::Drops(i) => {
+                Some(i.path(content).to_owned())
+            }
             _ => None,
         })
         .collect();
@@ -949,8 +947,7 @@ fn bag_card(
     }
     let all: Vec<String> = content.table::<ItemDef>().paths().to_vec();
     let mut add: Option<String> = None;
-    panel::tile(false).show(ui, |ui| {
-        ui.set_width(ui.available_width());
+    panel::card(ui, false, |ui| {
         panel::title(ui, "bag");
         if shown.is_empty() {
             ui.label(theme::muted("empty").size(13.0));

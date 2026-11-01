@@ -296,16 +296,10 @@ fn pick_place(
     let Some(ground) = frame.pointer_ground else {
         return;
     };
-    let at = super::select::snap_to(ground, fine);
-    let place = engine::systems::script::Place { area: area_id, at };
-    let verdict = engine::systems::area::check_place(&frame.content, place);
-    let color = if verdict.is_ok() {
-        Color32::from_rgb(255, 230, 120)
-    } else {
-        theme::DANGER
-    };
+    let picked = pins::PickedPlace::at(&frame.content, area_id, ground, fine);
+    let (at, color) = (picked.at, picked.color());
     painter.circle_stroke(frame.canvas.to_screen(at), 6.0, EStroke::new(2.0, color));
-    let what = match &verdict {
+    let what = match &picked.verdict {
         Ok(()) => "click to pick".to_owned(),
         Err(problem) => problem.expected.clone(),
     };
@@ -324,11 +318,7 @@ fn pick_place(
         EditorKey::Cancel.name()
     ));
     if frame.response.clicked() {
-        if let Err(problem) = verdict {
-            editor.toast(format!("{}: {}", problem.rule, problem.expected));
-            return;
-        }
-        pins::commit_pick(editor, &frame.bundle, at);
+        picked.commit(editor, &frame.bundle);
     }
 }
 
@@ -336,7 +326,7 @@ pub fn overlay(editor: &mut Editor, painter: &egui::Painter, view_key: &str, fra
     let canvas = &frame.canvas;
     let view = editor.views.area.view(view_key);
     let accent = Color32::from_rgb(255, 230, 120);
-    match view.drag() {
+    match view.drag.as_ref() {
         Some(AreaDrag::Box { from }) => {
             if let Some(ground) = frame.drag_ground() {
                 painter.add(egui::Shape::closed_line(
@@ -384,7 +374,7 @@ pub fn overlay(editor: &mut Editor, painter: &egui::Painter, view_key: &str, fra
             placed.shift(at.x, at.y);
             if let Some(bounds) = shapes::bounds(&placed, None) {
                 let kind = placed.kind();
-                let color = super::overlays::module_color(Some(kind));
+                let color = super::overlays::module_color(kind);
                 painter.add(egui::Shape::dashed_line(
                     &canvas.outline(bounds),
                     EStroke::new(1.5, color),
@@ -443,9 +433,8 @@ pub fn overlay(editor: &mut Editor, painter: &egui::Painter, view_key: &str, fra
                 return;
             };
             let kind = view.placing.expect("a kind being placed");
-            let color = super::overlays::module_color(Some(kind));
-            let bounds =
-                super::modules::template_bounds(kind, super::select::snap_to(ground, false));
+            let color = super::overlays::module_color(kind);
+            let bounds = super::modules::template_bounds(kind, crate::views::snap(ground, false));
             painter.add(egui::Shape::dashed_line(
                 &canvas.outline(bounds),
                 EStroke::new(1.5, color),
@@ -461,7 +450,7 @@ pub fn overlay(editor: &mut Editor, painter: &egui::Painter, view_key: &str, fra
         AreaTool::Module => {
             if let Some(ground) = frame.pointer_ground {
                 painter.add(egui::Shape::closed_line(
-                    canvas.circle(super::select::snap_to(ground, false), 0.5),
+                    canvas.circle(crate::views::snap(ground, false), 0.5),
                     EStroke::new(1.0, accent),
                 ));
             }
@@ -553,13 +542,13 @@ pub fn keys(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame)
             }
         }
         if pressed(EditorKey::NavmeshOverlay) {
-            view.overlay_navmesh = !view.overlay_navmesh;
+            view.toggle(super::AreaOverlay::Navmesh);
         }
         if pressed(EditorKey::ContoursOverlay) {
-            view.overlay_contours = !view.overlay_contours;
+            view.toggle(super::AreaOverlay::Contours);
         }
         if pressed(EditorKey::FootprintsOverlay) {
-            view.overlay_footprints = !view.overlay_footprints;
+            view.toggle(super::AreaOverlay::Footprints);
         }
         if pressed(EditorKey::BrushSmaller) {
             view.brush.shrink();

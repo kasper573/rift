@@ -1,6 +1,6 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 
-use crate::core::assets::AssetKind;
+use crate::core::content::AssetKind;
 
 use super::bundle::PartSpec;
 use super::id::nearest;
@@ -213,10 +213,6 @@ fn unknown_type(name: &str, table: &str, types: &[FileType], shape: Shape) -> Co
 /// Whether `name`, a file's name before its first dot or a folder's whole name, is one a disk and
 /// a URL both keep as it is.
 pub fn valid_name(name: &str) -> bool {
-    const DEVICES: [&str; 22] = [
-        "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
-        "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
-    ];
     let base = numbered(name).map_or(name, |(base, _)| base);
     (1..=64).contains(&name.len())
         && !base.is_empty()
@@ -224,7 +220,18 @@ pub fn valid_name(name: &str) -> bool {
         && base
             .bytes()
             .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
-        && !DEVICES.contains(&base)
+        && !is_device(base)
+}
+
+/// Whether `name` is one Windows keeps for a device, which no file can be named.
+pub fn is_device(name: &str) -> bool {
+    const DEVICES: [&str; 22] = [
+        "con", "prn", "aux", "nul", "com1", "com2", "com3", "com4", "com5", "com6", "com7", "com8",
+        "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9",
+    ];
+    DEVICES
+        .iter()
+        .any(|device| device.eq_ignore_ascii_case(name))
 }
 
 /// `name` split into what it numbers and its number, when it ends in " (n)".

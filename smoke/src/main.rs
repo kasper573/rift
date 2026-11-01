@@ -101,7 +101,7 @@ async fn main() {
         .body_mut()
         .read_to_string()
         .expect("rift.env reads");
-    std::fs::write(folder.join(launch::SETTINGS_FILE), rift_env).expect("rift.env saved");
+    std::fs::write(folder.join(launch::LAUNCH_FILE), rift_env).expect("rift.env saved");
 
     let display = Display::start();
     let driver = TcpListener::bind((LOCALHOST, 0)).expect("a port for the probe");

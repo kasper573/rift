@@ -211,7 +211,7 @@ pub struct AreaObject {
 }
 
 #[derive(Component, Default, Clone, PartialEq)]
-pub struct Underfoot {
+pub struct ObjectContact {
     inside: Vec<Entity>,
     standing: Vec<Entity>,
 }
@@ -232,7 +232,7 @@ pub fn spawn_in(world: &mut World, tile: TileAt) {
         let may_do = scripts.may_do(owner_row);
         let interactive = Interactive::of(&procedures);
         let warp = may_do.reaches.iter().find_map(|reach| match reach {
-            script::Reach::Warp(place) => Some(*place),
+            script::EffectReach::Warp(place) => Some(*place),
             _ => None,
         });
         let mut entity = world.spawn((
@@ -379,7 +379,7 @@ impl Planner for TrackUnderfoot {
                     .map(|object| object.entity)
                     .collect();
                 now.sort_unstable();
-                let before = world.get::<Underfoot>(actor);
+                let before = world.get::<ObjectContact>(actor);
                 let (stood, inside): (&[Entity], &[Entity]) =
                     before.map_or((&[], &[]), |before| (&before.standing, &before.inside));
                 let standing = standing_on(world, actor, stood, &now);
@@ -401,7 +401,10 @@ impl Planner for TrackUnderfoot {
                 now,
                 standing,
             } = crossing;
-            let before = world.get::<Underfoot>(actor).cloned().unwrap_or_default();
+            let before = world
+                .get::<ObjectContact>(actor)
+                .cloned()
+                .unwrap_or_default();
             for object in standing
                 .iter()
                 .filter(|object| !before.standing.contains(object))
@@ -414,7 +417,7 @@ impl Planner for TrackUnderfoot {
             for object in before.inside.iter().filter(|object| !now.contains(object)) {
                 raise_crossing(world, *object, EventKind::Left, actor, is_npc);
             }
-            world.entity_mut(actor).insert(Underfoot {
+            world.entity_mut(actor).insert(ObjectContact {
                 inside: now,
                 standing,
             });

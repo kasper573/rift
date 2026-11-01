@@ -9,7 +9,7 @@ use serde_json::Value;
 use ui::egui::Ui;
 
 use crate::forms::{FormChange, FormCx};
-use crate::shell::levels::{self, Level};
+use crate::levels::{self, Level};
 
 /// The rank cards of a skill row: each rank's point cost and the stats it adds, with the totals a
 /// player at that rank sees.

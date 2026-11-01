@@ -7,8 +7,8 @@ use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumString, VariantArray};
 
-use crate::core::assets::{FileSize, ImageRef};
 use crate::core::content::media::{VisiblePixelColumns, visible_columns};
+use crate::core::content::{AssetKind, FileSize, ImageRef};
 use crate::core::content::{
     Bundle, Content, ContentFile, ContentId, ContentProblem, ContentRegistry, ErrorPlace,
     FileWriter, LoadStep, Loading, MISSING_FILE, Nearby, PartSpec, Parts, RowCheck, Shape,
@@ -91,7 +91,7 @@ pub const MAX_CAST_BYTES: FileSize = FileSize::kib(3 * 1024);
 
 pub const BUST_FACES: PartSpec = PartSpec::Keyed {
     folder: "faces",
-    exts: &["png"],
+    exts: AssetKind::Image.extensions(),
 };
 
 pub fn content(registry: &mut ContentRegistry) {
