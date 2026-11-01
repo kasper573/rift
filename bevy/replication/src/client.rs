@@ -19,11 +19,13 @@ impl Plugin for ClientReplicationPlugin {
     }
 }
 
+/// Where the client applies what its server sent, and where it sends.
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ClientSystems {
     /// Applies what the server sent, and despawns everything it replicated once the
-    /// `ServerLink` is gone.
+    /// `ServerLink` is gone, in `PreUpdate`.
     Receive,
+    /// Hands the `ServerLink` the messages written since the last send, in `PostUpdate`.
     Send,
 }
 
@@ -39,10 +41,12 @@ pub struct ServerLink {
 }
 
 impl ServerLink {
+    /// Takes bytes the server sent, as the transport delivered them.
     pub fn receive(&mut self, bytes: Vec<u8>) {
         self.received.push(bytes);
     }
 
+    /// What the transport is to send the server, each piece delivered as one.
     pub fn take_outgoing(&mut self) -> Vec<Vec<u8>> {
         std::mem::take(&mut self.outgoing)
     }
@@ -63,10 +67,12 @@ pub struct ServerEntities {
 }
 
 impl ServerEntities {
+    /// The entity standing for the server's `server`, once the server has named it.
     pub fn client_of(&self, server: Entity) -> Option<Entity> {
         self.to_client.get(&server.to_bits()).copied()
     }
 
+    /// The server's entity that this client's `client` stands for.
     pub fn server_of(&self, client: Entity) -> Option<Entity> {
         self.to_server.get(&client).copied()
     }

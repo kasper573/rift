@@ -3,6 +3,7 @@ name = "bevy_replication"
 version.workspace = true
 edition.workspace = true
 description = "Server-authoritative replication for bevy: one reliable ordered stream per client, built for every client in parallel, scoped by pluggable interest"
+readme = "README.md"
 repository = "https://github.com/kasper573/rift"
 authors = ["kasper573"]
 

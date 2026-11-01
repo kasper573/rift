@@ -11,10 +11,12 @@ lint:
     cargo clippy --all-targets -- -D warnings
     cargo run --quiet -p cli --bin rift -- check editor/templates/new_game
 
-# Every test lives in a tests/ folder; the libs' and bins' own test harnesses would build for nothing.
-[doc("The unit and integration tests.")]
+# Every test lives in a tests/ folder, and every example in the docs compiles and runs; the libs' and
+# bins' own test harnesses would build for nothing.
+[doc("The unit and integration tests, and the examples in the docs.")]
 test:
     cargo test --workspace --test '*'
+    cargo test --workspace --doc
 
 [doc("Builds the editor and the two game binaries it plays with, then opens it, on FOLDER if given.")]
 editor *folder:

@@ -16,6 +16,7 @@ use crate::wire::{
 /// far as the interest lets each see, and reads what clients send.
 #[derive(Default)]
 pub struct ServerReplicationPlugin {
+    /// Who runs the sends.
     pub sending: Sending,
 }
 
@@ -31,6 +32,7 @@ pub enum Sending {
 
 impl Plugin for ServerReplicationPlugin {
     fn build(&self, app: &mut App) {
+        app.world_mut().register_component::<Replicated>();
         app.init_resource::<Protocol>()
             .init_resource::<ReplicationInterest>()
             .init_resource::<LastSend>()
@@ -50,7 +52,9 @@ impl Plugin for ServerReplicationPlugin {
 /// every update gives `Send` a run condition; messages written in between wait for the next send.
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ServerSystems {
+    /// Reads what every `ClientLink` received, in `PreUpdate`.
     Receive,
+    /// Hands every `ClientLink` its frame, in `PostUpdate`.
     Send,
 }
 
@@ -78,10 +82,12 @@ pub struct ClientLink {
 }
 
 impl ClientLink {
+    /// Takes bytes the client sent, as the transport delivered them.
     pub fn receive(&mut self, bytes: Vec<u8>) {
         self.received.push(bytes);
     }
 
+    /// What the transport is to send the client, each piece delivered as one.
     pub fn take_outgoing(&mut self) -> Vec<Vec<u8>> {
         std::mem::take(&mut self.outgoing)
     }
@@ -254,6 +260,7 @@ pub struct Sender {
 }
 
 impl Sender {
+    /// Takes from the world what the send holds of its clients, and readies the interest.
     pub fn prepare(&mut self, world: &mut World) {
         let this_run = world.change_tick();
         let last_run = std::mem::replace(&mut world.resource_mut::<LastSend>().0, this_run);
@@ -274,6 +281,7 @@ impl Sender {
         self.ticks = Some((last_run, this_run));
     }
 
+    /// Works out every client's frame from the world as it stands, on every core.
     pub fn plan(&mut self, world: &World) {
         let Some((last_run, this_run)) = self.ticks else {
             return;
@@ -282,7 +290,7 @@ impl Sender {
         let interest = &*world.resource::<ReplicationInterest>().0;
         let replicated = world
             .component_id::<Replicated>()
-            .expect("Replicated is registered once anything is");
+            .expect("the plugin registers Replicated");
         let private = protocol
             .components
             .iter()
@@ -444,6 +452,7 @@ impl Sender {
             });
     }
 
+    /// Hands the planned frames to the links.
     pub fn apply(&mut self, world: &mut World) {
         if self.ticks.take().is_none() {
             return;

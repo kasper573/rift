@@ -56,6 +56,7 @@ impl<C: Component<Mutability: Overwrite<C>> + Serialize + DeserializeOwned> Repl
 /// How a client puts a received component on its entity: a mutable one changes in place, so only
 /// change detection sees an update; an immutable one is inserted anew.
 pub trait Overwrite<C: Component> {
+    /// Puts `component` on `entity`.
     fn overwrite(entity: &mut EntityWorldMut, component: C);
 }
 
@@ -81,6 +82,7 @@ impl<C: Component<Mutability = Immutable>> Overwrite<C> for Immutable {
 pub struct FromClient<M> {
     /// The server's entity of the client that sent it.
     pub client: Entity,
+    /// The message as the client wrote it.
     pub message: M,
 }
 
@@ -91,6 +93,7 @@ impl<M: Message> Message for FromClient<M> {}
 pub struct ToClient<M> {
     /// The server's entity of the client to tell.
     pub client: Entity,
+    /// The message the client reads.
     pub message: M,
 }
 
