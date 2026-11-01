@@ -14,7 +14,7 @@ use crate::systems::npc::NpcId;
 use crate::systems::player::{ClientId, PlayedBy};
 use crate::systems::script::event::NPC;
 use crate::systems::script::{
-    Condition, EffectCall, Reach, RiftScripting, RunnerKind, effect as effects,
+    Condition, EffectCall, EffectLook, Reach, RiftScripting, RunnerKind, effect as effects,
 };
 use crate::systems::stat;
 use crate::systems::visibility::Presence;
@@ -95,6 +95,13 @@ impl EffectDef<RiftScripting> for SetAttitude {
             }
             EffectStep::Done
         }))
+    }
+    fn look(&self, _cx: &mut Compiler<RiftScripting>) -> Result<Option<EffectLook>, ScriptFault> {
+        let attitude = self.attitude;
+        Ok(Some(Box::new(move |world, _, cx| {
+            let npc = cx.owner?;
+            (world.get::<Attitude>(npc) == Some(&attitude)).then_some(EffectStep::Done)
+        })))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
         vec![match self.attitude {

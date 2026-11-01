@@ -17,7 +17,8 @@ use crate::systems::movement::{self, Approach, NavMesh};
 use crate::systems::npc::{Home, Npc, Roams};
 use crate::systems::script::event::NPC;
 use crate::systems::script::{
-    Condition, EffectCall, FlowKey, Place, Reach, RiftInstances, RiftScripting, RunnerKind, query,
+    Condition, EffectCall, EffectLook, FlowKey, Place, Reach, RiftInstances, RiftScripting,
+    RunnerKind, query,
 };
 use crate::systems::{dialogue, reach, skill, stat};
 
@@ -103,13 +104,7 @@ pub fn order(world: &mut World, npc: Entity, act: Act, priority: Priority, flow:
         flow,
         started: false,
     };
-    let same_as_current = world
-        .get::<Body>(npc)
-        .and_then(|body| body.current)
-        .is_some_and(|current| {
-            !current.pauses() && current.act == act && current.priority == priority
-        });
-    if same_as_current && flow.is_none() {
+    if flow.is_none() && doing(world, npc, act, priority) {
         return;
     }
     let interrupted = {
@@ -157,7 +152,7 @@ pub fn drive(
     let shared: &World = world;
     let drives: Vec<(Entity, Drive)> = npcs
         .par_iter()
-        .with_min_len(par::GRAIN)
+        .with_min_len(par::grain(npcs.len()))
         .filter_map(|&npc| Some((npc, drive_of(shared, npc, &talking)?)))
         .collect();
     for (npc, drive) in drives {
@@ -201,6 +196,17 @@ pub fn drive(
             Drive::Done(current, output) => done(world, npc, current, output),
         }
     }
+}
+
+/// Whether the npc's body is on `act` at `priority` already, with no flow waiting on it: an
+/// order for the same is nothing new.
+pub fn doing(world: &World, npc: Entity, act: Act, priority: Priority) -> bool {
+    world
+        .get::<Body>(npc)
+        .and_then(|body| body.current)
+        .is_some_and(|current| {
+            !current.pauses() && current.act == act && current.priority == priority
+        })
 }
 
 /// What an npc's body does this tick, as the tick found it.
@@ -513,6 +519,20 @@ impl EffectDef<RiftScripting> for Wander {
             EffectStep::Done
         }))
     }
+    fn look<'c>(
+        &'c self,
+        cx: &mut Compiler<'c, RiftScripting>,
+    ) -> Result<Option<EffectLook>, ScriptFault> {
+        let priority = Priority::checked(self.priority)?;
+        let leash = cx.opt_expr(self.leash.as_ref(), ValueType::Number)?;
+        Ok(Some(Box::new(move |world, _, cx| {
+            let leash = leash
+                .as_ref()
+                .map(|leash| Meters(leash(world, cx).as_num() as f32));
+            let npc = cx.owner?;
+            doing(world, npc, Act::Wander { leash }, priority).then_some(EffectStep::Done)
+        })))
+    }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
         vec![Reach::Walks]
     }
@@ -626,6 +646,13 @@ impl EffectDef<RiftScripting> for Stop {
             }
             EffectStep::Done
         }))
+    }
+    fn look(&self, _cx: &mut Compiler<RiftScripting>) -> Result<Option<EffectLook>, ScriptFault> {
+        let priority = Priority::checked(self.priority)?;
+        Ok(Some(Box::new(move |world, _, cx| {
+            let npc = cx.owner?;
+            doing(world, npc, Act::Stop, priority).then_some(EffectStep::Done)
+        })))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<Reach> {
         Vec::new()

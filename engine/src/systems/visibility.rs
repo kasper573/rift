@@ -1,9 +1,11 @@
 use bevy_app::App;
 use bevy_ecs::message::Message;
 use bevy_ecs::prelude::*;
+use bevy_ecs::query::Has;
+use bevy_platform::collections::HashMap;
 use bevy_replication::{Interest, Replicated, ReplicationInterest, ToClient};
 
-use crate::core::chunk::ChunkIndex;
+use crate::core::chunk::Chunk;
 use crate::core::math::Pos;
 use crate::core::units::Meters;
 use crate::systems::area::{AreaId, AreaTag};
@@ -48,7 +50,22 @@ pub fn coexist(world: &World, a: Entity, b: Entity) -> bool {
 #[derive(Default)]
 pub struct ClientSight {
     unplaced: Vec<Entity>,
+    /// Everything replicated standing somewhere, as of the send, under the chunk it stands in.
+    placed: HashMap<Chunk, Vec<Spotted>>,
+    standing: Option<Standing>,
 }
+
+#[derive(Clone, Copy)]
+struct Spotted {
+    entity: Entity,
+    at: Pos<Meters>,
+    area: AreaId,
+    /// Present to some viewers only, which `present` tells.
+    conditional: bool,
+}
+
+type Standing =
+    QueryState<(Entity, &'static Position, &'static AreaTag, Has<Presence>), With<Replicated>>;
 
 impl Interest for ClientSight {
     fn prepare(&mut self, world: &mut World) {
@@ -56,6 +73,21 @@ impl Interest for ClientSight {
             .query_filtered::<Entity, (With<Replicated>, Without<Position>)>()
             .iter(world)
             .collect();
+        for bucket in self.placed.values_mut() {
+            bucket.clear();
+        }
+        let standing = self.standing.get_or_insert_with(|| world.query_filtered());
+        for (entity, position, tag, conditional) in standing.iter(world) {
+            self.placed
+                .entry(Chunk::at(position.pos))
+                .or_default()
+                .push(Spotted {
+                    entity,
+                    at: position.pos,
+                    area: tag.area,
+                    conditional,
+                });
+        }
     }
 
     fn seen_by(&self, world: &World, client: Entity, seen: &mut Vec<Entity>) {
@@ -65,18 +97,31 @@ impl Interest for ClientSight {
         else {
             return;
         };
-        let near = view
-            .pos
-            .into_iter()
-            .flat_map(|pos| world.resource::<ChunkIndex>().around(pos, VIEW_DISTANCE));
         seen.extend(
             self.unplaced
                 .iter()
                 .copied()
                 .chain(std::iter::once(view.focus))
-                .chain(near)
                 .filter(|&subject| view.sees(world, subject)),
         );
+        let (Some(pos), Some(area)) = (view.pos, view.area) else {
+            return;
+        };
+        for chunk in Chunk::around(pos, VIEW_DISTANCE) {
+            let Some(bucket) = self.placed.get(&chunk) else {
+                continue;
+            };
+            seen.extend(
+                bucket
+                    .iter()
+                    .filter(|spotted| {
+                        spotted.area == area
+                            && (pos - spotted.at).square_length() <= VIEW_DISTANCE_SQ
+                            && (!spotted.conditional || present(world, spotted.entity, view.focus))
+                    })
+                    .map(|spotted| spotted.entity),
+            );
+        }
     }
 
     fn owns(&self, world: &World, client: Entity, entity: Entity) -> bool {

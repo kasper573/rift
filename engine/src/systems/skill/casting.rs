@@ -200,10 +200,10 @@ pub fn casts(world: &mut World, intents: &mut reach::Intents) {
 }
 
 /// Everyone reaching for a cast gives chase, at twice their pace.
-pub fn chase(world: &World, entity: Entity, into: &mut Vec<stat::Stat>) {
+pub fn chase(world: &World, entity: Entity, into: &mut dyn FnMut(stat::Stat)) {
     if reach::current(world, entity).is_some_and(|intent| intent.cast().is_some()) {
         let base = stat::base(world, entity, stat::StatKind::MovementSpeed);
-        into.push(stat::StatKind::MovementSpeed.of(base * (CHASE_SPEED_MULTIPLIER - 1.0)));
+        into(stat::StatKind::MovementSpeed.of(base * (CHASE_SPEED_MULTIPLIER - 1.0)));
     }
 }
 

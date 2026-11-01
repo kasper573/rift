@@ -1201,14 +1201,14 @@ fn take_back(world: &mut World, player: Entity, grants: &[ItemStack]) {
 /// becomes ready or a daily quest is open again. What the log shows is read from the state
 /// itself, so this only runs where something may have changed.
 fn announce(world: &mut World, player: Entity, clock: WallClock) {
-    let content = world.resource::<Content>().clone();
-    let parties = world.resource::<Parties>().clone();
     let Some(log) = log_of(world, player) else {
         return;
     };
     if log.active.is_empty() && log.finished.is_empty() {
         return;
     }
+    let content = world.resource::<Content>().clone();
+    let parties = world.resource::<Parties>().clone();
     let expired: Vec<QuestId> = log
         .active
         .iter()

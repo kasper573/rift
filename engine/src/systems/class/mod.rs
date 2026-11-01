@@ -318,9 +318,11 @@ impl EffectDef<RiftScripting> for GrantXp {
     }
 }
 
-pub(crate) fn level_stats(world: &World, entity: Entity, into: &mut Vec<Stat>) {
+pub(crate) fn level_stats(world: &World, entity: Entity, into: &mut dyn FnMut(Stat)) {
     let content = world.resource::<Content>();
     if let Some(class) = of(world, entity) {
-        into.extend(class.get(content).stats_at(xp_of(world, entity)));
+        for stat in class.get(content).stats_at(xp_of(world, entity)) {
+            into(stat);
+        }
     }
 }

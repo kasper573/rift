@@ -223,6 +223,7 @@ const DRIFT_SHARE: f32 = 0.1;
 /// Where an actor's walk ends. An actor walks for as long as it has one, along a [`Path`] planned to
 /// it whenever the path ends elsewhere. Only a player's goes out, for its own client to follow.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[require(Path)]
 pub struct MoveTarget {
     pub pos: Pos<Meters>,
 }
@@ -276,23 +277,32 @@ pub fn goto(world: &mut World, entity: Entity, pos: Pos<Meters>) {
     }
 }
 
-type Movers = QueryState<Entity, With<MoveTarget>>;
-type StepQuery = QueryState<(
-    &'static mut Position,
-    &'static mut Path,
-    Option<&'static mut Actor>,
-)>;
+pub type Movers = QueryState<
+    (
+        Entity,
+        &'static mut Position,
+        &'static mut Path,
+        Option<&'static mut Actor>,
+    ),
+    With<MoveTarget>,
+>;
 
-pub fn advance(world: &mut World, movers_query: &mut Movers, step_query: &mut StepQuery) {
+/// Walks every mover its tick's stride: worked out on every core from the world as the tick found
+/// it, then written in the order the movers were found.
+pub fn advance(world: &mut World, movers: &mut Movers) {
     let dt = Seconds(world.resource::<Time>().delta_secs());
-    let movers: Vec<Entity> = movers_query.iter(world).collect();
+    let ids: Vec<Entity> = movers.iter(world).map(|(id, ..)| id).collect();
     let shared: &World = world;
-    let strides: Vec<(Entity, Stride)> = movers
+    let strides: Vec<Stride> = ids
         .par_iter()
-        .with_min_len(par::GRAIN)
-        .filter_map(|&id| Some((id, stride(shared, id, dt)?)))
+        .with_min_len(par::grain(ids.len()))
+        .map(|&id| stride(shared, id, dt))
         .collect();
-    for (id, stride) in strides {
+    let (mut halted, mut arrived) = (Vec::new(), Vec::new());
+    for ((&id, stride), (found, mut position, mut path, mut actor)) in
+        ids.iter().zip(strides).zip(movers.iter_mut(world))
+    {
+        assert_eq!(id, found, "the movers walk in the order they were found");
         let Stride::Walk {
             at,
             planned,
@@ -302,31 +312,37 @@ pub fn advance(world: &mut World, movers_query: &mut Movers, step_query: &mut St
             gait,
         } = stride
         else {
-            halt(world, id);
+            halted.push(id);
             continue;
         };
         if let Some(corners) = planned {
-            world.entity_mut(id).insert(Path { corners });
+            path.corners = corners;
         }
-        let Ok((mut position, mut path, mut actor)) = step_query.get_mut(world, id) else {
-            continue;
-        };
-        let left = path.corners.len() - reached;
-        path.corners.truncate(left);
+        if reached > 0 {
+            let left = path.corners.len() - reached;
+            path.corners.truncate(left);
+        }
+        let left = path.corners.len();
         if position.pos != at {
             position.pos = at;
         }
-        if let Some(step) = heading
+        if let Some(facing) = heading
             && let Some(actor) = actor.as_mut()
         {
-            set_facing(actor, Radians::of(step), gait);
+            set_facing(actor, facing, gait);
             if actor.speed != speed {
                 actor.speed = speed;
             }
         }
         if left == 0 {
-            world.entity_mut(id).remove::<(MoveTarget, Path)>();
+            arrived.push(id);
         }
+    }
+    for id in arrived {
+        world.entity_mut(id).remove::<(MoveTarget, Path)>();
+    }
+    for id in halted {
+        halt(world, id);
     }
 }
 
@@ -340,24 +356,29 @@ enum Stride {
         planned: Option<Vec<Pos<Meters>>>,
         /// How many corners of the walk the mover reached this tick.
         reached: usize,
-        heading: Option<Offset<Meters>>,
+        /// Where the mover faces after the stretch it walked, if it walked at all.
+        heading: Option<Radians>,
         speed: MetersPerSec,
         gait: Action,
     },
 }
 
-fn stride(world: &World, id: Entity, dt: Seconds) -> Option<Stride> {
+fn stride(world: &World, id: Entity, dt: Seconds) -> Stride {
     if stat::is_dead(world, id) {
-        return Some(Stride::Halt);
+        return Stride::Halt;
     }
-    let goal = world.get::<MoveTarget>(id)?.pos;
-    let mut at = position(world, id)?;
+    let (Some(goal), Some(mut at)) = (
+        world.get::<MoveTarget>(id).map(|goal| goal.pos),
+        position(world, id),
+    ) else {
+        return Stride::Halt;
+    };
     let held = world.get::<Path>(id);
     let planned = match held {
         Some(path) if path.end() == Some(goal) => None,
         _ => match plan(world, id, goal) {
             Some(corners) => Some(corners),
-            None => return Some(Stride::Halt),
+            None => return Stride::Halt,
         },
     };
     let corners = planned
@@ -367,14 +388,14 @@ fn stride(world: &World, id: Entity, dt: Seconds) -> Option<Stride> {
     let speed = speed_of(world, id);
     let gait = gait_of(world, id, speed);
     let (reached, heading) = walk(&mut at, corners, speed * dt);
-    Some(Stride::Walk {
+    Stride::Walk {
         at,
         planned,
         reached,
-        heading,
+        heading: heading.map(Radians::of),
         speed,
         gait,
-    })
+    }
 }
 
 pub fn speed_of(world: &World, entity: Entity) -> MetersPerSec {

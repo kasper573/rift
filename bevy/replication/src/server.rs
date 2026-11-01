@@ -53,8 +53,8 @@ pub struct ClientLink {
     started: bool,
     received: Vec<Vec<u8>>,
     outgoing: Vec<Vec<u8>>,
-    /// Every entity the client holds, with the component kinds it holds of each.
-    known: EntityHashMap<Kinds>,
+    /// Every entity the client holds, in entity order, with the component kinds it holds of each.
+    known: Vec<(Entity, Kinds)>,
     messages: Vec<(u16, Vec<u8>)>,
     misbehaved: bool,
 }
@@ -196,10 +196,14 @@ fn queue_messages(world: &mut World) {
     }
 }
 
-/// The fewest clients, and the fewest entities, a job of a parallel pass takes, so a pass isn't
-/// cut into jobs that cost more to hand out than to run.
-const CLIENT_GRAIN: usize = 16;
-const ENTITY_GRAIN: usize = 128;
+/// How finely a pass over many clients or entities is cut into jobs: a few per core, so no core
+/// idles behind one slow job and none is spent handing jobs out.
+const JOBS_PER_THREAD: usize = 2;
+
+fn grain(len: usize) -> usize {
+    len.div_ceil(JOBS_PER_THREAD * rayon::current_num_threads())
+        .max(1)
+}
 
 /// Tells every client what changed in its sight since the last send, in four passes over every
 /// core: what each client sees; what of each seen entity is there and what changed; what each
@@ -237,7 +241,7 @@ fn send(world: &mut World, links: &mut QueryState<(Entity, &mut ClientLink)>) {
 
     let seen: Vec<Vec<Entity>> = clients
         .par_iter()
-        .with_min_len(CLIENT_GRAIN)
+        .with_min_len(grain(clients.len()))
         .map(|held| {
             let mut seen = Vec::new();
             interest.seen_by(shared, held.client, &mut seen);
@@ -247,12 +251,10 @@ fn send(world: &mut World, links: &mut QueryState<(Entity, &mut ClientLink)>) {
         })
         .collect();
 
-    let mut subjects: Vec<Entity> = seen.par_iter().flatten_iter().copied().collect();
-    subjects.par_sort_unstable();
-    subjects.dedup();
+    let subjects = union(&seen, shared.entities().len() as usize);
     let summaries: Vec<Option<Summary>> = subjects
         .par_iter()
-        .with_min_len(ENTITY_GRAIN)
+        .with_min_len(grain(subjects.len()))
         .map(|&entity| summarize(shared, protocol, replicated, entity, last_run, this_run))
         .collect();
     let summary_of = |entity: Entity| {
@@ -262,53 +264,56 @@ fn send(world: &mut World, links: &mut QueryState<(Entity, &mut ClientLink)>) {
             .and_then(|index| summaries[index].map(|summary| (index, summary)))
     };
 
+    let client_grain = grain(clients.len());
     let plans: Vec<Plan> = clients
         .par_iter_mut()
-        .with_min_len(CLIENT_GRAIN)
+        .with_min_len(client_grain)
         .zip(&seen)
         .map(|(held, seen)| {
             let mut plan = Plan::default();
+            let known = std::mem::take(&mut held.known);
+            held.known.reserve(seen.len());
+            let mut held_before = known.iter().peekable();
             for &entity in seen {
+                while let Some(&&(left, _)) = held_before.peek()
+                    && left < entity
+                {
+                    plan.left.push(left);
+                    held_before.next();
+                }
+                let holds = held_before
+                    .next_if(|&&(held, _)| held == entity)
+                    .map(|&(_, holds)| holds);
                 let Some((subject, summary)) = summary_of(entity) else {
+                    plan.left.extend(holds.map(|_| entity));
                     continue;
                 };
                 let mut want = summary.present;
                 if want & private != 0 && !interest.owns(shared, held.client, entity) {
                     want &= !private;
                 }
-                match held.known.get_mut(&entity) {
-                    None => {
-                        held.known.insert(entity, want);
-                        plan.entities.push(Told {
-                            subject,
-                            arrives: true,
-                            whole: want,
-                            updated: 0,
-                            removed: 0,
-                        });
-                    }
-                    Some(holds) => {
-                        let told = Told {
-                            subject,
-                            arrives: false,
-                            whole: want & !*holds,
-                            updated: want & *holds & summary.changed,
-                            removed: *holds & !want,
-                        };
-                        *holds = want;
-                        if told.whole | told.updated | told.removed != 0 {
-                            plan.entities.push(told);
-                        }
-                    }
+                held.known.push((entity, want));
+                let told = match holds {
+                    None => Told {
+                        subject,
+                        arrives: true,
+                        whole: want,
+                        updated: 0,
+                        removed: 0,
+                    },
+                    Some(holds) => Told {
+                        subject,
+                        arrives: false,
+                        whole: want & !holds,
+                        updated: want & holds & summary.changed,
+                        removed: holds & !want,
+                    },
+                };
+                if told.arrives || told.whole | told.updated | told.removed != 0 {
+                    plan.entities.push(told);
                 }
             }
-            held.known.retain(|&entity, _| {
-                let stays = seen.binary_search(&entity).is_ok() && summary_of(entity).is_some();
-                if !stays {
-                    plan.left.push(entity);
-                }
-                stays
-            });
+            plan.left.extend(held_before.map(|&(left, _)| left));
             plan
         })
         .collect();
@@ -325,7 +330,7 @@ fn send(world: &mut World, links: &mut QueryState<(Entity, &mut ClientLink)>) {
         .collect();
     let serialized: Vec<Serialized> = subjects
         .par_iter()
-        .with_min_len(ENTITY_GRAIN)
+        .with_min_len(grain(subjects.len()))
         .zip(&needed)
         .zip(&mut sent_as)
         .map(|((&entity, &kinds), sent_as)| serialize(shared, protocol, entity, kinds, sent_as))
@@ -333,7 +338,7 @@ fn send(world: &mut World, links: &mut QueryState<(Entity, &mut ClientLink)>) {
 
     let frames: Vec<Option<Vec<u8>>> = plans
         .par_iter()
-        .with_min_len(CLIENT_GRAIN)
+        .with_min_len(grain(plans.len()))
         .zip(&clients)
         .map(|(plan, held)| {
             let frame = ServerFrame {
@@ -385,8 +390,20 @@ fn send(world: &mut World, links: &mut QueryState<(Entity, &mut ClientLink)>) {
 struct Held {
     client: Entity,
     fresh: Option<u32>,
-    known: EntityHashMap<Kinds>,
+    known: Vec<(Entity, Kinds)>,
     messages: Vec<(u16, Vec<u8>)>,
+}
+
+/// Every entity in any of the `seen` lists, once, in entity order; `indices` bounds the
+/// entities' indices.
+fn union(seen: &[Vec<Entity>], indices: usize) -> Vec<Entity> {
+    let mut by_index: Vec<Option<Entity>> = vec![None; indices];
+    for &entity in seen.iter().flatten() {
+        by_index[entity.index_u32() as usize] = Some(entity);
+    }
+    let mut subjects: Vec<Entity> = by_index.into_iter().flatten().collect();
+    subjects.sort_unstable();
+    subjects
 }
 
 #[derive(Clone, Copy)]

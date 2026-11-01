@@ -112,6 +112,7 @@ pub type FlowKey = script::FlowKey<RiftScripting>;
 pub type FlowTrace = script::FlowTrace<RiftScripting>;
 pub type TraceStep = script::TraceStep<RiftScripting>;
 pub type EffectCall = script::EffectCall<RiftScripting>;
+pub type EffectLook = script::EffectLook<RiftScripting>;
 
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(from = "PlaceRow", into = "PlaceRow")]

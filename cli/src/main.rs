@@ -98,6 +98,7 @@ enum Schema {
 }
 
 fn main() {
+    engine::core::par::start();
     match Rift::parse().command {
         Command::Check { game } => check::run(&game),
         Command::Format { game } => check::format(&game),

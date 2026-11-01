@@ -106,7 +106,7 @@ pub fn settle_health(
     let shared: &World = world;
     let settled: Vec<(Entity, f32)> = entities
         .par_iter()
-        .with_min_len(par::GRAIN)
+        .with_min_len(par::grain(entities.len()))
         .filter_map(|&entity| {
             let max = max_health(shared, entity);
             let &health = shared.get::<Stats>(entity)?.0.get(&StatKind::Health)?;

@@ -119,17 +119,9 @@ pub fn spawn(
     let terrain = spawn_terrain(world, content, area, root);
     let covers = cover_layers(world, content, area);
     let mut props = SpatialIndex::new(PLACEMENT_CELL);
-    props.refile(
-        area.props
-            .iter()
-            .map(|placed| Rect::new(placed.at, Size::zero())),
-    );
+    props.refile_spots(area.props.iter().map(|placed| placed.at));
     let mut lights = SpatialIndex::new(PLACEMENT_CELL);
-    lights.refile(
-        area.lights
-            .iter()
-            .map(|light| Rect::new(light.at, Size::zero())),
-    );
+    lights.refile_spots(area.lights.iter().map(|light| light.at));
     world.entity_mut(root).insert(Streaming {
         content: content.clone(),
         area: area.clone(),

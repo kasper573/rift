@@ -6,7 +6,7 @@ use strum::{EnumDiscriminants, EnumString, IntoStaticStr, VariantArray};
 
 use super::{Condition, RiftScripting};
 use crate::core::content::Content;
-use crate::core::math::{Pos, Rect, Size};
+use crate::core::math::Pos;
 use crate::core::script::{Compiler, Eval, FlowCx, QueryDef, ScriptFault, Value, ValueType};
 use crate::core::spatial::SpatialIndex;
 use crate::core::time::{Seconds, WallClock};
@@ -19,7 +19,7 @@ use crate::systems::equipment;
 use crate::systems::item::{DroppedItem, Inventory, ItemId};
 use crate::systems::memory::{self, MemoryId};
 use crate::systems::movement::{self, Position};
-use crate::systems::npc::{Npc, NpcId, Pack, body};
+use crate::systems::npc::{Npc, NpcId, Pack, Packs, body};
 use crate::systems::player::{ArrivalHold, PlayedBy};
 use crate::systems::quest::{self, Objective, QuestId};
 use crate::systems::script::RunnerKind;
@@ -33,8 +33,11 @@ use crate::systems::visibility::{self, Presence};
 /// passes over only those standing in the cells around it.
 #[derive(Resource)]
 pub struct TickRoster {
+    /// The characters, then the npcs.
     listed: Vec<Listed>,
     characters: usize,
+    /// Where the npcs are listed before they join `listed`, kept for its capacity.
+    npcs: Vec<Listed>,
     /// The characters' spots and the npcs' apart, so a scan for one kind reaching none ends at
     /// once.
     character_spots: SpatialIndex,
@@ -46,6 +49,7 @@ impl Default for TickRoster {
         TickRoster {
             listed: Vec::new(),
             characters: 0,
+            npcs: Vec::new(),
             character_spots: SpatialIndex::new(SPOT_CELL),
             npc_spots: SpatialIndex::new(SPOT_CELL),
         }
@@ -57,7 +61,6 @@ const SPOT_CELL: Meters = Meters(16.0);
 #[derive(Clone, Copy)]
 pub struct Listed {
     pub entity: Entity,
-    pub pack: Option<Pack>,
     pub at: Pos<Meters>,
     pub area: AreaId,
     pub npc: Option<NpcId>,
@@ -100,14 +103,6 @@ impl TickRoster {
             )
             .map(|index| &self.listed[index])
     }
-
-    /// The npcs of `pack`, or every packless npc: the npcs are listed pack by pack.
-    pub fn pack(&self, pack: Option<Pack>) -> &[Listed] {
-        let npcs = &self.listed[self.characters..];
-        let start = npcs.partition_point(|listed| listed.pack < pack);
-        let end = npcs.partition_point(|listed| listed.pack <= pack);
-        &npcs[start..end]
-    }
 }
 
 type RosterQuery = QueryState<
@@ -116,7 +111,6 @@ type RosterQuery = QueryState<
         &'static Position,
         &'static AreaTag,
         Option<&'static Npc>,
-        Option<&'static Pack>,
         Option<&'static Stats>,
         Has<PlayedBy>,
         Has<ArrivalHold>,
@@ -126,12 +120,19 @@ type RosterQuery = QueryState<
 >;
 
 pub fn take_tick_roster(world: &mut World, query: &mut RosterQuery) {
-    let mut listed = std::mem::take(&mut world.get_resource_or_init::<TickRoster>().listed);
+    let mut roster = std::mem::take(world.get_resource_or_init::<TickRoster>().as_mut());
+    let TickRoster {
+        listed,
+        characters,
+        npcs,
+        character_spots,
+        npc_spots,
+    } = &mut roster;
     listed.clear();
-    listed.extend(query.iter(world).map(
-        |(entity, at, tag, npc, pack, stats, character, held, presence)| Listed {
+    npcs.clear();
+    for (entity, at, tag, npc, stats, character, held, presence) in query.iter(world) {
+        let entry = Listed {
             entity,
-            pack: pack.copied(),
             at: at.pos,
             area: tag.area,
             npc: npc.map(|npc| npc.def),
@@ -139,23 +140,20 @@ pub fn take_tick_roster(world: &mut World, query: &mut RosterQuery) {
             dead: stats.is_some_and(stat::dead),
             held,
             presence,
-        },
-    ));
-    listed.sort_unstable_by_key(|entry| (!entry.character, entry.pack));
-    let characters = listed.iter().take_while(|entry| entry.character).count();
-    let mut roster = world.resource_mut::<TickRoster>();
-    let TickRoster {
-        character_spots,
-        npc_spots,
-        ..
-    } = &mut *roster;
-    let spot = |entry: &Listed| Rect::new(entry.at, Size::zero());
+        };
+        if character {
+            listed.push(entry);
+        } else {
+            npcs.push(entry);
+        }
+    }
+    *characters = listed.len();
     rayon::join(
-        || character_spots.refile(listed[..characters].iter().map(spot)),
-        || npc_spots.refile(listed[characters..].iter().map(spot)),
+        || npc_spots.refile_spots(npcs.iter().map(|entry| entry.at)),
+        || character_spots.refile_spots(listed.iter().map(|entry| entry.at)),
     );
-    roster.listed = listed;
-    roster.characters = characters;
+    listed.append(npcs);
+    *world.resource_mut::<TickRoster>() = roster;
 }
 
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -956,14 +954,19 @@ impl<'w> Scan<'w> {
                 .map(|attackers| attackers.ids.clone())
                 .unwrap_or_default(),
             Among::PackAttackers => {
-                let pack = world.get::<Pack>(owner).copied();
-                roster
-                    .pack(pack)
+                let packs = world.resource::<Packs>();
+                let members = match world.get::<Pack>(owner) {
+                    Some(pack) => packs.members(*pack),
+                    None => std::slice::from_ref(&owner),
+                };
+                members
                     .iter()
-                    .filter(|listed| listed.area == area)
-                    .flat_map(|listed| {
+                    .filter(|&&member| {
+                        world.get::<AreaTag>(member).map(|tag| tag.area) == Some(area)
+                    })
+                    .flat_map(|&member| {
                         world
-                            .get::<Attackers>(listed.entity)
+                            .get::<Attackers>(member)
                             .map(|attackers| attackers.ids.clone())
                             .unwrap_or_default()
                     })

@@ -57,6 +57,12 @@ impl Rng {
         getrandom::u64().expect("os entropy for rng seed")
     }
 
+    /// A generator seeded by one draw from this one: whatever draws from it plays out alike from
+    /// run to run, without drawing from this one again.
+    pub fn fork(&mut self) -> Rng {
+        Rng::new((u64::from(self.0.rand_u32()) << 32) | u64::from(self.0.rand_u32()))
+    }
+
     pub fn rand_float(&mut self) -> f32 {
         self.0.rand_float()
     }

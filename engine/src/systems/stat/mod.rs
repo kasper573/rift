@@ -95,7 +95,7 @@ impl Stats {
 
 /// A system's say in an actor's effective stats, on top of its own `Stats`, pushed onto the
 /// modifiers gathered so far; registered with `source`.
-pub type StatSource = fn(&World, Entity, &mut Vec<Stat>);
+pub type StatSource = fn(&World, Entity, &mut dyn FnMut(Stat));
 
 #[derive(Resource, Default)]
 pub struct Sources(Vec<StatSource>);
@@ -109,12 +109,11 @@ pub fn source(world: &mut World, source: StatSource) {
     world.resource_mut::<Sources>().0.push(source);
 }
 
-pub fn modifiers(world: &World, entity: Entity) -> Vec<Stat> {
-    let mut gathered = Vec::new();
+/// Hands `into` every modifier on the entity's stats, source by source.
+pub fn modifiers(world: &World, entity: Entity, into: &mut dyn FnMut(Stat)) {
     for source in &world.resource::<Sources>().0 {
-        source(world, entity, &mut gathered);
+        source(world, entity, into);
     }
-    gathered
 }
 
 pub fn snapshot(world: &World, entity: Entity) -> Stats {
@@ -128,16 +127,18 @@ pub fn base(world: &World, entity: Entity, kind: StatKind) -> f32 {
 }
 
 pub fn effective(world: &World, entity: Entity, kind: StatKind) -> f32 {
-    let delta: f32 = modifiers(world, entity)
-        .into_iter()
-        .filter(|stat| stat.kind == kind)
-        .map(|stat| stat.value)
-        .sum();
+    let mut delta = 0.0;
+    modifiers(world, entity, &mut |stat| {
+        if stat.kind == kind {
+            delta += stat.value;
+        }
+    });
     base(world, entity, kind) + delta
 }
 
 pub fn effective_all(world: &World, entity: Entity) -> Stats {
-    let modifiers = modifiers(world, entity);
+    let mut modifiers = Vec::new();
+    self::modifiers(world, entity, &mut |stat| modifiers.push(stat));
     Stats(
         StatKind::VARIANTS
             .iter()

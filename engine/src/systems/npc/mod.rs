@@ -4,9 +4,11 @@ pub mod summon;
 pub use summon::{Despawn, SetAttitude, ShownFor, SpawnNear, SpawnNpcs, Summoned, dismiss, summon};
 
 use bevy_app::App;
+use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::message::{MessageCursor, Messages};
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryState;
+use bevy_ecs::world::DeferredWorld;
 use bevy_replication::Replicated;
 use bevy_time::Time;
 use rayon::prelude::*;
@@ -160,8 +162,51 @@ pub struct Npc {
 }
 
 /// The npcs spawned together, named from their world's pool so no two packs of an area are alike.
+/// The world's [`Packs`] follows it.
 #[derive(Component, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[component(immutable, on_insert = file_pack, on_remove = unfile_pack)]
 pub struct Pack(pub GlobalId);
+
+/// Every npc with a pack, by its pack.
+#[derive(Resource, Default)]
+pub struct Packs(HashMap<Pack, Vec<Entity>>);
+
+impl Packs {
+    pub fn members(&self, pack: Pack) -> &[Entity] {
+        self.0.get(&pack).map_or(&[], Vec::as_slice)
+    }
+}
+
+fn file_pack(mut world: DeferredWorld, context: HookContext) {
+    let pack = *world
+        .get::<Pack>(context.entity)
+        .expect("the component being inserted");
+    packs(&mut world)
+        .0
+        .entry(pack)
+        .or_default()
+        .push(context.entity);
+}
+
+fn unfile_pack(mut world: DeferredWorld, context: HookContext) {
+    let pack = *world
+        .get::<Pack>(context.entity)
+        .expect("the component being removed");
+    let mut packs = packs(&mut world);
+    let Some(members) = packs.0.get_mut(&pack) else {
+        return;
+    };
+    members.retain(|&member| member != context.entity);
+    if members.is_empty() {
+        packs.0.remove(&pack);
+    }
+}
+
+fn packs<'w>(world: &'w mut DeferredWorld) -> Mut<'w, Packs> {
+    world
+        .get_resource_mut::<Packs>()
+        .expect("a world spawning npcs holds its packs")
+}
 
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct Home(pub Pos<Meters>);
@@ -701,17 +746,14 @@ fn roaming_spot(
     draw(&|at| spots.crowding(area, at, None) == 0).or_else(|| draw(&|_| true))
 }
 
-type NpcIds = QueryState<Entity, (With<Npc>, Without<Ghost>)>;
+type FallenNpcs = QueryState<(Entity, &'static Dead), (With<Npc>, Without<Ghost>)>;
 
-pub fn run_respawn(world: &mut World, npcs: &mut NpcIds) {
+pub fn run_respawn(world: &mut World, fallen: &mut FallenNpcs) {
     let content = world.resource::<Content>().clone();
     let time = Seconds(world.resource::<Time>().elapsed_secs());
-    let ids: Vec<Entity> = npcs.iter(world).collect();
+    let ids: Vec<(Entity, Seconds)> = fallen.iter(world).map(|(id, dead)| (id, dead.at)).collect();
     world.resource_scope(|world, mut rng: Mut<Rng>| {
-        for id in ids {
-            let Some(since) = world.get::<Dead>(id).map(|dead| dead.at) else {
-                continue;
-            };
+        for (id, since) in ids {
             world
                 .resource_mut::<RiftInstances>()
                 .remove_owner(Owner::Entity(RunnerKind::Npc, id));

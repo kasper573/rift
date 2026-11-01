@@ -85,6 +85,7 @@ euclid = { version = "0.22", features = ["serde"] }
 fixedbitset = "0.5"
 oorandom = "11"
 getrandom = "0.4"
+num_cpus = "1"
 rayon.workspace = true
 strum = { workspace = true, features = ["derive"] }
 strsim.workspace = true

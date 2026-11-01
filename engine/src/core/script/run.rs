@@ -195,6 +195,9 @@ struct Flow<V: Vocabulary> {
     box_open: bool,
     /// Picked to run in the batch under way.
     running: bool,
+    /// The flow's own dice, forked from the world's when it started, so its rolls read nothing
+    /// but the flow.
+    dice: Rng,
 }
 
 struct Frame<V: Vocabulary> {
@@ -478,9 +481,10 @@ fn pick_queued<V: Vocabulary>(world: &mut World) -> bool {
                     V::log_dropped_flow(world, &owner, &format!("{MAX_LIVE_FLOWS} live flows"));
                     continue;
                 }
+                let dice = world.resource_mut::<Rng>().fork();
                 any |= world
                     .resource_mut::<Instances<V>>()
-                    .start_flow(owner, procedure, entry, subject, event);
+                    .start_flow(owner, procedure, entry, subject, event, dice);
             }
             Queued::Resume { key, answer } => any |= resume::<V>(world, key, answer),
         }
@@ -508,9 +512,10 @@ fn run_batch<V: Vocabulary>(world: &mut World, clock: TickClock) {
                 .filter_map(|(slot, flow)| Some((slot, &mut **flow.as_mut()?)))
                 .filter(|(_, flow)| flow.running)
                 .collect();
+            let grain = crate::core::par::grain(running.len());
             running
                 .into_par_iter()
-                .with_min_len(crate::core::par::GRAIN)
+                .with_min_len(grain)
                 .map(|(slot, flow)| {
                     let key = FlowKey {
                         owner: flow.owner,
@@ -614,7 +619,28 @@ fn read_ahead<V: Vocabulary>(
         let procedure: &Procedure<V> = &top.procedure;
         let mut looping = Looping::Same;
         let outcome = match procedure.step(node) {
-            Step::Random { .. } | Step::Dialogue { .. } | Step::Effect { .. } => None,
+            Step::Dialogue { .. } => None,
+            Step::Random { weights, outputs } => {
+                let steered = world
+                    .get_resource::<FlowSteering>()
+                    .and_then(|steering| steering.random.get(procedure.name(node)))
+                    .copied()
+                    .filter(|picked| *picked < outputs.len());
+                let picked = steered.unwrap_or_else(|| roll(&mut flow.dice, weights));
+                Some(StepOutcome::Next(outputs[picked]))
+            }
+            Step::Effect {
+                look: Some(look),
+                outputs,
+                ..
+            } => look(world, key, cx_now).map(|answer| {
+                StepOutcome::Next(match answer {
+                    EffectStep::Done => outputs.first().and_then(|(_, to)| *to),
+                    EffectStep::Output(name) => output_to(outputs, name),
+                    EffectStep::Pause => unreachable!("an effect that has nothing to do goes on"),
+                })
+            }),
+            Step::Effect { look: None, .. } => None,
             Step::Set { values, .. }
                 if values
                     .iter()
@@ -784,6 +810,29 @@ enum Looping {
     Done,
 }
 
+/// Which of the outputs the dice pick, each as likely as its weight.
+fn roll(dice: &mut Rng, weights: &[u32]) -> usize {
+    let total: u32 = weights.iter().sum();
+    let rolled = dice.rand_range(0..total);
+    let mut seen = 0;
+    for (index, weight) in weights.iter().enumerate() {
+        seen += weight;
+        if rolled < seen {
+            return index;
+        }
+    }
+    weights.len() - 1
+}
+
+/// Where an effect's named output leads.
+fn output_to(outputs: &[(&'static str, Option<StepIndex>)], name: &str) -> Option<StepIndex> {
+    outputs
+        .iter()
+        .find(|(output, _)| *output == name)
+        .unwrap_or_else(|| panic!("an effect answered {name:?}, not one of its outputs"))
+        .1
+}
+
 /// Leaves the frame that ran out of nodes: back to the start of its loop, or to its caller.
 /// Tells whether the flow goes on.
 fn leave_frame<V: Vocabulary>(flow: &mut Flow<V>) -> bool {
@@ -933,28 +982,6 @@ fn write_step<V: Vocabulary>(
             }
             StepOutcome::Next(*next)
         }
-        Step::Random { weights, outputs } => {
-            let steered = world
-                .get_resource::<FlowSteering>()
-                .and_then(|steering| steering.random.get(procedure.name(node)))
-                .copied()
-                .filter(|picked| *picked < outputs.len());
-            let picked = steered.unwrap_or_else(|| {
-                let total: u32 = weights.iter().sum();
-                let roll = world.resource_mut::<Rng>().rand_range(0..total);
-                let mut seen = 0;
-                let mut picked = outputs.len() - 1;
-                for (index, weight) in weights.iter().enumerate() {
-                    seen += weight;
-                    if roll < seen {
-                        picked = index;
-                        break;
-                    }
-                }
-                picked
-            });
-            StepOutcome::Next(outputs[picked])
-        }
         Step::Dialogue {
             node: dialogue,
             values,
@@ -1039,15 +1066,7 @@ fn write_step<V: Vocabulary>(
             ..
         } => match call(world, key, &mut cx) {
             EffectStep::Done => StepOutcome::Next(outputs.first().and_then(|(_, to)| *to)),
-            EffectStep::Output(name) => StepOutcome::Next(
-                outputs
-                    .iter()
-                    .find(|(output, _)| *output == name)
-                    .unwrap_or_else(|| {
-                        panic!("an effect answered {name:?}, not one of its outputs")
-                    })
-                    .1,
-            ),
+            EffectStep::Output(name) => StepOutcome::Next(output_to(outputs, name)),
             EffectStep::Pause => StepOutcome::Pause(Pause::Effect {
                 keeps_box: *keeps_box,
             }),
@@ -1146,6 +1165,7 @@ impl<V: Vocabulary> Instances<V> {
         entry: StepIndex,
         subject: Option<Entity>,
         event: Vec<Value>,
+        dice: Rng,
     ) -> bool {
         let Some(instance) = self.instances.get_mut(&owner) else {
             return false;
@@ -1173,6 +1193,7 @@ impl<V: Vocabulary> Instances<V> {
             pause: None,
             box_open: false,
             running: true,
+            dice,
         };
         let slot = self.flows.insert(Some(Box::new(flow)));
         self.by_id.insert(id, slot);

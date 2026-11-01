@@ -142,6 +142,7 @@ pub fn area_state(world: &mut World, content: &Content) {
     world.init_resource::<dialogue::StepCounter>();
     world.init_resource::<visibility::Sights>();
     world.init_resource::<crate::core::chunk::ChunkIndex>();
+    world.init_resource::<npc::Packs>();
     world.insert_resource(sleep::Sleep::of(content));
     MessageRegistry::register_message::<combat::Died>(world);
     MessageRegistry::register_message::<rewards::KillCredited>(world);

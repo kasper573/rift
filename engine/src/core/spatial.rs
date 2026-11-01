@@ -11,8 +11,9 @@ pub struct SpatialIndex {
     /// Each extent's index under every cell it covers, ordered by cell, row by row, with the first
     /// cell it covers, so a query spanning several of its cells takes it once.
     filed: Vec<(Cell, Cell, u32)>,
-    /// The box around every filed extent, so a query reaching none of them ends at once.
-    bounds: Option<(Pos<Meters>, Pos<Meters>)>,
+    /// The first and last cell any filed extent covers, so a query reaching none of them ends at
+    /// once.
+    bounds: Option<(Cell, Cell)>,
 }
 
 type Cell = (i32, i32);
@@ -26,31 +27,51 @@ impl SpatialIndex {
         }
     }
 
-    /// Files `extents` anew, each by its place among them. A spot is an extent of no size.
+    /// Files `extents` anew, each by its place among them.
     pub fn refile(&mut self, extents: impl IntoIterator<Item = Rect<Meters>>) {
         self.filed.clear();
         self.bounds = None;
         let cell = self.cell;
         for (index, extent) in extents.into_iter().enumerate() {
-            let (min, max) = (extent.min(), extent.max());
-            let (first, last) = (cell_of(cell, min), cell_of(cell, max));
+            let (first, last) = (cell_of(cell, extent.min()), cell_of(cell, extent.max()));
             for row in first.0..=last.0 {
                 for column in first.1..=last.1 {
                     self.filed.push(((row, column), first, index as u32));
                 }
             }
-            self.bounds = Some(match self.bounds {
-                None => (min, max),
-                Some((low, high)) => (
-                    Pos::new(low.x.min(min.x), low.y.min(min.y)),
-                    Pos::new(high.x.max(max.x), high.y.max(max.y)),
-                ),
-            });
+            self.widen(first, last);
         }
-        let Some((min, max)) = self.bounds else {
+        self.sort_filed();
+    }
+
+    /// Files `spots` anew, each by its place among them: extents of no size, each under one cell.
+    pub fn refile_spots(&mut self, spots: impl IntoIterator<Item = Pos<Meters>>) {
+        self.filed.clear();
+        self.bounds = None;
+        let cell = self.cell;
+        for (index, spot) in spots.into_iter().enumerate() {
+            let at = cell_of(cell, spot);
+            self.filed.push((at, at, index as u32));
+            self.widen(at, at);
+        }
+        self.sort_filed();
+    }
+
+    fn widen(&mut self, first: Cell, last: Cell) {
+        self.bounds = Some(match self.bounds {
+            None => (first, last),
+            Some((low, high)) => (
+                (low.0.min(first.0), low.1.min(first.1)),
+                (high.0.max(last.0), high.1.max(last.1)),
+            ),
+        });
+    }
+
+    /// Orders what is filed by cell, row by row, with a counting sort over the cells in bounds.
+    fn sort_filed(&mut self) {
+        let Some((first, last)) = self.bounds else {
             return;
         };
-        let (first, last) = (cell_of(cell, min), cell_of(cell, max));
         let columns = (last.1 - first.1 + 1) as usize;
         let cells = (last.0 - first.0 + 1) as usize * columns;
         let slot = |cell: Cell| (cell.0 - first.0) as usize * columns + (cell.1 - first.1) as usize;
@@ -80,16 +101,12 @@ impl SpatialIndex {
     /// The indices of the extents that may reach into `reach`, each once, in no particular order:
     /// every one that does, and some a little outside it.
     pub fn within(&self, reach: Rect<Meters>) -> impl Iterator<Item = usize> + '_ {
+        let low = cell_of(self.cell, reach.min());
+        let high = cell_of(self.cell, reach.max());
         let (low, high, rows) = match self.bounds {
-            Some((min, max))
-                if reach.max().x >= min.x
-                    && reach.min().x <= max.x
-                    && reach.max().y >= min.y
-                    && reach.min().y <= max.y =>
+            Some((first, last))
+                if high.0 >= first.0 && low.0 <= last.0 && high.1 >= first.1 && low.1 <= last.1 =>
             {
-                let (first, last) = (cell_of(self.cell, min), cell_of(self.cell, max));
-                let low = cell_of(self.cell, reach.min());
-                let high = cell_of(self.cell, reach.max());
                 let low = (low.0.max(first.0), low.1.max(first.1));
                 let high = (high.0.min(last.0), high.1.min(last.1));
                 (low, high, low.0..=high.0)

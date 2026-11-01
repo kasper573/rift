@@ -40,8 +40,10 @@ pub fn drop(world: &mut World, actor: Entity, source: AspectSource) {
     }
 }
 
-pub fn modifiers(world: &World, entity: Entity, into: &mut Vec<Stat>) {
+pub fn modifiers(world: &World, entity: Entity, into: &mut dyn FnMut(Stat)) {
     if let Some(boosts) = world.get::<Boosts>(entity) {
-        into.extend(boosts.0.iter().map(|boost| boost.stat));
+        for boost in &boosts.0 {
+            into(boost.stat);
+        }
     }
 }

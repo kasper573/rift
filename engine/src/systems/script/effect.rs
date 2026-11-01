@@ -25,7 +25,7 @@ use crate::systems::npc::summon::{Despawn, SetAttitude, SpawnNpcs};
 use crate::systems::quest::effects::{
     AcceptQuest, CompleteTask, Decide, FailQuest, OfferQuest, TurnIn,
 };
-use crate::systems::script::{EffectCall, RunnerKind};
+use crate::systems::script::{EffectCall, EffectLook, RunnerKind};
 use crate::systems::shop::OpenShop;
 use crate::systems::skill::{ResetSkills, UseSkill};
 use crate::systems::status::{ApplyStatus, Boost, RemoveStatus};
@@ -65,6 +65,9 @@ macro_rules! effects {
             }
             fn compile<'c>(&'c self, cx: &mut Compiler<'c, RiftScripting>) -> Result<EffectCall, ScriptFault> {
                 match self { $(RiftEffect::$variant(e) => e.compile(cx),)* }
+            }
+            fn look<'c>(&'c self, cx: &mut Compiler<'c, RiftScripting>) -> Result<Option<EffectLook>, ScriptFault> {
+                match self { $(RiftEffect::$variant(e) => e.look(cx),)* }
             }
             fn reach(&self, cx: &Compiler<RiftScripting>) -> Vec<Reach> {
                 match self { $(RiftEffect::$variant(e) => e.reach(cx),)* }

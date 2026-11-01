@@ -193,10 +193,13 @@ pub fn inflict(world: &mut World, target: Entity, attacker: Option<Entity>, dama
 
 /// The one place a fallen actor is declared dead. Every health change lands before this runs, so
 /// however health reached zero, the death is recorded and announced exactly once.
-pub fn defeats(world: &mut World) {
+/// Whoever's stats just left them no health falls: an entity falls only as its stats change.
+pub type Standing =
+    QueryState<(Entity, &'static Stats), (Changed<Stats>, Without<Dead>, Without<Ghost>)>;
+
+pub fn defeats(world: &mut World, standing: &mut Standing) {
     let time = Seconds(world.resource::<Time>().elapsed_secs());
-    let fallen: Vec<Entity> = world
-        .query_filtered::<(Entity, &Stats), (Without<Dead>, Without<Ghost>)>()
+    let fallen: Vec<Entity> = standing
         .iter(world)
         .filter(|(_, stats)| stat::dead(stats))
         .map(|(entity, _)| entity)

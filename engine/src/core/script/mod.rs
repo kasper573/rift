@@ -6,7 +6,9 @@ pub mod node;
 pub mod run;
 pub mod value;
 
-pub use compile::{Compiler, EffectCall, EffectStep, Eval, OwnerRow, Procedure, Scripts, Step};
+pub use compile::{
+    Compiler, EffectCall, EffectLook, EffectStep, Eval, OwnerRow, Procedure, Scripts, Step,
+};
 pub use dialogue::{Choice, ChoiceOffer, DialogueNode, DialogueView, check_reveals_unique};
 pub use expr::{Expr, ExprKind};
 pub use may_do::MayDo;
@@ -185,6 +187,12 @@ pub trait EffectDef<V: Vocabulary> {
         false
     }
     fn compile<'c>(&'c self, cx: &mut Compiler<'c, V>) -> Result<EffectCall<V>, ScriptFault>;
+    /// A look telling, from the world alone, what the effect answers when it has nothing to do:
+    /// a flow reads through such an effect as through any step that only reads, on every core.
+    /// An effect that always acts has no look.
+    fn look<'c>(&'c self, _cx: &mut Compiler<'c, V>) -> Result<Option<EffectLook<V>>, ScriptFault> {
+        Ok(None)
+    }
     fn reach(&self, cx: &Compiler<V>) -> Vec<V::Reach>;
 }
 

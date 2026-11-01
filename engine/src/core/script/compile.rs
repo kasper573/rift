@@ -24,6 +24,11 @@ pub type Eval = Box<dyn Fn(&World, &FlowCx) -> Value + Send + Sync>;
 pub type EffectCall<V> =
     Box<dyn Fn(&mut World, FlowKey<V>, &mut FlowCx) -> EffectStep + Send + Sync>;
 
+/// A look at the world telling what an effect answers when it has nothing to do there, or `None`
+/// when it must act.
+pub type EffectLook<V> =
+    Box<dyn Fn(&World, FlowKey<V>, &FlowCx) -> Option<EffectStep> + Send + Sync>;
+
 pub enum EffectStep {
     /// Along the effect's first output: its way on when all went as planned.
     Done,
@@ -132,6 +137,7 @@ pub enum Step<V: Vocabulary> {
     Effect {
         def: V::Effect,
         call: EffectCall<V>,
+        look: Option<EffectLook<V>>,
         outputs: Vec<(&'static str, Option<StepIndex>)>,
         pauses: bool,
         keeps_box: bool,
@@ -844,6 +850,9 @@ fn compile_source<'c, V: Vocabulary>(
                 let call = effect
                     .compile(&mut cx)
                     .map_err(|fault| node_fail(fault.rule, fault.expected))?;
+                let look = effect
+                    .look(&mut cx)
+                    .map_err(|fault| node_fail(fault.rule, fault.expected))?;
                 needs_subject[index] |= effect.needs_subject() || cx.subject_read;
                 may_do.reaches.extend(effect.reach(&cx));
                 let outputs = effect
@@ -862,6 +871,7 @@ fn compile_source<'c, V: Vocabulary>(
                 Step::Effect {
                     def: effect.clone(),
                     call,
+                    look,
                     outputs,
                     pauses: effect.pauses(),
                     keeps_box: effect.keeps_box(),

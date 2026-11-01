@@ -49,6 +49,7 @@ fn main() {
         println!("{}", build_info_line());
         return;
     }
+    engine::core::par::start();
     let launch = LaunchSettings::of_this_binary();
     let mut config: ServerConfig = launch.get(SERVER_ENV_PREFIX);
     config.content_dir = launch.path(&config.content_dir);
