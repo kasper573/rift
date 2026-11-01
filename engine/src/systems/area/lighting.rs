@@ -13,7 +13,9 @@ use crate::core::vfx::shader::Stage;
 use crate::core::vfx::{ParamValue, VfxShaderId};
 use crate::systems::area::AreaDef;
 
-/// How many point lights an area holds at most: what a browser's forward renderer lights in one pass.
+/// How many point lights a tile of ground holds at most: the view takes in a few tiles, and the
+/// renderer lights every fragment by all the lights clustered over it, so a scene stays cheap while
+/// each tile holds few.
 pub const MAX_LIGHTS: usize = 8;
 
 /// The light an area stands in: a sun, if it is outside, standing where it stands at noon, which

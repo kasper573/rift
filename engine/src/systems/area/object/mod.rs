@@ -8,11 +8,13 @@ use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 
 use crate::core::content::Content;
+use crate::core::ground::TileAt;
 use crate::core::math::{Offset, Pos, Rect, Size};
 use crate::core::par;
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::Meters;
 use crate::systems::actor::Name as ActorName;
+use crate::systems::area::AreaModule;
 use crate::systems::area::PropId;
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::interact::Interactive;
@@ -213,17 +215,22 @@ pub struct Underfoot {
     standing: Vec<Entity>,
 }
 
-pub fn spawn_all(world: &mut World) {
+/// Spawns the objects placed on the tile at `tile` in this world's cell.
+pub fn spawn_in(world: &mut World, tile: TileAt) {
     let zone = world.resource::<WorldArea>().0;
     let content = world.resource::<Content>().clone();
     let scripts = world.resource::<script::RiftScripts>().clone();
     let mine = world.resource::<WorldCell>().0;
     let cells = area::cells(&content, zone);
-    for (index, object) in area::objects(area::placed(&content, zone)) {
+    let placed = area::placed(&content, zone);
+    for index in area::load(&content, zone).modules_in(tile) {
+        let AreaModule::Object(object) = &placed[*index as usize].module else {
+            continue;
+        };
         if cells.at(object.shape.center()) != mine {
             continue;
         }
-        let index = index as usize;
+        let index = *index as usize;
         let owner_row = OwnerRow::of_object(zone, index as u32);
         let procedures = scripts.of(owner_row).to_vec();
         let may_do = scripts.may_do(owner_row);

@@ -1,5 +1,5 @@
 use engine::core::content::{Content, LoadReport, write};
-use engine::core::ground::{self as ground, GroundSize, Heightfield, Paint};
+use engine::core::ground::{self as ground, GroundSize, Heightfield, MIN_SIDE, Paint, TileAt};
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::units::{GROUND_ORIGIN, Meters};
 use engine::core::vfx::shader::Stage;
@@ -9,6 +9,14 @@ use serde_json::{Value, json};
 use testkit::{Game, Map, path};
 
 use crate::support::game;
+
+/// The one tile of a ground up to a tile wide, as its file holds it.
+fn tile(heights: &Heightfield) -> Vec<u8> {
+    heights
+        .encode_tile(TileAt { column: 0, row: 0 })
+        .expect("heights that aren't flat")
+        .to_vec()
+}
 
 /// Eight metres square, flat in the west, rising half a metre per metre through the middle and
 /// two metres per metre in the east.
@@ -37,7 +45,8 @@ fn the_ground_walks_where_it_is_flat_enough_and_painted_walkable() {
     ]);
     let content = game()
         .area("hill", &map, json!([]))
-        .part("area", "hill", "height.png", hill().encode())
+        .part("area", "hill", "height/0_0.png", tile(&hill()))
+        .part("area", "hill", "height_overview.png", overview(&hill()))
         .load();
     let hill = area::load(&content, area_id(&content, "hill"));
     let walks = |x: f32, y: f32| hill.mesh().walkable(Pos::new(x, y));
@@ -99,7 +108,8 @@ fn a_prop_stands_on_the_ground_under_it_sunk_as_deep_as_it_is_placed() {
                 { "type": "prop", "prop": path("prop", "boulder"), "at": { "x": 7.0, "y": 3.0 }, "sunk": 1.5 },
             ]),
         )
-        .part("area", "hill", "height.png", hill().encode())
+        .part("area", "hill", "height/0_0.png", tile(&hill()))
+        .part("area", "hill", "height_overview.png", overview(&hill()))
         .load();
     let hill_area = area::load(&content, area_id(&content, "hill"));
 
@@ -220,26 +230,117 @@ fn an_areas_heights_and_paint_write_back_as_they_were_read() {
     let paint = Paint::from_fn(size, |column, row| u8::from(column < 4 && row < 4));
     let game = game()
         .area("hill", &Map::open(8, 8), json!([]))
-        .part("area", "hill", "height.png", hill().encode())
-        .part("area", "hill", "paint.png", paint.encode());
+        .part("area", "hill", "height/0_0.png", tile(&hill()))
+        .part("area", "hill", "paint/0_0.png", tile_paint(&paint))
+        .part("area", "hill", "height_overview.png", overview(&hill()))
+        .part("area", "hill", "paint_overview.png", overview_paint(&paint));
     let out = tempfile::tempdir().expect("a folder");
 
     write(game.registry(), game.load(), out.path()).expect("written");
 
     let hill_area = out.path().join(path("area", "hill"));
     assert_eq!(
-        std::fs::read(hill_area.join("height.png")).expect("the heights"),
-        hill().encode()
+        std::fs::read(hill_area.join("height/0_0.png")).expect("the heights"),
+        tile(&hill())
     );
     assert_eq!(
-        std::fs::read(hill_area.join("paint.png")).expect("the paint"),
-        paint.encode()
+        std::fs::read(hill_area.join("paint/0_0.png")).expect("the paint"),
+        tile_paint(&paint)
+    );
+    assert_eq!(
+        std::fs::read(hill_area.join("height_overview.png")).expect("the height overview"),
+        overview(&hill())
+    );
+    assert_eq!(
+        std::fs::read(hill_area.join("paint_overview.png")).expect("the paint overview"),
+        overview_paint(&paint)
     );
     let start = out.path().join(path("area", "start"));
     assert!(
-        !start.join("height.png").exists(),
-        "a flat area keeps no height file"
+        !start.join("height").exists() && !start.join("height_overview.png").exists(),
+        "a flat area keeps no height tiles and no overview"
     );
+    let played = crate::support::game()
+        .area(
+            "meadow",
+            &Map::open(MIN_SIDE as usize, MIN_SIDE as usize),
+            json!([]),
+        )
+        .load_to_play();
+    let flat = area::load(&played, area_id(&played, "meadow"));
+    assert!(
+        flat.heights
+            .size()
+            .each_tile()
+            .all(|at| flat.heights.is_loaded(at) && flat.paint.is_loaded(at)),
+        "a flat area's ground is loaded at once, with nothing to read"
+    );
+
+    // A ground wider than a tile is held tile by tile, the seams shared, and reads back whole.
+    let wide = GroundSize {
+        width: 300,
+        height: 20,
+    };
+    let mut ridge = Heightfield::flat(wide);
+    for column in 0..=wide.width * ground::SAMPLES_PER_METER {
+        for row in 0..=wide.height * ground::SAMPLES_PER_METER {
+            ridge.set_sample(column, row, Meters((column % 7) as f32 * 0.25));
+        }
+    }
+    let striped = Paint::from_fn(wide, |column, _| (column / 100 % 2) as u8);
+    let ridge_game = wide.each_tile().fold(
+        crate::support::game()
+            .area("ridge", &Map::open(300, 20), json!([]))
+            .part("area", "ridge", "height_overview.png", overview(&ridge))
+            .part(
+                "area",
+                "ridge",
+                "paint_overview.png",
+                overview_paint(&striped),
+            ),
+        |game, at| {
+            let game = match ridge.encode_tile(at) {
+                Some(bytes) => game.part(
+                    "area",
+                    "ridge",
+                    &format!("height/{}.png", at.key()),
+                    bytes.to_vec(),
+                ),
+                None => game,
+            };
+            match striped.encode_tile(at) {
+                Some(bytes) => game.part(
+                    "area",
+                    "ridge",
+                    &format!("paint/{}.png", at.key()),
+                    bytes.to_vec(),
+                ),
+                None => game,
+            }
+        },
+    );
+    let content = ridge_game.load();
+    let read = area::load(&content, area_id(&content, "ridge"));
+    assert_eq!(wide.tiles(), (2, 1));
+    assert_eq!(read.heights, ridge);
+    assert_eq!(read.paint, striped);
+    let seam = Pos::new(255.5, 3.0);
+    assert_eq!(read.heights.height_at(seam), ridge.height_at(seam));
+}
+
+fn tile_paint(paint: &Paint) -> Vec<u8> {
+    paint
+        .encode_tile(TileAt { column: 0, row: 0 })
+        .expect("paint that isn't plain")
+        .to_vec()
+}
+
+fn overview(heights: &Heightfield) -> Vec<u8> {
+    heights.encode_overview().expect("heights that aren't flat")
+}
+
+fn overview_paint(paint: &Paint) -> Vec<u8> {
+    paint.encode_overview().expect("paint that isn't plain")
 }
 
 #[test]

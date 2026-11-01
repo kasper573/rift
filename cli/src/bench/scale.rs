@@ -212,9 +212,7 @@ fn served_in(
     let before = heap();
     let mut bench = Bench::with_players_in(areas, players, Layout::Distributed, content, awake);
     bench.connect();
-    for _ in 0..sim::WARMUP {
-        step(&mut bench, cores);
-    }
+    sim::warm_up(&mut bench, |bench| step(bench, cores));
     let held = Bytes(heap().0.saturating_sub(before.0));
     let started = Instant::now();
     for _ in 0..ticks {

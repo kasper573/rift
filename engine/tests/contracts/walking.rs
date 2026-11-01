@@ -159,9 +159,10 @@ fn a_walk_over_open_ground_keeps_to_the_straight_line() {
 }
 
 /// A ground far wider than a field walks as one: a walk across it is the straight line where
-/// nothing blocks, and goes round a boulder wherever on it one stands.
+/// nothing blocks, goes round a boulder wherever on it one stands, and round a rock by its end
+/// wherever the rock lies, even straddling a seam of the ground unevenly.
 #[test]
-fn a_wide_ground_walks_as_one_wherever_a_boulder_stands() {
+fn a_wide_ground_walks_as_one_wherever_a_boulder_or_a_rock_stands() {
     const GIVE: f32 = AGENT_RADIUS.0 / 10.0;
     let wide = || Map::open(500, 250);
     for end in [Offset::new(480.0, 0.0), Offset::new(480.0, 230.0)] {
@@ -208,6 +209,34 @@ fn a_wide_ground_walks_as_one_wherever_a_boulder_stands() {
         closest >= Meters(1.0 + AGENT_RADIUS.0 - GIVE),
         "came within {closest:?} of a boulder's middle"
     );
+
+    let rock = |x: usize, y: usize| {
+        (100..120).contains(&y) && (250..262).contains(&x)
+            || (120..140).contains(&y) && (256..262).contains(&x)
+    };
+    let rows: Vec<String> = (0..250)
+        .map(|y| {
+            (0..500)
+                .map(|x| if rock(x, y) { '#' } else { '.' })
+                .collect()
+        })
+        .collect();
+    let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
+    let end = Offset::new(32.0, 0.0);
+    let past_the_rock = Walk::on(
+        Game::new()
+            .area("field", &Map::of(&rows), json!([]))
+            .hero("field", 240.0, 130.0),
+    )
+    .toward(end)
+    .trail_to_rest();
+    assert_arrives(&past_the_rock, end, "round the rock");
+    for at in &past_the_rock {
+        assert!(
+            at.y >= -GIVE && at.y <= 10.0 + AGENT_RADIUS.0 + GIVE,
+            "{at:?} goes round the rock the long way"
+        );
+    }
 }
 
 /// A walk keeps a body out of what blocks, give or take a tenth of its radius, and through a

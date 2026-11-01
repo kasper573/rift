@@ -12,6 +12,7 @@ use engine::systems::interact::{self, InteractRequest};
 use engine::systems::memory::{self, MemoryDef};
 use engine::systems::movement::{self, MoveRequest, MoveSeq, moving, position};
 use engine::systems::player::commands_locked;
+use engine::systems::region;
 use engine::systems::script::{self, EventKind, RiftInstances};
 use engine::systems::stat::{self, Immortal, StatKind};
 use engine::systems::{combat, npc};
@@ -345,7 +346,7 @@ fn inn() -> Sim {
             movement::file_by_chunk,
         ));
     script::spawn_stateless(&mut sim.world);
-    npc::spawn_all(&mut sim.world);
+    region::reach_all(&mut sim.world);
     sim
 }
 

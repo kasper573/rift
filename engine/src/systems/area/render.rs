@@ -11,7 +11,6 @@ use crate::core::math::{Pos, Rect};
 use crate::core::render::camera::Zoom;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::sky::Daylight;
-use crate::core::render::world::terrain;
 use crate::core::render::{GroundHeights, WorldCamera, ground_height, world_point};
 use crate::core::units::{MeterSize, Meters};
 use crate::core::vfx::render::SiteExtent;
@@ -77,13 +76,9 @@ fn show_area(world: &mut World) {
     tear_down(world);
     let content = world.resource::<Content>().clone();
     let area = super::shared(&content, area_id).clone();
-    let image = world
-        .resource_mut::<Assets<Image>>()
-        .add(terrain::height_image(&area.heights));
     world.insert_resource(GroundHeights {
         heights: area.heights.clone(),
         bounds: area.size.bounds(),
-        image,
     });
     world.insert_resource(scenery::grade(&area.lighting));
     world.insert_resource(scenery::climate(&area));
@@ -120,7 +115,7 @@ fn follow_view(world: &mut World) {
 
 /// How far around the character the covers, props and lights stand: the ground the camera takes
 /// in from its widest, and as far again for what the frame's edge fades.
-fn view_reach() -> Meters {
+pub fn view_reach() -> Meters {
     Meters(Zoom::Wide.distance().0 * 4.0)
 }
 

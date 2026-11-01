@@ -11,6 +11,7 @@ use engine::systems::movement::{self, MoveRequest, MoveSeq, Position, moving, po
 use engine::systems::player::{
     self, ARRIVAL_PATIENCE, AreaDrawn, JoinRequest, Xp, commands_locked,
 };
+use engine::systems::region;
 use engine::systems::script::{self, Place};
 use engine::systems::{npc, stat};
 use serde_json::{Value, json};
@@ -292,8 +293,7 @@ fn harbour() -> Sim {
         ))
         .add(stat::settle_health);
     script::spawn_stateless(&mut sim.world);
-    npc::spawn_all(&mut sim.world);
-    area::object::spawn_all(&mut sim.world);
+    region::reach_all(&mut sim.world);
     sim
 }
 

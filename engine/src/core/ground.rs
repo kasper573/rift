@@ -1,30 +1,47 @@
 //! The grids an area's ground is made of: its size in whole metres, the height of the ground at
-//! every half metre, and which terrain paints it there. The renderer samples them, the loader
-//! checks them, and the server reads slopes and blocking paint from them.
+//! every half metre, and which terrain paints it there. Both grids are cut into tiles, each a file
+//! of the area's bundle and, once loaded, a block of memory everyone holding the ground shares, so
+//! an area of any size is read, written, copied and reshaped tile by tile and holds only the tiles
+//! someone has come to. A coarse overview of the whole ground, a file of its own, answers for the
+//! tiles not loaded. The renderer samples them, the loader checks them, and the server reads slopes
+//! and blocking paint from them.
 
 use std::io::Cursor;
+use std::sync::{Arc, RwLock};
 
+use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::content::{ContentProblem, RowCheck};
+use crate::core::chunk::CHUNK_SIDE;
+use crate::core::content::{ContentProblem, RowCheck, StoredPart};
 use crate::core::geometry::Degrees;
 use crate::core::math::{Pos, Rect, Size};
-use crate::core::units::{CellPos, GROUND_ORIGIN, GridSize, MeterSize, Meters};
+use crate::core::units::{CellPos, GROUND_ORIGIN, GridDims, GridSize, MeterSize, Meters};
 
-/// The ground is held whole, its height and paint maps with it, so an area spans at most this.
-pub const MAX_SIDE: u32 = 4096;
+/// Positions on the ground are `f32` metres snapped to sixteenths, which stay exact up to here.
+pub const MAX_SIDE: u32 = 1 << 20;
 pub const MIN_SIDE: u32 = 8;
-pub const MAX_CELLS: u32 = MAX_SIDE * MAX_SIDE;
 /// The terrains one area's paint can name: a byte per half metre.
 pub const MAX_TERRAINS: usize = 256;
 pub const SAMPLES_PER_METER: u32 = 2;
-/// The heights a sample can hold, the two ends of its 16 bits.
+/// The heights a sample can hold, the two ends of its 16 bits; ground level lies on a step of
+/// its own, so flat ground stands at exactly nothing.
 pub const LOWEST: Meters = Meters(-8.0);
 pub const HIGHEST: Meters = Meters(16.0);
+/// The ground is cut into tiles this wide, a whole number of chunks, each a file of its own.
+pub const TILE_CHUNKS: u32 = 8;
+pub const TILE_SIDE: Meters = Meters(CHUNK_SIDE.0 * TILE_CHUNKS as f32);
+/// The overview keeps every this-many-th value of the ground each way: what answers for a tile
+/// not loaded.
+pub const OVERVIEW_STRIDE: u32 = 8;
+
+const TILE_PIXELS: u32 = TILE_SIDE.0 as u32 * SAMPLES_PER_METER;
+const STEP: f32 = (HIGHEST.0 - LOWEST.0) / u16::MAX as f32;
+const GROUND_LEVEL: u16 = (-LOWEST.0 / STEP) as u16;
 
 /// A stretch of ground in whole metres, as an area's and a blueprint's canvas are measured.
-#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(JsonSchema, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GroundSize {
     pub width: u32,
@@ -60,6 +77,40 @@ impl GroundSize {
         )
     }
 
+    /// Tiles across and down, the last ones cut to the edge.
+    pub fn tiles(self) -> (u32, u32) {
+        let (columns, rows) = self.paint_pixels();
+        (
+            columns.div_ceil(TILE_PIXELS).max(1),
+            rows.div_ceil(TILE_PIXELS).max(1),
+        )
+    }
+
+    /// Every tile of the ground, row by row.
+    pub fn each_tile(self) -> impl Iterator<Item = TileAt> {
+        let (across, down) = self.tiles();
+        (0..down).flat_map(move |row| (0..across).map(move |column| TileAt { column, row }))
+    }
+
+    /// The tile under `at`, the nearest one past the edge.
+    pub fn tile_at(self, at: Pos<Meters>) -> TileAt {
+        let (across, down) = self.tiles();
+        let along = |value: f32, origin: f32| ((value - origin) / TILE_SIDE.0).floor().max(0.0);
+        TileAt {
+            column: (along(at.x, GROUND_ORIGIN.x) as u32).min(across - 1),
+            row: (along(at.y, GROUND_ORIGIN.y) as u32).min(down - 1),
+        }
+    }
+
+    /// Every tile holding any ground of `rect`, row by row.
+    pub fn tiles_within(self, rect: Rect<Meters>) -> impl Iterator<Item = TileAt> {
+        let low = self.tile_at(rect.origin);
+        let high = self.tile_at(Pos::new(rect.max_x(), rect.max_y()));
+        (low.row..=high.row).flat_map(move |row| {
+            (low.column..=high.column).map(move |column| TileAt { column, row })
+        })
+    }
+
     pub fn check(self, pointer: &str, min_side: u32, cx: &mut RowCheck) {
         cx.range(
             format!("{pointer}/width"),
@@ -75,110 +126,150 @@ impl GroundSize {
             MAX_SIDE,
             "m",
         );
-        if self.width.saturating_mul(self.height) > MAX_CELLS {
-            cx.error(
-                pointer,
-                "out of range",
-                format!("{} m²", self.width * self.height),
-                format!("at most {MAX_CELLS} m²"),
-            );
-        }
     }
 }
 
-/// The height of the ground at every half metre of an area, as its `height.png` holds it:
-/// 16-bit grey from [`LOWEST`] to [`HIGHEST`]. Sample `(2x, 2y)` is the height at the centre of the
-/// metre cell `(x, y)`.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Heightfield {
-    columns: u32,
-    rows: u32,
-    heights: Vec<Meters>,
+/// One tile of the ground, counted from its corner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct TileAt {
+    pub column: u32,
+    pub row: u32,
+}
+
+impl TileAt {
+    /// The tile's name in its folder of parts, `<column>_<row>`.
+    pub fn key(self) -> String {
+        format!("{}_{}", self.column, self.row)
+    }
+
+    pub fn from_key(key: &str) -> Option<TileAt> {
+        let (column, row) = key.split_once('_')?;
+        Some(TileAt {
+            column: plain_number(column)?,
+            row: plain_number(row)?,
+        })
+    }
+
+    /// The ground the tile covers, cut to a ground of `size`.
+    pub fn rect(self, size: GroundSize) -> Rect<Meters> {
+        let origin = Pos::new(
+            GROUND_ORIGIN.x + self.column as f32 * TILE_SIDE.0,
+            GROUND_ORIGIN.y + self.row as f32 * TILE_SIDE.0,
+        );
+        let bounds = size.bounds();
+        Rect::new(
+            origin,
+            Size::new(
+                TILE_SIDE.0.min(bounds.max_x() - origin.x).max(0.0),
+                TILE_SIDE.0.min(bounds.max_y() - origin.y).max(0.0),
+            ),
+        )
+    }
+}
+
+fn plain_number(text: &str) -> Option<u32> {
+    let plain = text == "0" || (!text.starts_with('0') && !text.is_empty());
+    (plain && text.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| text.parse().ok())
+        .flatten()
+}
+
+/// The height of the ground at every half metre of an area, as its `height/` tiles hold it:
+/// 16-bit grey from [`LOWEST`] to [`HIGHEST`]. Sample `(2x, 2y)` is the height at the centre of
+/// the metre cell `(x, y)`. Tiles share the samples on their seams.
+#[derive(Clone, Debug, Default)]
+pub struct Heightfield(Tiled<u16>);
+
+/// Which terrain paints every half metre of an area, as its `paint/` tiles hold it: a byte per
+/// pixel, the index of the terrain in the area's list.
+#[derive(Clone, Debug, Default)]
+pub struct Paint(Tiled<u8>);
+
+/// A terrain and how much of a point it covers, as the paint around the point blends.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Share {
+    pub terrain: u8,
+    pub weight: f32,
 }
 
 impl Heightfield {
     pub fn flat(size: GroundSize) -> Heightfield {
-        let (columns, rows) = size.samples();
-        Heightfield {
-            columns,
-            rows,
-            heights: vec![Meters(0.0); (columns * rows) as usize],
-        }
+        Heightfield(Tiled::blank(TileGrid::samples(size)))
     }
 
     /// A heightfield of `size` whose sample `(column, row)` is `height(column, row)`.
-    pub fn from_fn(size: GroundSize, height: impl Fn(u32, u32) -> Meters) -> Heightfield {
-        let (columns, rows) = size.samples();
-        let heights = (0..rows)
-            .flat_map(|row| (0..columns).map(move |column| (column, row)))
-            .map(|(column, row)| height(column, row))
-            .collect();
-        Heightfield {
-            columns,
-            rows,
-            heights,
-        }
+    pub fn from_fn(size: GroundSize, height: impl Fn(u32, u32) -> Meters + Sync) -> Heightfield {
+        Heightfield(Tiled::filled(TileGrid::samples(size), |column, row| {
+            level_of(height(column, row))
+        }))
     }
 
-    pub fn decode(size: GroundSize, bytes: &[u8]) -> Result<Heightfield, ContentProblem> {
-        let (columns, rows) = size.samples();
-        let picture = Picture::decode(bytes, columns, rows, Channels::Grey16)?;
-        let heights = picture
-            .bytes
-            .as_chunks::<2>()
-            .0
-            .iter()
-            .map(|pair| {
-                let level = u16::from_be_bytes(*pair) as f32 / u16::MAX as f32;
-                Meters(LOWEST.0 + level * (HIGHEST.0 - LOWEST.0))
-            })
-            .collect();
-        Ok(Heightfield {
-            columns,
-            rows,
-            heights,
-        })
+    pub fn size(&self) -> GroundSize {
+        self.0.grid.size
     }
 
-    /// Whether every sample sits at ground level, as a terrain without a height part does.
-    pub fn is_flat(&self) -> bool {
-        self.heights.iter().all(|height| height.0 == 0.0)
+    /// Samples across and down.
+    pub fn samples(&self) -> (u32, u32) {
+        (self.0.grid.columns, self.0.grid.rows)
     }
 
-    pub fn encode(&self) -> Vec<u8> {
-        let levels: Vec<u8> = self
-            .heights
-            .iter()
-            .flat_map(|height| {
-                let level = (height.0 - LOWEST.0) / (HIGHEST.0 - LOWEST.0);
-                ((level.clamp(0.0, 1.0) * u16::MAX as f32).round() as u16).to_be_bytes()
-            })
-            .collect();
-        Picture::encode(&levels, self.columns, self.rows, Channels::Grey16)
+    /// Keeps `part` as the tile at `at`, to read when the tile is first loaded.
+    pub fn store(&mut self, at: TileAt, part: StoredPart) {
+        self.0.store(at, part);
+    }
+
+    /// Reads the tile at `at` from its PNG, refusing one that isn't the tile's picture.
+    pub fn decode_tile(&mut self, at: TileAt, bytes: &[u8]) -> Result<(), ContentProblem> {
+        self.0.decode(at, bytes)
+    }
+
+    /// Reads the overview from its PNG, refusing one that isn't the ground's.
+    pub fn decode_overview(&mut self, bytes: &[u8]) -> Result<(), ContentProblem> {
+        self.0.decode_overview(bytes)
+    }
+
+    /// Whether the tile at `at` is loaded, so its samples answer exactly rather than from the
+    /// overview.
+    pub fn is_loaded(&self, at: TileAt) -> bool {
+        self.0.is_loaded(at)
+    }
+
+    /// Loads the tile at `at` from its file, unless it is loaded or has none; refuses a file that
+    /// isn't the tile's picture, leaving the tile as it was.
+    pub fn load(&self, at: TileAt) -> Result<(), ContentProblem> {
+        self.0.load(at)
+    }
+
+    /// Loads every tile, on every core: the problems of the tiles that don't load.
+    pub fn load_all(&self) -> Vec<(TileAt, ContentProblem)> {
+        self.0.load_all()
+    }
+
+    /// The tile at `at` as its PNG, none for a tile at ground level, which no file holds.
+    pub fn encode_tile(&self, at: TileAt) -> Option<Arc<[u8]>> {
+        self.0.encode(at)
+    }
+
+    /// The overview the tiles make as its PNG, none when the ground is flat.
+    pub fn encode_overview(&self) -> Option<Vec<u8>> {
+        self.0.encode_overview()
+    }
+
+    /// Whether the overview read says what the tiles say.
+    pub fn overview_is_current(&self) -> bool {
+        self.0.overview_is_current()
     }
 
     /// This heightfield over a terrain of `size`, kept from the top-left corner: what reaches past
     /// the new edge is cut, and new ground is flat at the old edge's height.
     pub fn resized(&self, size: GroundSize) -> Heightfield {
-        let (columns, rows) = (self.columns, self.rows);
-        Heightfield::from_fn(size, |column, row| {
-            self.sample(column.min(columns - 1), row.min(rows - 1))
-        })
-    }
-
-    /// Samples across and down.
-    pub fn samples(&self) -> (u32, u32) {
-        (self.columns, self.rows)
+        self.load_all();
+        Heightfield::from_fn(size, |column, row| self.sample(column, row))
     }
 
     /// Sets sample `(column, row)` to `height`, kept within the range the file holds.
     pub fn set_sample(&mut self, column: u32, row: u32, height: Meters) {
-        if column < self.columns
-            && row < self.rows
-            && let Some(sample) = self.heights.get_mut((row * self.columns + column) as usize)
-        {
-            *sample = Meters(height.0.clamp(LOWEST.0, HIGHEST.0));
-        }
+        self.0.set(column, row, level_of(height));
     }
 
     /// Where sample `(column, row)` lies on the ground.
@@ -190,13 +281,10 @@ impl Heightfield {
         )
     }
 
+    /// Sample `(column, row)`, the nearest past the edge; the overview's nearest where its tile
+    /// isn't loaded.
     pub fn sample(&self, column: u32, row: u32) -> Meters {
-        let column = column.min(self.columns.saturating_sub(1));
-        let row = row.min(self.rows.saturating_sub(1));
-        self.heights
-            .get((row * self.columns + column) as usize)
-            .copied()
-            .unwrap_or(Meters(0.0))
+        height_of(self.0.get(column, row))
     }
 
     /// The ground's height at `at`, between the samples around it.
@@ -215,98 +303,129 @@ impl Heightfield {
         lerp(top, bottom, v)
     }
 
-    /// The steepest slope between neighbouring samples under the metre cell `cell`.
-    pub fn steepest(&self, cell: CellPos) -> Degrees {
-        let (column, row) = (
-            (cell.x.max(0) as u32) * SAMPLES_PER_METER,
-            (cell.y.max(0) as u32) * SAMPLES_PER_METER,
+    /// The steepest slope between neighbouring samples under each metre cell of the `size` cells
+    /// from `origin`, row by row.
+    pub fn steepest_in(&self, origin: CellPos, size: GridSize) -> Vec<Degrees> {
+        let samples = self.0.window(
+            (origin.x.max(0) as u32) * SAMPLES_PER_METER,
+            (origin.y.max(0) as u32) * SAMPLES_PER_METER,
+            size.width * SAMPLES_PER_METER + 1,
+            size.height * SAMPLES_PER_METER + 1,
         );
         let step = 1.0 / SAMPLES_PER_METER as f32;
-        let mut steepest = 0.0f32;
-        for dy in 0..=SAMPLES_PER_METER {
-            for dx in 0..=SAMPLES_PER_METER {
-                let here = self.sample(column + dx, row + dy);
-                if dx < SAMPLES_PER_METER {
-                    let rise = (self.sample(column + dx + 1, row + dy).0 - here.0).abs();
-                    steepest = steepest.max(rise / step);
+        let height = |column: u32, row: u32| height_of(samples.at(column, row)).0;
+        size.cells()
+            .map(|cell| {
+                let (column, row) = (
+                    cell.x as u32 * SAMPLES_PER_METER,
+                    cell.y as u32 * SAMPLES_PER_METER,
+                );
+                let mut steepest = 0.0f32;
+                for dy in 0..=SAMPLES_PER_METER {
+                    for dx in 0..=SAMPLES_PER_METER {
+                        let here = height(column + dx, row + dy);
+                        if dx < SAMPLES_PER_METER {
+                            let rise = (height(column + dx + 1, row + dy) - here).abs();
+                            steepest = steepest.max(rise / step);
+                        }
+                        if dy < SAMPLES_PER_METER {
+                            let rise = (height(column + dx, row + dy + 1) - here).abs();
+                            steepest = steepest.max(rise / step);
+                        }
+                    }
                 }
-                if dy < SAMPLES_PER_METER {
-                    let rise = (self.sample(column + dx, row + dy + 1).0 - here.0).abs();
-                    steepest = steepest.max(rise / step);
-                }
-            }
-        }
-        Degrees(steepest.atan().to_degrees())
+                Degrees(steepest.atan().to_degrees())
+            })
+            .collect()
     }
 
     fn sample_space(&self, at: Pos<Meters>) -> (f32, f32) {
         let x = ((at.x - GROUND_ORIGIN.x) * SAMPLES_PER_METER as f32)
-            .clamp(0.0, self.columns.saturating_sub(1) as f32);
+            .clamp(0.0, self.0.grid.columns.saturating_sub(1) as f32);
         let y = ((at.y - GROUND_ORIGIN.y) * SAMPLES_PER_METER as f32)
-            .clamp(0.0, self.rows.saturating_sub(1) as f32);
+            .clamp(0.0, self.0.grid.rows.saturating_sub(1) as f32);
         (x, y)
     }
 }
 
-/// Which terrain paints every half metre of an area, as its `paint.png` holds it: a byte per
-/// pixel, the index of the terrain in the area's list.
-#[derive(Clone, Debug, Default, PartialEq)]
-pub struct Paint {
-    columns: u32,
-    rows: u32,
-    indices: Vec<u8>,
-}
-
-/// A terrain and how much of a point it covers, as the paint around the point blends.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Share {
-    pub terrain: u8,
-    pub weight: f32,
+impl PartialEq for Heightfield {
+    fn eq(&self, other: &Heightfield) -> bool {
+        self.0 == other.0
+    }
 }
 
 impl Paint {
     /// All the first terrain.
     pub fn plain(size: GroundSize) -> Paint {
-        Paint::from_fn(size, |_, _| 0)
+        Paint(Tiled::blank(TileGrid::pixels(size)))
     }
 
     /// A paint of `size` whose pixel `(column, row)` is the terrain `index(column, row)`.
-    pub fn from_fn(size: GroundSize, index: impl Fn(u32, u32) -> u8) -> Paint {
-        let (columns, rows) = size.paint_pixels();
-        let indices = (0..rows)
-            .flat_map(|row| (0..columns).map(move |column| (column, row)))
-            .map(|(column, row)| index(column, row))
-            .collect();
-        Paint {
-            columns,
-            rows,
-            indices,
-        }
+    pub fn from_fn(size: GroundSize, index: impl Fn(u32, u32) -> u8 + Sync) -> Paint {
+        Paint(Tiled::filled(TileGrid::pixels(size), index))
     }
 
-    pub fn decode(size: GroundSize, bytes: &[u8]) -> Result<Paint, ContentProblem> {
-        let (columns, rows) = size.paint_pixels();
-        let picture = Picture::decode(bytes, columns, rows, Channels::Grey8)?;
-        Ok(Paint {
-            columns,
-            rows,
-            indices: picture.bytes,
-        })
+    pub fn size(&self) -> GroundSize {
+        self.0.grid.size
     }
 
-    /// Whether every pixel is the first terrain, as a ground without a paint part is.
-    pub fn is_plain(&self) -> bool {
-        self.indices.iter().all(|index| *index == 0)
+    /// Pixels across and down.
+    pub fn pixels(&self) -> (u32, u32) {
+        (self.0.grid.columns, self.0.grid.rows)
     }
 
-    pub fn encode(&self) -> Vec<u8> {
-        Picture::encode(&self.indices, self.columns, self.rows, Channels::Grey8)
+    /// Keeps `part` as the tile at `at`, to read when the tile is first loaded.
+    pub fn store(&mut self, at: TileAt, part: StoredPart) {
+        self.0.store(at, part);
+    }
+
+    /// Reads the tile at `at` from its PNG, refusing one that isn't the tile's picture.
+    pub fn decode_tile(&mut self, at: TileAt, bytes: &[u8]) -> Result<(), ContentProblem> {
+        self.0.decode(at, bytes)
+    }
+
+    /// Reads the overview from its PNG, refusing one that isn't the ground's.
+    pub fn decode_overview(&mut self, bytes: &[u8]) -> Result<(), ContentProblem> {
+        self.0.decode_overview(bytes)
+    }
+
+    /// Whether the tile at `at` is loaded, so its pixels answer exactly rather than from the
+    /// overview.
+    pub fn is_loaded(&self, at: TileAt) -> bool {
+        self.0.is_loaded(at)
+    }
+
+    /// Loads the tile at `at` from its file, unless it is loaded or has none; refuses a file that
+    /// isn't the tile's picture, leaving the tile as it was.
+    pub fn load(&self, at: TileAt) -> Result<(), ContentProblem> {
+        self.0.load(at)
+    }
+
+    /// Loads every tile, on every core: the problems of the tiles that don't load.
+    pub fn load_all(&self) -> Vec<(TileAt, ContentProblem)> {
+        self.0.load_all()
+    }
+
+    /// The tile at `at` as its PNG, none for a tile all of the first terrain, which no file holds.
+    pub fn encode_tile(&self, at: TileAt) -> Option<Arc<[u8]>> {
+        self.0.encode(at)
+    }
+
+    /// The overview the tiles make as its PNG, none when the paint is plain.
+    pub fn encode_overview(&self) -> Option<Vec<u8>> {
+        self.0.encode_overview()
+    }
+
+    /// Whether the overview read says what the tiles say.
+    pub fn overview_is_current(&self) -> bool {
+        self.0.overview_is_current()
     }
 
     /// This paint over a ground of `size`, kept from the top-left corner: what reaches past the
     /// new edge is cut, and new ground is the first terrain.
     pub fn resized(&self, size: GroundSize) -> Paint {
-        let (columns, rows) = (self.columns, self.rows);
+        self.load_all();
+        let (columns, rows) = self.pixels();
         Paint::from_fn(size, |column, row| {
             if column < columns && row < rows {
                 self.index(column, row)
@@ -318,17 +437,7 @@ impl Paint {
 
     /// Paints pixel `(column, row)` with the terrain `index`.
     pub fn set(&mut self, column: u32, row: u32, index: u8) {
-        if column < self.columns
-            && row < self.rows
-            && let Some(pixel) = self.indices.get_mut((row * self.columns + column) as usize)
-        {
-            *pixel = index;
-        }
-    }
-
-    /// Pixels across and down.
-    pub fn pixels(&self) -> (u32, u32) {
-        (self.columns, self.rows)
+        self.0.set(column, row, index);
     }
 
     /// The middle of pixel `(column, row)` on the ground.
@@ -340,14 +449,10 @@ impl Paint {
         )
     }
 
-    /// The terrain painting pixel `(column, row)`; the nearest pixel past the edge.
+    /// The terrain painting pixel `(column, row)`, the nearest pixel past the edge; the
+    /// overview's nearest where its tile isn't loaded.
     pub fn index(&self, column: u32, row: u32) -> u8 {
-        let column = column.min(self.columns.saturating_sub(1));
-        let row = row.min(self.rows.saturating_sub(1));
-        self.indices
-            .get((row * self.columns + column) as usize)
-            .copied()
-            .unwrap_or(0)
+        self.0.get(column, row)
     }
 
     /// The terrain painting the half metre under `at`.
@@ -356,16 +461,24 @@ impl Paint {
         self.index(column, row)
     }
 
-    /// The highest terrain index any pixel names.
+    /// The highest terrain index any pixel names, every tile loaded.
     pub fn highest(&self) -> u8 {
-        self.indices.iter().copied().max().unwrap_or(0)
+        self.used().last().copied().unwrap_or(0)
     }
 
-    /// Every terrain index some pixel names, lowest first.
+    /// Every terrain index some pixel names, lowest first, every tile loaded.
     pub fn used(&self) -> Vec<u8> {
+        self.load_all();
         let mut seen = [false; MAX_TERRAINS];
-        for index in &self.indices {
-            seen[usize::from(*index)] = true;
+        for slot in &self.0.tiles {
+            match slot.tile() {
+                Some(tile) => {
+                    for index in &tile.values {
+                        seen[usize::from(*index)] = true;
+                    }
+                }
+                None => seen[0] = true,
+            }
         }
         (0..MAX_TERRAINS)
             .filter(|index| seen[*index])
@@ -417,22 +530,38 @@ impl Paint {
 
     /// The terrain painting most of the metre cell `cell`; of equals, the first.
     pub fn dominant(&self, cell: CellPos) -> u8 {
-        let (column, row) = (
-            (cell.x.max(0) as u32) * SAMPLES_PER_METER,
-            (cell.y.max(0) as u32) * SAMPLES_PER_METER,
+        self.dominant_in(cell, GridSize::new(1, 1))[0]
+    }
+
+    /// The terrain painting most of each metre cell of the `size` cells from `origin`, row by
+    /// row; of equals, the first.
+    pub fn dominant_in(&self, origin: CellPos, size: GridSize) -> Vec<u8> {
+        let pixels = self.0.window(
+            (origin.x.max(0) as u32) * SAMPLES_PER_METER,
+            (origin.y.max(0) as u32) * SAMPLES_PER_METER,
+            size.width * SAMPLES_PER_METER,
+            size.height * SAMPLES_PER_METER,
         );
-        let mut counts = [0u32; MAX_TERRAINS];
-        for dy in 0..SAMPLES_PER_METER {
-            for dx in 0..SAMPLES_PER_METER {
-                counts[usize::from(self.index(column + dx, row + dy))] += 1;
-            }
-        }
-        counts
-            .iter()
-            .enumerate()
-            .rev()
-            .max_by_key(|(_, count)| **count)
-            .map_or(0, |(index, _)| index as u8)
+        size.cells()
+            .map(|cell| {
+                let (column, row) = (
+                    cell.x as u32 * SAMPLES_PER_METER,
+                    cell.y as u32 * SAMPLES_PER_METER,
+                );
+                let mut counts = [0u32; MAX_TERRAINS];
+                for dy in 0..SAMPLES_PER_METER {
+                    for dx in 0..SAMPLES_PER_METER {
+                        counts[usize::from(pixels.at(column + dx, row + dy))] += 1;
+                    }
+                }
+                counts
+                    .iter()
+                    .enumerate()
+                    .rev()
+                    .max_by_key(|(_, count)| **count)
+                    .map_or(0, |(index, _)| index as u8)
+            })
+            .collect()
     }
 
     /// The pixel under `at`.
@@ -440,9 +569,604 @@ impl Paint {
         let column = ((at.x - GROUND_ORIGIN.x) * SAMPLES_PER_METER as f32).floor();
         let row = ((at.y - GROUND_ORIGIN.y) * SAMPLES_PER_METER as f32).floor();
         (
-            (column.max(0.0) as u32).min(self.columns.saturating_sub(1)),
-            (row.max(0.0) as u32).min(self.rows.saturating_sub(1)),
+            (column.max(0.0) as u32).min(self.0.grid.columns.saturating_sub(1)),
+            (row.max(0.0) as u32).min(self.0.grid.rows.saturating_sub(1)),
         )
+    }
+}
+
+impl PartialEq for Paint {
+    fn eq(&self, other: &Paint) -> bool {
+        self.0 == other.0
+    }
+}
+
+fn level_of(height: Meters) -> u16 {
+    (height.0 / STEP + GROUND_LEVEL as f32)
+        .round()
+        .clamp(0.0, u16::MAX as f32) as u16
+}
+
+fn height_of(level: u16) -> Meters {
+    Meters((level as f32 - GROUND_LEVEL as f32) * STEP)
+}
+
+/// A value of the ground as its files hold it.
+trait Value: Copy + PartialEq + Send + Sync + std::fmt::Debug + 'static {
+    /// What the ground is where no file says otherwise.
+    const BLANK: Self;
+    const CHANNELS: Channels;
+    fn decode(bytes: Vec<u8>) -> Vec<Self>;
+    fn encode(values: &[Self]) -> Vec<u8>;
+}
+
+impl Value for u16 {
+    const BLANK: u16 = GROUND_LEVEL;
+    const CHANNELS: Channels = Channels::Grey16;
+
+    fn decode(bytes: Vec<u8>) -> Vec<u16> {
+        bytes
+            .as_chunks::<2>()
+            .0
+            .iter()
+            .map(|pair| u16::from_be_bytes(*pair))
+            .collect()
+    }
+
+    fn encode(values: &[u16]) -> Vec<u8> {
+        values
+            .iter()
+            .flat_map(|level| level.to_be_bytes())
+            .collect()
+    }
+}
+
+impl Value for u8 {
+    const BLANK: u8 = 0;
+    const CHANNELS: Channels = Channels::Grey8;
+
+    fn decode(bytes: Vec<u8>) -> Vec<u8> {
+        bytes
+    }
+
+    fn encode(values: &[u8]) -> Vec<u8> {
+        values.to_vec()
+    }
+}
+
+/// A grid of values over the ground, held tile by tile with an overview of the whole. Copies
+/// share their tiles, so one copy's loading serves them all, and a copy that sets a value takes a
+/// tile of its own first.
+#[derive(Clone, Debug)]
+struct Tiled<T: Value> {
+    grid: TileGrid,
+    overview: Option<Arc<Tile<T>>>,
+    tiles: Vec<Arc<Slot<T>>>,
+}
+
+impl<T: Value> Default for Tiled<T> {
+    fn default() -> Tiled<T> {
+        Tiled {
+            grid: TileGrid::default(),
+            overview: None,
+            tiles: Vec::new(),
+        }
+    }
+}
+
+/// A window of values read out of the tiles, row by row.
+struct Window<T> {
+    columns: u32,
+    values: Vec<T>,
+}
+
+impl<T: Value> Window<T> {
+    fn at(&self, column: u32, row: u32) -> T {
+        self.values[(row * self.columns + column) as usize]
+    }
+}
+
+/// One tile's values row by row, with the file they came from while they are as it holds them.
+#[derive(Clone, Debug)]
+struct Tile<T> {
+    columns: u32,
+    rows: u32,
+    values: Vec<T>,
+    encoded: Option<Arc<[u8]>>,
+}
+
+/// A tile of the ground as it is held: its values once loaded, else the file to read them from,
+/// or nothing where the ground is blank.
+#[derive(Debug)]
+struct Slot<T> {
+    loaded: RwLock<Option<Arc<Tile<T>>>>,
+    stored: Option<StoredPart>,
+}
+
+impl<T: Value> Slot<T> {
+    fn blank() -> Slot<T> {
+        Slot {
+            loaded: RwLock::new(None),
+            stored: None,
+        }
+    }
+
+    fn holding(tile: Arc<Tile<T>>, stored: Option<StoredPart>) -> Slot<T> {
+        Slot {
+            loaded: RwLock::new(Some(tile)),
+            stored,
+        }
+    }
+
+    fn tile(&self) -> Option<Arc<Tile<T>>> {
+        self.loaded.read().expect("a ground tile lock").clone()
+    }
+
+    fn is_loaded(&self) -> bool {
+        self.stored.is_none() || self.loaded.read().expect("a ground tile lock").is_some()
+    }
+}
+
+impl<T: Value> Tiled<T> {
+    fn blank(grid: TileGrid) -> Tiled<T> {
+        Tiled {
+            tiles: (0..grid.count()).map(|_| Arc::new(Slot::blank())).collect(),
+            grid,
+            overview: None,
+        }
+    }
+
+    fn filled(grid: TileGrid, value: impl Fn(u32, u32) -> T + Sync) -> Tiled<T> {
+        let tiles = (0..grid.count())
+            .into_par_iter()
+            .map(|index| {
+                let at = grid.at(index);
+                let (first_column, first_row) = grid.first(at);
+                let (columns, rows) = grid.tile_dims(at);
+                let values = (0..rows)
+                    .flat_map(|row| (0..columns).map(move |column| (column, row)))
+                    .map(|(column, row)| value(first_column + column, first_row + row))
+                    .collect();
+                let tile = Tile {
+                    columns,
+                    rows,
+                    values,
+                    encoded: None,
+                };
+                Arc::new(Slot::holding(Arc::new(tile), None))
+            })
+            .collect();
+        Tiled {
+            grid,
+            overview: None,
+            tiles,
+        }
+    }
+
+    fn store(&mut self, at: TileAt, part: StoredPart) {
+        self.tiles[self.grid.index(at)] = Arc::new(Slot {
+            loaded: RwLock::new(None),
+            stored: Some(part),
+        });
+    }
+
+    fn decode(&mut self, at: TileAt, bytes: &[u8]) -> Result<(), ContentProblem> {
+        let tile = self.grid.decode_tile(at, bytes)?;
+        let slot = &mut self.tiles[self.grid.index(at)];
+        *slot = Arc::new(Slot::holding(Arc::new(tile), slot.stored.clone()));
+        Ok(())
+    }
+
+    fn decode_overview(&mut self, bytes: &[u8]) -> Result<(), ContentProblem> {
+        let (columns, rows) = self.grid.overview_dims();
+        let picture = Picture::decode(bytes, columns, rows, T::CHANNELS)?;
+        self.overview = Some(Arc::new(Tile {
+            columns,
+            rows,
+            values: T::decode(picture.bytes),
+            encoded: Some(Arc::from(bytes)),
+        }));
+        Ok(())
+    }
+
+    fn is_loaded(&self, at: TileAt) -> bool {
+        self.tiles[self.grid.index(at)].is_loaded()
+    }
+
+    fn load(&self, at: TileAt) -> Result<(), ContentProblem> {
+        let slot = &self.tiles[self.grid.index(at)];
+        let Some(stored) = &slot.stored else {
+            return Ok(());
+        };
+        if slot.is_loaded() {
+            return Ok(());
+        }
+        let bytes = stored.read().map_err(|error| {
+            ContentProblem::new("unreadable file", error.to_string(), "a readable file")
+        })?;
+        let mut tile = self.grid.decode_tile(at, &bytes)?;
+        tile.encoded = None;
+        let mut loaded = slot.loaded.write().expect("a ground tile lock");
+        if loaded.is_none() {
+            *loaded = Some(Arc::new(tile));
+        }
+        Ok(())
+    }
+
+    fn load_all(&self) -> Vec<(TileAt, ContentProblem)> {
+        (0..self.tiles.len())
+            .into_par_iter()
+            .filter_map(|index| {
+                let at = self.grid.at(index);
+                self.load(at).err().map(|problem| (at, problem))
+            })
+            .collect()
+    }
+
+    /// Whether every value is blank, without loading: a tile with a file to load counts as not.
+    fn is_blank(&self) -> bool {
+        self.tiles.iter().all(|slot| match slot.tile() {
+            Some(tile) => tile.values.iter().all(|value| *value == T::BLANK),
+            None => slot.stored.is_none(),
+        })
+    }
+
+    /// The tile's PNG: its file where it still has one, as a tile set since has not, else
+    /// encoded from its values; none for a blank tile.
+    fn encode(&self, at: TileAt) -> Option<Arc<[u8]>> {
+        let slot = &self.tiles[self.grid.index(at)];
+        if let Some(stored) = &slot.stored {
+            return stored.read().ok().map(Arc::from);
+        }
+        let tile = slot.tile()?;
+        if tile.values.iter().all(|value| *value == T::BLANK) {
+            return None;
+        }
+        Some(tile.png())
+    }
+
+    /// The overview's PNG: the file it was read from while it says what the tiles say, else
+    /// encoded from the tiles.
+    fn encode_overview(&self) -> Option<Vec<u8>> {
+        let overview = self.overview_of_tiles()?;
+        if let Some(held) = &self.overview
+            && held.values == overview.values
+            && let Some(bytes) = &held.encoded
+        {
+            return Some(bytes.to_vec());
+        }
+        Some(Picture::encode(
+            &T::encode(&overview.values),
+            overview.columns,
+            overview.rows,
+            T::CHANNELS,
+        ))
+    }
+
+    fn overview_is_current(&self) -> bool {
+        match (self.overview_of_tiles(), &self.overview) {
+            (None, None) => true,
+            (Some(made), Some(held)) => made.values == held.values,
+            _ => false,
+        }
+    }
+
+    /// The overview the tiles make, every tile loaded; none when the ground is blank.
+    fn overview_of_tiles(&self) -> Option<Tile<T>> {
+        self.load_all();
+        if self.is_blank() {
+            return None;
+        }
+        let (columns, rows) = self.grid.overview_dims();
+        let values = (0..rows)
+            .flat_map(|row| (0..columns).map(move |column| (column, row)))
+            .map(|(column, row)| {
+                let (column, row) = self.grid.overview_source(column, row);
+                self.get(column, row)
+            })
+            .collect();
+        Some(Tile {
+            columns,
+            rows,
+            values,
+            encoded: None,
+        })
+    }
+
+    /// The `columns` × `rows` values from `(column, row)`, row by row, each as [`Tiled::get`]
+    /// gives it, read a tile at a time.
+    fn window(&self, column: u32, row: u32, columns: u32, rows: u32) -> Window<T> {
+        let mut values = Vec::with_capacity((columns * rows) as usize);
+        let mut held: Option<(TileAt, Option<Arc<Tile<T>>>)> = None;
+        for row in row..row + rows {
+            let row = row.min(self.grid.rows.saturating_sub(1));
+            for column in column..column + columns {
+                let column = column.min(self.grid.columns.saturating_sub(1));
+                let at = TileAt {
+                    column: column / TILE_PIXELS,
+                    row: row / TILE_PIXELS,
+                };
+                let tile = match &held {
+                    Some((holding, tile)) if *holding == at => tile,
+                    _ => {
+                        let tile = self
+                            .tiles
+                            .get(self.grid.index(at))
+                            .and_then(|slot| slot.tile());
+                        &held.insert((at, tile)).1
+                    }
+                };
+                values.push(match tile {
+                    Some(tile) => {
+                        let (first_column, first_row) = self.grid.first(at);
+                        tile.values
+                            [((row - first_row) * tile.columns + (column - first_column)) as usize]
+                    }
+                    None => self.overview_value(column, row),
+                });
+            }
+        }
+        Window { columns, values }
+    }
+
+    /// The value at `(column, row)`, the nearest one past the edge: from its tile when that is
+    /// loaded, else the overview's nearest, else blank.
+    fn get(&self, column: u32, row: u32) -> T {
+        let column = column.min(self.grid.columns.saturating_sub(1));
+        let row = row.min(self.grid.rows.saturating_sub(1));
+        let at = TileAt {
+            column: column / TILE_PIXELS,
+            row: row / TILE_PIXELS,
+        };
+        let Some(slot) = self.tiles.get(self.grid.index(at)) else {
+            return T::BLANK;
+        };
+        if let Some(tile) = slot.loaded.read().expect("a ground tile lock").as_ref() {
+            let (first_column, first_row) = self.grid.first(at);
+            return tile.values
+                [((row - first_row) * tile.columns + (column - first_column)) as usize];
+        }
+        self.overview_value(column, row)
+    }
+
+    /// The overview's value nearest `(column, row)`, blank without one.
+    fn overview_value(&self, column: u32, row: u32) -> T {
+        match &self.overview {
+            Some(overview) => {
+                let (column, row) = self.grid.overview_nearest(column, row);
+                overview.values[(row * overview.columns + column) as usize]
+            }
+            None => T::BLANK,
+        }
+    }
+
+    /// Sets the value at `(column, row)` in every tile holding it, loading a tile first and
+    /// taking a tile of this copy's own where one is shared with another.
+    fn set(&mut self, column: u32, row: u32, value: T) {
+        let grid = self.grid;
+        for (index, local) in grid.holders(column, row) {
+            let at = grid.at(index);
+            self.load(at).ok();
+            let slot = &mut self.tiles[index];
+            let unchanged = match slot.tile() {
+                Some(tile) => tile.values[local] == value,
+                None => value == T::BLANK,
+            };
+            if unchanged {
+                continue;
+            }
+            if Arc::get_mut(slot).is_none() {
+                *slot = Arc::new(Slot {
+                    loaded: RwLock::new(slot.tile()),
+                    stored: None,
+                });
+            }
+            let slot = Arc::get_mut(slot).expect("a slot of this copy's own");
+            slot.stored = None;
+            let loaded = slot.loaded.get_mut().expect("a ground tile lock");
+            let tile = loaded.get_or_insert_with(|| {
+                let (columns, rows) = grid.tile_dims(at);
+                Arc::new(Tile {
+                    columns,
+                    rows,
+                    values: vec![T::BLANK; (columns * rows) as usize],
+                    encoded: None,
+                })
+            });
+            let tile = Arc::make_mut(tile);
+            tile.encoded = None;
+            tile.values[local] = value;
+        }
+    }
+}
+
+impl<T: Value> PartialEq for Tiled<T> {
+    fn eq(&self, other: &Tiled<T>) -> bool {
+        if self.grid != other.grid {
+            return false;
+        }
+        self.load_all();
+        other.load_all();
+        let blank = |tile: &Arc<Tile<T>>| tile.values.iter().all(|value| *value == T::BLANK);
+        self.tiles
+            .iter()
+            .zip(&other.tiles)
+            .all(|(a, b)| match (a.tile(), b.tile()) {
+                (Some(a), Some(b)) => Arc::ptr_eq(&a, &b) || a.values == b.values,
+                (Some(tile), None) | (None, Some(tile)) => blank(&tile),
+                (None, None) => true,
+            })
+    }
+}
+
+impl<T: Value> Tile<T> {
+    /// The tile's PNG: the file it came from while it is as it holds it, else encoded now.
+    fn png(&self) -> Arc<[u8]> {
+        match &self.encoded {
+            Some(bytes) => bytes.clone(),
+            None => Arc::from(Picture::encode(
+                &T::encode(&self.values),
+                self.columns,
+                self.rows,
+                T::CHANNELS,
+            )),
+        }
+    }
+}
+
+/// How a grid of values over the ground is cut into tiles: `columns`×`rows` values in all, each
+/// tile `TILE_PIXELS` across but the last ones, which end at the edge; a grid of samples has one
+/// value more than a grid of pixels each way, and its tiles share the values on their seams.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+struct TileGrid {
+    size: GroundSize,
+    columns: u32,
+    rows: u32,
+    across: u32,
+    down: u32,
+    /// How many values a tile holds past the pixels of its ground: one for samples, none for
+    /// pixels.
+    seam: u32,
+}
+
+impl TileGrid {
+    fn samples(size: GroundSize) -> TileGrid {
+        let (columns, rows) = size.samples();
+        let (across, down) = size.tiles();
+        TileGrid {
+            size,
+            columns,
+            rows,
+            across,
+            down,
+            seam: 1,
+        }
+    }
+
+    fn pixels(size: GroundSize) -> TileGrid {
+        let (columns, rows) = size.paint_pixels();
+        let (across, down) = size.tiles();
+        TileGrid {
+            size,
+            columns,
+            rows,
+            across,
+            down,
+            seam: 0,
+        }
+    }
+
+    fn count(&self) -> usize {
+        (self.across * self.down) as usize
+    }
+
+    fn index(&self, at: TileAt) -> usize {
+        (at.row * self.across + at.column) as usize
+    }
+
+    fn at(&self, index: usize) -> TileAt {
+        TileAt {
+            column: index as u32 % self.across,
+            row: index as u32 / self.across,
+        }
+    }
+
+    /// The first value of the tile at `at` in the grid.
+    fn first(&self, at: TileAt) -> (u32, u32) {
+        (at.column * TILE_PIXELS, at.row * TILE_PIXELS)
+    }
+
+    fn tile_dims(&self, at: TileAt) -> (u32, u32) {
+        let (first_column, first_row) = self.first(at);
+        (
+            (self.columns - first_column).min(TILE_PIXELS + self.seam),
+            (self.rows - first_row).min(TILE_PIXELS + self.seam),
+        )
+    }
+
+    fn decode_tile<T: Value>(&self, at: TileAt, bytes: &[u8]) -> Result<Tile<T>, ContentProblem> {
+        let (columns, rows) = self.tile_dims(at);
+        let picture = Picture::decode(bytes, columns, rows, T::CHANNELS)?;
+        Ok(Tile {
+            columns,
+            rows,
+            values: T::decode(picture.bytes),
+            encoded: Some(Arc::from(bytes)),
+        })
+    }
+
+    /// Overview values across and down: one per [`OVERVIEW_STRIDE`] of the grid's, and for a grid
+    /// of samples the one at the far edge too.
+    fn overview_dims(&self) -> (u32, u32) {
+        let along = |values: u32| {
+            if self.seam > 0 {
+                (values - 1).div_ceil(OVERVIEW_STRIDE) + 1
+            } else {
+                values.div_ceil(OVERVIEW_STRIDE)
+            }
+        };
+        (along(self.columns), along(self.rows))
+    }
+
+    /// The value of the grid the overview value `(column, row)` is: a sample on the stride, the
+    /// last one at the far edge; a pixel in the middle of its block of the stride.
+    fn overview_source(&self, column: u32, row: u32) -> (u32, u32) {
+        let middle = if self.seam > 0 {
+            0
+        } else {
+            OVERVIEW_STRIDE / 2
+        };
+        (
+            (column * OVERVIEW_STRIDE + middle).min(self.columns - 1),
+            (row * OVERVIEW_STRIDE + middle).min(self.rows - 1),
+        )
+    }
+
+    /// The overview value nearest the grid's `(column, row)`.
+    fn overview_nearest(&self, column: u32, row: u32) -> (u32, u32) {
+        let (across, down) = self.overview_dims();
+        let nearest = |value: u32, count: u32, values: u32| {
+            let lower = (value / OVERVIEW_STRIDE).min(count - 1);
+            let upper = (lower + 1).min(count - 1);
+            let source = |overview: u32| (overview * OVERVIEW_STRIDE).min(values - 1);
+            if self.seam > 0 && value - source(lower) > source(upper) - value {
+                upper
+            } else {
+                lower
+            }
+        };
+        (
+            nearest(column, across, self.columns),
+            nearest(row, down, self.rows),
+        )
+    }
+
+    /// Every tile holding the value at `(column, row)`, with the value's place in it: the tile it
+    /// falls in, and the one before it along each seam it lies on.
+    fn holders(&self, column: u32, row: u32) -> Vec<(usize, usize)> {
+        if column >= self.columns || row >= self.rows {
+            return Vec::new();
+        }
+        let along = |value: u32| {
+            let own = value / TILE_PIXELS;
+            let before =
+                (self.seam > 0 && value.is_multiple_of(TILE_PIXELS) && own > 0).then(|| own - 1);
+            [Some(own), before]
+        };
+        let mut holders = Vec::with_capacity(4);
+        for tile_column in along(column).into_iter().flatten() {
+            for tile_row in along(row).into_iter().flatten() {
+                let at = TileAt {
+                    column: tile_column,
+                    row: tile_row,
+                };
+                let (first_column, first_row) = self.first(at);
+                let (columns, _) = self.tile_dims(at);
+                let local = ((row - first_row) * columns + (column - first_column)) as usize;
+                holders.push((self.index(at), local));
+            }
+        }
+        holders
     }
 }
 
@@ -472,7 +1196,7 @@ impl Picture {
             return Err(ContentProblem::new(
                 "wrong size",
                 format!("{} × {} px", info.width, info.height),
-                format!("{columns} × {rows} px, two samples per metre of the ground"),
+                format!("{columns} × {rows} px over this ground"),
             ));
         }
         let (want_color, want_depth, expected) = match channels {
@@ -502,6 +1226,7 @@ impl Picture {
             .next_frame(&mut pixels)
             .map_err(|error| unreadable(error.to_string()))?;
         pixels.truncate(frame.buffer_size());
+        pixels.shrink_to_fit();
         Ok(Picture { bytes: pixels })
     }
 

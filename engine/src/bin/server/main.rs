@@ -70,6 +70,7 @@ fn main() {
     });
     let settings = content.built::<GameSettings>();
     let served = ServedContent::new(
+        engine::systems::registry(),
         &content,
         &FilesystemFolder(config.content_dir.clone()),
         version::build(),

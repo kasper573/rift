@@ -1,5 +1,6 @@
 use std::path::Path;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
@@ -11,6 +12,7 @@ use engine::systems::handoff::Moved;
 use engine::systems::launch::ServerDaylight;
 use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::player::{ClientId, JoinRequest, SpawnPolicy, SpawnRules};
+use engine::systems::region;
 use engine::systems::script::Place;
 use engine::systems::worlds::{self, Worlds};
 use engine::systems::{GameSettings, TICK_HZ, from_client, load_content, server_app, start_server};
@@ -36,6 +38,26 @@ fn clock_after(ticks: usize) -> WallClock {
 
 /// Ticks stepped before sampling, so spawn waves and connect churn settle out of the measurement.
 pub const WARMUP: usize = 30;
+
+/// How long the ground within reach of the players may take to be held before a bench gives up.
+const SETTLE: Duration = Duration::from_secs(120);
+
+/// Steps `bench` with `step` until the ground within reach of every player is held and what
+/// stands on it has come to life, as a server's first second goes, then through the warmup.
+pub fn warm_up(bench: &mut Bench, mut step: impl FnMut(&mut Bench)) {
+    let deadline = Instant::now() + SETTLE;
+    while !bench.settled() {
+        assert!(
+            Instant::now() < deadline,
+            "the ground within reach of the players is held within {SETTLE:?}"
+        );
+        std::thread::sleep(Duration::from_millis(1));
+        step(bench);
+    }
+    for _ in 0..WARMUP {
+        step(bench);
+    }
+}
 
 // Runs play out alike, so they compare.
 pub const SEED: u64 = 1931;
@@ -135,6 +157,11 @@ impl Bench {
             content: content.clone(),
             ticks: 0,
         }
+    }
+
+    /// Whether every world holds the ground within reach of its players, with no hold under way.
+    pub fn settled(&self) -> bool {
+        self.worlds.iter().all(|app| region::settled(app.world()))
     }
 
     /// One tick of every world, as the server steps them.

@@ -39,7 +39,6 @@ impl Plugin for WorldScenePlugin {
         bevy::shader::load_shader_library!(app, "shade.wesl");
         bevy::shader::load_shader_library!(app, "prepass_write.wesl");
         bevy::shader::load_shader_library!(app, "clearing.wesl");
-        bevy::shader::load_shader_library!(app, "terrain.wesl");
         bevy::asset::embedded_asset!(app, "fade.wesl");
         bevy::asset::embedded_asset!(app, "fade_prepass.wesl");
         bevy::asset::embedded_asset!(app, "decal.wesl");
@@ -58,7 +57,6 @@ impl Plugin for WorldScenePlugin {
         .init_resource::<cover::TexturedCovers>()
         .init_resource::<cover::CopyMeshes>()
         .init_resource::<clouds::CloudSheet>()
-        .init_resource::<decal::DecalMesh>()
         .init_resource::<super::GroundHeights>()
         .add_observer(material::dress_scenes)
         .add_observer(mannequin::start)

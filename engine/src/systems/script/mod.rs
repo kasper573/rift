@@ -20,6 +20,7 @@ use crate::core::audio::playback::SfxId;
 use crate::core::content::{
     Content, ContentFile, ContentId, ContentProblem, Loading, ModuleSet, fields_file,
 };
+use crate::core::ground::TileAt;
 use crate::core::math::Pos;
 use crate::core::script::{
     self, BoxEnding, DialogueView, Expr, Instances, LineDef, RunnerKindDef, ScriptError, Scripts,
@@ -588,26 +589,14 @@ pub fn run_tick(world: &mut World) {
 
 pub fn spawn_stateless(world: &mut World) {
     let scripts = world.resource::<RiftScripts>().clone();
-    let content = world.resource::<Content>().clone();
     let area = world.resource::<WorldArea>().0;
     let mine = world.resource::<WorldCell>().0;
-    let cells = area::cells(&content, area);
     let mut instances = world.resource_mut::<RiftInstances>();
     for (row, procedures) in scripts.owners() {
         let owner = match row.kind {
             // The area's own scripts run in its first cell.
             RunnerKind::Area if row.row == area.raw() && mine == Cell(0) => {
                 Owner::Row(RunnerKind::Area, row.row)
-            }
-            RunnerKind::Blueprint if row.row == area.raw() => {
-                let ordinal = row
-                    .object
-                    .expect("a placement's owner row names its ordinal");
-                let placed = cells.at(area::placements(&content, area)[ordinal as usize].at);
-                if placed != mine {
-                    continue;
-                }
-                Owner::Row(RunnerKind::Blueprint, ordinal)
             }
             RunnerKind::Item
             | RunnerKind::Quest
@@ -617,12 +606,33 @@ pub fn spawn_stateless(world: &mut World) {
             _ => continue,
         };
         instances.spawn_owner(owner, procedures.clone());
-        if matches!(
-            owner,
-            Owner::Row(RunnerKind::Area | RunnerKind::Blueprint, _)
-        ) {
+        if matches!(owner, Owner::Row(RunnerKind::Area, _)) {
             instances.raise(owner, EventKind::Started, None, Vec::new(), |_| true);
         }
+    }
+}
+
+/// Starts the scripts of the blueprints placed on the tile at `tile` in this world's cell: each
+/// placement owns its scripts, and they start as the ground they stand on is first reached.
+pub fn spawn_placed(world: &mut World, tile: TileAt) {
+    let scripts = world.resource::<RiftScripts>().clone();
+    let content = world.resource::<Content>().clone();
+    let area = world.resource::<WorldArea>().0;
+    let mine = world.resource::<WorldCell>().0;
+    let cells = area::cells(&content, area);
+    let placements = area::placements(&content, area);
+    let mut instances = world.resource_mut::<RiftInstances>();
+    for ordinal in area::load(&content, area).placements_in(tile) {
+        if cells.at(placements[*ordinal as usize].at) != mine {
+            continue;
+        }
+        let procedures = scripts.of(OwnerRow::of_placement(area, *ordinal));
+        if procedures.is_empty() {
+            continue;
+        }
+        let owner = Owner::Row(RunnerKind::Blueprint, *ordinal);
+        instances.spawn_owner(owner, procedures.to_vec());
+        instances.raise(owner, EventKind::Started, None, Vec::new(), |_| true);
     }
 }
 

@@ -1,13 +1,11 @@
 use std::ops::Range;
 
-use glam::Vec2;
-use polyanya::{Coords, Layer, Mesh, Polygon, Triangulation, Vertex};
-use rayon::prelude::*;
-
 use crate::core::geometry::corners;
-use crate::core::math::{Offset, Pos, Rect, Rng, Size};
+use crate::core::math::{Offset, Pos, Rect, Rng};
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::{MeterPos, Meters};
+use glam::Vec2;
+use polyanya::{Coords, Layer, Mesh, Polygon, Triangulation, Vertex};
 
 /// The ground every walker's body takes, so it keeps this far from what blocks and from the others.
 pub const AGENT_RADIUS: Meters = Meters(0.35);
@@ -26,6 +24,12 @@ pub struct NavMesh {
     /// The polygons by the ground they cover, so a clip or a search passes over only those near it.
     index: SpatialIndex,
     by_area: ByArea,
+}
+
+/// One tile of ground triangulated on its own, to join with its neighbours into a mesh.
+pub struct TileLayer {
+    rect: Rect<Meters>,
+    layer: Layer,
 }
 
 /// The polygons island by island, each with the ground of every one up to it, so a draw by area
@@ -70,24 +74,71 @@ impl ByArea {
 pub struct Island(usize);
 
 impl NavMesh {
-    /// `bounds` less each obstacle, every outline grown by `radius` and the bounds shrunk by it, so
-    /// a point on the mesh is a place a body of that radius fits, give or take a tenth of the
-    /// radius: a grown outline keeps only the points that each add more ground than a sixteenth
-    /// of the radius squared, which lets a body a tenth of its radius in at most between the
-    /// points kept round an outline its own size, and spares the mesh most of the points a
-    /// rounded outline or a run of blocked cells brings.
-    pub fn build(
+    /// The ground of `tile`, within `bounds` shrunk by `radius`, less every obstacle reaching into
+    /// it grown by `radius`, triangulated on its own: a point on the layer is a place a body of
+    /// that radius fits, give or take a tenth of the radius. A grown outline keeps only the points
+    /// that each add more ground than a sixteenth of the radius squared, which lets a body a tenth
+    /// of its radius in at most between the points kept round an outline its own size, and spares
+    /// the mesh most of the points a rounded outline or a run of blocked cells brings.
+    pub fn triangulate(
+        tile: Rect<Meters>,
         bounds: Rect<Meters>,
-        obstacles: impl IntoIterator<Item = Vec<Pos<Meters>>>,
+        obstacles: &[Vec<Pos<Meters>>],
         radius: Meters,
-    ) -> NavMesh {
-        let obstacles: Vec<Vec<Pos<Meters>>> = obstacles
-            .into_iter()
-            .filter(|outline| outline.len() >= 3)
-            .collect();
+    ) -> TileLayer {
         let ground = bounds.inflate(-radius.0, -radius.0);
+        let Some(rect) = tile.intersection(&ground).filter(|rect| !rect.is_empty()) else {
+            return TileLayer {
+                rect: Rect::zero(),
+                layer: Layer::default(),
+            };
+        };
+        let mut triangulation = Triangulation::from_outer_edges(&corners(rect).map(vec2));
+        triangulation.set_agent_radius(radius.0);
+        triangulation.set_agent_radius_simplification(radius.0 * radius.0 / 16.0);
+        triangulation.agent_radius_on_outer_edge(false);
+        triangulation.add_obstacles(
+            obstacles
+                .iter()
+                .filter(|outline| outline.len() >= 3)
+                .filter(|outline| {
+                    Rect::from_points(outline.iter().copied())
+                        .inflate(radius.0, radius.0)
+                        .intersects(&rect)
+                })
+                .map(|outline| outline.iter().copied().map(vec2).collect::<Vec<_>>()),
+        );
+        TileLayer {
+            rect,
+            layer: triangulation.as_layer(),
+        }
+    }
+
+    /// The mesh the tiles make, joined along the seams where they meet: a polygon's neighbours
+    /// across a seam are the other tile's, and a seam no tile lies beyond is the mesh's edge.
+    pub fn join<'a>(
+        bounds: Rect<Meters>,
+        tiles: impl IntoIterator<Item = &'a TileLayer>,
+    ) -> NavMesh {
+        let tiles: Vec<&TileLayer> = tiles.into_iter().collect();
+        let seams = |along: fn(&Rect<Meters>) -> [f32; 2]| {
+            let mut seams: Vec<f32> = tiles
+                .iter()
+                .filter(|tile| !tile.rect.is_empty())
+                .flat_map(|tile| along(&tile.rect))
+                .collect();
+            seams.sort_by(f32::total_cmp);
+            seams.dedup();
+            seams
+        };
+        let seams_x = seams(|rect| [rect.min_x(), rect.max_x()]);
+        let seams_y = seams(|rect| [rect.min_y(), rect.max_y()]);
         let mut mesh = Mesh {
-            layers: vec![triangulate(ground, &obstacles, radius)],
+            layers: vec![joined(
+                tiles.iter().map(|tile| &tile.layer),
+                &seams_x,
+                &seams_y,
+            )],
             ..Default::default()
         };
         mesh.reorder_neighbors_ccw_and_fix_corners();
@@ -406,11 +457,6 @@ const AREA_EPSILON: f32 = 1e-6;
 const DRAWS: usize = 32;
 const POLYGON_CELL: Meters = Meters(16.0);
 const CIRCLE_SIDES: usize = 24;
-/// The ground is triangulated in tiles no wider than this, each on a core of its own: growing an
-/// outline and triangulating cost more per outline the more there are, and a wide area holds
-/// outlines by the hundred thousand, while a tile this size holds a few hundred, enough work to be
-/// worth a core.
-const TILE_SIDE: Meters = Meters(200.0);
 /// How far off a seam a vertex may land through the arithmetic and still be the seam's: both tiles
 /// cut the same outline at the same seam, so their vertices there differ by the rounding alone,
 /// far under a millimetre.
@@ -428,78 +474,20 @@ fn fit(layer: &mut Layer) {
     layer.polygons.shrink_to_fit();
 }
 
-/// `ground` less the obstacles grown by `radius`, as one layer of convex polygons: triangulated
-/// tile by tile, in parallel, each tile given every obstacle reaching into it, then joined along
-/// the seams, where both tiles hold the same vertices.
-fn triangulate(ground: Rect<Meters>, obstacles: &[Vec<Pos<Meters>>], radius: Meters) -> Layer {
-    if ground.is_empty() {
-        return Layer::default();
-    }
-    let columns = (ground.size.width / TILE_SIDE.0).ceil().max(1.0) as usize;
-    let rows = (ground.size.height / TILE_SIDE.0).ceil().max(1.0) as usize;
-    let tile: Size<Meters> = Size::new(
-        ground.size.width / columns as f32,
-        ground.size.height / rows as f32,
-    );
-    let seam_x = |column: usize| {
-        if column == columns {
-            ground.max().x
-        } else {
-            ground.min().x + tile.width * column as f32
-        }
-    };
-    let seam_y = |row: usize| {
-        if row == rows {
-            ground.max().y
-        } else {
-            ground.min().y + tile.height * row as f32
-        }
-    };
-    let reaches: Vec<Rect<Meters>> = obstacles
-        .iter()
-        .map(|outline| Rect::from_points(outline).inflate(radius.0, radius.0))
-        .collect();
-    let tiles: Vec<Layer> = (0..rows * columns)
-        .into_par_iter()
-        .map(|index| {
-            let (row, column) = (index / columns, index % columns);
-            let rect = Rect::from_points([
-                Pos::new(seam_x(column), seam_y(row)),
-                Pos::new(seam_x(column + 1), seam_y(row + 1)),
-            ]);
-            let mut triangulation = Triangulation::from_outer_edges(&corners(rect).map(vec2));
-            triangulation.set_agent_radius(radius.0);
-            triangulation.set_agent_radius_simplification(radius.0 * radius.0 / 16.0);
-            triangulation.agent_radius_on_outer_edge(false);
-            triangulation.add_obstacles(
-                obstacles
-                    .iter()
-                    .zip(&reaches)
-                    .filter(|(_, reach)| reach.intersects(&rect))
-                    .map(|(outline, _)| outline.iter().copied().map(vec2).collect::<Vec<_>>()),
-            );
-            triangulation.as_layer()
-        })
-        .collect();
-    let seams_x: Vec<f32> = (1..columns).map(seam_x).collect();
-    let seams_y: Vec<f32> = (1..rows).map(seam_y).collect();
-    joined(tiles, &seams_x, &seams_y)
-}
-
 /// The tiles as one layer: every vertex on a seam snapped onto it and shared by the tiles meeting
 /// there, so the polygons on both sides neighbour each other through it.
-fn joined(tiles: Vec<Layer>, seams_x: &[f32], seams_y: &[f32]) -> Layer {
+fn joined<'a>(tiles: impl Iterator<Item = &'a Layer>, seams_x: &[f32], seams_y: &[f32]) -> Layer {
     let mut vertices: Vec<Vertex> = Vec::new();
     let mut polygons: Vec<Polygon> = Vec::new();
     for layer in tiles {
         let (first_vertex, first_polygon) = (vertices.len() as u32, polygons.len() as u32);
-        polygons.extend(layer.polygons.into_iter().map(|polygon| {
+        polygons.extend(layer.polygons.iter().map(|polygon| {
             Polygon::new(
                 polygon.vertices.iter().map(|v| v + first_vertex).collect(),
                 polygon.is_one_way,
             )
         }));
-        vertices.extend(layer.vertices.into_iter().map(|vertex| {
+        vertices.extend(layer.vertices.iter().map(|vertex| {
             let mut coords = vertex.coords;
             if let Some(seam) = seams_x.iter().find(|x| (coords.x - *x).abs() <= SEAM_SNAP) {
                 coords.x = *seam;

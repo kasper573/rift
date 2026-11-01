@@ -5,6 +5,7 @@ use engine::systems::combat::{self, AttackRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::movement::{self, MoveRequest, position};
 use engine::systems::npc::NpcDef;
+use engine::systems::region;
 use engine::systems::script::Place;
 use engine::systems::staging::{Staging, stage};
 use engine::systems::{actor, dialogue, npc, reach, script, skill, stat};
@@ -144,7 +145,7 @@ fn sim() -> Sim {
             actor::settle,
         ));
     script::spawn_stateless(&mut sim.world);
-    npc::spawn_all(&mut sim.world);
+    region::reach_all(&mut sim.world);
     let raider = sim.id::<NpcDef>("raider");
     let area = sim.id::<AreaDef>("yard");
     npc::spawn(&mut sim.world, raider, Pos::new(18.0, 7.0), area, None);

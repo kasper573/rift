@@ -1,7 +1,8 @@
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::actor::{Appearance, Hitbox, ModelDef, held::Held};
 use engine::systems::item::ItemDef;
-use engine::systems::{npc, script};
+use engine::systems::region;
+use engine::systems::script;
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, path, rig_clips};
 
@@ -42,7 +43,7 @@ fn an_npcs_script_dresses_it_anew_and_fills_its_hands() {
         let mut sim = Sim::new(game(case.nodes).load());
         sim.serve("room").add(script::run_tick);
         script::spawn_stateless(&mut sim.world);
-        npc::spawn_all(&mut sim.world);
+        region::reach_all(&mut sim.world);
         let guard = sim.npc("guard");
         sim.tick();
 

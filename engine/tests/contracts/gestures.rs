@@ -2,7 +2,8 @@ use engine::core::time::{Millis, Seconds};
 use engine::systems::actor::playing::Playing;
 use engine::systems::actor::skeleton::GestureName;
 use engine::systems::actor::{self, Appearance, ModelDef, Motion};
-use engine::systems::{npc, script};
+use engine::systems::region;
+use engine::systems::script;
 use serde_json::{Value, json};
 use testkit::{BODY, Game, Map, Sim, clip, path, rig_clips};
 
@@ -39,7 +40,7 @@ fn a_script_makes_an_npc_gesture_where_its_body_names_the_gesture() {
         sim.serve("room")
             .add((script::run_tick, actor::playing::progress));
         script::spawn_stateless(&mut sim.world);
-        npc::spawn_all(&mut sim.world);
+        region::reach_all(&mut sim.world);
         let guard = sim.npc("guard");
         let giant = sim.id::<ModelDef>("giant");
         sim.tick();

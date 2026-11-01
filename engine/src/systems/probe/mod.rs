@@ -26,6 +26,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::audio::mix::AudioCategory;
 use crate::core::audio::playback::Listener;
 use crate::core::audio::soundscape::{self, SoundscapeMixer, SoundscapeShape};
+use crate::core::chunk::Chunk;
 use crate::core::content::{Content, ContentScope, with_content};
 use crate::core::geometry::{Capsule, Radians};
 use crate::core::gui::{self, GuiContext, WorldLayers};
@@ -38,7 +39,7 @@ use crate::core::render::world::layers::Layered;
 use crate::core::render::world::sky::Daylight;
 use crate::core::render::{self, CameraRig, GroundHeights, Pointed, ground_height, world_point};
 use crate::core::time::{self, PlaybackRate, Seconds};
-use crate::core::units::{Bytes, GROUND_ORIGIN, Meters};
+use crate::core::units::{Bytes, MeterSize, Meters};
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
 use crate::systems::actor::held::{self, Held};
 use crate::systems::actor::render::Puppet;
@@ -145,8 +146,8 @@ pub struct ProbeSnapshot {
     pub screen: Option<Size<WindowPx>>,
     pub view: Option<ProbeView>,
     pub area: Option<AreaId>,
-    /// The area's ground heights, sent with the first frame in a new area and left out after, so a
-    /// driver keeps the last it saw.
+    /// The ground's heights around the player: the chunks within the view's reach, sent as the
+    /// player comes to new ground and left out while they stay, so a driver keeps the last it saw.
     pub terrain: Option<ProbeTerrain>,
     pub me: Option<ProbeBody>,
     pub actors: Vec<ProbeBody>,
@@ -257,8 +258,8 @@ impl ProbeView {
     }
 }
 
-/// An area's ground heights a metre apart, row by row from its corner at `origin` on: `size` plus
-/// one of them to a row, and as many rows.
+/// Ground heights a metre apart, row by row from the corner at `origin` on: `size` plus one of
+/// them to a row, and as many rows. Beyond its edge the nearest height stands in.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 pub struct ProbeTerrain {
     #[schemars(with = "PosSchema")]
@@ -910,7 +911,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
             .and_then(|slot| slot.0),
         skills: me.and_then(|me| skills(world, me)),
         me: me.and_then(|me| body(world, me, view.as_ref())),
-        terrain: terrain(world, area),
+        terrain: terrain(world, me, area),
         actors: actors(world, me, area),
         objects: objects(world, area),
         items: items(world, area),
@@ -1080,32 +1081,57 @@ fn view(world: &mut World) -> Option<ProbeView> {
     })
 }
 
-/// Which area's terrain the probe last sent, so it goes out once per arrival.
+/// The ground the probe last sent: the window it covered, so it goes out again only once the
+/// player has moved on to ground beyond it.
 #[derive(Resource, Default)]
-struct TerrainSent(Option<AreaId>);
+struct TerrainSent(Option<(AreaId, Rect<Meters>)>);
 
-fn terrain(world: &mut World, area: Option<AreaId>) -> Option<ProbeTerrain> {
+fn terrain(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Option<ProbeTerrain> {
+    let standing = me.and_then(|me| {
+        world
+            .get::<RenderPosition>(me)
+            .map(|drawn| drawn.0)
+            .or_else(|| world.get::<Position>(me).map(|position| position.pos))
+    });
+    let (Some(area_id), Some(at)) = (area, standing) else {
+        world.resource_mut::<TerrainSent>().0 = None;
+        return None;
+    };
+    let bounds = area::load(world.resource::<Content>(), area_id)
+        .size
+        .bounds();
+    let window = ground_window(at, bounds);
     let mut sent = world.resource_mut::<TerrainSent>();
-    if sent.0 == area {
+    if sent.0 == Some((area_id, window)) {
         return None;
     }
-    sent.0 = area;
-    let content = world.resource::<Content>();
-    let area = area::load(content, area?);
-    let size = area.size;
+    sent.0 = Some((area_id, window));
+    let area = area::load(world.resource::<Content>(), area_id);
+    let size = Size::new(window.size.width.floor(), window.size.height.floor());
     let (columns, rows) = (size.width as usize + 1, size.height as usize + 1);
     let heights = (0..rows)
         .flat_map(|row| (0..columns).map(move |column| (column, row)))
         .map(|(column, row)| {
             area.heights
-                .height_at(GROUND_ORIGIN + Offset::new(column as f32, row as f32))
+                .height_at(window.origin + Offset::new(column as f32, row as f32))
         })
         .collect();
     Some(ProbeTerrain {
-        origin: GROUND_ORIGIN,
+        origin: window.origin,
         size,
         heights,
     })
+}
+
+/// The ground around `at` the probe reports: the chunks within the view's reach, within the
+/// area, so the window moves only as the player crosses from chunk to chunk.
+fn ground_window(at: Pos<Meters>, bounds: Rect<Meters>) -> Rect<Meters> {
+    let reach = area::render::view_reach();
+    let low = Chunk::at(Pos::new(at.x - reach.0, at.y - reach.0)).rect();
+    let high = Chunk::at(Pos::new(at.x + reach.0, at.y + reach.0)).rect();
+    Rect::from_points([low.min(), high.max()])
+        .intersection(&bounds)
+        .unwrap_or(Rect::new(at, Size::zero()))
 }
 
 fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<ProbeBody> {

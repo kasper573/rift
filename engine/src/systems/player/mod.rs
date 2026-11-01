@@ -37,7 +37,7 @@ use crate::systems::shop::{self, ShopLedger};
 use crate::systems::skill::{BasicAttack, Hotbar, Learned};
 use crate::systems::stat::{self, Immortal, Stats};
 use crate::systems::visibility;
-use crate::systems::{GameSettings, WorldArea, belongings, drain_requests, notification};
+use crate::systems::{GameSettings, WorldArea, belongings, drain_requests, notification, region};
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -332,8 +332,9 @@ pub fn join(world: &mut World) {
         let (at, state) = match world.get::<JoinAs>(client_entity) {
             Some(JoinAs { snapshot, start }) if start.area == zone => {
                 let (snapshot, start) = (snapshot.clone(), *start);
+                region::reach(world, start.at);
                 (
-                    movement::place_beside(world, zone, area.mesh(), start.at),
+                    movement::place_beside(world, zone, &area.mesh(), start.at),
                     snapshot::materialize(&content, &snapshot, start, clock),
                 )
             }
@@ -342,7 +343,8 @@ pub fn join(world: &mut World) {
                     .get::<Identity>(client_entity)
                     .map_or_else(|| format!("player {}", client.0), |id| id.name.clone());
                 let spawn = spawn_position(world, policy, zone, area);
-                let at = movement::place_beside(world, zone, area.mesh(), spawn);
+                region::reach(world, spawn);
+                let at = movement::place_beside(world, zone, &area.mesh(), spawn);
                 let fresh = CharacterSnapshot::of_player(&content, &name, def(&content));
                 let start = Place { area: zone, at };
                 let state = snapshot::materialize(&content, &fresh, start, clock);

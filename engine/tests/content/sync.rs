@@ -1,8 +1,9 @@
 use std::collections::HashSet;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use bevy::tasks::futures_lite::future::block_on;
+use engine::core::content::FileHash;
 use engine::core::content::store::ContentStore;
 use engine::core::content::sync::{
     ContentSource, ServedContent, SyncError, SyncPolicy, SyncStatus, SyncedContent, sync,
@@ -11,7 +12,8 @@ use engine::core::content::version;
 use engine::core::os::FetchFailure;
 use engine::core::time::{Backoff, Seconds};
 use futures_util::future::BoxFuture;
-use testkit::{Game, wav};
+use serde_json::json;
+use testkit::{Game, Map, wav};
 
 use crate::store::TestStore;
 use crate::support::game;
@@ -240,7 +242,7 @@ fn another_build_is_refused_before_anything_downloads() {
     let store = TestStore::default();
 
     let refused = block_on(sync(
-        &server,
+        server.clone(),
         &store,
         "0badf00d",
         quickly(),
@@ -255,6 +257,45 @@ fn another_build_is_refused_before_anything_downloads() {
     );
     assert!(server.requested_hashes().is_empty());
     assert!(store.hashes().is_empty());
+}
+
+/// A streamed part, as the tiles of an area's ground are, is left out of the sync and fetched as it
+/// is first read, then kept in the store like the rest: the visit after keeps it without a fetch.
+#[test]
+fn a_streamed_part_is_fetched_as_it_is_first_read_and_kept() {
+    let rows = [
+        "........", "........", "........", "...#....", "........", "........", "........",
+        "........",
+    ];
+    let server = FakeServer::new(served(sounding().area("cove", &Map::of(&rows), json!([]))));
+    let store = TestStore::default();
+    let synced = run(&server, &store).expect("it syncs");
+    let indexed = |ending: &str| {
+        synced
+            .index
+            .files
+            .iter()
+            .find(|file| file.path.ends_with(ending))
+            .unwrap_or_else(|| panic!("{ending} is indexed"))
+            .clone()
+    };
+    let (tile, overview) = (indexed("paint/0_0.png"), indexed("paint_overview.png"));
+    assert!(tile.streamed && !overview.streamed);
+    let requested = server.requested_hashes();
+    assert!(requested.contains(&overview.hash) && !requested.contains(&tile.hash));
+    assert!(!store.hashes().contains(&tile.hash));
+
+    server.forget_requests();
+    let bytes = synced.assets.read(&tile.path).expect("the tile reads");
+    assert_eq!(FileHash::of(&bytes).hash, tile.hash);
+    assert_eq!(server.requested_hashes(), std::slice::from_ref(&tile.hash));
+    assert!(store.hashes().contains(&tile.hash));
+    server.forget_requests();
+    assert!(synced.assets.read(&tile.path).is_some());
+    assert!(server.requested_hashes().is_empty(), "kept once fetched");
+
+    run(&server, &store).expect("the next visit syncs");
+    assert!(store.hashes().contains(&tile.hash), "a visit keeps it");
 }
 
 /// A small game with a sound to fetch.
@@ -274,8 +315,10 @@ fn longer_slash() -> Vec<u8> {
 
 fn served(game: Game) -> ServedContent {
     let folder = game.folder();
+    let registry = game.registry();
     let content = game.load();
-    ServedContent::new(&content, &folder, version::build(), "Rift").expect("the folder is served")
+    ServedContent::new(registry, &content, &folder, version::build(), "Rift")
+        .expect("the folder is served")
 }
 
 fn quickly() -> SyncPolicy {
@@ -289,9 +332,9 @@ fn quickly() -> SyncPolicy {
     }
 }
 
-fn run(server: &FakeServer, store: &ContentStore) -> Result<SyncedContent, SyncError> {
+fn run(server: &Arc<FakeServer>, store: &ContentStore) -> Result<SyncedContent, SyncError> {
     block_on(sync(
-        server,
+        server.clone(),
         store,
         version::build(),
         quickly(),
@@ -299,11 +342,14 @@ fn run(server: &FakeServer, store: &ContentStore) -> Result<SyncedContent, SyncE
     ))
 }
 
+/// Every file a visit fetches and keeps: all the index names but the streamed parts, which it
+/// fetches only as they are read.
 fn expected_hashes(served: &ServedContent, index: &SyncedContent) -> HashSet<String> {
     index
         .index
         .files
         .iter()
+        .filter(|file| !file.streamed)
         .map(|file| file.hash.clone())
         .chain([
             served.manifest.index.hash.clone(),
@@ -320,13 +366,13 @@ struct FakeServer {
 }
 
 impl FakeServer {
-    fn new(served: ServedContent) -> FakeServer {
-        FakeServer {
+    fn new(served: ServedContent) -> Arc<FakeServer> {
+        Arc::new(FakeServer {
             served: Mutex::new(served),
             requests: Mutex::new(Vec::new()),
             corrupt_once: Mutex::new(HashSet::new()),
             deploy_on_404: Mutex::new(None),
-        }
+        })
     }
 
     fn requested_hashes(&self) -> Vec<String> {

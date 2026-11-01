@@ -204,7 +204,7 @@ pub fn summon(
         let spot = movement::place_beside(
             world,
             tag.area,
-            region.mesh(),
+            &region.mesh(),
             ring(region, at, index, count),
         );
         let summon = super::spawn(world, npc, spot, tag.area, Some(pack));

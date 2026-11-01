@@ -484,13 +484,11 @@ impl View {
 }
 
 /// The ground on view: the shown area's heights and how far it reaches, for everything that stands
-/// on the ground or points at it, and the heights as a picture for what settles on the ground in
-/// its shader.
+/// on the ground or points at it.
 #[derive(Resource, Clone, Default)]
 pub struct GroundHeights {
     pub heights: Heightfield,
     pub bounds: Rect<Meters>,
-    pub image: Handle<Image>,
 }
 
 impl GroundHeights {

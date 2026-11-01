@@ -6,7 +6,7 @@ mod spots;
 pub use berth::{
     Aim, Approach, approach, place_beside, reachable, relocate_beside, settle, vacant_near,
 };
-pub use navmesh::{AGENT_RADIUS, Island, NavMesh};
+pub use navmesh::{AGENT_RADIUS, Island, NavMesh, TileLayer};
 pub use predict::request_walk;
 pub use spots::{SPACING, Spot, Spots, crowding, spot_of};
 
@@ -26,6 +26,7 @@ use crate::core::par;
 use crate::core::time::Seconds;
 use crate::core::units::{MeterPos, Meters, MetersPerSec};
 use crate::systems::actor::{Action, Actor, ActorModel, appearance, held, set_facing};
+use crate::systems::area::HeldMesh;
 use crate::systems::player::{conn_player, may_command};
 use crate::systems::stat::{self, StatKind};
 use crate::systems::{area, drain_requests, reach};
@@ -408,12 +409,12 @@ pub fn speed_of(world: &World, entity: Entity) -> MetersPerSec {
 
 /// The mesh the actor moves on: its area's ground, or its air for a flyer, the wild one when it is
 /// wild.
-pub fn mesh_of<'c>(content: &'c Content, world: &World, entity: Entity) -> Option<&'c NavMesh> {
+pub fn mesh_of(content: &Content, world: &World, entity: Entity) -> Option<HeldMesh> {
     let area = area::of_in(content, world, entity)?;
     Some(area.mesh_for(area::wild(world, entity), airborne(world, entity)))
 }
 
-fn mesh_in(world: &World, entity: Entity) -> Option<&NavMesh> {
+fn mesh_in(world: &World, entity: Entity) -> Option<HeldMesh> {
     mesh_of(world.resource::<Content>(), world, entity)
 }
 
@@ -458,7 +459,8 @@ fn walk(
 
 fn plan(world: &World, entity: Entity, goal: Pos<Meters>) -> Option<Vec<Pos<Meters>>> {
     let at = position(world, entity)?;
-    plan_on(mesh_in(world, entity)?, at, world.get::<Path>(entity), goal)
+    let mesh = mesh_in(world, entity)?;
+    plan_on(&mesh, at, world.get::<Path>(entity), goal)
 }
 
 /// The corners, back to front, of a walk to `goal` by an actor at `at` walking `path`. A goal the

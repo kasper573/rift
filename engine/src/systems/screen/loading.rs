@@ -111,9 +111,9 @@ fn start(world: &mut World, retry: Retry) {
     let task = AsyncComputeTaskPool::get().spawn({
         let status = status.clone();
         async move {
-            let source = ServerContent { http, base };
+            let source = Arc::new(ServerContent { http, base });
             let synced = sync(
-                &source,
+                source,
                 &store,
                 version::build(),
                 SyncPolicy::default(),

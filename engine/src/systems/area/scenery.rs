@@ -18,6 +18,8 @@ use bevy::light::NotShadowCaster;
 use bevy::light::atmosphere::ScatteringMedium;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
+use bevy::tasks::futures_lite::future;
+use bevy::tasks::{IoTaskPool, Task, block_on};
 
 use super::lighting::DomeLook;
 use super::prop::PropId;
@@ -28,7 +30,7 @@ use crate::core::content::media::GltfInfos;
 use crate::core::content::{Content, FileHash, FileHashes};
 use crate::core::geometry::Radians;
 use crate::core::geometry::{PlacedShape, Shape};
-use crate::core::ground::{Heightfield, Paint, SAMPLES_PER_METER};
+use crate::core::ground::{Heightfield, OVERVIEW_STRIDE, Paint, SAMPLES_PER_METER, TileAt};
 use crate::core::math::{Pos, Rect, Rng, Size};
 use crate::core::render::present::AreaGrade;
 use crate::core::render::world::clouds::{self, CloudSheet};
@@ -133,6 +135,7 @@ pub fn spawn(
         lights,
         view: None,
         stood: Stood::default(),
+        loading: HashMap::default(),
         settled: false,
     });
     Scenery {
@@ -262,6 +265,8 @@ struct Streaming {
     lights: SpatialIndex,
     view: Option<(Pos<Meters>, Meters)>,
     stood: Stood,
+    /// The tiles of ground being loaded, for the near chunks waiting on them.
+    loading: HashMap<TileAt, Task<()>>,
     settled: bool,
 }
 
@@ -310,6 +315,9 @@ struct Node {
 /// sides, to be cut into finer ones.
 const LEAF_SAMPLES: u32 = 128;
 const SPLIT_WITHIN: f32 = 1.5;
+/// The level from which a chunk's stride is the overview's, so it stands from the overview alone;
+/// a finer chunk waits for the tiles of ground under it.
+const OVERVIEW_LEVEL: u32 = OVERVIEW_STRIDE.trailing_zeros();
 /// How placements are filed to be found near the view.
 const PLACEMENT_CELL: Meters = Meters(32.0);
 /// How far past its reach the view keeps what stands, so pacing back and forth over the edge
@@ -339,6 +347,7 @@ fn stream(world: &mut World) {
         let keep = Meters(reach.0 * KEEP_SHARE);
         let mut budget = Budget::new(framed);
         stream_ground(world, &mut streaming, at, &mut budget);
+        share_pictures(world, &streaming);
         stream_covers(world, &mut streaming, root, at, reach, keep, &mut budget);
         stream_props(world, &mut streaming, root, at, reach, keep, &mut budget);
         stream_lights(world, &mut streaming, root, at, reach, keep);
@@ -390,6 +399,9 @@ fn stream_ground(
     at: Pos<Meters>,
     budget: &mut Budget,
 ) {
+    streaming
+        .loading
+        .retain(|_, task| block_on(future::poll_once(task)).is_none());
     let wanted = nodes_for(&streaming.heights, at);
     let gone: Vec<Node> = streaming
         .stood
@@ -413,10 +425,13 @@ fn stream_ground(
     }
     missing.sort_by_key(|node| node.level);
     for node in missing {
+        if !ground_under(streaming, node) {
+            continue;
+        }
         if !budget.take(|budget| &mut budget.chunks) {
             break;
         }
-        let entity = spawn_chunk(world, &streaming.heights, node, streaming.terrain);
+        let entity = spawn_chunk(world, streaming, node);
         streaming.stood.ground.insert(node, entity);
     }
     if wanted
@@ -429,6 +444,73 @@ fn stream_ground(
             }
         }
     }
+}
+
+/// Whether the ground under `node` is there to stand it on: the overview, for a chunk as coarse as
+/// it; else every tile under it loaded, each not yet being loaded set loading on a task.
+fn ground_under(streaming: &mut Streaming, node: Node) -> bool {
+    if node.level >= OVERVIEW_LEVEL {
+        return true;
+    }
+    let (heights, paint) = (&streaming.heights, &streaming.paint);
+    let rect = node_rect(node);
+    let side = rect.side as f32 / SAMPLES_PER_METER as f32;
+    let bounds = Rect::new(
+        Heightfield::sample_pos(rect.first.0, rect.first.1),
+        Size::new(side, side),
+    );
+    let mut ready = true;
+    for tile in heights.size().tiles_within(bounds) {
+        if heights.is_loaded(tile) && paint.is_loaded(tile) {
+            continue;
+        }
+        ready = false;
+        if streaming.loading.contains_key(&tile) {
+            continue;
+        }
+        let (heights, paint) = (heights.clone(), paint.clone());
+        let task = IoTaskPool::get().spawn(async move {
+            for problem in [heights.load(tile).err(), paint.load(tile).err()]
+                .into_iter()
+                .flatten()
+            {
+                warn!("ground tile {} doesn't load: {problem}", tile.key());
+            }
+        });
+        streaming.loading.insert(tile, task);
+    }
+    ready
+}
+
+/// Gives every chunk the ground's pictures once they have loaded.
+fn share_pictures(world: &mut World, streaming: &Streaming) {
+    let Some(ground) = chunk_material_of(world, streaming.terrain) else {
+        return;
+    };
+    let chunks: Vec<Handle<GroundMaterial>> = streaming
+        .stood
+        .ground
+        .values()
+        .filter_map(|&chunk| chunk_material_of(world, chunk))
+        .collect();
+    let mut materials = world.resource_mut::<Assets<GroundMaterial>>();
+    let Some(ground) = materials.get(&ground).cloned() else {
+        return;
+    };
+    for chunk in chunks {
+        let shared = materials
+            .get(&chunk)
+            .is_some_and(|material| material.extension.pictures != ground.extension.pictures);
+        if shared && let Some(mut material) = materials.get_mut(&chunk) {
+            terrain::share_pictures(&mut material, &ground);
+        }
+    }
+}
+
+fn chunk_material_of(world: &World, entity: Entity) -> Option<Handle<GroundMaterial>> {
+    world
+        .get::<MeshMaterial3d<GroundMaterial>>(entity)
+        .map(|material| material.0.clone())
 }
 
 /// The nodes of the quadtree over the ground's samples that stand for the view at `at`: every node
@@ -486,21 +568,37 @@ fn node_rect(node: Node) -> NodeRect {
     }
 }
 
-fn spawn_chunk(world: &mut World, heights: &Heightfield, node: Node, terrain: Entity) -> Entity {
-    let mesh = chunk_mesh(heights, node);
+fn spawn_chunk(world: &mut World, streaming: &Streaming, node: Node) -> Entity {
+    let mesh = chunk_mesh(&streaming.heights, node);
     let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
-    let material = world
-        .get::<MeshMaterial3d<GroundMaterial>>(terrain)
-        .map(|material| material.0.clone())
-        .expect("the ground's material");
+    let ground = chunk_material_of(world, streaming.terrain).expect("the ground's material");
+    let material = world.resource_scope(|world, mut images: Mut<Assets<Image>>| {
+        let mut materials = world.resource_mut::<Assets<GroundMaterial>>();
+        let ground = materials
+            .get(&ground)
+            .cloned()
+            .expect("the ground's material");
+        let material =
+            terrain::chunk_material(&ground, &streaming.paint, chunk_samples(node), &mut images);
+        materials.add(material)
+    });
     world
         .spawn((
             Mesh3d(mesh),
             MeshMaterial3d(material),
             Transform::default(),
-            ChildOf(terrain),
+            ChildOf(streaming.terrain),
         ))
         .id()
+}
+
+fn chunk_samples(node: Node) -> terrain::ChunkSamples {
+    let rect = node_rect(node);
+    terrain::ChunkSamples {
+        first: rect.first,
+        side: rect.side,
+        stride: 1 << node.level,
+    }
 }
 
 fn chunk_mesh(heights: &Heightfield, node: Node) -> Mesh {
@@ -853,6 +951,15 @@ pub fn lay_ground(world: &mut World, scenery: Scenery, heights: &Heightfield, pa
         if let Ok(mut chunk) = world.get_entity_mut(entity) {
             chunk.insert(Mesh3d(mesh));
         }
+        let Some(material) = chunk_material_of(world, entity) else {
+            continue;
+        };
+        world.resource_scope(|world, mut images: Mut<Assets<Image>>| {
+            let mut materials = world.resource_mut::<Assets<GroundMaterial>>();
+            if let Some(mut material) = materials.get_mut(&material) {
+                terrain::repaint_chunk(&mut material, paint, chunk_samples(node), &mut images);
+            }
+        });
     }
     let covers: Vec<Entity> = streaming
         .stood
@@ -864,28 +971,13 @@ pub fn lay_ground(world: &mut World, scenery: Scenery, heights: &Heightfield, pa
         world.despawn(entity);
     }
     world.entity_mut(scenery.root).insert(streaming);
-    let Some(material) = world
-        .get::<MeshMaterial3d<GroundMaterial>>(scenery.terrain)
-        .map(|material| material.0.clone())
-    else {
-        return;
-    };
-    world.resource_scope(|world, mut images: Mut<Assets<Image>>| {
-        let mut materials = world.resource_mut::<Assets<GroundMaterial>>();
-        terrain::repaint(&material, paint, &mut materials, &mut images);
-    });
 }
 
-/// The ground's root, holding the material its chunks are painted with.
+/// The ground's root, holding the material its chunks are painted from.
 fn spawn_terrain(world: &mut World, content: &Content, area: &Area, root: Entity) -> Entity {
     let layers = ground_layers(content, area);
     let (material, pictures) = world.resource_scope(|world, mut images: Mut<Assets<Image>>| {
-        terrain::ground_material(
-            &layers,
-            &area.paint,
-            world.resource::<AssetServer>(),
-            &mut images,
-        )
+        terrain::ground_material(&layers, world.resource::<AssetServer>(), &mut images)
     });
     let material = world.resource_mut::<Assets<GroundMaterial>>().add(material);
     world

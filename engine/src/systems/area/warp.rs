@@ -10,7 +10,7 @@ use crate::systems::player::SpawnPoint;
 use crate::systems::script::{
     Condition, EffectCall, Fill, Place, Reach, RiftScripting, effect as effects,
 };
-use crate::systems::{dialogue, movement, reach};
+use crate::systems::{dialogue, movement, reach, region};
 
 /// Moves an actor to a place, setting its spawn point.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
@@ -62,6 +62,7 @@ pub fn warp(world: &mut World, actor: Entity, to: Place) -> Result<(), String> {
     reach::forget(world, actor);
     world.entity_mut(actor).insert(SpawnPoint(to.at));
     if here == Some(to.area) {
+        region::reach(world, to.at);
         movement::relocate_beside(world, actor, to.at);
     } else {
         world.entity_mut(actor).insert(Crossing {

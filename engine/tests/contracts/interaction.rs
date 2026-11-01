@@ -2,7 +2,8 @@ use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::systems::dialogue::{self, Conversation, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::player::commands_locked;
-use engine::systems::{area, movement, script};
+use engine::systems::region;
+use engine::systems::{movement, script};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, dialogue, lines, path};
 
@@ -137,7 +138,7 @@ fn beach() -> Sim {
             dialogue::refresh,
         ));
     script::spawn_stateless(&mut sim.world);
-    area::object::spawn_all(&mut sim.world);
+    region::reach_all(&mut sim.world);
     sim
 }
 

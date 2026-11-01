@@ -1,4 +1,8 @@
-use std::sync::OnceLock;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, RwLock};
+
+use arc_swap::{ArcSwap, Guard};
+use rayon::prelude::*;
 
 use super::Area;
 use super::prop::PropPlacement;
@@ -6,9 +10,10 @@ use super::terrain::{TerrainId, Walk};
 use crate::core::audio::playback::SfxId;
 use crate::core::content::Content;
 use crate::core::geometry::corners;
-use crate::core::math::{Pos, Rect};
-use crate::core::units::{Cell, CellPos, GridDims, GridSize, MeterSize, Meters};
-use crate::systems::movement::{AGENT_RADIUS, NavMesh};
+use crate::core::ground::{TILE_SIDE, TileAt};
+use crate::core::math::{Pos, Rect, Size};
+use crate::core::units::{Cell, CellPos, GridSize, MeterSize, Meters};
+use crate::systems::movement::{AGENT_RADIUS, NavMesh, TileLayer};
 
 /// What a terrain is underfoot: whether actors walk on it, and what a step on it sounds like.
 #[derive(Clone, Debug)]
@@ -17,37 +22,100 @@ pub struct Underfoot {
     pub footstep: SfxId,
 }
 
-/// Where an area walks and flies, for everyone and for the wild, each built the first time it's
-/// asked for: a process moves on few of a game's areas, and a wide area's meshes are large.
-#[derive(Default)]
+/// Where an area walks and flies, for everyone and for the wild, over the tiles of ground held so
+/// far: each tile triangulated once as it is first held, and the four meshes joined anew over
+/// every held tile whenever more come in. A process moves on the ground near its players alone,
+/// however wide the area. A mesh is read without a lock or a count, so every core reads it at
+/// once, and swapped whole when it is laid anew.
 pub struct Meshes {
-    walk: OnceLock<NavMesh>,
-    wild: OnceLock<NavMesh>,
-    airspace: OnceLock<NavMesh>,
-    wild_airspace: OnceLock<NavMesh>,
+    tiles: RwLock<BTreeMap<TileAt, Arc<[TileLayer; KINDS]>>>,
+    patches: RwLock<BTreeMap<TileAt, Arc<[Rect<Meters>]>>>,
+    meshes: [ArcSwap<NavMesh>; KINDS],
 }
 
-/// The mesh `area`'s actors move on, built on first use unless laid before. The ground blocks
-/// where it is painted
+/// A mesh as it is read: the one laid when the read began, kept whole until the read ends.
+pub type HeldMesh = Guard<Arc<NavMesh>>;
+
+impl Meshes {
+    /// The meshes over no ground yet, within `bounds`.
+    pub(super) fn empty(bounds: Rect<Meters>) -> Meshes {
+        Meshes {
+            tiles: RwLock::new(BTreeMap::new()),
+            patches: RwLock::new(BTreeMap::new()),
+            meshes: std::array::from_fn(|_| {
+                ArcSwap::from_pointee(NavMesh::join(bounds, std::iter::empty()))
+            }),
+        }
+    }
+}
+
+/// The meshes of an area: the ground and the air, each for everyone and for the wild.
+const KINDS: usize = 4;
+
+/// The tiles of `area` held: those its meshes cover.
+pub(super) fn held(area: &Area) -> BTreeSet<TileAt> {
+    area.meshes
+        .tiles
+        .read()
+        .expect("the tiles lock")
+        .keys()
+        .copied()
+        .collect()
+}
+
+/// Holds `tiles` of `area` besides those held, so its meshes cover them: loads their ground,
+/// triangulates each new one on a core of its own and joins the meshes anew. Whether any tile was
+/// new.
+pub(super) fn hold(area: &Area, tiles: impl IntoIterator<Item = TileAt>) -> bool {
+    let wanted: BTreeSet<TileAt> = tiles.into_iter().collect();
+    let missing: Vec<TileAt> = {
+        let held = area.meshes.tiles.read().expect("the tiles lock");
+        wanted
+            .into_iter()
+            .filter(|at| !held.contains_key(at))
+            .collect()
+    };
+    if missing.is_empty() {
+        return false;
+    }
+    let started = std::time::Instant::now();
+    let count = missing.len();
+    let laid: Vec<(TileAt, Arc<[TileLayer; KINDS]>)> = missing
+        .into_par_iter()
+        .map(|at| (at, Arc::new(triangulate(area, at))))
+        .collect();
+    loop {
+        let tiles: Vec<Arc<[TileLayer; KINDS]>> = {
+            let mut held = area.meshes.tiles.write().expect("the tiles lock");
+            held.extend(laid.iter().cloned());
+            held.values().cloned().collect()
+        };
+        let bounds = area.size.bounds();
+        let meshes: Vec<Arc<NavMesh>> = (0..KINDS)
+            .into_par_iter()
+            .map(|kind| Arc::new(NavMesh::join(bounds, tiles.iter().map(|tile| &tile[kind]))))
+            .collect();
+        let held = area.meshes.tiles.write().expect("the tiles lock");
+        if held.len() == tiles.len() {
+            for (kind, mesh) in meshes.into_iter().enumerate() {
+                area.meshes.meshes[kind].store(mesh);
+            }
+            bevy::log::debug!(
+                "held {count} more ground tiles, meshes over {} in {:?}",
+                tiles.len(),
+                started.elapsed()
+            );
+            return true;
+        }
+    }
+}
+
+/// The mesh `area`'s actors move on, over the tiles held. The ground blocks where it is painted
 /// mostly with a terrain that blocks, where it is steeper than the area's `max_slope`, and under
 /// every prop's footprint; a safe zone keeps the wild out of it. The air knows only the bounds
 /// and, for the wild, the safe zones.
-pub(super) fn mesh(area: &Area, wild: bool, flies: bool) -> &NavMesh {
-    let meshes = &area.meshes;
-    let build = |obstacles: Vec<Vec<Pos<Meters>>>| {
-        NavMesh::build(area.size.bounds(), obstacles, AGENT_RADIUS)
-    };
-    let zones = || area.safe_zones.iter().map(|zone| corners(*zone).to_vec());
-    match (wild, flies) {
-        (false, false) => meshes.walk.get_or_init(|| build(blocked(area))),
-        (true, false) => meshes
-            .wild
-            .get_or_init(|| build(blocked(area).into_iter().chain(zones()).collect())),
-        (false, true) => meshes.airspace.get_or_init(|| build(Vec::new())),
-        (true, true) => meshes
-            .wild_airspace
-            .get_or_init(|| build(zones().collect())),
-    }
+pub(super) fn mesh(area: &Area, wild: bool, flies: bool) -> HeldMesh {
+    area.meshes.meshes[kind(wild, flies)].load()
 }
 
 /// What each of `terrains` is underfoot, by its index in the area.
@@ -76,28 +144,95 @@ pub(super) fn footprints(content: &Content, props: &[PropPlacement]) -> Vec<Vec<
         .collect()
 }
 
-fn blocked(area: &Area) -> Vec<Vec<Pos<Meters>>> {
-    let size = area.size.grid();
-    let blocked: Vec<bool> = size
-        .cells()
-        .map(|cell| {
-            !area.underfoot_of(area.paint.dominant(cell)).walkable
-                || area.heights.steepest(cell) > area.max_slope
-        })
-        .collect();
-    area.footprints
-        .iter()
-        .cloned()
-        .chain(
-            patches(size, &blocked)
-                .into_iter()
-                .map(|patch| corners(patch).to_vec()),
-        )
-        .collect()
+/// Which of the four meshes: the ground's for everyone, the wild's, the air's, the wild air's.
+fn kind(wild: bool, flies: bool) -> usize {
+    usize::from(wild) | usize::from(flies) << 1
 }
 
-/// The blocked cells as rectangles: each row's runs, and runs alike on consecutive rows joined.
-fn patches(size: GridSize, blocked: &[bool]) -> Vec<Rect<Meters>> {
+/// The four layers of the tile at `at`.
+fn triangulate(area: &Area, at: TileAt) -> [TileLayer; KINDS] {
+    let size = area.heights.size();
+    let tile = at.rect(size);
+    let reach = tile.inflate(AGENT_RADIUS.0, AGENT_RADIUS.0);
+    let bounds = area.size.bounds();
+    let mut ground: Vec<Vec<Pos<Meters>>> = area
+        .footprint_index
+        .within(reach)
+        .map(|footprint| area.footprints[footprint].clone())
+        .collect();
+    ground.extend(
+        size.tiles_within(tile.inflate(TILE_SIDE.0, TILE_SIDE.0))
+            .flat_map(|near| blocked(area, near).to_vec())
+            .filter(|patch| patch.intersects(&reach))
+            .map(|patch| corners(patch).to_vec()),
+    );
+    let zones: Vec<Vec<Pos<Meters>>> = area
+        .safe_zones
+        .iter()
+        .map(|zone| corners(*zone).to_vec())
+        .collect();
+    let mut wild_ground = ground.clone();
+    wild_ground.extend(zones.iter().cloned());
+    let lay = |obstacles: &[Vec<Pos<Meters>>]| {
+        NavMesh::triangulate(tile, bounds, obstacles, AGENT_RADIUS)
+    };
+    [lay(&ground), lay(&wild_ground), lay(&[]), lay(&zones)]
+}
+
+/// Where the ground of the tile at `at` blocks: the cells painted mostly with a terrain that
+/// blocks or steeper than the area walks, as rectangles.
+/// The patches of ground blocked on tile `at`, computed once: terrain that doesn't walk, and
+/// ground steeper than the area allows. A cell's steepness reads the samples on its far edges,
+/// which on the tile's last row and column lie on the next tiles, so those are loaded first: a
+/// patch must come out the same whenever it is asked for, as the tiles meeting at a seam each
+/// triangulate the patches reaching across it.
+fn blocked(area: &Area, at: TileAt) -> Arc<[Rect<Meters>]> {
+    if let Some(patches) = area
+        .meshes
+        .patches
+        .read()
+        .expect("the patches lock")
+        .get(&at)
+    {
+        return patches.clone();
+    }
+    let size = area.heights.size();
+    let tile = at.rect(size);
+    for near in size.tiles_within(Rect::new(tile.origin, tile.size + Size::new(1.0, 1.0))) {
+        if let Err(problem) = area.heights.load(near) {
+            bevy::log::warn!("ground tile {} doesn't load: {problem}", near.key());
+        }
+    }
+    if let Err(problem) = area.paint.load(at) {
+        bevy::log::warn!("paint tile {} doesn't load: {problem}", at.key());
+    }
+    let grid = area.size.grid();
+    let side = TILE_SIDE.0 as u32;
+    let origin = CellPos::new((at.column * side) as i32, (at.row * side) as i32);
+    let dims = GridSize::new(
+        side.min(grid.width.saturating_sub(at.column * side)),
+        side.min(grid.height.saturating_sub(at.row * side)),
+    );
+    let blocked: Vec<bool> = area
+        .paint
+        .dominant_in(origin, dims)
+        .into_iter()
+        .zip(area.heights.steepest_in(origin, dims))
+        .map(|(terrain, slope)| !area.underfoot_of(terrain).walkable || slope > area.max_slope)
+        .collect();
+    let patches: Arc<[Rect<Meters>]> = patches(origin, dims, &blocked).into();
+    area.meshes
+        .patches
+        .write()
+        .expect("the patches lock")
+        .entry(at)
+        .or_insert(patches)
+        .clone()
+}
+
+/// The blocked cells of a tile of `size` cells from `origin` as rectangles: each row's runs, and
+/// runs alike on consecutive rows joined.
+fn patches(origin: CellPos, size: GridSize, blocked: &[bool]) -> Vec<Rect<Meters>> {
     let (width, height) = (size.width as usize, size.height as usize);
     let mut patches: Vec<Rect<Meters>> = Vec::new();
     for y in 0..height {
@@ -111,9 +246,9 @@ fn patches(size: GridSize, blocked: &[bool]) -> Vec<Rect<Meters>> {
             while x < width && blocked[y * width + x] {
                 x += 1;
             }
-            let run = CellPos::new(start as i32, y as i32)
+            let run = (origin + CellPos::new(start as i32, y as i32).to_vector())
                 .bounds()
-                .union(&CellPos::new(x as i32 - 1, y as i32).bounds());
+                .union(&(origin + CellPos::new(x as i32 - 1, y as i32).to_vector()).bounds());
             match patches.iter_mut().find(|patch| {
                 patch.min_x() == run.min_x()
                     && patch.max_x() == run.max_x()

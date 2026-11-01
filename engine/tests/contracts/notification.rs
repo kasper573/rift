@@ -13,6 +13,7 @@ use engine::systems::notification::{self, Notification, NotificationKind, Notifi
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::player::{AreaDrawn, commands_locked};
 use engine::systems::quest::{self, QuestDef};
+use engine::systems::region;
 use engine::systems::status::{self, StatusEffectDef};
 use engine::systems::text::LineText;
 use engine::systems::{actor, belongings, class, script, stat, vfx};
@@ -454,8 +455,7 @@ fn intro_row(title: &str) -> serde_json::Value {
 
 fn island(game: &Content) -> Sim {
     let mut sim = area(game, "island");
-    npc::spawn_all(&mut sim.world);
-    area::object::spawn_all(&mut sim.world);
+    region::reach_all(&mut sim.world);
     sim
 }
 

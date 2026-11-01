@@ -27,6 +27,7 @@ pub mod player;
 pub mod probe;
 pub mod quest;
 pub mod reach;
+pub mod region;
 pub mod rewards;
 pub mod screen;
 pub mod script;
@@ -144,6 +145,7 @@ pub fn area_state(world: &mut World, content: &Content) {
     world.init_resource::<crate::core::chunk::ChunkIndex>();
     world.init_resource::<npc::Packs>();
     world.insert_resource(sleep::Sleep::of(content));
+    world.insert_resource(region::Region::of(content));
     MessageRegistry::register_message::<combat::Died>(world);
     MessageRegistry::register_message::<rewards::KillCredited>(world);
     world.add_observer(player::greet);
@@ -230,20 +232,17 @@ pub fn server_app(
     mirror::register(&mut app);
     visibility::register(&mut app);
     area_state(app.world_mut(), content);
-    area::lay_meshes(content, area);
     // Seed the phase by the world's ordinal so worlds replicate on different ticks, spreading the
     // serialization load across ticks instead of spiking every Nth tick in lockstep.
     app.insert_resource(ReplicationClock(ordinal))
+        .add_systems(Startup, script::spawn_stateless)
         .add_systems(
-            Startup,
+            First,
             (
-                script::spawn_stateless,
-                area::object::spawn_all,
-                npc::spawn_all,
-            )
-                .chain(),
+                advance_replication_clock,
+                (sleep::settle, region::settle).chain(),
+            ),
         )
-        .add_systems(First, (advance_replication_clock, sleep::settle))
         .add_systems(
             PostUpdate,
             movement::file_by_chunk.before(ServerSystems::Send),
@@ -416,6 +415,7 @@ pub fn client_app(
             view::CameraFollowPlugin,
             player::session::ClientSessionPlugin,
             input::PlayerInputPlugin,
+            region::ClientRegionPlugin,
         ))
         .add_plugins((
             settings::plugin,

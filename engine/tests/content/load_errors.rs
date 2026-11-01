@@ -1,5 +1,5 @@
 use engine::core::content::{ErrorPlace, Fixture, LoadReport, SETTINGS_FILE};
-use engine::core::ground::{GroundSize, Paint};
+use engine::core::ground::{GroundSize, Paint, TileAt};
 use engine::core::vfx::Stage;
 use engine::systems::actor::model::MAX_CHARACTER_TRIANGLES;
 use engine::systems::area::AreaDef;
@@ -25,7 +25,7 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
             hero["icon"] = json!("icons/heroo.png")
         })
         .area("cove", &Map::open(8, 8), json!([]))
-        .part("area", "cove", "paint.png", png(8, 8))
+        .part("area", "cove", "paint/0_0.png", png(8, 8))
         .row(
             "test_character",
             "lost",
@@ -79,8 +79,9 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
                 "wrong type",
                 None
             ),
+            ("cove.area", ErrorPlace::WholeFile, "missing file", None),
             (
-                "cove.area/paint.png",
+                "cove.area/paint/0_0.png",
                 ErrorPlace::WholeFile,
                 "wrong size",
                 None,
@@ -110,7 +111,7 @@ fn every_rule_names_its_file_line_pointer_and_nearest_value() {
     let text = report.to_string();
     for at in [
         "fixtures/game.config.json:8:13  /player",
-        "cove.area/paint.png  whole file",
+        "cove.area/paint/0_0.png  whole file",
         "nearest   \"icons/hero.png\"",
     ] {
         assert!(text.contains(at), "the report says {at}:\n{text}");
@@ -126,35 +127,47 @@ fn an_areas_terrain_parts_are_held_to_its_size_and_depth() {
     }
     let cases = [
         Case {
-            part: "height.png",
+            part: "height/0_0.png",
             png: png(17, 17),
             rule: "wrong format",
         },
         Case {
-            part: "height.png",
+            part: "height/0_0.png",
             png: grey16(16, 17),
             rule: "wrong size",
         },
         Case {
-            part: "paint.png",
+            part: "paint/0_0.png",
             png: png(16, 15),
             rule: "wrong size",
         },
         Case {
-            part: "paint.png",
+            part: "paint/0_0.png",
             png: png(16, 16),
             rule: "wrong format",
         },
         Case {
-            part: "paint.png",
+            part: "paint/0_0.png",
             png: b"not a png".to_vec(),
             rule: "unreadable image",
+        },
+        Case {
+            part: "paint/1_0.png",
+            png: grey8(16, 16),
+            rule: "not a tile of the ground",
+        },
+        Case {
+            part: "height/00_0.png",
+            png: grey16(17, 17),
+            rule: "not a tile of the ground",
         },
     ];
     for case in cases {
         let report = game()
             .area("cove", &Map::open(8, 8), json!([]))
             .part("area", "cove", case.part, case.png)
+            .part("area", "cove", "height_overview.png", grey16(3, 3))
+            .part("area", "cove", "paint_overview.png", grey8(2, 2))
             .try_load()
             .err()
             .expect("refused");
@@ -167,32 +180,72 @@ fn an_areas_terrain_parts_are_held_to_its_size_and_depth() {
         );
     }
 
+    // A ground with tiles keeps an overview of them, and it must say what the tiles say.
+    let size = GroundSize {
+        width: 8,
+        height: 8,
+    };
+    let painted = Paint::from_fn(size, |column, _| u8::from(column < 8));
+    let tile = painted
+        .encode_tile(TileAt { column: 0, row: 0 })
+        .expect("paint that isn't plain")
+        .to_vec();
+    let overview = painted.encode_overview().expect("paint that isn't plain");
+    let without = game()
+        .area("cove", &Map::open(8, 8), json!([]))
+        .part("area", "cove", "paint/0_0.png", tile.clone())
+        .try_load()
+        .err()
+        .expect("refused without an overview");
+    assert!(
+        rules_in(&without, "cove.area")
+            .iter()
+            .any(|(rule, expected)| *rule == "missing file" && expected.contains("paint_overview")),
+        "{without}"
+    );
+    let stale = game()
+        .area("cove", &Map::open(8, 8), json!([]))
+        .part("area", "cove", "paint/0_0.png", tile.clone())
+        .part("area", "cove", "paint_overview.png", grey8(2, 2))
+        .try_load()
+        .err()
+        .expect("refused with a stale overview");
+    assert!(
+        rules_in(&stale, "cove.area/paint_overview.png")
+            .iter()
+            .any(|(rule, _)| *rule == "overview out of date"),
+        "{stale}"
+    );
     let content = game()
         .area("cove", &Map::open(8, 8), json!([]))
-        .part("area", "cove", "height.png", grey16(17, 17))
-        .part(
-            "area",
-            "cove",
-            "paint.png",
-            Paint::plain(GroundSize {
-                width: 8,
-                height: 8,
-            })
-            .encode(),
-        )
+        .part("area", "cove", "paint/0_0.png", tile)
+        .part("area", "cove", "paint_overview.png", overview)
         .load();
     assert!(content.by_path::<AreaDef>(&path("area", "cove")).is_some());
 }
 
 /// A 16-bit grey PNG of `width` × `height` black pixels.
 fn grey16(width: u32, height: u32) -> Vec<u8> {
+    grey(width, height, png::BitDepth::Sixteen)
+}
+
+/// An 8-bit grey PNG of `width` × `height` black pixels.
+fn grey8(width: u32, height: u32) -> Vec<u8> {
+    grey(width, height, png::BitDepth::Eight)
+}
+
+fn grey(width: u32, height: u32, depth: png::BitDepth) -> Vec<u8> {
+    let bytes_per_pixel = match depth {
+        png::BitDepth::Sixteen => 2,
+        _ => 1,
+    };
     let mut bytes = Vec::new();
     let mut encoder = png::Encoder::new(&mut bytes, width, height);
     encoder.set_color(png::ColorType::Grayscale);
-    encoder.set_depth(png::BitDepth::Sixteen);
+    encoder.set_depth(depth);
     let mut writer = encoder.write_header().expect("a png header");
     writer
-        .write_image_data(&vec![0; (width * height * 2) as usize])
+        .write_image_data(&vec![0; (width * height * bytes_per_pixel) as usize])
         .expect("png pixels");
     writer.finish().expect("a png");
     bytes

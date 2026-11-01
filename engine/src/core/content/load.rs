@@ -97,6 +97,8 @@ pub struct TableShape {
     pub table: String,
     /// Whether each file is a bundle of its config and parts.
     pub bundle: bool,
+    /// The parts a bundle keeps beside its config, each as its name in the bundle.
+    pub parts: Vec<String>,
     pub shape: serde_json::Value,
     /// The path of every fixture of the type.
     pub fixtures: Vec<String>,
@@ -193,6 +195,7 @@ impl ContentRegistry {
             parts: Some(BundleParts {
                 specs: Row::PARTS,
                 written: Row::WRITTEN,
+                streamed: Row::STREAMED,
                 read: Row::read_parts,
                 write: Row::write_parts,
             }),
@@ -363,6 +366,21 @@ impl ContentRegistry {
         bundle_of(file, &self.bundle_tables())
     }
 
+    /// Whether `file` is a part its bundle's type reads only as play comes to it.
+    pub fn is_streamed(&self, file: &str) -> bool {
+        let Some((bundle, part)) = self.bundle_of(file) else {
+            return false;
+        };
+        table_of(bundle)
+            .and_then(|table| self.loader_named(table))
+            .is_some_and(|loader| {
+                loader
+                    .streamed_parts()
+                    .iter()
+                    .any(|spec| spec.matches(part))
+            })
+    }
+
     pub fn table_names(&self) -> Vec<&'static str> {
         self.rows.iter().map(|row| row.name()).collect()
     }
@@ -463,6 +481,7 @@ impl ContentRegistry {
                 TableShape {
                     table: row.name().to_owned(),
                     bundle: row.shape() == Shape::Bundle,
+                    parts: row.parts().iter().map(PartSpec::describe).collect(),
                     shape: row.schema(settings),
                     fixtures: fixtures().map(|(path, _)| path.clone()).collect(),
                     locks: fixtures()
@@ -1089,9 +1108,10 @@ impl Loading {
             .collect();
         let root = self.folder.clone();
         let listing = self.listing.clone();
+        let purpose = self.purpose;
         let parsed: Vec<(usize, String, ParsedFile)> = self.each(jobs, |(index, path)| {
             let loader = registry.row_loaders()[index].as_ref();
-            let parsed = parse_file(registry, loader, &root, &listing, &scope, &path);
+            let parsed = parse_file(registry, loader, &root, &listing, &scope, purpose, &path);
             (index, path, parsed)
         });
 
@@ -1326,6 +1346,7 @@ pub(super) fn parse_file(
     root: &Arc<dyn ContentFolder>,
     listing: &Listing,
     scope: &ContentScope,
+    purpose: LoadPurpose,
     path: &str,
 ) -> ParsedFile {
     let file = read_file(root.as_ref(), &fields_file(path));
@@ -1334,7 +1355,7 @@ pub(super) fn parse_file(
     });
     if let Some(row) = parsed.row.as_mut() {
         let parts = listing.parts.get(path).map_or(&[][..], Vec::as_slice);
-        let mut reader = Parts::new(path, parts, root, scope);
+        let mut reader = Parts::new(path, parts, root, scope, purpose);
         loader.read_parts(row.as_mut(), &mut reader);
         let read = reader.finish();
         parsed.errors.extend(read.errors);
@@ -1716,6 +1737,7 @@ pub(super) trait TableLoader: Send + Sync {
     fn shape(&self) -> Shape;
     fn parts(&self) -> &'static [PartSpec];
     fn written_parts(&self) -> &'static [PartSpec];
+    fn streamed_parts(&self) -> &'static [PartSpec];
     fn schema(&self, settings: &SchemaSettings) -> serde_json::Value;
     fn picked_from_table(&self) -> bool;
     fn parse_value(&self, value: &serde_json::Value) -> ParseResult;
@@ -1748,6 +1770,7 @@ struct RowLoader<Row> {
 struct BundleParts<Row> {
     specs: &'static [PartSpec],
     written: &'static [PartSpec],
+    streamed: &'static [PartSpec],
     read: fn(&mut Row, &mut Parts),
     write: fn(&Row, &str, &mut FileWriter) -> io::Result<()>,
 }
@@ -1771,6 +1794,10 @@ impl<Row: ContentFile> TableLoader for RowLoader<Row> {
 
     fn written_parts(&self) -> &'static [PartSpec] {
         self.parts.as_ref().map_or(&[], |parts| parts.written)
+    }
+
+    fn streamed_parts(&self) -> &'static [PartSpec] {
+        self.parts.as_ref().map_or(&[], |parts| parts.streamed)
     }
 
     fn schema(&self, settings: &SchemaSettings) -> serde_json::Value {

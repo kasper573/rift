@@ -10,6 +10,7 @@ use serde_json::Value;
 use crate::core::content::ContentId;
 use crate::core::content::{Content, ContentScope, Fixture, with_content};
 use crate::core::geometry::Shape;
+use crate::core::ground::TILE_SIDE;
 use crate::core::math::{Pos, PosSchema, Rect, RectSchema, Size, SizeSchema};
 use crate::core::units::Meters;
 use crate::systems::GameSettings;
@@ -289,19 +290,21 @@ fn answer_in_scope(content: &Content, question: &ProbeQuestion) -> Option<Value>
                 .map(|question| answer_in_scope(content, question))
                 .collect::<Option<_>>()?,
         ),
-        &ProbeQuestion::Walkable { area, at } => json(&mesh(content, area).walkable(at)),
+        &ProbeQuestion::Walkable { area, at } => json(&mesh(content, area, &[at]).walkable(at)),
         &ProbeQuestion::Connects { area, from, to } => {
-            json(&mesh(content, area).connects(from, to))
+            json(&mesh(content, area, &[from, to]).connects(from, to))
         }
-        &ProbeQuestion::Route { area, from, to } => json(&mesh(content, area).route(from, to)),
-        &ProbeQuestion::Nearest { area, at } => json(&mesh(content, area).nearest(at)),
+        &ProbeQuestion::Route { area, from, to } => {
+            json(&mesh(content, area, &[from, to]).route(from, to))
+        }
+        &ProbeQuestion::Nearest { area, at } => json(&mesh(content, area, &[at]).nearest(at)),
         &ProbeQuestion::ReachableNear {
             area,
             from,
             goal,
             spacing,
         } => {
-            let mesh = mesh(content, area);
+            let mesh = mesh(content, area, &[from, goal]);
             let reached = mesh.nearest(from).and_then(|from| {
                 mesh.nearest_where(goal, spacing, |point| mesh.connects(from, point))
             });
@@ -450,8 +453,13 @@ fn area_of(content: &Content, id: AreaId) -> ProbeArea {
     }
 }
 
-fn mesh(content: &Content, area: AreaId) -> &crate::systems::movement::NavMesh {
-    area::load(content, area).mesh()
+/// The area's mesh over the tiles around `points`, held first, and whatever a route between
+/// them may take in besides: a tile's width around them.
+fn mesh(content: &Content, area: AreaId, points: &[Pos<Meters>]) -> area::HeldMesh {
+    let area = area::load(content, area);
+    let around = Rect::from_points(points.iter().copied()).inflate(TILE_SIDE.0, TILE_SIDE.0);
+    area.hold(area.ground_size().tiles_within(around));
+    area.mesh()
 }
 
 fn pictured(content: &Content, id: AreaId, at: Pos<Meters>) -> bool {

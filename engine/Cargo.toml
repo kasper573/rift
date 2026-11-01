@@ -124,6 +124,7 @@ walkdir = "2"
 cargo_metadata = "0.23"
 syn = { workspace = true, features = ["visit"] }
 proc-macro2 = { workspace = true, features = ["span-locations"] }
+arc-swap.workspace = true
 
 [dev-dependencies]
 testkit = { path = "../testkit" }

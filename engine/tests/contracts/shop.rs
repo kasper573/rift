@@ -2,12 +2,12 @@ use bevy_ecs::prelude::*;
 use engine::core::content::Content;
 use engine::core::math::Offset;
 use engine::core::time::{Seconds, WallClock};
-use engine::systems::area;
 use engine::systems::dialogue::{self, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::item::{ItemDef, ItemStack};
 use engine::systems::movement::{self, position};
-use engine::systems::npc::{self, NpcDef};
+use engine::systems::npc::NpcDef;
+use engine::systems::region;
 use engine::systems::script::{self, Speaker};
 use engine::systems::shop::{self, SaleQuote, SaleVerdict, ShopDef, ShopRequest, ShopView};
 use serde_json::{Value, json};
@@ -344,8 +344,7 @@ fn market() -> Sim {
             shop::refresh,
         ));
     script::spawn_stateless(&mut sim.world);
-    npc::spawn_all(&mut sim.world);
-    area::object::spawn_all(&mut sim.world);
+    region::reach_all(&mut sim.world);
     sim
 }
 

@@ -34,7 +34,7 @@ pub fn request_walk(world: &mut World, goal: Pos<Meters>) {
     stride.sent = MoveSeq(stride.sent.0 + 1);
     let seq = stride.sent;
     if free && let Some(mesh) = mesh {
-        stride.head_for(mesh, goal);
+        stride.head_for(&mesh, goal);
     }
     world.write_message(MoveRequest { pos: goal, seq });
 }
@@ -84,7 +84,7 @@ pub(super) fn walk_ahead(world: &mut World) {
     stride.track(&server);
     let heading = if alive {
         if heard >= stride.sent {
-            stride.follow(mesh, server_goal, server.pos);
+            stride.follow(&mesh, server_goal, server.pos);
         }
         stride.advance(speed * dt)
     } else {

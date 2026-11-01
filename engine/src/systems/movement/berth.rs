@@ -153,7 +153,7 @@ pub fn relocate_beside(world: &mut World, entity: Entity, spot: Pos<Meters>) {
         world.get::<AreaTag>(entity).map(|tag| tag.area),
         mesh_in(world, entity),
     ) {
-        (Some(area), Some(mesh)) => place_beside(world, area, mesh, spot),
+        (Some(area), Some(mesh)) => place_beside(world, area, &mesh, spot),
         _ => spot,
     };
     relocate(world, entity, at);

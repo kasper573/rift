@@ -162,9 +162,7 @@ fn point(areas: usize, layout: sim::Layout, content: &Content) -> Point {
 }
 
 fn measure(bench: &mut Bench) -> Timings {
-    for _ in 0..sim::WARMUP {
-        step(bench);
-    }
+    sim::warm_up(bench, step);
     let mut samples = Vec::with_capacity(MEASURE);
     for _ in 0..MEASURE {
         let started = Instant::now();

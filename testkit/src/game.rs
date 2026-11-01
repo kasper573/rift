@@ -620,7 +620,21 @@ impl Game {
             );
             u8::from(blocked(x, y))
         });
-        game.part("area", name, &area::PAINT.named("", "png"), paint.encode())
+        let game = size
+            .each_tile()
+            .filter_map(|at| Some((at, paint.encode_tile(at)?)))
+            .fold(game, |game, (at, bytes)| {
+                game.part(
+                    "area",
+                    name,
+                    &area::PAINT.named(&at.key(), "png"),
+                    bytes.to_vec(),
+                )
+            });
+        match paint.encode_overview() {
+            Some(bytes) => game.part("area", name, &area::PAINT_OVERVIEW.named("", "png"), bytes),
+            None => game,
+        }
     }
 
     /// The two terrains every declared area is painted with: turf to walk on and rock that
@@ -662,6 +676,19 @@ impl Game {
 
     pub fn load(self) -> Content {
         self.try_load().unwrap_or_else(|report| panic!("{report}"))
+    }
+
+    /// The game loaded as a server or a client loads it to play: trusting it was checked, holding
+    /// of its ground only what play comes to.
+    pub fn load_to_play(self) -> Content {
+        engine::core::content::load(
+            self.registry(),
+            Arc::new(self.folder()),
+            version::build(),
+            "the test game did not load",
+            engine::core::content::LoadPurpose::Play,
+        )
+        .unwrap_or_else(|report| panic!("{report}"))
     }
 
     /// Holds the game to everything a whole game must provide besides what it declares: every file

@@ -5,6 +5,7 @@ use engine::systems::area::{self, AreaDef, Wild};
 use engine::systems::combat::{self, AttackRequest};
 use engine::systems::movement::{self, MoveRequest, MoveSeq, position};
 use engine::systems::npc::{self, NpcDef};
+use engine::systems::region;
 use engine::systems::{actor, reach, script, skill, stat};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, hunting, path};
@@ -16,7 +17,7 @@ const REFUGE: Pos<Meters> = Pos::new(9.5, 4.0);
 #[test]
 fn wild_monsters_never_set_foot_in_a_safe_zone() {
     let mut sim = border(json!([{ "type": "population", "npc": "wanderer.npc.json", "count": 6 }]));
-    npc::spawn_all(&mut sim.world);
+    region::reach_all(&mut sim.world);
     let monsters: Vec<Entity> = sim
         .world
         .query_filtered::<Entity, With<Wild>>()

@@ -21,6 +21,7 @@ use crate::core::content::{
     Nearby, RowCheck, serial,
 };
 use crate::core::geometry::Radians;
+use crate::core::ground::TileAt;
 use crate::core::math::{Percent, Pos, Rect, Rng};
 use crate::core::script::compile::ProcedureId;
 use crate::core::script::value::Value;
@@ -402,16 +403,17 @@ pub fn next_pack(world: &mut World) -> Pack {
     Pack(world.resource_mut::<Names>().give())
 }
 
-/// Spawns the npcs placed in this world's cell: a resident at its spot, a population where its
-/// roaming ground is, or the area's middle when it roams anywhere.
-pub fn spawn_all(world: &mut World) {
+/// Spawns the npcs placed on the tile at `tile` in this world's cell: a resident at its spot, a
+/// population where its roaming ground is, or the area's middle when it roams anywhere.
+pub fn spawn_in(world: &mut World, tile: TileAt) {
     let content = world.resource::<Content>().clone();
     let area_id = world.resource::<WorldArea>().0;
     let mine = world.resource::<WorldCell>().0;
     let area = area::load(&content, area_id);
     let cells = area::cells(&content, area_id);
-    for module in area::modules(&content, area_id) {
-        match module {
+    let placed = area::placed(&content, area_id);
+    for index in area.modules_in(tile) {
+        match &placed[*index as usize].module {
             AreaModule::Population(population) => {
                 let anchor = population
                     .roams
@@ -437,7 +439,7 @@ pub fn spawn_all(world: &mut World) {
                 }
                 let pack = next_pack(world);
                 let mesh = area::load(&content, area_id).mesh();
-                let at = movement::place_beside(world, area_id, mesh, resident.at);
+                let at = movement::place_beside(world, area_id, &mesh, resident.at);
                 let entity = spawn(world, resident.npc, at, area_id, Some(pack));
                 world.entity_mut(entity).insert(Home(resident.at));
                 if let Some(mut actor) = world.get_mut::<Actor>(entity) {
@@ -466,7 +468,7 @@ fn spawn_wild(
     let at = world
         .resource_scope(|world, mut rng: Mut<Rng>| {
             let spots = world.resource::<Spots>();
-            roaming_spot(mesh, &mut rng, spots, area_id, roams)
+            roaming_spot(&mesh, &mut rng, spots, area_id, roams)
         })
         .expect("validated at startup: populations have ground outside the safe zones");
     let entity = spawn(world, npc, at, area_id, Some(pack));
@@ -780,7 +782,7 @@ pub fn run_respawn(world: &mut World, fallen: &mut FallenNpcs) {
             let spots = world.resource::<Spots>();
             let at = match world.get::<Home>(id) {
                 Some(&Home(home)) => Some(home),
-                None => roaming_spot(mesh, &mut rng, spots, area_id, roams),
+                None => roaming_spot(&mesh, &mut rng, spots, area_id, roams),
             }
             .unwrap_or_else(|| region.fallback_spawn());
             crate::systems::combat::revive(world, id, at);

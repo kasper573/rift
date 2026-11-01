@@ -8,8 +8,9 @@ use engine::systems::item::{
 use engine::systems::memory::{self, MemoryDef};
 use engine::systems::player::Xp;
 use engine::systems::quest::{self, QuestDef, QuestLog, QuestRequest, QuestResult};
+use engine::systems::region;
 use engine::systems::shop::{self, ShopRequest};
-use engine::systems::{area, combat, movement, npc, rewards, script, stat};
+use engine::systems::{combat, movement, npc, rewards, script, stat};
 use serde_json::{Value, json};
 use testkit::{BODY, Game, Map, Sim, dialogue, labels, locked, path, said};
 
@@ -671,8 +672,7 @@ fn harbour() -> Sim {
         ))
         .add((stat::settle_health, combat::defeats));
     script::spawn_stateless(&mut sim.world);
-    npc::spawn_all(&mut sim.world);
-    area::object::spawn_all(&mut sim.world);
+    region::reach_all(&mut sim.world);
     sim
 }
 

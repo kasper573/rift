@@ -23,6 +23,7 @@ mod presence;
 mod probe;
 mod quest;
 mod reach;
+mod region;
 mod safe_zone;
 mod scenery;
 mod shop;

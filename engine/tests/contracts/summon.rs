@@ -5,6 +5,7 @@ use engine::systems::interact::{self, InteractRequest};
 use engine::systems::memory::{self, MemoryDef};
 use engine::systems::npc::{self, NpcDef, summon};
 use engine::systems::player::ClientId;
+use engine::systems::region;
 use engine::systems::stat::{self, StatKind};
 use engine::systems::visibility;
 use engine::systems::{actor, movement, rewards, script, skill};
@@ -275,7 +276,7 @@ fn harbour() -> Sim {
             actor::settle,
         ));
     script::spawn_stateless(&mut sim.world);
-    npc::spawn_all(&mut sim.world);
+    region::reach_all(&mut sim.world);
     sim
 }
 

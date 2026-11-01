@@ -18,7 +18,7 @@ pub mod sync;
 pub mod table;
 pub mod version;
 
-pub use bundle::{Bundle, PartSpec, Parts};
+pub use bundle::{Bundle, PartSpec, Parts, StoredPart};
 pub use check::RowCheck;
 pub use files::{
     CONFIG_FILE, FIXTURES_DIR, FileType, GameFile, GameFiles, Listing, NOTE_EXTENSION,

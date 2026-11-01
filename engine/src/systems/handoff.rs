@@ -13,7 +13,6 @@ use crate::core::math::Pos;
 use crate::core::script::compile::ProcedureId;
 use crate::core::script::value::Value;
 use crate::core::units::Meters;
-use crate::systems::WorldArea;
 use crate::systems::actor::Actor;
 use crate::systems::area::transition::Crossing;
 use crate::systems::area::{AreaTag, Wild};
@@ -32,6 +31,7 @@ use crate::systems::stat::{self, Immortal, Stats};
 use crate::systems::status::Statuses;
 use crate::systems::visibility::Presence;
 use crate::systems::worlds::{Wake, Worlds};
+use crate::systems::{WorldArea, region};
 
 /// A player whose character changed hands this tick: its connection follows, from the world it
 /// played in to the one its character now stands in.
@@ -295,6 +295,7 @@ fn arrive(world: &mut World, carried: Carried) {
     match carried {
         Carried::Npc(carry) => {
             let carry = *carry;
+            region::reach(world, carry.stance.at);
             let entity = under_name(world, carry.name);
             npc::furnish(
                 world,
@@ -328,6 +329,7 @@ fn arrive(world: &mut World, carried: Carried) {
             stand(world, entity, carry.stance);
         }
         Carried::Drop(carry) => {
+            region::reach(world, carry.at);
             let entity = under_name(world, carry.name);
             world.entity_mut(entity).insert((
                 Replicated,
@@ -347,6 +349,7 @@ fn arrive(world: &mut World, carried: Carried) {
         }
         Carried::Player(carry) => {
             let carry = *carry;
+            region::reach(world, carry.stance.at);
             let entity = under_name(world, carry.name);
             player::furnish(
                 world,

@@ -2,7 +2,8 @@ use engine::core::time::{Millis, Seconds};
 use engine::systems::actor::held::Held;
 use engine::systems::actor::playing::Playing;
 use engine::systems::actor::{self, Actor, Motion, Pose};
-use engine::systems::{npc, script};
+use engine::systems::region;
+use engine::systems::script;
 use serde_json::{Value, json};
 use strum::VariantArray;
 use testkit::{BODY, Game, Map, Sim, clip, path, rig_clips};
@@ -44,7 +45,7 @@ fn a_script_sits_a_body_down_and_stands_it_up_through_the_clips_its_skeleton_nam
         sim.serve("room")
             .add((script::run_tick, actor::playing::progress));
         script::spawn_stateless(&mut sim.world);
-        npc::spawn_all(&mut sim.world);
+        region::reach_all(&mut sim.world);
         let guard = sim.npc("guard");
         sim.tick();
 

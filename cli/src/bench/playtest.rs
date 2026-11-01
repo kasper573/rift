@@ -27,6 +27,8 @@ use crate::binaries::{self, DESKTOP_CLIENT, GAME_SERVER};
 use crate::server::{GameServer, LOCALHOST, absolute, resident};
 
 const ACCOUNT: &str = "bench";
+const CLIENT_LOG: &str = "client.log";
+const LOG_TAIL: usize = 40;
 
 pub struct Playtest {
     content: Content,
@@ -35,7 +37,7 @@ pub struct Playtest {
     questions: TcpStream,
     answers: BufReader<TcpStream>,
     _desktop: BenchDesktop,
-    _folder: TempDir,
+    folder: TempDir,
 }
 
 impl Playtest {
@@ -83,7 +85,7 @@ impl Playtest {
             probe: Some(listener.local_addr().expect("a bound probe port")),
         };
         let desktop = BenchDesktop::open(folder.path());
-        let log = File::create(folder.path().join("client.log")).expect("a client log");
+        let log = File::create(folder.path().join(CLIENT_LOG)).expect("a client log");
         let client = Command::new(binaries::beside(DESKTOP_CLIENT))
             .envs(launch::env_of(CLIENT_ENV_PREFIX, &config))
             .envs(desktop.env())
@@ -102,7 +104,7 @@ impl Playtest {
             questions,
             answers,
             _desktop: desktop,
-            _folder: folder,
+            folder,
         }
     }
 
@@ -116,12 +118,18 @@ impl Playtest {
         writeln!(self.questions, "{line}").expect("the client takes questions");
         let mut answer = String::new();
         match self.answers.read_line(&mut answer) {
-            Ok(0) => panic!("the client hung up"),
+            Ok(0) => panic!("the client hung up; its log ends:\n{}", self.log_tail()),
             Ok(_) => {}
             Err(error) => panic!("the client stopped answering: {error}"),
         }
         in_scope(&self.content, || serde_json::from_str(&answer))
             .unwrap_or_else(|error| panic!("an unreadable answer to {line}: {error}"))
+    }
+
+    fn log_tail(&self) -> String {
+        let log = std::fs::read_to_string(self.folder.path().join(CLIENT_LOG)).unwrap_or_default();
+        let lines: Vec<&str> = log.lines().collect();
+        lines[lines.len().saturating_sub(LOG_TAIL)..].join("\n")
     }
 
     /// Asks the server to stage `staging` for the character, and tells why it couldn't.

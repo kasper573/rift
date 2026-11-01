@@ -12,6 +12,7 @@ use engine::systems::dialogue::{self, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::movement::{self, position};
 use engine::systems::npc::{self, NpcDef};
+use engine::systems::region;
 use engine::systems::script::{
     self, EventKind, Owner, Procedure, RiftInstances, RunnerKind, ScriptModule,
 };
@@ -78,7 +79,7 @@ pub fn field() -> (Sim, Entity) {
             actor::settle,
         ));
     script::spawn_stateless(&mut sim.world);
-    npc::spawn_all(&mut sim.world);
+    region::reach_all(&mut sim.world);
     let player = sim.join(1);
     sim.equip(player, "sword");
     sim.run(0.5);

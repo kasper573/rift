@@ -44,6 +44,7 @@ proc-macro2 = "1"
 renet2 = { version = "1", default-features = false }
 renet2_netcode = { version = "1", default-features = false, features = ["native_transport"] }
 rayon = "1"
+arc-swap = "1"
 bevy_replication = { path = "bevy/replication" }
 postcard = { version = "1", features = ["alloc"] }
 egui = "0.36"

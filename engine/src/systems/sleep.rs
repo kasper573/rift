@@ -24,6 +24,11 @@ pub struct Sleep {
 }
 
 impl Sleep {
+    /// The chunks players stood in as of the last settle, sorted, each once.
+    pub fn stood(&self) -> &[Chunk] {
+        &self.stood
+    }
+
     /// Awake is as far as a player sees, and as far again as anything there can reach out to
     /// what it sees: a skill landing, a script listening.
     pub fn of(content: &Content) -> Sleep {

@@ -7,7 +7,7 @@ use super::files::{CONFIG_FILE, valid_name};
 use super::gltf::GltfInfo;
 use super::id::{ContentScope, with_content};
 use super::load::{
-    ContentFolder, FileWriter, named_media, parse_json, reference_errors, shape_error,
+    ContentFolder, FileWriter, LoadPurpose, named_media, parse_json, reference_errors, shape_error,
 };
 use super::locate::JsonIndex;
 use super::report::{ContentProblem, ErrorPlace, LoadError};
@@ -21,6 +21,9 @@ pub trait Bundle: ContentFile {
     const PARTS: &'static [PartSpec];
     /// The parts `write_parts` writes: one it leaves unwritten is no part of the bundle any more.
     const WRITTEN: &'static [PartSpec] = &[];
+    /// The parts play reads only as it comes to them: a client fetches one from the server when it
+    /// is first read rather than with the rest of the content.
+    const STREAMED: &'static [PartSpec] = &[];
 
     fn read_parts(&mut self, parts: &mut Parts);
 
@@ -87,12 +90,37 @@ impl PartSpec {
     }
 }
 
+/// A part of a bundle left in its folder, to read when it is first needed.
+#[derive(Clone)]
+pub struct StoredPart {
+    folder: Arc<dyn ContentFolder>,
+    path: String,
+}
+
+impl StoredPart {
+    pub fn read(&self) -> std::io::Result<Vec<u8>> {
+        self.folder.read(&self.path)
+    }
+
+    /// The part's path from the game folder.
+    pub fn path(&self) -> &str {
+        &self.path
+    }
+}
+
+impl std::fmt::Debug for StoredPart {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str(&self.path)
+    }
+}
+
 /// The parts of one bundle as the loader found them, for its type to read with its fields.
 pub struct Parts<'a> {
     bundle: &'a str,
     files: &'a [String],
     folder: &'a Arc<dyn ContentFolder>,
     scope: &'a ContentScope,
+    purpose: LoadPurpose,
     errors: Vec<LoadError>,
     indexes: Vec<(String, Arc<JsonIndex>)>,
     media: Vec<String>,
@@ -104,12 +132,14 @@ impl<'a> Parts<'a> {
         files: &'a [String],
         folder: &'a Arc<dyn ContentFolder>,
         scope: &'a ContentScope,
+        purpose: LoadPurpose,
     ) -> Parts<'a> {
         Parts {
             bundle,
             files,
             folder,
             scope,
+            purpose,
             errors: Vec::new(),
             indexes: Vec::new(),
             media: Vec::new(),
@@ -118,6 +148,20 @@ impl<'a> Parts<'a> {
 
     pub fn bundle(&self) -> &str {
         self.bundle
+    }
+
+    /// What the bundle is read for: a type reads at play only the parts play needs at once, and
+    /// leaves the rest stored to read when they are first needed.
+    pub fn purpose(&self) -> LoadPurpose {
+        self.purpose
+    }
+
+    /// The part at `part` left in the folder, to read later.
+    pub fn stored(&self, part: &str) -> StoredPart {
+        StoredPart {
+            folder: self.folder.clone(),
+            path: self.path(part),
+        }
     }
 
     /// The path from the game folder of the part at `part` in the bundle.

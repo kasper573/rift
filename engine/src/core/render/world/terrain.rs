@@ -1,7 +1,6 @@
-//! The ground as meshes of its chunks, a vertex at every height sample a chunk keeps, painted by the ground material with
-//! the terrains laid there, each its colour under the picture it repeats over the ground, blended
-//! across the paint's pixels as the paint blends; and its heights as a picture, for what a shader
-//! settles on the ground.
+//! The ground as meshes of its chunks, a vertex at every height sample a chunk keeps, each
+//! painted by the ground material with the terrains laid under it, every terrain its colour under
+//! the picture it repeats over the ground, blended across the paint's pixels as the paint blends.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
@@ -38,9 +37,9 @@ pub struct GroundLayer {
 }
 
 /// What the ground is painted from: the terrains' pictures as one stack, white at the bottom for
-/// a terrain that has none; the paint, a terrain's place in the area's list for each pixel; and
-/// for each terrain its colour and tile in the first row and its picture's place in the stack in
-/// the second; and where the paint's pixels lie.
+/// a terrain that has none; for each terrain its colour and tile in the first row and its
+/// picture's place in the stack in the second; and the paint of the chunk the material draws,
+/// a terrain's place in the area's list for each pixel, with where its pixels lie.
 #[derive(Asset, AsBindGroup, Clone, Debug, TypePath)]
 pub struct GroundLook {
     #[texture(100, dimension = "2d_array")]
@@ -51,13 +50,21 @@ pub struct GroundLook {
     #[texture(103, sample_type = "float", filterable = false)]
     pub layers: Handle<Image>,
     #[uniform(104)]
-    pub ground: GroundUniform,
+    pub grid: PaintGrid,
 }
 
 impl MaterialExtension for GroundLook {
     fn fragment_shader() -> ShaderRef {
         embedded("ground.wesl")
     }
+}
+
+/// Where a paint texture's pixels lie on the ground: `pixels_per_metre` to the metre from the
+/// edge of the first at `origin`.
+#[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
+pub struct PaintGrid {
+    pub origin: Vec2,
+    pub pixels_per_metre: f32,
 }
 
 /// A ground whose pictures are still loading: its layers, and each picture in their order.
@@ -67,11 +74,11 @@ pub struct GroundPictures {
     loading: Vec<Handle<Image>>,
 }
 
-/// The material `paint` is drawn with in `layers`, the pictures white until they load, and what
-/// waits for them to.
+/// The material every chunk of the ground is painted from in `layers`, the pictures white until
+/// they load, and what waits for them to. It paints nothing itself: a chunk's material is
+/// [`chunk_material`], sharing its pictures and layers.
 pub fn ground_material(
     layers: &[GroundLayer],
-    paint: &Paint,
     assets: &AssetServer,
     images: &mut Assets<Image>,
 ) -> (GroundMaterial, GroundPictures) {
@@ -83,9 +90,12 @@ pub fn ground_material(
         base: dielectric(StandardMaterial::default()),
         extension: GroundLook {
             pictures: images.add(stack(1, &[])),
-            paint: images.add(paint_image(paint)),
+            paint: images.add(paint_image(&[0], 1, 1)),
             layers: images.add(layers_image(layers, &vec![0; layers.len()])),
-            ground: GroundUniform::lifted(0.0),
+            grid: PaintGrid {
+                origin: Vec2::ZERO,
+                pixels_per_metre: 1.0,
+            },
         },
     };
     let waiting = GroundPictures {
@@ -95,16 +105,58 @@ pub fn ground_material(
     (material, waiting)
 }
 
-/// Lays `paint` on the ground `material` draws.
-pub fn repaint(
-    material: &Handle<GroundMaterial>,
+/// A chunk of ground's samples: where they begin, how many lie along its side and how many
+/// samples apart they are taken.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ChunkSamples {
+    pub first: (u32, u32),
+    pub side: u32,
+    pub stride: u32,
+}
+
+/// The material a chunk is painted with: the ground's pictures and layers, and the paint under
+/// the chunk at the chunk's stride, a pixel beyond each edge so the paint blends across into the
+/// chunks beside it.
+pub fn chunk_material(
+    ground: &GroundMaterial,
     paint: &Paint,
-    materials: &mut Assets<GroundMaterial>,
+    chunk: ChunkSamples,
+    images: &mut Assets<Image>,
+) -> GroundMaterial {
+    let (image, grid) = chunk_paint(paint, chunk);
+    ExtendedMaterial {
+        base: dielectric(StandardMaterial::default()),
+        extension: GroundLook {
+            pictures: ground.extension.pictures.clone(),
+            paint: images.add(image),
+            layers: ground.extension.layers.clone(),
+            grid,
+        },
+    }
+}
+
+/// Lays `paint` anew under the chunk `material` draws.
+pub fn repaint_chunk(
+    material: &mut GroundMaterial,
+    paint: &Paint,
+    chunk: ChunkSamples,
     images: &mut Assets<Image>,
 ) {
-    if let Some(mut material) = materials.get_mut(material) {
-        material.extension.paint = images.add(paint_image(paint));
+    let (image, grid) = chunk_paint(paint, chunk);
+    material.extension.paint = images.add(image);
+    material.extension.grid = grid;
+}
+
+/// Gives a chunk's material the ground's pictures and layers once they differ, as they do once
+/// the pictures have loaded.
+pub fn share_pictures(material: &mut GroundMaterial, ground: &GroundMaterial) -> bool {
+    let (pictures, layers) = (&ground.extension.pictures, &ground.extension.layers);
+    if material.extension.pictures == *pictures && material.extension.layers == *layers {
+        return false;
     }
+    material.extension.pictures = pictures.clone();
+    material.extension.layers = layers.clone();
+    true
 }
 
 /// Stacks every waiting ground's pictures once they have all loaded, or failed, which leaves
@@ -154,12 +206,40 @@ pub(super) fn stack_pictures(
     }
 }
 
-/// The paint as a picture a pixel per paint pixel, each the terrain's place in the area's list.
-fn paint_image(paint: &Paint) -> Image {
-    let (columns, rows) = paint.pixels();
-    let data = (0..rows)
-        .flat_map(|row| (0..columns).map(move |column| paint.index(column, row)))
+/// The paint under a chunk, a pixel per `stride` of the paint's from a pixel before the chunk's
+/// first sample to one past its last, each the terrain at the middle of the pixels it stands for.
+fn chunk_paint(paint: &Paint, chunk: ChunkSamples) -> (Image, PaintGrid) {
+    let stride = chunk.stride.max(1);
+    let across = chunk.side.div_ceil(stride) + 2;
+    let first = (
+        chunk.first.0 as i64 - stride as i64,
+        chunk.first.1 as i64 - stride as i64,
+    );
+    let middle = (stride / 2) as i64;
+    let pixel = |column: u32, row: u32| {
+        let at = (
+            first.0 + column as i64 * stride as i64 + middle,
+            first.1 + row as i64 * stride as i64 + middle,
+        );
+        paint.index(at.0.max(0) as u32, at.1.max(0) as u32)
+    };
+    let data: Vec<u8> = (0..across)
+        .flat_map(|row| (0..across).map(move |column| (column, row)))
+        .map(|(column, row)| pixel(column, row))
         .collect();
+    let step = stride as f32 / SAMPLES_PER_METER as f32;
+    let grid = PaintGrid {
+        origin: Vec2::new(
+            GROUND_ORIGIN.x + first.0 as f32 / SAMPLES_PER_METER as f32,
+            GROUND_ORIGIN.y + first.1 as f32 / SAMPLES_PER_METER as f32,
+        ),
+        pixels_per_metre: 1.0 / step,
+    };
+    (paint_image(&data, across, across), grid)
+}
+
+/// A paint as a picture a pixel per entry, each the terrain's place in the area's list.
+fn paint_image(data: &[u8], columns: u32, rows: u32) -> Image {
     Image::new(
         Extent3d {
             width: columns.max(1),
@@ -167,7 +247,7 @@ fn paint_image(paint: &Paint) -> Image {
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        data,
+        data.to_vec(),
         TextureFormat::R8Uint,
         RenderAssetUsages::RENDER_WORLD,
     )
@@ -244,45 +324,6 @@ fn stack(side: u32, pictures: &[RgbaImage]) -> Image {
         ..ImageSamplerDescriptor::linear()
     });
     image
-}
-
-/// Where the ground's samples lie, as a shader settling a mesh on the ground reads them: the
-/// metres the first stands at, how many stand to the metre, and how far above the ground to draw.
-#[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
-pub struct GroundUniform {
-    pub origin: Vec2,
-    pub samples_per_metre: f32,
-    pub lift: f32,
-}
-
-impl GroundUniform {
-    pub fn lifted(lift: f32) -> GroundUniform {
-        GroundUniform {
-            origin: Vec2::new(GROUND_ORIGIN.x, GROUND_ORIGIN.y),
-            samples_per_metre: SAMPLES_PER_METER as f32,
-            lift,
-        }
-    }
-}
-
-/// The ground's heights as a picture a texel per sample, in metres.
-pub fn height_image(heights: &Heightfield) -> Image {
-    let (columns, rows) = heights.samples();
-    let data = (0..rows)
-        .flat_map(|row| (0..columns).map(move |column| heights.sample(column, row).0))
-        .flat_map(f32::to_le_bytes)
-        .collect();
-    Image::new(
-        Extent3d {
-            width: columns.max(1),
-            height: rows.max(1),
-            depth_or_array_layers: 1,
-        },
-        TextureDimension::D2,
-        data,
-        TextureFormat::R32Float,
-        RenderAssetUsages::RENDER_WORLD,
-    )
 }
 
 /// The mesh of the chunk of ground `columns`×`rows` samples from sample `first`, taking every

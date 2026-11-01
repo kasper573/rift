@@ -7,8 +7,8 @@ use super::files::{Listing, list_files, table_of};
 use super::fresh::Nearby;
 use super::id::{ContentId, ContentScope, with_content};
 use super::load::{
-    CheckedFiles, ContentFolder, ContentRegistry, FileWriter, Settings, TableLoader, check_files,
-    listing_scope, parse_file, parse_settings, parse_value,
+    CheckedFiles, ContentFolder, ContentRegistry, FileWriter, LoadPurpose, Settings, TableLoader,
+    check_files, listing_scope, parse_file, parse_settings, parse_value,
 };
 use super::report::{ContentProblem, ErrorPlace, LoadError, MISSING_FILE};
 use super::table::ContentFile;
@@ -108,6 +108,7 @@ impl FolderReader {
             &self.folder,
             &self.listed.listing,
             scope,
+            LoadPurpose::Check,
             path,
         );
         whole(parsed.row, parsed.errors, path)
@@ -182,6 +183,7 @@ impl FolderReader {
             &self.folder,
             &self.listed.listing,
             &scope,
+            LoadPurpose::Check,
             path,
         );
         let row = read_whole(parsed.row, parsed.errors, path).map_err(|errors| told(&errors))?;

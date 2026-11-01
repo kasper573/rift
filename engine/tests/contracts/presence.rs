@@ -9,6 +9,7 @@ use engine::systems::memory::{self, MemoryDef};
 use engine::systems::movement::{self, position};
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::player::ClientId;
+use engine::systems::region;
 use engine::systems::script;
 use engine::systems::script::condition;
 use engine::systems::stat::{self, StatKind};
@@ -75,7 +76,7 @@ fn a_resident_shown_by_condition_follows_the_players_memory() {
     let mut sim = arena();
     let player = sim.join(1);
     sim.equip(player, "sword");
-    npc::spawn_all(&mut sim.world);
+    region::reach_all(&mut sim.world);
     let ghost = sim.npc("ghost");
     assert!(visibility::present(&sim.world, ghost, player));
 

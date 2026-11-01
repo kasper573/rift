@@ -1,10 +1,7 @@
 import bevy_pbr::render::{
-    forward_io::{Vertex, VertexOutput, decompress_vertex},
-    mesh_functions,
+    forward_io::VertexOutput,
     mesh_view_bindings::globals,
-    view_transformations::position_world_to_clip,
 };
-import engine::core::render::world::terrain::{Ground, ground_height};
 
 struct Paint {
     color: vec4<f32>,
@@ -14,30 +11,9 @@ struct Paint {
 }
 
 @group(3) @binding(0) var<uniform> paint: Paint;
-@group(3) @binding(1) var<uniform> ground: Ground;
-@group(3) @binding(2) var heights: texture_2d<f32>;
 
 const RING: u32 = 0u;
 const TAU: f32 = 6.2831855;
-
-@vertex
-fn vertex(vertex_in: Vertex) -> VertexOutput {
-    var out: VertexOutput;
-    let vertex = decompress_vertex(vertex_in, vertex_in.instance_index);
-    let world_from_local = mesh_functions::get_world_from_local(vertex_in.instance_index);
-    var world = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
-    world.y = ground_height(heights, ground, world.xz) + ground.lift;
-    out.world_position = world;
-    out.position = position_world_to_clip(world.xyz);
-    out.world_normal = vec3<f32>(0.0, 1.0, 0.0);
-    @if(VERTEX_UVS_A) {
-        out.uv = vertex.uv;
-    }
-    @if(VERTEX_OUTPUT_INSTANCE_INDEX) {
-        out.instance_index = vertex_in.instance_index;
-    }
-    return out;
-}
 
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {

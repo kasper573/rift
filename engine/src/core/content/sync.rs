@@ -4,6 +4,7 @@ use std::ops::Bound;
 use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
+use bevy::tasks::block_on;
 use bevy::tasks::futures_lite::future;
 use bevy_ecs::prelude::Resource;
 use futures_timer::Delay;
@@ -12,12 +13,15 @@ use futures_util::{StreamExt, stream};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::load::{ContentFolder, FileHash, FileHashes, FolderEntry, entries_in};
+use super::load::{ContentFolder, ContentRegistry, FileHash, FileHashes, FolderEntry, entries_in};
 use super::store::ContentStore;
 use super::table::Content;
 use crate::core::math::Rng;
 use crate::core::os::FetchFailure;
 use crate::core::time::{Backoff, Seconds};
+
+/// Where the server serves a content file by its hash.
+pub const FILES: &str = "/content/files/";
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -55,6 +59,8 @@ pub struct IndexedFile {
     pub path: String,
     pub hash: String,
     pub size: u64,
+    /// Whether a client fetches the file as it is first read rather than with the rest.
+    pub streamed: bool,
 }
 
 pub struct ServedContent {
@@ -64,6 +70,7 @@ pub struct ServedContent {
 
 impl ServedContent {
     pub fn new(
+        registry: &ContentRegistry,
         content: &Content,
         folder: &dyn ContentFolder,
         build: &str,
@@ -81,6 +88,7 @@ impl ServedContent {
                     path: path.clone(),
                     hash: stamp.hash.clone(),
                     size: stamp.size,
+                    streamed: registry.is_streamed(path),
                 });
                 files.insert(stamp.hash.clone(), Arc::from(bytes));
             } else {
@@ -106,7 +114,7 @@ impl ServedContent {
     }
 }
 
-pub trait ContentSource: Sync {
+pub trait ContentSource: Send + Sync {
     fn get(&self, path: &str) -> BoxFuture<'static, Result<Vec<u8>, FetchFailure>>;
 }
 
@@ -212,13 +220,16 @@ pub struct SyncedContent {
     pub memory_only: bool,
 }
 
-/// The synced assets as they are read: from the store, by the hash the index files each under, and
-/// held in memory those the store couldn't keep.
+/// The synced assets as they are read: from the store, by the hash the index files each under,
+/// held in memory those the store couldn't keep, and fetched from the server as they are first
+/// read those the server streams.
 #[derive(Clone, Default)]
 pub struct SyncedAssets {
     hashes: Arc<HashMap<String, String>>,
     held: Arc<HashMap<String, Arc<[u8]>>>,
     reader: Option<ContentStore>,
+    streamed: Arc<HashSet<String>>,
+    source: Option<Arc<dyn ContentSource>>,
 }
 
 impl SyncedAssets {
@@ -246,14 +257,32 @@ impl SyncedAssets {
     }
 
     /// The bytes of the asset at `path`: none where there is no such asset, or the store has lost
-    /// or spoilt it since the sync.
+    /// or spoilt it since the sync. A streamed asset the store lacks is fetched now and kept.
     pub fn read(&self, path: &str) -> Option<Arc<[u8]>> {
         if let Some(bytes) = self.held.get(path) {
             return Some(bytes.clone());
         }
         let hash = self.hashes.get(path)?;
-        let bytes = self.reader.as_ref()?.read(hash)?;
-        (FileHash::of(&bytes).hash == *hash).then(|| Arc::from(bytes))
+        let stored = self
+            .reader
+            .as_ref()
+            .and_then(|store| store.read(hash))
+            .filter(|bytes| FileHash::of(bytes).hash == *hash);
+        if let Some(bytes) = stored {
+            return Some(Arc::from(bytes));
+        }
+        if !self.streamed.contains(path) {
+            return None;
+        }
+        let source = self.source.as_ref()?;
+        let bytes = block_on(source.get(&format!("{FILES}{hash}"))).ok()?;
+        if FileHash::of(&bytes).hash != *hash {
+            return None;
+        }
+        if let Some(store) = &self.reader {
+            store.write(hash, &bytes).ok();
+        }
+        Some(Arc::from(bytes))
     }
 }
 
@@ -340,7 +369,7 @@ impl ContentFolder for SyncedFolder {
 }
 
 pub async fn sync(
-    source: &dyn ContentSource,
+    source: Arc<dyn ContentSource>,
     store: &ContentStore,
     build: &str,
     policy: SyncPolicy,
@@ -416,7 +445,7 @@ fn rows_bundle(rows: &[(String, Vec<u8>)]) -> io::Result<Vec<u8>> {
 }
 
 struct Run<'a> {
-    source: &'a dyn ContentSource,
+    source: Arc<dyn ContentSource>,
     store: &'a ContentStore,
     policy: SyncPolicy,
     status: SyncStatus,
@@ -464,6 +493,7 @@ impl Run<'_> {
         let (kept, mut missing): (Vec<IndexedFile>, Vec<IndexedFile>) = index
             .files
             .iter()
+            .filter(|file| !file.streamed || stored.contains(&file.hash))
             .cloned()
             .partition(|file| stored.contains(&file.hash));
         self.status.update(|progress| {
@@ -480,7 +510,7 @@ impl Run<'_> {
                     self.status
                         .update(|progress| progress.read.advance(file.size));
                 }
-                !intact
+                !intact && !file.streamed
             })
             .collect();
         missing.extend(spoilt);
@@ -527,6 +557,12 @@ impl Run<'_> {
             .filter(|file| !held.contains_key(&file.path))
             .map(|file| (file.path.clone(), file.hash.clone()))
             .collect();
+        let streamed = index
+            .files
+            .iter()
+            .filter(|file| file.streamed)
+            .map(|file| file.path.clone())
+            .collect();
         Ok(SyncedContent {
             manifest,
             index,
@@ -535,6 +571,8 @@ impl Run<'_> {
                 hashes: Arc::new(hashes),
                 held: Arc::new(held),
                 reader: Some(self.store.clone()),
+                streamed: Arc::new(streamed),
+                source: Some(self.source.clone()),
             },
             memory_only: self.memory_only(),
         })
@@ -562,7 +600,7 @@ impl Run<'_> {
 
     async fn fetch_file(&self, hash: &str) -> Result<(Arc<[u8]>, Kept), Attempt> {
         let bytes: Arc<[u8]> = Arc::from(
-            self.fetch_with_retries(&format!("/content/files/{hash}"), Some(hash))
+            self.fetch_with_retries(&format!("{FILES}{hash}"), Some(hash))
                 .await?,
         );
         let kept = !self.memory_only() && self.store.write(hash, &bytes).is_ok();

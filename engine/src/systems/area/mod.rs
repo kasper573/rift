@@ -37,9 +37,10 @@ pub use object::{AreaObject, ObjectDef, ObjectShape};
 pub use prop::{Footprint, PropDef, PropId, PropPlacement, Scatter};
 pub use scene::SceneNode;
 pub use terrain::{SurfaceDef, SurfaceId, TerrainDef, TerrainId, Walk};
+pub use walk::HeldMesh;
 pub use weather::{DayCycle, Weather, Wind};
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
 use std::sync::Arc;
 
@@ -57,18 +58,22 @@ use crate::core::audio::playback::SfxId;
 use crate::core::audio::soundscape::{
     SoundscapeChannel, SoundscapeLayer, SoundscapeShape, SoundscapeZone,
 };
+use crate::core::content::ErrorPlace;
 use crate::core::content::{
-    Bundle, Content, ContentFile, ContentId, ContentProblem, ContentRegistry, FileWriter, LoadStep,
-    Loading, NamedContent, Nearby, PartSpec, Parts, RowCheck, Shape, serial,
+    Bundle, Content, ContentFile, ContentId, ContentProblem, ContentRegistry, FileWriter,
+    LoadPurpose, LoadStep, Loading, NamedContent, Nearby, PartSpec, Parts, RowCheck, Shape,
+    StoredPart, fields_file, serial,
 };
 use crate::core::geometry::Degrees;
-use crate::core::ground::{GroundSize, Heightfield, MAX_TERRAINS, MIN_SIDE, Paint};
+use crate::core::ground::{
+    GroundSize, Heightfield, MAX_TERRAINS, MIN_SIDE, Paint, TILE_SIDE, TileAt,
+};
 use crate::core::math::{Offset, Pos, Rect, Size};
+use crate::core::spatial::SpatialIndex;
 use crate::core::units::{GridDims, MeterSize, Meters};
 use crate::systems::GameSettings;
 use crate::systems::actor::Pose;
 use crate::systems::movement;
-use crate::systems::movement::NavMesh;
 use crate::systems::npc::NpcId;
 use crate::systems::script::{self, Condition, OwnerRow, Reach, RiftScripts, ScriptModule};
 use blueprint::{FlattenAt, FlattenError};
@@ -77,10 +82,6 @@ use prop::MAX_PROPS;
 use scene::{SCENE, scene_file};
 
 pub type AreaId = ContentId<AreaDef>;
-
-/// The square of ground an area's budgets count over: the largest an area was when they were set,
-/// so a wider area holds as much on every such square.
-pub const BUDGET_SQUARE: Meters = Meters(256.0);
 
 pub const MAX_POPULATION: u32 = 500;
 
@@ -134,17 +135,28 @@ pub fn same_area(world: &World, a: Entity, b: Entity) -> bool {
 pub const MIN_SLOPE: Degrees = Degrees(10.0);
 pub const MAX_SLOPE: Degrees = Degrees(60.0);
 
-pub const HEIGHT: PartSpec = PartSpec::File {
-    name: "height",
+/// The ground's heights and paint, a tile of each to a file named by the tile's place, and an
+/// overview of each over the whole ground, which answers for the tiles not loaded.
+pub const HEIGHT: PartSpec = PartSpec::Keyed {
+    folder: "height",
     exts: &["png"],
 };
-pub const PAINT: PartSpec = PartSpec::File {
-    name: "paint",
+pub const PAINT: PartSpec = PartSpec::Keyed {
+    folder: "paint",
+    exts: &["png"],
+};
+pub const HEIGHT_OVERVIEW: PartSpec = PartSpec::File {
+    name: "height_overview",
+    exts: &["png"],
+};
+pub const PAINT_OVERVIEW: PartSpec = PartSpec::File {
+    name: "paint_overview",
     exts: &["png"],
 };
 
 /// A place in the world: a stretch of ground painted with terrains, the light it stands in, and a
-/// scene of modules on it. Its scene, heights and paint are parts of its bundle.
+/// scene of modules on it. Its scene and the tiles of its heights and paint are parts of its
+/// bundle.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AreaDef {
@@ -205,15 +217,6 @@ impl ContentFile for AreaDef {
             MAX_TERRAINS,
             "terrains",
         );
-        let highest = usize::from(self.paint.highest());
-        if highest >= self.terrains.len() {
-            cx.error(
-                "/terrains",
-                "paint names a missing terrain",
-                format!("the paint names terrain {highest}"),
-                format!("terrains 0 to {} listed", self.terrains.len() - 1),
-            );
-        }
         self.lighting.check("/lighting", cx);
         self.weather.check("/weather", cx);
     }
@@ -226,34 +229,58 @@ impl NamedContent for AreaDef {
 }
 
 impl Bundle for AreaDef {
-    const PARTS: &'static [PartSpec] = &[SCENE, HEIGHT, PAINT];
-    const WRITTEN: &'static [PartSpec] = &[SCENE, HEIGHT, PAINT];
+    const PARTS: &'static [PartSpec] = &[SCENE, HEIGHT, PAINT, HEIGHT_OVERVIEW, PAINT_OVERVIEW];
+    const WRITTEN: &'static [PartSpec] = &[SCENE, HEIGHT, PAINT, HEIGHT_OVERVIEW, PAINT_OVERVIEW];
+    const STREAMED: &'static [PartSpec] = &[HEIGHT, PAINT];
 
     fn read_parts(&mut self, parts: &mut Parts) {
         scene::read(&mut self.scene, &BTreeMap::new(), parts);
-        let size = self.size;
-        self.heights = read_part(
+        self.heights = Heightfield::flat(self.size);
+        self.paint = Paint::plain(self.size);
+        read_ground(
             parts,
-            HEIGHT,
-            || Heightfield::flat(size),
-            |bytes| Heightfield::decode(size, bytes),
+            GroundParts {
+                tiles: HEIGHT,
+                overview: HEIGHT_OVERVIEW,
+            },
+            self.size,
+            &mut self.heights,
+            Heightfield::store,
+            Heightfield::decode_tile,
+            Heightfield::decode_overview,
+            Heightfield::overview_is_current,
         );
-        self.paint = read_part(
+        read_ground(
             parts,
-            PAINT,
-            || Paint::plain(size),
-            |bytes| Paint::decode(size, bytes),
+            GroundParts {
+                tiles: PAINT,
+                overview: PAINT_OVERVIEW,
+            },
+            self.size,
+            &mut self.paint,
+            Paint::store,
+            Paint::decode_tile,
+            Paint::decode_overview,
+            Paint::overview_is_current,
         );
     }
 
     fn write_parts(&self, bundle: &str, writer: &mut FileWriter) -> io::Result<()> {
         scene::write(&self.scene, bundle, writer)?;
-        let part = |spec: PartSpec| format!("{bundle}/{}", spec.named("", "png"));
-        if !self.heights.is_flat() {
-            writer.file(&part(HEIGHT), &self.heights.encode())?;
+        let part = |spec: PartSpec, key: &str| format!("{bundle}/{}", spec.named(key, "png"));
+        for at in self.size.each_tile() {
+            if let Some(bytes) = self.heights.encode_tile(at) {
+                writer.file(&part(HEIGHT, &at.key()), &bytes)?;
+            }
+            if let Some(bytes) = self.paint.encode_tile(at) {
+                writer.file(&part(PAINT, &at.key()), &bytes)?;
+            }
         }
-        if !self.paint.is_plain() {
-            writer.file(&part(PAINT), &self.paint.encode())?;
+        if let Some(bytes) = self.heights.encode_overview() {
+            writer.file(&part(HEIGHT_OVERVIEW, ""), &bytes)?;
+        }
+        if let Some(bytes) = self.paint.encode_overview() {
+            writer.file(&part(PAINT_OVERVIEW, ""), &bytes)?;
         }
         Ok(())
     }
@@ -286,26 +313,86 @@ impl AreaDef {
     }
 }
 
-/// A part the bundle may leave out, `absent` then; one it keeps is `decode`d, and refused at its
-/// file when it doesn't.
-fn read_part<T>(
+/// The parts one grid of the ground is kept in: its tiles and their overview.
+#[derive(Clone, Copy)]
+struct GroundParts {
+    tiles: PartSpec,
+    overview: PartSpec,
+}
+
+/// Reads one grid of the ground from the bundle into `ground`: every tile, refusing at its file
+/// one that isn't a tile of a ground of `size` or doesn't decode, and the overview, which a ground
+/// with any tile must keep. A load to play leaves the tiles stored, to read as they are first
+/// needed; a check decodes them all and holds the overview to what they say. A tile the bundle
+/// leaves out stays as it is.
+#[allow(clippy::too_many_arguments)]
+fn read_ground<T>(
     parts: &mut Parts,
-    spec: PartSpec,
-    absent: impl FnOnce() -> T,
-    decode: impl FnOnce(&[u8]) -> Result<T, ContentProblem>,
-) -> T {
-    let Some(file) = parts.file(spec) else {
-        return absent();
+    specs: GroundParts,
+    size: GroundSize,
+    ground: &mut T,
+    store: impl Fn(&mut T, TileAt, StoredPart),
+    decode: impl Fn(&mut T, TileAt, &[u8]) -> Result<(), ContentProblem>,
+    decode_overview: impl Fn(&mut T, &[u8]) -> Result<(), ContentProblem>,
+    overview_is_current: impl Fn(&T) -> bool,
+) {
+    let (across, down) = size.tiles();
+    let tiles = parts.keyed(specs.tiles);
+    let any_tile = !tiles.is_empty();
+    for (key, file) in tiles {
+        let Some(at) = TileAt::from_key(key).filter(|at| at.column < across && at.row < down)
+        else {
+            parts.error(
+                file,
+                ErrorPlace::WholeFile,
+                ContentProblem::new(
+                    "not a tile of the ground",
+                    key,
+                    format!(
+                        "<column>_<row>, from 0_0 to {}_{} over this ground",
+                        across - 1,
+                        down - 1
+                    ),
+                ),
+            );
+            continue;
+        };
+        if parts.purpose() == LoadPurpose::Play {
+            store(ground, at, parts.stored(file));
+            continue;
+        }
+        let Some(bytes) = parts.bytes(file) else {
+            continue;
+        };
+        if let Err(problem) = decode(ground, at, &bytes) {
+            parts.error(file, ErrorPlace::WholeFile, problem);
+        }
+    }
+    let overview = if any_tile {
+        parts.required(specs.overview)
+    } else {
+        parts.file(specs.overview)
+    };
+    let Some(file) = overview else {
+        return;
     };
     let Some(bytes) = parts.bytes(file) else {
-        return absent();
+        return;
     };
-    match decode(&bytes) {
-        Ok(part) => part,
-        Err(problem) => {
-            parts.error(file, crate::core::content::ErrorPlace::WholeFile, problem);
-            absent()
-        }
+    if let Err(problem) = decode_overview(ground, &bytes) {
+        parts.error(file, ErrorPlace::WholeFile, problem);
+        return;
+    }
+    if parts.purpose() == LoadPurpose::Check && !overview_is_current(ground) {
+        parts.error(
+            file,
+            ErrorPlace::WholeFile,
+            ContentProblem::new(
+                "overview out of date",
+                "an overview unlike the tiles",
+                "the overview the tiles make: write the area again",
+            ),
+        );
     }
 }
 
@@ -664,7 +751,11 @@ pub struct Area {
     pub lights: Vec<PointLightDef>,
     underfoot: Vec<walk::Underfoot>,
     footprints: Vec<Vec<Pos<Meters>>>,
+    /// The footprints by the ground they cover, so a tile's mesh takes in only those reaching it.
+    footprint_index: SpatialIndex,
     meshes: walk::Meshes,
+    modules_by_tile: HashMap<TileAt, Vec<u32>>,
+    placements_by_tile: HashMap<TileAt, Vec<u32>>,
 }
 
 impl Area {
@@ -672,22 +763,55 @@ impl Area {
         self.safe_zones.iter().any(|zone| zone.contains(at))
     }
 
-    /// The ground everyone walks.
-    pub fn mesh(&self) -> &NavMesh {
+    /// The ground everyone walks, as far as the tiles held.
+    pub fn mesh(&self) -> HeldMesh {
         self.mesh_for(false, false)
     }
 
-    /// The mesh an actor moves on: the ground or, flying, the air, each cut around the safe zones
-    /// for the wild; with no safe zone the wild moves on everyone's.
-    pub fn mesh_for(&self, wild: bool, flies: bool) -> &NavMesh {
+    /// The mesh an actor moves on, as far as the tiles held: the ground or, flying, the air, each
+    /// cut around the safe zones for the wild; with no safe zone the wild moves on everyone's.
+    pub fn mesh_for(&self, wild: bool, flies: bool) -> HeldMesh {
         walk::mesh(self, wild && !self.safe_zones.is_empty(), flies)
     }
 
-    /// Builds every mesh actors move on in the area.
-    fn lay_meshes(&self) {
-        for (wild, flies) in [(false, false), (true, false), (false, true), (true, true)] {
-            self.mesh_for(wild, flies);
-        }
+    /// The tiles of ground held: those loaded, whose ground the meshes cover.
+    pub fn held(&self) -> BTreeSet<TileAt> {
+        walk::held(self)
+    }
+
+    /// Holds `tiles` besides those held: loads their ground and lays the meshes over them. Whether
+    /// any was new.
+    pub fn hold(&self, tiles: impl IntoIterator<Item = TileAt>) -> bool {
+        walk::hold(self, tiles)
+    }
+
+    /// Holds every tile of the area, as a check of the whole area or a tool editing it needs.
+    pub fn hold_all(&self) -> bool {
+        self.hold(self.ground_size().each_tile())
+    }
+
+    /// The tiles holding any ground within `reach` of `at`.
+    pub fn tiles_around(&self, at: Pos<Meters>, reach: Meters) -> impl Iterator<Item = TileAt> {
+        let around = Rect::new(
+            Pos::new(at.x - reach.0, at.y - reach.0),
+            Size::new(reach.0 * 2.0, reach.0 * 2.0),
+        );
+        self.ground_size().tiles_within(around)
+    }
+
+    pub fn ground_size(&self) -> GroundSize {
+        self.heights.size()
+    }
+
+    /// The modules of the area's scene anchored in the tile at `at`, as indices among its placed
+    /// modules: what comes to life when the tile is first reached.
+    pub fn modules_in(&self, at: TileAt) -> &[u32] {
+        self.modules_by_tile.get(&at).map_or(&[], Vec::as_slice)
+    }
+
+    /// The blueprint placements anchored in the tile at `at`, as indices among the area's.
+    pub fn placements_in(&self, at: TileAt) -> &[u32] {
+        self.placements_by_tile.get(&at).map_or(&[], Vec::as_slice)
     }
 
     /// The depth the ground is drawn at: one terrain, under everything.
@@ -723,13 +847,6 @@ pub struct Areas(Vec<Option<Arc<Area>>>);
 
 pub fn load(content: &Content, area: AreaId) -> &Area {
     shared(content, area)
-}
-
-/// Builds every mesh actors move on in `area`, for a world about to play it. A mesh is otherwise
-/// built on first use, which a playing world must never be the one to do: the build would stall
-/// its tick, and asked for from parallel work, would wait on workers blocked waiting for it.
-pub fn lay_meshes(content: &Content, area: AreaId) {
-    load(content, area).lay_meshes();
 }
 
 /// The area at `area` when it loaded, to keep beside the content it came from.
@@ -852,7 +969,13 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
             )
         }
     };
-    let (area, _) = build_area(content, &ground, &flattening.modules);
+    let (area, _) = build_area(
+        content,
+        &ground,
+        &flattening.modules,
+        &flattening.placements,
+    );
+    area.hold_all();
     Some(Picture {
         area: Arc::new(area),
         placed: flattening.modules,
@@ -899,18 +1022,18 @@ fn flatten_all(loading: &mut Loading) {
     for (id, def) in loading.rows::<AreaDef>(&content) {
         let mut errors = Vec::new();
         let flattening = blueprint::flatten(&content, &def.scene, &mut errors);
-        let squares = budget_squares(def.size.meters());
-        if flattening.modules.len() > blueprint::MAX_AREA_PARTS * squares {
+        let tiles = def.size.each_tile().count();
+        if flattening.modules.len() > blueprint::MAX_AREA_PARTS * tiles {
             errors.push(FlattenError {
                 at: FlattenAt::Area(String::new()),
                 problem: ContentProblem::new(
                     "too many parts",
                     format!("{} modules after flattening", flattening.modules.len()),
                     format!(
-                        "at most {} a {} m square of ground, {} for this area",
+                        "at most {} a {} m tile of ground, {} for this area",
                         blueprint::MAX_AREA_PARTS,
-                        BUDGET_SQUARE.0,
-                        blueprint::MAX_AREA_PARTS * squares
+                        TILE_SIDE.0,
+                        blueprint::MAX_AREA_PARTS * tiles
                     ),
                 ),
             });
@@ -965,10 +1088,12 @@ fn build_all(loading: &mut Loading) {
         };
         let mut check = RowCheck::default();
         check_bounds(&content, ground.size, modules, &mut check);
-        let (area, budget) = build_area(&content, &ground, modules);
+        let (area, budget) = build_area(&content, &ground, modules, placements(&content, id));
         check.extend(budget);
         check_placed(&content, id, modules, &mut check);
         if loading.thorough() {
+            check_terrains(&content, id, def, loading);
+            area.hold_all();
             check_footing(&content, id, &area, modules, &mut check);
         }
         let scene = scene_file(id.path(&content));
@@ -978,6 +1103,22 @@ fn build_all(loading: &mut Loading) {
         areas[id.index()] = Some(Arc::new(area));
     }
     loading.built(Areas(areas));
+}
+
+/// Every terrain the paint names must be listed: a check over every tile of the paint.
+fn check_terrains(content: &Content, id: AreaId, def: &AreaDef, loading: &mut Loading) {
+    let highest = usize::from(def.paint.highest());
+    if highest >= def.terrains.len() {
+        loading.json_error(
+            fields_file(id.path(content)),
+            "/terrains",
+            ContentProblem::new(
+                "paint names a missing terrain",
+                format!("the paint names terrain {highest}"),
+                format!("terrains 0 to {} listed", def.terrains.len() - 1),
+            ),
+        );
+    }
 }
 
 /// The ground an area is built on: what its config and parts say before any module stands on it.
@@ -993,9 +1134,40 @@ pub(super) struct Ground {
 
 /// The area a ground and its flattened modules make: where it walks, flies, is safe and sounds,
 /// what stands and shines on it. With it, the problems of too much standing or shining there.
-fn build_area(content: &Content, ground: &Ground, modules: &[Flattened]) -> (Area, RowCheck) {
+fn build_area(
+    content: &Content,
+    ground: &Ground,
+    modules: &[Flattened],
+    placements: &[PlacedBlueprint],
+) -> (Area, RowCheck) {
     let mut check = RowCheck::default();
-    let squares = budget_squares(ground.size.meters());
+    let tiles = ground.size.each_tile().count();
+    let center = Pos::new(
+        (ground.size.width as f32 / 2.0).floor(),
+        (ground.size.height as f32 / 2.0).floor(),
+    );
+    let mut modules_by_tile: HashMap<TileAt, Vec<u32>> = HashMap::new();
+    for (index, placed) in modules.iter().enumerate() {
+        let anchor = match &placed.module {
+            AreaModule::Object(object) => object.shape.center(),
+            AreaModule::Resident(resident) => resident.at,
+            AreaModule::Population(population) => {
+                population.roams.map_or(center, |roams| roams.center())
+            }
+            _ => continue,
+        };
+        modules_by_tile
+            .entry(ground.size.tile_at(anchor))
+            .or_default()
+            .push(index as u32);
+    }
+    let mut placements_by_tile: HashMap<TileAt, Vec<u32>> = HashMap::new();
+    for (index, placement) in placements.iter().enumerate() {
+        placements_by_tile
+            .entry(ground.size.tile_at(placement.at))
+            .or_default()
+            .push(index as u32);
+    }
     let safe_zones: Vec<Rect<Meters>> = modules
         .iter()
         .filter_map(|placed| match &placed.module {
@@ -1010,19 +1182,23 @@ fn build_area(content: &Content, ground: &Ground, modules: &[Flattened]) -> (Are
             AreaModule::Prop(prop) => props.push(prop.clone()),
             AreaModule::Scatter(scatter) => props.extend(scatter.expand()),
             AreaModule::Light(light) => {
-                if lights.len() == MAX_LIGHTS {
+                if lights.len() == MAX_LIGHTS * tiles {
                     check.error(
                         module_pointer(placed, ""),
                         "too many lights",
                         format!("light {} of the area", lights.len() + 1),
-                        format!("at most {MAX_LIGHTS} lights in an area"),
+                        format!(
+                            "at most {MAX_LIGHTS} lights a {} m tile of ground, {} for this area",
+                            TILE_SIDE.0,
+                            MAX_LIGHTS * tiles
+                        ),
                     );
                 }
                 lights.push(light.clone());
             }
             _ => {}
         }
-        if props.len() > MAX_PROPS * squares
+        if props.len() > MAX_PROPS * tiles
             && matches!(placed.module, AreaModule::Prop(_) | AreaModule::Scatter(_))
         {
             check.error(
@@ -1030,13 +1206,20 @@ fn build_area(content: &Content, ground: &Ground, modules: &[Flattened]) -> (Are
                 "too many props",
                 format!("{} props standing in the area", props.len()),
                 format!(
-                    "at most {MAX_PROPS} props a {} m square of ground, {} for this area, scattered ones counted",
-                    BUDGET_SQUARE.0,
-                    MAX_PROPS * squares
+                    "at most {MAX_PROPS} props a {} m tile of ground, {} for this area, scattered ones counted",
+                    TILE_SIDE.0,
+                    MAX_PROPS * tiles
                 ),
             );
         }
     }
+    let footprints = walk::footprints(content, &props);
+    let mut footprint_index = SpatialIndex::new(TILE_SIDE);
+    footprint_index.refile(
+        footprints
+            .iter()
+            .map(|outline| Rect::from_points(outline.iter().copied())),
+    );
     let area = Area {
         size: ground.size.meters(),
         max_slope: ground.max_slope,
@@ -1054,10 +1237,13 @@ fn build_area(content: &Content, ground: &Ground, modules: &[Flattened]) -> (Are
             })
             .collect(),
         underfoot: walk::underfoot(content, &ground.terrains),
-        footprints: walk::footprints(content, &props),
+        footprints,
+        footprint_index,
         props,
         lights,
-        meshes: walk::Meshes::default(),
+        meshes: walk::Meshes::empty(ground.size.bounds()),
+        modules_by_tile,
+        placements_by_tile,
     };
     (area, check)
 }
@@ -1383,6 +1569,7 @@ pub fn check_place(content: &Content, place: script::Place) -> Result<(), Conten
     else {
         return Ok(());
     };
+    area.hold(area.tiles_around(place.at, TILE_SIDE));
     let key = place.area.path(content);
     let warps = warp_objects(content, place.area);
     let problem = |rule: &'static str, found: String| {
@@ -1427,10 +1614,4 @@ fn describe_point(at: Pos<Meters>) -> String {
 
 pub fn sixteenth(v: f32) -> f32 {
     (v * 16.0).round() / 16.0
-}
-
-/// How many squares of ground `size` holds, for its budgets: at least one.
-fn budget_squares(size: Size<Meters>) -> usize {
-    let squares = size.width * size.height / (BUDGET_SQUARE.0 * BUDGET_SQUARE.0);
-    squares.ceil().max(1.0) as usize
 }

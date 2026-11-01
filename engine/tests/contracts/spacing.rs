@@ -262,11 +262,15 @@ fn players_and_npcs_pick_berths_alike() {
 
 #[test]
 fn wandering_never_ends_on_a_taken_spot() {
-    let mut arena = Arena::new();
-    for (dx, dy) in [(0.0, 0.0), (1.0, 0.0), (-1.0, 1.0), (0.0, -2.0), (2.0, 2.0)] {
-        arena.victim(arena.at(dx, dy));
-    }
-    npc::spawn_all(arena.world());
+    let mut arena = Arena::among_wanderers(|sim| {
+        let (area, def) = (sim.id::<AreaDef>("field"), sim.id::<NpcDef>("brute"));
+        let pack = sim.pack(VICTIMS);
+        for (dx, dy) in [(0.0, 0.0), (1.0, 0.0), (-1.0, 1.0), (0.0, -2.0), (2.0, 2.0)] {
+            let at = SPAWN + Offset::new(dx, dy);
+            let victim = npc::spawn(&mut sim.world, def, at, area, Some(pack));
+            sim.world.entity_mut(victim).insert(Attitude::Hostile);
+        }
+    });
 
     let apart = arena.watch(20.0, |world| {
         let mut actors = world.query_filtered::<Entity, With<Npc>>();
@@ -282,7 +286,7 @@ fn wandering_never_ends_on_a_taken_spot() {
 
 #[test]
 fn joiners_at_the_spawn_land_on_distinct_spots_around_it() {
-    let mut sim = field();
+    let mut sim = field(false);
     let players: Vec<Entity> = (1..=4).map(|client| sim.join(client)).collect();
     let world = &sim.world;
     let spawn = at(world, players[0]);
@@ -376,7 +380,18 @@ struct Arena {
 impl Arena {
     /// A player alone in the middle of open ground they can walk all over, twelve metres each way.
     fn new() -> Arena {
-        let mut sim = field();
+        Arena::on(field(false))
+    }
+
+    /// The player among the wanderers living on the ground, who come to life as the player
+    /// joins, beside whoever `first` stood there before.
+    fn among_wanderers(first: impl FnOnce(&mut Sim)) -> Arena {
+        let mut sim = field(true);
+        first(&mut sim);
+        Arena::on(sim)
+    }
+
+    fn on(mut sim: Sim) -> Arena {
         let player = sim.join(1);
         sim.equip(player, "sword");
         let origin = at(&sim.world, player);
@@ -475,10 +490,16 @@ impl Arena {
 }
 
 /// Open ground, with brutes to fight that hit back with a strike but hardly ever fall.
-fn field() -> Sim {
-    let wanderers = [(10.0, 12.0), (14.0, 11.0), (13.0, 14.0), (11.0, 11.0)];
-    let residents: Vec<Value> = (0..wanderers.len())
-        .zip(wanderers)
+/// Where a player joining the field spawns.
+const SPAWN: Pos<Meters> = Pos::new(12.0, 12.0);
+
+/// Open ground, twenty-five metres square, with four wanderers living on it when `wanderers`:
+/// they come to life around whoever joins.
+fn field(wanderers: bool) -> Sim {
+    let homes = [(10.0, 12.0), (14.0, 11.0), (13.0, 14.0), (11.0, 11.0)];
+    let residents: Vec<Value> = (0..homes.len())
+        .zip(homes)
+        .filter(|_| wanderers)
         .map(|(index, (x, y))| {
             json!({
                 "type": "resident",
@@ -487,7 +508,7 @@ fn field() -> Sim {
             })
         })
         .collect();
-    let game = (0..wanderers.len()).fold(Game::new(), |game, index| {
+    let game = (0..homes.len()).fold(Game::new(), |game, index| {
         game.npc(
             &format!("wanderer_{index}"),
             100_000.0,
