@@ -23,6 +23,7 @@ use bevy_egui::{EguiOutput, EguiPostUpdateSet, PrimaryEguiContext};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::core::audio::Hearing;
 use crate::core::audio::mix::AudioCategory;
 use crate::core::audio::playback::Listener;
 use crate::core::audio::soundscape::{self, SoundscapeMixer, SoundscapeShape};
@@ -917,6 +918,7 @@ fn record_line(record: &HistoryRecord, inputs: &InputMap) -> ProbeRecord {
 
 fn soundscape(world: &World) -> ProbeSoundscape {
     let listener = world.resource::<Listener>().0;
+    let hearing = world.get_resource::<Hearing>();
     ProbeSoundscape {
         zones: world
             .resource::<soundscape::Soundscape>()
@@ -925,9 +927,10 @@ fn soundscape(world: &World) -> ProbeSoundscape {
             .map(|zone| ProbeSoundZone {
                 bounds: zone.shape.bounds(),
                 ellipse: matches!(zone.shape, SoundscapeShape::Ellipse(_)),
-                reach: zone.reach(),
+                reach: zone.reach,
                 proximity: listener
-                    .and_then(|at| zone.heard_from(at))
+                    .zip(hearing)
+                    .and_then(|(at, hearing)| zone.heard_from(at, hearing))
                     .map_or(0.0, |heard| heard.proximity),
                 tracks: zone
                     .channels

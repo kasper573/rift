@@ -19,8 +19,6 @@ use crate::systems::script::{
 use crate::systems::stat;
 use crate::systems::visibility::Presence;
 
-const MAX_SPAWNED: u32 = 20;
-
 /// Hostile or friendly, until set again.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[schemars(extend("x-system" = "npc"))]
@@ -119,10 +117,10 @@ impl EffectDef<RiftScripting> for SpawnNpcs {
     }
     crate::outputs!(NEXT => next);
     fn compile(&self, _cx: &mut Compiler<RiftScripting>) -> Result<EffectCall, ScriptFault> {
-        if !(1..=MAX_SPAWNED).contains(&self.count) {
+        if self.count == 0 {
             return Err(ScriptFault::new(
                 "out of range",
-                format!("a count 1 to {MAX_SPAWNED}, not {}", self.count),
+                "a count of at least 1, not 0",
             ));
         }
         let (npc, count, spread, near, shown) =

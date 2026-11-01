@@ -16,7 +16,7 @@ use crate::core::content::{
 };
 use crate::core::math::Rng;
 use crate::core::text::{
-    LettersPerSecond, StyledLine, TextPiece, TextVoice, Typewriter, TypewriterReveal,
+    StyledLine, TextPiece, TextVoice, Typewriter, TypewriterReveal, TypingPace,
     advance_typewriters, reveal_times,
 };
 use crate::core::units::{Hertz, PlaybackRate, Seconds};
@@ -26,18 +26,40 @@ pub type BabbleBankId = ContentId<BabbleBankDef>;
 
 pub const LETTERS: &str = "abcdefghijklmnopqrstuvwxyz";
 const VOWELS: [char; 5] = ['a', 'e', 'i', 'o', 'u'];
-const WORD_GAP: Seconds = Seconds(0.05);
-const CLAUSE_GAP: Seconds = Seconds(0.12);
-const SENTENCE_GAP: Seconds = Seconds(0.24);
-const QUESTION_RISE: Semitones = Semitones(4.0);
-const EXCLAIMED_LIFT: Semitones = Semitones(1.5);
-const STATEMENT_FALL: Semitones = Semitones(-1.5);
-const SHOUT_LIFT: Semitones = Semitones(1.0);
-const WHISPER_DROP: Semitones = Semitones(-1.0);
-const STEPS: u32 = 9;
-const EXCLAIMED_LOUDNESS: f32 = 1.2;
-const SHOUT_LOUDNESS: f32 = 1.35;
-const WHISPER_LOUDNESS: f32 = 0.6;
+
+/// How every babbling voice of the game speaks a line: its pauses, how a sentence's ending bends
+/// its last word, how a shout and a whisper change it, and how many pitches its letters are
+/// spoken on across a voice's range.
+#[derive(JsonSchema, Resource, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Speech {
+    pub gaps: SpeechGaps,
+    /// How far a question's last word climbs by its end.
+    pub question_rise: Semitones,
+    /// How far a statement's last word sinks by its end.
+    pub statement_fall: Semitones,
+    pub exclaimed: VoiceShift,
+    pub shout: VoiceShift,
+    pub whisper: VoiceShift,
+    pub pitches: u32,
+}
+
+/// The pauses after a word, a clause and a sentence.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpeechGaps {
+    pub word: Seconds,
+    pub clause: Seconds,
+    pub sentence: Seconds,
+}
+
+/// How a way of speaking moves a voice: its pitch by `lift`, its loudness `loudness` times.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct VoiceShift {
+    pub lift: Semitones,
+    pub loudness: f32,
+}
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 pub struct BabbleDef {
@@ -167,6 +189,8 @@ impl Plugin for BabblePlugin {
                 load_clips.run_if(resource_exists_and_changed::<Content>),
                 babble
                     .run_if(resource_exists::<Content>)
+                    .run_if(resource_exists::<TypingPace>)
+                    .run_if(resource_exists::<Speech>)
                     .after(advance_typewriters),
             )
                 .chain(),
@@ -212,6 +236,13 @@ struct Mouth {
     ends_at: Duration,
 }
 
+/// How lines are delivered: the pace they type at and how voices speak them.
+#[derive(SystemParam)]
+struct Delivery<'w> {
+    pace: Res<'w, TypingPace>,
+    speech: Res<'w, Speech>,
+}
+
 #[derive(SystemParam)]
 struct Voice<'w> {
     clips: Res<'w, BabbleClips>,
@@ -223,7 +254,7 @@ fn babble(
     content: Res<Content>,
     mut revealed: MessageReader<TypewriterReveal>,
     typing: Query<(Entity, &Babbling, &Typewriter, &StyledLine)>,
-    speed: Res<LettersPerSecond>,
+    delivery: Delivery,
     time: Res<Time>,
     mut mouth: Local<Mouth>,
     mut voice: Voice,
@@ -246,7 +277,7 @@ fn babble(
     if mouth.speaker == Some(speaker) {
         return;
     }
-    let moments = reveal_times(&text.pieces, *speed);
+    let moments = reveal_times(&text.pieces, *delivery.pace);
     let first_shown = revealed
         .read()
         .filter(|reveal| reveal.entity == speaker)
@@ -262,7 +293,7 @@ fn babble(
         if moment < busy_until {
             continue;
         }
-        let Some(syllable) = Syllable::at(text, index) else {
+        let Some(syllable) = Syllable::at(text, index, &delivery.speech) else {
             continue;
         };
         let Some(letter) = syllable.letter else {
@@ -338,7 +369,7 @@ impl Glyph {
 }
 
 impl Syllable {
-    fn at(text: &StyledLine, index: usize) -> Option<Syllable> {
+    fn at(text: &StyledLine, index: usize, speech: &Speech) -> Option<Syllable> {
         let spoken = spoken(text);
         let here = *spoken.get(index)?;
         let word_start = spoken[..index]
@@ -362,31 +393,33 @@ impl Syllable {
             .max(1);
         let through_word = (index - word_start + 1) as f32 / word_length as f32;
         let mut intonation = match (ending, last_word) {
-            (Some(Glyph::Char('?')), true) => Semitones(QUESTION_RISE.0 * through_word),
-            (Some(Glyph::Char('!')), _) => EXCLAIMED_LIFT,
-            (Some(Glyph::Char('.')), true) => Semitones(STATEMENT_FALL.0 * through_word),
+            (Some(Glyph::Char('?')), true) => Semitones(speech.question_rise.0 * through_word),
+            (Some(Glyph::Char('!')), _) => speech.exclaimed.lift,
+            (Some(Glyph::Char('.')), true) => Semitones(speech.statement_fall.0 * through_word),
             _ => Semitones(0.0),
         };
         let mut loudness = match ending {
-            Some(Glyph::Char('!')) => EXCLAIMED_LOUDNESS,
+            Some(Glyph::Char('!')) => speech.exclaimed.loudness,
             _ => 1.0,
         };
         match here.voice {
             Some(TextVoice::Shout) => {
-                intonation = intonation + SHOUT_LIFT;
-                loudness *= SHOUT_LOUDNESS;
+                intonation = intonation + speech.shout.lift;
+                loudness *= speech.shout.loudness;
             }
             Some(TextVoice::Whisper) => {
-                intonation = intonation + WHISPER_DROP;
-                loudness *= WHISPER_LOUDNESS;
+                intonation = intonation + speech.whisper.lift;
+                loudness *= speech.whisper.loudness;
             }
             None => {}
         }
         let letter = letter_of(here.glyph);
         Some(Syllable {
             letter,
-            pause: pause_after(here.glyph),
-            step: letter.map_or(0.0, |letter| step(letter, index - word_start)),
+            pause: pause_after(here.glyph, speech.gaps),
+            step: letter.map_or(0.0, |letter| {
+                step(letter, index - word_start, speech.pitches)
+            }),
             intonation,
             loudness,
         })
@@ -427,16 +460,17 @@ fn letter_of(glyph: Glyph) -> Option<char> {
     ch.is_alphanumeric().then_some(VOWELS[0])
 }
 
-fn pause_after(glyph: Glyph) -> Seconds {
+fn pause_after(glyph: Glyph, gaps: SpeechGaps) -> Seconds {
     match glyph {
-        Glyph::Char('.' | '!' | '?') => SENTENCE_GAP,
-        Glyph::Char(',' | ';' | ':' | '-' | '\u{2014}') => CLAUSE_GAP,
-        _ => WORD_GAP,
+        Glyph::Char('.' | '!' | '?') => gaps.sentence,
+        Glyph::Char(',' | ';' | ':' | '-' | '\u{2014}') => gaps.clause,
+        _ => gaps.word,
     }
 }
 
-fn step(letter: char, place_in_word: usize) -> f32 {
+/// Where in a voice's range a letter falls, from -1 to 1, on one of `pitches` pitches.
+fn step(letter: char, place_in_word: usize, pitches: u32) -> f32 {
     let seed = (u64::from(letter) << 32) | place_in_word as u64;
-    let notch = Rng::new(seed).rand_range(0..STEPS);
-    notch as f32 / ((STEPS - 1) as f32 / 2.0) - 1.0
+    let notch = Rng::new(seed).rand_range(0..pitches);
+    notch as f32 / ((pitches - 1) as f32 / 2.0) - 1.0
 }

@@ -50,9 +50,10 @@ use bevy_replication::FromClient;
 use schemars::JsonSchema;
 
 use crate::core::assets::SyncedFiles;
+use crate::core::audio::Hearing;
 use crate::core::audio::playback::{SfxDef, SfxPlugin};
 use crate::core::audio::soundscape::SoundscapePlugin;
-use crate::core::babble::BabblePlugin;
+use crate::core::babble::{BabblePlugin, Speech};
 use crate::core::content::sync::SyncedContent;
 use crate::core::content::{
     Content, ContentFolder, ContentProblem, ContentRegistry, ContentVersion, LoadPurpose,
@@ -66,7 +67,7 @@ use crate::core::net::transport::ClientTransportPlugin;
 use crate::core::os::{Http, Profile, SignIn, StartParams};
 use crate::core::render::Look;
 use crate::core::render::WorldRenderPlugin;
-use crate::core::text::StyledTextPlugin;
+use crate::core::text::{Lettering, StyledTextPlugin, Typing};
 use crate::core::tick::{self, Tick};
 use crate::core::time::{DayClock, WallClock};
 use crate::core::units::{Hertz, Meters, Seconds};
@@ -154,6 +155,10 @@ pub fn area_state(world: &mut World, content: &Content) {
 fn insert_content(world: &mut World, content: &Content) {
     let settings = content.built::<GameSettings>();
     world.insert_resource(settings.look.clone());
+    world.insert_resource(settings.typing);
+    world.insert_resource(settings.lettering);
+    world.insert_resource(settings.speech);
+    world.insert_resource(settings.hearing);
     world.insert_resource(settings.clone());
     let bodies = movement::Bodies::of(content).expect("a game that loaded knows its bodies");
     world.insert_resource(bodies);
@@ -191,6 +196,10 @@ pub struct GameSettings {
     pub reading: Reading,
     pub notices: Notices,
     pub words: Words,
+    pub typing: Typing,
+    pub lettering: Lettering,
+    pub speech: Speech,
+    pub hearing: Hearing,
     pub look: Look,
     pub relations: Relations,
     /// How soon after each other like entries of a player's history count as one, a run of loot
@@ -241,6 +250,12 @@ pub struct Words {
     pub no_longer: String,
     /// What a player is told offered a quest with every slot of their quest log taken.
     pub quest_log_full: String,
+    /// What a trade asking for items a player lacks says: `{count}` more of the item `{item}`.
+    pub needs_more: String,
+    /// What a trade says that a player's bag has no room for, one slot short.
+    pub needs_a_slot: String,
+    /// What a trade says that a player's bag has no room for, `{slots}` slots short.
+    pub needs_slots: String,
 }
 
 /// How long notices take to read: each stays a glance and a little longer for every word, and
@@ -280,6 +295,8 @@ pub struct Drops {
     pub scatter: Meters,
     /// How close a player comes to an item to pick it up.
     pub pickup_reach: Meters,
+    /// How far from an item on the ground a click still picks it.
+    pub click_reach: Meters,
 }
 
 pub fn server_app(
@@ -716,6 +733,7 @@ fn check_settings(loading: &mut Loading) {
     check.at_least("/drops/last", drops.last.0, 0.0, "seconds");
     check.at_least("/drops/scatter", drops.scatter.0, 0.0, "meters");
     check.at_least("/drops/pickup_reach", drops.pickup_reach.0, 0.0, "meters");
+    check.at_least("/drops/click_reach", drops.click_reach.0, 0.0, "meters");
     for (field, said) in [
         ("accept_quest", &settings.words.accept_quest),
         ("decline_quest", &settings.words.decline_quest),
@@ -723,9 +741,16 @@ fn check_settings(loading: &mut Loading) {
         ("locked", &settings.words.locked),
         ("no_longer", &settings.words.no_longer),
         ("quest_log_full", &settings.words.quest_log_full),
+        ("needs_more", &settings.words.needs_more),
+        ("needs_a_slot", &settings.words.needs_a_slot),
+        ("needs_slots", &settings.words.needs_slots),
     ] {
         check.text(format!("/words/{field}"), said, 1, 80);
     }
+    check_typing(&mut check, &settings.typing);
+    check_lettering(&mut check, &settings.lettering);
+    check_speech(&mut check, &settings.speech);
+    check_hearing(&mut check, &settings.hearing);
     check.at_least("/reading/glance", settings.reading.glance.0, 0.0, "seconds");
     check.at_least(
         "/reading/per_word",
@@ -762,6 +787,98 @@ fn check_settings(loading: &mut Loading) {
 
 /// The rules of a look a schema can't state: a camera that can see, between its own limits, with
 /// its zooms in order.
+fn check_typing(check: &mut RowCheck, typing: &Typing) {
+    check.at_least("/typing/slowest", typing.slowest.0, 1.0, "letters a second");
+    check.range(
+        "/typing/fastest",
+        typing.fastest.0,
+        typing.slowest.0,
+        f32::MAX,
+        "letters a second, no slower than the slowest",
+    );
+    check.range(
+        "/typing/pace",
+        typing.pace.0,
+        typing.slowest.0,
+        typing.fastest.0,
+        "letters a second, between the slowest and the fastest",
+    );
+    check.at_least("/typing/slow_by", typing.slow_by, 1.0, "times");
+}
+
+fn check_lettering(check: &mut RowCheck, lettering: &Lettering) {
+    for (field, size) in [
+        ("whisper/size", lettering.whisper.size),
+        ("shout_size", lettering.shout_size),
+        ("caps/size", lettering.caps.size),
+    ] {
+        check.range(
+            format!("/lettering/{field}"),
+            size,
+            0.25,
+            4.0,
+            "times the text's size",
+        );
+    }
+    check.range(
+        "/lettering/whisper/opacity",
+        lettering.whisper.opacity,
+        0.0,
+        1.0,
+        "a share",
+    );
+    check.at_least("/lettering/caps/room", lettering.caps.room, 0.0, "ems");
+    check.at_least("/lettering/halo", lettering.halo, 0.0, "points");
+    for (field, swing) in [
+        ("wave", lettering.wave),
+        ("shake/across", lettering.shake.across),
+        ("shake/down", lettering.shake.down),
+        ("pulse", lettering.pulse),
+    ] {
+        check.at_least(
+            format!("/lettering/{field}/reach"),
+            swing.reach,
+            0.0,
+            "points or a share",
+        );
+    }
+}
+
+fn check_speech(check: &mut RowCheck, speech: &Speech) {
+    for (field, gap) in [
+        ("word", speech.gaps.word),
+        ("clause", speech.gaps.clause),
+        ("sentence", speech.gaps.sentence),
+    ] {
+        check.at_least(format!("/speech/gaps/{field}"), gap.0, 0.0, "seconds");
+    }
+    for (field, shift) in [
+        ("exclaimed", speech.exclaimed),
+        ("shout", speech.shout),
+        ("whisper", speech.whisper),
+    ] {
+        check.at_least(
+            format!("/speech/{field}/loudness"),
+            shift.loudness,
+            0.0,
+            "times",
+        );
+    }
+    check.at_least("/speech/pitches", speech.pitches, 2, "pitches");
+}
+
+fn check_hearing(check: &mut RowCheck, hearing: &Hearing) {
+    check.at_least("/hearing/wide", hearing.wide.0, 0.5, "meters");
+    check.at_least("/hearing/deep", hearing.deep.0, 0.5, "meters");
+    check.at_least(
+        "/hearing/repeats_after",
+        hearing.repeats_after.0,
+        0.0,
+        "seconds",
+    );
+    check.at_least("/hearing/glide", hearing.glide.0, 0.01, "seconds");
+}
+
 fn check_look(check: &mut RowCheck, look: &Look) {
     let camera = &look.camera;
     check.range("/look/camera/fov", camera.fov.0, 1.0, 170.0, "degrees");

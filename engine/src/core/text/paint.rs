@@ -13,13 +13,7 @@ use ui::egui::{
 use ui::face::{Face, TextRole};
 use ui::ink::Ground;
 
-use super::{KeyNames, SpanInk, StyledLine, TextMotion, TextPiece, TextVoice};
-
-const WHISPER_SCALE: f32 = 0.9;
-const WHISPER_ALPHA: f32 = 0.7;
-const SHOUT_SCALE: f32 = 1.3;
-const CAP_SCALE: f32 = 0.85;
-const CAP_PAD_EM: f32 = 0.3;
+use super::{KeyNames, Lettering, SpanInk, StyledLine, Swing, TextMotion, TextPiece, TextVoice};
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextLook {
@@ -94,7 +88,7 @@ pub fn show(
     shown: Option<usize>,
 ) -> Response {
     let keys = world.resource::<KeyNames>();
-    let plan = Plan::new(line, keys, look);
+    let plan = Plan::new(line, keys, *world.resource::<Lettering>(), look);
     let galley = ui.painter().layout_job(plan.job(ui.available_width()));
     let pad = plan.pad;
     let (rect, response) = ui.allocate_exact_size(plan.footprint(&galley), Sense::hover());
@@ -136,13 +130,17 @@ pub fn measure(
     look: TextLook,
     wrap: f32,
 ) -> Vec2 {
-    let plan = Plan::new(line, world.resource::<KeyNames>(), look);
+    let plan = Plan::new(
+        line,
+        world.resource::<KeyNames>(),
+        *world.resource::<Lettering>(),
+        look,
+    );
     let galley = gui.fonts_mut(|fonts| fonts.layout_job(plan.job(wrap)));
     plan.footprint(&galley)
 }
 
 const HALO_STEPS: usize = 8;
-const HALO_REACH: f32 = 1.5;
 
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct TextShadow {
@@ -186,6 +184,7 @@ struct Plan {
     units: usize,
     pad: f32,
     halo: Option<Color32>,
+    lettering: Lettering,
 }
 
 struct Letter {
@@ -215,8 +214,8 @@ struct Placed {
 }
 
 impl Plan {
-    fn new(line: &StyledLine, keys: &KeyNames, look: TextLook) -> Plan {
-        let pad = look.size * CAP_PAD_EM;
+    fn new(line: &StyledLine, keys: &KeyNames, lettering: Lettering, look: TextLook) -> Plan {
+        let pad = look.size * lettering.caps.room;
         let mut plan = Plan {
             letters: Vec::new(),
             words: Vec::new(),
@@ -224,6 +223,7 @@ impl Plan {
             units: 0,
             pad,
             halo: look.halo,
+            lettering,
         };
         let mut letter = 0;
         let mut owed = 0.0;
@@ -234,7 +234,10 @@ impl Plan {
                 TextPiece::Key(cap) => {
                     let format = TextFormat {
                         line_height: look.line_height,
-                        ..TextFormat::simple(Face::Mono.id(look.size * CAP_SCALE), look.color)
+                        ..TextFormat::simple(
+                            Face::Mono.id(look.size * lettering.caps.size),
+                            look.color,
+                        )
                     };
                     let start = plan.letters.len();
                     for (at, ch) in cap.name(keys).chars().enumerate() {
@@ -261,7 +264,7 @@ impl Plan {
                     letter += 1;
                 }
                 TextPiece::Span(span) => {
-                    let format = span_format(span.voice, ink_of(span.ink, look), look);
+                    let format = span_format(span.voice, ink_of(span.ink, look), look, lettering);
                     for ch in span.text.chars() {
                         let leading = std::mem::take(&mut owed);
                         plan.letters.push(Letter {
@@ -315,7 +318,12 @@ impl Plan {
     }
 }
 
-fn span_format(voice: Option<TextVoice>, color: Color32, look: TextLook) -> TextFormat {
+fn span_format(
+    voice: Option<TextVoice>,
+    color: Color32,
+    look: TextLook,
+    lettering: Lettering,
+) -> TextFormat {
     let (normal, whisper, shout) = match look.hand {
         Hand::Book => (Face::Book, Face::BookItalic, Face::BookBold),
         Hand::Bold => (Face::BookBold, Face::BookItalic, Face::BookBold),
@@ -324,10 +332,12 @@ fn span_format(voice: Option<TextVoice>, color: Color32, look: TextLook) -> Text
     let format = match voice {
         None => TextFormat::simple(normal.id(look.size), color),
         Some(TextVoice::Whisper) => TextFormat::simple(
-            whisper.id(look.size * WHISPER_SCALE),
-            color.gamma_multiply(WHISPER_ALPHA),
+            whisper.id(look.size * lettering.whisper.size),
+            color.gamma_multiply(lettering.whisper.opacity),
         ),
-        Some(TextVoice::Shout) => TextFormat::simple(shout.id(look.size * SHOUT_SCALE), color),
+        Some(TextVoice::Shout) => {
+            TextFormat::simple(shout.id(look.size * lettering.shout_size), color)
+        }
     };
     TextFormat {
         line_height: look.line_height,
@@ -407,25 +417,28 @@ fn paint_word(
     match motion {
         None => {}
         Some(TextMotion::Wave) => {
-            shape.pos.y += (time * 5.0 - phase * 0.8).sin() * 2.5;
+            let wave = plan.lettering.wave;
+            shape.pos.y += turn(wave, time, -phase).sin() * wave.reach;
         }
         Some(TextMotion::Shake) => {
+            let shake = plan.lettering.shake;
             shape.pos += Vec2::new(
-                (time * 53.0 + phase * 7.1).sin() * 1.2,
-                (time * 47.0 + phase * 3.3).cos() * 1.2,
+                turn(shake.across, time, phase).sin() * shake.across.reach,
+                turn(shake.down, time, phase).cos() * shake.down.reach,
             );
         }
         Some(TextMotion::Pulse) => {
-            let scale = 1.0 + (time * 3.0 - phase * 0.4).sin() * 0.05;
+            let pulse = plan.lettering.pulse;
+            let scale = 1.0 + turn(pulse, time, -phase).sin() * pulse.reach;
             let center = shape.visual_bounding_rect().center().to_vec2();
             shape.transform(TSTransform::new(center * (1.0 - scale), scale));
         }
     }
     if let Some(halo) = plan.halo {
         for step in 0..HALO_STEPS {
-            let turn = step as f32 / HALO_STEPS as f32 * std::f32::consts::TAU;
+            let angle = step as f32 / HALO_STEPS as f32 * std::f32::consts::TAU;
             let mut ring = shape.clone();
-            ring.pos += Vec2::angled(turn) * HALO_REACH;
+            ring.pos += Vec2::angled(angle) * plan.lettering.halo;
             ring.override_text_color = Some(halo);
             ui.painter().add(Shape::Text(ring));
         }
@@ -439,4 +452,9 @@ fn ink_of(ink: Option<SpanInk>, look: TextLook) -> Color32 {
         Some(SpanInk::Fixed(color)) => color,
         None => look.color,
     }
+}
+
+/// How far round its swing a word `phase` words into its line has turned at `time`.
+fn turn(swing: Swing, time: f32, phase: f32) -> f32 {
+    time * swing.rate.0 + phase * swing.step.0
 }

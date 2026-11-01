@@ -13,7 +13,7 @@ use strum::{IntoStaticStr, VariantArray};
 use ui::egui::Color32;
 use ui::ink::Prose;
 
-const SLOW_PACE: f32 = 2.5;
+use crate::core::units::{Radians, RadiansPerSec};
 
 #[derive(Component, Clone, Debug, Default, PartialEq)]
 pub struct StyledLine {
@@ -109,22 +109,89 @@ impl KeyNames {
     }
 }
 
-#[derive(Resource, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, PartialOrd)]
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, PartialOrd)]
+#[schemars(extend("x-unit" = "letters/s"))]
 pub struct LettersPerSecond(pub f32);
 
-impl LettersPerSecond {
-    pub(crate) const SLOWEST: LettersPerSecond = LettersPerSecond(15.0);
-    pub(crate) const FASTEST: LettersPerSecond = LettersPerSecond(120.0);
+/// How styled text sets its voices, key caps, halos and motions; sizes are shares of the text's
+/// own, distances in points.
+#[derive(JsonSchema, Resource, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Lettering {
+    pub whisper: WhisperLettering,
+    pub shout_size: f32,
+    pub caps: CapLettering,
+    /// How far a halo spreads around each letter.
+    pub halo: f32,
+    /// How a waving word bobs up and down.
+    pub wave: Swing,
+    pub shake: ShakeLettering,
+    /// How a pulsing word swells, its reach a share of its size.
+    pub pulse: Swing,
+}
 
-    pub(crate) fn clamped(self) -> LettersPerSecond {
-        LettersPerSecond(self.0.clamp(Self::SLOWEST.0, Self::FASTEST.0))
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct WhisperLettering {
+    pub size: f32,
+    pub opacity: f32,
+}
+
+/// A key cap's letters, and the room around the cap in ems of the text.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CapLettering {
+    pub size: f32,
+    pub room: f32,
+}
+
+/// How a shaking word trembles across and down.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ShakeLettering {
+    pub across: Swing,
+    pub down: Swing,
+}
+
+/// A swing to and fro, as far as `reach` either way, turning at `rate`, each word of a line
+/// `step` further round than the one before.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Swing {
+    pub rate: RadiansPerSec,
+    pub step: Radians,
+    pub reach: f32,
+}
+
+/// How lines type out in the game: at its pace unless a player chooses another between its
+/// slowest and fastest, a slow span's letters each taking `slow_by` times as long.
+#[derive(JsonSchema, Resource, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Typing {
+    pub pace: LettersPerSecond,
+    pub slowest: LettersPerSecond,
+    pub fastest: LettersPerSecond,
+    pub slow_by: f32,
+}
+
+impl Typing {
+    /// The pace lines type at for a player who `chose` one, or chose none.
+    pub fn pace_for(self, chose: Option<LettersPerSecond>) -> TypingPace {
+        let letters = chose.map_or(self.pace, |chose| {
+            LettersPerSecond(chose.0.clamp(self.slowest.0, self.fastest.0))
+        });
+        TypingPace {
+            letters,
+            slow_by: self.slow_by,
+        }
     }
 }
 
-impl Default for LettersPerSecond {
-    fn default() -> LettersPerSecond {
-        LettersPerSecond(45.0)
-    }
+/// How fast lines type out where they are read.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct TypingPace {
+    pub letters: LettersPerSecond,
+    pub slow_by: f32,
 }
 
 #[derive(Component, Clone, Debug, Default, PartialEq)]
@@ -232,17 +299,18 @@ impl From<StyledSpan> for TextPiece {
     }
 }
 
-pub fn reveal_times(pieces: &[TextPiece], speed: LettersPerSecond) -> Vec<Duration> {
-    let step = |pace: f32| Duration::from_secs_f64(f64::from(pace) / f64::from(speed.0));
+pub fn reveal_times(pieces: &[TextPiece], pace: TypingPace) -> Vec<Duration> {
+    let step =
+        |slowness: f32| Duration::from_secs_f64(f64::from(slowness) / f64::from(pace.letters.0));
     let mut clock = Duration::ZERO;
     let mut times = Vec::new();
     for piece in pieces {
         match piece {
             TextPiece::Pause(pause) => clock += *pause,
             TextPiece::Span(span) => {
-                let pace = if span.slow { SLOW_PACE } else { 1.0 };
+                let slowness = if span.slow { pace.slow_by } else { 1.0 };
                 for _ in span.text.chars() {
-                    clock += step(pace);
+                    clock += step(slowness);
                     times.push(clock);
                 }
             }
@@ -255,15 +323,15 @@ pub fn reveal_times(pieces: &[TextPiece], speed: LettersPerSecond) -> Vec<Durati
     times
 }
 
-pub fn revealed(pieces: &[TextPiece], speed: LettersPerSecond, elapsed: Duration) -> usize {
-    reveal_times(pieces, speed)
+pub fn revealed(pieces: &[TextPiece], pace: TypingPace, elapsed: Duration) -> usize {
+    reveal_times(pieces, pace)
         .iter()
         .take_while(|time| **time <= elapsed)
         .count()
 }
 
-pub fn reveal_duration(pieces: &[TextPiece], speed: LettersPerSecond) -> Duration {
-    reveal_times(pieces, speed)
+pub fn reveal_duration(pieces: &[TextPiece], pace: TypingPace) -> Duration {
+    reveal_times(pieces, pace)
         .last()
         .copied()
         .unwrap_or(Duration::ZERO)
@@ -274,15 +342,17 @@ pub struct StyledTextPlugin;
 impl Plugin for StyledTextPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<KeyNames>()
-            .init_resource::<LettersPerSecond>()
             .add_message::<TypewriterReveal>()
-            .add_systems(Update, advance_typewriters);
+            .add_systems(
+                Update,
+                advance_typewriters.run_if(resource_exists::<TypingPace>),
+            );
     }
 }
 
 pub(crate) fn advance_typewriters(
     time: Res<Time>,
-    speed: Res<LettersPerSecond>,
+    pace: Res<TypingPace>,
     mut lines: Query<(Entity, Ref<StyledLine>, &mut Typewriter)>,
     mut reveals: MessageWriter<TypewriterReveal>,
 ) {
@@ -291,13 +361,13 @@ pub(crate) fn advance_typewriters(
             *typewriter = Typewriter::default();
         }
         let shown = if typewriter.finished {
-            reveal_times(&line.pieces, *speed).len()
+            reveal_times(&line.pieces, *pace).len()
         } else {
             typewriter.elapsed += time.delta();
-            if typewriter.elapsed >= reveal_duration(&line.pieces, *speed) {
+            if typewriter.elapsed >= reveal_duration(&line.pieces, *pace) {
                 typewriter.finished = true;
             }
-            revealed(&line.pieces, *speed, typewriter.elapsed)
+            revealed(&line.pieces, *pace, typewriter.elapsed)
         };
         if shown > typewriter.shown {
             let newly = typewriter.shown..shown;

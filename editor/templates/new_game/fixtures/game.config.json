@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "c10b280e",
+  "content_version": "0e8de03d",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -23,7 +23,8 @@
   "drops": {
     "last": 120.0,
     "scatter": 1.0,
-    "pickup_reach": 1.0
+    "pickup_reach": 1.0,
+    "click_reach": 0.5
   },
   "reading": {
     "glance": 2.0,
@@ -39,7 +40,78 @@
     "not_yet": "Not yet.",
     "locked": "You can't do that yet.",
     "no_longer": "You can't do that any more.",
-    "quest_log_full": "Your quest log is full."
+    "quest_log_full": "Your quest log is full.",
+    "needs_more": "Needs {count} more {item}",
+    "needs_a_slot": "Needs 1 free slot",
+    "needs_slots": "Needs {slots} free slots"
+  },
+  "typing": {
+    "pace": 45.0,
+    "slowest": 15.0,
+    "fastest": 120.0,
+    "slow_by": 2.5
+  },
+  "lettering": {
+    "whisper": {
+      "size": 0.9,
+      "opacity": 0.7
+    },
+    "shout_size": 1.3,
+    "caps": {
+      "size": 0.85,
+      "room": 0.3
+    },
+    "halo": 1.5,
+    "wave": {
+      "rate": 5.0,
+      "step": 0.8,
+      "reach": 2.5
+    },
+    "shake": {
+      "across": {
+        "rate": 53.0,
+        "step": 7.1,
+        "reach": 1.2
+      },
+      "down": {
+        "rate": 47.0,
+        "step": 3.3,
+        "reach": 1.2
+      }
+    },
+    "pulse": {
+      "rate": 3.0,
+      "step": 0.4,
+      "reach": 0.05
+    }
+  },
+  "speech": {
+    "gaps": {
+      "word": 0.05,
+      "clause": 0.12,
+      "sentence": 0.24
+    },
+    "question_rise": 4.0,
+    "statement_fall": -1.5,
+    "exclaimed": {
+      "lift": 1.5,
+      "loudness": 1.2
+    },
+    "shout": {
+      "lift": 1.0,
+      "loudness": 1.35
+    },
+    "whisper": {
+      "lift": -1.0,
+      "loudness": 0.6
+    },
+    "pitches": 9
+  },
+  "hearing": {
+    "wide": 12.0,
+    "deep": 9.0,
+    "repeats_after": 0.1,
+    "glide": 0.75
   },
   "look": {
     "camera": {

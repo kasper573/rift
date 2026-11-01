@@ -2,8 +2,10 @@ use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::{Arc, LazyLock};
 
+use engine::core::audio::Hearing;
 use engine::core::audio::playback::SFX_CLIP;
 use engine::core::babble::BABBLE_LETTERS;
+use engine::core::babble::{Semitones, Speech, SpeechGaps, VoiceShift};
 use engine::core::content::{
     CONFIG_FILE, Content, ContentFile, ContentId, ContentRegistry, LoadReport, MemoryFolder,
     SETTINGS_FILE, Shape, content_path, name_of, table_of, version,
@@ -14,7 +16,10 @@ use engine::core::render::{
     CameraFraming, ClearingLook, CloudLook, LightLook, Look, PictureGrade, SkyLook, SurfaceFinish,
     Zooms,
 };
-use engine::core::units::Degrees;
+use engine::core::text::{
+    CapLettering, Lettering, LettersPerSecond, ShakeLettering, Swing, Typing, WhisperLettering,
+};
+use engine::core::units::{Degrees, Radians, RadiansPerSec};
 use engine::core::units::{Meters, MetersPerSec, Stops};
 use engine::core::units::{Millis, Seconds};
 use engine::core::vfx::shader::{SHADER_SOURCE, Stage};
@@ -226,7 +231,7 @@ impl Game {
                 "corpses_linger": 5.0,
                 "claims_last": 60.0,
                 "slots": { "bag": 25, "hotbar": 40, "quest_log": 20 },
-                "drops": { "last": 120.0, "scatter": 1.0, "pickup_reach": 1.0 },
+                "drops": { "last": 120.0, "scatter": 1.0, "pickup_reach": 1.0, "click_reach": 0.5 },
                 "reading": { "glance": 2.0, "per_word": 0.3 },
                 "notices": { "pops_last": 1.0, "intro_after": 0.3 },
                 "words": {
@@ -236,7 +241,14 @@ impl Game {
                     "locked": "You can't do that yet.",
                     "no_longer": "You can't do that any more.",
                     "quest_log_full": "Your quest log is full.",
+                    "needs_more": "Needs {count} more {item}",
+                    "needs_a_slot": "Needs 1 free slot",
+                    "needs_slots": "Needs {slots} free slots",
                 },
+                "typing": typing(),
+                "lettering": lettering(),
+                "speech": speech(),
+                "hearing": hearing(),
                 "relations": {
                     "characters": "ally",
                     "characters_and_friendly": "neutral",
@@ -830,6 +842,74 @@ pub fn stats(health: f32) -> Value {
 
 fn json_bytes(value: &Value) -> Vec<u8> {
     serde_json::to_vec_pretty(value).expect("json")
+}
+
+/// How every test game types its lines out.
+pub fn typing() -> Typing {
+    Typing {
+        pace: LettersPerSecond(45.0),
+        slowest: LettersPerSecond(15.0),
+        fastest: LettersPerSecond(120.0),
+        slow_by: 2.5,
+    }
+}
+
+/// How every test game sets its styled text.
+pub fn lettering() -> Lettering {
+    let swing = |rate: f32, step: f32, reach: f32| Swing {
+        rate: RadiansPerSec(rate),
+        step: Radians(step),
+        reach,
+    };
+    Lettering {
+        whisper: WhisperLettering {
+            size: 0.9,
+            opacity: 0.7,
+        },
+        shout_size: 1.3,
+        caps: CapLettering {
+            size: 0.85,
+            room: 0.3,
+        },
+        halo: 1.5,
+        wave: swing(5.0, 0.8, 2.5),
+        shake: ShakeLettering {
+            across: swing(53.0, 7.1, 1.2),
+            down: swing(47.0, 3.3, 1.2),
+        },
+        pulse: swing(3.0, 0.4, 0.05),
+    }
+}
+
+/// How every test game's babbling voices speak.
+pub fn speech() -> Speech {
+    let shift = |lift: f32, loudness: f32| VoiceShift {
+        lift: Semitones(lift),
+        loudness,
+    };
+    Speech {
+        gaps: SpeechGaps {
+            word: Seconds(0.05),
+            clause: Seconds(0.12),
+            sentence: Seconds(0.24),
+        },
+        question_rise: Semitones(4.0),
+        statement_fall: Semitones(-1.5),
+        exclaimed: shift(1.5, 1.2),
+        shout: shift(1.0, 1.35),
+        whisper: shift(-1.0, 0.6),
+        pitches: 9,
+    }
+}
+
+/// How every test game is heard.
+pub fn hearing() -> Hearing {
+    Hearing {
+        wide: Meters(12.0),
+        deep: Meters(9.0),
+        repeats_after: Seconds(0.1),
+        glide: Seconds(0.75),
+    }
 }
 
 /// The look every test game has.

@@ -395,7 +395,7 @@ pub fn module_template(
         }),
         AreaModuleKind::Soundscape => AreaModule::Soundscape(SoundscapeDef {
             shape: SoundscapeShape::Rect(spot_rect(at.ok_or_else(placed)?)),
-            emit: 4.0,
+            reach: Meters(8.0),
             channels: vec![SoundChannel {
                 channel: 1,
                 file: Nearby::new(reader, bundle).audio()?,

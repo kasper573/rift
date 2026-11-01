@@ -371,6 +371,12 @@ pub struct Degrees(pub f32);
 #[schemars(extend("x-unit" = "rad"))]
 pub struct Radians(pub f32);
 
+#[derive(
+    JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd,
+)]
+#[schemars(extend("x-unit" = "rad/s"))]
+pub struct RadiansPerSec(pub f32);
+
 impl Degrees {
     pub fn radians(self) -> Radians {
         Radians(self.0.to_radians())

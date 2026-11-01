@@ -144,7 +144,7 @@ fn an_optional_field_set_to_what_the_game_reads_without_it_stays_shown_to_edit_i
     let wind = json!({
         "type": "soundscape",
         "shape": { "type": "rect", "x": -0.5, "y": -0.5, "w": 8.0, "h": 8.0 },
-        "emit": 0.0,
+        "reach": 4.0,
         "channels": [{ "channel": 1, "file": "audio/wind.wav" }],
     });
     let game = Game::new()

@@ -6,18 +6,13 @@ use bevy_kira_audio::prelude::{Audio, AudioControl, AudioInstance, AudioSource, 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::audio::decibels;
 use crate::core::audio::mix::{AudioCategory, AudioMix};
 use crate::core::audio::playback::{Listener, PositionalAudio};
+use crate::core::audio::{Hearing, decibels};
 use crate::core::content::AudioRef;
 use crate::core::content::serial;
 use crate::core::math::{Pos, Rect, Size};
 use crate::core::units::{Meters, Seconds};
-
-pub const EDGE_FALLOFF: Meters = Meters(4.0);
-// The quickest the mix may swing from silence to full. Proximity drives every change, and this only
-// catches the jumps, like travelling between areas, so they glide instead of cutting.
-const SLEW: Seconds = Seconds(0.75);
 
 pub struct SoundscapePlugin;
 
@@ -27,7 +22,11 @@ impl Plugin for SoundscapePlugin {
             .init_resource::<SoundscapeMixer>()
             .add_systems(
                 Update,
-                (load_sources.run_if(resource_changed::<Soundscape>), mix).chain(),
+                (
+                    load_sources.run_if(resource_changed::<Soundscape>),
+                    mix.run_if(resource_exists::<Hearing>),
+                )
+                    .chain(),
             );
     }
 }
@@ -38,7 +37,8 @@ pub struct Soundscape(pub Vec<SoundscapeZone>);
 #[derive(Clone, Debug, PartialEq)]
 pub struct SoundscapeZone {
     pub shape: SoundscapeShape,
-    pub emit: Meters,
+    /// How far from its shape it is heard, fading out as it goes.
+    pub reach: Meters,
     pub channels: BTreeMap<SoundscapeChannel, SoundscapeLayer>,
 }
 
@@ -94,12 +94,13 @@ pub struct SoundscapeVoice {
 }
 
 impl SoundscapeZone {
-    pub fn reach(&self) -> Meters {
-        EDGE_FALLOFF + self.emit
-    }
-
-    pub fn heard_from(&self, at: Pos<Meters>) -> Option<PositionalAudio> {
-        let heard = PositionalAudio::of(at, self.shape.nearest(at), Size::splat(self.reach().0));
+    pub fn heard_from(&self, at: Pos<Meters>, hearing: &Hearing) -> Option<PositionalAudio> {
+        let heard = PositionalAudio::of(
+            at,
+            self.shape.nearest(at),
+            Size::splat(self.reach.0),
+            hearing.wide,
+        );
         heard.audible().then_some(heard)
     }
 }
@@ -143,8 +144,8 @@ impl SoundscapeVoice {
         self.channel == layer.channel && self.src == layer.src
     }
 
-    fn approach(&mut self, wanted: Option<&WantedLayer>, elapsed: Seconds) {
-        let step = elapsed.ratio(SLEW);
+    fn approach(&mut self, wanted: Option<&WantedLayer>, elapsed: Seconds, glide: Seconds) {
+        let step = elapsed.ratio(glide);
         self.share = toward(self.share, wanted.map_or(0.0, |wanted| wanted.share), step);
         if let Some(wanted) = wanted {
             self.volume = toward(self.volume, wanted.volume, step);
@@ -202,6 +203,7 @@ fn load_sources(
 fn mix(
     soundscape: Res<Soundscape>,
     listener: Res<Listener>,
+    hearing: Res<Hearing>,
     time: Res<Time<Real>>,
     audio_mix: Res<AudioMix>,
     audio: Res<Audio>,
@@ -212,7 +214,7 @@ fn mix(
     let mixer = &mut *mixer;
     let wanted = listener
         .0
-        .map_or_else(Vec::new, |at| wanted_layers(&soundscape, at));
+        .map_or_else(Vec::new, |at| wanted_layers(&soundscape, at, &hearing));
     let clock = time.elapsed().saturating_sub(mixer.clock_start);
     let elapsed = Seconds(time.delta_secs());
     if mixer
@@ -224,7 +226,7 @@ fn mix(
     }
     mixer.voices.retain_mut(|voice| {
         let playing = wanted.iter().find(|layer| voice.plays(layer));
-        voice.approach(playing, elapsed);
+        voice.approach(playing, elapsed, hearing.glide);
         let Some(mut instance) = instances.get_mut(&voice.instance) else {
             warn!("soundscape voice {} failed to start", voice.src.as_str());
             mixer.refused = Some(wanted.clone());
@@ -271,10 +273,10 @@ fn mix(
     }
 }
 
-fn wanted_layers(soundscape: &Soundscape, at: Pos<Meters>) -> Vec<WantedLayer> {
+fn wanted_layers(soundscape: &Soundscape, at: Pos<Meters>, hearing: &Hearing) -> Vec<WantedLayer> {
     let mut wanted: Vec<WantedLayer> = Vec::new();
     for zone in &soundscape.0 {
-        let Some(heard) = zone.heard_from(at) else {
+        let Some(heard) = zone.heard_from(at, hearing) else {
             continue;
         };
         let power = heard.proximity * heard.proximity;

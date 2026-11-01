@@ -478,7 +478,8 @@ pub struct SafeZone {
 #[serde(deny_unknown_fields)]
 pub struct SoundscapeDef {
     pub shape: SoundscapeShape,
-    pub emit: f32,
+    /// How far from its shape it is heard, fading out as it goes.
+    pub reach: Meters,
     pub channels: Vec<SoundChannel>,
 }
 
@@ -505,7 +506,7 @@ fn is_ambience(category: &AudioCategory) -> bool {
 
 impl SoundscapeDef {
     fn check(&self, pointer: &str, cx: &mut RowCheck) {
-        cx.range(format!("{pointer}/emit"), self.emit, 0.0, 32.0, "m");
+        cx.range(format!("{pointer}/reach"), self.reach.0, 0.5, 64.0, "m");
         cx.count(
             format!("{pointer}/channels"),
             self.channels.len(),
@@ -541,7 +542,7 @@ impl SoundscapeDef {
     pub fn zone(&self) -> SoundscapeZone {
         SoundscapeZone {
             shape: self.shape,
-            emit: Meters(self.emit),
+            reach: self.reach,
             channels: self
                 .channels
                 .iter()

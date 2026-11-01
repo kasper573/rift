@@ -16,6 +16,7 @@ use engine::core::content::sync::SyncedAssets;
 use engine::core::math::Pos;
 use engine::core::text::{StyledLine, Typewriter};
 use engine::core::units::Meters;
+use engine::systems::GameSettings;
 use engine::systems::area::{self, AreaId};
 use ui::egui::Ui;
 
@@ -40,12 +41,13 @@ pub struct HeardZone {
 
 pub fn listen(editor: &mut Editor, content: &Content, area_id: AreaId, at: Pos<Meters>) {
     let area = area::load(content, area_id);
+    let hearing = content.built::<GameSettings>().hearing;
     let heard = area
         .soundscape
         .iter()
         .enumerate()
         .filter_map(|(index, zone)| {
-            let positional = zone.heard_from(at)?;
+            let positional = zone.heard_from(at, &hearing)?;
             let stem = zone
                 .channels
                 .values()
@@ -56,7 +58,7 @@ pub fn listen(editor: &mut Editor, content: &Content, area_id: AreaId, at: Pos<M
             Some(HeardZone {
                 name: format!("soundscape {} · {stem}", index + 1),
                 gain: positional.proximity,
-                outside: Meters(((at - zone.shape.nearest(at)).length() - zone.emit.0).max(0.0)),
+                outside: Meters((at - zone.shape.nearest(at)).length()),
                 zone: zone.clone(),
             })
         })

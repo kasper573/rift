@@ -42,9 +42,6 @@ use crate::systems::script::{
 use crate::systems::skill::SkillId;
 use crate::systems::visibility::{self, Presence, seen_by};
 
-/// How far from a dropped item a click still picks it up.
-const PICK_REACH: Meters = Meters(0.5);
-
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
 
@@ -140,16 +137,16 @@ pub enum ExchangeRefusal {
 
 impl ExchangeRefusal {
     pub fn describe(self, content: &Content) -> String {
+        let words = &content.built::<GameSettings>().words;
         match self {
-            ExchangeRefusal::Missing(stack) => {
-                format!(
-                    "Needs {} more {}",
-                    stack.count,
-                    stack.item.get(content).name
-                )
+            ExchangeRefusal::Missing(stack) => words
+                .needs_more
+                .replace("{count}", &stack.count.to_string())
+                .replace("{item}", &stack.item.get(content).name),
+            ExchangeRefusal::NoRoom { slots: 1 } => words.needs_a_slot.clone(),
+            ExchangeRefusal::NoRoom { slots } => {
+                words.needs_slots.replace("{slots}", &slots.to_string())
             }
-            ExchangeRefusal::NoRoom { slots: 1 } => "Needs 1 free slot".to_owned(),
-            ExchangeRefusal::NoRoom { slots } => format!("Needs {slots} free slots"),
         }
     }
 }
@@ -785,11 +782,12 @@ pub fn pickup_request(world: &mut World) {
 
 pub fn pickable_at(world: &mut World, point: Pos<Meters>) -> Option<Entity> {
     let me = crate::systems::player::session::my_id(world);
+    let reach = world.resource::<GameSettings>().drops.click_reach;
     world
         .query::<(Entity, &Position, &DroppedItem, Option<&Reservation>)>()
         .iter(world)
         .filter(|(_, at, _, reservation)| {
-            at.pos.distance(point) <= PICK_REACH
+            at.pos.distance(point) <= reach
                 && reservation.is_none_or(|reservation| reservation.allows(me))
         })
         .min_by(|a, b| {

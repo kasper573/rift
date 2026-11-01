@@ -15,7 +15,7 @@ use crate::core::os::Profile;
 use crate::core::render::transition::{ScreenTransition, ScreenTransitionPreference};
 use crate::core::render::video::{AmbientOcclusionQuality, VideoPreferences};
 use crate::core::render::{CameraPreferences, FullPicture};
-use crate::core::text::LettersPerSecond;
+use crate::core::text::{LettersPerSecond, Typing};
 use crate::core::units::{Degrees, WindowPx};
 use crate::systems::hud::HudWindow;
 use crate::systems::input::map::{InputAction, KeyGesture};
@@ -30,7 +30,7 @@ const FORM_SPACING: egui::Vec2 = egui::Vec2::new(16.0, 8.0);
 pub(crate) fn plugin(app: &mut App) {
     let settings = UserSettings::load(app.world().resource::<Profile>());
     app.insert_resource(settings)
-        .add_systems(Update, (persist, apply, apply_video));
+        .add_systems(Update, (persist, apply, apply_video, pace_typing));
 }
 
 #[derive(Resource, Serialize, Deserialize, Default)]
@@ -103,8 +103,14 @@ impl HudWindow for SettingsWindow {
         let offered = VideoOffered {
             full_picture: world.resource::<FullPicture>().0,
         };
+        let typing = world.get_resource::<Typing>().copied();
         sheet::scroll(ui, egui::ScrollArea::vertical().auto_shrink(false), |ui| {
-            show_settings(ui, &mut world.resource_mut::<UserSettings>(), offered)
+            show_settings(
+                ui,
+                &mut world.resource_mut::<UserSettings>(),
+                offered,
+                typing,
+            )
         });
     }
 }
@@ -116,7 +122,12 @@ struct VideoOffered {
     full_picture: bool,
 }
 
-fn show_settings(ui: &mut Ui, settings: &mut Mut<UserSettings>, offered: VideoOffered) {
+fn show_settings(
+    ui: &mut Ui,
+    settings: &mut Mut<UserSettings>,
+    offered: VideoOffered,
+    typing: Option<Typing>,
+) {
     ui.spacing_mut().slider_width = SLIDER_WIDTH;
     sheet::section(ui, "Interface");
     let mut snapping = settings.snapping_enabled();
@@ -137,9 +148,11 @@ fn show_settings(ui: &mut Ui, settings: &mut Mut<UserSettings>, offered: VideoOf
     }
     ui.add_space(4.0);
     form(ui, "interface", |ui| {
-        let label = ui.label("Text speed");
-        text_speed_slider(ui, settings, label.id);
-        ui.end_row();
+        if let Some(typing) = typing {
+            let label = ui.label("Text speed");
+            text_speed_slider(ui, settings, typing, label.id);
+            ui.end_row();
+        }
         let label = ui.label("Area transition");
         let current = settings.screen_transition();
         if let Some(transition) = picker(ui, "area transition", current, label.id) {
@@ -262,15 +275,20 @@ fn form(ui: &mut Ui, id: &str, add: impl FnOnce(&mut Ui)) {
         .show(ui, add);
 }
 
-fn text_speed_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: egui::Id) {
-    let mut speed = settings.letters_per_second().0;
+fn text_speed_slider(
+    ui: &mut Ui,
+    settings: &mut Mut<UserSettings>,
+    typing: Typing,
+    label: egui::Id,
+) {
+    let mut speed = typing.pace_for(settings.text.letters_per_second).letters.0;
     ui.horizontal(|ui| {
-        let range = LettersPerSecond::SLOWEST.0..=LettersPerSecond::FASTEST.0;
+        let range = typing.slowest.0..=typing.fastest.0;
         if controls::slider(ui, &mut speed, range)
             .labelled_by(label)
             .changed()
         {
-            settings.set_letters_per_second(LettersPerSecond(speed.round()));
+            settings.text.letters_per_second = Some(LettersPerSecond(speed.round()));
         }
         ui.label(face::faint(format!("{:.0} letters/s", speed.round())));
     });
@@ -331,14 +349,6 @@ impl UserSettings {
             Some(_) => None,
             None => Some(DEFAULT_SNAP),
         };
-    }
-
-    pub(crate) fn letters_per_second(&self) -> LettersPerSecond {
-        self.text.letters_per_second
-    }
-
-    pub(crate) fn set_letters_per_second(&mut self, letters_per_second: LettersPerSecond) {
-        self.text.letters_per_second = letters_per_second.clamped();
     }
 
     pub(crate) fn volume(&self, fader: AudioFader) -> AudioVolume {
@@ -419,7 +429,6 @@ impl UserSettings {
             .and_then(|json| serde_json::from_str(&json).ok())
             .unwrap_or_default();
         settings.ui.snap = settings.ui.snap.filter(|snap| snap.0 > 0.0);
-        settings.text.letters_per_second = settings.text.letters_per_second.clamped();
         settings
     }
 
@@ -470,8 +479,9 @@ fn default_snap() -> Option<WindowPx> {
 
 #[derive(Serialize, Deserialize, Default)]
 struct TextSettings {
+    /// None keeps the game's own pace.
     #[serde(default)]
-    letters_per_second: LettersPerSecond,
+    letters_per_second: Option<LettersPerSecond>,
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -531,7 +541,6 @@ fn persist(settings: Res<UserSettings>, profile: Res<Profile>) {
 
 fn apply(
     settings: Res<UserSettings>,
-    mut speed: ResMut<LettersPerSecond>,
     mut audio_mix: ResMut<AudioMix>,
     mut transition: ResMut<ScreenTransitionPreference>,
     mut camera: ResMut<CameraPreferences>,
@@ -539,7 +548,6 @@ fn apply(
     if !settings.is_changed() {
         return;
     }
-    *speed = settings.text.letters_per_second;
     *audio_mix = settings.sound;
     transition.0 = settings.screen.transition;
     camera.turn_speed = Degrees(
@@ -549,6 +557,16 @@ fn apply(
             .0
             .clamp(TURN_SPEEDS.0, TURN_SPEEDS.1),
     );
+}
+
+/// Lines type at the game's pace, or the one its player chose within the game's bounds.
+fn pace_typing(settings: Res<UserSettings>, typing: Option<Res<Typing>>, mut commands: Commands) {
+    let Some(typing) = typing else {
+        return;
+    };
+    if settings.is_changed() || typing.is_changed() {
+        commands.insert_resource(typing.pace_for(settings.text.letters_per_second));
+    }
 }
 
 fn apply_video(

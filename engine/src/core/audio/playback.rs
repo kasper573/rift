@@ -11,6 +11,7 @@ use kira::StartTime;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::Hearing;
 use crate::core::audio::decibels;
 use crate::core::audio::loader::AudioLoader;
 use crate::core::audio::mix::{AudioCategory, AudioMix};
@@ -20,9 +21,6 @@ use crate::core::content::{
 };
 use crate::core::math::{Pos, Rng, Size};
 use crate::core::units::{Meters, PlaybackRate, Seconds};
-
-const HALF_VIEW: Size<Meters> = Size::new(12.0, 9.0);
-const STACK_WINDOW: Seconds = Seconds(0.1);
 
 pub struct SfxPlugin;
 
@@ -43,9 +41,9 @@ impl Plugin for SfxPlugin {
                 Update,
                 (
                     load.run_if(resource_exists_and_changed::<Content>),
-                    mix,
+                    mix.run_if(resource_exists::<Hearing>),
                     hush,
-                    play_clips,
+                    play_clips.run_if(resource_exists::<Hearing>),
                 )
                     .chain(),
             );
@@ -169,13 +167,20 @@ impl PositionalAudio {
         pan: 0.0,
     };
 
-    pub fn of(listener: Pos<Meters>, source: Pos<Meters>, reach: Size<Meters>) -> PositionalAudio {
+    /// A sound at `source` as heard at `listener`, fading out `reach` away each way and panned
+    /// fully aside `across` away.
+    pub fn of(
+        listener: Pos<Meters>,
+        source: Pos<Meters>,
+        reach: Size<Meters>,
+        across: Meters,
+    ) -> PositionalAudio {
         let offset = source - listener;
         let dx = offset.x.abs() / reach.width;
         let dy = offset.y.abs() / reach.height;
         PositionalAudio {
             proximity: (1.0 - dx.max(dy)).clamp(0.0, 1.0),
-            pan: (offset.x / HALF_VIEW.width).clamp(-1.0, 1.0),
+            pan: (offset.x / across.0).clamp(-1.0, 1.0),
         }
     }
 
@@ -316,6 +321,7 @@ fn load(assets: Res<AssetServer>, content: Res<Content>, mut catalog: ResMut<Cat
 fn mix(
     mut requests: MessageReader<PlaySfx>,
     listener: Res<Listener>,
+    hearing: Res<Hearing>,
     mut speakers: Speakers,
     catalog: Res<Catalog>,
     mut played: ResMut<Played>,
@@ -327,7 +333,8 @@ fn mix(
         let Some(sound) = catalog.0.get(req.id.index()) else {
             continue;
         };
-        let Some(PositionalAudio { proximity, pan }) = heard_at(req.place, listener.0) else {
+        let Some(PositionalAudio { proximity, pan }) = heard_at(req.place, listener.0, &hearing)
+        else {
             continue;
         };
         let cue = Cue {
@@ -343,7 +350,7 @@ fn mix(
         }
     }
     for (id, cue) in frame {
-        if !ready(&mut played.0, id, clock) {
+        if !ready(&mut played.0, id, clock, hearing.repeats_after) {
             continue;
         }
         let tune = SfxTune {
@@ -360,9 +367,15 @@ fn hush(mut hushes: MessageReader<HushVoice>, voice: Res<AudioChannel<VoiceTrack
     }
 }
 
-fn play_clips(mut clips: MessageReader<PlayClip>, listener: Res<Listener>, mut speakers: Speakers) {
+fn play_clips(
+    mut clips: MessageReader<PlayClip>,
+    listener: Res<Listener>,
+    hearing: Res<Hearing>,
+    mut speakers: Speakers,
+) {
     for clip in clips.read() {
-        let Some(PositionalAudio { proximity, pan }) = heard_at(clip.place, listener.0) else {
+        let Some(PositionalAudio { proximity, pan }) = heard_at(clip.place, listener.0, &hearing)
+        else {
             continue;
         };
         let tune = SfxTune {
@@ -438,19 +451,33 @@ impl Speakers<'_> {
     }
 }
 
-fn heard_at(place: SfxPlace, listener: Option<Pos<Meters>>) -> Option<PositionalAudio> {
+fn heard_at(
+    place: SfxPlace,
+    listener: Option<Pos<Meters>>,
+    hearing: &Hearing,
+) -> Option<PositionalAudio> {
     let heard = match (place, listener) {
         (SfxPlace::Interface, _) => PositionalAudio::CENTERED,
-        (SfxPlace::World(at), Some(listener)) => PositionalAudio::of(listener, at, HALF_VIEW),
+        (SfxPlace::World(at), Some(listener)) => PositionalAudio::of(
+            listener,
+            at,
+            Size::new(hearing.wide.0, hearing.deep.0),
+            hearing.wide,
+        ),
         (SfxPlace::World(_), None) => return None,
     };
     heard.audible().then_some(heard)
 }
 
-fn ready(played: &mut HashMap<SfxId, Seconds>, id: SfxId, clock: Seconds) -> bool {
+fn ready(
+    played: &mut HashMap<SfxId, Seconds>,
+    id: SfxId,
+    clock: Seconds,
+    repeats_after: Seconds,
+) -> bool {
     if played
         .get(&id)
-        .is_some_and(|&last| clock - last < STACK_WINDOW)
+        .is_some_and(|&last| clock - last < repeats_after)
     {
         return false;
     }

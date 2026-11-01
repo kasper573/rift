@@ -8,7 +8,6 @@ use ui::egui;
 use ui::ink;
 use ui::theme;
 
-use engine::core::audio::soundscape::EDGE_FALLOFF;
 use engine::core::math::Rect;
 use engine::core::units::MeterSize;
 use engine::systems::area::blueprint::BlueprintDef;
@@ -319,7 +318,7 @@ pub(super) fn overlay_soundscape_reach(
             continue;
         };
         let bounds = soundscape.shape.bounds();
-        let reach = soundscape.emit + EDGE_FALLOFF.0;
+        let reach = soundscape.reach.0;
         let outer = bounds.inflate(reach, reach);
         let color = Color32::from_rgba_unmultiplied(170, 110, 255, 120);
         let line = if shapes::is_ellipse(module) {

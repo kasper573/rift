@@ -1,10 +1,14 @@
 use std::time::Duration;
 
 use engine::core::text::{
-    InputRef, KeyCap, LettersPerSecond, StyledSpan, TextPiece, reveal_duration, revealed,
+    InputRef, KeyCap, LettersPerSecond, StyledSpan, TextPiece, TypingPace, reveal_duration,
+    revealed,
 };
 
-const TEN_PER_SECOND: LettersPerSecond = LettersPerSecond(10.0);
+const TEN_PER_SECOND: TypingPace = TypingPace {
+    letters: LettersPerSecond(10.0),
+    slow_by: 2.5,
+};
 
 #[test]
 fn characters_appear_at_the_typing_speed_a_key_as_one_and_slow_spans_slower() {

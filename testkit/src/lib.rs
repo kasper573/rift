@@ -20,7 +20,7 @@ pub use art::{
 pub use crowd::{CROWD_AREA, crowd};
 pub use game::{
     APEX, BODY, CLIP, Declared, Game, Map, ROCK, RUN_PACE, SPRINT_PACE, TURF, WALK_PACE, clip,
-    clip_on, look, part_file, path, rig_clips, rig_file, stats,
+    clip_on, hearing, lettering, look, part_file, path, rig_clips, rig_file, speech, stats, typing,
 };
 pub use script::{dialogue, hunting, said};
 pub use sim::{Sim, drawn_seed};

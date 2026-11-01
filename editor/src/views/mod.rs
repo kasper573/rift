@@ -27,7 +27,6 @@ use ui::theme;
 use bevy::prelude::*;
 use engine::core::content::ContentFile;
 use engine::core::math::Pos;
-use engine::core::render::Look;
 use engine::core::units::Meters;
 use engine::systems::GameSettings;
 use engine::systems::area::{AreaDef, sixteenth};
@@ -113,7 +112,7 @@ pub(crate) fn read_shown<Row: ContentFile>(
 
 pub fn sync(editor: &mut Editor, world: &mut World) {
     share_content(editor, world);
-    take_look(editor, world);
+    take_settings(editor, world);
     sound::sync(editor, world);
     crate::stage::sync(editor, world);
     area::viewport::sync(editor, world);
@@ -136,18 +135,26 @@ fn share_content(editor: &mut Editor, world: &mut World) {
     }
 }
 
-/// The world draws as the open game looks.
-fn take_look(editor: &Editor, world: &mut World) {
-    let Some(content) = editor
+/// The world draws, sounds and speaks as the open game does.
+fn take_settings(editor: &Editor, world: &mut World) {
+    let Some(settings) = editor
         .project
         .as_ref()
         .and_then(|project| project.content.as_ref())
+        .and_then(|content| content.try_built::<GameSettings>())
     else {
         return;
     };
-    let look = &content.built::<GameSettings>().look;
-    if world.get_resource::<Look>() != Some(look) {
-        world.insert_resource(look.clone());
+    mirror(world, &settings.look);
+    mirror(world, &settings.hearing);
+    mirror(world, &settings.speech);
+    mirror(world, &settings.lettering);
+    mirror(world, &settings.typing.pace_for(None));
+}
+
+fn mirror<R: Resource + Clone + PartialEq>(world: &mut World, value: &R) {
+    if world.get_resource::<R>() != Some(value) {
+        world.insert_resource(value.clone());
     }
 }
 
