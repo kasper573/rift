@@ -8,7 +8,7 @@ use bevy_egui::input::egui_wants_any_keyboard_input;
 use super::map::{self, InputAction};
 use crate::core::geometry::Degrees;
 use crate::core::gui;
-use crate::core::render::{CameraRig, TILT_STEP, TURN_STEP};
+use crate::core::render::{CameraFraming, CameraRig};
 use crate::systems::screen::ClientScreen;
 
 /// How far the camera turns for a pixel of middle-button drag.
@@ -38,18 +38,25 @@ fn steer_by_keys(world: &mut World) {
     let up = map::just_pressed(world, InputAction::TiltUp);
     let down = map::just_pressed(world, InputAction::TiltDown);
     let home = map::just_pressed(world, InputAction::CameraHome);
-    let mut rig = world.resource_mut::<CameraRig>();
+    let Some(mut rig) = world.get_resource_mut::<CameraRig>() else {
+        return;
+    };
+    let CameraFraming {
+        turn_step,
+        tilt_step,
+        ..
+    } = *rig.framing();
     if left {
-        rig.turn(TURN_STEP);
+        rig.turn(turn_step);
     }
     if right {
-        rig.turn(Degrees(-TURN_STEP.0));
+        rig.turn(Degrees(-turn_step.0));
     }
     if up {
-        rig.tilt(Degrees(-TILT_STEP.0));
+        rig.tilt(Degrees(-tilt_step.0));
     }
     if down {
-        rig.tilt(TILT_STEP);
+        rig.tilt(tilt_step);
     }
     if home {
         rig.home();
@@ -73,7 +80,9 @@ fn steer_by_pointer(world: &mut World) {
     gathered.0 += steps;
     let zoom = gathered.0.trunc();
     gathered.0 -= zoom;
-    let mut rig = world.resource_mut::<CameraRig>();
+    let Some(mut rig) = world.get_resource_mut::<CameraRig>() else {
+        return;
+    };
     for _ in 0..zoom.abs() as u32 {
         if zoom > 0.0 {
             rig.zoom_in();

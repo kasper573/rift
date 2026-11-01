@@ -17,52 +17,72 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::clouds;
-use super::lights::{self, SUN_LUX};
+use super::lights;
 use crate::core::geometry::Degrees;
-use crate::core::math::Rect;
+use crate::core::math::{Rect, Rgb};
+use crate::core::render::Look;
 use crate::core::render::camera::FullPicture;
 use crate::core::units::{Meters, Stops};
 
-/// How many metres of air a metre of the world stands for: enough that the sky's horizon shows
-/// its haze band from the heights the camera stands at, and no more, so what stands near keeps
-/// its own colour. The world is a diorama a few hundred metres across, and the haze that blues its
-/// far side is laid on separately, clear up close.
-const AIR_PER_METRE: f32 = 10.0;
-/// How far from the camera the air stays clear, and how far until the haze lies as thick as it
-/// gets: never so thick that what stands in it loses its shape.
-const HAZE_CLEAR: f32 = 50.0;
-const HAZE_THICK: f32 = 170.0;
-const THICKEST_HAZE: f32 = 0.85;
-/// The haze's colours under the noon light: pale blue by day, glowing toward dusk, and the blue of
-/// the night, which the dark of the night dims as it dims everything else.
-const DAY_HAZE: Color = Color::srgb(0.72, 0.83, 0.96);
-const DUSK_HAZE: Color = Color::srgb(0.95, 0.66, 0.42);
-const NIGHT_HAZE: Color = Color::srgb(0.45, 0.5, 0.85);
-/// The haze of an air no sun ever lights.
-const SUNLESS_HAZE: Color = Color::srgb(0.16, 0.18, 0.30);
-/// How much of the light a face under a clear sky gets comes from the sky rather than the sun.
-const SKY_SHARE: f32 = 0.25;
-/// The haze of saturated air by day, whiter than dry air's, and how much nearer it closes in.
-const MOIST_HAZE: Color = Color::srgb(0.86, 0.9, 0.93);
-const MOIST_CLOSER: f32 = 0.5;
-/// How many times more the water in saturated air scatters than dry air's dust.
-const MOIST_MIE: f32 = 12.0;
-/// How moist cloud of no water at all leaves the air, of saturated.
-const MOISTURE_OF_CLOUD: f32 = 0.3;
 /// How far into the air the haze is worked out, in metres of the world.
 const HAZE_REACH: f32 = 600.0;
-/// How much the sky lights everything from above, of the atmosphere's own brightness.
-const SKY_LIGHT: f32 = 0.3;
 /// How many pixels across each face of the map of the sky's light is: the sky is a smooth
 /// gradient, and the light it sheds on a matte face smoother still.
 const SKY_MAP: u32 = 32;
-/// How high the air the sun's shafts show in reaches over an area.
-const AIR_HEIGHT: f32 = 40.0;
-/// How thick that air is, dry and saturated: dry air thin, so the shafts only show where the light
-/// breaks through a canopy and the far side of the world keeps its colour, and moist air thick
-/// enough that the light stands in it in shafts.
-const DRY_AIR: f32 = 0.006;
-const MOIST_AIR: f32 = 0.04;
+
+/// How the air over the world looks, and how it and the sun light it through the day.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SkyLook {
+    /// How many metres of air a metre of the world stands for: enough that the sky's horizon
+    /// shows its haze band from the heights the camera stands at, and no more, so what stands
+    /// near keeps its own colour.
+    pub air_per_metre: f32,
+    /// How far from the camera the air stays clear, how far until the haze lies as thick as it
+    /// gets, and how thick that is: never so thick that what stands in it loses its shape.
+    pub haze_clear: Meters,
+    pub haze_thick: Meters,
+    pub thickest_haze: f32,
+    /// The haze's colours under the noon light: by day, glowing toward dusk, and by night, which
+    /// the dark of the night dims as it dims everything else.
+    pub day_haze: Rgb,
+    pub dusk_haze: Rgb,
+    pub night_haze: Rgb,
+    /// The haze of an air no sun ever lights.
+    pub sunless_haze: Rgb,
+    /// The haze of saturated air by day, and how much nearer it closes in.
+    pub moist_haze: Rgb,
+    pub moist_closer: f32,
+    /// How many times more the water in saturated air scatters than dry air's dust.
+    pub moist_scatter: f32,
+    /// How moist cloud of no water at all leaves the air, of saturated.
+    pub moisture_of_cloud: f32,
+    /// How much of the light a face under a clear sky gets comes from the sky rather than the sun.
+    pub sky_share: f32,
+    /// How much the sky lights everything from above, of the atmosphere's own brightness.
+    pub sky_light: f32,
+    /// How high the air the sun's shafts show in reaches over an area, and how thick it is dry
+    /// and saturated: dry air thin, so the shafts show only where the light breaks through, and
+    /// moist air thick enough that the light stands in it in shafts.
+    pub shaft_height: Meters,
+    pub dry_air: f32,
+    pub moist_air: f32,
+    /// The colour a sun reddens toward as it nears the horizon.
+    pub setting_sun: Rgb,
+    /// The full moon's light, and how much of the sun's it sheds.
+    pub moonlight: Rgb,
+    pub moon_share: f32,
+    /// How many stops the eye opens for every stop the light falls, and how many at the most.
+    pub adapting: f32,
+    pub most_adapted: Stops,
+    /// The sun's elevation above which the night has not begun to fall, and below which it is
+    /// full.
+    pub dusk_begins: Degrees,
+    pub night_falls: Degrees,
+    /// The sun's elevation below which its light is gone, and above which it is full.
+    pub sun_gone: Degrees,
+    pub sun_full: Degrees,
+}
 
 /// What stands over an area: the air its sun lights, blue by day, or the dark of a cave or a
 /// stage, which no sun lights however it shines below.
@@ -89,6 +109,9 @@ pub fn show(world: &mut World, camera: Entity, sky: Sky) {
     if !world.resource::<FullPicture>().0 {
         return;
     }
+    let Some(sky_light) = world.get_resource::<Look>().map(|look| look.sky.sky_light) else {
+        return;
+    };
     let Ok(mut camera) = world.get_entity_mut(camera) else {
         return;
     };
@@ -106,7 +129,7 @@ pub fn show(world: &mut World, camera: Entity, sky: Sky) {
     }
     if let Some(mut light) = camera.get_mut::<GeneratedEnvironmentMapLight>() {
         light.intensity = match sky {
-            Sky::Air => SKY_LIGHT,
+            Sky::Air => sky_light,
             Sky::Dark => 0.0,
         };
     }
@@ -140,30 +163,23 @@ pub struct SunLight {
     pub illuminance: f32,
 }
 
-const SETTING_SUN: Color = Color::srgb(1.0, 0.6, 0.32);
-/// The full moon's light, and how much of the sun's it sheds.
-const MOONLIGHT: Color = Color::srgb(0.62, 0.72, 1.0);
-const MOON_SHARE: f32 = 0.06;
-/// How many stops the eye opens for every stop the light falls, and how many at the most.
-const ADAPTING: f32 = 0.5;
-const MOST_ADAPTED: Stops = Stops(1.0);
-/// The sun's elevation above which the night has not begun to fall and below which it is full.
-const DUSK: (f32, f32) = (6.0, -10.0);
-/// The sun's elevation below which its light is gone and above which it is full.
-const SUNRISE: (f32, f32) = (-3.0, 8.0);
-
 /// The air over the world under `sky`: an Earth's atmosphere as moist as `humidity`, the water in
 /// the air scattering the light white and hazing the horizon the more it holds, scaled down so the
 /// world's few hundred metres stretch over enough air to haze, over a ground the colour of the
 /// haze, so that past the world's edge the eye meets the same haze the far distance sinks into;
 /// or over the dark, an air that scatters nothing over a black ground.
-pub fn atmosphere(media: &mut Assets<ScatteringMedium>, sky: Sky, humidity: f32) -> impl Bundle {
+pub fn atmosphere(
+    media: &mut Assets<ScatteringMedium>,
+    sky: Sky,
+    humidity: f32,
+    look: &SkyLook,
+) -> impl Bundle {
     let mut medium = ScatteringMedium::default();
     match sky {
         Sky::Air => {
             for term in &mut medium.terms {
                 if matches!(term.phase, PhaseFunction::Mie { .. }) {
-                    term.scattering *= 1.0 + MOIST_MIE * humidity;
+                    term.scattering *= 1.0 + look.moist_scatter * humidity;
                 }
             }
         }
@@ -171,10 +187,10 @@ pub fn atmosphere(media: &mut Assets<ScatteringMedium>, sky: Sky, humidity: f32)
     }
     let mut atmosphere = Atmosphere::earth(media.add(medium));
     atmosphere.ground_albedo = match sky {
-        Sky::Air => DAY_HAZE.to_linear().to_vec3(),
+        Sky::Air => look.day_haze.color().to_linear().to_vec3(),
         Sky::Dark => Vec3::ZERO,
     };
-    let scale = 1.0 / AIR_PER_METRE;
+    let scale = 1.0 / look.air_per_metre;
     (
         Transform {
             translation: -Vec3::Y * atmosphere.inner_radius * scale,
@@ -186,19 +202,21 @@ pub fn atmosphere(media: &mut Assets<ScatteringMedium>, sky: Sky, humidity: f32)
 }
 
 /// The air standing over `ground` as moist as `humidity`, which the sun's light shafts show in.
-pub fn air(ground: Rect<Meters>, humidity: f32) -> impl Bundle {
+pub fn air(ground: Rect<Meters>, humidity: f32, look: &SkyLook) -> impl Bundle {
     let center = ground.center();
+    let height = look.shaft_height.0;
     (
         FogVolume {
-            density_factor: DRY_AIR + (MOIST_AIR - DRY_AIR) * humidity.clamp(0.0, 1.0),
+            density_factor: look.dry_air
+                + (look.moist_air - look.dry_air) * humidity.clamp(0.0, 1.0),
             absorption: 0.1,
             scattering: 0.3,
             scattering_asymmetry: 0.7,
             ..default()
         },
-        Transform::from_xyz(center.x, AIR_HEIGHT / 2.0, center.y).with_scale(Vec3::new(
+        Transform::from_xyz(center.x, height / 2.0, center.y).with_scale(Vec3::new(
             ground.size.width,
-            AIR_HEIGHT,
+            height,
             ground.size.height,
         )),
     )
@@ -208,34 +226,46 @@ pub fn air(ground: Rect<Meters>, humidity: f32) -> impl Bundle {
 /// thickening with the distance into the colour of the sky at the horizon, pale blue by day,
 /// glowing at dusk and blue by night, as bright as the world is `lit` of its noon light, or black
 /// under a dark sky, so what stands far off sinks toward the sky.
-pub fn haze(sun: Option<SunLight>, lit: f32, sky: Sky, humidity: f32) -> DistanceFog {
+pub fn haze(
+    sun: Option<SunLight>,
+    lit: f32,
+    sky: Sky,
+    humidity: f32,
+    look: &SkyLook,
+) -> DistanceFog {
     let color = match (sky, sun) {
         (Sky::Dark, _) => Color::BLACK,
-        (Sky::Air, None) => SUNLESS_HAZE,
+        (Sky::Air, None) => look.sunless_haze.color(),
         (Sky::Air, Some(sun)) => {
-            let day = smoothstep(SUNRISE.0, SUNRISE.1, sun.elevation.0);
+            let day = smoothstep(look.sun_gone.0, look.sun_full.0, sun.elevation.0);
             let glow = (1.0 - sun.elevation.0.abs() / 15.0).clamp(0.0, 1.0);
-            let clear = mix(DAY_HAZE, MOIST_HAZE, humidity);
-            let hue = mix(mix(NIGHT_HAZE, clear, day), DUSK_HAZE, glow).to_linear();
+            let clear = mix(look.day_haze.color(), look.moist_haze.color(), humidity);
+            let hue = mix(
+                mix(look.night_haze.color(), clear, day),
+                look.dusk_haze.color(),
+                glow,
+            )
+            .to_linear();
             Color::LinearRgba(hue * lit)
         }
     };
-    let closer = 1.0 - MOIST_CLOSER * humidity;
+    let closer = 1.0 - look.moist_closer * humidity;
     DistanceFog {
-        color: color.with_alpha(THICKEST_HAZE),
+        color: color.with_alpha(look.thickest_haze),
         directional_light_color: Color::NONE,
         directional_light_exponent: 8.0,
         falloff: FogFalloff::Linear {
-            start: HAZE_CLEAR * closer,
-            end: HAZE_THICK * closer,
+            start: look.haze_clear.0 * closer,
+            end: look.haze_thick.0 * closer,
         },
     }
 }
 
 /// How moist the air of an area is under `clouds` holding `water`, 0 dry to 1 saturated: the
 /// more water the sky holds, the more the air does, and cloud of any kind means some.
-pub fn humidity(clouds: f32, water: f32) -> f32 {
-    (clouds * (MOISTURE_OF_CLOUD + (1.0 - MOISTURE_OF_CLOUD) * water)).clamp(0.0, 1.0)
+pub fn humidity(clouds: f32, water: f32, look: &SkyLook) -> f32 {
+    let dry = look.moisture_of_cloud;
+    (clouds * (dry + (1.0 - dry) * water)).clamp(0.0, 1.0)
 }
 
 /// An area's authored sun as it shines at `daylight` under `clouds` holding `water`: fixed, as
@@ -249,14 +279,16 @@ pub fn sun_at(
     color: Color,
     clouds: f32,
     water: f32,
+    look: &Look,
 ) -> SunLight {
-    let clouded = clouded(clouds, water);
+    let clouded = clouded(clouds, water, look);
+    let sun_lux = look.light.sun_lux;
     match daylight {
         Daylight::Fixed => SunLight {
             elevation: noon_elevation,
             azimuth: noon_azimuth,
             color,
-            illuminance: SUN_LUX * clouded,
+            illuminance: sun_lux * clouded,
         },
         Daylight::Hour(hour) => {
             let (elevation, azimuth) = orbit(noon_elevation, noon_azimuth, hour);
@@ -264,8 +296,10 @@ pub fn sun_at(
             SunLight {
                 elevation,
                 azimuth,
-                color: mix(color, SETTING_SUN, warmth * 0.8),
-                illuminance: SUN_LUX * smoothstep(SUNRISE.0, SUNRISE.1, elevation.0) * clouded,
+                color: mix(color, look.sky.setting_sun.color(), warmth * 0.8),
+                illuminance: sun_lux
+                    * smoothstep(look.sky.sun_gone.0, look.sky.sun_full.0, elevation.0)
+                    * clouded,
             }
         }
     }
@@ -292,56 +326,60 @@ fn orbit(noon_elevation: Degrees, noon_azimuth: Degrees, hour: f32) -> (Degrees,
 /// light is gone below the horizon, then the light of the moon, always full, standing opposite
 /// it, brightening from nothing as the sun sinks on, so the one hands over to the other in the
 /// dark.
-pub fn shining(sun: SunLight, clouds: f32, water: f32) -> SunLight {
-    if sun.elevation.0 >= SUNRISE.0 {
+pub fn shining(sun: SunLight, clouds: f32, water: f32, look: &Look) -> SunLight {
+    let (gone, full) = (look.sky.sun_gone.0, look.sky.sun_full.0);
+    if sun.elevation.0 >= gone {
         return sun;
     }
     let elevation = Degrees(-sun.elevation.0);
     SunLight {
         elevation,
         azimuth: Degrees((sun.azimuth.0 + 180.0).rem_euclid(360.0)),
-        color: MOONLIGHT,
-        illuminance: SUN_LUX
-            * MOON_SHARE
-            * smoothstep(-SUNRISE.0, SUNRISE.1 - 2.0 * SUNRISE.0, elevation.0)
-            * clouded(clouds, water),
+        color: look.sky.moonlight.color(),
+        illuminance: look.light.sun_lux
+            * look.sky.moon_share
+            * smoothstep(-gone, full - 2.0 * gone, elevation.0)
+            * clouded(clouds, water, look),
     }
 }
 
 /// How far into the night the sky is under `sun`, 0 while any daylight lingers to 1 once the
 /// stars are all out; never night when the light stands fixed.
-pub fn night(daylight: Daylight, sun: SunLight) -> f32 {
+pub fn night(daylight: Daylight, sun: SunLight, look: &SkyLook) -> f32 {
     match daylight {
         Daylight::Fixed => 0.0,
-        Daylight::Hour(_) => smoothstep(DUSK.0, DUSK.1, sun.elevation.0),
+        Daylight::Hour(_) => smoothstep(look.dusk_begins.0, look.night_falls.0, sun.elevation.0),
     }
 }
 
 /// How much wider the eye opens under `shining` at `daylight`, as an eye opens to the dusk and
-/// the night: half a stop for every stop the light falls, the sky dimming too as the light stands
-/// lower, up to one; never under a fixed light, which stands as authored.
-pub fn adaptation(daylight: Daylight, shining: SunLight) -> Stops {
+/// the night: by `adapting` for every stop the light falls, the sky dimming too as the light stands
+/// lower, up to `most_adapted`; never under a fixed light, which stands as authored.
+pub fn adaptation(daylight: Daylight, shining: SunLight, look: &Look) -> Stops {
     match daylight {
         Daylight::Fixed => Stops(0.0),
         Daylight::Hour(_) => {
             let height = shining.elevation.radians().0.sin().max(0.0).sqrt();
-            let strength = shining.illuminance / SUN_LUX * (0.3 + 0.7 * height);
-            Stops((-strength.max(1e-3).log2() * ADAPTING).clamp(0.0, MOST_ADAPTED.0))
+            let strength = shining.illuminance / look.light.sun_lux * (0.3 + 0.7 * height);
+            let opened = -strength.max(1e-3).log2() * look.sky.adapting;
+            Stops(opened.clamp(0.0, look.sky.most_adapted.0))
         }
     }
 }
 
 /// How much of the sun's light reaches the ground through `clouds` holding `water`.
-pub fn clouded(clouds: f32, water: f32) -> f32 {
-    1.0 - clouds::shade(water) * clouds
+pub fn clouded(clouds: f32, water: f32, look: &Look) -> f32 {
+    1.0 - clouds::shade(water, &look.clouds) * clouds
 }
 
 /// How brightly the world shows lit by `shining` and by `ambient` of its sky's full light, through
 /// an eye opened `opened`, of how it shows lit by its `noon` sun and its full sky light.
-pub fn lit(shining: SunLight, ambient: f32, opened: Stops, noon: SunLight) -> f32 {
+pub fn lit(shining: SunLight, ambient: f32, opened: Stops, noon: SunLight, look: &Look) -> f32 {
+    let share = look.sky.sky_share;
     let shown = |light: SunLight, ambient: f32| {
-        let sun = light.illuminance / SUN_LUX * light.elevation.radians().0.sin().max(0.0);
-        (1.0 - SKY_SHARE) * sun + SKY_SHARE * ambient
+        let sun =
+            light.illuminance / look.light.sun_lux * light.elevation.radians().0.sin().max(0.0);
+        (1.0 - share) * sun + share * ambient
     };
     shown(shining, ambient) * 2f32.powf(opened.0) / shown(noon, 1.0).max(1e-3)
 }
@@ -349,9 +387,15 @@ pub fn lit(shining: SunLight, ambient: f32, opened: Stops, noon: SunLight) -> f3
 /// How much of its authored brightness an area's ambient light keeps with its sun at
 /// `elevation` (none for an area without one) and under `clouds` holding `water`: the sky's light
 /// dims under cloud less than the sun's does, scattered through it rather than stopped.
-pub fn ambient_at(daylight: Daylight, elevation: Option<Degrees>, clouds: f32, water: f32) -> f32 {
+pub fn ambient_at(
+    daylight: Daylight,
+    elevation: Option<Degrees>,
+    clouds: f32,
+    water: f32,
+    look: &Look,
+) -> f32 {
     daytime(daylight, elevation).map_or(1.0, |lit| 0.12 + 0.88 * lit)
-        * (1.0 - 0.45 * clouds::shade(water) * clouds)
+        * (1.0 - 0.45 * clouds::shade(water, &look.clouds) * clouds)
 }
 
 /// How far into the day a sun at `elevation` is, 0 by night and 1 by day, or nothing when the

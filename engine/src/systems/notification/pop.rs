@@ -21,6 +21,7 @@ use crate::core::vfx::render::{
     ParamsUniform, Run, SiteFrame, SiteTexture, compiled_shader, hide, present_shader, screen_piece,
 };
 use crate::core::vfx::{VfxParams, VfxShaderId};
+use crate::systems::GameSettings;
 use crate::systems::actor::Hitbox;
 use crate::systems::movement::RenderPosition;
 use crate::systems::screen::ClientScreen;
@@ -28,7 +29,6 @@ use crate::systems::text::LineText;
 use crate::systems::vfx::fixture::VfxShaderFixture;
 use crate::systems::visibility;
 
-const LIFE: Seconds = Seconds(1.0);
 const FACE: Face = Face::SmallCapsBold;
 const SIZE: f32 = 35.0;
 const PAD: u32 = 6;
@@ -171,10 +171,11 @@ fn burst(world: &mut World) {
     let now = time::uptime(world);
     let live = std::mem::take(&mut world.resource_mut::<Pops>().live);
     let window = camera::window_size(world);
+    let lasts = world.resource::<GameSettings>().notices.pops_last;
     let mut kept = Vec::with_capacity(live.len());
     for pop in live {
         let age = Seconds(now.0 - pop.born.0);
-        if age.0 >= LIFE.0 || world.get_entity(pop.actor).is_err() {
+        if age.0 >= lasts.0 || world.get_entity(pop.actor).is_err() {
             world.despawn(pop.piece);
             continue;
         }
@@ -208,7 +209,7 @@ fn burst(world: &mut World) {
         let content = world.resource::<Content>().clone();
         let packed = ParamsUniform::pack(pop.shader.get(&content), |name| pop.params.get(name));
         let run = Run {
-            progress: t / LIFE.0,
+            progress: t / lasts.0,
             time: age,
         };
         present_shader(world, pop.piece, &frame, compiled, packed, run);

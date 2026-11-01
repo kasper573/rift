@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use engine::core::geometry::Degrees;
-use engine::core::render::world::clouds::{self, CLOUD_BASE, CLOUD_TILE, CloudSheet};
+use engine::core::render::world::clouds::{self, CLOUD_TILE, CloudSheet};
 use engine::core::render::world::lights::sun_transform;
 
 const CLOUDS: f32 = 0.5;
@@ -12,7 +12,7 @@ fn the_ground_lies_in_the_shadow_of_the_cloud_up_the_suns_rays_as_the_clouds_dri
  {
     let mut world = World::new();
     world.init_resource::<Assets<Image>>();
-    let mut sheet = CloudSheet::from_world(&mut world);
+    let mut sheet = CloudSheet::new(&mut world, testkit::look().clouds);
     let mut images = world.resource_mut::<Assets<Image>>();
     sheet.cover(CLOUDS, WATER);
     let over = Vec2::new(64.0, 64.0);
@@ -26,7 +26,7 @@ fn the_ground_lies_in_the_shadow_of_the_cloud_up_the_suns_rays_as_the_clouds_dri
     ];
     for (when, elevation, azimuth, seconds) in suns {
         let light = sun_transform(Degrees(elevation), Degrees(azimuth), over);
-        let drift = clouds::drift(WIND, seconds);
+        let drift = clouds::drift(WIND, seconds, sheet.look());
         let cast = sheet.lay(light, drift, &mut images);
         let shadows = images.get(&sheet.over_sun().image).expect("the shadows");
         let toward = cast.back().as_vec3();
@@ -36,14 +36,14 @@ fn the_ground_lies_in_the_shadow_of_the_cloud_up_the_suns_rays_as_the_clouds_dri
         for x in (0..128).step_by(8) {
             for z in (0..128).step_by(8) {
                 let ground = Vec3::new(x as f32, 0.0, z as f32);
-                let up = ground + toward * CLOUD_BASE.0 / toward.y;
+                let up = ground + toward * sheet.look().height.0 / toward.y;
                 let cloud = sheet.cloudiness((Vec2::new(up.x, up.z) - drift) / CLOUD_TILE.0);
                 let local = from_light.transform_point3(ground);
                 let lit = texel(
                     shadows,
                     Vec2::new((1.0 - local.x) / 2.0, (local.y + 1.0) / 2.0),
                 );
-                off += (lit - (1.0 - clouds::shade(WATER) * cloud)).abs();
+                off += (lit - (1.0 - clouds::shade(WATER, sheet.look()) * cloud)).abs();
                 points += 1.0;
             }
         }
@@ -59,7 +59,7 @@ fn the_ground_lies_in_the_shadow_of_the_cloud_up_the_suns_rays_as_the_clouds_dri
 fn the_sky_never_shows_the_same_clouds_a_tile_over_whichever_way_one_looks() {
     let mut world = World::new();
     world.init_resource::<Assets<Image>>();
-    let mut sheet = CloudSheet::from_world(&mut world);
+    let mut sheet = CloudSheet::new(&mut world, testkit::look().clouds);
     sheet.cover(CLOUDS, WATER);
     for (way, step) in [
         ("along a row", Vec2::X),

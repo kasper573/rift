@@ -255,8 +255,21 @@ pub struct SkeletonDef {
     pub paces: Vec<ClipPace>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub layers: Vec<Layer>,
+    pub easing: BodyEasing,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<SkeletonModule>,
+}
+
+/// How long a body takes to move from one way of standing to the next.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct BodyEasing {
+    /// To turn to a new facing.
+    pub turn: Seconds,
+    /// For one clip to blend into the next.
+    pub crossfade: Seconds,
+    /// For a hand to close on an item it takes up.
+    pub clasp: Seconds,
 }
 
 /// Our rig: every joint, every node that draws no mesh, of the glTF files it is read from, each
@@ -583,8 +596,22 @@ pub enum Layer {
     Feet {
         legs: Vec<Leg>,
         gait: Gait,
+        /// How far a foot's spot drifts from where it stands before it steps.
         stride: Meters,
+        /// How high a stepping foot is lifted.
         lift: Meters,
+        /// How long a foot is in the air.
+        step: Seconds,
+        /// How far past the spot the clip would put it a stepping foot lands, in strides, so it
+        /// doesn't step again at once.
+        lead: f32,
+        /// How far the planted feet may raise or lower the body.
+        most_rise: Meters,
+        /// How steeply the planted feet may tilt the body, as a slope.
+        most_tilt: f32,
+        /// How quickly the body settles onto its planted feet: the time it takes to go most of the
+        /// way.
+        settle: Seconds,
         #[serde(default = "calm")]
         during: Vec<Action>,
     },
@@ -620,6 +647,8 @@ pub enum Layer {
         #[serde(default, skip_serializing_if = "is_zero")]
         on_step: f32,
         ease: Seconds,
+        /// The most the joint is squashed, as a share of its height.
+        most: f32,
         #[serde(default = "calm")]
         during: Vec<Action>,
     },
@@ -752,6 +781,11 @@ impl ContentFile for SkeletonDef {
             cues: Vec::new(),
             paces: Vec::new(),
             layers: Vec::new(),
+            easing: BodyEasing {
+                turn: Seconds(0.0),
+                crossfade: Seconds(0.0),
+                clasp: Seconds(0.0),
+            },
             modules: Vec::new(),
         })
     }
@@ -902,6 +936,13 @@ impl ContentFile for SkeletonDef {
         for (index, layer) in self.layers.iter().enumerate() {
             check_layer(&format!("/layers/{index}"), layer, cx);
         }
+        for (field, lasts) in [
+            ("turn", self.easing.turn),
+            ("crossfade", self.easing.crossfade),
+            ("clasp", self.easing.clasp),
+        ] {
+            cx.range(format!("/easing/{field}"), lasts.0, 0.0, 2.0, "s");
+        }
     }
 }
 
@@ -1019,7 +1060,15 @@ fn check_layer(pointer: &str, layer: &Layer, cx: &mut RowCheck) {
     }
     match layer {
         Layer::Feet {
-            legs, stride, lift, ..
+            legs,
+            stride,
+            lift,
+            step,
+            lead,
+            most_rise,
+            most_tilt,
+            settle,
+            ..
         } => {
             cx.count(format!("{pointer}/legs"), legs.len(), 1, 8, "legs");
             for (index, leg) in legs.iter().enumerate() {
@@ -1033,6 +1082,17 @@ fn check_layer(pointer: &str, layer: &Layer, cx: &mut RowCheck) {
             }
             cx.range(format!("{pointer}/stride"), stride.0, 0.05, 4.0, "m");
             cx.range(format!("{pointer}/lift"), lift.0, 0.0, 1.0, "m");
+            cx.range(format!("{pointer}/step"), step.0, 0.01, 2.0, "s");
+            cx.range(format!("{pointer}/lead"), *lead, 0.0, 2.0, "strides");
+            cx.range(format!("{pointer}/most_rise"), most_rise.0, 0.0, 2.0, "m");
+            cx.range(
+                format!("{pointer}/most_tilt"),
+                *most_tilt,
+                0.0,
+                2.0,
+                "a slope",
+            );
+            cx.range(format!("{pointer}/settle"), settle.0, 0.0, 2.0, "s");
         }
         Layer::Chain {
             stiffness,
@@ -1073,6 +1133,7 @@ fn check_layer(pointer: &str, layer: &Layer, cx: &mut RowCheck) {
             by_speed,
             on_step,
             ease,
+            most,
             ..
         } => {
             cx.range(
@@ -1084,6 +1145,7 @@ fn check_layer(pointer: &str, layer: &Layer, cx: &mut RowCheck) {
             );
             cx.range(format!("{pointer}/on_step"), *on_step, 0.0, 1.0, "a squash");
             cx.range(format!("{pointer}/ease"), ease.0, 0.0, 2.0, "s");
+            cx.range(format!("{pointer}/most"), *most, 0.0, 0.95, "a share");
         }
     }
 }

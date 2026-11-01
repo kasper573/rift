@@ -27,7 +27,9 @@ use ui::theme;
 use bevy::prelude::*;
 use engine::core::content::ContentFile;
 use engine::core::math::Pos;
+use engine::core::render::Look;
 use engine::core::units::Meters;
+use engine::systems::GameSettings;
 use engine::systems::area::AreaDef;
 use engine::systems::script::Place;
 use ui::egui::Ui;
@@ -104,11 +106,27 @@ pub(crate) fn read_shown<Row: ContentFile>(
 }
 
 pub fn sync(editor: &mut Editor, world: &mut World) {
+    take_look(editor, world);
     sound::sync(editor, world);
     crate::stage::sync(editor, world);
     area::viewport::sync(editor, world);
     crate::thumbs::props::sync(editor, world);
     crate::thumbs::areas::sync(editor, world);
+}
+
+/// The world draws as the open game looks.
+fn take_look(editor: &Editor, world: &mut World) {
+    let Some(content) = editor
+        .project
+        .as_ref()
+        .and_then(|project| project.content.as_ref())
+    else {
+        return;
+    };
+    let look = &content.built::<GameSettings>().look;
+    if world.get_resource::<Look>() != Some(look) {
+        world.insert_resource(look.clone());
+    }
 }
 
 pub(crate) fn bottom_tabs(editor: &Editor) -> Vec<(BottomTab, String)> {

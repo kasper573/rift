@@ -5,21 +5,32 @@ use bevy::light::{
     CascadeShadowConfig, CascadeShadowConfigBuilder, DirectionalLight, PointLight, SunDisk,
     VolumetricLight,
 };
-use bevy::pbr::MAX_CASCADES_PER_LIGHT;
 use bevy::prelude::*;
 
 use super::clouds::{LOWEST_LIGHT, SHADOW_SPAN};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
 use crate::core::geometry::Degrees;
+use crate::core::render::Look;
 use crate::core::render::video::{ShadowQuality, VideoPreferences};
 use crate::core::time::Seconds;
 
-/// The sun's illuminance in lux: with the camera's exposure, a white face square to the sun is
-/// lit to the top of the screen's range.
-pub const SUN_LUX: f32 = 2600.0;
-/// How bright the ambient light is for an ambient colour of full white, in candela per square
-/// metre: outside, the fill that keeps a shadow a few steps under the sun rather than black;
-/// inside, where no sky reaches, the whole of the light between the lamps.
-pub const AMBIENT_NITS: f32 = 800.0;
+/// How strong the world's lights are, and how soft the sun's shadows.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct LightLook {
+    /// The sun's illuminance in lux: with the camera's exposure, a white face square to the sun
+    /// is lit to the top of the screen's range.
+    pub sun_lux: f32,
+    /// How bright the ambient light is for an ambient colour of full white, in candela per
+    /// square metre: outside, the fill that keeps a shadow a few steps under the sun rather than
+    /// black; inside, where no sky reaches, the whole of the light between the lamps.
+    pub ambient_nits: f32,
+    /// How wide the sun is as a source of light, which is how far its shadows soften from what
+    /// casts them.
+    pub sun_width: f32,
+}
 /// Lumens per unit of a content light's intensity.
 pub const LUMENS_PER_UNIT: f32 = 4_000.0;
 /// How far the sun's shadows reach from the camera.
@@ -27,9 +38,6 @@ const SHADOW_REACH: f32 = 70.0;
 
 /// How far the near shadow cascade reaches, at the finer of the two.
 const NEAR_SHADOWS: f32 = 25.0;
-/// How wide the sun is as a source of light, which is how far its shadows soften from what casts
-/// them.
-const SUN_WIDTH: f32 = 1.5;
 
 /// A sun shining from `elevation` above the horizon at `azimuth` clockwise from north: soft
 /// shadows from two cascades, and shafts of light through the air.
@@ -39,7 +47,6 @@ pub fn sun(color: Color, illuminance: f32, elevation: Degrees, azimuth: Degrees)
             color,
             illuminance,
             shadow_maps_enabled: true,
-            soft_shadow_size: soft_shadows(ShadowQuality::High),
             ..default()
         },
         shadow_cascades(ShadowQuality::High),
@@ -55,14 +62,19 @@ pub fn sun(color: Color, illuminance: f32, elevation: Degrees, azimuth: Degrees)
 /// change.
 pub(super) fn cast_shadows(
     video: Res<VideoPreferences>,
+    look: Option<Res<Look>>,
     mut lights: Query<(&mut DirectionalLight, &mut CascadeShadowConfig)>,
 ) {
+    let Some(look) = look else {
+        return;
+    };
     for (mut light, mut cascades) in &mut lights {
-        if !light.is_added() && !video.is_changed() {
+        if !light.is_added() && !video.is_changed() && !look.is_changed() {
             continue;
         }
         light.shadow_maps_enabled = video.shadows != ShadowQuality::Off;
-        light.soft_shadow_size = soft_shadows(video.shadows);
+        light.soft_shadow_size =
+            (video.shadows == ShadowQuality::High).then_some(look.light.sun_width);
         *cascades = shadow_cascades(video.shadows);
     }
 }
@@ -119,16 +131,10 @@ pub(super) fn flicker(time: Res<Time>, mut lights: Query<(&Flicker, &mut PointLi
     }
 }
 
-fn soft_shadows(quality: ShadowQuality) -> Option<f32> {
-    (quality == ShadowQuality::High).then_some(SUN_WIDTH)
-}
-
-/// The cascades `quality` asks for, as many as the platform draws: one that draws fewer draws only
-/// the nearest, which would leave everything past it unshadowed.
+/// The cascades `quality` asks for: a fine one near the camera at the highest, and one otherwise.
 fn shadow_cascades(quality: ShadowQuality) -> CascadeShadowConfig {
-    let wanted = if quality == ShadowQuality::High { 2 } else { 1 };
     CascadeShadowConfigBuilder {
-        num_cascades: wanted.min(MAX_CASCADES_PER_LIGHT),
+        num_cascades: if quality == ShadowQuality::High { 2 } else { 1 },
         maximum_distance: SHADOW_REACH,
         first_cascade_far_bound: NEAR_SHADOWS,
         ..default()

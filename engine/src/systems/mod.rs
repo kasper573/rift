@@ -56,7 +56,7 @@ use crate::core::babble::BabblePlugin;
 use crate::core::content::sync::SyncedContent;
 use crate::core::content::{
     Content, ContentFolder, ContentProblem, ContentRegistry, ContentVersion, LoadPurpose,
-    LoadReport, Loading, MODULES, SETTINGS_FILE, Settings,
+    LoadReport, Loading, MODULES, RowCheck, SETTINGS_FILE, Settings,
 };
 use crate::core::gui::GuiPlugin;
 use crate::core::interpolate::SnapshotPlugin;
@@ -64,6 +64,7 @@ use crate::core::math::Rng;
 use crate::core::net::auth::Credentials;
 use crate::core::net::transport::ClientTransportPlugin;
 use crate::core::os::{Http, Profile, SignIn, StartParams};
+use crate::core::render::Look;
 use crate::core::render::WorldRenderPlugin;
 use crate::core::text::StyledTextPlugin;
 use crate::core::tick::{self, Tick};
@@ -153,7 +154,9 @@ pub fn area_state(world: &mut World, content: &Content) {
 /// The content, its settings and the scripts and parties built from it, as every world playing it
 /// reads them.
 fn insert_content(world: &mut World, content: &Content) {
-    world.insert_resource(content.built::<GameSettings>().clone());
+    let settings = content.built::<GameSettings>();
+    world.insert_resource(settings.look.clone());
+    world.insert_resource(settings.clone());
     world.insert_resource(content.built::<quest::Parties>().clone());
     world.insert_resource(content.built::<script::RiftScripts>().clone());
     world.insert_resource(content.clone());
@@ -185,7 +188,9 @@ pub struct GameSettings {
     pub slots: Slots,
     pub drops: Drops,
     pub reading: Reading,
+    pub notices: Notices,
     pub words: Words,
+    pub look: Look,
     pub relations: Relations,
     /// How soon after each other like entries of a player's history count as one, a run of loot
     /// or kills read as a tally.
@@ -251,6 +256,17 @@ impl Reading {
     pub fn of(self, words: usize) -> Seconds {
         Seconds(self.glance.0 + self.per_word.0 * words as f32)
     }
+}
+
+/// How the notices that aren't read move.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Notices {
+    /// How long a number bursting out of an actor flies before it is gone.
+    pub pops_last: Seconds,
+    /// How long an area stands settled after it comes into view before its intro lands, so the
+    /// title and its sound don't arrive on the frame the transition ends.
+    pub intro_after: Seconds,
 }
 
 /// What becomes of items on the ground.
@@ -680,7 +696,7 @@ impl Settings for GameSettings {
 fn check_settings(loading: &mut Loading) {
     let content = loading.content();
     let settings = content.built::<GameSettings>();
-    let mut check = crate::core::content::RowCheck::default();
+    let mut check = RowCheck::default();
     if let Some(cycle) = &settings.daylight {
         cycle.check("/daylight", &mut check);
     }
@@ -717,17 +733,73 @@ fn check_settings(loading: &mut Loading) {
         "seconds",
     );
     check.at_least(
+        "/notices/pops_last",
+        settings.notices.pops_last.0,
+        0.0,
+        "seconds",
+    );
+    check.at_least(
+        "/notices/intro_after",
+        settings.notices.intro_after.0,
+        0.0,
+        "seconds",
+    );
+    check.at_least(
         "/history_merges_within",
         settings.history_merges_within.0,
         0.0,
         "seconds",
     );
+    check_look(&mut check, &settings.look);
     for error in check.into_errors() {
         loading.json_error(SETTINGS_FILE, &error.pointer, error.problem);
     }
     if loading.thorough() {
         check_reach(loading, &content, settings.initial_spawn);
     }
+}
+
+/// The rules of a look a schema can't state: a camera that can see, between its own limits, with
+/// its zooms in order.
+fn check_look(check: &mut RowCheck, look: &Look) {
+    let camera = &look.camera;
+    check.range("/look/camera/fov", camera.fov.0, 1.0, 170.0, "degrees");
+    check.range(
+        "/look/camera/highest_pitch",
+        camera.highest_pitch.0,
+        camera.lowest_pitch.0,
+        90.0,
+        "degrees",
+    );
+    check.range(
+        "/look/camera/pitch",
+        camera.pitch.0,
+        camera.lowest_pitch.0,
+        camera.highest_pitch.0,
+        "degrees",
+    );
+    let zooms = &camera.zooms;
+    check.range(
+        "/look/camera/zooms/middle",
+        zooms.middle.0,
+        zooms.close.0,
+        zooms.wide.0,
+        "meters",
+    );
+    check.at_least("/look/camera/zooms/close", zooms.close.0, 0.1, "meters");
+    check.at_least("/look/camera/zoom_ease", camera.zoom_ease.0, 0.0, "seconds");
+    check.at_least(
+        "/look/clearing/fades",
+        look.clearing.fades.0,
+        0.0,
+        "seconds",
+    );
+    check.at_least(
+        "/look/clearing/radius",
+        look.clearing.radius.0,
+        0.0,
+        "meters",
+    );
 }
 
 /// Whether the initial spawn stands on ground, and everything placed in an area stands where the

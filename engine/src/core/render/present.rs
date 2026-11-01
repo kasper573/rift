@@ -12,15 +12,12 @@ use bevy::shader::ShaderRef;
 use bevy::sprite_render::Material2d;
 use bevy::window::PrimaryWindow;
 
+use super::Look;
 use super::camera::{self, WorldCamera};
 use super::transition::{ActiveTransition, CutUniform};
 use crate::core::time::Seconds;
 
-/// Window pixels to a pixel of the world's picture.
-pub(crate) const SCALE: f32 = 1.0;
 pub(crate) const PRESENT_LAYER: usize = 1;
-/// What shows where nothing is drawn.
-const VOID: Color = Color::srgb(0.06, 0.065, 0.08);
 
 #[derive(Component)]
 pub(super) struct Screen;
@@ -151,12 +148,10 @@ pub(super) fn setup(
         Camera3d::default(),
         Camera {
             order: 0,
-            clear_color: ClearColorConfig::Custom(VOID),
+            clear_color: ClearColorConfig::Custom(Color::BLACK),
             ..default()
         },
         camera_target,
-        camera::projection(target_w, target_h),
-        camera::picture(),
         WorldCamera,
     ));
 
@@ -184,6 +179,25 @@ pub(super) fn setup(
     ));
 }
 
+/// The world's camera finished as `look` says: its lens, its picture and the void behind it.
+pub(super) fn take_look(world: &mut World, look: &Look) {
+    let (width, height) = world.resource::<WorldTargets>().size;
+    let Ok(camera) = world
+        .query_filtered::<Entity, With<WorldCamera>>()
+        .single(world)
+    else {
+        return;
+    };
+    let mut camera = world.entity_mut(camera);
+    camera.insert((
+        camera::lens(look.camera.fov, width, height),
+        camera::picture(look.picture),
+    ));
+    if let Some(mut drawn) = camera.get_mut::<Camera>() {
+        drawn.clear_color = ClearColorConfig::Custom(look.picture.void.color());
+    }
+}
+
 pub(crate) fn world_texture(world: &World) -> Option<Handle<Image>> {
     world
         .get_resource::<WorldTargets>()
@@ -209,7 +223,9 @@ pub(super) fn fit(
         targets.size = (target_w, target_h);
         targets.live = images.add(world_target(target_w, target_h));
         if let Ok((mut target, mut projection)) = camera.single_mut() {
-            *projection = camera::projection(target_w, target_h);
+            if let Projection::Perspective(perspective) = &mut *projection {
+                perspective.aspect_ratio = target_w as f32 / target_h.max(1) as f32;
+            }
             if let Ok((_, screen)) = quad.single() {
                 targets.bind(&mut target, &screen.0, &mut materials);
             }
@@ -281,7 +297,7 @@ fn world_target(width: u32, height: u32) -> Image {
 /// The world's picture over the window's size, rounded to whole even pixels.
 pub(crate) fn target_size(window: &Window) -> (u32, u32) {
     let scaled = |logical: f32| {
-        let px = (logical / SCALE).round().max(2.0) as u32;
+        let px = logical.round().max(2.0) as u32;
         px + (px & 1)
     };
     let res = &window.resolution;

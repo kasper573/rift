@@ -11,7 +11,8 @@ use bevy::render::gpu_readback::ReadbackOnce;
 use bevy::render::render_resource::{TextureFormat, TextureUsages};
 use bevy_egui::{EguiTextureHandle, EguiUserTextures};
 use engine::core::math::{Pos, Rect as MRect};
-use engine::core::render::camera::{self as world_camera, FOV};
+use engine::core::render::Look;
+use engine::core::render::camera::{self as world_camera};
 use engine::core::render::world::sky::Daylight;
 use engine::core::units::{MeterSize, Meters};
 use engine::systems::area::scenery::{self, Scenery};
@@ -21,6 +22,7 @@ use ui::egui::{self, Color32, TextureId};
 use super::taken;
 use crate::app::Editor;
 use crate::project::ProjectFiles;
+use crate::views::area::camera::LENS;
 use crate::views::navigation::Viewport;
 
 /// How many pixels the longer side of an area's render spans.
@@ -258,6 +260,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
                 LONGEST,
             ]
         };
+        let grade = world.resource::<Look>().picture;
         let target = {
             let mut image =
                 Image::new_target_texture(size[0], size[1], TextureFormat::Rgba8UnormSrgb, None);
@@ -265,7 +268,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
             world.resource_mut::<Assets<Image>>().add(image)
         };
         let center = Vec3::new(width / 2.0, 0.0, height / 2.0);
-        let distance = height / 2.0 / (FOV.radians().0 / 2.0).tan() * 1.02;
+        let distance = height / 2.0 / (LENS.radians().0 / 2.0).tan() * 1.02;
         let camera = world
             .spawn((
                 Camera3d::default(),
@@ -275,8 +278,8 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
                     ..default()
                 },
                 RenderTarget::Image(target.clone().into()),
-                world_camera::projection(size[0], size[1]),
-                world_camera::picture(),
+                world_camera::lens(LENS, size[0], size[1]),
+                world_camera::picture(grade),
                 RenderLayers::from_layers(&[LAYER]),
                 Transform::from_translation(center + Vec3::Y * distance)
                     .looking_at(center, -Vec3::Z),

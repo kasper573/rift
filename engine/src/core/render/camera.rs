@@ -16,40 +16,79 @@ use bevy::render::renderer::RenderAdapterInfo;
 use bevy::render::settings::Backends;
 use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
 use bevy::window::PrimaryWindow;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::geometry::{Degrees, Radians};
 use crate::core::ground::{HIGHEST, Heightfield, LOWEST};
 use crate::core::gui;
-use crate::core::math::{Pos, Rect};
+use crate::core::math::{Pos, Rect, Rgb};
 use crate::core::render::video::VideoPreferences;
 use crate::core::time::Seconds;
 use crate::core::units::{Meters, Stops};
 
-pub const FOV: Degrees = Degrees(32.0);
-/// How far down the camera looks when brought home.
-pub const PITCH: Degrees = Degrees(55.0);
-/// How far one press of a turn key turns the camera.
-pub const TURN_STEP: Degrees = Degrees(45.0);
-/// How far one press of a tilt key tilts the camera, between looking out over the ground and
-/// nearly straight down.
-pub const TILT_STEP: Degrees = Degrees(10.0);
-pub const LOWEST_PITCH: Degrees = Degrees(5.0);
-pub const HIGHEST_PITCH: Degrees = Degrees(75.0);
 const NEAR: f32 = 0.5;
 /// How far a ray is followed through the world before it is given up as hitting nothing.
 const REACH: f32 = 200.0;
 const MARCH_STEP: f32 = 0.25;
 const BISECTIONS: u32 = 12;
-/// How long a zoom step takes to ease over.
-const ZOOM_EASE: Seconds = Seconds(0.2);
+
+/// How the camera frames the world.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CameraFraming {
+    /// How much of the world the camera takes in, top to bottom.
+    pub fov: Degrees,
+    /// How far down it looks when brought home.
+    pub pitch: Degrees,
+    /// The least it may look down, out over the ground, and the most, toward straight down.
+    pub lowest_pitch: Degrees,
+    pub highest_pitch: Degrees,
+    /// How far one press of a turn key turns it.
+    pub turn_step: Degrees,
+    /// How far one press of a tilt key tilts it.
+    pub tilt_step: Degrees,
+    /// How far it stands back from what it looks at, at each zoom.
+    pub zooms: Zooms,
+    /// How long a zoom step takes to ease over.
+    pub zoom_ease: Seconds,
+}
+
+/// The camera's distances along its pitch line, nearest first; it is brought home to the middle.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Zooms {
+    pub close: Meters,
+    pub middle: Meters,
+    pub wide: Meters,
+}
+
+/// How the world's picture is finished.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct PictureGrade {
+    /// How much of the light blooms over its rim, so what the light catches glows softly into the
+    /// shade around it.
+    pub bloom: f32,
+    /// How saturated the colours stay after the tone mapping, of its own: a little under it keeps
+    /// a painted colour reading as painted, as the curve deepens colour as it lifts contrast.
+    pub saturation: f32,
+    /// How far the picture is opened over the light the world's lights are measured in.
+    pub exposure: Stops,
+    /// How much the air itself glows, of the sky's light, where no sun shaft crosses it, and in
+    /// what colour.
+    pub air_glow: f32,
+    pub air_color: Rgb,
+    /// What shows where nothing of the world is drawn.
+    pub void: Rgb,
+}
 
 #[derive(Component)]
 pub struct WorldCamera;
 
-/// A camera that draws the world the way the player sees it, finished by `picture`.
-#[derive(Component)]
-pub struct WorldPicture;
+/// A camera that draws the world the way the player sees it, finished by `picture` in its grade.
+#[derive(Component, Clone, Copy)]
+pub struct WorldPicture(pub PictureGrade);
 
 /// Whether the GPU draws the full picture: the sky scattering the sun's light and lighting the
 /// world, the sun's shafts in the air, creases shaded by ambient occlusion, and the picture
@@ -68,20 +107,8 @@ impl FullPicture {
     }
 }
 
-/// How much of the light blooms over its rim, so what the light catches glows softly into the
-/// shade around it.
-const BLOOM: f32 = 0.3;
-/// How saturated the colours stay after the tone mapping, a little under its own, which deepens
-/// colour as it lifts contrast, so a painted colour reads as painted.
-const SATURATION: f32 = 0.88;
-/// How far the picture is opened over the light the world's lights are measured in: a face square
-/// to the sun lit to just under white, and the shade still holding its colour.
-const EXPOSURE: Stops = Stops(1.85);
 /// How many steps the air is marched in along each pixel's ray for the sun's shafts.
 const AIR_STEPS: u32 = 32;
-/// How much the air itself glows, of the sky's light, where no sun shaft crosses it.
-const AIR_GLOW: f32 = 0.04;
-const AIR_COLOR: Color = Color::srgb(0.55, 0.72, 1.0);
 
 /// How every camera that draws the world finishes its picture: in a high range of light, the air
 /// lit by the sun's shafts, creases shaded by what stands around them, soft shadows, and where
@@ -92,13 +119,13 @@ const AIR_COLOR: Color = Color::srgb(0.55, 0.72, 1.0);
 /// against banding, and smoothed once more by morphological anti-aliasing over the finished
 /// picture, which takes the clearings along with the geometry's edges. The shafts, the shaded
 /// creases, the bloom and the smoothing are drawn as the player's `VideoPreferences` ask.
-pub fn picture() -> impl Bundle {
+pub fn picture(grade: PictureGrade) -> impl Bundle {
     (
-        WorldPicture,
+        WorldPicture(grade),
         Hdr,
         Msaa::Off,
         Tonemapping::AcesFitted,
-        grading(Tone::NEUTRAL),
+        grading(Tone::NEUTRAL, grade),
         DebandDither::Enabled,
     )
 }
@@ -123,12 +150,12 @@ impl Tone {
     };
 }
 
-/// The grading a picture finished in `tone` is drawn through.
-pub fn grading(tone: Tone) -> ColorGrading {
+/// The grading a picture of `grade` finished in `tone` is drawn through.
+pub fn grading(tone: Tone, grade: PictureGrade) -> ColorGrading {
     ColorGrading {
         global: ColorGradingGlobal {
-            exposure: EXPOSURE.0 + tone.exposure.0,
-            post_saturation: SATURATION * tone.saturation,
+            exposure: grade.exposure.0 + tone.exposure.0,
+            post_saturation: grade.saturation * tone.saturation,
             temperature: tone.warmth,
             ..default()
         },
@@ -147,8 +174,12 @@ pub(super) fn finish_new_picture(
     add: On<Add<WorldPicture>>,
     full: Res<FullPicture>,
     video: Res<VideoPreferences>,
+    grades: Query<&WorldPicture>,
     mut commands: Commands,
 ) {
+    let Ok(&WorldPicture(grade)) = grades.get(add.entity) else {
+        return;
+    };
     let mut picture = commands.entity(add.entity);
     if full.0 {
         picture.insert((
@@ -158,25 +189,29 @@ pub(super) fn finish_new_picture(
     } else {
         picture.insert(ShadowFilteringMethod::Gaussian);
     }
-    finish(&mut picture, *full, *video);
+    finish(&mut picture, *full, *video, grade);
 }
 
-/// Every picture is finished anew as the player's video preferences change.
+/// Every picture is finished anew as the player's video preferences or its grade change.
 pub(super) fn refinish_pictures(
     full: Res<FullPicture>,
     video: Res<VideoPreferences>,
-    pictures: Query<Entity, With<WorldPicture>>,
+    pictures: Query<(Entity, Ref<WorldPicture>)>,
     mut commands: Commands,
 ) {
-    if !video.is_changed() {
-        return;
-    }
-    for picture in &pictures {
-        finish(&mut commands.entity(picture), *full, *video);
+    for (picture, grade) in &pictures {
+        if video.is_changed() || (grade.is_changed() && !grade.is_added()) {
+            finish(&mut commands.entity(picture), *full, *video, grade.0);
+        }
     }
 }
 
-fn finish(picture: &mut EntityCommands, full: FullPicture, video: VideoPreferences) {
+fn finish(
+    picture: &mut EntityCommands,
+    full: FullPicture,
+    video: VideoPreferences,
+    grade: PictureGrade,
+) {
     match video.ambient_occlusion.level().filter(|_| full.0) {
         Some(quality_level) => picture.insert(ScreenSpaceAmbientOcclusion {
             quality_level,
@@ -186,7 +221,7 @@ fn finish(picture: &mut EntityCommands, full: FullPicture, video: VideoPreferenc
     };
     if video.bloom {
         picture.insert(Bloom {
-            intensity: BLOOM,
+            intensity: grade.bloom,
             ..Bloom::NATURAL
         });
     } else {
@@ -198,19 +233,14 @@ fn finish(picture: &mut EntityCommands, full: FullPicture, video: VideoPreferenc
     };
     if full.0 && video.light_shafts {
         picture.insert(VolumetricFog {
-            ambient_color: AIR_COLOR,
-            ambient_intensity: AIR_GLOW,
+            ambient_color: grade.air_color.color(),
+            ambient_intensity: grade.air_glow,
             jitter: 0.5,
             step_count: AIR_STEPS,
         });
     } else {
         picture.remove::<VolumetricFog>();
     }
-}
-
-/// The perspective every camera on the world draws with, over a viewport `width` by `height`.
-pub fn projection(width: u32, height: u32) -> Projection {
-    lens(FOV, width, height)
 }
 
 /// A perspective `fov` high over a viewport `width` by `height`.
@@ -223,7 +253,7 @@ pub fn lens(fov: Degrees, width: u32, height: u32) -> Projection {
     })
 }
 
-/// The three distances the camera is kept at, along its pitch line.
+/// Which of its three distances the camera is kept at, along its pitch line.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Zoom {
     Close,
@@ -236,11 +266,11 @@ impl Zoom {
     /// How many steps the zoom has.
     pub const STEPS: u8 = 3;
 
-    pub fn distance(self) -> Meters {
+    pub fn distance(self, zooms: &Zooms) -> Meters {
         match self {
-            Zoom::Close => Meters(18.0),
-            Zoom::Middle => Meters(28.0),
-            Zoom::Wide => Meters(40.0),
+            Zoom::Close => zooms.close,
+            Zoom::Middle => zooms.middle,
+            Zoom::Wide => zooms.wide,
         }
     }
 
@@ -269,9 +299,11 @@ impl Zoom {
 }
 
 /// Where the camera looks from: at a point of the world, from a yaw and a distance that ease toward
-/// what the player last asked for. A client resource, never replicated.
+/// what the player last asked for, framed as the game frames it. A client resource, never
+/// replicated, there once the game's look is known.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct CameraRig {
+    framing: CameraFraming,
     target: Vec3,
     yaw: Radians,
     wanted_yaw: Radians,
@@ -279,20 +311,6 @@ pub struct CameraRig {
     wanted_pitch: Radians,
     distance: Meters,
     zoom: Zoom,
-}
-
-impl Default for CameraRig {
-    fn default() -> CameraRig {
-        CameraRig {
-            target: Vec3::ZERO,
-            yaw: Radians(0.0),
-            wanted_yaw: Radians(0.0),
-            pitch: PITCH.radians(),
-            wanted_pitch: PITCH.radians(),
-            distance: Zoom::default().distance(),
-            zoom: Zoom::default(),
-        }
-    }
 }
 
 /// How the player likes the camera to move.
@@ -311,6 +329,30 @@ impl Default for CameraPreferences {
 }
 
 impl CameraRig {
+    /// A camera framed by `framing`, brought home.
+    pub fn new(framing: CameraFraming) -> CameraRig {
+        CameraRig {
+            framing,
+            target: Vec3::ZERO,
+            yaw: Radians(0.0),
+            wanted_yaw: Radians(0.0),
+            pitch: framing.pitch.radians(),
+            wanted_pitch: framing.pitch.radians(),
+            distance: Zoom::default().distance(&framing.zooms),
+            zoom: Zoom::default(),
+        }
+    }
+
+    pub fn framing(&self) -> &CameraFraming {
+        &self.framing
+    }
+
+    /// Frames the camera anew, easing from where it stands to where the new framing keeps it.
+    pub fn reframe(&mut self, framing: CameraFraming) {
+        self.framing = framing;
+        self.tilt(Degrees(0.0));
+    }
+
     /// Points the camera at `at`, `height` above the ground there.
     pub fn look_at(&mut self, at: Pos<Meters>, height: Meters) {
         self.target = world_point(at, height);
@@ -333,10 +375,10 @@ impl CameraRig {
     /// Tilts the camera `by` degrees further down, or up toward the horizon when negative, within
     /// its limits.
     pub fn tilt(&mut self, by: Degrees) {
-        self.wanted_pitch = Radians(
-            (self.wanted_pitch.0 + by.radians().0)
-                .clamp(LOWEST_PITCH.radians().0, HIGHEST_PITCH.radians().0),
-        );
+        self.wanted_pitch = Radians((self.wanted_pitch.0 + by.radians().0).clamp(
+            self.framing.lowest_pitch.radians().0,
+            self.framing.highest_pitch.radians().0,
+        ));
     }
 
     /// Tilts the camera straight away.
@@ -347,7 +389,7 @@ impl CameraRig {
 
     pub fn home(&mut self) {
         self.wanted_yaw = Radians(0.0);
-        self.wanted_pitch = PITCH.radians();
+        self.wanted_pitch = self.framing.pitch.radians();
         self.zoom = Zoom::default();
     }
 
@@ -375,14 +417,14 @@ impl CameraRig {
     pub fn settled(&self) -> bool {
         self.yaw == self.wanted_yaw
             && self.pitch == self.wanted_pitch
-            && self.distance == self.zoom.distance()
+            && self.distance == self.zoom.distance(&self.framing.zooms)
     }
 
     /// Whether the camera rests where going home puts it.
     pub fn at_home(&self) -> bool {
         self.settled()
             && self.yaw == Radians(0.0)
-            && self.pitch == PITCH.radians()
+            && self.pitch == self.framing.pitch.radians()
             && self.zoom == Zoom::default()
     }
 
@@ -397,11 +439,11 @@ impl CameraRig {
     }
 
     pub fn view(&self, viewport: Vec2) -> View {
-        View::new(self.transform(), viewport)
+        View::new(self.transform(), viewport, self.framing.fov)
     }
 
     fn ease(&mut self, dt: Seconds, preferences: &CameraPreferences) {
-        let wanted = self.zoom.distance();
+        let wanted = self.zoom.distance(&self.framing.zooms);
         let turn = preferences.turn_speed.radians().0 * dt.0;
         let toward = |from: Radians, to: Radians| {
             let apart = to.0 - from.0;
@@ -413,7 +455,7 @@ impl CameraRig {
         };
         self.yaw = toward(self.yaw, self.wanted_yaw);
         self.pitch = toward(self.pitch, self.wanted_pitch);
-        let caught = (dt.0 / ZOOM_EASE.0).min(1.0);
+        let caught = (dt.0 / self.framing.zoom_ease.0.max(f32::EPSILON)).min(1.0);
         let left = wanted.0 - self.distance.0;
         self.distance = if left.abs() < 0.01 {
             wanted
@@ -433,12 +475,12 @@ pub struct View {
 }
 
 impl View {
-    pub fn new(camera: Transform, viewport: Vec2) -> View {
+    pub fn new(camera: Transform, viewport: Vec2, fov: Degrees) -> View {
         let aspect = viewport.x / viewport.y.max(1.0);
         View {
             world_from_view: GlobalTransform::from(camera),
             clip_from_view: bevy::math::proj::perspective_infinite_reverse(
-                FOV.radians().0,
+                fov.radians().0,
                 aspect,
                 NEAR,
             ),
@@ -577,7 +619,7 @@ pub fn window_size(world: &mut World) -> Option<Vec2> {
 /// The camera's view through the primary window.
 pub fn view_of(world: &mut World) -> Option<View> {
     let viewport = window_size(world)?;
-    Some(world.resource::<CameraRig>().view(viewport))
+    Some(world.get_resource::<CameraRig>()?.view(viewport))
 }
 
 /// The ray through the pointer, while it is over the world rather than the interface.
@@ -608,15 +650,22 @@ pub fn window_point(world: &mut World, at: Pos<Meters>, height: Meters) -> Optio
 pub(super) fn ease(
     time: Res<Time>,
     preferences: Res<CameraPreferences>,
-    mut rig: ResMut<CameraRig>,
+    rig: Option<ResMut<CameraRig>>,
 ) {
-    if !rig.settled() {
+    if let Some(mut rig) = rig
+        && !rig.settled()
+    {
         rig.ease(Seconds(time.delta_secs()), &preferences);
     }
 }
 
-pub(super) fn place(rig: Res<CameraRig>, mut camera: Query<&mut Transform, With<WorldCamera>>) {
-    if let Ok(mut transform) = camera.single_mut() {
+pub(super) fn place(
+    rig: Option<Res<CameraRig>>,
+    mut camera: Query<&mut Transform, With<WorldCamera>>,
+) {
+    if let Some(rig) = rig
+        && let Ok(mut transform) = camera.single_mut()
+    {
         *transform = rig.transform();
     }
 }

@@ -1065,7 +1065,8 @@ fn terrain(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Optio
     let bounds = area::load(world.resource::<Content>(), area_id)
         .size
         .bounds();
-    let window = ground_window(at, bounds);
+    let rig = world.get_resource::<CameraRig>()?;
+    let window = ground_window(at, bounds, area::render::view_reach(rig.framing()));
     let mut sent = world.resource_mut::<TerrainSent>();
     if sent.0 == Some((area_id, window)) {
         return None;
@@ -1090,8 +1091,7 @@ fn terrain(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Optio
 
 /// The ground around `at` the probe reports: the chunks within the view's reach, within the
 /// area, so the window moves only as the player crosses from chunk to chunk.
-fn ground_window(at: Pos<Meters>, bounds: Rect<Meters>) -> Rect<Meters> {
-    let reach = area::render::view_reach();
+fn ground_window(at: Pos<Meters>, bounds: Rect<Meters>, reach: Meters) -> Rect<Meters> {
     let low = Chunk::at(Pos::new(at.x - reach.0, at.y - reach.0)).rect();
     let high = Chunk::at(Pos::new(at.x + reach.0, at.y + reach.0)).rect();
     Rect::from_points([low.min(), high.max()])

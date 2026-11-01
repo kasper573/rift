@@ -172,6 +172,11 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
         gait: Gait::Lateral,
         stride: Meters(0.5),
         lift: Meters(0.1),
+        step: Seconds(0.2),
+        lead: 0.5,
+        most_rise: Meters(0.5),
+        most_tilt: 0.5,
+        settle: Seconds(0.12),
         during: vec![Action::Walk],
     };
     assert!(

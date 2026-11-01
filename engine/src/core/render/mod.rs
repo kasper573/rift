@@ -7,9 +7,9 @@ pub mod video;
 pub mod world;
 
 pub use camera::{
-    CameraPreferences, CameraRig, FullPicture, GroundHeights, PITCH, TILT_STEP, TURN_STEP, View,
-    WorldCamera, Zoom, cursor_ground, cursor_ray, facing_rotation, ground_height, ground_pos,
-    view_of, window_point, world_point,
+    CameraFraming, CameraPreferences, CameraRig, FullPicture, GroundHeights, PictureGrade, View,
+    WorldCamera, Zoom, Zooms, cursor_ground, cursor_ray, facing_rotation, ground_height,
+    ground_pos, view_of, window_point, world_point,
 };
 pub use pick::{Pointed, capsule_hit, pointed, sphere_hit};
 
@@ -19,10 +19,17 @@ use bevy::prelude::*;
 use bevy::render::batching::gpu_preprocessing::{GpuPreprocessingMode, GpuPreprocessingSupport};
 use bevy::render::{RenderApp, RenderStartup, init_gpu_resource};
 use bevy::sprite_render::Material2dPlugin;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use crate::core::interpolate::RenderValueSystems;
 use crate::core::math::Rng;
 use crate::core::time::Seconds;
+pub use world::clouds::CloudLook;
+pub use world::fade::ClearingLook;
+pub use world::lights::LightLook;
+pub use world::material::SurfaceFinish;
+pub use world::sky::SkyLook;
 
 pub struct WorldRenderPlugin;
 
@@ -40,7 +47,6 @@ impl Plugin for WorldRenderPlugin {
             world::WorldScenePlugin,
         ))
         .init_resource::<Animator>()
-        .init_resource::<CameraRig>()
         .init_resource::<CameraPreferences>()
         .init_resource::<GroundHeights>()
         .init_resource::<present::ScreenGrade>()
@@ -60,6 +66,7 @@ impl Plugin for WorldRenderPlugin {
                 .after(RenderValueSystems),
         )
         .add_systems(Startup, present::setup)
+        .add_systems(First, take_look.run_if(resource_exists_and_changed::<Look>))
         .add_systems(
             Update,
             (present::fit, icons::keep_icons_resident, camera::ease),
@@ -72,6 +79,32 @@ impl Plugin for WorldRenderPlugin {
             ),
         );
     }
+}
+
+/// How a game looks: how its camera frames the world, how the picture is finished, the air and
+/// clouds over the world and the light they let through, how its surfaces take the light, and
+/// how what hides the player clears away.
+#[derive(Resource, JsonSchema, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Look {
+    pub camera: CameraFraming,
+    pub picture: PictureGrade,
+    pub sky: SkyLook,
+    pub clouds: CloudLook,
+    pub light: LightLook,
+    pub materials: SurfaceFinish,
+    pub clearing: ClearingLook,
+}
+
+/// Frames the camera and finishes the world's picture as the game's look says, once it is known
+/// and whenever it changes.
+fn take_look(world: &mut World) {
+    let look = world.resource::<Look>().clone();
+    match world.get_resource_mut::<CameraRig>() {
+        Some(mut rig) => rig.reframe(look.camera),
+        None => world.insert_resource(CameraRig::new(look.camera)),
+    }
+    present::take_look(world, &look);
 }
 
 /// Where each entity's animation stands: the state it is in, and the turn of the state's clips it

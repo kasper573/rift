@@ -14,7 +14,7 @@ use engine::systems::actor::Action;
 use engine::systems::actor::skeleton::{GroupName, JointName, Layer, Leg, SkeletonDef};
 use strum::VariantArray;
 use ui::egui::{self, RichText, Ui, Vec2};
-use ui::{chip, controls, form, panel, theme};
+use ui::{chip, controls, form, panel, sheet, theme};
 
 use super::preview;
 use super::rigging::Rigging;
@@ -90,6 +90,8 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigg
             .auto_shrink([false, false])
             .show(ui, |ui| {
                 groups(editor, ui, key, def, &rig);
+                ui.add_space(10.0);
+                easing(editor, ui, key, def);
                 ui.add_space(10.0);
                 layers(editor, ui, key, def, &rig);
             });
@@ -210,6 +212,32 @@ fn groups(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rig: &
     );
     if let Some(groups) = changed {
         super::set_groups(editor, key, groups);
+    }
+}
+
+/// How long the bodies take to turn, to blend from one clip into the next, and to close a hand.
+fn easing(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
+    sheet::section(ui, "Easing");
+    let mut edited = def.easing;
+    egui::Grid::new(("easing", key))
+        .num_columns(2)
+        .spacing(Vec2::new(10.0, 6.0))
+        .show(ui, |ui| {
+            number(ui, "turn · s", &mut edited.turn.0, 0.005, 0.0..=2.0);
+            number(
+                ui,
+                "crossfade · s",
+                &mut edited.crossfade.0,
+                0.005,
+                0.0..=2.0,
+            );
+            number(ui, "clasp · s", &mut edited.clasp.0, 0.005, 0.0..=2.0);
+        });
+    if edited != def.easing {
+        super::change(editor, key, "Change the easing", |skeleton| {
+            skeleton.easing = edited;
+            Ok(())
+        });
     }
 }
 
@@ -346,6 +374,11 @@ fn fresh_layers(rig: &NodeTree, from: &str) -> Vec<(&'static str, Layer)> {
                 gait: Gait::Lateral,
                 stride: Meters(0.6),
                 lift: Meters(0.1),
+                step: Seconds(0.2),
+                lead: 0.5,
+                most_rise: Meters(0.5),
+                most_tilt: 0.5,
+                settle: Seconds(0.12),
                 during: vec![Action::Walk, Action::Run],
             },
         ),
@@ -377,6 +410,7 @@ fn fresh_layers(rig: &NodeTree, from: &str) -> Vec<(&'static str, Layer)> {
                 by_speed: 0.1,
                 on_step: 0.2,
                 ease: Seconds(0.15),
+                most: 0.6,
                 during,
             },
         ),
@@ -426,6 +460,11 @@ fn fields(ui: &mut Ui, key: &str, rig: &NodeTree, from: &Option<String>, layer: 
                 gait,
                 stride,
                 lift,
+                step,
+                lead,
+                most_rise,
+                most_tilt,
+                settle,
                 ..
             } => {
                 ui.label(theme::muted("gait"));
@@ -439,6 +478,11 @@ fn fields(ui: &mut Ui, key: &str, rig: &NodeTree, from: &Option<String>, layer: 
                 ui.end_row();
                 number(ui, "stride · m", &mut stride.0, 0.01, 0.05..=4.0);
                 number(ui, "lift · m", &mut lift.0, 0.005, 0.0..=1.0);
+                number(ui, "step · s", &mut step.0, 0.005, 0.01..=2.0);
+                number(ui, "lead · strides", lead, 0.01, 0.0..=2.0);
+                number(ui, "most rise · m", &mut most_rise.0, 0.01, 0.0..=2.0);
+                number(ui, "most tilt", most_tilt, 0.01, 0.0..=2.0);
+                number(ui, "settle · s", &mut settle.0, 0.005, 0.0..=2.0);
                 ui.label(theme::muted("legs"));
                 ui.vertical(|ui| {
                     let mut removed = None;
@@ -506,6 +550,7 @@ fn fields(ui: &mut Ui, key: &str, rig: &NodeTree, from: &Option<String>, layer: 
                 by_speed,
                 on_step,
                 ease,
+                most,
                 ..
             } => {
                 ui.label(theme::muted("joint"));
@@ -514,6 +559,7 @@ fn fields(ui: &mut Ui, key: &str, rig: &NodeTree, from: &Option<String>, layer: 
                 number(ui, "by speed", by_speed, 0.005, 0.0..=1.0);
                 number(ui, "on step", on_step, 0.005, 0.0..=1.0);
                 number(ui, "ease · s", &mut ease.0, 0.01, 0.0..=2.0);
+                number(ui, "most · share", most, 0.01, 0.0..=0.95);
             }
         });
     let during = match layer {

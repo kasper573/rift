@@ -23,6 +23,7 @@ use engine::core::content::{Content, FilesystemFolder};
 use engine::core::geometry::{Degrees, Radians};
 use engine::core::ground::Heightfield;
 use engine::core::math::Pos;
+use engine::core::render::Look;
 use engine::core::render::camera::{self, world_point};
 use engine::core::render::world::WorldScenePlugin;
 use engine::core::render::world::body;
@@ -33,6 +34,7 @@ use engine::core::render::world::sky::Daylight;
 use engine::core::time::Seconds;
 use engine::core::units::Meters;
 use engine::core::vfx::render::VfxMaterialsPlugin;
+use engine::systems::GameSettings;
 use engine::systems::actor::layering::{self, Layering};
 use engine::systems::actor::model::{ActorModel, ModelId};
 use engine::systems::actor::skeleton::Clip;
@@ -202,6 +204,7 @@ pub fn area(folder: &Path, shot: &Path, out: &Path) {
             1.0 / 60.0,
         )))
         .add_plugins((WorldScenePlugin, VfxMaterialsPlugin))
+        .insert_resource(content.built::<GameSettings>().look.clone())
         .insert_resource(content)
         .init_resource::<Read>()
         .add_observer(|read: On<ReadbackComplete>, mut taken: ResMut<Read>| {
@@ -314,6 +317,7 @@ fn set_up(
     if !scenery::shaders_ready(world, content, &picture.area) {
         return None;
     }
+    let grade = world.resource::<Look>().picture;
     let camera = world
         .spawn((
             Camera3d::default(),
@@ -323,7 +327,7 @@ fn set_up(
             },
             RenderTarget::Image(image.clone().into()),
             camera::lens(shot.lens.fov, shot.width, shot.height),
-            camera::picture(),
+            camera::picture(grade),
             Transform::from_translation(shot.lens.eye.point(&picture.area.heights))
                 .looking_at(shot.lens.target.point(&picture.area.heights), Vec3::Y),
         ))

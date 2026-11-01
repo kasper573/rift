@@ -57,7 +57,7 @@ fn the_pointer_ray_lands_where_the_ground_shows() {
         (Pos::new(3.0, 3.0), "the flat"),
     ];
     for (turned, tilted) in [(0.0, -25.0), (45.0, 0.0), (135.0, 15.0), (270.0, -10.0)] {
-        let mut rig = CameraRig::default();
+        let mut rig = CameraRig::new(testkit::look().camera);
         rig.look_at(Pos::new(14.0, 14.0), Meters(1.0));
         rig.turn_now(Degrees(turned));
         rig.tilt_now(Degrees(tilted));
@@ -87,7 +87,7 @@ fn pointing_at_a_body_where_it_shows_picks_it() {
     let at = Pos::new(12.0, 19.0);
     let foot = world_point(at, heights.height_at(at));
     for zoomed in 0..3 {
-        let mut rig = CameraRig::default();
+        let mut rig = CameraRig::new(testkit::look().camera);
         rig.look_at(Pos::new(14.0, 14.0), Meters(1.0));
         for _ in 0..zoomed {
             rig.zoom_in();

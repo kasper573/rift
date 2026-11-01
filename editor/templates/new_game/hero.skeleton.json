@@ -78,5 +78,10 @@
       },
       "pace": 1.5
     }
-  ]
+  ],
+  "easing": {
+    "turn": 0.12,
+    "crossfade": 0.1,
+    "clasp": 0.15
+  }
 }

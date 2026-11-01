@@ -18,8 +18,8 @@ const HAIR_SHORT: f32 = 0.999999;
 // DEPRECATED: a temporary stand-in for Bevy's `apply_pbr_lighting`, to be deleted once
 // https://github.com/bevyengine/bevy/pull/26335 ships in the Bevy this engine builds on; every
 // world shader lights through it until then. Bevy takes pow(1 - N·V, 5) with N·V unclamped above,
-// so a face turned square to the camera now and then rounds it past 1: WebGL makes that pow NaN,
-// which bloom spreads into a flash over the screen. A normal a hair short of a unit keeps N·V
+// so a face turned square to the camera now and then rounds it past 1: a pow of a negative base is
+// undefined in WGSL and comes out NaN, which bloom spreads into a flash over the screen. A normal a hair short of a unit keeps N·V
 // under 1 and lights alike otherwise.
 fn lighting(input: PbrInput) -> vec4<f32> {
     var shortened = input;

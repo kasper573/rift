@@ -7,7 +7,6 @@ use std::sync::Arc;
 use engine::core::content::Content;
 use engine::core::geometry::{Degrees, Radians};
 use engine::core::math::{Offset, Pos};
-use engine::core::render::camera::{FOV, PITCH};
 use engine::core::units::Meters;
 use engine::systems::area::scenery::Sources;
 use engine::systems::area::{self, Kept, PROP_STAGE, Picture, Pictured};
@@ -25,7 +24,7 @@ use engine::systems::item::{Grip, ItemId, Wear};
 
 use ui::egui::{Response, Sense, Vec2};
 
-use super::area::camera::{self, AreaCanvas, OrbitCamera};
+use super::area::camera::{self, AreaCanvas, LENS, OrbitCamera, PITCH};
 use super::area::viewport::{Request, StageClip, StageLayers, StandingActor, StandingProp};
 use crate::app::Editor;
 
@@ -253,7 +252,7 @@ pub fn framing(radius: f32) -> OrbitCamera {
         target: center(),
         yaw: YAW.radians(),
         pitch: PITCH.radians(),
-        distance: Meters((radius.max(0.5) / (FOV.radians().0 / 2.0).sin()).max(2.5)),
+        distance: Meters((radius.max(0.5) / (LENS.radians().0 / 2.0).sin()).max(2.5)),
     }
 }
 

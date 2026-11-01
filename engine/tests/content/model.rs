@@ -397,7 +397,12 @@ fn a_painted_texture_lays_each_colour_as_thick_as_its_mask_is_bright() {
     };
     let red = layer(0, [255, 0, 0]);
     let blue = layer(1, [0, 0, 255]);
-    let painted = bake(&base, &[(&mask, &red), (&mask, &blue)]).expect("it bakes");
+    let painted = bake(
+        &base,
+        &[(&mask, &red), (&mask, &blue)],
+        testkit::look().materials,
+    )
+    .expect("it bakes");
     assert!(
         painted.surface.is_none(),
         "no metal layer leaves the surface as it is"
@@ -420,7 +425,12 @@ fn a_painted_texture_lays_each_colour_as_thick_as_its_mask_is_bright() {
 
     let half = image(&[[128, 0, 0, 255]]);
     let black = image(&[[0, 0, 0, 255]]);
-    let painted = bake(&black, &[(&half, &layer(0, [255, 255, 255]))]).expect("it bakes");
+    let painted = bake(
+        &black,
+        &[(&half, &layer(0, [255, 255, 255]))],
+        testkit::look().materials,
+    )
+    .expect("it bakes");
     let [r, g, b, _] = painted.colour.data.expect("pixels")[..] else {
         panic!("one pixel");
     };
@@ -431,7 +441,7 @@ fn a_painted_texture_lays_each_colour_as_thick_as_its_mask_is_bright() {
 
     let wide = image(&[grey, grey]);
     assert!(
-        bake(&wide, &[(&black, &red)]).is_none(),
+        bake(&wide, &[(&black, &red)], testkit::look().materials).is_none(),
         "a mask of another size paints nothing"
     );
 
@@ -439,10 +449,14 @@ fn a_painted_texture_lays_each_colour_as_thick_as_its_mask_is_bright() {
         metal: true,
         ..layer(0, [200, 200, 200])
     };
-    let surface = bake(&base, &[(&mask, &steel), (&mask, &blue)])
-        .expect("it bakes")
-        .surface
-        .expect("a metal surface");
+    let surface = bake(
+        &base,
+        &[(&mask, &steel), (&mask, &blue)],
+        testkit::look().materials,
+    )
+    .expect("it bakes")
+    .surface
+    .expect("a metal surface");
     let pixels: Vec<_> = surface
         .data
         .expect("pixels")

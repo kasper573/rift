@@ -13,7 +13,7 @@ use bevy::render::render_resource::{
 };
 use bevy::shader::Shader;
 
-use crate::core::render::world::clouds::{self, CLOUD_BASE, CLOUD_TILE, SECOND_SHIFT, SOFTNESS};
+use crate::core::render::world::clouds::{self, CLOUD_TILE, CloudLook, SECOND_SHIFT};
 
 use super::render::{ParamsUniform, SiteUniform, VfxShaderKey};
 
@@ -58,19 +58,20 @@ pub struct Heavens {
     pub cloud_second: Mat2,
 }
 
-impl Default for Heavens {
-    fn default() -> Heavens {
+impl Heavens {
+    /// A sky of no light under clouds that look as `look` says, covering none of it.
+    pub fn clear(look: &CloudLook) -> Heavens {
         Heavens {
             toward: Vec3::Y,
             shining: 0.0,
             color: Vec4::ZERO,
             moon: Vec3::NEG_Y,
             night: 0.0,
-            cloud_base: CLOUD_BASE.0,
+            cloud_base: look.height.0,
             cloud_tile: CLOUD_TILE.0,
             drift: Vec2::ZERO,
-            cloud_edge: clouds::edge(0.0),
-            cloud_softness: SOFTNESS,
+            cloud_edge: clouds::edge(0.0, look),
+            cloud_softness: look.softness,
             cloud_shift: SECOND_SHIFT,
             cloud_second: clouds::second_read(),
         }
@@ -134,16 +135,15 @@ pub fn dome(meshes: &mut Assets<Mesh>, material: Handle<SkyMaterial>) -> impl Bu
 
 impl Heavens {
     /// The world lit from `toward` in `color`, `strength` times as strong as the full sun, shining
-    /// fully once the light clears the horizon; the moon standing toward `moon`, `night` of the
-    /// way into the night, and the clouds covering `clouds` of the sky, carried `drift` along.
+    /// fully once the light clears the horizon; the moon standing toward `moon`, and `night` of
+    /// the way into the night, under clouds that look as `look` says.
     pub fn new(
         toward: Vec3,
         color: Color,
         strength: f32,
         moon: Vec3,
         night: f32,
-        clouds: f32,
-        drift: Vec2,
+        look: &CloudLook,
     ) -> Heavens {
         let linear = color.to_linear() * strength;
         Heavens {
@@ -152,9 +152,16 @@ impl Heavens {
             color: Vec4::new(linear.red, linear.green, linear.blue, 1.0),
             moon,
             night,
+            ..Heavens::clear(look)
+        }
+    }
+
+    /// These heavens with the clouds covering `clouds` of the sky, carried `drift` along.
+    pub fn covered(self, clouds: f32, drift: Vec2, look: &CloudLook) -> Heavens {
+        Heavens {
             drift,
-            cloud_edge: clouds::edge(clouds),
-            ..Heavens::default()
+            cloud_edge: clouds::edge(clouds, look),
+            ..self
         }
     }
 }

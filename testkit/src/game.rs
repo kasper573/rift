@@ -8,9 +8,15 @@ use engine::core::content::{
     CONFIG_FILE, Content, ContentFile, ContentId, ContentRegistry, LoadReport, MemoryFolder,
     SETTINGS_FILE, Shape, content_path, name_of, table_of, version,
 };
+use engine::core::geometry::Degrees;
 use engine::core::ground::{GroundSize, MIN_SIDE, Paint, SAMPLES_PER_METER};
+use engine::core::math::Rgb;
+use engine::core::render::{
+    CameraFraming, ClearingLook, CloudLook, LightLook, Look, PictureGrade, SkyLook, SurfaceFinish,
+    Zooms,
+};
 use engine::core::time::{Millis, Seconds};
-use engine::core::units::{Meters, MetersPerSec};
+use engine::core::units::{Meters, MetersPerSec, Stops};
 use engine::core::vfx::shader::{SHADER_SOURCE, Stage};
 use engine::systems::actor::Action;
 use engine::systems::area;
@@ -219,6 +225,7 @@ impl Game {
                 "slots": { "bag": 25, "hotbar": 40, "quest_log": 20 },
                 "drops": { "last": 120.0, "scatter": 1.0, "pickup_reach": 1.0 },
                 "reading": { "glance": 2.0, "per_word": 0.3 },
+                "notices": { "pops_last": 1.0, "intro_after": 0.3 },
                 "words": {
                     "accept_quest": "Accept",
                     "decline_quest": "Decline",
@@ -235,6 +242,7 @@ impl Game {
                     "npcs_apart": "enemy",
                 },
                 "history_merges_within": 10.0,
+                "look": look(),
             }))
     }
 
@@ -325,6 +333,7 @@ impl Game {
                 paced("run", RUN_PACE),
                 paced("sprint", SPRINT_PACE),
             ],
+            "easing": { "turn": 0.12, "crossfade": 0.1, "clasp": 0.15 },
         });
         for (field, value) in fields.as_object().expect("a skeleton's fields") {
             row[field] = value.clone();
@@ -818,4 +827,84 @@ pub fn stats(health: f32) -> Value {
 
 fn json_bytes(value: &Value) -> Vec<u8> {
     serde_json::to_vec_pretty(value).expect("json")
+}
+
+/// The look every test game has.
+pub fn look() -> Look {
+    Look {
+        camera: CameraFraming {
+            fov: Degrees(32.0),
+            pitch: Degrees(55.0),
+            lowest_pitch: Degrees(5.0),
+            highest_pitch: Degrees(75.0),
+            turn_step: Degrees(45.0),
+            tilt_step: Degrees(10.0),
+            zooms: Zooms {
+                close: Meters(18.0),
+                middle: Meters(28.0),
+                wide: Meters(40.0),
+            },
+            zoom_ease: Seconds(0.2),
+        },
+        picture: PictureGrade {
+            bloom: 0.3,
+            saturation: 0.88,
+            exposure: Stops(1.85),
+            air_glow: 0.04,
+            air_color: Rgb([140, 184, 255]),
+            void: Rgb([15, 17, 20]),
+        },
+        sky: SkyLook {
+            air_per_metre: 10.0,
+            haze_clear: Meters(50.0),
+            haze_thick: Meters(170.0),
+            thickest_haze: 0.85,
+            day_haze: Rgb([184, 212, 245]),
+            dusk_haze: Rgb([242, 168, 107]),
+            night_haze: Rgb([115, 128, 217]),
+            sunless_haze: Rgb([41, 46, 76]),
+            moist_haze: Rgb([219, 230, 237]),
+            moist_closer: 0.5,
+            moist_scatter: 12.0,
+            moisture_of_cloud: 0.3,
+            sky_share: 0.25,
+            sky_light: 0.3,
+            shaft_height: Meters(40.0),
+            dry_air: 0.006,
+            moist_air: 0.04,
+            setting_sun: Rgb([255, 153, 82]),
+            moonlight: Rgb([158, 184, 255]),
+            moon_share: 0.06,
+            adapting: 0.5,
+            most_adapted: Stops(1.0),
+            dusk_begins: Degrees(6.0),
+            night_falls: Degrees(-10.0),
+            sun_gone: Degrees(-3.0),
+            sun_full: Degrees(8.0),
+        },
+        clouds: CloudLook {
+            height: Meters(150.0),
+            speed: MetersPerSec(Meters(2.5)),
+            fair_shade: 0.35,
+            storm_shade: 0.9,
+            clear_sky: 0.8,
+            full_cover: 0.2,
+            softness: 0.16,
+        },
+        light: LightLook {
+            sun_lux: 2600.0,
+            ambient_nits: 800.0,
+            sun_width: 1.5,
+        },
+        materials: SurfaceFinish {
+            roughness: 0.8,
+            reflectance: 0.5,
+            metal_roughness: 0.45,
+            metallic: 0.7,
+        },
+        clearing: ClearingLook {
+            fades: Seconds(0.2),
+            radius: Meters(2.2),
+        },
+    }
 }

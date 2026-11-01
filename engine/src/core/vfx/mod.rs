@@ -34,12 +34,10 @@ pub type VfxId = ContentId<VfxDef>;
 pub const MAX_PARAMS: usize = 32;
 pub const MAX_LAYERS: usize = 16;
 
-/// How long a layer may run or wait: within a minute, and long enough to be seen.
+/// The shortest a layer may run: long enough to be seen.
 pub const SHORTEST_RUN: Seconds = Seconds(SHORTEST_RUN_EXACT as f32);
-pub const LONGEST_RUN: Seconds = Seconds(LONGEST_RUN_EXACT as f32);
-// The schema states the bounds as written; an f32 widened to f64 would read 0.0500000007.
+// The schema states the bound as written; an f32 widened to f64 would read 0.0500000007.
 const SHORTEST_RUN_EXACT: f64 = 0.05;
-const LONGEST_RUN_EXACT: f64 = 60.0;
 pub const MAX_FRAME_SIDE: u32 = 1024;
 pub const MAX_FRAMES: u32 = 256;
 pub const MAX_FPS: f32 = 120.0;
@@ -108,7 +106,7 @@ pub enum VfxLayer {
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         #[schemars(extend("x-params-of" = "shader"))]
         params: BTreeMap<String, ParamFill>,
-        #[schemars(extend("minimum" = SHORTEST_RUN_EXACT, "maximum" = LONGEST_RUN_EXACT))]
+        #[schemars(extend("minimum" = SHORTEST_RUN_EXACT))]
         duration: Seconds,
         #[serde(default, skip_serializing_if = "Seconds::is_zero")]
         delay: Seconds,
@@ -130,7 +128,7 @@ pub enum SpritePlay {
     #[default]
     Once,
     Loop {
-        #[schemars(extend("minimum" = SHORTEST_RUN_EXACT, "maximum" = LONGEST_RUN_EXACT))]
+        #[schemars(extend("minimum" = SHORTEST_RUN_EXACT))]
         seconds: Seconds,
     },
 }
@@ -317,7 +315,7 @@ impl ContentFile for VfxDef {
         }
         for (index, layer) in self.layers.iter().enumerate() {
             let at = |field: &str| format!("/layers/{index}/{field}");
-            check.range(at("delay"), layer.delay().0, 0.0, LONGEST_RUN.0, "seconds");
+            check.at_least(at("delay"), layer.delay().0, 0.0, "seconds");
             match layer {
                 VfxLayer::Sprite {
                     frame,
@@ -332,7 +330,9 @@ impl ContentFile for VfxDef {
                     check.range(at("frame/height"), frame.height, 1, side, "pixels");
                     check.range(at("frames"), *frames, 1, MAX_FRAMES, "frames");
                     check.range(at("fps"), fps.0, 1.0, MAX_FPS, "frames per second");
-                    check.range(at("scale"), *scale, 0.1, 10.0, "a scale");
+                    if *scale <= 0.0 {
+                        check.error(at("scale"), "out of range", scale, "a scale above 0");
+                    }
                     if let SpritePlay::Loop { seconds } = play {
                         check_run(check, at("play/seconds"), *seconds);
                     }
@@ -548,7 +548,7 @@ fn check_all(loading: &mut Loading) {
 }
 
 fn check_run(check: &mut RowCheck, pointer: String, run: Seconds) {
-    check.range(pointer, run.0, SHORTEST_RUN.0, LONGEST_RUN.0, "seconds");
+    check.at_least(pointer, run.0, SHORTEST_RUN.0, "seconds");
 }
 
 impl SpriteAnchor {

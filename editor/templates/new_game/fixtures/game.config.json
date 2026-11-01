@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "6b83048c",
+  "content_version": "cee82836",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -29,6 +29,10 @@
     "glance": 2.0,
     "per_word": 0.3
   },
+  "notices": {
+    "pops_last": 1.0,
+    "intro_after": 0.3
+  },
   "words": {
     "accept_quest": "Accept",
     "decline_quest": "Decline",
@@ -36,6 +40,118 @@
     "locked": "You can't do that yet.",
     "no_longer": "You can't do that any more.",
     "quest_log_full": "Your quest log is full."
+  },
+  "look": {
+    "camera": {
+      "fov": 32.0,
+      "pitch": 55.0,
+      "lowest_pitch": 5.0,
+      "highest_pitch": 75.0,
+      "turn_step": 45.0,
+      "tilt_step": 10.0,
+      "zooms": {
+        "close": 18.0,
+        "middle": 28.0,
+        "wide": 40.0
+      },
+      "zoom_ease": 0.2
+    },
+    "picture": {
+      "bloom": 0.3,
+      "saturation": 0.88,
+      "exposure": 1.85,
+      "air_glow": 0.04,
+      "air_color": [
+        140,
+        184,
+        255
+      ],
+      "void": [
+        15,
+        17,
+        20
+      ]
+    },
+    "sky": {
+      "air_per_metre": 10.0,
+      "haze_clear": 50.0,
+      "haze_thick": 170.0,
+      "thickest_haze": 0.85,
+      "day_haze": [
+        184,
+        212,
+        245
+      ],
+      "dusk_haze": [
+        242,
+        168,
+        107
+      ],
+      "night_haze": [
+        115,
+        128,
+        217
+      ],
+      "sunless_haze": [
+        41,
+        46,
+        76
+      ],
+      "moist_haze": [
+        219,
+        230,
+        237
+      ],
+      "moist_closer": 0.5,
+      "moist_scatter": 12.0,
+      "moisture_of_cloud": 0.3,
+      "sky_share": 0.25,
+      "sky_light": 0.3,
+      "shaft_height": 40.0,
+      "dry_air": 0.006,
+      "moist_air": 0.04,
+      "setting_sun": [
+        255,
+        153,
+        82
+      ],
+      "moonlight": [
+        158,
+        184,
+        255
+      ],
+      "moon_share": 0.06,
+      "adapting": 0.5,
+      "most_adapted": 1.0,
+      "dusk_begins": 6.0,
+      "night_falls": -10.0,
+      "sun_gone": -3.0,
+      "sun_full": 8.0
+    },
+    "clouds": {
+      "height": 150.0,
+      "speed": 2.5,
+      "fair_shade": 0.35,
+      "storm_shade": 0.9,
+      "clear_sky": 0.8,
+      "full_cover": 0.2,
+      "softness": 0.16
+    },
+    "light": {
+      "sun_lux": 2600.0,
+      "ambient_nits": 800.0,
+      "sun_width": 1.5
+    },
+    "materials": {
+      "roughness": 0.8,
+      "reflectance": 0.5,
+      "metal_roughness": 0.45,
+      "metallic": 0.7
+    },
+    "clearing": {
+      "fades": 0.2,
+      "radius": 2.2
+    }
   },
   "relations": {
     "characters": "ally",

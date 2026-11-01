@@ -26,6 +26,7 @@ use bevy::prelude::*;
 use bevy::render::renderer::RenderAdapterInfo;
 use bevy::world_serialization::{WorldAssetRoot, WorldInstance, WorldInstanceSpawner};
 
+use super::Look;
 use super::camera::{self, CameraRig, FullPicture};
 use super::video::VideoPreferences;
 
@@ -56,11 +57,14 @@ impl Plugin for WorldScenePlugin {
         .init_resource::<material::MaterialCache>()
         .init_resource::<cover::TexturedCovers>()
         .init_resource::<cover::CopyMeshes>()
-        .init_resource::<clouds::CloudSheet>()
         .init_resource::<super::GroundHeights>()
         .add_observer(material::dress_scenes)
         .add_observer(mannequin::start)
         .add_observer(camera::finish_new_picture)
+        .add_systems(
+            First,
+            cloud_look.run_if(resource_exists_and_changed::<Look>),
+        )
         .add_systems(
             Update,
             (
@@ -94,6 +98,18 @@ impl Plugin for WorldScenePlugin {
     fn finish(&self, app: &mut App) {
         let full = FullPicture::on(app.world().get_resource::<RenderAdapterInfo>());
         app.insert_resource(full);
+    }
+}
+
+/// The clouds look as the game's look says, once it is known and whenever it changes.
+fn cloud_look(world: &mut World) {
+    let look = world.resource::<Look>().clouds;
+    match world.get_resource_mut::<clouds::CloudSheet>() {
+        Some(mut sheet) => sheet.restyle(look),
+        None => {
+            let sheet = clouds::CloudSheet::new(world, look);
+            world.insert_resource(sheet);
+        }
     }
 }
 

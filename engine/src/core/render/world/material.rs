@@ -19,8 +19,12 @@ use bevy::render::render_resource::{
 use bevy::shader::{Shader, ShaderRef};
 use bevy::world_serialization::WorldInstanceReady;
 
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
 use super::camera::FullPicture;
 use super::fade::Fades;
+use crate::core::render::Look;
 use crate::core::vfx::cover::WeatherImage;
 use crate::core::vfx::render::{ParamsUniform, SiteUniform, VfxShaderKey};
 use crate::core::vfx::shader::PARAMS_BYTES;
@@ -161,15 +165,19 @@ pub(super) fn embedded(shader: &str) -> ShaderRef {
     ShaderRef::Path(AssetPath::from_path_buf(embedded_path!(shader)).with_source("embedded"))
 }
 
-/// How rough every surface of the world is, and how much light it reflects head-on: the rough
-/// dielectric low-poly art is painted for, which keeps a faint sheen where a face turns toward the
-/// light or away from the eye.
-pub(super) const ROUGHNESS: f32 = 0.8;
-const REFLECTANCE: f32 = 0.5;
-/// How smooth and how metallic a painted metal is: smooth enough that a facet turned to the light
-/// flashes and its neighbours darken, so plate reads as metal beside cloth and skin.
-pub(super) const METAL_ROUGHNESS: f32 = 0.45;
-pub(super) const METALLIC: f32 = 0.7;
+/// How every surface of the world takes the light.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct SurfaceFinish {
+    /// How rough every surface is, and how much light it reflects head-on: a rough dielectric
+    /// keeps a faint sheen where a face turns toward the light or away from the eye.
+    pub roughness: f32,
+    pub reflectance: f32,
+    /// How smooth and how metallic a painted metal is: smooth enough that a facet turned to the
+    /// light flashes and its neighbours darken, so plate reads as metal beside cloth and skin.
+    pub metal_roughness: f32,
+    pub metallic: f32,
+}
 
 /// The world material a mesh gets for the standard material it was loaded with, every surface
 /// alike a rough dielectric over the model's own colours. Nothing in the world is blended: a
@@ -177,11 +185,15 @@ pub(super) const METALLIC: f32 = 0.7;
 /// where it is mostly clear, and any other is masked at a cutoff of zero, which drops nothing by
 /// itself: bevy lets a material's shaders drop pixels only when its alpha mode says they may, and
 /// the fade drops them in every pass.
-pub fn world_material(base: StandardMaterial, full: FullPicture) -> WorldMaterial {
+pub fn world_material(
+    base: StandardMaterial,
+    full: FullPicture,
+    finish: &SurfaceFinish,
+) -> WorldMaterial {
     ExtendedMaterial {
         base: StandardMaterial {
             alpha_mode: world_alpha(base.alpha_mode),
-            ..dielectric(base)
+            ..dielectric(base, finish)
         },
         extension: WorldLook {
             style: FadeStyle::default(),
@@ -195,11 +207,11 @@ pub fn world_material(base: StandardMaterial, full: FullPicture) -> WorldMateria
 }
 
 /// `base` as every surface of the world is: a rough dielectric over its own colours.
-pub(super) fn dielectric(base: StandardMaterial) -> StandardMaterial {
+pub(super) fn dielectric(base: StandardMaterial, finish: &SurfaceFinish) -> StandardMaterial {
     StandardMaterial {
-        perceptual_roughness: ROUGHNESS,
+        perceptual_roughness: finish.roughness,
         metallic: 0.0,
-        reflectance: REFLECTANCE,
+        reflectance: finish.reflectance,
         ..base
     }
 }
@@ -211,10 +223,11 @@ pub(super) fn dielectric(base: StandardMaterial) -> StandardMaterial {
 pub fn looked_material(
     base: StandardMaterial,
     full: FullPicture,
+    finish: &SurfaceFinish,
     look: &MaterialLook,
     weather: Handle<Image>,
 ) -> WorldMaterial {
-    let mut material = world_material(base, full);
+    let mut material = world_material(base, full, finish);
     material.base.double_sided = false;
     material.base.cull_mode = None;
     material.base.diffuse_transmission = look.translucency;
@@ -260,6 +273,7 @@ pub(super) struct Wardrobe<'w> {
     cache: ResMut<'w, MaterialCache>,
     full: Res<'w, FullPicture>,
     weather: Option<Res<'w, WeatherImage>>,
+    look: Option<Res<'w, Look>>,
 }
 
 impl Wardrobe<'_> {
@@ -273,14 +287,15 @@ impl Wardrobe<'_> {
     ) -> Option<Handle<WorldMaterial>> {
         let base = self.standard.get(standard)?.clone();
         let full = *self.full;
+        let finish = self.look.as_ref()?.materials;
         let weather = self
             .weather
             .as_ref()
             .map(|weather| weather.0.clone())
             .unwrap_or_default();
         let make = |base: StandardMaterial| match look {
-            Some(look) => looked_material(base, full, look, weather),
-            None => world_material(base, full),
+            Some(look) => looked_material(base, full, &finish, look, weather),
+            None => world_material(base, full, &finish),
         };
         Some(if own {
             self.materials.add(make(base))

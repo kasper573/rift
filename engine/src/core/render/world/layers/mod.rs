@@ -11,7 +11,7 @@ mod squash;
 mod wave;
 
 pub use chain::Chain;
-pub use feet::{Feet, Gait};
+pub use feet::{Feet, Gait, Stepping};
 pub use held_pose::HeldPose;
 pub use squash::Squash;
 pub use wave::Wave;

@@ -26,7 +26,8 @@ impl Plugin for CameraFollowPlugin {
             Update,
             track_player
                 .after(RenderValueSystems)
-                .run_if(in_state(ClientScreen::Area)),
+                .run_if(in_state(ClientScreen::Area))
+                .run_if(resource_exists::<CameraRig>),
         );
     }
 }

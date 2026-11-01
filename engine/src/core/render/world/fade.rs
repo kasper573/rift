@@ -8,16 +8,24 @@ use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
 use super::camera::CameraRig;
 use super::material::{FadeStyle, WorldMaterial};
+use crate::core::render::Look;
 use crate::core::time::Seconds;
 use crate::core::units::Meters;
 
-/// How long a fade takes, out or back.
-pub const FADE: Seconds = Seconds(0.2);
-
-/// How far round the subject a fading thing is cleared, on the ground it stands on.
-pub const CLEARING: Meters = Meters(2.2);
+/// How what hides the camera's subject clears away.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct ClearingLook {
+    /// How long a fade takes, out or back.
+    pub fades: Seconds,
+    /// How far round the subject a fading thing is cleared, on the ground it stands on.
+    pub radius: Meters,
+}
 
 /// A thing that fades when it hides the camera's subject.
 #[derive(Component, Default)]
@@ -38,6 +46,7 @@ pub(super) struct Fading<'w, 's> {
 pub(super) fn fade_occluders(
     time: Res<Time>,
     rig: Res<CameraRig>,
+    look: Res<Look>,
     window: Query<&Window, With<PrimaryWindow>>,
     mut fading: Fading,
 ) {
@@ -58,12 +67,12 @@ pub(super) fn fade_occluders(
         window.resolution.height(),
     ));
     let Some((focus, focus_radius)) = view.project(target).and_then(|focus| {
-        let rim = view.project(target + rig.transform().right() * CLEARING.0)?;
+        let rim = view.project(target + rig.transform().right() * look.clearing.radius.0)?;
         Some((focus, focus.distance(rim)))
     }) else {
         return;
     };
-    let step = time.delta_secs() / FADE.0;
+    let step = time.delta_secs() / look.clearing.fades.0.max(f32::EPSILON);
     for (root, mut fades) in roots.iter_mut() {
         let (mut crossed, mut around_eye) = (false, false);
         for (aabb, transform) in children

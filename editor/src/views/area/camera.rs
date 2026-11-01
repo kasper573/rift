@@ -7,7 +7,7 @@ use std::sync::Arc;
 use bevy::prelude::{Ray3d, Transform, Vec2, Vec3};
 use engine::core::geometry::{Degrees, Radians};
 use engine::core::math::{Pos, Rect};
-use engine::core::render::camera::{FOV, PITCH, View, ground_hit, world_point};
+use engine::core::render::camera::{View, ground_hit, world_point};
 use engine::core::units::{MeterPos, MeterSize, Meters};
 use engine::systems::area::Area;
 use serde::{Deserialize, Serialize};
@@ -15,6 +15,10 @@ use ui::egui::{PointerButton, Pos2, Rect as ERect, Response, Ui};
 
 use crate::keymap::EditorKey;
 
+/// How much of the area the editor's camera takes in, top to bottom.
+pub const LENS: Degrees = Degrees(32.0);
+/// How far down the camera looks as it frames an area.
+pub const PITCH: Degrees = Degrees(55.0);
 /// How close the camera may come to its target, and how far it may draw back.
 pub const NEAREST: Meters = Meters(3.0);
 const FARTHEST: Meters = Meters(400.0);
@@ -61,7 +65,7 @@ impl OrbitCamera {
         let center = bounds.center();
         self.target = Pos::new(center.x, center.y);
         let span = bounds.size.width.max(bounds.size.height).max(1.0);
-        let half_fov = FOV.radians().0 / 2.0;
+        let half_fov = LENS.radians().0 / 2.0;
         self.distance =
             Meters((span * FRAME_MARGIN / 2.0 / half_fov.tan()).clamp(NEAREST.0, FARTHEST.0));
     }
@@ -97,7 +101,7 @@ impl OrbitCamera {
 
     /// Metres of ground a pixel of the viewport spans at the target, over `height` pixels.
     fn metres_per_pixel(&self, height: f32) -> f32 {
-        2.0 * self.distance.0 * (FOV.radians().0 / 2.0).tan() / height.max(1.0)
+        2.0 * self.distance.0 * (LENS.radians().0 / 2.0).tan() / height.max(1.0)
     }
 
     /// Where the camera stands and looks, its target `ground` high.
@@ -110,7 +114,7 @@ impl OrbitCamera {
     }
 
     pub fn view(&self, ground: Meters, viewport: Vec2) -> View {
-        View::new(self.transform(ground), viewport)
+        View::new(self.transform(ground), viewport, LENS)
     }
 
     /// Whether two cameras look alike enough that neither needs remembering over the other.

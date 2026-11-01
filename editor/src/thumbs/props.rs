@@ -15,13 +15,15 @@ use bevy::render::render_resource::{TextureFormat, TextureUsages};
 use bevy_egui::{EguiTextureHandle, EguiUserTextures};
 use engine::core::content::media::GltfInfos;
 use engine::core::geometry::Degrees;
-use engine::core::render::camera::{self as world_camera, FOV};
-use engine::core::render::world::lights::{self, AMBIENT_NITS, SUN_LUX};
+use engine::core::render::Look;
+use engine::core::render::camera::{self as world_camera};
+use engine::core::render::world::lights;
 use engine::core::render::world::sky::{self, Sky};
 use engine::systems::area::prop::PropDef;
 use ui::egui;
 
 use crate::app::Editor;
+use crate::views::area::camera::LENS;
 
 pub const SIZE: u32 = 128;
 const LAYER: usize = 399;
@@ -190,6 +192,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
             ),
             None => (Vec3::new(0.0, 0.5, 0.0), 1.0),
         };
+        let look = world.resource::<Look>().clone();
         let target = {
             let mut image =
                 Image::new_target_texture(SIZE, SIZE, TextureFormat::Rgba8UnormSrgb, None);
@@ -206,7 +209,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
             ))
             .id();
         world.spawn((
-            lights::sun(Color::WHITE, SUN_LUX, SUN_ELEVATION, SUN_AZIMUTH),
+            lights::sun(Color::WHITE, look.light.sun_lux, SUN_ELEVATION, SUN_AZIMUTH),
             layers.clone(),
             ChildOf(root),
         ));
@@ -214,9 +217,10 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
             &mut world.resource_mut::<Assets<ScatteringMedium>>(),
             Sky::Air,
             0.0,
+            &look.sky,
         );
         world.spawn((atmosphere, layers.clone(), ChildOf(root)));
-        let distance = radius / (FOV.radians().0 / 2.0).sin() * 1.1;
+        let distance = radius / (LENS.radians().0 / 2.0).sin() * 1.1;
         let (sin_p, cos_p) = PITCH.radians().0.sin_cos();
         let back = Vec3::new(0.0, distance * sin_p, distance * cos_p);
         let eye = center + Quat::from_rotation_y(YAW.radians().0) * back;
@@ -229,11 +233,11 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
                     ..default()
                 },
                 RenderTarget::Image(target.clone().into()),
-                world_camera::projection(SIZE, SIZE),
-                world_camera::picture(),
+                world_camera::lens(LENS, SIZE, SIZE),
+                world_camera::picture(look.picture),
                 AmbientLight {
                     color: Color::WHITE,
-                    brightness: AMBIENT_NITS,
+                    brightness: look.light.ambient_nits,
                     ..default()
                 },
                 layers,

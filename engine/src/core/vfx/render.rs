@@ -395,10 +395,9 @@ impl SiteFrame {
                     rect: Rect::from_corners(Vec2::ZERO, Vec2::ONE),
                     pixel: Vec2::ONE / size,
                 };
-                let px = present::SCALE
-                    * world
-                        .get_resource::<PresentScale>()
-                        .map_or(1.0, |scale| scale.0.max(0.01));
+                let px = world
+                    .get_resource::<PresentScale>()
+                    .map_or(1.0, |scale| scale.0.max(0.01));
                 SiteFrame::screen(size, Some(texture), px)
             }
             VfxSite::Widget(_) => return None,

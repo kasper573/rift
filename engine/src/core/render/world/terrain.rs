@@ -15,7 +15,7 @@ use bevy::shader::ShaderRef;
 use image::RgbaImage;
 use image::imageops::{self, FilterType};
 
-use super::material::{dielectric, embedded};
+use super::material::{SurfaceFinish, dielectric, embedded};
 use crate::core::ground::{Heightfield, Paint, SAMPLES_PER_METER};
 use crate::core::units::{GROUND_ORIGIN, Meters};
 
@@ -79,6 +79,7 @@ pub struct GroundPictures {
 /// [`chunk_material`], sharing its pictures and layers.
 pub fn ground_material(
     layers: &[GroundLayer],
+    finish: &SurfaceFinish,
     assets: &AssetServer,
     images: &mut Assets<Image>,
 ) -> (GroundMaterial, GroundPictures) {
@@ -87,7 +88,7 @@ pub fn ground_material(
         .filter_map(|layer| Some(assets.load(layer.picture.as_ref()?.0.clone())))
         .collect();
     let material = ExtendedMaterial {
-        base: dielectric(StandardMaterial::default()),
+        base: dielectric(StandardMaterial::default(), finish),
         extension: GroundLook {
             pictures: images.add(stack(1, &[])),
             paint: images.add(paint_image(&[0], 1, 1)),
@@ -125,7 +126,7 @@ pub fn chunk_material(
 ) -> GroundMaterial {
     let (image, grid) = chunk_paint(paint, chunk);
     ExtendedMaterial {
-        base: dielectric(StandardMaterial::default()),
+        base: ground.base.clone(),
         extension: GroundLook {
             pictures: ground.extension.pictures.clone(),
             paint: images.add(image),

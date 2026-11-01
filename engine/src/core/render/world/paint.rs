@@ -12,8 +12,9 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
 use rayon::prelude::*;
 
-use super::material::{METAL_ROUGHNESS, METALLIC, ROUGHNESS, WorldMaterial};
+use super::material::{SurfaceFinish, WorldMaterial};
 use crate::core::math::Rgb;
+use crate::core::render::Look;
 
 /// A texture painted from `base` and `layers`, laid in order.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -92,11 +93,13 @@ pub struct Painter<'w> {
     assets: Res<'w, AssetServer>,
     images: ResMut<'w, Assets<Image>>,
     materials: ResMut<'w, Assets<WorldMaterial>>,
+    look: Option<Res<'w, Look>>,
 }
 
 impl Painter<'_> {
     /// The textures `paint` makes, once its base and masks have loaded and it is baked.
     pub fn texture(&mut self, paint: &Paint) -> Option<Painted> {
+        let finish = self.look.as_ref()?.materials;
         let Painter {
             paints,
             assets,
@@ -129,7 +132,7 @@ impl Painter<'_> {
                 let started = images
                     .get(base.id())
                     .zip(layers)
-                    .and_then(|(base, layers)| Bake::start(base, &layers));
+                    .and_then(|(base, layers)| Bake::start(base, &layers, finish));
                 *baking = match started {
                     Some(bake) => PaintState::Baking(
                         AsyncComputeTaskPool::get().spawn(async { bake.finish() }),
@@ -187,8 +190,12 @@ pub struct Baked {
     pub surface: Option<Image>,
 }
 
-pub fn bake(base: &Image, layers: &[(&Image, &PaintLayer)]) -> Option<Baked> {
-    Some(Bake::start(base, layers)?.finish())
+pub fn bake(
+    base: &Image,
+    layers: &[(&Image, &PaintLayer)],
+    finish: SurfaceFinish,
+) -> Option<Baked> {
+    Some(Bake::start(base, layers, finish)?.finish())
 }
 
 /// A paint's pixels read from its images, ready to bake apart from them.
@@ -199,6 +206,7 @@ pub struct Bake {
     surface: Option<Vec<u8>>,
     masks: Vec<Vec<u8>>,
     layers: Vec<Laid>,
+    finish: SurfaceFinish,
 }
 
 /// A layer as a bake reads it: its mask among the decoded ones, and its colour in linear light.
@@ -211,8 +219,13 @@ struct Laid {
 }
 
 impl Bake {
-    /// Begins baking `layers` over `base`: none when a mask is not the size of the base.
-    pub fn start(base: &Image, layers: &[(&Image, &PaintLayer)]) -> Option<Bake> {
+    /// Begins baking `layers` over `base` for surfaces of `finish`: none when a mask is not the
+    /// size of the base.
+    pub fn start(
+        base: &Image,
+        layers: &[(&Image, &PaintLayer)],
+        finish: SurfaceFinish,
+    ) -> Option<Bake> {
         let pixels = |image: &Image| Some(image.clone().try_into_dynamic().ok()?.to_rgba8());
         let base = pixels(base)?;
         let (width, height) = base.dimensions();
@@ -252,6 +265,7 @@ impl Bake {
             surface,
             masks,
             layers: laid,
+            finish,
         })
     }
 
@@ -260,6 +274,12 @@ impl Bake {
         let width = self.width as usize;
         let srgb = &*SRGB;
         let (masks, layers) = (&self.masks, &self.layers);
+        let SurfaceFinish {
+            roughness,
+            metal_roughness,
+            metallic,
+            ..
+        } = self.finish;
         let paint_row = |row: usize, colour: &mut [u8], surface: Option<&mut [u8]>| {
             let mut surface = surface
                 .map(|surface| surface.as_chunks_mut::<4>().0.iter_mut())
@@ -282,11 +302,11 @@ impl Bake {
                     *byte = srgb[(mixed.clamp(0.0, 1.0) * SRGB_STEPS as f32).round() as usize];
                 }
                 if let Some(pixel) = surface.next() {
-                    let roughness = ROUGHNESS + (METAL_ROUGHNESS - ROUGHNESS) * metal;
+                    let rough = roughness + (metal_roughness - roughness) * metal;
                     *pixel = [
                         0,
-                        (roughness * 255.0).round() as u8,
-                        (METALLIC * metal * 255.0).round() as u8,
+                        (rough * 255.0).round() as u8,
+                        (metallic * metal * 255.0).round() as u8,
                         255,
                     ];
                 }

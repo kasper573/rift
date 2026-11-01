@@ -32,15 +32,16 @@ use crate::core::geometry::Radians;
 use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::ground::{Heightfield, OVERVIEW_STRIDE, Paint, SAMPLES_PER_METER, TileAt};
 use crate::core::math::{Pos, Rect, Rng, Size};
+use crate::core::render::camera::WorldPicture;
 use crate::core::render::present::AreaGrade;
 use crate::core::render::world::clouds::{self, CloudSheet};
 use crate::core::render::world::cover;
 use crate::core::render::world::fade::Fades;
-use crate::core::render::world::lights::{self, AMBIENT_NITS, Flicker, SUN_LUX};
+use crate::core::render::world::lights::{self, Flicker};
 use crate::core::render::world::material::{MaterialLook, MaterialLooks};
 use crate::core::render::world::sky::{self, Daylight, SunLight};
 use crate::core::render::world::terrain::{self, GroundLayer, GroundMaterial};
-use crate::core::render::{camera, world_point};
+use crate::core::render::{Look, camera, world_point};
 use crate::core::spatial::SpatialIndex;
 use crate::core::time::Seconds;
 use crate::core::units::{MeterSize, Meters};
@@ -102,23 +103,28 @@ pub fn spawn(
             ))
             .id()
     });
-    let humidity = humidity(area);
+    let look = world.resource::<Look>().clone();
+    let humidity = humidity(area, &look);
     let atmosphere = sky::atmosphere(
         &mut world.resource_mut::<Assets<ScatteringMedium>>(),
         area.lighting.sky,
         humidity,
+        &look.sky,
     );
     world.spawn((atmosphere, ChildOf(root)));
     let mut dome = None;
     if area.lighting.sky.is_air() {
-        world.spawn((sky::air(area.size.bounds(), humidity), ChildOf(root)));
+        world.spawn((
+            sky::air(area.size.bounds(), humidity, &look.sky),
+            ChildOf(root),
+        ));
         dome = area
             .lighting
             .dome
             .as_ref()
             .and_then(|look| spawn_dome(world, content, look, root));
     }
-    let terrain = spawn_terrain(world, content, area, root);
+    let terrain = spawn_terrain(world, content, area, &look, root);
     let covers = cover_layers(world, content, area);
     let mut props = SpatialIndex::new(PLACEMENT_CELL);
     props.refile_spots(area.props.iter().map(|placed| placed.at));
@@ -790,24 +796,28 @@ pub fn despawn(world: &mut World, scenery: Scenery) {
 /// on by the wind, and the ambient light, the haze of the sun as it shines and the area's sky put
 /// on `camera`; cheap enough to do every frame.
 pub fn light(world: &mut World, area: &Area, daylight: Daylight, scenery: Scenery, camera: Entity) {
-    let sun = sun_at(area, daylight);
+    let look = world.resource::<Look>().clone();
+    let (clouds, water) = (area.weather.clouds, area.weather.water);
+    let sun = sun_at(area, daylight, &look);
     let elevation = sun.map(|sun| sun.elevation);
     let ambient = AmbientLight {
         color: area.lighting.ambient.color(),
-        brightness: AMBIENT_NITS
-            * sky::ambient_at(daylight, elevation, area.weather.clouds, area.weather.water),
+        brightness: look.light.ambient_nits
+            * sky::ambient_at(daylight, elevation, clouds, water, &look),
         ..default()
     };
-    world
-        .resource_mut::<CloudSheet>()
-        .cover(area.weather.clouds, area.weather.water);
-    let shining = sun.map(|sun| sky::shining(sun, area.weather.clouds, area.weather.water));
+    world.resource_mut::<CloudSheet>().cover(clouds, water);
+    let shining = sun.map(|sun| sky::shining(sun, clouds, water, &look));
     if let (Some(sun), Some(shining), Some(entity)) = (sun, shining, scenery.sun) {
         if let Some(mut light) = world.get_mut::<DirectionalLight>(entity) {
             light.color = shining.color;
             light.illuminance = shining.illuminance;
         }
-        let drifted = clouds::drift(climate(area).wind, world.resource::<Time>().elapsed_secs());
+        let drifted = clouds::drift(
+            climate(area).wind,
+            world.resource::<Time>().elapsed_secs(),
+            &look.clouds,
+        );
         let center = area.size.bounds().center();
         let placed = lights::sun_transform(
             shining.elevation,
@@ -824,44 +834,44 @@ pub fn light(world: &mut World, area: &Area, daylight: Daylight, scenery: Scener
             let heavens = Heavens::new(
                 placed.back().as_vec3(),
                 shining.color,
-                shining.illuminance
-                    / (SUN_LUX * sky::clouded(area.weather.clouds, area.weather.water)),
+                shining.illuminance / (look.light.sun_lux * sky::clouded(clouds, water, &look)),
                 -lights::toward(sun.elevation, sun.azimuth),
-                sky::night(daylight, sun),
-                area.weather.clouds,
-                drifted,
-            );
+                sky::night(daylight, sun, &look.sky),
+                &look.clouds,
+            )
+            .covered(clouds, drifted, &look.clouds);
             light_dome(world, dome, heavens);
         }
     }
     let mut tone = area.lighting.grade.tone();
     let mut lit = 1.0;
-    if let (Some(shining), Some(noon)) = (shining, sun_at(area, Daylight::Fixed)) {
-        let opened = sky::adaptation(daylight, shining);
+    if let (Some(shining), Some(noon)) = (shining, sun_at(area, Daylight::Fixed, &look)) {
+        let opened = sky::adaptation(daylight, shining, &look);
         tone.exposure.0 += opened.0;
-        let sky_light =
-            sky::ambient_at(daylight, elevation, area.weather.clouds, area.weather.water)
-                / sky::ambient_at(
-                    Daylight::Fixed,
-                    None,
-                    area.weather.clouds,
-                    area.weather.water,
-                );
-        lit = sky::lit(shining, sky_light, opened, noon);
+        let sky_light = sky::ambient_at(daylight, elevation, clouds, water, &look)
+            / sky::ambient_at(Daylight::Fixed, None, clouds, water, &look);
+        lit = sky::lit(shining, sky_light, opened, noon, &look);
     }
     if let Ok(mut camera) = world.get_entity_mut(camera) {
-        camera.insert((
-            ambient,
-            sky::haze(sun, lit, area.lighting.sky, humidity(area)),
-            camera::grading(tone),
-        ));
+        let grade = camera.get::<WorldPicture>().map(|picture| picture.0);
+        let haze = sky::haze(
+            sun,
+            lit,
+            area.lighting.sky,
+            humidity(area, &look),
+            &look.sky,
+        );
+        camera.insert((ambient, haze));
+        if let Some(grade) = grade {
+            camera.insert(camera::grading(tone, grade));
+        }
     }
     sky::show(world, camera, area.lighting.sky);
 }
 
 /// How moist the area's air is under its weather.
-fn humidity(area: &Area) -> f32 {
-    sky::humidity(area.weather.clouds, area.weather.water)
+fn humidity(area: &Area, look: &Look) -> f32 {
+    sky::humidity(area.weather.clouds, area.weather.water, &look.sky)
 }
 
 /// The dome the area's sky is painted on, its shader filled with the look's parameters.
@@ -879,7 +889,7 @@ fn spawn_dome(
         site: SiteUniform::default(),
         params,
         weather: world.resource::<cover_vfx::WeatherImage>().0.clone(),
-        heavens: Heavens::default(),
+        heavens: Heavens::clear(world.resource::<CloudSheet>().look()),
         clouds: world.resource::<CloudSheet>().field(),
         shader,
     };
@@ -907,7 +917,7 @@ fn light_dome(world: &mut World, dome: Entity, heavens: Heavens) {
     }
 }
 
-fn sun_at(area: &Area, daylight: Daylight) -> Option<SunLight> {
+fn sun_at(area: &Area, daylight: Daylight, look: &Look) -> Option<SunLight> {
     area.lighting.sun.map(|sun| {
         sky::sun_at(
             daylight,
@@ -916,6 +926,7 @@ fn sun_at(area: &Area, daylight: Daylight) -> Option<SunLight> {
             sun.color.color(),
             area.weather.clouds,
             area.weather.water,
+            look,
         )
     })
 }
@@ -974,10 +985,17 @@ pub fn lay_ground(world: &mut World, scenery: Scenery, heights: &Heightfield, pa
 }
 
 /// The ground's root, holding the material its chunks are painted from.
-fn spawn_terrain(world: &mut World, content: &Content, area: &Area, root: Entity) -> Entity {
+fn spawn_terrain(
+    world: &mut World,
+    content: &Content,
+    area: &Area,
+    look: &Look,
+    root: Entity,
+) -> Entity {
     let layers = ground_layers(content, area);
     let (material, pictures) = world.resource_scope(|world, mut images: Mut<Assets<Image>>| {
-        terrain::ground_material(&layers, world.resource::<AssetServer>(), &mut images)
+        let assets = world.resource::<AssetServer>();
+        terrain::ground_material(&layers, &look.materials, assets, &mut images)
     });
     let material = world.resource_mut::<Assets<GroundMaterial>>().add(material);
     world

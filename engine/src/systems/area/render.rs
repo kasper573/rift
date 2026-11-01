@@ -8,9 +8,9 @@ use super::scenery::{self, Scenery, SceneryPlugin};
 use super::{AreaId, AreaObject, AreaTag};
 use crate::core::content::Content;
 use crate::core::math::{Pos, Rect};
-use crate::core::render::camera::Zoom;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::sky::Daylight;
+use crate::core::render::{CameraFraming, CameraRig};
 use crate::core::render::{GroundHeights, WorldCamera, ground_height, world_point};
 use crate::core::units::{MeterSize, Meters};
 use crate::core::vfx::render::SiteExtent;
@@ -110,13 +110,17 @@ fn follow_view(world: &mut World) {
     else {
         return;
     };
-    scenery::view_from(world, stood, at, view_reach());
+    let Some(rig) = world.get_resource::<CameraRig>() else {
+        return;
+    };
+    let reach = view_reach(rig.framing());
+    scenery::view_from(world, stood, at, reach);
 }
 
 /// How far around the character the covers, props and lights stand: the ground the camera takes
 /// in from its widest, and as far again for what the frame's edge fades.
-pub fn view_reach() -> Meters {
-    Meters(Zoom::Wide.distance().0 * 4.0)
+pub fn view_reach(framing: &CameraFraming) -> Meters {
+    Meters(framing.zooms.wide.0 * 4.0)
 }
 
 /// Turns the shown area's sun with the hour as it moves, and its clouds with the wind.

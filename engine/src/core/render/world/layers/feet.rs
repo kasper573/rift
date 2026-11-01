@@ -12,17 +12,26 @@ use serde::{Deserialize, Serialize};
 
 use super::{Frame, Rig};
 
-/// How long a foot is in the air.
-const STEP: f32 = 0.2;
-/// How far past the spot the clip would put it a stepping foot lands, in strides, so it does not
-/// step again at once.
-const LEAD: f32 = 0.5;
-/// How far the planted feet may raise or lower the body, in metres.
-const MOST_RISE: f32 = 0.5;
-/// How steeply the planted feet may tilt the body.
-const MOST_TILT: f32 = 0.5;
-/// How quickly the body settles onto its planted feet: the time it takes to go most of the way.
-const SETTLE: f32 = 0.12;
+/// How a body's feet step and carry it.
+#[derive(Clone, Copy, Debug)]
+pub struct Stepping {
+    /// How far a foot's spot drifts from where it stands before it steps, in metres.
+    pub stride: f32,
+    /// How high a stepping foot is lifted, in metres.
+    pub lift: f32,
+    /// How long a foot is in the air, in seconds.
+    pub step: f32,
+    /// How far past the spot the clip would put it a stepping foot lands, in strides, so it does
+    /// not step again at once.
+    pub lead: f32,
+    /// How far the planted feet may raise or lower the body, in metres.
+    pub most_rise: f32,
+    /// How steeply the planted feet may tilt the body, as a slope.
+    pub most_tilt: f32,
+    /// How quickly the body settles onto its planted feet: the seconds it takes to go most of the
+    /// way.
+    pub settle: f32,
+}
 
 /// Which feet step together.
 #[derive(
@@ -54,8 +63,7 @@ pub enum Gait {
 
 pub struct Feet {
     legs: Vec<Leg>,
-    stride: f32,
-    lift: f32,
+    stepping: Stepping,
     /// How far the body is raised and how its ground slopes under it, along its right and front.
     body: Vec3,
 }
@@ -78,9 +86,8 @@ struct Step {
 
 impl Feet {
     /// The feet of `legs`, each a chain of joints from the hip to the foot down the rig, stepping in
-    /// `gait` once a foot is `stride` metres from its spot, lifting it `lift` metres. A leg that is
-    /// not a chain down the rig is left out.
-    pub fn new(rig: &Rig, legs: &[Vec<u16>], gait: Gait, stride: f32, lift: f32) -> Feet {
+    /// `gait` as `stepping` says. A leg that is not a chain down the rig is left out.
+    pub fn new(rig: &Rig, legs: &[Vec<u16>], gait: Gait, stepping: Stepping) -> Feet {
         let rest = rig.rest_poses();
         let mut posed = rest.clone();
         let view = SkeletonView {
@@ -111,8 +118,7 @@ impl Feet {
                     ik: IterateState::default(),
                 })
                 .collect(),
-            stride,
-            lift,
+            stepping,
             body: Vec3::ZERO,
         }
     }
@@ -138,6 +144,13 @@ impl Feet {
             .map(|leg| leg.group)
             .collect();
         let mut lifting: Option<usize> = aloft.first().copied();
+        let Stepping {
+            stride,
+            lift,
+            step: in_air,
+            lead,
+            ..
+        } = self.stepping;
         for leg in &mut self.legs {
             let foot = *leg.chain.as_slice().last().expect("a leg has a foot");
             let clip =
@@ -146,7 +159,7 @@ impl Feet {
             let planted = *leg.planted.get_or_insert(spot);
             let target = match &mut leg.step {
                 Some(step) => {
-                    step.t += frame.dt / STEP;
+                    step.t += frame.dt / in_air.max(f32::EPSILON);
                     if step.t >= 1.0 {
                         let landed = step.to;
                         leg.planted = Some(landed);
@@ -154,15 +167,15 @@ impl Feet {
                         landed
                     } else {
                         step.from.lerp(step.to, step.t)
-                            + Vec3::Y * self.lift * scale * (step.t * std::f32::consts::PI).sin()
+                            + Vec3::Y * lift * scale * (step.t * std::f32::consts::PI).sin()
                     }
                 }
                 None => {
                     let drift = Vec2::new(spot.x - planted.x, spot.z - planted.z);
                     let free = lifting.is_none_or(|group| group == leg.group);
-                    if drift.length() > self.stride * scale && free {
+                    if drift.length() > stride * scale && free {
                         lifting = Some(leg.group);
-                        let ahead = drift.normalize_or_zero() * self.stride * scale * LEAD;
+                        let ahead = drift.normalize_or_zero() * stride * scale * lead;
                         let to = grounded(
                             frame,
                             Vec3::new(spot.x + ahead.x, spot.y, spot.z + ahead.y),
@@ -216,12 +229,18 @@ impl Feet {
             ),
             _ => plane(&planted),
         };
+        let Stepping {
+            most_rise,
+            most_tilt,
+            settle,
+            ..
+        } = self.stepping;
         let wanted = Vec3::new(
-            wanted.x.clamp(-MOST_RISE / scale, MOST_RISE / scale),
-            wanted.y.clamp(-MOST_TILT, MOST_TILT),
-            wanted.z.clamp(-MOST_TILT, MOST_TILT),
+            wanted.x.clamp(-most_rise / scale, most_rise / scale),
+            wanted.y.clamp(-most_tilt, most_tilt),
+            wanted.z.clamp(-most_tilt, most_tilt),
         );
-        self.body += (wanted - self.body) * (1.0 - (-frame.dt / SETTLE).exp());
+        self.body += (wanted - self.body) * (1.0 - (-frame.dt / settle.max(f32::EPSILON)).exp());
         let Some(base) =
             (0..frame.view.parents.len()).find(|&joint| frame.view.parents[joint].is_none())
         else {

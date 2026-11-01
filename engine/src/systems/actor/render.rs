@@ -43,11 +43,6 @@ use crate::systems::item::{Grip, ItemId, PropAxis, Wear};
 use crate::systems::movement::RenderPosition;
 use crate::systems::screen::ClientScreen;
 
-/// How long an actor takes to turn to a new facing.
-const TURN: Seconds = Seconds(0.12);
-/// How long one clip blends into the next.
-const CROSSFADE: Seconds = Seconds(0.1);
-
 pub struct ActorRenderPlugin;
 
 impl Plugin for ActorRenderPlugin {
@@ -216,11 +211,12 @@ struct Turn {
     from: Radians,
     to: Radians,
     started: Seconds,
+    lasts: Seconds,
 }
 
 impl Turn {
     fn shown(&self, now: Seconds) -> Radians {
-        let t = ((now - self.started).0 / TURN.0).clamp(0.0, 1.0);
+        let t = ((now - self.started).0 / self.lasts.0.max(f32::EPSILON)).clamp(0.0, 1.0);
         let apart = (self.to.0 - self.from.0).rem_euclid(std::f32::consts::TAU);
         let short = if apart > std::f32::consts::PI {
             apart - std::f32::consts::TAU
@@ -331,6 +327,7 @@ pub fn dress(world: &mut World) {
                     from: facing,
                     to: facing,
                     started: now,
+                    lasts: Seconds(0.0),
                 },
                 held: BTreeMap::new(),
             },
@@ -499,6 +496,7 @@ pub fn pose(world: &mut World) {
     let mut sounds = Vec::new();
     for (entity, shown, at, actor, model, playing) in shown {
         let model = ActorModel::get(&content, model);
+        let easing = model.skeleton().def.easing;
         let stance = held::stance_of(world, entity);
         let ground = ground_height(world, at.0);
         let given = playing
@@ -608,6 +606,7 @@ pub fn pose(world: &mut World) {
                 from: puppet.turn.shown(now),
                 to: shown.facing,
                 started: now,
+                lasts: easing.turn,
             };
         }
         let facing = puppet.turn.shown(now);
@@ -676,8 +675,8 @@ pub fn pose(world: &mut World) {
                 }
             }
             for track in &mut tracks {
-                let step = if CROSSFADE.0 > 0.0 {
-                    delta.0 / CROSSFADE.0
+                let step = if easing.crossfade.0 > 0.0 {
+                    delta.0 / easing.crossfade.0
                 } else {
                     1.0
                 };

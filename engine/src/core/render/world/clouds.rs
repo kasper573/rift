@@ -9,21 +9,17 @@ use bevy::light::DirectionalLightTexture;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
-use crate::core::units::Meters;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use crate::core::units::{Meters, MetersPerSec};
 
 /// How much ground one tile of the field covers, the field repeating past it.
 pub const CLOUD_TILE: Meters = Meters(640.0);
-/// The height the field of cloud lies at.
-pub const CLOUD_BASE: Meters = Meters(150.0);
 /// How much ground the field's shadows reach over round where they are laid, repeating past it.
 pub const SHADOW_SPAN: Meters = Meters(512.0);
 /// The lowest a light stands over the horizon, in degrees, for the field to cast its shadows.
 pub const LOWEST_LIGHT: f32 = 2.0;
-/// How fast the clouds drift for a full wind.
-pub const CLOUD_SPEED: f32 = 2.5;
-/// How much of the sun a cloud takes, from fair-weather cloud to storm cloud.
-const FAIR_SHADE: f32 = 0.35;
-const STORM_SHADE: f32 = 0.9;
 /// Texels a side of the field and of its shadows.
 const SHEET: u32 = 256;
 const SHADOWS: u32 = 256;
@@ -35,17 +31,31 @@ const CELLS: u32 = 4;
 const OCTAVES: u32 = 3;
 /// How far, in tiles, the field's noise is pushed about where it is read.
 const WARP: f32 = 0.12;
-/// Where, in the noise's range, cloud begins under a clear sky and under a full cover, and how
-/// far past that it is thick.
-const CLEAR_SKY: f32 = 0.8;
-const FULL_COVER: f32 = 0.2;
-pub const SOFTNESS: f32 = 0.16;
 /// The second read of the noise every point blends with its first: turned and scaled by amounts
 /// no small whole numbers relate, so the two only fall in step again far past anything in view,
 /// and the turn crosses the rows the noise's square lattice would otherwise line its clouds up in.
 const SECOND_TURN: f32 = 1.0;
 const SECOND_SCALE: f32 = 0.754_877_7;
 pub const SECOND_SHIFT: Vec2 = Vec2::new(0.373, 0.619);
+
+/// How the clouds look: where they lie, how they drift, how much of the sun they take and how
+/// they thicken with the weather.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct CloudLook {
+    /// The height the field of cloud lies at.
+    pub height: Meters,
+    /// How fast the clouds drift for a full wind.
+    pub speed: MetersPerSec,
+    /// How much of the sun a cloud takes, from fair-weather cloud to storm cloud.
+    pub fair_shade: f32,
+    pub storm_shade: f32,
+    /// Where, in the field's noise, cloud begins under a clear sky and under a full cover, and how
+    /// far past that it is thick.
+    pub clear_sky: f32,
+    pub full_cover: f32,
+    pub softness: f32,
+}
 
 /// The one field of cloud every sky paints and every sun casts: `field`, the noise the clouds are
 /// drawn from in red, read twice and blended where it is read (`read`), so it never shows where it
@@ -58,10 +68,11 @@ pub struct CloudSheet {
     noise: Vec<f32>,
     weather: (f32, f32),
     laid: Option<Laid>,
+    look: CloudLook,
 }
 
-impl FromWorld for CloudSheet {
-    fn from_world(world: &mut World) -> CloudSheet {
+impl CloudSheet {
+    pub fn new(world: &mut World, look: CloudLook) -> CloudSheet {
         let noise: Vec<f32> = (0..SHEET * SHEET)
             .map(|texel| {
                 noise(Vec2::new((texel % SHEET) as f32, (texel / SHEET) as f32) / SHEET as f32)
@@ -85,11 +96,21 @@ impl FromWorld for CloudSheet {
             noise,
             weather: (0.0, 0.0),
             laid: None,
+            look,
         }
     }
-}
 
-impl CloudSheet {
+    /// The clouds looking as `look` says from now on.
+    pub fn restyle(&mut self, look: CloudLook) {
+        if self.look != look {
+            self.look = look;
+            self.laid = None;
+        }
+    }
+
+    pub fn look(&self) -> &CloudLook {
+        &self.look
+    }
     /// The field's shadows laid over a sun.
     pub fn over_sun(&self) -> DirectionalLightTexture {
         DirectionalLightTexture {
@@ -106,8 +127,8 @@ impl CloudSheet {
     /// How cloudy the sky is at `at`, in tiles, under the cover last set, 0 clear to 1 thick, as
     /// the sky reads the field.
     pub fn cloudiness(&self, at: Vec2) -> f32 {
-        let edge = edge(self.weather.0);
-        smoothstep(edge, edge + SOFTNESS, read(&self.noise, at))
+        let edge = edge(self.weather.0, &self.look);
+        smoothstep(edge, edge + self.look.softness, read(&self.noise, at))
     }
 
     /// Thickens or thins the field's shadows to cover `clouds` of the sky, 0 none and 1 all of
@@ -125,7 +146,8 @@ impl CloudSheet {
     /// it and the clouds have travelled `RELAID_AFTER` since; until then the light is carried
     /// along with the clouds, so the shadows last laid fall where the clouds have drifted since.
     pub fn lay(&mut self, light: Transform, drift: Vec2, images: &mut Assets<Image>) -> Transform {
-        let laid = match self.laid.filter(|laid| laid.holds(light, drift)) {
+        let height = self.look.height;
+        let laid = match self.laid.filter(|laid| laid.holds(light, drift, height)) {
             Some(laid) => laid,
             None => {
                 self.paint_shadows(light, drift, images);
@@ -141,7 +163,7 @@ impl CloudSheet {
     }
 
     fn paint_shadows(&self, light: Transform, drift: Vec2, images: &mut Assets<Image>) {
-        let shade = shade(self.weather.1);
+        let shade = shade(self.weather.1, &self.look);
         let toward = light.back().as_vec3();
         let data = (0..SHADOWS * SHADOWS)
             .flat_map(|texel| {
@@ -149,7 +171,7 @@ impl CloudSheet {
                     / SHADOWS as f32;
                 let near =
                     light.transform_point(Vec3::new(1.0 - 2.0 * uv.x, 2.0 * uv.y - 1.0, 0.0));
-                let over = near + toward * (CLOUD_BASE.0 - near.y) / toward.y;
+                let over = near + toward * (self.look.height.0 - near.y) / toward.y;
                 let at = (Vec2::new(over.x, over.z) - drift) / CLOUD_TILE.0;
                 let lit = 1.0 - shade * self.cloudiness(at);
                 [lit, lit, lit, 1.0].map(|value| (value * 255.0) as u8)
@@ -162,13 +184,13 @@ impl CloudSheet {
 }
 
 /// How much of the sun a cloud holding `water` takes.
-pub fn shade(water: f32) -> f32 {
-    FAIR_SHADE + (STORM_SHADE - FAIR_SHADE) * water.clamp(0.0, 1.0)
+pub fn shade(water: f32, look: &CloudLook) -> f32 {
+    look.fair_shade + (look.storm_shade - look.fair_shade) * water.clamp(0.0, 1.0)
 }
 
 /// How far the clouds have drifted on `wind` after `seconds`.
-pub fn drift(wind: Vec2, seconds: f32) -> Vec2 {
-    wind * CLOUD_SPEED * seconds
+pub fn drift(wind: Vec2, seconds: f32, look: &CloudLook) -> Vec2 {
+    wind * look.speed.0.0 * seconds
 }
 
 /// Where the shadows were last laid: along the rays of `light`, the field carried `drift`.
@@ -180,8 +202,8 @@ struct Laid {
 
 impl Laid {
     /// Whether the shadows laid here still fall true under `light` with the field carried `drift`.
-    fn holds(&self, light: Transform, drift: Vec2) -> bool {
-        let slip = CLOUD_BASE.0 * (lean(self.light) - lean(light)).length();
+    fn holds(&self, light: Transform, drift: Vec2, height: Meters) -> bool {
+        let slip = height.0 * (lean(self.light) - lean(light)).length();
         let travelled =
             self.light.translation.distance(light.translation) + self.drift.distance(drift);
         slip < SHADOW_SPAN.0 / SHADOWS as f32 && travelled < RELAID_AFTER.0
@@ -195,8 +217,8 @@ fn lean(light: Transform) -> Vec2 {
 }
 
 /// Where, in the noise's range, cloud begins under `clouds`.
-pub fn edge(clouds: f32) -> f32 {
-    CLEAR_SKY + (FULL_COVER - CLEAR_SKY) * clouds.clamp(0.0, 1.0)
+pub fn edge(clouds: f32, look: &CloudLook) -> f32 {
+    look.clear_sky + (look.full_cover - look.clear_sky) * clouds.clamp(0.0, 1.0)
 }
 
 /// How the second read of the noise is turned and scaled from the first, in tiles; it is then

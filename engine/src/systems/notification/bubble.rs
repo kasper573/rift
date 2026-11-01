@@ -35,7 +35,6 @@ const LINES: usize = 2;
 const FULL: usize = 3;
 const FULL_IN_SMALL_WINDOW: usize = 2;
 const SMALL_WINDOW: f32 = 960.0;
-const READ_LINGERS: Seconds = Seconds(0.6);
 const EDGE: f32 = 8.0;
 const CROWN_GAP: f32 = 4.0;
 
@@ -279,10 +278,9 @@ impl Speaking {
             self.lines.push(newest);
             self.changed = now;
         }
-        let lingers = Duration::from(READ_LINGERS);
         let (kept, gone): (Vec<SpokenLine>, Vec<SpokenLine>) = std::mem::take(&mut self.lines)
             .into_iter()
-            .partition(|line| line.read_by.is_none_or(|read_by| now < read_by + lingers));
+            .partition(|line| line.read_by.is_none_or(|read_by| now < read_by));
         self.lines = kept;
         dropped.extend(gone.into_iter().filter_map(|line| line.typing));
         dropped

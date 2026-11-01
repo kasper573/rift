@@ -11,11 +11,8 @@ use super::stance::HandIndex;
 use super::{Action, ActorModel};
 use crate::core::content::gltf::NodeTree;
 use crate::core::render::world::layers::{
-    Chain, Feet, HeldPose, JointLayer, Layered, Rig, Squash, Wave,
+    Chain, Feet, HeldPose, JointLayer, Layered, Rig, Squash, Stepping, Wave,
 };
-
-/// How long a hand takes to close on an item it takes up.
-const CLASP_EASE: f32 = 0.15;
 
 /// When each of a body's layers runs, in the order of its layers.
 #[derive(Component)]
@@ -50,13 +47,27 @@ pub fn layered(
                 gait,
                 stride,
                 lift,
+                step,
+                lead,
+                most_rise,
+                most_tilt,
+                settle,
                 ..
             } => {
                 let legs: Option<Vec<Vec<u16>>> = legs
                     .iter()
                     .map(|leg| leg.joints.iter().map(at).collect())
                     .collect();
-                legs.map(|legs| JointLayer::Feet(Feet::new(&rig, &legs, *gait, stride.0, lift.0)))
+                let stepping = Stepping {
+                    stride: stride.0,
+                    lift: lift.0,
+                    step: step.0,
+                    lead: *lead,
+                    most_rise: most_rise.0,
+                    most_tilt: *most_tilt,
+                    settle: settle.0,
+                };
+                legs.map(|legs| JointLayer::Feet(Feet::new(&rig, &legs, *gait, stepping)))
             }
             Layer::Chain {
                 from,
@@ -81,9 +92,11 @@ pub fn layered(
                 by_speed,
                 on_step,
                 ease,
+                most,
                 ..
-            } => at(joint)
-                .map(|joint| JointLayer::Squash(Squash::new(joint, *by_speed, *on_step, ease.0))),
+            } => at(joint).map(|joint| {
+                JointLayer::Squash(Squash::new(joint, *by_speed, *on_step, ease.0, *most))
+            }),
         };
         if let Some(built) = built {
             layers.push(built);
@@ -101,7 +114,10 @@ pub fn layered(
             })
             .collect();
         if let Some(held) = held.filter(|held| !held.is_empty()) {
-            layers.push(JointLayer::HeldPose(HeldPose::new(held, CLASP_EASE)));
+            layers.push(JointLayer::HeldPose(HeldPose::new(
+                held,
+                skeleton.def.easing.clasp.0,
+            )));
             runs.push(Runs::Holding(HandIndex(hand as u8)));
         }
     }

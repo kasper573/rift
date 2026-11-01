@@ -10,6 +10,7 @@ use bevy::render::gpu_readback::ReadbackComplete;
 
 use engine::core::assets::ImageRef;
 use engine::core::gui::{GuiImage, ImageSource};
+use engine::core::render::SurfaceFinish;
 use engine::core::render::world::paint::{Paint, bake};
 use image::RgbaImage;
 use image::imageops::FilterType;
@@ -107,6 +108,7 @@ impl Thumbnails {
         ctx: &egui::Context,
         files: &ProjectFiles,
         paint: &Paint,
+        finish: SurfaceFinish,
     ) -> Option<Thumbnail> {
         let key = format!("paint:{paint:?}");
         let paths: BTreeSet<&str> = std::iter::once(paint.base.as_str())
@@ -138,7 +140,7 @@ impl Thumbnails {
                 .iter()
                 .map(|layer| Some((images.get(layer.mask.as_str())?, layer)))
                 .collect::<Option<Vec<_>>>()?;
-            bake(base, &layers)?.colour.try_into_dynamic().ok()
+            bake(base, &layers, finish)?.colour.try_into_dynamic().ok()
         });
         let max_side = ctx.input(|i| i.max_texture_side) as u32;
         let thumb = baked.map(|image| {

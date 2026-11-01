@@ -307,7 +307,8 @@ fn show_material(editor: &mut Editor, ui: &mut Ui, key: &str) {
     let files = &project.as_ref().expect("a project").files;
     let width = ui.available_width();
     let paint = material.paint(skeleton, &Colours::default());
-    match form.thumbnails.painted(&ctx, files, &paint) {
+    let finish = content.built::<GameSettings>().look.materials;
+    match form.thumbnails.painted(&ctx, files, &paint, finish) {
         Some(painted) => {
             let size = painted.texture.size_vec2();
             ui.image((painted.texture.id(), size * (width / size.x)));

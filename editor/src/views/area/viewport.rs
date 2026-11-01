@@ -15,13 +15,13 @@ use bevy_egui::EguiUserTextures;
 use engine::core::audio::playback::{self, PlaySfx, SfxPlace};
 use engine::core::content::Content;
 use engine::core::ground::{Heightfield, Paint};
-use engine::core::render::camera;
 use engine::core::render::world::body::{self, Body, Figure};
 use engine::core::render::world::layers::Layered;
 use engine::core::render::world::mannequin::Mannequin;
 use engine::core::render::world::mannequin::mannequin;
 use engine::core::render::world::rig_clip;
 use engine::core::render::world::sky::Daylight;
+use engine::core::render::{Look, camera};
 use engine::core::time::Seconds;
 use engine::core::units::Meters;
 use engine::systems::actor::Action;
@@ -38,6 +38,7 @@ use ui::egui;
 use super::camera::OrbitCamera;
 use crate::app::Editor;
 use crate::stage::picture::render_target;
+use crate::views::area::camera::LENS;
 
 const FIRST_LAYER: usize = 400;
 
@@ -256,6 +257,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
 
 impl RenderedView {
     fn spawn(world: &mut World, layer: usize, size: [u32; 2]) -> RenderedView {
+        let grade = world.resource::<Look>().picture;
         let (image, texture) = render_target(world, size, ImageSampler::linear());
         let root = world
             .spawn((
@@ -273,8 +275,8 @@ impl RenderedView {
                     ..default()
                 },
                 RenderTarget::Image(image.clone().into()),
-                camera::projection(size[0], size[1]),
-                camera::picture(),
+                camera::lens(LENS, size[0], size[1]),
+                camera::picture(grade),
                 RenderLayers::from_layers(&[layer]),
                 Transform::default(),
             ))
@@ -306,7 +308,7 @@ impl RenderedView {
             if let Ok(mut camera) = world.get_entity_mut(self.camera) {
                 camera.insert((
                     RenderTarget::Image(self.image.clone().into()),
-                    camera::projection(request.size[0], request.size[1]),
+                    camera::lens(LENS, request.size[0], request.size[1]),
                 ));
             }
         }

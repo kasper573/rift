@@ -14,6 +14,7 @@ use crate::core::audio::playback::{PlaySfx, SfxPlace};
 use crate::core::gui;
 use crate::core::math::Rgba;
 use crate::core::text::{self, TextMotion, TextShadow};
+use crate::systems::GameSettings;
 use crate::systems::screen::{ClientScreen, area};
 use ui::paint;
 
@@ -29,9 +30,6 @@ const SHADOW: TextShadow = TextShadow {
     offset: Vec2::new(0.0, 2.0),
     color: Color32::from_black_alpha(204),
 };
-/// The breathing room after an area settles before its intro lands: a deliberate pause, so the
-/// title and its sound do not arrive on the same frame as the transition ends.
-const BREATH_AFTER_TRANSITION: Duration = Duration::from_millis(300);
 const PRESENCE: Presence = Presence {
     enter: Move::new(Vec2::new(0.0, 14.0), 0.94, 0.8),
     exit: Move::new(Vec2::new(0.0, -8.0), 1.04, 0.6),
@@ -202,13 +200,14 @@ struct ShowingIntro {
 fn reveal_when_settled(world: &mut World) {
     let delta = world.resource::<Time>().delta();
     let settled = area::settled(world);
+    let after = Duration::from(world.resource::<GameSettings>().notices.intro_after);
     let mut shown = world.resource_mut::<ShownIntro>();
     shown.settled_for = if settled {
         shown.settled_for + delta
     } else {
         Duration::ZERO
     };
-    if shown.settled_for < BREATH_AFTER_TRANSITION || shown.waiting.is_none() {
+    if shown.settled_for < after || shown.waiting.is_none() {
         return;
     }
     let Some(NotificationSent {

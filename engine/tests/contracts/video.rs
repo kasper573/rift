@@ -14,7 +14,7 @@ use engine::core::render::video::{
     AmbientOcclusionQuality, AntiAliasingQuality, ShadowQuality, VideoPreferences,
 };
 use engine::core::render::world::WorldScenePlugin;
-use engine::core::render::world::lights::{self, SUN_LUX};
+use engine::core::render::world::lights;
 use engine::core::vfx::render::VfxMaterialsPlugin;
 use strum::VariantArray;
 
@@ -125,7 +125,8 @@ fn client() -> App {
     .init_asset::<Image>()
     .init_asset::<StandardMaterial>()
     .init_asset::<ScatteringMedium>()
-    .add_plugins((VfxMaterialsPlugin, WorldScenePlugin));
+    .add_plugins((VfxMaterialsPlugin, WorldScenePlugin))
+    .insert_resource(testkit::look());
     app.finish();
     app.cleanup();
     app
@@ -134,11 +135,14 @@ fn client() -> App {
 /// A picture of the world and the sun over it, as a client draws them.
 fn stand(app: &mut App) -> (Entity, Entity) {
     let world = app.world_mut();
-    let picture = world.spawn((Camera3d::default(), camera::picture())).id();
+    let look = testkit::look();
+    let picture = world
+        .spawn((Camera3d::default(), camera::picture(look.picture)))
+        .id();
     let sun = world
         .spawn(lights::sun(
             Color::WHITE,
-            SUN_LUX,
+            look.light.sun_lux,
             Degrees(45.0),
             Degrees(180.0),
         ))

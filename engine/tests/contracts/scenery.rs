@@ -115,6 +115,7 @@ fn client(game: Game, folder: &Path) -> (App, Arc<Area>) {
         WorldScenePlugin,
         scenery::SceneryPlugin { paced: false },
     ))
+    .insert_resource(testkit::look())
     .insert_resource(content);
     app.finish();
     app.cleanup();
