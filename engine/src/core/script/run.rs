@@ -6,6 +6,7 @@ use bevy_ecs::entity_disabling::Disabled;
 use bevy_ecs::prelude::*;
 use bevy_platform::collections::HashMap;
 use bevy_time::Time;
+use rayon::prelude::*;
 use slotmap::{SlotMap, new_key_type};
 use smallvec::{SmallVec, smallvec};
 
@@ -106,7 +107,7 @@ enum Op<V: Vocabulary> {
     Spawn {
         owner: Owner<V>,
         procedures: Vec<Arc<Procedure<V>>>,
-        state: HashMap<ProcedureId, Vec<Value>>,
+        state: OwnerState,
     },
     Remove {
         owner: Owner<V>,
@@ -133,7 +134,7 @@ pub struct Instances<V: Vocabulary> {
     answering: HashMap<<V::Event as EventDef<V>>::Kind, Vec<Owner<V>>>,
     ops: VecDeque<Op<V>>,
     queue: VecDeque<Queued<V>>,
-    flows: SlotMap<FlowSlot, Option<Flow<V>>>,
+    flows: SlotMap<FlowSlot, Option<Box<Flow<V>>>>,
     by_id: HashMap<FlowId, FlowSlot>,
     next_flow: FlowId,
     tick: u64,
@@ -175,9 +176,12 @@ enum Queued<V: Vocabulary> {
 struct Instance<V: Vocabulary> {
     procedures: Vec<Arc<Procedure<V>>>,
     may_do: MayDo<V>,
-    state: HashMap<ProcedureId, Vec<Value>>,
+    state: OwnerState,
     flows: Vec<FlowSlot>,
 }
+
+/// The state of an owner's procedures, by procedure.
+type OwnerState = HashMap<ProcedureId, Vec<Value>>;
 
 struct Flow<V: Vocabulary> {
     owner: Owner<V>,
@@ -189,6 +193,8 @@ struct Flow<V: Vocabulary> {
     frames: SmallVec<[Frame<V>; 1]>,
     pause: Option<Pause>,
     box_open: bool,
+    /// Picked to run in the batch under way.
+    running: bool,
 }
 
 struct Frame<V: Vocabulary> {
@@ -211,7 +217,7 @@ impl<V: Vocabulary> Instances<V> {
         &mut self,
         owner: Owner<V>,
         procedures: Vec<Arc<Procedure<V>>>,
-        state: HashMap<ProcedureId, Vec<Value>>,
+        state: OwnerState,
     ) {
         self.ops.push_back(Op::Spawn {
             owner,
@@ -221,7 +227,7 @@ impl<V: Vocabulary> Instances<V> {
     }
 
     /// The state of the owner's procedures as it stands, to spawn the owner with elsewhere.
-    pub fn state_of(&self, owner: Owner<V>) -> HashMap<ProcedureId, Vec<Value>> {
+    pub fn state_of(&self, owner: Owner<V>) -> OwnerState {
         self.instances
             .get(&owner)
             .map(|instance| instance.state.clone())
@@ -323,37 +329,25 @@ impl<V: Vocabulary> Instances<V> {
             .map_or(0, |instance| instance.flows.len())
     }
 
+    fn state(&self, owner: Owner<V>) -> Option<&OwnerState> {
+        self.instances.get(&owner).map(|instance| &instance.state)
+    }
+
     fn flow(&self, key: FlowKey<V>) -> Option<&Flow<V>> {
         let slot = *self.by_id.get(&key.flow)?;
-        self.flows.get(slot)?.as_ref()
+        self.flows.get(slot)?.as_deref()
     }
 
     fn flow_mut(&mut self, key: FlowKey<V>) -> Option<&mut Flow<V>> {
         let slot = *self.by_id.get(&key.flow)?;
-        self.flows.get_mut(slot)?.as_mut()
+        self.flows.get_mut(slot)?.as_deref_mut()
     }
 
-    fn take_state(&mut self, owner: Owner<V>, procedure: &Procedure<V>) -> Vec<Value> {
-        let zeroed = || procedure.state.iter().map(|(_, ty)| ty.zero()).collect();
-        if procedure.state.is_empty() {
-            return Vec::new();
-        }
-        let Some(instance) = self.instances.get_mut(&owner) else {
-            return zeroed();
-        };
-        let state = instance.state.entry(procedure.id).or_default();
-        if state.len() != procedure.state.len() {
-            *state = zeroed();
-        }
-        std::mem::take(state)
-    }
-
-    fn put_state(&mut self, owner: Owner<V>, procedure: &Procedure<V>, state: Vec<Value>) {
-        if procedure.state.is_empty() {
-            return;
-        }
-        if let Some(instance) = self.instances.get_mut(&owner) {
-            instance.state.insert(procedure.id, state);
+    fn set_state(&mut self, owner: Owner<V>, procedure: ProcedureId, state: Vec<Value>) {
+        if let Some(instance) = self.instances.get_mut(&owner)
+            && instance.state.get(&procedure) != Some(&state)
+        {
+            instance.state.insert(procedure, state);
         }
     }
 }
@@ -370,55 +364,29 @@ pub fn choice_state<V: Vocabulary>(
     key: FlowKey<V>,
     choice: usize,
 ) -> ChoiceState {
-    match choice_open::<V>(world, key, choice) {
+    match choice_open::<V>(&*world, key, choice) {
         Some(true) => ChoiceState::Open,
         Some(false) => ChoiceState::Locked,
         None => ChoiceState::Gone,
     }
 }
 
-fn choice_open<V: Vocabulary>(world: &mut World, key: FlowKey<V>, choice: usize) -> Option<bool> {
-    let mut flow = world.resource_mut::<Instances<V>>().take_flow(key)?;
-    let open = open_choice_of(world, key, &mut flow, choice);
-    put_flow(world, key, flow);
-    open
-}
-
-fn open_choice_of<V: Vocabulary>(
-    world: &mut World,
-    key: FlowKey<V>,
-    flow: &mut Flow<V>,
-    choice: usize,
-) -> Option<bool> {
+fn choice_open<V: Vocabulary>(world: &World, key: FlowKey<V>, choice: usize) -> Option<bool> {
+    let instances = world.resource::<Instances<V>>();
+    let flow = instances.flow(key)?;
     if flow.pause != Some(Pause::Dialogue) {
         return None;
     }
-    let node = flow.frames.last()?.node?;
-    let procedure = flow.frames.last()?.procedure.clone();
-    if !matches!(procedure.step(node), Step::Dialogue { .. }) {
+    let top = flow.frames.last()?;
+    let Step::Dialogue { requires, .. } = top.procedure.step(top.node?) else {
         return None;
-    }
-    let mut frame = flow.frames.pop()?;
-    let cx = FlowCx {
-        owner: key.owner.entity(),
-        subject: flow.subject,
-        locals: std::mem::take(&mut frame.locals),
-        state: world
-            .resource_mut::<Instances<V>>()
-            .take_state(key.owner, &procedure),
-        event: std::mem::take(&mut flow.event),
     };
-    let open = match procedure.step(node) {
-        Step::Dialogue { requires, .. } => requires.get(choice).map(|requires| {
-            requires
-                .as_ref()
-                .is_none_or(|requires| requires(world, &cx).truthy())
-        }),
-        _ => None,
-    };
-    give_back(world, &mut frame, flow, cx);
-    flow.frames.push(frame);
-    open
+    let cx = cx_clone(key, flow, instances.state(key.owner));
+    requires.get(choice).map(|requires| {
+        requires
+            .as_ref()
+            .is_none_or(|requires| requires(world, &cx).truthy())
+    })
 }
 
 pub fn tick<V: Vocabulary>(world: &mut World) {
@@ -426,91 +394,22 @@ pub fn tick<V: Vocabulary>(world: &mut World) {
         return;
     }
     let now = world.resource::<Time>().elapsed();
-    let (tick, due) = {
+    let tick = {
         let mut instances = world.resource_mut::<Instances<V>>();
         instances.tick += 1;
-        let tick = instances.tick;
-        let mut due: Vec<FlowKey<V>> = instances
-            .flows
-            .values()
-            .flatten()
-            .filter(|flow| match flow.pause {
-                Some(Pause::Wait { until }) => until <= now,
-                Some(Pause::NextTick { tick: at }) | Some(Pause::Step { tick: at }) => at <= tick,
-                _ => false,
-            })
-            .map(|flow| FlowKey {
-                owner: flow.owner,
-                flow: flow.id,
-            })
-            .collect();
-        due.sort_by_key(|key| key.flow);
-        (tick, due)
+        instances.tick
     };
-    // A disabled owner is asleep: its flows wait, due, until it wakes.
-    let due: Vec<FlowKey<V>> = due
-        .into_iter()
-        .filter(|key| {
-            key.owner.entity().is_none_or(|owner| {
-                world
-                    .get_entity(owner)
-                    .map_or(true, |owner| !owner.contains::<Disabled>())
-            })
-        })
-        .collect();
-    {
-        let mut instances = world.resource_mut::<Instances<V>>();
-        for key in due {
-            instances.queue.push_back(Queued::Resume {
-                key,
-                answer: Answer::Output(super::NEXT),
-            });
-        }
-    }
     let clock = TickClock { tick, now };
+    let mut ready = wake_due::<V>(world, clock);
     let mut rounds = 0;
     loop {
-        let picked = {
-            let mut instances = world.resource_mut::<Instances<V>>();
-            let pending_ops = !instances.ops.is_empty();
-            if pending_ops {
-                apply_ops::<V>(world);
-                continue;
-            }
-            match instances.queue.pop_front() {
-                None => break,
-                Some(Queued::Start {
-                    owner,
-                    procedure,
-                    entry,
-                    subject,
-                    event,
-                }) => {
-                    if instances.is_full(owner) {
-                        Some(Picked::Dropped(owner))
-                    } else {
-                        instances
-                            .start_flow(owner, procedure, entry, subject, event)
-                            .map(|(key, flow)| Picked::Start(key, flow))
-                    }
-                }
-                Some(Queued::Resume { key, answer }) => instances
-                    .take_flow(key)
-                    .map(|flow| Picked::Resume(key, flow, answer)),
-            }
-        };
-        match picked {
-            Some(Picked::Dropped(owner)) => {
-                V::log_dropped_flow(world, &owner, &format!("{MAX_LIVE_FLOWS} live flows"))
-            }
-            Some(Picked::Start(key, flow)) => run_flow::<V>(world, key, flow, clock),
-            Some(Picked::Resume(key, flow, answer)) => {
-                if let Some(flow) = resume::<V>(world, key, flow, answer) {
-                    run_flow::<V>(world, key, flow, clock);
-                }
-            }
-            None => {}
+        apply_ops::<V>(world);
+        ready |= pick_queued::<V>(world);
+        if !ready {
+            break;
         }
+        run_batch::<V>(world, clock);
+        ready = false;
         rounds += 1;
         if rounds > MAX_ROUNDS_PER_TICK {
             break;
@@ -518,16 +417,725 @@ pub fn tick<V: Vocabulary>(world: &mut World) {
     }
 }
 
+/// Readies every flow whose wait is over: at the step after its wait, or back at the step it
+/// stepped to. A disabled owner is asleep: its flows wait, due, until it wakes. Tells whether any
+/// is.
+fn wake_due<V: Vocabulary>(world: &mut World, clock: TickClock) -> bool {
+    world.resource_scope(|world, mut instances: Mut<Instances<V>>| {
+        let mut any = false;
+        for flow in instances.flows.values_mut().flatten() {
+            let due = match flow.pause {
+                Some(Pause::Wait { until }) => until <= clock.now,
+                Some(Pause::NextTick { tick }) | Some(Pause::Step { tick }) => tick <= clock.tick,
+                _ => false,
+            };
+            if !due {
+                continue;
+            }
+            let asleep = flow.owner.entity().is_some_and(|owner| {
+                world
+                    .get_entity(owner)
+                    .is_ok_and(|owner| owner.contains::<Disabled>())
+            });
+            if asleep {
+                continue;
+            }
+            let Some(top) = flow.frames.last_mut() else {
+                continue;
+            };
+            let Some(node) = top.node else {
+                continue;
+            };
+            match (top.procedure.step(node), flow.pause) {
+                (Step::Wait { next, .. }, Some(Pause::Wait { .. } | Pause::NextTick { .. })) => {
+                    top.node = *next;
+                }
+                (_, Some(Pause::Step { .. })) => {}
+                _ => continue,
+            }
+            flow.pause = None;
+            flow.running = true;
+            any = true;
+        }
+        any
+    })
+}
+
+/// Readies every flow queued to run: the ones starting, and the ones resumed by the answer they
+/// waited for. Tells whether any is.
+fn pick_queued<V: Vocabulary>(world: &mut World) -> bool {
+    let mut any = false;
+    while let Some(queued) = world.resource_mut::<Instances<V>>().queue.pop_front() {
+        match queued {
+            Queued::Start {
+                owner,
+                procedure,
+                entry,
+                subject,
+                event,
+            } => {
+                if world.resource::<Instances<V>>().is_full(owner) {
+                    V::log_dropped_flow(world, &owner, &format!("{MAX_LIVE_FLOWS} live flows"));
+                    continue;
+                }
+                any |= world
+                    .resource_mut::<Instances<V>>()
+                    .start_flow(owner, procedure, entry, subject, event);
+            }
+            Queued::Resume { key, answer } => any |= resume::<V>(world, key, answer),
+        }
+    }
+    any
+}
+
+/// Runs the flows picked: first every one reads ahead on every core, through the steps that
+/// only read the world; then each finishes in turn, by flow, its steps that write the world
+/// applied and read on from. What a flow reads before its first write is the world as the
+/// batch found it.
+fn run_batch<V: Vocabulary>(world: &mut World, clock: TickClock) {
+    let steering = Steering::of::<V>(world);
+    let mut reads: Vec<Read<V>> =
+        world.resource_scope(|world, mut instances: Mut<Instances<V>>| {
+            let Instances {
+                flows,
+                instances: owners,
+                ..
+            } = &mut *instances;
+            let owners: &HashMap<Owner<V>, Instance<V>> = owners;
+            let shared: &World = world;
+            let running: Vec<(FlowSlot, &mut Flow<V>)> = flows
+                .iter_mut()
+                .filter_map(|(slot, flow)| Some((slot, &mut **flow.as_mut()?)))
+                .filter(|(_, flow)| flow.running)
+                .collect();
+            running
+                .into_par_iter()
+                .with_min_len(crate::core::par::GRAIN)
+                .map(|(slot, flow)| {
+                    let key = FlowKey {
+                        owner: flow.owner,
+                        flow: flow.id,
+                    };
+                    let mut trace = Vec::new();
+                    let stopped =
+                        read_ahead(shared, owners, key, flow, clock, steering, &mut trace);
+                    Read {
+                        slot,
+                        key,
+                        stopped,
+                        trace,
+                    }
+                })
+                .collect()
+        });
+    reads.sort_unstable_by_key(|read| read.key.flow);
+    for read in reads {
+        if steering.tracing
+            && let Some(mut traced) = world.get_resource_mut::<FlowTrace<V>>()
+        {
+            traced.steps.extend(read.trace);
+        }
+        finish(world, read.slot, read.key, read.stopped, clock, steering);
+    }
+}
+
+/// How far a flow read ahead.
+struct Read<V: Vocabulary> {
+    slot: FlowSlot,
+    key: FlowKey<V>,
+    stopped: Stopped,
+    trace: Vec<TraceStep<V>>,
+}
+
+/// Where a flow's reading ahead stopped.
+#[derive(Clone, Copy)]
+enum Stopped {
+    /// At a step that writes the world: a roll of the dice, a dialogue shown, an effect, a
+    /// state set.
+    Write,
+    /// Paused at its node, `Flow::pause` saying for what, and the flow's dialogue box left
+    /// open or to close for its subject.
+    Paused {
+        close: Option<Entity>,
+    },
+    Ended,
+}
+
+/// How the tools steer a run, as of its start.
+#[derive(Clone, Copy)]
+struct Steering {
+    step: bool,
+    tracing: bool,
+}
+
+impl Steering {
+    fn of<V: Vocabulary>(world: &World) -> Steering {
+        Steering {
+            step: world
+                .get_resource::<FlowSteering>()
+                .is_some_and(|steering| steering.step),
+            tracing: world.contains_resource::<FlowTrace<V>>(),
+        }
+    }
+}
+
+/// Runs the flow on from its node through every step that only reads the world, until it
+/// pauses, ends, or stands at a step that writes.
+fn read_ahead<V: Vocabulary>(
+    world: &World,
+    owners: &HashMap<Owner<V>, Instance<V>>,
+    key: FlowKey<V>,
+    flow: &mut Flow<V>,
+    clock: TickClock,
+    steering: Steering,
+    trace: &mut Vec<TraceStep<V>>,
+) -> Stopped {
+    let state = owners.get(&key.owner).map(|instance| &instance.state);
+    let mut cx: Option<FlowCx> = None;
+    loop {
+        if flow
+            .frames
+            .last()
+            .expect("a flow holds a frame while it runs")
+            .node
+            .is_none()
+        {
+            if let Some(cx) = cx.take() {
+                cx_back(flow, cx);
+            }
+            if !leave_frame(flow) {
+                return Stopped::Ended;
+            }
+            continue;
+        }
+        let cx_now = cx.get_or_insert_with(|| cx_of(key, flow, state));
+        let top = flow.frames.last().expect("the frame the context came from");
+        let node = top.node.expect("checked above");
+        let procedure: &Procedure<V> = &top.procedure;
+        let mut looping = Looping::Same;
+        let outcome = match procedure.step(node) {
+            Step::Random { .. } | Step::Dialogue { .. } | Step::Effect { .. } => None,
+            Step::Set { values, .. }
+                if values
+                    .iter()
+                    .any(|(slot, _)| matches!(slot, Slot::State(_))) =>
+            {
+                None
+            }
+            Step::On { next } => Some(StepOutcome::Next(*next)),
+            Step::If { test, yes, no } => {
+                Some(StepOutcome::Next(if test(world, cx_now).truthy() {
+                    *yes
+                } else {
+                    *no
+                }))
+            }
+            Step::Repeat {
+                times,
+                at_most,
+                each,
+                then,
+            } => Some(StepOutcome::Next(match top.loops.last() {
+                Some((repeat, remaining)) if *repeat == node => {
+                    if *remaining > 0 {
+                        looping = Looping::Again;
+                        *each
+                    } else {
+                        looping = Looping::Done;
+                        *then
+                    }
+                }
+                _ => {
+                    let count = times(world, cx_now).as_int().clamp(0, i64::from(*at_most)) as u32;
+                    if count == 0 {
+                        *then
+                    } else {
+                        looping = Looping::Begun(count - 1);
+                        *each
+                    }
+                }
+            })),
+            Step::Wait {
+                seconds, at_most, ..
+            } => {
+                let seconds = seconds(world, cx_now).as_num().min(f64::from(at_most.0));
+                Some(StepOutcome::Pause(if seconds <= 0.0 {
+                    Pause::NextTick {
+                        tick: clock.tick + 1,
+                    }
+                } else {
+                    Pause::Wait {
+                        until: clock.now + Duration::from_secs_f64(seconds),
+                    }
+                }))
+            }
+            Step::Set { values, next } => {
+                for (slot, to) in values {
+                    let value = to(world, cx_now);
+                    match slot {
+                        Slot::Local(index) => cx_now.locals[*index] = value,
+                        Slot::State(_) => {}
+                    }
+                }
+                Some(StepOutcome::Next(*next))
+            }
+            Step::Run {
+                callee,
+                entry,
+                into,
+                next,
+            } => Some(StepOutcome::Call {
+                callee: callee.clone(),
+                entry: *entry,
+                into: *into,
+                return_to: *next,
+            }),
+            Step::Return { value } => Some(StepOutcome::Return(
+                value.as_ref().map(|value| value(world, cx_now)),
+            )),
+        };
+        let Some(outcome) = outcome else {
+            if let Some(cx) = cx.take() {
+                cx_back(flow, cx);
+            }
+            return Stopped::Write;
+        };
+        if steering.tracing {
+            trace.push(TraceStep {
+                key,
+                procedure: procedure.label.clone(),
+                node: procedure.name(node).to_owned(),
+            });
+        }
+        let frame = flow.frames.last_mut().expect("the frame read");
+        match looping {
+            Looping::Same => {}
+            Looping::Begun(count) => frame.loops.push((node, count)),
+            Looping::Again => {
+                let (_, remaining) = frame.loops.last_mut().expect("the loop");
+                *remaining -= 1;
+            }
+            Looping::Done => {
+                frame.loops.pop();
+            }
+        }
+        match outcome {
+            StepOutcome::Next(next) => {
+                frame.node = next;
+                if steering.step && next.is_some() {
+                    if let Some(cx) = cx.take() {
+                        cx_back(flow, cx);
+                    }
+                    return pause_at(
+                        flow,
+                        Pause::Step {
+                            tick: clock.tick + 1,
+                        },
+                    );
+                }
+            }
+            StepOutcome::Pause(pause) => {
+                if let Some(cx) = cx.take() {
+                    cx_back(flow, cx);
+                }
+                return pause_at(flow, pause);
+            }
+            StepOutcome::Call {
+                callee,
+                entry,
+                into,
+                return_to,
+            } => {
+                if let Some(cx) = cx.take() {
+                    cx_back(flow, cx);
+                }
+                let locals = callee.locals.iter().map(|(_, ty)| ty.zero()).collect();
+                flow.frames.push(Frame {
+                    procedure: callee,
+                    node: Some(entry),
+                    locals,
+                    loops: Vec::new(),
+                    into,
+                    return_to,
+                });
+            }
+            StepOutcome::Return(value) => {
+                if let Some(cx) = cx.take() {
+                    cx_back(flow, cx);
+                }
+                let done = flow.frames.pop().expect("the frame read");
+                let Some(caller) = flow.frames.last_mut() else {
+                    return Stopped::Ended;
+                };
+                if let (Some(into), Some(value)) = (done.into, value) {
+                    caller.locals[into] = value;
+                }
+                caller.node = done.return_to;
+            }
+        }
+    }
+}
+
+/// What a repeat step read does to its frame's loop.
+enum Looping {
+    Same,
+    Begun(u32),
+    Again,
+    Done,
+}
+
+/// Leaves the frame that ran out of nodes: back to the start of its loop, or to its caller.
+/// Tells whether the flow goes on.
+fn leave_frame<V: Vocabulary>(flow: &mut Flow<V>) -> bool {
+    let frame = flow
+        .frames
+        .last_mut()
+        .expect("a flow holds a frame while it runs");
+    if let Some((repeat, _)) = frame.loops.last() {
+        frame.node = Some(*repeat);
+        return true;
+    }
+    let done = flow.frames.pop().expect("the frame left");
+    match flow.frames.last_mut() {
+        Some(caller) => {
+            caller.node = done.return_to;
+            true
+        }
+        None => false,
+    }
+}
+
+/// Pauses the flow at its node, telling what for, and closes its dialogue box unless the pause
+/// keeps it open.
+fn pause_at<V: Vocabulary>(flow: &mut Flow<V>, pause: Pause) -> Stopped {
+    flow.pause = Some(pause);
+    flow.running = false;
+    let keeps = matches!(pause, Pause::Dialogue | Pause::Effect { keeps_box: true });
+    let close = if flow.box_open && !keeps {
+        flow.box_open = false;
+        flow.subject
+    } else {
+        None
+    };
+    Stopped::Paused { close }
+}
+
+/// Finishes a flow's run, from where it read ahead to.
+fn finish<V: Vocabulary>(
+    world: &mut World,
+    slot: FlowSlot,
+    key: FlowKey<V>,
+    stopped: Stopped,
+    clock: TickClock,
+    steering: Steering,
+) {
+    let mut stopped = stopped;
+    loop {
+        match stopped {
+            Stopped::Ended => return end_flow(world, key),
+            Stopped::Paused { close } => {
+                if let Some(subject) = close {
+                    V::close_dialogue(world, key, subject, BoxEnding::Ended);
+                }
+                return;
+            }
+            Stopped::Write => stopped = write_on(world, slot, key, clock, steering),
+        }
+    }
+}
+
+/// Runs the flow on from the step that writes it stands at, reading ahead between writes, until
+/// it pauses or ends. The flow is taken out of its slot while its steps write the world, as a
+/// step may reach into the instances.
+fn write_on<V: Vocabulary>(
+    world: &mut World,
+    slot: FlowSlot,
+    key: FlowKey<V>,
+    clock: TickClock,
+    steering: Steering,
+) -> Stopped {
+    let mut flow = world
+        .resource_mut::<Instances<V>>()
+        .flows
+        .get_mut(slot)
+        .and_then(Option::take)
+        .expect("a flow read ahead stands in its slot");
+    let stopped = loop {
+        if let Some(pause) = write_step(world, key, &mut flow, clock, steering) {
+            break pause_at(&mut flow, pause);
+        }
+        let mut trace = Vec::new();
+        let instances = world.resource::<Instances<V>>();
+        let stopped = read_ahead(
+            world,
+            &instances.instances,
+            key,
+            &mut flow,
+            clock,
+            steering,
+            &mut trace,
+        );
+        if steering.tracing
+            && let Some(mut traced) = world.get_resource_mut::<FlowTrace<V>>()
+        {
+            traced.steps.extend(trace);
+        }
+        if !matches!(stopped, Stopped::Write) {
+            break stopped;
+        }
+    };
+    if let Some(kept) = world.resource_mut::<Instances<V>>().flows.get_mut(slot) {
+        *kept = Some(flow);
+    }
+    stopped
+}
+
+/// Runs the step the flow stands at, which writes the world: the flow goes on from it, or
+/// pauses at it for what this says.
+fn write_step<V: Vocabulary>(
+    world: &mut World,
+    key: FlowKey<V>,
+    flow: &mut Flow<V>,
+    clock: TickClock,
+    steering: Steering,
+) -> Option<Pause> {
+    let procedure_id = {
+        let procedure = &flow
+            .frames
+            .last()
+            .expect("a flow holds a frame while it runs")
+            .procedure;
+        (!procedure.state.is_empty()).then_some(procedure.id)
+    };
+    let held = procedure_id.and_then(|_| world.resource::<Instances<V>>().state(key.owner));
+    let mut cx = cx_of(key, flow, held);
+    let top = flow.frames.last().expect("the frame the context came from");
+    let node = top.node.expect("a step that writes is a node");
+    let procedure: &Procedure<V> = &top.procedure;
+    if steering.tracing
+        && let Some(mut trace) = world.get_resource_mut::<FlowTrace<V>>()
+    {
+        trace.steps.push(TraceStep {
+            key,
+            procedure: procedure.label.clone(),
+            node: procedure.name(node).to_owned(),
+        });
+    }
+    let mut box_opened = false;
+    let outcome: StepOutcome<V> = match procedure.step(node) {
+        Step::Set { values, next } => {
+            for (slot, to) in values {
+                let value = to(world, &cx);
+                match slot {
+                    Slot::Local(index) => cx.locals[*index] = value,
+                    Slot::State(index) => cx.state[*index] = value,
+                }
+            }
+            StepOutcome::Next(*next)
+        }
+        Step::Random { weights, outputs } => {
+            let steered = world
+                .get_resource::<FlowSteering>()
+                .and_then(|steering| steering.random.get(procedure.name(node)))
+                .copied()
+                .filter(|picked| *picked < outputs.len());
+            let picked = steered.unwrap_or_else(|| {
+                let total: u32 = weights.iter().sum();
+                let roll = world.resource_mut::<Rng>().rand_range(0..total);
+                let mut seen = 0;
+                let mut picked = outputs.len() - 1;
+                for (index, weight) in weights.iter().enumerate() {
+                    seen += weight;
+                    if roll < seen {
+                        picked = index;
+                        break;
+                    }
+                }
+                picked
+            });
+            StepOutcome::Next(outputs[picked])
+        }
+        Step::Dialogue {
+            node: dialogue,
+            values,
+            labels,
+            requires,
+            choices,
+            next,
+            ..
+        } => match cx.subject {
+            None => StepOutcome::Next(None),
+            Some(subject) => {
+                let mut offers = Vec::new();
+                for (index, (choice, label)) in dialogue.choices.iter().zip(labels).enumerate() {
+                    let met = match &requires[index] {
+                        Some(requires) => requires(world, &cx).truthy(),
+                        None => true,
+                    };
+                    if !met && !choice.reveal.iter().any(|kind| kind.shows_while_locked()) {
+                        continue;
+                    }
+                    let mut leads = Vec::new();
+                    let mut to = choices[index];
+                    while let Some(at) = to {
+                        let Step::Effect {
+                            def,
+                            outputs,
+                            pauses,
+                            ..
+                        } = procedure.step(at)
+                        else {
+                            break;
+                        };
+                        leads.push(def);
+                        to = if *pauses {
+                            None
+                        } else {
+                            outputs.first().and_then(|(_, to)| *to)
+                        };
+                    }
+                    offers.push(ChoiceOffer {
+                        index,
+                        label: &choice.label,
+                        label_values: label.iter().map(|eval| eval(world, &cx)).collect(),
+                        locked: !met,
+                        requires: choice.requires.as_ref(),
+                        reveal: choice.reveal.as_slice(),
+                        warn: choice.warn.as_deref(),
+                        leads,
+                    });
+                }
+                let lines = dialogue
+                    .lines
+                    .iter()
+                    .zip(values)
+                    .map(|(line, evals)| {
+                        (line, evals.iter().map(|eval| eval(world, &cx)).collect())
+                    })
+                    .collect();
+                V::show_dialogue(
+                    world,
+                    key,
+                    subject,
+                    DialogueView {
+                        script: &procedure.label,
+                        node: procedure.name(node),
+                        lines,
+                        choices: offers,
+                    },
+                );
+                box_opened = true;
+                if dialogue.choices.is_empty() && next.is_some() {
+                    StepOutcome::Next(*next)
+                } else {
+                    StepOutcome::Pause(Pause::Dialogue)
+                }
+            }
+        },
+        Step::Effect {
+            call,
+            outputs,
+            keeps_box,
+            ..
+        } => match call(world, key, &mut cx) {
+            EffectStep::Done => StepOutcome::Next(outputs.first().and_then(|(_, to)| *to)),
+            EffectStep::Output(name) => StepOutcome::Next(
+                outputs
+                    .iter()
+                    .find(|(output, _)| *output == name)
+                    .unwrap_or_else(|| {
+                        panic!("an effect answered {name:?}, not one of its outputs")
+                    })
+                    .1,
+            ),
+            EffectStep::Pause => StepOutcome::Pause(Pause::Effect {
+                keeps_box: *keeps_box,
+            }),
+        },
+        _ => unreachable!("reading ahead stops only at a step that writes"),
+    };
+    let state = cx_back(flow, cx);
+    if box_opened {
+        flow.box_open = true;
+    }
+    if let Some(procedure) = procedure_id {
+        world
+            .resource_mut::<Instances<V>>()
+            .set_state(key.owner, procedure, state);
+    }
+    match outcome {
+        StepOutcome::Next(next) => {
+            flow.frames.last_mut().expect("the frame written").node = next;
+            (steering.step && next.is_some()).then_some(Pause::Step {
+                tick: clock.tick + 1,
+            })
+        }
+        StepOutcome::Pause(pause) => Some(pause),
+        StepOutcome::Call { .. } | StepOutcome::Return(_) => {
+            unreachable!("a step that writes neither calls nor returns")
+        }
+    }
+}
+
+/// The context the flow's top frame runs in: its locals and event taken out of the flow, and a
+/// copy of its procedure's state from `state`.
+fn cx_of<V: Vocabulary>(key: FlowKey<V>, flow: &mut Flow<V>, state: Option<&OwnerState>) -> FlowCx {
+    let frame = flow
+        .frames
+        .last_mut()
+        .expect("a flow holds a frame while it runs");
+    FlowCx {
+        owner: key.owner.entity(),
+        subject: flow.subject,
+        locals: std::mem::take(&mut frame.locals),
+        state: state_of(&frame.procedure, state),
+        event: std::mem::take(&mut flow.event),
+    }
+}
+
+/// Gives the locals and event back to the flow's top frame, where `cx_of` took them from; the
+/// state is the caller's to keep.
+fn cx_back<V: Vocabulary>(flow: &mut Flow<V>, cx: FlowCx) -> Vec<Value> {
+    let frame = flow
+        .frames
+        .last_mut()
+        .expect("a flow holds a frame while it runs");
+    frame.locals = cx.locals;
+    flow.event = cx.event;
+    cx.state
+}
+
+/// A copy of the context the flow's top frame runs in.
+fn cx_clone<V: Vocabulary>(key: FlowKey<V>, flow: &Flow<V>, state: Option<&OwnerState>) -> FlowCx {
+    let frame = flow
+        .frames
+        .last()
+        .expect("a flow holds a frame while it runs");
+    FlowCx {
+        owner: key.owner.entity(),
+        subject: flow.subject,
+        locals: frame.locals.clone(),
+        state: state_of(&frame.procedure, state),
+        event: flow.event.clone(),
+    }
+}
+
+/// The procedure's state as the owner holds it, or zeroed when it holds none of this shape.
+fn state_of<V: Vocabulary>(procedure: &Procedure<V>, state: Option<&OwnerState>) -> Vec<Value> {
+    if procedure.state.is_empty() {
+        return Vec::new();
+    }
+    state
+        .and_then(|state| state.get(&procedure.id))
+        .filter(|held| held.len() == procedure.state.len())
+        .cloned()
+        .unwrap_or_else(|| procedure.state.iter().map(|(_, ty)| ty.zero()).collect())
+}
+
 #[derive(Clone, Copy)]
 struct TickClock {
     tick: u64,
     now: Duration,
-}
-
-enum Picked<V: Vocabulary> {
-    Dropped(Owner<V>),
-    Start(FlowKey<V>, Flow<V>),
-    Resume(FlowKey<V>, Flow<V>, Answer),
 }
 
 impl<V: Vocabulary> Instances<V> {
@@ -538,13 +1146,12 @@ impl<V: Vocabulary> Instances<V> {
         entry: StepIndex,
         subject: Option<Entity>,
         event: Vec<Value>,
-    ) -> Option<(FlowKey<V>, Flow<V>)> {
-        let instance = self.instances.get_mut(&owner)?;
+    ) -> bool {
+        let Some(instance) = self.instances.get_mut(&owner) else {
+            return false;
+        };
         let id = self.next_flow;
         self.next_flow = FlowId(id.0 + 1);
-        let slot = self.flows.insert(None);
-        self.by_id.insert(id, slot);
-        instance.flows.push(slot);
         let root = instance.procedures[procedure].clone();
         let locals = root.locals.iter().map(|(_, ty)| ty.zero()).collect();
         let event = padded(event, &root, entry);
@@ -565,19 +1172,18 @@ impl<V: Vocabulary> Instances<V> {
             }],
             pause: None,
             box_open: false,
+            running: true,
         };
-        Some((FlowKey { owner, flow: id }, flow))
+        let slot = self.flows.insert(Some(Box::new(flow)));
+        self.by_id.insert(id, slot);
+        instance.flows.push(slot);
+        true
     }
 
     fn is_full(&self, owner: Owner<V>) -> bool {
         self.instances
             .get(&owner)
             .is_some_and(|instance| instance.flows.len() >= MAX_LIVE_FLOWS)
-    }
-
-    fn take_flow(&mut self, key: FlowKey<V>) -> Option<Flow<V>> {
-        let slot = *self.by_id.get(&key.flow)?;
-        self.flows.get_mut(slot)?.take()
     }
 
     fn drop_flow(&mut self, key: FlowKey<V>) {
@@ -742,21 +1348,25 @@ fn queued_owner<V: Vocabulary>(queued: &Queued<V>) -> Owner<V> {
     }
 }
 
-fn resume<V: Vocabulary>(
-    world: &mut World,
-    key: FlowKey<V>,
-    mut flow: Flow<V>,
-    answer: Answer,
-) -> Option<Flow<V>> {
+/// Resumes a paused flow in its slot with the answer it waited for, and tells whether it goes
+/// on: an answer that isn't the one it waits for leaves it as it is.
+fn resume<V: Vocabulary>(world: &mut World, key: FlowKey<V>, answer: Answer) -> bool {
+    let instances = world.resource::<Instances<V>>();
+    let Some(flow) = instances.flow(key) else {
+        return false;
+    };
     let Some(pause) = flow.pause else {
-        return keep(world, key, flow);
+        return false;
     };
-    let mut frame = flow.frames.pop().expect("a paused flow has a frame");
-    let Some(node) = frame.node else {
-        flow.frames.push(frame);
-        return keep(world, key, flow);
+    let Some(top) = flow.frames.last() else {
+        return false;
     };
-    let next = match (frame.procedure.step(node), pause, &answer) {
+    let Some(node) = top.node else {
+        return false;
+    };
+    let procedure = Arc::clone(&top.procedure);
+    let mut leaves_box = false;
+    let next = match (procedure.step(node), pause, &answer) {
         (
             Step::Wait { next, .. },
             Pause::Wait { .. } | Pause::NextTick { .. },
@@ -771,57 +1381,36 @@ fn resume<V: Vocabulary>(
         ) => match choices.get(*choice).copied() {
             Some(to) => match requires.get(*choice) {
                 Some(Some(requires)) => {
-                    let cx = FlowCx {
-                        owner: key.owner.entity(),
-                        subject: flow.subject,
-                        locals: std::mem::take(&mut frame.locals),
-                        state: world
-                            .resource_mut::<Instances<V>>()
-                            .take_state(key.owner, &frame.procedure),
-                        event: std::mem::take(&mut flow.event),
-                    };
-                    let met = requires(world, &cx).truthy();
-                    give_back(world, &mut frame, &mut flow, cx);
-                    met.then_some(to)
+                    let cx = cx_clone(key, flow, instances.state(key.owner));
+                    requires(world, &cx).truthy().then_some(to)
                 }
                 _ => Some(to),
             },
             None => None,
         },
         (Step::Dialogue { left, .. }, Pause::Dialogue, Answer::Left) => {
-            flow.box_open = false;
+            leaves_box = true;
             Some(*left)
         }
         (Step::Effect { outputs, .. }, Pause::Effect { .. }, Answer::Output(name)) => outputs
             .iter()
             .find(|(output, _)| output == name)
             .map(|(_, to)| *to),
-        (_, Pause::Step { .. }, Answer::Output(_)) => Some(frame.node),
+        (_, Pause::Step { .. }, Answer::Output(_)) => Some(Some(node)),
         _ => None,
     };
     let Some(next) = next else {
-        flow.frames.push(frame);
-        return keep(world, key, flow);
+        return false;
     };
-    frame.node = next;
-    flow.frames.push(frame);
-    flow.pause = None;
-    Some(flow)
-}
-
-fn keep<V: Vocabulary>(world: &mut World, key: FlowKey<V>, flow: Flow<V>) -> Option<Flow<V>> {
-    put_flow(world, key, flow);
-    None
-}
-
-fn put_flow<V: Vocabulary>(world: &mut World, key: FlowKey<V>, flow: Flow<V>) {
     let mut instances = world.resource_mut::<Instances<V>>();
-    let Some(slot) = instances.by_id.get(&key.flow).copied() else {
-        return;
-    };
-    if let Some(kept) = instances.flows.get_mut(slot) {
-        *kept = Some(flow);
+    let flow = instances.flow_mut(key).expect("the flow resumed");
+    if leaves_box {
+        flow.box_open = false;
     }
+    flow.frames.last_mut().expect("the frame resumed").node = next;
+    flow.pause = None;
+    flow.running = true;
+    true
 }
 
 /// Every node a flow stepped through while this resource was in the world, for tools that watch a
@@ -870,332 +1459,6 @@ fn padded<V: Vocabulary>(
     event
 }
 
-fn run_flow<V: Vocabulary>(world: &mut World, key: FlowKey<V>, flow: Flow<V>, clock: TickClock) {
-    let mut trace = world.remove_resource::<FlowTrace<V>>();
-    run_flow_traced(world, key, flow, clock, &mut trace);
-    if let Some(trace) = trace {
-        world.insert_resource(trace);
-    }
-}
-
-fn run_flow_traced<V: Vocabulary>(
-    world: &mut World,
-    key: FlowKey<V>,
-    mut flow: Flow<V>,
-    clock: TickClock,
-    trace: &mut Option<FlowTrace<V>>,
-) {
-    loop {
-        let mut frame = flow.frames.pop().expect("a frame");
-        let Some(node) = frame.node else {
-            if let Some((repeat, _)) = frame.loops.last() {
-                frame.node = Some(*repeat);
-                flow.frames.push(frame);
-                continue;
-            }
-            if let Some(caller) = flow.frames.last_mut() {
-                caller.node = frame.return_to;
-                continue;
-            }
-            end_flow::<V>(world, key, flow, BoxEnding::Ended);
-            return;
-        };
-        let procedure = Arc::clone(&frame.procedure);
-        let mut cx = FlowCx {
-            owner: key.owner.entity(),
-            subject: flow.subject,
-            locals: std::mem::take(&mut frame.locals),
-            state: world
-                .resource_mut::<Instances<V>>()
-                .take_state(key.owner, &procedure),
-            event: std::mem::take(&mut flow.event),
-        };
-        if let Some(trace) = trace.as_mut() {
-            trace.steps.push(TraceStep {
-                key,
-                procedure: procedure.label.clone(),
-                node: procedure.name(node).to_owned(),
-            });
-        }
-        let outcome;
-        match procedure.step(node) {
-            Step::On { next } => outcome = StepOutcome::Next(*next),
-            Step::If { test, yes, no } => {
-                outcome = StepOutcome::Next(if test(world, &cx).truthy() { *yes } else { *no });
-            }
-            Step::Random { weights, outputs } => {
-                let steered = world
-                    .get_resource::<FlowSteering>()
-                    .and_then(|steering| steering.random.get(procedure.name(node)))
-                    .copied()
-                    .filter(|picked| *picked < outputs.len());
-                let picked = steered.unwrap_or_else(|| {
-                    let total: u32 = weights.iter().sum();
-                    let roll = world.resource_mut::<Rng>().rand_range(0..total);
-                    let mut seen = 0;
-                    let mut picked = outputs.len() - 1;
-                    for (index, weight) in weights.iter().enumerate() {
-                        seen += weight;
-                        if roll < seen {
-                            picked = index;
-                            break;
-                        }
-                    }
-                    picked
-                });
-                outcome = StepOutcome::Next(outputs[picked]);
-            }
-            Step::Repeat {
-                times,
-                at_most,
-                each,
-                then,
-            } => {
-                let looping = frame
-                    .loops
-                    .last()
-                    .is_some_and(|(repeat, _)| *repeat == node);
-                if looping {
-                    let (_, remaining) = frame.loops.last_mut().expect("the loop");
-                    if *remaining > 0 {
-                        *remaining -= 1;
-                        outcome = StepOutcome::Next(*each);
-                    } else {
-                        frame.loops.pop();
-                        outcome = StepOutcome::Next(*then);
-                    }
-                } else {
-                    let count = times(world, &cx).as_int().clamp(0, i64::from(*at_most)) as u32;
-                    if count == 0 {
-                        outcome = StepOutcome::Next(*then);
-                    } else {
-                        frame.loops.push((node, count - 1));
-                        outcome = StepOutcome::Next(*each);
-                    }
-                }
-            }
-            Step::Wait {
-                seconds, at_most, ..
-            } => {
-                let seconds = seconds(world, &cx).as_num().min(f64::from(at_most.0));
-                let pause = if seconds <= 0.0 {
-                    Pause::NextTick {
-                        tick: clock.tick + 1,
-                    }
-                } else {
-                    Pause::Wait {
-                        until: clock.now + Duration::from_secs_f64(seconds),
-                    }
-                };
-                outcome = StepOutcome::Pause(pause);
-            }
-            Step::Set { values, next } => {
-                for (slot, to) in values {
-                    let value = to(world, &cx);
-                    match slot {
-                        Slot::Local(index) => cx.locals[*index] = value,
-                        Slot::State(index) => cx.state[*index] = value,
-                    }
-                }
-                outcome = StepOutcome::Next(*next);
-            }
-            Step::Run {
-                callee,
-                entry,
-                into,
-                next,
-            } => {
-                outcome = StepOutcome::Call {
-                    callee: callee.clone(),
-                    entry: *entry,
-                    into: *into,
-                    return_to: *next,
-                };
-            }
-            Step::Return { value } => {
-                outcome = StepOutcome::Return(value.as_ref().map(|value| value(world, &cx)));
-            }
-            Step::Dialogue {
-                node: dialogue,
-                values,
-                labels,
-                requires,
-                choices,
-                next,
-                ..
-            } => {
-                let Some(subject) = cx.subject else {
-                    give_back(world, &mut frame, &mut flow, cx);
-                    frame.node = None;
-                    flow.frames.push(frame);
-                    continue;
-                };
-                let mut offers = Vec::new();
-                for (index, (choice, label)) in dialogue.choices.iter().zip(labels).enumerate() {
-                    let met = match &requires[index] {
-                        Some(requires) => requires(world, &cx).truthy(),
-                        None => true,
-                    };
-                    if !met && !choice.reveal.iter().any(|kind| kind.shows_while_locked()) {
-                        continue;
-                    }
-                    let mut leads = Vec::new();
-                    let mut to = choices[index];
-                    while let Some(at) = to {
-                        let Step::Effect {
-                            def,
-                            outputs,
-                            pauses,
-                            ..
-                        } = procedure.step(at)
-                        else {
-                            break;
-                        };
-                        leads.push(def);
-                        to = if *pauses {
-                            None
-                        } else {
-                            outputs.first().and_then(|(_, to)| *to)
-                        };
-                    }
-                    offers.push(ChoiceOffer {
-                        index,
-                        label: &choice.label,
-                        label_values: label.iter().map(|eval| eval(world, &cx)).collect(),
-                        locked: !met,
-                        requires: choice.requires.as_ref(),
-                        reveal: choice.reveal.as_slice(),
-                        warn: choice.warn.as_deref(),
-                        leads,
-                    });
-                }
-                let lines = dialogue
-                    .lines
-                    .iter()
-                    .zip(values)
-                    .map(|(line, evals)| {
-                        (line, evals.iter().map(|eval| eval(world, &cx)).collect())
-                    })
-                    .collect();
-                V::show_dialogue(
-                    world,
-                    key,
-                    subject,
-                    DialogueView {
-                        script: &procedure.label,
-                        node: procedure.name(node),
-                        lines,
-                        choices: offers,
-                    },
-                );
-                flow.box_open = true;
-                outcome = if dialogue.choices.is_empty() && next.is_some() {
-                    StepOutcome::Next(*next)
-                } else {
-                    StepOutcome::Pause(Pause::Dialogue)
-                };
-            }
-            Step::Effect {
-                call,
-                outputs,
-                keeps_box,
-                ..
-            } => {
-                outcome = match call(world, key, &mut cx) {
-                    EffectStep::Done => StepOutcome::Next(outputs.first().and_then(|(_, to)| *to)),
-                    EffectStep::Output(name) => StepOutcome::Next(
-                        outputs
-                            .iter()
-                            .find(|(output, _)| *output == name)
-                            .unwrap_or_else(|| {
-                                panic!("an effect answered {name:?}, not one of its outputs")
-                            })
-                            .1,
-                    ),
-                    EffectStep::Pause => StepOutcome::Pause(Pause::Effect {
-                        keeps_box: *keeps_box,
-                    }),
-                };
-            }
-        }
-        give_back(world, &mut frame, &mut flow, cx);
-        let stepping = world
-            .get_resource::<FlowSteering>()
-            .is_some_and(|steering| steering.step);
-        if stepping && let StepOutcome::Next(Some(next)) = outcome {
-            frame.node = Some(next);
-            flow.frames.push(frame);
-            flow.pause = Some(Pause::Step {
-                tick: clock.tick + 1,
-            });
-            put_flow(world, key, flow);
-            return;
-        }
-        match outcome {
-            StepOutcome::Next(next) => {
-                frame.node = next;
-                flow.frames.push(frame);
-            }
-            StepOutcome::Pause(pause) => {
-                flow.frames.push(frame);
-                flow.pause = Some(pause);
-                let keeps = matches!(pause, Pause::Dialogue | Pause::Effect { keeps_box: true });
-                let close = if flow.box_open && !keeps {
-                    flow.box_open = false;
-                    flow.subject
-                } else {
-                    None
-                };
-                put_flow(world, key, flow);
-                if let Some(subject) = close {
-                    V::close_dialogue(world, key, subject, BoxEnding::Ended);
-                }
-                return;
-            }
-            StepOutcome::Call {
-                callee,
-                entry,
-                into,
-                return_to,
-            } => {
-                let locals = callee.locals.iter().map(|(_, ty)| ty.zero()).collect();
-                flow.frames.push(frame);
-                flow.frames.push(Frame {
-                    procedure: callee,
-                    node: Some(entry),
-                    locals,
-                    loops: Vec::new(),
-                    into,
-                    return_to,
-                });
-            }
-            StepOutcome::Return(value) => {
-                let Some(caller) = flow.frames.last_mut() else {
-                    end_flow::<V>(world, key, flow, BoxEnding::Ended);
-                    return;
-                };
-                if let (Some(into), Some(value)) = (frame.into, value) {
-                    caller.locals[into] = value;
-                }
-                caller.node = frame.return_to;
-            }
-        }
-    }
-}
-
-fn give_back<V: Vocabulary>(
-    world: &mut World,
-    frame: &mut Frame<V>,
-    flow: &mut Flow<V>,
-    cx: FlowCx,
-) {
-    frame.locals = cx.locals;
-    flow.event = cx.event;
-    world
-        .resource_mut::<Instances<V>>()
-        .put_state(flow.owner, &frame.procedure, cx.state);
-}
-
 enum StepOutcome<V: Vocabulary> {
     Next(Option<StepIndex>),
     Pause(Pause),
@@ -1208,12 +1471,19 @@ enum StepOutcome<V: Vocabulary> {
     Return(Option<Value>),
 }
 
-fn end_flow<V: Vocabulary>(world: &mut World, key: FlowKey<V>, flow: Flow<V>, ending: BoxEnding) {
-    world.resource_mut::<Instances<V>>().drop_flow(key);
-    if flow.box_open
-        && let Some(subject) = flow.subject
-    {
-        V::close_dialogue(world, key, subject, ending);
+/// Drops a flow that ran to its end, closing its dialogue box if it left one open.
+fn end_flow<V: Vocabulary>(world: &mut World, key: FlowKey<V>) {
+    let close = {
+        let mut instances = world.resource_mut::<Instances<V>>();
+        let close = instances
+            .flow(key)
+            .filter(|flow| flow.box_open)
+            .and_then(|flow| flow.subject);
+        instances.drop_flow(key);
+        close
+    };
+    if let Some(subject) = close {
+        V::close_dialogue(world, key, subject, BoxEnding::Ended);
     }
 }
 

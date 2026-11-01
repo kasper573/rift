@@ -1,12 +1,15 @@
 use bevy_app::App;
 use bevy_ecs::entity::{EntityMapper, MapEntities};
 use bevy_ecs::prelude::*;
+use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::assets::ImageRef;
+use crate::core::chunk::{CHUNK_SIDE, ChunkIndex};
 use crate::core::content::{ContentFile, ContentId, Fixture, Nearby};
 use crate::core::math::Pos;
+use crate::core::par;
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::area::{AreaId, AreaTag};
 use crate::systems::interact::{self, Interactive};
@@ -121,78 +124,75 @@ pub fn update(
     world: &mut World,
     targets: &mut QueryState<(Entity, &'static AreaTag, &'static Position), With<Interactive>>,
     mut turn: Local<u32>,
-    mut viewers: Local<Vec<Entity>>,
     mut found: Local<Vec<(Entity, Entity, AttentionId)>>,
 ) {
     *turn = (*turn + 1) % REFRESH_ROUNDS;
     let marking = world.resource::<MarkSources>().0.clone();
     let badging = world.resource::<BadgeSources>().0.clone();
-    let players: Vec<(Entity, Option<AreaId>, Option<Pos<Meters>>)> = world
+    let mut players: Vec<Entity> = world
         .resource::<Players>()
         .0
         .values()
         .copied()
         .enumerate()
         .filter(|(index, _)| *index as u32 % REFRESH_ROUNDS == *turn)
-        .map(|(_, player)| {
-            (
-                player,
-                world.get::<AreaTag>(player).map(|tag| tag.area),
-                world.get::<Position>(player).map(|position| position.pos),
-            )
-        })
+        .map(|(_, player)| player)
         .collect();
+    players.sort_unstable();
+    let targets: Vec<(Entity, AreaId, Pos<Meters>)> = targets
+        .iter(world)
+        .map(|(target, tag, position)| (target, tag.area, position.pos))
+        .collect();
+    let shared: &World = world;
+    let chunks = shared.resource::<ChunkIndex>();
     found.clear();
-    for (target, tag, position) in targets.iter(world) {
-        if interact::interaction_of(world, target).is_none() || stat::is_dead(world, target) {
-            continue;
-        }
-        let at = position.pos;
-        viewers.clear();
-        viewers.extend(
-            players
-                .iter()
-                .filter(|(player, area, standing)| {
-                    *area == Some(tag.area)
-                        && standing.is_some_and(|standing| standing.distance(at) <= MARKED_RANGE)
-                        && visibility::present(world, target, *player)
+    found.par_extend(targets.par_iter().with_min_len(par::GRAIN).flat_map_iter(
+        |&(target, area, at)| {
+            let mut marks = Vec::new();
+            if interact::interaction_of(shared, target).is_none() || stat::is_dead(shared, target) {
+                return marks.into_iter();
+            }
+            // The chunks are as of the last filing, a tick ago: a chunk of margin covers
+            // whoever walked over a chunk's edge since.
+            let mut viewers: Vec<Entity> = chunks
+                .around(at, Meters(MARKED_RANGE.0 + CHUNK_SIDE.0))
+                .filter(|player| players.binary_search(player).is_ok())
+                .filter(|&player| {
+                    shared
+                        .get::<AreaTag>(player)
+                        .is_some_and(|tag| tag.area == area)
+                        && shared
+                            .get::<Position>(player)
+                            .is_some_and(|standing| standing.pos.distance(at) <= MARKED_RANGE)
+                        && visibility::present(shared, target, player)
                 })
-                .map(|(player, ..)| *player),
-        );
-        if viewers.is_empty() {
-            continue;
-        }
-        for source in &marking {
-            source(world, target, &viewers, &mut |player, mark| {
-                found.push((player, target, mark));
-            });
-        }
-    }
+                .collect();
+            viewers.sort_unstable();
+            if viewers.is_empty() {
+                return marks.into_iter();
+            }
+            for source in &marking {
+                source(shared, target, &viewers, &mut |player, mark| {
+                    marks.push((player, target, mark));
+                });
+            }
+            marks.into_iter()
+        },
+    ));
     found.sort_unstable();
     found.dedup();
-    let mut refreshed: Vec<(Entity, Attention)> = Vec::with_capacity(players.len());
-    for &(player, target, mark) in found.iter() {
-        let attention = match refreshed.last_mut() {
-            Some((known, attention)) if *known == player => attention,
-            _ => {
-                refreshed.push((player, Attention::default()));
-                &mut refreshed.last_mut().expect("just pushed").1
+    let mut marked = found.iter().peekable();
+    for player in players {
+        let mut attention = Attention::default();
+        while let Some(&(_, target, mark)) = marked.next_if(|(marked, ..)| *marked == player) {
+            match attention.0.last_mut() {
+                Some(marked) if marked.target == target => marked.marks.push(mark),
+                _ => attention.0.push(MarkedTarget {
+                    target,
+                    marks: vec![mark],
+                }),
             }
-        };
-        match attention.0.last_mut() {
-            Some(marked) if marked.target == target => marked.marks.push(mark),
-            _ => attention.0.push(MarkedTarget {
-                target,
-                marks: vec![mark],
-            }),
         }
-    }
-    for (player, ..) in players {
-        let attention = refreshed
-            .iter()
-            .position(|(known, _)| *known == player)
-            .map(|index| refreshed.swap_remove(index).1)
-            .unwrap_or_default();
         if world.get::<Attention>(player) != Some(&attention) {
             world.entity_mut(player).insert(attention);
         }

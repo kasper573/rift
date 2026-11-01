@@ -108,11 +108,6 @@ impl TickRoster {
         let end = npcs.partition_point(|listed| listed.pack <= pack);
         &npcs[start..end]
     }
-
-    /// The actor `entity` as the tick began.
-    pub fn get(&self, entity: Entity) -> Option<&Listed> {
-        self.listed.iter().find(|listed| listed.entity == entity)
-    }
 }
 
 type RosterQuery = QueryState<
@@ -146,16 +141,19 @@ pub fn take_tick_roster(world: &mut World, query: &mut RosterQuery) {
             presence,
         },
     ));
-    listed.sort_by_key(|entry| (!entry.character, entry.pack));
+    listed.sort_unstable_by_key(|entry| (!entry.character, entry.pack));
     let characters = listed.iter().take_while(|entry| entry.character).count();
     let mut roster = world.resource_mut::<TickRoster>();
+    let TickRoster {
+        character_spots,
+        npc_spots,
+        ..
+    } = &mut *roster;
     let spot = |entry: &Listed| Rect::new(entry.at, Size::zero());
-    roster
-        .character_spots
-        .refile(listed[..characters].iter().map(spot));
-    roster
-        .npc_spots
-        .refile(listed[characters..].iter().map(spot));
+    rayon::join(
+        || character_spots.refile(listed[..characters].iter().map(spot)),
+        || npc_spots.refile(listed[characters..].iter().map(spot)),
+    );
     roster.listed = listed;
     roster.characters = characters;
 }

@@ -342,6 +342,7 @@ fn inn() -> Sim {
             combat::defeats,
             actor::settle,
             attention::update,
+            movement::file_by_chunk,
         ));
     script::spawn_stateless(&mut sim.world);
     npc::spawn_all(&mut sim.world);

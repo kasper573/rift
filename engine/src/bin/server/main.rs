@@ -67,8 +67,6 @@ fn main() {
         eprint!("{report}");
         std::process::exit(2);
     });
-    // Built up front, as a build in the middle of play would stall every world for its length.
-    area::lay_all_meshes(&content);
     let settings = content.built::<GameSettings>();
     let served = ServedContent::new(
         &content,

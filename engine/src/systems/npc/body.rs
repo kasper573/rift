@@ -1,17 +1,19 @@
 use bevy_ecs::prelude::*;
+use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::IntoStaticStr;
 
 use crate::core::content::Content;
 use crate::core::math::{Pos, Rng};
+use crate::core::par;
 use crate::core::script::{
     Answer, Arrow, Compiler, EffectDef, EffectStep, Eval, FlowCx, ScriptFault, Value, ValueType,
 };
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::actor::{self, Actor};
 use crate::systems::area::{self, AreaTag, object};
-use crate::systems::movement::{self, Approach};
+use crate::systems::movement::{self, Approach, NavMesh};
 use crate::systems::npc::{Home, Npc, Roams};
 use crate::systems::script::event::NPC;
 use crate::systems::script::{
@@ -148,53 +150,149 @@ pub fn drive(
     world: &mut World,
     bodies: &mut QueryState<Entity, With<Body>>,
     sessions: &mut dialogue::Sessions,
-    mut npcs: Local<Vec<Entity>>,
 ) {
-    npcs.clear();
-    npcs.extend(bodies.iter(world));
-    let talking = dialogue::counterparts(world, sessions);
-    for &npc in npcs.iter() {
-        if talking.contains(&npc) {
-            if movement::moving(world, npc) {
-                movement::halt(world, npc);
+    let npcs: Vec<Entity> = bodies.iter(world).collect();
+    let mut talking = dialogue::counterparts(world, sessions);
+    talking.sort_unstable();
+    let shared: &World = world;
+    let drives: Vec<(Entity, Drive)> = npcs
+        .par_iter()
+        .with_min_len(par::GRAIN)
+        .filter_map(|&npc| Some((npc, drive_of(shared, npc, &talking)?)))
+        .collect();
+    for (npc, drive) in drives {
+        match drive {
+            Drive::Halt => movement::halt(world, npc),
+            Drive::Drop => {
+                let Some(mut body) = world.get_mut::<Body>(npc) else {
+                    continue;
+                };
+                let dropped: Vec<Running> = body
+                    .current
+                    .take()
+                    .into_iter()
+                    .chain(body.waiting.drain(..))
+                    .collect();
+                for running in dropped {
+                    answer(world, running, Outcome::Lost);
+                }
             }
-            continue;
-        }
-        if stat::is_dead(world, npc) {
-            let Some(mut body) = world.get_mut::<Body>(npc) else {
-                continue;
-            };
-            let dropped: Vec<Running> = body
-                .current
-                .take()
-                .into_iter()
-                .chain(body.waiting.drain(..))
-                .collect();
-            for running in dropped {
-                answer(world, running, Outcome::Lost);
+            Drive::Start => start_waiting(world, npc),
+            Drive::Step(current) => {
+                let outcome = step(world, npc, current);
+                if !current.started
+                    && let Some(mut body) = world.get_mut::<Body>(npc)
+                    && let Some(running) = body.current.as_mut()
+                {
+                    running.started = true;
+                }
+                if let Some(output) = outcome {
+                    done(world, npc, current, output);
+                }
             }
-            continue;
-        }
-        let Some(current) = world.get::<Body>(npc).and_then(|body| body.current) else {
-            start_waiting(world, npc);
-            continue;
-        };
-        let outcome = step(world, npc, current);
-        if !current.started
-            && let Some(mut body) = world.get_mut::<Body>(npc)
-            && let Some(running) = body.current.as_mut()
-        {
-            running.started = true;
-        }
-        if let Some(output) = outcome {
-            reach::forget(world, npc);
-            if let Some(mut body) = world.get_mut::<Body>(npc) {
-                body.current = None;
+            Drive::Wander(ground) => {
+                wander_to(world, npc, ground);
+                if let Some(mut body) = world.get_mut::<Body>(npc)
+                    && let Some(running) = body.current.as_mut()
+                {
+                    running.started = true;
+                }
             }
-            answer(world, current, output);
-            start_waiting(world, npc);
+            Drive::Done(current, output) => done(world, npc, current, output),
         }
     }
+}
+
+/// What an npc's body does this tick, as the tick found it.
+enum Drive {
+    /// Stands still to talk.
+    Halt,
+    /// Fallen: every act of its is lost.
+    Drop,
+    Start,
+    /// Steps its current act, which may move it.
+    Step(Running),
+    /// Sets out wandering, over the ground it may wander.
+    Wander(WanderGround),
+    /// Its current act came to an end on its own.
+    Done(Running, Outcome),
+}
+
+/// Where a wander may lead: the ground the npc can reach around its home or within its range,
+/// as triangles to draw a spot from, or anywhere it can reach.
+enum WanderGround {
+    Triangles(Vec<[Pos<Meters>; 3]>),
+    Anywhere,
+}
+
+fn drive_of(world: &World, npc: Entity, talking: &[Entity]) -> Option<Drive> {
+    if talking.binary_search(&npc).is_ok() {
+        return movement::moving(world, npc).then_some(Drive::Halt);
+    }
+    let body = world.get::<Body>(npc)?;
+    if stat::is_dead(world, npc) {
+        return (body.current.is_some() || !body.waiting.is_empty()).then_some(Drive::Drop);
+    }
+    let Some(current) = body.current else {
+        return (!body.waiting.is_empty()).then_some(Drive::Start);
+    };
+    Some(match current.act {
+        Act::Wander { .. } if current.started => {
+            if movement::moving(world, npc) {
+                return None;
+            }
+            Drive::Done(current, Outcome::Next)
+        }
+        Act::Wander { leash } => Drive::Wander(wander_ground(world, npc, leash)),
+        _ => Drive::Step(current),
+    })
+}
+
+fn wander_ground(world: &World, npc: Entity, leash: Option<Meters>) -> WanderGround {
+    let (Some(at), Some(mesh)) = (
+        movement::position(world, npc),
+        movement::mesh_of(world.resource::<Content>(), world, npc),
+    ) else {
+        return WanderGround::Triangles(Vec::new());
+    };
+    let home = world.get::<Home>(npc).map(|home| home.0);
+    let roams = world.get::<Roams>(npc).map(|roams| roams.0);
+    match (leash.zip(home), roams) {
+        (Some((leash, home)), _) => WanderGround::Triangles(mesh.reachable_near(at, home, leash)),
+        (None, Some(roams)) => WanderGround::Triangles(mesh.reachable_within(at, roams)),
+        (None, None) => WanderGround::Anywhere,
+    }
+}
+
+/// Sends the npc wandering to a free spot on `ground`.
+fn wander_to(world: &mut World, npc: Entity, ground: WanderGround) {
+    let Some(at) = movement::position(world, npc) else {
+        return;
+    };
+    let content = world.resource::<Content>().clone();
+    let Some(mesh) = movement::mesh_of(&content, world, npc) else {
+        return;
+    };
+    let goal = world.resource_scope(|world, mut rng: Mut<Rng>| {
+        let free = |spot| movement::crowding(world, npc, spot) == 0;
+        match ground {
+            WanderGround::Triangles(triangles) => NavMesh::draw_on(&mut rng, triangles, free),
+            WanderGround::Anywhere => mesh.random_reachable(&mut rng, at, free),
+        }
+    });
+    if let Some(goal) = goal {
+        movement::goto(world, npc, goal);
+    }
+}
+
+/// Ends the npc's current act with its outcome, and takes up the next waiting.
+fn done(world: &mut World, npc: Entity, current: Running, output: Outcome) {
+    reach::forget(world, npc);
+    if let Some(mut body) = world.get_mut::<Body>(npc) {
+        body.current = None;
+    }
+    answer(world, current, output);
+    start_waiting(world, npc);
 }
 
 fn start_waiting(world: &mut World, npc: Entity) {
@@ -222,13 +320,7 @@ fn step(world: &mut World, npc: Entity, running: Running) -> Option<Outcome> {
             movement::halt(world, npc);
             Some(Outcome::Next)
         }
-        Act::Wander { leash } => {
-            if !running.started {
-                wander(world, npc, leash);
-                return None;
-            }
-            (!movement::moving(world, npc)).then_some(Outcome::Next)
-        }
+        Act::Wander { .. } => (!movement::moving(world, npc)).then_some(Outcome::Next),
         Act::WalkTo { to, within } => {
             let Some(aim) = destination(world, npc, to, within) else {
                 return Some(Outcome::Blocked);
@@ -297,29 +389,6 @@ fn destination(
     Some(movement::Aim::Point(movement::vacant_near(
         world, npc, spot, within,
     )))
-}
-
-fn wander(world: &mut World, npc: Entity, leash: Option<Meters>) {
-    let Some(at) = movement::position(world, npc) else {
-        return;
-    };
-    let content = world.resource::<Content>().clone();
-    let Some(mesh) = movement::mesh_of(&content, world, npc) else {
-        return;
-    };
-    let home = world.get::<Home>(npc).map(|home| home.0);
-    let roams = world.get::<Roams>(npc).map(|roams| roams.0);
-    let goal = world.resource_scope(|world, mut rng: Mut<Rng>| {
-        let free = |spot| movement::crowding(world, npc, spot) == 0;
-        match (leash.zip(home), roams) {
-            (Some((leash, home)), _) => mesh.random_reachable_near(&mut rng, at, home, leash, free),
-            (None, Some(roams)) => mesh.random_reachable_within(&mut rng, at, roams, free),
-            (None, None) => mesh.random_reachable(&mut rng, at, free),
-        }
-    });
-    if let Some(goal) = goal {
-        movement::goto(world, npc, goal);
-    }
 }
 
 /// Walks to a random reachable spot.

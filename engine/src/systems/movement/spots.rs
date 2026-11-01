@@ -4,6 +4,7 @@ use bevy_ecs::world::DeferredWorld;
 use bevy_platform::collections::HashMap;
 
 use super::navmesh::AGENT_RADIUS;
+use crate::core::chunk::Chunk;
 use crate::core::math::Pos;
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::area::{AreaId, AreaTag};
@@ -22,18 +23,21 @@ pub struct Spot {
     pub at: Pos<Meters>,
 }
 
-/// Every actor's [`Spot`] by area, kept in step with the spots as they come and go.
+/// Every actor's [`Spot`] by area and chunk, kept in step with the spots as they come and go.
 #[derive(Resource, Default)]
-pub struct Spots(HashMap<AreaId, HashMap<Entity, Pos<Meters>>>);
+pub struct Spots(HashMap<AreaId, ChunkSpots>);
+
+type ChunkSpots = HashMap<Chunk, Vec<(Entity, Pos<Meters>)>>;
 
 impl Spots {
     /// How many bodies resting on their spots in `area` a body at `at` would overlap, `except` for
     /// one actor's own.
     pub fn crowding(&self, area: AreaId, at: Pos<Meters>, except: Option<Entity>) -> u16 {
         self.0.get(&area).map_or(0, |spots| {
-            spots
-                .iter()
-                .filter(|(entity, spot)| Some(**entity) != except && overlaps(**spot, at))
+            Chunk::around(at, SPACING)
+                .filter_map(|chunk| spots.get(&chunk))
+                .flatten()
+                .filter(|(entity, spot)| Some(*entity) != except && overlaps(*spot, at))
                 .count() as u16
         })
     }
@@ -56,7 +60,9 @@ impl Spot {
             .0
             .entry(spot.area)
             .or_default()
-            .insert(context.entity, spot.at);
+            .entry(Chunk::at(spot.at))
+            .or_default()
+            .push((context.entity, spot.at));
     }
 
     fn uncount(mut world: DeferredWorld, context: HookContext) {
@@ -64,11 +70,18 @@ impl Spot {
             return;
         };
         let mut spots = world.resource_mut::<Spots>();
-        if let Some(area) = spots.0.get_mut(&spot.area) {
-            area.remove(&context.entity);
-            if area.is_empty() {
-                spots.0.remove(&spot.area);
+        let Some(area) = spots.0.get_mut(&spot.area) else {
+            return;
+        };
+        let chunk = Chunk::at(spot.at);
+        if let Some(filed) = area.get_mut(&chunk) {
+            filed.retain(|(entity, _)| *entity != context.entity);
+            if filed.is_empty() {
+                area.remove(&chunk);
             }
+        }
+        if area.is_empty() {
+            spots.0.remove(&spot.area);
         }
     }
 }

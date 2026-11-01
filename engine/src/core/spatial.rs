@@ -47,7 +47,27 @@ impl SpatialIndex {
                 ),
             });
         }
-        self.filed.sort_unstable();
+        let Some((min, max)) = self.bounds else {
+            return;
+        };
+        let (first, last) = (cell_of(cell, min), cell_of(cell, max));
+        let columns = (last.1 - first.1 + 1) as usize;
+        let cells = (last.0 - first.0 + 1) as usize * columns;
+        let slot = |cell: Cell| (cell.0 - first.0) as usize * columns + (cell.1 - first.1) as usize;
+        let mut starts = vec![0usize; cells + 1];
+        for (cell, ..) in &self.filed {
+            starts[slot(*cell) + 1] += 1;
+        }
+        for index in 1..=cells {
+            starts[index] += starts[index - 1];
+        }
+        let mut sorted = vec![((0, 0), (0, 0), 0u32); self.filed.len()];
+        for entry in &self.filed {
+            let at = &mut starts[slot(entry.0)];
+            sorted[*at] = *entry;
+            *at += 1;
+        }
+        self.filed = sorted;
     }
 
     /// The indices of the extents that may lie within `within` of `from`, in no particular order:

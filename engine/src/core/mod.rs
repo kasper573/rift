@@ -10,6 +10,7 @@ pub mod interpolate;
 pub mod math;
 pub mod net;
 pub mod os;
+pub mod par;
 pub mod render;
 pub mod script;
 pub mod spatial;

@@ -2,11 +2,13 @@ use std::borrow::Cow;
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
+use rayon::prelude::*;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 
 use crate::core::content::Content;
 use crate::core::math::{Offset, Pos, Rect, Size};
+use crate::core::par;
 use crate::core::units::Meters;
 use crate::systems::actor::Name as ActorName;
 use crate::systems::area::PropId;
@@ -299,7 +301,6 @@ pub fn track(
     world: &mut World,
     actors: &mut Actors,
     objects: &mut QueryState<(Entity, &AreaObject, &AreaTag)>,
-    mut now: Local<Vec<Entity>>,
 ) {
     let watchers = watchers(world);
     let instances = world.resource::<RiftInstances>();
@@ -332,19 +333,37 @@ pub fn track(
         .iter(world)
         .map(|(entity, at, tag)| (entity, at.pos, tag.area))
         .collect();
-    for (actor, at, area_id) in positions {
-        now.clear();
-        now.extend(
-            placed
+    let shared: &World = world;
+    let crossings: Vec<Crossing> = positions
+        .par_iter()
+        .with_min_len(par::GRAIN)
+        .map(|&(actor, at, area_id)| {
+            let mut now: Vec<Entity> = placed
                 .iter()
                 .filter(|object| object.area == area_id && object.shape.covers(at))
-                .filter(|object| crate::systems::visibility::present(world, object.entity, actor))
-                .map(|object| object.entity),
-        );
-        now.sort_unstable();
-        let is_npc = world.get::<Npc>(actor).is_some();
-        let before = world.get::<Underfoot>(actor).cloned().unwrap_or_default();
-        let standing = standing_on(world, actor, &before.standing, &now);
+                .filter(|object| crate::systems::visibility::present(shared, object.entity, actor))
+                .map(|object| object.entity)
+                .collect();
+            now.sort_unstable();
+            let before = shared.get::<Underfoot>(actor).cloned().unwrap_or_default();
+            let standing = standing_on(shared, actor, &before.standing, &now);
+            Crossing {
+                actor,
+                is_npc: shared.get::<Npc>(actor).is_some(),
+                before,
+                now,
+                standing,
+            }
+        })
+        .collect();
+    for crossing in crossings {
+        let Crossing {
+            actor,
+            is_npc,
+            before,
+            now,
+            standing,
+        } = crossing;
         for object in standing
             .iter()
             .filter(|object| !before.standing.contains(object))
@@ -358,13 +377,22 @@ pub fn track(
             raise_crossing(world, *object, EventKind::Left, actor, is_npc);
         }
         let after = Underfoot {
-            inside: now.clone(),
+            inside: now,
             standing,
         };
         if after != before {
             world.entity_mut(actor).insert(after);
         }
     }
+}
+
+/// Where an actor stands this tick against where it stood, as the tick found it.
+struct Crossing {
+    actor: Entity,
+    is_npc: bool,
+    before: Underfoot,
+    now: Vec<Entity>,
+    standing: Vec<Entity>,
 }
 
 fn standing_on(

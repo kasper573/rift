@@ -678,15 +678,13 @@ impl Area {
     }
 
     /// The mesh an actor moves on: the ground or, flying, the air, each cut around the safe zones
-    /// for the wild; with no safe zone the wild moves on everyone's. Built the first time it's
-    /// asked for.
+    /// for the wild; with no safe zone the wild moves on everyone's.
     pub fn mesh_for(&self, wild: bool, flies: bool) -> &NavMesh {
         walk::mesh(self, wild && !self.safe_zones.is_empty(), flies)
     }
 
-    /// Builds every mesh actors move on in the area now, rather than when one is first asked for
-    /// and the build holds up whatever asked.
-    pub fn lay_meshes(&self) {
+    /// Builds every mesh actors move on in the area.
+    fn lay_meshes(&self) {
         for (wild, flies) in [(false, false), (true, false), (false, true), (true, true)] {
             self.mesh_for(wild, flies);
         }
@@ -727,16 +725,11 @@ pub fn load(content: &Content, area: AreaId) -> &Area {
     shared(content, area)
 }
 
-/// Builds the meshes of every area that loaded now, side by side, rather than each when it's
-/// first asked for.
-pub fn lay_all_meshes(content: &Content) {
-    use rayon::prelude::*;
-    content
-        .built::<Areas>()
-        .0
-        .par_iter()
-        .flatten()
-        .for_each(|area| area.lay_meshes());
+/// Builds every mesh actors move on in `area`, for a world about to play it. A mesh is otherwise
+/// built on first use, which a playing world must never be the one to do: the build would stall
+/// its tick, and asked for from parallel work, would wait on workers blocked waiting for it.
+pub fn lay_meshes(content: &Content, area: AreaId) {
+    load(content, area).lay_meshes();
 }
 
 /// The area at `area` when it loaded, to keep beside the content it came from.

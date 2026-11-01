@@ -14,6 +14,7 @@ use bevy_app::{App, Plugin, Update};
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryState;
 use bevy_time::Time;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use crate::core::chunk::{Chunk, InChunk};
@@ -21,6 +22,7 @@ use crate::core::content::Content;
 use crate::core::geometry::Radians;
 use crate::core::interpolate::{Interpolate, InterpolatePlugin, Jumps, RenderValueSystems};
 use crate::core::math::{Offset, Pos};
+use crate::core::par;
 use crate::core::time::Seconds;
 use crate::core::units::{MeterPos, Meters, MetersPerSec};
 use crate::systems::actor::{Action, Actor, ActorModel, appearance, held, set_facing};
@@ -284,38 +286,36 @@ type StepQuery = QueryState<(
 pub fn advance(world: &mut World, movers_query: &mut Movers, step_query: &mut StepQuery) {
     let dt = Seconds(world.resource::<Time>().delta_secs());
     let movers: Vec<Entity> = movers_query.iter(world).collect();
-    for id in movers {
-        if stat::is_dead(world, id) {
+    let shared: &World = world;
+    let strides: Vec<(Entity, Stride)> = movers
+        .par_iter()
+        .with_min_len(par::GRAIN)
+        .filter_map(|&id| Some((id, stride(shared, id, dt)?)))
+        .collect();
+    for (id, stride) in strides {
+        let Stride::Walk {
+            at,
+            planned,
+            reached,
+            heading,
+            speed,
+            gait,
+        } = stride
+        else {
             halt(world, id);
             continue;
-        }
-        let Some(goal) = world.get::<MoveTarget>(id).map(|target| target.pos) else {
-            continue;
         };
-        let planned = world
-            .get::<Path>(id)
-            .is_some_and(|path| path.end() == Some(goal));
-        if !planned {
-            match plan(world, id, goal) {
-                Some(corners) => {
-                    world.entity_mut(id).insert(Path { corners });
-                }
-                None => {
-                    halt(world, id);
-                    continue;
-                }
-            }
+        if let Some(corners) = planned {
+            world.entity_mut(id).insert(Path { corners });
         }
-
-        let speed = speed_of(world, id);
-        let gait = gait_of(world, id, speed);
         let Ok((mut position, mut path, mut actor)) = step_query.get_mut(world, id) else {
             continue;
         };
-        let mut at = position.pos;
-        let heading = walk(&mut at, &mut path, speed * dt);
-        let arrived = path.corners.is_empty();
-        position.pos = at;
+        let left = path.corners.len() - reached;
+        path.corners.truncate(left);
+        if position.pos != at {
+            position.pos = at;
+        }
         if let Some(step) = heading
             && let Some(actor) = actor.as_mut()
         {
@@ -324,10 +324,57 @@ pub fn advance(world: &mut World, movers_query: &mut Movers, step_query: &mut St
                 actor.speed = speed;
             }
         }
-        if arrived {
+        if left == 0 {
             world.entity_mut(id).remove::<(MoveTarget, Path)>();
         }
     }
+}
+
+/// What a mover's tick comes to, worked out from the world as the tick found it.
+enum Stride {
+    /// The walk ends where the mover stands: it fell, or no way leads to its goal.
+    Halt,
+    Walk {
+        at: Pos<Meters>,
+        /// The corners of a walk routed afresh this tick, back to front.
+        planned: Option<Vec<Pos<Meters>>>,
+        /// How many corners of the walk the mover reached this tick.
+        reached: usize,
+        heading: Option<Offset<Meters>>,
+        speed: MetersPerSec,
+        gait: Action,
+    },
+}
+
+fn stride(world: &World, id: Entity, dt: Seconds) -> Option<Stride> {
+    if stat::is_dead(world, id) {
+        return Some(Stride::Halt);
+    }
+    let goal = world.get::<MoveTarget>(id)?.pos;
+    let mut at = position(world, id)?;
+    let held = world.get::<Path>(id);
+    let planned = match held {
+        Some(path) if path.end() == Some(goal) => None,
+        _ => match plan(world, id, goal) {
+            Some(corners) => Some(corners),
+            None => return Some(Stride::Halt),
+        },
+    };
+    let corners = planned
+        .as_deref()
+        .or_else(|| held.map(|path| path.corners.as_slice()))
+        .unwrap_or_default();
+    let speed = speed_of(world, id);
+    let gait = gait_of(world, id, speed);
+    let (reached, heading) = walk(&mut at, corners, speed * dt);
+    Some(Stride::Walk {
+        at,
+        planned,
+        reached,
+        heading,
+        speed,
+        gait,
+    })
 }
 
 pub fn speed_of(world: &World, entity: Entity) -> MetersPerSec {
@@ -356,31 +403,36 @@ pub(super) fn gait_of(world: &World, entity: Entity, speed: MetersPerSec) -> Act
     })
 }
 
-/// Walks `at` along `path` for `distance`, dropping each corner it reaches. Returns the heading of
-/// the last stretch walked, if it walked at all.
-fn walk(at: &mut Pos<Meters>, path: &mut Path, distance: Meters) -> Option<Offset<Meters>> {
+/// Walks `at` along `corners`, back to front, for `distance`: how many corners it reached, and the
+/// heading of the last stretch walked, if it walked at all.
+fn walk(
+    at: &mut Pos<Meters>,
+    corners: &[Pos<Meters>],
+    distance: Meters,
+) -> (usize, Option<Offset<Meters>>) {
     let mut heading = None;
     let mut remaining = distance;
+    let mut reached = 0;
     while remaining > Meters(1e-6)
-        && let Some(target) = path.next()
+        && let Some(&target) = corners[..corners.len() - reached].last()
     {
         let gap = at.distance(target);
         if gap < Meters(1e-4) {
             *at = target;
-            path.corners.pop();
+            reached += 1;
             continue;
         }
         heading = Some(target - *at);
         if gap <= remaining {
             *at = target;
             remaining -= gap;
-            path.corners.pop();
+            reached += 1;
         } else {
             *at = at.toward(target, remaining);
             remaining = Meters(0.0);
         }
     }
-    heading
+    (reached, heading)
 }
 
 fn plan(world: &World, entity: Entity, goal: Pos<Meters>) -> Option<Vec<Pos<Meters>>> {

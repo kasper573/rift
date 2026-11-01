@@ -229,6 +229,7 @@ pub fn server_app(
     mirror::register(&mut app);
     visibility::register(&mut app);
     area_state(app.world_mut(), content);
+    area::lay_meshes(content, area);
     // Seed the phase by the world's ordinal so worlds replicate on different ticks, spreading the
     // serialization load across ticks instead of spiking every Nth tick in lockstep.
     app.insert_resource(ReplicationClock(ordinal))

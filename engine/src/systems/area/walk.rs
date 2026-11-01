@@ -27,7 +27,8 @@ pub struct Meshes {
     wild_airspace: OnceLock<NavMesh>,
 }
 
-/// The mesh `area`'s actors move on, built on first use. The ground blocks where it is painted
+/// The mesh `area`'s actors move on, built on first use unless laid before. The ground blocks
+/// where it is painted
 /// mostly with a terrain that blocks, where it is steeper than the area's `max_slope`, and under
 /// every prop's footprint; a safe zone keeps the wild out of it. The air knows only the bounds
 /// and, for the wild, the safe zones.

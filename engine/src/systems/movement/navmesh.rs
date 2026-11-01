@@ -278,37 +278,41 @@ impl NavMesh {
         self.draw_by_area(rng, self.by_area.islands[island.0].clone(), fits)
     }
 
-    pub fn random_reachable_within(
+    /// The ground within `radius` of `center` an actor at `from` can reach, as triangles to draw
+    /// a spot from.
+    pub fn reachable_near(
         &self,
-        rng: &mut Rng,
-        from: Pos<Meters>,
-        bounds: Rect<Meters>,
-        fits: impl Fn(Pos<Meters>) -> bool,
-    ) -> Option<Pos<Meters>> {
-        let island = self.island(from)?;
-        draw(
-            rng,
-            self.clipped(&corners(bounds), |polygon| self.islands[polygon] == island),
-            fits,
-        )
-    }
-
-    pub fn random_reachable_near(
-        &self,
-        rng: &mut Rng,
         from: Pos<Meters>,
         center: Pos<Meters>,
         radius: Meters,
+    ) -> Vec<[Pos<Meters>; 3]> {
+        let Some(island) = self.island(from) else {
+            return Vec::new();
+        };
+        self.clipped(&circle_outline(center, radius), |polygon| {
+            self.islands[polygon] == island
+        })
+    }
+
+    /// The ground within `bounds` an actor at `from` can reach, as triangles to draw a spot from.
+    pub fn reachable_within(
+        &self,
+        from: Pos<Meters>,
+        bounds: Rect<Meters>,
+    ) -> Vec<[Pos<Meters>; 3]> {
+        let Some(island) = self.island(from) else {
+            return Vec::new();
+        };
+        self.clipped(&corners(bounds), |polygon| self.islands[polygon] == island)
+    }
+
+    /// A spot that `fits` on `ground`, each as likely as any other of the same size.
+    pub fn draw_on(
+        rng: &mut Rng,
+        ground: impl IntoIterator<Item = [Pos<Meters>; 3]>,
         fits: impl Fn(Pos<Meters>) -> bool,
     ) -> Option<Pos<Meters>> {
-        let island = self.island(from)?;
-        draw(
-            rng,
-            self.clipped(&circle_outline(center, radius), |polygon| {
-                self.islands[polygon] == island
-            }),
-            fits,
-        )
+        draw(rng, ground, fits)
     }
 
     /// The polygon holding `at`, or the nearest within the fuzz: a point on a polygon's edge, as a

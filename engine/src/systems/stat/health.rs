@@ -1,6 +1,8 @@
 use bevy_ecs::prelude::*;
+use rayon::prelude::*;
 
 use super::{StatKind, Stats, base, effective};
+use crate::core::par;
 use crate::core::vfx::VfxSite;
 use crate::systems::actor::Hurt;
 use crate::systems::mirror::{self, Effect, Ghost};
@@ -101,8 +103,21 @@ pub fn settle_health(
     living: &mut QueryState<Entity, (With<Stats>, Without<Ghost>)>,
 ) {
     let entities: Vec<Entity> = living.iter(world).collect();
-    for entity in entities {
-        set_health(world, entity, |health, _| health);
+    let shared: &World = world;
+    let settled: Vec<(Entity, f32)> = entities
+        .par_iter()
+        .with_min_len(par::GRAIN)
+        .filter_map(|&entity| {
+            let max = max_health(shared, entity);
+            let &health = shared.get::<Stats>(entity)?.0.get(&StatKind::Health)?;
+            let settled = health.min(max);
+            (settled != health).then_some((entity, settled))
+        })
+        .collect();
+    for (entity, settled) in settled {
+        if let Some(mut stats) = world.get_mut::<Stats>(entity) {
+            stats.0.insert(StatKind::Health, settled);
+        }
     }
 }
 

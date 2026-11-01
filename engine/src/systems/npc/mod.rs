@@ -9,6 +9,7 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryState;
 use bevy_replication::Replicated;
 use bevy_time::Time;
+use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -45,7 +46,7 @@ use crate::systems::skill::{self, Rank, SkillId};
 use crate::systems::stat::Stats;
 use crate::systems::status::Statuses;
 use crate::systems::visibility::{self, Presence};
-use crate::systems::{WorldArea, WorldCell, dialogue};
+use crate::systems::{WorldArea, WorldCell, dialogue, stat};
 use bevy_platform::collections::HashMap;
 
 pub type NpcId = ContentId<NpcDef>;
@@ -561,10 +562,11 @@ pub fn approach(world: &mut World) {
             let Owner::Entity(RunnerKind::Npc, npc) = owner else {
                 return None;
             };
-            let listed = roster.get(npc)?;
-            if listed.dead {
+            if stat::is_dead(world, npc) {
                 return None;
             }
+            let at = position(world, npc)?;
+            let area = world.get::<AreaTag>(npc)?.area;
             let reach = instances
                 .entries(owner, EventKind::CameNear)
                 .filter_map(|event| match event {
@@ -575,8 +577,8 @@ pub fn approach(world: &mut World) {
                 .unwrap_or(Meters(0.0));
             Some(Watcher {
                 npc,
-                at: listed.at,
-                area: listed.area,
+                at,
+                area,
                 reach,
             })
         })
@@ -585,7 +587,7 @@ pub fn approach(world: &mut World) {
         return;
     }
     let approached: Vec<(Watcher, Vec<Entity>)> = watchers
-        .into_iter()
+        .into_par_iter()
         .map(|watcher| {
             let mut now: Vec<Entity> = roster
                 .near(Among::Anyone, watcher.at, watcher.reach)

@@ -196,6 +196,11 @@ fn queue_messages(world: &mut World) {
     }
 }
 
+/// The fewest clients, and the fewest entities, a job of a parallel pass takes, so a pass isn't
+/// cut into jobs that cost more to hand out than to run.
+const CLIENT_GRAIN: usize = 16;
+const ENTITY_GRAIN: usize = 128;
+
 /// Tells every client what changed in its sight since the last send, in four passes over every
 /// core: what each client sees; what of each seen entity is there and what changed; what each
 /// client must be told; then each changed component serialized once, and every client's frame
@@ -232,6 +237,7 @@ fn send(world: &mut World, links: &mut QueryState<(Entity, &mut ClientLink)>) {
 
     let seen: Vec<Vec<Entity>> = clients
         .par_iter()
+        .with_min_len(CLIENT_GRAIN)
         .map(|held| {
             let mut seen = Vec::new();
             interest.seen_by(shared, held.client, &mut seen);
@@ -241,11 +247,12 @@ fn send(world: &mut World, links: &mut QueryState<(Entity, &mut ClientLink)>) {
         })
         .collect();
 
-    let mut subjects: Vec<Entity> = seen.iter().flatten().copied().collect();
-    subjects.sort_unstable();
+    let mut subjects: Vec<Entity> = seen.par_iter().flatten_iter().copied().collect();
+    subjects.par_sort_unstable();
     subjects.dedup();
     let summaries: Vec<Option<Summary>> = subjects
         .par_iter()
+        .with_min_len(ENTITY_GRAIN)
         .map(|&entity| summarize(shared, protocol, replicated, entity, last_run, this_run))
         .collect();
     let summary_of = |entity: Entity| {
@@ -257,6 +264,7 @@ fn send(world: &mut World, links: &mut QueryState<(Entity, &mut ClientLink)>) {
 
     let plans: Vec<Plan> = clients
         .par_iter_mut()
+        .with_min_len(CLIENT_GRAIN)
         .zip(&seen)
         .map(|(held, seen)| {
             let mut plan = Plan::default();
@@ -317,6 +325,7 @@ fn send(world: &mut World, links: &mut QueryState<(Entity, &mut ClientLink)>) {
         .collect();
     let serialized: Vec<Serialized> = subjects
         .par_iter()
+        .with_min_len(ENTITY_GRAIN)
         .zip(&needed)
         .zip(&mut sent_as)
         .map(|((&entity, &kinds), sent_as)| serialize(shared, protocol, entity, kinds, sent_as))
@@ -324,6 +333,7 @@ fn send(world: &mut World, links: &mut QueryState<(Entity, &mut ClientLink)>) {
 
     let frames: Vec<Option<Vec<u8>>> = plans
         .par_iter()
+        .with_min_len(CLIENT_GRAIN)
         .zip(&clients)
         .map(|(plan, held)| {
             let frame = ServerFrame {

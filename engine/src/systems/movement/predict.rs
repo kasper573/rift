@@ -166,8 +166,10 @@ impl Stride {
     }
 
     fn advance(&mut self, distance: Meters) -> Option<Offset<Meters>> {
-        let heading = walk(&mut self.at, &mut self.path, distance);
-        if self.path.corners.is_empty() {
+        let (reached, heading) = walk(&mut self.at, &self.path.corners, distance);
+        let left = self.path.corners.len() - reached;
+        self.path.corners.truncate(left);
+        if left == 0 {
             self.target = None;
         }
         heading
