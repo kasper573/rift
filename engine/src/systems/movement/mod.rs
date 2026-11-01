@@ -4,7 +4,8 @@ mod predict;
 mod spots;
 
 pub use berth::{
-    Aim, Approach, approach, place_beside, reachable, relocate_beside, settle, vacant_near,
+    Aim, Approach, ApproachPlan, Berths, approach, place_beside, reachable, relocate_beside,
+    settle, vacant_near,
 };
 pub use navmesh::{AGENT_RADIUS, Island, NavMesh, TileLayer};
 pub use predict::request_walk;

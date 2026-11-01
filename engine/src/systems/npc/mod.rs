@@ -239,6 +239,8 @@ pub struct NpcDef {
     pub held: Vec<ItemId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<NpcModule>,
+    /// How far from home it wanders, when a wander of its script names no leash of its own.
+    pub leash: Meters,
 }
 
 #[derive(JsonSchema, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -263,6 +265,7 @@ impl ContentFile for NpcDef {
             skills: Vec::new(),
             held: Vec::new(),
             modules: Vec::new(),
+            leash: Meters(0.0),
         })
     }
 

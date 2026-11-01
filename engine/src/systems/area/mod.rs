@@ -814,11 +814,6 @@ impl Area {
         self.placements_by_tile.get(&at).map_or(&[], Vec::as_slice)
     }
 
-    /// The depth the ground is drawn at: one terrain, under everything.
-    pub fn sort_base(&self) -> f32 {
-        0.0
-    }
-
     pub fn footstep_at(&self, at: Pos<Meters>) -> Option<&SfxId> {
         let cell = self.size.grid().cell_under(at)?;
         Some(&self.underfoot_of(self.paint.dominant(cell)).footstep)

@@ -22,6 +22,7 @@ use crate::systems::reach;
 use crate::systems::skill::{self, BasicAttack, CastAim, Targeting};
 use crate::systems::stat::{self, Stats};
 use crate::systems::vfx::{self, VfxFixture};
+use crate::systems::visibility;
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -163,7 +164,9 @@ pub fn regen(world: &mut World) {
 /// it falls.
 pub fn request(world: &mut World) {
     player_requests::<AttackRequest>(world, true, |world, player, request| {
-        if !attackable(world, player, request.target) {
+        if !visibility::in_sight(world, player, request.target)
+            || !attackable(world, player, request.target)
+        {
             return Ok(());
         }
         let skill = world

@@ -72,23 +72,36 @@ pub fn register(app: &mut App) {
 pub struct ClientId(pub u32);
 
 impl ClientId {
-    fn connect(mut world: DeferredWorld, _: HookContext) {
+    fn connect(mut world: DeferredWorld, context: HookContext) {
+        let Some(&client) = world.get::<ClientId>(context.entity) else {
+            return;
+        };
         if let Some(mut connected) = world.get_resource_mut::<Connected>() {
-            connected.0 += 1;
+            connected.0.insert(client, context.entity);
         }
     }
 
-    fn disconnect(mut world: DeferredWorld, _: HookContext) {
+    fn disconnect(mut world: DeferredWorld, context: HookContext) {
+        let Some(&client) = world.get::<ClientId>(context.entity) else {
+            return;
+        };
         if let Some(mut connected) = world.get_resource_mut::<Connected>() {
-            connected.0 -= 1;
+            connected.0.remove(&client);
         }
     }
 }
 
-/// How many clients are connected to a server's world, playing a character or about to: counted
-/// as connections come and go, so whether anyone is there is known without a look at the world.
+/// The clients connected to a server's world, playing a character or about to, each by its
+/// connection: kept as connections come and go, so who is there is known without a look at the
+/// world.
 #[derive(Resource, Default)]
-pub struct Connected(usize);
+pub struct Connected(HashMap<ClientId, Entity>);
+
+impl Connected {
+    pub fn connection(&self, client: ClientId) -> Option<Entity> {
+        self.0.get(&client).copied()
+    }
+}
 
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct PlayedBy {
@@ -201,7 +214,7 @@ pub struct Players(pub HashMap<ClientId, Entity>);
 pub fn any_connected(world: &World) -> bool {
     world
         .get_resource::<Connected>()
-        .is_some_and(|connected| connected.0 > 0)
+        .is_some_and(|connected| !connected.0.is_empty())
 }
 
 pub fn commands_locked(world: &World, player: Entity) -> bool {

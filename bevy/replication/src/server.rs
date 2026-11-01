@@ -3,7 +3,6 @@ use std::ops::Range;
 use bevy_app::{App, Plugin, PostUpdate, PreUpdate};
 use bevy_ecs::change_detection::Tick;
 use bevy_ecs::component::ComponentId;
-use bevy_ecs::entity::EntityHashMap;
 use bevy_ecs::prelude::*;
 use rayon::prelude::*;
 
@@ -143,10 +142,17 @@ impl FromWorld for LastSend {
     }
 }
 
-/// The bytes every replicated entity some client sees last went out as, kind by kind: what every
-/// client holding that kind of it holds, as each was told every change since.
+/// The bytes every replicated entity some client sees last went out as, each under its entity's
+/// index.
 #[derive(Resource, Default)]
-struct LastSent(EntityHashMap<Vec<(u16, Vec<u8>)>>);
+struct LastSent(Vec<Option<Sent>>);
+
+/// The bytes an entity last went out as, kind by kind: what every client holding that kind of it
+/// holds, as each was told every change since.
+struct Sent {
+    entity: Entity,
+    kinds: Vec<(u16, Vec<u8>)>,
+}
 
 fn receive(world: &mut World, links: &mut QueryState<(Entity, &mut ClientLink)>) {
     let arrived: Vec<(Entity, u32, Vec<Vec<u8>>)> = links
@@ -251,17 +257,15 @@ fn send(world: &mut World, links: &mut QueryState<(Entity, &mut ClientLink)>) {
         })
         .collect();
 
-    let subjects = union(&seen, shared.entities().len() as usize);
+    let (subjects, slot_of) = union(&seen, shared.entities().len() as usize);
     let summaries: Vec<Option<Summary>> = subjects
         .par_iter()
         .with_min_len(grain(subjects.len()))
         .map(|&entity| summarize(shared, protocol, replicated, entity, last_run, this_run))
         .collect();
     let summary_of = |entity: Entity| {
-        subjects
-            .binary_search(&entity)
-            .ok()
-            .and_then(|index| summaries[index].map(|summary| (index, summary)))
+        let slot = slot_of[entity.index_u32() as usize]? as usize;
+        summaries[slot].map(|summary| (slot, summary))
     };
 
     let client_grain = grain(clients.len());
@@ -324,9 +328,15 @@ fn send(world: &mut World, links: &mut QueryState<(Entity, &mut ClientLink)>) {
             needed[told.subject] |= told.whole | told.updated;
         }
     }
+    last_sent.resize_with(slot_of.len(), || None);
     let mut sent_as: Vec<Vec<(u16, Vec<u8>)>> = subjects
         .iter()
-        .map(|entity| last_sent.remove(entity).unwrap_or_default())
+        .map(
+            |&entity| match last_sent[entity.index_u32() as usize].take() {
+                Some(sent) if sent.entity == entity => sent.kinds,
+                _ => Vec::new(),
+            },
+        )
         .collect();
     let serialized: Vec<Serialized> = subjects
         .par_iter()
@@ -372,11 +382,16 @@ fn send(world: &mut World, links: &mut QueryState<(Entity, &mut ClientLink)>) {
         })
         .collect();
 
-    world.resource_mut::<LastSent>().0 = subjects
-        .into_iter()
-        .zip(sent_as)
-        .filter(|(_, sent_as)| !sent_as.is_empty())
-        .collect();
+    last_sent.fill_with(|| None);
+    for (&entity, sent_as) in subjects.iter().zip(sent_as) {
+        if !sent_as.is_empty() {
+            last_sent[entity.index_u32() as usize] = Some(Sent {
+                entity,
+                kinds: sent_as,
+            });
+        }
+    }
+    world.resource_mut::<LastSent>().0 = last_sent;
     for (held, frame) in clients.into_iter().zip(frames) {
         let Some(mut link) = world.get_mut::<ClientLink>(held.client) else {
             continue;
@@ -394,16 +409,22 @@ struct Held {
     messages: Vec<(u16, Vec<u8>)>,
 }
 
-/// Every entity in any of the `seen` lists, once, in entity order; `indices` bounds the
-/// entities' indices.
-fn union(seen: &[Vec<Entity>], indices: usize) -> Vec<Entity> {
+/// Every entity in any of the `seen` lists, once, in the order of their indices, and the slot
+/// of each among them under its index; `indices` bounds the entities' indices.
+fn union(seen: &[Vec<Entity>], indices: usize) -> (Vec<Entity>, Vec<Option<u32>>) {
     let mut by_index: Vec<Option<Entity>> = vec![None; indices];
     for &entity in seen.iter().flatten() {
         by_index[entity.index_u32() as usize] = Some(entity);
     }
-    let mut subjects: Vec<Entity> = by_index.into_iter().flatten().collect();
-    subjects.sort_unstable();
-    subjects
+    let mut slot_of: Vec<Option<u32>> = vec![None; indices];
+    let mut subjects: Vec<Entity> = Vec::new();
+    for (index, entity) in by_index.into_iter().enumerate() {
+        if let Some(entity) = entity {
+            slot_of[index] = Some(subjects.len() as u32);
+            subjects.push(entity);
+        }
+    }
+    (subjects, slot_of)
 }
 
 #[derive(Clone, Copy)]

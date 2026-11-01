@@ -1,9 +1,11 @@
 use bevy_ecs::prelude::*;
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
 use super::{StatusEffectId, Statuses, boost};
 use crate::core::audio::playback::SfxId;
 use crate::core::content::Content;
+use crate::core::par;
 use crate::core::time::{Seconds, UnixMillis, WallClock};
 use crate::core::vfx::VfxSite;
 use crate::systems::actor::Actor;
@@ -73,23 +75,17 @@ type Stirred = Or<(
 
 /// Brings every actor whose statuses, gear, bag or learning changed to the aspects it should have:
 /// a new one activates, one no longer wanted deactivates, and a status applied again does both.
+/// What each actor wants is worked out on every core from the world as the tick found it, then
+/// brought about in the order the actors were found.
 pub fn settle(world: &mut World, stirred: &mut QueryState<Entity, (Stirred, Without<Ghost>)>) {
     let actors: Vec<Entity> = stirred.iter(world).collect();
-    for actor in actors {
-        let wanted = desired(world, actor);
-        let active: Vec<Wanted> = world
-            .get::<ActiveAspects>(actor)
-            .map(|aspects| {
-                aspects
-                    .0
-                    .iter()
-                    .map(|aspect| Wanted {
-                        source: aspect.source,
-                        since: aspect.since,
-                    })
-                    .collect()
-            })
-            .unwrap_or_default();
+    let shared: &World = world;
+    let changes: Vec<(Entity, Vec<Wanted>, Vec<Wanted>)> = actors
+        .par_iter()
+        .with_min_len(par::grain(actors.len()))
+        .map(|&actor| (actor, desired(shared, actor), active(shared, actor)))
+        .collect();
+    for (actor, wanted, active) in changes {
         for gone in active.iter().filter(|aspect| !wanted.contains(aspect)) {
             deactivate(world, actor, gone.source);
         }
@@ -135,6 +131,22 @@ pub fn tick(world: &mut World, active: &mut QueryState<(Entity, &ActiveAspects)>
     for (actor, source) in replays {
         play_during(world, actor, source, now);
     }
+}
+
+fn active(world: &World, actor: Entity) -> Vec<Wanted> {
+    world
+        .get::<ActiveAspects>(actor)
+        .map(|aspects| {
+            aspects
+                .0
+                .iter()
+                .map(|aspect| Wanted {
+                    source: aspect.source,
+                    since: aspect.since,
+                })
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 fn desired(world: &World, actor: Entity) -> Vec<Wanted> {

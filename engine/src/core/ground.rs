@@ -519,15 +519,6 @@ impl Paint {
         shares
     }
 
-    /// How much of the point `at` the terrain `index` covers, 0 to 1.
-    pub fn share_at(&self, at: Pos<Meters>, index: u8) -> f32 {
-        self.blend_at(at)
-            .into_iter()
-            .filter(|share| share.terrain == index)
-            .map(|share| share.weight)
-            .sum()
-    }
-
     /// The terrain painting most of the metre cell `cell`; of equals, the first.
     pub fn dominant(&self, cell: CellPos) -> u8 {
         self.dominant_in(cell, GridSize::new(1, 1))[0]

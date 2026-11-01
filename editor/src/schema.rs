@@ -850,10 +850,20 @@ impl<'a> Nearby<'a> {
 }
 
 /// A fresh value of `schema`: its default, or the least value of its shape, naming the content and
-/// media nearest where it is written wherever it names some.
+/// media nearest where it is written wherever it names some. An expression field that says what
+/// its value must come to (`x-value`) starts as the least value of that type.
 pub fn template(root: &Value, schema: &Value, nearby: Nearby) -> Value {
     if let Some(default) = schema.get("default") {
         return default.clone();
+    }
+    if let Some(wanted) = schema.get("x-value").and_then(Value::as_str) {
+        let least = minimum(schema).unwrap_or(0.0);
+        return match wanted {
+            "integer" => Value::from(least as i64),
+            "number" => Value::from(least),
+            "boolean" => Value::Bool(false),
+            _ => Value::String(String::new()),
+        };
     }
     let fresh = match marker(resolve(root, schema)) {
         Some("x-place") => nearby.place(),

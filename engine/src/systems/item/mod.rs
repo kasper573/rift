@@ -783,7 +783,7 @@ pub fn drop_item(world: &mut World) {
 pub fn pickup_request(world: &mut World) {
     player_requests::<PickupRequest>(world, true, |world, player, request| {
         let target = request.target;
-        if world.get::<DroppedItem>(target).is_some() && visibility::present(world, target, player)
+        if world.get::<DroppedItem>(target).is_some() && visibility::in_sight(world, player, target)
         {
             reach::intend(world, player, ReachTarget::Actor(target), ReachAct::Pickup);
         }

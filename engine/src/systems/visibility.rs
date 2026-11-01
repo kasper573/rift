@@ -1,17 +1,15 @@
 use bevy_app::App;
 use bevy_ecs::message::Message;
 use bevy_ecs::prelude::*;
-use bevy_ecs::query::Has;
-use bevy_platform::collections::HashMap;
 use bevy_replication::{Interest, Replicated, ReplicationInterest, ToClient};
 
-use crate::core::chunk::Chunk;
+use crate::core::chunk::{CHUNK_SIDE, Chunk, ChunkIndex};
 use crate::core::math::Pos;
-use crate::core::units::Meters;
-use crate::systems::area::{AreaId, AreaTag};
+use crate::core::units::{MeterPos, Meters};
+use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::mirror::AppMirrorExt;
 use crate::systems::movement::{Position, position};
-use crate::systems::player::{ClientId, PlayedBy, Players};
+use crate::systems::player::{ClientId, Connected, PlayedBy, Players};
 use crate::systems::script::condition::CompiledCondition;
 
 pub const VIEW_DISTANCE: Meters = Meters(24.0);
@@ -44,28 +42,25 @@ pub fn coexist(world: &World, a: Entity, b: Entity) -> bool {
     present(world, a, b) && present(world, b, a)
 }
 
+/// Whether `subject` is among what `viewer` is shown: present to each other, in the same area
+/// within [`VIEW_DISTANCE`]. What a player may aim at, reach for or pick up, since their client
+/// shows nothing else; a request for anything farther didn't come from what they see.
+pub fn in_sight(world: &World, viewer: Entity, subject: Entity) -> bool {
+    coexist(world, viewer, subject)
+        && area::same_area(world, viewer, subject)
+        && matches!(
+            (position(world, viewer), position(world, subject)),
+            (Some(at), Some(there)) if at.distance(there) <= VIEW_DISTANCE
+        )
+}
+
 /// What a client sees: everything replicated that stands nowhere, its own character, and what
 /// stands in its character's area within `VIEW_DISTANCE` of it; of all those, only what is present
 /// to its character. Only the client playing a character is told its private components.
 #[derive(Default)]
 pub struct ClientSight {
     unplaced: Vec<Entity>,
-    /// Everything replicated standing somewhere, as of the send, under the chunk it stands in.
-    placed: HashMap<Chunk, Vec<Spotted>>,
-    standing: Option<Standing>,
 }
-
-#[derive(Clone, Copy)]
-struct Spotted {
-    entity: Entity,
-    at: Pos<Meters>,
-    area: AreaId,
-    /// Present to some viewers only, which `present` tells.
-    conditional: bool,
-}
-
-type Standing =
-    QueryState<(Entity, &'static Position, &'static AreaTag, Has<Presence>), With<Replicated>>;
 
 impl Interest for ClientSight {
     fn prepare(&mut self, world: &mut World) {
@@ -73,23 +68,9 @@ impl Interest for ClientSight {
             .query_filtered::<Entity, (With<Replicated>, Without<Position>)>()
             .iter(world)
             .collect();
-        for bucket in self.placed.values_mut() {
-            bucket.clear();
-        }
-        let standing = self.standing.get_or_insert_with(|| world.query_filtered());
-        for (entity, position, tag, conditional) in standing.iter(world) {
-            self.placed
-                .entry(Chunk::at(position.pos))
-                .or_default()
-                .push(Spotted {
-                    entity,
-                    at: position.pos,
-                    area: tag.area,
-                    conditional,
-                });
-        }
     }
 
+    /// What stands in the chunks around the character, as the chunks are filed this tick.
     fn seen_by(&self, world: &World, client: Entity, seen: &mut Vec<Entity>) {
         let Some(view) = world
             .get::<ClientId>(client)
@@ -104,22 +85,17 @@ impl Interest for ClientSight {
                 .chain(std::iter::once(view.focus))
                 .filter(|&subject| view.sees(world, subject)),
         );
-        let (Some(pos), Some(area)) = (view.pos, view.area) else {
+        let Some(pos) = view.pos else {
             return;
         };
+        let chunks = world.resource::<ChunkIndex>();
         for chunk in Chunk::around(pos, VIEW_DISTANCE) {
-            let Some(bucket) = self.placed.get(&chunk) else {
-                continue;
-            };
             seen.extend(
-                bucket
+                chunks
+                    .in_chunk(chunk)
                     .iter()
-                    .filter(|spotted| {
-                        spotted.area == area
-                            && (pos - spotted.at).square_length() <= VIEW_DISTANCE_SQ
-                            && (!spotted.conditional || present(world, spotted.entity, view.focus))
-                    })
-                    .map(|spotted| spotted.entity),
+                    .copied()
+                    .filter(|&subject| subject != view.focus && view.sees(world, subject)),
             );
         }
     }
@@ -131,28 +107,31 @@ impl Interest for ClientSight {
     }
 }
 
-/// The clients that see `entity`.
-pub fn seen_by(world: &mut World, entity: Entity) -> Vec<Entity> {
-    if position(world, entity).is_none() {
+/// The clients that see `entity`: those whose characters stand in the chunks around it, as the
+/// chunks were filed last tick (hence a chunk of margin), and see it where it stands now.
+pub fn seen_by(world: &World, entity: Entity) -> Vec<Entity> {
+    let Some(at) = position(world, entity) else {
         return Vec::new();
-    }
-    let clients: Vec<(Entity, ClientId)> = clients(world);
-    clients
-        .into_iter()
-        .filter(|&(_, id)| view(world, id).is_some_and(|view| view.sees(world, entity)))
-        .map(|(client, _)| client)
+    };
+    let connected = world.resource::<Connected>();
+    world
+        .resource::<ChunkIndex>()
+        .around(at, Meters(VIEW_DISTANCE.0 + CHUNK_SIDE.0))
+        .filter_map(|near| world.get::<PlayedBy>(near).map(|played| played.client))
+        .filter(|&client| view(world, client).is_some_and(|view| view.sees(world, entity)))
+        .filter_map(|client| connected.connection(client))
         .collect()
 }
 
 /// The clients that play `player`.
-pub fn private_viewers(world: &mut World, player: Entity) -> Vec<Entity> {
+pub fn private_viewers(world: &World, player: Entity) -> Vec<Entity> {
     let Some(owner) = world.get::<PlayedBy>(player).map(|owner| owner.client) else {
         return Vec::new();
     };
-    clients(world)
+    world
+        .resource::<Connected>()
+        .connection(owner)
         .into_iter()
-        .filter(|&(_, client)| client == owner)
-        .map(|(conn, _)| conn)
         .collect()
 }
 
@@ -167,25 +146,6 @@ pub fn send_to<M: Message>(world: &mut World, conn: Entity, message: M) {
         client: conn,
         message,
     });
-}
-
-fn clients(world: &mut World) -> Vec<(Entity, ClientId)> {
-    world.resource_scope(|world, mut sights: Mut<Sights>| {
-        sights
-            .0
-            .iter(world)
-            .map(|(entity, &id)| (entity, id))
-            .collect()
-    })
-}
-
-#[derive(Resource)]
-pub(crate) struct Sights(QueryState<(Entity, &'static ClientId)>);
-
-impl FromWorld for Sights {
-    fn from_world(world: &mut World) -> Self {
-        Sights(world.query())
-    }
 }
 
 /// Where a client looks from: its character, where it stands.

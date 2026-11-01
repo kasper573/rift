@@ -387,6 +387,7 @@ impl Game {
                 "appearance": { "model": path("model", name) },
                 "stats": stats(health),
                 "modules": modules,
+                "leash": 8.0,
             }),
         )
     }

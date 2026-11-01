@@ -446,6 +446,7 @@ fn spawn_sturdy(
         skills: Vec::new(),
         held: Vec::new(),
         modules: Vec::new(),
+        leash: Meters(0.0),
     };
     npc::spawn_actor(world, &def, at, area)
 }

@@ -96,7 +96,7 @@ pub fn interact_request(world: &mut World) {
         let target = request.target;
         if stat::stands(world, target)
             && interaction_of(world, target).is_some()
-            && visibility::present(world, target, player)
+            && visibility::in_sight(world, player, target)
         {
             reach::intend(
                 world,

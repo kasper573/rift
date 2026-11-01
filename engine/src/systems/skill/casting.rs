@@ -1,11 +1,13 @@
 use bevy_ecs::entity::MapEntities;
 use bevy_ecs::prelude::*;
+use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{Cooldowns, Rank, SkillId, Targeting};
 use crate::core::content::Content;
 use crate::core::math::Pos;
+use crate::core::par;
 use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, Eval, NEXT, REFUSED, ScriptFault, Value, ValueType,
 };
@@ -14,14 +16,15 @@ use crate::core::units::Meters;
 use crate::systems::actor::{self, playing};
 use crate::systems::combat::{self, Relation};
 use crate::systems::item::Inventory;
+use crate::systems::movement::Berths;
 use crate::systems::player::{self, player_requests};
-use crate::systems::reach::{self, Pursuit, ReachAct, ReachTarget};
+use crate::systems::reach::{self, Pursuit, PursuitPlan, ReachAct, ReachIntent, ReachTarget};
 use crate::systems::script::effect::{self as effects, Audience};
 use crate::systems::script::{
     Condition, EffectCall, EventKind, Owner, Reach, RiftInstances, RiftScripting, RunnerKind,
     condition, event,
 };
-use crate::systems::{notification, stat};
+use crate::systems::{notification, stat, visibility};
 
 #[derive(Message, Serialize, Deserialize, MapEntities, Clone, Debug, PartialEq)]
 pub struct UseSkillRequest {
@@ -60,6 +63,11 @@ pub struct UseSkill {
 
 pub fn request(world: &mut World) {
     player_requests::<UseSkillRequest>(world, true, |world, caster, request| {
+        if let CastAim::Actor(target) = request.aim
+            && !visibility::in_sight(world, caster, target)
+        {
+            return Err("Can't see them".to_owned());
+        }
         cast(world, caster, request.skill, request.aim, false)
     });
 }
@@ -151,50 +159,92 @@ pub fn fits(world: &World, caster: Entity, target: Entity, targeting: Targeting)
 /// Walks every caster toward what it aims at and performs the skill on arrival, once ready: the
 /// cost is taken, the cooldown starts and `used` is raised on the skill's script. A caster stands
 /// through what it plays, since a step would cut its swing short of the hit, and between casts it
-/// settles, spreading out from others that crowd its tile.
+/// settles, spreading out from others that crowd its tile. Every caster's step is worked out on every
+/// core from the world as the tick found it, then written in the order the casters were found.
 pub fn casts(world: &mut World, intents: &mut reach::Intents) {
-    for (caster, intent) in reach::casting(world, intents) {
-        let (ReachAct::Cast { skill, repeat }, target) = (intent.act, intent.target) else {
-            continue;
+    let casters = reach::casting(world, intents);
+    let shared: &World = world;
+    let steps: Vec<CastStep> = casters
+        .par_iter()
+        .with_min_len(par::grain(casters.len()))
+        .map(|&(caster, intent)| step_of(shared, caster, intent))
+        .collect();
+    for ((caster, intent), step) in casters.into_iter().zip(steps) {
+        apply(world, caster, intent, step);
+    }
+}
+
+/// What a caster's tick comes to, worked out from the world as the tick found it.
+enum CastStep {
+    /// The cast is given up, told to the player who meant it when it was refused.
+    Forget {
+        refused: Option<String>,
+    },
+    /// Playing a cast, or waiting on the delay before the next.
+    Wait,
+    Pursue(PursuitPlan),
+    Settle(Berths),
+    Perform {
+        skill: SkillId,
+        rank: Rank,
+    },
+}
+
+fn step_of(world: &World, caster: Entity, intent: ReachIntent) -> CastStep {
+    let (ReachAct::Cast { skill, .. }, target) = (intent.act, intent.target) else {
+        return CastStep::Wait;
+    };
+    let rank = super::rank_of(world, caster, skill);
+    if stat::is_dead(world, caster) || rank == Rank::NONE {
+        return CastStep::Forget { refused: None };
+    }
+    if playing::playing(world, caster) {
+        return CastStep::Wait;
+    }
+    let range = super::range_of(world, caster, skill, rank);
+    let pursuit = PursuitPlan::of(world, caster, range);
+    if !pursuit.arrived() {
+        return CastStep::Pursue(pursuit);
+    }
+    if !playing::ready(world, caster) {
+        return match reach::settling(world, caster, range) {
+            Some(berths) => CastStep::Settle(berths),
+            None => CastStep::Wait,
         };
-        let rank = super::rank_of(world, caster, skill);
-        if stat::is_dead(world, caster) || rank == Rank::NONE {
-            reach::forget(world, caster);
-            continue;
-        }
-        if playing::playing(world, caster) {
-            continue;
-        }
-        let range = super::range_of(world, caster, skill, rank);
-        match reach::pursue(world, caster, range) {
-            Pursuit::Lost => {
-                reach::forget(world, caster);
-                continue;
-            }
-            Pursuit::Approaching => continue,
-            Pursuit::Arrived => {}
-        }
-        if !playing::ready(world, caster) {
-            reach::settle(world, caster, range);
-            continue;
-        }
-        let targeting = skill.get(world.resource::<Content>()).target;
-        if let ReachTarget::Actor(target) = target
-            && !fits(world, caster, target, targeting)
-        {
-            reach::forget(world, caster);
-            continue;
-        }
-        if let Err(reason) = ready(world, caster, skill) {
-            if world.get::<player::PlayedBy>(caster).is_some() {
+    }
+    let targeting = skill.get(world.resource::<Content>()).target;
+    if let ReachTarget::Actor(target) = target
+        && !fits(world, caster, target, targeting)
+    {
+        return CastStep::Forget { refused: None };
+    }
+    if let Err(reason) = ready(world, caster, skill) {
+        let refused = world.get::<player::PlayedBy>(caster).map(|_| reason);
+        return CastStep::Forget { refused };
+    }
+    CastStep::Perform { skill, rank }
+}
+
+fn apply(world: &mut World, caster: Entity, intent: ReachIntent, step: CastStep) {
+    match step {
+        CastStep::Forget { refused } => {
+            if let Some(reason) = refused {
                 notification::error(world, caster, reason);
             }
             reach::forget(world, caster);
-            continue;
         }
-        perform(world, caster, skill, rank, target);
-        if !repeat {
-            reach::drop_intent(world, caster);
+        CastStep::Wait => {}
+        CastStep::Pursue(pursuit) => {
+            if pursuit.apply(world, caster) == Pursuit::Lost {
+                reach::forget(world, caster);
+            }
+        }
+        CastStep::Settle(berths) => berths.settle(world, caster),
+        CastStep::Perform { skill, rank } => {
+            perform(world, caster, skill, rank, intent.target);
+            if let ReachAct::Cast { repeat: false, .. } = intent.act {
+                reach::drop_intent(world, caster);
+            }
         }
     }
 }

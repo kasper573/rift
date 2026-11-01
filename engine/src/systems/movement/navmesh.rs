@@ -32,19 +32,16 @@ pub struct TileLayer {
     layer: Layer,
 }
 
-/// The polygons island by island, each with the ground of every one up to it, so a draw by area
-/// halves its way to a polygon rather than weighing them all.
+/// The polygons, each with the ground of every one up to it, so a draw by area halves its way to
+/// a polygon rather than weighing them all.
 struct ByArea {
     polygons: Vec<u32>,
     reach: Vec<f64>,
-    /// Where each island's polygons lie among them.
-    islands: Vec<Range<usize>>,
 }
 
 impl ByArea {
-    fn of<'a>(islands: &[Island], outline: impl Fn(usize) -> &'a [Pos<Meters>]) -> ByArea {
-        let mut polygons: Vec<u32> = (0..islands.len() as u32).collect();
-        polygons.sort_by_key(|&polygon| islands[polygon as usize].0);
+    fn of<'a>(count: usize, outline: impl Fn(usize) -> &'a [Pos<Meters>]) -> ByArea {
+        let polygons: Vec<u32> = (0..count as u32).collect();
         let mut total = 0.0;
         let reach: Vec<f64> = polygons
             .iter()
@@ -53,19 +50,7 @@ impl ByArea {
                 total
             })
             .collect();
-        let count = islands.iter().map(|island| island.0 + 1).max().unwrap_or(0);
-        let ranges = (0..count)
-            .map(|island| {
-                let start = polygons.partition_point(|&p| islands[p as usize].0 < island);
-                let end = polygons.partition_point(|&p| islands[p as usize].0 <= island);
-                start..end
-            })
-            .collect();
-        ByArea {
-            polygons,
-            reach,
-            islands: ranges,
-        }
+        ByArea { polygons, reach }
     }
 }
 
@@ -167,7 +152,7 @@ impl NavMesh {
         let count = starts.len() - 1;
         let mut index = SpatialIndex::new(POLYGON_CELL);
         index.refile((0..count).map(|polygon| Rect::from_points(outline(polygon))));
-        let by_area = ByArea::of(&islands, outline);
+        let by_area = ByArea::of(islands.len(), outline);
         NavMesh {
             bounds,
             mesh,
@@ -316,17 +301,6 @@ impl NavMesh {
         fits: impl Fn(Pos<Meters>) -> bool,
     ) -> Option<Pos<Meters>> {
         draw(rng, self.clipped(&corners(bounds), |_| true), fits)
-    }
-
-    /// A point that `fits` on the island `from` stands on.
-    pub fn random_reachable(
-        &self,
-        rng: &mut Rng,
-        from: Pos<Meters>,
-        fits: impl Fn(Pos<Meters>) -> bool,
-    ) -> Option<Pos<Meters>> {
-        let island = self.island(from)?;
-        self.draw_by_area(rng, self.by_area.islands[island.0].clone(), fits)
     }
 
     /// The ground within `radius` of `center` an actor at `from` can reach, as triangles to draw

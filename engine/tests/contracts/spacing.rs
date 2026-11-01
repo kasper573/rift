@@ -5,7 +5,7 @@ use engine::core::units::{MeterPos, Meters};
 use engine::systems::area::warp::warp;
 use engine::systems::area::{AreaDef, AreaId};
 use engine::systems::combat::{self, AttackRequest, Attitude};
-use engine::systems::movement::{self, MoveRequest, MoveSeq, SPACING, moving, position};
+use engine::systems::movement::{self, MoveRequest, MoveSeq, Position, SPACING, moving, position};
 use engine::systems::npc::body::{self, Act, Priority};
 use engine::systems::npc::{self, Npc, NpcDef};
 use engine::systems::script::{self, Place};
@@ -282,6 +282,107 @@ fn wandering_never_ends_on_a_taken_spot() {
     });
 
     assert!(apart, "a wanderer came to rest on a taken spot");
+}
+
+#[test]
+fn a_wanderer_keeps_within_its_leash_of_home_however_far_the_ground_goes() {
+    let homes = [Pos::new(15.0, 30.0), Pos::new(45.0, 30.0)];
+    let leashes = [Meters(6.0), Meters(15.0)];
+    let residents: Vec<Value> = homes
+        .iter()
+        .enumerate()
+        .map(|(index, home)| {
+            json!({
+                "type": "resident",
+                "npc": path("npc", &format!("wanderer_{index}")),
+                "at": { "x": home.x, "y": home.y },
+            })
+        })
+        .collect();
+    let content = Game::new()
+        .npc(
+            "wanderer_0",
+            100.0,
+            json!([{ "type": "script", "script": "roam_as_defined.script.json" }]),
+        )
+        .edit("npc", "wanderer_0", |npc| {
+            npc["leash"] = json!(leashes[0].0)
+        })
+        .script(
+            "roam_as_defined",
+            "npc",
+            json!({
+                "spawned": { "type": "on", "event": "started", "next": "roam" },
+                "roam": { "type": "wander", "priority": 1, "next": "rest" },
+                "rest": { "type": "wait", "seconds": 0, "at_most": 0.5, "next": "roam" },
+            }),
+        )
+        .npc(
+            "wanderer_1",
+            100.0,
+            json!([{ "type": "script", "script": "roam_as_scripted.script.json" }]),
+        )
+        .edit("npc", "wanderer_1", |npc| {
+            npc["leash"] = json!(leashes[0].0)
+        })
+        .script(
+            "roam_as_scripted",
+            "npc",
+            json!({
+                "spawned": { "type": "on", "event": "started", "next": "roam" },
+                "roam": { "type": "wander", "leash": leashes[1].0, "priority": 1, "next": "rest" },
+                "rest": { "type": "wait", "seconds": 0, "at_most": 0.5, "next": "roam" },
+            }),
+        )
+        .area("plain", &Map::open(60, 60), json!(residents))
+        .hero("plain", 30.0, 5.0)
+        .load();
+    let mut sim = Sim::new(content);
+    sim.serve("plain").add((
+        script::query::take_tick_roster,
+        script::run_tick,
+        npc::body::drive,
+        movement::advance,
+    ));
+    script::spawn_stateless(&mut sim.world);
+    sim.join(1);
+    sim.tick();
+    let wanderers: Vec<Entity> = homes
+        .iter()
+        .map(|home| {
+            sim.world
+                .query_filtered::<(Entity, &Position), With<Npc>>()
+                .iter(&sim.world)
+                .min_by(|a, b| {
+                    a.1.pos
+                        .distance(*home)
+                        .0
+                        .total_cmp(&b.1.pos.distance(*home).0)
+                })
+                .map(|(entity, _)| entity)
+                .expect("a wanderer starts at each home")
+        })
+        .collect();
+    let mut strayed = [Meters(0.0); 2];
+
+    sim.run_until(40.0, |world| {
+        for (index, &wanderer) in wanderers.iter().enumerate() {
+            let away = position(world, wanderer)
+                .expect("the wanderer stands")
+                .distance(homes[index]);
+            strayed[index] = Meters(strayed[index].0.max(away.0));
+        }
+        false
+    });
+
+    for (index, strayed) in strayed.iter().enumerate() {
+        assert!(
+            *strayed <= leashes[index],
+            "wanderer {index} strayed {strayed:?} from home on a leash of {:?}",
+            leashes[index]
+        );
+        assert!(*strayed > Meters(1.0), "wanderer {index} never wandered");
+    }
 }
 
 #[test]

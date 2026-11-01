@@ -13,7 +13,7 @@ use crate::core::script::{
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::actor::{self, Actor};
 use crate::systems::area::{self, AreaTag, object};
-use crate::systems::movement::{self, Approach, NavMesh};
+use crate::systems::movement::{self, Approach, ApproachPlan, NavMesh};
 use crate::systems::npc::{Home, Npc, Roams};
 use crate::systems::script::event::NPC;
 use crate::systems::script::{
@@ -173,6 +173,18 @@ pub fn drive(
                 }
             }
             Drive::Start => start_waiting(world, npc),
+            Drive::Walk(current, plan) => {
+                let outcome = walk_on(world, npc, current, plan);
+                if !current.started
+                    && let Some(mut body) = world.get_mut::<Body>(npc)
+                    && let Some(running) = body.current.as_mut()
+                {
+                    running.started = true;
+                }
+                if let Some(output) = outcome {
+                    done(world, npc, current, output);
+                }
+            }
             Drive::Step(current) => {
                 let outcome = step(world, npc, current);
                 if !current.started
@@ -218,17 +230,12 @@ enum Drive {
     Start,
     /// Steps its current act, which may move it.
     Step(Running),
-    /// Sets out wandering, over the ground it may wander.
-    Wander(WanderGround),
+    /// Walks on toward where its current act leads, as planned from the world as the tick found it.
+    Walk(Running, Option<ApproachPlan>),
+    /// Sets out wandering, over the ground it may wander: triangles to draw a spot from.
+    Wander(Vec<[Pos<Meters>; 3]>),
     /// Its current act came to an end on its own.
     Done(Running, Outcome),
-}
-
-/// Where a wander may lead: the ground the npc can reach around its home or within its range,
-/// as triangles to draw a spot from, or anywhere it can reach.
-enum WanderGround {
-    Triangles(Vec<[Pos<Meters>; 3]>),
-    Anywhere,
 }
 
 fn drive_of(world: &World, npc: Entity, talking: &[Entity]) -> Option<Drive> {
@@ -250,41 +257,42 @@ fn drive_of(world: &World, npc: Entity, talking: &[Entity]) -> Option<Drive> {
             Drive::Done(current, Outcome::Next)
         }
         Act::Wander { leash } => Drive::Wander(wander_ground(world, npc, leash)),
-        _ => Drive::Step(current),
+        Act::WalkTo { to, within } => Drive::Walk(
+            current,
+            destination(world, npc, to, within)
+                .map(|aim| ApproachPlan::of(world, npc, aim, within)),
+        ),
+        Act::Attack { .. } | Act::Stop => Drive::Step(current),
     })
 }
 
-fn wander_ground(world: &World, npc: Entity, leash: Option<Meters>) -> WanderGround {
-    let (Some(at), Some(mesh)) = (
+/// The ground a wander may lead over: within the leash of the npc's home, within the range it
+/// roams, or within the leash of where it stands when it has neither. The leash is the wander's
+/// own, else the npc's.
+fn wander_ground(world: &World, npc: Entity, leash: Option<Meters>) -> Vec<[Pos<Meters>; 3]> {
+    let content = world.resource::<Content>();
+    let (Some(at), Some(mesh), Some(body)) = (
         movement::position(world, npc),
-        movement::mesh_of(world.resource::<Content>(), world, npc),
+        movement::mesh_of(content, world, npc),
+        world.get::<Npc>(npc),
     ) else {
-        return WanderGround::Triangles(Vec::new());
+        return Vec::new();
     };
+    let leash = leash.unwrap_or(body.def.get(content).leash);
     let home = world.get::<Home>(npc).map(|home| home.0);
     let roams = world.get::<Roams>(npc).map(|roams| roams.0);
-    match (leash.zip(home), roams) {
-        (Some((leash, home)), _) => WanderGround::Triangles(mesh.reachable_near(at, home, leash)),
-        (None, Some(roams)) => WanderGround::Triangles(mesh.reachable_within(at, roams)),
-        (None, None) => WanderGround::Anywhere,
+    match (home, roams) {
+        (Some(home), _) => mesh.reachable_near(at, home, leash),
+        (None, Some(roams)) => mesh.reachable_within(at, roams),
+        (None, None) => mesh.reachable_near(at, at, leash),
     }
 }
 
 /// Sends the npc wandering to a free spot on `ground`.
-fn wander_to(world: &mut World, npc: Entity, ground: WanderGround) {
-    let Some(at) = movement::position(world, npc) else {
-        return;
-    };
-    let content = world.resource::<Content>().clone();
-    let Some(mesh) = movement::mesh_of(&content, world, npc) else {
-        return;
-    };
+fn wander_to(world: &mut World, npc: Entity, ground: Vec<[Pos<Meters>; 3]>) {
     let goal = world.resource_scope(|world, mut rng: Mut<Rng>| {
         let free = |spot| movement::crowding(world, npc, spot) == 0;
-        match ground {
-            WanderGround::Triangles(triangles) => NavMesh::draw_on(&mut rng, triangles, free),
-            WanderGround::Anywhere => mesh.random_reachable(&mut rng, at, free),
-        }
+        NavMesh::draw_on(&mut rng, ground, free)
     });
     if let Some(goal) = goal {
         movement::goto(world, npc, goal);
@@ -326,18 +334,8 @@ fn step(world: &mut World, npc: Entity, running: Running) -> Option<Outcome> {
             movement::halt(world, npc);
             Some(Outcome::Next)
         }
-        Act::Wander { .. } => (!movement::moving(world, npc)).then_some(Outcome::Next),
-        Act::WalkTo { to, within } => {
-            let Some(aim) = destination(world, npc, to, within) else {
-                return Some(Outcome::Blocked);
-            };
-            match movement::approach(world, npc, aim, within) {
-                Approach::Arrived => Some(Outcome::Arrived),
-                Approach::Unreachable => Some(Outcome::Blocked),
-                Approach::Approaching => {
-                    (running.started && !movement::moving(world, npc)).then_some(Outcome::Blocked)
-                }
-            }
+        Act::Wander { .. } | Act::WalkTo { .. } => {
+            (!movement::moving(world, npc)).then_some(Outcome::Next)
         }
         Act::Attack { target, within } => {
             if world.get_entity(target).is_err() || stat::is_dead(world, target) {
@@ -377,6 +375,24 @@ fn step(world: &mut World, npc: Entity, running: Running) -> Option<Outcome> {
     }
 }
 
+fn walk_on(
+    world: &mut World,
+    npc: Entity,
+    running: Running,
+    plan: Option<ApproachPlan>,
+) -> Option<Outcome> {
+    let Some(plan) = plan else {
+        return Some(Outcome::Blocked);
+    };
+    match plan.apply(world, npc) {
+        Approach::Arrived => Some(Outcome::Arrived),
+        Approach::Unreachable => Some(Outcome::Blocked),
+        Approach::Approaching => {
+            (running.started && !movement::moving(world, npc)).then_some(Outcome::Blocked)
+        }
+    }
+}
+
 /// A place or object stood on by others is walked to beside them instead.
 fn destination(
     world: &World,
@@ -397,12 +413,13 @@ fn destination(
     )))
 }
 
-/// Walks to a random reachable spot.
+/// Walks to a random spot within `leash` of the npc's home, the npc's own leash when none is
+/// given, or wherever it roams.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[schemars(extend("x-system" = "npc body"))]
 pub struct Wander {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(extend("default" = 8.0))]
+    #[schemars(extend("x-value" = "number"))]
     pub leash: Option<Condition>,
     #[schemars(extend("minimum" = Priority::LOWEST, "maximum" = Priority::HIGHEST))]
     pub priority: u8,

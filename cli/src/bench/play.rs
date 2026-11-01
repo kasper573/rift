@@ -2,6 +2,7 @@
 //! characters: they join as the content's test characters and cast through the game's own path.
 
 use bevy_ecs::prelude::*;
+use engine::core::chunk::ChunkIndex;
 use engine::core::content::Content;
 use engine::core::math::Pos;
 use engine::core::units::{MeterPos, Meters};
@@ -13,6 +14,7 @@ use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, start_of};
 use engine::systems::player::{ClientId, Players};
 use engine::systems::script::Place;
 use engine::systems::skill::{CastAim, Hotbar, HotbarEntry, SkillDef, Targeting, UseSkillRequest};
+use engine::systems::visibility::VIEW_DISTANCE;
 
 /// Ticks between one player's casts: two seconds at the server's rate.
 pub const CAST_EVERY: usize = 60;
@@ -90,10 +92,12 @@ fn player_of(world: &World, conn: Entity) -> Option<Entity> {
     world.resource::<Players>().0.get(client).copied()
 }
 
-fn nearest_npc(world: &mut World, at: Pos<Meters>) -> Option<(Entity, Pos<Meters>)> {
+/// The nearest npc the player's client is shown, as a player would pick one to target.
+fn nearest_npc(world: &World, at: Pos<Meters>) -> Option<(Entity, Pos<Meters>)> {
     world
-        .query_filtered::<(Entity, &Position), With<Npc>>()
-        .iter(world)
-        .map(|(entity, position)| (entity, position.pos))
+        .resource::<ChunkIndex>()
+        .around(at, VIEW_DISTANCE)
+        .filter(|&near| world.get::<Npc>(near).is_some())
+        .filter_map(|near| Some((near, world.get::<Position>(near)?.pos)))
         .min_by(|a, b| a.1.distance(at).0.total_cmp(&b.1.distance(at).0))
 }

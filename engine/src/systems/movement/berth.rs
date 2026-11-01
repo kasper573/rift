@@ -3,7 +3,7 @@ use std::cmp::Ordering;
 use bevy_ecs::prelude::*;
 
 use super::spots::{SPACING, Spots, crowding, overlaps, spot_of};
-use super::{MoveTarget, NavMesh, goto, halt, mesh_in, moving, position, relocate, speed_of};
+use super::{MoveTarget, NavMesh, goto, mesh_in, moving, position, relocate, speed_of};
 use crate::core::math::{Offset, Pos};
 use crate::core::units::{MeterPos, Meters, MetersPerSec};
 use crate::systems::area::{AreaId, AreaTag};
@@ -38,6 +38,7 @@ impl Aim {
         Some(match self {
             Aim::Point(point) => Sight {
                 origin: point,
+                actor: None,
                 footing: None,
                 avoid: Vec::new(),
                 walking: false,
@@ -46,6 +47,7 @@ impl Aim {
                 let footing = position(world, actor)?;
                 Sight {
                     origin: footing,
+                    actor: Some(actor),
                     footing: Some(footing),
                     avoid: vec![footing],
                     walking: moving(world, actor),
@@ -56,6 +58,7 @@ impl Aim {
                 let origin = spot_of(world, actor).map_or(footing, |spot| spot.at);
                 Sight {
                     origin,
+                    actor: Some(actor),
                     footing: Some(footing),
                     avoid: vec![origin, footing],
                     walking: false,
@@ -75,40 +78,98 @@ impl Aim {
 /// approacher has stopped. An actor that can't take a step, held fast or never moving at all, waits
 /// where it stands for what it aims at to come in reach.
 pub fn approach(world: &mut World, entity: Entity, aim: Aim, reach: Meters) -> Approach {
-    let (Some(at), Some(sight)) = (position(world, entity), aim.sight(world)) else {
-        return Approach::Unreachable;
-    };
-    let rooted = speed_of(world, entity) <= MetersPerSec(Meters(0.0));
-    let caught = sight.walking && sight.reaches(at, closing(reach));
-    if moving(world, entity) && (rooted || caught) {
-        halt(world, entity);
-    }
-    if !moving(world, entity) && sight.reaches(at, reach) {
-        let met = sight
-            .footing
-            .is_none_or(|footing| at.distance(footing) <= reach);
-        return if met {
-            Approach::Arrived
-        } else {
-            Approach::Approaching
+    ApproachPlan::of(world, entity, aim, reach).apply(world, entity)
+}
+
+/// What an [`approach`] comes to, worked out from the world as it stood, so many can be planned on
+/// every core and written in order: the berths it may choose from are found on the ground, which
+/// doesn't change meanwhile, and the one chosen among them by the crowd as it stands when the plan
+/// is applied.
+pub enum ApproachPlan {
+    Unreachable,
+    /// Standing in reach of what it aims at: `met` once that is in reach of the actor's body too.
+    Resting {
+        halt: bool,
+        met: bool,
+    },
+    /// Waiting where it stands or walking on to the berth it has.
+    Holding {
+        halt: bool,
+    },
+    /// Choosing a berth to walk to.
+    Berthing {
+        halt: bool,
+        berths: Berths,
+        nearest_first: bool,
+    },
+}
+
+impl ApproachPlan {
+    pub fn of(world: &World, entity: Entity, aim: Aim, reach: Meters) -> ApproachPlan {
+        let (Some(at), Some(sight)) = (position(world, entity), aim.sight(world)) else {
+            return ApproachPlan::Unreachable;
         };
-    }
-    if rooted {
-        return Approach::Approaching;
-    }
-    let reach = if sight.walking { closing(reach) } else { reach };
-    let kept = world
-        .get::<MoveTarget>(entity)
-        .is_some_and(|goal| sight.berths(goal.pos, reach));
-    if kept {
-        return Approach::Approaching;
-    }
-    match berth(world, entity, at, &sight, reach, sight.walking) {
-        Some(spot) => {
-            goto(world, entity, spot);
-            Approach::Approaching
+        let rooted = speed_of(world, entity) <= MetersPerSec(Meters(0.0));
+        let caught = sight.walking && sight.reaches(at, closing(reach));
+        let halt = moving(world, entity) && (rooted || caught);
+        if (halt || !moving(world, entity)) && sight.reaches(at, reach) {
+            let met = sight
+                .footing
+                .is_none_or(|footing| at.distance(footing) <= reach);
+            return ApproachPlan::Resting { halt, met };
         }
-        None => Approach::Unreachable,
+        if rooted {
+            return ApproachPlan::Holding { halt };
+        }
+        let reach = if sight.walking { closing(reach) } else { reach };
+        let kept = !halt
+            && world
+                .get::<MoveTarget>(entity)
+                .is_some_and(|goal| sight.berths(goal.pos, reach));
+        if kept {
+            return ApproachPlan::Holding { halt };
+        }
+        ApproachPlan::Berthing {
+            halt,
+            berths: Berths::within(world, entity, at, &sight, reach),
+            nearest_first: sight.walking,
+        }
+    }
+
+    pub fn arrived(&self) -> bool {
+        matches!(self, ApproachPlan::Resting { met: true, .. })
+    }
+
+    pub fn apply(self, world: &mut World, entity: Entity) -> Approach {
+        match self {
+            ApproachPlan::Unreachable => Approach::Unreachable,
+            ApproachPlan::Resting { halt, met } => {
+                halt_if(world, entity, halt);
+                if met {
+                    Approach::Arrived
+                } else {
+                    Approach::Approaching
+                }
+            }
+            ApproachPlan::Holding { halt } => {
+                halt_if(world, entity, halt);
+                Approach::Approaching
+            }
+            ApproachPlan::Berthing {
+                halt,
+                berths,
+                nearest_first,
+            } => {
+                halt_if(world, entity, halt);
+                match berths.pick(world, entity, nearest_first) {
+                    Some(spot) => {
+                        goto(world, entity, spot);
+                        Approach::Approaching
+                    }
+                    None => Approach::Unreachable,
+                }
+            }
+        }
     }
 }
 
@@ -116,25 +177,123 @@ pub fn approach(world: &mut World, entity: Entity, aim: Aim, reach: Meters) -> A
 /// aims at, or onto a spot overlapping at least two fewer, the smallest gap that evens a crowd out
 /// without two actors trading places back and forth.
 pub fn settle(world: &mut World, entity: Entity, aim: Aim, reach: Meters) {
-    if moving(world, entity) || aim.actor() == Some(entity) {
-        return;
+    if let Some(berths) = Berths::for_settling(world, entity, aim, reach) {
+        berths.settle(world, entity);
     }
-    let (Some(at), Some(sight)) = (position(world, entity), aim.sight(world)) else {
-        return;
-    };
-    let crowd = crowding(world, entity, at) + 1;
-    let on_target = aim
-        .actor()
-        .and_then(|actor| spot_of(world, actor))
-        .is_some_and(|spot| overlaps(spot.at, at));
-    if !on_target && crowd < 2 {
-        return;
+}
+
+/// The spots in reach of what an actor aims at that it can walk to, found on the ground as it
+/// stands, ranked among themselves by nearness alone; the crowd on each is read as one is picked.
+pub struct Berths {
+    aimed_at: Option<Entity>,
+    candidates: Vec<Candidate>,
+}
+
+impl Berths {
+    /// The berths an actor resting at `at` may [`settle`] on, when its berth is worth leaving:
+    /// overlapping the body of the actor it aims at, or crowded by another.
+    pub fn for_settling(world: &World, entity: Entity, aim: Aim, reach: Meters) -> Option<Berths> {
+        if moving(world, entity) || aim.actor() == Some(entity) {
+            return None;
+        }
+        let (Some(at), Some(sight)) = (position(world, entity), aim.sight(world)) else {
+            return None;
+        };
+        let berths = Berths::within(world, entity, at, &sight, reach);
+        berths.worth_leaving(world, entity, at).then_some(berths)
     }
-    let Some(best) = berth(world, entity, at, &sight, reach, false) else {
-        return;
-    };
-    if best != at && (on_target || crowding(world, entity, best) + 2 <= crowd) {
-        goto(world, entity, best);
+
+    /// Moves the actor to the best of these berths when that evens the crowd out, as it stands now.
+    pub fn settle(&self, world: &mut World, entity: Entity) {
+        let Some(at) = position(world, entity) else {
+            return;
+        };
+        if !self.worth_leaving(world, entity, at) {
+            return;
+        }
+        let Some(best) = self.pick(world, entity, false) else {
+            return;
+        };
+        let crowd = crowding(world, entity, at) + 1;
+        if best != at && (self.on_target(world, at) || crowding(world, entity, best) + 2 <= crowd) {
+            goto(world, entity, best);
+        }
+    }
+
+    fn within(
+        world: &World,
+        entity: Entity,
+        at: Pos<Meters>,
+        sight: &Sight,
+        reach: Meters,
+    ) -> Berths {
+        let aimed_at = sight.actor;
+        let Some(mesh) = mesh_in(world, entity) else {
+            return Berths {
+                aimed_at,
+                candidates: Vec::new(),
+            };
+        };
+        let Some(from) = mesh.island(at) else {
+            return Berths {
+                aimed_at,
+                candidates: Vec::new(),
+            };
+        };
+        let mut candidates: Vec<Candidate> = around(sight.origin, reach)
+            .filter(|&point| mesh.island(point) == Some(from))
+            .map(|point| Candidate {
+                at: point,
+                distance: at.distance(point),
+                avoided: sight.avoided(point),
+            })
+            .collect();
+        candidates.sort_by(Candidate::nearest);
+        Berths {
+            aimed_at,
+            candidates,
+        }
+    }
+
+    /// The berth whose body would overlap the fewest others as the crowd stands now, the nearest of
+    /// those (the nearest outright, when `nearest_first`), then the southernmost and westernmost; one
+    /// to avoid only when no other is in reach.
+    fn pick(&self, world: &World, entity: Entity, nearest_first: bool) -> Option<Pos<Meters>> {
+        let crowd = |candidate: &Candidate| crowding(world, entity, candidate.at);
+        self.best(|candidate| !candidate.avoided, crowd, nearest_first)
+            .or_else(|| self.best(|_| true, crowd, nearest_first))
+    }
+
+    fn best(
+        &self,
+        among: impl Fn(&Candidate) -> bool,
+        crowd: impl Fn(&Candidate) -> u16,
+        nearest_first: bool,
+    ) -> Option<Pos<Meters>> {
+        let mut best: Option<(u16, &Candidate)> = None;
+        for candidate in self.candidates.iter().filter(|candidate| among(candidate)) {
+            if let Some((best_crowd, best_candidate)) = best
+                && (best_crowd == 0
+                    || (nearest_first && candidate.distance != best_candidate.distance))
+            {
+                break;
+            }
+            let crowd = crowd(candidate);
+            if best.is_none_or(|(best_crowd, _)| crowd < best_crowd) {
+                best = Some((crowd, candidate));
+            }
+        }
+        best.map(|(_, candidate)| candidate.at)
+    }
+
+    fn worth_leaving(&self, world: &World, entity: Entity, at: Pos<Meters>) -> bool {
+        self.on_target(world, at) || crowding(world, entity, at) >= 1
+    }
+
+    fn on_target(&self, world: &World, at: Pos<Meters>) -> bool {
+        self.aimed_at
+            .and_then(|actor| spot_of(world, actor))
+            .is_some_and(|spot| overlaps(spot.at, at))
     }
 }
 
@@ -165,8 +324,13 @@ pub fn vacant_near(world: &World, entity: Entity, spot: Pos<Meters>, reach: Mete
     let (Some(at), Some(mesh)) = (position(world, entity), mesh_in(world, entity)) else {
         return spot;
     };
-    let free = |point: Pos<Meters>| mesh.connects(at, point) && crowding(world, entity, point) == 0;
-    if around(spot, reach).any(|point| mesh.walkable(point) && free(point)) {
+    let Some(from) = mesh.island(at) else {
+        return spot;
+    };
+    let free = |point: Pos<Meters>| {
+        mesh.island(point) == Some(from) && crowding(world, entity, point) == 0
+    };
+    if around(spot, reach).any(free) {
         return spot;
     }
     mesh.nearest_where(spot, SPACING, free).unwrap_or(spot)
@@ -186,8 +350,16 @@ fn closing(reach: Meters) -> Meters {
     Meters((reach.0 - SPACING.0).max(SPACING.0).min(reach.0))
 }
 
+fn halt_if(world: &mut World, entity: Entity, halt: bool) {
+    if halt {
+        super::halt(world, entity);
+    }
+}
+
 struct Sight {
     origin: Pos<Meters>,
+    /// The actor aimed at, where it stands.
+    actor: Option<Entity>,
     footing: Option<Pos<Meters>>,
     avoid: Vec<Pos<Meters>>,
     walking: bool,
@@ -207,50 +379,17 @@ impl Sight {
     }
 }
 
-fn berth(
-    world: &World,
-    entity: Entity,
-    at: Pos<Meters>,
-    sight: &Sight,
-    reach: Meters,
-    nearest_first: bool,
-) -> Option<Pos<Meters>> {
-    let mesh = mesh_in(world, entity)?;
-    let candidates: Vec<Candidate> = around(sight.origin, reach)
-        .filter(|&point| mesh.walkable(point) && mesh.connects(at, point))
-        .map(|point| Candidate {
-            at: point,
-            crowd: crowding(world, entity, point),
-            distance: at.distance(point),
-            avoided: sight.avoided(point),
-        })
-        .collect();
-    candidates
-        .iter()
-        .filter(|candidate| !candidate.avoided)
-        .min_by(|a, b| a.rank(b, nearest_first))
-        .or_else(|| candidates.iter().min_by(|a, b| a.rank(b, nearest_first)))
-        .map(|candidate| candidate.at)
-}
-
 struct Candidate {
     at: Pos<Meters>,
-    crowd: u16,
     distance: Meters,
     avoided: bool,
 }
 
 impl Candidate {
-    fn rank(&self, other: &Candidate, nearest_first: bool) -> Ordering {
-        let emptiest = self.crowd.cmp(&other.crowd);
-        let nearest = self.distance.0.total_cmp(&other.distance.0);
-        let (first, second) = if nearest_first {
-            (nearest, emptiest)
-        } else {
-            (emptiest, nearest)
-        };
-        first
-            .then(second)
+    fn nearest(&self, other: &Candidate) -> Ordering {
+        self.distance
+            .0
+            .total_cmp(&other.distance.0)
             .then(other.at.y.total_cmp(&self.at.y))
             .then(self.at.x.total_cmp(&other.at.x))
     }

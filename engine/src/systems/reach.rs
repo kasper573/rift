@@ -5,7 +5,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::math::Pos;
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::area::{self, AreaId, AreaTag};
-use crate::systems::movement::{self, Aim, Approach, position};
+use crate::systems::movement::{self, Aim, Approach, ApproachPlan, Berths, position};
 use crate::systems::skill::SkillId;
 use crate::systems::{stat, visibility};
 
@@ -187,30 +187,80 @@ pub fn intent(world: &World, actor: Entity, act: ReachAct) -> Option<Entity> {
 /// tells whether it's there. Two actors coming for each other meet between them, each covering the
 /// share of the gap its pace allows, rather than both heading for where the other stands.
 pub fn pursue(world: &mut World, actor: Entity, range: Meters) -> Pursuit {
-    let Some(target) = pursued(world, actor) else {
-        return Pursuit::Lost;
-    };
-    let reach = range;
-    if let ReachTarget::Actor(target) = target
-        && let Some(meeting) = meeting_point(world, actor, target, reach)
-    {
-        movement::goto(world, actor, meeting);
-        return Pursuit::Approaching;
+    PursuitPlan::of(world, actor, range).apply(world, actor)
+}
+
+/// What a [`pursue`] comes to, worked out from the world as it stood, so many can be planned on
+/// every core and written in order.
+pub enum PursuitPlan {
+    Lost,
+    /// Setting out to meet an actor coming for this one, while neither has set out yet.
+    Meeting {
+        target: Entity,
+        at: Pos<Meters>,
+    },
+    Approaching(ApproachPlan),
+}
+
+impl PursuitPlan {
+    pub fn of(world: &World, actor: Entity, range: Meters) -> PursuitPlan {
+        let Some(target) = pursued(world, actor) else {
+            return PursuitPlan::Lost;
+        };
+        let reach = range;
+        if let ReachTarget::Actor(target) = target
+            && let Some(at) = meeting_point(world, actor, target, reach)
+        {
+            return PursuitPlan::Meeting { target, at };
+        }
+        PursuitPlan::Approaching(ApproachPlan::of(
+            world,
+            actor,
+            aim(world, actor, target),
+            reach,
+        ))
     }
-    match movement::approach(world, actor, aim(world, actor, target), reach) {
-        Approach::Arrived => Pursuit::Arrived,
-        Approach::Approaching => Pursuit::Approaching,
-        Approach::Unreachable => Pursuit::Lost,
+
+    pub fn arrived(&self) -> bool {
+        match self {
+            PursuitPlan::Approaching(approach) => approach.arrived(),
+            PursuitPlan::Lost | PursuitPlan::Meeting { .. } => false,
+        }
+    }
+
+    /// A meeting planned while neither actor had set out is kept only while that still holds: the
+    /// other may have set out for it meanwhile, and is then approached where it is going instead,
+    /// from the next plan on.
+    pub fn apply(self, world: &mut World, actor: Entity) -> Pursuit {
+        match self {
+            PursuitPlan::Lost => Pursuit::Lost,
+            PursuitPlan::Meeting { target, at } => {
+                if !movement::moving(world, actor) && !movement::moving(world, target) {
+                    movement::goto(world, actor, at);
+                }
+                Pursuit::Approaching
+            }
+            PursuitPlan::Approaching(approach) => match approach.apply(world, actor) {
+                Approach::Arrived => Pursuit::Arrived,
+                Approach::Approaching => Pursuit::Approaching,
+                Approach::Unreachable => Pursuit::Lost,
+            },
+        }
     }
 }
 
 /// Spreads an actor that has arrived out over the ground in reach, by way of
 /// [`movement::settle`], while it waits to act again.
 pub fn settle(world: &mut World, actor: Entity, range: Meters) {
-    if let Some(target) = pursued(world, actor) {
-        let aim = aim(world, actor, target);
-        movement::settle(world, actor, aim, range);
+    if let Some(berths) = settling(world, actor, range) {
+        berths.settle(world, actor);
     }
+}
+
+/// The berths an arrived actor may [`settle`] on, when its berth is worth leaving.
+pub fn settling(world: &World, actor: Entity, range: Meters) -> Option<Berths> {
+    let target = pursued(world, actor)?;
+    Berths::for_settling(world, actor, aim(world, actor, target), range)
 }
 
 /// Whether an actor can still be reached for: alive, in the same area and able to meet.

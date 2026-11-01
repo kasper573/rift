@@ -467,6 +467,7 @@ fn area(game: &Content, key: &str) -> Sim {
         .accept::<InteractRequest>()
         .accept::<ConversationRequest>()
         .add((
+            movement::file_by_chunk,
             (status::expire, status::aspect::settle, status::aspect::tick).chain(),
             vfx::expire,
             engine::systems::player::arrival_holds,

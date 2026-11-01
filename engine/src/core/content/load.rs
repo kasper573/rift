@@ -55,7 +55,6 @@ type Hook = Box<dyn Fn(&mut Loading) + Send + Sync>;
 type FixtureCheck = Box<dyn Fn(&mut Loading, bool) + Send + Sync>;
 struct FixtureEntry {
     table: &'static str,
-    folder: Option<&'static str>,
     whole_table: bool,
     paths: Vec<(String, Vec<FixtureLock>)>,
     check: FixtureCheck,
@@ -298,7 +297,6 @@ impl ContentRegistry {
         self.version.take();
         self.fixtures.push(FixtureEntry {
             table: F::Row::TABLE,
-            folder: F::FOLDER,
             whole_table: F::WHOLE_TABLE,
             paths: F::VARIANTS
                 .iter()
@@ -451,14 +449,6 @@ impl ContentRegistry {
         self.fixtures
             .iter()
             .any(|fixture| fixture.table == table && fixture.whole_table)
-    }
-
-    /// Every folder a fixture sits in under `fixtures/`, by the system that declares it.
-    pub fn fixture_folders(&self) -> BTreeSet<String> {
-        self.fixtures
-            .iter()
-            .map(|fixture| fixture_dir(fixture.folder))
-            .collect()
     }
 
     pub fn version(&self) -> ContentVersion {
@@ -930,10 +920,6 @@ impl Loading {
         self.errors.push(error);
     }
 
-    pub fn extend_errors(&mut self, errors: impl IntoIterator<Item = LoadError>) {
-        self.errors.extend(errors);
-    }
-
     pub fn file_error(&mut self, file: impl Into<String>, at: ErrorPlace, problem: ContentProblem) {
         self.errors.push(LoadError {
             file: file.into(),
@@ -1060,11 +1046,6 @@ impl Loading {
             .collect();
         parts.sort_unstable();
         parts
-    }
-
-    /// Every part of the bundle at `path`, by its path inside the bundle.
-    pub fn parts_of(&self, path: &str) -> &[String] {
-        self.listing.parts.get(path).map_or(&[], Vec::as_slice)
     }
 
     pub fn place(&mut self, file: &str, pointer: &str) -> ErrorPlace {
