@@ -8,6 +8,8 @@ use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::message::{MessageCursor, Messages};
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryState;
+
+use crate::core::tick::Planner;
 use bevy_ecs::world::DeferredWorld;
 use bevy_replication::Replicated;
 use bevy_time::Time;
@@ -600,90 +602,100 @@ struct Watcher {
     reach: Meters,
 }
 
-pub fn approach(world: &mut World) {
-    let Some(roster) = world.get_resource::<TickRoster>() else {
-        return;
-    };
-    let instances = world.resource::<RiftInstances>();
-    let watchers: Vec<Watcher> = instances
-        .owners_answering(EventKind::CameNear)
-        .iter()
-        .filter_map(|&owner| {
-            let Owner::Entity(RunnerKind::Npc, npc) = owner else {
-                return None;
-            };
-            if stat::is_dead(world, npc) {
-                return None;
-            }
-            let at = position(world, npc)?;
-            let area = world.get::<AreaTag>(npc)?.area;
-            let reach = instances
-                .entries(owner, EventKind::CameNear)
-                .filter_map(|event| match event {
-                    RiftEvent::CameNear { within, .. } => Some(*within),
-                    _ => None,
+/// Tells every npc watching for whoever comes near who did: who is near each watcher is found on
+/// every core from the tick's roster, then raised in the order the watchers were found.
+#[derive(Default)]
+pub struct ApproachWatchers {
+    approached: Vec<(Watcher, Vec<Entity>)>,
+}
+
+impl Planner for ApproachWatchers {
+    fn plan(&mut self, world: &World) {
+        self.approached.clear();
+        let Some(roster) = world.get_resource::<TickRoster>() else {
+            return;
+        };
+        let instances = world.resource::<RiftInstances>();
+        let watchers: Vec<Watcher> = instances
+            .owners_answering(EventKind::CameNear)
+            .iter()
+            .filter_map(|&owner| {
+                let Owner::Entity(RunnerKind::Npc, npc) = owner else {
+                    return None;
+                };
+                if stat::is_dead(world, npc) {
+                    return None;
+                }
+                let at = position(world, npc)?;
+                let area = world.get::<AreaTag>(npc)?.area;
+                let reach = instances
+                    .entries(owner, EventKind::CameNear)
+                    .filter_map(|event| match event {
+                        RiftEvent::CameNear { within, .. } => Some(*within),
+                        _ => None,
+                    })
+                    .max_by(|a, b| a.0.total_cmp(&b.0))
+                    .unwrap_or(Meters(0.0));
+                Some(Watcher {
+                    npc,
+                    at,
+                    area,
+                    reach,
                 })
-                .max_by(|a, b| a.0.total_cmp(&b.0))
-                .unwrap_or(Meters(0.0));
-            Some(Watcher {
-                npc,
-                at,
-                area,
-                reach,
             })
-        })
-        .collect();
-    if watchers.is_empty() {
-        return;
+            .collect();
+        self.approached = watchers
+            .into_par_iter()
+            .map(|watcher| {
+                let mut now: Vec<Entity> = roster
+                    .near(Among::Anyone, watcher.at, watcher.reach)
+                    .filter(|listed| {
+                        listed.entity != watcher.npc
+                            && listed.area == watcher.area
+                            && !listed.dead
+                            && listed.at.distance(watcher.at) <= watcher.reach
+                            && visibility::coexist(world, watcher.npc, listed.entity)
+                            && !dialogue::in_conversation(world, listed.entity)
+                    })
+                    .map(|listed| listed.entity)
+                    .collect();
+                now.sort_unstable();
+                (watcher, now)
+            })
+            .collect();
     }
-    let approached: Vec<(Watcher, Vec<Entity>)> = watchers
-        .into_par_iter()
-        .map(|watcher| {
-            let mut now: Vec<Entity> = roster
-                .near(Among::Anyone, watcher.at, watcher.reach)
-                .filter(|listed| {
-                    listed.entity != watcher.npc
-                        && listed.area == watcher.area
-                        && !listed.dead
-                        && listed.at.distance(watcher.at) <= watcher.reach
-                        && visibility::coexist(world, watcher.npc, listed.entity)
-                        && !dialogue::in_conversation(world, listed.entity)
-                })
-                .map(|listed| listed.entity)
-                .collect();
-            now.sort_unstable();
-            (watcher, now)
-        })
-        .collect();
-    for (Watcher { npc, at, .. }, now) in approached {
-        let before: Vec<Entity> = world
-            .get::<Near>(npc)
-            .map(|near| near.0.clone())
-            .unwrap_or_default();
-        if now == before {
-            continue;
+
+    fn apply(&mut self, world: &mut World) {
+        for (Watcher { npc, at, .. }, now) in self.approached.drain(..) {
+            let before: Vec<Entity> = world
+                .get::<Near>(npc)
+                .map(|near| near.0.clone())
+                .unwrap_or_default();
+            if now == before {
+                continue;
+            }
+            for &other in now.iter().filter(|other| !before.contains(other)) {
+                let is_npc = world.get::<Npc>(other).is_some();
+                let def = world.get::<Npc>(other).map(|npc| npc.def);
+                let distance =
+                    position(world, other).map_or(Meters(f32::MAX), |there| there.distance(at));
+                world.resource_mut::<RiftInstances>().raise(
+                    Owner::Entity(RunnerKind::Npc, npc),
+                    EventKind::CameNear,
+                    Some(other),
+                    Vec::new(),
+                    move |event| match event {
+                        RiftEvent::CameNear { within, by, npc } => {
+                            distance <= *within
+                                && by.admits(is_npc)
+                                && npc.is_none_or(|npc| Some(npc) == def)
+                        }
+                        _ => false,
+                    },
+                );
+            }
+            world.entity_mut(npc).insert(Near(now));
         }
-        for &other in now.iter().filter(|other| !before.contains(other)) {
-            let is_npc = world.get::<Npc>(other).is_some();
-            let def = world.get::<Npc>(other).map(|npc| npc.def);
-            let distance =
-                position(world, other).map_or(Meters(f32::MAX), |there| there.distance(at));
-            world.resource_mut::<RiftInstances>().raise(
-                Owner::Entity(RunnerKind::Npc, npc),
-                EventKind::CameNear,
-                Some(other),
-                Vec::new(),
-                move |event| match event {
-                    RiftEvent::CameNear { within, by, npc } => {
-                        distance <= *within
-                            && by.admits(is_npc)
-                            && npc.is_none_or(|npc| Some(npc) == def)
-                    }
-                    _ => false,
-                },
-            );
-        }
-        world.entity_mut(npc).insert(Near(now));
     }
 }
 

@@ -17,6 +17,8 @@ use super::node::MAX_LIVE_FLOWS;
 use super::value::Value;
 use super::{EventDef, RevealDef, Vocabulary};
 use crate::core::math::Rng;
+use crate::core::par;
+use crate::core::tick::Planner;
 
 /// Flows that keep waking one another stop for the tick here, so they cannot hold the server.
 const MAX_ROUNDS_PER_TICK: u32 = 100_000;
@@ -392,76 +394,118 @@ fn choice_open<V: Vocabulary>(world: &World, key: FlowKey<V>, choice: usize) -> 
     })
 }
 
-pub fn tick<V: Vocabulary>(world: &mut World) {
-    if !world.contains_resource::<Instances<V>>() {
-        return;
-    }
-    let now = world.resource::<Time>().elapsed();
-    let tick = {
-        let mut instances = world.resource_mut::<Instances<V>>();
-        instances.tick += 1;
-        instances.tick
-    };
-    let clock = TickClock { tick, now };
-    let mut ready = wake_due::<V>(world, clock);
-    let mut rounds = 0;
-    loop {
-        apply_ops::<V>(world);
-        ready |= pick_queued::<V>(world);
-        if !ready {
-            break;
+/// Runs the flows due each tick: every one that wakes reads ahead on every core, through the
+/// steps that only read the world as the tick found it; then each finishes in turn, by flow, its
+/// steps that write the world applied and read on from; then whatever those writes start or
+/// resume runs on, round by round, until nothing is left to run.
+pub struct FlowRunner<V: Vocabulary> {
+    flows: SlotMap<FlowSlot, Option<Box<Flow<V>>>>,
+    reads: Vec<Read<V>>,
+    clock: Option<TickClock>,
+    steering: Steering,
+}
+
+impl<V: Vocabulary> Default for FlowRunner<V> {
+    fn default() -> FlowRunner<V> {
+        FlowRunner {
+            flows: SlotMap::with_key(),
+            reads: Vec::new(),
+            clock: None,
+            steering: Steering::default(),
         }
-        run_batch::<V>(world, clock);
-        ready = false;
-        rounds += 1;
-        if rounds > MAX_ROUNDS_PER_TICK {
-            break;
+    }
+}
+
+impl<V: Vocabulary> Planner for FlowRunner<V> {
+    fn prepare(&mut self, world: &mut World) {
+        self.clock = None;
+        let Some(mut instances) = world.get_resource_mut::<Instances<V>>() else {
+            return;
+        };
+        instances.tick += 1;
+        let tick = instances.tick;
+        self.flows = std::mem::take(&mut instances.flows);
+        self.clock = Some(TickClock {
+            tick,
+            now: world.resource::<Time>().elapsed(),
+        });
+        self.steering = Steering::of::<V>(world);
+    }
+
+    fn plan(&mut self, world: &World) {
+        self.reads.clear();
+        let Some(clock) = self.clock else {
+            return;
+        };
+        wake_due(world, &mut self.flows, clock);
+        let owners = &world.resource::<Instances<V>>().instances;
+        self.reads = read_batch(world, owners, &mut self.flows, clock, self.steering);
+    }
+
+    fn apply(&mut self, world: &mut World) {
+        let Some(clock) = self.clock.take() else {
+            return;
+        };
+        std::mem::swap(
+            &mut world.resource_mut::<Instances<V>>().flows,
+            &mut self.flows,
+        );
+        finish_reads(world, std::mem::take(&mut self.reads), clock, self.steering);
+        let mut rounds = 0;
+        loop {
+            apply_ops::<V>(world);
+            if !pick_queued::<V>(world) {
+                break;
+            }
+            run_batch::<V>(world, clock);
+            rounds += 1;
+            if rounds > MAX_ROUNDS_PER_TICK {
+                break;
+            }
         }
     }
 }
 
 /// Readies every flow whose wait is over: at the step after its wait, or back at the step it
-/// stepped to. A disabled owner is asleep: its flows wait, due, until it wakes. Tells whether any
-/// is.
-fn wake_due<V: Vocabulary>(world: &mut World, clock: TickClock) -> bool {
-    world.resource_scope(|world, mut instances: Mut<Instances<V>>| {
-        let mut any = false;
-        for flow in instances.flows.values_mut().flatten() {
-            let due = match flow.pause {
-                Some(Pause::Wait { until }) => until <= clock.now,
-                Some(Pause::NextTick { tick }) | Some(Pause::Step { tick }) => tick <= clock.tick,
-                _ => false,
-            };
-            if !due {
-                continue;
-            }
-            let asleep = flow.owner.entity().is_some_and(|owner| {
-                world
-                    .get_entity(owner)
-                    .is_ok_and(|owner| owner.contains::<Disabled>())
-            });
-            if asleep {
-                continue;
-            }
-            let Some(top) = flow.frames.last_mut() else {
-                continue;
-            };
-            let Some(node) = top.node else {
-                continue;
-            };
-            match (top.procedure.step(node), flow.pause) {
-                (Step::Wait { next, .. }, Some(Pause::Wait { .. } | Pause::NextTick { .. })) => {
-                    top.node = *next;
-                }
-                (_, Some(Pause::Step { .. })) => {}
-                _ => continue,
-            }
-            flow.pause = None;
-            flow.running = true;
-            any = true;
+/// stepped to. A disabled owner is asleep: its flows wait, due, until it wakes.
+fn wake_due<V: Vocabulary>(
+    world: &World,
+    flows: &mut SlotMap<FlowSlot, Option<Box<Flow<V>>>>,
+    clock: TickClock,
+) {
+    for flow in flows.values_mut().flatten() {
+        let due = match flow.pause {
+            Some(Pause::Wait { until }) => until <= clock.now,
+            Some(Pause::NextTick { tick }) | Some(Pause::Step { tick }) => tick <= clock.tick,
+            _ => false,
+        };
+        if !due {
+            continue;
         }
-        any
-    })
+        let asleep = flow.owner.entity().is_some_and(|owner| {
+            world
+                .get_entity(owner)
+                .is_ok_and(|owner| owner.contains::<Disabled>())
+        });
+        if asleep {
+            continue;
+        }
+        let Some(top) = flow.frames.last_mut() else {
+            continue;
+        };
+        let Some(node) = top.node else {
+            continue;
+        };
+        match (top.procedure.step(node), flow.pause) {
+            (Step::Wait { next, .. }, Some(Pause::Wait { .. } | Pause::NextTick { .. })) => {
+                top.node = *next;
+            }
+            (_, Some(Pause::Step { .. })) => {}
+            _ => continue,
+        }
+        flow.pause = None;
+        flow.running = true;
+    }
 }
 
 /// Readies every flow queued to run: the ones starting, and the ones resumed by the answer they
@@ -498,42 +542,66 @@ fn pick_queued<V: Vocabulary>(world: &mut World) -> bool {
 /// batch found it.
 fn run_batch<V: Vocabulary>(world: &mut World, clock: TickClock) {
     let steering = Steering::of::<V>(world);
-    let mut reads: Vec<Read<V>> =
-        world.resource_scope(|world, mut instances: Mut<Instances<V>>| {
-            let Instances {
-                flows,
-                instances: owners,
-                ..
-            } = &mut *instances;
-            let owners: &HashMap<Owner<V>, Instance<V>> = owners;
-            let shared: &World = world;
-            let running: Vec<(FlowSlot, &mut Flow<V>)> = flows
-                .iter_mut()
-                .filter_map(|(slot, flow)| Some((slot, &mut **flow.as_mut()?)))
-                .filter(|(_, flow)| flow.running)
-                .collect();
-            let grain = crate::core::par::grain(running.len());
-            running
-                .into_par_iter()
-                .with_min_len(grain)
-                .map(|(slot, flow)| {
-                    let key = FlowKey {
-                        owner: flow.owner,
-                        flow: flow.id,
-                    };
-                    let mut trace = Vec::new();
-                    let stopped =
-                        read_ahead(shared, owners, key, flow, clock, steering, &mut trace);
-                    Read {
-                        slot,
-                        key,
-                        stopped,
-                        trace,
-                    }
-                })
-                .collect()
-        });
+    let mut flows = std::mem::take(&mut world.resource_mut::<Instances<V>>().flows);
+    let reads = read_batch(
+        world,
+        &world.resource::<Instances<V>>().instances,
+        &mut flows,
+        clock,
+        steering,
+    );
+    world.resource_mut::<Instances<V>>().flows = flows;
+    finish_reads(world, reads, clock, steering);
+}
+
+/// Every running flow read ahead on every core, through the steps that only read the world.
+fn read_batch<V: Vocabulary>(
+    world: &World,
+    owners: &HashMap<Owner<V>, Instance<V>>,
+    flows: &mut SlotMap<FlowSlot, Option<Box<Flow<V>>>>,
+    clock: TickClock,
+    steering: Steering,
+) -> Vec<Read<V>> {
+    let running: Vec<(FlowSlot, &mut Flow<V>)> = flows
+        .iter_mut()
+        .filter_map(|(slot, flow)| Some((slot, &mut **flow.as_mut()?)))
+        .filter(|(_, flow)| flow.running)
+        .collect();
+    let read = |(slot, flow): (FlowSlot, &mut Flow<V>)| {
+        let key = FlowKey {
+            owner: flow.owner,
+            flow: flow.id,
+        };
+        let mut trace = Vec::new();
+        let stopped = read_ahead(world, owners, key, flow, clock, steering, &mut trace);
+        Read {
+            slot,
+            key,
+            stopped,
+            trace,
+        }
+    };
+    let mut reads: Vec<Read<V>> = if par::few(running.len()) {
+        running.into_iter().map(read).collect()
+    } else {
+        let grain = par::grain(running.len());
+        running
+            .into_par_iter()
+            .with_min_len(grain)
+            .map(read)
+            .collect()
+    };
     reads.sort_unstable_by_key(|read| read.key.flow);
+    reads
+}
+
+/// Finishes every flow read ahead, in turn, by flow.
+fn finish_reads<V: Vocabulary>(
+    world: &mut World,
+    reads: Vec<Read<V>>,
+    clock: TickClock,
+    steering: Steering,
+) {
     for read in reads {
         if steering.tracing
             && let Some(mut traced) = world.get_resource_mut::<FlowTrace<V>>()
@@ -567,7 +635,7 @@ enum Stopped {
 }
 
 /// How the tools steer a run, as of its start.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Default)]
 struct Steering {
     step: bool,
     tracing: bool,

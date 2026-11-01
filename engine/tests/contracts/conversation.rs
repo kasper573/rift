@@ -42,8 +42,10 @@ fn talking_walks_into_reach_opens_the_greeting_and_locks_commands() {
 
     assert_eq!(lines(&opened), vec!["Welcome in.".to_owned()]);
     assert_eq!(opened.with, Some(keeper));
-    // A step under way when the greeting opens still ends on its tile.
+    // A step under way when the greeting opens still ends on its tile, and the stance settles
+    // the tick after.
     assert!(sim.run_until(1.0, |world| !moving(world, player)));
+    sim.tick();
     let at = position(&sim.world, player).expect("position");
     let keeper_at = position(&sim.world, keeper).expect("position");
     assert!(at.distance(keeper_at) <= Meters(2.0 + std::f32::consts::SQRT_2));
@@ -328,22 +330,20 @@ fn inn() -> Sim {
             interact::interact_request,
             dialogue::requests,
         ))
-        .add((
-            script::query::take_tick_roster,
-            npc::approach,
-            script::run_tick,
-            npc::body::drive,
-            movement::advance,
-            interact::interactions,
-            dialogue::hold,
-            dialogue::refresh,
+        .add(movement::file_by_chunk)
+        .plan((
+            script::query::ListRoster::default(),
+            npc::ApproachWatchers::default(),
+            script::RunFlows::default(),
+            npc::body::DriveBodies::default(),
+            movement::AdvanceWalks::default(),
         ))
-        .add((
-            stat::settle_health,
-            combat::defeats,
-            actor::settle,
-            attention::update,
-            movement::file_by_chunk,
+        .add((interact::interactions, dialogue::hold, dialogue::refresh))
+        .plan(stat::SettleHealth::default())
+        .add(combat::defeats)
+        .plan((
+            actor::SettleActions::default(),
+            attention::MarkAttention::default(),
         ));
     script::spawn_stateless(&mut sim.world);
     region::reach_all(&mut sim.world);

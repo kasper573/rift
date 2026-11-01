@@ -5,6 +5,7 @@ use bevy_replication::{Interest, Replicated, ReplicationInterest, ToClient};
 
 use crate::core::chunk::{CHUNK_SIDE, Chunk, ChunkIndex};
 use crate::core::math::Pos;
+use crate::core::tick::Planner;
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::mirror::AppMirrorExt;
@@ -60,6 +61,26 @@ pub fn in_sight(world: &World, viewer: Entity, subject: Entity) -> bool {
 #[derive(Default)]
 pub struct ClientSight {
     unplaced: Vec<Entity>,
+    /// Every replicated entity that stands somewhere, by its index, as a view checks it: read
+    /// once per send rather than once per client that looks its way.
+    standing: Vec<Option<Standing>>,
+}
+
+/// What a view checks of an entity standing in a chunk.
+#[derive(Clone, Copy)]
+struct Standing {
+    entity: Entity,
+    at: Pos<Meters>,
+    area: Option<AreaId>,
+    shown: Shown,
+}
+
+#[derive(Clone, Copy)]
+enum Shown {
+    ToAll,
+    To(ClientId),
+    /// On a condition of the viewer, asked of the world.
+    When,
 }
 
 impl Interest for ClientSight {
@@ -68,6 +89,24 @@ impl Interest for ClientSight {
             .query_filtered::<Entity, (With<Replicated>, Without<Position>)>()
             .iter(world)
             .collect();
+        self.standing.clear();
+        self.standing.resize(world.entities().len() as usize, None);
+        let mut placed = world.query_filtered::<
+            (Entity, &Position, Option<&AreaTag>, Option<&Presence>),
+            With<Replicated>,
+        >();
+        for (entity, position, tag, presence) in placed.iter(world) {
+            self.standing[entity.index_u32() as usize] = Some(Standing {
+                entity,
+                at: position.pos,
+                area: tag.map(|tag| tag.area),
+                shown: match presence {
+                    None => Shown::ToAll,
+                    Some(Presence::For(client)) => Shown::To(*client),
+                    Some(Presence::When(_)) => Shown::When,
+                },
+            });
+        }
     }
 
     /// What stands in the chunks around the character, as the chunks are filed this tick.
@@ -85,7 +124,7 @@ impl Interest for ClientSight {
                 .chain(std::iter::once(view.focus))
                 .filter(|&subject| view.sees(world, subject)),
         );
-        let Some(pos) = view.pos else {
+        let (Some(pos), Some(area)) = (view.pos, view.area) else {
             return;
         };
         let chunks = world.resource::<ChunkIndex>();
@@ -95,7 +134,21 @@ impl Interest for ClientSight {
                     .in_chunk(chunk)
                     .iter()
                     .copied()
-                    .filter(|&subject| subject != view.focus && view.sees(world, subject)),
+                    .filter(|&subject| subject != view.focus)
+                    .filter(
+                        |&subject| match self.standing.get(subject.index_u32() as usize) {
+                            Some(Some(standing)) if standing.entity == subject => {
+                                standing.area == Some(area)
+                                    && (pos - standing.at).square_length() <= VIEW_DISTANCE_SQ
+                                    && match standing.shown {
+                                        Shown::ToAll => true,
+                                        Shown::To(client) => view.client == client,
+                                        Shown::When => present(world, subject, view.focus),
+                                    }
+                            }
+                            _ => view.sees(world, subject),
+                        },
+                    ),
             );
         }
     }
@@ -150,6 +203,7 @@ pub fn send_to<M: Message>(world: &mut World, conn: Entity, message: M) {
 
 /// Where a client looks from: its character, where it stands.
 struct View {
+    client: ClientId,
     focus: Entity,
     pos: Option<Pos<Meters>>,
     area: Option<AreaId>,
@@ -158,6 +212,7 @@ struct View {
 fn view(world: &World, client: ClientId) -> Option<View> {
     let focus = world.resource::<Players>().0.get(&client).copied()?;
     Some(View {
+        client,
         focus,
         pos: position(world, focus),
         area: world.get::<AreaTag>(focus).map(|tag| tag.area),
@@ -180,5 +235,26 @@ impl View {
         };
         world.get::<AreaTag>(subject).map(|tag| tag.area) == Some(area)
             && (pos - at).square_length() <= VIEW_DISTANCE_SQ
+    }
+}
+
+/// Tells every client what changed in its sight, each replication tick, planned beside the rest
+/// of the tick from the world as the tick found it.
+#[derive(Default)]
+pub struct SendSights(bevy_replication::Sender);
+
+impl Planner for SendSights {
+    fn prepare(&mut self, world: &mut World) {
+        if crate::systems::replication_tick(world) {
+            self.0.prepare(world);
+        }
+    }
+
+    fn plan(&mut self, world: &World) {
+        self.0.plan(world);
+    }
+
+    fn apply(&mut self, world: &mut World) {
+        self.0.apply(world);
     }
 }

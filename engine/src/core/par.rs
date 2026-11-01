@@ -20,6 +20,14 @@ pub fn start() {
     });
 }
 
+/// Whether a pass over `len` items is too small to hand to the pool: handing it out would cost
+/// more than the pass itself, so it runs where it's called.
+pub fn few(len: usize) -> bool {
+    len < FEW
+}
+
+const FEW: usize = 32;
+
 /// The fewest items a job of a pass over `len` items takes.
 pub fn grain(len: usize) -> usize {
     let jobs = JOBS_PER_THREAD * rayon::current_num_threads();

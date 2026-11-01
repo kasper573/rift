@@ -519,25 +519,20 @@ fn armed(game: Game) -> (Sim, Entity) {
     sim.serve("field")
         .accept::<AttackRequest>()
         .accept::<HoldRequest>()
-        .add((
-            combat::request,
-            equipment::hold,
-            actor::playing::progress,
-            skill::casting::casts,
+        .add((combat::request, equipment::hold, actor::playing::progress))
+        .add((status::expire, rewards::grant))
+        .plan(skill::casting::StepCasts::default())
+        .plan((
+            script::query::ListRoster::default(),
+            script::RunFlows::default(),
+            movement::AdvanceWalks::default(),
         ))
-        .add((
-            script::query::take_tick_roster,
-            script::run_tick,
-            movement::advance,
+        .plan((
+            status::aspect::SettleAspects::default(),
+            stat::SettleHealth::default(),
         ))
-        .add((
-            (status::expire, status::aspect::settle).chain(),
-            stat::settle_health,
-            combat::defeats,
-            skill::hotbar::settle_basic_attack,
-            actor::settle,
-        ))
-        .add(rewards::grant);
+        .add((combat::defeats, skill::hotbar::settle_basic_attack))
+        .plan(actor::SettleActions::default());
     script::spawn_stateless(&mut sim.world);
     let player = sim.join(1);
     sim.tick();

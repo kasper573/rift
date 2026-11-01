@@ -280,18 +280,16 @@ fn harbour() -> Sim {
             interact::interact_request,
             dialogue::requests,
         ))
-        .add((
-            script::query::take_tick_roster,
-            area::object::track,
-            npc::approach,
-            script::run_tick,
-            npc::body::drive,
-            movement::advance,
-            interact::interactions,
-            dialogue::hold,
-            dialogue::refresh,
+        .plan((
+            script::query::ListRoster::default(),
+            area::object::TrackUnderfoot::default(),
+            npc::ApproachWatchers::default(),
+            script::RunFlows::default(),
+            npc::body::DriveBodies::default(),
+            movement::AdvanceWalks::default(),
         ))
-        .add(stat::settle_health);
+        .add((interact::interactions, dialogue::hold, dialogue::refresh))
+        .plan(stat::SettleHealth::default());
     script::spawn_stateless(&mut sim.world);
     region::reach_all(&mut sim.world);
     sim

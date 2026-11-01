@@ -10,9 +10,11 @@ use crate::core::par;
 use crate::core::script::{
     Answer, Arrow, Compiler, EffectDef, EffectStep, Eval, FlowCx, ScriptFault, Value, ValueType,
 };
+use crate::core::tick::{Cached, Planner};
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::actor::{self, Actor};
 use crate::systems::area::{self, AreaTag, object};
+use crate::systems::dialogue::ConversationSession;
 use crate::systems::movement::{self, Approach, ApproachPlan, NavMesh};
 use crate::systems::npc::{Home, Npc, Roams};
 use crate::systems::script::event::NPC;
@@ -141,71 +143,85 @@ pub fn target(world: &World, npc: Entity) -> Option<Entity> {
     }
 }
 
-pub fn drive(
-    world: &mut World,
-    bodies: &mut QueryState<Entity, With<Body>>,
-    sessions: &mut dialogue::Sessions,
-) {
-    let npcs: Vec<Entity> = bodies.iter(world).collect();
-    let mut talking = dialogue::counterparts(world, sessions);
-    talking.sort_unstable();
-    let shared: &World = world;
-    let drives: Vec<(Entity, Drive)> = npcs
-        .par_iter()
-        .with_min_len(par::grain(npcs.len()))
-        .filter_map(|&npc| Some((npc, drive_of(shared, npc, &talking)?)))
-        .collect();
-    for (npc, drive) in drives {
-        match drive {
-            Drive::Halt => movement::halt(world, npc),
-            Drive::Drop => {
-                let Some(mut body) = world.get_mut::<Body>(npc) else {
-                    continue;
-                };
-                let dropped: Vec<Running> = body
-                    .current
-                    .take()
-                    .into_iter()
-                    .chain(body.waiting.drain(..))
-                    .collect();
-                for running in dropped {
-                    answer(world, running, Outcome::Lost);
+/// Drives every npc's body on: what each does next is worked out on every core from the world as
+/// the tick found it, then done in the order the npcs were found.
+#[derive(Default)]
+pub struct DriveBodies {
+    bodies: Cached<Entity, With<Body>>,
+    sessions: Cached<(Entity, &'static ConversationSession), ()>,
+    drives: Vec<(Entity, Drive)>,
+}
+
+impl Planner for DriveBodies {
+    fn prepare(&mut self, world: &mut World) {
+        self.bodies.ready(world);
+        self.sessions.ready(world);
+    }
+
+    fn plan(&mut self, world: &World) {
+        let npcs: Vec<Entity> = self.bodies.query(world).iter().collect();
+        let mut talking = dialogue::counterparts(self.sessions.query(world).iter());
+        talking.sort_unstable();
+        self.drives = npcs
+            .par_iter()
+            .with_min_len(par::grain(npcs.len()))
+            .filter_map(|&npc| Some((npc, drive_of(world, npc, &talking)?)))
+            .collect();
+    }
+
+    fn apply(&mut self, world: &mut World) {
+        for (npc, drive) in self.drives.drain(..) {
+            match drive {
+                Drive::Halt => movement::halt(world, npc),
+                Drive::Drop => {
+                    let Some(mut body) = world.get_mut::<Body>(npc) else {
+                        continue;
+                    };
+                    let dropped: Vec<Running> = body
+                        .current
+                        .take()
+                        .into_iter()
+                        .chain(body.waiting.drain(..))
+                        .collect();
+                    for running in dropped {
+                        answer(world, running, Outcome::Lost);
+                    }
                 }
+                Drive::Start => start_waiting(world, npc),
+                Drive::Walk(current, plan) => {
+                    let outcome = walk_on(world, npc, current, plan);
+                    if !current.started
+                        && let Some(mut body) = world.get_mut::<Body>(npc)
+                        && let Some(running) = body.current.as_mut()
+                    {
+                        running.started = true;
+                    }
+                    if let Some(output) = outcome {
+                        done(world, npc, current, output);
+                    }
+                }
+                Drive::Step(current) => {
+                    let outcome = step(world, npc, current);
+                    if !current.started
+                        && let Some(mut body) = world.get_mut::<Body>(npc)
+                        && let Some(running) = body.current.as_mut()
+                    {
+                        running.started = true;
+                    }
+                    if let Some(output) = outcome {
+                        done(world, npc, current, output);
+                    }
+                }
+                Drive::Wander(ground) => {
+                    wander_to(world, npc, ground);
+                    if let Some(mut body) = world.get_mut::<Body>(npc)
+                        && let Some(running) = body.current.as_mut()
+                    {
+                        running.started = true;
+                    }
+                }
+                Drive::Done(current, output) => done(world, npc, current, output),
             }
-            Drive::Start => start_waiting(world, npc),
-            Drive::Walk(current, plan) => {
-                let outcome = walk_on(world, npc, current, plan);
-                if !current.started
-                    && let Some(mut body) = world.get_mut::<Body>(npc)
-                    && let Some(running) = body.current.as_mut()
-                {
-                    running.started = true;
-                }
-                if let Some(output) = outcome {
-                    done(world, npc, current, output);
-                }
-            }
-            Drive::Step(current) => {
-                let outcome = step(world, npc, current);
-                if !current.started
-                    && let Some(mut body) = world.get_mut::<Body>(npc)
-                    && let Some(running) = body.current.as_mut()
-                {
-                    running.started = true;
-                }
-                if let Some(output) = outcome {
-                    done(world, npc, current, output);
-                }
-            }
-            Drive::Wander(ground) => {
-                wander_to(world, npc, ground);
-                if let Some(mut body) = world.get_mut::<Body>(npc)
-                    && let Some(running) = body.current.as_mut()
-                {
-                    running.started = true;
-                }
-            }
-            Drive::Done(current, output) => done(world, npc, current, output),
         }
     }
 }

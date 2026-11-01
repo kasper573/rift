@@ -24,6 +24,7 @@ use crate::core::geometry::Radians;
 use crate::core::interpolate::{Interpolate, InterpolatePlugin, Jumps, RenderValueSystems};
 use crate::core::math::{Offset, Pos};
 use crate::core::par;
+use crate::core::tick::{Cached, Planner};
 use crate::core::time::Seconds;
 use crate::core::units::{MeterPos, Meters, MetersPerSec};
 use crate::systems::actor::{Action, Actor, ActorModel, appearance, held, set_facing};
@@ -279,72 +280,97 @@ pub fn goto(world: &mut World, entity: Entity, pos: Pos<Meters>) {
     }
 }
 
-pub type Movers = QueryState<
-    (
-        Entity,
-        &'static mut Position,
-        &'static mut Path,
-        Option<&'static mut Actor>,
-    ),
-    With<MoveTarget>,
->;
-
 /// Walks every mover its tick's stride: worked out on every core from the world as the tick found
-/// it, then written in the order the movers were found.
-pub fn advance(world: &mut World, movers: &mut Movers) {
-    let dt = Seconds(world.resource::<Time>().delta_secs());
-    let ids: Vec<Entity> = movers.iter(world).map(|(id, ..)| id).collect();
-    let shared: &World = world;
-    let strides: Vec<Stride> = ids
-        .par_iter()
-        .with_min_len(par::grain(ids.len()))
-        .map(|&id| stride(shared, id, dt))
-        .collect();
-    let (mut halted, mut arrived) = (Vec::new(), Vec::new());
-    for ((&id, stride), (found, mut position, mut path, mut actor)) in
-        ids.iter().zip(strides).zip(movers.iter_mut(world))
-    {
-        assert_eq!(id, found, "the movers walk in the order they were found");
-        let Stride::Walk {
-            at,
-            planned,
-            reached,
-            heading,
-            speed,
-            gait,
-        } = stride
-        else {
-            halted.push(id);
-            continue;
-        };
-        if let Some(corners) = planned {
-            path.corners = corners;
+/// it, then written in the order the movers stand.
+#[derive(Default)]
+pub struct AdvanceWalks {
+    movers: Cached<Entity, With<MoveTarget>>,
+    walking: Option<QueryState<Movers, With<MoveTarget>>>,
+    strides: Vec<Stride>,
+    /// Each mover's stride, under the mover's index.
+    stride_of: Vec<Option<u32>>,
+}
+
+type Movers = (
+    Entity,
+    &'static mut Position,
+    &'static mut Path,
+    Option<&'static mut Actor>,
+);
+
+impl Planner for AdvanceWalks {
+    fn prepare(&mut self, world: &mut World) {
+        self.movers.ready(world);
+        self.walking.get_or_insert_with(|| world.query_filtered());
+    }
+
+    fn plan(&mut self, world: &World) {
+        let dt = Seconds(world.resource::<Time>().delta_secs());
+        let ids: Vec<Entity> = self.movers.query(world).iter().collect();
+        self.strides = ids
+            .par_iter()
+            .with_min_len(par::grain(ids.len()))
+            .map(|&id| stride(world, id, dt))
+            .collect();
+        self.stride_of.clear();
+        self.stride_of.resize(world.entities().len() as usize, None);
+        for (slot, id) in ids.iter().enumerate() {
+            self.stride_of[id.index_u32() as usize] = Some(slot as u32);
         }
-        if reached > 0 {
-            let left = path.corners.len() - reached;
-            path.corners.truncate(left);
-        }
-        let left = path.corners.len();
-        if position.pos != at {
-            position.pos = at;
-        }
-        if let Some(facing) = heading
-            && let Some(actor) = actor.as_mut()
-        {
-            set_facing(actor, facing, gait);
-            if actor.speed != speed {
-                actor.speed = speed;
+    }
+
+    fn apply(&mut self, world: &mut World) {
+        let (mut halted, mut arrived) = (Vec::new(), Vec::new());
+        let walking = self.walking.as_mut().expect("the movers' query is readied");
+        for (id, mut position, mut path, mut actor) in walking.iter_mut(world) {
+            let Some(slot) = self
+                .stride_of
+                .get(id.index_u32() as usize)
+                .copied()
+                .flatten()
+            else {
+                continue;
+            };
+            let Stride::Walk {
+                at,
+                planned,
+                reached,
+                heading,
+                speed,
+                gait,
+            } = std::mem::replace(&mut self.strides[slot as usize], Stride::Halt)
+            else {
+                halted.push(id);
+                continue;
+            };
+            if let Some(corners) = planned {
+                path.corners = corners;
+            }
+            if reached > 0 {
+                let left = path.corners.len() - reached;
+                path.corners.truncate(left);
+            }
+            if position.pos != at {
+                position.pos = at;
+            }
+            if let Some(facing) = heading
+                && let Some(actor) = actor.as_mut()
+            {
+                set_facing(actor, facing, gait);
+                if actor.speed != speed {
+                    actor.speed = speed;
+                }
+            }
+            if path.corners.is_empty() {
+                arrived.push(id);
             }
         }
-        if left == 0 {
-            arrived.push(id);
+        for id in arrived {
+            world.entity_mut(id).remove::<(MoveTarget, Path)>();
         }
-    }
-    for id in arrived {
-        world.entity_mut(id).remove::<(MoveTarget, Path)>();
-    }
-    for id in halted {
-        halt(world, id);
+        for id in halted {
+            halt(world, id);
+        }
     }
 }
 

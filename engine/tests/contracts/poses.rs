@@ -43,7 +43,8 @@ fn a_script_sits_a_body_down_and_stands_it_up_through_the_clips_its_skeleton_nam
     for case in cases {
         let mut sim = Sim::new(game(case.placed, case.pose).load());
         sim.serve("room")
-            .add((script::run_tick, actor::playing::progress));
+            .add(actor::playing::progress)
+            .plan(script::RunFlows::default());
         script::spawn_stateless(&mut sim.world);
         region::reach_all(&mut sim.world);
         let guard = sim.npc("guard");

@@ -277,14 +277,16 @@ fn arena() -> (Sim, Entity) {
             vfx::expire,
             skill::casting::request,
             actor::playing::progress,
-            skill::casting::casts,
         ))
-        .add((
-            script::query::take_tick_roster,
-            script::run_tick,
-            movement::advance,
+        .plan(skill::casting::StepCasts::default())
+        .plan((
+            script::query::ListRoster::default(),
+            script::RunFlows::default(),
+            movement::AdvanceWalks::default(),
         ))
-        .add((stat::settle_health, combat::defeats, actor::settle));
+        .plan(stat::SettleHealth::default())
+        .add(combat::defeats)
+        .plan(actor::SettleActions::default());
     script::spawn_stateless(&mut sim.world);
     let player = sim.join(1);
     sim.run(0.5);

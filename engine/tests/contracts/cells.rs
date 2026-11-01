@@ -40,14 +40,8 @@ fn an_actor_near_a_border_is_a_ghost_next_door_and_a_blow_on_the_ghost_lands_on_
             .mirror::<Actor>()
             .mirror::<Stats>()
             .mirror::<Npc>()
-            .add(
-                (
-                    identity::name_replicated,
-                    mirror::deliver,
-                    stat::settle_health,
-                )
-                    .chain(),
-            );
+            .add((identity::name_replicated, mirror::deliver))
+            .plan(stat::SettleHealth::default());
     }
     west.join(1);
     let area = east.id::<AreaDef>("plain");
@@ -105,14 +99,8 @@ fn an_actor_deep_in_the_next_cell_changes_hands_as_it_stands() {
             .mirror::<Actor>()
             .mirror::<Stats>()
             .mirror::<Npc>()
-            .add(
-                (
-                    identity::name_replicated,
-                    mirror::deliver,
-                    stat::settle_health,
-                )
-                    .chain(),
-            );
+            .add((identity::name_replicated, mirror::deliver))
+            .plan(stat::SettleHealth::default());
     }
     let area = east.id::<AreaDef>("plain");
     let brute = east.id::<NpcDef>("brute");
@@ -236,15 +224,12 @@ fn a_walk_over_a_border_carries_on_into_the_next_cell() {
                 .mirror::<Position>()
                 .mirror::<Actor>()
                 .accept::<MoveRequest>()
-                .add(
-                    (
-                        identity::name_replicated,
-                        mirror::deliver,
-                        movement::move_request,
-                        movement::advance,
-                    )
-                        .chain(),
-                );
+                .add((
+                    identity::name_replicated,
+                    mirror::deliver,
+                    movement::move_request,
+                ))
+                .plan(movement::AdvanceWalks::default());
             sim
         })
         .collect();
@@ -391,14 +376,8 @@ fn a_woken_cell_shows_what_changed_while_it_slept() {
                 .mirror::<Actor>()
                 .mirror::<Stats>()
                 .mirror::<Npc>()
-                .add(
-                    (
-                        identity::name_replicated,
-                        mirror::deliver,
-                        stat::settle_health,
-                    )
-                        .chain(),
-                );
+                .add((identity::name_replicated, mirror::deliver))
+                .plan(stat::SettleHealth::default());
             sim
         })
         .collect();

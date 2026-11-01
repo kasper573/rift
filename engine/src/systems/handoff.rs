@@ -173,7 +173,7 @@ fn departing(
 ) -> Vec<(usize, Carried)> {
     world.get_resource_or_init::<Scans>();
     let (leaving, pulled) = world.resource_scope(|world, mut scans: Mut<Scans>| {
-        let held = dialogue::counterparts(world, &mut scans.sessions);
+        let held = dialogue::counterparts(scans.sessions.iter(world));
         let pulled: Vec<Entity> = scans.pulled.iter(world).collect();
         let leaving: Vec<(Entity, usize)> = scans
             .standing

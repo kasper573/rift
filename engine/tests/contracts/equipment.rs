@@ -17,7 +17,7 @@ fn a_lowered_maximum_pulls_health_down_to_it() {
 
     let rock = sim.id::<ItemDef>("rock");
     equipment::equip_from_bag(&mut sim.world, player, rock).expect("the rock is worn");
-    sim.tick();
+    sim.run(0.1);
 
     assert_eq!(stat::max_health(&sim.world, player), 20.0);
     assert_eq!(stat::current_health(&sim.world, player), 20.0);
@@ -103,12 +103,14 @@ fn wardrobe() -> (Sim, Entity) {
     let mut sim = Sim::new(content);
     sim.serve("room")
         .accept::<UnequipRequest>()
-        .add((
-            (status::expire, status::aspect::settle, status::aspect::tick).chain(),
-            equipment::unequip,
+        .add(status::expire)
+        .add(equipment::unequip)
+        .plan((
+            status::aspect::SettleAspects::default(),
+            status::aspect::TickAspects::default(),
         ))
-        .add(script::run_tick)
-        .add(stat::settle_health);
+        .plan(script::RunFlows::default())
+        .plan(stat::SettleHealth::default());
     script::spawn_stateless(&mut sim.world);
     let player = sim.join(1);
     (sim, player)

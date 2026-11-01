@@ -423,22 +423,27 @@ fn clinic() -> (Sim, Entity) {
         .accept::<UseSkillRequest>()
         .accept::<AssignHotbarRequest>()
         .accept::<AssignBasicAttackRequest>()
+        .add(status::expire)
         .add((
-            (status::expire, status::aspect::settle, status::aspect::tick).chain(),
             vfx::expire,
-            skill::casting::request,
-            skill::hotbar::requests,
             item::use_item,
             equipment::unequip,
             actor::playing::progress,
-            skill::casting::casts,
         ))
-        .add((
-            script::query::take_tick_roster,
-            script::run_tick,
-            movement::advance,
+        .plan((
+            status::aspect::SettleAspects::default(),
+            status::aspect::TickAspects::default(),
         ))
-        .add((stat::settle_health, combat::defeats, actor::settle));
+        .add((skill::casting::request, skill::hotbar::requests))
+        .plan(skill::casting::StepCasts::default())
+        .plan((
+            script::query::ListRoster::default(),
+            script::RunFlows::default(),
+            movement::AdvanceWalks::default(),
+        ))
+        .plan(stat::SettleHealth::default())
+        .add(combat::defeats)
+        .plan(actor::SettleActions::default());
     script::spawn_stateless(&mut sim.world);
     let player = sim.join(1);
     sim.run(0.5);

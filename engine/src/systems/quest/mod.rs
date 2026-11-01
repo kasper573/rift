@@ -9,6 +9,10 @@ use std::sync::Arc;
 use bevy_app::App;
 use bevy_ecs::message::{Message, MessageCursor, Messages};
 use bevy_ecs::prelude::*;
+use rayon::prelude::*;
+
+use crate::core::par;
+use crate::core::tick::{Cached, Planner};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{EnumDiscriminants, EnumString};
@@ -967,12 +971,121 @@ pub fn credit(world: &mut World, mut kills: Local<MessageCursor<KillCredited>>) 
     }
 }
 
-pub fn refresh(world: &mut World, logs: &mut QueryState<Entity, With<QuestLog>>) {
-    let clock = *world.resource::<WallClock>();
-    let players: Vec<Entity> = logs.iter(world).collect();
-    for player in players {
-        announce(world, player, clock);
+/// Tells every player what moved in their quest log, each replication tick: what each is told
+/// is worked out on every core from the world as the tick found it, then told in the order the
+/// players were found. A player with a quest past its deadline is settled on their own, as the
+/// failing changes what the rest says.
+#[derive(Default)]
+pub struct AnnounceQuests {
+    logs: Cached<Entity, With<QuestLog>>,
+    announced: Vec<(Entity, Announcement)>,
+}
+
+impl Planner for AnnounceQuests {
+    fn prepare(&mut self, world: &mut World) {
+        self.logs.ready(world);
     }
+
+    fn plan(&mut self, world: &World) {
+        self.announced.clear();
+        if !crate::systems::replication_tick(world) {
+            return;
+        }
+        let clock = *world.resource::<WallClock>();
+        let players: Vec<Entity> = self.logs.query(world).iter().collect();
+        self.announced = players
+            .par_iter()
+            .with_min_len(par::grain(players.len()))
+            .filter_map(|&player| Some((player, announcement(world, player, clock)?)))
+            .collect();
+    }
+
+    fn apply(&mut self, world: &mut World) {
+        let clock = *world.resource::<WallClock>();
+        for (player, announcement) in self.announced.drain(..) {
+            match announcement {
+                Announcement::Expired => announce(world, player, clock),
+                Announcement::Settled { log, told } => {
+                    if let Some(log) = log {
+                        world.entity_mut(player).insert(log);
+                    }
+                    for (text, icon, sfx) in told {
+                        tell(world, player, text, Some(&icon), sfx);
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// What a player's log says this tick.
+enum Announcement {
+    /// A quest ran past its deadline: the log is settled once it has failed.
+    Expired,
+    Settled {
+        log: Option<QuestLog>,
+        told: Vec<(String, ImageRef, Option<SfxId>)>,
+    },
+}
+
+fn announcement(world: &World, player: Entity, clock: WallClock) -> Option<Announcement> {
+    let log = log_of(world, player)?;
+    if log.active.is_empty() && log.finished.is_empty() {
+        return None;
+    }
+    let expired = log.active.iter().any(|active| {
+        active
+            .deadline
+            .is_some_and(|deadline| clock.now >= deadline)
+    });
+    if expired {
+        return Some(Announcement::Expired);
+    }
+    let content = world.resource::<Content>();
+    let parties = world.resource::<Parties>();
+    let inventory = world.get::<Inventory>(player);
+    let mut log = log.clone();
+    let mut told: Vec<(String, ImageRef, Option<SfxId>)> = Vec::new();
+    let ready: Vec<QuestId> = log
+        .active
+        .iter()
+        .filter(|active| active.ready(content, parties, inventory))
+        .map(|active| active.quest)
+        .collect();
+    for &quest in &ready {
+        if !log.told_ready.contains(&quest) {
+            log.told_ready.push(quest);
+            let def = quest.get(content);
+            told.push((
+                format!("Quest ready · {}", def.hand_in_hint(parties, quest)),
+                ready_mark(def).get(content).icon.clone(),
+                Some(InterfaceSound::UiChime.id(content)),
+            ));
+        }
+    }
+    log.told_ready.retain(|quest| ready.contains(quest));
+    for finished in &mut log.finished {
+        let def = finished.quest.get(content);
+        if finished.resets_at.is_some_and(|at| clock.now >= at) {
+            finished.resets_at = None;
+            told.push((
+                format!("{} is open again", def.title),
+                AttentionMark::RepeatableOffered.get(content).icon.clone(),
+                Some(InterfaceSound::UiPage.id(content)),
+            ));
+        }
+        finished.offered_again =
+            finished.result == QuestResult::Failed && shown_to(world, player, finished.quest);
+    }
+    let trackable: Vec<QuestId> = log
+        .tracked
+        .iter()
+        .copied()
+        .filter(|&quest| log.trackable(content, quest))
+        .collect();
+    log.tracked = trackable;
+    let log = (log_of(world, player) != Some(&log)).then_some(log);
+    Some(Announcement::Settled { log, told })
 }
 
 pub fn check_all(loading: &mut Loading) {

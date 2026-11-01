@@ -660,17 +660,20 @@ fn harbour() -> Sim {
             quest::requests,
         ))
         .add((rewards::grant, quest::credit, npc::defeated))
+        .plan((
+            script::RunFlows::default(),
+            movement::AdvanceWalks::default(),
+        ))
         .add((
-            script::run_tick,
-            movement::advance,
             interact::interactions,
             dialogue::hold,
             dialogue::refresh,
             shop::hold,
             shop::refresh,
-            quest::refresh,
         ))
-        .add((stat::settle_health, combat::defeats));
+        .plan(quest::AnnounceQuests::default())
+        .plan(stat::SettleHealth::default())
+        .add(combat::defeats);
     script::spawn_stateless(&mut sim.world);
     region::reach_all(&mut sim.world);
     sim

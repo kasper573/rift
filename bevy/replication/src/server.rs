@@ -1,4 +1,5 @@
 use std::ops::Range;
+use std::sync::OnceLock;
 
 use bevy_app::{App, Plugin, PostUpdate, PreUpdate};
 use bevy_ecs::change_detection::Tick;
@@ -7,11 +8,26 @@ use bevy_ecs::prelude::*;
 use rayon::prelude::*;
 
 use crate::protocol::{Kinds, Protocol};
-use crate::wire::{Change, ClientFrame, EntityChanges, Part, ServerFrame, write_patch};
+use crate::wire::{
+    Change, ClientFrame, EntityChangesOut, Part, ServerFrameOut, WireEntity, write_patch,
+};
 
 /// Replicates what the protocol declares of every `Replicated` entity to each `ClientLink`, as
 /// far as the interest lets each see, and reads what clients send.
-pub struct ServerReplicationPlugin;
+#[derive(Default)]
+pub struct ServerReplicationPlugin {
+    pub sending: Sending,
+}
+
+/// Who runs the sends.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+pub enum Sending {
+    /// The plugin, every update, in `ServerSystems::Send`.
+    #[default]
+    EveryUpdate,
+    /// The host, through a `Sender` of its own, wherever its schedule sends.
+    ByHost,
+}
 
 impl Plugin for ServerReplicationPlugin {
     fn build(&self, app: &mut App) {
@@ -20,10 +36,13 @@ impl Plugin for ServerReplicationPlugin {
             .init_resource::<LastSend>()
             .init_resource::<LastSent>()
             .add_systems(PreUpdate, receive.in_set(ServerSystems::Receive))
-            .add_systems(
+            .add_systems(PostUpdate, queue_messages);
+        if self.sending == Sending::EveryUpdate {
+            app.add_systems(
                 PostUpdate,
-                (queue_messages, send.in_set(ServerSystems::Send)).chain(),
+                send.in_set(ServerSystems::Send).after(queue_messages),
             );
+        }
     }
 }
 
@@ -211,194 +230,244 @@ fn grain(len: usize) -> usize {
         .max(1)
 }
 
-/// Tells every client what changed in its sight since the last send, in four passes over every
-/// core: what each client sees; what of each seen entity is there and what changed; what each
-/// client must be told; then each changed component serialized once, and every client's frame
-/// assembled from those bytes.
-fn send(world: &mut World, links: &mut QueryState<(Entity, &mut ClientLink)>) {
-    let this_run = world.change_tick();
-    let last_run = std::mem::replace(&mut world.resource_mut::<LastSend>().0, this_run);
-    world.resource_scope(|world, mut interest: Mut<ReplicationInterest>| {
-        interest.0.prepare(world);
-    });
-    let mut last_sent = std::mem::take(&mut world.resource_mut::<LastSent>().0);
-    let mut clients: Vec<Held> = links
-        .iter_mut(world)
-        .map(|(client, mut link)| Held {
-            client,
-            fresh: (!std::mem::replace(&mut link.started, true)).then_some(link.epoch),
-            known: std::mem::take(&mut link.known),
-            messages: std::mem::take(&mut link.messages),
-        })
-        .collect();
+fn send(world: &mut World, mut sender: Local<Sender>) {
+    sender.prepare(world);
+    sender.plan(world);
+    sender.apply(world);
+}
 
-    let shared: &World = world;
-    let protocol = shared.resource::<Protocol>();
-    let interest = &*shared.resource::<ReplicationInterest>().0;
-    let replicated = shared
-        .component_id::<Replicated>()
-        .expect("Replicated is registered once anything is");
-    let private = protocol
-        .components
-        .iter()
-        .enumerate()
-        .filter(|(_, rule)| rule.private)
-        .fold(0, |mask, (kind, _)| mask | bit(kind));
+/// A send in three steps, for a host that plans it beside work of its own: `prepare` takes from
+/// the world what the send holds of its clients, `plan` works out every client's frame from the
+/// world as it stands, all clients at once on every core (what each sees, what it must be told
+/// of each, and the frame of it; what each seen entity is there as, what changed of it, and its
+/// bytes, worked out once by whichever client reaches it first), and `apply` hands the frames to
+/// the links. Run in turn, the three are one send; a plan or an apply without a prepare before
+/// it does nothing.
+#[derive(Default)]
+pub struct Sender {
+    links: Option<QueryState<(Entity, &'static mut ClientLink)>>,
+    ticks: Option<(Tick, Tick)>,
+    clients: Vec<Held>,
+    last_sent: Vec<Option<Sent>>,
+    subjects: Vec<OnceLock<Option<Subject>>>,
+    frames: Vec<Option<Vec<u8>>>,
+}
 
-    let seen: Vec<Vec<Entity>> = clients
-        .par_iter()
-        .with_min_len(grain(clients.len()))
-        .map(|held| {
-            let mut seen = Vec::new();
-            interest.seen_by(shared, held.client, &mut seen);
-            seen.sort_unstable();
-            seen.dedup();
-            seen
-        })
-        .collect();
-
-    let (subjects, slot_of) = union(&seen, shared.entities().len() as usize);
-    let summaries: Vec<Option<Summary>> = subjects
-        .par_iter()
-        .with_min_len(grain(subjects.len()))
-        .map(|&entity| summarize(shared, protocol, replicated, entity, last_run, this_run))
-        .collect();
-    let summary_of = |entity: Entity| {
-        let slot = slot_of[entity.index_u32() as usize]? as usize;
-        summaries[slot].map(|summary| (slot, summary))
-    };
-
-    let client_grain = grain(clients.len());
-    let plans: Vec<Plan> = clients
-        .par_iter_mut()
-        .with_min_len(client_grain)
-        .zip(&seen)
-        .map(|(held, seen)| {
-            let mut plan = Plan::default();
-            let known = std::mem::take(&mut held.known);
-            held.known.reserve(seen.len());
-            let mut held_before = known.iter().peekable();
-            for &entity in seen {
-                while let Some(&&(left, _)) = held_before.peek()
-                    && left < entity
-                {
-                    plan.left.push(left);
-                    held_before.next();
-                }
-                let holds = held_before
-                    .next_if(|&&(held, _)| held == entity)
-                    .map(|&(_, holds)| holds);
-                let Some((subject, summary)) = summary_of(entity) else {
-                    plan.left.extend(holds.map(|_| entity));
-                    continue;
-                };
-                let mut want = summary.present;
-                if want & private != 0 && !interest.owns(shared, held.client, entity) {
-                    want &= !private;
-                }
-                held.known.push((entity, want));
-                let told = match holds {
-                    None => Told {
-                        subject,
-                        arrives: true,
-                        whole: want,
-                        updated: 0,
-                        removed: 0,
-                    },
-                    Some(holds) => Told {
-                        subject,
-                        arrives: false,
-                        whole: want & !holds,
-                        updated: want & holds & summary.changed,
-                        removed: holds & !want,
-                    },
-                };
-                if told.arrives || told.whole | told.updated | told.removed != 0 {
-                    plan.entities.push(told);
-                }
-            }
-            plan.left.extend(held_before.map(|&(left, _)| left));
-            plan
-        })
-        .collect();
-
-    let mut needed: Vec<Kinds> = vec![0; subjects.len()];
-    for plan in &plans {
-        for told in &plan.entities {
-            needed[told.subject] |= told.whole | told.updated;
-        }
+impl Sender {
+    pub fn prepare(&mut self, world: &mut World) {
+        let this_run = world.change_tick();
+        let last_run = std::mem::replace(&mut world.resource_mut::<LastSend>().0, this_run);
+        world.resource_scope(|world, mut interest: Mut<ReplicationInterest>| {
+            interest.0.prepare(world);
+        });
+        self.last_sent = std::mem::take(&mut world.resource_mut::<LastSent>().0);
+        let links = self.links.get_or_insert_with(|| world.query());
+        self.clients = links
+            .iter_mut(world)
+            .map(|(client, mut link)| Held {
+                client,
+                fresh: (!std::mem::replace(&mut link.started, true)).then_some(link.epoch),
+                known: std::mem::take(&mut link.known),
+                messages: std::mem::take(&mut link.messages),
+            })
+            .collect();
+        self.ticks = Some((last_run, this_run));
     }
-    last_sent.resize_with(slot_of.len(), || None);
-    let mut sent_as: Vec<Vec<(u16, Vec<u8>)>> = subjects
-        .iter()
-        .map(
-            |&entity| match last_sent[entity.index_u32() as usize].take() {
-                Some(sent) if sent.entity == entity => sent.kinds,
-                _ => Vec::new(),
-            },
-        )
-        .collect();
-    let serialized: Vec<Serialized> = subjects
-        .par_iter()
-        .with_min_len(grain(subjects.len()))
-        .zip(&needed)
-        .zip(&mut sent_as)
-        .map(|((&entity, &kinds), sent_as)| serialize(shared, protocol, entity, kinds, sent_as))
-        .collect();
 
-    let frames: Vec<Option<Vec<u8>>> = plans
-        .par_iter()
-        .with_min_len(grain(plans.len()))
-        .zip(&clients)
-        .map(|(plan, held)| {
-            let frame = ServerFrame {
-                fresh: held.fresh,
-                left: plan.left.iter().map(|&entity| entity.into()).collect(),
-                entities: plan
-                    .entities
-                    .iter()
-                    .filter_map(|told| {
-                        let changes: Vec<Change> = serialized[told.subject]
-                            .changes(told)
-                            .chain(kinds_of(told.removed).map(|kind| Change::whole(kind, &[])))
-                            .collect();
-                        (told.arrives || !changes.is_empty()).then(|| EntityChanges {
-                            entity: subjects[told.subject].into(),
-                            changes,
-                        })
+    pub fn plan(&mut self, world: &World) {
+        let Some((last_run, this_run)) = self.ticks else {
+            return;
+        };
+        let protocol = world.resource::<Protocol>();
+        let interest = &*world.resource::<ReplicationInterest>().0;
+        let replicated = world
+            .component_id::<Replicated>()
+            .expect("Replicated is registered once anything is");
+        let private = protocol
+            .components
+            .iter()
+            .enumerate()
+            .filter(|(_, rule)| rule.private)
+            .fold(0, |mask, (kind, _)| mask | bit(kind));
+
+        let indices = world.entities().len() as usize;
+        self.last_sent.resize_with(indices, || None);
+        self.subjects.resize_with(indices, OnceLock::new);
+        let last_sent = &self.last_sent;
+        let subjects = &self.subjects;
+        let subject = |entity: Entity| -> Option<&Subject> {
+            let index = entity.index_u32() as usize;
+            subjects[index]
+                .get_or_init(|| {
+                    let summary =
+                        summarize(world, protocol, replicated, entity, last_run, this_run)?;
+                    Some(Subject {
+                        entity,
+                        summary,
+                        kinds: (0..summary.present.count_ones())
+                            .map(|_| OnceLock::new())
+                            .collect(),
                     })
-                    .collect(),
-                messages: held
+                })
+                .as_ref()
+        };
+
+        let clients = &mut self.clients;
+        let client_grain = grain(clients.len());
+        self.frames = clients
+            .par_iter_mut()
+            .with_min_len(client_grain)
+            .map_init(Scratch::default, |scratch, held| {
+                let Scratch {
+                    seen,
+                    known,
+                    left,
+                    changes,
+                    entities,
+                } = scratch;
+                seen.clear();
+                interest.seen_by(world, held.client, seen);
+                seen.sort_unstable();
+                seen.dedup();
+                known.clear();
+                left.clear();
+                changes.clear();
+                entities.clear();
+                let mut held_before = held.known.iter().peekable();
+                for &entity in seen.iter() {
+                    while let Some(&&(before, _)) = held_before.peek()
+                        && before < entity
+                    {
+                        left.push(WireEntity::from(before));
+                        held_before.next();
+                    }
+                    let holds = held_before
+                        .next_if(|&&(before, _)| before == entity)
+                        .map(|&(_, holds)| holds);
+                    let Some(subject) = subject(entity) else {
+                        left.extend(holds.map(|_| WireEntity::from(entity)));
+                        continue;
+                    };
+                    let mut want = subject.summary.present;
+                    if want & private != 0 && !interest.owns(world, held.client, entity) {
+                        want &= !private;
+                    }
+                    known.push((entity, want));
+                    let told = match holds {
+                        None => Told {
+                            arrives: true,
+                            whole: want,
+                            updated: 0,
+                            removed: 0,
+                        },
+                        Some(holds) => Told {
+                            arrives: false,
+                            whole: want & !holds,
+                            updated: want & holds & subject.summary.changed,
+                            removed: holds & !want,
+                        },
+                    };
+                    if !told.arrives && told.whole | told.updated | told.removed == 0 {
+                        continue;
+                    }
+                    let start = changes.len();
+                    changes.extend(subject.changes(world, protocol, last_sent, &told));
+                    changes.extend(kinds_of(told.removed).map(|kind| Change::whole(kind, &[])));
+                    if told.arrives || changes.len() > start {
+                        entities.push((entity, start..changes.len()));
+                    }
+                }
+                left.extend(held_before.map(|&(before, _)| WireEntity::from(before)));
+                held.known.clear();
+                held.known.extend_from_slice(known);
+                let entities: Vec<EntityChangesOut> = entities
+                    .iter()
+                    .map(|(entity, range)| EntityChangesOut {
+                        entity: WireEntity::from(*entity),
+                        changes: &changes[range.clone()],
+                    })
+                    .collect();
+                let messages: Vec<Part> = held
                     .messages
                     .iter()
                     .map(|(kind, bytes)| Part {
                         kind: *kind,
                         bytes: bytes.as_slice(),
                     })
-                    .collect(),
-            };
-            (!frame.is_empty())
-                .then(|| postcard::to_allocvec(&frame).expect("a server frame serializes"))
-        })
-        .collect();
+                    .collect();
+                let frame = ServerFrameOut {
+                    fresh: held.fresh,
+                    left,
+                    entities: &entities,
+                    messages: &messages,
+                };
+                (!frame.is_empty())
+                    .then(|| postcard::to_allocvec(&frame).expect("a server frame serializes"))
+            })
+            .collect();
 
-    last_sent.fill_with(|| None);
-    for (&entity, sent_as) in subjects.iter().zip(sent_as) {
-        if !sent_as.is_empty() {
-            last_sent[entity.index_u32() as usize] = Some(Sent {
-                entity,
-                kinds: sent_as,
+        self.subjects
+            .par_iter_mut()
+            .zip(self.last_sent.par_iter_mut())
+            .with_min_len(grain(indices))
+            .for_each(|(slot, last_sent)| {
+                let Some(subject) = slot.take().flatten() else {
+                    *last_sent = None;
+                    return;
+                };
+                let last = last_sent
+                    .take()
+                    .filter(|sent| sent.entity == subject.entity)
+                    .map(|sent| sent.kinds)
+                    .unwrap_or_default();
+                let mut last = last.into_iter().peekable();
+                let mut kinds = Vec::with_capacity(subject.kinds.len());
+                for (kind, serialization) in kinds_of(subject.summary.present).zip(subject.kinds) {
+                    let bytes = match serialization.into_inner() {
+                        Some(serialization) => Some(serialization.whole),
+                        None => {
+                            while last.peek().is_some_and(|(sent, _)| *sent < kind) {
+                                last.next();
+                            }
+                            last.next_if(|(sent, _)| *sent == kind)
+                                .map(|(_, bytes)| bytes)
+                        }
+                    };
+                    if let Some(bytes) = bytes {
+                        kinds.push((kind, bytes));
+                    }
+                }
+                *last_sent = (!kinds.is_empty()).then_some(Sent {
+                    entity: subject.entity,
+                    kinds,
+                });
             });
+    }
+
+    pub fn apply(&mut self, world: &mut World) {
+        if self.ticks.take().is_none() {
+            return;
+        }
+        world.resource_mut::<LastSent>().0 = std::mem::take(&mut self.last_sent);
+        for (held, frame) in self.clients.drain(..).zip(self.frames.drain(..)) {
+            let Some(mut link) = world.get_mut::<ClientLink>(held.client) else {
+                continue;
+            };
+            link.known = held.known;
+            link.outgoing.extend(frame);
         }
     }
-    world.resource_mut::<LastSent>().0 = last_sent;
-    for (held, frame) in clients.into_iter().zip(frames) {
-        let Some(mut link) = world.get_mut::<ClientLink>(held.client) else {
-            continue;
-        };
-        link.known = held.known;
-        link.outgoing.extend(frame);
-    }
+}
+
+/// What a job of the send keeps from one client's frame to the next, so a frame allocates
+/// nothing but its bytes.
+#[derive(Default)]
+struct Scratch<'a> {
+    seen: Vec<Entity>,
+    known: Vec<(Entity, Kinds)>,
+    left: Vec<WireEntity>,
+    changes: Vec<Change<'a>>,
+    entities: Vec<(Entity, Range<usize>)>,
 }
 
 /// What a send holds of a client while it works out what to tell it.
@@ -409,22 +478,56 @@ struct Held {
     messages: Vec<(u16, Vec<u8>)>,
 }
 
-/// Every entity in any of the `seen` lists, once, in the order of their indices, and the slot
-/// of each among them under its index; `indices` bounds the entities' indices.
-fn union(seen: &[Vec<Entity>], indices: usize) -> (Vec<Entity>, Vec<Option<u32>>) {
-    let mut by_index: Vec<Option<Entity>> = vec![None; indices];
-    for &entity in seen.iter().flatten() {
-        by_index[entity.index_u32() as usize] = Some(entity);
+/// An entity some client sees this send, as every client that sees it is told of it: each of
+/// its kinds serialized once, by whichever client first needs it.
+struct Subject {
+    entity: Entity,
+    summary: Summary,
+    /// One per present kind, in kind order.
+    kinds: Vec<OnceLock<Serialization>>,
+}
+
+impl Subject {
+    /// What to tell a client of the entity, each kind serialized as the first client needing it
+    /// asks, over the bytes `last_sent` holds of it.
+    fn changes<'a>(
+        &'a self,
+        world: &'a World,
+        protocol: &'a Protocol,
+        last_sent: &'a [Option<Sent>],
+        told: &Told,
+    ) -> impl Iterator<Item = Change<'a>> {
+        let (whole, updated) = (told.whole, told.updated);
+        kinds_of(whole | updated).filter_map(move |kind| {
+            let serialization = self.serialization(world, protocol, last_sent, kind);
+            if whole & bit(kind as usize) != 0 {
+                return Some(Change::whole(kind, &serialization.whole));
+            }
+            match &serialization.update {
+                Update::Unchanged => None,
+                Update::Whole => Some(Change::whole(kind, &serialization.whole)),
+                Update::Patch(patch) => Some(Change::patch(kind, patch)),
+            }
+        })
     }
-    let mut slot_of: Vec<Option<u32>> = vec![None; indices];
-    let mut subjects: Vec<Entity> = Vec::new();
-    for (index, entity) in by_index.into_iter().enumerate() {
-        if let Some(entity) = entity {
-            slot_of[index] = Some(subjects.len() as u32);
-            subjects.push(entity);
-        }
+
+    fn serialization(
+        &self,
+        world: &World,
+        protocol: &Protocol,
+        last_sent: &[Option<Sent>],
+        kind: u16,
+    ) -> &Serialization {
+        let rank = (self.summary.present & (bit(kind as usize) - 1)).count_ones() as usize;
+        self.kinds[rank].get_or_init(|| {
+            let last = last_sent[self.entity.index_u32() as usize]
+                .as_ref()
+                .filter(|sent| sent.entity == self.entity)
+                .and_then(|sent| sent.kinds.iter().find(|(sent, _)| *sent == kind))
+                .map(|(_, bytes)| bytes.as_slice());
+            serialize(world, protocol, self.entity, kind, last)
+        })
     }
-    (subjects, slot_of)
 }
 
 #[derive(Clone, Copy)]
@@ -435,35 +538,20 @@ struct Summary {
     changed: Kinds,
 }
 
-/// What to tell a client: what left its sight, and what to tell it of each entity in it.
-#[derive(Default)]
-struct Plan {
-    left: Vec<Entity>,
-    entities: Vec<Told>,
-}
-
-/// What to tell a client of one entity, by its place among the send's subjects: whether it comes
-/// into the client's sight; the kinds the client doesn't hold, told whole; those it holds that
-/// changed; and those it holds but may no longer.
+/// What to tell a client of one entity: whether it comes into the client's sight; the kinds the
+/// client doesn't hold, told whole; those it holds that changed; and those it holds but may no
+/// longer.
 struct Told {
-    subject: usize,
     arrives: bool,
     whole: Kinds,
     updated: Kinds,
     removed: Kinds,
 }
 
-/// An entity's components that some client is told this send, each serialized once, whole and
-/// as an update for the clients that hold it.
-#[derive(Default)]
-struct Serialized {
-    bytes: Vec<u8>,
-    kinds: Vec<Serialization>,
-}
-
+/// One component of an entity as it goes out this send: whole, and as an update for the clients
+/// that hold it.
 struct Serialization {
-    kind: u16,
-    whole: Range<usize>,
+    whole: Vec<u8>,
     update: Update,
 }
 
@@ -472,31 +560,7 @@ struct Serialization {
 enum Update {
     Unchanged,
     Whole,
-    Patch(Range<usize>),
-}
-
-impl Serialized {
-    fn changes<'a>(&'a self, told: &Told) -> impl Iterator<Item = Change<'a>> {
-        let (whole, updated) = (told.whole, told.updated);
-        self.kinds.iter().filter_map(move |serialization| {
-            let kind = bit(serialization.kind as usize);
-            let whole_bytes = &self.bytes[serialization.whole.clone()];
-            if whole & kind != 0 {
-                return Some(Change::whole(serialization.kind, whole_bytes));
-            }
-            if updated & kind == 0 {
-                return None;
-            }
-            match &serialization.update {
-                Update::Unchanged => None,
-                Update::Whole => Some(Change::whole(serialization.kind, whole_bytes)),
-                Update::Patch(patch) => Some(Change::patch(
-                    serialization.kind,
-                    &self.bytes[patch.clone()],
-                )),
-            }
-        })
-    }
+    Patch(Vec<u8>),
 }
 
 fn summarize(
@@ -533,58 +597,30 @@ fn summarize(
     Some(summary)
 }
 
-/// Serializes the `kinds` of `entity`, each as an update over what it last went out as too,
-/// and keeps what each goes out as now in `sent_as`.
+/// Serializes the `kind` of `entity`, whole and as an update over the bytes it last went out as.
 fn serialize(
     world: &World,
     protocol: &Protocol,
     entity: Entity,
-    kinds: Kinds,
-    sent_as: &mut Vec<(u16, Vec<u8>)>,
-) -> Serialized {
-    let mut serialized = Serialized::default();
-    if kinds == 0 {
-        return serialized;
-    }
-    let entity = world.entity(entity);
-    let mut patch = Vec::new();
-    for kind in kinds_of(kinds) {
-        let start = serialized.bytes.len();
-        (protocol.components[kind as usize].serialize)(entity, &mut serialized.bytes);
-        let whole = start..serialized.bytes.len();
-        let bytes = &serialized.bytes[whole.clone()];
-        let last = match sent_as.iter().position(|(sent, _)| *sent == kind) {
-            Some(at) => &mut sent_as[at].1,
-            None => {
-                sent_as.push((kind, Vec::new()));
-                &mut sent_as.last_mut().expect("just pushed").1
-            }
-        };
-        let update = if last.as_slice() == bytes {
-            Update::Unchanged
-        } else if last.len() == bytes.len() {
-            patch.clear();
-            write_patch(last, bytes, &mut patch);
-            if patch.len() < bytes.len() {
-                Update::Patch(serialized.bytes.len()..serialized.bytes.len() + patch.len())
+    kind: u16,
+    last: Option<&[u8]>,
+) -> Serialization {
+    let mut whole = Vec::new();
+    (protocol.components[kind as usize].serialize)(world.entity(entity), &mut whole);
+    let update = match last {
+        Some(last) if last == whole => Update::Unchanged,
+        Some(last) if last.len() == whole.len() => {
+            let mut patch = Vec::new();
+            write_patch(last, &whole, &mut patch);
+            if patch.len() < whole.len() {
+                Update::Patch(patch)
             } else {
                 Update::Whole
             }
-        } else {
-            Update::Whole
-        };
-        last.clear();
-        last.extend_from_slice(bytes);
-        if let Update::Patch(_) = update {
-            serialized.bytes.extend_from_slice(&patch);
         }
-        serialized.kinds.push(Serialization {
-            kind,
-            whole,
-            update,
-        });
-    }
-    serialized
+        _ => Update::Whole,
+    };
+    Serialization { whole, update }
 }
 
 fn bit(kind: usize) -> Kinds {

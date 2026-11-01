@@ -497,20 +497,17 @@ fn yard() -> (Sim, Entity) {
             equipment::unequip,
             skill::reset::expire,
             actor::playing::progress,
-            skill::casting::casts,
-            reach::mirror_engaged,
         ))
-        .add((
-            script::query::take_tick_roster,
-            script::run_tick,
-            movement::advance,
+        .add(reach::mirror_engaged)
+        .plan(skill::casting::StepCasts::default())
+        .plan((
+            script::query::ListRoster::default(),
+            script::RunFlows::default(),
+            movement::AdvanceWalks::default(),
         ))
-        .add((
-            stat::settle_health,
-            combat::defeats,
-            skill::hotbar::settle_basic_attack,
-            actor::settle,
-        ));
+        .plan(stat::SettleHealth::default())
+        .add((combat::defeats, skill::hotbar::settle_basic_attack))
+        .plan(actor::SettleActions::default());
     script::spawn_stateless(&mut sim.world);
     let player = sim.join(1);
     sim.equip(player, "sword");

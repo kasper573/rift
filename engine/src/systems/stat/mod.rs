@@ -2,8 +2,8 @@ mod health;
 pub mod widget;
 
 pub use health::{
-    Immortal, apply_damage, current_health, dead, fraction, heal, is_dead, max_health, refill,
-    regenerate, revive, settle_health, stands,
+    Immortal, SettleHealth, apply_damage, current_health, dead, fraction, heal, is_dead,
+    max_health, refill, regenerate, revive, stands,
 };
 
 use std::collections::BTreeMap;

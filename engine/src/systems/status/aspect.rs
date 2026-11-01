@@ -6,6 +6,7 @@ use super::{StatusEffectId, Statuses, boost};
 use crate::core::audio::playback::SfxId;
 use crate::core::content::Content;
 use crate::core::par;
+use crate::core::tick::{Cached, Planner};
 use crate::core::time::{Seconds, UnixMillis, WallClock};
 use crate::core::vfx::VfxSite;
 use crate::systems::actor::Actor;
@@ -77,20 +78,85 @@ type Stirred = Or<(
 /// a new one activates, one no longer wanted deactivates, and a status applied again does both.
 /// What each actor wants is worked out on every core from the world as the tick found it, then
 /// brought about in the order the actors were found.
-pub fn settle(world: &mut World, stirred: &mut QueryState<Entity, (Stirred, Without<Ghost>)>) {
-    let actors: Vec<Entity> = stirred.iter(world).collect();
-    let shared: &World = world;
-    let changes: Vec<(Entity, Vec<Wanted>, Vec<Wanted>)> = actors
-        .par_iter()
-        .with_min_len(par::grain(actors.len()))
-        .map(|&actor| (actor, desired(shared, actor), active(shared, actor)))
-        .collect();
-    for (actor, wanted, active) in changes {
-        for gone in active.iter().filter(|aspect| !wanted.contains(aspect)) {
-            deactivate(world, actor, gone.source);
+#[derive(Default)]
+pub struct SettleAspects {
+    stirred: Cached<Entity, (Stirred, Without<Ghost>)>,
+    changes: Vec<(Entity, Vec<Wanted>, Vec<Wanted>)>,
+}
+
+impl Planner for SettleAspects {
+    fn prepare(&mut self, world: &mut World) {
+        self.stirred.ready(world);
+    }
+
+    fn plan(&mut self, world: &World) {
+        let actors: Vec<Entity> = self.stirred.query(world).iter().collect();
+        self.changes = actors
+            .par_iter()
+            .with_min_len(par::grain(actors.len()))
+            .map(|&actor| (actor, desired(world, actor), active(world, actor)))
+            .collect();
+    }
+
+    fn apply(&mut self, world: &mut World) {
+        for (actor, wanted, active) in self.changes.drain(..) {
+            for gone in active.iter().filter(|aspect| !wanted.contains(aspect)) {
+                deactivate(world, actor, gone.source);
+            }
+            for new in wanted.iter().filter(|aspect| !active.contains(aspect)) {
+                activate(world, actor, *new);
+            }
         }
-        for new in wanted.iter().filter(|aspect| !active.contains(aspect)) {
-            activate(world, actor, *new);
+    }
+}
+
+/// Fires the interval nodes whose time came and replays a status's `during` vfx and sound.
+#[derive(Default)]
+pub struct TickAspects {
+    active: Cached<(Entity, &'static ActiveAspects), ()>,
+    fired: Vec<(Entity, AspectSource, Seconds)>,
+    replays: Vec<(Entity, AspectSource)>,
+}
+
+impl Planner for TickAspects {
+    fn prepare(&mut self, world: &mut World) {
+        self.active.ready(world);
+    }
+
+    fn plan(&mut self, world: &World) {
+        let now = world.resource::<WallClock>().now;
+        self.fired.clear();
+        self.replays.clear();
+        for (actor, aspects) in self.active.query(world).iter() {
+            for aspect in &aspects.0 {
+                for cadence in &aspect.cadences {
+                    if cadence.next <= now {
+                        self.fired.push((actor, aspect.source, cadence.seconds));
+                    }
+                }
+                if aspect.during_next.is_some_and(|next| next <= now) {
+                    self.replays.push((actor, aspect.source));
+                }
+            }
+        }
+    }
+
+    fn apply(&mut self, world: &mut World) {
+        let now = world.resource::<WallClock>().now;
+        for (actor, source, seconds) in self.fired.drain(..) {
+            advance(world, actor, source, seconds, now);
+            world.resource_mut::<RiftInstances>().raise(
+                source.owner(),
+                EventKind::Interval,
+                Some(actor),
+                Vec::new(),
+                move |event| {
+                    matches!(event, RiftEvent::Interval { seconds: every } if *every == seconds)
+                },
+            );
+        }
+        for (actor, source) in self.replays.drain(..) {
+            play_during(world, actor, source, now);
         }
     }
 }
@@ -99,38 +165,6 @@ pub fn settle(world: &mut World, stirred: &mut QueryState<Entity, (Stirred, With
 struct Wanted {
     source: AspectSource,
     since: Option<UnixMillis>,
-}
-
-/// Fires the interval nodes whose time came and replays a status's `during` vfx and sound.
-pub fn tick(world: &mut World, active: &mut QueryState<(Entity, &ActiveAspects)>) {
-    let now = world.resource::<WallClock>().now;
-    let mut fired: Vec<(Entity, AspectSource, Seconds)> = Vec::new();
-    let mut replays: Vec<(Entity, AspectSource)> = Vec::new();
-    for (actor, aspects) in active.iter(world) {
-        for aspect in &aspects.0 {
-            for cadence in &aspect.cadences {
-                if cadence.next <= now {
-                    fired.push((actor, aspect.source, cadence.seconds));
-                }
-            }
-            if aspect.during_next.is_some_and(|next| next <= now) {
-                replays.push((actor, aspect.source));
-            }
-        }
-    }
-    for (actor, source, seconds) in fired {
-        advance(world, actor, source, seconds, now);
-        world.resource_mut::<RiftInstances>().raise(
-            source.owner(),
-            EventKind::Interval,
-            Some(actor),
-            Vec::new(),
-            move |event| matches!(event, RiftEvent::Interval { seconds: every } if *every == seconds),
-        );
-    }
-    for (actor, source) in replays {
-        play_during(world, actor, source, now);
-    }
 }
 
 fn active(world: &World, actor: Entity) -> Vec<Wanted> {

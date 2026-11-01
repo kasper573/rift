@@ -15,6 +15,7 @@ pub mod render;
 pub mod script;
 pub mod spatial;
 pub mod text;
+pub mod tick;
 pub mod time;
 pub mod units;
 pub mod vfx;

@@ -177,20 +177,17 @@ fn border(modules: Value) -> Sim {
             movement::move_request,
             combat::request,
             actor::playing::progress,
-            skill::casting::casts,
         ))
-        .add((
-            script::query::take_tick_roster,
-            script::run_tick,
-            npc::body::drive,
-            movement::advance,
+        .plan(skill::casting::StepCasts::default())
+        .plan((
+            script::query::ListRoster::default(),
+            script::RunFlows::default(),
+            npc::body::DriveBodies::default(),
+            movement::AdvanceWalks::default(),
         ))
-        .add((
-            stat::settle_health,
-            combat::defeats,
-            skill::hotbar::settle_basic_attack,
-            actor::settle,
-        ));
+        .plan(stat::SettleHealth::default())
+        .add((combat::defeats, skill::hotbar::settle_basic_attack))
+        .plan(actor::SettleActions::default());
     script::spawn_stateless(&mut sim.world);
     sim
 }

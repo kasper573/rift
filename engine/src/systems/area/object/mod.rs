@@ -12,6 +12,7 @@ use crate::core::ground::TileAt;
 use crate::core::math::{Offset, Pos, Rect, Size};
 use crate::core::par;
 use crate::core::spatial::SpatialIndex;
+use crate::core::tick::{Cached, Planner};
 use crate::core::units::Meters;
 use crate::systems::actor::Name as ActorName;
 use crate::systems::area::AreaModule;
@@ -303,97 +304,126 @@ pub fn shape_of(world: &World, object: Entity) -> Option<ObjectShape> {
     world.get::<AreaObject>(object).map(|object| object.shape)
 }
 
-type Actors =
-    QueryState<(Entity, &'static Position, &'static AreaTag), Or<(With<PlayedBy>, With<Npc>)>>;
+/// Tells every object and every npc watching for it who stepped onto it, into it or out of it,
+/// on each replication tick: where every actor stands against the objects is found on every
+/// core from the world as the tick found it, then raised in the order the actors were found.
+#[derive(Default)]
+pub struct TrackUnderfoot {
+    actors: Cached<(Entity, &'static Position, &'static AreaTag), Actors>,
+    objects: Cached<(Entity, &'static AreaObject, &'static AreaTag), ()>,
+    watchers: Vec<Watcher>,
+    placed: Vec<Placed>,
+    crossings: Vec<Crossing>,
+}
 
-pub fn track(
-    world: &mut World,
-    actors: &mut Actors,
-    objects: &mut QueryState<(Entity, &AreaObject, &AreaTag)>,
-) {
-    let watchers = watchers(world);
-    let instances = world.resource::<RiftInstances>();
-    let crossing: HashSet<Entity> = [EventKind::Entered, EventKind::Left]
-        .iter()
-        .flat_map(|kind| instances.owners_answering(*kind))
-        .filter_map(|owner| match owner {
-            Owner::Entity(RunnerKind::Object, object) => Some(*object),
-            _ => None,
-        })
-        .collect();
-    let watched = |object: &AreaObject, area: AreaId| {
-        watchers
-            .iter()
-            .any(|watcher| watcher.area == area && Some(&watcher.object) == object.name.as_ref())
-    };
-    let placed: Vec<Placed> = objects
-        .iter(world)
-        .filter(|(entity, object, tag)| crossing.contains(entity) || watched(object, tag.area))
-        .map(|(entity, object, tag)| Placed {
-            entity,
-            name: object.name.clone(),
-            shape: object.shape,
-            area: tag.area,
-        })
-        .collect();
-    if placed.is_empty() {
-        return;
+/// Players and npcs: whatever stands on objects.
+type Actors = Or<(With<PlayedBy>, With<Npc>)>;
+
+impl Planner for TrackUnderfoot {
+    fn prepare(&mut self, world: &mut World) {
+        self.actors.ready(world);
+        self.objects.ready(world);
     }
-    let mut filed = SpatialIndex::new(OBJECT_CELL);
-    filed.refile(placed.iter().map(|object| object.shape.bounds()));
-    let positions: Vec<(Entity, Pos<Meters>, AreaId)> = actors
-        .iter(world)
-        .map(|(entity, at, tag)| (entity, at.pos, tag.area))
-        .collect();
-    let shared: &World = world;
-    let crossings: Vec<Crossing> = positions
-        .par_iter()
-        .with_min_len(par::grain(positions.len()))
-        .filter_map(|&(actor, at, area_id)| {
-            let mut now: Vec<Entity> = filed
-                .within(Rect::new(at, Size::zero()))
-                .map(|index| &placed[index])
-                .filter(|object| object.area == area_id && object.shape.covers(at))
-                .filter(|object| crate::systems::visibility::present(shared, object.entity, actor))
-                .map(|object| object.entity)
-                .collect();
-            now.sort_unstable();
-            let before = shared.get::<Underfoot>(actor);
-            let (stood, inside): (&[Entity], &[Entity]) =
-                before.map_or((&[], &[]), |before| (&before.standing, &before.inside));
-            let standing = standing_on(shared, actor, stood, &now);
-            (now != inside || standing != stood).then_some(Crossing {
+
+    fn plan(&mut self, world: &World) {
+        self.crossings.clear();
+        if !crate::systems::replication_tick(world) {
+            return;
+        }
+        self.watchers = watchers(world);
+        let instances = world.resource::<RiftInstances>();
+        let crossing: HashSet<Entity> = [EventKind::Entered, EventKind::Left]
+            .iter()
+            .flat_map(|kind| instances.owners_answering(*kind))
+            .filter_map(|owner| match owner {
+                Owner::Entity(RunnerKind::Object, object) => Some(*object),
+                _ => None,
+            })
+            .collect();
+        let watchers = &self.watchers;
+        let watched = |object: &AreaObject, area: AreaId| {
+            watchers.iter().any(|watcher| {
+                watcher.area == area && Some(&watcher.object) == object.name.as_ref()
+            })
+        };
+        self.placed = self
+            .objects
+            .query(world)
+            .iter()
+            .filter(|(entity, object, tag)| crossing.contains(entity) || watched(object, tag.area))
+            .map(|(entity, object, tag)| Placed {
+                entity,
+                name: object.name.clone(),
+                shape: object.shape,
+                area: tag.area,
+            })
+            .collect();
+        if self.placed.is_empty() {
+            return;
+        }
+        let placed = &self.placed;
+        let mut filed = SpatialIndex::new(OBJECT_CELL);
+        filed.refile(placed.iter().map(|object| object.shape.bounds()));
+        let positions: Vec<(Entity, Pos<Meters>, AreaId)> = self
+            .actors
+            .query(world)
+            .iter()
+            .map(|(entity, at, tag)| (entity, at.pos, tag.area))
+            .collect();
+        self.crossings = positions
+            .par_iter()
+            .with_min_len(par::grain(positions.len()))
+            .filter_map(|&(actor, at, area_id)| {
+                let mut now: Vec<Entity> = filed
+                    .within(Rect::new(at, Size::zero()))
+                    .map(|index| &placed[index])
+                    .filter(|object| object.area == area_id && object.shape.covers(at))
+                    .filter(|object| {
+                        crate::systems::visibility::present(world, object.entity, actor)
+                    })
+                    .map(|object| object.entity)
+                    .collect();
+                now.sort_unstable();
+                let before = world.get::<Underfoot>(actor);
+                let (stood, inside): (&[Entity], &[Entity]) =
+                    before.map_or((&[], &[]), |before| (&before.standing, &before.inside));
+                let standing = standing_on(world, actor, stood, &now);
+                (now != inside || standing != stood).then_some(Crossing {
+                    actor,
+                    is_npc: world.get::<Npc>(actor).is_some(),
+                    now,
+                    standing,
+                })
+            })
+            .collect();
+    }
+
+    fn apply(&mut self, world: &mut World) {
+        for crossing in self.crossings.drain(..) {
+            let Crossing {
                 actor,
-                is_npc: shared.get::<Npc>(actor).is_some(),
+                is_npc,
                 now,
                 standing,
-            })
-        })
-        .collect();
-    for crossing in crossings {
-        let Crossing {
-            actor,
-            is_npc,
-            now,
-            standing,
-        } = crossing;
-        let before = world.get::<Underfoot>(actor).cloned().unwrap_or_default();
-        for object in standing
-            .iter()
-            .filter(|object| !before.standing.contains(object))
-        {
-            raise_standing(world, &placed, &watchers, *object, actor, is_npc);
+            } = crossing;
+            let before = world.get::<Underfoot>(actor).cloned().unwrap_or_default();
+            for object in standing
+                .iter()
+                .filter(|object| !before.standing.contains(object))
+            {
+                raise_standing(world, &self.placed, &self.watchers, *object, actor, is_npc);
+            }
+            for object in now.iter().filter(|object| !before.inside.contains(object)) {
+                raise_crossing(world, *object, EventKind::Entered, actor, is_npc);
+            }
+            for object in before.inside.iter().filter(|object| !now.contains(object)) {
+                raise_crossing(world, *object, EventKind::Left, actor, is_npc);
+            }
+            world.entity_mut(actor).insert(Underfoot {
+                inside: now,
+                standing,
+            });
         }
-        for object in now.iter().filter(|object| !before.inside.contains(object)) {
-            raise_crossing(world, *object, EventKind::Entered, actor, is_npc);
-        }
-        for object in before.inside.iter().filter(|object| !now.contains(object)) {
-            raise_crossing(world, *object, EventKind::Left, actor, is_npc);
-        }
-        world.entity_mut(actor).insert(Underfoot {
-            inside: now,
-            standing,
-        });
     }
 }
 

@@ -466,30 +466,29 @@ fn area(game: &Content, key: &str) -> Sim {
         .accept::<AreaDrawn>()
         .accept::<InteractRequest>()
         .accept::<ConversationRequest>()
+        .add((movement::file_by_chunk, status::expire))
         .add((
-            movement::file_by_chunk,
-            (status::expire, status::aspect::settle, status::aspect::tick).chain(),
             vfx::expire,
             engine::systems::player::arrival_holds,
             interact::interact_request,
             dialogue::requests,
         ))
-        .add((
-            script::query::take_tick_roster,
-            area::object::track,
-            npc::approach,
-            script::run_tick,
-            movement::advance,
-            interact::interactions,
-            dialogue::hold,
-            dialogue::refresh,
+        .plan((
+            status::aspect::SettleAspects::default(),
+            status::aspect::TickAspects::default(),
         ))
-        .add((
-            stat::settle_health,
-            combat::defeats,
-            actor::settle,
-            belongings::notify_changes,
-        ));
+        .plan((
+            script::query::ListRoster::default(),
+            area::object::TrackUnderfoot::default(),
+            npc::ApproachWatchers::default(),
+            script::RunFlows::default(),
+            movement::AdvanceWalks::default(),
+        ))
+        .add((interact::interactions, dialogue::hold, dialogue::refresh))
+        .plan(stat::SettleHealth::default())
+        .add(combat::defeats)
+        .plan(actor::SettleActions::default())
+        .add(belongings::notify_changes);
     script::spawn_stateless(&mut sim.world);
     sim
 }

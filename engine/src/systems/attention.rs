@@ -9,6 +9,7 @@ use crate::core::assets::ImageRef;
 use crate::core::chunk::{CHUNK_SIDE, ChunkIndex};
 use crate::core::content::{ContentFile, ContentId, Fixture, Nearby};
 use crate::core::par;
+use crate::core::tick::{Cached, Planner};
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::area::AreaTag;
 use crate::systems::interact::{self, Interactive};
@@ -119,118 +120,136 @@ pub fn badge_source(world: &mut World, source: BadgeSource) {
     world.resource_mut::<BadgeSources>().0.push(source);
 }
 
-pub fn update(
-    world: &mut World,
-    targets: &mut QueryState<(Entity, &'static AreaTag, &'static Position), With<Interactive>>,
-    mut turn: Local<u32>,
-    mut found: Local<Vec<(Entity, Entity, AttentionId)>>,
-) {
-    *turn = (*turn + 1) % REFRESH_ROUNDS;
-    let marking = world.resource::<MarkSources>().0.clone();
-    let badging = world.resource::<BadgeSources>().0.clone();
-    let mut players: Vec<Entity> = world
-        .resource::<Players>()
-        .0
-        .values()
-        .copied()
-        .enumerate()
-        .filter(|(index, _)| *index as u32 % REFRESH_ROUNDS == *turn)
-        .map(|(_, player)| player)
-        .collect();
-    players.sort_unstable();
-    targets.update_archetypes(world);
-    let targets: &QueryState<_, _> = targets;
-    let shared: &World = world;
-    let chunks = shared.resource::<ChunkIndex>();
-    let mut seen: Vec<(Entity, Entity)> = players
-        .par_iter()
-        .with_min_len(par::grain(players.len()))
-        .flat_map_iter(|&player| {
-            let standing = shared
-                .get::<AreaTag>(player)
-                .zip(shared.get::<Position>(player))
-                .map(|(tag, position)| (tag.area, position.pos));
-            // The chunks are as of the last filing, a tick ago: a chunk of margin covers
-            // whoever walked over a chunk's edge since.
-            standing
-                .into_iter()
-                .flat_map(|(area, at)| {
-                    chunks
-                        .around(at, Meters(MARKED_RANGE.0 + CHUNK_SIDE.0))
-                        .filter(move |&target| {
-                            targets
-                                .get_manual(shared, target)
-                                .is_ok_and(|(_, tag, standing)| {
+/// Marks what draws each player's attention and badges their status, a share of the players a
+/// replication tick: what each is shown is worked out on every core from the world as the tick
+/// found it, then set in the order the players were found.
+#[derive(Default)]
+pub struct MarkAttention {
+    targets: Cached<(Entity, &'static AreaTag, &'static Position), With<Interactive>>,
+    turn: u32,
+    found: Vec<(Entity, Entity, AttentionId)>,
+    changed: Vec<(Entity, Option<Attention>, Option<StatusBadges>)>,
+}
+
+impl Planner for MarkAttention {
+    fn prepare(&mut self, world: &mut World) {
+        self.targets.ready(world);
+    }
+
+    fn plan(&mut self, world: &World) {
+        self.changed.clear();
+        if !crate::systems::replication_tick(world) {
+            return;
+        }
+        self.turn = (self.turn + 1) % REFRESH_ROUNDS;
+        let turn = self.turn;
+        let marking = &world.resource::<MarkSources>().0;
+        let badging = &world.resource::<BadgeSources>().0;
+        let mut players: Vec<Entity> = world
+            .resource::<Players>()
+            .0
+            .values()
+            .copied()
+            .enumerate()
+            .filter(|(index, _)| *index as u32 % REFRESH_ROUNDS == turn)
+            .map(|(_, player)| player)
+            .collect();
+        players.sort_unstable();
+        let targets = self.targets.query(world);
+        let chunks = world.resource::<ChunkIndex>();
+        let mut seen: Vec<(Entity, Entity)> = players
+            .par_iter()
+            .with_min_len(par::grain(players.len()))
+            .flat_map_iter(|&player| {
+                let standing = world
+                    .get::<AreaTag>(player)
+                    .zip(world.get::<Position>(player))
+                    .map(|(tag, position)| (tag.area, position.pos));
+                // The chunks are as of the last filing, a tick ago: a chunk of margin covers
+                // whoever walked over a chunk's edge since.
+                standing
+                    .into_iter()
+                    .flat_map(|(area, at)| {
+                        chunks
+                            .around(at, Meters(MARKED_RANGE.0 + CHUNK_SIDE.0))
+                            .filter(move |&target| {
+                                targets.get(target).is_ok_and(|(_, tag, standing)| {
                                     tag.area == area && standing.pos.distance(at) <= MARKED_RANGE
                                 })
-                        })
-                })
-                .filter(|&target| {
-                    interact::interaction_of(shared, target).is_some()
-                        && !stat::is_dead(shared, target)
-                        && visibility::present(shared, target, player)
-                })
-                .map(|target| (target, player))
-                .collect::<Vec<_>>()
-                .into_iter()
-        })
-        .collect();
-    seen.sort_unstable();
-    found.clear();
-    found.par_extend(
-        seen.par_chunk_by(|a, b| a.0 == b.0)
-            .flat_map_iter(|viewed| {
-                let target = viewed[0].0;
-                let viewers: Vec<Entity> = viewed.iter().map(|&(_, player)| player).collect();
-                let mut marks = Vec::new();
-                for source in &marking {
-                    source(shared, target, &viewers, &mut |player, mark| {
-                        marks.push((player, target, mark));
-                    });
-                }
-                marks.into_iter()
-            }),
-    );
-    found.sort_unstable();
-    found.dedup();
-    let changed: Vec<(Entity, Option<Attention>, Option<StatusBadges>)> = players
-        .par_iter()
-        .with_min_len(par::grain(players.len()))
-        .map(|&player| {
-            let mut attention = Attention::default();
-            let from = found.partition_point(|&(marked, ..)| marked < player);
-            for &(_, target, mark) in found[from..]
-                .iter()
-                .take_while(|&&(marked, ..)| marked == player)
-            {
-                match attention.0.last_mut() {
-                    Some(marked) if marked.target == target => marked.marks.push(mark),
-                    _ => attention.0.push(MarkedTarget {
-                        target,
-                        marks: vec![mark],
-                    }),
-                }
-            }
-            let badges = StatusBadges(
-                badging
+                            })
+                    })
+                    .filter(|&target| {
+                        interact::interaction_of(world, target).is_some()
+                            && !stat::is_dead(world, target)
+                            && visibility::present(world, target, player)
+                    })
+                    .map(|target| (target, player))
+                    .collect::<Vec<_>>()
+                    .into_iter()
+            })
+            .collect();
+        seen.sort_unstable();
+        let found = &mut self.found;
+        found.clear();
+        found.par_extend(
+            seen.par_chunk_by(|a, b| a.0 == b.0)
+                .flat_map_iter(|viewed| {
+                    let target = viewed[0].0;
+                    let viewers: Vec<Entity> = viewed.iter().map(|&(_, player)| player).collect();
+                    let mut marks = Vec::new();
+                    for source in marking {
+                        source(world, target, &viewers, &mut |player, mark| {
+                            marks.push((player, target, mark));
+                        });
+                    }
+                    marks.into_iter()
+                }),
+        );
+        found.sort_unstable();
+        found.dedup();
+        let found = &self.found;
+        self.changed = players
+            .par_iter()
+            .with_min_len(par::grain(players.len()))
+            .map(|&player| {
+                let mut attention = Attention::default();
+                let from = found.partition_point(|&(marked, ..)| marked < player);
+                for &(_, target, mark) in found[from..]
                     .iter()
-                    .filter_map(|source| source(shared, player))
-                    .collect(),
-            );
-            (
-                player,
-                (shared.get::<Attention>(player) != Some(&attention)).then_some(attention),
-                (shared.get::<StatusBadges>(player) != Some(&badges)).then_some(badges),
-            )
-        })
-        .filter(|(_, attention, badges)| attention.is_some() || badges.is_some())
-        .collect();
-    for (player, attention, badges) in changed {
-        if let Some(attention) = attention {
-            world.entity_mut(player).insert(attention);
-        }
-        if let Some(badges) = badges {
-            world.entity_mut(player).insert(badges);
+                    .take_while(|&&(marked, ..)| marked == player)
+                {
+                    match attention.0.last_mut() {
+                        Some(marked) if marked.target == target => marked.marks.push(mark),
+                        _ => attention.0.push(MarkedTarget {
+                            target,
+                            marks: vec![mark],
+                        }),
+                    }
+                }
+                let badges = StatusBadges(
+                    badging
+                        .iter()
+                        .filter_map(|source| source(world, player))
+                        .collect(),
+                );
+                (
+                    player,
+                    (world.get::<Attention>(player) != Some(&attention)).then_some(attention),
+                    (world.get::<StatusBadges>(player) != Some(&badges)).then_some(badges),
+                )
+            })
+            .filter(|(_, attention, badges)| attention.is_some() || badges.is_some())
+            .collect();
+    }
+
+    fn apply(&mut self, world: &mut World) {
+        for (player, attention, badges) in self.changed.drain(..) {
+            if let Some(attention) = attention {
+                world.entity_mut(player).insert(attention);
+            }
+            if let Some(badges) = badges {
+                world.entity_mut(player).insert(badges);
+            }
         }
     }
 }

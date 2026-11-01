@@ -158,9 +158,10 @@ pub fn intending(world: &World, intents: &mut Intents, act: ReachAct) -> Vec<(En
         .collect()
 }
 
-pub fn casting(world: &World, intents: &mut Intents) -> Vec<(Entity, ReachIntent)> {
+pub fn casting<'a>(
+    intents: impl Iterator<Item = (Entity, &'a ReachIntent)>,
+) -> Vec<(Entity, ReachIntent)> {
     intents
-        .iter(world)
         .filter(|(_, intent)| intent.cast().is_some())
         .map(|(actor, intent)| (actor, *intent))
         .collect()

@@ -24,6 +24,11 @@ pub use stance::{StanceDef, StanceId};
 
 use bevy_app::App;
 use bevy_ecs::prelude::*;
+use rayon::prelude::*;
+
+use crate::core::par;
+use crate::core::tick::{Cached, Planner};
+use crate::systems::dialogue::ConversationSession;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumString, VariantArray};
@@ -240,52 +245,88 @@ pub fn set_facing(actor: &mut Mut<Actor>, facing: Radians, action: Action) {
     }
 }
 
-pub type Situations = QueryState<
-    (
-        Entity,
-        &'static mut Actor,
-        Option<&'static Stats>,
-        Option<&'static Playing>,
-        Has<Path>,
-    ),
-    Without<Ghost>,
->;
-
 /// Picks every actor's action from its state: dead, playing, walking, in conversation, or idle.
-/// Two in conversation face each other.
-pub fn settle(world: &mut World, actors: &mut Situations, sessions: &mut dialogue::Sessions) {
-    let talking: HashSet<Entity> = dialogue::parties(world, sessions).into_iter().collect();
-    let facing_partner: HashMap<Entity, Radians> = sessions
-        .iter(world)
-        .filter_map(|(player, _)| Some((player, dialogue::counterpart_of(world, player)?)))
-        .flat_map(|(player, partner)| [(player, partner), (partner, player)])
-        .filter_map(|(me, partner)| {
-            let (at, there) = (
-                movement::position(world, me)?,
-                movement::position(world, partner)?,
-            );
-            (at.distance(there) > Meters(1e-3)).then(|| (me, Radians::of(there - at)))
-        })
-        .collect();
-    for (entity, mut actor, stats, playing, walking) in actors.iter_mut(world) {
-        let action = if stats.is_some_and(stat::dead) {
-            Action::Dead
-        } else if let Some(playing) = playing {
-            playing.motion.action()
-        } else if walking {
-            if actor.action.moves() {
-                actor.action
-            } else {
-                Action::Walk
+/// Two in conversation face each other. Every actor's action is worked out on every core from
+/// the world as the tick found it, then set in the order the actors were found.
+#[derive(Default)]
+pub struct SettleActions {
+    actors: Cached<ActorState, Without<Ghost>>,
+    sessions: Cached<(Entity, &'static ConversationSession), ()>,
+    settled: Vec<(Entity, Action, Option<Radians>)>,
+}
+
+type ActorState = (
+    Entity,
+    &'static Actor,
+    Option<&'static Stats>,
+    Option<&'static Playing>,
+    Has<Path>,
+);
+
+impl Planner for SettleActions {
+    fn prepare(&mut self, world: &mut World) {
+        self.actors.ready(world);
+        self.sessions.ready(world);
+    }
+
+    fn plan(&mut self, world: &World) {
+        let talking: HashSet<Entity> = dialogue::parties(self.sessions.query(world).iter())
+            .into_iter()
+            .collect();
+        let facing_partner: HashMap<Entity, Radians> = self
+            .sessions
+            .query(world)
+            .iter()
+            .filter_map(|(player, _)| Some((player, dialogue::counterpart_of(world, player)?)))
+            .flat_map(|(player, partner)| [(player, partner), (partner, player)])
+            .filter_map(|(me, partner)| {
+                let (at, there) = (
+                    movement::position(world, me)?,
+                    movement::position(world, partner)?,
+                );
+                (at.distance(there) > Meters(1e-3)).then(|| (me, Radians::of(there - at)))
+            })
+            .collect();
+        let situations: Vec<_> = self.actors.query(world).into_iter().collect();
+        self.settled = situations
+            .par_iter()
+            .with_min_len(par::grain(situations.len()))
+            .filter_map(|&(entity, actor, stats, playing, walking)| {
+                let action = if stats.is_some_and(stat::dead) {
+                    Action::Dead
+                } else if let Some(playing) = playing {
+                    playing.motion.action()
+                } else if walking {
+                    if actor.action.moves() {
+                        actor.action
+                    } else {
+                        Action::Walk
+                    }
+                } else if talking.contains(&entity) {
+                    Action::Talk
+                } else {
+                    Action::Idle
+                };
+                let facing = facing_partner
+                    .get(&entity)
+                    .copied()
+                    .filter(|_| action == Action::Talk);
+                let changed =
+                    actor.action != action || facing.is_some_and(|facing| actor.facing != facing);
+                changed.then_some((entity, action, facing))
+            })
+            .collect();
+    }
+
+    fn apply(&mut self, world: &mut World) {
+        for (entity, action, facing) in self.settled.drain(..) {
+            let Some(mut actor) = world.get_mut::<Actor>(entity) else {
+                continue;
+            };
+            match facing {
+                Some(facing) => set_facing(&mut actor, facing, action),
+                None => set_action(&mut actor, action),
             }
-        } else if talking.contains(&entity) {
-            Action::Talk
-        } else {
-            Action::Idle
-        };
-        match facing_partner.get(&entity) {
-            Some(&facing) if action == Action::Talk => set_facing(&mut actor, facing, action),
-            _ => set_action(&mut actor, action),
         }
     }
 }

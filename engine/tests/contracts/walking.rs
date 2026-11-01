@@ -1,7 +1,6 @@
 use std::collections::BTreeMap;
 
 use bevy_ecs::entity::Entity;
-use bevy_ecs::schedule::IntoScheduleConfigs;
 use engine::core::math::{Offset, Pos};
 use engine::core::units::{MeterPos, Meters};
 use engine::systems::actor::{Action, Actor};
@@ -407,7 +406,8 @@ impl Walk {
         let content = game.load();
         let mut sim = Sim::new(content);
         sim.serve("field")
-            .add((movement::move_request, movement::advance).chain());
+            .add(movement::move_request)
+            .plan(movement::AdvanceWalks::default());
         let player = sim.join(1);
         let conn = sim.conn(1);
         let start = position(&sim.world, player).expect("the player");

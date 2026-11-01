@@ -38,7 +38,8 @@ fn a_script_makes_an_npc_gesture_where_its_body_names_the_gesture() {
     for case in cases {
         let mut sim = Sim::new(game(case.nodes).load());
         sim.serve("room")
-            .add((script::run_tick, actor::playing::progress));
+            .add(actor::playing::progress)
+            .plan(script::RunFlows::default());
         script::spawn_stateless(&mut sim.world);
         region::reach_all(&mut sim.world);
         let guard = sim.npc("guard");

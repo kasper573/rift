@@ -334,9 +334,11 @@ fn market() -> Sim {
             dialogue::requests,
             shop::requests,
         ))
+        .plan((
+            script::RunFlows::default(),
+            movement::AdvanceWalks::default(),
+        ))
         .add((
-            script::run_tick,
-            movement::advance,
             interact::interactions,
             dialogue::hold,
             dialogue::refresh,

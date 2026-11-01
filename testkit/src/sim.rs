@@ -7,6 +7,7 @@ use bevy_replication::ToClient;
 use bevy_time::Time;
 use engine::core::content::{Content, ContentFile, ContentId};
 use engine::core::math::Rng;
+use engine::core::tick::{self, Planners, Tick};
 use engine::core::time::{Seconds, UnixMillis, UtcHour, WallClock};
 use engine::systems::notification::NotificationSent;
 use engine::systems::{TICK_HZ, area_state, plug_ins};
@@ -67,6 +68,18 @@ impl Sim {
             schedule.configure_sets(step.after(previous));
             schedule.add_systems(systems.chain().in_set(step));
         });
+        self
+    }
+
+    /// Runs `planners` every tick as the server does: every plan made at once from the world as
+    /// the tick found it, then written in the order given. The first call places that step after
+    /// the systems added before it; planners of later calls join the same step.
+    pub fn plan(&mut self, planners: impl Planners) -> &mut Sim {
+        if !self.world.contains_resource::<Tick>() {
+            self.world.init_resource::<Tick>();
+            self.add(tick::run);
+        }
+        self.world.resource_mut::<Tick>().add(planners);
         self
     }
 

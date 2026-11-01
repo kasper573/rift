@@ -130,13 +130,11 @@ fn beach() -> Sim {
         .accept::<InteractRequest>()
         .accept::<ConversationRequest>()
         .add((interact::interact_request, dialogue::requests))
-        .add((
-            script::run_tick,
-            movement::advance,
-            interact::interactions,
-            dialogue::hold,
-            dialogue::refresh,
-        ));
+        .plan((
+            script::RunFlows::default(),
+            movement::AdvanceWalks::default(),
+        ))
+        .add((interact::interactions, dialogue::hold, dialogue::refresh));
     script::spawn_stateless(&mut sim.world);
     region::reach_all(&mut sim.world);
     sim

@@ -148,23 +148,17 @@ fn arena() -> Sim {
     let mut sim = Sim::new(content);
     sim.serve("arena")
         .accept::<AttackRequest>()
-        .add((
-            combat::request,
-            actor::playing::progress,
-            skill::casting::casts,
+        .add((combat::request, actor::playing::progress))
+        .plan(skill::casting::StepCasts::default())
+        .plan((
+            script::query::ListRoster::default(),
+            script::RunFlows::default(),
+            npc::body::DriveBodies::default(),
+            movement::AdvanceWalks::default(),
         ))
-        .add((
-            script::query::take_tick_roster,
-            script::run_tick,
-            npc::body::drive,
-            movement::advance,
-        ))
-        .add((
-            stat::settle_health,
-            combat::defeats,
-            skill::hotbar::settle_basic_attack,
-            actor::settle,
-        ));
+        .plan(stat::SettleHealth::default())
+        .add((combat::defeats, skill::hotbar::settle_basic_attack))
+        .plan(actor::SettleActions::default());
     script::spawn_stateless(&mut sim.world);
     sim
 }

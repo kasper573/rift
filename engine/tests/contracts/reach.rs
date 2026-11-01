@@ -94,15 +94,13 @@ fn yard() -> Sim {
             item::pickup_request,
             combat::request,
             actor::playing::progress,
-            skill::casting::casts,
         ))
-        .add((movement::advance, item::pickups))
-        .add((
-            stat::settle_health,
-            combat::defeats,
-            skill::hotbar::settle_basic_attack,
-            actor::settle,
-        ));
+        .plan(skill::casting::StepCasts::default())
+        .plan(movement::AdvanceWalks::default())
+        .add(item::pickups)
+        .plan(stat::SettleHealth::default())
+        .add((combat::defeats, skill::hotbar::settle_basic_attack))
+        .plan(actor::SettleActions::default());
     sim
 }
 

@@ -68,6 +68,7 @@ use crate::core::net::transport::ClientTransportPlugin;
 use crate::core::os::{Http, Profile, SignIn, StartParams};
 use crate::core::render::WorldRenderPlugin;
 use crate::core::text::StyledTextPlugin;
+use crate::core::tick::{self, Tick};
 use crate::core::time::{DayClock, Hertz, Seconds, WallClock};
 use crate::core::units::Meters;
 use crate::core::vfx::render::VfxRenderPlugin;
@@ -203,7 +204,7 @@ pub fn server_app(
 ) -> App {
     use bevy_app::{First, PostUpdate, Startup, Update};
     use bevy_ecs::schedule::{IntoScheduleConfigs, Schedules, SingleThreadedExecutor};
-    use bevy_replication::{ServerReplicationPlugin, ServerSystems};
+    use bevy_replication::{Sending, ServerReplicationPlugin};
 
     let mut app = App::new();
     let settings = content.built::<GameSettings>();
@@ -225,8 +226,9 @@ pub fn server_app(
     ));
     app.insert_resource(Rng::for_world(rng_seed, ordinal));
     app.insert_resource(identity::Names::for_world(ordinal));
-    app.add_plugins(ServerReplicationPlugin)
-        .configure_sets(PostUpdate, ServerSystems::Send.run_if(on_replication_tick));
+    app.add_plugins(ServerReplicationPlugin {
+        sending: Sending::ByHost,
+    });
     protocol(&mut app);
     mirror::register(&mut app);
     visibility::register(&mut app);
@@ -242,19 +244,12 @@ pub fn server_app(
                 (sleep::settle, region::settle).chain(),
             ),
         )
-        .add_systems(
-            PostUpdate,
-            movement::file_by_chunk.before(ServerSystems::Send),
-        )
+        .add_systems(PostUpdate, movement::file_by_chunk)
         .add_systems(
             Update,
             (
                 (
-                    (
-                        mirror::deliver,
-                        (status::expire, status::aspect::settle, status::aspect::tick).chain(),
-                    )
-                        .chain(),
+                    (mirror::deliver, status::expire).chain(),
                     vfx::expire,
                     player::arrival_holds,
                     combat::regen,
@@ -272,23 +267,12 @@ pub fn server_app(
                     equipment::unequip,
                     skill::reset::expire,
                     actor::playing::progress,
-                    skill::casting::casts,
                     reach::mirror_engaged,
+                    (rewards::grant, quest::credit, npc::defeated).chain(),
                 )
                     .chain(),
+                tick::run,
                 (
-                    (rewards::grant, quest::credit, npc::defeated).chain(),
-                    (
-                        script::query::take_tick_roster,
-                        area::object::track.run_if(on_replication_tick),
-                        // Every tick, so whoever walks up is near before they can talk: a check
-                        // between replication ticks would let the talk run first.
-                        npc::approach,
-                    )
-                        .chain(),
-                    script::run_tick,
-                    npc::body::drive,
-                    movement::advance,
                     item::pickups,
                     interact::interactions,
                     (
@@ -297,29 +281,23 @@ pub fn server_app(
                     )
                         .chain(),
                     (shop::hold, shop::refresh.run_if(on_replication_tick)).chain(),
-                    quest::refresh.run_if(on_replication_tick),
                     item::expire_drops,
                     player::join,
                     player::respawn,
                     (npc::run_respawn, npc::dismiss).chain(),
-                )
-                    .chain(),
-                (
-                    stat::settle_health,
                     combat::defeats,
                     skill::hotbar::settle_basic_attack,
-                    actor::settle,
                     chat::hear,
                     chat::rebroadcast,
                     belongings::notify_changes,
                     history::backfill,
-                    attention::update.run_if(on_replication_tick),
                     identity::name_replicated.run_if(on_replication_tick),
                 )
                     .chain(),
             )
                 .chain(),
         );
+    app.insert_resource(tick_planners());
 
     // An area world is stepped single-threaded so the driver (server/bench) owns all parallelism by
     // running whole areas concurrently. Letting each area's schedules fan out onto the global task
@@ -328,6 +306,30 @@ pub fn server_app(
         schedule.set_executor(SingleThreadedExecutor::new());
     }
     app
+}
+
+/// The planners of an area's tick, in the order their plans are written: what every script,
+/// body, walk, cast, status and quest comes to, and what each client is told of it, worked out
+/// on every core at once from the world as the tick found it.
+fn tick_planners() -> Tick {
+    let mut tick = Tick::default();
+    tick.add((
+        status::aspect::SettleAspects::default(),
+        status::aspect::TickAspects::default(),
+        skill::casting::StepCasts::default(),
+        script::query::ListRoster::default(),
+        area::object::TrackUnderfoot::default(),
+        npc::ApproachWatchers::default(),
+        script::RunFlows::default(),
+        npc::body::DriveBodies::default(),
+        movement::AdvanceWalks::default(),
+        stat::SettleHealth::default(),
+        actor::SettleActions::default(),
+        attention::MarkAttention::default(),
+        quest::AnnounceQuests::default(),
+        visibility::SendSights::default(),
+    ));
+    tick
 }
 
 pub fn start_server(app: &mut App) {
@@ -674,4 +676,12 @@ fn advance_replication_clock(mut clock: ResMut<ReplicationClock>) {
 
 fn on_replication_tick(clock: Res<ReplicationClock>) -> bool {
     clock.0.is_multiple_of(REPLICATION_INTERVAL)
+}
+
+/// Whether this tick is one the server replicates on; a world without the clock replicates every
+/// tick.
+pub fn replication_tick(world: &World) -> bool {
+    world
+        .get_resource::<ReplicationClock>()
+        .is_none_or(|clock| clock.0.is_multiple_of(REPLICATION_INTERVAL))
 }

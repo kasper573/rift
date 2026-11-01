@@ -16,7 +16,18 @@ pub(crate) struct ServerFrame<'a> {
     pub messages: Vec<Part<'a>>,
 }
 
-impl ServerFrame<'_> {
+/// A server frame as the server writes it, over the slices it assembled, so a frame costs no
+/// copies. It serializes exactly as `ServerFrame` reads, a sequence being a sequence whether a
+/// vector or a slice.
+#[derive(Serialize)]
+pub(crate) struct ServerFrameOut<'a> {
+    pub fresh: Option<u32>,
+    pub left: &'a [WireEntity],
+    pub entities: &'a [EntityChangesOut<'a>],
+    pub messages: &'a [Part<'a>],
+}
+
+impl ServerFrameOut<'_> {
     pub fn is_empty(&self) -> bool {
         self.fresh.is_none()
             && self.left.is_empty()
@@ -32,6 +43,13 @@ pub(crate) struct EntityChanges<'a> {
     pub entity: WireEntity,
     #[serde(borrow)]
     pub changes: Vec<Change<'a>>,
+}
+
+/// `EntityChanges` as the server writes it.
+#[derive(Serialize)]
+pub(crate) struct EntityChangesOut<'a> {
+    pub entity: WireEntity,
+    pub changes: &'a [Change<'a>],
 }
 
 /// One component of an entity. To a client that doesn't hold the kind, its whole bytes. To one

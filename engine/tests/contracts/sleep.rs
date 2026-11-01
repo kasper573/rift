@@ -15,7 +15,9 @@ fn what_no_player_is_near_stands_still_until_one_comes() {
         .load();
     let mut sim = Sim::new(content);
     sim.serve("field")
-        .add((sleep::settle, movement::advance, movement::file_by_chunk));
+        .add(sleep::settle)
+        .add(movement::file_by_chunk)
+        .plan(movement::AdvanceWalks::default());
     let hero = sim.join(1);
     let (crow, field) = (sim.id::<NpcDef>("crow"), sim.id::<AreaDef>("field"));
     let far = Pos::new(220.0, 6.0);

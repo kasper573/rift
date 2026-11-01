@@ -257,24 +257,23 @@ fn harbour() -> Sim {
             dialogue::requests,
             combat::request,
             actor::playing::progress,
-            skill::casting::casts,
+        ))
+        .add((rewards::grant, npc::defeated))
+        .plan(skill::casting::StepCasts::default())
+        .plan((
+            script::query::ListRoster::default(),
+            script::RunFlows::default(),
+            npc::body::DriveBodies::default(),
+            movement::AdvanceWalks::default(),
         ))
         .add((
-            (rewards::grant, npc::defeated).chain(),
-            script::query::take_tick_roster,
-            script::run_tick,
-            npc::body::drive,
-            movement::advance,
             interact::interactions,
             (dialogue::hold, dialogue::refresh).chain(),
             (npc::run_respawn, npc::dismiss).chain(),
         ))
-        .add((
-            stat::settle_health,
-            combat::defeats,
-            skill::hotbar::settle_basic_attack,
-            actor::settle,
-        ));
+        .plan(stat::SettleHealth::default())
+        .add((combat::defeats, skill::hotbar::settle_basic_attack))
+        .plan(actor::SettleActions::default());
     script::spawn_stateless(&mut sim.world);
     region::reach_all(&mut sim.world);
     sim

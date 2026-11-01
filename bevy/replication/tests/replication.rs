@@ -347,7 +347,7 @@ struct Net {
 impl Net {
     fn new() -> Net {
         let mut server = App::new();
-        server.add_plugins(ServerReplicationPlugin);
+        server.add_plugins(ServerReplicationPlugin::default());
         protocol(&mut server);
         server.init_resource::<Sights>();
         server.insert_resource(ReplicationInterest(Box::new(ByTable::default())));

@@ -338,11 +338,11 @@ fn a_wanderer_keeps_within_its_leash_of_home_however_far_the_ground_goes() {
         .hero("plain", 30.0, 5.0)
         .load();
     let mut sim = Sim::new(content);
-    sim.serve("plain").add((
-        script::query::take_tick_roster,
-        script::run_tick,
-        npc::body::drive,
-        movement::advance,
+    sim.serve("plain").plan((
+        script::query::ListRoster::default(),
+        script::RunFlows::default(),
+        npc::body::DriveBodies::default(),
+        movement::AdvanceWalks::default(),
     ));
     script::spawn_stateless(&mut sim.world);
     sim.join(1);
@@ -650,20 +650,17 @@ fn field(wanderers: bool) -> Sim {
             movement::move_request,
             combat::request,
             actor::playing::progress,
-            skill::casting::casts,
         ))
-        .add((
-            script::query::take_tick_roster,
-            script::run_tick,
-            npc::body::drive,
-            movement::advance,
+        .plan(skill::casting::StepCasts::default())
+        .plan((
+            script::query::ListRoster::default(),
+            script::RunFlows::default(),
+            npc::body::DriveBodies::default(),
+            movement::AdvanceWalks::default(),
         ))
-        .add((
-            stat::settle_health,
-            combat::defeats,
-            skill::hotbar::settle_basic_attack,
-            actor::settle,
-        ));
+        .plan(stat::SettleHealth::default())
+        .add((combat::defeats, skill::hotbar::settle_basic_attack))
+        .plan(actor::SettleActions::default());
     script::spawn_stateless(&mut sim.world);
     sim
 }

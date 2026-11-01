@@ -11,6 +11,7 @@ use crate::core::par;
 use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, Eval, NEXT, REFUSED, ScriptFault, Value, ValueType,
 };
+use crate::core::tick::{Cached, Planner};
 use crate::core::time::WallClock;
 use crate::core::units::Meters;
 use crate::systems::actor::{self, playing};
@@ -161,16 +162,30 @@ pub fn fits(world: &World, caster: Entity, target: Entity, targeting: Targeting)
 /// through what it plays, since a step would cut its swing short of the hit, and between casts it
 /// settles, spreading out from others that crowd its tile. Every caster's step is worked out on every
 /// core from the world as the tick found it, then written in the order the casters were found.
-pub fn casts(world: &mut World, intents: &mut reach::Intents) {
-    let casters = reach::casting(world, intents);
-    let shared: &World = world;
-    let steps: Vec<CastStep> = casters
-        .par_iter()
-        .with_min_len(par::grain(casters.len()))
-        .map(|&(caster, intent)| step_of(shared, caster, intent))
-        .collect();
-    for ((caster, intent), step) in casters.into_iter().zip(steps) {
-        apply(world, caster, intent, step);
+#[derive(Default)]
+pub struct StepCasts {
+    intents: Cached<(Entity, &'static ReachIntent), ()>,
+    steps: Vec<(Entity, ReachIntent, CastStep)>,
+}
+
+impl Planner for StepCasts {
+    fn prepare(&mut self, world: &mut World) {
+        self.intents.ready(world);
+    }
+
+    fn plan(&mut self, world: &World) {
+        let casters = reach::casting(self.intents.query(world).iter());
+        self.steps = casters
+            .par_iter()
+            .with_min_len(par::grain(casters.len()))
+            .map(|&(caster, intent)| (caster, intent, step_of(world, caster, intent)))
+            .collect();
+    }
+
+    fn apply(&mut self, world: &mut World) {
+        for (caster, intent, step) in self.steps.drain(..) {
+            apply(world, caster, intent, step);
+        }
     }
 }
 

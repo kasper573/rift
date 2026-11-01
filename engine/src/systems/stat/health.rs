@@ -3,10 +3,12 @@ use rayon::prelude::*;
 
 use super::{StatKind, Stats, base, effective};
 use crate::core::par;
+use crate::core::tick::{Cached, Planner};
 use crate::core::vfx::VfxSite;
 use crate::systems::actor::Hurt;
 use crate::systems::mirror::{self, Effect, Ghost};
 use crate::systems::notification;
+use crate::systems::status::boost::Boosts;
 use crate::systems::vfx::{VfxFixture, VfxShaderFixture, fixture};
 
 /// Worn down by damage like anyone, but always left standing.
@@ -98,25 +100,43 @@ pub fn revive(world: &mut World, entity: Entity) {
     set_health(world, entity, |_, max| max);
 }
 
-pub fn settle_health(
-    world: &mut World,
-    living: &mut QueryState<Entity, (With<Stats>, Without<Ghost>)>,
-) {
-    let entities: Vec<Entity> = living.iter(world).collect();
-    let shared: &World = world;
-    let settled: Vec<(Entity, f32)> = entities
-        .par_iter()
-        .with_min_len(par::grain(entities.len()))
-        .filter_map(|&entity| {
-            let max = max_health(shared, entity);
-            let &health = shared.get::<Stats>(entity)?.0.get(&StatKind::Health)?;
-            let settled = health.min(max);
-            (settled != health).then_some((entity, settled))
-        })
-        .collect();
-    for (entity, settled) in settled {
-        if let Some(mut stats) = world.get_mut::<Stats>(entity) {
-            stats.0.insert(StatKind::Health, settled);
+/// Holds every actor's health within its maximum: found on every core among the actors whose
+/// health could have risen past it, written in the order the actors were found. Health passes
+/// its maximum when it changes or when a boost comes or goes; what else feeds the maximum only
+/// ever raises it.
+#[derive(Default)]
+pub struct SettleHealth {
+    living: Cached<Entity, (MaximumMoved, Without<Ghost>)>,
+    settled: Vec<(Entity, f32)>,
+}
+
+/// Actors whose health or maximum may have changed.
+type MaximumMoved = Or<(Changed<Stats>, Changed<Boosts>)>;
+
+impl Planner for SettleHealth {
+    fn prepare(&mut self, world: &mut World) {
+        self.living.ready(world);
+    }
+
+    fn plan(&mut self, world: &World) {
+        let entities: Vec<Entity> = self.living.query(world).iter().collect();
+        self.settled = entities
+            .par_iter()
+            .with_min_len(par::grain(entities.len()))
+            .filter_map(|&entity| {
+                let max = max_health(world, entity);
+                let &health = world.get::<Stats>(entity)?.0.get(&StatKind::Health)?;
+                let settled = health.min(max);
+                (settled != health).then_some((entity, settled))
+            })
+            .collect();
+    }
+
+    fn apply(&mut self, world: &mut World) {
+        for (entity, settled) in self.settled.drain(..) {
+            if let Some(mut stats) = world.get_mut::<Stats>(entity) {
+                stats.0.insert(StatKind::Health, settled);
+            }
         }
     }
 }

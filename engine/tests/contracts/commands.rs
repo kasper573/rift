@@ -53,8 +53,8 @@ fn camp() -> (Sim, Entity) {
         .accept::<DropItemRequest>()
         .accept::<UnequipRequest>()
         .add((item::use_item, item::drop_item, equipment::unequip))
-        .add(script::run_tick)
-        .add(stat::settle_health);
+        .plan(script::RunFlows::default())
+        .plan(stat::SettleHealth::default());
     script::spawn_stateless(&mut sim.world);
     let player = sim.join(1);
     (sim, player)

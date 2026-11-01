@@ -583,9 +583,8 @@ pub fn area_owner(world: &World) -> Owner {
     Owner::Row(RunnerKind::Area, world.resource::<WorldArea>().0.raw())
 }
 
-pub fn run_tick(world: &mut World) {
-    script::run::tick::<RiftScripting>(world);
-}
+/// Runs this game's flows each tick.
+pub type RunFlows = script::run::FlowRunner<RiftScripting>;
 
 pub fn spawn_stateless(world: &mut World) {
     let scripts = world.resource::<RiftScripts>().clone();

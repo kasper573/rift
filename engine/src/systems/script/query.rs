@@ -1,4 +1,6 @@
 use bevy_ecs::prelude::*;
+
+use crate::core::tick::{Cached, Planner};
 use bevy_ecs::query::Has;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -105,55 +107,74 @@ impl TickRoster {
     }
 }
 
-type RosterQuery = QueryState<
-    (
-        Entity,
-        &'static Position,
-        &'static AreaTag,
-        Option<&'static Npc>,
-        Option<&'static Stats>,
-        Has<PlayedBy>,
-        Has<ArrivalHold>,
-        Has<Presence>,
-    ),
-    Or<(With<PlayedBy>, With<Npc>)>,
->;
+/// Lists who stands where as the tick begins, for every script run this tick.
+#[derive(Default)]
+pub struct ListRoster {
+    query: Cached<Listing, Actors>,
+    roster: TickRoster,
+}
 
-pub fn take_tick_roster(world: &mut World, query: &mut RosterQuery) {
-    let mut roster = std::mem::take(world.get_resource_or_init::<TickRoster>().as_mut());
-    let TickRoster {
-        listed,
-        characters,
-        npcs,
-        character_spots,
-        npc_spots,
-    } = &mut roster;
-    listed.clear();
-    npcs.clear();
-    for (entity, at, tag, npc, stats, character, held, presence) in query.iter(world) {
-        let entry = Listed {
-            entity,
-            at: at.pos,
-            area: tag.area,
-            npc: npc.map(|npc| npc.def),
-            character,
-            dead: stats.is_some_and(stat::dead),
-            held,
-            presence,
-        };
-        if character {
-            listed.push(entry);
-        } else {
-            npcs.push(entry);
-        }
+/// Players and npcs: who the roster lists.
+type Actors = Or<(With<PlayedBy>, With<Npc>)>;
+
+/// What the roster lists of each actor.
+type Listing = (
+    Entity,
+    &'static Position,
+    &'static AreaTag,
+    Option<&'static Npc>,
+    Option<&'static Stats>,
+    Has<PlayedBy>,
+    Has<ArrivalHold>,
+    Has<Presence>,
+);
+
+impl Planner for ListRoster {
+    fn prepare(&mut self, world: &mut World) {
+        self.query.ready(world);
     }
-    *characters = listed.len();
-    rayon::join(
-        || npc_spots.refile_spots(npcs.iter().map(|entry| entry.at)),
-        || character_spots.refile_spots(listed.iter().map(|entry| entry.at)),
-    );
-    listed.append(npcs);
-    *world.resource_mut::<TickRoster>() = roster;
+
+    fn plan(&mut self, world: &World) {
+        let TickRoster {
+            listed,
+            characters,
+            npcs,
+            character_spots,
+            npc_spots,
+        } = &mut self.roster;
+        listed.clear();
+        npcs.clear();
+        for (entity, at, tag, npc, stats, character, held, presence) in
+            self.query.query(world).iter()
+        {
+            let entry = Listed {
+                entity,
+                at: at.pos,
+                area: tag.area,
+                npc: npc.map(|npc| npc.def),
+                character,
+                dead: stats.is_some_and(stat::dead),
+                held,
+                presence,
+            };
+            if character {
+                listed.push(entry);
+            } else {
+                npcs.push(entry);
+            }
+        }
+        *characters = listed.len();
+        rayon::join(
+            || npc_spots.refile_spots(npcs.iter().map(|entry| entry.at)),
+            || character_spots.refile_spots(listed.iter().map(|entry| entry.at)),
+        );
+        listed.append(npcs);
+    }
+
+    fn apply(&mut self, world: &mut World) {
+        let mut held = world.get_resource_or_init::<TickRoster>();
+        std::mem::swap(&mut self.roster, &mut *held);
+    }
 }
 
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
