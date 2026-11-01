@@ -25,8 +25,6 @@ use crate::core::content::{
 use crate::core::geometry::Radians;
 use crate::core::ground::TileAt;
 use crate::core::math::{Percent, Pos, Rect, Rng};
-use crate::core::script::compile::ProcedureId;
-use crate::core::script::value::Value;
 use crate::core::time::{PlaybackRate, Seconds};
 use crate::core::units::{MeterPos, Meters, MetersPerSec};
 use crate::systems::actor::held::{self, Held};
@@ -39,7 +37,6 @@ use crate::systems::dialogue::bust::BustId;
 use crate::systems::identity::{GlobalId, Names};
 use crate::systems::interact::Interactive;
 use crate::systems::item::{ItemId, Reservation, Wear};
-use crate::systems::mirror::Ghost;
 use crate::systems::movement::{self, NavMesh, Position, Spot, Spots, position};
 use crate::systems::script::condition::CompiledCondition;
 use crate::systems::script::query::{Among, TickRoster};
@@ -51,7 +48,7 @@ use crate::systems::skill::{self, Rank, SkillId};
 use crate::systems::stat::Stats;
 use crate::systems::status::Statuses;
 use crate::systems::visibility::{self, Presence};
-use crate::systems::{WorldArea, WorldCell, dialogue, stat};
+use crate::systems::{WorldArea, dialogue, stat};
 use bevy_platform::collections::HashMap;
 
 pub type NpcId = ContentId<NpcDef>;
@@ -59,8 +56,8 @@ pub type NpcId = ContentId<NpcDef>;
 const CORPSE_LINGER: Seconds = Seconds(5.0);
 
 pub fn register(app: &mut App) {
-    use crate::systems::mirror::AppMirrorExt;
-    app.replicate_once::<Npc>().mirror::<Pack>();
+    use bevy_replication::AppReplicationExt;
+    app.replicate_once::<Npc>();
 }
 
 /// The ranks an npc holds its skills at lie within those skills' ranks.
@@ -408,24 +405,16 @@ pub fn next_pack(world: &mut World) -> Pack {
     Pack(world.resource_mut::<Names>().give())
 }
 
-/// Spawns the npcs placed on the tile at `tile` in this world's cell: a resident at its spot, a
-/// population where its roaming ground is, or the area's middle when it roams anywhere.
+/// Spawns the npcs placed on the tile at `tile`: a resident at its spot, a population where it
+/// roams.
 pub fn spawn_in(world: &mut World, tile: TileAt) {
     let content = world.resource::<Content>().clone();
     let area_id = world.resource::<WorldArea>().0;
-    let mine = world.resource::<WorldCell>().0;
     let area = area::load(&content, area_id);
-    let cells = area::cells(&content, area_id);
     let placed = area::placed(&content, area_id);
     for index in area.modules_in(tile) {
         match &placed[*index as usize].module {
             AreaModule::Population(population) => {
-                let anchor = population
-                    .roams
-                    .map_or_else(|| area.center(), |roams| roams.center());
-                if cells.at(anchor) != mine {
-                    continue;
-                }
                 let pack = next_pack(world);
                 for _ in 0..population.count {
                     spawn_wild(
@@ -439,9 +428,6 @@ pub fn spawn_in(world: &mut World, tile: TileAt) {
                 }
             }
             AreaModule::Resident(resident) => {
-                if cells.at(resident.at) != mine {
-                    continue;
-                }
                 let pack = next_pack(world);
                 let mesh = area::load(&content, area_id).mesh();
                 let at = movement::place_beside(world, area_id, &mesh, resident.at);
@@ -499,27 +485,9 @@ pub fn spawn(
     pack: Option<Pack>,
 ) -> Entity {
     let pack = pack.unwrap_or_else(|| next_pack(world));
-    let entity = world.spawn_empty().id();
-    furnish(world, entity, def, at, area, pack, HashMap::new());
-    entity
-}
-
-/// Makes `entity` an npc of `def` standing at `at`, in `pack`, its scripts started with their
-/// state as `scripts` holds it: what [`spawn`] does to a new entity, and a handoff to one taken
-/// up under a name.
-pub fn furnish(
-    world: &mut World,
-    entity: Entity,
-    def: NpcId,
-    at: Pos<Meters>,
-    area: AreaId,
-    pack: Pack,
-    scripts: HashMap<ProcedureId, Vec<Value>>,
-) {
     let content = world.resource::<Content>().clone();
     let row = def.get(&content);
-    let mut entity_mut = world.entity_mut(entity);
-    entity_mut.insert((
+    let mut entity_mut = world.spawn((
         actor_bundle(&content, row, at, area),
         Npc { def },
         pack,
@@ -532,14 +500,9 @@ pub fn furnish(
     if let Some(babble) = row.voice() {
         entity_mut.insert(Babbler(babble));
     }
-    start_scripts(world, entity, def, scripts);
-}
-
-/// The state of the npc's scripts as it stands, to furnish it with elsewhere.
-pub fn script_state(world: &World, npc: Entity) -> HashMap<ProcedureId, Vec<Value>> {
-    world
-        .resource::<RiftInstances>()
-        .state_of(Owner::Entity(RunnerKind::Npc, npc))
+    let entity = entity_mut.id();
+    start_scripts(world, entity, def);
+    entity
 }
 
 pub fn despawn(world: &mut World, npc: Entity) {
@@ -723,12 +686,7 @@ fn actor_bundle(content: &Content, def: &NpcDef, at: Pos<Meters>, area: AreaId) 
     )
 }
 
-fn start_scripts(
-    world: &mut World,
-    entity: Entity,
-    def: NpcId,
-    state: HashMap<ProcedureId, Vec<Value>>,
-) {
+fn start_scripts(world: &mut World, entity: Entity, def: NpcId) {
     let procedures = world
         .resource::<RiftScripts>()
         .of(OwnerRow::of_row(def))
@@ -744,7 +702,7 @@ fn start_scripts(
         }
     }
     let mut instances = world.resource_mut::<RiftInstances>();
-    instances.spawn_owner_with(owner, procedures, state);
+    instances.spawn_owner(owner, procedures);
     instances.raise(owner, EventKind::Started, None, Vec::new(), |_| true);
 }
 
@@ -763,7 +721,7 @@ fn roaming_spot(
     draw(&|at| spots.crowding(area, at, None) == 0).or_else(|| draw(&|_| true))
 }
 
-type FallenNpcs = QueryState<(Entity, &'static Dead), (With<Npc>, Without<Ghost>)>;
+type FallenNpcs = QueryState<(Entity, &'static Dead), With<Npc>>;
 
 pub fn run_respawn(world: &mut World, fallen: &mut FallenNpcs) {
     let content = world.resource::<Content>().clone();
@@ -806,7 +764,7 @@ pub fn run_respawn(world: &mut World, fallen: &mut FallenNpcs) {
                 .insert((Attitude::Friendly, body::Body::default(), Near::default()))
                 .remove::<Reservation>()
                 .insert(Statuses::default());
-            start_scripts(world, id, npc, HashMap::new());
+            start_scripts(world, id, npc);
         }
     });
 }

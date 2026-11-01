@@ -53,7 +53,7 @@ pub const QUEST_LOG_CAP: usize = 20;
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
 
-    use crate::systems::mirror::AppMirrorExt;
+    use bevy_replication::AppReplicationExt;
     app.replicate_private::<QuestLog>()
         .add_client_message::<QuestRequest>();
 }

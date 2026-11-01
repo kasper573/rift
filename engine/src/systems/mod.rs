@@ -9,7 +9,6 @@ pub mod combat;
 pub mod dialogue;
 pub mod equipment;
 pub mod frame_rate;
-pub mod handoff;
 pub mod history;
 pub mod hud;
 pub mod identity;
@@ -19,7 +18,6 @@ pub mod interface;
 pub mod item;
 pub mod launch;
 pub mod memory;
-pub mod mirror;
 pub mod movement;
 pub mod notification;
 pub mod npc;
@@ -62,7 +60,7 @@ use crate::core::content::{
 };
 use crate::core::gui::GuiPlugin;
 use crate::core::interpolate::SnapshotPlugin;
-use crate::core::math::{Rect, Rng};
+use crate::core::math::Rng;
 use crate::core::net::auth::Credentials;
 use crate::core::net::transport::ClientTransportPlugin;
 use crate::core::os::{Http, Profile, SignIn, StartParams};
@@ -70,7 +68,6 @@ use crate::core::render::WorldRenderPlugin;
 use crate::core::text::StyledTextPlugin;
 use crate::core::tick::{self, Tick};
 use crate::core::time::{DayClock, Hertz, Seconds, WallClock};
-use crate::core::units::Meters;
 use crate::core::vfx::render::VfxRenderPlugin;
 use crate::systems::area::AreaId;
 use crate::systems::player::PlayerDefId;
@@ -87,7 +84,6 @@ pub fn protocol(app: &mut App) {
     identity::register(app);
     actor::register(app);
     crate::core::babble::register(app);
-    mirror::AppMirrorExt::mirror::<crate::core::babble::Babbler>(app);
     notification::register(app);
     area::register(app);
     attention::register(app);
@@ -163,17 +159,6 @@ fn insert_content(world: &mut World, content: &Content) {
 #[derive(Resource, Clone, Copy)]
 pub struct WorldArea(pub AreaId);
 
-/// The cell of its area this world runs.
-#[derive(Resource, Clone, Copy)]
-pub struct WorldCell(pub area::Cell);
-
-/// The ground this world owns: its cell's rect of its area.
-pub fn world_rect(world: &World) -> Rect<Meters> {
-    let content = world.resource::<Content>();
-    let area = world.resource::<WorldArea>().0;
-    area::cells(content, area).rect(world.resource::<WorldCell>().0)
-}
-
 #[derive(JsonSchema, Resource, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct GameSettings {
@@ -184,18 +169,10 @@ pub struct GameSettings {
     /// Without one the game has no clock: every area's light stands as authored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daylight: Option<area::DayCycle>,
-    /// The server partitions an area into cells about this size, as many as its ground holds of
-    /// it, evened out over the ground, each stepped as a world of its own on a core of its own,
-    /// seeing as far past its edges as the content reaches; an area about this size or smaller
-    /// runs as one world. A small cell spreads a crowded area over more cores but holds more of
-    /// its neighbours, so the best size for a game's content is what `rift bench <game> --only
-    /// cells` measures.
-    pub spatial_partition_cell_size: Meters,
 }
 
 pub fn server_app(
     area: AreaId,
-    cell: area::Cell,
     ordinal: u64,
     rng_seed: u64,
     clock: WallClock,
@@ -209,7 +186,6 @@ pub fn server_app(
     let mut app = App::new();
     let settings = content.built::<GameSettings>();
     app.insert_resource(WorldArea(area));
-    app.insert_resource(WorldCell(cell));
     app.insert_resource(settings.clone());
     app.insert_resource(clock);
     app.insert_resource(DayClock(
@@ -230,7 +206,6 @@ pub fn server_app(
         sending: Sending::ByHost,
     });
     protocol(&mut app);
-    mirror::register(&mut app);
     visibility::register(&mut app);
     area_state(app.world_mut(), content);
     // Seed the phase by the world's ordinal so worlds replicate on different ticks, spreading the
@@ -249,7 +224,7 @@ pub fn server_app(
             Update,
             (
                 (
-                    (mirror::deliver, status::expire).chain(),
+                    status::expire,
                     vfx::expire,
                     player::arrival_holds,
                     combat::regen,
@@ -623,21 +598,6 @@ fn check_settings(loading: &mut Loading) {
     }
     if loading.thorough() {
         check_reach(loading, &content, settings.initial_spawn);
-    }
-    let (halo, reached_by) = mirror::halo(&content);
-    if settings.spatial_partition_cell_size < halo {
-        loading.json_error(
-            SETTINGS_FILE,
-            "/spatial_partition_cell_size",
-            ContentProblem::new(
-                "too short",
-                format!("{} m", settings.spatial_partition_cell_size.0),
-                format!(
-                    "at least {} m, as far as {reached_by}: what a world sees past its cell",
-                    halo.0
-                ),
-            ),
-        );
     }
 }
 

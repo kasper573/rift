@@ -15,7 +15,6 @@ use crate::core::time::Seconds;
 use crate::core::units::Meters;
 use crate::core::vfx::VfxSite;
 use crate::systems::actor::{self, Actor};
-use crate::systems::mirror::{self, Effect, Ghost};
 use crate::systems::npc::Pack;
 use crate::systems::player::{self, PlayedBy, player_requests, session};
 use crate::systems::reach;
@@ -27,10 +26,9 @@ use crate::systems::visibility;
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
 
-    use crate::systems::mirror::AppMirrorExt;
+    use bevy_replication::AppReplicationExt;
     app.add_mapped_client_message::<AttackRequest>()
-        .replicate::<Attitude>()
-        .mirror::<Attackers>();
+        .replicate::<Attitude>();
 }
 
 #[derive(JsonSchema, Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -152,7 +150,7 @@ pub fn regen(world: &mut World) {
         last.0 = now;
     }
     let players: Vec<Entity> = world
-        .query_filtered::<Entity, (With<PlayedBy>, Without<Ghost>)>()
+        .query_filtered::<Entity, With<PlayedBy>>()
         .iter(world)
         .collect();
     for player in players {
@@ -178,9 +176,6 @@ pub fn request(world: &mut World) {
 }
 
 pub fn inflict(world: &mut World, target: Entity, attacker: Option<Entity>, damage: f32) {
-    if mirror::post(world, target, attacker, Effect::Inflict { damage }) {
-        return;
-    }
     if !stat::stands(world, target) || player::arriving(world, target) {
         return;
     }
@@ -197,8 +192,7 @@ pub fn inflict(world: &mut World, target: Entity, attacker: Option<Entity>, dama
 /// The one place a fallen actor is declared dead. Every health change lands before this runs, so
 /// however health reached zero, the death is recorded and announced exactly once.
 /// Whoever's stats just left them no health falls: an entity falls only as its stats change.
-pub type Standing =
-    QueryState<(Entity, &'static Stats), (Changed<Stats>, Without<Dead>, Without<Ghost>)>;
+pub type Standing = QueryState<(Entity, &'static Stats), (Changed<Stats>, Without<Dead>)>;
 
 pub fn defeats(world: &mut World, standing: &mut Standing) {
     let time = Seconds(world.resource::<Time>().elapsed_secs());

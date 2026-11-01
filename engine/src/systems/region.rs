@@ -17,9 +17,9 @@ use crate::core::ground::TileAt;
 use crate::core::math::Pos;
 use crate::core::units::Meters;
 use crate::systems::player::session::my_character;
-use crate::systems::sleep::{PlayerPositions, Sleep};
+use crate::systems::sleep::Sleep;
 use crate::systems::visibility::VIEW_DISTANCE;
-use crate::systems::{WorldArea, area, mirror, npc, script};
+use crate::systems::{WorldArea, area, npc, script, sleep};
 
 /// How far around a player the ground is held, which tiles this world has brought to life, and
 /// the hold under way.
@@ -37,7 +37,7 @@ impl Region {
     /// a client sees and anything there reaches, rounded up to whole chunks.
     pub fn of(content: &Content) -> Region {
         Region {
-            reach: Meters(VIEW_DISTANCE.0 + mirror::halo(content).0.0 + CHUNK_SIDE.0 * 2.0),
+            reach: Meters(VIEW_DISTANCE.0 + sleep::acting_reach(content).0 + CHUNK_SIDE.0 * 2.0),
             reached: HashSet::new(),
             holding: None,
             stood: Vec::new(),
@@ -50,7 +50,7 @@ impl Region {
 /// for the first time once they are held. Players walk far slower than ground is held, and the
 /// ground is held as far past them as anything awake stands, so they never reach its edge. Runs
 /// after the sleep settles, and asks for ground only when a player stands in a new chunk.
-pub fn settle(world: &mut World, players: &mut PlayerPositions) {
+pub fn settle(world: &mut World) {
     let finished = world
         .resource::<Region>()
         .holding
@@ -70,16 +70,15 @@ pub fn settle(world: &mut World, players: &mut PlayerPositions) {
     if region.holding.is_some() || region.stood == world.resource::<Sleep>().stood() {
         return;
     }
-    let stood_in = world.resource::<Sleep>().stood().to_vec();
-    world.resource_mut::<Region>().stood = stood_in;
-    let stood: Vec<Pos<Meters>> = players.iter(world).map(|position| position.pos).collect();
+    let stood = world.resource::<Sleep>().stood().to_vec();
+    world.resource_mut::<Region>().stood = stood.clone();
     let content = world.resource::<Content>().clone();
     let area_id = world.resource::<WorldArea>().0;
     let area = area::load(&content, area_id);
     let region = world.resource::<Region>();
     let wanted: BTreeSet<TileAt> = stood
         .into_iter()
-        .flat_map(|at| area.tiles_around(at, region.reach))
+        .flat_map(|chunk| area.tiles_around(chunk.rect().center(), region.reach))
         .filter(|tile| !region.reached.contains(tile))
         .collect();
     if wanted.is_empty() {

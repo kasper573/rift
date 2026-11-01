@@ -55,7 +55,7 @@ pub const AREA_TARGETS: usize = 8;
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
 
-    use crate::systems::mirror::AppMirrorExt;
+    use bevy_replication::AppReplicationExt;
     app.replicate_private::<Learned>()
         .replicate_private::<Cooldowns>()
         .replicate_private::<Hotbar>()

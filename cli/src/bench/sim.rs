@@ -7,14 +7,15 @@ use bevy_ecs::prelude::*;
 use bevy_replication::ClientLink;
 use engine::core::content::{Content, FilesystemFolder};
 use engine::core::time::{Seconds, UnixMillis, UtcHour, WallClock};
-use engine::systems::area::{self, Cell};
-use engine::systems::handoff::Moved;
+use engine::core::units::MeterPos;
+use engine::systems::area;
 use engine::systems::launch::ServerDaylight;
 use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::player::{ClientId, JoinRequest, SpawnPolicy, SpawnRules};
 use engine::systems::region;
 use engine::systems::script::Place;
-use engine::systems::worlds::{self, Worlds};
+use engine::systems::visibility::VIEW_DISTANCE;
+use engine::systems::worlds;
 use engine::systems::{GameSettings, TICK_HZ, from_client, load_content, server_app, start_server};
 use strum::AsRefStr;
 
@@ -70,7 +71,7 @@ pub enum Layout {
     /// Every player spawns on the spawn tile, so all clients share one identical area-of-interest —
     /// the worst case for replicating nearby entities to many overlapping viewers.
     Congested,
-    /// Players spawn across the area's walkable cells, so clients have realistically distinct
+    /// Players spawn across the area's walkable ground, so clients have realistically distinct
     /// areas-of-interest.
     Distributed,
 }
@@ -87,7 +88,6 @@ impl Layout {
 /// Areas of the content's spawn area, each with its players, stepped as the server steps its own.
 pub struct Bench {
     pub worlds: Vec<App>,
-    cells: Worlds,
     rosters: Vec<Vec<Entity>>,
     content: Content,
     ticks: usize,
@@ -98,9 +98,9 @@ impl Bench {
         Bench::with_players(areas, PLAYERS_PER_AREA, layout, content)
     }
 
-    /// `areas` of the spawn area, each with `players` playing in it: each as one of the test
-    /// characters in turn, in the world of the cell its character starts in. Crowded players
-    /// play only the characters starting in the spawn's cell; spread ones all of them.
+    /// `areas` of the spawn area, each with `players` playing in it, each as one of the test
+    /// characters in turn. Crowded players play only the characters starting within sight of the
+    /// spawn; spread ones all of them.
     pub fn with_players(areas: usize, players: usize, layout: Layout, content: &Content) -> Bench {
         Bench::with_players_in(areas, players, layout, content, 1.0)
     }
@@ -115,12 +115,11 @@ impl Bench {
         share: f32,
     ) -> Bench {
         let spawn = content.built::<GameSettings>().initial_spawn;
-        let cells = area::cells(content, spawn.area);
         let peopled = area::load(content, spawn.area).size.height * share;
         let characters: Vec<Option<(CharacterSnapshot, Place)>> = {
             let mut all = play::characters_in(content, spawn.area);
             if layout == Layout::Congested {
-                all.retain(|(_, start)| cells.at(start.at) == cells.at(spawn.at));
+                all.retain(|(_, start)| start.at.distance(spawn.at) <= VIEW_DISTANCE);
             }
             all.retain(|(_, start)| start.at.y < peopled);
             if all.is_empty() {
@@ -129,30 +128,14 @@ impl Bench {
                 all.into_iter().map(Some).collect()
             }
         };
-        let cell_of = |character: &Option<(CharacterSnapshot, Place)>| {
-            character
-                .as_ref()
-                .map_or(cells.at(spawn.at), |(_, start)| cells.at(start.at))
-        };
-        let mut joining: Vec<Vec<Option<(CharacterSnapshot, Place)>>> =
-            vec![Vec::new(); areas * cells.count()];
-        for copy in 0..areas {
-            for index in 0..players {
-                let character = characters[index % characters.len()].clone();
-                joining[copy * cells.count() + cell_of(&character).0 as usize].push(character);
-            }
-        }
-        let (worlds, rosters) = Worlds::copies(content, spawn.area, areas)
-            .iter()
-            .zip(joining)
-            .enumerate()
-            .map(|(ordinal, ((_, cell), joining))| {
-                build_world(layout, content, cell, ordinal as u64, joining)
-            })
+        let joining: Vec<Option<(CharacterSnapshot, Place)>> = (0..players)
+            .map(|index| characters[index % characters.len()].clone())
+            .collect();
+        let (worlds, rosters) = (0..areas)
+            .map(|ordinal| build_world(layout, content, ordinal as u64, joining.clone()))
             .unzip();
         Bench {
             worlds,
-            cells: Worlds::copies(content, spawn.area, areas),
             rosters,
             content: content.clone(),
             ticks: 0,
@@ -171,8 +154,7 @@ impl Bench {
             .iter_mut()
             .map(|app| Some(app.world_mut()))
             .collect();
-        let moved = worlds::tick(&self.cells, &mut views, clock);
-        self.follow(moved);
+        worlds::tick(&mut views, clock);
     }
 
     /// One tick on `pool`'s threads alone.
@@ -182,31 +164,7 @@ impl Bench {
             .iter_mut()
             .map(|app| Some(app.world_mut()))
             .collect();
-        let moved = pool.install(|| worlds::tick(&self.cells, &mut views, clock));
-        self.follow(moved);
-    }
-
-    /// Moves the connection of every player whose character changed hands to the world it now
-    /// stands in, as the server does.
-    fn follow(&mut self, moved: Vec<Moved>) {
-        for Moved { client, from, to } in moved {
-            let Some(slot) = self.rosters[from]
-                .iter()
-                .position(|&conn| self.worlds[from].world().get::<ClientId>(conn) == Some(&client))
-            else {
-                continue;
-            };
-            let conn = self.rosters[from].remove(slot);
-            let mut leaving = self.worlds[from].world_mut().entity_mut(conn);
-            let link = leaving.take::<ClientLink>();
-            leaving.despawn();
-            let mut conn = self.worlds[to].world_mut().spawn(client);
-            if let Some(link) = link {
-                conn.insert(link.hand_over());
-            }
-            let conn = conn.id();
-            self.rosters[to].push(conn);
-        }
+        pool.install(|| worlds::tick(&mut views, clock));
     }
 
     pub fn connect(&mut self) {
@@ -255,13 +213,11 @@ pub fn load(content_dir: &Path) -> Content {
 fn build_world(
     layout: Layout,
     content: &Content,
-    cell: Cell,
     ordinal: u64,
     players: Vec<Option<(CharacterSnapshot, Place)>>,
 ) -> (App, Vec<Entity>) {
     let mut app = server_app(
         content.built::<GameSettings>().initial_spawn.area,
-        cell,
         ordinal,
         SEED,
         CLOCK,

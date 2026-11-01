@@ -9,7 +9,7 @@ use bevy_app::App;
 use bevy_ecs::component::Component;
 use bevy_ecs::entity::{Entity, MapEntities};
 use bevy_ecs::message::Message;
-use bevy_ecs::query::{QueryState, With, Without};
+use bevy_ecs::query::{QueryState, With};
 use bevy_ecs::world::World;
 use bevy_replication::Replicated;
 use bevy_time::Time;
@@ -32,7 +32,6 @@ use crate::systems::actor::skeleton::{Colours, EquipmentSlot, LocalOffset, Local
 use crate::systems::actor::stance::StanceId;
 use crate::systems::area::{self, AreaId, AreaTag, PropId};
 use crate::systems::equipment;
-use crate::systems::mirror::{self, Effect, Ghost};
 use crate::systems::movement::{Position, position};
 use crate::systems::npc::Npc;
 use crate::systems::player::{ClientId, PlayedBy, Players, player_requests};
@@ -54,7 +53,7 @@ const PICKUP_RANGE: Meters = Meters(1.0);
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
 
-    use crate::systems::mirror::AppMirrorExt;
+    use bevy_replication::AppReplicationExt;
 
     app.replicate_private::<Inventory>()
         .replicate::<DroppedItem>()
@@ -814,7 +813,6 @@ pub fn pickups(world: &mut World, intents: &mut reach::Intents) {
         match reach::pursue(world, player, PICKUP_RANGE) {
             Pursuit::Approaching => {}
             Pursuit::Lost => reach::forget(world, player),
-            Pursuit::Arrived if mirror::post(world, target, Some(player), Effect::Pull) => {}
             Pursuit::Arrived => {
                 collect(world, player, target);
                 reach::forget(world, player);
@@ -823,7 +821,7 @@ pub fn pickups(world: &mut World, intents: &mut reach::Intents) {
     }
 }
 
-type OwnedDrops = QueryState<(Entity, &'static Reservation), (With<DroppedItem>, Without<Ghost>)>;
+type OwnedDrops = QueryState<(Entity, &'static Reservation), With<DroppedItem>>;
 
 pub fn expire_drops(world: &mut World, drops: &mut OwnedDrops) {
     let now = Seconds(world.resource::<Time>().elapsed_secs());
@@ -860,16 +858,10 @@ pub fn reserve(world: &mut World, npc: Entity, attacker: Entity, now: Seconds) {
     }
 }
 
-/// The character credited with the victim's fall: the one that held it, as this world holds it,
-/// a ghost when its owner is a neighbour.
+/// The character credited with the victim's fall: the one that held it.
 pub fn credited(world: &World, victim: Entity, now: Seconds) -> Option<Entity> {
     let client = world.get::<Reservation>(victim)?.holder(now)?;
-    world
-        .resource::<Players>()
-        .0
-        .get(&client)
-        .copied()
-        .or_else(|| mirror::ghost_played_by(world, client))
+    world.resource::<Players>().0.get(&client).copied()
 }
 
 pub fn scatter_drop(

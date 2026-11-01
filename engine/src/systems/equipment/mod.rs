@@ -18,7 +18,7 @@ use crate::systems::script::condition;
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
 
-    use crate::systems::mirror::AppMirrorExt;
+    use bevy_replication::AppReplicationExt;
     app.replicate::<Equipment>()
         .add_client_message::<UnequipRequest>()
         .add_client_message::<HoldRequest>();

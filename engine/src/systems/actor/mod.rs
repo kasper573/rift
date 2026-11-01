@@ -41,14 +41,13 @@ use crate::core::time::PlaybackRate;
 use crate::core::units::{MeterPos, Meters, MetersPerSec};
 use crate::systems::area::AreaObject;
 use crate::systems::dialogue;
-use crate::systems::mirror::Ghost;
 use crate::systems::movement::{self, Path, Position, RenderPosition};
 use crate::systems::skill::Cooldowns;
 use crate::systems::stat::{self, Stats};
 use crate::systems::status::{ActiveAspects, Boosts, Statuses};
 
 pub fn register(app: &mut App) {
-    use crate::systems::mirror::AppMirrorExt;
+    use bevy_replication::AppReplicationExt;
 
     app.replicate::<Actor>()
         .replicate::<Appearance>()
@@ -250,7 +249,7 @@ pub fn set_facing(actor: &mut Mut<Actor>, facing: Radians, action: Action) {
 /// the world as the tick found it, then set in the order the actors were found.
 #[derive(Default)]
 pub struct SettleActions {
-    actors: Cached<ActorState, Without<Ghost>>,
+    actors: Cached<ActorState, ()>,
     sessions: Cached<(Entity, &'static ConversationSession), ()>,
     settled: Vec<(Entity, Action, Option<Radians>)>,
 }

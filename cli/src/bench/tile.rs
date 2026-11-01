@@ -8,11 +8,10 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
 
-use engine::core::content::{Content, ContentFile, WrittenFiles, content_path, name_of, parent_of};
+use engine::core::content::{Content, ContentFile, content_path, name_of, parent_of};
 use engine::core::ground::{GroundSize, Heightfield, Paint, SAMPLES_PER_METER};
 use engine::core::math::Pos;
 use engine::core::script::VarValue;
-use engine::core::units::Meters;
 use engine::systems::GameSettings;
 use engine::systems::area::scene::{SceneFolder, SceneNode};
 use engine::systems::area::{AreaDef, AreaModule};
@@ -21,20 +20,6 @@ use engine::systems::player::snapshot::{CharacterSnapshot, CharacterStart, start
 use engine::systems::script::Place;
 
 use crate::folder::{reader_of, write};
-
-/// Sets the cell size of the game written at `into`, whose content is `content`.
-pub fn with_cell_size(into: &Path, content: &Content, size: Meters) -> Result<(), String> {
-    let mut settings = content.built::<GameSettings>().clone();
-    settings.spatial_partition_cell_size = size;
-    let files = reader_of(into).write_settings(&settings);
-    write(
-        into,
-        files.map(|files| WrittenFiles {
-            files,
-            removed: Vec::new(),
-        }),
-    )
-}
 
 /// Writes into `into` the game at `game` with its spawn area laid out `side` by `side` times.
 pub fn tiled(game: &Path, content: &Content, side: u32, into: &Path) -> Result<(), String> {

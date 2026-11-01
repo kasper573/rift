@@ -25,8 +25,6 @@ use crate::core::vfx::{
 };
 use crate::systems::WorldArea;
 use crate::systems::area::{AreaObject, AreaTag};
-use crate::systems::mirror::AppMirrorExt;
-use crate::systems::mirror::Ghost;
 use crate::systems::movement::{Position, position};
 use crate::systems::player::PlayedBy;
 use crate::systems::script::effect::RiftEffect;
@@ -35,6 +33,7 @@ use crate::systems::script::{Condition, EffectCall, Reach, RiftScripting, Runner
 use crate::systems::skill::{self, SkillDef};
 use crate::systems::status::StatusEffectDef;
 use crate::systems::visibility::Presence;
+use bevy_replication::AppReplicationExt;
 
 /// How long an instance outlives its last layer, so a client sees the end before the entity goes.
 const LINGER: Seconds = Seconds(0.25);
@@ -174,10 +173,7 @@ pub fn spawn_for(
     ))
 }
 
-pub fn expire(
-    world: &mut World,
-    instances: &mut QueryState<(Entity, &VfxInstance), Without<Ghost>>,
-) {
+pub fn expire(world: &mut World, instances: &mut QueryState<(Entity, &VfxInstance)>) {
     let now = world.resource::<WallClock>().now;
     let done: Vec<Entity> = instances
         .iter(world)

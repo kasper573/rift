@@ -34,7 +34,6 @@ use engine::systems::launch::{
 };
 use engine::systems::player::snapshot::{self, CharacterSnapshot, JoinAs};
 use engine::systems::player::{ClientId, SpawnPolicy, SpawnRules};
-use engine::systems::script::Place;
 use engine::systems::staging::{self, STAGING_ROUTE, Staging};
 use engine::systems::worlds::{self, Worlds};
 use engine::systems::{GameSettings, TICK_HZ, load_content, server_app, start_server};
@@ -108,10 +107,10 @@ fn main() {
         .block_on(tokio::net::TcpListener::bind(http_bind))
         .unwrap_or_else(|error| panic!("cannot bind {http_bind}: {error}"));
     let http_addr = listener.local_addr().expect("bound http address");
-    let cells = Worlds::of(&content);
+    let areas = Worlds::of(&content);
     let lobby = Lobby {
-        spawn: cells.world_of(settings.initial_spawn),
-        cells: cells.clone(),
+        spawn: areas.world_of(settings.initial_spawn.area),
+        areas: areas.clone(),
         policy: config.player_spawn_policy,
         online,
         test_characters: http.test_characters.clone(),
@@ -127,15 +126,12 @@ fn main() {
     let reset = config.daily_reset_utc_hour;
     let rng_seed = seeded(config.rng_seed);
     let daylight = config.daylight;
-    let places: Vec<_> = cells.iter().collect();
-    let mut worlds = Cellar {
-        apps: places.iter().map(|_| None).collect(),
-        cells: cells.clone(),
+    let running: Vec<_> = areas.iter().collect();
+    let mut worlds = AreaWorlds {
+        apps: running.iter().map(|_| None).collect(),
         make: Box::new(move |ordinal| {
-            let (area, cell) = places[ordinal];
             let mut app = server_app(
-                area,
-                cell,
+                running[ordinal],
                 ordinal as u64,
                 rng_seed,
                 wall_clock(reset),
@@ -147,7 +143,7 @@ fn main() {
             app
         }),
     };
-    worlds.reach(lobby.spawn);
+    worlds.app(lobby.spawn);
     // Opened only once players can connect, so a passing health check means the game is playable.
     runtime.spawn(api);
 
@@ -163,26 +159,18 @@ fn main() {
     runtime.shutdown_background();
 }
 
-/// The world of every cell of every area, each made when a client first comes within reach of it:
-/// a land of many cells costs only the worlds its players have come near.
-struct Cellar {
+/// The world of every area, each made when a client first comes to it: a game of many areas
+/// costs only the worlds its players have been to.
+struct AreaWorlds {
     apps: Vec<Option<App>>,
-    cells: Worlds,
     make: Box<dyn Fn(usize) -> App>,
 }
 
-impl Cellar {
-    /// The world of cell `index`, made now if it wasn't.
+impl AreaWorlds {
+    /// The world of area `index`, made now if it wasn't.
     fn app(&mut self, index: usize) -> &mut App {
         let make = &self.make;
         self.apps[index].get_or_insert_with(|| make(index))
-    }
-
-    /// Makes every world a tick may touch on account of a client in `world`.
-    fn reach(&mut self, world: usize) {
-        for index in self.cells.reached_from(world) {
-            self.app(index);
-        }
     }
 
     fn count(&self) -> usize {
@@ -193,7 +181,7 @@ impl Cellar {
         self.apps.iter_mut().flatten()
     }
 
-    /// Every cell's world as a tick takes them, none for those not made.
+    /// Every area's world as a tick takes them, none for those not made.
     fn views(&mut self) -> Vec<Option<&mut World>> {
         self.apps
             .iter_mut()
@@ -205,7 +193,7 @@ impl Cellar {
 struct Lobby {
     /// The world of the game's initial spawn.
     spawn: usize,
-    cells: Worlds,
+    areas: Worlds,
     policy: SpawnPolicy,
     online: Online,
     test_characters: Option<TestCharacters>,
@@ -239,7 +227,7 @@ impl Lobby {
             .and_then(|characters| characters.take(&account));
         accounts.insert(account, client);
         let world = match (&join_as, self.policy) {
-            (Some(join_as), _) => self.cells.world_of(join_as.start),
+            (Some(join_as), _) => self.areas.world_of(join_as.start.area),
             (None, SpawnPolicy::Dist) => {
                 let world = self.next_dealt % worlds;
                 self.next_dealt += 1;
@@ -260,7 +248,7 @@ impl Lobby {
 }
 
 fn simulate(
-    mut worlds: Cellar,
+    mut worlds: AreaWorlds,
     mut transport: UdpTransport,
     sessions: Sessions,
     mut lobby: Lobby,
@@ -338,15 +326,9 @@ fn simulate(
             let _ = asked.answer.send(staged);
         }
 
-        for conn in conns.values() {
-            worlds.reach(conn.world);
-        }
         let mut views = worlds.views();
-        let moved = worlds::tick(&lobby.cells, &mut views, wall_clock(reset));
-        for moved in moved {
-            move_client(&mut worlds, &mut conns, moved.client, moved.to);
-        }
-        travel(&mut worlds, &mut conns, &lobby.cells);
+        worlds::tick(&mut views, wall_clock(reset));
+        travel(&mut worlds, &mut conns, &lobby.areas);
 
         for (&network_id, conn) in &conns {
             let world = worlds.app(conn.world).world_mut();
@@ -383,7 +365,7 @@ struct StageAsked {
 }
 
 fn stage(
-    worlds: &mut Cellar,
+    worlds: &mut AreaWorlds,
     conns: &HashMap<u64, Conn>,
     online: &Online,
     asked: &StageAsked,
@@ -413,7 +395,7 @@ fn wall_clock(reset: UtcHour) -> WallClock {
     }
 }
 
-fn record_ecs_metrics(worlds: &mut Cellar) {
+fn record_ecs_metrics(worlds: &mut AreaWorlds) {
     let worlds: Vec<&mut App> = worlds.made().collect();
     gauge!("rift_worlds").set(worlds.len() as f64);
     let mut entities = 0usize;
@@ -510,16 +492,13 @@ fn spawn_conn(app: &mut App, client: ClientId, link: ClientLink, identity: Ident
 
 /// Every travelling player's character placed in the world of the place it is bound for, its
 /// connections with it.
-fn travel(worlds: &mut Cellar, conns: &mut HashMap<u64, Conn>, cells: &Worlds) {
+fn travel(worlds: &mut AreaWorlds, conns: &mut HashMap<u64, Conn>, areas: &Worlds) {
     let travelers: Vec<_> = worlds
         .made()
         .flat_map(|app| transition::departing(app.world_mut()))
         .collect();
     for traveler in travelers {
-        let dest = cells.world_of(Place {
-            area: traveler.dest_area,
-            at: traveler.dest,
-        });
+        let dest = areas.world_of(traveler.dest_area);
         move_client(worlds, conns, traveler.client, dest);
         transition::arrive(worlds.app(dest).world_mut(), traveler);
     }
@@ -527,8 +506,12 @@ fn travel(worlds: &mut Cellar, conns: &mut HashMap<u64, Conn>, cells: &Worlds) {
 
 /// Every connection of `client` handed over to the world `dest`, which shows them that world
 /// afresh.
-fn move_client(worlds: &mut Cellar, conns: &mut HashMap<u64, Conn>, client: ClientId, dest: usize) {
-    worlds.reach(dest);
+fn move_client(
+    worlds: &mut AreaWorlds,
+    conns: &mut HashMap<u64, Conn>,
+    client: ClientId,
+    dest: usize,
+) {
     for conn in conns.values_mut().filter(|conn| conn.client == client) {
         let mut leaving = worlds.app(conn.world).world_mut().entity_mut(conn.entity);
         let identity = leaving.take::<Identity>().expect("a connection's identity");

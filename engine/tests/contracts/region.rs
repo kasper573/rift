@@ -22,7 +22,6 @@ fn an_areas_ground_and_what_stands_on_it_come_to_life_as_a_player_comes_near() {
             ]),
         )
         .hero("field", 4.0, 6.0)
-        .edit_settings(|settings| settings["spatial_partition_cell_size"] = json!(1000.0))
         .load_to_play();
     let mut sim = Sim::new(content.clone());
     sim.serve("field").add((sleep::settle, region::settle));

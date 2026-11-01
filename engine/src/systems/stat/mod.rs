@@ -101,7 +101,7 @@ pub type StatSource = fn(&World, Entity, &mut dyn FnMut(Stat));
 pub struct Sources(Vec<StatSource>);
 
 pub fn register(app: &mut App) {
-    use crate::systems::mirror::AppMirrorExt;
+    use bevy_replication::AppReplicationExt;
     app.replicate::<Stats>();
 }
 

@@ -21,7 +21,7 @@ const REFRESH_ROUNDS: u32 = 3;
 const MARKED_RANGE: Meters = Meters(visibility::VIEW_DISTANCE.0 + 4.0);
 
 pub fn register(app: &mut App) {
-    use crate::systems::mirror::AppMirrorExt;
+    use bevy_replication::AppReplicationExt;
     app.replicate_private::<Attention>()
         .replicate::<StatusBadges>();
 }

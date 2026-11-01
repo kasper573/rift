@@ -9,9 +9,11 @@ use bevy_platform::collections::HashSet;
 use crate::core::chunk::{Chunk, ChunkIndex, InChunk};
 use crate::core::content::Content;
 use crate::core::units::Meters;
-use crate::systems::mirror::{self, Ghost};
 use crate::systems::movement::Position;
 use crate::systems::player::PlayedBy;
+use crate::systems::script::RiftScripts;
+use crate::systems::script::event::RiftEvent;
+use crate::systems::skill::SkillDef;
 use crate::systems::visibility::VIEW_DISTANCE;
 
 /// The chunks awake, and how far from a player's chunk they reach.
@@ -33,7 +35,7 @@ impl Sleep {
     /// what it sees: a skill landing, a script listening.
     pub fn of(content: &Content) -> Sleep {
         Sleep {
-            reach: Meters(VIEW_DISTANCE.0 + mirror::halo(content).0.0),
+            reach: Meters(VIEW_DISTANCE.0 + acting_reach(content).0),
             stood: Vec::new(),
             awake: HashSet::default(),
         }
@@ -87,15 +89,36 @@ pub fn settle(world: &mut World, players: &mut PlayerPositions, filed: &mut File
     for entity in falling {
         if let Ok(mut entity) = world.get_entity_mut(entity)
             && !entity.contains::<PlayedBy>()
-            && !entity.contains::<Ghost>()
         {
             entity.insert(Disabled);
         }
     }
 }
 
+/// How far anything acts on what it sees: as far as a client sees, a skill lands or a script's
+/// event listens. What stands that far past a player's sight must be awake for what the player
+/// sees to act as it would.
+pub fn acting_reach(content: &Content) -> Meters {
+    let mut reach = VIEW_DISTANCE;
+    for (_, skill) in content.table::<SkillDef>().iter() {
+        let lands = skill.range.map_or(0.0, |range| range.0)
+            + skill.area.as_ref().map_or(0.0, |area| area.reach().0);
+        reach = Meters(reach.0.max(lands));
+    }
+    for (_, procedures) in content.built::<RiftScripts>().owners() {
+        for procedure in procedures {
+            for (_, event) in &procedure.entries {
+                if let RiftEvent::CameNear { within, .. } | RiftEvent::Heard { within, .. } = event
+                {
+                    reach = Meters(reach.0.max(within.0));
+                }
+            }
+        }
+    }
+    reach
+}
+
 pub type PlayerPositions = QueryState<&'static Position, With<PlayedBy>>;
 
 /// What was filed under a chunk since the last settle, of what may sleep.
-pub type Filed =
-    QueryState<(Entity, &'static InChunk), (Changed<InChunk>, Without<PlayedBy>, Without<Ghost>)>;
+pub type Filed = QueryState<(Entity, &'static InChunk), (Changed<InChunk>, Without<PlayedBy>)>;

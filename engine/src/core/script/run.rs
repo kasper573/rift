@@ -109,7 +109,6 @@ enum Op<V: Vocabulary> {
     Spawn {
         owner: Owner<V>,
         procedures: Vec<Arc<Procedure<V>>>,
-        state: OwnerState,
     },
     Remove {
         owner: Owner<V>,
@@ -213,30 +212,7 @@ struct Frame<V: Vocabulary> {
 
 impl<V: Vocabulary> Instances<V> {
     pub fn spawn_owner(&mut self, owner: Owner<V>, procedures: Vec<Arc<Procedure<V>>>) {
-        self.spawn_owner_with(owner, procedures, HashMap::new());
-    }
-
-    /// Spawns the owner's instance with its procedures' state as another instance left it, so an
-    /// owner taken up in a new world carries on where it was.
-    pub fn spawn_owner_with(
-        &mut self,
-        owner: Owner<V>,
-        procedures: Vec<Arc<Procedure<V>>>,
-        state: OwnerState,
-    ) {
-        self.ops.push_back(Op::Spawn {
-            owner,
-            procedures,
-            state,
-        });
-    }
-
-    /// The state of the owner's procedures as it stands, to spawn the owner with elsewhere.
-    pub fn state_of(&self, owner: Owner<V>) -> OwnerState {
-        self.instances
-            .get(&owner)
-            .map(|instance| instance.state.clone())
-            .unwrap_or_default()
+        self.ops.push_back(Op::Spawn { owner, procedures });
     }
 
     pub fn remove_owner(&mut self, owner: Owner<V>) {
@@ -1289,11 +1265,7 @@ impl<V: Vocabulary> Instances<V> {
 fn apply_ops<V: Vocabulary>(world: &mut World) {
     while let Some(op) = world.resource_mut::<Instances<V>>().ops.pop_front() {
         match op {
-            Op::Spawn {
-                owner,
-                procedures,
-                state,
-            } => {
+            Op::Spawn { owner, procedures } => {
                 close_instance(world, owner);
                 let may_do = MayDo::owned(procedures.iter().map(|procedure| &procedure.may_do));
                 let mut instances = world.resource_mut::<Instances<V>>();
@@ -1308,7 +1280,7 @@ fn apply_ops<V: Vocabulary>(world: &mut World) {
                     Instance {
                         procedures,
                         may_do,
-                        state,
+                        state: OwnerState::new(),
                         flows: Vec::new(),
                     },
                 );

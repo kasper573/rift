@@ -8,7 +8,6 @@ use crate::core::math::Pos;
 use crate::core::tick::Planner;
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::area::{self, AreaId, AreaTag};
-use crate::systems::mirror::AppMirrorExt;
 use crate::systems::movement::{Position, position};
 use crate::systems::player::{ClientId, Connected, PlayedBy, Players};
 use crate::systems::script::condition::CompiledCondition;
@@ -19,7 +18,6 @@ pub const VIEW_DISTANCE: Meters = Meters(24.0);
 const VIEW_DISTANCE_SQ: f32 = VIEW_DISTANCE.0 * VIEW_DISTANCE.0;
 
 pub fn register(app: &mut App) {
-    app.mirror::<Presence>();
     app.insert_resource(ReplicationInterest(Box::new(ClientSight::default())));
 }
 

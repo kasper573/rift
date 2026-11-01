@@ -31,7 +31,7 @@ const BUYBACK_KEPT: usize = 12;
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
 
-    use crate::systems::mirror::AppMirrorExt;
+    use bevy_replication::AppReplicationExt;
     app.replicate_private::<ShopView>()
         .add_client_message::<ShopRequest>();
 }

@@ -6,7 +6,6 @@ use crate::core::par;
 use crate::core::tick::{Cached, Planner};
 use crate::core::vfx::VfxSite;
 use crate::systems::actor::Hurt;
-use crate::systems::mirror::{self, Effect, Ghost};
 use crate::systems::notification;
 use crate::systems::status::boost::Boosts;
 use crate::systems::vfx::{VfxFixture, VfxShaderFixture, fixture};
@@ -69,9 +68,6 @@ pub fn apply_damage(world: &mut World, entity: Entity, amount: f32) {
 /// A heal that lands as an event, shown where it lands; the slow trickle of regeneration is
 /// `regenerate`.
 pub fn heal(world: &mut World, entity: Entity, amount: f32) {
-    if mirror::post(world, entity, None, Effect::Heal { amount }) {
-        return;
-    }
     if is_dead(world, entity) || amount <= 0.0 {
         return;
     }
@@ -106,7 +102,7 @@ pub fn revive(world: &mut World, entity: Entity) {
 /// ever raises it.
 #[derive(Default)]
 pub struct SettleHealth {
-    living: Cached<Entity, (MaximumMoved, Without<Ghost>)>,
+    living: Cached<Entity, MaximumMoved>,
     settled: Vec<(Entity, f32)>,
 }
 

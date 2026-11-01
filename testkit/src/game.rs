@@ -212,7 +212,6 @@ impl Game {
                 "name": "Test",
                 "initial_spawn": { "area": path("area", area), "x": x, "y": y },
                 "player": path("player", "hero"),
-                "spatial_partition_cell_size": 256.0,
             }))
     }
 

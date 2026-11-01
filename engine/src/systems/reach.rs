@@ -21,7 +21,7 @@ pub struct ReachIntent {
 pub struct Engaged(#[entities] pub Entity);
 
 pub fn register(app: &mut bevy_app::App) {
-    use crate::systems::mirror::AppMirrorExt;
+    use bevy_replication::AppReplicationExt;
     app.replicate::<Engaged>();
 }
 

@@ -1,17 +1,12 @@
 //! An entity's name across every world that holds it: the same in each world of the server and on
-//! every client, so what one world hands another, or what a client comes to see from another world,
-//! is known as itself.
-
-use std::sync::Arc;
+//! every client, so what a client comes to see from another world is known as itself.
 
 use bevy_app::{App, Plugin, PreUpdate};
 use bevy_ecs::component::ComponentId;
-use bevy_ecs::entity::EntityHashMap;
-use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryState;
 use bevy_ecs::schedule::common_conditions::resource_removed;
-use bevy_ecs::world::{DeferredWorld, EntityWorldMut};
+use bevy_ecs::world::EntityWorldMut;
 use bevy_platform::collections::HashMap;
 use bevy_replication::{
     AppReplicationExt, ClientSystems, Remote, Replicated, ReplicatedDespawn, ServerLink,
@@ -27,7 +22,7 @@ use crate::systems::player::{ARRIVAL_PATIENCE, PlayedBy};
 #[derive(
     Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash,
 )]
-#[component(immutable, on_insert = GlobalId::name, on_remove = GlobalId::unname)]
+#[component(immutable)]
 pub struct GlobalId(u64);
 
 /// Where a world's names come from: its own pool, told apart from every other world's by the
@@ -61,7 +56,6 @@ impl Names {
 const WORLD_BITS: u32 = 24;
 
 pub fn register(app: &mut App) {
-    app.init_resource::<Named>();
     app.replicate_once::<GlobalId>();
 }
 
@@ -78,64 +72,7 @@ pub fn name_replicated(
     }
 }
 
-/// Which entity of this world bears each name, and which name each bears, kept by the names
-/// themselves as they come and go. Both maps hand out shared snapshots, copied only once a name
-/// has changed since the last.
-#[derive(Resource, Default)]
-pub struct Named {
-    by_entity: Arc<EntityHashMap<GlobalId>>,
-    by_name: Arc<HashMap<GlobalId, Entity>>,
-}
-
-impl Named {
-    pub fn contains(&self, id: GlobalId) -> bool {
-        self.by_name.contains_key(&id)
-    }
-
-    pub fn get(&self, id: GlobalId) -> Option<Entity> {
-        self.by_name.get(&id).copied()
-    }
-
-    pub fn name(&self, entity: Entity) -> Option<GlobalId> {
-        self.by_entity.get(&entity).copied()
-    }
-
-    pub fn by_entity(&self) -> Arc<EntityHashMap<GlobalId>> {
-        self.by_entity.clone()
-    }
-
-    pub fn by_name(&self) -> Arc<HashMap<GlobalId, Entity>> {
-        self.by_name.clone()
-    }
-}
-
-impl GlobalId {
-    fn name(mut world: DeferredWorld, context: HookContext) {
-        let Some(&id) = world.get::<GlobalId>(context.entity) else {
-            return;
-        };
-        let Some(mut named) = world.get_resource_mut::<Named>() else {
-            return;
-        };
-        Arc::make_mut(&mut named.by_entity).insert(context.entity, id);
-        Arc::make_mut(&mut named.by_name).insert(id, context.entity);
-    }
-
-    fn unname(mut world: DeferredWorld, context: HookContext) {
-        let Some(&id) = world.get::<GlobalId>(context.entity) else {
-            return;
-        };
-        let Some(mut named) = world.get_resource_mut::<Named>() else {
-            return;
-        };
-        Arc::make_mut(&mut named.by_entity).remove(&context.entity);
-        if named.by_name.get(&id) == Some(&context.entity) {
-            Arc::make_mut(&mut named.by_name).remove(&id);
-        }
-    }
-}
-
-/// A client switches worlds when its character crosses to another cell or another area: the
+/// A client switches worlds when its character travels to another area: the
 /// world it was in despawns everything it saw, and the next replicates its own entities, under
 /// the same names where they stand for the same things. While the switch lasts, what the server
 /// despawns stays as it was shown, and what the next world replicates under a name shown that way

@@ -20,13 +20,12 @@ use crate::core::content::{
 };
 use crate::core::time::{Seconds, UnixMillis, WallClock};
 use crate::core::vfx::VfxId;
-use crate::systems::mirror::{self, Effect, Ghost};
 use crate::systems::script::{RunnerKind, ScriptModule, ScriptedRow};
 
 pub type StatusEffectId = ContentId<StatusEffectDef>;
 
 pub fn register(app: &mut App) {
-    use crate::systems::mirror::AppMirrorExt;
+    use bevy_replication::AppReplicationExt;
     app.replicate::<Statuses>().replicate_private::<Boosts>();
 }
 
@@ -132,18 +131,7 @@ pub fn apply(
     power: f32,
     lasts: Option<Seconds>,
 ) {
-    if world.get_entity(actor).is_err()
-        || mirror::post(
-            world,
-            actor,
-            None,
-            Effect::Status {
-                effect,
-                power,
-                lasts,
-            },
-        )
-    {
+    if world.get_entity(actor).is_err() {
         return;
     }
     let now = world.resource::<WallClock>().now;
@@ -201,7 +189,7 @@ pub fn power(world: &World, actor: Entity, effect: StatusEffectId) -> f32 {
         .map_or(0.0, |status| status.power)
 }
 
-pub fn expire(world: &mut World, held: &mut QueryState<(Entity, &Statuses), Without<Ghost>>) {
+pub fn expire(world: &mut World, held: &mut QueryState<(Entity, &Statuses)>) {
     let now = world.resource::<WallClock>().now;
     let due: Vec<Entity> = held
         .iter(world)

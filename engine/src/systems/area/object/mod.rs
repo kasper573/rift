@@ -14,6 +14,7 @@ use crate::core::par;
 use crate::core::spatial::SpatialIndex;
 use crate::core::tick::{Cached, Planner};
 use crate::core::units::Meters;
+use crate::systems::WorldArea;
 use crate::systems::actor::Name as ActorName;
 use crate::systems::area::AreaModule;
 use crate::systems::area::PropId;
@@ -28,10 +29,9 @@ use crate::systems::script::{
     ScriptModule,
 };
 use crate::systems::visibility::Presence;
-use crate::systems::{WorldArea, WorldCell};
 
 pub fn register(app: &mut App) {
-    use crate::systems::mirror::AppMirrorExt;
+    use bevy_replication::AppReplicationExt;
     app.replicate_once::<AreaObject>();
 }
 
@@ -216,21 +216,16 @@ pub struct Underfoot {
     standing: Vec<Entity>,
 }
 
-/// Spawns the objects placed on the tile at `tile` in this world's cell.
+/// Spawns the objects placed on the tile at `tile`.
 pub fn spawn_in(world: &mut World, tile: TileAt) {
     let zone = world.resource::<WorldArea>().0;
     let content = world.resource::<Content>().clone();
     let scripts = world.resource::<script::RiftScripts>().clone();
-    let mine = world.resource::<WorldCell>().0;
-    let cells = area::cells(&content, zone);
     let placed = area::placed(&content, zone);
     for index in area::load(&content, zone).modules_in(tile) {
         let AreaModule::Object(object) = &placed[*index as usize].module else {
             continue;
         };
-        if cells.at(object.shape.center()) != mine {
-            continue;
-        }
         let index = *index as usize;
         let owner_row = OwnerRow::of_object(zone, index as u32);
         let procedures = scripts.of(owner_row).to_vec();

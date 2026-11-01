@@ -12,7 +12,6 @@ use crate::core::vfx::VfxSite;
 use crate::systems::actor::Actor;
 use crate::systems::equipment::Equipment;
 use crate::systems::item::{Inventory, ItemId, ItemKind};
-use crate::systems::mirror::Ghost;
 use crate::systems::notification;
 use crate::systems::script::effect::Audience;
 use crate::systems::script::event::RiftEvent;
@@ -80,7 +79,7 @@ type Stirred = Or<(
 /// brought about in the order the actors were found.
 #[derive(Default)]
 pub struct SettleAspects {
-    stirred: Cached<Entity, (Stirred, Without<Ghost>)>,
+    stirred: Cached<Entity, Stirred>,
     changes: Vec<(Entity, Vec<Wanted>, Vec<Wanted>)>,
 }
 

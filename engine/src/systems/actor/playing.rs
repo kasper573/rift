@@ -12,7 +12,6 @@ use crate::core::geometry::Radians;
 use crate::core::math::Rng;
 use crate::core::script::{Answer, Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
 use crate::core::time::{Millis, PlaybackRate, UnixMillis, WallClock};
-use crate::systems::mirror::Ghost;
 use crate::systems::script::effect::{self as effects, Audience};
 use crate::systems::script::event::NPC;
 use crate::systems::script::{
@@ -366,10 +365,7 @@ pub fn playing(world: &World, actor: Entity) -> bool {
     world.get::<Playing>(actor).is_some()
 }
 
-pub fn progress(
-    world: &mut World,
-    playing: &mut QueryState<Entity, (With<Playing>, Without<Ghost>)>,
-) {
+pub fn progress(world: &mut World, playing: &mut QueryState<Entity, With<Playing>>) {
     let now = world.resource::<WallClock>().now;
     let actors: Vec<Entity> = playing.iter(world).collect();
     for actor in actors {

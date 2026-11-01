@@ -27,8 +27,9 @@ use crate::core::script::{
     TextDef, Vocabulary, compile::compile_row,
 };
 use crate::core::units::Meters;
+use crate::systems::WorldArea;
 use crate::systems::area::scene::scene_file;
-use crate::systems::area::{self, AreaDef, AreaId, AreaModule, AreaObject, Cell};
+use crate::systems::area::{self, AreaDef, AreaId, AreaModule, AreaObject};
 use crate::systems::class::{ClassDef, ClassId};
 use crate::systems::dialogue::bust::Expression;
 use crate::systems::dialogue::{self, ChoiceReveal};
@@ -42,7 +43,6 @@ use crate::systems::skill::{SkillDef, SkillId};
 use crate::systems::stat::StatKind;
 use crate::systems::status::{StatusEffectDef, StatusEffectId};
 use crate::systems::text::{self, Span};
-use crate::systems::{WorldArea, WorldCell};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RiftScripting;
@@ -589,14 +589,10 @@ pub type RunFlows = script::run::FlowRunner<RiftScripting>;
 pub fn spawn_stateless(world: &mut World) {
     let scripts = world.resource::<RiftScripts>().clone();
     let area = world.resource::<WorldArea>().0;
-    let mine = world.resource::<WorldCell>().0;
     let mut instances = world.resource_mut::<RiftInstances>();
     for (row, procedures) in scripts.owners() {
         let owner = match row.kind {
-            // The area's own scripts run in its first cell.
-            RunnerKind::Area if row.row == area.raw() && mine == Cell(0) => {
-                Owner::Row(RunnerKind::Area, row.row)
-            }
+            RunnerKind::Area if row.row == area.raw() => Owner::Row(RunnerKind::Area, row.row),
             RunnerKind::Item
             | RunnerKind::Quest
             | RunnerKind::Shop
@@ -611,20 +607,14 @@ pub fn spawn_stateless(world: &mut World) {
     }
 }
 
-/// Starts the scripts of the blueprints placed on the tile at `tile` in this world's cell: each
+/// Starts the scripts of the blueprints placed on the tile at `tile`: each
 /// placement owns its scripts, and they start as the ground they stand on is first reached.
 pub fn spawn_placed(world: &mut World, tile: TileAt) {
     let scripts = world.resource::<RiftScripts>().clone();
     let content = world.resource::<Content>().clone();
     let area = world.resource::<WorldArea>().0;
-    let mine = world.resource::<WorldCell>().0;
-    let cells = area::cells(&content, area);
-    let placements = area::placements(&content, area);
     let mut instances = world.resource_mut::<RiftInstances>();
     for ordinal in area::load(&content, area).placements_in(tile) {
-        if cells.at(placements[*ordinal as usize].at) != mine {
-            continue;
-        }
         let procedures = scripts.of(OwnerRow::of_placement(area, *ordinal));
         if procedures.is_empty() {
             continue;

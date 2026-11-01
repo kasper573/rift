@@ -1,5 +1,4 @@
 pub mod blueprint;
-pub mod cells;
 pub mod lighting;
 pub mod object;
 pub mod prop;
@@ -15,23 +14,7 @@ pub mod weather;
 pub mod world_map;
 
 pub use blueprint::{BlueprintDef, Flattened, PlacedBlueprint, Placement};
-pub use cells::{Cell, Cells};
 
-/// How the server cuts `area` into the cells it runs, by the game's settings.
-pub fn cells(content: &Content, area: AreaId) -> Cells {
-    cells_over(content, load(content, area).size)
-}
-
-/// The cells over `size` by the game's settings; one cell while the settings aren't loaded, as
-/// nothing runs on a game whose settings failed.
-fn cells_over(content: &Content, size: Size<Meters>) -> Cells {
-    let cell_size = content
-        .try_built::<GameSettings>()
-        .map_or(size.width.max(size.height), |settings| {
-            settings.spatial_partition_cell_size.0
-        });
-    Cells::over(size, Meters(cell_size))
-}
 pub use lighting::{Lighting, PointLightDef};
 pub use object::{AreaObject, ObjectDef, ObjectShape};
 pub use prop::{Footprint, PropDef, PropId, PropPlacement, Scatter};
@@ -86,7 +69,7 @@ pub type AreaId = ContentId<AreaDef>;
 pub const MAX_POPULATION: u32 = 500;
 
 pub fn register(app: &mut App) {
-    use crate::systems::mirror::AppMirrorExt;
+    use bevy_replication::AppReplicationExt;
     app.replicate_once::<AreaTag>();
     object::register(app);
 }

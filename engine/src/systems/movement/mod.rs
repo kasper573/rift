@@ -36,12 +36,11 @@ use crate::systems::{area, drain_requests, reach};
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
 
-    use crate::systems::mirror::AppMirrorExt;
+    use bevy_replication::AppReplicationExt;
 
     app.replicate::<Position>()
         .replicate_private_while::<MoveTarget, HeardMove>()
         .replicate_private::<HeardMove>()
-        .mirror::<Spot>()
         .add_client_message::<MoveRequest>();
 }
 

@@ -8,7 +8,6 @@ use crate::core::time::Seconds;
 use crate::core::units::Meters;
 use crate::systems::combat::Died;
 use crate::systems::item::{ItemId, Reservation, credited, scatter_drop};
-use crate::systems::mirror::{self, Effect};
 use crate::systems::movement::position;
 use crate::systems::npc::{Npc, NpcId};
 use crate::systems::visibility::Presence;
@@ -39,7 +38,6 @@ pub fn grant(world: &mut World, mut deaths: Local<MessageCursor<Died>>) {
             let rewardee = credited(world, died.entity, now);
             if let Some(credited) = rewardee
                 && let Some(at) = position(world, died.entity)
-                && !mirror::post(world, credited, None, Effect::Kill { npc, at })
             {
                 world.write_message(KillCredited { npc, at, credited });
             }

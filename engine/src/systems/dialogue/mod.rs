@@ -37,7 +37,7 @@ use bust::Expression;
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
 
-    use crate::systems::mirror::AppMirrorExt;
+    use bevy_replication::AppReplicationExt;
     app.replicate_private::<Conversation>()
         .add_client_message::<ConversationRequest>();
 }
