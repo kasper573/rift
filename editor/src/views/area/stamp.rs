@@ -21,7 +21,7 @@ use crate::keymap::EditorKey;
 use crate::rows;
 
 /// A placement of the blueprint `blueprint`, an id among the paths it was read against.
-pub fn placement_node(
+fn placement_node(
     blueprint: BlueprintId,
     at: Pos<Meters>,
     yaw: Degrees,
@@ -35,7 +35,12 @@ pub fn placement_node(
     })))
 }
 
-pub fn stamp_panel(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &AreaSnapshot) {
+pub(crate) fn stamp_panel(
+    editor: &mut Editor,
+    ui: &mut Ui,
+    view_key: &str,
+    snapshot: &AreaSnapshot,
+) {
     let content = &snapshot.content;
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
     for module in snapshot.modules.iter() {
@@ -216,7 +221,7 @@ pub(super) fn blueprint_card(
 
 /// The blueprint's modules as outlines, fitted into `into`: what a placement of it would stand on
 /// the ground.
-pub fn draw_blueprint_art(ui: &mut Ui, content: &Content, key: &str, into: ERect) {
+fn draw_blueprint_art(ui: &mut Ui, content: &Content, key: &str, into: ERect) {
     let Some(id) = content.by_path::<BlueprintDef>(key) else {
         return;
     };
@@ -276,7 +281,7 @@ pub fn draw_blueprint_art(ui: &mut Ui, content: &Content, key: &str, into: ERect
 }
 
 /// Turns the stamp a quarter turn, clockwise or counter.
-pub fn turn_stamp(editor: &mut Editor, view_key: &str, clockwise: bool) {
+pub(crate) fn turn_stamp(editor: &mut Editor, view_key: &str, clockwise: bool) {
     let Some(stamp) = editor.views.area.view(view_key).stamp().map(str::to_owned) else {
         return;
     };
@@ -295,7 +300,7 @@ pub(super) fn stamp_yaw(editor: &Editor, stamp: &str) -> Degrees {
 }
 
 /// What one placement of the stamp covers, `values` read among `reader`'s paths.
-pub fn stamp_footprint(
+pub(crate) fn stamp_footprint(
     editor: &Editor,
     content: &Content,
     reader: &FolderReader,
@@ -322,7 +327,7 @@ pub fn stamp_footprint(
     })
 }
 
-pub fn stamp_input(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame) {
+pub(crate) fn stamp_input(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame) {
     let response = frame.response;
     let Some(stamp) = editor.views.area.view(view_key).stamp().map(str::to_owned) else {
         return;
@@ -422,13 +427,18 @@ pub(super) fn place_stamps(
     }
 }
 
-pub fn object_names(placed: &[area::blueprint::Flattened]) -> HashSet<String> {
+pub(crate) fn object_names(placed: &[area::blueprint::Flattened]) -> HashSet<String> {
     area::objects(placed)
         .filter_map(|(_, object)| object.name.clone())
         .collect()
 }
 
-pub fn stamp_overlay(editor: &Editor, painter: &egui::Painter, view_key: &str, frame: &AreaFrame) {
+pub(crate) fn stamp_overlay(
+    editor: &Editor,
+    painter: &egui::Painter,
+    view_key: &str,
+    frame: &AreaFrame,
+) {
     let canvas = &frame.canvas;
     let view = editor.views.area.view(view_key);
     let Some(stamp) = view.stamp().map(str::to_owned) else {

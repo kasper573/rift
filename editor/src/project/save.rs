@@ -103,7 +103,7 @@ fn remove_emptied_folders(root: &Path, files: &ProjectFiles, path: &str) {
     }
 }
 
-pub fn clean_leftovers(root: &Path) {
+pub(crate) fn clean_leftovers(root: &Path) {
     let leftovers = WalkDir::new(root)
         .into_iter()
         .filter_map(Result::ok)

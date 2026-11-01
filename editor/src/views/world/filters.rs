@@ -33,7 +33,7 @@ impl MapLens {
         }
     }
 
-    pub fn crumb(&self) -> String {
+    pub(crate) fn crumb(&self) -> String {
         match self {
             MapLens::Row { key, .. } => shown_path(key).to_owned(),
             MapLens::Module(kind) => format!("module/{}", kind.tag()),
@@ -72,7 +72,7 @@ impl MapLens {
     }
 }
 
-pub fn lit_areas(
+pub(crate) fn lit_areas(
     atlas: &WorldAtlas,
     lenses: &[MapLens],
 ) -> Option<BTreeMap<AreaId, Vec<AtlasSource>>> {
@@ -98,7 +98,7 @@ pub fn lit_areas(
     Some(lit)
 }
 
-pub fn tag_line(sources: &[AtlasSource]) -> String {
+pub(crate) fn tag_line(sources: &[AtlasSource]) -> String {
     let mut counts: BTreeMap<AtlasSourceKind, usize> = BTreeMap::new();
     for source in sources {
         *counts.entry(source.kind).or_default() += 1;
@@ -155,7 +155,7 @@ impl ColorField {
         self.path.last().map_or("", String::as_str)
     }
 
-    pub fn path_text(&self) -> String {
+    pub(crate) fn path_text(&self) -> String {
         self.path.join(" · ")
     }
 
@@ -236,7 +236,7 @@ impl ColorBy {
 }
 
 #[derive(Clone, Copy)]
-pub struct AreaRange {
+pub(crate) struct AreaRange {
     pub low: f64,
     pub high: f64,
 }
@@ -271,7 +271,7 @@ impl AreaRange {
     }
 }
 
-pub struct ColorRanges {
+pub(crate) struct ColorRanges {
     pub areas: BTreeMap<AreaId, AreaRange>,
     pub low: f64,
     pub high: f64,

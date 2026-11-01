@@ -22,7 +22,7 @@ use ui::egui::Ui;
 use crate::app::Editor;
 use crate::keymap::EditorKey;
 
-pub const BABBLE_SAMPLE: &str = "The quick brown fox jumps over the lazy dog";
+const BABBLE_SAMPLE: &str = "The quick brown fox jumps over the lazy dog";
 
 pub struct ListeningPoint {
     pub area: String,

@@ -8,6 +8,7 @@ pub mod card;
 pub mod chip;
 pub mod controls;
 pub mod dialog;
+pub mod draft;
 pub mod drag;
 pub mod dusk;
 pub mod face;
@@ -134,7 +135,7 @@ pub fn style(style: &mut Style) {
     }
 }
 
-pub fn popup_style(style: &mut Style) {
+pub(crate) fn popup_style(style: &mut Style) {
     let widgets = &mut style.visuals.widgets;
     for widget in [
         &mut widgets.inactive,

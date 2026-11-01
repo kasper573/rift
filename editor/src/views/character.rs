@@ -3,8 +3,8 @@ use ui::chip;
 use ui::egui;
 
 use crate::views::navigation::PX_PER_METER;
+use ui::draft;
 use ui::form;
-use ui::input;
 use ui::menu;
 use ui::paint;
 use ui::panel;
@@ -44,7 +44,7 @@ use crate::app::{Editor, PlacePick};
 use crate::forms::{self, FormAction, FormChange, FormCx};
 use crate::project::ContentEdit;
 use crate::shell::browser::BrowserAction;
-use crate::shell::{row_form, widgets};
+use crate::shell::row_form;
 use crate::tabs::{EditorTab, file_title, shown_path};
 use crate::thumbs::areas::{self, AreaThumbnails};
 use crate::{picker, play, stage};
@@ -176,7 +176,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
                         .monospace()
                         .size(11.5),
                 );
-                menu::dropdown(ui, theme::faint("other…"), |ui| {
+                menu::button(ui, theme::faint("other…"), |ui| {
                     for other in &characters {
                         if ui
                             .selectable_label(
@@ -673,7 +673,7 @@ fn skills(
 fn hotbar(ui: &mut Ui, cx: &mut FormCx, character: &mut CharacterSnapshot) -> FormChange {
     let mut changed = FormChange::default();
     let mut remove = None;
-    panel::card(false).show(ui, |ui| {
+    panel::tile(false).show(ui, |ui| {
         ui.set_width(HOTBAR_COLUMN);
         panel::title(ui, "Hotbar");
         form::kv(ui, "basic attack", |ui| {
@@ -965,7 +965,7 @@ impl Standing {
         }
     }
 
-    pub fn of_log(log: &QuestLog, quest: QuestId) -> Standing {
+    pub(crate) fn of_log(log: &QuestLog, quest: QuestId) -> Standing {
         if log.active(quest).is_some() {
             return Standing::Active;
         }
@@ -1115,7 +1115,7 @@ fn quests(
                         .map(|giver| format!("from {giver}"))
                         .unwrap_or_default(),
                 };
-                panel::card(standing == Standing::Active).show(ui, |ui| {
+                panel::tile(standing == Standing::Active).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
@@ -1468,7 +1468,7 @@ fn memories(
                             _ => "",
                         };
                         let id = ui.id().with(("memory", key));
-                        if let Some(typed) = input::drafted(ui, id, text, |ui, draft| {
+                        if let Some(typed) = draft::drafted(ui, id, text, |ui, draft| {
                             InputField::new(draft).width(MEMORY_WIDTH).show(ui)
                         }) {
                             updates.push((key.clone(), Some(MemoryValue::Text(typed))));
@@ -1505,7 +1505,10 @@ fn memories(
                 }
                 ui.label(
                     theme::muted(
-                        entry.map_or_else(|| "never".to_owned(), |entry| widgets::ago(entry.ago)),
+                        entry.map_or_else(
+                            || "never".to_owned(),
+                            |entry| ui::words::ago(entry.ago.0),
+                        ),
                     )
                     .size(12.5)
                     .monospace(),
@@ -1548,7 +1551,7 @@ fn memories(
 }
 
 fn card(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {
-    panel::card(false).show(ui, |ui| {
+    panel::tile(false).show(ui, |ui| {
         ui.set_width(COLUMN);
         panel::title(ui, title);
         body(ui);
@@ -1561,7 +1564,7 @@ fn level_of(cx: &FormCx, sheet: &Sheet, character: &CharacterSnapshot) -> u32 {
         .map_or(0, |class| class.level_at(character.xp))
 }
 
-pub fn preview_extras(editor: &mut Editor, ui: &mut Ui, key: &str) {
+pub(crate) fn preview_extras(editor: &mut Editor, ui: &mut Ui, key: &str) {
     let (Some(Ok(character)), Some(reader), Some(project)) = (
         editor.read::<CharacterSnapshot>(key),
         editor.reader(),

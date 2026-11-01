@@ -3442,7 +3442,6 @@ dependencies = [
  "jiff",
  "notify",
  "opener 0.9.0",
- "png",
  "process-wrap",
  "rayon",
  "rfd",
@@ -9614,6 +9613,7 @@ dependencies = [
  "egui_dock",
  "egui_ltreeview",
  "image",
+ "jiff",
  "strum",
 ]
 

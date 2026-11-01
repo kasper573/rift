@@ -30,7 +30,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef, size: Ve
     let view_key = format!("prop:{key}");
     stage::show_picture(editor, ui, &painter, rect, &view_key);
     let dt = ui.input(|i| i.stable_dt).min(0.1);
-    let view = editor.views.prop.view_mut(key);
+    let view = editor.views.prop.views.view_mut(key);
     let busy = camera::navigate(ui, &response, &mut view.turntable, rect.height());
     if busy && response.dragged_by(egui::PointerButton::Secondary) {
         editor.views.toggles.turning = false;

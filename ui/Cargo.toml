@@ -15,6 +15,7 @@ egui_ltreeview = "0.9"
 egui-snarl = "0.12"
 egui-phosphor = { version = "0.14", default-features = false, features = ["regular", "fill"] }
 image = { version = "0.25", default-features = false, features = ["png"] }
+jiff = "0.2"
 strum = { workspace = true, features = ["derive"] }
 
 [lints]

@@ -30,7 +30,7 @@ impl HitboxHandles {
     }
 
     /// Drops the drag under way, for a stage no longer showing the hitbox.
-    pub fn let_go(&mut self) {
+    pub(crate) fn let_go(&mut self) {
         self.drag = None;
     }
 }

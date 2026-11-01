@@ -64,7 +64,7 @@ pub struct MapEdge {
     pub back: usize,
 }
 
-pub struct MapCanvas {
+pub(crate) struct MapCanvas {
     pub response: Response,
     pub viewport: Viewport<Meters>,
     pub cards: Vec<MapCard>,
@@ -80,11 +80,11 @@ impl MapCanvas {
         self.cards.iter().find(|card| card.area == area)
     }
 
-    pub fn card_at(&self, p: Pos2) -> Option<AreaId> {
+    pub(crate) fn card_at(&self, p: Pos2) -> Option<AreaId> {
         topmost_card_at(&self.cards, p)
     }
 
-    pub fn tile_at(&self, atlas: &WorldAtlas, p: Pos2) -> Option<MapTileHit> {
+    pub(crate) fn tile_at(&self, atlas: &WorldAtlas, p: Pos2) -> Option<MapTileHit> {
         let card = self.card(self.card_at(p)?)?;
         let size = atlas.size(card.area);
         let rel = (p - card.art.min) / card.art.size().max(Vec2::splat(1.0));
@@ -94,7 +94,7 @@ impl MapCanvas {
         })
     }
 
-    pub fn edge_at(&self, p: Pos2) -> Option<&MapEdge> {
+    pub(crate) fn edge_at(&self, p: Pos2) -> Option<&MapEdge> {
         self.edges
             .iter()
             .map(|edge| (edge, distance_to_segment(p, edge.a, edge.b)))
@@ -103,11 +103,11 @@ impl MapCanvas {
             .map(|(edge, _)| edge)
     }
 
-    pub fn note_at(&self, p: Pos2) -> Option<usize> {
+    pub(crate) fn note_at(&self, p: Pos2) -> Option<usize> {
         self.notes.iter().position(|note| note.contains(p))
     }
 
-    pub fn region_label_at(&self, p: Pos2) -> Option<usize> {
+    pub(crate) fn region_label_at(&self, p: Pos2) -> Option<usize> {
         self.region_labels
             .iter()
             .find(|(_, rect)| rect.contains(p))
@@ -224,7 +224,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap) {
     status(editor, map, &canvas, &drawing.overlays);
 }
 
-pub fn viridis(t: f32) -> Color32 {
+pub(crate) fn viridis(t: f32) -> Color32 {
     const STOPS: [[u8; 3]; 9] = [
         [68, 1, 84],
         [72, 36, 117],
@@ -967,7 +967,7 @@ fn draw_quest_line(painter: &Painter, atlas: &WorldAtlas, cards: &[MapCard], cat
     }
 }
 
-pub fn line_badge(painter: &Painter, at: Pos2, badge: &str, branch: bool) {
+pub(crate) fn line_badge(painter: &Painter, at: Pos2, badge: &str, branch: bool) {
     let (fill, ink) = if branch {
         (theme::DANGER, ink::LIGHT)
     } else {

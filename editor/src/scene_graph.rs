@@ -11,7 +11,7 @@ pub fn module_pointer(pointer: &str) -> Option<String> {
 }
 
 /// The pointer of the scene node a pointer into a scene graph is within, through its folders.
-pub fn node_pointer(pointer: &str) -> String {
+pub(crate) fn node_pointer(pointer: &str) -> String {
     let segments: Vec<&str> = pointer.split('/').skip(1).collect();
     let mut node = String::new();
     let mut at = 0;

@@ -1,9 +1,8 @@
 //! The hands page: the joints an item hangs from, in order (the first the main hand, the second the
-//! off hand), each with a grip frame (set on the stage, see `grips`), mirrored on a hand that mirrors
-//! the ones grips are fitted to, and a clasp closing its fingers
-//! as a clip's first moment poses them. A hand's joint and its clasp's fingers are clicked on the
-//! view's preview, whose hands hold the items picked there, so the palm is judged with a real
-//! handle in it.
+//! off hand). Each has a grip frame (set on the stage, see `grips`), may mirror the hand that grips
+//! are fitted to, and has a clasp closing its fingers as a clip's first moment poses them. A hand's
+//! joint and its clasp's fingers are clicked on the view's preview, whose hands hold the items
+//! picked there, so the palm is judged with a real handle in it.
 
 use engine::systems::actor::skeleton::{
     Clasp, Clip, Hand, JointName, LocalOffset, LocalTurn, SkeletonDef,
@@ -14,6 +13,8 @@ use ui::{chip, controls, form, panel, theme};
 use super::preview;
 use super::rigging::Rigging;
 use crate::app::Editor;
+
+const FIRST_HAND_NAMES: [&str; 2] = ["right", "left"];
 
 #[derive(Default)]
 pub struct HandsState {
@@ -32,6 +33,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigg
     let chosen = editor
         .views
         .skeleton
+        .views
         .view(key)
         .hand
         .min(hands.len().saturating_sub(1));
@@ -124,7 +126,7 @@ fn list(
     {
         let mut more = hands.to_vec();
         more.push(Hand {
-            name: ["right", "left"].get(hands.len()).map_or_else(
+            name: FIRST_HAND_NAMES.get(hands.len()).map_or_else(
                 || format!("hand {}", hands.len() + 1),
                 |name| (*name).to_owned(),
             ),
@@ -136,7 +138,7 @@ fn list(
         });
         if super::set_hands(editor, key, more) {
             pick = Some(hands.len());
-            editor.views.skeleton.view_mut(key).hands.picking = Some(Picking::Joint);
+            editor.views.skeleton.views.view_mut(key).hands.picking = Some(Picking::Joint);
         }
     }
     form::hint(
@@ -157,7 +159,7 @@ fn list(
         super::set_hands(editor, key, fewer);
     }
     if let Some(index) = pick {
-        let view = editor.views.skeleton.view_mut(key);
+        let view = editor.views.skeleton.views.view_mut(key);
         view.hand = index;
         view.chosen = Some(super::Chosen::Grip(index));
     }
@@ -172,7 +174,7 @@ fn fields(
     hand: &Hand,
 ) {
     ui.label(RichText::new(&hand.name).strong());
-    let picking = editor.views.skeleton.view(key).hands.picking;
+    let picking = editor.views.skeleton.views.view(key).hands.picking;
     let mut asked = picking;
     let mut edited = hand.clone();
     egui::Grid::new(("hand-fields", key))
@@ -244,7 +246,7 @@ fn fields(
         "A clasp closes each finger from its root down as its clip turns them at its first moment, \
          while the hand holds an item.",
     );
-    editor.views.skeleton.view_mut(key).hands.picking = asked;
+    editor.views.skeleton.views.view_mut(key).hands.picking = asked;
     if edited != *hand {
         super::set_hand(editor, key, chosen, edited);
     }
@@ -253,12 +255,12 @@ fn fields(
 /// The joint `clicked` on the stage: the hand's joint, or a finger's root toggled in its clasp;
 /// either keeps the hand's grip frame picked for the inspector.
 fn pick(editor: &mut Editor, key: &str, chosen: usize, hand: &Hand, clicked: String) {
-    let picking = editor.views.skeleton.view(key).hands.picking;
+    let picking = editor.views.skeleton.views.view(key).hands.picking;
     let mut edited = hand.clone();
     match picking {
         Some(Picking::Joint) => {
             edited.joint = JointName::new(clicked);
-            editor.views.skeleton.view_mut(key).hands.picking = None;
+            editor.views.skeleton.views.view_mut(key).hands.picking = None;
         }
         Some(Picking::Fingers) => {
             if let Some(clasp) = &mut edited.clasp {
@@ -273,6 +275,6 @@ fn pick(editor: &mut Editor, key: &str, chosen: usize, hand: &Hand, clicked: Str
         }
         None => return,
     }
-    editor.views.skeleton.view_mut(key).chosen = Some(super::Chosen::Grip(chosen));
+    editor.views.skeleton.views.view_mut(key).chosen = Some(super::Chosen::Grip(chosen));
     super::set_hand(editor, key, chosen, edited);
 }

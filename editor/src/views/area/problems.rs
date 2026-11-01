@@ -74,23 +74,15 @@ pub fn all(editor: &Editor) -> Vec<Problem> {
 }
 
 /// The problems in `bundle`'s files.
-pub fn in_bundle(editor: &Editor, bundle: &str) -> Vec<Problem> {
+pub(crate) fn in_bundle(editor: &Editor, bundle: &str) -> Vec<Problem> {
     all(editor)
         .into_iter()
         .filter(|problem| problem.bundle() == Some(bundle))
         .collect()
 }
 
-/// The problems on the scene node `node` of `bundle`.
-pub fn on_node(editor: &Editor, bundle: &str, node: &str) -> Vec<Problem> {
-    in_bundle(editor, bundle)
-        .into_iter()
-        .filter(|problem| problem.node.as_deref() == Some(node))
-        .collect()
-}
-
 /// Opens where the problem is: the bundle's view with its node selected, or the row's own tab.
-pub fn go_to(editor: &mut Editor, problem: &Problem) {
+pub(crate) fn go_to(editor: &mut Editor, problem: &Problem) {
     if let Some(bundle) = problem.bundle() {
         let at = problem
             .node
@@ -122,44 +114,6 @@ pub fn go_to(editor: &mut Editor, problem: &Problem) {
     if let Some((table, key)) = crate::project::files::content_of(&problem.file) {
         let (table, key) = (table.to_owned(), key.to_owned());
         editor.open_row(&table, &key);
-    }
-}
-
-/// Moves the module at `node` of `bundle` to where its problem says it would be fine.
-pub fn move_there(editor: &mut Editor, bundle: &str, node: &str, to: Pos<Meters>) {
-    let reader = editor.reader();
-    nodes::change_scene(editor, bundle, |scene| {
-        let module = &mut nodes::module_node_mut(scene, node)?.module;
-        let from = super::shapes::bounds(module, None)?.center();
-        module.shift(to.x - from.x, to.y - from.y);
-        Some(format!(
-            "Move {} to {:.2}, {:.2}",
-            reader
-                .as_ref()
-                .map(|reader| super::shapes::label(module, reader.as_ref()))
-                .unwrap_or_default(),
-            to.x,
-            to.y
-        ))
-    });
-}
-
-/// The problems on a module, each with a way to act on it, under the module's card.
-pub fn module_problems(editor: &mut Editor, ui: &mut Ui, bundle: &str, node: &str) {
-    let problems = on_node(editor, bundle, node);
-    if problems.is_empty() {
-        return;
-    }
-    ui.add_space(4.0);
-    for problem in problems {
-        ui.horizontal_wrapped(|ui| {
-            ui.label(theme::warn(&problem.text).size(12.5));
-            if let Some(to) = problem.suggested
-                && controls::button(ui, "Move there").clicked()
-            {
-                move_there(editor, bundle, node, to);
-            }
-        });
     }
 }
 

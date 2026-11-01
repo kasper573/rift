@@ -16,11 +16,7 @@ pub fn show<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> 
     show_tinted(ui, Color32::WHITE, add)
 }
 
-pub fn show_tinted<R>(
-    ui: &mut Ui,
-    tint: Color32,
-    add: impl FnOnce(&mut Ui) -> R,
-) -> InnerResponse<R> {
+fn show_tinted<R>(ui: &mut Ui, tint: Color32, add: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
     let under = ui.painter().add(Shape::Noop);
     let shown = egui::Frame::new().inner_margin(PADDING).show(ui, add);
     let rect = shown.response.rect;

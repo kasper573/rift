@@ -1,8 +1,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use ui::controls;
+use ui::draft;
 use ui::egui;
 use ui::form;
-use ui::input;
 use ui::panel;
 use ui::sheet;
 use ui::theme;
@@ -524,7 +524,7 @@ fn inspect_cards(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, cards: &[
     let mut next = map.layout.clone();
     let mut label: Option<String> = None;
     let mut open_area = false;
-    panel::card(true).show(ui, |ui| {
+    panel::tile(true).show(ui, |ui| {
         ui.set_width(ui.available_width());
         panel::title(ui, &title);
         if cards.len() == 1 {
@@ -652,12 +652,12 @@ fn inspect_region(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, index: u
     let region = &map.layout.regions[index];
     let mut next = map.layout.clone();
     let mut label: Option<String> = None;
-    panel::card(true).show(ui, |ui| {
+    panel::tile(true).show(ui, |ui| {
         ui.set_width(ui.available_width());
         panel::title(ui, &region.name);
         form::kv(ui, "name", |ui| {
             let id = ui.id().with(("region-name", index));
-            let typed = input::drafted(ui, id, &region.name, |ui, draft| {
+            let typed = draft::drafted(ui, id, &region.name, |ui, draft| {
                 InputField::new(draft).show(ui)
             });
             if let Some(typed) = typed
@@ -723,7 +723,7 @@ fn inspect_note(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, index: usi
     sheet::section(ui, "Note");
     let id = ui.id().with(("note-text", index));
     let mut count = note.text.chars().count();
-    let typed = input::drafted(ui, id, &note.text, |ui, draft| {
+    let typed = draft::drafted(ui, id, &note.text, |ui, draft| {
         let response = InputField::new(draft).rows(4).char_limit(MAX_NOTE).show(ui);
         count = draft.chars().count();
         response

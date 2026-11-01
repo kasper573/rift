@@ -16,6 +16,7 @@ use ui::egui_dock::DockState;
 use ui::glyph::Mark;
 
 use crate::icons::{self, KindIcon};
+use crate::moves::file_name;
 use crate::project::files::content_holding;
 use crate::views::script::ScriptRow;
 
@@ -71,7 +72,7 @@ impl EditorTab {
             EditorTab::Script(owner) => owner.title(),
             EditorTab::Spreadsheet { table } => format!("{table} table"),
             EditorTab::Game => "game".to_owned(),
-            EditorTab::Asset { path } => path.rsplit('/').next().unwrap_or(path).to_owned(),
+            EditorTab::Asset { path } => file_name(path).to_owned(),
         }
     }
 
@@ -117,13 +118,6 @@ impl EditorTab {
             EditorTab::Game => file == SETTINGS_FILE,
             EditorTab::Asset { path } => file == path,
             other => other.row().is_some_and(|(_, key)| holds(&key, file)),
-        }
-    }
-
-    pub fn is_row(&self, table: &str, key: &str) -> bool {
-        match self {
-            EditorTab::Script(owner) => owner.is_row(table, key),
-            other => other.row().is_some_and(|(t, k)| t == table && k == key),
         }
     }
 
@@ -237,8 +231,8 @@ fn holds(path: &str, file: &str) -> bool {
 }
 
 /// How a content file is named on its tab and in lists: its file name, without `.json`.
-pub fn file_title(path: &str) -> &str {
-    shown_path(path.rsplit('/').next().unwrap_or(path))
+pub(crate) fn file_title(path: &str) -> &str {
+    shown_path(file_name(path))
 }
 
 /// A path as the editor writes it for the user: a content file without the `.json` every one of

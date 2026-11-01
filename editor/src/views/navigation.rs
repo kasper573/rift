@@ -19,13 +19,13 @@ impl<U> Viewport<U> {
         self.zoom * PX_PER_METER
     }
 
-    pub fn to_screen(&self, p: Pos<U>) -> Pos2 {
+    pub(crate) fn to_screen(&self, p: Pos<U>) -> Pos2 {
         let c = self.screen.center();
         let d = (p - self.center) * self.scale();
         Pos2::new(c.x + d.x, c.y + d.y)
     }
 
-    pub fn to_ground(&self, p: Pos2) -> Pos<U> {
+    pub(crate) fn to_ground(&self, p: Pos2) -> Pos<U> {
         self.center + offset(p - self.screen.center()) / self.scale()
     }
 
@@ -41,7 +41,7 @@ impl<U> Viewport<U> {
     }
 }
 
-pub fn zoom_and_pan<U>(
+pub(crate) fn zoom_and_pan<U>(
     ui: &Ui,
     response: &Response,
     viewport: &mut Viewport<U>,
@@ -73,11 +73,11 @@ pub fn zoom_and_pan<U>(
     panning
 }
 
-pub fn pixels_per_unit(available: Vec2, content: Vec2) -> f32 {
+pub(crate) fn pixels_per_unit(available: Vec2, content: Vec2) -> f32 {
     (available.x / content.x.max(1.0)).min(available.y / content.y.max(1.0))
 }
 
-pub fn fit_zoom(available: Vec2, content_tiles: Vec2, tile_px: f32) -> f32 {
+pub(crate) fn fit_zoom(available: Vec2, content_tiles: Vec2, tile_px: f32) -> f32 {
     pixels_per_unit(available, content_tiles) / tile_px
 }
 
@@ -85,15 +85,15 @@ fn offset<U>(v: Vec2) -> Offset<U> {
     Offset::new(v.x, v.y)
 }
 
-pub fn pos_from_egui<U>(p: Pos2) -> Pos<U> {
+pub(crate) fn pos_from_egui<U>(p: Pos2) -> Pos<U> {
     Pos::new(p.x, p.y)
 }
 
-pub fn rect_from_egui<U>(r: Rect) -> GroundRect<U> {
+pub(crate) fn rect_from_egui<U>(r: Rect) -> GroundRect<U> {
     GroundRect::from_points([pos_from_egui(r.min), pos_from_egui(r.max)])
 }
 
-pub fn rect_to_egui<U>(r: GroundRect<U>) -> Rect {
+pub(crate) fn rect_to_egui<U>(r: GroundRect<U>) -> Rect {
     Rect::from_min_max(
         Pos2::new(r.min_x(), r.min_y()),
         Pos2::new(r.max_x(), r.max_y()),

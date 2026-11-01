@@ -18,7 +18,7 @@ use crate::app::Editor;
 use crate::forms::{FormChange, FormCx};
 use crate::project::{ContentEdit, RowSelection};
 use crate::shell::levels::{self, Level};
-use crate::shell::{self, row_form, sidebar};
+use crate::shell::{self, row_form};
 use crate::tabs::shown_path;
 
 pub const TREE_PART: &str = "/tree/";
@@ -68,7 +68,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
     let page = editor.views.class.page(key);
     let selection = editor.selection.clone();
     match page {
-        ClassPage::Tree => sidebar::inspector(editor, ui, "class", |editor, ui| {
+        ClassPage::Tree => ui::panel::inspector(ui, editor, "class", |editor, ui| {
             if selection.keys.first().is_some_and(|k| k == key) && node_of(&selection).is_some() {
                 inspect::show(editor, ui, &selection);
             } else {
@@ -117,7 +117,7 @@ pub fn node_of(selection: &RowSelection) -> Option<&str> {
         .filter(|node| !node.is_empty())
 }
 
-pub fn select_node(editor: &mut Editor, key: &str, node: Option<&str>) {
+pub(crate) fn select_node(editor: &mut Editor, key: &str, node: Option<&str>) {
     match node {
         Some(node) => editor.select(RowSelection::parts(
             ClassDef::TABLE,

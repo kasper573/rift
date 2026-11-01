@@ -11,16 +11,14 @@ use ui::egui::{self, RichText, Ui, Vec2};
 use ui::{controls, form, sheet, theme};
 
 use crate::app::Editor;
+use crate::project::ContentEdit;
+use crate::shell::row_form;
 use crate::shell::row_form::usages;
-use crate::shell::{row_form, sidebar};
 use crate::tabs::shown_path;
 
 /// Adds to the stance at `key` that beside an item of the stance at `with` it becomes the stance at
 /// `becomes`, in place of what it became beside `with` before.
 pub fn add_pair(editor: &mut Editor, key: &str, with: &str, becomes: &str) -> bool {
-    let Some(Ok(row)) = editor.read::<StanceDef>(key) else {
-        return false;
-    };
     let Some(reader) = editor.reader() else {
         return false;
     };
@@ -31,24 +29,29 @@ pub fn add_pair(editor: &mut Editor, key: &str, with: &str, becomes: &str) -> bo
         editor.toast("a pair names two stances");
         return false;
     };
-    let mut stance = (*row).clone();
-    stance.paired.retain(|pairing| pairing.with != with);
-    stance.paired.push(Pairing { with, becomes });
-    editor.write_content(&format!("Pair {}", shown_path(key)), key, &stance)
+    editor.change(
+        ContentEdit::new(format!("Pair {}", shown_path(key))),
+        key,
+        |stance: &mut StanceDef| {
+            stance.paired.retain(|pairing| pairing.with != with);
+            stance.paired.push(Pairing { with, becomes });
+            Ok(())
+        },
+    )
 }
 
 pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
     if super::read_shown::<StanceDef>(editor, ui, key).is_none() {
         return;
     }
-    sidebar::row(ui, "stance", |ui| {
+    ui::panel::left_scrolled(ui, "stance", |ui| {
         row_form::show_row(editor, ui, StanceDef::TABLE, key)
     });
-    sidebar::inspector(editor, ui, "stance", |editor, ui| {
+    ui::panel::inspector(ui, editor, "stance", |editor, ui| {
         usages::show_usages_grouped(editor, ui, key, true);
     });
     egui::Frame::new()
-        .inner_margin(egui::Margin::symmetric(12, 8))
+        .inner_margin(crate::shell::VIEW_PADDING)
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
             ui.label(theme::mono(shown_path(key)).color(theme::CODE));

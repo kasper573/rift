@@ -47,7 +47,7 @@ pub struct PlannedMove {
 
 /// Why `path` stays where it is, if the engine finds it there: the fixtures folder, a fixture, or a
 /// folder that holds one.
-pub fn fixed_place(path: &str) -> Option<&'static str> {
+pub(crate) fn fixed_place(path: &str) -> Option<&'static str> {
     let registry = registry();
     if path == FIXTURES_DIR {
         return Some("the engine reads its fixtures and the game's settings from this folder");
@@ -64,7 +64,7 @@ pub fn fixed_place(path: &str) -> Option<&'static str> {
 
 /// Why a copy of `file` could never load, when its type's files are the engine's fixtures and no
 /// others.
-pub fn uncopyable(file: &str) -> Option<&'static str> {
+pub(crate) fn uncopyable(file: &str) -> Option<&'static str> {
     content_of(file)
         .filter(|(table, _)| registry().closed(table))
         .map(|_| "the engine reads only its own fixtures of this type, and a game adds none")
@@ -73,12 +73,17 @@ pub fn uncopyable(file: &str) -> Option<&'static str> {
 /// The path a file or folder named `file` gets in `folder`: `file` itself when no neighbour has
 /// its name, ignoring case, or else its name numbered " (1)", " (2)", the first that is free.
 /// `leaving` names entries that move away in the same step, whose names are free.
-pub fn free_path(files: &ProjectFiles, folder: &str, file: &str, leaving: &[String]) -> String {
+pub(crate) fn free_path(
+    files: &ProjectFiles,
+    folder: &str,
+    file: &str,
+    leaving: &[String],
+) -> String {
     free_path_among(files, folder, file, leaving, &[])
 }
 
 /// `free_path`, with the paths `arriving` in the same step taken as well.
-pub fn free_path_among(
+pub(crate) fn free_path_among(
     files: &ProjectFiles,
     folder: &str,
     file: &str,
@@ -257,7 +262,7 @@ fn rewrite_named(
 /// Writes every path `renames` names as a key as its value in the content files and settings
 /// that `files` belong to, each read as its type and written back as the game writes it, as the
 /// folder stands once `edit` is applied. Gives how many files that touched.
-pub fn rewrite_renamed<'f>(
+pub(crate) fn rewrite_renamed<'f>(
     project: &Project,
     edit: &mut ContentEdit,
     files: impl IntoIterator<Item = &'f str>,
@@ -350,7 +355,7 @@ pub fn follow(editor: &mut Editor, moves: &[PathMove]) {
     }
 }
 
-/// The name a moved or renamed file or folder takes in `folder`, as `free_path` gives it.
+/// The last segment of `path`: the name of its file or folder.
 pub fn file_name(path: &str) -> &str {
     path.rsplit('/').next().unwrap_or(path)
 }
@@ -383,7 +388,7 @@ fn named_inside<'u>(
 }
 
 /// Keeps `folder` once what moves leaves it, as a file manager does.
-pub fn keep_folder(files: &ProjectFiles, edit: &mut ContentEdit, folder: &str) {
+pub(crate) fn keep_folder(files: &ProjectFiles, edit: &mut ContentEdit, folder: &str) {
     if folder.is_empty() {
         return;
     }

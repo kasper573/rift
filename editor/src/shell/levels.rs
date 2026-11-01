@@ -35,7 +35,7 @@ pub trait Level: JsonSchema + Serialize + DeserializeOwned + 'static {
 
 /// The cards of the levels of the row `value` read as its type, which `levels` finds at `path` in
 /// it, each with a `note` beside its title, which sees every level in turn.
-pub fn row_cards<Row: Serialize + DeserializeOwned, L: Level>(
+pub(crate) fn row_cards<Row: Serialize + DeserializeOwned, L: Level>(
     ui: &mut Ui,
     cx: &mut FormCx,
     value: &mut Value,
@@ -97,7 +97,7 @@ fn card<L: Level>(
     changed: &mut FormChange,
 ) -> bool {
     let mut removed = false;
-    panel::card(false).show(ui, |ui| {
+    panel::tile(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             ui.label(theme::strong(format!("{} {}", L::NAME, index + 1)));

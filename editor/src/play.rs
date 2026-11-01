@@ -29,8 +29,11 @@ use ui::controls::{self, Pill};
 use ui::egui::{RichText, Ui};
 use ui::glyph::{self, Mark};
 
-use crate::app::{BottomTab, ChannelInbox, Editor, ModalDialog, OutputLine, content_version};
+use crate::app::{BottomTab, Editor, content_version};
+use crate::inbox::ChannelInbox;
 use crate::keymap::EditorKey;
+use crate::modal::ModalDialog;
+use crate::output_log::OutputLine;
 use crate::project::{EditRefusal, Project, problem_place};
 use crate::shell::{self, content_tree, widgets};
 use ui::input;
@@ -320,7 +323,7 @@ pub fn start(editor: &mut Editor, start: Option<Place>) {
                 ),
             );
         }
-        editor.panels.bottom = BottomTab::Output;
+        editor.bottom_tab = BottomTab::Output;
         fail(
             editor,
             PlayFailure::NotStarted(format!(
@@ -365,7 +368,7 @@ pub fn start(editor: &mut Editor, start: Option<Place>) {
         sender,
         ports: None,
     });
-    editor.panels.bottom = BottomTab::Output;
+    editor.bottom_tab = BottomTab::Output;
 }
 
 pub fn stop(editor: &mut Editor) {
@@ -391,7 +394,7 @@ pub fn restart(editor: &mut Editor) {
     start(editor, from);
 }
 
-pub fn top_bar(editor: &mut Editor, ui: &mut Ui) {
+pub(crate) fn top_bar(editor: &mut Editor, ui: &mut Ui) {
     let characters = test_characters(editor);
     let current = current_character(editor);
     let (play, arrow) = ui
@@ -509,7 +512,7 @@ pub fn top_bar(editor: &mut Editor, ui: &mut Ui) {
     }
 }
 
-pub fn banner(editor: &mut Editor, ui: &mut Ui) {
+pub(crate) fn banner(editor: &mut Editor, ui: &mut Ui) {
     let Some(failure) = editor.play.failure.as_ref() else {
         return;
     };
@@ -565,7 +568,7 @@ pub fn banner(editor: &mut Editor, ui: &mut Ui) {
     }
 }
 
-pub fn save_output(editor: &Editor) {
+pub(crate) fn save_output(editor: &Editor) {
     if let Some(path) = rfd::FileDialog::new()
         .set_title("Save the output")
         .set_file_name("rift-editor-output.txt")
@@ -640,14 +643,14 @@ pub fn test_characters(editor: &Editor) -> Vec<TestCharacter> {
 }
 
 /// Opens the picked test character, or makes one in the game folder when there is none.
-pub fn edit_test_characters(editor: &mut Editor) {
+pub(crate) fn edit_test_characters(editor: &mut Editor) {
     match current_character(editor) {
         Some(key) => editor.open_row(CharacterSnapshot::TABLE, &key),
         None => content_tree::new_file(editor, "", CharacterSnapshot::TABLE),
     }
 }
 
-pub fn current_character(editor: &Editor) -> Option<String> {
+pub(crate) fn current_character(editor: &Editor) -> Option<String> {
     let characters = test_characters(editor);
     editor
         .play
@@ -658,7 +661,7 @@ pub fn current_character(editor: &Editor) -> Option<String> {
         .or_else(|| characters.first().map(|character| character.key.clone()))
 }
 
-pub fn binaries_folder(editor: &Editor) -> PathBuf {
+fn binaries_folder(editor: &Editor) -> PathBuf {
     editor
         .settings
         .binaries
@@ -666,7 +669,7 @@ pub fn binaries_folder(editor: &Editor) -> PathBuf {
         .unwrap_or_else(next_to_editor)
 }
 
-pub fn next_to_editor() -> PathBuf {
+fn next_to_editor() -> PathBuf {
     std::env::current_exe()
         .ok()
         .and_then(|exe| exe.parent().map(Path::to_path_buf))
@@ -675,7 +678,7 @@ pub fn next_to_editor() -> PathBuf {
 
 // Starting a game binary for its build line takes long enough to feel as a freeze, so the check
 // runs on a thread and answers `None` until it is done.
-pub fn check_binaries(editor: &mut Editor) -> Option<GameBinaries> {
+pub(crate) fn check_binaries(editor: &mut Editor) -> Option<GameBinaries> {
     let folder = binaries_folder(editor);
     if let Some(known) = editor
         .play
@@ -720,7 +723,7 @@ fn build_info(binary: &Path) -> Result<BuildInfo, String> {
     serde_json::from_str(text.trim()).map_err(|_| "no build line".to_owned())
 }
 
-pub fn binaries_body(editor: &mut Editor, ui: &mut Ui) -> bool {
+pub(crate) fn binaries_body(editor: &mut Editor, ui: &mut Ui) -> bool {
     let checked = check_binaries(editor);
     let folder = binaries_folder(editor);
     let build = version::build();

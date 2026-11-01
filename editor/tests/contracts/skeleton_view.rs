@@ -320,7 +320,7 @@ fn the_skeleton_view_draws_every_page_and_sets_a_cell_from_the_pointer() {
     };
 
     draw(&mut editor, Vec::new());
-    editor.views.skeleton.view_mut(&key).page = SkeletonPage::Sets;
+    editor.views.skeleton.views.view_mut(&key).page = SkeletonPage::Sets;
     draw(&mut editor, Vec::new());
     let sets_page = draw(&mut editor, Vec::new());
     let sit = egui::pos2(sets_page.at("sword").x, sets_page.at("sit · pose").y);
@@ -347,7 +347,7 @@ fn the_skeleton_view_draws_every_page_and_sets_a_cell_from_the_pointer() {
         SkeletonPage::Body,
         SkeletonPage::Layers,
     ] {
-        editor.views.skeleton.view_mut(&key).page = page;
+        editor.views.skeleton.views.view_mut(&key).page = page;
         let drawn = draw(&mut editor, Vec::new());
         assert!(
             !drawn.any(|text| text.contains("did not load") || text.contains("no rig stands")),
@@ -371,7 +371,7 @@ fn a_clip_on_the_skeleton_view_plays_without_being_asked() {
     let mut draw =
         |editor: &mut Editor| frames.run(Vec::new(), |ui| skeleton::show(editor, ui, &key));
     draw(&mut editor);
-    let view = editor.views.skeleton.view_mut(&key);
+    let view = editor.views.skeleton.views.view_mut(&key);
     view.page = SkeletonPage::Sets;
     view.sets.open = Some((sets::SetRow::Action(Action::Walk), None));
     view.preview.play(file_clip(&clip("walk")));

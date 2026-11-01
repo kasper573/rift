@@ -6,7 +6,7 @@ use crate::glyph::Mark;
 use crate::theme;
 
 /// A plain button that opens a menu, its caret on the right.
-pub fn dropdown<R>(
+pub fn button<R>(
     ui: &mut Ui,
     text: impl Into<RichText>,
     contents: impl FnOnce(&mut Ui) -> R,

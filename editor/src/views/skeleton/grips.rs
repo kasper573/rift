@@ -87,7 +87,7 @@ pub(super) fn overlay(
 ) -> Touched {
     let mut touched = Touched::default();
     let shown = editor.views.toggles.grips;
-    let grips = &mut editor.views.skeleton.view_mut(key).grips;
+    let grips = &mut editor.views.skeleton.views.view_mut(key).grips;
     if !shown {
         grips.grab = None;
         grips.dragged = None;
@@ -140,9 +140,9 @@ pub fn fields(
     index: usize,
     hands: &[Hand],
 ) -> Option<Hand> {
-    let working = editor.views.skeleton.view(key).grips.working(hands);
+    let working = editor.views.skeleton.views.view(key).grips.working(hands);
     let edited = drag_fields(ui, working.get(index)?);
-    let grips = &mut editor.views.skeleton.view_mut(key).grips;
+    let grips = &mut editor.views.skeleton.views.view_mut(key).grips;
     match edited? {
         Edited::Dragging(hand) => {
             grips.dragged = Some((index, hand));
@@ -226,7 +226,7 @@ fn grab(
         .response
         .hover_pos()
         .or(ui.input(|i| i.pointer.latest_pos()));
-    let grips = &mut editor.views.skeleton.view_mut(key).grips;
+    let grips = &mut editor.views.skeleton.views.view_mut(key).grips;
     if moving || turning {
         grips.grab = Some(Grab {
             turning,
@@ -260,7 +260,7 @@ fn grab(
         edited.offset = shifted(staged, joint, &grab, moved);
     }
     let origin = draw_frame(ui, staged, joint, &edited, grab.axis, true);
-    let grips = &mut editor.views.skeleton.view_mut(key).grips;
+    let grips = &mut editor.views.skeleton.views.view_mut(key).grips;
     if cancel {
         grips.grab = None;
         return (origin, false);

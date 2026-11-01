@@ -24,7 +24,7 @@ use crate::project::ProjectFiles;
 use crate::views::navigation::Viewport;
 
 /// How many pixels the longer side of an area's render spans.
-pub const LONGEST: u32 = 512;
+const LONGEST: u32 = 512;
 const LAYER: usize = 398;
 /// How many frames the scenery gets to load and settle before it is read back.
 const SETTLE_FRAMES: u32 = 8;
@@ -108,7 +108,7 @@ pub fn stamp(files: &ProjectFiles, area: &str) -> String {
 
 /// Draws the area at `path` into `rect`, `center` in its middle at `px_per_meter`, once it is
 /// rendered; says whether it was.
-pub fn draw_area(
+pub(crate) fn draw_area(
     editor: &mut Editor,
     painter: &egui::Painter,
     path: &str,

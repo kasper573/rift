@@ -10,8 +10,9 @@ use engine::systems::area::world_map::WorldMapDef;
 use ui::egui::{Color32, Pos2, Rect, RichText, Stroke, Ui, Vec2};
 
 use super::{OpenWorldMap, card_at, hundredths, move_card, selected};
-use crate::app::{Editor, ModalDialog};
+use crate::app::Editor;
 use crate::keymap::EditorKey;
+use crate::modal::ModalDialog;
 use crate::project::ContentEdit;
 use crate::views::navigation;
 
@@ -67,7 +68,7 @@ pub fn open(editor: &mut Editor) {
     }));
 }
 
-pub fn arrange_everything(editor: &mut Editor) {
+pub(crate) fn arrange_everything(editor: &mut Editor) {
     let Some(map) = OpenWorldMap::of(editor) else {
         return;
     };
@@ -253,7 +254,7 @@ fn preview(ui: &mut Ui, map: &OpenWorldMap, layout: &WorldMapDef) {
     }
 }
 
-pub fn solve(
+fn solve(
     map: &OpenWorldMap,
     layout: &WorldMapDef,
     keep_regions: bool,

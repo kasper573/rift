@@ -7,7 +7,7 @@ use engine::systems::movement::AGENT_RADIUS;
 use ui::egui::{self, Ui, Vec2};
 use ui::{form, panel, theme};
 
-use super::footprint::Kind;
+use super::footprint::FootprintKind;
 use crate::app::Editor;
 use crate::rows;
 use crate::shell::row_form::usages;
@@ -42,7 +42,7 @@ fn model_card(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef) {
         .and_then(|project| project.files.get(&path))
         .map(|bytes| FileSize(bytes.len()));
     let flat_shaded = super::geometry(editor, key).map(|geometry| geometry.flat_shaded);
-    panel::card(false).show(ui, |ui| {
+    panel::tile(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
         panel::header(ui, "Model", "", |ui| {
             if ui.button("Replace model…").clicked() {
@@ -119,9 +119,9 @@ fn footprint_card(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef) {
         .and_then(|project| project.files.hash_of(&row.model.path()))
         .map(str::to_owned);
     let mut refit = false;
-    panel::card(false).show(ui, |ui| {
+    panel::tile(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
-        panel::subtitled(ui, "Footprint", Kind::of(&row.footprint).label());
+        panel::subtitled(ui, "Footprint", FootprintKind::of(&row.footprint).label());
         ui.add_space(4.0);
         if let Footprint::Polygon { points, fitted_to } = &row.footprint {
             form::kv_text(ui, "corners", points.len().to_string());

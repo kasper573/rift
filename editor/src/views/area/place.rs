@@ -188,7 +188,7 @@ pub fn overlay(editor: &Editor, painter: &egui::Painter, view_key: &str, frame: 
 
 /// A prop's footprint on the ground and, outside it, the outline the navmesh keeps walkers clear
 /// of; a stake where the prop takes no ground.
-pub fn draw_footprint(
+pub(crate) fn draw_footprint(
     painter: &egui::Painter,
     canvas: &AreaCanvas,
     footprint: &Footprint,

@@ -9,13 +9,13 @@ use serde_json::Value;
 use ui::egui::{Align2, FontId, Sense, Ui};
 use ui::glyph::Mark;
 
-use super::widgets;
 use crate::app::Editor;
 use crate::keymap::EditorKey;
 use crate::project::FileBytes;
 use crate::project::files::content_of;
 use crate::project::history::EditStep;
 use crate::tabs::shown_path;
+use engine::core::time::UnixMillis;
 
 const ROW: f32 = 28.0;
 
@@ -296,5 +296,5 @@ fn restores(step: &EditStep) -> String {
 }
 
 fn clock(at: SystemTime) -> String {
-    widgets::clock(at.into(), true)
+    ui::words::clock(UnixMillis::from(at).0, true)
 }

@@ -19,11 +19,12 @@ use ui::glyph::{self, Mark};
 use ui::sheet;
 
 use super::{content_tree, unused_dialog, widgets};
-use crate::app::{
-    CloseThen, ConfirmAction, Editor, ModalDialog, NewGameDialog, NewGameSource, PickRowThen,
-};
+use crate::app::Editor;
 use crate::icons;
 use crate::keymap::{EditorKey, KeyScope};
+use crate::modal::{
+    CloseThen, ConfirmAction, ModalDialog, NewGameDialog, NewGameSource, PickRowThen,
+};
 use crate::play;
 use crate::project::{ContentEdit, files};
 use crate::rows::{self, UsageDecision};
@@ -238,7 +239,7 @@ fn template_cards(ui: &mut Ui, picked: &mut String, templates: &[GameTemplate]) 
         sheet::section(ui, "Built into this editor");
         for template in templates {
             let selected = *picked == template.key;
-            let response = panel::card(selected)
+            let response = panel::tile(selected)
                 .inner_margin(12.0)
                 .show(ui, |ui| {
                     ui.set_width(ui.available_width());

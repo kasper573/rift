@@ -32,7 +32,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
     });
     if editor.views.model.view(key).hitbox_chosen {
         let mut sized = None;
-        panel::card(false).show(ui, |ui| {
+        panel::tile(false).show(ui, |ui| {
             ui.set_width(ui.available_width());
             panel::title(ui, "Hitbox");
             ui.add_space(4.0);
@@ -43,7 +43,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
         }
         ui.add_space(8.0);
     }
-    panel::card(false).show(ui, |ui| {
+    panel::tile(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
         panel::title(ui, "Body");
         ui.add_space(4.0);

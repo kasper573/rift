@@ -12,7 +12,7 @@ use engine::core::math::Pos;
 use engine::core::time::Seconds;
 use engine::core::units::Meters;
 use engine::core::vfx::{ParamValue, VfxLayer, VfxParams};
-use engine::systems::actor::{Action, ModelDef};
+use engine::systems::actor::ModelDef;
 use strum::{EnumDiscriminants, IntoStaticStr, VariantArray};
 use ui::controls;
 use ui::egui::{Pos2, Stroke, Ui};
@@ -53,7 +53,7 @@ impl Default for VfxViews {
 #[strum_discriminants(name(VfxTargetKind), derive(VariantArray, IntoStaticStr))]
 enum VfxTarget {
     #[strum_discriminants(strum(serialize = "actor"))]
-    Actor { model: String, action: Action },
+    Actor { model: String },
     #[strum_discriminants(strum(serialize = "area"))]
     Area { shape: Shape, facing: Degrees },
     #[strum_discriminants(strum(serialize = "area + actors"))]
@@ -61,7 +61,6 @@ enum VfxTarget {
         shape: Shape,
         facing: Degrees,
         count: u32,
-        action: Action,
     },
     #[strum_discriminants(strum(serialize = "screen"))]
     Screen,
@@ -71,7 +70,6 @@ impl Default for VfxTarget {
     fn default() -> VfxTarget {
         VfxTarget::Actor {
             model: String::new(),
-            action: Action::Idle,
         }
     }
 }
@@ -110,7 +108,7 @@ pub fn preview(
         }
     });
     ui.horizontal_wrapped(|ui| match &mut views.target {
-        VfxTarget::Actor { model, action } => {
+        VfxTarget::Actor { model } => {
             controls::combo("preview-model")
                 .width(160.0)
                 .selected_text(theme::mono(model.as_str()).size(13.0))
@@ -119,8 +117,6 @@ pub fn preview(
                         ui.selectable_value(model, candidate.clone(), candidate);
                     }
                 });
-            ui.end_row();
-            action_combo(ui, action);
         }
         VfxTarget::Area { shape, facing } => {
             shape_fields(ui, shape);
@@ -130,7 +126,6 @@ pub fn preview(
             shape,
             facing,
             count,
-            action,
         } => {
             shape_fields(ui, shape);
             facing_field(ui, facing);
@@ -142,8 +137,6 @@ pub fn preview(
                 *count = crowd.round() as u32;
             }
             ui.label(theme::faint(count.to_string()).size(12.0));
-            ui.end_row();
-            action_combo(ui, action);
         }
         VfxTarget::Screen => {}
     });
@@ -188,27 +181,23 @@ pub fn preview(
     let footprint = target.footprint(center);
     let mut posed = Posed::default();
     let on = match &target {
-        VfxTarget::Actor { model, action } => {
+        VfxTarget::Actor { model } => {
             let Some(model) = content.by_path::<ModelDef>(model) else {
                 ui.label(theme::warn("pick a model to play the vfx on"));
                 return;
             };
-            posed.actors.push(PosedActor {
-                action: *action,
-                ..PosedActor::standing(model, center)
-            });
+            posed.actors.push(PosedActor::standing(model, center));
             PosedSite::Actor(0)
         }
         VfxTarget::Area { .. } => PosedSite::Area(footprint.expect("an area has a footprint")),
-        VfxTarget::Crowd { count, action, .. } => {
+        VfxTarget::Crowd { count, .. } => {
             let footprint = footprint.expect("a crowd has a footprint");
             let models: Vec<_> = content.table::<ModelDef>().ids().collect();
             if !models.is_empty() {
                 for (index, at) in stage::spread(&footprint, *count).into_iter().enumerate() {
-                    posed.actors.push(PosedActor {
-                        action: *action,
-                        ..PosedActor::standing(models[index % models.len()], at)
-                    });
+                    posed
+                        .actors
+                        .push(PosedActor::standing(models[index % models.len()], at));
                 }
             }
             PosedSite::Area(footprint)
@@ -255,7 +244,6 @@ impl VfxTarget {
         match kind {
             VfxTargetKind::Actor => VfxTarget::Actor {
                 model: models.first().cloned().unwrap_or_default(),
-                action: Action::Idle,
             },
             VfxTargetKind::Area => VfxTarget::Area {
                 shape: Shape::Circle {
@@ -269,7 +257,6 @@ impl VfxTarget {
                 },
                 facing: Degrees(0.0),
                 count: FIRST_CROWD,
-                action: Action::Idle,
             },
             VfxTargetKind::Screen => VfxTarget::Screen,
         }
@@ -287,17 +274,6 @@ impl VfxTarget {
             VfxTarget::Actor { .. } | VfxTarget::Screen => None,
         }
     }
-}
-
-fn action_combo(ui: &mut Ui, action: &mut Action) {
-    controls::combo("preview-action")
-        .width(90.0)
-        .selected_text(theme::mono(action.as_ref()).size(13.0))
-        .show_ui(ui, |ui| {
-            for candidate in Action::VARIANTS {
-                ui.selectable_value(action, *candidate, candidate.as_ref());
-            }
-        });
 }
 
 fn facing_field(ui: &mut Ui, facing: &mut Degrees) {

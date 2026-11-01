@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use super::files::{FileBytes, FileChange};
 use crate::user::UserFolder;
 
-pub const EVERY: Duration = Duration::from_secs(3);
+const EVERY: Duration = Duration::from_secs(3);
 
 pub struct RecoveryJournal {
     file: PathBuf,
@@ -66,7 +66,7 @@ impl RecoveryJournal {
 
     /// Moves the folder's journal out of the way of the next one, keeping it beside it. Gives
     /// where it went.
-    pub fn set_aside(user: &UserFolder, folder: &Path) -> Option<PathBuf> {
+    pub(crate) fn set_aside(user: &UserFolder, folder: &Path) -> Option<PathBuf> {
         let file = file_for(user, folder);
         let aside = file.with_extension("json.old");
         std::fs::rename(&file, &aside).ok().map(|()| aside)
@@ -84,7 +84,7 @@ impl RecoveryJournalFile {
 
     /// Whether the file on disk is no longer the one the journaled bytes were edited from, given
     /// the hash of the one there now.
-    pub fn changed_on_disk(&self, now: Option<&str>) -> bool {
+    pub(crate) fn changed_on_disk(&self, now: Option<&str>) -> bool {
         self.base.as_deref() != now
     }
 

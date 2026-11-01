@@ -100,12 +100,12 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigg
 /// The view's preview, the skeleton's layers running there as the client runs them while it plays
 /// an action; while the joint new entries start from is being picked, the joint clicked there.
 fn stage(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigging: &Rigging) {
-    let lit = editor.views.skeleton.view(key).layers.joint.clone();
+    let lit = editor.views.skeleton.views.view(key).layers.joint.clone();
     let lit: Vec<&str> = lit.as_deref().into_iter().collect();
     let Some(previewed) = preview::show(editor, ui, key, def, rigging, &lit, 24.0) else {
         return;
     };
-    let layers = &mut editor.views.skeleton.view_mut(key).layers;
+    let layers = &mut editor.views.skeleton.views.view_mut(key).layers;
     if let Some(clicked) = previewed.picked {
         layers.joint = Some(clicked);
         layers.picking = false;
@@ -130,7 +130,7 @@ fn joint_names(rig: &NodeTree) -> Vec<String> {
 /// The joint new roots, layers and legs start from: picked here, or clicked on the stage.
 fn joint_picker(editor: &mut Editor, ui: &mut Ui, key: &str, rig: &NodeTree) -> Option<String> {
     let names = joint_names(rig);
-    let view = editor.views.skeleton.view_mut(key);
+    let view = editor.views.skeleton.views.view_mut(key);
     let mut joint = view
         .layers
         .joint
@@ -150,7 +150,7 @@ fn joint_picker(editor: &mut Editor, ui: &mut Ui, key: &str, rig: &NodeTree) -> 
             });
         ui.toggle_value(&mut picking, "click it on the stage");
     });
-    let view = editor.views.skeleton.view_mut(key);
+    let view = editor.views.skeleton.views.view_mut(key);
     view.layers.joint = joint.clone();
     view.layers.picking = picking;
     joint
@@ -178,7 +178,7 @@ fn groups(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rig: &
         });
     }
     let joint = joint_picker(editor, ui, key, rig);
-    let view = editor.views.skeleton.view_mut(key);
+    let view = editor.views.skeleton.views.view_mut(key);
     ui.horizontal(|ui| {
         ui.add(
             egui::TextEdit::singleline(&mut view.layers.new_group)
@@ -218,6 +218,7 @@ fn layers(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rig: &
     let chosen = editor
         .views
         .skeleton
+        .views
         .view(key)
         .layers
         .layer
@@ -241,6 +242,7 @@ fn layers(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rig: &
     let from = editor
         .views
         .skeleton
+        .views
         .view(key)
         .layers
         .joint
@@ -260,17 +262,17 @@ fn layers(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rig: &
     if let Some(index) = removed {
         let mut fewer = layers.clone();
         fewer.remove(index);
-        set(editor, key, rig, fewer, "Remove a layer", false);
+        set(editor, key, Some(rig), fewer, "Remove a layer", false);
     }
     if let Some(layer) = added {
         let mut more = layers.clone();
         more.push(layer);
-        if set(editor, key, rig, more, "Add a layer", false) {
+        if set(editor, key, Some(rig), more, "Add a layer", false) {
             pick = Some(layers.len());
         }
     }
     if let Some(index) = pick {
-        editor.views.skeleton.view_mut(key).layers.layer = index;
+        editor.views.skeleton.views.view_mut(key).layers.layer = index;
     }
     let Some(layer) = layers.get(chosen) else {
         form::hint(
@@ -290,20 +292,22 @@ fn layers(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rig: &
     if edited != *layer {
         let mut changed = layers.clone();
         changed[chosen] = edited;
-        set(editor, key, rig, changed, "Change a layer", true);
+        set(editor, key, Some(rig), changed, "Change a layer", true);
     }
 }
 
 /// Sets the layers when every leg is a chain down the rig, else says which joint is not.
-fn set(
+pub(super) fn set(
     editor: &mut Editor,
     key: &str,
-    rig: &NodeTree,
+    rig: Option<&NodeTree>,
     layers: Vec<Layer>,
     label: &str,
     merging: bool,
 ) -> bool {
-    if let Some(refusal) = refusals(rig, &layers).into_iter().next() {
+    if let Some(rig) = rig
+        && let Some(refusal) = refusals(rig, &layers).into_iter().next()
+    {
         editor.toast(format!("{}: {refusal}", shown_path(key)));
         return false;
     }
@@ -311,7 +315,7 @@ fn set(
     if merging {
         edit = edit.merging();
     }
-    super::change_with(editor, key, edit, |skeleton| {
+    editor.change(edit, key, |skeleton: &mut SkeletonDef| {
         skeleton.layers = layers;
         Ok(())
     })

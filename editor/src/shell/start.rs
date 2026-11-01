@@ -13,8 +13,9 @@ use ui::glyph::Mark;
 
 use super::report::{self, ReportAction};
 use super::widgets;
-use crate::app::{CloseThen, Editor, ModalDialog, NewGameDialog, NewGameSource, content_version};
+use crate::app::{Editor, content_version};
 use crate::keymap::EditorKey;
+use crate::modal::{CloseThen, ModalDialog, NewGameDialog, NewGameSource};
 use crate::project::files::content_of;
 use crate::project::journal::RecoveryJournal;
 use crate::shell::{self};
@@ -191,7 +192,7 @@ fn recover_dialog(editor: &mut Editor, ctx: &Context) {
     let mut keep = Some((folder.clone(), data));
     dialog::card(ctx, "recover", 520.0, |ui| {
         let (folder, data) = keep.as_ref().expect("kept");
-        let when = widgets::clock(data.written, false);
+        let when = ui::words::clock(data.written.0, false);
         dialog::title(ui, "Recover unsaved work?");
         ui.label(
             theme::muted(format!(
@@ -263,7 +264,7 @@ fn recover_dialog(editor: &mut Editor, ctx: &Context) {
     }
 }
 
-pub fn pick_folder(editor: &mut Editor) {
+pub(crate) fn pick_folder(editor: &mut Editor) {
     let start = editor
         .settings
         .recent
@@ -278,7 +279,7 @@ pub fn pick_folder(editor: &mut Editor) {
     }
 }
 
-pub fn new_game_dialog(editor: &mut Editor, copy: Option<PathBuf>) {
+fn new_game_dialog(editor: &mut Editor, copy: Option<PathBuf>) {
     let base = editor
         .settings
         .recent

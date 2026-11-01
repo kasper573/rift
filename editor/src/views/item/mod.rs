@@ -5,7 +5,6 @@
 pub mod wield;
 pub mod worn;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use engine::core::content::ContentFile;
@@ -20,15 +19,10 @@ use ui::{card, chip, form, panel, sheet, theme};
 use super::area::camera;
 use super::stage::{self, StagePicture};
 use crate::app::Editor;
+use crate::shell::row_form;
 use crate::shell::row_form::usages;
-use crate::shell::{row_form, sidebar};
 use crate::tabs::shown_path;
 use crate::thumbs::ProjectImages;
-
-#[derive(Default)]
-pub struct ItemViews {
-    views: HashMap<String, ItemView>,
-}
 
 pub struct ItemView {
     pub page: ItemPage,
@@ -79,10 +73,10 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         return;
     };
     ensure_view(editor, key);
-    sidebar::row(ui, "item", |ui| {
+    ui::panel::left_scrolled(ui, "item", |ui| {
         row_form::show_row(editor, ui, ItemDef::TABLE, key)
     });
-    sidebar::inspector(editor, ui, "item", |editor, ui| {
+    ui::panel::inspector(ui, editor, "item", |editor, ui| {
         inspect(editor, ui, key, &row);
     });
     let pages: &[ItemPage] = match row.wear() {
@@ -94,7 +88,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         .filter(|page| pages.contains(page))
         .unwrap_or_default();
     egui::Frame::new()
-        .inner_margin(egui::Margin::symmetric(12, 8))
+        .inner_margin(crate::shell::VIEW_PADDING)
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
             let view = editor.views.item.view_mut(key);
@@ -236,7 +230,7 @@ fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef) {
         ui.add_space(8.0);
     }
     let checks = pictures(editor, key);
-    panel::card(false).show(ui, |ui| {
+    panel::tile(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
         panel::title(ui, "Pictures");
         ui.add_space(4.0);
@@ -273,7 +267,7 @@ fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef) {
         }
     });
     ui.add_space(8.0);
-    panel::card(false).show(ui, |ui| {
+    panel::tile(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
         panel::title(ui, "Look");
         ui.add_space(4.0);
@@ -331,7 +325,7 @@ pub fn pictures(editor: &mut Editor, key: &str) -> Vec<PictureCheck> {
 }
 
 pub fn ensure_view(editor: &mut Editor, key: &str) {
-    if editor.views.item.views.contains_key(key) {
+    if editor.views.item.contains(key) {
         return;
     }
     let radius = editor
@@ -347,8 +341,8 @@ pub fn ensure_view(editor: &mut Editor, key: &str) {
             Some((info.bounds.max - info.bounds.min).length() / 2.0)
         })
         .unwrap_or(0.5);
-    editor.views.item.views.insert(
-        key.to_owned(),
+    editor.views.item.insert(
+        key,
         ItemView {
             page: ItemPage::default(),
             camera: stage::framing(radius.max(0.4)),
@@ -357,14 +351,6 @@ pub fn ensure_view(editor: &mut Editor, key: &str) {
             worn: worn::WornView::default(),
         },
     );
-}
-
-impl ItemViews {
-    pub fn view_mut(&mut self, key: &str) -> &mut ItemView {
-        self.views
-            .get_mut(key)
-            .expect("ensure_view ran before the item view was changed")
-    }
 }
 
 /// The path of the prop the item looks like, when it loads.

@@ -20,27 +20,11 @@ use crate::views::area::viewport::StageClip;
 /// Every glTF binary of the game folder the editor has read, by its path, with the hash of the
 /// bytes it was read from.
 #[derive(Default)]
-pub struct GltfCache(HashMap<String, (String, Option<Read>)>);
-
-/// A glTF binary as the loader reads it, with its tree of nodes to stand a rig on.
-#[derive(Clone)]
-struct Read {
-    info: Arc<GltfInfo>,
-    tree: Arc<NodeTree>,
-}
+pub struct GltfCache(HashMap<String, (String, Option<Arc<GltfInfo>>)>);
 
 impl GltfCache {
     /// The file at `path` as the loader reads it, when it reads.
     pub fn info(&mut self, files: &ProjectFiles, path: &str) -> Option<Arc<GltfInfo>> {
-        Some(self.read(files, path)?.info)
-    }
-
-    /// The tree of nodes of the file at `path`, when it reads.
-    pub fn tree(&mut self, files: &ProjectFiles, path: &str) -> Option<Arc<NodeTree>> {
-        Some(self.read(files, path)?.tree)
-    }
-
-    fn read(&mut self, files: &ProjectFiles, path: &str) -> Option<Read> {
         let hash = files.hash_of(path)?;
         if let Some((held, read)) = self.0.get(path)
             && held == hash
@@ -50,10 +34,7 @@ impl GltfCache {
         let read = files
             .get(path)
             .and_then(|bytes| gltf::inspect(bytes).ok())
-            .map(|info| Read {
-                tree: Arc::new(info.tree.clone()),
-                info: Arc::new(info),
-            });
+            .map(Arc::new);
         self.0
             .insert(path.to_owned(), (hash.to_owned(), read.clone()));
         read
@@ -83,7 +64,7 @@ pub struct Playable {
 
 impl Playable {
     /// The clip as a stage plays it on our rig.
-    pub fn stage_clip(&self, def: &SkeletonDef) -> StageClip {
+    pub(crate) fn stage_clip(&self, def: &SkeletonDef) -> StageClip {
         StageClip {
             file: self.clip.file().as_str().to_owned(),
             animation: self.animation,
@@ -97,7 +78,7 @@ impl Playable {
 
 /// A glTF binary of the game folder holding joints: nodes that draw no mesh.
 #[derive(Clone, Debug)]
-pub struct JointFile {
+pub(crate) struct JointFile {
     pub path: String,
     pub joints: Vec<String>,
 }
@@ -123,14 +104,14 @@ impl Rigging {
 
 /// What a skeleton's rigging was worked out from, so it is worked out again only when that changes.
 #[derive(Clone, PartialEq)]
-pub struct RiggedFrom {
+pub(crate) struct RiggedFrom {
     pub revision: u64,
     pub rig: Rig,
     pub sources: Vec<SourceRig>,
 }
 
 /// The rigging of `def` from the files as they stand.
-pub fn rig_up(def: &SkeletonDef, files: &ProjectFiles, cache: &mut GltfCache) -> Rigging {
+pub(crate) fn rig_up(def: &SkeletonDef, files: &ProjectFiles, cache: &mut GltfCache) -> Rigging {
     let infos = infos_of(&def.rig.files, files, cache);
     let mut cx = RowCheck::default();
     let joints = read_joints(&def.rig, &infos, &mut RowCheck::default());
@@ -189,7 +170,7 @@ pub fn rig_up(def: &SkeletonDef, files: &ProjectFiles, cache: &mut GltfCache) ->
 }
 
 /// Every glTF binary of the game folder that holds joints, with their names.
-pub fn joint_files(files: &ProjectFiles, cache: &mut GltfCache) -> Vec<JointFile> {
+pub(crate) fn joint_files(files: &ProjectFiles, cache: &mut GltfCache) -> Vec<JointFile> {
     cache
         .every(files)
         .into_iter()
@@ -206,7 +187,7 @@ pub fn joint_files(files: &ProjectFiles, cache: &mut GltfCache) -> Vec<JointFile
 
 /// Where each top of the rig `files` put together, but the body's, hangs: on the joint that stands
 /// the joints under it closest to where the skins of those files bind them.
-pub fn guess_hangs(
+pub(crate) fn guess_hangs(
     files: &[ModelRef],
     project: &ProjectFiles,
     cache: &mut GltfCache,

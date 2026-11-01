@@ -13,7 +13,7 @@ use engine::core::math::Pos;
 use engine::core::time::{Seconds, UnixMillis, UtcHour, WallClock};
 use engine::core::units::{MeterPos, Meters};
 use engine::core::vfx::VfxInstance;
-use engine::systems::actor::plate::{self, PlateLabel};
+use engine::systems::actor::plate;
 use engine::systems::actor::{Action, Actor, Appearance, ModelId};
 use engine::systems::area::{self, AreaId, AreaModule};
 use engine::systems::class::ClassDef;
@@ -31,7 +31,7 @@ use engine::systems::stat::{self, StatKind, Stats};
 use engine::systems::status::{self, StatusEffectId};
 use engine::systems::{GameSettings, TICK_HZ, from_client, server_app, start_server};
 
-use super::{Scenario, spread};
+use super::{PosedActor, Scenario, spread};
 
 const SEED: u64 = 0x57a6e;
 const TICKS_PER_FRAME_AT_MOST: u32 = 6;
@@ -44,7 +44,7 @@ const CLEAR_OF_CASTER: f32 = 1.3;
 const STURDY: f32 = 1_000_000.0;
 const STATUS_POWER: f32 = 1.0;
 
-pub struct LiveWorld {
+pub(crate) struct LiveWorld {
     world: World,
     clock: WallClock,
     carry: Duration,
@@ -74,14 +74,6 @@ enum Setup {
 enum Phase {
     Resting { until: UnixMillis },
     Playing { since: UnixMillis, seen: bool },
-}
-
-/// An actor of the live world as the stage draws it.
-pub struct LiveActor {
-    pub entity: Entity,
-    pub model: ModelId,
-    pub at: Pos<Meters>,
-    pub plate: Option<PlateLabel>,
 }
 
 impl LiveWorld {
@@ -131,7 +123,7 @@ impl LiveWorld {
     }
 
     /// Brings the world in line with what the scene asks: the status on or off the actor.
-    pub fn reconcile(&mut self, scenario: &Scenario) {
+    pub(crate) fn reconcile(&mut self, scenario: &Scenario) {
         if let (Setup::Status { actor, effect }, Scenario::Status { applied, .. }) =
             (&self.setup, scenario)
         {
@@ -148,17 +140,12 @@ impl LiveWorld {
         }
     }
 
-    pub fn now(&self) -> UnixMillis {
-        self.clock.now
-    }
-
-    pub fn actors(&self) -> Vec<LiveActor> {
+    pub fn actors(&self) -> Vec<PosedActor> {
         let content = self.world.resource::<Content>();
         self.cast()
             .into_iter()
             .filter_map(|entity| {
-                Some(LiveActor {
-                    entity,
+                Some(PosedActor {
                     model: self.world.get::<Appearance>(entity)?.model,
                     at: self.world.get::<Position>(entity)?.pos,
                     plate: plate::label_of(&self.world, content, entity),
@@ -257,9 +244,8 @@ impl LiveWorld {
     }
 }
 
-/// A server world over `content` opened on `area`'s first cell, where nobody dies and nobody has
-/// joined yet.
-pub fn sandbox(content: &Content, area: AreaId, seed: u64, clock: WallClock) -> World {
+/// A server world over `content` opened on `area`, where nobody dies and nobody has joined yet.
+pub(crate) fn sandbox(content: &Content, area: AreaId, seed: u64, clock: WallClock) -> World {
     let mut app = server_app(area, 0, seed, clock, ServerDaylight::Turning, content);
     app.insert_resource(SpawnRules {
         policy: SpawnPolicy::Map,

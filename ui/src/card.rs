@@ -5,7 +5,7 @@ use egui::{
 };
 
 use crate::face::TextRole;
-use crate::glyph::{self, Kind, Mark};
+use crate::glyph::{self, CardKind, Mark};
 use crate::sheet::{self, Depth};
 use crate::{controls, ink};
 
@@ -13,16 +13,16 @@ pub const WIDTH: f32 = 300.0;
 pub const DOCKED_WIDTH: f32 = 480.0;
 pub const MAX_HEIGHT: f32 = 420.0;
 pub const MARGIN: f32 = 6.0;
-pub const CORNER: f32 = 10.0;
-pub const FRAME_STROKE: f32 = 2.5;
-pub const FRAME_RADIUS: f32 = 6.0;
-pub const GLYPH: f32 = 18.0;
+const CORNER: f32 = 10.0;
+const FRAME_STROKE: f32 = 2.5;
+const FRAME_RADIUS: f32 = 6.0;
+const GLYPH: f32 = 18.0;
 pub const KIND_BAND: f32 = 26.0;
 pub const NAME_BAND: f32 = 34.0;
 pub const ART: f32 = 118.0;
 pub const ART_QUEST: f32 = 80.0;
 pub const ART_SHORT: f32 = 70.0;
-pub const PLATE_PADDING: Margin = Margin::symmetric(12, 10);
+const PLATE_PADDING: Margin = Margin::symmetric(12, 10);
 pub const LINE_GAP: f32 = 6.0;
 pub const GRANT_ICON: f32 = 22.0;
 const CROSS_AT: Vec2 = Vec2::new(8.0, 7.0);
@@ -34,13 +34,13 @@ pub const SHADOW: Shadow = Shadow {
     spread: 0,
     color: Color32::from_black_alpha(140),
 };
-pub const BEHIND_SHADOW: Shadow = Shadow {
+const BEHIND_SHADOW: Shadow = Shadow {
     offset: [0, 5],
     blur: 8,
     spread: 0,
     color: Color32::from_black_alpha(90),
 };
-pub const CONTACT_SHADOW: Shadow = Shadow {
+pub(crate) const CONTACT_SHADOW: Shadow = Shadow {
     offset: [0, 1],
     blur: 2,
     spread: 0,
@@ -54,13 +54,13 @@ pub struct Art {
 }
 
 impl Art {
-    pub fn icon_size(self) -> f32 {
+    fn icon_size(self) -> f32 {
         if self.height >= ART { 96.0 } else { 60.0 }
     }
 }
 
 pub struct Card<'a> {
-    pub kind: Kind,
+    pub kind: CardKind,
     pub band: &'a str,
     pub numeral: Option<&'a str>,
     pub name: &'a str,
@@ -86,7 +86,7 @@ pub struct CardResponse {
 }
 
 impl<'a> Card<'a> {
-    pub fn new(kind: Kind, name: &'a str) -> Card<'a> {
+    pub fn new(kind: CardKind, name: &'a str) -> Card<'a> {
         Card {
             kind,
             band: kind.word(),

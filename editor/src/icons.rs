@@ -44,10 +44,10 @@ use crate::thumbs::{self, Thumbnails};
 
 /// The largest picture, in pixels each way, that still reads as an icon; a bigger one leaves its
 /// file to its kind's icon.
-pub const PREVIEW_MAX: f32 = 64.0;
+const PREVIEW_MAX: f32 = 64.0;
 
 /// How many pictures a list decodes in one frame, so opening a long list never stalls a frame.
-pub const DECODES_PER_FRAME: u32 = 4;
+pub(crate) const DECODES_PER_FRAME: u32 = 4;
 
 /// The icon of a kind of file, with a smaller badge on its corner for a kind that is a variant of
 /// another, in the colour of its family when it has one.
@@ -243,7 +243,7 @@ pub fn of_table(table: &str) -> KindIcon {
 }
 
 /// The icon of the file at `path` in the game folder, by what kind of file it is.
-pub fn of_file(index: &FolderIndex, path: &str) -> KindIcon {
+pub(crate) fn of_file(index: &FolderIndex, path: &str) -> KindIcon {
     if path == SETTINGS_FILE {
         return KindIcon::from(Mark::Settings);
     }
@@ -263,7 +263,7 @@ pub fn of_file(index: &FolderIndex, path: &str) -> KindIcon {
 }
 
 /// The icon of a media file, by its kind.
-pub fn of_media(path: &str) -> KindIcon {
+pub(crate) fn of_media(path: &str) -> KindIcon {
     match AssetKind::of(path) {
         Some(AssetKind::Image) => IMAGE,
         Some(AssetKind::Audio) => KindIcon::plain(phosphor::FILE_AUDIO),
@@ -274,7 +274,7 @@ pub fn of_media(path: &str) -> KindIcon {
 
 pub const FILE: KindIcon = KindIcon::plain(phosphor::FILE);
 pub const NOTE: KindIcon = KindIcon::plain(phosphor::NOTE);
-pub const IMAGE: KindIcon = KindIcon::plain(phosphor::IMAGE);
+pub(crate) const IMAGE: KindIcon = KindIcon::plain(phosphor::IMAGE);
 pub const TABLE: KindIcon = KindIcon::plain(phosphor::TABLE);
 
 /// The picture a file is known by: the picture itself for an image, or a content file's icon or
@@ -283,7 +283,7 @@ pub struct Picture {
     pub path: String,
 }
 
-pub fn picture_of(project: &Project, path: &str) -> Option<Picture> {
+pub(crate) fn picture_of(project: &Project, path: &str) -> Option<Picture> {
     if AssetKind::of(path) == Some(AssetKind::Image) {
         return Some(Picture {
             path: path.to_owned(),
@@ -365,7 +365,7 @@ pub fn preview(
 }
 
 /// What stands for the file at `path` in a list: its preview, or else its kind's icon.
-pub fn paint_file(
+pub(crate) fn paint_file(
     painter: &Painter,
     rect: Rect,
     preview: Option<Preview>,

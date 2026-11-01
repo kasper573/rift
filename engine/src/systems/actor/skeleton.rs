@@ -26,9 +26,61 @@ use crate::core::units::{Meters, MetersPerSec};
 
 pub type SkeletonId = ContentId<SkeletonDef>;
 
+/// What a name of a body's field names, which a form offers the names of to pick from. A field
+/// carries its kind in its schema as the kind's marker.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NameKind {
+    Move,
+    Gesture,
+    Joint,
+    Group,
+    Build,
+    Region,
+    Slot,
+    Tint,
+}
+
+impl NameKind {
+    const ALL: [NameKind; 8] = [
+        NameKind::Move,
+        NameKind::Gesture,
+        NameKind::Joint,
+        NameKind::Group,
+        NameKind::Build,
+        NameKind::Region,
+        NameKind::Slot,
+        NameKind::Tint,
+    ];
+
+    /// The schema key a field of this kind of name carries.
+    pub fn marker(self) -> &'static str {
+        match self {
+            NameKind::Move => "x-move",
+            NameKind::Gesture => "x-gesture",
+            NameKind::Joint => "x-joint",
+            NameKind::Group => "x-group",
+            NameKind::Build => "x-build",
+            NameKind::Region => "x-region",
+            NameKind::Slot => "x-slot",
+            NameKind::Tint => "x-tint",
+        }
+    }
+
+    /// The kind whose marker is the schema key `marker`.
+    pub fn of_marker(marker: &str) -> Option<NameKind> {
+        NameKind::ALL
+            .into_iter()
+            .find(|kind| kind.marker() == marker)
+    }
+
+    fn mark(self, schema: &mut schemars::Schema) {
+        schema.insert(self.marker().to_owned(), true.into());
+    }
+}
+
 macro_rules! name_type {
-    ($(#[$doc:meta])* $name:ident, $marker:literal) => {
-        name_type!(@named [$(#[$doc])*] [#[schemars(extend($marker = true))]] $name);
+    ($(#[$doc:meta])* $name:ident, $kind:expr) => {
+        name_type!(@named [$(#[$doc])*] [#[schemars(transform = |schema: &mut schemars::Schema| $kind.mark(schema))]] $name);
     };
     ($(#[$doc:meta])* $name:ident) => {
         name_type!(@named [$(#[$doc])*] [] $name);
@@ -75,45 +127,45 @@ name_type!(
 name_type!(
     /// A swing a skill asks for by name, which a skeleton's sets turn into a clip per stance.
     MoveName,
-    "x-move"
+    NameKind::Move
 );
 name_type!(
     /// A gesture a body makes by name: a line said with an expression of the same name, or an emote
     /// a script plays, such as a wave.
     GestureName,
-    "x-gesture"
+    NameKind::Gesture
 );
 name_type!(
     /// A named part of a body a clip may be kept to: the joints under the group's roots.
     GroupName,
-    "x-group"
+    NameKind::Group
 );
 name_type!(
     /// A joint of a rig, by its name.
     JointName,
-    "x-joint"
+    NameKind::Joint
 );
 name_type!(
     /// A body type a skeleton's models are cut for, such as male or female: a part may carry a
     /// mesh for each, and a build may play clips of its own.
     BuildName,
-    "x-build"
+    NameKind::Build
 );
 name_type!(
     /// A place on a body a part goes: a part covers some, and may hide others.
     BodyRegion,
-    "x-region"
+    NameKind::Region
 );
 name_type!(
     /// A place on a body an item is worn besides its hands, such as its chest or its head.
     EquipmentSlot,
-    "x-slot"
+    NameKind::Slot
 );
 name_type!(
     /// A colour a body is painted in wherever a material's mask marks it, such as its skin, its hair
     /// or its metal.
     TintName,
-    "x-tint"
+    NameKind::Tint
 );
 
 /// A tint of a skeleton, and the colour a body is painted in unless its model, its appearance or
@@ -130,7 +182,12 @@ pub struct SkeletonTint {
 /// Colours by the tint each paints.
 #[derive(JsonSchema, Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(transparent)]
-#[schemars(extend("propertyNames" = { "type": "string", "x-tint": true }))]
+#[schemars(transform = |schema: &mut schemars::Schema| {
+    let mut names = schemars::Schema::default();
+    names.insert("type".to_owned(), "string".into());
+    NameKind::Tint.mark(&mut names);
+    schema.insert("propertyNames".to_owned(), names.into());
+})]
 pub struct Colours(pub BTreeMap<TintName, Rgb>);
 
 impl Colours {

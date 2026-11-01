@@ -87,7 +87,7 @@ fn menu_id(view_key: &str) -> egui::Id {
     egui::Id::new((view_key, "context"))
 }
 
-pub fn module_menu_row(ui: &mut Ui, kind: &str, description: &str) -> bool {
+pub(crate) fn module_menu_row(ui: &mut Ui, kind: &str, description: &str) -> bool {
     let (rect, response) = ui.allocate_exact_size(
         Vec2::new(ui.available_width().min(260.0), 34.0),
         egui::Sense::click(),
@@ -326,7 +326,7 @@ pub(super) enum MenuAction {
     Area(AreaAction),
 }
 
-pub const ADD_MENU: &[(&str, &[(AreaModuleKind, &str)])] = &[
+pub(crate) const ADD_MENU: &[(&str, &[(AreaModuleKind, &str)])] = &[
     (
         "Shapes",
         &[
@@ -361,7 +361,7 @@ pub const ADD_MENU: &[(&str, &[(AreaModuleKind, &str)])] = &[
 ];
 
 /// What a module of `kind` first covers when it is placed at `at`.
-pub fn template_bounds(kind: AreaModuleKind, at: Pos<Meters>) -> Rect<Meters> {
+pub(crate) fn template_bounds(kind: AreaModuleKind, at: Pos<Meters>) -> Rect<Meters> {
     match kind {
         AreaModuleKind::SafeZone
         | AreaModuleKind::Soundscape
@@ -454,7 +454,7 @@ pub fn module_template(
 /// Adds a module of `kind` where `ground` is: into the blueprint being edited in place when it is
 /// selected, at its spot within it. Asks first which file it names, unless the view's stamp
 /// names the blueprint to place.
-pub fn add_module(
+pub(crate) fn add_module(
     editor: &mut Editor,
     view_key: &str,
     frame: &AreaFrame,
@@ -504,14 +504,14 @@ pub fn add_module(
     }
 }
 
-pub enum PlaceOutcome {
+pub(crate) enum PlaceOutcome {
     Whole,
     Partly { skipped: usize, reason: String },
 }
 
 /// Places `new` in the insertion folder of `bundle` as one step: all of them, or as many as the
 /// folder's game takes, in order, when some are refused. Selects what it placed.
-pub fn place_modules(
+pub(crate) fn place_modules(
     editor: &mut Editor,
     bundle: &str,
     mut new: Vec<SceneNode>,

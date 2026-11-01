@@ -3,7 +3,6 @@
 
 pub mod fit;
 
-use std::collections::HashMap;
 use std::sync::Arc;
 
 use engine::core::assets::FileSize;
@@ -21,13 +20,8 @@ use ui::{chip, form, panel, theme};
 use super::area::viewport::StageClip;
 use super::stage;
 use crate::app::Editor;
-use crate::shell::{row_form, sidebar};
+use crate::shell::row_form;
 use crate::tabs::shown_path;
-
-#[derive(Default)]
-pub struct ModelPartViews {
-    pub views: HashMap<String, ModelPartView>,
-}
 
 pub struct ModelPartView {
     /// The mesh shown: the one cut for this build, or with `None` the one every build wears.
@@ -35,33 +29,19 @@ pub struct ModelPartView {
     pub stage: stage::StageState,
 }
 
-impl ModelPartViews {
-    pub fn view(&self, key: &str) -> &ModelPartView {
-        self.views
-            .get(key)
-            .expect("ensure_view ran before the model part view was read")
-    }
-
-    pub fn view_mut(&mut self, key: &str) -> &mut ModelPartView {
-        self.views
-            .get_mut(key)
-            .expect("ensure_view ran before the model part view was changed")
-    }
-}
-
 pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
     let Some(row) = super::read_shown::<ModelPartDef>(editor, ui, key) else {
         return;
     };
     ensure_view(editor, key, &row);
-    sidebar::row(ui, "model_part", |ui| {
+    ui::panel::left_scrolled(ui, "model_part", |ui| {
         row_form::show_row(editor, ui, ModelPartDef::TABLE, key)
     });
-    sidebar::inspector(editor, ui, "model_part", |editor, ui| {
+    ui::panel::inspector(ui, editor, "model_part", |editor, ui| {
         inspect(editor, ui, key, &row);
     });
     egui::Frame::new()
-        .inner_margin(egui::Margin::symmetric(12, 8))
+        .inner_margin(crate::shell::VIEW_PADDING)
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
             mesh_bar(editor, ui, key, &row);
@@ -71,15 +51,15 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
 }
 
 pub fn ensure_view(editor: &mut Editor, key: &str, row: &ModelPartDef) {
-    if editor.views.model_part.views.contains_key(key) {
+    if editor.views.model_part.contains(key) {
         return;
     }
     let mesh = match &row.mesh {
         Some(_) => None,
         None => row.builds.keys().next().cloned(),
     };
-    editor.views.model_part.views.insert(
-        key.to_owned(),
+    editor.views.model_part.insert(
+        key,
         ModelPartView {
             mesh,
             stage: stage::StageState::framing(1.3),
@@ -97,7 +77,7 @@ pub fn skeleton<'c>(
 }
 
 /// The clip `skeleton` stands a body in while idle.
-pub fn idle_clip(skeleton: &BuiltSkeleton) -> Option<StageClip> {
+pub(crate) fn rig_idle_clip(skeleton: &BuiltSkeleton) -> Option<StageClip> {
     let (cell, _) = skeleton
         .def
         .named(None, None, &Motion::Action(Action::Idle), Pose::Idle)?;
@@ -141,7 +121,7 @@ pub(super) fn stand(
         rig: skeleton.rig.clone(),
         skins: vec![skin],
     };
-    let standing = stage::standing(body, idle_clip(skeleton), None, Vec::new(), Vec::new());
+    let standing = stage::standing(body, rig_idle_clip(skeleton), None, Vec::new(), Vec::new());
     turntable.stand(editor, ui, vec![standing]);
 }
 
@@ -167,7 +147,7 @@ fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelPartDef) {
             (mesh.as_str().to_owned(), triangles, weight)
         })
         .collect();
-    panel::card(false).show(ui, |ui| {
+    panel::tile(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
         panel::title(ui, "Meshes");
         ui.add_space(4.0);

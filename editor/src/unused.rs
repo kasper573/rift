@@ -116,7 +116,7 @@ impl UnusedContent {
     }
 
     /// Whether the media file at `path` is unused.
-    pub fn has_asset(&self, path: &str) -> bool {
+    pub(crate) fn has_asset(&self, path: &str) -> bool {
         self.assets.contains(path)
     }
 

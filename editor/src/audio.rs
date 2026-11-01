@@ -5,7 +5,7 @@ use engine::core::audio::loader;
 
 use std::sync::mpsc::TryRecvError;
 
-use crate::app::ChannelInbox;
+use crate::inbox::ChannelInbox;
 use crate::project::ProjectFiles;
 
 pub const BINS: usize = 160;

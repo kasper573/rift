@@ -40,12 +40,12 @@ use super::model::{self, hitbox::HitboxHandles};
 use super::stage;
 use crate::app::Editor;
 use crate::project::{ContentEdit, ProjectFiles};
-use crate::shell::sidebar;
 use crate::tabs::shown_path;
+use crate::views::ViewMap;
 
 #[derive(Default)]
 pub struct SkeletonViews {
-    pub views: HashMap<String, SkeletonView>,
+    pub views: ViewMap<SkeletonView>,
     pub gltfs: GltfCache,
     rigged: HashMap<String, (RiggedFrom, Arc<Rigging>)>,
     posed: HashMap<(usize, StageKey), Posed>,
@@ -53,7 +53,7 @@ pub struct SkeletonViews {
 
 /// The keys a clip plays on a rig, with the rig, which the entry holds so no other stands where it
 /// stood.
-struct Posed {
+pub struct Posed {
     rig: Arc<NodeTree>,
     keys: Option<Arc<ClipKeys>>,
 }
@@ -128,20 +128,6 @@ pub enum Chosen {
     Grip(usize),
 }
 
-impl SkeletonViews {
-    pub fn view(&self, key: &str) -> &SkeletonView {
-        self.views
-            .get(key)
-            .expect("ensure_view ran before the skeleton view was read")
-    }
-
-    pub fn view_mut(&mut self, key: &str) -> &mut SkeletonView {
-        self.views
-            .get_mut(key)
-            .expect("ensure_view ran before the skeleton view was changed")
-    }
-}
-
 pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
     let Some(def) = super::read_shown::<SkeletonDef>(editor, ui, key) else {
         return;
@@ -150,12 +136,12 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
     let Some(rigging) = rigging(editor, key, &def) else {
         return;
     };
-    let page = editor.views.skeleton.view(key).page;
-    sidebar::inspector(editor, ui, "skeleton", |editor, ui| {
+    let page = editor.views.skeleton.views.view(key).page;
+    ui::panel::inspector(ui, editor, "skeleton", |editor, ui| {
         inspect::show(editor, ui, key, &def, &rigging, page);
     });
     egui::Frame::new()
-        .inner_margin(egui::Margin::symmetric(12, 8))
+        .inner_margin(crate::shell::VIEW_PADDING)
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
             page_bar(editor, ui, key, page);
@@ -176,7 +162,7 @@ fn page_bar(editor: &mut Editor, ui: &mut Ui, key: &str, page: SkeletonPage) {
         ui.add_space(8.0);
         for other in SkeletonPage::ALL {
             if chip::mode(ui, other.label(), page == other).clicked() {
-                editor.views.skeleton.view_mut(key).page = other;
+                editor.views.skeleton.views.view_mut(key).page = other;
             }
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -190,11 +176,11 @@ fn page_bar(editor: &mut Editor, ui: &mut Ui, key: &str, page: SkeletonPage) {
 }
 
 pub fn ensure_view(editor: &mut Editor, key: &str) {
-    if editor.views.skeleton.views.contains_key(key) {
+    if editor.views.skeleton.views.contains(key) {
         return;
     }
     editor.views.skeleton.views.insert(
-        key.to_owned(),
+        key,
         SkeletonView {
             page: SkeletonPage::default(),
             preview: preview::SkeletonPreview::default(),
@@ -238,7 +224,10 @@ fn skeleton_id(content: &Content, key: &str) -> Option<SkeletonId> {
 
 /// The models that wear the skeleton at `key`, by their paths, with how each was built if it
 /// loaded.
-pub fn wearers<'c>(content: &'c Content, key: &str) -> Vec<(String, Option<&'c ActorModel>)> {
+pub(crate) fn wearers<'c>(
+    content: &'c Content,
+    key: &str,
+) -> Vec<(String, Option<&'c ActorModel>)> {
     let Some(id) = skeleton_id(content, key) else {
         return Vec::new();
     };
@@ -256,7 +245,7 @@ pub fn wearers<'c>(content: &'c Content, key: &str) -> Vec<(String, Option<&'c A
 }
 
 /// The items held in a hand, by their paths, with their names.
-pub fn hand_items(content: &Content) -> Vec<(String, String)> {
+pub(crate) fn hand_items(content: &Content) -> Vec<(String, String)> {
     content
         .table::<ItemDef>()
         .iter()
@@ -267,7 +256,7 @@ pub fn hand_items(content: &Content) -> Vec<(String, String)> {
 
 /// A combo labelled `label` of every clip that plays on the rig, filtered by any part of its file's
 /// path as it is typed, offering no clip too as `none` names it.
-pub fn clip_picker(
+pub(crate) fn clip_picker(
     ui: &mut Ui,
     label: &str,
     id: impl std::hash::Hash + std::fmt::Debug + Copy,
@@ -320,7 +309,7 @@ pub fn clip_picker(
 }
 
 /// The most clips a list offers at once; typing narrows it.
-pub const MAX_LISTED: usize = 200;
+pub(crate) const MAX_LISTED: usize = 200;
 
 /// The clips that play on the rig whose file's path holds `filter`, ignoring case.
 pub fn matching<'r>(rigging: &'r Rigging, filter: &str) -> impl Iterator<Item = &'r Playable> {
@@ -439,7 +428,7 @@ fn handles(
 ) -> bool {
     let toggles = &editor.views.toggles;
     let (hitbox_shown, grips_shown) = (toggles.hitbox, toggles.grips);
-    let view = editor.views.skeleton.view_mut(key);
+    let view = editor.views.skeleton.views.view_mut(key);
     if !hitbox_shown {
         view.hitbox.let_go();
     }
@@ -458,7 +447,7 @@ fn handles(
         let model = editor.read::<ModelDef>(path)?.ok()?;
         Some((path.to_owned(), model.hitbox))
     });
-    let view = editor.views.skeleton.view_mut(key);
+    let view = editor.views.skeleton.views.view_mut(key);
     let touched = match &hitbox {
         Some((_, capsule)) => model::hitbox::overlay(
             ui,
@@ -477,7 +466,7 @@ fn handles(
     };
     let hands = view.grips.working(&def.hands);
     let gripped = grips::overlay(editor, ui, key, staged, &hands, grip);
-    let view = editor.views.skeleton.view_mut(key);
+    let view = editor.views.skeleton.views.view_mut(key);
     view.chosen = match (gripped.picked, touched.picked) {
         _ if on_joint => view.chosen,
         (Some(index), _) => {
@@ -548,7 +537,7 @@ fn project(canvas: &AreaCanvas, at: Vec3) -> Pos2 {
 }
 
 /// Every node of `tree` in the scene, standing `pose`, or at rest without one.
-pub fn posed_worlds(tree: &NodeTree, pose: Option<&[Rest]>) -> Vec<Mat4> {
+fn posed_worlds(tree: &NodeTree, pose: Option<&[Rest]>) -> Vec<Mat4> {
     match pose {
         None => tree.worlds(),
         Some(pose) => NodeTree {
@@ -629,28 +618,7 @@ pub fn change(
     change: impl FnOnce(&mut SkeletonDef) -> Result<(), String>,
 ) -> bool {
     let edit = ContentEdit::new(format!("{label} in {}", shown_path(key)));
-    change_with(editor, key, edit, change)
-}
-
-/// Writes the skeleton at `key` as `change` leaves it, as part of `edit`.
-pub fn change_with(
-    editor: &mut Editor,
-    key: &str,
-    edit: ContentEdit,
-    change: impl FnOnce(&mut SkeletonDef) -> Result<(), String>,
-) -> bool {
-    let Some(Ok(row)) = editor.read::<SkeletonDef>(key) else {
-        return false;
-    };
-    let mut skeleton = (*row).clone();
-    if let Err(refusal) = change(&mut skeleton) {
-        editor.toast(format!("{}: {refusal}", shown_path(key)));
-        return false;
-    }
-    if skeleton == *row {
-        return false;
-    }
-    editor.write_content_as(edit, key, &skeleton)
+    editor.change(edit, key, change)
 }
 
 /// Gives the clip `clip` the cues `cues`, in order of time: none takes its entry away.
@@ -677,7 +645,7 @@ pub fn set_cues(editor: &mut Editor, key: &str, clip: &Clip, mut cues: Vec<Cue>)
 /// Gives the clip `clip` the pace `pace`, merging with the pace set just before it as one drag does.
 pub fn set_pace(editor: &mut Editor, key: &str, clip: &Clip, pace: MetersPerSec) -> bool {
     let edit = ContentEdit::new(format!("Pace {} in {}", clip.shown(), shown_path(key))).merging();
-    change_with(editor, key, edit, |skeleton| {
+    editor.change(edit, key, |skeleton: &mut SkeletonDef| {
         match skeleton.paces.iter_mut().find(|held| held.clip == *clip) {
             Some(held) => held.pace = pace,
             None => {
@@ -697,7 +665,7 @@ pub fn set_pace(editor: &mut Editor, key: &str, clip: &Clip, pace: MetersPerSec)
 pub fn set_hand(editor: &mut Editor, key: &str, index: usize, hand: Hand) -> bool {
     let edit =
         ContentEdit::new(format!("Change hand {} in {}", hand.name, shown_path(key))).merging();
-    change_with(editor, key, edit, |skeleton| {
+    editor.change(edit, key, |skeleton: &mut SkeletonDef| {
         let held = skeleton
             .hands
             .get_mut(index)
@@ -716,7 +684,7 @@ pub fn set_hands(editor: &mut Editor, key: &str, hands: Vec<Hand>) -> bool {
 }
 
 /// Sets the skeleton's groups to `groups`.
-pub fn set_groups(
+pub(crate) fn set_groups(
     editor: &mut Editor,
     key: &str,
     groups: BTreeMap<GroupName, Vec<JointName>>,
@@ -734,14 +702,12 @@ pub fn set_layers(editor: &mut Editor, key: &str, layers: Vec<Layer>) -> bool {
         .and_then(Result::ok)
         .and_then(|def| rigging(editor, key, &def))
         .and_then(|rigging| rigging.rig.clone());
-    if let Some(rig) = rig
-        && let Some(refusal) = layers::refusals(&rig, &layers).into_iter().next()
-    {
-        editor.toast(format!("{}: {refusal}", shown_path(key)));
-        return false;
-    }
-    change(editor, key, "Change the layers", |skeleton| {
-        skeleton.layers = layers;
-        Ok(())
-    })
+    layers::set(
+        editor,
+        key,
+        rig.as_deref(),
+        layers,
+        "Change the layers",
+        false,
+    )
 }

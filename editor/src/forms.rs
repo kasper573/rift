@@ -35,12 +35,14 @@ use crate::views::bust::faces;
 use crate::views::script::nodes::NodeCatalogue;
 use crate::views::vfx;
 use crate::{audio, condition, picker, spans, thumbs, value};
-use ui::input::{self, InputField, Typed, drafted, typed};
+use ui::draft::{self, Typed, drafted, typed};
+use ui::input::{self, InputField};
 
 /// What a hole a blueprint's owners fill is drawn in.
-pub const VARIABLE: egui::Color32 = ui::ink::TYRIAN;
+pub(crate) const VARIABLE: egui::Color32 = ui::ink::TYRIAN;
 
-pub const KEPT_TIP: &str = "Kept: the engine reads this from every game, so it stays as it is";
+pub(crate) const KEPT_TIP: &str =
+    "Kept: the engine reads this from every game, so it stays as it is";
 
 pub struct FormCx<'a> {
     pub project: &'a Project,
@@ -100,7 +102,7 @@ impl<'a> FormCx<'a> {
     }
 
     /// The row this form edits, whose load errors it then shows beside their fields.
-    pub fn editing(mut self, table: &str, key: Option<&str>) -> FormCx<'a> {
+    pub(crate) fn editing(mut self, table: &str, key: Option<&str>) -> FormCx<'a> {
         self.row_table = Some(table.to_owned());
         self.row_key = key.map(str::to_owned);
         self.locks = key.map_or_else(Vec::new, |key| self.shapes.locks(table, key).to_vec());
@@ -115,7 +117,7 @@ impl<'a> FormCx<'a> {
 
     /// Shows the load errors of `file` beside their fields instead: a part of the bundle being
     /// edited that this form edits rather than its config.
-    pub fn errors_of(mut self, file: &str) -> FormCx<'a> {
+    pub(crate) fn errors_of(mut self, file: &str) -> FormCx<'a> {
         self.load_errors = self
             .report
             .map(|report| {
@@ -139,7 +141,7 @@ impl<'a> FormCx<'a> {
 
     /// How `path` reads from the file this form edits: how many folders up from it their paths
     /// meet, and the path from there.
-    pub fn seen_from_here(&self, path: &str) -> (usize, String) {
+    pub(crate) fn seen_from_here(&self, path: &str) -> (usize, String) {
         seen_from(self.row_key.as_deref(), path)
     }
 
@@ -150,7 +152,7 @@ impl<'a> FormCx<'a> {
 
 /// How `path` reads from the file `own`: how many folders up from it their paths meet, and the
 /// path from there.
-pub fn seen_from(own: Option<&str>, path: &str) -> (usize, String) {
+pub(crate) fn seen_from(own: Option<&str>, path: &str) -> (usize, String) {
     let here: Vec<&str> = own.map_or(Vec::new(), |own| {
         parent_of(own)
             .split('/')
@@ -200,9 +202,6 @@ pub enum FormAction {
     OpenRow {
         table: String,
         key: String,
-    },
-    OpenNode {
-        name: String,
     },
     PickPlace {
         path: String,
@@ -265,7 +264,7 @@ const LABEL_WIDTH: f32 = 124.0;
 
 // The column is allocated at its full width whatever the label's length, so every value beside it
 // starts on the same line.
-pub fn label_column(ui: &mut Ui) -> Ui {
+pub(crate) fn label_column(ui: &mut Ui) -> Ui {
     let (rect, _) = ui.allocate_exact_size(
         egui::vec2(LABEL_WIDTH, ui.spacing().interact_size.y),
         egui::Sense::hover(),
@@ -290,7 +289,7 @@ pub fn of_type<T: JsonSchema + Serialize + DeserializeOwned + 'static>(
 
 /// The form of `typed` as `of_type` draws it, without the fields at `hidden`, pointers into the
 /// value that another part of the view edits.
-pub fn of_type_without<T: JsonSchema + Serialize + DeserializeOwned + 'static>(
+pub(crate) fn of_type_without<T: JsonSchema + Serialize + DeserializeOwned + 'static>(
     ui: &mut Ui,
     cx: &mut FormCx,
     typed: &mut T,
@@ -515,6 +514,9 @@ fn plain(
     }
     let schema = schema::non_null(cx.root, schema);
     if let Some(marker) = schema::marker(schema) {
+        if let Some(kind) = NameKind::of_marker(marker) {
+            return named(ui, cx, kind, value, path);
+        }
         match marker {
             "x-table" => {
                 return reference(ui, cx, schema, value, path);
@@ -523,11 +525,6 @@ fn plain(
             "x-place" => return place(ui, cx, schema, value, path),
             "x-color" => return color(ui, schema, value, path),
             "x-face" => return face(ui, cx, value, path),
-            "x-move" | "x-joint" | "x-group" | "x-build" | "x-region" | "x-slot" | "x-tint" => {
-                if let Some(kind) = NameKind::of_marker(marker) {
-                    return named(ui, cx, kind, value, path);
-                }
-            }
             "x-span" => {
                 return as_type(ui, cx, value, path, |ui, cx, span| {
                     spans::edit(ui, cx, span, path)
@@ -589,7 +586,7 @@ pub fn object(
     object_without(ui, cx, schema, value, path, &[])
 }
 
-pub fn object_without(
+pub(crate) fn object_without(
     ui: &mut Ui,
     cx: &mut FormCx,
     schema: &Value,
@@ -1004,12 +1001,12 @@ fn variant_body(
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum FieldGeometry {
+enum FieldGeometry {
     Pos,
     Rect,
 }
 
-pub fn geometry_of(schema: &Value) -> Option<FieldGeometry> {
+fn geometry_of(schema: &Value) -> Option<FieldGeometry> {
     if schema.get("x-pos").is_some() {
         Some(FieldGeometry::Pos)
     } else if schema.get("x-rect").is_some() {
@@ -1249,7 +1246,7 @@ fn array(ui: &mut Ui, cx: &mut FormCx, items: &Value, value: &mut Value, path: &
                 .map(str::to_owned)
                 .collect();
             if boxed {
-                panel::card(false).show(ui, |ui| {
+                panel::tile(false).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
                         match schema::kind(cx.root, item_schema) {
@@ -1615,19 +1612,19 @@ fn map(
         }
         ui.horizontal(|ui| {
             let id = ui.id().with(path).with("new-key");
-            let mut draft = input::draft_of(ui, id).unwrap_or_default();
+            let mut draft = draft::draft_of(ui, id).unwrap_or_default();
             let response = InputField::new(&mut draft)
                 .hint("new key")
                 .width(110.0)
                 .show(ui);
             if response.changed() {
-                input::set_draft(ui, id, &draft);
+                draft::set_draft(ui, id, &draft);
             }
             let add = ui.small_button("+ add").clicked()
                 || (response.lost_focus() && ui.input(|i| EditorKey::Confirm.pressed(i)));
             if add && !draft.is_empty() && !entries.contains_key(&draft) {
                 entries.insert(draft, schema::template(cx.root, values, cx.nearby()));
-                input::clear_draft(ui, id);
+                draft::clear_draft(ui, id);
                 changed = FormChange::at(path);
             }
         });
@@ -1664,7 +1661,7 @@ pub fn text(ui: &mut Ui, cx: &mut FormCx, value: &mut Value, path: &str) -> Form
 }
 
 /// A text edited as `text` edits one.
-pub fn text_of(ui: &mut Ui, cx: &mut FormCx, text: &mut String, path: &str) -> FormChange {
+pub(crate) fn text_of(ui: &mut Ui, cx: &mut FormCx, text: &mut String, path: &str) -> FormChange {
     let mut json = Value::String(std::mem::take(text));
     let changed = self::text(ui, cx, &mut json, path);
     if let Value::String(typed) = json {
@@ -1675,7 +1672,7 @@ pub fn text_of(ui: &mut Ui, cx: &mut FormCx, text: &mut String, path: &str) -> F
 
 /// The fields of `typed`, the variant of `root` that `schema` is, as `object_without` draws them:
 /// a part of a type the schema of a wider type describes.
-pub fn variant_of_type<T: Serialize + DeserializeOwned>(
+pub(crate) fn variant_of_type<T: Serialize + DeserializeOwned>(
     ui: &mut Ui,
     cx: &mut FormCx,
     root: &'static Value,
@@ -1713,7 +1710,7 @@ const NESTED_CONDITION_ROOM: f32 = 220.0;
 
 /// The fields of `typed`, the variant of `root` that `schema` is, in a row as a sentence lays them
 /// out, its conditions edited by `condition`.
-pub fn inline_fields_of<T: Serialize + DeserializeOwned>(
+pub(crate) fn inline_fields_of<T: Serialize + DeserializeOwned>(
     ui: &mut Ui,
     cx: &mut FormCx,
     root: &'static Value,
@@ -1810,7 +1807,7 @@ pub fn of_row<Row: Serialize + DeserializeOwned>(
 
 /// `value` edited as the `T` it reads as, by an editor of `T`'s own: where the form of a schema
 /// meets a type it doesn't walk. A value that doesn't read is edited as raw JSON.
-pub fn as_type<T: Serialize + DeserializeOwned>(
+pub(crate) fn as_type<T: Serialize + DeserializeOwned>(
     ui: &mut Ui,
     cx: &mut FormCx,
     value: &mut Value,
@@ -1849,7 +1846,7 @@ pub fn number(
 }
 
 /// An amount of `unit`, edited as `number` edits one.
-pub fn quantity(
+pub(crate) fn quantity(
     ui: &mut Ui,
     cx: &mut FormCx,
     amount: &mut f32,
@@ -2043,7 +2040,7 @@ pub fn color(ui: &mut Ui, schema: &Value, value: &mut Value, path: &str) -> Form
     FormChange::at(path)
 }
 
-pub fn raw_json(ui: &mut Ui, cx: &mut FormCx, value: &mut Value, path: &str) -> FormChange {
+pub(crate) fn raw_json(ui: &mut Ui, cx: &mut FormCx, value: &mut Value, path: &str) -> FormChange {
     let id = ui.id().with(path).with("json");
     let current = serde_json::to_string(value).unwrap_or_default();
     let typed = typed(ui, id, &current, |ui, draft| {

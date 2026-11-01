@@ -244,7 +244,14 @@ fn wearing(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, def: 
         return;
     }
     ui.label(theme::muted("dress the stage in"));
-    let mut dressed = editor.views.skeleton.view(key).preview.wearing.clone();
+    let mut dressed = editor
+        .views
+        .skeleton
+        .views
+        .view(key)
+        .preview
+        .wearing
+        .clone();
     for slot in &def.slots {
         for (_, path, name) in worn.iter().filter(|(worn, _, _)| *worn == slot) {
             ui.horizontal(|ui| {
@@ -263,7 +270,7 @@ fn wearing(editor: &mut Editor, ui: &mut Ui, key: &str, content: &Content, def: 
             });
         }
     }
-    editor.views.skeleton.view_mut(key).preview.wearing = dressed;
+    editor.views.skeleton.views.view_mut(key).preview.wearing = dressed;
 }
 
 fn tints(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
@@ -352,6 +359,7 @@ pub(super) fn wearing_items(
     editor
         .views
         .skeleton
+        .views
         .view(key)
         .preview
         .wearing

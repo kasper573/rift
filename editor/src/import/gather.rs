@@ -170,6 +170,6 @@ fn unpack(gathered: &mut Gathered, path: &str, bytes: &[u8], reading: &dyn Fn(&s
 }
 
 fn extension(path: &str) -> Option<String> {
-    let name = path.rsplit('/').next()?;
+    let name = crate::moves::file_name(path);
     name.rsplit_once('.').map(|(_, ext)| ext.to_lowercase())
 }

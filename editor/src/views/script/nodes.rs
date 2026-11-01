@@ -26,32 +26,32 @@ use crate::schema::{self, SchemaVariant};
 use crate::tabs::shown_path;
 use crate::{condition, rows, spans};
 
-pub type Nodes = BTreeMap<String, Node>;
+pub(crate) type Nodes = BTreeMap<String, Node>;
 
 /// The tag a node is written with: its flow kind, or the effect it is.
-pub fn tag_of(node: &Node) -> &'static str {
+pub(crate) fn tag_of(node: &Node) -> &'static str {
     match node {
         Node::Effect(effect) => RiftEffectKind::from(effect).into(),
         other => other.kind().name(),
     }
 }
 
-pub fn is_dialogue(node: &Node) -> bool {
+pub(crate) fn is_dialogue(node: &Node) -> bool {
     matches!(node, Node::Dialogue(_))
 }
 
-pub fn is_event(node: &Node) -> bool {
+pub(crate) fn is_event(node: &Node) -> bool {
     matches!(node, Node::On { .. })
 }
 
-pub fn event_of(node: &Node) -> Option<EventKind> {
+fn event_of(node: &Node) -> Option<EventKind> {
     match node {
         Node::On { event, .. } => Some(event.kind()),
         _ => None,
     }
 }
 
-pub fn event_name(node: &Node) -> Option<&'static str> {
+pub(crate) fn event_name(node: &Node) -> Option<&'static str> {
     event_of(node).map(Into::into)
 }
 
@@ -78,7 +78,7 @@ pub fn hint(node: &Node) -> String {
 
 /// Who says a line, as a writer picks it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum SpeakerKind {
+pub(crate) enum SpeakerKind {
     Npc,
     Object,
     Narrator,
@@ -113,7 +113,7 @@ impl SpeakerKind {
     }
 }
 
-pub fn blank_line(by: Speaker) -> Line {
+pub(crate) fn blank_line(by: Speaker) -> Line {
     Line {
         by,
         face: None,
@@ -129,7 +129,11 @@ pub fn speaker_name(reader: &FolderReader, by: Speaker) -> String {
 }
 
 /// The bust image `by` shows in `face`, when an npc speaks.
-pub fn bust_file(project: &Project, by: Speaker, face: Option<&Expression>) -> Option<String> {
+pub(crate) fn bust_file(
+    project: &Project,
+    by: Speaker,
+    face: Option<&Expression>,
+) -> Option<String> {
     let Speaker::Npc(npc) = by else {
         return None;
     };
@@ -149,7 +153,7 @@ pub struct NodePort {
 }
 
 impl NodePort {
-    pub fn is_choice(&self) -> bool {
+    pub(crate) fn is_choice(&self) -> bool {
         matches!(self.exit, Exit::Choice(_))
     }
 }
@@ -278,7 +282,7 @@ impl NodeCatalogue {
         self.entries.iter().find(|entry| entry.kind == kind)
     }
 
-    pub fn entry_of(&self, node: &Node) -> Option<&NodeEntry> {
+    pub(crate) fn entry_of(&self, node: &Node) -> Option<&NodeEntry> {
         self.entry(tag_of(node))
     }
 
@@ -307,11 +311,6 @@ impl NodeCatalogue {
     pub fn refusal(&self, kind: &str, owner: RunnerKind) -> Option<OwnerRefusal> {
         allowed(&self.entry(kind)?.owners, owner)
     }
-
-    pub fn event_refusal(&self, event: &str, owner: RunnerKind) -> Option<OwnerRefusal> {
-        let (_, owners) = self.events.iter().find(|(name, _)| name == event)?;
-        allowed(owners, owner)
-    }
 }
 
 /// `template` read as a `T` whatever the files it names, which a template of no folder names
@@ -337,7 +336,7 @@ fn allowed(owners: &[RunnerKind], owner: RunnerKind) -> Option<OwnerRefusal> {
     })
 }
 
-pub fn has_input(node: &Node) -> bool {
+pub(crate) fn has_input(node: &Node) -> bool {
     !is_event(node)
 }
 
@@ -386,14 +385,14 @@ pub fn ports(node: &Node) -> Vec<NodePort> {
 }
 
 /// The exit of `node` a scene names by the label of its output.
-pub fn exit_called(node: &Node, output: &str) -> Option<Exit> {
+pub(crate) fn exit_called(node: &Node, output: &str) -> Option<Exit> {
     node.exits()
         .into_iter()
         .map(|(exit, _)| exit)
         .find(|exit| exit_name(*exit) == output)
 }
 
-pub fn exit_label(exit: Exit) -> String {
+pub(crate) fn exit_label(exit: Exit) -> String {
     exit_name(exit)
 }
 
@@ -405,13 +404,13 @@ fn exit_name(exit: Exit) -> String {
     }
 }
 
-pub fn set_arrow(node: &mut Node, exit: Exit, target: Option<&str>) {
+pub(crate) fn set_arrow(node: &mut Node, exit: Exit, target: Option<&str>) {
     if let Some(arrow) = node.exit_mut(exit) {
         arrow.point(target);
     }
 }
 
-pub fn arrows_into(nodes: &Nodes, target: &str) -> Vec<(String, Exit)> {
+pub(crate) fn arrows_into(nodes: &Nodes, target: &str) -> Vec<(String, Exit)> {
     let mut found = Vec::new();
     for (name, node) in nodes {
         for (exit, arrow) in node.exits() {
@@ -423,7 +422,7 @@ pub fn arrows_into(nodes: &Nodes, target: &str) -> Vec<(String, Exit)> {
     found
 }
 
-pub fn unlink(nodes: &mut Nodes, target: &str) {
+pub(crate) fn unlink(nodes: &mut Nodes, target: &str) {
     for node in nodes.values_mut() {
         for (_, arrow) in node.exits_mut() {
             if arrow.to() == Some(target) {
@@ -433,7 +432,7 @@ pub fn unlink(nodes: &mut Nodes, target: &str) {
     }
 }
 
-pub fn port_label(nodes: &Nodes, from: &str, exit: Exit) -> String {
+pub(crate) fn port_label(nodes: &Nodes, from: &str, exit: Exit) -> String {
     nodes
         .get(from)
         .and_then(|node| ports(node).into_iter().find(|port| port.exit == exit))
@@ -444,7 +443,7 @@ pub fn reachable(nodes: &Nodes) -> HashSet<String> {
     depths(nodes).into_keys().collect()
 }
 
-pub fn depths(nodes: &Nodes) -> BTreeMap<String, usize> {
+pub(crate) fn depths(nodes: &Nodes) -> BTreeMap<String, usize> {
     let mut depths: BTreeMap<String, usize> = BTreeMap::new();
     let mut queue: VecDeque<(String, usize)> = nodes
         .iter()
@@ -483,7 +482,7 @@ pub fn rename(nodes: &mut Nodes, old: &str, new: &str) {
     }
 }
 
-pub fn free_name(nodes: &Nodes, base: &str) -> String {
+pub(crate) fn free_name(nodes: &Nodes, base: &str) -> String {
     let base = base
         .trim()
         .replace(|c: char| !c.is_ascii_alphanumeric() && c != '_', "_");
@@ -492,7 +491,7 @@ pub fn free_name(nodes: &Nodes, base: &str) -> String {
 }
 
 /// The schema of a node, as the forms of a node's fields walk it.
-pub fn node_root() -> &'static Value {
+pub(crate) fn node_root() -> &'static Value {
     schema::of_type::<Node>()
 }
 
@@ -501,25 +500,18 @@ pub fn variants() -> Vec<SchemaVariant<'static>> {
     schema::tagged_variants(root, root)
 }
 
-pub fn variant_schema(kind: &str) -> Option<&'static Value> {
+fn variant_schema(kind: &str) -> Option<&'static Value> {
     variants()
         .into_iter()
         .find(|variant| variant.tag == kind)
         .map(|variant| variant.schema)
 }
 
-pub fn event_variants() -> Vec<SchemaVariant<'static>> {
+pub(crate) fn event_variants() -> Vec<SchemaVariant<'static>> {
     let Some(on) = variant_schema(NodeKind::On.name()) else {
         return Vec::new();
     };
     schema::tagged_variants(node_root(), on)
-}
-
-pub fn event_variant(event: &str) -> Option<&'static Value> {
-    event_variants()
-        .into_iter()
-        .find(|variant| variant.tag == event)
-        .map(|variant| variant.schema)
 }
 
 /// A node of `kind` as the editor first places it: the least it can be, with a start a writer
@@ -582,7 +574,7 @@ pub fn fresh(
 
 /// A node starting a flow at the first event a script of `kind` answers that none in `used`
 /// already starts.
-pub fn free_event(
+pub(crate) fn free_event(
     reader: &FolderReader,
     catalogue: &NodeCatalogue,
     kind: RunnerKind,
@@ -597,7 +589,11 @@ pub fn free_event(
 }
 
 /// An event node for `event`, its fields at a start a writer can see work.
-pub fn fresh_event(reader: &FolderReader, event: &str, nearby: schema::Nearby) -> Option<Node> {
+pub(crate) fn fresh_event(
+    reader: &FolderReader,
+    event: &str,
+    nearby: schema::Nearby,
+) -> Option<Node> {
     let variant = event_variants()
         .into_iter()
         .find(|variant| variant.tag == event)?;
@@ -620,7 +616,7 @@ pub fn fresh_event(reader: &FolderReader, event: &str, nearby: schema::Nearby) -
 }
 
 /// The schema of the fields a node's form shows, and those it leaves to the node's arrows.
-pub fn form_fields(node: &Node) -> Option<(&'static Value, Vec<String>)> {
+pub(crate) fn form_fields(node: &Node) -> Option<(&'static Value, Vec<String>)> {
     let variant = variants()
         .into_iter()
         .find(|variant| variant.tag == tag_of(node))?;
@@ -654,7 +650,7 @@ pub fn summary(node: &Node, text: &NodeText) -> String {
         .join(" · ")
 }
 
-pub fn place_text(text: &NodeText, place: &Place) -> String {
+fn place_text(text: &NodeText, place: &Place) -> String {
     format!(
         "{} {}, {}",
         text.path_of(place.area),
@@ -747,7 +743,7 @@ impl Walker<'_> {
 }
 
 #[derive(Default)]
-pub struct NodeReads {
+pub(crate) struct NodeReads {
     pub memories: Vec<String>,
     pub items: Vec<String>,
     pub places: Vec<String>,
@@ -1070,7 +1066,7 @@ fn value_text(value: &Value) -> String {
 }
 
 /// A value a variable takes, as text.
-pub fn var_value_text(text: &NodeText, value: &VarValue<RiftScripting>) -> String {
+pub(crate) fn var_value_text(text: &NodeText, value: &VarValue<RiftScripting>) -> String {
     var_value_pieces(text, value)
         .into_iter()
         .map(|piece| piece.text)
@@ -1163,7 +1159,7 @@ fn event_pieces(text: &NodeText, event: &RiftEvent) -> Vec<SummaryPiece> {
     }
 }
 
-pub fn expression_pieces(text: &NodeText, condition: &Condition) -> Vec<SummaryPiece> {
+fn expression_pieces(text: &NodeText, condition: &Condition) -> Vec<SummaryPiece> {
     if let Expr::Var { var } = condition {
         return vec![hole(var)];
     }
@@ -1194,7 +1190,7 @@ pub fn expression_pieces(text: &NodeText, condition: &Condition) -> Vec<SummaryP
 }
 
 /// The variable a value of a script is filled from, when it is filled from one.
-pub fn var_name(value: &Value) -> Option<String> {
+pub(crate) fn var_name(value: &Value) -> Option<String> {
     match Fill::<Value>::deserialize(value) {
         Ok(Fill::Var { var }) => Some(var),
         _ => None,
@@ -1202,7 +1198,7 @@ pub fn var_name(value: &Value) -> Option<String> {
 }
 
 /// The variables the values within `value` are filled from.
-pub fn vars_in(value: &Value, names: &mut Vec<String>) {
+fn vars_in(value: &Value, names: &mut Vec<String>) {
     if let Some(name) = var_name(value) {
         if !names.contains(&name) {
             names.push(name);
@@ -1217,7 +1213,7 @@ pub fn vars_in(value: &Value, names: &mut Vec<String>) {
 }
 
 /// The variables `node` is filled from.
-pub fn node_vars(reader: &FolderReader, node: &Node) -> Vec<String> {
+pub(crate) fn node_vars(reader: &FolderReader, node: &Node) -> Vec<String> {
     let mut names = Vec::new();
     if let Ok(json) = reader.to_json(node) {
         vars_in(&json, &mut names);

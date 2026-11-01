@@ -26,7 +26,6 @@ rfd = "0.17"
 process-wrap = { version = "10", features = ["std"] }
 include_dir = "0.7"
 image = { version = "0.25", default-features = false, features = ["png", "gif"] }
-png = "0.18"
 dirs = "7"
 ureq = { workspace = true }
 rayon.workspace = true

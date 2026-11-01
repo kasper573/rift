@@ -61,7 +61,7 @@ fn used_script(edit: &mut ContentEdit, project: &Project, skill: &str) -> Result
 
 /// Writes into `edit` a script answering used, run by owners of `runs_on`, beside `owner` and named
 /// after it. Gives what reads the files with it, and its id there.
-pub fn answering_used(
+pub(crate) fn answering_used(
     edit: &mut ContentEdit,
     project: &Project,
     owner: &str,
@@ -83,7 +83,11 @@ pub fn answering_used(
 }
 
 /// Whether `item` is usable with no script of its own answering used, which the game refuses.
-pub fn usable_without_used(project: &Project, reader: &FolderReader, item: &ItemDef) -> bool {
+pub(crate) fn usable_without_used(
+    project: &Project,
+    reader: &FolderReader,
+    item: &ItemDef,
+) -> bool {
     let answers_used = |module: &ItemModule| {
         let ItemModule::Script(module) = module else {
             return false;

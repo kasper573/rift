@@ -11,11 +11,11 @@ use crate::project::files::content_holding;
 use crate::tabs::file_title;
 use crate::tabs::shown_path;
 
-pub fn show_usages_grouped(editor: &mut Editor, ui: &mut Ui, key: &str, titled: bool) {
+pub(crate) fn show_usages_grouped(editor: &mut Editor, ui: &mut Ui, key: &str, titled: bool) {
     let Some(project) = &editor.project else {
         return;
     };
-    let mut groups: Vec<UsageGroup> = Vec::new();
+    let mut groups: Vec<FieldUsages> = Vec::new();
     let mut total = 0;
     for usage in project.usages.of_content(key) {
         total += 1;
@@ -25,7 +25,7 @@ pub fn show_usages_grouped(editor: &mut Editor, ui: &mut Ui, key: &str, titled: 
             .find(|group| group.file == usage.file && group.field == field)
         {
             Some(group) => group.count += 1,
-            None => groups.push(UsageGroup {
+            None => groups.push(FieldUsages {
                 file: usage.file.clone(),
                 field,
                 count: 1,
@@ -85,7 +85,7 @@ pub fn show_usages_grouped(editor: &mut Editor, ui: &mut Ui, key: &str, titled: 
     }
 }
 
-pub fn show_asset(editor: &mut Editor, ui: &mut Ui, path: &str) {
+pub(crate) fn show_asset(editor: &mut Editor, ui: &mut Ui, path: &str) {
     ui.label(theme::mono(path.to_owned()).color(theme::CODE));
     if path.ends_with(&format!(".{NOTE_EXTENSION}")) {
         show_note(editor, ui, path);
@@ -136,7 +136,7 @@ fn show_note(editor: &Editor, ui: &mut Ui, path: &str) {
     ui.add(egui::Label::new(theme::mono(text).color(theme::TEXT)).wrap());
 }
 
-pub fn show_asset_usages(editor: &mut Editor, ui: &mut Ui, path: &str) {
+pub(crate) fn show_asset_usages(editor: &mut Editor, ui: &mut Ui, path: &str) {
     let usages: Vec<(String, String)> = editor
         .project
         .as_ref()
@@ -170,7 +170,7 @@ pub fn show_asset_usages(editor: &mut Editor, ui: &mut Ui, path: &str) {
 }
 
 /// The usages one file makes of a row from the same field.
-struct UsageGroup {
+pub struct FieldUsages {
     file: String,
     field: String,
     count: usize,

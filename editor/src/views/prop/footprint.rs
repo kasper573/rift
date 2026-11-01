@@ -21,31 +21,36 @@ const GRIP: f32 = 10.0;
 const SMALLEST: f32 = 0.05;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub enum Kind {
+pub enum FootprintKind {
     None,
     Circle,
     Box,
     Polygon,
 }
 
-impl Kind {
-    pub const ALL: [Kind; 4] = [Kind::None, Kind::Circle, Kind::Box, Kind::Polygon];
+impl FootprintKind {
+    pub(crate) const ALL: [FootprintKind; 4] = [
+        FootprintKind::None,
+        FootprintKind::Circle,
+        FootprintKind::Box,
+        FootprintKind::Polygon,
+    ];
 
-    pub fn of(footprint: &Footprint) -> Kind {
+    pub fn of(footprint: &Footprint) -> FootprintKind {
         match footprint {
-            Footprint::None => Kind::None,
-            Footprint::Circle { .. } => Kind::Circle,
-            Footprint::Box { .. } => Kind::Box,
-            Footprint::Polygon { .. } => Kind::Polygon,
+            Footprint::None => FootprintKind::None,
+            Footprint::Circle { .. } => FootprintKind::Circle,
+            Footprint::Box { .. } => FootprintKind::Box,
+            Footprint::Polygon { .. } => FootprintKind::Polygon,
         }
     }
 
     pub fn label(self) -> &'static str {
         match self {
-            Kind::None => "no footprint",
-            Kind::Circle => "circle",
-            Kind::Box => "box",
-            Kind::Polygon => "polygon",
+            FootprintKind::None => "no footprint",
+            FootprintKind::Circle => "circle",
+            FootprintKind::Box => "box",
+            FootprintKind::Polygon => "polygon",
         }
     }
 }
@@ -66,18 +71,18 @@ pub struct Drag {
 
 /// `from` as a footprint of `kind`, as big as it was, or as the model's box (`bounds`) when it took
 /// no ground.
-pub fn converted(from: &Footprint, bounds: Option<(Vec3, Vec3)>, kind: Kind) -> Footprint {
+pub fn converted(from: &Footprint, bounds: Option<(Vec3, Vec3)>, kind: FootprintKind) -> Footprint {
     let (half_width, half_depth) = half_extents(from, bounds);
     match kind {
-        Kind::None => Footprint::None,
-        Kind::Circle => Footprint::Circle {
+        FootprintKind::None => Footprint::None,
+        FootprintKind::Circle => Footprint::Circle {
             radius: Meters(half_width.max(half_depth)),
         },
-        Kind::Box => Footprint::Box {
+        FootprintKind::Box => Footprint::Box {
             width: Meters(half_width * 2.0),
             depth: Meters(half_depth * 2.0),
         },
-        Kind::Polygon => Footprint::Polygon {
+        FootprintKind::Polygon => Footprint::Polygon {
             points: vec![
                 Pos::new(-half_width, -half_depth),
                 Pos::new(half_width, -half_depth),
@@ -99,7 +104,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef, size: Ve
     let view_key = format!("prop-top:{key}");
     stage::show_picture(editor, ui, &painter, rect, &view_key);
     let bounds = super::model_bounds(editor, key);
-    let view = editor.views.prop.view_mut(key);
+    let view = editor.views.prop.views.view_mut(key);
     camera::navigate(ui, &response, &mut view.top, rect.height());
     view.top.top_down();
     let camera = view.top;

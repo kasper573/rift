@@ -5,7 +5,6 @@ pub mod footprint;
 pub mod inspect;
 pub mod turntable;
 
-use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -26,16 +25,17 @@ use super::area::camera::OrbitCamera;
 use super::stage::{self, StagePicture};
 use crate::app::Editor;
 use crate::project::ContentEdit;
-use crate::shell::{row_form, sidebar};
+use crate::shell::row_form;
 use crate::tabs::shown_path;
+use crate::views::ViewMap;
 
 /// How far above its lowest point a model's corners still count as standing on the ground; a
 /// model shorter than twice this is measured to half its height instead.
-pub const KNEE: Meters = Meters(0.5);
+const KNEE: Meters = Meters(0.5);
 
 #[derive(Default)]
 pub struct PropViews {
-    pub views: HashMap<String, PropView>,
+    pub views: ViewMap<PropView>,
     pub drops: Vec<PathBuf>,
 }
 
@@ -54,34 +54,20 @@ pub struct Geometry {
     pub flat_shaded: bool,
 }
 
-impl PropViews {
-    pub fn view(&self, key: &str) -> &PropView {
-        self.views
-            .get(key)
-            .expect("ensure_view ran before the prop view was read")
-    }
-
-    pub fn view_mut(&mut self, key: &str) -> &mut PropView {
-        self.views
-            .get_mut(key)
-            .expect("ensure_view ran before the prop view was changed")
-    }
-}
-
 pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
     let Some(row) = super::read_shown::<PropDef>(editor, ui, key) else {
         return;
     };
     ensure_view(editor, key);
     take_drops(editor, key);
-    sidebar::row(ui, "prop", |ui| {
+    ui::panel::left_scrolled(ui, "prop", |ui| {
         row_form::show_row(editor, ui, PropDef::TABLE, key)
     });
-    sidebar::inspector(editor, ui, "prop", |editor, ui| {
+    ui::panel::inspector(ui, editor, "prop", |editor, ui| {
         inspect::show(editor, ui, key, &row);
     });
     egui::Frame::new()
-        .inner_margin(egui::Margin::symmetric(12, 8))
+        .inner_margin(crate::shell::VIEW_PADDING)
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
             header(editor, ui, key, &row);
@@ -95,7 +81,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
     editor.status.left.push(format!(
         "{} · {}",
         shown_path(key),
-        footprint::Kind::of(&row.footprint).label()
+        footprint::FootprintKind::of(&row.footprint).label()
     ));
     editor.status.left.push(
         "right drag turns · wheel zooms · drag the handles from above · drop a .glb to replace the \
@@ -106,7 +92,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
 
 /// A view for the prop at `key`, framed on its model, when none is open yet.
 pub fn ensure_view(editor: &mut Editor, key: &str) {
-    if editor.views.prop.views.contains_key(key) {
+    if editor.views.prop.views.contains(key) {
         return;
     }
     let radius = model_bounds(editor, key).map_or(1.0, |(min, max)| (max - min).length() / 2.0);
@@ -117,7 +103,7 @@ pub fn ensure_view(editor: &mut Editor, key: &str) {
     };
     top.top_down();
     editor.views.prop.views.insert(
-        key.to_owned(),
+        key,
         PropView {
             turntable,
             top,
@@ -160,18 +146,13 @@ pub fn fit_to_mesh(editor: &mut Editor, key: &str) -> bool {
 
 /// Gives the prop at `key` the footprint `footprint`, as one step.
 pub fn shape(editor: &mut Editor, key: &str, footprint: Footprint) -> bool {
-    let Some(Ok(row)) = editor.read::<PropDef>(key) else {
-        return false;
-    };
-    if row.footprint == footprint {
-        return false;
-    }
-    let mut prop = (*row).clone();
-    prop.footprint = footprint;
-    editor.write_content(
-        &format!("Shape {}'s footprint", shown_path(key)),
+    editor.change(
+        ContentEdit::new(format!("Shape {}'s footprint", shown_path(key))),
         key,
-        &prop,
+        |prop: &mut PropDef| {
+            prop.footprint = footprint;
+            Ok(())
+        },
     )
 }
 
@@ -261,7 +242,7 @@ pub fn geometry(editor: &mut Editor, key: &str) -> Option<Arc<Geometry>> {
     let path = row.model.path();
     let hash = project.files.hash_of(&path)?.to_owned();
     ensure_view(editor, key);
-    if let Some(known) = &editor.views.prop.view(key).geometry
+    if let Some(known) = &editor.views.prop.views.view(key).geometry
         && known.hash == hash
     {
         return Some(known.clone());
@@ -273,12 +254,15 @@ pub fn geometry(editor: &mut Editor, key: &str) -> Option<Arc<Geometry>> {
         flat_shaded: gltf::is_flat_shaded(&triangles),
         triangles,
     });
-    editor.views.prop.view_mut(key).geometry = Some(geometry.clone());
+    editor.views.prop.views.view_mut(key).geometry = Some(geometry.clone());
     Some(geometry)
 }
 
 /// The box the model of the prop at `key` fits in, as the loader measured it.
-pub fn model_bounds(editor: &Editor, key: &str) -> Option<(bevy::math::Vec3, bevy::math::Vec3)> {
+pub(crate) fn model_bounds(
+    editor: &Editor,
+    key: &str,
+) -> Option<(bevy::math::Vec3, bevy::math::Vec3)> {
     let project = editor.project.as_ref()?;
     let content = project.content.as_ref()?;
     let row = project.read::<PropDef>(key).ok()?;
@@ -296,6 +280,7 @@ pub(super) fn picture(editor: &mut Editor, key: &str) -> Option<(u64, Arc<Pictur
     editor
         .views
         .prop
+        .views
         .view_mut(key)
         .picture
         .of(&content, generation, Pictured::Prop(id))
@@ -305,8 +290,8 @@ fn header(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef) {
     ui.horizontal(|ui| {
         ui.label(theme::mono(shown_path(key)).color(theme::CODE));
         ui.add_space(8.0);
-        let current = footprint::Kind::of(&row.footprint);
-        for kind in footprint::Kind::ALL {
+        let current = footprint::FootprintKind::of(&row.footprint);
+        for kind in footprint::FootprintKind::ALL {
             if chip::mode(ui, kind.label(), kind == current).clicked() && kind != current {
                 let bounds = model_bounds(editor, key);
                 shape(

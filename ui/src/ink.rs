@@ -2,7 +2,7 @@ use egui::Color32;
 
 pub const CREAM: Color32 = Color32::from_rgb(0xEF, 0xE3, 0xC4);
 pub const LIGHT: Color32 = Color32::from_rgb(0xF5, 0xEB, 0xD3);
-pub const CREAM2: Color32 = Color32::from_rgb(0xE4, 0xD2, 0xA4);
+pub(crate) const CREAM2: Color32 = Color32::from_rgb(0xE4, 0xD2, 0xA4);
 pub const HONEY: Color32 = Color32::from_rgb(0xE2, 0xCB, 0x93);
 pub const HONEY2: Color32 = Color32::from_rgb(0xD2, 0xB6, 0x76);
 pub const INK: Color32 = Color32::from_rgb(0x2A, 0x1F, 0x15);
@@ -21,7 +21,7 @@ pub const SPRING: Color32 = Color32::from_rgb(0x7E, 0xE8, 0x8F);
 
 pub const VEIL: Color32 = Color32::from_rgb(0x12, 0x12, 0x12);
 
-pub const PLACE: Color32 = AZURE;
+const PLACE: Color32 = AZURE;
 pub const NAME: Color32 = VERDIGRIS;
 pub const ITEM: Color32 = GOLD;
 pub const MAGIC: Color32 = TYRIAN;
@@ -76,7 +76,7 @@ pub fn ink_wash(alpha: f32) -> Color32 {
     wash(INK, alpha)
 }
 
-pub fn white_wash(alpha: f32) -> Color32 {
+pub(crate) fn white_wash(alpha: f32) -> Color32 {
     wash(Color32::WHITE, alpha)
 }
 

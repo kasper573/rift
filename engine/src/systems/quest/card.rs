@@ -3,7 +3,7 @@ use ui::card::{self, Art, Card, CardResponse};
 use ui::controls::{self, Pill};
 use ui::egui::{Align, Label, Layout, Response, Sense, Ui};
 use ui::face::{self, TextRole};
-use ui::glyph::{self, Kind, Mark};
+use ui::glyph::{self, CardKind, Mark};
 use ui::ink;
 
 use super::{
@@ -59,7 +59,7 @@ pub fn show<I: ImageSource + ?Sized>(
         None => def.category.to_lowercase(),
     };
     let icon = images.image(def.icon(content)).map(|image| image.texture);
-    let mut shown = Card::new(Kind::Quest, &def.title);
+    let mut shown = Card::new(CardKind::Quest, &def.title);
     shown.band = &band;
     shown.art = Art {
         icon,

@@ -5,6 +5,7 @@ use std::collections::BTreeMap;
 
 use engine::core::content::{Content, ContentFile, ContentNames, NamedContent};
 use engine::systems::actor::model::Skeletons;
+pub use engine::systems::actor::skeleton::NameKind;
 use engine::systems::actor::skeleton::{ClipSet, MoveName, Rung, SkeletonDef, SkeletonId};
 use engine::systems::actor::{MaterialDef, ModelDef, ModelId, ModelPartDef};
 use engine::systems::actor::{Motion, Pose};
@@ -13,49 +14,20 @@ use engine::systems::item::{ItemDef, Wear};
 use engine::systems::npc::NpcDef;
 use engine::systems::player::snapshot::CharacterSnapshot;
 
-/// What kind of name a field holds, by the marker its schema carries.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum NameKind {
-    Move,
-    Gesture,
-    Joint,
-    Group,
-    Build,
-    Region,
-    Slot,
-    Tint,
+/// The kind of name a field of `schema` holds, by the marker its schema carries.
+pub(crate) fn kind_of_schema(schema: &serde_json::Value) -> Option<NameKind> {
+    schema
+        .as_object()?
+        .keys()
+        .find_map(|marker| NameKind::of_marker(marker))
 }
 
-impl NameKind {
-    /// The kind of name a field of `schema` holds, by the marker its schema carries.
-    pub fn of_schema(schema: &serde_json::Value) -> Option<NameKind> {
-        schema
-            .as_object()?
-            .keys()
-            .find_map(|marker| NameKind::of_marker(marker))
-    }
-
-    /// Whether names of the kind are made up where a skeleton lists them, rather than picked.
-    fn listed_by_skeleton(self) -> bool {
-        matches!(
-            self,
-            NameKind::Build | NameKind::Region | NameKind::Slot | NameKind::Tint
-        )
-    }
-
-    pub fn of_marker(marker: &str) -> Option<NameKind> {
-        match marker {
-            "x-move" => Some(NameKind::Move),
-            "x-gesture" => Some(NameKind::Gesture),
-            "x-joint" => Some(NameKind::Joint),
-            "x-group" => Some(NameKind::Group),
-            "x-build" => Some(NameKind::Build),
-            "x-region" => Some(NameKind::Region),
-            "x-slot" => Some(NameKind::Slot),
-            "x-tint" => Some(NameKind::Tint),
-            _ => None,
-        }
-    }
+/// Whether names of `kind` are made up where a skeleton lists them, rather than picked.
+fn listed_by_skeleton(kind: NameKind) -> bool {
+    matches!(
+        kind,
+        NameKind::Build | NameKind::Region | NameKind::Slot | NameKind::Tint
+    )
 }
 
 /// A name a field may take, with what it is.
@@ -95,7 +67,9 @@ pub fn declarations<N: Ord>(
 }
 
 /// Where each move is declared.
-pub fn move_declarations(content: &Content) -> BTreeMap<MoveName, Vec<(String, Vec<String>)>> {
+pub(crate) fn move_declarations(
+    content: &Content,
+) -> BTreeMap<MoveName, Vec<(String, Vec<String>)>> {
     declarations(content, |set| set.moves.keys().cloned().collect())
 }
 
@@ -173,7 +147,7 @@ pub fn choices(
         );
     }
     let (table, key) = row?;
-    if table == SkeletonDef::TABLE && kind.listed_by_skeleton() {
+    if table == SkeletonDef::TABLE && listed_by_skeleton(kind) {
         return None;
     }
     if table == ItemDef::TABLE && kind == NameKind::Slot {

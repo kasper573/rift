@@ -15,10 +15,11 @@ use super::flags::Flag;
 use super::modules::ADD_MENU;
 use super::nodes::{self, Landing, NodeFlag, Remap};
 use super::{AreaSnapshot, shapes};
-use crate::app::{Clipboard, Editor, SceneClip};
+use crate::app::Editor;
+use crate::clipboard::{Clipboard, SceneClip};
 use crate::keymap::EditorKey;
 use crate::picker::Dragged;
-use crate::project::{ContentEdit, Project, RowSelection};
+use crate::project::{Project, RowSelection};
 use crate::scene_graph;
 pub use crate::shell::tree::Toggle;
 use crate::shell::tree::{self, DropAt, RowToggles, ToggleState, TreeDrop, TreeRow, TreeSource};
@@ -130,7 +131,7 @@ impl<'a> SceneSource<'a> {
     ) -> SceneSource<'a> {
         let SceneNarrowing { filter, view, kept } = narrowing;
         let in_place: Vec<String> = (1..=snapshot.in_place.len())
-            .map(|depth| place_ids(&snapshot.in_place[..depth]))
+            .map(|depth| super::place_id_of(&snapshot.in_place[..depth]))
             .collect();
         let mut source = SceneSource {
             snapshot,
@@ -228,7 +229,7 @@ impl<'a> SceneSource<'a> {
     }
 
     /// How many rows pass the filter and Show, and how many there are.
-    pub fn hit_count(&self) -> Option<(usize, usize)> {
+    pub(crate) fn hit_count(&self) -> Option<(usize, usize)> {
         self.narrowed.as_ref().map(|narrowed| narrowed.counted)
     }
 
@@ -888,7 +889,7 @@ pub fn add_menu(ui: &mut Ui, folder: &str, snapshot: &AreaSnapshot) -> Option<Sc
 }
 
 /// The row of the node holding the row `id`, "" at the top.
-pub fn parent_id(id: &str) -> String {
+pub(crate) fn parent_id(id: &str) -> String {
     let children = id.rfind("/children/");
     let opened = id.rfind("/in/");
     match (children, opened) {
@@ -907,17 +908,8 @@ pub fn local(id: &str) -> &str {
     }
 }
 
-/// The rows of the placements edited in place along `chain`, joined into the innermost's row.
-fn place_ids(chain: &[super::placement::AreaPlacement]) -> String {
-    chain
-        .iter()
-        .map(|place| place.node.as_str())
-        .collect::<Vec<_>>()
-        .join("/in")
-}
-
 /// The rows the editor's selection names in the tree of `snapshot`.
-pub fn selected_ids(snapshot: &AreaSnapshot, selection: &RowSelection) -> Vec<String> {
+pub(crate) fn selected_ids(snapshot: &AreaSnapshot, selection: &RowSelection) -> Vec<String> {
     let Some(key) = selection.keys.first() else {
         return Vec::new();
     };
@@ -926,7 +918,7 @@ pub fn selected_ids(snapshot: &AreaSnapshot, selection: &RowSelection) -> Vec<St
     }
     match snapshot.in_place.last() {
         Some(place) if place.blueprint == *key => {
-            let prefix = place_ids(&snapshot.in_place);
+            let prefix = super::place_id_of(&snapshot.in_place);
             selection
                 .parts
                 .iter()
@@ -939,7 +931,7 @@ pub fn selected_ids(snapshot: &AreaSnapshot, selection: &RowSelection) -> Vec<St
 
 /// The selection the rows `ids` of the tree of `snapshot` make: rows of one scene, the scene of the
 /// first.
-pub fn selection_of(snapshot: &AreaSnapshot, ids: &[String]) -> RowSelection {
+pub(crate) fn selection_of(snapshot: &AreaSnapshot, ids: &[String]) -> RowSelection {
     let level = ids.first().map_or(0, |id| SceneSource::level(id));
     let parts: Vec<String> = ids
         .iter()
@@ -1059,7 +1051,7 @@ pub fn toggle(editor: &mut Editor, bundle: &str, ids: &[String], toggle: Toggle)
 }
 
 /// Clears `toggle` on every node of `bundle`'s scene as one step.
-pub fn clear_all(editor: &mut Editor, bundle: &str, toggle: Toggle) {
+pub(crate) fn clear_all(editor: &mut Editor, bundle: &str, toggle: Toggle) {
     let verb = match toggle {
         Toggle::Hide => "Show",
         Toggle::Lock => "Unlock",
@@ -1187,11 +1179,11 @@ pub fn ungroup(editor: &mut Editor, bundle: &str, ids: &[String]) {
     }
 }
 
-pub const NEW_FOLDER: &str = "New folder";
+const NEW_FOLDER: &str = "New folder";
 
 /// Moves the rows `ids` into the folder row `folder` at `at`, as one step, the selection and open
 /// folders following them.
-pub fn move_rows(
+pub(crate) fn move_rows(
     editor: &mut Editor,
     snapshot: &AreaSnapshot,
     ids: &[String],
@@ -1245,13 +1237,13 @@ pub fn move_rows(
 }
 
 fn folder_is_level_top(snapshot: &AreaSnapshot, folder: &str, level: usize) -> bool {
-    level > 0 && place_ids(&snapshot.in_place[..level]) == folder
+    level > 0 && super::place_id_of(&snapshot.in_place[..level]) == folder
 }
 
 fn level_prefix(snapshot: &AreaSnapshot, level: usize) -> String {
     match level {
         0 => String::new(),
-        depth => format!("{}/in", place_ids(&snapshot.in_place[..depth])),
+        depth => format!("{}/in", super::place_id_of(&snapshot.in_place[..depth])),
     }
 }
 
@@ -1277,7 +1269,7 @@ fn follow(editor: &mut Editor, snapshot: &AreaSnapshot, level: usize, remap: &Re
 }
 
 /// The key a scene's open folders and Show choice are kept under, per user.
-pub fn tree_key(project: &Project, bundle: &str) -> String {
+pub(crate) fn tree_key(project: &Project, bundle: &str) -> String {
     format!(
         "{}:{bundle}",
         crate::user::UserFolder::folder_key(&project.root)
@@ -1332,26 +1324,26 @@ fn folder_is_place(snapshot: &AreaSnapshot, id: &str) -> bool {
 }
 
 /// Whether the row `id` is a placement edited in place, opened on its blueprint's scene.
-pub fn is_place_row(snapshot: &AreaSnapshot, id: &str) -> bool {
-    (1..=snapshot.in_place.len()).any(|depth| place_ids(&snapshot.in_place[..depth]) == id)
+fn is_place_row(snapshot: &AreaSnapshot, id: &str) -> bool {
+    (1..=snapshot.in_place.len()).any(|depth| super::place_id_of(&snapshot.in_place[..depth]) == id)
 }
 
 /// The row of the innermost placement edited in place, "" for none.
-pub fn place_row(snapshot: &AreaSnapshot) -> String {
+pub(crate) fn place_row(snapshot: &AreaSnapshot) -> String {
     match snapshot.in_place.len() {
         0 => String::new(),
-        depth => place_ids(&snapshot.in_place[..depth]),
+        depth => super::place_id_of(&snapshot.in_place[..depth]),
     }
 }
 
 /// The bundle whose scene holds the row `id`.
-pub fn bundle_of_row(snapshot: &AreaSnapshot, id: &str) -> String {
+pub(crate) fn bundle_of_row(snapshot: &AreaSnapshot, id: &str) -> String {
     bundle_at(snapshot, SceneSource::level(id))
 }
 
 /// The pointer within its own scene of the folder row `folder` new rows go into: "" for the top
 /// of a scene, the bundle's or a blueprint's edited in place.
-pub fn folder_pointer(snapshot: &AreaSnapshot, folder: &str) -> String {
+fn folder_pointer(snapshot: &AreaSnapshot, folder: &str) -> String {
     if folder.is_empty() || is_place_row(snapshot, folder) {
         String::new()
     } else {
@@ -1359,23 +1351,8 @@ pub fn folder_pointer(snapshot: &AreaSnapshot, folder: &str) -> String {
     }
 }
 
-/// What the ids of rows in the scene of `bundle` start with.
-pub fn prefix_of(snapshot: &AreaSnapshot, bundle: &str) -> String {
-    if bundle == snapshot.bundle {
-        return String::new();
-    }
-    match snapshot
-        .in_place
-        .iter()
-        .position(|place| place.blueprint == bundle)
-    {
-        Some(depth) => level_prefix(snapshot, depth + 1),
-        None => String::new(),
-    }
-}
-
 /// The rows directly inside the row `parent`, "" for the top, whatever narrows the tree.
-pub fn rows_in(snapshot: &AreaSnapshot, parent: &str) -> Vec<String> {
+pub(crate) fn rows_in(snapshot: &AreaSnapshot, parent: &str) -> Vec<String> {
     let (list, prefix): (&[SceneNode], String) = if parent.is_empty() {
         (snapshot.nodes(), String::new())
     } else if is_place_row(snapshot, parent) {
@@ -1409,7 +1386,7 @@ fn flag_of(toggle: Toggle) -> NodeFlag {
 }
 
 /// Every row of the tree, depth first in order.
-pub fn rows_in_order(snapshot: &AreaSnapshot) -> Vec<String> {
+pub(crate) fn rows_in_order(snapshot: &AreaSnapshot) -> Vec<String> {
     fn inner(snapshot: &AreaSnapshot, parent: &str, out: &mut Vec<String>) {
         for row in rows_in(snapshot, parent) {
             out.push(row.clone());
@@ -1422,7 +1399,7 @@ pub fn rows_in_order(snapshot: &AreaSnapshot) -> Vec<String> {
 }
 
 /// The folder row a paste into `folder` lands in.
-pub fn paste_target(snapshot: &AreaSnapshot, folder: &str) -> String {
+pub(crate) fn paste_target(snapshot: &AreaSnapshot, folder: &str) -> String {
     match snapshot.scene_node(folder) {
         Some(node) if nodes::is_folder(node) => folder.to_owned(),
         _ if is_place_row(snapshot, folder) => folder.to_owned(),
@@ -1537,7 +1514,7 @@ pub fn paste_rows(editor: &mut Editor, snapshot: &AreaSnapshot, folder: &str) {
 
 /// Copies each of the rows `ids` right after itself, a module a metre down and right of its
 /// original, as one step.
-pub fn duplicate_rows(editor: &mut Editor, snapshot: &AreaSnapshot, ids: &[String]) {
+pub(crate) fn duplicate_rows(editor: &mut Editor, snapshot: &AreaSnapshot, ids: &[String]) {
     let Some(first) = ids.first() else {
         return;
     };
@@ -1641,7 +1618,12 @@ pub fn delete_rows(editor: &mut Editor, snapshot: &AreaSnapshot, ids: &[String])
 }
 
 /// Moves each of the rows `ids` one place up or down among its siblings, as one step.
-pub fn reorder_rows(editor: &mut Editor, snapshot: &AreaSnapshot, ids: &[String], step: i32) {
+pub(crate) fn reorder_rows(
+    editor: &mut Editor,
+    snapshot: &AreaSnapshot,
+    ids: &[String],
+    step: i32,
+) {
     let Some(first) = ids.first() else {
         return;
     };
@@ -1749,14 +1731,14 @@ pub fn rename(editor: &mut Editor, snapshot: &AreaSnapshot, id: &str, typed: &st
 
 /// Every folder row of the scene at `level` a row could move into, by its labels from the top, the
 /// top itself first.
-pub fn folders_of(snapshot: &AreaSnapshot, level: usize) -> Vec<(String, String)> {
+pub(crate) fn folders_of(snapshot: &AreaSnapshot, level: usize) -> Vec<(String, String)> {
     let scene = scene_at(snapshot, level);
     let prefix = level_prefix(snapshot, level);
     let mut out = vec![(
         "(top level)".to_owned(),
         match level {
             0 => String::new(),
-            depth => place_ids(&snapshot.in_place[..depth]),
+            depth => super::place_id_of(&snapshot.in_place[..depth]),
         },
     )];
     let mut labels: HashMap<String, String> = HashMap::new();
@@ -1774,11 +1756,4 @@ pub fn folders_of(snapshot: &AreaSnapshot, level: usize) -> Vec<(String, String)
         }
     });
     out
-}
-
-/// Writes `edit` and, when it lands, selects `parts` of `bundle`.
-pub fn apply_selecting(editor: &mut Editor, edit: ContentEdit, bundle: &str, parts: Vec<String>) {
-    if editor.apply(edit) {
-        nodes::select(editor, bundle, parts);
-    }
 }

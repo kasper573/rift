@@ -68,7 +68,7 @@ pub(super) fn show_rows(editor: &mut Editor, ui: &mut Ui, selection: &RowSelecti
         let project = project.as_ref().expect("a project");
         let mut cx = FormCx::new(project, root, shapes, form, &mut actions).editing(&table, None);
         let shared_card = |ui: &mut Ui, cx: &mut FormCx, edits: &mut Vec<(String, Value)>| {
-            panel::card(false).show(ui, |ui| {
+            panel::tile(false).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 panel::subtitled(ui, &format!("{} {}s", values.len(), table), "shared fields");
                 ui.add_space(4.0);
@@ -137,7 +137,7 @@ pub(super) fn show_rows(editor: &mut Editor, ui: &mut Ui, selection: &RowSelecti
                     })
                     .collect();
                 let agree = firsts.iter().all(|(_, _, module)| *module == firsts[0].2);
-                panel::card(false).show(ui, |ui| {
+                panel::tile(false).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     panel::title(ui, &tag.replace('_', " "));
                     ui.add_space(4.0);

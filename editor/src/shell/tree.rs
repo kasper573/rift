@@ -914,7 +914,7 @@ pub fn matched(name: &str, needle: &str) -> Option<Range<usize>> {
 
 /// A tree's search field, filling the row, with Show ▾ at its right. Answers what `search`
 /// answers and whether the menu changed what the tree keeps in the user's settings.
-pub fn filter_row<R>(
+pub(crate) fn filter_row<R>(
     ui: &mut Ui,
     search: impl FnOnce(&mut Ui) -> R,
     menu: impl FnOnce(&mut Ui) -> bool,
@@ -934,7 +934,7 @@ pub fn filter_row<R>(
 
 /// A narrowing of what a tree lists that lives as long as the editor runs, shown in Show ▾ as a
 /// checkbox above the kinds.
-pub struct Narrowing<'a> {
+pub(crate) struct Narrowing<'a> {
     pub label: &'a str,
     pub on: &'a mut bool,
 }
@@ -942,7 +942,7 @@ pub struct Narrowing<'a> {
 /// Show ▾: which kinds of row a tree lists, whether folders with nothing shown stay, and the
 /// tree's narrowings, each kind after its mark. Answers whether what the user's settings keep
 /// changed.
-pub fn show_menu(
+pub(crate) fn show_menu(
     ui: &mut Ui,
     view: &mut crate::user::TreeView,
     kinds: &[String],

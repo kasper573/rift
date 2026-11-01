@@ -50,38 +50,6 @@ pub fn hatched(painter: &Painter, rect: Rect, color: Color32, scale: f32) {
     glyph::hatch_every(painter, rect, color, (scale / 2.0).clamp(3.0, 12.0));
 }
 
-/// `rect` washed in `color` and dotted over in it.
-pub fn dotted(painter: &Painter, rect: Rect, color: Color32) {
-    painter.rect_filled(rect, 0.0, ink::wash(color, 0.24));
-    let step = (rect.width() / 4.0).max(3.0);
-    let mut y = rect.min.y + step / 2.0;
-    while y < rect.max.y {
-        let mut x = rect.min.x + step / 2.0;
-        while x < rect.max.x {
-            painter.circle_filled(Pos2::new(x, y), (step / 5.0).max(1.0), color);
-            x += step;
-        }
-        y += step;
-    }
-}
-
-/// `rect` washed in `color` and ruled over in it both ways.
-pub fn gridded(painter: &Painter, rect: Rect, color: Color32) {
-    painter.rect_filled(rect, 0.0, ink::wash(color, 0.2));
-    let step = (rect.width() / 3.0).max(3.0);
-    let stroke = Stroke::new(1.0, color);
-    let mut x = rect.min.x + step;
-    while x < rect.max.x {
-        painter.vline(x, rect.y_range(), stroke);
-        x += step;
-    }
-    let mut y = rect.min.y + step;
-    while y < rect.max.y {
-        painter.hline(rect.x_range(), y, stroke);
-        y += step;
-    }
-}
-
 /// `rect` washed in `color` and ruled over in it across.
 pub fn striped(painter: &Painter, rect: Rect, color: Color32) {
     painter.rect_filled(rect, 0.0, ink::wash(color, 0.2));

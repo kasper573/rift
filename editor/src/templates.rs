@@ -22,7 +22,7 @@ pub struct GameTemplate {
 }
 
 impl GameTemplate {
-    pub fn rows_in(&self, table: &str) -> usize {
+    pub(crate) fn rows_in(&self, table: &str) -> usize {
         self.rows.get(table).map_or(0, Vec::len)
     }
 }

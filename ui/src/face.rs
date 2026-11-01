@@ -98,7 +98,7 @@ impl TextRole {
     }
 
     /// Extra space between letters, in em.
-    pub fn tracking(self) -> f32 {
+    fn tracking(self) -> f32 {
         match self {
             TextRole::Title => 0.06,
             TextRole::Section => 0.1,
@@ -144,7 +144,7 @@ impl TextRole {
         }
     }
 
-    pub fn widget_text(self, text: &str, color: Color32) -> WidgetText {
+    pub(crate) fn widget_text(self, text: &str, color: Color32) -> WidgetText {
         if self.tracking() == 0.0 {
             self.rich(text).color(color).into()
         } else {
@@ -187,10 +187,6 @@ pub fn quill(text: impl Into<String>) -> RichText {
 
 pub fn mono(text: impl Into<String>) -> RichText {
     TextRole::Mono.rich(text)
-}
-
-pub fn rubric(text: impl Into<String>) -> RichText {
-    RichText::new(text).color(ink::RUBRIC)
 }
 
 /// A Roman numeral for a card band; zero stays a zero and a count past the numerals' reach stays

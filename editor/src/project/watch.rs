@@ -6,7 +6,7 @@ use notify::event::{AccessKind, AccessMode, ModifyKind};
 use notify::{EventKind, RecommendedWatcher, RecursiveMode, Watcher as _};
 
 use super::files;
-use crate::app::ChannelInbox;
+use crate::inbox::ChannelInbox;
 
 pub struct FolderWatcher {
     root: PathBuf,

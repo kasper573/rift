@@ -15,7 +15,7 @@ pub fn ease_out(t: f32) -> f32 {
     1.0 - (1.0 - t).powi(3)
 }
 
-pub fn ease_in(t: f32) -> f32 {
+fn ease_in(t: f32) -> f32 {
     t.clamp(0.0, 1.0).powi(3)
 }
 

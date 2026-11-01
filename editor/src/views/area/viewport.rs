@@ -11,8 +11,7 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{ClearColorConfig, RenderTarget};
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
-use bevy::render::render_resource::TextureFormat;
-use bevy_egui::{EguiTextureHandle, EguiUserTextures};
+use bevy_egui::EguiUserTextures;
 use engine::core::audio::playback::{self, PlaySfx, SfxPlace};
 use engine::core::content::Content;
 use engine::core::ground::{Heightfield, Paint};
@@ -38,6 +37,7 @@ use ui::egui;
 
 use super::camera::OrbitCamera;
 use crate::app::Editor;
+use crate::stage::picture::render_target;
 
 const FIRST_LAYER: usize = 400;
 
@@ -53,7 +53,7 @@ pub struct Request {
     /// The terrain as a brush stroke is shaping it, shown in place of the picture's.
     pub stroke: Option<StrokeTerrain>,
     pub ghost: Option<Ghost>,
-    pub cast: Vec<Standing>,
+    pub cast: Vec<StandingActor>,
 }
 
 /// A terrain mid-stroke, numbered so it is laid again only when the stroke moves on.
@@ -74,7 +74,7 @@ pub struct Ghost {
 /// A rig standing in the area as the view shows it: a resident or one of a population's preview,
 /// looping its clip, or a model held at one moment of a clip on a turntable.
 #[derive(Clone, PartialEq)]
-pub struct Standing {
+pub struct StandingActor {
     pub body: Figure,
     pub clip: Option<StageClip>,
     pub transform: Transform,
@@ -143,9 +143,9 @@ struct StageProps {
     hung: Vec<Entity>,
 }
 
-impl Standing {
+impl StandingActor {
     /// Whether the same rig in the same clip stands here, however it is placed or held.
-    fn same_rig(&self, other: &Standing) -> bool {
+    fn same_rig(&self, other: &StandingActor) -> bool {
         self.body == other.body && self.clip == other.clip
     }
 }
@@ -162,13 +162,13 @@ pub struct Shown {
 
 #[derive(Default)]
 pub struct Viewports {
-    shown: HashMap<String, Viewport>,
+    shown: HashMap<String, RenderedView>,
     requests: Vec<Request>,
     layers: Vec<usize>,
     mirrored: Option<u64>,
 }
 
-struct Viewport {
+struct RenderedView {
     layer: usize,
     root: Entity,
     camera: Entity,
@@ -179,7 +179,7 @@ struct Viewport {
     stood: Option<Stood>,
     stroke: Option<u64>,
     ghost: Option<(String, Entity)>,
-    cast: Option<(Vec<Standing>, Vec<Entity>)>,
+    cast: Option<(Vec<StandingActor>, Vec<Entity>)>,
 }
 
 /// How far around the camera's target the covers, props and lights stand, in the camera's
@@ -246,7 +246,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
                     .find(|layer| !viewports.layers.contains(layer))
                     .unwrap_or(FIRST_LAYER);
                 viewports.layers.push(layer);
-                Viewport::spawn(world, layer, request.size)
+                RenderedView::spawn(world, layer, request.size)
             });
         viewport.draw(world, request);
     }
@@ -254,9 +254,9 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
     run_layers(world);
 }
 
-impl Viewport {
-    fn spawn(world: &mut World, layer: usize, size: [u32; 2]) -> Viewport {
-        let (image, texture) = render_target(world, size);
+impl RenderedView {
+    fn spawn(world: &mut World, layer: usize, size: [u32; 2]) -> RenderedView {
+        let (image, texture) = render_target(world, size, ImageSampler::linear());
         let root = world
             .spawn((
                 Transform::default(),
@@ -279,7 +279,7 @@ impl Viewport {
                 Transform::default(),
             ))
             .id();
-        Viewport {
+        RenderedView {
             layer,
             root,
             camera,
@@ -299,7 +299,7 @@ impl Viewport {
             world
                 .resource_mut::<EguiUserTextures>()
                 .remove_image(&self.image);
-            let (image, texture) = render_target(world, request.size);
+            let (image, texture) = render_target(world, request.size, ImageSampler::linear());
             self.image = image;
             self.texture = texture;
             self.size = request.size;
@@ -410,7 +410,7 @@ impl Viewport {
 
     /// Stands the cast: a rig already standing in its clip is moved and held where it is asked
     /// to, the rest are spawned anew.
-    fn people(&mut self, world: &mut World, cast: Vec<Standing>) {
+    fn people(&mut self, world: &mut World, cast: Vec<StandingActor>) {
         if self
             .cast
             .as_ref()
@@ -419,7 +419,7 @@ impl Viewport {
             return;
         }
         let (stood, entities) = self.cast.take().unwrap_or_default();
-        let mut spare: Vec<(Standing, Entity)> = stood.into_iter().zip(entities).collect();
+        let mut spare: Vec<(StandingActor, Entity)> = stood.into_iter().zip(entities).collect();
         let mut kept: Vec<Entity> = Vec::with_capacity(cast.len());
         for standing in &cast {
             let reused = spare
@@ -491,7 +491,7 @@ impl Viewport {
 /// Sounds the cues each of `cast` crossed, on the ground of `area` under it, as the game sounds a
 /// body's. A view's stage is the one thing heard, so its sounds play centred rather than from where
 /// the rig stands.
-fn sound(world: &mut World, area: &Area, cast: &[Standing]) {
+fn sound(world: &mut World, area: &Area, cast: &[StandingActor]) {
     for standing in cast {
         let crossed: Vec<&Cue> = standing.crossed.iter().collect();
         let at = camera::ground_pos(standing.transform.translation);
@@ -660,20 +660,4 @@ fn run_layers(world: &mut World) {
             stage.asked.stepped,
         );
     }
-}
-
-/// An offscreen picture of `size` pixels a camera renders to, and the egui texture that shows it.
-fn render_target(world: &mut World, size: [u32; 2]) -> (Handle<Image>, egui::TextureId) {
-    let mut image = Image::new_target_texture(
-        size[0].max(1),
-        size[1].max(1),
-        TextureFormat::Rgba8UnormSrgb,
-        None,
-    );
-    image.sampler = ImageSampler::linear();
-    let image = world.resource_mut::<Assets<Image>>().add(image);
-    let texture = world
-        .resource_mut::<EguiUserTextures>()
-        .add_image(EguiTextureHandle::Strong(image.clone()));
-    (image, texture)
 }

@@ -20,7 +20,7 @@ pub struct ContentUsage {
 impl ContentUsage {
     /// The path its file names here as `file` holds it now, which differs from the path it was
     /// found naming once the file changed since.
-    pub fn named_in(&self, file: &Value) -> Option<String> {
+    pub(crate) fn named_in(&self, file: &Value) -> Option<String> {
         if !self.key {
             return file.pointer(&self.pointer)?.as_str().map(str::to_owned);
         }
@@ -89,19 +89,19 @@ impl ContentUsages {
             .map(|(path, usages)| (path.as_str(), usages.as_slice()))
     }
 
-    pub fn of_content(&self, path: &str) -> &[ContentUsage] {
+    pub(crate) fn of_content(&self, path: &str) -> &[ContentUsage] {
         self.content.get(path).map_or(&[], Vec::as_slice)
     }
 
-    pub fn of_media(&self, path: &str) -> &[ContentUsage] {
+    pub(crate) fn of_media(&self, path: &str) -> &[ContentUsage] {
         self.media.get(path).map_or(&[], Vec::as_slice)
     }
 
-    pub fn in_file(&self, file: &str) -> &[Reference] {
+    pub(crate) fn in_file(&self, file: &str) -> &[Reference] {
         self.by_file.get(file).map_or(&[], Vec::as_slice)
     }
 
-    pub fn files_naming(&self, path: &str) -> Vec<(String, Vec<String>)> {
+    pub(crate) fn files_naming(&self, path: &str) -> Vec<(String, Vec<String>)> {
         let mut by_file: Vec<(String, Vec<String>)> = Vec::new();
         for usage in self.of_content(path) {
             match by_file.iter_mut().find(|(file, _)| *file == usage.file) {

@@ -3,15 +3,16 @@
 
 use ui::controls;
 use ui::dialog;
+use ui::draft;
 use ui::egui;
 use ui::form;
-use ui::input;
 use ui::panel;
 use ui::theme;
 
 use engine::core::content::ContentFile;
-use engine::systems::dialogue::bust::BustDef;
+use engine::systems::dialogue::bust::{BustDef, GenericExpression};
 use engine::systems::script::ScriptDef;
+use strum::VariantArray;
 use ui::egui::{RichText, Ui};
 
 use super::faces::{self, BustFace, FaceLine};
@@ -66,7 +67,7 @@ fn face_card(editor: &mut Editor, ui: &mut Ui, key: &str, face: &BustFace, faces
     let mut remove_with: Option<String> = None;
     let lines = faces::lines(editor, key);
     let uses_of_face = lines.iter().filter(|line| line.face == face.name).count();
-    panel::card(true).show(ui, |ui| {
+    panel::tile(true).show(ui, |ui| {
         ui.set_width(ui.available_width());
         let kind = if face.own { "" } else { "generic" };
         if face.own {
@@ -83,7 +84,7 @@ fn face_card(editor: &mut Editor, ui: &mut Ui, key: &str, face: &BustFace, faces
         form::kv(ui, "name", |ui| {
             if face.own {
                 let id = ui.id().with(("face-name", &face.file));
-                let typed = input::drafted(ui, id, &face.name, |ui, draft| {
+                let typed = draft::drafted(ui, id, &face.name, |ui, draft| {
                     InputField::new(draft).show(ui)
                 });
                 let wanted = typed.map(|typed| typed.trim().to_owned());
@@ -95,7 +96,10 @@ fn face_card(editor: &mut Editor, ui: &mut Ui, key: &str, face: &BustFace, faces
                 }
             } else {
                 ui.label(theme::mono(&face.name));
-                ui.label(theme::faint("one of the six every bust has"));
+                ui.label(theme::faint(format!(
+                    "one of the {} every bust has",
+                    GenericExpression::VARIANTS.len()
+                )));
             }
         });
         form::kv(ui, "file", |ui| {
@@ -144,7 +148,7 @@ fn face_card(editor: &mut Editor, ui: &mut Ui, key: &str, face: &BustFace, faces
     if let Some(wanted) = rename_to
         && faces::rename(editor, key, face, &wanted)
     {
-        let view = editor.views.bust.view_mut(key);
+        let view = editor.views.bust.views.view_mut(key);
         view.face = Some(wanted);
     }
     if remove_with.is_some() {
@@ -153,7 +157,7 @@ fn face_card(editor: &mut Editor, ui: &mut Ui, key: &str, face: &BustFace, faces
 }
 
 fn remove_dialog(editor: &mut Editor, key: &str, face: &BustFace, faces: &[BustFace], uses: usize) {
-    let view = editor.views.bust.view_mut(key);
+    let view = editor.views.bust.views.view_mut(key);
     view.removing = Some(super::FaceRemoval {
         face: face.clone(),
         replacement: faces
@@ -165,7 +169,7 @@ fn remove_dialog(editor: &mut Editor, key: &str, face: &BustFace, faces: &[BustF
     });
 }
 
-pub fn remove_face_dialog(editor: &mut Editor, ctx: &egui::Context, key: &str) {
+pub(crate) fn remove_face_dialog(editor: &mut Editor, ctx: &egui::Context, key: &str) {
     let Some(removing) = editor
         .views
         .bust
@@ -217,7 +221,7 @@ pub fn remove_face_dialog(editor: &mut Editor, ctx: &egui::Context, key: &str) {
         }
     });
     {
-        let view = editor.views.bust.view_mut(key);
+        let view = editor.views.bust.views.view_mut(key);
         if let Some(removing) = view.removing.as_mut() {
             removing.replacement = replacement.clone();
         }
@@ -225,10 +229,10 @@ pub fn remove_face_dialog(editor: &mut Editor, ctx: &egui::Context, key: &str) {
     let Some(apply) = decision else {
         return;
     };
-    let view = editor.views.bust.view_mut(key);
+    let view = editor.views.bust.views.view_mut(key);
     view.removing = None;
     if apply && faces::remove(editor, key, &removing.face, &replacement) {
-        let view = editor.views.bust.view_mut(key);
+        let view = editor.views.bust.views.view_mut(key);
         view.face = None;
         editor.select(RowSelection::row(BustDef::TABLE, key));
     }

@@ -26,7 +26,7 @@ use engine::systems::item::{Grip, ItemId, Wear};
 use ui::egui::{Response, Sense, Vec2};
 
 use super::area::camera::{self, AreaCanvas, OrbitCamera};
-use super::area::viewport::{Request, StageClip, StageLayers, Standing, StandingProp};
+use super::area::viewport::{Request, StageClip, StageLayers, StandingActor, StandingProp};
 use crate::app::Editor;
 
 /// How fast a stage turns on its own.
@@ -36,7 +36,7 @@ const YAW: Degrees = Degrees(30.0);
 /// A picture of the stage, made again when the project's content moves, and numbered anew only
 /// when the files its scenery is made from change, so the stage stands again only then.
 #[derive(Default)]
-pub struct StagePicture {
+pub(crate) struct StagePicture {
     made: Option<Made>,
 }
 
@@ -190,7 +190,7 @@ pub fn turntable(
 
 impl Turntable {
     /// Asks for the picture with `cast` standing on it.
-    pub fn stand(self, editor: &mut Editor, ui: &Ui, cast: Vec<Standing>) {
+    pub fn stand(self, editor: &mut Editor, ui: &Ui, cast: Vec<StandingActor>) {
         request(
             editor,
             ui,
@@ -211,8 +211,8 @@ pub fn standing(
     held: Option<engine::core::time::Seconds>,
     crossed: Vec<Cue>,
     props: Vec<StandingProp>,
-) -> Standing {
-    Standing {
+) -> StandingActor {
+    StandingActor {
         body,
         clip,
         transform: bevy::prelude::Transform::from_translation(
@@ -226,7 +226,7 @@ pub fn standing(
 }
 
 /// The clip `model` idles in, standing in no stance.
-pub fn idle_clip(model: &engine::systems::actor::model::ActorModel) -> StageClip {
+pub(crate) fn model_idle_clip(model: &engine::systems::actor::model::ActorModel) -> StageClip {
     let idle = model.standing_clip(None, &Motion::Action(Action::Idle), Pose::Idle);
     StageClip::played(model.skeleton(), idle)
 }
@@ -263,7 +263,13 @@ pub fn spin(camera: &mut OrbitCamera, dt: f32) {
 }
 
 /// Draws the picture last rendered for `view_key` over `rect`, or says it is on its way.
-pub fn show_picture(editor: &Editor, ui: &Ui, painter: &egui::Painter, rect: Rect, view_key: &str) {
+pub(crate) fn show_picture(
+    editor: &Editor,
+    ui: &Ui,
+    painter: &egui::Painter,
+    rect: Rect,
+    view_key: &str,
+) {
     match editor.views.area.viewports.shown(view_key) {
         Some(shown) => {
             painter.image(shown.texture, rect, crate::thumbs::FULL_UV, Color32::WHITE);
@@ -290,7 +296,7 @@ pub fn request(
     rect: Rect,
     camera: OrbitCamera,
     (made, picture): (u64, Arc<Picture>),
-    cast: Vec<Standing>,
+    cast: Vec<StandingActor>,
 ) {
     let Some(project) = editor.project.as_ref() else {
         return;
@@ -350,7 +356,7 @@ pub fn props(
 
 /// The prop of `item` hanging from `hand`, the hand at `at` of `model`, by `grip`, either of which
 /// may be being edited.
-pub fn prop_in_hand(
+pub(crate) fn prop_in_hand(
     content: &Content,
     model: &ActorModel,
     at: HandIndex,

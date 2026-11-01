@@ -38,7 +38,7 @@ pub struct Thumbnail {
 }
 
 /// A project's pictures, for drawing the engine's own gui in the editor.
-pub struct ProjectImages<'a> {
+pub(crate) struct ProjectImages<'a> {
     pub ctx: &'a egui::Context,
     pub files: &'a ProjectFiles,
     pub thumbnails: &'a mut Thumbnails,
@@ -58,7 +58,8 @@ impl ImageSource for ProjectImages<'_> {
 }
 
 pub const ICON: u32 = 32;
-pub const FULL_UV: egui::Rect = egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0));
+pub(crate) const FULL_UV: egui::Rect =
+    egui::Rect::from_min_max(egui::Pos2::ZERO, egui::pos2(1.0, 1.0));
 
 impl Thumbnails {
     pub fn image(
@@ -225,7 +226,7 @@ pub fn uv(size: [usize; 2], x: f32, y: f32, w: f32, h: f32) -> egui::Rect {
     )
 }
 
-pub fn square_uv(size: [usize; 2]) -> egui::Rect {
+pub(crate) fn square_uv(size: [usize; 2]) -> egui::Rect {
     let (w, h) = (size[0] as f32, size[1] as f32);
     if h >= w {
         egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, w / h))
@@ -233,17 +234,6 @@ pub fn square_uv(size: [usize; 2]) -> egui::Rect {
         let margin = (1.0 - h / w) / 2.0;
         egui::Rect::from_min_max(egui::pos2(margin, 0.0), egui::pos2(1.0 - margin, 1.0))
     }
-}
-
-pub fn flip_uv(uv: egui::Rect, horizontal: bool, vertical: bool) -> egui::Rect {
-    let (mut min, mut max) = (uv.min, uv.max);
-    if horizontal {
-        std::mem::swap(&mut min.x, &mut max.x);
-    }
-    if vertical {
-        std::mem::swap(&mut min.y, &mut max.y);
-    }
-    egui::Rect::from_min_max(min, max)
 }
 
 fn decode(bytes: &[u8]) -> Option<RgbaImage> {

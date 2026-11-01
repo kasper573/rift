@@ -7,13 +7,13 @@ use engine::systems::area::TerrainDef;
 use engine::systems::area::{AreaModule, AreaModuleKind};
 use strum::VariantArray;
 use ui::egui;
-use ui::egui::{Color32, Pos2, Rect as ERect, Stroke as EStroke, Ui, Vec2};
+use ui::egui::{Color32, Pos2, Stroke as EStroke, Ui, Vec2};
 use ui::paint;
 use ui::theme;
 use ui::words;
 
 use super::brush::{SculptMode, Stroke, StrokeKind};
-use super::camera::{self, OrbitCamera};
+use super::camera::{self};
 use super::modules::{context_menu_at, open_add_menu, show_add_menu};
 use super::select::{
     copy_selection, delete_selection, duplicate_selection, move_selection, paste_anchor,
@@ -23,7 +23,8 @@ use super::{
     AreaDrag, AreaFrame, AreaTool, Placeable, blueprint, nodes, pins, place, placement, scatter,
     shapes, stamp,
 };
-use crate::app::{Clipboard, Editor, PlacePick};
+use crate::app::{Editor, PlacePick};
+use crate::clipboard::Clipboard;
 use crate::keymap::EditorKey;
 use crate::tabs::file_title;
 
@@ -79,7 +80,7 @@ pub fn rail(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
 /// What taking a tool brings along: its bottom tab.
 fn took(editor: &mut Editor, tool: AreaTool) {
     if let Some(bottom) = tool.bottom_tab() {
-        editor.panels.bottom = bottom;
+        editor.bottom_tab = bottom;
     }
 }
 
@@ -266,7 +267,7 @@ fn brush_input(
 
 /// The sculpt mode the modifiers turn the brush to: Shift inverts raising and lowering, Ctrl
 /// smooths.
-pub fn sculpt_mode(chosen: SculptMode, modifiers: egui::Modifiers) -> SculptMode {
+fn sculpt_mode(chosen: SculptMode, modifiers: egui::Modifiers) -> SculptMode {
     if EditorKey::ToggleSelection.held_among(modifiers) {
         return SculptMode::Smooth;
     }
@@ -692,14 +693,4 @@ fn frame_selection(editor: &mut Editor, view_key: &str, frame: &AreaFrame) {
         .unwrap_or_else(|| frame.size().bounds());
     let view = editor.views.area.view_mut(view_key);
     view.camera.frame(bounds.inflate(1.0, 1.0));
-}
-
-/// Where the camera stands, for whoever asks after the view.
-pub fn camera_of(editor: &Editor, view_key: &str) -> OrbitCamera {
-    editor.views.area.view(view_key).camera
-}
-
-/// The screen box around a ground rectangle, as the overlays place labels by.
-pub fn screen_box(frame: &AreaFrame, rect: Rect<Meters>) -> ERect {
-    frame.canvas.rect(rect)
 }

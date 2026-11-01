@@ -8,7 +8,7 @@ use engine::core::math::Pos;
 use engine::core::units::Meters;
 
 /// Metres of height between contour lines.
-pub const INTERVAL: f32 = 1.0;
+const INTERVAL: f32 = 1.0;
 
 /// A contour: the height it runs at and the line segments that make it.
 pub struct Contour {

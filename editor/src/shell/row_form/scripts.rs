@@ -22,7 +22,7 @@ use crate::{condition, schema};
 /// The scripts `scripts` lists at `path`, each as a card, in a row of `table`, run by owners of
 /// `kind`. Adding one names the nearest script they can run, or asks for `none_fits` when there's
 /// none.
-pub fn script_cards(
+pub(crate) fn script_cards(
     ui: &mut Ui,
     cx: &mut FormCx,
     table: &str,
@@ -36,7 +36,7 @@ pub fn script_cards(
     let mut duplicate = None;
     for (index, module) in scripts.iter_mut().enumerate() {
         let module_path = format!("{path}/{index}");
-        ui::panel::card(true).show(ui, |ui| {
+        ui::panel::tile(true).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.label(theme::strong(ScriptModule::TAG).monospace());
@@ -254,7 +254,7 @@ pub(super) fn speaker_of(table: &str, key: &str) -> Option<String> {
     (table == NpcDef::TABLE).then(|| key.to_owned())
 }
 
-pub fn summary_of(cx: &FormCx, module: &Value) -> String {
+pub(crate) fn summary_of(cx: &FormCx, module: &Value) -> String {
     let reader = cx.project.reader();
     schema::summary_of(cx.root, module_shape(cx.root, module), module, |field| {
         reader
@@ -264,7 +264,7 @@ pub fn summary_of(cx: &FormCx, module: &Value) -> String {
     })
 }
 
-pub fn module_lines(root: &Value, module: &Value) -> String {
+pub(crate) fn module_lines(root: &Value, module: &Value) -> String {
     schema::lines_of(root, module_shape(root, module), module)
 }
 

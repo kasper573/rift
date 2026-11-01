@@ -33,14 +33,14 @@ pub fn show(
     if let Some(content) = &content {
         chosen(editor, ui, key, def, content);
     }
-    panel::card(false).show(ui, |ui| {
+    panel::tile(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
         panel::title(ui, "Rig");
         ui.add_space(4.0);
         rig(ui, key, def, rigging, content.as_ref());
     });
     ui.add_space(8.0);
-    panel::card(false).show(ui, |ui| {
+    panel::tile(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
         match page {
             SkeletonPage::Rigs => sources(ui, def, rigging),
@@ -54,13 +54,13 @@ pub fn show(
 
 /// What is picked on the stage, as number fields: the wearer's hitbox, or a hand's grip frame.
 fn chosen(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, content: &Content) {
-    match editor.views.skeleton.view(key).chosen {
+    match editor.views.skeleton.views.view(key).chosen {
         Some(Chosen::Grip(index)) => {
             let Some(hand) = def.hands.get(index) else {
                 return;
             };
             let mut edited = None;
-            panel::card(false).show(ui, |ui| {
+            panel::tile(false).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 panel::title(ui, &format!("Grip · {}", hand.name));
                 ui.add_space(4.0);
@@ -78,7 +78,7 @@ fn chosen(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, conten
                 return;
             };
             let mut sized = None;
-            panel::card(false).show(ui, |ui| {
+            panel::tile(false).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 panel::title(ui, &format!("Hitbox · {}", shown_path(&path)));
                 ui.add_space(4.0);
@@ -284,7 +284,7 @@ fn sets(
 }
 
 /// Every move a script asks an animate node to play, with the script's path, as its file reads.
-pub fn asked_moves(editor: &Editor, content: &Content) -> Vec<(String, MoveName)> {
+fn asked_moves(editor: &Editor, content: &Content) -> Vec<(String, MoveName)> {
     let mut asked = Vec::new();
     for path in content.table::<ScriptDef>().paths() {
         let Some(Ok(script)) = editor.read::<ScriptDef>(path) else {
@@ -304,7 +304,7 @@ pub fn asked_moves(editor: &Editor, content: &Content) -> Vec<(String, MoveName)
 }
 
 fn hand(editor: &Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
-    let index = editor.views.skeleton.view(key).hand;
+    let index = editor.views.skeleton.views.view(key).hand;
     let Some(hand) = def.hands.get(index) else {
         panel::title(ui, "Hand");
         form::hint(ui, "No hands: nothing this skeleton holds is ever shown.");
@@ -329,7 +329,7 @@ fn hand(editor: &Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
 
 fn layer(editor: &Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigging: &Rigging) {
     panel::title(ui, "Layer");
-    let index = editor.views.skeleton.view(key).layers.layer;
+    let index = editor.views.skeleton.views.view(key).layers.layer;
     let Some(layer) = def.layers.get(index) else {
         form::hint(ui, "No layers.");
         return;

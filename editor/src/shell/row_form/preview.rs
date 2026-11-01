@@ -75,12 +75,12 @@ pub(super) struct Pose {
 /// Where a table's preview goes: a column beside the form for one that shows a picture, under the
 /// form for one that is a control or two.
 #[derive(Clone, Copy, PartialEq, Eq)]
-pub enum PreviewPlace {
+pub(crate) enum PreviewPlace {
     Beside,
     Below,
 }
 
-pub fn preview_place(table: &str) -> Option<PreviewPlace> {
+pub(crate) fn preview_place(table: &str) -> Option<PreviewPlace> {
     match table {
         NpcDef::TABLE
         | PlayerDef::TABLE

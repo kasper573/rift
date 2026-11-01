@@ -5,8 +5,6 @@ pub mod hitbox;
 pub mod inspect;
 pub mod look;
 
-use std::collections::HashMap;
-
 use engine::core::content::{Content, ContentFile};
 use engine::core::geometry::Capsule;
 use engine::core::time::Seconds;
@@ -20,13 +18,8 @@ use super::area::viewport::StageClip;
 use super::stage;
 use crate::app::Editor;
 use crate::project::ContentEdit;
-use crate::shell::{row_form, sidebar};
+use crate::shell::row_form;
 use crate::tabs::shown_path;
-
-#[derive(Default)]
-pub struct ModelViews {
-    pub views: HashMap<String, ModelView>,
-}
 
 pub struct ModelView {
     /// The stance the stage shows the model in, by its file's path.
@@ -40,33 +33,19 @@ pub struct ModelView {
     pub hitbox_chosen: bool,
 }
 
-impl ModelViews {
-    pub fn view(&self, key: &str) -> &ModelView {
-        self.views
-            .get(key)
-            .expect("ensure_view ran before the model view was read")
-    }
-
-    pub fn view_mut(&mut self, key: &str) -> &mut ModelView {
-        self.views
-            .get_mut(key)
-            .expect("ensure_view ran before the model view was changed")
-    }
-}
-
 pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
     let Some(row) = super::read_shown::<ModelDef>(editor, ui, key) else {
         return;
     };
     ensure_view(editor, key);
-    sidebar::row(ui, "model", |ui| {
+    ui::panel::left_scrolled(ui, "model", |ui| {
         row_form::show_row(editor, ui, ModelDef::TABLE, key)
     });
-    sidebar::inspector(editor, ui, "model", |editor, ui| {
+    ui::panel::inspector(ui, editor, "model", |editor, ui| {
         inspect::show(editor, ui, key, &row);
     });
     egui::Frame::new()
-        .inner_margin(egui::Margin::symmetric(12, 8))
+        .inner_margin(crate::shell::VIEW_PADDING)
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
             page_bar(editor, ui, key);
@@ -87,13 +66,13 @@ fn page_bar(editor: &mut Editor, ui: &mut Ui, key: &str) {
 }
 
 pub fn ensure_view(editor: &mut Editor, key: &str) {
-    if editor.views.model.views.contains_key(key) {
+    if editor.views.model.contains(key) {
         return;
     }
     let model = editor.read::<ModelDef>(key).and_then(Result::ok);
     let height = model.as_ref().map_or(1.8, |model| model.hitbox.height.0);
-    editor.views.model.views.insert(
-        key.to_owned(),
+    editor.views.model.insert(
+        key,
         ModelView {
             stance: None,
             motion: Motion::Action(Action::Idle),
@@ -109,16 +88,11 @@ pub fn ensure_view(editor: &mut Editor, key: &str) {
 /// Sizes the hitbox of the model at `key`, merging with the size set just before it as one drag of
 /// a number field does.
 pub fn set_hitbox(editor: &mut Editor, key: &str, hitbox: Capsule) -> bool {
-    let Some(Ok(row)) = editor.read::<ModelDef>(key) else {
-        return false;
-    };
-    if row.hitbox == hitbox {
-        return false;
-    }
-    let mut model = (*row).clone();
-    model.hitbox = hitbox;
     let edit = ContentEdit::new(format!("Size {}'s hitbox", shown_path(key))).merging();
-    editor.write_content_as(edit, key, &model)
+    editor.change(edit, key, |model: &mut ModelDef| {
+        model.hitbox = hitbox;
+        Ok(())
+    })
 }
 
 /// The model at `key` as the game built it from the files as they last loaded, when it loaded.

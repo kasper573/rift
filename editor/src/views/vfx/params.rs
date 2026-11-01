@@ -75,7 +75,7 @@ pub fn params_of(project: &Project, table: &str, key: &str) -> Vec<ParamSpec> {
 
 /// One knob for a parameter's value, by its kind: a checkbox, a slider within the range or a
 /// number field without one, or a color button. Says whether it moved.
-pub fn param_control(ui: &mut Ui, spec: &ParamSpec, value: &mut ParamValue) -> bool {
+pub(crate) fn param_control(ui: &mut Ui, spec: &ParamSpec, value: &mut ParamValue) -> bool {
     match spec.kind {
         ParamKind::Bool => {
             let mut flag = matches!(value, ParamValue::Bool(true));

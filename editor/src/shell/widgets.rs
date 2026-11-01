@@ -1,5 +1,4 @@
 use engine::core::content::LoadError;
-use engine::core::time::{Seconds, UnixMillis};
 use ui::egui;
 use ui::egui::{Color32, FontId, Rect, Response, RichText, Sense, Ui, Vec2};
 use ui::glyph;
@@ -9,12 +8,15 @@ use crate::icons::{IconTone, KindIcon};
 use crate::keymap::EditorKey;
 use crate::tabs::shown_path;
 
-pub fn shortcut_button<'a>(label: impl Into<egui::WidgetText>, key: EditorKey) -> egui::Button<'a> {
+pub(crate) fn shortcut_button<'a>(
+    label: impl Into<egui::WidgetText>,
+    key: EditorKey,
+) -> egui::Button<'a> {
     egui::Button::new(label).shortcut_text(key.name())
 }
 
 /// A menu button reading `label` after a kind's icon, with its shortcut when it has one.
-pub fn kind_button(
+pub(crate) fn kind_button(
     ui: &mut Ui,
     kind: KindIcon,
     label: &str,
@@ -30,7 +32,7 @@ pub fn kind_button(
 }
 
 /// A line of a list to pick from, reading `label` after a kind's icon.
-pub fn kind_option(ui: &mut Ui, kind: KindIcon, label: &str, selected: bool) -> Response {
+pub(crate) fn kind_option(ui: &mut Ui, kind: KindIcon, label: &str, selected: bool) -> Response {
     let id = ui.id().with(("kind option", label));
     let button = egui::Button::selectable(
         selected,
@@ -42,7 +44,7 @@ pub fn kind_option(ui: &mut Ui, kind: KindIcon, label: &str, selected: bool) -> 
 
 /// What stands for a kind: a file kind's icon, or the lettered badge of a module kind.
 #[derive(Clone, Copy)]
-pub enum KindMark<'a> {
+pub(crate) enum KindMark<'a> {
     Icon(KindIcon),
     Badge(&'a str),
 }
@@ -64,7 +66,7 @@ impl KindMark<'_> {
 }
 
 /// A checkbox reading `label` after a kind's mark, both in the kind's colour.
-pub fn kind_checkbox(ui: &mut Ui, mark: KindMark, label: &str, on: &mut bool) -> Response {
+pub(crate) fn kind_checkbox(ui: &mut Ui, mark: KindMark, label: &str, on: &mut bool) -> Response {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 2.0;
         let mut response = ui.add(egui::Checkbox::without_text(on));
@@ -100,14 +102,14 @@ fn paint_kind(ui: &Ui, kind: KindIcon, id: egui::Id, laid: egui::AtomLayoutRespo
     laid.response
 }
 
-pub const BADGE_SIZE: f32 = 16.0;
+const BADGE_SIZE: f32 = 16.0;
 
 pub fn badge(ui: &mut Ui, kind: &str) {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(BADGE_SIZE), Sense::hover());
     paint_badge(ui.painter(), rect, kind);
 }
 
-pub fn badge_color(kind: &str) -> Color32 {
+pub(crate) fn badge_color(kind: &str) -> Color32 {
     match kind {
         "population" | "resident" | "npc" | "player" | "nameplate" | "tint" | "voice" => ink::OCHRE,
         "object" | "safe_zone" | "area" | "walk" | "terrain" => ink::VERDIGRIS,
@@ -120,7 +122,7 @@ pub fn badge_color(kind: &str) -> Color32 {
     }
 }
 
-pub fn badge_letter(kind: &str) -> String {
+pub(crate) fn badge_letter(kind: &str) -> String {
     match kind {
         "script" => "S".to_owned(),
         "population" | "resident" | "npc" => "N".to_owned(),
@@ -170,43 +172,5 @@ pub fn unreadable(ui: &mut Ui, path: &str, errors: &[LoadError]) {
             .color(theme::MUTED)
             .size(12.5),
         );
-    }
-}
-
-/// The time of day `at` falls on in the user's own time zone.
-pub fn clock(at: UnixMillis, with_seconds: bool) -> String {
-    let format = if with_seconds { "%H:%M:%S" } else { "%H:%M" };
-    i64::try_from(at.0)
-        .ok()
-        .and_then(|millis| jiff::Timestamp::from_millisecond(millis).ok())
-        .map(|at| {
-            at.to_zoned(jiff::tz::TimeZone::system())
-                .strftime(format)
-                .to_string()
-        })
-        .unwrap_or_default()
-}
-
-pub fn ago(elapsed: Seconds) -> String {
-    let seconds = elapsed.0.max(0.0) as u64;
-    let minutes = seconds / 60;
-    let hours = minutes / 60;
-    let days = hours / 24;
-    if seconds < 60 {
-        "just now".to_owned()
-    } else if minutes < 60 {
-        format!("{minutes} min ago")
-    } else if hours < 24 {
-        format!("{hours} h ago")
-    } else if days == 1 {
-        "yesterday".to_owned()
-    } else if days < 7 {
-        format!("{days} days ago")
-    } else if days < 14 {
-        "last week".to_owned()
-    } else if days < 31 {
-        format!("{} weeks ago", days / 7)
-    } else {
-        format!("{} months ago", days / 30)
     }
 }

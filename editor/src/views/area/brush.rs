@@ -19,7 +19,7 @@ use crate::project::ContentEdit;
 pub const SMALLEST_RADIUS: Meters = Meters(0.5);
 pub const LARGEST_RADIUS: Meters = Meters(32.0);
 /// How many times bigger or smaller a step of the radius keys makes the brush.
-pub const RADIUS_STEP: f32 = 1.25;
+const RADIUS_STEP: f32 = 1.25;
 /// Metres a second a full-strength sculpt moves the ground by.
 const SCULPT_RATE: f32 = 6.0;
 /// How much of the way toward the neighbours' mean a second of full-strength smoothing goes.

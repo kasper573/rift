@@ -288,7 +288,7 @@ fn folder_card(editor: &mut Editor, ui: &mut Ui, snapshot: &super::AreaSnapshot,
             .size(13.0),
     );
     ui.add_space(4.0);
-    panel::card(true).show(ui, |ui| {
+    panel::tile(true).show(ui, |ui| {
         ui.set_width(ui.available_width());
         let state = if flags.hidden.on() { "hidden" } else { "" };
         panel::subtitled(ui, &format!("folder {label}"), state);
@@ -358,7 +358,7 @@ enum FolderAction {
 }
 
 fn tool_card(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {
-    panel::card(true).show(ui, |ui| {
+    panel::tile(true).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             ui.label(theme::strong(title).monospace());
@@ -530,7 +530,7 @@ fn stamp_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, content: &Conten
     }
 }
 
-pub fn show_parts(editor: &mut Editor, ui: &mut Ui, view_key: &str, selection: &RowSelection) {
+fn show_parts(editor: &mut Editor, ui: &mut Ui, view_key: &str, selection: &RowSelection) {
     let Some(bundle) = selection.keys.first().cloned() else {
         return;
     };
@@ -594,7 +594,7 @@ pub fn show_parts(editor: &mut Editor, ui: &mut Ui, view_key: &str, selection: &
             );
             ui.label(theme::muted(spans(&draft.nodes, &selected, reader.as_ref())).size(12.5));
             ui.add_space(4.0);
-            panel::card(true).show(ui, |ui| {
+            panel::tile(true).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 panel::header(ui, &format!("{} modules", selected.len()), "", |ui| {
                     if ui.button("Copy").clicked() {
@@ -708,7 +708,7 @@ fn module_inspector(
         return false;
     };
     let mut changed = false;
-    panel::card(true).show(ui, |ui| {
+    panel::tile(true).show(ui, |ui| {
         ui.set_width(ui.available_width());
         panel::header(ui, &shown_kind, "", |ui| {
             if ui.button("Copy").clicked() {
@@ -760,7 +760,7 @@ fn module_inspector(
                 && !def.variables.is_empty()
             {
                 sheet::section(ui, &format!("Values · {}", file_title(&placed)));
-                panel::card(false).show(ui, |ui| {
+                panel::tile(false).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     panel::title(ui, "values");
                     ui.add_space(4.0);
@@ -863,7 +863,11 @@ fn object_scripts(ui: &mut Ui, cx: &mut FormCx, object: &mut ObjectDef, node: &s
 
 /// Makes a script run by the object at the scene node `node` of `bundle`, beside it and named after
 /// the object, and names it in the object's scripts, as one step.
-pub fn new_object_script(editor: &mut Editor, bundle: &str, node: &str) -> Result<(), String> {
+pub(crate) fn new_object_script(
+    editor: &mut Editor,
+    bundle: &str,
+    node: &str,
+) -> Result<(), String> {
     let project = editor.project.as_ref().ok_or("no folder is open")?;
     let read = nodes::bundle_of(editor, bundle)
         .ok_or_else(|| format!("{} doesn't read", file_title(bundle)))?;

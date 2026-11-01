@@ -10,7 +10,7 @@ use crate::glyph::Mark;
 use crate::{ink, sheet, theme};
 
 /// The frame of a card, picked out when it is `selected`.
-pub fn card(selected: bool) -> egui::Frame {
+pub fn tile(selected: bool) -> egui::Frame {
     let (fill, border) = card_ink(selected);
     egui::Frame::new()
         .fill(fill)
@@ -20,7 +20,7 @@ pub fn card(selected: bool) -> egui::Frame {
 }
 
 /// A card's look painted on a rect laid out by hand.
-pub fn paint_card(painter: &Painter, rect: Rect, selected: bool) {
+pub fn paint_tile(painter: &Painter, rect: Rect, selected: bool) {
     let (fill, border) = card_ink(selected);
     painter.rect(
         rect,
@@ -29,14 +29,6 @@ pub fn paint_card(painter: &Painter, rect: Rect, selected: bool) {
         Stroke::new(1.0, border),
         egui::StrokeKind::Inside,
     );
-}
-
-/// A card of `size` to click, and the painter of what shows on it.
-pub fn card_slot(ui: &mut Ui, size: Vec2, selected: bool) -> (Response, Painter) {
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-    let painter = ui.painter_at(rect);
-    paint_card(&painter, rect, selected);
-    (response, painter)
 }
 
 /// A card's heading: its title, a subtitle at the right and a menu behind its more mark.
@@ -68,17 +60,6 @@ pub fn subtitled(ui: &mut Ui, title: &str, subtitle: &str) -> Response {
 /// A box sunk into a panel, holding a list or text that is read rather than typed into.
 pub fn well() -> egui::Frame {
     crate::input::frame().inner_margin(8.0)
-}
-
-/// A well's look painted on a rect laid out by hand.
-pub fn paint_well(painter: &Painter, rect: Rect) {
-    painter.rect(
-        rect,
-        crate::controls::RADIUS,
-        theme::INPUT,
-        Stroke::new(1.0, theme::BORDER),
-        egui::StrokeKind::Inside,
-    );
 }
 
 /// Text to read or copy as it is, such as a path or a report.
@@ -312,4 +293,65 @@ fn heading(
         })
         .response;
     response.interact(Sense::click())
+}
+
+/// A view's right panel: the inspector of what is selected inside it. A resizable column on the
+/// right of its window, whose `body` works on `state`.
+pub fn inspector<S>(ui: &mut Ui, state: &mut S, id: &str, body: impl FnOnce(&mut S, &mut Ui)) {
+    column(ui, ("inspector", id), Side::Right, |ui| {
+        sheet::tabs(ui, &[((), "Inspector".to_owned())], &mut ());
+        scrolled(ui, |ui| body(state, ui));
+    });
+}
+
+/// The row a view works on, laid out on the left of its window.
+pub fn left_scrolled(ui: &mut Ui, id: &str, body: impl FnOnce(&mut Ui)) {
+    column(ui, ("left scrolled", id), Side::Left, |ui| {
+        scrolled(ui, body)
+    });
+}
+
+/// The left column of a view whose body scrolls what it must itself, such as a tree under a few
+/// fixed boxes.
+pub fn left_framed(ui: &mut Ui, id: &str, body: impl FnOnce(&mut Ui)) {
+    column(ui, ("left framed", id), Side::Left, |ui| {
+        egui::Frame::new().inner_margin(PADDING).show(ui, |ui| {
+            ui.set_min_height(ui.available_height());
+            body(ui)
+        });
+    });
+}
+
+/// The folders above the last segment of `path`, each clickable, then `name`. Answers the path of
+/// the folder clicked.
+pub fn breadcrumb(ui: &mut Ui, path: &str, name: &str) -> Option<String> {
+    let mut clicked = None;
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing.x = 4.0;
+        let mut folder = String::new();
+        let segments: Vec<&str> = path.split('/').collect();
+        for segment in segments.split_last().map_or(&[][..], |(_, above)| above) {
+            if !folder.is_empty() {
+                folder.push('/');
+            }
+            folder.push_str(segment);
+            let response = ui
+                .add(
+                    egui::Label::new(
+                        egui::RichText::new(*segment)
+                            .monospace()
+                            .color(theme::MUTED),
+                    )
+                    .sense(Sense::click()),
+                )
+                .on_hover_cursor(egui::CursorIcon::PointingHand)
+                .on_hover_text("Show in the content tree");
+            if response.clicked() {
+                clicked = Some(folder.clone());
+            }
+            ui.label(theme::faint("/"));
+        }
+        ui.label(theme::strong(name).monospace());
+    });
+    clicked
 }

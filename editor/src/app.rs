@@ -1,10 +1,8 @@
-use std::collections::BTreeSet;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::mem;
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{Receiver, TryRecvError};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::time::{Instant, SystemTime};
 use ui::egui;
 use ui::words;
@@ -15,35 +13,28 @@ use bevy_egui::{
     EguiContext, EguiPlugin, EguiPreUpdateSet, EguiPrimaryContextPass, PrimaryEguiContext,
 };
 use engine::core::content::{Content, ContentFile, FolderReader, Unreadable, fields_file, version};
-use engine::core::math::Pos;
-use engine::core::units::Meters;
 use engine::systems;
-use engine::systems::area::AreaModuleKind;
 use engine::systems::frame_rate::{self, FrameCountPlugin, FrameRates};
 use serde::Deserialize;
 use serde_json::Value;
 use strum::IntoStaticStr;
 use ui::egui_dock::DockState;
 
+use crate::clipboard::Clipboard;
 use crate::forms::{FormCx, FormState};
+use crate::modal::ModalDialog;
+use crate::output_log::OutputLog;
 use crate::play::{self, PlayTest};
 use crate::project::journal::{RecoveryJournal, RecoveryJournalData, RecoveryJournalFile};
 use crate::project::lock::ProjectLock;
 use crate::project::watch::FolderWatcher;
-use crate::project::{
-    AppliedStep, ContentEdit, EditRefusal, EditViewpoint, FileConflict, Project, RowSelection,
-};
-use crate::rows;
+use crate::project::{AppliedStep, ContentEdit, EditRefusal, EditViewpoint, Project, RowSelection};
 use crate::scenes::{self, SceneStep};
 use crate::schema::SchemaShapes;
 use crate::shell::{self, row_form};
 use crate::tabs::{self, DockRequest, EditorTab, TabOpening};
 use crate::thumbs::Thumbnail;
 use crate::user::{EditorSettings, UserFolder};
-use crate::views::area::ResizeDialog;
-use crate::views::area::nodes::CopiedNodes;
-use crate::views::script::{LinkNodeDialog, RenameNodeDialog, ScriptRow};
-use crate::views::world::ArrangeDialog;
 use crate::views::{self, EditorCamera, EditorViews};
 
 #[derive(Clone, Debug)]
@@ -123,7 +114,7 @@ pub struct Editor {
     pub watcher: Option<FolderWatcher>,
     pub journal: Option<RecoveryJournal>,
     pub dock: DockState<EditorTab>,
-    pub panels: DockTabs,
+    pub bottom_tab: BottomTab,
     pub content_tree: crate::shell::content_tree::ContentTree,
     pub status: StatusBar,
     pub last_refusal: Option<EditRefusal>,
@@ -147,44 +138,6 @@ pub struct Editor {
     pub quit: bool,
     pub frame: u64,
     pub frame_log: Option<BufWriter<File>>,
-}
-
-#[derive(Default)]
-pub struct OutputLog {
-    pub lines: Vec<OutputLine>,
-}
-
-#[derive(Clone)]
-pub struct OutputLine {
-    pub tag: &'static str,
-    pub text: String,
-}
-
-pub const OUTPUT_KEPT: usize = 20_000;
-
-impl OutputLog {
-    pub fn say(&mut self, tag: &'static str, text: impl Into<String>) {
-        let text = text.into();
-        eprintln!("[{tag}] {text}");
-        self.lines.push(OutputLine { tag, text });
-        if self.lines.len() > OUTPUT_KEPT {
-            let drop = self.lines.len() - OUTPUT_KEPT;
-            self.lines.drain(..drop);
-        }
-    }
-
-    pub fn text(&self) -> String {
-        self.lines
-            .iter()
-            .map(|line| format!("[{}] {}", line.tag, line.text))
-            .collect::<Vec<_>>()
-            .join("\n")
-    }
-}
-
-#[derive(Default)]
-pub struct DockTabs {
-    pub bottom: BottomTab,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, IntoStaticStr)]
@@ -234,179 +187,6 @@ pub struct PlacePick {
     pub area: Option<String>,
 }
 
-pub enum ModalDialog {
-    NewGame(NewGameDialog),
-    Confirm(ConfirmDialog),
-    Conflicts(Vec<FileConflict>),
-    Delete(DeleteDialog),
-    FindUnused(FindUnusedDialog),
-    Close(CloseDialog),
-    Binaries,
-    Keys,
-    Resize(ResizeDialog),
-    Arrange(ArrangeDialog),
-    PickRow(PickRowDialog),
-    RenameNode(RenameNodeDialog),
-    LinkNode(LinkNodeDialog),
-    Import(crate::import::ImportDialog),
-}
-
-pub struct PickRowDialog {
-    pub title: String,
-    pub table: String,
-    pub search: String,
-    pub picked: Option<String>,
-    pub options: Vec<String>,
-    pub then: PickRowThen,
-}
-
-pub enum PickRowThen {
-    /// Adds a module of `kind` at `at` to `area`, naming the picked file.
-    AddModule {
-        area: String,
-        kind: AreaModuleKind,
-        at: Option<Pos<Meters>>,
-    },
-    ReplaceBlueprint {
-        area: String,
-        node: String,
-    },
-    NewFile {
-        folder: String,
-    },
-    MoveInto {
-        paths: Vec<String>,
-    },
-    /// Moves rows of a scene graph into the folder picked, by its labels.
-    MoveNodes {
-        bundle: String,
-        ids: Vec<String>,
-        folders: Vec<(String, String)>,
-    },
-}
-
-impl PickRowThen {
-    /// The file the picked row is written into, when it is one.
-    pub fn editing(&self) -> Option<&str> {
-        match self {
-            PickRowThen::AddModule { area, .. } | PickRowThen::ReplaceBlueprint { area, .. } => {
-                Some(area)
-            }
-            _ => None,
-        }
-    }
-}
-
-/// What was copied last: nodes of a scene, or modules of a row's list.
-#[derive(Clone)]
-pub enum Clipboard {
-    Scene(SceneClip),
-    Modules(ModuleClip),
-}
-
-/// Nodes copied out of the scene of the area or blueprint `from`, moved so what they cover starts
-/// at the map's top-left; `origin` is where it started.
-#[derive(Clone)]
-pub struct SceneClip {
-    pub from: String,
-    pub nodes: CopiedNodes,
-    pub count: usize,
-    pub origin: Pos<Meters>,
-}
-
-/// Modules copied out of the list of the row `from`.
-#[derive(Clone)]
-pub struct ModuleClip {
-    pub from: String,
-    pub modules: Vec<Value>,
-}
-
-impl Clipboard {
-    pub fn scene(&self) -> Option<&SceneClip> {
-        match self {
-            Clipboard::Scene(clip) => Some(clip),
-            Clipboard::Modules(_) => None,
-        }
-    }
-}
-
-pub struct NewGameDialog {
-    pub source: NewGameSource,
-    pub name: String,
-    pub folder: String,
-    pub folder_touched: bool,
-    pub error: Option<String>,
-}
-
-pub enum NewGameSource {
-    Template(String),
-    Copy(PathBuf),
-}
-
-pub struct ConfirmDialog {
-    pub title: String,
-    pub body: String,
-    pub label: String,
-    pub compare: Option<TextComparison>,
-    pub action: ConfirmAction,
-}
-
-pub struct TextComparison {
-    pub left_title: String,
-    pub left: String,
-    pub right_title: String,
-    pub right: String,
-}
-
-pub enum ConfirmAction {
-    ReplaceModule {
-        table: String,
-        key: String,
-        index: usize,
-        module: Value,
-    },
-    DeleteScriptNodes {
-        script: ScriptRow,
-        names: Vec<String>,
-    },
-}
-
-impl ConfirmAction {
-    pub fn destroys(&self) -> bool {
-        match self {
-            ConfirmAction::ReplaceModule { .. } => false,
-            ConfirmAction::DeleteScriptNodes { .. } => true,
-        }
-    }
-}
-
-pub struct DeleteDialog {
-    /// The files and folders picked to delete.
-    pub paths: Vec<String>,
-    /// Every content file and media file that goes with them.
-    pub gone: Vec<String>,
-    pub groups: Vec<rows::UsageGroup>,
-    pub error: Option<String>,
-}
-
-pub struct FindUnusedDialog {
-    /// What is left out of the deletion; everything else found is in it.
-    pub unticked: BTreeSet<crate::unused::UnusedItem>,
-    pub open: BTreeSet<String>,
-    pub error: Option<String>,
-}
-
-pub struct CloseDialog {
-    pub then: CloseThen,
-}
-
-#[derive(Clone)]
-pub enum CloseThen {
-    Quit,
-    Close,
-    Open(PathBuf),
-}
-
 impl Editor {
     pub fn new(user: UserFolder, settings: EditorSettings) -> Editor {
         Editor {
@@ -418,7 +198,7 @@ impl Editor {
             watcher: None,
             journal: None,
             dock: DockState::new(Vec::new()),
-            panels: DockTabs::default(),
+            bottom_tab: BottomTab::default(),
             content_tree: Default::default(),
             status: StatusBar::default(),
             last_refusal: None,
@@ -454,13 +234,13 @@ impl Editor {
         self.toast = Some((text, Instant::now()));
     }
 
-    pub fn copy_text(&mut self, text: impl Into<String>) {
+    pub(crate) fn copy_text(&mut self, text: impl Into<String>) {
         let text = text.into();
         self.toast(format!("Copied {text}"));
         self.copied = Some(text);
     }
 
-    pub fn save_settings(&self) {
+    pub(crate) fn save_settings(&self) {
         self.user.save_settings(&self.settings);
     }
 
@@ -490,112 +270,17 @@ impl Editor {
         self.close_project();
         match Project::open(folder, self.shapes.clone()) {
             Ok(project) if project.report.is_some() && recovered.is_empty() => {
-                let report = project
+                self.say_opened(folder, &project);
+                self.settings.remember(folder);
+                self.save_settings();
+                self.start.failed = None;
+                self.start.report = project
                     .report
                     .as_ref()
-                    .map(|report| report.to_string())
-                    .unwrap_or_default();
-                self.say(format!(
-                    "{} did not load: {} errors",
-                    folder.display(),
-                    project.report.as_ref().map_or(0, |r| r.errors.len())
-                ));
-                self.settings.remember(folder);
-                self.save_settings();
-                self.start.failed = None;
-                self.start.report = Some((folder.to_path_buf(), report));
+                    .map(|report| (folder.to_path_buf(), report.to_string()));
                 self.start.watch = Some(FolderWatcher::on(folder));
             }
-            Ok(mut project) => {
-                let lock = match ProjectLock::take(&self.user, folder) {
-                    Ok(lock) => Some(lock),
-                    Err(reason) => {
-                        project.read_only = Some(reason.clone());
-                        self.say(format!("Read-only: {reason}"));
-                        None
-                    }
-                };
-                if !recovered.is_empty() {
-                    let mut edit = ContentEdit::new("Recover unsaved rows from the journal");
-                    for file in &recovered {
-                        let change = file.change();
-                        match change.bytes {
-                            Some(bytes) => edit.write(change.file, bytes),
-                            None => edit.remove(change.file),
-                        };
-                    }
-                    let changed: Vec<&str> = recovered
-                        .iter()
-                        .filter(|file| file.changed_on_disk(project.disk_hash(&file.path)))
-                        .map(|file| file.path.as_str())
-                        .collect();
-                    let applied = project
-                        .apply(edit, EditViewpoint::default())
-                        .and_then(|()| {
-                            project.settle();
-                            match project.take_refused() {
-                                Some(refused) => Err(Box::new(refused.refusal)),
-                                None => Ok(()),
-                            }
-                        });
-                    match applied {
-                        Err(refusal) => {
-                            let kept = RecoveryJournal::set_aside(&self.user, folder)
-                                .map_or(String::new(), |aside| {
-                                    format!("; it is kept at {}", aside.display())
-                                });
-                            self.toast(format!(
-                                "The journal did not apply: {}{kept}",
-                                refusal.sentence()
-                            ));
-                        }
-                        Ok(()) if !changed.is_empty() => self.toast(format!(
-                            "Recovered {} unsaved rows; {} changed on disk since, and saving \
-                             replaces what is there: {}",
-                            recovered.len(),
-                            changed.len(),
-                            changed.join(", ")
-                        )),
-                        Ok(()) => self.say(format!("Recovered {} unsaved rows", recovered.len())),
-                    }
-                }
-                match (&project.report, project.last_load) {
-                    (Some(report), _) => {
-                        self.say(format!(
-                            "{} did not load: {} errors",
-                            folder.display(),
-                            report.errors.len()
-                        ));
-                    }
-                    (None, Some(took)) => {
-                        let usages = project.last_usages.map_or(0, |d| d.as_millis());
-                        self.say(format!(
-                            "Opened {} in {} ms (load) + {usages} ms (usages)",
-                            folder.display(),
-                            took.as_millis()
-                        ));
-                    }
-                    _ => {}
-                }
-                self.settings.remember(folder);
-                self.save_settings();
-                self.lock = lock;
-                self.watcher = Some(FolderWatcher::on(folder));
-                self.journal = Some(RecoveryJournal::for_folder(&self.user, folder));
-                self.project = Some(project);
-                self.dock = DockState::new(Vec::new());
-                self.panels = DockTabs::default();
-                self.selection = RowSelection::default();
-                self.form = FormState::default();
-                self.views = EditorViews::default();
-                self.start.failed = None;
-                self.start.report = None;
-                self.start.watch = None;
-                play::check_binaries(self);
-                if let Some(scene) = self.scene.take() {
-                    scenes::open(self, &scene);
-                }
-            }
+            Ok(project) => self.enter(project, folder, recovered),
             Err(reason) => {
                 self.start.failed = Some((folder.to_path_buf(), reason.clone()));
                 self.say(reason);
@@ -603,7 +288,104 @@ impl Editor {
         }
     }
 
-    pub fn close_project(&mut self) {
+    fn enter(&mut self, mut project: Project, folder: &Path, recovered: Vec<RecoveryJournalFile>) {
+        let lock = match ProjectLock::take(&self.user, folder) {
+            Ok(lock) => Some(lock),
+            Err(reason) => {
+                project.read_only = Some(reason.clone());
+                self.say(format!("Read-only: {reason}"));
+                None
+            }
+        };
+        if !recovered.is_empty() {
+            self.recover(&mut project, folder, &recovered);
+        }
+        self.say_opened(folder, &project);
+        self.settings.remember(folder);
+        self.save_settings();
+        self.lock = lock;
+        self.watcher = Some(FolderWatcher::on(folder));
+        self.journal = Some(RecoveryJournal::for_folder(&self.user, folder));
+        self.project = Some(project);
+        self.dock = DockState::new(Vec::new());
+        self.bottom_tab = BottomTab::default();
+        self.selection = RowSelection::default();
+        self.form = FormState::default();
+        self.views = EditorViews::default();
+        self.start.failed = None;
+        self.start.report = None;
+        self.start.watch = None;
+        play::check_binaries(self);
+        if let Some(scene) = self.scene.take() {
+            scenes::open(self, &scene);
+        }
+    }
+
+    fn recover(&mut self, project: &mut Project, folder: &Path, recovered: &[RecoveryJournalFile]) {
+        let mut edit = ContentEdit::new("Recover unsaved rows from the journal");
+        for file in recovered {
+            let change = file.change();
+            match change.bytes {
+                Some(bytes) => edit.write(change.file, bytes),
+                None => edit.remove(change.file),
+            };
+        }
+        let changed: Vec<&str> = recovered
+            .iter()
+            .filter(|file| file.changed_on_disk(project.disk_hash(&file.path)))
+            .map(|file| file.path.as_str())
+            .collect();
+        let applied = project
+            .apply(edit, EditViewpoint::default())
+            .and_then(|()| {
+                project.settle();
+                match project.take_refused() {
+                    Some(refused) => Err(Box::new(refused.refusal)),
+                    None => Ok(()),
+                }
+            });
+        match applied {
+            Err(refusal) => {
+                let kept = RecoveryJournal::set_aside(&self.user, folder)
+                    .map_or(String::new(), |aside| {
+                        format!("; it is kept at {}", aside.display())
+                    });
+                self.toast(format!(
+                    "The journal did not apply: {}{kept}",
+                    refusal.sentence()
+                ));
+            }
+            Ok(()) if !changed.is_empty() => self.toast(format!(
+                "Recovered {} unsaved rows; {} changed on disk since, and saving \
+                 replaces what is there: {}",
+                recovered.len(),
+                changed.len(),
+                changed.join(", ")
+            )),
+            Ok(()) => self.say(format!("Recovered {} unsaved rows", recovered.len())),
+        }
+    }
+
+    fn say_opened(&mut self, folder: &Path, project: &Project) {
+        match (&project.report, project.last_load) {
+            (Some(report), _) => self.say(format!(
+                "{} did not load: {} errors",
+                folder.display(),
+                report.errors.len()
+            )),
+            (None, Some(took)) => {
+                let usages = project.last_usages.map_or(0, |d| d.as_millis());
+                self.say(format!(
+                    "Opened {} in {} ms (load) + {usages} ms (usages)",
+                    folder.display(),
+                    took.as_millis()
+                ));
+            }
+            _ => {}
+        }
+    }
+
+    pub(crate) fn close_project(&mut self) {
         self.save_settings();
         if let Some(mut play) = self.play.running.take() {
             play.stop();
@@ -617,7 +399,7 @@ impl Editor {
         self.lock = None;
         self.project = None;
         self.dock = DockState::new(Vec::new());
-        self.panels = DockTabs::default();
+        self.bottom_tab = BottomTab::default();
     }
 
     pub fn apply(&mut self, edit: ContentEdit) -> bool {
@@ -673,7 +455,7 @@ impl Editor {
         self.revisit(Project::undo, "Undid");
     }
 
-    pub fn redo(&mut self) {
+    pub(crate) fn redo(&mut self) {
         self.revisit(Project::redo, "Redid");
     }
 
@@ -775,7 +557,7 @@ impl Editor {
     }
 
     /// Shows the media file at `path` in a preview tab, and in the content tree.
-    pub fn open_media(&mut self, path: &str) {
+    pub(crate) fn open_media(&mut self, path: &str) {
         self.select(RowSelection::row("asset", path));
         self.preview_tab(EditorTab::Asset {
             path: path.to_owned(),
@@ -784,14 +566,14 @@ impl Editor {
     }
 
     /// Opens the content file at `path` in its tab.
-    pub fn open_path(&mut self, path: &str) {
+    pub(crate) fn open_path(&mut self, path: &str) {
         if let Some(table) = engine::core::content::table_of(path) {
             let table = table.to_owned();
             self.open_row(&table, path);
         }
     }
 
-    pub fn open_row(&mut self, table: &str, key: &str) {
+    pub(crate) fn open_row(&mut self, table: &str, key: &str) {
         self.select(RowSelection::row(table, key));
         self.open_tab(EditorTab::for_row(table, key));
     }
@@ -825,7 +607,7 @@ impl Editor {
 
     /// Writes `row` as the content file at `path` as part of `edit`, merging or amending as it
     /// says.
-    pub fn write_content_as<Row: ContentFile>(
+    pub(crate) fn write_content_as<Row: ContentFile>(
         &mut self,
         mut edit: ContentEdit,
         path: &str,
@@ -841,6 +623,32 @@ impl Editor {
         self.apply(edit)
     }
 
+    /// Writes the content file at `path` as `change` leaves it, as part of `edit`. Writes nothing
+    /// when `change` refuses, which is told to the designer, or leaves the file as it was.
+    pub(crate) fn change<Row: ContentFile + Clone>(
+        &mut self,
+        edit: ContentEdit,
+        path: &str,
+        change: impl FnOnce(&mut Row) -> Result<(), String>,
+    ) -> bool {
+        let Some(Ok(row)) = self.read::<Row>(path) else {
+            return false;
+        };
+        let mut changed = (*row).clone();
+        if let Err(refusal) = change(&mut changed) {
+            self.toast(format!("{}: {refusal}", tabs::shown_path(path)));
+            return false;
+        }
+        let reader = self.reader();
+        let unchanged = reader.is_some_and(|reader| {
+            matches!((reader.to_json(&changed), reader.to_json(&*row)), (Ok(now), Ok(before)) if now == before)
+        });
+        if unchanged {
+            return false;
+        }
+        self.write_content_as(edit, path, &changed)
+    }
+
     /// The fields of the content file at `path` as raw JSON, as the editor holds them now: for
     /// the forms that walk a file by its type's schema, which know no field by name. Code that
     /// names a field reads the file as its type with `read`.
@@ -853,7 +661,7 @@ impl Editor {
         self.form.thumbnails.image(ctx, &project.files, path)
     }
 
-    pub fn thumb_icon(&mut self, ctx: &egui::Context, path: &str) -> Option<Thumbnail> {
+    pub(crate) fn thumb_icon(&mut self, ctx: &egui::Context, path: &str) -> Option<Thumbnail> {
         let project = self.project.as_ref()?;
         let mut budget = u32::MAX;
         self.form
@@ -869,7 +677,7 @@ impl Editor {
 
     /// Shows a form owned by `key` of `table` against the schema `root`, then carries out the
     /// actions its fields raised; nothing is shown without a project.
-    pub fn with_form<R>(
+    pub(crate) fn with_form<R>(
         &mut self,
         table: &str,
         key: Option<&str>,
@@ -950,7 +758,7 @@ impl Editor {
                         ),
                     );
                 }
-                self.panels.bottom = BottomTab::Output;
+                self.bottom_tab = BottomTab::Output;
                 crate::moves::moved_outside_summary(&moved, &project.files.index())
             } else {
                 format!(
@@ -1054,32 +862,4 @@ fn background(world: &mut World) {
 pub fn content_version() -> &'static str {
     static VERSION: OnceLock<String> = OnceLock::new();
     VERSION.get_or_init(|| systems::registry().version().0)
-}
-
-// A `Receiver` is `!Sync`, and everything the editor holds lives in one bevy resource, so each
-// channel end is wrapped once here instead of at every field.
-pub struct ChannelInbox<T>(Mutex<Receiver<T>>);
-
-impl<T> ChannelInbox<T> {
-    pub fn new(receiver: Receiver<T>) -> ChannelInbox<T> {
-        ChannelInbox(Mutex::new(receiver))
-    }
-
-    pub fn drain(&self) -> Vec<T> {
-        self.0
-            .lock()
-            .map(|receiver| receiver.try_iter().collect())
-            .unwrap_or_default()
-    }
-
-    pub fn try_recv(&self) -> Result<T, TryRecvError> {
-        match self.0.lock() {
-            Ok(receiver) => receiver.try_recv(),
-            Err(_) => Err(TryRecvError::Disconnected),
-        }
-    }
-
-    pub fn recv(&self) -> Option<T> {
-        self.0.lock().ok().and_then(|receiver| receiver.recv().ok())
-    }
 }

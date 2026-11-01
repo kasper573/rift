@@ -13,7 +13,8 @@ use ui::theme;
 use ui::words;
 
 use super::{pins, select};
-use crate::app::{Clipboard, Editor};
+use crate::app::Editor;
+use crate::clipboard::Clipboard;
 use crate::forms;
 use crate::keymap::EditorKey;
 use crate::views::navigation;
@@ -41,7 +42,7 @@ pub(super) fn clipboard_panel(editor: &Editor, ui: &mut Ui) {
     ui.add_space(6.0);
 }
 
-pub fn pick_preview(editor: &mut Editor, ui: &mut Ui) {
+pub(crate) fn pick_preview(editor: &mut Editor, ui: &mut Ui) {
     let Some(pick) = editor.pick.clone() else {
         return;
     };

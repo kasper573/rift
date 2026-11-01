@@ -348,7 +348,7 @@ pub fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str) {
         return;
     };
     let def = stance.get(&content);
-    panel::card(false).show(ui, |ui| {
+    panel::tile(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
         panel::title(ui, "Wield");
         ui.add_space(4.0);
@@ -404,9 +404,6 @@ fn set_wield_as(
     grip: Grip,
     edit: ContentEdit,
 ) -> bool {
-    let Some(Ok(row)) = editor.read::<ItemDef>(key) else {
-        return false;
-    };
     let Some(stance) = editor
         .reader()
         .and_then(|reader| reader.id_of::<StanceDef>(stance))
@@ -414,14 +411,11 @@ fn set_wield_as(
         editor.toast(format!("{stance} is not a stance"));
         return false;
     };
-    let mut item = (*row).clone();
-    let ItemKind::Equipment { wear, .. } = &mut item.kind else {
-        return false;
-    };
-    let held = Wear::Held { stance, grip };
-    if *wear == held {
-        return false;
-    }
-    *wear = held;
-    editor.write_content_as(edit, key, &item)
+    editor.change(edit, key, |item: &mut ItemDef| {
+        let ItemKind::Equipment { wear, .. } = &mut item.kind else {
+            return Ok(());
+        };
+        *wear = Wear::Held { stance, grip };
+        Ok(())
+    })
 }

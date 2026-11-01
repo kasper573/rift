@@ -30,7 +30,7 @@ const MIN_CODE_WIDTH: f32 = 260.0;
 const HEADING_HEIGHT: f32 = 24.0;
 const MIN_TITLE_WIDTH: f32 = 60.0;
 
-pub fn show_vfx(editor: &mut Editor, ui: &mut Ui, key: &str) {
+pub(crate) fn show_vfx(editor: &mut Editor, ui: &mut Ui, key: &str) {
     let Some(project) = &editor.project else {
         return;
     };
@@ -80,7 +80,7 @@ pub fn show_vfx(editor: &mut Editor, ui: &mut Ui, key: &str) {
     });
 }
 
-pub fn show_shader(editor: &mut Editor, ui: &mut Ui, key: &str) {
+pub(crate) fn show_shader(editor: &mut Editor, ui: &mut Ui, key: &str) {
     let Some(read) = editor.read::<VfxShaderDef>(key) else {
         return;
     };

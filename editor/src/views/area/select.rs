@@ -15,7 +15,8 @@ use super::{
     AreaDrag, AreaFrame, AreaSnapshot, AreaTool, AreaViewState, PasteGhost, ResizeCorner,
     blueprint, nodes, pick, pins, scene_tree, shapes,
 };
-use crate::app::{Clipboard, Editor, SceneClip};
+use crate::app::Editor;
+use crate::clipboard::{Clipboard, SceneClip};
 use crate::keymap::EditorKey;
 use crate::project::RowSelection;
 
@@ -481,7 +482,7 @@ fn finish_select_drag(
 }
 
 /// Snaps a ground point to the half metre, or the sixteenth when `fine`.
-pub fn snap_to(p: Pos<Meters>, fine: bool) -> Pos<Meters> {
+pub(crate) fn snap_to(p: Pos<Meters>, fine: bool) -> Pos<Meters> {
     if fine {
         Pos::new(sixteenth(p.x), sixteenth(p.y))
     } else {
@@ -498,7 +499,7 @@ pub(super) fn snapped_delta(from: Pos<Meters>, to: Pos<Meters>, fine: bool) -> (
     }
 }
 
-pub fn move_selection(editor: &mut Editor, frame: &AreaFrame, dx: f32, dy: f32) {
+pub(crate) fn move_selection(editor: &mut Editor, frame: &AreaFrame, dx: f32, dy: f32) {
     if let Some(place) = frame.in_place.last().cloned() {
         let parts = placement::selected_in_place(editor, &place.blueprint);
         if !parts.is_empty() {
@@ -525,12 +526,12 @@ pub fn move_selection(editor: &mut Editor, frame: &AreaFrame, dx: f32, dy: f32) 
     });
 }
 
-pub fn copy_selection(editor: &mut Editor, frame: &AreaSnapshot) {
+pub(crate) fn copy_selection(editor: &mut Editor, frame: &AreaSnapshot) {
     let ids = scene_tree::selected_ids(frame, &editor.selection);
     scene_tree::copy_rows(editor, frame, &ids);
 }
 
-pub fn start_paste(editor: &mut Editor, view_key: &str) {
+pub(crate) fn start_paste(editor: &mut Editor, view_key: &str) {
     let Some(clip) = editor
         .clipboard
         .as_ref()
@@ -549,7 +550,7 @@ pub fn start_paste(editor: &mut Editor, view_key: &str) {
     view.paste = Some(PasteGhost { clip, nodes });
 }
 
-pub fn paste_in_place(editor: &mut Editor, frame: &AreaFrame) {
+pub(crate) fn paste_in_place(editor: &mut Editor, frame: &AreaFrame) {
     let Some(clip) = editor
         .clipboard
         .as_ref()
@@ -661,19 +662,19 @@ fn settle_holes(nodes: &mut [SceneNode], variables: &BTreeMap<String, Variable>)
     open
 }
 
-pub fn duplicate_selection(editor: &mut Editor, frame: &AreaSnapshot) {
+pub(crate) fn duplicate_selection(editor: &mut Editor, frame: &AreaSnapshot) {
     let ids = scene_tree::selected_ids(frame, &editor.selection);
     scene_tree::duplicate_rows(editor, frame, &ids);
 }
 
-pub fn delete_selection(editor: &mut Editor, frame: &AreaSnapshot) {
+pub(crate) fn delete_selection(editor: &mut Editor, frame: &AreaSnapshot) {
     let ids = scene_tree::selected_ids(frame, &editor.selection);
     scene_tree::delete_rows(editor, frame, &ids);
 }
 
 /// Selects every module of the scene the map lets the pointer at, passing over what is hidden or
 /// locked.
-pub fn select_all(editor: &mut Editor, frame: &AreaFrame) {
+pub(crate) fn select_all(editor: &mut Editor, frame: &AreaFrame) {
     let mut skipped = Skipped::default();
     let (bundle, parts): (String, Vec<String>) = match frame.in_place.last() {
         Some(place) => (

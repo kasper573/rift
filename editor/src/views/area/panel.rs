@@ -22,15 +22,17 @@ use ui::glyph::{self, Mark};
 use super::nodes::SceneBundle;
 use super::scene_tree::{self, SceneAction, SceneNarrowing, SceneSource, Toggle};
 use super::{AreaSnapshot, nodes, placement, resize, shapes};
-use crate::app::{Editor, ModalDialog, PickRowDialog, PickRowThen};
+use crate::app::Editor;
 use crate::forms::{self, FormCx};
 use crate::keymap::EditorKey;
+use crate::modal::{ModalDialog, PickRowDialog, PickRowThen};
 use crate::project::files::content_of;
 use crate::shell::tree::{self, DropAt, TreeSource, TreeState};
 use crate::shell::widgets::{self, KindMark};
-use crate::shell::{breadcrumb, content_tree, row_form};
+use crate::shell::{content_tree, row_form};
 use crate::tabs::{EditorTab, file_title};
 use crate::views;
+use ui::draft;
 use ui::input::{self, InputField};
 
 /// The left panel's own state between frames: the scene graph's tree, its filter, and what was
@@ -57,7 +59,7 @@ pub struct ScenePanel {
 /// The view's left panel: where the bundle is, its boxes, then its scene graph.
 pub fn show(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
     let bundle = editor.views.area.view(view_key).bundle.clone();
-    if let Some(folder) = breadcrumb::show(ui, &bundle) {
+    if let Some(folder) = ui::panel::breadcrumb(ui, &bundle, file_title(&bundle)) {
         content_tree::reveal(editor, &folder);
     }
     ui.add_space(4.0);
@@ -95,7 +97,7 @@ fn boxes(editor: &mut Editor, ui: &mut Ui, snapshot: &AreaSnapshot) {
     let mut renamed = None;
     let mut variables_changed = None;
     let mut actions = Vec::new();
-    panel::card(false).show(ui, |ui| {
+    panel::tile(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
         ui.horizontal(|ui| {
             let mark = if folded {
@@ -138,7 +140,7 @@ fn boxes(editor: &mut Editor, ui: &mut Ui, snapshot: &AreaSnapshot) {
         if let SceneBundle::Area(held) = &def {
             form::kv(ui, "name", |ui| {
                 let id = ui.id().with(("area-name", &bundle));
-                renamed = input::drafted(ui, id, &held.name, |ui, draft| {
+                renamed = draft::drafted(ui, id, &held.name, |ui, draft| {
                     InputField::new(draft).show(ui)
                 });
             });
@@ -907,7 +909,7 @@ fn move_to_dialog(editor: &mut Editor, snapshot: &AreaSnapshot, ids: Vec<String>
 }
 
 /// Moves the rows `ids` of the view of `bundle` into the folder labelled `picked` among `folders`.
-pub fn move_into_picked(
+pub(crate) fn move_into_picked(
     editor: &mut Editor,
     bundle: &str,
     ids: &[String],

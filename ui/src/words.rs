@@ -57,3 +57,42 @@ pub fn clip(text: &str, max: usize) -> String {
     out.push('…');
     out
 }
+
+/// The time of day `unix_millis` after the epoch falls on in the user's own time zone.
+pub fn clock(unix_millis: u64, with_seconds: bool) -> String {
+    let format = if with_seconds { "%H:%M:%S" } else { "%H:%M" };
+    i64::try_from(unix_millis)
+        .ok()
+        .and_then(|millis| jiff::Timestamp::from_millisecond(millis).ok())
+        .map(|at| {
+            at.to_zoned(jiff::tz::TimeZone::system())
+                .strftime(format)
+                .to_string()
+        })
+        .unwrap_or_default()
+}
+
+/// How long ago something was, in the largest unit that reads naturally.
+pub fn ago(elapsed_seconds: f32) -> String {
+    let seconds = elapsed_seconds.max(0.0) as u64;
+    let minutes = seconds / 60;
+    let hours = minutes / 60;
+    let days = hours / 24;
+    if seconds < 60 {
+        "just now".to_owned()
+    } else if minutes < 60 {
+        format!("{minutes} min ago")
+    } else if hours < 24 {
+        format!("{hours} h ago")
+    } else if days == 1 {
+        "yesterday".to_owned()
+    } else if days < 7 {
+        format!("{days} days ago")
+    } else if days < 14 {
+        "last week".to_owned()
+    } else if days < 31 {
+        format!("{} weeks ago", days / 7)
+    } else {
+        format!("{} months ago", days / 30)
+    }
+}

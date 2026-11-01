@@ -105,16 +105,16 @@ impl SceneBundle {
 
 /// The area or blueprint at `bundle` as its files read now; `None` when there is no project or no
 /// such bundle.
-pub fn read_bundle(editor: &Editor, bundle: &str) -> Option<Result<SceneBundle, Arc<Unreadable>>> {
+pub(crate) fn read_bundle(
+    editor: &Editor,
+    bundle: &str,
+) -> Option<Result<SceneBundle, Arc<Unreadable>>> {
     read_bundle_in(editor.project.as_ref()?, bundle)
 }
 
 /// The area or blueprint at `bundle` of `project` as its files read now; `None` when it names no
 /// area or blueprint.
-pub fn read_bundle_in(
-    project: &Project,
-    bundle: &str,
-) -> Option<Result<SceneBundle, Arc<Unreadable>>> {
+fn read_bundle_in(project: &Project, bundle: &str) -> Option<Result<SceneBundle, Arc<Unreadable>>> {
     Some(match table_of(bundle)? {
         AreaDef::TABLE => project.read::<AreaDef>(bundle).map(SceneBundle::Area),
         BlueprintDef::TABLE => project
@@ -130,7 +130,7 @@ pub fn bundle_of(editor: &Editor, bundle: &str) -> Option<SceneBundle> {
 }
 
 /// The area or blueprint at `bundle` of `project`, when it reads.
-pub fn bundle_in(project: &Project, bundle: &str) -> Option<SceneBundle> {
+pub(crate) fn bundle_in(project: &Project, bundle: &str) -> Option<SceneBundle> {
     read_bundle_in(project, bundle)?.ok()
 }
 
@@ -190,7 +190,7 @@ impl SceneModule {
 }
 
 /// The tag a node is badged and filtered by: its module's kind, or a folder's.
-pub fn kind_tag(node: &SceneNode) -> &'static str {
+pub(crate) fn kind_tag(node: &SceneNode) -> &'static str {
     match node {
         SceneNode::Folder(_) => FOLDER,
         SceneNode::Module(module) => module.module.kind().tag(),
@@ -281,20 +281,20 @@ pub fn node<'a>(nodes: &'a [SceneNode], pointer: &str) -> Option<&'a SceneNode> 
     siblings.get(*last)
 }
 
-pub fn node_mut<'a>(nodes: &'a mut [SceneNode], pointer: &str) -> Option<&'a mut SceneNode> {
+pub(crate) fn node_mut<'a>(nodes: &'a mut [SceneNode], pointer: &str) -> Option<&'a mut SceneNode> {
     let path = path_of(pointer)?;
     node_at_mut(nodes, &path)
 }
 
 /// The module node of `nodes` at `pointer`.
-pub fn module_node<'a>(nodes: &'a [SceneNode], pointer: &str) -> Option<&'a ModuleNode> {
+pub(crate) fn module_node<'a>(nodes: &'a [SceneNode], pointer: &str) -> Option<&'a ModuleNode> {
     match node(nodes, pointer)? {
         SceneNode::Module(node) => Some(node),
         _ => None,
     }
 }
 
-pub fn module_node_mut<'a>(
+pub(crate) fn module_node_mut<'a>(
     nodes: &'a mut [SceneNode],
     pointer: &str,
 ) -> Option<&'a mut ModuleNode> {
@@ -305,7 +305,7 @@ pub fn module_node_mut<'a>(
 }
 
 /// The folder holding the node at `pointer`, `""` for the top level, and the node's index in it.
-pub fn place_of(pointer: &str) -> Option<(&str, usize)> {
+pub(crate) fn place_of(pointer: &str) -> Option<(&str, usize)> {
     let cut = pointer.rfind('/')?;
     let index = pointer[cut + 1..].parse().ok()?;
     let folder = pointer[..cut].strip_suffix("/children").unwrap_or("");
@@ -313,7 +313,7 @@ pub fn place_of(pointer: &str) -> Option<(&str, usize)> {
 }
 
 /// The nodes of `folder`, `""` for the top level.
-pub fn children_mut<'a>(
+pub(crate) fn children_mut<'a>(
     nodes: &'a mut Vec<SceneNode>,
     folder: &str,
 ) -> Option<&'a mut Vec<SceneNode>> {
@@ -330,7 +330,7 @@ pub fn label_of(node: &SceneNode) -> Option<&str> {
     node.label()
 }
 
-pub fn set_label(node: &mut SceneNode, label: String) {
+pub(crate) fn set_label(node: &mut SceneNode, label: String) {
     match node {
         SceneNode::Folder(folder) => folder.label = label,
         SceneNode::Module(module) => module.label = Some(label),
@@ -339,7 +339,7 @@ pub fn set_label(node: &mut SceneNode, label: String) {
 
 /// A label for a new node among `siblings`: `base`, or `base (1)`, `base (2)`, the next free
 /// number, when a sibling has it already.
-pub fn free_label(base: &str, siblings: &[SceneNode]) -> String {
+pub(crate) fn free_label(base: &str, siblings: &[SceneNode]) -> String {
     let taken = |label: &str| {
         siblings
             .iter()
@@ -368,7 +368,7 @@ pub fn folder(label: String) -> SceneNode {
 
 /// Labels each placement among `new` that has none with its blueprint's name, numbered past what
 /// `folder` of `nodes` holds, as a new placement is labelled.
-pub fn label_placements(
+pub(crate) fn label_placements(
     nodes: &[SceneNode],
     folder: &str,
     new: &mut [SceneNode],
@@ -415,7 +415,7 @@ pub fn insertion_folder(editor: &Editor, bundle: &str) -> String {
 
 /// An edit of `bundle`'s scene: `change` changes its nodes and names the step, or answers `None` to
 /// make no step.
-pub fn scene_edit(
+pub(crate) fn scene_edit(
     editor: &Editor,
     bundle: &str,
     change: impl FnOnce(&mut Vec<SceneNode>) -> Option<String>,
@@ -425,7 +425,7 @@ pub fn scene_edit(
 
 /// An edit of the scene of `bundle` and the variables its holes name: `change` changes them and
 /// names the step, or answers `None` to make no step.
-pub fn draft_edit(
+fn draft_edit(
     editor: &Editor,
     bundle: &str,
     change: impl FnOnce(&mut SceneDraft) -> Option<String>,
@@ -448,14 +448,6 @@ pub fn change_scene(
     change: impl FnOnce(&mut Vec<SceneNode>) -> Option<String>,
 ) -> bool {
     scene_edit(editor, bundle, change).is_some_and(|edit| editor.apply(edit))
-}
-
-pub fn change_draft(
-    editor: &mut Editor,
-    bundle: &str,
-    change: impl FnOnce(&mut SceneDraft) -> Option<String>,
-) -> bool {
-    draft_edit(editor, bundle, change).is_some_and(|edit| editor.apply(edit))
 }
 
 /// Adds `new` to the insertion folder of `bundle` as one step, and selects what it added.
@@ -492,7 +484,7 @@ pub enum Landing {
 }
 
 /// Where each node of a scene went in a change to it, by its pointer before and after.
-pub type Remap = HashMap<String, String>;
+pub(crate) type Remap = HashMap<String, String>;
 
 /// Where `pointer` names a node after a change, following the nearest node above it that moved.
 pub fn remapped(remap: &Remap, pointer: &str) -> Option<String> {
@@ -819,7 +811,7 @@ impl<'a> SceneTree<'a> {
     }
 
     /// Clears `flag` on every node; answers how many had it.
-    pub fn clear_flag(&mut self, flag: NodeFlag) -> usize {
+    pub(crate) fn clear_flag(&mut self, flag: NodeFlag) -> usize {
         let mut set = Vec::new();
         walk(self.nodes, &mut |pointer, node| {
             if flag.of(node) {
@@ -951,7 +943,7 @@ impl<'a> SceneTree<'a> {
 
 /// Makes `change` to `nodes` through a `SceneTree` and answers where every node went, by pointer,
 /// so whatever names nodes by their pointers can follow them.
-pub fn restructure<R>(
+pub(crate) fn restructure<R>(
     nodes: &mut Vec<SceneNode>,
     change: impl FnOnce(&mut SceneTree) -> R,
 ) -> (R, Remap) {
@@ -962,7 +954,7 @@ pub fn restructure<R>(
 
 /// How many folders hold the node at `pointer`.
 /// Sorts `pointers` into the order their nodes stand in the scene, depth first.
-pub fn sort_in_scene_order(pointers: &mut [String]) {
+pub(crate) fn sort_in_scene_order(pointers: &mut [String]) {
     pointers.sort_by_key(|pointer| indices(pointer));
 }
 
@@ -971,7 +963,7 @@ pub fn depth(pointer: &str) -> usize {
 }
 
 /// How deep the folders inside `node` go, 0 when it holds none.
-pub fn folders_inside(node: &SceneNode) -> usize {
+pub(crate) fn folders_inside(node: &SceneNode) -> usize {
     match node {
         SceneNode::Folder(folder) => folder
             .children

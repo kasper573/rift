@@ -11,7 +11,7 @@ use crate::face::TextRole;
 use crate::ink;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, VariantArray)]
-pub enum Kind {
+pub enum CardKind {
     Equipment,
     Usable,
     Resource,
@@ -20,28 +20,28 @@ pub enum Kind {
     Passive,
 }
 
-impl Kind {
+impl CardKind {
     pub fn word(self) -> &'static str {
         match self {
-            Kind::Equipment => "equipment",
-            Kind::Usable => "usable",
-            Kind::Resource => "resource",
-            Kind::Quest => "quest",
-            Kind::Active => "active skill",
-            Kind::Passive => "passive skill",
+            CardKind::Equipment => "equipment",
+            CardKind::Usable => "usable",
+            CardKind::Resource => "resource",
+            CardKind::Quest => "quest",
+            CardKind::Active => "active skill",
+            CardKind::Passive => "passive skill",
         }
     }
 
     pub fn ground(self) -> [Color32; 2] {
         match self {
-            Kind::Equipment => [Color32::from_rgb(0x3A, 0x5E, 0xA3), ink::AZURE],
-            Kind::Usable | Kind::Active => [Color32::from_rgb(0xC8, 0x30, 0x2A), ink::WAX],
-            Kind::Resource => [
+            CardKind::Equipment => [Color32::from_rgb(0x3A, 0x5E, 0xA3), ink::AZURE],
+            CardKind::Usable | CardKind::Active => [Color32::from_rgb(0xC8, 0x30, 0x2A), ink::WAX],
+            CardKind::Resource => [
                 Color32::from_rgb(0xE3, 0xB3, 0x35),
                 Color32::from_rgb(0xC4, 0x92, 0x1E),
             ],
-            Kind::Quest => [ink::TYRIAN, Color32::from_rgb(0x4F, 0x2A, 0x5C)],
-            Kind::Passive => [
+            CardKind::Quest => [ink::TYRIAN, Color32::from_rgb(0x4F, 0x2A, 0x5C)],
+            CardKind::Passive => [
                 Color32::from_rgb(0x4A, 0x94, 0x60),
                 Color32::from_rgb(0x3F, 0x7A, 0x58),
             ],
@@ -69,12 +69,12 @@ impl Kind {
 
     fn png(self) -> &'static [u8] {
         match self {
-            Kind::Equipment => include_bytes!("../glyphs/equipment.png"),
-            Kind::Usable => include_bytes!("../glyphs/usable.png"),
-            Kind::Resource => include_bytes!("../glyphs/resource.png"),
-            Kind::Quest => include_bytes!("../glyphs/quest.png"),
-            Kind::Active => include_bytes!("../glyphs/active.png"),
-            Kind::Passive => include_bytes!("../glyphs/passive.png"),
+            CardKind::Equipment => include_bytes!("../glyphs/equipment.png"),
+            CardKind::Usable => include_bytes!("../glyphs/usable.png"),
+            CardKind::Resource => include_bytes!("../glyphs/resource.png"),
+            CardKind::Quest => include_bytes!("../glyphs/quest.png"),
+            CardKind::Active => include_bytes!("../glyphs/active.png"),
+            CardKind::Passive => include_bytes!("../glyphs/passive.png"),
         }
     }
 }

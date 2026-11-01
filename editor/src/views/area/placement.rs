@@ -28,17 +28,17 @@ use ui::glyph::{self, Mark};
 use super::inspect::Followups;
 use super::stamp::object_names;
 use super::{AreaFrame, AreaSnapshot, nodes, shapes};
-use crate::app::{Editor, ModalDialog, PickRowDialog, PickRowThen};
+use crate::app::Editor;
 use crate::forms::{self, FormCx};
 use crate::keymap::EditorKey;
-use crate::project::files::content_of;
+use crate::modal::{ModalDialog, PickRowDialog, PickRowThen};
 use crate::project::{IdPaths, Project, RowSelection};
 use crate::tabs::file_title;
 use crate::{rows, schema};
 
 /// What each placement of a scene covers on the map, by its node's pointer: the modules it brings,
 /// placed.
-pub fn placement_bounds(placed: &[Flattened]) -> HashMap<String, Rect<Meters>> {
+pub(crate) fn placement_bounds(placed: &[Flattened]) -> HashMap<String, Rect<Meters>> {
     let mut out: HashMap<String, Rect<Meters>> = HashMap::new();
     for placed in placed {
         if placed.chain.is_empty() {
@@ -54,19 +54,6 @@ pub fn placement_bounds(placed: &[Flattened]) -> HashMap<String, Rect<Meters>> {
     out
 }
 
-pub fn first_area_using(editor: &Editor, blueprint: &str) -> Option<String> {
-    let project = editor.project.as_ref()?;
-    project
-        .usages
-        .of_content(blueprint)
-        .iter()
-        .find_map(|usage| {
-            content_of(&usage.file)
-                .filter(|(table, _)| *table == AreaDef::TABLE)
-                .map(|(_, key)| key.to_owned())
-        })
-}
-
 /// Where a blueprint is placed: straight into areas, and how many more times inside other
 /// blueprints.
 pub struct BlueprintPlacements<'a> {
@@ -74,7 +61,7 @@ pub struct BlueprintPlacements<'a> {
     pub nested: usize,
 }
 
-pub fn placements_of(content: &Content, blueprint: BlueprintId) -> BlueprintPlacements<'_> {
+pub(crate) fn placements_of(content: &Content, blueprint: BlueprintId) -> BlueprintPlacements<'_> {
     let mut placements = BlueprintPlacements {
         direct: Vec::new(),
         nested: 0,
@@ -94,7 +81,7 @@ pub fn placements_of(content: &Content, blueprint: BlueprintId) -> BlueprintPlac
     placements
 }
 
-pub fn placement_count(content: &Content, blueprint: &str) -> String {
+pub(crate) fn placement_count(content: &Content, blueprint: &str) -> String {
     let Some(id) = content.by_path::<BlueprintDef>(blueprint) else {
         return String::new();
     };
@@ -120,7 +107,7 @@ pub fn placement_count(content: &Content, blueprint: &str) -> String {
 }
 
 /// The values a placement gives its blueprint's variables, each edited as its variable's type.
-pub fn placement_card(
+pub(crate) fn placement_card(
     ui: &mut Ui,
     cx: &mut FormCx,
     placement: &mut Placement,
@@ -189,7 +176,7 @@ pub fn variable_default(reader: &FolderReader, variable: &Variable) -> Option<Va
     reader.to_json(variable.default.as_ref()?).ok()
 }
 
-pub fn variable_template(variable: &Variable, nearby: schema::Nearby) -> Value {
+pub(crate) fn variable_template(variable: &Variable, nearby: schema::Nearby) -> Value {
     let schema = schema::variable_schema(variable.ty, variable.table.as_deref());
     match variable.ty {
         VariableType::Condition => Value::Bool(true),
@@ -197,7 +184,7 @@ pub fn variable_template(variable: &Variable, nearby: schema::Nearby) -> Value {
     }
 }
 
-pub fn variable_field(
+pub(crate) fn variable_field(
     ui: &mut Ui,
     cx: &mut FormCx,
     variable: &Variable,
@@ -233,7 +220,10 @@ pub(super) fn short_value(value: &VarValue, project: &Project) -> String {
 }
 
 /// Every place the object's scripts lead to, by the path of its area and its ground.
-pub fn warp_destinations(object: &ObjectDef, paths: &impl IdPaths) -> Vec<(String, Pos<Meters>)> {
+pub(crate) fn warp_destinations(
+    object: &ObjectDef,
+    paths: &impl IdPaths,
+) -> Vec<(String, Pos<Meters>)> {
     object
         .scripts
         .iter()
@@ -246,7 +236,7 @@ pub fn warp_destinations(object: &ObjectDef, paths: &impl IdPaths) -> Vec<(Strin
 }
 
 /// Points every place the object's scripts name at `to`, so a copy of a warp leads there instead.
-pub fn redirect_places(object: &mut ObjectDef, to: Place) {
+fn redirect_places(object: &mut ObjectDef, to: Place) {
     for value in object
         .scripts
         .iter_mut()
@@ -260,7 +250,7 @@ pub fn redirect_places(object: &mut ObjectDef, to: Place) {
 
 /// The values every selected placement gives, edited for all of them at once when they place the
 /// same blueprint.
-pub fn shared_values(
+pub(crate) fn shared_values(
     ui: &mut Ui,
     cx: &mut FormCx,
     nodes: &mut [SceneNode],
@@ -371,7 +361,7 @@ pub struct AreaPlacement {
 
 /// The placements edited in place along `path`, each named by its node's pointer in the scene of
 /// the one before; as many as still resolve.
-pub fn resolve_in_place(
+pub(crate) fn resolve_in_place(
     editor: &Editor,
     scene: &[SceneNode],
     path: &[String],
@@ -427,7 +417,7 @@ impl AreaPlacement {
 
 /// The module of a part of the blueprint `place` places, its holes filled with the placement's
 /// values and placed as the placement lands.
-pub fn placed_part(
+fn placed_part(
     reader: &FolderReader,
     part: &ModuleNode,
     place: &AreaPlacement,
@@ -438,7 +428,7 @@ pub fn placed_part(
     Some(module)
 }
 
-pub struct PartView {
+pub(crate) struct PartView {
     pub part: String,
     pub module: AreaModule,
     pub bounds: Option<Rect<Meters>>,
@@ -446,7 +436,7 @@ pub struct PartView {
     pub locked: bool,
 }
 
-pub fn parts_in_place(frame: &AreaFrame, place: &AreaPlacement) -> Vec<PartView> {
+pub(crate) fn parts_in_place(frame: &AreaFrame, place: &AreaPlacement) -> Vec<PartView> {
     let reader = frame.reader.clone();
     let row = super::scene_tree::place_row(frame);
     let mut out = Vec::new();
@@ -494,7 +484,7 @@ pub(super) fn nested_bounds(
     Some(bounds.unwrap_or_else(|| shapes::cell_rect(placement.at)))
 }
 
-pub fn start_in_place(editor: &mut Editor, view_key: &str, area_key: &str, node: &str) {
+fn start_in_place(editor: &mut Editor, view_key: &str, area_key: &str, node: &str) {
     let scene = nodes::scene_of(editor, area_key);
     let Some(ModuleNode {
         module: AreaModule::Blueprint(placement),
@@ -515,11 +505,11 @@ pub fn start_in_place(editor: &mut Editor, view_key: &str, area_key: &str, node:
     editor.selection = RowSelection::row(BlueprintDef::TABLE, &blueprint);
 }
 
-pub fn edit_in_place(editor: &mut Editor, view_key: &str, frame: &AreaFrame, node: &str) {
+pub(crate) fn edit_in_place(editor: &mut Editor, view_key: &str, frame: &AreaFrame, node: &str) {
     start_in_place(editor, view_key, &frame.bundle, node);
 }
 
-pub fn enter_nested(editor: &mut Editor, view_key: &str, part: &str, blueprint: &str) {
+pub(crate) fn enter_nested(editor: &mut Editor, view_key: &str, part: &str, blueprint: &str) {
     editor
         .views
         .area
@@ -530,7 +520,7 @@ pub fn enter_nested(editor: &mut Editor, view_key: &str, part: &str, blueprint: 
 }
 
 /// The nodes of `blueprint` selected while it is edited in place.
-pub fn selected_in_place(editor: &Editor, blueprint: &str) -> Vec<String> {
+pub(crate) fn selected_in_place(editor: &Editor, blueprint: &str) -> Vec<String> {
     if editor.selection.table != BlueprintDef::TABLE
         || !editor.selection.keys.iter().any(|k| k == blueprint)
     {
@@ -539,7 +529,7 @@ pub fn selected_in_place(editor: &Editor, blueprint: &str) -> Vec<String> {
     editor.selection.parts.clone()
 }
 
-pub fn overlay_in_place(
+pub(crate) fn overlay_in_place(
     editor: &Editor,
     painter: &egui::Painter,
     frame: &AreaFrame,
@@ -587,7 +577,7 @@ pub fn overlay_in_place(
     }
 }
 
-pub fn move_parts_in_place(
+pub(crate) fn move_parts_in_place(
     editor: &mut Editor,
     frame: &AreaFrame,
     place: &AreaPlacement,
@@ -710,7 +700,7 @@ pub fn unpack(editor: &mut Editor, frame: &AreaSnapshot, node: &str) {
     }
 }
 
-pub fn replace_dialog(editor: &mut Editor, frame: &AreaSnapshot, node: &str) {
+pub(crate) fn replace_dialog(editor: &mut Editor, frame: &AreaSnapshot, node: &str) {
     let placed = match frame.module(node) {
         Some(AreaModule::Blueprint(placement)) => frame.reader.path_of(placement.blueprint),
         _ => None,
@@ -728,7 +718,7 @@ pub fn replace_dialog(editor: &mut Editor, frame: &AreaSnapshot, node: &str) {
     }));
 }
 
-pub fn replace_with(editor: &mut Editor, bundle: &str, node: &str, replacement: &str) {
+pub(crate) fn replace_with(editor: &mut Editor, bundle: &str, node: &str, replacement: &str) {
     let (Some(reader), Some(Ok(def))) = (editor.reader(), editor.read::<BlueprintDef>(replacement))
     else {
         return;
@@ -835,7 +825,7 @@ fn chain_to(
 
 /// Adds an object to the area the warp object at `node` leads to, on the nearest walkable cell
 /// beside its arrival, with the object's scripts pointed back here, so the player can come back.
-pub fn return_door(editor: &mut Editor, frame: &AreaSnapshot, node: &str) {
+pub(crate) fn return_door(editor: &mut Editor, frame: &AreaSnapshot, node: &str) {
     let area_key = &frame.bundle;
     let Some(AreaModule::Object(object)) = frame.module(node) else {
         return;

@@ -16,7 +16,7 @@ pub struct SfxTuneField {
     pub of: fn(&mut SfxDef) -> &mut SfxScalar,
 }
 
-pub const SFX_TUNE_FIELDS: [SfxTuneField; 2] = [
+const SFX_TUNE_FIELDS: [SfxTuneField; 2] = [
     SfxTuneField {
         name: "volume",
         range: RangeInclusive::new(0.0, 2.0),
@@ -29,7 +29,7 @@ pub const SFX_TUNE_FIELDS: [SfxTuneField; 2] = [
     },
 ];
 
-pub fn sfx_tune_field(name: &str) -> Option<&'static SfxTuneField> {
+pub(crate) fn sfx_tune_field(name: &str) -> Option<&'static SfxTuneField> {
     SFX_TUNE_FIELDS.iter().find(|field| field.name == name)
 }
 
@@ -48,7 +48,7 @@ pub fn show(ui: &mut Ui, sound: &mut SfxDef) -> Option<&'static str> {
 
 /// A value fixed or drawn at random from a span, each end on a slider within `range`. Values
 /// outside it that the file already holds stay as they are until moved.
-pub fn scalar(ui: &mut Ui, scalar: &mut SfxScalar, range: &RangeInclusive<f32>) -> bool {
+pub(crate) fn scalar(ui: &mut Ui, scalar: &mut SfxScalar, range: &RangeInclusive<f32>) -> bool {
     let mut changed = false;
     ui.horizontal(|ui| {
         let random = matches!(scalar, SfxScalar::Random { .. });

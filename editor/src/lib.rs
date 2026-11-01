@@ -1,13 +1,17 @@
 pub mod app;
 pub mod audio;
 pub mod body_names;
+mod clipboard;
 mod condition;
 mod forms;
 pub mod icons;
 pub mod import;
+mod inbox;
 pub mod keymap;
 pub mod make;
+pub mod modal;
 pub mod moves;
+pub mod output_log;
 mod picker;
 mod play;
 pub mod project;

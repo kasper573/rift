@@ -68,21 +68,21 @@ use self::overlays::{
     overlay_navmesh, overlay_soundscape_reach,
 };
 use self::status::status_bar;
-use self::viewport::{Request, StageClip, Standing, StrokeTerrain, Viewports};
+use self::viewport::{Request, StageClip, StandingActor, StrokeTerrain, Viewports};
 use crate::app::{BottomTab, Editor};
 use crate::keymap::EditorKey;
 use crate::play;
 use crate::project::{AreaCameraState, Project, RowSelection};
-use crate::shell::{sidebar, widgets};
+use crate::shell::widgets;
 use crate::tabs::{EditorTab, file_title};
 
 /// The key of the view of an area or blueprint bundle.
-pub fn view_key(bundle: &str) -> String {
+pub(crate) fn view_key(bundle: &str) -> String {
     format!("bundle:{bundle}")
 }
 
 /// The bundle a view key's view shows: an area, or a blueprint.
-pub fn viewed_bundle(view_key: &str) -> Option<&str> {
+pub(crate) fn viewed_bundle(view_key: &str) -> Option<&str> {
     view_key.strip_prefix("bundle:")
 }
 
@@ -152,16 +152,11 @@ impl AreaTool {
     }
 
     /// The bottom tab a tool works from, brought up when the tool is taken.
-    pub fn bottom_tab(self) -> Option<BottomTab> {
+    pub(crate) fn bottom_tab(self) -> Option<BottomTab> {
         match self {
             AreaTool::Place | AreaTool::Scatter => Some(BottomTab::Palette),
             _ => None,
         }
-    }
-
-    /// Whether the tool shapes the terrain, which only an area has.
-    pub fn shapes_terrain(self) -> bool {
-        matches!(self, AreaTool::Sculpt | AreaTool::Paint)
     }
 }
 
@@ -226,15 +221,15 @@ impl AreaViewState {
         self.drag.as_ref()
     }
 
-    pub fn drag_mut(&mut self) -> Option<&mut AreaDrag> {
+    pub(crate) fn drag_mut(&mut self) -> Option<&mut AreaDrag> {
         self.drag.as_mut()
     }
 
-    pub fn set_drag(&mut self, drag: AreaDrag) {
+    pub(crate) fn set_drag(&mut self, drag: AreaDrag) {
         self.drag = Some(drag);
     }
 
-    pub fn set_tool(&mut self, tool: AreaTool) {
+    pub(crate) fn set_tool(&mut self, tool: AreaTool) {
         self.tool = tool;
         self.cancel_gesture();
     }
@@ -249,11 +244,11 @@ impl AreaViewState {
         *flag = !*flag;
     }
 
-    pub fn cancel_gesture(&mut self) -> bool {
+    pub(crate) fn cancel_gesture(&mut self) -> bool {
         self.drag.take().is_some() | self.placing.take().is_some() | self.stroke.take().is_some()
     }
 
-    pub fn take_drag(&mut self) -> Option<AreaDrag> {
+    pub(crate) fn take_drag(&mut self) -> Option<AreaDrag> {
         self.drag.take()
     }
 
@@ -329,7 +324,7 @@ pub enum ResizeCorner {
 /// What is being pasted, following the pointer until a click places it: the nodes as they read
 /// when the paste started, drawn as a ghost.
 pub struct PasteGhost {
-    pub clip: crate::app::SceneClip,
+    pub clip: crate::clipboard::SceneClip,
     pub nodes: Vec<SceneNode>,
 }
 
@@ -339,7 +334,7 @@ impl AreaViews {
         self.active = None;
     }
 
-    pub fn camera_state(&self) -> Option<AreaCameraState> {
+    pub(crate) fn camera_state(&self) -> Option<AreaCameraState> {
         let bundle = self.active.as_ref()?;
         let view = self.views.get(&view_key(bundle))?;
         Some(AreaCameraState {
@@ -348,7 +343,7 @@ impl AreaViews {
         })
     }
 
-    pub fn restore_camera(&mut self, camera: &AreaCameraState) {
+    pub(crate) fn restore_camera(&mut self, camera: &AreaCameraState) {
         if let Some(view) = self.views.get_mut(&view_key(&camera.bundle)) {
             view.camera = camera.camera;
         }
@@ -382,21 +377,12 @@ impl AreaViews {
     }
 }
 
-/// The tab of an area: its scene graph on the left, its map, and the inspector.
-pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
-    show_bundle(editor, ui, key);
-}
-
-/// The tab of a blueprint: the same view as an area's, on the blueprint's own canvas.
-pub fn show_blueprint(editor: &mut Editor, ui: &mut Ui, key: &str) {
-    show_bundle(editor, ui, key);
-}
-
-fn show_bundle(editor: &mut Editor, ui: &mut Ui, bundle: &str) {
+/// The tab of an area or a blueprint: its scene graph on the left, its map, and the inspector.
+pub fn show(editor: &mut Editor, ui: &mut Ui, bundle: &str) {
     let view_key = view_key(bundle);
     editor.views.area.ensure_view(bundle);
-    sidebar::panel(ui, "area", |ui| panel::show(editor, ui, &view_key));
-    sidebar::inspector(editor, ui, "area", |editor, ui| {
+    ui::panel::left_framed(ui, "area", |ui| panel::show(editor, ui, &view_key));
+    ui::panel::inspector(ui, editor, "area", |editor, ui| {
         inspect::sidebar(editor, ui, &view_key)
     });
     show_canvas(editor, ui, &view_key);
@@ -500,7 +486,15 @@ fn banners(editor: &mut Editor, ui: &mut Ui, view_key: &str, canvas_rect: ERect)
                 placement::placements_of(&snapshot.content, id).direct.len()
             });
         let label = snapshot
-            .scene_node(&place_id(&editor.views.area.view(view_key).in_place))
+            .scene_node(&place_id(
+                editor
+                    .views
+                    .area
+                    .view(view_key)
+                    .in_place
+                    .iter()
+                    .map(String::as_str),
+            ))
             .and_then(|node| node.label().map(str::to_owned))
             .unwrap_or_else(|| file_title(&place.blueprint).to_owned());
         chip(&mut child, &mut |ui| {
@@ -695,7 +689,7 @@ fn ghost_moves(view: &AreaViewState) -> bool {
 
 /// The rigs standing in the view: each resident at its spot in its pose, and the previewed places
 /// of each population, every one in its model's idle.
-fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<Standing> {
+fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<StandingActor> {
     let content = &frame.content;
     let area = frame.area();
     let (generation, revision) = editor.project.as_ref().map_or((0, 0), |project| {
@@ -715,7 +709,7 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<Standing>
             model.standing_clip(stance, &Motion::Action(Action::Idle), pose),
         );
         let ground = area.heights.height_at(at);
-        Some(Standing {
+        Some(StandingActor {
             body: model.dressed(content, &look(content, &def.appearance, &BTreeMap::new())),
             clip: Some(clip),
             transform: Transform {
@@ -886,7 +880,7 @@ impl AreaSnapshot {
     /// The snapshot of an open view, made again when the files, the content or the view's flags
     /// change. Its picture is drawn again only when the content or what's hidden changes, so a
     /// change to the scene shows without waiting for the folder to load again.
-    pub fn for_view(editor: &mut Editor, view_key: &str) -> Option<Self> {
+    pub(crate) fn for_view(editor: &mut Editor, view_key: &str) -> Option<Self> {
         let project = editor.project.as_ref()?;
         let content = project.content.clone()?;
         let generation = project.generation;
@@ -978,7 +972,7 @@ impl AreaSnapshot {
         self.area().size
     }
 
-    pub fn in_map(&self, ground: Pos<Meters>) -> bool {
+    pub(crate) fn in_map(&self, ground: Pos<Meters>) -> bool {
         self.size().bounds().contains(ground)
     }
 
@@ -988,7 +982,7 @@ impl AreaSnapshot {
     }
 
     /// The node of the scene a tree row stands for, through the placements edited in place.
-    pub fn scene_node(&self, id: &str) -> Option<&SceneNode> {
+    pub(crate) fn scene_node(&self, id: &str) -> Option<&SceneNode> {
         let mut levels = id.split("/in/");
         let top = levels.next()?;
         let mut node = nodes::node(self.nodes(), top)?;
@@ -998,7 +992,7 @@ impl AreaSnapshot {
         Some(node)
     }
 
-    pub fn module_node(&self, pointer: &str) -> Option<&ModuleNode> {
+    pub(crate) fn module_node(&self, pointer: &str) -> Option<&ModuleNode> {
         self.modules.get(pointer).map(|module| &module.node)
     }
 
@@ -1011,7 +1005,7 @@ impl AreaSnapshot {
     }
 
     /// Where `module`, one of the bundle's own, takes room on the map.
-    pub fn bounds_of(&self, module: &nodes::SceneModule) -> Option<Rect<Meters>> {
+    pub(crate) fn bounds_of(&self, module: &nodes::SceneModule) -> Option<Rect<Meters>> {
         shapes::bounds(
             module.module(),
             self.placement_bounds.get(&module.pointer).copied(),
@@ -1020,7 +1014,7 @@ impl AreaSnapshot {
 
     /// Whether the map lets the pointer at the module: not hidden, not locked, and not outside the
     /// placement edited in place.
-    pub fn pickable(&self, pointer: &str) -> bool {
+    pub(crate) fn pickable(&self, pointer: &str) -> bool {
         !self.flags.hidden(pointer) && !self.flags.locked(pointer) && self.in_place.is_empty()
     }
 
@@ -1038,7 +1032,7 @@ impl AreaSnapshot {
 
     /// The module the pointer at `screen` picks: the nearest one whose standing body the pointer's
     /// ray passes through, else the smallest one covering the ground under it.
-    pub fn hit_at(
+    fn hit_at(
         &self,
         canvas: &AreaCanvas,
         screen: Pos2,
@@ -1111,7 +1105,7 @@ impl AreaSnapshot {
 
     /// The names objects take in the bundle: its own, as the editor holds them, and those its
     /// placements bring.
-    pub fn object_names(&self) -> HashSet<String> {
+    pub(crate) fn object_names(&self) -> HashSet<String> {
         let own = self
             .modules
             .iter()
@@ -1124,7 +1118,7 @@ impl AreaSnapshot {
     }
 
     /// The locked module under `ground` a click passes through, for the tip that says what locks it.
-    pub fn locked_hit_at(&self, ground: Pos<Meters>) -> Option<String> {
+    pub(crate) fn locked_hit_at(&self, ground: Pos<Meters>) -> Option<String> {
         self.targets
             .iter()
             .filter(|target| target.shown && target.locked && target.bounds.contains(ground))
@@ -1208,17 +1202,13 @@ fn snapshot_parts(
     })
 }
 
-/// The tree row of the placement edited in place at the end of `path`.
-pub fn place_id(path: &[String]) -> String {
-    path.join("/in")
+/// The tree row of the placement edited in place at the end of the chain of `nodes`.
+fn place_id<'a>(nodes: impl IntoIterator<Item = &'a str>) -> String {
+    nodes.into_iter().collect::<Vec<_>>().join("/in")
 }
 
-fn place_id_of(chain: &[placement::AreaPlacement]) -> String {
-    chain
-        .iter()
-        .map(|place| place.node.as_str())
-        .collect::<Vec<_>>()
-        .join("/in")
+pub(super) fn place_id_of(chain: &[placement::AreaPlacement]) -> String {
+    place_id(chain.iter().map(|place| place.node.as_str()))
 }
 
 /// How tall a module stands over the ground, for picking it by its body: a prop by its model, a
@@ -1268,7 +1258,7 @@ impl AreaFrame<'_> {
 
     /// The ground under the pointer, or under where a drag began when the pointer has left the
     /// ground.
-    pub fn drag_ground(&self) -> Option<Pos<Meters>> {
+    pub(crate) fn drag_ground(&self) -> Option<Pos<Meters>> {
         self.pointer_ground.or_else(|| {
             self.response
                 .interact_pointer_pos()
@@ -1277,14 +1267,14 @@ impl AreaFrame<'_> {
     }
 
     /// The module the pointer picks: by its standing body, else by the ground under it.
-    pub fn hit_pointer(&self) -> Option<String> {
+    pub(crate) fn hit_pointer(&self) -> Option<String> {
         let screen = self.pointer?;
         self.snapshot
             .hit_at(&self.canvas, screen, self.pointer_ground)
     }
 
     /// The locked module a click under the pointer passes through.
-    pub fn locked_hit(&self) -> Option<String> {
+    fn locked_hit(&self) -> Option<String> {
         self.snapshot.locked_hit_at(self.pointer_ground?)
     }
 }
@@ -1293,7 +1283,7 @@ fn is_selectable(module: &AreaModule) -> bool {
     !matches!(module, AreaModule::Population(population) if population.roams.is_none())
 }
 
-pub fn selected_parts(editor: &Editor, bundle: &str) -> HashSet<String> {
+pub(crate) fn selected_parts(editor: &Editor, bundle: &str) -> HashSet<String> {
     selected_parts_of(editor, bundle)
         .into_iter()
         .cloned()
@@ -1328,7 +1318,7 @@ fn remember_camera(editor: &mut Editor, view_key: &str) {
     }
 }
 
-pub fn open_area_at(
+pub(crate) fn open_area_at(
     editor: &mut Editor,
     area: &str,
     at: Option<Pos<Meters>>,

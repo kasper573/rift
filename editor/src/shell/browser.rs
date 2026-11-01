@@ -25,7 +25,7 @@ pub enum BrowserAction {
 
 /// What a content file's menu offers: everything, except that a fixture stays where the engine
 /// finds it and a type of fixtures alone takes no copies, which the menu says rather than hiding.
-pub struct RowMenu {
+pub(crate) struct RowMenu {
     table: String,
     fixed: Option<&'static str>,
     uncopyable: Option<&'static str>,
@@ -43,7 +43,7 @@ impl RowMenu {
 
 /// The menu of what can be done to one content file, each with its shortcut. In the content tree
 /// it opens the file; elsewhere it shows the file in the tree. Answers the one picked.
-pub fn row_menu(ui: &mut Ui, menu: &RowMenu, in_tree: bool) -> Option<BrowserAction> {
+pub(crate) fn row_menu(ui: &mut Ui, menu: &RowMenu, in_tree: bool) -> Option<BrowserAction> {
     use BrowserAction::*;
     let finding = if in_tree { Open } else { ShowInTree };
     let groups = [
@@ -83,37 +83,6 @@ pub fn row_menu(ui: &mut Ui, menu: &RowMenu, in_tree: bool) -> Option<BrowserAct
         }
     }
     picked
-}
-
-/// The shortcuts of a content file's menu, while its tab is the active one.
-pub fn row_keys(editor: &mut Editor, ui: &mut Ui) {
-    let on_row_form = matches!(super::active_tab(editor), Some(EditorTab::Row { .. }));
-    if !on_row_form || ui.ctx().text_edit_focused() {
-        return;
-    }
-    let selection = editor.selection.clone();
-    if selection.keys.len() != 1
-        || !selection.parts.is_empty()
-        || selection.table.is_empty()
-        || selection.is_game()
-    {
-        return;
-    }
-    let pressed = ui.input_mut(|i| {
-        [
-            BrowserAction::Rename,
-            BrowserAction::Usages,
-            BrowserAction::CopyPath,
-            BrowserAction::Duplicate,
-            BrowserAction::Delete,
-            BrowserAction::OpenTab,
-        ]
-        .into_iter()
-        .find(|action| action.key().is_some_and(|key| key.consume(i)))
-    });
-    if let Some(action) = pressed {
-        act(editor, &selection.table, &selection.keys[0], action);
-    }
 }
 
 impl BrowserAction {
@@ -169,7 +138,7 @@ pub fn act(editor: &mut Editor, table: &str, key: &str, action: BrowserAction) {
         }
         BrowserAction::Usages => {
             editor.preview_row(table, key);
-            editor.panels.bottom = BottomTab::UsedBy;
+            editor.bottom_tab = BottomTab::UsedBy;
         }
         BrowserAction::ShowInTree => content_tree::reveal(editor, key),
         BrowserAction::OpenTable => editor.open_tab(EditorTab::Spreadsheet {

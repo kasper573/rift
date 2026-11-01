@@ -88,7 +88,7 @@ fn our_rig(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, riggi
             words::counted(joints, "joint")
         ));
         if ui.button("Read joints from files…").clicked() {
-            editor.views.skeleton.view_mut(key).rigs.picker = Some(FilePicker {
+            editor.views.skeleton.views.view_mut(key).rigs.picker = Some(FilePicker {
                 reading: Reading::OurRig,
                 query: String::new(),
                 ticked: def
@@ -185,7 +185,7 @@ fn our_rig(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, riggi
 
 fn sources(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigging: &Rigging) {
     form::section_count(ui, "Source rigs", def.sources.len());
-    let state = &editor.views.skeleton.view(key).rigs;
+    let state = &editor.views.skeleton.views.view(key).rigs;
     let chosen = state.source.min(def.sources.len().saturating_sub(1));
     let mut pick = None;
     let mut removed = None;
@@ -209,7 +209,7 @@ fn sources(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, riggi
         });
     }
     ui.horizontal(|ui| {
-        let state = &mut editor.views.skeleton.view_mut(key).rigs;
+        let state = &mut editor.views.skeleton.views.view_mut(key).rigs;
         ui.add(
             egui::TextEdit::singleline(&mut state.new_source)
                 .hint_text("its name")
@@ -243,7 +243,7 @@ fn sources(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, riggi
         return;
     }
     if let Some(index) = pick {
-        let state = &mut editor.views.skeleton.view_mut(key).rigs;
+        let state = &mut editor.views.skeleton.views.view_mut(key).rigs;
         state.source = index;
         state.pairing = None;
     }
@@ -271,7 +271,7 @@ fn pairs(
     ui.horizontal(|ui| {
         ui.label(RichText::new(format!("{} · joint pairs", source.name)).strong());
         if ui.button("Read joints from a file…").clicked() {
-            editor.views.skeleton.view_mut(key).rigs.picker = Some(FilePicker {
+            editor.views.skeleton.views.view_mut(key).rigs.picker = Some(FilePicker {
                 reading: Reading::Source(index),
                 query: String::new(),
                 ticked: BTreeSet::new(),
@@ -285,7 +285,7 @@ fn pairs(
             changed = by_names(&source.joints, &ours);
         }
     });
-    let pairing = editor.views.skeleton.view(key).rigs.pairing.clone();
+    let pairing = editor.views.skeleton.views.view(key).rigs.pairing.clone();
     let mut chosen = None;
     egui::Grid::new(("pairs", key, index))
         .num_columns(2)
@@ -354,7 +354,7 @@ fn pairs(
          paired with none moves nothing of ours.",
     );
     if let Some(chosen) = chosen {
-        editor.views.skeleton.view_mut(key).rigs.pairing = chosen;
+        editor.views.skeleton.views.view_mut(key).rigs.pairing = chosen;
     }
     if changed != source.pairs {
         set_pairs(editor, key, index, changed);
@@ -426,8 +426,8 @@ fn stage(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigging
         form::hint(ui, "Pick our rig's files to see it here.");
         return;
     }
-    let pairing = editor.views.skeleton.view(key).rigs.pairing.clone();
-    let source = editor.views.skeleton.view(key).rigs.source;
+    let pairing = editor.views.skeleton.views.view(key).rigs.pairing.clone();
+    let source = editor.views.skeleton.views.view(key).rigs.source;
     let lit: Vec<&str> = pairing
         .as_deref()
         .and_then(|his| {
@@ -460,6 +460,7 @@ fn picker_window(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef)
     let Some(reading) = editor
         .views
         .skeleton
+        .views
         .view(key)
         .rigs
         .picker
@@ -487,6 +488,7 @@ fn picker_window(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef)
             let picker = editor
                 .views
                 .skeleton
+                .views
                 .view_mut(key)
                 .rigs
                 .picker
@@ -498,6 +500,7 @@ fn picker_window(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef)
         let picker = editor
             .views
             .skeleton
+            .views
             .view_mut(key)
             .rigs
             .picker
@@ -505,7 +508,7 @@ fn picker_window(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef)
             .expect("an open picker");
         apply(editor, key, def, picker, &files);
     } else if !open {
-        editor.views.skeleton.view_mut(key).rigs.picker = None;
+        editor.views.skeleton.views.view_mut(key).rigs.picker = None;
     }
 }
 
@@ -610,7 +613,7 @@ fn apply(
                 return;
             };
             if add_source(editor, key, name, joints_of(path)) {
-                editor.views.skeleton.view_mut(key).rigs.source = def.sources.len();
+                editor.views.skeleton.views.view_mut(key).rigs.source = def.sources.len();
             }
         }
         Reading::Source(index) => {
@@ -635,7 +638,7 @@ fn apply(
 }
 
 /// Puts our rig together from `files`, each top but the body's hung where its skins say.
-pub fn read_our_rig(editor: &mut Editor, key: &str, files: Vec<ModelRef>) -> bool {
+fn read_our_rig(editor: &mut Editor, key: &str, files: Vec<ModelRef>) -> bool {
     let hangs = {
         let Editor { project, views, .. } = &mut *editor;
         let Some(project) = project.as_ref() else {

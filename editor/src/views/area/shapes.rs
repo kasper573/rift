@@ -27,14 +27,14 @@ pub fn bounds(module: &AreaModule, placement_bounds: Option<Rect<Meters>>) -> Op
     }
 }
 
-pub fn is_ellipse(module: &AreaModule) -> bool {
+pub(crate) fn is_ellipse(module: &AreaModule) -> bool {
     matches!(
         module,
         AreaModule::Soundscape(soundscape) if matches!(soundscape.shape, SoundscapeShape::Ellipse(_))
     )
 }
 
-pub fn is_point(module: &AreaModule) -> bool {
+pub(crate) fn is_point(module: &AreaModule) -> bool {
     match module {
         AreaModule::Object(object) => matches!(object.shape, ObjectShape::Point(_)),
         AreaModule::Resident(_) | AreaModule::Prop(_) | AreaModule::Light(_) => true,
@@ -42,7 +42,7 @@ pub fn is_point(module: &AreaModule) -> bool {
     }
 }
 
-pub fn cell_rect(at: Pos<Meters>) -> Rect<Meters> {
+pub(crate) fn cell_rect(at: Pos<Meters>) -> Rect<Meters> {
     Rect::new(at - Offset::new(0.5, 0.5), Size::splat(1.0))
 }
 
@@ -54,7 +54,7 @@ pub fn resize(module: &mut AreaModule, w: f32, h: f32) {
     }
 }
 
-pub fn has_size(module: &AreaModule) -> bool {
+pub(crate) fn has_size(module: &AreaModule) -> bool {
     match module {
         AreaModule::Object(object) => matches!(object.shape, ObjectShape::Rect(_)),
         AreaModule::Soundscape(_) | AreaModule::SafeZone(_) | AreaModule::Scatter(_) => true,
@@ -104,7 +104,7 @@ pub fn label(module: &AreaModule, paths: &impl IdPaths) -> String {
 
 /// What a node reads as in a scene graph: its label, or what the module is: a placement its
 /// blueprint, a resident its npc, a prop its file.
-pub fn node_label(node: &SceneNode, paths: &impl IdPaths) -> String {
+pub(crate) fn node_label(node: &SceneNode, paths: &impl IdPaths) -> String {
     if let Some(label) = node.label() {
         return label.to_owned();
     }
@@ -127,7 +127,7 @@ pub fn node_label(node: &SceneNode, paths: &impl IdPaths) -> String {
 
 /// What a module node's row says after its name: where a warp leads, how many a population keeps,
 /// where a point stands, or how big a shape is.
-pub fn node_detail(module: &AreaModule, paths: &impl IdPaths) -> String {
+pub(crate) fn node_detail(module: &AreaModule, paths: &impl IdPaths) -> String {
     if let AreaModule::Object(object) = module
         && let Some((area, _)) = super::placement::warp_destinations(object, paths)
             .into_iter()

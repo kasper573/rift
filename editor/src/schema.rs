@@ -91,11 +91,11 @@ impl SchemaShapes {
             .map_or(&[], Vec::as_slice)
     }
 
-    pub fn modules_of(&self, table: &str) -> Option<&Value> {
+    fn modules_of(&self, table: &str) -> Option<&Value> {
         modules_in(&self.tables.get(table)?.shape)
     }
 
-    pub fn module_variants(&self, table: &str) -> Vec<SchemaVariant<'_>> {
+    pub(crate) fn module_variants(&self, table: &str) -> Vec<SchemaVariant<'_>> {
         let Some(shape) = self.tables.get(table).map(|table| &table.shape) else {
             return Vec::new();
         };
@@ -183,7 +183,7 @@ pub fn settle<'a>(root: &'a Value, schema: &'a Value, value: &Value) -> &'a Valu
 
 /// What an optional schema holds when it holds something: the one alternative beside null, its
 /// own nesting left whole.
-pub fn non_null<'a>(root: &'a Value, schema: &'a Value) -> &'a Value {
+pub(crate) fn non_null<'a>(root: &'a Value, schema: &'a Value) -> &'a Value {
     let schema = resolve(root, schema);
     let Some(alternatives) = schema
         .get("anyOf")
@@ -201,7 +201,7 @@ pub fn non_null<'a>(root: &'a Value, schema: &'a Value) -> &'a Value {
     }
 }
 
-pub fn number_shorthand(root: &Value, field: &Value, number: f64) -> Option<String> {
+pub(crate) fn number_shorthand(root: &Value, field: &Value, number: f64) -> Option<String> {
     if non_null(root, field)["x-unit"] == "%" {
         Some(format!("{number}%"))
     } else if field.get("x-count").is_some() {
@@ -217,7 +217,7 @@ pub fn usage(schema: &Value) -> Option<&str> {
 }
 
 /// Whether the objects `schema` describes hold no field but their tag.
-pub fn is_fieldless(schema: &Value) -> bool {
+pub(crate) fn is_fieldless(schema: &Value) -> bool {
     let tag = tag_of(schema).map(|(field, _)| field);
     properties(schema)
         .iter()
@@ -230,7 +230,7 @@ pub fn modules_in(shape: &Value) -> Option<&Value> {
 }
 
 /// The schema of an object with `properties`, of which those `required` must be present.
-pub fn object_of(properties: Map<String, Value>, required: Vec<String>) -> Value {
+pub(crate) fn object_of(properties: Map<String, Value>, required: Vec<String>) -> Value {
     json!({ "type": "object", "properties": properties, "required": required })
 }
 
@@ -314,7 +314,7 @@ fn cell(root: &Value, field: &Value, value: &Value) -> String {
 
 /// A few words of the fields of `value`, the object `shape` describes within `root`: each text
 /// as it is, each number in its unit, each list by its length, and each object `object` can say.
-pub fn summary_of(
+pub(crate) fn summary_of(
     root: &Value,
     shape: &Value,
     value: &Value,
@@ -345,7 +345,7 @@ pub fn summary_of(
     parts.join(" · ")
 }
 
-pub fn blank_meaning<'a>(schema: &'a Value, value: &Value) -> Vec<&'a str> {
+pub(crate) fn blank_meaning<'a>(schema: &'a Value, value: &Value) -> Vec<&'a str> {
     properties(schema)
         .into_iter()
         .filter(|(name, _)| value.get(name.as_str()).is_none_or(Value::is_null))
@@ -453,7 +453,7 @@ fn collect_variants<'a>(
 
 /// The variants of a union flattened into an object of `schema`, which share its value: each
 /// alternative fixes the same field, the tag, to a word of its own.
-pub fn flattened_variants<'a>(root: &'a Value, schema: &'a Value) -> Vec<SchemaVariant<'a>> {
+pub(crate) fn flattened_variants<'a>(root: &'a Value, schema: &'a Value) -> Vec<SchemaVariant<'a>> {
     schema.get("properties").map_or(Vec::new(), |_| {
         let Some(alternatives) = schema.get("oneOf").and_then(Value::as_array) else {
             return Vec::new();
@@ -510,7 +510,7 @@ pub fn tagged_variants<'a>(root: &'a Value, schema: &'a Value) -> Vec<SchemaVari
     }
 }
 
-pub fn tag_of(schema: &Value) -> Option<(String, String)> {
+pub(crate) fn tag_of(schema: &Value) -> Option<(String, String)> {
     let properties = schema.get("properties")?.as_object()?;
     for field in ["type", "event"] {
         if let Some(tag) = properties.get(field).and_then(|p| p.get("const")?.as_str()) {
@@ -520,7 +520,7 @@ pub fn tag_of(schema: &Value) -> Option<(String, String)> {
     None
 }
 
-pub fn is_optional(schema: &Value) -> bool {
+pub(crate) fn is_optional(schema: &Value) -> bool {
     type_names(schema).contains(&"null")
         || schema
             .get("anyOf")
@@ -579,7 +579,7 @@ pub fn fits(root: &Value, schema: &Value, value: &Value) -> bool {
     })
 }
 
-pub fn type_names(schema: &Value) -> Vec<&str> {
+pub(crate) fn type_names(schema: &Value) -> Vec<&str> {
     match schema.get("type") {
         Some(Value::String(name)) => vec![name.as_str()],
         Some(Value::Array(names)) => names.iter().filter_map(Value::as_str).collect(),
@@ -595,7 +595,7 @@ pub fn properties(schema: &Value) -> Vec<(&String, &Value)> {
         .unwrap_or_default()
 }
 
-pub fn number_paths(root: &Value) -> Vec<Vec<String>> {
+pub(crate) fn number_paths(root: &Value) -> Vec<Vec<String>> {
     let mut out = Vec::new();
     number_paths_in(root, root, &mut Vec::new(), &mut out, 0);
     out.sort();
@@ -613,7 +613,7 @@ pub fn required(schema: &Value) -> Vec<&str> {
 
 /// Whether `schema`, a map, keys rows the engine fixes: a sheet lists them, and none is added,
 /// removed or renamed.
-pub fn fixed_rows(schema: &Value) -> bool {
+pub(crate) fn fixed_rows(schema: &Value) -> bool {
     schema.get("x-fixed-rows").and_then(Value::as_bool) == Some(true)
 }
 
@@ -622,7 +622,7 @@ pub fn description(schema: &Value) -> Option<&str> {
 }
 
 /// The game system a node belongs to, as its definition declares it.
-pub fn system_of(schema: &Value) -> Option<&str> {
+pub(crate) fn system_of(schema: &Value) -> Option<&str> {
     schema.get("x-system")?.as_str()
 }
 
@@ -632,7 +632,7 @@ pub fn fails(schema: &Value) -> bool {
 }
 
 /// Whether the field holds an arrow to another node, or a list of them.
-pub fn leads_out(field: &Value) -> bool {
+pub(crate) fn leads_out(field: &Value) -> bool {
     let is_arrow = |schema: &Value| marker(schema) == Some("x-arrow");
     is_arrow(field) || field.get("items").is_some_and(is_arrow)
 }
@@ -645,7 +645,7 @@ pub fn marker(schema: &Value) -> Option<&str> {
         .map(String::as_str)
 }
 
-pub fn is_var_fill(schema: &Value) -> bool {
+fn is_var_fill(schema: &Value) -> bool {
     schema
         .get("properties")
         .and_then(Value::as_object)
@@ -657,13 +657,13 @@ pub fn table_of(schema: &Value) -> Option<&str> {
 }
 
 /// The table whose files a map's keys name, when they name files.
-pub fn key_table(map: &Value) -> Option<&str> {
+pub(crate) fn key_table(map: &Value) -> Option<&str> {
     map.get("propertyNames").and_then(table_of)
 }
 
 /// The kind of name a map's keys are, when they are names a skeleton lists.
 pub fn key_names(map: &Value) -> Option<crate::body_names::NameKind> {
-    crate::body_names::NameKind::of_schema(map.get("propertyNames")?)
+    crate::body_names::kind_of_schema(map.get("propertyNames")?)
 }
 
 pub fn minimum(schema: &Value) -> Option<f64> {
@@ -783,7 +783,7 @@ impl<'a> Nearby<'a> {
     }
 
     /// The file of `table` nearest the file written into but those `taken`.
-    pub fn content_besides(&self, table: &str, taken: &[&str]) -> Option<String> {
+    pub(crate) fn content_besides(&self, table: &str, taken: &[&str]) -> Option<String> {
         let from = self.from.map(fields_file);
         self.nearest(
             self.files
@@ -817,7 +817,7 @@ impl<'a> Nearby<'a> {
 
     /// The script nearest the file written into that a script run by `kind` may run: one for that
     /// kind, or for any.
-    pub fn script_run_by(&self, kind: RunnerKind) -> Option<String> {
+    pub(crate) fn script_run_by(&self, kind: RunnerKind) -> Option<String> {
         let content = self.loaded?;
         let scripts = content.table::<ScriptDef>();
         let from = self.from.map(fields_file);
@@ -935,7 +935,7 @@ fn named(schema: &Value, nearby: Nearby) -> Option<String> {
     nearby.media(kind.parse().ok()?)
 }
 
-pub fn variant_of<'a>(
+pub(crate) fn variant_of<'a>(
     variants: &'a [SchemaVariant<'a>],
     value: &Value,
 ) -> Option<&'a SchemaVariant<'a>> {
@@ -947,7 +947,7 @@ pub fn variant_of<'a>(
     })
 }
 
-pub fn variable_schema(ty: VariableType, table: Option<&str>) -> Value {
+pub(crate) fn variable_schema(ty: VariableType, table: Option<&str>) -> Value {
     match ty {
         VariableType::Integer => json!({ "type": "integer" }),
         VariableType::Number => json!({ "type": "number" }),
@@ -1077,7 +1077,7 @@ pub struct VarField {
 
 /// Every field of `value`, a value of the type whose schema is `schema` within `root`, that holds
 /// a value or the name of one of the script's variables.
-pub fn var_fields(root: &Value, schema: &Value, value: &Value) -> Vec<VarField> {
+pub(crate) fn var_fields(root: &Value, schema: &Value, value: &Value) -> Vec<VarField> {
     let mut out = Vec::new();
     collect_var_fields(root, schema, value, "", &mut out);
     out

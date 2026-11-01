@@ -141,7 +141,7 @@ impl EditorKey {
     }
 
     /// Like `pressed`, and takes the key from the frame's input so nothing else answers it.
-    pub fn consume(self, input: &mut InputState) -> bool {
+    pub(crate) fn consume(self, input: &mut InputState) -> bool {
         let Binding::Press(chords) = self.binding() else {
             return self.pressed(input);
         };
@@ -162,7 +162,7 @@ impl EditorKey {
     }
 
     /// Whether a modifier key is among `modifiers`, as recorded with a click.
-    pub fn held_among(self, modifiers: Modifiers) -> bool {
+    pub(crate) fn held_among(self, modifiers: Modifiers) -> bool {
         match self.binding() {
             Binding::Hold(held) => modifiers.contains(held),
             _ => false,
@@ -178,7 +178,7 @@ impl EditorKey {
     }
 
     /// Like `arrow`, and takes the arrow key from the frame's input so nothing else answers it.
-    pub fn take_arrow(self, input: &mut InputState) -> Option<[i32; 2]> {
+    pub(crate) fn take_arrow(self, input: &mut InputState) -> Option<[i32; 2]> {
         let Binding::Arrows(modifiers) = self.binding() else {
             return None;
         };
@@ -221,11 +221,6 @@ impl EditorKey {
             Binding::Hold(modifiers) => held(modifiers),
             Binding::HoldKey(key) => key_name(key).to_owned(),
         }
-    }
-
-    /// The name of the digit key that picks the numbered entry `index`, counted from 0.
-    pub fn digit_name(index: usize) -> Option<&'static str> {
-        DIGITS.get(index).map(|key| key_name(*key))
     }
 
     pub fn scope(self) -> KeyScope {

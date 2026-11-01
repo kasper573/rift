@@ -116,7 +116,7 @@ pub fn show(
     pickers(editor, ui, key, def, rigging, &content);
     let model = wearer(editor, key, &content);
     let held = held_items(editor, key, &content, def.hands.len());
-    let preview = &editor.views.skeleton.view(key).preview;
+    let preview = &editor.views.skeleton.views.view(key).preview;
     let action = (preview.plays == PreviewPlays::Action).then_some(preview.action);
     let clip = match action {
         Some(action) => def
@@ -134,7 +134,7 @@ pub fn show(
         .and_then(|clip| rigging.playable(clip))
         .cloned();
     let dt = ui.input(|i| i.stable_dt).min(0.1);
-    let preview = &mut editor.views.skeleton.view_mut(key).preview;
+    let preview = &mut editor.views.skeleton.views.view_mut(key).preview;
     if preview.played != clip {
         preview.played = clip;
         preview.scrub.restart();
@@ -170,9 +170,9 @@ pub fn show(
         ui.available_width(),
         (ui.available_height() - below).max(140.0),
     );
-    let mut state = std::mem::take(&mut editor.views.skeleton.view_mut(key).preview.stage);
+    let mut state = std::mem::take(&mut editor.views.skeleton.views.view_mut(key).preview.stage);
     let turntable = stage::turntable(editor, ui, &format!("skeleton:{key}"), size, &mut state);
-    editor.views.skeleton.view_mut(key).preview.stage = state;
+    editor.views.skeleton.views.view_mut(key).preview.stage = state;
     let turntable = turntable?;
     let mut staged = place(
         turntable.rect,
@@ -200,7 +200,13 @@ pub fn show(
                 &body::wearing_items(editor, key, &content),
             ),
         );
-        let hands = editor.views.skeleton.view(key).grips.working(&def.hands);
+        let hands = editor
+            .views
+            .skeleton
+            .views
+            .view(key)
+            .grips
+            .working(&def.hands);
         let props = stage::props(&content, built, &hands, &held);
         let holds = !props.is_empty();
         let mut standing = stage::standing(
@@ -237,7 +243,7 @@ pub fn wearer<'c>(
     key: &str,
     content: &'c Content,
 ) -> Option<(String, &'c ActorModel)> {
-    let picked = editor.views.skeleton.view(key).preview.model.clone();
+    let picked = editor.views.skeleton.views.view(key).preview.model.clone();
     let wearers = wearers(content, key);
     picked
         .and_then(|picked| {
@@ -260,7 +266,7 @@ fn pickers(
     content: &Content,
 ) {
     let mut model = wearer(editor, key, content).map(|(path, _)| path);
-    let preview = &editor.views.skeleton.view(key).preview;
+    let preview = &editor.views.skeleton.views.view(key).preview;
     let mut plays = preview.plays;
     let mut action = preview.action;
     let mut clip = preview.clip.clone();
@@ -327,7 +333,7 @@ fn pickers(
             }
         });
     }
-    let preview = &mut editor.views.skeleton.view_mut(key).preview;
+    let preview = &mut editor.views.skeleton.views.view_mut(key).preview;
     if model.is_some() {
         preview.model = model;
     }
@@ -379,6 +385,7 @@ fn held_items(
     editor
         .views
         .skeleton
+        .views
         .view(key)
         .preview
         .held
@@ -398,7 +405,7 @@ fn joints(
     lit: &[&str],
     worn: bool,
 ) -> Option<String> {
-    let picks = editor.views.skeleton.view(key).picks_joints();
+    let picks = editor.views.skeleton.views.view(key).picks_joints();
     if !worn {
         staged.draw(ui, theme::TEXT);
     }

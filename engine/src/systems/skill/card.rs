@@ -5,7 +5,7 @@ use ui::egui;
 use ui::egui::{Rect, Response, Ui};
 use ui::face::{self, TextRole};
 use ui::float;
-use ui::glyph::Kind;
+use ui::glyph::CardKind;
 use ui::ink;
 use ui::sheet::Depth;
 
@@ -140,10 +140,10 @@ pub fn tooltip(
     });
 }
 
-pub fn kind(def: &SkillDef) -> Kind {
+pub fn kind(def: &SkillDef) -> CardKind {
     match def.kind {
-        SkillKind::Active => Kind::Active,
-        SkillKind::Passive => Kind::Passive,
+        SkillKind::Active => CardKind::Active,
+        SkillKind::Passive => CardKind::Passive,
     }
 }
 

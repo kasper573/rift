@@ -34,27 +34,26 @@ use ui::theme;
 use self::preview::PreviewPlace;
 use self::rows::{fieldless_note, free_singles, show_rows};
 use self::scripts::{module_lines, script_module_body, script_summary, speaker_of, summary_of};
-use super::{breadcrumb, widgets};
-use crate::app::{
-    Clipboard, ConfirmAction, ConfirmDialog, Editor, ModalDialog, ModuleClip, PlacePick,
-    TextComparison,
-};
+use super::widgets;
+use crate::app::{Editor, PlacePick};
+use crate::clipboard::{Clipboard, ModuleClip};
 use crate::forms::{self, FormAction, FormChange, FormCx};
 use crate::keymap::EditorKey;
+use crate::modal::{ConfirmAction, ConfirmDialog, ModalDialog, TextComparison};
 use crate::project::{ContentEdit, Project, RowSelection};
 use crate::rows::new_file_into;
 use crate::shell::browser::{self, RowMenu};
 use crate::tabs::{file_title, shown_path};
 use crate::views::{class, skill, vfx};
 use crate::{make, schema, stage};
-use ui::input::{clear_draft, draft_of, set_draft};
+use ui::draft::{clear_draft, draft_of, set_draft};
 
 const WIDE: f32 = 760.0;
 pub(super) const LEFT_COLUMN: f32 = 390.0;
 const SINGLE_COLUMN: f32 = 560.0;
 const COLUMN_GAP: f32 = 16.0;
 
-pub fn show_row_tab(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str) {
+pub(crate) fn show_row_tab(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str) {
     let place = preview::preview_place(table);
     if place != Some(PreviewPlace::Beside) {
         egui::ScrollArea::vertical()
@@ -283,12 +282,12 @@ fn row_card(
     typed: &mut Option<TypedWrite>,
 ) -> FormChange {
     let mut changed = FormChange::default();
-    panel::card(false).show(ui, |ui| {
+    panel::tile(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
         let mut open_folder = None;
         panel::header_with(
             ui,
-            |ui| open_folder = breadcrumb::show(ui, key),
+            |ui| open_folder = ui::panel::breadcrumb(ui, key, file_title(key)),
             if fixture { "fixture" } else { "" },
             |ui| {
                 if ui.button("Copy as JSON").clicked() {
@@ -442,7 +441,7 @@ fn modules_column(
             } else {
                 summary_of(cx, module)
             };
-            panel::card(is_selected).show(ui, |ui| {
+            panel::tile(is_selected).show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 let header = ui
                     .horizontal(|ui| {
@@ -740,26 +739,11 @@ pub(super) fn add_module_popup(
     picked
 }
 
-pub fn with_row_form(
-    editor: &mut Editor,
-    table: &str,
-    key: &str,
-    show: impl FnOnce(&mut FormCx) -> bool,
-) -> bool {
-    let Some(root) = editor.fields_json(key) else {
-        return false;
-    };
-    editor
-        .with_form(table, Some(key), &root, show)
-        .unwrap_or(false)
-}
-
 pub fn act(editor: &mut Editor, action: FormAction, table: &str, key: &str) {
     match action {
         FormAction::OpenRow { table, key } => {
             editor.open_row(&table, &key);
         }
-        FormAction::OpenNode { .. } => {}
         FormAction::PickPlace { path } => {
             editor.pick = Some(PlacePick {
                 file: fields_file(key),

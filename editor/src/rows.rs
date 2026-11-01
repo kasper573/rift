@@ -21,8 +21,9 @@ use engine::systems::script::{
 use serde_json::Value;
 use ui::egui::Ui;
 
-use crate::app::{DeleteDialog, Editor, ModalDialog};
+use crate::app::Editor;
 use crate::make;
+use crate::modal::{DeleteDialog, ModalDialog};
 use crate::moves::{self, PathMove, fixed_place, free_path, free_path_among};
 use crate::project::files::{FolderIndex, content_holding, folder_entry};
 use crate::project::{ContentEdit, FileBytes, Project, ProjectFiles};
@@ -38,7 +39,7 @@ use crate::views::script::nodes as script_nodes;
 /// What deleted files leave behind: the uses of one kind of a deleted file, and what becomes of
 /// them.
 #[derive(Clone, Debug)]
-pub struct UsageGroup {
+pub struct DeletedUsages {
     /// The type of the deleted files the group's uses name, or `MEDIA`.
     pub target: String,
     pub table: String,
@@ -50,7 +51,7 @@ pub struct UsageGroup {
 }
 
 /// The target of uses that name media rather than a content file.
-pub const MEDIA: &str = "media";
+const MEDIA: &str = "media";
 
 #[derive(Clone, Debug, PartialEq)]
 pub enum UsageDecision {
@@ -64,7 +65,7 @@ pub enum UsageDecision {
 /// `own` that is being renamed. `kind` is what follows a name in the file's name, its type and
 /// extension (`.npc.json`), empty for a folder: two files of different kinds may share a name,
 /// as an npc and its model often do.
-pub fn name_problem(
+fn name_problem(
     files: &ProjectFiles,
     folder: &str,
     name: &str,
@@ -97,14 +98,14 @@ pub fn name_problem(
 }
 
 /// What follows the name in the file name of `path`: its type and extension, with the dot.
-pub fn name_kind(path: &str) -> &str {
-    let file = path.rsplit('/').next().unwrap_or(path);
+fn name_kind(path: &str) -> &str {
+    let file = moves::file_name(path);
     file.find('.').map_or("", |dot| &file[dot..])
 }
 
 /// `name` as a name within a file, such as a node's or a variable's: `name` itself when none of
 /// `taken` has it, ignoring case, or else `name_2`, `name_3`, the first that is free.
-pub fn free_name(name: &str, taken: &HashSet<String>) -> String {
+pub(crate) fn free_name(name: &str, taken: &HashSet<String>) -> String {
     let is_taken = |candidate: &str| taken.iter().any(|t| t.eq_ignore_ascii_case(candidate));
     if !is_taken(name) {
         return name.to_owned();
@@ -121,7 +122,7 @@ pub fn free_name(name: &str, taken: &HashSet<String>) -> String {
 
 /// A file name made from what someone typed: lower case, spaces as underscores, and only what a
 /// name may hold.
-pub fn name_from(text: &str) -> String {
+pub(crate) fn name_from(text: &str) -> String {
     text.trim()
         .to_lowercase()
         .chars()
@@ -132,7 +133,7 @@ pub fn name_from(text: &str) -> String {
 
 /// The path a new content file of `table` named `name` gets in `folder`, numbered when the name is
 /// taken there.
-pub fn new_path(files: &ProjectFiles, folder: &str, table: &str, name: &str) -> String {
+pub(crate) fn new_path(files: &ProjectFiles, folder: &str, table: &str, name: &str) -> String {
     let shape = registry()
         .shape_of(table)
         .unwrap_or(engine::core::content::Shape::Json);
@@ -154,7 +155,7 @@ pub fn new_file(editor: &mut Editor, folder: &str, table: &str) -> Result<String
 
 /// Makes a content file of `table` beside `file` and writes its path into `file` at `pointer`, as
 /// one step.
-pub fn new_file_into(
+pub(crate) fn new_file_into(
     editor: &mut Editor,
     table: &str,
     file: &str,
@@ -210,7 +211,7 @@ pub fn new_script_module(editor: &mut Editor, table: &str, key: &str) -> Result<
 /// The nodes of a new script run by owners of `runs_on`, made for the file `key`: one starting a
 /// flow at the first event they answer that none in `answered` is, as every script a row runs
 /// needs one and an owner answers each event once.
-pub fn answering_first(
+pub(crate) fn answering_first(
     project: &Project,
     key: &str,
     runs_on: RunnerKind,
@@ -237,7 +238,7 @@ pub fn answering_first(
 
 /// Writes into `edit` a script of `nodes`, run by owners of `runs_on`, named `name` beside the file
 /// `beside`. Gives its path, what reads the files with it, and its id there.
-pub fn new_script(
+pub(crate) fn new_script(
     edit: &mut ContentEdit,
     project: &Project,
     beside: &str,
@@ -277,7 +278,7 @@ pub fn new_folder(editor: &mut Editor, parent: &str) -> Result<String, String> {
 }
 
 /// Makes an empty note named "note" in `folder`. Gives its path.
-pub fn new_note(editor: &mut Editor, folder: &str) -> Result<String, String> {
+pub(crate) fn new_note(editor: &mut Editor, folder: &str) -> Result<String, String> {
     let project = editor.project.as_ref().ok_or("no folder is open")?;
     let path = free_path(
         &project.files,
@@ -352,7 +353,7 @@ pub fn copy_into(
 }
 
 /// Puts the bytes of `source` in place of the media file at `path`, which keeps its name.
-pub fn replace_media(
+pub(crate) fn replace_media(
     editor: &mut Editor,
     path: &str,
     source: &std::path::Path,
@@ -434,7 +435,7 @@ pub fn make_fixture(editor: &mut Editor, path: &str) -> Result<(), String> {
 }
 
 /// The files picked in the system's dialog, when any were.
-pub fn picked_files(dialog: rfd::FileDialog) -> Option<Vec<std::path::PathBuf>> {
+pub(crate) fn picked_files(dialog: rfd::FileDialog) -> Option<Vec<std::path::PathBuf>> {
     // The desktop portal answers a cancelled pick with no files rather than with none.
     dialog.pick_files().filter(|files| !files.is_empty())
 }
@@ -590,7 +591,7 @@ pub fn delete_dialog(editor: &mut Editor, paths: Vec<String>) {
         .iter()
         .flat_map(|path| project.files.files_of(path))
         .collect();
-    let mut groups: Vec<UsageGroup> = Vec::new();
+    let mut groups: Vec<DeletedUsages> = Vec::new();
     for path in &gone {
         let target = target_of(project, path).to_owned();
         let usages = match target.as_str() {
@@ -607,7 +608,7 @@ pub fn delete_dialog(editor: &mut Editor, paths: Vec<String>) {
                 entry,
             } = kind_of(project, &usage.file, &usage.pointer);
             let removable = entry.is_some();
-            let same_group = |group: &&mut UsageGroup| {
+            let same_group = |group: &&mut DeletedUsages| {
                 group.target == target
                     && group.table == other_table
                     && group.removable == removable
@@ -619,7 +620,7 @@ pub fn delete_dialog(editor: &mut Editor, paths: Vec<String>) {
             };
             match groups.iter_mut().find(same_group) {
                 Some(group) => group.usages.push(usage.clone()),
-                None => groups.push(UsageGroup {
+                None => groups.push(DeletedUsages {
                     target: target.clone(),
                     table: other_table,
                     kind,
@@ -669,7 +670,7 @@ fn gone_with(index: &FolderIndex, paths: &[String]) -> Vec<String> {
 }
 
 /// What deleting `paths` is called: one file by its name, or how many files go.
-pub fn delete_title(dialog: &DeleteDialog) -> String {
+pub(crate) fn delete_title(dialog: &DeleteDialog) -> String {
     match dialog.paths.as_slice() {
         [one] if dialog.gone.len() == 1 && dialog.gone[0] == *one => {
             format!("Delete {}", file_title(one))
@@ -691,42 +692,9 @@ pub fn delete_title(dialog: &DeleteDialog) -> String {
     }
 }
 
-pub struct UsageSummary {
-    pub table: String,
-    pub field: String,
-    pub keys: Vec<String>,
-}
-
-pub fn usage_groups(project: &Project, path: &str) -> Vec<UsageSummary> {
-    let mut groups: Vec<UsageSummary> = Vec::new();
-    for usage in project.usages.of_content(path) {
-        let Some(other_key) = content_holding(&usage.file) else {
-            continue;
-        };
-        let other_table = table_of(other_key).unwrap_or_default();
-        let field = field_of(project, &usage.file, &usage.pointer);
-        match groups
-            .iter_mut()
-            .find(|group| group.table == other_table && group.field == field)
-        {
-            Some(group) => {
-                if !group.keys.iter().any(|k| k == other_key) {
-                    group.keys.push(other_key.to_owned());
-                }
-            }
-            None => groups.push(UsageSummary {
-                table: other_table.to_owned(),
-                field,
-                keys: vec![other_key.to_owned()],
-            }),
-        }
-    }
-    groups
-}
-
-pub fn field_of(project: &Project, file: &str, pointer: &str) -> String {
+pub(crate) fn field_of(project: &Project, file: &str, pointer: &str) -> String {
     if is_beside(file) {
-        let name = file.rsplit('/').next().unwrap_or(file);
+        let name = moves::file_name(file);
         return name
             .split_once('.')
             .map_or(name, |(stem, _)| stem)
@@ -855,7 +823,7 @@ fn usage_detail(project: &Project, file: &str, pointer: &str) -> String {
 
 /// Whether `file` is a scene graph, whose nodes nest in folders' children.
 fn is_scene(file: &str) -> bool {
-    file.rsplit('/').next() == Some(SCENE_FILE)
+    moves::file_name(file) == SCENE_FILE
 }
 
 /// Whether `file` is a part of a bundle that names content in a format of its own, not JSON.
@@ -870,7 +838,7 @@ fn target_of<'p>(project: &Project, path: &'p str) -> &'p str {
         .unwrap_or(MEDIA)
 }
 
-pub fn delete_body(editor: &mut Editor, ui: &mut Ui, dialog: &mut DeleteDialog) {
+pub(crate) fn delete_body(editor: &mut Editor, ui: &mut Ui, dialog: &mut DeleteDialog) {
     let Some(project) = &editor.project else {
         return;
     };
@@ -960,7 +928,7 @@ pub fn delete_body(editor: &mut Editor, ui: &mut Ui, dialog: &mut DeleteDialog) 
         .show(ui, |ui| {
             for (index, group) in dialog.groups.iter_mut().enumerate() {
                 let title = group_title(project, group);
-                panel::card(false).show(ui, |ui| {
+                panel::tile(false).show(ui, |ui| {
                     ui.set_width(ui.available_width());
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -1007,7 +975,7 @@ pub fn delete_body(editor: &mut Editor, ui: &mut Ui, dialog: &mut DeleteDialog) 
     }
 }
 
-fn group_title(project: &Project, group: &UsageGroup) -> String {
+fn group_title(project: &Project, group: &DeletedUsages) -> String {
     let mut files: Vec<&String> = group.usages.iter().map(|usage| &usage.file).collect();
     files.sort();
     files.dedup();
@@ -1041,7 +1009,7 @@ fn decision_picker(
     ui: &mut Ui,
     shapes: &SchemaShapes,
     index: usize,
-    group: &mut UsageGroup,
+    group: &mut DeletedUsages,
     candidates: &[String],
 ) {
     let table = group.target.as_str();
@@ -1167,7 +1135,7 @@ pub fn delete(editor: &mut Editor, dialog: &DeleteDialog) -> Result<(), String> 
     }
     let label = delete_title(dialog);
     let mut edit = ContentEdit::new(label.clone());
-    let mut by_file: BTreeMap<String, Vec<(&ContentUsage, &UsageGroup)>> = Default::default();
+    let mut by_file: BTreeMap<String, Vec<(&ContentUsage, &DeletedUsages)>> = Default::default();
     for group in &dialog.groups {
         for usage in &group.usages {
             by_file
@@ -1340,7 +1308,7 @@ enum PointerStep {
     Index(usize),
 }
 
-pub fn close_tabs(editor: &mut Editor, path: &str) {
+pub(crate) fn close_tabs(editor: &mut Editor, path: &str) {
     let gone: Vec<EditorTab> = editor
         .dock
         .iter_all_tabs()

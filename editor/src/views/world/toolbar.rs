@@ -34,11 +34,11 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap) {
                 if !editor.views.world.search.trim().is_empty() {
                     pick = results(editor, ui, map, &search);
                 }
-                menu::dropdown(ui, RichText::new("Layers").size(12.5), |ui| {
+                menu::button(ui, RichText::new("Layers").size(12.5), |ui| {
                     ui.set_width(220.0);
                     layer_rows(editor, ui, map);
                 });
-                menu::dropdown(ui, RichText::new("Color by").size(12.5), |ui| {
+                menu::button(ui, RichText::new("Color by").size(12.5), |ui| {
                     ui.set_width(260.0);
                     if let Some(color) = color_menu(editor, ui) {
                         pick = Some(Pick::Color(color));
@@ -73,7 +73,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap) {
     }
 }
 
-pub fn layer_rows(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap) {
+fn layer_rows(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap) {
     let atlas = &map.atlas;
     let count = |of: fn(&AtlasArea) -> usize| atlas.areas.values().map(of).sum();
     let givers: usize = atlas

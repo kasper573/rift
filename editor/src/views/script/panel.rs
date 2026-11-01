@@ -18,18 +18,18 @@ use engine::systems::stat::StatKind;
 use ui::egui::{RichText, Ui};
 
 use super::nodes::{self, NodeReads, NodeText};
-use super::{ScriptDoc, ScriptPanel, ScriptPath, ScriptRef, ScriptRow, run};
-use crate::app::Editor;
+use super::{ScriptDoc, ScriptPath, ScriptRef, ScriptRow, run};
+use crate::app::{BottomTab, Editor};
 use crate::project::RowSelection;
 use crate::project::files::content_of;
 use crate::tabs::shown_path;
 use crate::tabs::{EditorTab, file_title};
 
-pub fn show(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, panel: ScriptPanel) {
-    match panel {
-        ScriptPanel::MayDo => may_do(editor, ui, doc),
-        ScriptPanel::UsedBy => used_by(editor, ui, doc),
-        ScriptPanel::Run => run::panel(editor, ui, doc),
+pub fn show(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, tab: BottomTab) {
+    match tab {
+        BottomTab::UsedBy => used_by(editor, ui, doc),
+        BottomTab::Run => run::panel(editor, ui, doc),
+        _ => may_do(editor, ui, doc),
     }
 }
 
@@ -616,7 +616,7 @@ fn read_by_rows(content: &Content, may: &MayDo<RiftScripting>) -> Vec<(String, S
     rows
 }
 
-pub fn describe_reach(content: &Content, reach: &Reach) -> String {
+pub(crate) fn describe_reach(content: &Content, reach: &Reach) -> String {
     match reach {
         Reach::Warp(place) => format!(
             "warps to {} {}",
@@ -794,7 +794,7 @@ fn used_by(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
     }
 }
 
-pub fn used_by_count(editor: &Editor, script: &ScriptRow) -> usize {
+pub(crate) fn used_by_count(editor: &Editor, script: &ScriptRow) -> usize {
     editor
         .project
         .as_ref()

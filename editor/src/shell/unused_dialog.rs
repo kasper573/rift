@@ -7,13 +7,14 @@ use ui::words;
 use ui::egui::{Context, Ui};
 use ui::glyph::{self, Mark};
 
-use crate::app::{Editor, FindUnusedDialog, ModalDialog};
+use crate::app::Editor;
+use crate::modal::{FindUnusedDialog, ModalDialog};
 use crate::rows;
 use crate::unused::{self, UnusedItem, UnusedRow};
 use ui::dialog::{self, answer, card, keys, title};
 use ui::form::error_line;
 
-pub fn find_unused(editor: &mut Editor) {
+pub(crate) fn find_unused(editor: &mut Editor) {
     editor
         .dialogs
         .push(ModalDialog::FindUnused(FindUnusedDialog {
@@ -36,7 +37,7 @@ struct Member {
     note: String,
 }
 
-pub fn find_unused_dialog(
+pub(crate) fn find_unused_dialog(
     editor: &mut Editor,
     ctx: &Context,
     mut dialog: FindUnusedDialog,

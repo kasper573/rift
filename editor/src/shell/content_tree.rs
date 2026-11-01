@@ -18,10 +18,11 @@ use super::browser::{self, BrowserAction, RowMenu};
 
 use super::tree::{self, Narrowing, TreeDrop, TreeRow, TreeSource, TreeState};
 use super::widgets::{self, KindMark};
-use crate::app::{BottomTab, Editor, ModalDialog, PickRowDialog, PickRowThen};
+use crate::app::{BottomTab, Editor};
 use crate::icons::{self, IconTone, Preview};
 use crate::import;
 use crate::keymap::EditorKey;
+use crate::modal::{ModalDialog, PickRowDialog, PickRowThen};
 use crate::moves::{file_name, fixed_place};
 use crate::picker::Dragged;
 use crate::project::Project;
@@ -74,7 +75,7 @@ struct ListedFrom {
 
 /// The folder new things land in: the folder selected in the tree, or the one holding what is
 /// selected, or the top of the game folder.
-pub fn current_folder(editor: &Editor) -> String {
+pub(crate) fn current_folder(editor: &Editor) -> String {
     let Some(project) = &editor.project else {
         return String::new();
     };
@@ -85,7 +86,7 @@ pub fn current_folder(editor: &Editor) -> String {
     }
 }
 
-pub fn focus_search(editor: &mut Editor) {
+pub(crate) fn focus_search(editor: &mut Editor) {
     editor.content_tree.focus_search = true;
 }
 
@@ -100,7 +101,7 @@ pub fn begin_rename(editor: &mut Editor, path: &str) {
 }
 
 /// Asks which folder the files at `paths` go into.
-pub fn move_to_dialog(editor: &mut Editor, paths: Vec<String>) {
+pub(crate) fn move_to_dialog(editor: &mut Editor, paths: Vec<String>) {
     let Some(project) = &editor.project else {
         return;
     };
@@ -396,7 +397,7 @@ fn media_act(editor: &mut Editor, path: &str, action: BrowserAction) {
         BrowserAction::Open | BrowserAction::OpenTab => open_path(editor, path, true),
         BrowserAction::Usages => {
             open_path(editor, path, false);
-            editor.panels.bottom = BottomTab::UsedBy;
+            editor.bottom_tab = BottomTab::UsedBy;
         }
         BrowserAction::CopyPath => editor.copy_text(path),
         BrowserAction::Rename => begin_rename(editor, path),
@@ -593,7 +594,7 @@ fn kinds(editor: &Editor) -> Vec<String> {
         .collect()
 }
 
-pub fn folder_title(folder: &str) -> &str {
+pub(crate) fn folder_title(folder: &str) -> &str {
     if folder.is_empty() {
         "the game folder"
     } else {

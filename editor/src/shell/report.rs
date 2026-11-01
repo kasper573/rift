@@ -63,7 +63,7 @@ pub fn panel(ui: &mut Ui, folder: &str, text: &str, closable: bool) -> ReportAct
     action
 }
 
-pub fn not_loaded(editor: &mut Editor, ctx: &Context) {
+pub(crate) fn not_loaded(editor: &mut Editor, ctx: &Context) {
     let Some(project) = &editor.project else {
         return;
     };

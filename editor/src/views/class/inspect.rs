@@ -142,7 +142,7 @@ fn requirements(
     for (index, requirement) in requires.iter_mut().enumerate() {
         let item_path = format!("{path}/{index}");
         let kind = TypeTag::of(requirement).unwrap_or_default();
-        panel::card(false).show(ui, |ui| {
+        panel::tile(false).show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 widgets::badge(ui, &kind);
@@ -171,7 +171,7 @@ fn requirements(
     }
     ui.add_space(4.0);
     let fresh = templates(around, requires);
-    menu::dropdown(ui, "+ add requirement", |ui| {
+    menu::button(ui, "+ add requirement", |ui| {
         for (kind, template) in fresh {
             let button = ui
                 .add_enabled(template.is_some(), egui::Button::new(schema::title(kind)))

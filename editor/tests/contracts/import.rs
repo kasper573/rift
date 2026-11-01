@@ -62,8 +62,12 @@ fn importing_brings_folders_whole_unpacks_archives_and_converts_fbx() {
     let archive = archive.finish().expect("an archive").into_inner();
     write(&pack.join("Extras.zip"), &archive);
 
-    let (made, failed) =
-        import::import_now(&mut editor, "art", std::slice::from_ref(&pack)).expect("imported");
+    let (incoming, failed) = import::review(
+        &support::settled(&mut editor).files,
+        "art",
+        import::gather(std::slice::from_ref(&pack), &|_| {}),
+    );
+    let made = import::import(&mut editor, incoming).expect("imported");
     assert!(
         failed.is_empty(),
         "{:?}",

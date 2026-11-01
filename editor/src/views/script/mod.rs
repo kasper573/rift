@@ -33,13 +33,13 @@ use ui::egui::emath::TSTransform;
 use ui::egui::{Pos2, Rect, RichText, Stroke, Ui, vec2};
 use ui::egui_snarl::ui::get_selected_nodes;
 
-use crate::app::{BottomTab, ConfirmAction, ConfirmDialog, Editor, ModalDialog};
+use crate::app::{BottomTab, Editor};
 use crate::forms::{FormAction, FormCx};
 use crate::keymap::EditorKey;
+use crate::modal::{ConfirmAction, ConfirmDialog, ModalDialog};
 use crate::project::files::content_of;
 use crate::project::{ContentEdit, Project, RowSelection};
 use crate::scene_graph;
-use crate::shell::sidebar;
 use crate::tabs::{DockRequest, EditorTab};
 use crate::thumbs;
 use crate::user::UserFolder;
@@ -48,7 +48,7 @@ use ui::input::InputField;
 /// Where in its file a module that runs a script is: a module by its pointer, the place of a
 /// module in a list of modules or of a node in a scene, or one of an object's scripts.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum ScriptPath {
+pub(crate) enum ScriptPath {
     Module(String),
     ObjectScript { object: String, script: usize },
 }
@@ -79,7 +79,7 @@ impl ScriptPath {
 
     /// The script module at this place of `file`, as the file holds it now: one of a row's
     /// modules, a script module of a scene, or one of the scripts of a scene's object.
-    pub fn module_in(&self, project: &Project, file: &str) -> Option<ScriptModule> {
+    pub(crate) fn module_in(&self, project: &Project, file: &str) -> Option<ScriptModule> {
         let Some(bundle) = file.strip_suffix(&format!("/{SCENE_FILE}")) else {
             return match self {
                 ScriptPath::Module(pointer) => project
@@ -120,7 +120,7 @@ impl ScriptPath {
     }
 }
 
-pub struct ScriptRef {
+pub(crate) struct ScriptRef {
     pub module: Option<ScriptPath>,
     pub node: Option<String>,
 }
@@ -161,10 +161,6 @@ impl ScriptRow {
 
     pub fn slug(&self) -> String {
         format!("script-{}", self.key)
-    }
-
-    pub fn is_row(&self, table: &str, key: &str) -> bool {
-        table == ScriptDef::TABLE && self.key == key
     }
 }
 
@@ -216,7 +212,7 @@ impl ScriptDoc {
         (*self.script).clone()
     }
 
-    pub fn default_speaker(&self) -> Speaker {
+    pub(crate) fn default_speaker(&self) -> Speaker {
         let npc = self
             .speaker
             .as_deref()
@@ -237,7 +233,7 @@ impl ScriptDoc {
         }
     }
 
-    pub fn form_cx<'a>(
+    pub(crate) fn form_cx<'a>(
         &self,
         editor: &'a mut Editor,
         root: &'a Value,
@@ -259,13 +255,6 @@ impl ScriptDoc {
         };
         cx
     }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum ScriptPanel {
-    MayDo,
-    UsedBy,
-    Run,
 }
 
 #[derive(Default)]
@@ -291,12 +280,12 @@ impl ScriptViewState {
         }
     }
 
-    pub fn toggle_outline(&mut self) {
+    fn toggle_outline(&mut self) {
         self.outline = !self.outline;
         self.layout_dirty = true;
     }
 
-    pub fn place_node(&mut self, name: &str, at: Pos2) {
+    fn place_node(&mut self, name: &str, at: Pos2) {
         self.graph.place(name, at);
         self.layout_dirty = true;
     }
@@ -419,29 +408,29 @@ impl ScriptViews {
         })
     }
 
-    pub fn run_of(&self, at: &ScriptRow) -> Option<&run::ScriptRun> {
+    pub(crate) fn run_of(&self, at: &ScriptRow) -> Option<&run::ScriptRun> {
         let id = self.find(at)?;
         self.run.as_ref().filter(|run| run.doc == id)
     }
 
-    pub fn run_of_mut(&mut self, at: &ScriptRow) -> Option<&mut run::ScriptRun> {
+    pub(crate) fn run_of_mut(&mut self, at: &ScriptRow) -> Option<&mut run::ScriptRun> {
         let id = self.find(at)?;
         self.run.as_mut().filter(|run| run.doc == id)
     }
 
-    pub fn existing_view_mut(&mut self, at: &ScriptRow) -> Option<&mut ScriptViewState> {
+    fn existing_view_mut(&mut self, at: &ScriptRow) -> Option<&mut ScriptViewState> {
         let id = self.find(at)?;
         self.views.get_mut(&id)
     }
 
-    pub fn setup_of(&self, at: &ScriptRow) -> run::RunSetup {
+    pub(crate) fn setup_of(&self, at: &ScriptRow) -> run::RunSetup {
         self.find(at)
             .and_then(|id| self.setups.get(&id))
             .cloned()
             .unwrap_or_default()
     }
 
-    pub fn set_setup(&mut self, at: &ScriptRow, setup: run::RunSetup) {
+    pub(crate) fn set_setup(&mut self, at: &ScriptRow, setup: run::RunSetup) {
         let id = self.session(at);
         self.setups.insert(id, setup);
     }
@@ -450,17 +439,17 @@ impl ScriptViews {
         self.fire = Some(self.session(at));
     }
 
-    pub fn take_fire(&mut self, at: &ScriptRow) -> bool {
+    pub(crate) fn take_fire(&mut self, at: &ScriptRow) -> bool {
         let fired = self.fire.take();
         fired.is_some() && fired == self.find(at)
     }
 
-    pub fn set_pending(&mut self, at: &ScriptRow, action: PendingScriptAction) {
+    pub(crate) fn set_pending(&mut self, at: &ScriptRow, action: PendingScriptAction) {
         let id = self.session(at);
         self.pending = Some((id, action));
     }
 
-    pub fn take_pending(&mut self, at: &ScriptRow) -> Option<PendingScriptAction> {
+    fn take_pending(&mut self, at: &ScriptRow) -> Option<PendingScriptAction> {
         let id = self.find(at)?;
         self.pending
             .take_if(|(pending, _)| *pending == id)
@@ -477,7 +466,7 @@ impl ScriptViews {
     }
 }
 
-pub enum PendingScriptAction {
+pub(crate) enum PendingScriptAction {
     /// Links the output of `from` a scene names by its label to `to`.
     Connect {
         from: String,
@@ -539,7 +528,7 @@ fn sync_graph(editor: &mut Editor, doc: &ScriptDoc) {
         .sync(doc, &doc.text(project), generation);
 }
 
-pub fn sync_with_content(editor: &mut Editor) {
+pub(crate) fn sync_with_content(editor: &mut Editor) {
     let generation = content_generation(editor);
     let views = &mut editor.views.script;
     if views
@@ -582,7 +571,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, at: &ScriptRow) {
     let mut actions = Vec::new();
     keys(editor, ui, &doc, &mut actions);
     status(editor, &doc);
-    sidebar::row(ui, "script", |ui| inspect::script_row(editor, ui, &doc));
+    ui::panel::left_scrolled(ui, "script", |ui| inspect::script_row(editor, ui, &doc));
     let (table, key) = at.row();
     let selection = if editor.selection.table == table
         && editor.selection.keys.first().is_some_and(|k| *k == key)
@@ -591,7 +580,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, at: &ScriptRow) {
     } else {
         RowSelection::row(&table, &key)
     };
-    sidebar::inspector(editor, ui, "script", |editor, ui| {
+    ui::panel::inspector(ui, editor, "script", |editor, ui| {
         inspect::show(editor, ui, &doc, &selection)
     });
     egui::CentralPanel::default()
@@ -625,12 +614,7 @@ pub fn bottom(editor: &mut Editor, ui: &mut Ui, at: &ScriptRow, tab: BottomTab) 
         return;
     };
     sync_with_content(editor);
-    let panel = match tab {
-        BottomTab::UsedBy => ScriptPanel::UsedBy,
-        BottomTab::Run => ScriptPanel::Run,
-        _ => ScriptPanel::MayDo,
-    };
-    panel::show(editor, ui, &doc, panel);
+    panel::show(editor, ui, &doc, tab);
 }
 
 /// Canvas and Outline, at the top right of the view they switch between, in a layer above the
@@ -852,7 +836,7 @@ fn header_chip(editor: &Editor, ui: &Ui, doc: &ScriptDoc) {
     );
 }
 
-pub fn chip_title(editor: &Editor, doc: &ScriptDoc) -> String {
+fn chip_title(editor: &Editor, doc: &ScriptDoc) -> String {
     let count = doc.nodes().len();
     let mut text = format!(
         "{} · runs on {} · {count} node{}",
@@ -1070,7 +1054,7 @@ pub fn select_nodes(editor: &mut Editor, doc: &ScriptDoc, names: &[String]) {
         .selected = names.to_vec();
 }
 
-pub fn is_node_selection(selection: &RowSelection) -> bool {
+fn is_node_selection(selection: &RowSelection) -> bool {
     !selection.parts.is_empty()
         && selection
             .parts
@@ -1091,7 +1075,7 @@ fn keys(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, actions: &mut Vec<Scr
         return;
     }
     if keys.fire {
-        editor.panels.bottom = BottomTab::Run;
+        editor.bottom_tab = BottomTab::Run;
         editor.views.script.fire(&at);
         return;
     }
@@ -1148,7 +1132,7 @@ fn keys(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, actions: &mut Vec<Scr
     }
 }
 
-pub fn free_port_link(doc: &ScriptDoc, name: &str) -> Option<(String, Exit)> {
+pub(crate) fn free_port_link(doc: &ScriptDoc, name: &str) -> Option<(String, Exit)> {
     let node = doc.nodes().get(name)?;
     nodes::ports(node)
         .into_iter()
@@ -1156,7 +1140,7 @@ pub fn free_port_link(doc: &ScriptDoc, name: &str) -> Option<(String, Exit)> {
         .map(|port| (name.to_owned(), port.exit))
 }
 
-pub fn link_by_name(editor: &mut Editor, at: &ScriptRow, from: String) {
+pub(crate) fn link_by_name(editor: &mut Editor, at: &ScriptRow, from: String) {
     editor.dialogs.push(ModalDialog::LinkNode(LinkNodeDialog {
         at: at.clone(),
         from,
@@ -1240,7 +1224,7 @@ pub fn act(editor: &mut Editor, doc: &ScriptDoc, action: ScriptGraphAction) {
 }
 
 /// Gives a dialogue a choice more, its plain next given up to the choices.
-pub fn add_choice(node: &mut Node) {
+pub(crate) fn add_choice(node: &mut Node) {
     let Node::Dialogue(dialogue) = node else {
         return;
     };
@@ -1309,7 +1293,7 @@ fn remove_nodes(doc: &ScriptDoc, names: &[String]) -> ScriptDef {
     script
 }
 
-pub fn delete_nodes(editor: &mut Editor, doc: &ScriptDoc, names: Vec<String>) {
+pub(crate) fn delete_nodes(editor: &mut Editor, doc: &ScriptDoc, names: Vec<String>) {
     let script = remove_nodes(doc, &names);
     let reachable = nodes::reachable(&script.nodes);
     let were_reachable = nodes::reachable(doc.nodes());
@@ -1346,7 +1330,7 @@ pub fn delete_nodes(editor: &mut Editor, doc: &ScriptDoc, names: Vec<String>) {
     }
 }
 
-pub fn delete_nodes_now(editor: &mut Editor, at: &ScriptRow, names: Vec<String>) {
+pub(crate) fn delete_nodes_now(editor: &mut Editor, at: &ScriptRow, names: Vec<String>) {
     let Some(doc) = ScriptDoc::load(editor, at) else {
         return;
     };
@@ -1458,7 +1442,7 @@ pub fn write(editor: &mut Editor, doc: &ScriptDoc, script: ScriptDef, label: Str
     written
 }
 
-pub fn rename_node_dialog(
+pub(crate) fn rename_node_dialog(
     editor: &mut Editor,
     ctx: &egui::Context,
     mut dialog: RenameNodeDialog,
@@ -1530,7 +1514,7 @@ pub fn rename_node(editor: &mut Editor, doc: &ScriptDoc, old: &str, new: &str) {
     }
 }
 
-pub fn link_node_dialog(
+pub(crate) fn link_node_dialog(
     editor: &mut Editor,
     ctx: &egui::Context,
     mut dialog: LinkNodeDialog,

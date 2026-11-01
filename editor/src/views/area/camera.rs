@@ -17,9 +17,9 @@ use crate::keymap::EditorKey;
 
 /// How close the camera may come to its target, and how far it may draw back.
 pub const NEAREST: Meters = Meters(3.0);
-pub const FARTHEST: Meters = Meters(400.0);
+const FARTHEST: Meters = Meters(400.0);
 /// How far down the camera looks when it looks straight down.
-pub const TOP_DOWN: Degrees = Degrees(89.0);
+const TOP_DOWN: Degrees = Degrees(89.0);
 const LOWEST_PITCH: Degrees = Degrees(5.0);
 /// Degrees of turn and tilt a pixel of drag gives.
 const ORBIT_PER_PIXEL: f32 = 0.4;
@@ -96,7 +96,7 @@ impl OrbitCamera {
     }
 
     /// Metres of ground a pixel of the viewport spans at the target, over `height` pixels.
-    pub fn metres_per_pixel(&self, height: f32) -> f32 {
+    fn metres_per_pixel(&self, height: f32) -> f32 {
         2.0 * self.distance.0 * (FOV.radians().0 / 2.0).tan() / height.max(1.0)
     }
 
@@ -125,7 +125,12 @@ impl OrbitCamera {
 /// Moves `camera` as the pointer asks of `response`: the right button orbits, the middle button or
 /// Space with the left drags the ground along, the wheel draws back and in. Answers whether the
 /// pointer is busy with the camera.
-pub fn navigate(ui: &Ui, response: &Response, camera: &mut OrbitCamera, height: f32) -> bool {
+pub(crate) fn navigate(
+    ui: &Ui,
+    response: &Response,
+    camera: &mut OrbitCamera,
+    height: f32,
+) -> bool {
     if response.dragged_by(PointerButton::Secondary) {
         let delta = response.drag_delta();
         camera.orbit(Vec2::new(delta.x, delta.y));
@@ -179,7 +184,7 @@ impl AreaCanvas {
     }
 
     /// Where a point of the ground shows on the screen.
-    pub fn to_screen(&self, at: Pos<Meters>) -> Pos2 {
+    pub(crate) fn to_screen(&self, at: Pos<Meters>) -> Pos2 {
         self.lifted(at, Meters(0.0))
     }
 
@@ -200,7 +205,7 @@ impl AreaCanvas {
     }
 
     /// The ground under a screen point, when it points at the area.
-    pub fn to_ground(&self, screen: Pos2) -> Option<Pos<Meters>> {
+    pub(crate) fn to_ground(&self, screen: Pos2) -> Option<Pos<Meters>> {
         ground_hit(
             &self.area.heights,
             self.area.size.bounds().inflate(0.5, 0.5),
@@ -240,7 +245,7 @@ impl AreaCanvas {
     }
 
     /// A line through `points` on the ground, bent over the terrain.
-    pub fn polyline(&self, points: &[Pos<Meters>]) -> Vec<Pos2> {
+    pub(crate) fn polyline(&self, points: &[Pos<Meters>]) -> Vec<Pos2> {
         let mut out = Vec::new();
         for pair in points.windows(2) {
             let (from, to) = (pair[0], pair[1]);
@@ -289,7 +294,7 @@ impl AreaCanvas {
 
     /// Whether the ray through `screen` passes through the box standing on `bounds`, `height`
     /// high over the ground, and how far along the ray it enters.
-    pub fn hits_box(&self, screen: Pos2, bounds: Rect<Meters>, height: f32) -> Option<f32> {
+    pub(crate) fn hits_box(&self, screen: Pos2, bounds: Rect<Meters>, height: f32) -> Option<f32> {
         let ray = self.ray(screen);
         let floor = engine::core::geometry::corners(bounds)
             .iter()

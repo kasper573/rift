@@ -63,7 +63,7 @@ pub fn faces(busts: &BustDef) -> Vec<BustFace> {
 }
 
 /// The name of every face `bust` has: the generic ones, then its own.
-pub fn face_names(bust: Option<&BustDef>) -> Vec<String> {
+pub(crate) fn face_names(bust: Option<&BustDef>) -> Vec<String> {
     let generic = GenericExpression::VARIANTS
         .iter()
         .map(|expression| expression.as_ref().to_owned());
@@ -74,13 +74,13 @@ pub fn face_names(bust: Option<&BustDef>) -> Vec<String> {
 }
 
 /// The bust the npc at `npc` is shown in, when both read.
-pub fn bust_of_npc(project: &Project, npc: &str) -> Option<Arc<BustDef>> {
+pub(crate) fn bust_of_npc(project: &Project, npc: &str) -> Option<Arc<BustDef>> {
     let npc = project.read::<NpcDef>(npc).ok()?;
     project.read_id(npc.bust?)
 }
 
 /// The part of the bust at `key` its face `name` is drawn in.
-pub fn face_file(key: &str, name: &str) -> String {
+fn face_file(key: &str, name: &str) -> String {
     format!("{key}/{}", BUST_FACES.named(name, "png"))
 }
 
@@ -101,7 +101,7 @@ pub fn grid(editor: &mut Editor, ui: &mut Ui, key: &str, row: &BustDef) {
     sheet::section(ui, &format!("Bust · {title}"));
     let drops = std::mem::take(&mut editor.views.bust.drops);
     let pointer = ui.input(|i| i.pointer.hover_pos());
-    let selected = editor.views.bust.view(key).face.clone();
+    let selected = editor.views.bust.views.view(key).face.clone();
     let mut pick = None;
     let mut replace: Option<(BustFace, PathBuf)> = None;
     let mut add: Vec<PathBuf> = Vec::new();
@@ -166,7 +166,7 @@ pub fn grid(editor: &mut Editor, ui: &mut Ui, key: &str, row: &BustDef) {
 }
 
 /// The faces picked for the bust at `key`, each a PNG named after its expression.
-pub fn browse_faces(key: &str) -> Vec<PathBuf> {
+fn browse_faces(key: &str) -> Vec<PathBuf> {
     rfd::FileDialog::new()
         .set_title(format!("The faces of {}", shown_path(key)))
         .add_filter("PNG", &["png"])
@@ -209,7 +209,7 @@ fn card(
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(CARD, Sense::click());
     let painter = ui.painter_at(rect);
-    panel::paint_card(&painter, rect, selected);
+    panel::paint_tile(&painter, rect, selected);
     let art = ERect::from_min_max(
         rect.min + Vec2::new(4.0, 4.0),
         rect.right_bottom() - Vec2::new(4.0, 28.0),
@@ -303,7 +303,7 @@ fn add_faces(editor: &mut Editor, key: &str, faces: &[BustFace], paths: &[PathBu
     if editor.apply(edit)
         && let Some(face) = named.last()
     {
-        editor.views.bust.view_mut(key).face = Some(face.clone());
+        editor.views.bust.views.view_mut(key).face = Some(face.clone());
         let part = BUST_FACES.named(face, "png");
         editor.select(RowSelection::parts(BustDef::TABLE, key, vec![part]));
     }

@@ -1,4 +1,3 @@
-pub mod breadcrumb;
 pub mod browser;
 pub mod content_tree;
 pub mod dialogs;
@@ -7,7 +6,6 @@ pub mod levels;
 pub mod output;
 pub mod report;
 pub mod row_form;
-pub mod sidebar;
 pub mod start;
 pub mod tree;
 pub mod unused_dialog;
@@ -35,9 +33,10 @@ use ui::egui_dock::{DockArea, DockState, TabViewer};
 use ui::face::{self, TextRole};
 use ui::{float, ink, sheet};
 
-use crate::app::{BottomTab, CloseDialog, CloseThen, Editor, ModalDialog};
+use crate::app::{BottomTab, Editor};
 use crate::icons::IconTone;
 use crate::keymap::EditorKey;
+use crate::modal::{CloseDialog, CloseThen, ModalDialog};
 use crate::play;
 use crate::project::{self, EditRefusal};
 use crate::tabs::{DockRequest, EditorTab};
@@ -178,7 +177,7 @@ pub fn shortcuts(editor: &mut Editor, ctx: &Context) {
     }
 }
 
-pub fn request_close(editor: &mut Editor, then: CloseThen) {
+pub(crate) fn request_close(editor: &mut Editor, then: CloseThen) {
     if editor.has_unsaved() {
         editor
             .dialogs
@@ -188,7 +187,7 @@ pub fn request_close(editor: &mut Editor, then: CloseThen) {
     }
 }
 
-pub fn finish_close(editor: &mut Editor, then: CloseThen) {
+pub(crate) fn finish_close(editor: &mut Editor, then: CloseThen) {
     match then {
         CloseThen::Quit => {
             editor.close_project();
@@ -299,7 +298,7 @@ fn toggle_frame_rate(editor: &mut Editor) {
     editor.save_settings();
 }
 
-pub fn pretty_path(path: &Path) -> String {
+pub(crate) fn pretty_path(path: &Path) -> String {
     let text = path.display().to_string();
     match dirs::home_dir() {
         Some(home) if path.starts_with(&home) => format!(
@@ -331,11 +330,8 @@ fn workspace(editor: &mut Editor, root: &mut egui::Ui) {
         });
     panel::divide(root, content.response.rect, panel::Edge::Right);
     let bottom_tabs = views::bottom_tabs(editor);
-    if !bottom_tabs
-        .iter()
-        .any(|(tab, _)| *tab == editor.panels.bottom)
-    {
-        editor.panels.bottom = bottom_tabs
+    if !bottom_tabs.iter().any(|(tab, _)| *tab == editor.bottom_tab) {
+        editor.bottom_tab = bottom_tabs
             .first()
             .map(|(tab, _)| *tab)
             .unwrap_or(BottomTab::History);
@@ -349,13 +345,13 @@ fn workspace(editor: &mut Editor, root: &mut egui::Ui) {
             ..egui::Margin::ZERO
         }))
         .show(root, |ui| {
-            sheet::tabs(ui, &bottom_tabs, &mut editor.panels.bottom);
+            sheet::tabs(ui, &bottom_tabs, &mut editor.bottom_tab);
             panel::rest(ui, |ui| {
                 egui::Frame::new()
                     .inner_margin(egui::Margin::symmetric(10, 8))
                     .show(ui, |ui| {
                         ui.set_min_height(ui.available_height());
-                        match editor.panels.bottom {
+                        match editor.bottom_tab {
                             BottomTab::History => history::show(editor, ui),
                             BottomTab::Output => output::show(editor, ui),
                             other => views::bottom_show(editor, ui, other),
@@ -398,7 +394,7 @@ fn empty_centre(ui: &mut egui::Ui) {
 }
 
 const TOP_BAR_HEIGHT: f32 = 42.0;
-pub const STATUS_HEIGHT: f32 = 24.0;
+pub(crate) const STATUS_HEIGHT: f32 = 24.0;
 
 fn dock_style(egui_style: &egui::Style) -> egui_dock::Style {
     let mut style = egui_dock::Style::from_egui(egui_style);
@@ -511,7 +507,8 @@ struct Viewer<'a> {
 }
 
 /// The gutter every tab's content keeps from the tab body's edge, so views line up.
-pub const CONTENT_PADDING: egui::Margin = egui::Margin::symmetric(16, 10);
+pub(crate) const CONTENT_PADDING: egui::Margin = egui::Margin::symmetric(16, 10);
+pub(crate) const VIEW_PADDING: egui::Margin = egui::Margin::symmetric(12, 8);
 
 impl TabViewer for Viewer<'_> {
     type Tab = EditorTab;
@@ -551,8 +548,9 @@ impl TabViewer for Viewer<'_> {
     fn ui(&mut self, ui: &mut egui::Ui, tab: &mut EditorTab) {
         match tab {
             EditorTab::World => world::show(self.editor, ui),
-            EditorTab::Area { key } => area::show(self.editor, ui, key),
-            EditorTab::Blueprint { key } => area::show_blueprint(self.editor, ui, key),
+            EditorTab::Area { key } | EditorTab::Blueprint { key } => {
+                area::show(self.editor, ui, key)
+            }
             EditorTab::Script(owner) => script::show(self.editor, ui, owner),
             EditorTab::Model { key } => model::show(self.editor, ui, key),
             EditorTab::ModelPart { key } => model_part::show(self.editor, ui, key),

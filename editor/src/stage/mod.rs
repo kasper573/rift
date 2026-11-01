@@ -1,11 +1,9 @@
-//! The one stage every preview in the editor plays on, so a preview shows what the game shows: the
-//! game's starting area behind, actors drawn with the game's own frames, anchor and row depths,
-//! vfx through the game's presenters. A scene is either posed by the
-//! designer, or taken live from a server world running the game's own mechanics.
+//! The one stage every preview in the editor plays on: the game's starting area behind, and the
+//! plates of the actors standing on it. A scene is either posed by the designer, or taken live from
+//! a server world running the game's own mechanics.
 
-mod images;
 pub mod live;
-mod mirror;
+pub(crate) mod picture;
 
 use std::collections::{HashMap, HashSet};
 use std::f32::consts::PI;
@@ -14,27 +12,27 @@ use ui::theme;
 
 use bevy::prelude::*;
 use engine::core::content::Content;
-use engine::core::geometry::{PlacedShape, Radians};
+use engine::core::geometry::PlacedShape;
 use engine::core::math::Pos;
 use engine::core::time::Seconds;
 use engine::core::units::Meters;
 use engine::core::vfx::{VfxLayer, VfxParams};
 use engine::systems::GameSettings;
+use engine::systems::actor::ModelId;
 use engine::systems::actor::plate::{self, PlateLabel};
-use engine::systems::actor::{Action, ModelId};
 use engine::systems::skill::SkillId;
 use engine::systems::status::StatusEffectId;
 use ui::egui::{Color32, Pos2, Ui, Vec2 as EVec2};
 
 use self::live::LiveWorld;
-use self::mirror::{ActorPose, Stage};
+use self::picture::Stage;
 use crate::app::Editor;
 use crate::thumbs;
 
 pub const SIZE: [u32; 2] = [384, 288];
-pub const ZOOM: f32 = 2.0;
-pub const NARROWEST: f32 = 240.0;
-pub use crate::views::navigation::PX_PER_METER;
+pub(crate) const ZOOM: f32 = 2.0;
+const NARROWEST: f32 = 240.0;
+use crate::views::navigation::PX_PER_METER;
 const SPREAD_CANDIDATES: usize = 4096;
 const SPREAD_ROUNDS: usize = 12;
 
@@ -56,7 +54,7 @@ impl Stages {
         })
     }
 
-    fn render(&mut self, world: &mut World, key: &str, frame: &mirror::Frame) {
+    fn render(&mut self, world: &mut World, key: &str, frame: &picture::Frame) {
         self.stage(world, key);
         if let Some(stage) = self.stages.get_mut(key) {
             stage.render(world, frame);
@@ -79,15 +77,22 @@ pub struct Posed {
     pub vfx: Option<PosedVfx>,
 }
 
+/// An actor as the stage places it: where it stands and the plate over its head.
 #[derive(Clone, PartialEq)]
 pub struct PosedActor {
     pub model: ModelId,
-    pub action: Action,
-    pub facing: Radians,
     pub at: Pos<Meters>,
     pub plate: Option<PlateLabel>,
-    /// Held at this moment of the action, or animated.
-    pub held: Option<Seconds>,
+}
+
+impl PosedActor {
+    pub fn standing(model: ModelId, at: Pos<Meters>) -> PosedActor {
+        PosedActor {
+            model,
+            at,
+            plate: None,
+        }
+    }
 }
 
 #[derive(Clone, PartialEq)]
@@ -143,19 +148,6 @@ struct Request {
     scene: Scene,
 }
 
-impl PosedActor {
-    pub fn standing(model: ModelId, at: Pos<Meters>) -> PosedActor {
-        PosedActor {
-            model,
-            action: Action::Idle,
-            facing: Radians::SOUTH,
-            at,
-            plate: None,
-            held: None,
-        }
-    }
-}
-
 /// Where the stage stands: the game's initial spawn, which every scene is laid out around.
 pub fn center(content: &Content) -> Pos<Meters> {
     content.built::<GameSettings>().initial_spawn.at
@@ -163,7 +155,7 @@ pub fn center(content: &Content) -> Pos<Meters> {
 
 /// The width every view gives its preview out of `room`: the stage's own width, narrowing only as
 /// far as the stage stays readable, so previews look alike across views.
-pub fn preview_width(room: f32) -> f32 {
+pub(crate) fn preview_width(room: f32) -> f32 {
     room.clamp(NARROWEST, SIZE[0] as f32)
 }
 
@@ -180,7 +172,7 @@ pub fn show(
         ui.label(theme::muted("the preview plays once the content loads"));
         return None;
     };
-    let spawn = content.built::<GameSettings>().initial_spawn;
+    let center = center(&content);
     let fit = (ui.available_width() / SIZE[0] as f32).min(1.0);
     let size = EVec2::new(SIZE[0] as f32, SIZE[1] as f32) * fit;
     let px = ZOOM * fit;
@@ -188,13 +180,18 @@ pub fn show(
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 4.0, theme::CANVAS);
     if ground {
-        let area = spawn.area.path(&content).to_owned();
-        crate::thumbs::areas::draw_area(editor, &painter, &area, rect, spawn.at, px);
+        let area = content
+            .built::<GameSettings>()
+            .initial_spawn
+            .area
+            .path(&content)
+            .to_owned();
+        crate::thumbs::areas::draw_area(editor, &painter, &area, rect, center, px);
     }
     let shown = Shown {
         rect,
         px,
-        center: spawn.at,
+        center,
         report: editor
             .views
             .stage
@@ -276,7 +273,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
 }
 
 /// A ground point as the stage's flat camera sees it, in its pixels with y up.
-pub fn to_screen(at: Pos<Meters>) -> Vec2 {
+pub(crate) fn to_screen(at: Pos<Meters>) -> Vec2 {
     Vec2::new(at.x * PX_PER_METER, -at.y * PX_PER_METER)
 }
 
@@ -343,49 +340,20 @@ pub fn spread(footprint: &PlacedShape, count: u32) -> Vec<Pos<Meters>> {
     }
     picks.into_iter().map(|pick| inside[pick]).collect()
 }
-fn posed_frame<'a>(posed: &Posed, content: &'a Content) -> mirror::Frame<'a> {
-    let spawn = content.built::<GameSettings>().initial_spawn;
-    let actors = posed
-        .actors
-        .iter()
-        .map(|actor| ActorPose {
-            model: actor.model,
-            at: actor.at,
-            plate: actor.plate.clone(),
-        })
-        .collect();
-    let mut not_yet = Vec::new();
-    if posed.vfx.is_some() {
-        not_yet.push("vfx");
-    }
-    mirror::Frame {
+fn posed_frame<'a>(posed: &Posed, content: &'a Content) -> picture::Frame<'a> {
+    picture::Frame {
         content,
-        center: spawn.at,
-        actors,
-        not_yet,
+        center: center(content),
+        actors: posed.actors.clone(),
+        has_vfx: posed.vfx.is_some(),
     }
 }
 
-fn live_frame<'a>(live: &mut LiveWorld, content: &'a Content) -> mirror::Frame<'a> {
-    let spawn = content.built::<GameSettings>().initial_spawn;
-    let actors = live
-        .actors()
-        .into_iter()
-        .map(|shown| ActorPose {
-            model: shown.model,
-            at: shown.at,
-            plate: shown.plate,
-        })
-        .collect();
-    let not_yet = if live.vfx().is_empty() {
-        Vec::new()
-    } else {
-        vec!["vfx"]
-    };
-    mirror::Frame {
+fn live_frame<'a>(live: &mut LiveWorld, content: &'a Content) -> picture::Frame<'a> {
+    picture::Frame {
         content,
-        center: spawn.at,
-        actors,
-        not_yet,
+        center: center(content),
+        actors: live.actors(),
+        has_vfx: !live.vfx().is_empty(),
     }
 }

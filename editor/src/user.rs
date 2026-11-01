@@ -6,7 +6,7 @@ use engine::core::time::UnixMillis;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
-use crate::shell::widgets;
+use crate::views::area::camera::OrbitCamera;
 
 // Per-user state stays outside content folders, so it never ships with a game.
 #[derive(Clone, Debug)]
@@ -28,34 +28,30 @@ impl UserFolder {
         self.root.join("settings.json")
     }
 
-    pub fn journal_dir(&self) -> PathBuf {
+    pub(crate) fn journal_dir(&self) -> PathBuf {
         self.root.join("journal")
     }
 
-    pub fn imports_dir(&self) -> PathBuf {
-        self.root.join("imports")
-    }
-
-    pub fn locks_dir(&self) -> PathBuf {
+    pub(crate) fn locks_dir(&self) -> PathBuf {
         self.root.join("locks")
     }
 
-    pub fn layouts_dir(&self) -> PathBuf {
+    fn layouts_dir(&self) -> PathBuf {
         self.root.join("layouts")
     }
 
-    pub fn profiles_dir(&self) -> PathBuf {
+    pub(crate) fn profiles_dir(&self) -> PathBuf {
         self.root.join("profiles")
     }
 
-    pub fn load_settings(&self) -> EditorSettings {
+    pub(crate) fn load_settings(&self) -> EditorSettings {
         std::fs::read_to_string(self.settings_file())
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default()
     }
 
-    pub fn save_settings(&self, settings: &EditorSettings) {
+    pub(crate) fn save_settings(&self, settings: &EditorSettings) {
         let _ = std::fs::create_dir_all(&self.root);
         if let Ok(text) = serde_json::to_string_pretty(settings) {
             let _ = std::fs::write(self.settings_file(), text + "\n");
@@ -66,14 +62,18 @@ impl UserFolder {
         blake3::hash(folder.to_string_lossy().as_bytes()).to_hex()[..16].to_owned()
     }
 
-    pub fn load_layout<T: DeserializeOwned + Default>(&self, project: &Path, slug: &str) -> T {
+    pub(crate) fn load_layout<T: DeserializeOwned + Default>(
+        &self,
+        project: &Path,
+        slug: &str,
+    ) -> T {
         std::fs::read_to_string(self.layout_file(project, slug))
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default()
     }
 
-    pub fn save_layout<T: Serialize>(
+    pub(crate) fn save_layout<T: Serialize>(
         &self,
         project: &Path,
         slug: &str,
@@ -102,7 +102,7 @@ pub struct EditorSettings {
     pub recent_at: BTreeMap<String, UnixMillis>,
     pub binaries: Option<PathBuf>,
     pub stamps: BTreeMap<String, StampSettings>,
-    pub cameras: BTreeMap<String, CameraSettings>,
+    pub cameras: BTreeMap<String, OrbitCamera>,
     pub listeners: BTreeMap<String, [f32; 2]>,
     pub views: BTreeMap<String, SpreadsheetView>,
     pub last_play: Option<String>,
@@ -144,8 +144,6 @@ pub struct StampSettings {
     pub values: BTreeMap<String, serde_json::Value>,
 }
 
-pub type CameraSettings = crate::views::area::camera::OrbitCamera;
-
 #[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq)]
 #[serde(default)]
 pub struct SpreadsheetView {
@@ -173,10 +171,10 @@ impl EditorSettings {
         self.recent_at.remove(&folder.display().to_string());
     }
 
-    pub fn opened_ago(&self, folder: &Path) -> String {
+    pub(crate) fn opened_ago(&self, folder: &Path) -> String {
         let Some(at) = self.recent_at.get(&folder.display().to_string()) else {
             return String::new();
         };
-        widgets::ago(UnixMillis::from(SystemTime::now()).since(*at))
+        ui::words::ago(UnixMillis::from(SystemTime::now()).since(*at).0)
     }
 }

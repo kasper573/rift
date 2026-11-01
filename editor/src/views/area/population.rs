@@ -81,7 +81,7 @@ pub(super) fn from_npc(ui: &mut Ui, cx: &mut FormCx, npc: &str) {
 }
 
 /// Where a preview of `population` stands its npcs in `area`, rolled from `seed`.
-pub fn population_places(
+pub(crate) fn population_places(
     area: &area::Area,
     population: &Population,
     seed: u64,

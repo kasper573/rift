@@ -37,7 +37,7 @@ pub fn ranks(ui: &mut Ui, cx: &mut FormCx, value: &mut Value) -> FormChange {
 /// `skill` as an edit from `before` leaves it, with its target and area kept in step: a target
 /// aimed at a point takes an area and a single one gives its area up, and an area added or removed
 /// turns the target into its area or single kind. The game takes neither half without the other.
-pub fn paired_targeting(before: &SkillDef, skill: &mut SkillDef) {
+pub(crate) fn paired_targeting(before: &SkillDef, skill: &mut SkillDef) {
     let target_changed = before.target != skill.target;
     match (skill.target.aimed_at_point(), skill.area.is_some()) {
         (true, false) if target_changed => {

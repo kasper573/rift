@@ -15,7 +15,7 @@ use crate::keymap::EditorKey;
 pub const STEP: Millis = Millis(10.0);
 /// How close to a cue, in points, the pointer takes it.
 const GRIP: f32 = 8.0;
-pub const STRIP_HEIGHT: f32 = 18.0;
+pub(crate) const STRIP_HEIGHT: f32 = 18.0;
 const TIMELINE_HEIGHT: f32 = 64.0;
 
 /// Where a clip is being looked at: the playhead, whether it plays on, and a cue being dragged.
@@ -65,7 +65,7 @@ pub struct CueDrag {
 }
 
 /// Keys every timeline answers, and what the status bar says of them.
-pub const KEYS: &str = "Space pauses or plays · , . step 10 ms · A apex here · S step here · drag a cue · right-click removes it";
+pub(crate) const KEYS: &str = "Space pauses or plays · , . step 10 ms · A apex here · S step here · drag a cue · right-click removes it";
 
 /// Moves the playhead on while the clip plays, and as the keys ask.
 pub fn advance(ui: &mut Ui, scrub: &mut Scrub, length: Option<Millis>) {

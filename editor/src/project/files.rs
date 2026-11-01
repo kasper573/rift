@@ -104,7 +104,7 @@ impl FolderIndex {
             .map(String::as_str)
     }
 
-    pub fn count_of(&self, folder: &str) -> usize {
+    pub(crate) fn count_of(&self, folder: &str) -> usize {
         self.counts.get(folder).copied().unwrap_or(0)
     }
 
@@ -178,7 +178,7 @@ impl ProjectFiles {
 
     /// Which paths the files are at: files at the same paths revision hold the same paths,
     /// whatever bytes they hold, so what is worked out from the paths alone keeps while it stays.
-    pub fn paths_revision(&self) -> u64 {
+    pub(crate) fn paths_revision(&self) -> u64 {
         self.paths_revision
     }
 
@@ -272,7 +272,7 @@ impl ProjectFiles {
         }
     }
 
-    pub fn paths_under(&self, prefix: &str) -> impl Iterator<Item = &String> {
+    pub(crate) fn paths_under(&self, prefix: &str) -> impl Iterator<Item = &String> {
         self.map
             .range::<str, _>((Bound::Included(prefix), Bound::Unbounded))
             .map(|(path, _)| path)
@@ -287,7 +287,7 @@ pub fn bundle_of(file: &str) -> Option<(&str, &str)> {
 }
 
 /// The path of the content file that `file` is, or is a part of; `None` for the settings.
-pub fn content_holding(file: &str) -> Option<&str> {
+pub(crate) fn content_holding(file: &str) -> Option<&str> {
     match bundle_of(file) {
         Some((bundle, _)) => Some(bundle),
         None => (file != SETTINGS_FILE && json_table(file)).then_some(file),
@@ -312,7 +312,7 @@ pub fn is_folder(path: &str) -> bool {
 }
 
 /// The entry that keeps `folder` while nothing is in it.
-pub fn folder_entry(folder: &str) -> String {
+pub(crate) fn folder_entry(folder: &str) -> String {
     format!("{folder}/")
 }
 
@@ -395,10 +395,6 @@ pub fn json_bytes(value: &serde_json::Value) -> FileBytes {
     FileBytes::from(bytes)
 }
 
-pub fn text_bytes(text: String) -> FileBytes {
-    FileBytes::from(text.into_bytes())
-}
-
 #[derive(Clone, Debug)]
 pub struct FileChange {
     pub file: String,
@@ -418,7 +414,7 @@ impl PartialEq for FileChange {
 
 /// The folder-relative names of the files under `root` that make up its content, and of every
 /// folder there that holds nothing, as its entry.
-pub fn content_files(root: &Path) -> io::Result<Vec<String>> {
+pub(crate) fn content_files(root: &Path) -> io::Result<Vec<String>> {
     let mut files = Vec::new();
     let entries = WalkDir::new(root)
         .min_depth(1)
@@ -437,7 +433,7 @@ pub fn content_files(root: &Path) -> io::Result<Vec<String>> {
     Ok(files)
 }
 
-pub fn empty_folder(path: &Path) -> io::Result<bool> {
+pub(crate) fn empty_folder(path: &Path) -> io::Result<bool> {
     Ok(std::fs::read_dir(path)?
         .filter_map(Result::ok)
         .all(|entry| entry.file_name().to_str().is_some_and(hidden)))
@@ -450,7 +446,7 @@ pub fn hidden(name: &str) -> bool {
 }
 
 /// The folder-relative, slash-separated name of a file under `root`.
-pub fn folder_file(root: &Path, path: &Path) -> Option<String> {
+pub(crate) fn folder_file(root: &Path, path: &Path) -> Option<String> {
     let parts: Vec<_> = path
         .strip_prefix(root)
         .ok()?

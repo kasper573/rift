@@ -60,10 +60,10 @@ pub struct NodeDrag {
 
 /// The payload of a node drag, which the node inspector takes as a skill requirement.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct CarriedNode(pub NodeKey);
+pub(crate) struct CarriedNode(pub NodeKey);
 
 /// What the canvas shows of a node's skill, read from the files before the tree is drawn.
-pub struct NodeSkill {
+pub(crate) struct NodeSkill {
     pub def: Option<Arc<SkillDef>>,
     pub path: String,
     pub needs: Vec<String>,
@@ -87,7 +87,7 @@ impl NodeSkill {
     }
 }
 
-pub fn node_skills(project: &Project, tree: &SkillTree) -> BTreeMap<NodeKey, NodeSkill> {
+pub(crate) fn node_skills(project: &Project, tree: &SkillTree) -> BTreeMap<NodeKey, NodeSkill> {
     let reader = project.reader();
     tree.0
         .iter()
@@ -145,7 +145,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
 }
 
 /// Takes `node` out of `tree`, and every requirement of another node on it.
-pub fn remove_node(tree: &mut SkillTree, node: &NodeKey) {
+pub(crate) fn remove_node(tree: &mut SkillTree, node: &NodeKey) {
     tree.0.remove(node);
     for other in tree.0.values_mut() {
         other.requires.retain(|requirement| {

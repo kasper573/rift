@@ -13,13 +13,13 @@ use crate::{controls, ink};
 
 pub const RULE_INSET: f32 = 7.0;
 const RULE_GAP: f32 = 8.0;
-pub const SMALL_RULE_INSET: f32 = 4.0;
-pub const TITLE_BAND: f32 = 36.0;
-pub const CROSS: f32 = 24.0;
-pub const SMALL_CROSS: f32 = 16.0;
-pub const CURL: f32 = 24.0;
-pub const FILLER: f32 = 34.0;
-pub const SMALL_SHEET: f32 = 160.0;
+const SMALL_RULE_INSET: f32 = 4.0;
+const TITLE_BAND: f32 = 36.0;
+pub(crate) const CROSS: f32 = 24.0;
+const SMALL_CROSS: f32 = 16.0;
+pub(crate) const CURL: f32 = 24.0;
+const FILLER: f32 = 34.0;
+const SMALL_SHEET: f32 = 160.0;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Depth {
@@ -133,7 +133,7 @@ pub const fn shadow(depth: Depth) -> Shadow {
     }
 }
 
-pub const CONTACT_SHADOW: Shadow = Shadow {
+pub(crate) const CONTACT_SHADOW: Shadow = Shadow {
     offset: [0, 2],
     blur: 3,
     spread: 0,
@@ -167,7 +167,7 @@ pub fn note<R>(ui: &mut Ui, padding: Margin, add: impl FnOnce(&mut Ui) -> R) -> 
     framed
 }
 
-pub fn paint_note(painter: &Painter, under: ShapeIdx, rect: Rect) {
+pub(crate) fn paint_note(painter: &Painter, under: ShapeIdx, rect: Rect) {
     let mut shapes = vec![
         Shape::Rect(shadow(Depth::Front).as_shape(rect, CornerRadius::ZERO)),
         Shape::Rect(CONTACT_SHADOW.as_shape(rect, CornerRadius::ZERO)),
@@ -213,7 +213,7 @@ pub fn title_origin(ctx: &egui::Context, rect: Rect, title: &str) -> Pos2 {
     title_at(title_room(band, small), galley.size())
 }
 
-pub fn title_band(painter: &Painter, band: Rect, title: &str, fillers: bool) {
+fn title_band(painter: &Painter, band: Rect, title: &str, fillers: bool) {
     let galley = painter.layout_job(TextRole::Title.job(title, ink::RUBRIC));
     let width = galley.size().x.min(band.width());
     let at = title_at(band, galley.size());
@@ -248,7 +248,7 @@ pub fn title_band(painter: &Painter, band: Rect, title: &str, fillers: bool) {
     );
 }
 
-pub fn fading_line(painter: &Painter, from: Pos2, to: Pos2, color: Color32, width: f32) {
+fn fading_line(painter: &Painter, from: Pos2, to: Pos2, color: Color32, width: f32) {
     let along = to - from;
     if along.length() <= f32::EPSILON {
         return;

@@ -1,7 +1,6 @@
 use engine::core::content::{ContentFile, table_of};
 use engine::core::ground::{self, GroundSize};
 use engine::systems::area::AreaDef;
-use engine::systems::area::blueprint::BlueprintDef;
 use ui::controls;
 use ui::dialog;
 use ui::egui;
@@ -34,7 +33,7 @@ impl ResizeDialog {
     }
 }
 
-pub fn resize_dialog(
+pub(crate) fn resize_dialog(
     editor: &mut Editor,
     ctx: &egui::Context,
     mut dialog: ResizeDialog,
@@ -140,13 +139,5 @@ fn resize(editor: &mut Editor, dialog: &ResizeDialog) -> Result<(), String> {
             .as_ref()
             .map(|refusal| refusal.sentence())
             .unwrap_or_else(|| "the resize was refused".to_owned()))
-    }
-}
-
-/// The table a dialog resizes, for the step that names it.
-pub fn table_resized(dialog: &ResizeDialog) -> &'static str {
-    match table_of(&dialog.bundle) {
-        Some(BlueprintDef::TABLE) => BlueprintDef::TABLE,
-        _ => AreaDef::TABLE,
     }
 }

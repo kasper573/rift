@@ -181,7 +181,7 @@ impl AtlasSourceKind {
         }
     }
 
-    pub fn per_area(self) -> bool {
+    pub(crate) fn per_area(self) -> bool {
         matches!(
             self,
             AtlasSourceKind::Area
@@ -319,7 +319,7 @@ impl WorldAtlas {
         self.exits.get(&from).map_or(&[], Vec::as_slice)
     }
 
-    pub fn distances_from(&self, start: AreaId) -> BTreeMap<AreaId, u32> {
+    fn distances_from(&self, start: AreaId) -> BTreeMap<AreaId, u32> {
         let mut distances = BTreeMap::new();
         if !self.areas.contains_key(&start) {
             return distances;
@@ -363,13 +363,17 @@ impl WorldAtlas {
         None
     }
 
-    pub fn warps_between(&self, from: AreaId, to: AreaId) -> impl Iterator<Item = &AtlasWarp> {
+    pub(crate) fn warps_between(
+        &self,
+        from: AreaId,
+        to: AreaId,
+    ) -> impl Iterator<Item = &AtlasWarp> {
         self.warps
             .iter()
             .filter(move |warp| warp.from == from && warp.to == to)
     }
 
-    pub fn both_ways(&self, warp: &AtlasWarp) -> bool {
+    pub(crate) fn both_ways(&self, warp: &AtlasWarp) -> bool {
         self.exits(warp.to).contains(&warp.from)
     }
 
@@ -394,7 +398,7 @@ impl WorldAtlas {
             .map_or(&[], Vec::as_slice)
     }
 
-    pub fn line_steps(&self, category: &str) -> Vec<QuestLineStep> {
+    pub(crate) fn line_steps(&self, category: &str) -> Vec<QuestLineStep> {
         let Some(line) = self.lines.iter().find(|line| line.category == category) else {
             return Vec::new();
         };
@@ -487,7 +491,7 @@ impl WorldAtlas {
         out
     }
 
-    pub fn line_areas(&self, category: &str) -> BTreeSet<AreaId> {
+    pub(crate) fn line_areas(&self, category: &str) -> BTreeSet<AreaId> {
         self.line_steps(category)
             .into_iter()
             .flat_map(|step| step.areas)
@@ -1017,7 +1021,7 @@ impl WorldAtlas {
 }
 
 impl AtlasArea {
-    pub fn rows_found<'a>(&'a self, table: &'a str) -> impl Iterator<Item = &'a str> + 'a {
+    pub(crate) fn rows_found<'a>(&'a self, table: &'a str) -> impl Iterator<Item = &'a str> + 'a {
         self.found
             .keys()
             .filter(move |(found, _)| found == table)

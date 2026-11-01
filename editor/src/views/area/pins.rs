@@ -1,8 +1,8 @@
-use engine::core::content::{Content, SETTINGS_FILE, name_of};
+use engine::core::content::{SETTINGS_FILE, name_of};
 use engine::core::math::Pos;
 use engine::core::units::Meters;
 use engine::systems::area::scene::SCENE_FILE;
-use engine::systems::area::{self, AreaDef, AreaId, AreaModule, ObjectShape};
+use engine::systems::area::{AreaDef, AreaModule};
 use engine::systems::script::Place;
 use ui::egui;
 use ui::egui::{Color32, Pos2, Stroke as EStroke, Vec2};
@@ -14,7 +14,7 @@ use crate::project::files::content_of;
 use crate::scene_graph;
 use crate::tabs::shown_path;
 
-pub const INITIAL_SPAWN: &str = "/initial_spawn";
+const INITIAL_SPAWN: &str = "/initial_spawn";
 
 #[derive(Clone, Debug)]
 pub struct ArrivalPin {
@@ -25,7 +25,7 @@ pub struct ArrivalPin {
 }
 
 #[derive(Clone, Debug)]
-pub enum PinHit {
+pub(crate) enum PinHit {
     InitialSpawn,
     Place { file: String, pointer: String },
 }
@@ -53,13 +53,6 @@ pub fn arrivals(editor: &Editor, area_key: &str) -> Vec<ArrivalPin> {
     out
 }
 
-pub fn warp_objects(content: &Content, area_id: AreaId) -> Vec<ObjectShape> {
-    area::warp_objects(content, area_id)
-        .into_iter()
-        .map(|(_, object)| object.shape)
-        .collect()
-}
-
 impl ArrivalPin {
     /// Whose file the arrival is in, and the object leading to it when a scene's object does.
     pub fn names(&self, editor: &Editor) -> (String, Option<String>) {
@@ -83,7 +76,7 @@ impl ArrivalPin {
 }
 
 /// Puts the place `at` in `area_key` where the place being picked goes, and ends the pick.
-pub fn commit_pick(editor: &mut Editor, area_key: &str, at: Pos<Meters>) {
+pub(crate) fn commit_pick(editor: &mut Editor, area_key: &str, at: Pos<Meters>) {
     let Some(PlacePick { file, pointer, .. }) = editor.pick.clone() else {
         return;
     };
@@ -110,7 +103,7 @@ pub fn commit_pick(editor: &mut Editor, area_key: &str, at: Pos<Meters>) {
     }
 }
 
-pub fn draw_arrivals(editor: &Editor, painter: &egui::Painter, frame: &AreaFrame) {
+pub(crate) fn draw_arrivals(editor: &Editor, painter: &egui::Painter, frame: &AreaFrame) {
     let canvas = &frame.canvas;
     for arrival in arrivals(editor, &frame.bundle) {
         let at = canvas.to_screen(arrival.at);
@@ -146,7 +139,7 @@ fn pin(painter: &egui::Painter, at: Pos2, color: Color32) {
     painter.circle_stroke(at, 4.0, EStroke::new(1.0, Color32::BLACK));
 }
 
-pub fn pin_at(editor: &Editor, frame: &AreaFrame, pointer: Pos2) -> Option<PinHit> {
+pub(crate) fn pin_at(editor: &Editor, frame: &AreaFrame, pointer: Pos2) -> Option<PinHit> {
     for arrival in arrivals(editor, &frame.bundle) {
         let at = frame.canvas.to_screen(arrival.at);
         let hit = egui::Rect::from_min_max(at + Vec2::new(-8.0, -20.0), at + Vec2::new(8.0, 2.0));
@@ -164,7 +157,7 @@ pub fn pin_at(editor: &Editor, frame: &AreaFrame, pointer: Pos2) -> Option<PinHi
     None
 }
 
-pub fn open_pin(editor: &mut Editor, pin: PinHit) {
+pub(crate) fn open_pin(editor: &mut Editor, pin: PinHit) {
     match pin {
         PinHit::InitialSpawn => {
             editor.toast("The game's spawn: set in game.config.json; drag the pin to move it")
@@ -179,7 +172,7 @@ pub fn open_pin(editor: &mut Editor, pin: PinHit) {
     }
 }
 
-pub fn move_pin(
+pub(crate) fn move_pin(
     editor: &mut Editor,
     frame: &AreaFrame,
     file: &str,
@@ -200,7 +193,7 @@ pub fn move_pin(
     editor.apply(edit);
 }
 
-pub fn set_spawn(editor: &mut Editor, area_key: &str, at: Pos<Meters>) {
+pub(crate) fn set_spawn(editor: &mut Editor, area_key: &str, at: Pos<Meters>) {
     let Some(project) = editor.project.as_ref() else {
         return;
     };

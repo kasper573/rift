@@ -2,7 +2,7 @@ use egui::{Context, Pos2, Rect, Vec2};
 use strum::VariantArray;
 use ui::card::{self, Card};
 use ui::face::{self, Face};
-use ui::glyph::{Icon, Kind, Mark, Weight};
+use ui::glyph::{CardKind, Icon, Mark, Weight};
 use ui::motion::{self, Clock};
 use ui::sheet::{Depth, Sheet};
 use ui::{controls, ink};
@@ -76,15 +76,15 @@ fn roman_numerals() {
 #[test]
 fn every_kind_goes_by_a_word_of_its_own() {
     let words: std::collections::HashSet<&str> =
-        Kind::VARIANTS.iter().map(|kind| kind.word()).collect();
-    assert_eq!(words.len(), Kind::VARIANTS.len());
+        CardKind::VARIANTS.iter().map(|kind| kind.word()).collect();
+    assert_eq!(words.len(), CardKind::VARIANTS.len());
 }
 
 #[test]
 fn every_kind_glyph_decodes_into_a_texture() {
     let ctx = context();
     pass(&ctx, |_| {});
-    for &kind in Kind::VARIANTS {
+    for &kind in CardKind::VARIANTS {
         let texture = kind.texture(&ctx);
         let size = ctx.tex_manager().read().meta(texture).map(|meta| meta.size);
         assert!(
@@ -189,12 +189,12 @@ fn a_card_keeps_its_width_and_grows_with_what_it_holds_up_to_its_most() {
     let mut long = None;
     pass(&ctx, |ui| {
         short = Some(
-            Card::new(Kind::Equipment, "Rusty Sword")
+            Card::new(CardKind::Equipment, "Rusty Sword")
                 .show(ui, |ui, _| card::fact(ui, "+2 Damage"))
                 .rect,
         );
         long = Some(
-            Card::new(Kind::Quest, "A long errand")
+            Card::new(CardKind::Quest, "A long errand")
                 .show(ui, |ui, _| {
                     for line in 0..40 {
                         card::fact(ui, &format!("Objective {line}"));
@@ -219,9 +219,9 @@ fn a_card_cuts_a_long_name_and_tells_the_plate_so() {
     let ctx = context();
     let mut cut = Vec::new();
     pass(&ctx, |ui| {
-        Card::new(Kind::Resource, "Bundle").show(ui, |_, plate| cut.push(plate.name_cut));
+        Card::new(CardKind::Resource, "Bundle").show(ui, |_, plate| cut.push(plate.name_cut));
         Card::new(
-            Kind::Resource,
+            CardKind::Resource,
             "A bundle of seventeen very long dried herbs from the far marsh",
         )
         .show(ui, |_, plate| cut.push(plate.name_cut));
@@ -234,11 +234,11 @@ fn a_closable_card_has_a_cross_and_a_page_card_has_none() {
     let ctx = context();
     let mut crosses = Vec::new();
     pass(&ctx, |ui| {
-        let mut closable = Card::new(Kind::Active, "Cleave");
+        let mut closable = Card::new(CardKind::Active, "Cleave");
         closable.closable = true;
         crosses.push(closable.show(ui, |_, _| {}).close.is_some());
         crosses.push(
-            Card::new(Kind::Passive, "Thick Skin")
+            Card::new(CardKind::Passive, "Thick Skin")
                 .show(ui, |_, _| {})
                 .close
                 .is_some(),

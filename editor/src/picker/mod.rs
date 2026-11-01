@@ -26,8 +26,8 @@ use crate::forms::{FormAction, FormCx};
 use crate::icons::{self, IconTone, KindIcon};
 use crate::keymap::EditorKey;
 use crate::tabs::shown_path;
+use ui::draft::{clear_draft, draft_of, set_draft};
 use ui::input;
-use ui::input::{clear_draft, draft_of, set_draft};
 
 /// What a picker field holds: a key within a category (a row's key within its table, a file's
 /// path within its kind).
@@ -92,7 +92,7 @@ pub struct Candidate {
 }
 
 /// What a picker field lists, how it shows a pick, and what it takes by drop.
-pub trait PickSource {
+pub(crate) trait PickSource {
     fn placeholder(&self) -> String;
     /// The chips offered for quick filtering; none hides the chip row.
     fn categories(&self, cx: &FormCx) -> Vec<Category>;
@@ -124,7 +124,7 @@ pub trait PickSource {
 /// How a popover lays its candidates out: pictures with their names, or a line each with its
 /// whole path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum PickLayout {
+pub(crate) enum PickLayout {
     Grid,
     List,
 }
@@ -157,7 +157,7 @@ pub fn content<Row: ContentFile>(
 }
 
 /// A field picking the file of `Row` that `id` names, or none.
-pub fn maybe_content<Row: ContentFile>(
+pub(crate) fn maybe_content<Row: ContentFile>(
     ui: &mut Ui,
     cx: &mut FormCx,
     id: &mut Option<ContentId<Row>>,
@@ -182,7 +182,7 @@ pub fn maybe_content<Row: ContentFile>(
 }
 
 /// A field over several tables at once; the pick names which table its key came from.
-pub fn row_among(
+pub(crate) fn row_among(
     ui: &mut Ui,
     cx: &mut FormCx,
     tables: &[&str],
@@ -199,7 +199,7 @@ pub fn row_among(
     changed
 }
 
-pub fn asset_of(
+pub(crate) fn asset_of(
     ui: &mut Ui,
     cx: &mut FormCx,
     kind: AssetKind,

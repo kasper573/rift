@@ -14,7 +14,7 @@ use crate::keymap::EditorKey;
 use crate::tabs::file_title;
 
 /// How many props a fresh scatter strews on each square metre.
-pub const DENSITY: f32 = 0.25;
+const DENSITY: f32 = 0.25;
 
 pub fn input(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame) {
     let response = frame.response;

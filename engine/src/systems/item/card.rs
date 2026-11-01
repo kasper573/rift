@@ -6,7 +6,7 @@ use ui::drag;
 use ui::egui;
 use ui::egui::{Rect, Response, TextureId, Ui};
 use ui::face::{self, TextRole};
-use ui::glyph::Kind;
+use ui::glyph::CardKind;
 use ui::ink;
 use ui::sheet::Depth;
 
@@ -114,11 +114,11 @@ pub fn use_verb(def: &ItemDef) -> Option<&'static str> {
     }
 }
 
-pub fn kind(def: &ItemDef) -> Kind {
+pub fn kind(def: &ItemDef) -> CardKind {
     match def.kind {
-        ItemKind::Equipment { .. } => Kind::Equipment,
-        ItemKind::Usable => Kind::Usable,
-        ItemKind::Resource => Kind::Resource,
+        ItemKind::Equipment { .. } => CardKind::Equipment,
+        ItemKind::Usable => CardKind::Usable,
+        ItemKind::Resource => CardKind::Resource,
     }
 }
 

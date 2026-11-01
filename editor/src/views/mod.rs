@@ -15,6 +15,8 @@ pub mod sound;
 pub mod spreadsheet;
 pub mod stage;
 pub mod stance;
+mod view_map;
+pub use view_map::ViewMap;
 pub mod vfx;
 pub mod world;
 
@@ -45,15 +47,15 @@ pub(crate) fn snap(at: Pos<Meters>) -> Pos<Meters> {
 }
 
 #[derive(Component)]
-pub struct EditorCamera;
+pub(crate) struct EditorCamera;
 
 #[derive(Default)]
 pub struct EditorViews {
     pub area: area::AreaViews,
     pub world: world::WorldView,
     pub script: script::ScriptViews,
-    pub model: model::ModelViews,
-    pub model_part: model_part::ModelPartViews,
+    pub model: ViewMap<model::ModelView>,
+    pub model_part: ViewMap<model_part::ModelPartView>,
     pub bust: bust::BustViews,
     pub skeleton: skeleton::SkeletonViews,
     pub prop: prop::PropViews,
@@ -61,7 +63,7 @@ pub struct EditorViews {
     pub sound: sound::SoundViews,
     pub character: character::CharacterView,
     pub class: class::ClassViews,
-    pub item: item::ItemViews,
+    pub item: ViewMap<item::ItemView>,
     pub vfx: vfx::VfxViews,
     pub preview: RowPreviewState,
     pub stage: Stages,
@@ -75,11 +77,11 @@ impl EditorViews {
         self.script.close();
     }
 
-    pub fn camera_state(&self) -> Option<AreaCameraState> {
+    pub(crate) fn camera_state(&self) -> Option<AreaCameraState> {
         self.area.camera_state()
     }
 
-    pub fn restore_camera(&mut self, camera: Option<AreaCameraState>) {
+    pub(crate) fn restore_camera(&mut self, camera: Option<AreaCameraState>) {
         if let Some(camera) = camera {
             self.area.restore_camera(&camera);
         }
@@ -87,7 +89,11 @@ impl EditorViews {
 }
 
 /// The content file at `key` as the game reads it, or `None` once `ui` says why it doesn't read.
-pub fn read_shown<Row: ContentFile>(editor: &Editor, ui: &mut Ui, key: &str) -> Option<Arc<Row>> {
+pub(crate) fn read_shown<Row: ContentFile>(
+    editor: &Editor,
+    ui: &mut Ui,
+    key: &str,
+) -> Option<Arc<Row>> {
     match editor.read::<Row>(key)? {
         Ok(row) => Some(row),
         Err(errors) => {
@@ -105,7 +111,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
     crate::thumbs::areas::sync(editor, world);
 }
 
-pub fn bottom_tabs(editor: &Editor) -> Vec<(BottomTab, String)> {
+pub(crate) fn bottom_tabs(editor: &Editor) -> Vec<(BottomTab, String)> {
     let mut tabs: Vec<BottomTab> = match shell::active_tab(editor) {
         Some(EditorTab::Area { .. }) | Some(EditorTab::Blueprint { .. }) => {
             let mut tabs = vec![BottomTab::Palette, BottomTab::Blueprints];
@@ -142,16 +148,14 @@ pub fn bottom_tabs(editor: &Editor) -> Vec<(BottomTab, String)> {
         .collect()
 }
 
-pub fn bottom_show(editor: &mut Editor, ui: &mut Ui, tab: BottomTab) {
+pub(crate) fn bottom_show(editor: &mut Editor, ui: &mut Ui, tab: BottomTab) {
     match (shell::active_tab(editor), tab) {
-        (Some(EditorTab::Area { key }), BottomTab::Blueprints | BottomTab::Palette) => {
-            area::bottom(editor, ui, &area::view_key(&key), tab)
-        }
-        (Some(EditorTab::Area { .. }) | Some(EditorTab::Blueprint { .. }), BottomTab::Listen) => {
+        (
+            Some(EditorTab::Area { key } | EditorTab::Blueprint { key }),
+            BottomTab::Blueprints | BottomTab::Palette,
+        ) => area::bottom(editor, ui, &area::view_key(&key), tab),
+        (Some(EditorTab::Area { .. } | EditorTab::Blueprint { .. }), BottomTab::Listen) => {
             sound::panel(editor, ui)
-        }
-        (Some(EditorTab::Blueprint { key }), BottomTab::Blueprints | BottomTab::Palette) => {
-            area::bottom(editor, ui, &area::view_key(&key), tab)
         }
         (Some(EditorTab::Script(owner)), BottomTab::MayDo | BottomTab::UsedBy | BottomTab::Run) => {
             script::bottom(editor, ui, &owner, tab)
@@ -201,7 +205,7 @@ fn used_by_subject(editor: &Editor) -> Option<UsedBySubject> {
     }
 }
 
-pub fn play_here(editor: &mut Editor) {
+pub(crate) fn play_here(editor: &mut Editor) {
     let Some(hover) = editor.views.area.hover.clone() else {
         editor.toast("Play here needs an area view under the pointer");
         return;

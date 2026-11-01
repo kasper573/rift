@@ -18,7 +18,9 @@ use ui::{controls, dialog, form, theme, words};
 pub use fbx::glb_of_fbx;
 pub use gather::{Came, Failure, Found, Gathered, gather};
 
-use crate::app::{Editor, ModalDialog};
+use crate::app::Editor;
+use crate::modal::ModalDialog;
+use crate::moves::file_name;
 use crate::project::{ContentEdit, FileBytes, ProjectFiles, files};
 use crate::shell::content_tree;
 
@@ -124,18 +126,6 @@ pub fn import(editor: &mut Editor, incoming: Vec<Incoming>) -> Result<Vec<String
     }
     editor.try_apply(edit)?;
     Ok(made)
-}
-
-/// Imports what `sources` hold into `folder` at once, as the list offers them: everything but what
-/// is already there or refused. Gives the paths written and what could not be read.
-pub fn import_now(
-    editor: &mut Editor,
-    folder: &str,
-    sources: &[PathBuf],
-) -> Result<(Vec<String>, Vec<Failure>), String> {
-    let project = editor.project.as_ref().ok_or("no folder is open")?;
-    let (incoming, failed) = review(&project.files, folder, gather(sources, &|_| {}));
-    Ok((import(editor, incoming)?, failed))
 }
 
 pub fn dialog(editor: &mut Editor, ctx: &Context, mut dialog: ImportDialog) -> Option<ModalDialog> {
@@ -343,8 +333,4 @@ fn refusal(path: &str, types: &[engine::core::content::files::FileType]) -> Opti
         Ok(Some(GameFile::Settings)) => Some("the game's settings".to_owned()),
         _ => None,
     }
-}
-
-fn file_name(path: &str) -> &str {
-    path.rsplit('/').next().unwrap_or(path)
 }

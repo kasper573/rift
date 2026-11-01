@@ -6,7 +6,7 @@ pub mod save;
 mod typed;
 pub mod watch;
 
-pub use files::{DiskHashes, FileBytes, FileChange, ProjectFiles, hash, json_bytes, text_bytes};
+pub use files::{DiskHashes, FileBytes, FileChange, ProjectFiles, hash, json_bytes};
 pub use history::{EditHistory, EditStep, RowSelection};
 pub use typed::IdPaths;
 
@@ -26,7 +26,7 @@ use engine::systems::{self, GameSettings};
 
 use self::files::content_holding;
 use self::watch::FolderChange;
-use crate::app::ChannelInbox;
+use crate::inbox::ChannelInbox;
 use crate::schema::SchemaShapes;
 use crate::unused::UnusedContent;
 use crate::usages::ContentUsages;
@@ -57,7 +57,7 @@ impl ContentEdit {
         self
     }
 
-    pub fn amending(mut self, step: &str) -> ContentEdit {
+    pub(crate) fn amending(mut self, step: &str) -> ContentEdit {
         self.amends = Some(step.to_owned());
         self
     }
@@ -72,7 +72,7 @@ impl ContentEdit {
         self
     }
 
-    pub fn write_json(
+    pub(crate) fn write_json(
         &mut self,
         file: impl Into<String>,
         value: &serde_json::Value,
@@ -95,7 +95,7 @@ impl ContentEdit {
     /// Changes the value at `pointer` in the content file `file` as a `T`, its ids among
     /// `project`'s paths: a value the usages of another file found there, in a row of any type. The
     /// rest of the row is kept as it stands, and the edit is checked whole when it is applied.
-    pub fn update_at<T: serde::Serialize + serde::de::DeserializeOwned>(
+    pub(crate) fn update_at<T: serde::Serialize + serde::de::DeserializeOwned>(
         &mut self,
         project: &Project,
         file: &str,
@@ -117,7 +117,7 @@ impl ContentEdit {
     }
 
     /// The file as it stands once this edit is applied, or `None` when the edit removes it.
-    pub fn pending_json(&self, files: &ProjectFiles, file: &str) -> Option<serde_json::Value> {
+    fn pending_json(&self, files: &ProjectFiles, file: &str) -> Option<serde_json::Value> {
         match self.changes.iter().find(|change| change.file == file) {
             Some(FileChange {
                 bytes: Some(bytes), ..
@@ -128,7 +128,7 @@ impl ContentEdit {
     }
 
     /// The file's bytes once this edit is applied, or `None` when it has none by then.
-    pub fn pending_bytes(&self, files: &ProjectFiles, file: &str) -> Option<FileBytes> {
+    pub(crate) fn pending_bytes(&self, files: &ProjectFiles, file: &str) -> Option<FileBytes> {
         match self.changes.iter().find(|change| change.file == file) {
             Some(change) => change.bytes.clone(),
             None => files.get(file).cloned(),
@@ -146,7 +146,7 @@ impl ContentEdit {
     }
 
     /// Writes `row` as the content file at `path`, its ids those of `reader`'s paths.
-    pub fn write_content_in<Row: ContentFile>(
+    pub(crate) fn write_content_in<Row: ContentFile>(
         &mut self,
         reader: &FolderReader,
         path: &str,
@@ -200,7 +200,7 @@ impl EditRefusal {
         EditRefusal::of_errors(&report.errors)
     }
 
-    pub fn of_errors(errors: &[LoadError]) -> EditRefusal {
+    fn of_errors(errors: &[LoadError]) -> EditRefusal {
         let first = errors.first().cloned().unwrap_or(LoadError {
             file: String::new(),
             at: WholeFile,
@@ -228,7 +228,7 @@ impl EditRefusal {
 }
 
 /// Where in the folder a problem is: its file, and the JSON pointer within it when it has one.
-pub fn problem_place(file: &str, pointer: &str) -> String {
+pub(crate) fn problem_place(file: &str, pointer: &str) -> String {
     if pointer.is_empty() {
         file.to_owned()
     } else {
@@ -287,7 +287,7 @@ pub struct Project {
     pub moved_outside: Vec<MovedOutside>,
     pub catalogue: NodeCatalogue,
     typed: typed::TypedFiles,
-    loading: Option<Loading>,
+    loading: Option<ChannelInbox<Result<Loaded, LoadReport>>>,
     stale: bool,
     unverified: Option<Unverified>,
     checked: Option<Checked>,
@@ -299,12 +299,7 @@ pub struct Project {
 // load then vouches for the rules across files, and an edit it finds problems in is taken back.
 // Files that don't load for anything else, such as a change on disk, are kept as they are, with
 // the load's report beside the last content that did load.
-struct Loading {
-    receiver: ChannelInbox<Result<Loaded, LoadReport>>,
-}
 
-/// An applied edit its load has yet to vouch for, with the edits that continue it: the files and
-/// history from before it, to go back to when the load finds problems they brought.
 /// The edits made since the folder last loaded, vouched for together by the next load so the
 /// editor never waits on one: the first edit's label, how many came after it, and the files and
 /// history from before them.
@@ -339,7 +334,7 @@ struct Loaded {
 
 /// The problems a load found in one file, by JSON pointer (an empty pointer for the file as a
 /// whole).
-pub fn errors_in(report: &LoadReport, file: &str) -> Vec<(String, String)> {
+pub(crate) fn errors_in(report: &LoadReport, file: &str) -> Vec<(String, String)> {
     report
         .errors
         .iter()
@@ -393,7 +388,7 @@ impl Project {
     }
 
     /// The content file `id` names among the files as they stand now, when it reads.
-    pub fn read_id<Row: ContentFile>(&self, id: ContentId<Row>) -> Option<Arc<Row>> {
+    pub(crate) fn read_id<Row: ContentFile>(&self, id: ContentId<Row>) -> Option<Arc<Row>> {
         self.read(self.reader().path_of(id)?).ok()
     }
 
@@ -404,7 +399,11 @@ impl Project {
 
     /// The value at `pointer` in the file `file` as a `T`, its ids among the files' paths as they
     /// stand now: a value the usages of another file found there, in a row of any type.
-    pub fn value_at<T: serde::de::DeserializeOwned>(&self, file: &str, pointer: &str) -> Option<T> {
+    pub(crate) fn value_at<T: serde::de::DeserializeOwned>(
+        &self,
+        file: &str,
+        pointer: &str,
+    ) -> Option<T> {
         let json = self.files.json(file)?;
         self.reader().from_json(json.pointer(pointer)?).ok()
     }
@@ -415,7 +414,7 @@ impl Project {
     }
 
     /// What reads the files as they would stand after `edit`: how an edit names a file it makes.
-    pub fn reader_after(&self, edit: &ContentEdit) -> FolderReader {
+    pub(crate) fn reader_after(&self, edit: &ContentEdit) -> FolderReader {
         self.reader_of(&self.files.with(&edit.changes))
     }
 
@@ -435,7 +434,7 @@ impl Project {
 
     /// What keeps the game from being played as it is now, though it loads to be worked on:
     /// quests and shops out of a player's reach.
-    pub fn unplayable(&self) -> Option<LoadReport> {
+    pub(crate) fn unplayable(&self) -> Option<LoadReport> {
         let folder = Arc::new(self.files.folder(&self.name()));
         systems::load_content(folder, "it can't be played yet", LoadPurpose::Check).err()
     }
@@ -500,7 +499,7 @@ impl Project {
         let Some(loading) = self.loading.as_ref() else {
             return false;
         };
-        let outcome = match loading.receiver.try_recv() {
+        let outcome = match loading.try_recv() {
             Ok(outcome) => outcome,
             Err(TryRecvError::Empty) => return false,
             Err(TryRecvError::Disconnected) => {
@@ -516,10 +515,7 @@ impl Project {
     /// Waits out every pending load, so what is saved or asked of the content is what loaded.
     pub fn settle(&mut self) {
         while self.loading.is_some() {
-            let outcome = self
-                .loading
-                .take()
-                .and_then(|loading| loading.receiver.recv());
+            let outcome = self.loading.take().and_then(|loading| loading.recv());
             if let Some(outcome) = outcome {
                 self.take(outcome);
             }
@@ -670,7 +666,7 @@ impl Project {
         Some(applied)
     }
 
-    pub fn redo(&mut self) -> Option<AppliedStep> {
+    pub(crate) fn redo(&mut self) -> Option<AppliedStep> {
         let step = self.history.redo_step()?;
         let (applied, changes) = (AppliedStep::of(step), step.after.clone());
         self.restore(&changes);
@@ -794,9 +790,7 @@ impl Project {
         let files = self.files.clone();
         let name = self.root.display().to_string();
         let (sender, receiver) = mpsc::channel();
-        self.loading = Some(Loading {
-            receiver: ChannelInbox::new(receiver),
-        });
+        self.loading = Some(ChannelInbox::new(receiver));
         std::thread::spawn(move || {
             let outcome =
                 load(&files, &name).map(|(content, took)| Loaded::build(content, &files, took));
@@ -840,7 +834,7 @@ impl Project {
     }
 
     /// Whether the file at `path`, or any part of the bundle there, differs from disk.
-    pub fn holds_unsaved(&self, path: &str) -> bool {
+    pub(crate) fn holds_unsaved(&self, path: &str) -> bool {
         let unsaved = self.unsaved();
         let parts = files::folder_entry(path);
         let first_part = unsaved.partition_point(|file| *file < parts);
@@ -852,12 +846,12 @@ impl Project {
                 .is_some_and(|file| file.starts_with(&parts))
     }
 
-    pub fn is_unsaved(&self, path: &str) -> bool {
+    fn is_unsaved(&self, path: &str) -> bool {
         self.files.hash_of(path) != self.disk_hash(path)
     }
 
     /// The hash of the file at `path` as it stands on disk.
-    pub fn disk_hash(&self, path: &str) -> Option<&str> {
+    pub(crate) fn disk_hash(&self, path: &str) -> Option<&str> {
         self.disk.get(path)
     }
 
@@ -956,7 +950,7 @@ impl Project {
         held.into_iter().collect()
     }
 
-    pub fn take_disk(&mut self, conflict: &FileConflict) {
+    pub(crate) fn take_disk(&mut self, conflict: &FileConflict) {
         self.settle_unverified();
         match &conflict.disk {
             Some(bytes) => self.files.insert(conflict.file.clone(), bytes.clone()),
@@ -1012,7 +1006,7 @@ static NO_CATALOGUE: NodeCatalogue = NodeCatalogue {
     events: Vec::new(),
 };
 
-pub fn catalogue_of(project: Option<&Project>) -> &NodeCatalogue {
+pub(crate) fn catalogue_of(project: Option<&Project>) -> &NodeCatalogue {
     project.map_or(&NO_CATALOGUE, |project| &project.catalogue)
 }
 
@@ -1028,7 +1022,7 @@ pub struct MovedOutside {
 /// Every path named at the last load that is gone now, with where a file of its name and type is.
 fn moved_outside(usages: &ContentUsages, files: &ProjectFiles) -> Vec<MovedOutside> {
     let index = files.index();
-    let name = |path: &str| path.rsplit('/').next().unwrap_or(path).to_owned();
+    let name = |path: &str| crate::moves::file_name(path).to_owned();
     let found = |from: &str, candidates: Vec<&str>| {
         let mut same = candidates
             .into_iter()

@@ -22,7 +22,7 @@ const DRAG_SLOP: f32 = 3.0;
 const CORNER_HIT: f32 = 8.0;
 const SIZE_STEP: f32 = 5.0;
 
-pub enum MapDrag {
+pub(crate) enum MapDrag {
     Cards {
         from: Pos2,
         cards: Vec<String>,

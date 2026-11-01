@@ -27,7 +27,7 @@ use crate::shell::widgets;
 use crate::spans;
 
 const COLUMN: f32 = 240.0;
-pub const CARD: f32 = 176.0;
+pub(crate) const CARD: f32 = 176.0;
 /// Where the graph's first node goes: a node placed nowhere else starts its column from here.
 pub const FIRST: Pos2 = Pos2::new(40.0, 40.0);
 const FACE: f32 = 20.0;
@@ -142,7 +142,7 @@ impl ScriptGraph {
             .collect()
     }
 
-    pub fn node_spots(&self) -> Vec<Pos2> {
+    pub(crate) fn node_spots(&self) -> Vec<Pos2> {
         self.snarl.nodes_pos().map(|(pos, _)| pos).collect()
     }
 
@@ -242,15 +242,15 @@ pub enum ScriptGraphAction {
     },
 }
 
-pub struct FaceImage {
+pub(crate) struct FaceImage {
     pub texture: egui::TextureId,
     pub uv: Rect,
 }
 
 /// The bust each speaker shows in each face their lines name.
-pub type SpeakerFaces = HashMap<(Speaker, Option<Expression>), FaceImage>;
+pub(crate) type SpeakerFaces = HashMap<(Speaker, Option<Expression>), FaceImage>;
 
-pub struct ScriptGraphViewer<'a> {
+pub(crate) struct ScriptGraphViewer<'a> {
     pub doc: &'a ScriptDoc,
     pub text: NodeText<'a>,
     pub ports: HashMap<String, Vec<NodePort>>,
@@ -265,12 +265,12 @@ pub struct ScriptGraphViewer<'a> {
     pub fit: Option<(Rect, Rect)>,
 }
 
-pub struct NodeClick {
+pub(crate) struct NodeClick {
     pub name: String,
     pub extend: bool,
 }
 
-pub fn ports_of(doc: &ScriptDoc) -> HashMap<String, Vec<NodePort>> {
+pub(crate) fn ports_of(doc: &ScriptDoc) -> HashMap<String, Vec<NodePort>> {
     doc.nodes()
         .iter()
         .map(|(name, node)| (name.clone(), nodes::ports(node)))
@@ -880,7 +880,7 @@ fn kind_fill(node: &Node) -> Color32 {
     }
 }
 
-pub fn kind_mark(node: &Node) -> (Mark, Color32) {
+pub(crate) fn kind_mark(node: &Node) -> (Mark, Color32) {
     match node.kind() {
         NodeKind::On => (Mark::Play, theme::WARN),
         NodeKind::Run => (Mark::CaretRight, RUN),
@@ -895,7 +895,7 @@ pub fn kind_mark(node: &Node) -> (Mark, Color32) {
     }
 }
 
-pub fn card_title(name: &str, node: &Node) -> String {
+pub(crate) fn card_title(name: &str, node: &Node) -> String {
     match node.kind() {
         NodeKind::On => format!("on {}", nodes::event_name(node).unwrap_or("?")),
         NodeKind::Dialogue => name.to_owned(),

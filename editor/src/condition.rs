@@ -5,10 +5,10 @@ use serde_json::Value;
 use strum::VariantArray;
 use ui::chip;
 use ui::controls;
+use ui::draft;
 use ui::egui;
 use ui::egui::{RichText, Stroke, Ui};
 use ui::glyph::{self, Mark};
-use ui::input;
 use ui::paint;
 use ui::sheet;
 use ui::theme;
@@ -372,8 +372,7 @@ fn block(
             if block(ui, cx, palette, a, &format!("{path}/a"), Slot::Any).is_some() {
                 changed = FormChange::at(path);
             }
-            let response =
-                chip::dropdown_colored(ui, sign(kind).unwrap_or("?"), theme::INPUT, theme::CODE);
+            let response = chip::picker(ui, sign(kind).unwrap_or("?"), theme::INPUT, theme::CODE);
             let mut swapped = None;
             egui::Popup::from_toggle_button_response(&response)
                 .id(ui.id().with(path).with("op"))
@@ -416,7 +415,7 @@ fn number(ui: &mut Ui, cx: &mut FormCx, condition: &mut Condition, path: &str) -
         _ => return FormChange::default(),
     };
     let id = ui.id().with(path).with("number");
-    let typed = input::drafted(ui, id, &current, |ui, draft| {
+    let typed = draft::drafted(ui, id, &current, |ui, draft| {
         InputField::new(draft).show(ui)
     });
     let Some(typed) = typed else {
@@ -507,7 +506,7 @@ fn list_block(
                         }
                     }
                 }
-                let add = chip::dropdown_colored(ui, "+ condition", theme::INPUT, theme::TEXT);
+                let add = chip::picker(ui, "+ condition", theme::INPUT, theme::TEXT);
                 let id = ui.id().with(path).with("add");
                 egui::Popup::from_toggle_button_response(&add)
                     .id(id)

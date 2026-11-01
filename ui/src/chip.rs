@@ -17,16 +17,7 @@ pub fn colored(ui: &mut Ui, text: impl Into<RichText>, fill: Color32, ink: Color
 }
 
 /// A chip that opens a list to choose from, its caret on the right.
-pub fn dropdown(ui: &mut Ui, text: impl Into<RichText>) -> Response {
-    dropdown_colored(ui, text, theme::RAISED, theme::TEXT)
-}
-
-pub fn dropdown_colored(
-    ui: &mut Ui,
-    text: impl Into<RichText>,
-    fill: Color32,
-    ink: Color32,
-) -> Response {
+pub fn picker(ui: &mut Ui, text: impl Into<RichText>, fill: Color32, ink: Color32) -> Response {
     framed(ui, text.into(), fill, ink, true)
 }
 
@@ -40,7 +31,6 @@ pub fn toggle(ui: &mut Ui, text: &str, on: bool) -> Response {
     colored(ui, text, fill, ink)
 }
 
-/// One of a few chips of which one is the mode in use.
 /// A colour shown as a small square before its name.
 pub fn swatch(ui: &mut Ui, text: impl Into<RichText>, colour: Color32) -> Response {
     ui.horizontal(|ui| {
@@ -57,6 +47,7 @@ pub fn swatch(ui: &mut Ui, text: impl Into<RichText>, colour: Color32) -> Respon
     .inner
 }
 
+/// One of a few chips of which one is the mode in use.
 pub fn mode(ui: &mut Ui, text: impl Into<RichText>, on: bool) -> Response {
     let (fill, ink) = if on {
         (ink::LIGHT, ink::RUBRIC)

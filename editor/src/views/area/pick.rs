@@ -10,12 +10,13 @@ use engine::systems::npc::NpcDef;
 use engine::systems::script::ScriptDef;
 
 use super::{AreaFrame, modules, nodes, shapes};
-use crate::app::{BottomTab, Editor, ModalDialog, PickRowDialog, PickRowThen};
+use crate::app::{BottomTab, Editor};
+use crate::modal::{ModalDialog, PickRowDialog, PickRowThen};
 use crate::schema;
 use crate::views::sound;
 
 /// The type of file a module of `kind` names, picked when one is added: whose npc, which blueprint.
-pub fn named_table(kind: AreaModuleKind) -> Option<&'static str> {
+pub(crate) fn named_table(kind: AreaModuleKind) -> Option<&'static str> {
     match kind {
         AreaModuleKind::Population | AreaModuleKind::Resident => Some(NpcDef::TABLE),
         AreaModuleKind::Blueprint => Some(BlueprintDef::TABLE),
@@ -30,7 +31,7 @@ pub fn named_table(kind: AreaModuleKind) -> Option<&'static str> {
 
 /// Asks which file a new module of `kind` names, then adds it at `at`, or area-wide without one, to
 /// `bundle`'s insertion folder.
-pub fn pick_then_add(
+pub(crate) fn pick_then_add(
     editor: &mut Editor,
     bundle: &str,
     kind: AreaModuleKind,
@@ -55,7 +56,7 @@ pub fn pick_then_add(
 
 /// Adds a module of `kind` at `at`, or area-wide without one, to `area`, naming the file at
 /// `picked`.
-pub fn add_picked(
+pub(crate) fn add_picked(
     editor: &mut Editor,
     area: &str,
     kind: AreaModuleKind,
@@ -90,5 +91,5 @@ pub fn listen(editor: &mut Editor, frame: &AreaFrame, ground: Pos<Meters>) {
         return;
     };
     sound::listen(editor, &frame.content, area, ground);
-    editor.panels.bottom = BottomTab::Listen;
+    editor.bottom_tab = BottomTab::Listen;
 }

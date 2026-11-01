@@ -1,4 +1,5 @@
-use editor::app::{Editor, ModalDialog};
+use editor::app::Editor;
+use editor::modal::ModalDialog;
 use editor::moves;
 use editor::project::MovedOutside;
 use editor::project::watch::FolderChange;

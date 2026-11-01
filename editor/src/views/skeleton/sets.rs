@@ -331,7 +331,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigg
             &rows,
         );
     });
-    let open = editor.views.skeleton.view(key).sets.open.clone();
+    let open = editor.views.skeleton.views.view(key).sets.open.clone();
     panel::body(ui, right, |ui| {
         egui::ScrollArea::vertical()
             .id_salt(("set-playing", key))
@@ -363,7 +363,7 @@ fn table(
     columns: &[Option<StanceId>],
     rows: &[SetRow],
 ) {
-    let open = editor.views.skeleton.view(key).sets.open.clone();
+    let open = editor.views.skeleton.views.view(key).sets.open.clone();
     let mut picked: Option<(SetRow, Option<String>)> = None;
     let height = ui.available_height();
     egui::ScrollArea::both()
@@ -401,12 +401,12 @@ fn table(
                 });
         });
     if let Some(picked) = picked {
-        let view = editor.views.skeleton.view_mut(key);
+        let view = editor.views.skeleton.views.view_mut(key);
         let sets = &mut view.sets;
         sets.open = (sets.open.as_ref() != Some(&picked)).then_some(picked);
         sets.filter.clear();
     }
-    if let Some((row, stance)) = editor.views.skeleton.view(key).sets.open.clone() {
+    if let Some((row, stance)) = editor.views.skeleton.views.view(key).sets.open.clone() {
         ui.add_space(6.0);
         form::rule(ui);
         picker(
@@ -425,7 +425,7 @@ fn table(
 
 /// The build the table shows, as picked, or the first.
 fn build_shown(editor: &mut Editor, key: &str, def: &SkeletonDef) -> Option<BuildName> {
-    let sets = &mut editor.views.skeleton.view_mut(key).sets;
+    let sets = &mut editor.views.skeleton.views.view_mut(key).sets;
     if sets
         .build
         .as_ref()
@@ -487,7 +487,7 @@ fn toolbar(
             });
         });
         ui.add_space(12.0);
-        let sets = &mut editor.views.skeleton.view_mut(key).sets;
+        let sets = &mut editor.views.skeleton.views.view_mut(key).sets;
         ui.add(
             egui::TextEdit::singleline(&mut sets.new_move)
                 .hint_text("move name")
@@ -516,7 +516,7 @@ fn toolbar(
             sets.new_gesture.clear();
         }
     });
-    let sets = &mut editor.views.skeleton.view_mut(key).sets;
+    let sets = &mut editor.views.skeleton.views.view_mut(key).sets;
     if let Some(build) = picked_build {
         sets.build = Some(build);
         sets.open = None;
@@ -537,10 +537,10 @@ fn toolbar(
 
 /// The window asking what to replace in the first build's clips' paths, with what it would fill.
 fn fill_window(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigging: &Rigging) {
-    let Some(build) = editor.views.skeleton.view(key).sets.build.clone() else {
+    let Some(build) = editor.views.skeleton.views.view(key).sets.build.clone() else {
         return;
     };
-    let Some(mut replace) = editor.views.skeleton.view(key).sets.fill.clone() else {
+    let Some(mut replace) = editor.views.skeleton.views.view(key).sets.fill.clone() else {
         return;
     };
     let mut open = true;
@@ -592,9 +592,9 @@ fn fill_window(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, r
     if filled {
         let count = fill(editor, key, rigging, &build, &replace);
         editor.toast(format!("Filled {}", words::counted(count, "cell")));
-        editor.views.skeleton.view_mut(key).sets.fill = None;
+        editor.views.skeleton.views.view_mut(key).sets.fill = None;
     } else {
-        editor.views.skeleton.view_mut(key).sets.fill = open.then_some(replace);
+        editor.views.skeleton.views.view_mut(key).sets.fill = open.then_some(replace);
     }
 }
 
@@ -602,7 +602,7 @@ fn fill_window(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, r
 /// the designer added, and the gestures of the generic expressions, every other a set names and
 /// those the designer added.
 fn rows(editor: &Editor, key: &str, def: &SkeletonDef) -> Vec<SetRow> {
-    let added = &editor.views.skeleton.view(key).sets.added;
+    let added = &editor.views.skeleton.views.view(key).sets.added;
     let mut moves: Vec<MoveName> = def.moves().cloned().collect();
     let mut gestures: Vec<GestureName> = def.gestures().cloned().collect();
     for row in added {
@@ -705,7 +705,7 @@ fn picker(
         }
         ui.label(RichText::new(title).strong());
         if ui.button("close").clicked() {
-            editor.views.skeleton.view_mut(key).sets.open = None;
+            editor.views.skeleton.views.view_mut(key).sets.open = None;
         }
     });
     if current.is_some() {
@@ -728,7 +728,7 @@ fn picker(
     }
     let clips: Vec<ClipRef> = current.map_or(Vec::new(), |cell| cell.clips().to_vec());
     let order = current.map_or(ClipOrder::Random, ClipCell::order);
-    let preview = &editor.views.skeleton.view(key).preview;
+    let preview = &editor.views.skeleton.views.view(key).preview;
     let playing = preview
         .clip
         .clone()
@@ -802,11 +802,11 @@ fn picker(
         }
     }
     if current.is_some() {
-        let adding = &mut editor.views.skeleton.view_mut(key).sets.adding;
+        let adding = &mut editor.views.skeleton.views.view_mut(key).sets.adding;
         ui.checkbox(adding, "a clip picked joins the cell's clips");
     }
-    let adding = editor.views.skeleton.view(key).sets.adding && current.is_some();
-    let filter = &mut editor.views.skeleton.view_mut(key).sets.filter;
+    let adding = editor.views.skeleton.views.view(key).sets.adding && current.is_some();
+    let filter = &mut editor.views.skeleton.views.view_mut(key).sets.filter;
     ui.add(
         egui::TextEdit::singleline(filter)
             .hint_text("search clips by any part of the path")
@@ -855,7 +855,7 @@ fn picker(
         set_cell(editor, key, build, stance, row, cell);
     }
     if let Some(clip) = play {
-        editor.views.skeleton.view_mut(key).preview.play(clip);
+        editor.views.skeleton.views.view_mut(key).preview.play(clip);
     }
 }
 
@@ -882,7 +882,7 @@ fn playing(
     let clip = found.clip.clone();
     ui.label(RichText::new(format!("{clip} · {:.2} s", found.length.0)).strong());
     let held = def.cues_of(&clip).to_vec();
-    let scrub = &mut editor.views.skeleton.view_mut(key).preview.scrub;
+    let scrub = &mut editor.views.skeleton.views.view_mut(key).preview.scrub;
     if let Some(cues) = cues::timeline(ui, scrub, found.length.millis(), &held, true) {
         super::set_cues(editor, key, &clip, cues);
     }

@@ -1,9 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::str::FromStr;
 use std::time::Duration;
+use ui::draft;
 use ui::egui;
 use ui::form;
-use ui::input;
 use ui::menu;
 use ui::panel;
 use ui::sheet;
@@ -63,7 +63,7 @@ const RUN_SEED: u64 = 1;
 const COUNT_WIDTH: f32 = 80.0;
 
 #[derive(Clone, Debug)]
-pub struct RunSetup {
+pub(crate) struct RunSetup {
     pub event: String,
     pub owner: usize,
     pub character: Option<String>,
@@ -203,7 +203,7 @@ pub fn panel(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
                 let owner = &bound[0];
                 let response = ui
                     .horizontal(|ui| {
-                        panel::card(true)
+                        panel::tile(true)
                             .inner_margin(egui::Margin::symmetric(6, 2))
                             .show(ui, |ui| {
                                 widgets::badge(ui, owner.row.kind.name());
@@ -482,7 +482,7 @@ struct NodeCard {
     detail: String,
 }
 
-pub fn conversation_box(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
+pub(crate) fn conversation_box(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
     let owner = doc.at.clone();
     let Some(run) = editor.views.script.run_of_mut(&owner) else {
         return;
@@ -628,7 +628,7 @@ pub fn inspector(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) -> bool {
             .unwrap_or_default(),
     };
     sheet::section(ui, "Owner");
-    panel::card(false).show(ui, |ui| {
+    panel::tile(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
         panel::title(ui, &label);
         form::kv_text(ui, "state", state_names);
@@ -679,7 +679,7 @@ fn character_card(
         .map(|class| class.get(content).levels.len())
         .unwrap_or(0);
     let area_key = run.area.path(content).to_owned();
-    panel::card(false).show(ui, |ui| {
+    panel::tile(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
         panel::title(ui, &name);
         form::kv(ui, "level", |ui| {
@@ -754,7 +754,7 @@ fn memories_card(ui: &mut Ui, run: &mut ScriptRun, content: &Content, read: &[St
     }
     let all: Vec<String> = content.table::<MemoryDef>().paths().to_vec();
     let mut add: Option<String> = None;
-    panel::card(false).show(ui, |ui| {
+    panel::tile(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
         panel::title(ui, "memories");
         if shown.is_empty() {
@@ -785,7 +785,7 @@ fn memories_card(ui: &mut Ui, run: &mut ScriptRun, content: &Content, read: &[St
                             _ => String::new(),
                         };
                         let draft_id = ui.id().with(("run-memory", key));
-                        if let Some(typed) = input::drafted(ui, draft_id, &text, |ui, draft| {
+                        if let Some(typed) = draft::drafted(ui, draft_id, &text, |ui, draft| {
                             let field = InputField::new(draft);
                             if is_set { field } else { field.hint("unset") }.show(ui)
                         }) {
@@ -882,7 +882,7 @@ fn quests_card(
     }
     let all: Vec<String> = content.table::<QuestDef>().paths().to_vec();
     let mut add: Option<String> = None;
-    panel::card(false).show(ui, |ui| {
+    panel::tile(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
         panel::title(ui, "quests");
         if shown.is_empty() {
@@ -949,7 +949,7 @@ fn bag_card(
     }
     let all: Vec<String> = content.table::<ItemDef>().paths().to_vec();
     let mut add: Option<String> = None;
-    panel::card(false).show(ui, |ui| {
+    panel::tile(false).show(ui, |ui| {
         ui.set_width(ui.available_width());
         panel::title(ui, "bag");
         if shown.is_empty() {
@@ -988,7 +988,7 @@ fn bag_card(
 
 fn add_popup(ui: &mut Ui, label: &str, all: &[String], shown: &[String]) -> Option<String> {
     let mut add = None;
-    menu::dropdown(ui, theme::muted(label).size(12.5), |ui| {
+    menu::button(ui, theme::muted(label).size(12.5), |ui| {
         ui.set_min_width(180.0);
         egui::ScrollArea::vertical()
             .max_height(240.0)

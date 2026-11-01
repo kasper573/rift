@@ -4,7 +4,7 @@ use super::AreaCameraState;
 use super::files::FileChange;
 
 pub const MAX_STEPS: usize = 500;
-pub const MAX_BYTES: usize = 64 * 1024 * 1024;
+const MAX_BYTES: usize = 64 * 1024 * 1024;
 
 #[derive(Clone)]
 pub struct EditStep {
@@ -71,10 +71,6 @@ impl RowSelection {
     pub fn game() -> RowSelection {
         RowSelection::row(GAME, GAME)
     }
-
-    pub fn is_game(&self) -> bool {
-        self.table == GAME
-    }
 }
 
 #[derive(Clone)]
@@ -105,19 +101,19 @@ impl EditHistory {
         self.trim();
     }
 
-    pub fn undo_step(&self) -> Option<&EditStep> {
+    pub(crate) fn undo_step(&self) -> Option<&EditStep> {
         self.applied.checked_sub(1).map(|at| &self.steps[at])
     }
 
-    pub fn redo_step(&self) -> Option<&EditStep> {
+    pub(crate) fn redo_step(&self) -> Option<&EditStep> {
         self.steps.get(self.applied)
     }
 
-    pub fn undone(&mut self) {
+    pub(crate) fn undone(&mut self) {
         self.applied = self.applied.saturating_sub(1);
     }
 
-    pub fn redone(&mut self) {
+    pub(crate) fn redone(&mut self) {
         self.applied = (self.applied + 1).min(self.steps.len());
     }
 
@@ -133,7 +129,7 @@ impl EditHistory {
         self.saved
     }
 
-    pub fn mark_saved(&mut self) {
+    pub(crate) fn mark_saved(&mut self) {
         self.saved = Some(self.applied);
     }
 
@@ -143,7 +139,7 @@ impl EditHistory {
 
     /// Folds `after` into the last step when it carries the same label, was made within the last
     /// second and nothing was undone since; files the step didn't touch keep `before` to undo to.
-    pub fn merge_into_last(
+    pub(crate) fn merge_into_last(
         &mut self,
         label: &str,
         after: Vec<FileChange>,
@@ -168,7 +164,7 @@ impl EditHistory {
 
     /// Folds `after` into the last step when it is labelled `step` and nothing was undone since,
     /// relabelling it; files the step didn't touch keep `before` to undo to.
-    pub fn amend_last(
+    pub(crate) fn amend_last(
         &mut self,
         step: &str,
         label: &str,

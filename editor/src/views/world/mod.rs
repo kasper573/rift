@@ -29,7 +29,6 @@ use ui::egui::{Color32, Pos2, Rect, Ui, Vec2};
 
 use crate::app::Editor;
 use crate::project::{ContentEdit, Project, RowSelection};
-use crate::shell::sidebar;
 use crate::views::navigation;
 
 const AREA_PX_PER_TILE: f32 = 2.0;
@@ -136,7 +135,7 @@ impl FromStr for MapPart {
     }
 }
 
-pub fn region_color(color: Option<RegionColor>) -> Color32 {
+pub(crate) fn region_color(color: Option<RegionColor>) -> Color32 {
     match color {
         None => Color32::from_rgb(150, 150, 170),
         Some(RegionColor::Amber) => theme::WARN,
@@ -147,7 +146,7 @@ pub fn region_color(color: Option<RegionColor>) -> Color32 {
     }
 }
 
-pub fn region_color_name(color: Option<RegionColor>) -> &'static str {
+pub(crate) fn region_color_name(color: Option<RegionColor>) -> &'static str {
     color.map_or("grey", <&str>::from)
 }
 
@@ -170,7 +169,7 @@ impl OpenWorldMap {
         })
     }
 
-    pub fn card_rect(&self, area: AreaId, card: &AreaCard) -> Rect {
+    pub(crate) fn card_rect(&self, area: AreaId, card: &AreaCard) -> Rect {
         card_rect(self.atlas.size(area), card)
     }
 
@@ -186,7 +185,7 @@ impl OpenWorldMap {
             .reduce(|a, b| a.union(b))
     }
 
-    pub fn region_rect(&self, layout: &WorldMapDef, region: &Region) -> Option<Rect> {
+    pub(crate) fn region_rect(&self, layout: &WorldMapDef, region: &Region) -> Option<Rect> {
         region
             .cards
             .iter()
@@ -200,7 +199,7 @@ impl OpenWorldMap {
             .map(|rect| rect.expand(REGION_PAD))
     }
 
-    pub fn card_ids(&self, parts: &[MapPart]) -> Vec<AreaId> {
+    pub(crate) fn card_ids(&self, parts: &[MapPart]) -> Vec<AreaId> {
         parts
             .iter()
             .filter_map(|part| match part {
@@ -237,7 +236,7 @@ impl OpenWorldMap {
 }
 
 impl WorldView {
-    pub fn request_fit(&mut self) {
+    pub(crate) fn request_fit(&mut self) {
         self.fitted = false;
     }
 
@@ -278,7 +277,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui) {
     {
         editor.views.world.look_at(&map, area, look.zoom);
     }
-    sidebar::inspector(editor, ui, "world", |editor, ui| {
+    ui::panel::inspector(ui, editor, "world", |editor, ui| {
         let selection = if editor.selection.table == WorldMapDef::TABLE {
             editor.selection.clone()
         } else {
@@ -349,7 +348,7 @@ fn shows_areas(zoom: f32) -> bool {
 /// map card of its own beside the card of the area it was copied from, written into `edit`. A
 /// copied folder's areas count, each at its place inside the copy. A world map that doesn't read
 /// takes no cards; the folder's report already says why.
-pub fn cards_beside(
+pub(crate) fn cards_beside(
     project: &Project,
     edit: &mut ContentEdit,
     copies: &[(String, String)],

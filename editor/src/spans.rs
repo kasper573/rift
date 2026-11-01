@@ -265,7 +265,7 @@ fn fx_menu<T: Copy + Into<&'static str>>(
     styled: &mut impl FnMut(FxKind, Option<Fx>),
 ) {
     let field = kind.name();
-    menu::dropdown(ui, RichText::new(field).size(12.0), |ui| {
+    menu::button(ui, RichText::new(field).size(12.0), |ui| {
         for &option in options {
             if ui.button(option.into()).clicked() {
                 styled(kind, Some(wrap(option)));
@@ -356,7 +356,12 @@ pub fn edit(ui: &mut Ui, cx: &mut FormCx, span: &mut Span, path: &str) -> FormCh
 
 /// A line of spans as a form edits it: typed in place, with the expression of each value span
 /// below it.
-pub fn line_field(ui: &mut Ui, cx: &mut FormCx, spans: &mut Vec<Span>, path: &str) -> FormChange {
+pub(crate) fn line_field(
+    ui: &mut Ui,
+    cx: &mut FormCx,
+    spans: &mut Vec<Span>,
+    path: &str,
+) -> FormChange {
     let id = ui.id().with(path).with("line");
     let mut changed = FormChange::default();
     input::boxed(ui, None, |ui| {

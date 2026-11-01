@@ -9,8 +9,7 @@ use ui::ink;
 use ui::theme;
 
 use engine::core::audio::soundscape::EDGE_FALLOFF;
-use engine::core::math::Rect;
-use engine::core::units::{MeterSize, Meters};
+use engine::core::units::MeterSize;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::PropDef;
 use engine::systems::area::{AreaModule, AreaModuleKind, Pictured};
@@ -121,7 +120,7 @@ pub(super) fn overlay_footprints(painter: &egui::Painter, frame: &AreaFrame) {
     }
 }
 
-pub fn module_color(kind: Option<AreaModuleKind>) -> Color32 {
+pub(crate) fn module_color(kind: Option<AreaModuleKind>) -> Color32 {
     match kind {
         Some(AreaModuleKind::Object) => Color32::from_rgb(255, 200, 80),
         Some(AreaModuleKind::SafeZone) => Color32::from_rgb(90, 160, 255),
@@ -387,9 +386,4 @@ fn free_slot(preferred: ERect, placed: &[ERect]) -> ERect {
         .chain(shifted)
         .find(|slot| !placed.iter().any(|other| other.intersects(*slot)))
         .unwrap_or(preferred)
-}
-
-/// A rectangle of ground as the overlays box it on the screen.
-pub fn screen_rect(frame: &AreaFrame, rect: Rect<Meters>) -> ERect {
-    frame.canvas.rect(rect)
 }

@@ -155,7 +155,7 @@ fn stand(
     );
     let standing = stage::standing(
         body,
-        Some(stage::idle_clip(built)),
+        Some(stage::model_idle_clip(built)),
         None,
         Vec::new(),
         Vec::new(),

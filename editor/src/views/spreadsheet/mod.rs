@@ -29,8 +29,8 @@ use crate::icons::{self, IconTone};
 use crate::keymap::EditorKey;
 use crate::project::{ContentEdit, RowSelection};
 use crate::schema::{self, SchemaKind};
+use crate::shell;
 use crate::shell::row_form::tune::{self, SfxTuneField, sfx_tune_field};
-use crate::shell::{self, sidebar};
 use crate::tabs::shown_path;
 use crate::tabs::{EditorTab, file_title};
 use crate::user::SpreadsheetView;
@@ -78,7 +78,7 @@ impl SpreadsheetState {
 
 /// Where a sheet's rows come from.
 #[derive(Clone, Debug, PartialEq)]
-pub enum SheetRows {
+enum SheetRows {
     /// Every file of the table, a row each.
     Files,
     /// Every entry of the map at `field` in the table's one file: rows the engine fixes, which
@@ -192,7 +192,7 @@ impl SpreadsheetRow {
         }
     }
 
-    pub fn has_module(&self, tag: &str) -> bool {
+    fn has_module(&self, tag: &str) -> bool {
         self.module(tag).is_some()
     }
 
@@ -236,7 +236,7 @@ impl SpreadsheetColumn {
         self.get(row).and_then(Value::as_f64)
     }
 
-    pub fn lacks_module(&self, row: &SpreadsheetRow) -> bool {
+    fn lacks_module(&self, row: &SpreadsheetRow) -> bool {
         match &self.source {
             ColumnSource::Module { tag, .. } => row.unread.is_none() && !row.has_module(tag),
             _ => false,
@@ -290,7 +290,7 @@ fn cell_text(value: &Value) -> String {
     }
 }
 
-pub fn columns_of(editor: &Editor, table: &str, rows: &[SpreadsheetRow]) -> Vec<SpreadsheetColumn> {
+fn columns_of(editor: &Editor, table: &str, rows: &[SpreadsheetRow]) -> Vec<SpreadsheetColumn> {
     let mut columns = Vec::new();
     let Some(shape) = editor.shapes.table(table) else {
         return columns;
@@ -731,12 +731,12 @@ fn files_revision(editor: &Editor) -> u64 {
 
 pub fn show(editor: &mut Editor, ui: &mut Ui, table: &str) {
     let selection = editor.selection.clone();
-    sidebar::inspector(editor, ui, "sheet-column", |editor, ui| {
+    ui::panel::inspector(ui, editor, "sheet-column", |editor, ui| {
         if selection.table == table
             && selection
                 .parts
                 .first()
-                .is_some_and(|part| part.starts_with("#sheet/"))
+                .is_some_and(|part| sheet_column(part).is_some())
         {
             inspect(editor, ui, &selection);
         } else {
@@ -805,7 +805,7 @@ fn toolbar(
             filters.remove(index);
             changed = true;
         }
-        menu::dropdown(ui, "+ filter", |ui| {
+        menu::button(ui, "+ filter", |ui| {
             if table == NpcDef::TABLE && ui.button(CAN_BE_FOUGHT).clicked() {
                 filters.push(CAN_BE_FOUGHT.to_owned());
                 changed = true;
@@ -846,7 +846,7 @@ fn toolbar(
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(theme::muted(format!("{shown} of {total} rows")));
-            menu::dropdown(ui, "columns", |ui| {
+            menu::button(ui, "columns", |ui| {
                 ui.set_min_width(220.0);
                 egui::ScrollArea::vertical()
                     .max_height(400.0)
@@ -1209,7 +1209,7 @@ fn table_body(
         editor.select(RowSelection {
             table: table.to_owned(),
             keys: vec![file],
-            parts: vec![format!("#sheet/{}", hit.column)],
+            parts: vec![sheet_part(&hit.column)],
         });
     }
     let settled = commit.is_some() || stop_editing;
@@ -1587,7 +1587,7 @@ fn keys(
         editor.select(RowSelection {
             table: table.to_owned(),
             keys: vec![rows[target.0].file.clone()],
-            parts: vec![format!("#sheet/{}", shown[target.1].id)],
+            parts: vec![sheet_part(&shown[target.1].id)],
         });
         return;
     }
@@ -1813,7 +1813,7 @@ pub fn inspect(editor: &mut Editor, ui: &mut Ui, selection: &RowSelection) {
     let Some(column_id) = selection
         .parts
         .first()
-        .and_then(|part| part.strip_prefix("#sheet/"))
+        .and_then(|part| sheet_column(part))
         .map(str::to_owned)
     else {
         return;
@@ -1829,7 +1829,7 @@ pub fn inspect(editor: &mut Editor, ui: &mut Ui, selection: &RowSelection) {
     );
     ui.add_space(6.0);
     let values: Vec<f64> = rows.iter().filter_map(|row| column.number(row)).collect();
-    panel::card(true).show(ui, |ui| {
+    panel::tile(true).show(ui, |ui| {
         ui.vertical(|ui| {
             panel::title(ui, &column.title);
             form::kv_text(ui, "from", column.origin());
@@ -1985,4 +1985,16 @@ fn histogram(ui: &mut Ui, values: &[f64], highlight: Option<f64>) {
             );
         }
     }
+}
+
+const SHEET_PART_PREFIX: &str = "#sheet/";
+
+/// The part of a row selection that stands for the column `column` of a table's sheet.
+pub(crate) fn sheet_part(column: &str) -> String {
+    format!("{SHEET_PART_PREFIX}{column}")
+}
+
+/// The column a part of a row selection stands for, when it stands for one of a sheet.
+pub(crate) fn sheet_column(part: &str) -> Option<&str> {
+    part.strip_prefix(SHEET_PART_PREFIX)
 }

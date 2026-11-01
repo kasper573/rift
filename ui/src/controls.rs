@@ -15,11 +15,11 @@ use crate::{ink, paint, sheet};
 
 /// Every control stands this tall, so an icon-only button lines up with the text buttons beside it.
 pub const CONTROL_HEIGHT: f32 = 26.0;
-pub const BUTTON_PADDING: Vec2 = Vec2::new(12.0, 4.0);
+pub(crate) const BUTTON_PADDING: Vec2 = Vec2::new(12.0, 4.0);
 pub const RADIUS: f32 = 4.0;
 pub const SLOT: f32 = 36.0;
 pub const SLOT_ICON: f32 = 30.0;
-pub const PILL_HEIGHT: f32 = 20.0;
+const PILL_HEIGHT: f32 = 20.0;
 const BEAD: f32 = 6.0;
 
 pub fn button(ui: &mut Ui, text: impl Into<WidgetText>) -> Response {

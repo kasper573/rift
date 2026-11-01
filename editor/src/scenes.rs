@@ -16,7 +16,9 @@ use engine::systems::script::ScriptDef;
 use serde::Deserialize;
 use strum::VariantNames;
 
-use crate::app::{BottomTab, Clipboard, Editor, ModalDialog, SceneClip};
+use crate::app::{BottomTab, Editor};
+use crate::clipboard::{Clipboard, SceneClip};
+use crate::modal::ModalDialog;
 use crate::project::{ContentEdit, RowSelection};
 use crate::tabs::EditorTab;
 use crate::views::area::resize::ResizeDialog;
@@ -394,7 +396,7 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
                 to: to.clone(),
             },
         ),
-        SceneStep::Bottom(tab) => editor.panels.bottom = *tab,
+        SceneStep::Bottom(tab) => editor.bottom_tab = *tab,
         SceneStep::Model(step) => model_step(editor, step),
         SceneStep::Bust(step) => bust_step(editor, step),
         SceneStep::Skeleton(step) => skeleton_step(editor, step),
@@ -503,7 +505,7 @@ fn sheet_step(editor: &mut Editor, step: &SheetStep) {
         editor.select(RowSelection {
             table: table.clone(),
             keys: vec![key.clone()],
-            parts: vec![format!("#sheet/{column}")],
+            parts: vec![crate::views::spreadsheet::sheet_part(column)],
         });
         return;
     }
@@ -540,7 +542,7 @@ fn model_step(editor: &mut Editor, step: &ModelStep) {
     model::ensure_view(editor, &key);
     match step {
         ModelStep::Open(_) => {}
-        ModelStep::Bottom(tab) => editor.panels.bottom = *tab,
+        ModelStep::Bottom(tab) => editor.bottom_tab = *tab,
     }
 }
 
@@ -557,7 +559,7 @@ fn bust_step(editor: &mut Editor, step: &BustStep) {
     match step {
         BustStep::Open(_) => {}
         BustStep::Face(None) => {
-            editor.views.bust.view_mut(&key).face = None;
+            editor.views.bust.views.view_mut(&key).face = None;
             editor.select(RowSelection::row(BustDef::TABLE, &key));
         }
         BustStep::Face(Some(face)) => {
@@ -591,7 +593,7 @@ fn skeleton_step(editor: &mut Editor, step: &SkeletonStep) {
         _ => return,
     };
     skeleton::ensure_view(editor, &key);
-    let view = editor.views.skeleton.view_mut(&key);
+    let view = editor.views.skeleton.views.view_mut(&key);
     match step {
         SkeletonStep::Open(_) => {}
         SkeletonStep::Page(page) => view.page = *page,

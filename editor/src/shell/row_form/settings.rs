@@ -2,11 +2,11 @@ use engine::core::content::SETTINGS_FILE;
 use ui::egui::Ui;
 use ui::theme;
 
-use crate::app::{Editor, PlacePick};
-use crate::forms::{self, FormAction, FormCx};
+use crate::app::Editor;
+use crate::forms::{self, FormCx};
 use crate::project::ContentEdit;
 
-pub fn show_game(editor: &mut Editor, ui: &mut Ui) {
+pub(crate) fn show_game(editor: &mut Editor, ui: &mut Ui) {
     let Some(mut value) = editor
         .project
         .as_ref()
@@ -45,24 +45,6 @@ pub fn show_game(editor: &mut Editor, ui: &mut Ui) {
         editor.apply(edit);
     }
     for action in actions {
-        match action {
-            FormAction::OpenRow { table, key } => {
-                editor.open_row(&table, &key);
-            }
-            FormAction::PickPlace { path } => {
-                editor.pick = Some(PlacePick {
-                    file: SETTINGS_FILE.to_owned(),
-                    pointer: path,
-                    area: None,
-                });
-                editor.toast("Click a walkable cell on an area to put the initial spawn there");
-            }
-            FormAction::OpenNode { .. }
-            | FormAction::NewRow { .. }
-            | FormAction::RowAction(_)
-            | FormAction::Reveal { .. }
-            | FormAction::NewScriptModule
-            | FormAction::NewObjectScript { .. } => {}
-        }
+        super::act(editor, action, "", SETTINGS_FILE);
     }
 }

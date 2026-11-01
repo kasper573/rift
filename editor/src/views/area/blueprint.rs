@@ -22,7 +22,7 @@ use crate::tabs::file_title;
 /// Makes a blueprint of the selection at once: a new bundle beside the one being edited holds the
 /// selected nodes, or what a selected folder holds, and one placement of it takes their place. The
 /// blueprint is named after the folder or node.
-pub fn make_blueprint_from_selection(editor: &mut Editor, frame: &AreaSnapshot) {
+pub(crate) fn make_blueprint_from_selection(editor: &mut Editor, frame: &AreaSnapshot) {
     let bundle = frame.bundle.clone();
     let Some(own) = nodes::bundle_of(editor, &bundle) else {
         return;
@@ -170,7 +170,7 @@ pub(super) fn covered(
         .reduce(|a, b| a.union(&b))
 }
 
-pub fn shift_tree(node: &mut SceneNode, dx: f32, dy: f32) {
+pub(crate) fn shift_tree(node: &mut SceneNode, dx: f32, dy: f32) {
     match node {
         SceneNode::Folder(folder) => {
             for child in &mut folder.children {
@@ -182,7 +182,7 @@ pub fn shift_tree(node: &mut SceneNode, dx: f32, dy: f32) {
 }
 
 /// Where the modules among `nodes` start on the map: the top-left of what they cover.
-pub fn selection_origin(nodes: &[SceneNode]) -> Option<Pos<Meters>> {
+pub(crate) fn selection_origin(nodes: &[SceneNode]) -> Option<Pos<Meters>> {
     super::nodes::modules(nodes)
         .iter()
         .filter_map(|module| shapes::bounds(module.module(), None))
