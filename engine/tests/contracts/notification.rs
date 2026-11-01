@@ -56,8 +56,8 @@ fn history_keeps_every_notice_and_refusal_raised_and_never_a_pop() {
     let gulls = sim.spoken("gulls");
     let refused = refusal(&sim);
 
-    notification::notify(&mut sim.world, player, gulls);
-    notification::notify(&mut sim.world, player, refused);
+    notification::notify(&mut sim.world, player, None, gulls);
+    notification::notify(&mut sim.world, player, None, refused);
     notification::pop(&mut sim.world, player, "Ouch", None, VfxParams::default());
     sim.tick();
 
@@ -112,7 +112,7 @@ fn a_character_speaks_to_players_on_its_errand_from_its_own_body() {
     sim.forget_notified();
     let talker = sim.npc("talker");
     let challenge = sim.spoken("challenge");
-    notification::notify_from(&mut sim.world, player, Some(talker), challenge);
+    notification::notify(&mut sim.world, player, Some(talker), challenge);
     assert_eq!(
         sim.notified(1)
             .into_iter()
@@ -188,7 +188,7 @@ fn the_same_line_from_the_same_speaker_goes_out_once_per_window_and_merges_in_hi
     let player = sim.join(1);
     let gulls = sim.spoken("gulls");
     for _ in 0..25 {
-        notification::notify(&mut sim.world, player, gulls.clone());
+        notification::notify(&mut sim.world, player, None, gulls.clone());
     }
     assert_eq!(sim.told(1), vec![gulls.clone()]);
     let repeats = |sim: &Sim| {
@@ -201,7 +201,7 @@ fn the_same_line_from_the_same_speaker_goes_out_once_per_window_and_merges_in_hi
     assert_eq!(repeats(&sim), vec![25]);
 
     sim.later(11.0);
-    notification::notify(&mut sim.world, player, gulls.clone());
+    notification::notify(&mut sim.world, player, None, gulls.clone());
     assert_eq!(sim.told(1), vec![gulls.clone(), gulls]);
 }
 
@@ -210,7 +210,12 @@ fn a_flood_goes_out_in_a_burst_and_then_at_the_refill_rate() {
     let mut sim = island(&game());
     let player = sim.join(1);
     for line in 0..15 {
-        notification::notify(&mut sim.world, player, narration(format!("Beat {line}")));
+        notification::notify(
+            &mut sim.world,
+            player,
+            None,
+            narration(format!("Beat {line}")),
+        );
     }
     assert_eq!(sim.told(1).len(), 10);
     assert_eq!(
@@ -223,7 +228,12 @@ fn a_flood_goes_out_in_a_burst_and_then_at_the_refill_rate() {
 
     sim.later(1.0);
     for line in 15..20 {
-        notification::notify(&mut sim.world, player, narration(format!("Beat {line}")));
+        notification::notify(
+            &mut sim.world,
+            player,
+            None,
+            narration(format!("Beat {line}")),
+        );
     }
     assert_eq!(sim.told(1).len(), 12);
 }
@@ -234,7 +244,7 @@ fn every_refusal_answers_its_action_however_many_come() {
     let player = sim.join(1);
     let refused = refusal(&sim);
     for _ in 0..20 {
-        notification::notify(&mut sim.world, player, refused.clone());
+        notification::notify(&mut sim.world, player, None, refused.clone());
     }
     assert_eq!(sim.told(1), vec![refused; 20]);
 }

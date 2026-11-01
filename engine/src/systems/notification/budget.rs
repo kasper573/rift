@@ -1,21 +1,15 @@
 use bevy::log::warn;
 use bevy_ecs::prelude::*;
 
-use super::Notification;
-use crate::core::time::{Seconds, UnixMillis};
+use super::{Notification, NotificationSent};
+use crate::core::time::UnixMillis;
 
-const REPEAT_WINDOW: Seconds = Seconds(10.0);
 const BURST: f32 = 10.0;
 const REFILL_PER_SECOND: f32 = 2.0;
 const LOUD_AFTER: u32 = 20;
 
-pub fn admit(
-    world: &mut World,
-    player: Entity,
-    notification: &Notification,
-    speaker: Option<Entity>,
-    now: UnixMillis,
-) -> bool {
+/// Whether `sent` goes out to `player` live: not while the same line is still up, nor past a burst.
+pub fn admit(world: &mut World, player: Entity, sent: &NotificationSent, now: UnixMillis) -> bool {
     let Ok(mut entity) = world.get_entity_mut(player) else {
         return false;
     };
@@ -23,7 +17,7 @@ pub fn admit(
         .entry::<LiveBudget>()
         .or_insert_with(|| LiveBudget::full(now))
         .into_mut()
-        .admit(notification, speaker, now)
+        .admit(sent, now)
 }
 
 #[derive(Component)]
@@ -37,7 +31,7 @@ pub struct LiveBudget {
 struct RecentLine {
     notification: Notification,
     speaker: Option<Entity>,
-    sent_at: UnixMillis,
+    up_until: UnixMillis,
     repeats: u32,
 }
 
@@ -51,24 +45,17 @@ impl LiveBudget {
         }
     }
 
-    fn admit(
-        &mut self,
-        notification: &Notification,
-        speaker: Option<Entity>,
-        now: UnixMillis,
-    ) -> bool {
+    fn admit(&mut self, sent: &NotificationSent, now: UnixMillis) -> bool {
+        let (notification, speaker) = (&sent.notification, sent.actor);
         self.recent_lines
-            .retain(|recent_line| now.since(recent_line.sent_at) < REPEAT_WINDOW);
+            .retain(|recent_line| now < recent_line.up_until);
         let repeated = self.recent_lines.iter_mut().find(|recent_line| {
             recent_line.notification == *notification && recent_line.speaker == speaker
         });
         if let Some(recent_line) = repeated {
             recent_line.repeats += 1;
             if recent_line.repeats == LOUD_AFTER {
-                warn!(
-                    "{notification:?} repeated {LOUD_AFTER} times within {}s",
-                    REPEAT_WINDOW.0
-                );
+                warn!("{notification:?} repeated {LOUD_AFTER} times while up");
             }
             return false;
         }
@@ -86,7 +73,7 @@ impl LiveBudget {
         self.recent_lines.push(RecentLine {
             notification: notification.clone(),
             speaker,
-            sent_at: now,
+            up_until: now.after(sent.stays),
             repeats: 0,
         });
         true

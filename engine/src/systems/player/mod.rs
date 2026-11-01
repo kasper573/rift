@@ -9,7 +9,6 @@ use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::prelude::*;
 use bevy_ecs::world::DeferredWorld;
 use bevy_replication::Replicated;
-use bevy_time::Time;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use snapshot::{CharacterSnapshot, JoinAs};
@@ -17,7 +16,7 @@ use snapshot::{CharacterSnapshot, JoinAs};
 use crate::core::content::{Content, ContentFile, ContentId, ModuleRule, ModuleSet, Nearby};
 use crate::core::geometry::Radians;
 use crate::core::math::{Pos, Rect, Rng};
-use crate::core::time::{DayClock, DayCourse, PlaybackRate, Seconds, UnixMillis, WallClock};
+use crate::core::time::{self, DayClock, DayCourse, PlaybackRate, Seconds, UnixMillis, WallClock};
 use crate::core::units::{Meters, MetersPerSec};
 use crate::systems::account::Identity;
 use crate::systems::actor::{Action, Actor, ActorModel, Appearance, Hitbox, Name, Pose};
@@ -257,7 +256,7 @@ pub fn arrival_holds(world: &mut World) {
             player.remove::<ArrivalHold>();
         }
     }
-    let now = Seconds(world.resource::<Time>().elapsed_secs());
+    let now = time::uptime(world);
     let expired: Vec<Entity> = world
         .query::<(Entity, &ArrivalHold)>()
         .iter(world)
@@ -453,7 +452,7 @@ pub(crate) fn place(
 ) -> Entity {
     let content = world.resource::<Content>().clone();
     let hitbox = Hitbox(ActorModel::get(&content, state.appearance.model).hitbox());
-    let now = Seconds(world.resource::<Time>().elapsed_secs());
+    let now = time::uptime(world);
     let entity = world
         .spawn((
             Replicated,

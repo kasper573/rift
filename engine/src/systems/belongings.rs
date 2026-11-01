@@ -65,7 +65,7 @@ pub fn notify_changes(
         world.entity_mut(player).insert(now.clone());
         let content = world.resource::<Content>().clone();
         for notification in changes(&content, &before, &now) {
-            notification::notify(world, player, notification);
+            notification::notify(world, player, None, notification);
         }
     }
 }
@@ -93,7 +93,8 @@ fn changes(content: &Content, before: &Belongings, now: &Belongings) -> Vec<Noti
     if now.xp > before.xp {
         told.push(
             Notification::feed(HistoryTopic::Item, "XP")
-                .tally(RecordTally::Change(change(before.xp, now.xp))),
+                .tally(RecordTally::Change(change(before.xp, now.xp)))
+                .into(),
         );
     }
     for &on in now.worn.difference(&before.worn) {
@@ -123,7 +124,8 @@ fn changes(content: &Content, before: &Belongings, now: &Belongings) -> Vec<Noti
     if now.points > before.points {
         told.push(
             Notification::feed(HistoryTopic::Notification, "Skill points to spend")
-                .tally(RecordTally::Change(change(before.points.0, now.points.0))),
+                .tally(RecordTally::Change(change(before.points.0, now.points.0)))
+                .into(),
         );
     }
     told
@@ -140,6 +142,7 @@ fn item_row(content: &Content, item: ItemId, change: i32) -> Notification {
         .icon(item.get(content).icon.path())
         .tally(RecordTally::Change(change))
         .sound(sfx)
+        .into()
 }
 
 /// How far a count moved, as a tally shows it.
@@ -151,4 +154,5 @@ fn worn_row(content: &Content, text: String, item: ItemId) -> Notification {
     Notification::feed(HistoryTopic::Item, text)
         .icon(item.get(content).icon.path())
         .sound(item.get(content).sfx.trade)
+        .into()
 }

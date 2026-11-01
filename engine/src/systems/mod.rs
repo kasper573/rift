@@ -68,6 +68,7 @@ use crate::core::render::WorldRenderPlugin;
 use crate::core::text::StyledTextPlugin;
 use crate::core::tick::{self, Tick};
 use crate::core::time::{DayClock, Hertz, Seconds, WallClock};
+use crate::core::units::Meters;
 use crate::core::vfx::render::VfxRenderPlugin;
 use crate::systems::area::AreaId;
 use crate::systems::player::PlayerDefId;
@@ -149,8 +150,10 @@ pub fn area_state(world: &mut World, content: &Content) {
     world.add_observer(equipment::reflect);
 }
 
-/// The content and the scripts and parties built from it, as every world playing it reads them.
+/// The content, its settings and the scripts and parties built from it, as every world playing it
+/// reads them.
 fn insert_content(world: &mut World, content: &Content) {
+    world.insert_resource(content.built::<GameSettings>().clone());
     world.insert_resource(content.built::<quest::Parties>().clone());
     world.insert_resource(content.built::<script::RiftScripts>().clone());
     world.insert_resource(content.clone());
@@ -169,6 +172,97 @@ pub struct GameSettings {
     /// Without one the game has no clock: every area's light stands as authored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daylight: Option<area::DayCycle>,
+    /// How far a player sees: what their client is told of, and so all they may aim at, reach
+    /// for or speak to.
+    pub sight: Meters,
+    /// How many times their pace an actor runs while reaching for a cast.
+    pub chase_pace: f32,
+    /// How long a fallen npc that never comes back lies before it is gone.
+    pub corpses_linger: Seconds,
+    /// How long a player's claim on a foe holds after their last hit: whoever holds it when the
+    /// foe falls is credited with the fall, and what it drops is theirs.
+    pub claims_last: Seconds,
+    pub slots: Slots,
+    pub drops: Drops,
+    pub reading: Reading,
+    pub words: Words,
+    pub relations: Relations,
+    /// How soon after each other like entries of a player's history count as one, a run of loot
+    /// or kills read as a tally.
+    pub history_merges_within: Seconds,
+}
+
+/// How much a player keeps.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Slots {
+    /// Stacks of items in a bag; the most rewards a quest may hand out at once.
+    pub bag: u32,
+    /// Slots of a hotbar, however a player lays them out.
+    pub hotbar: u32,
+    /// Quests under way at once.
+    pub quest_log: u32,
+}
+
+/// How the sides stand to each other: the players' characters, the npcs friendly to them and the
+/// npcs hostile to them.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Relations {
+    /// Characters to each other.
+    pub characters: combat::Regard,
+    pub characters_and_friendly: combat::Regard,
+    pub characters_and_hostile: combat::Regard,
+    /// Friendly npcs to each other.
+    pub friendly: combat::Regard,
+    /// Npcs of different packs, unless both are friendly.
+    pub npcs_apart: combat::Regard,
+}
+
+/// What the game says in its own voice where the engine puts it into words.
+#[derive(JsonSchema, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Words {
+    /// The player's choice taking up a quest offered to them.
+    pub accept_quest: String,
+    /// The player's choice turning a quest offer down.
+    pub decline_quest: String,
+    /// The player's choice leaving a quest unhanded for now.
+    pub not_yet: String,
+    /// What a player is told picking a choice not open to them yet.
+    pub locked: String,
+    /// What a player is told picking a choice no longer open to them.
+    pub no_longer: String,
+    /// What a player is told offered a quest with every slot of their quest log taken.
+    pub quest_log_full: String,
+}
+
+/// How long notices take to read: each stays a glance and a little longer for every word, and
+/// stays at least a glance before a newer one in its place replaces it.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Reading {
+    pub glance: Seconds,
+    pub per_word: Seconds,
+}
+
+impl Reading {
+    /// How long a notice of `words` stays.
+    pub fn of(self, words: usize) -> Seconds {
+        Seconds(self.glance.0 + self.per_word.0 * words as f32)
+    }
+}
+
+/// What becomes of items on the ground.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Drops {
+    /// How long an item lies on the ground, unless what dropped it says otherwise.
+    pub last: Seconds,
+    /// How far from where they fell several items lie, around it.
+    pub scatter: Meters,
+    /// How close a player comes to an item to pick it up.
+    pub pickup_reach: Meters,
 }
 
 pub fn server_app(
@@ -186,7 +280,6 @@ pub fn server_app(
     let mut app = App::new();
     let settings = content.built::<GameSettings>();
     app.insert_resource(WorldArea(area));
-    app.insert_resource(settings.clone());
     app.insert_resource(clock);
     app.insert_resource(DayClock(
         settings
@@ -274,9 +367,9 @@ pub fn server_app(
         );
     app.insert_resource(tick_planners());
 
-    // An area world is stepped single-threaded so the driver (server/bench) owns all parallelism by
-    // running whole areas concurrently. Letting each area's schedules fan out onto the global task
-    // pool too would nest a work-stealing pool inside the per-area pool and oversubscribe the cores.
+    // The schedules run single-threaded: the parallel work, an area's planners and the areas'
+    // ticks side by side, all runs on one pool, and bevy's executor would fan systems out onto a
+    // pool of its own beside it and oversubscribe the cores.
     for (_, schedule) in app.world_mut().resource_mut::<Schedules>().iter_mut() {
         schedule.set_executor(SingleThreadedExecutor::new());
     }
@@ -411,10 +504,9 @@ pub fn client_app(
     app
 }
 
-/// The worlds, not the owning `App`s, are stepped because `App` is `!Send` while `World` is `Send`;
-/// for these single-schedule headless apps `run_schedule(Main)` + `clear_trackers` is what
+/// One tick of one area's world, as [`worlds::tick`] steps each awake one. The world is stepped
+/// rather than its `App`, which can't cross threads; for a headless app this is what
 /// `App::update` does.
-/// One tick of one area's world, as [`worlds::tick`] steps each awake one.
 pub fn step_area(world: &mut World, clock: WallClock) {
     world.insert_resource(clock);
     world.run_schedule(bevy_app::Main);
@@ -468,7 +560,6 @@ pub fn install_content(world: &mut World, synced: SyncedContent, content: Conten
         }
     }
     insert_content(world, &content);
-    world.insert_resource(content.built::<GameSettings>().clone());
     world.insert_resource(input::map::InputMap::new(&content));
     world.insert_resource(synced);
 }
@@ -589,12 +680,50 @@ impl Settings for GameSettings {
 fn check_settings(loading: &mut Loading) {
     let content = loading.content();
     let settings = content.built::<GameSettings>();
+    let mut check = crate::core::content::RowCheck::default();
     if let Some(cycle) = &settings.daylight {
-        let mut check = crate::core::content::RowCheck::default();
         cycle.check("/daylight", &mut check);
-        for error in check.into_errors() {
-            loading.json_error(SETTINGS_FILE, &error.pointer, error.problem);
-        }
+    }
+    check.at_least("/sight", settings.sight.0, 0.0, "meters");
+    check.at_least("/chase_pace", settings.chase_pace, 1.0, "times");
+    check.at_least("/corpses_linger", settings.corpses_linger.0, 0.0, "seconds");
+    check.at_least("/claims_last", settings.claims_last.0, 0.0, "seconds");
+    for (field, slots) in [
+        ("bag", settings.slots.bag),
+        ("hotbar", settings.slots.hotbar),
+        ("quest_log", settings.slots.quest_log),
+    ] {
+        check.at_least(format!("/slots/{field}"), slots, 1, "slots");
+    }
+    let drops = &settings.drops;
+    check.at_least("/drops/last", drops.last.0, 0.0, "seconds");
+    check.at_least("/drops/scatter", drops.scatter.0, 0.0, "meters");
+    check.at_least("/drops/pickup_reach", drops.pickup_reach.0, 0.0, "meters");
+    for (field, said) in [
+        ("accept_quest", &settings.words.accept_quest),
+        ("decline_quest", &settings.words.decline_quest),
+        ("not_yet", &settings.words.not_yet),
+        ("locked", &settings.words.locked),
+        ("no_longer", &settings.words.no_longer),
+        ("quest_log_full", &settings.words.quest_log_full),
+    ] {
+        check.text(format!("/words/{field}"), said, 1, 80);
+    }
+    check.at_least("/reading/glance", settings.reading.glance.0, 0.0, "seconds");
+    check.at_least(
+        "/reading/per_word",
+        settings.reading.per_word.0,
+        0.0,
+        "seconds",
+    );
+    check.at_least(
+        "/history_merges_within",
+        settings.history_merges_within.0,
+        0.0,
+        "seconds",
+    );
+    for error in check.into_errors() {
+        loading.json_error(SETTINGS_FILE, &error.pointer, error.problem);
     }
     if loading.thorough() {
         check_reach(loading, &content, settings.initial_spawn);

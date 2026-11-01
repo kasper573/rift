@@ -12,7 +12,6 @@ use bevy_ecs::query::QueryState;
 use crate::core::tick::Planner;
 use bevy_ecs::world::DeferredWorld;
 use bevy_replication::Replicated;
-use bevy_time::Time;
 use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -25,8 +24,9 @@ use crate::core::content::{
 use crate::core::geometry::Radians;
 use crate::core::ground::TileAt;
 use crate::core::math::{Percent, Pos, Rect, Rng};
-use crate::core::time::{PlaybackRate, Seconds};
+use crate::core::time::{self, PlaybackRate, Seconds};
 use crate::core::units::{MeterPos, Meters, MetersPerSec};
+use crate::systems::GameSettings;
 use crate::systems::actor::held::{self, Held};
 use crate::systems::actor::{
     self, Action, Actor, ActorModel, Appearance, Hitbox, Pose, appearance,
@@ -52,8 +52,6 @@ use crate::systems::{WorldArea, dialogue, stat};
 use bevy_platform::collections::HashMap;
 
 pub type NpcId = ContentId<NpcDef>;
-
-const CORPSE_LINGER: Seconds = Seconds(5.0);
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppReplicationExt;
@@ -240,6 +238,8 @@ pub struct NpcDef {
     pub modules: Vec<NpcModule>,
     /// How far from home it wanders, when a wander of its script names no leash of its own.
     pub leash: Meters,
+    /// How it stands toward the players as it comes to life, until a script sets it otherwise.
+    pub attitude: Attitude,
 }
 
 #[derive(JsonSchema, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
@@ -265,6 +265,7 @@ impl ContentFile for NpcDef {
             held: Vec::new(),
             modules: Vec::new(),
             leash: Meters(0.0),
+            attitude: Attitude::Friendly,
         })
     }
 
@@ -491,7 +492,7 @@ pub fn spawn(
         actor_bundle(&content, row, at, area),
         Npc { def },
         pack,
-        Attitude::Friendly,
+        row.attitude,
         body::Body::default(),
         actor::Name {
             name: row.name.to_owned(),
@@ -526,7 +527,7 @@ pub fn attacked(world: &mut World, target: Entity, attacker: Entity) {
 }
 
 pub fn defeated(world: &mut World, mut deaths: Local<MessageCursor<Died>>) {
-    let now = Seconds(world.resource::<Time>().elapsed_secs());
+    let now = time::uptime(world);
     let deaths: Vec<Died> = deaths
         .read(world.resource::<Messages<Died>>())
         .cloned()
@@ -725,7 +726,8 @@ type FallenNpcs = QueryState<(Entity, &'static Dead), With<Npc>>;
 
 pub fn run_respawn(world: &mut World, fallen: &mut FallenNpcs) {
     let content = world.resource::<Content>().clone();
-    let time = Seconds(world.resource::<Time>().elapsed_secs());
+    let time = time::uptime(world);
+    let linger = world.resource::<GameSettings>().corpses_linger;
     let ids: Vec<(Entity, Seconds)> = fallen.iter(world).map(|(id, dead)| (id, dead.at)).collect();
     world.resource_scope(|world, mut rng: Mut<Rng>| {
         for (id, since) in ids {
@@ -737,7 +739,7 @@ pub fn run_respawn(world: &mut World, fallen: &mut FallenNpcs) {
             };
             let def = npc.get(&content);
             let Some(delay) = def.respawn() else {
-                if time - since >= CORPSE_LINGER {
+                if time - since >= linger {
                     world.despawn(id);
                 }
                 continue;
@@ -761,7 +763,7 @@ pub fn run_respawn(world: &mut World, fallen: &mut FallenNpcs) {
             crate::systems::combat::revive(world, id, at);
             world
                 .entity_mut(id)
-                .insert((Attitude::Friendly, body::Body::default(), Near::default()))
+                .insert((def.attitude, body::Body::default(), Near::default()))
                 .remove::<Reservation>()
                 .insert(Statuses::default());
             start_scripts(world, id, npc);

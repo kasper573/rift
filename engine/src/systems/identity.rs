@@ -11,11 +11,10 @@ use bevy_platform::collections::HashMap;
 use bevy_replication::{
     AppReplicationExt, ClientSystems, Remote, Replicated, ReplicatedDespawn, ServerLink,
 };
-use bevy_time::Time;
 use serde::{Deserialize, Serialize};
 
 use crate::core::render::transition::WorldViewSystems;
-use crate::core::time::Seconds;
+use crate::core::time::{self, Seconds};
 use crate::systems::player::session;
 use crate::systems::player::{ARRIVAL_PATIENCE, PlayedBy};
 
@@ -122,7 +121,7 @@ pub fn vanish(mut entity: EntityWorldMut) {
             world.entity_mut(child).insert(ChildOf(stand_in));
         }
         if mine {
-            let now = Seconds(world.resource::<Time>().elapsed_secs());
+            let now = time::uptime(world);
             world.resource_mut::<Switching>().0.get_or_insert(now);
         }
     });
@@ -164,7 +163,7 @@ fn settle(
     for (stand_in, entity) in adoptions {
         adopt(world, stand_in, entity);
     }
-    let now = Seconds(world.resource::<Time>().elapsed_secs());
+    let now = time::uptime(world);
     let me = session::my_id(world);
     let back = played.iter(world).any(|played| Some(played.client) == me);
     let over = match world.resource::<Switching>().0 {

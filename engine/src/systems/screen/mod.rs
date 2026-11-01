@@ -7,9 +7,12 @@ use std::time::Duration;
 use ui::egui;
 use ui::float;
 
+use bevy::ecs::component::Mutable;
 use bevy::prelude::*;
+use bevy::tasks::futures_lite::future;
+use bevy::tasks::{Task, block_on};
 use bevy::winit::{UpdateMode, WinitSettings};
-use connection::{Announce, PendingSession};
+use connection::PendingSession;
 use ui::controls;
 use ui::egui::{TextStyle, Ui};
 use ui::face;
@@ -19,7 +22,6 @@ use crate::core::math::Rng;
 use crate::core::net::auth::Credentials;
 use crate::core::net::transport::Connection;
 use crate::core::time::{Backoff, Seconds};
-use crate::systems::player::{JoinRequest, session};
 use ui::dialog;
 
 const NOTICE_WIDTH: f32 = 356.0;
@@ -37,8 +39,8 @@ const SERVER_RETRY: Backoff = Backoff {
 /// `None` means the next try waits for the player.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct Retry {
-    pub failures: u32,
-    pub due: Option<Seconds>,
+    failures: u32,
+    due: Option<Seconds>,
 }
 
 impl Retry {
@@ -48,6 +50,15 @@ impl Retry {
             failures,
             due: Some(now + SERVER_RETRY.after(failures, rng)),
         }
+    }
+
+    /// The same tries, the next waiting for the player.
+    pub fn held(self) -> Retry {
+        Retry { due: None, ..self }
+    }
+
+    pub fn due(self) -> Option<Seconds> {
+        self.due
     }
 
     pub fn is_due(self, now: Seconds) -> bool {
@@ -81,7 +92,10 @@ impl Plugin for ClientScreenPlugin {
             connection::ConnectionPlugin,
             area::AreaScreenPlugin,
         ))
-        .add_systems(Update, (connection::poll_session, drive, announce).chain());
+        .add_systems(
+            Update,
+            (connection::poll_session, drive, connection::announce).chain(),
+        );
     }
 }
 
@@ -113,15 +127,6 @@ fn drive(
     if *scene.get() != target {
         next.set(target);
     }
-}
-
-fn announce(world: &mut World) {
-    if world.get_resource::<Announce>().is_none() || session::my_id(world).is_none() {
-        return;
-    }
-    info!("connection welcomed; joining");
-    world.write_message(JoinRequest);
-    world.remove_resource::<Announce>();
 }
 
 /// What a screen between screens says, always in one panel.
@@ -196,18 +201,14 @@ pub(crate) fn note(ui: &mut Ui, text: &str) {
 /// A screen that waits on another thread or the network needs only a few frames a second, and
 /// every frame beyond those is time the work it waits on can't have.
 fn pace_slowly(world: &mut World) {
-    remember_pace(world);
-    world.insert_resource(WinitSettings {
-        focused_mode: UpdateMode::reactive_low_power(WAITING_FRAME),
-        unfocused_mode: UpdateMode::reactive_low_power(WAITING_FRAME),
-    });
-}
-
-fn remember_pace(world: &mut World) {
     if !world.contains_resource::<PacedFrom>() {
         let before = world.resource::<WinitSettings>().clone();
         world.insert_resource(PacedFrom(before));
     }
+    world.insert_resource(WinitSettings {
+        focused_mode: UpdateMode::reactive_low_power(WAITING_FRAME),
+        unfocused_mode: UpdateMode::reactive_low_power(WAITING_FRAME),
+    });
 }
 
 fn pace_as_before(world: &mut World) {
@@ -238,4 +239,15 @@ fn notice_panel(ui: &mut Ui, notice: Notice) -> bool {
 fn notice_height(ui: &Ui) -> f32 {
     let line = ui.text_style_height(&TextStyle::Body) + LINE_GAP;
     ui.text_style_height(&TextStyle::Heading) + NOTICE_LINES as f32 * line
+}
+
+/// What the task the resource `R` holds came to, once it has, with `R` taken out; while it runs,
+/// or without an `R`, nothing, and `R` stays.
+fn finished<R: Resource<Mutability = Mutable>, T>(
+    world: &mut World,
+    task: impl FnOnce(&mut R) -> &mut Task<T>,
+) -> Option<(R, T)> {
+    let mut held = world.get_resource_mut::<R>()?;
+    let outcome = block_on(future::poll_once(task(&mut held)))?;
+    Some((world.remove_resource::<R>()?, outcome))
 }

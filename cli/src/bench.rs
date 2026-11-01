@@ -175,7 +175,7 @@ fn measure(bench: &mut Bench) -> Timings {
 /// uses, so the benchmark's capacity reflects the threaded server.
 fn step(bench: &mut Bench) {
     let clock = bench.play();
-    bench.tick(clock);
+    bench.tick(None, clock);
     bench.send_out();
 }
 

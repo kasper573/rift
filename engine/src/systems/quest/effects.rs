@@ -9,6 +9,7 @@ use crate::core::content::{Content, Fixture};
 use crate::core::script::{
     Answer, Arrow, Compiler, EffectDef, EffectStep, NEXT, REFUSED, ScriptFault,
 };
+use crate::systems::GameSettings;
 use crate::systems::dialogue::{
     self, CardOffer, ChoiceChip, ChoiceReveal, ChoiceTag, ConversationPanel,
 };
@@ -107,10 +108,6 @@ pub struct Decide {
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
 }
-
-const ACCEPT: &str = "Accept";
-const DECLINE: &str = "Decline";
-const NOT_YET: &str = "Not yet.";
 
 impl EffectDef<RiftScripting> for OfferQuest {
     fn needs_subject(&self) -> bool {
@@ -324,6 +321,7 @@ impl EffectDef<RiftScripting> for Decide {
 
 fn offer_card(world: &World, player: Entity, quest: QuestId) -> Vec<CardOffer> {
     let content = world.resource::<Content>();
+    let words = &world.resource::<GameSettings>().words;
     let def = quest.get(content);
     let open = super::open_to(world, player, quest);
     let chips = match def.requires().filter(|_| def.reveals(ChoiceReveal::Needs)) {
@@ -332,7 +330,7 @@ fn offer_card(world: &World, player: Entity, quest: QuestId) -> Vec<CardOffer> {
     };
     vec![
         CardOffer {
-            label: LineText::plain(ACCEPT),
+            label: LineText::plain(words.accept_quest.clone()),
             tag: ChoiceTag::Quest,
             icon: Some(super::offered_mark(def).get(content).icon.clone()),
             chips,
@@ -343,7 +341,7 @@ fn offer_card(world: &World, player: Entity, quest: QuestId) -> Vec<CardOffer> {
             }),
         },
         CardOffer {
-            label: LineText::plain(DECLINE),
+            label: LineText::plain(words.decline_quest.clone()),
             tag: ChoiceTag::Dialogue,
             icon: None,
             chips: Vec::new(),
@@ -409,7 +407,7 @@ fn turn_in_card(world: &World, player: Entity, quest: QuestId) -> Vec<CardOffer>
             .collect()
     };
     offers.push(CardOffer {
-        label: LineText::plain(NOT_YET),
+        label: LineText::plain(world.resource::<GameSettings>().words.not_yet.clone()),
         tag: ChoiceTag::Dialogue,
         icon: None,
         chips: Vec::new(),

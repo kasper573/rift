@@ -3,9 +3,7 @@ use strum::{IntoStaticStr, VariantArray};
 
 use crate::core::content::fixture::FixtureLock;
 use crate::core::content::{Content, ContentFile, Fixture, Nearby};
-use crate::core::vfx::{
-    ParamKind, ShaderParam, SiteKind, Stage, VfxDef, VfxParams, VfxShaderDef, VfxSite,
-};
+use crate::core::vfx::{ParamKind, ShaderParam, SiteKind, Stage, VfxDef, VfxShaderDef, VfxSite};
 
 /// The parameter the engine sets when it draws the ground an area skill is aimed at: whether the
 /// skill hurts whom it lands on.
@@ -28,15 +26,8 @@ impl Fixture for VfxFixture {
 }
 
 impl VfxFixture {
-    /// The kinds of site the engine plays the fixture on.
-    pub fn sites(self) -> &'static [SiteKind] {
-        match self {
-            VfxFixture::DamageTaken
-            | VfxFixture::Healed
-            | VfxFixture::Defeated
-            | VfxFixture::LevelUp => &[SiteKind::Actor],
-        }
-    }
+    /// The kinds of site the engine plays every fixture on: each marks a moment of an actor.
+    pub const SITES: &'static [SiteKind] = &[SiteKind::Actor];
 }
 
 /// The shaders every game provides, drawn by the engine itself: the ground an area skill is aimed
@@ -120,15 +111,4 @@ impl VfxShaderFixture {
 pub fn play(world: &mut World, fixture: VfxFixture, site: VfxSite) {
     let content = world.resource::<Content>().clone();
     super::show(world, fixture.id(&content), site);
-}
-
-pub fn play_for(world: &mut World, player: Entity, fixture: VfxFixture, site: VfxSite) {
-    let content = world.resource::<Content>().clone();
-    super::spawn_for(
-        world,
-        player,
-        fixture.id(&content),
-        site,
-        VfxParams::default(),
-    );
 }

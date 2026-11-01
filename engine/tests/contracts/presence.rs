@@ -29,6 +29,7 @@ fn a_monster_summoned_for_one_player_fights_only_that_player() {
         &mut sim.world,
         hunter,
         1,
+        Meters(1.5),
         bystander,
         Some(ClientId(1)),
         None,

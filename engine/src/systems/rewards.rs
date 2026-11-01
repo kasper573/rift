@@ -1,11 +1,11 @@
 use bevy_ecs::message::{Message, MessageCursor, Messages};
 use bevy_ecs::prelude::*;
-use bevy_time::Time;
 
 use crate::core::content::Content;
 use crate::core::math::{Pos, Rng};
-use crate::core::time::Seconds;
+use crate::core::time::{self};
 use crate::core::units::Meters;
+use crate::systems::GameSettings;
 use crate::systems::combat::Died;
 use crate::systems::item::{ItemId, Reservation, credited, scatter_drop};
 use crate::systems::movement::position;
@@ -22,7 +22,8 @@ pub struct KillCredited {
 
 pub fn grant(world: &mut World, mut deaths: Local<MessageCursor<Died>>) {
     let content = world.resource::<Content>().clone();
-    let now = Seconds(world.resource::<Time>().elapsed_secs());
+    let now = time::uptime(world);
+    let claims_last = world.resource::<GameSettings>().claims_last;
     let deaths: Vec<Died> = deaths
         .read(world.resource::<Messages<Died>>())
         .cloned()
@@ -34,7 +35,7 @@ pub fn grant(world: &mut World, mut deaths: Local<MessageCursor<Died>>) {
             };
             let reserved_by = world
                 .get::<Reservation>(died.entity)
-                .and_then(|reservation| reservation.holder(now));
+                .and_then(|reservation| reservation.holder(now, claims_last));
             let rewardee = credited(world, died.entity, now);
             if let Some(credited) = rewardee
                 && let Some(at) = position(world, died.entity)

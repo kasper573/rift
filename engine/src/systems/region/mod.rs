@@ -6,9 +6,8 @@
 use std::collections::{BTreeSet, HashSet};
 use std::thread::JoinHandle;
 
-use bevy::tasks::futures_lite::future;
-use bevy::tasks::{IoTaskPool, Task, block_on};
-use bevy_app::{App, Plugin, PreUpdate};
+pub use client::ClientRegionPlugin;
+
 use bevy_ecs::prelude::*;
 
 use crate::core::chunk::{CHUNK_SIDE, Chunk};
@@ -16,10 +15,10 @@ use crate::core::content::Content;
 use crate::core::ground::TileAt;
 use crate::core::math::Pos;
 use crate::core::units::Meters;
-use crate::systems::player::session::my_character;
 use crate::systems::sleep::Sleep;
-use crate::systems::visibility::VIEW_DISTANCE;
-use crate::systems::{WorldArea, area, npc, script, sleep};
+use crate::systems::{GameSettings, WorldArea, area, npc, script, sleep};
+
+mod client;
 
 /// How far around a player the ground is held, which tiles this world has brought to life, and
 /// the hold under way.
@@ -33,11 +32,9 @@ pub struct Region {
 }
 
 impl Region {
-    /// Held is as far as anything awake stands: the chunks awake reach past a player by as far as
-    /// a client sees and anything there reaches, rounded up to whole chunks.
     pub fn of(content: &Content) -> Region {
         Region {
-            reach: Meters(VIEW_DISTANCE.0 + sleep::acting_reach(content).0 + CHUNK_SIDE.0 * 2.0),
+            reach: held_reach(content),
             reached: HashSet::new(),
             holding: None,
             stood: Vec::new(),
@@ -135,58 +132,10 @@ fn come_to_life(world: &mut World, held: BTreeSet<TileAt>) {
     }
 }
 
-/// On a client, the ground around the player's own character is held: what the client predicts
-/// walks on, and what it checks a click against. A hold fetches and lays ground, so it runs on a
-/// task of its own, one at a time, and the frames go on meanwhile.
-pub struct ClientRegionPlugin;
-
-impl Plugin for ClientRegionPlugin {
-    fn build(&self, app: &mut App) {
-        app.init_resource::<Holding>()
-            .add_systems(PreUpdate, follow);
-    }
-}
-
-#[derive(Resource, Default)]
-struct Holding(Option<Task<()>>);
-
-fn follow(world: &mut World) {
-    let Some(content) = world.get_resource::<Content>().cloned() else {
-        return;
-    };
-    let Some((me, at)) = my_character(world).and_then(|me| {
-        let at = me.get::<crate::systems::movement::Position>()?.pos;
-        Some((me.id(), at))
-    }) else {
-        return;
-    };
-    let Some(area_id) = world.get::<area::AreaTag>(me).map(|tag| tag.area) else {
-        return;
-    };
-    let Some(area) = area::loaded(&content, area_id).cloned() else {
-        return;
-    };
-    if !world.contains_resource::<Region>() {
-        let region = Region::of(&content);
-        world.insert_resource(region);
-    }
-    let reach = world.resource::<Region>().reach;
-    let mut holding = world.resource_mut::<Holding>();
-    if let Some(task) = holding.0.as_mut() {
-        if block_on(future::poll_once(task)).is_none() {
-            return;
-        }
-        holding.0 = None;
-    }
-    let held = area.held();
-    let wanted: Vec<TileAt> = area
-        .tiles_around(at, reach)
-        .filter(|tile| !held.contains(tile))
-        .collect();
-    if wanted.is_empty() {
-        return;
-    }
-    holding.0 = Some(IoTaskPool::get().spawn(async move {
-        area.hold(wanted);
-    }));
+/// How far around a player ground is held: as far as anything awake stands, the chunks awake
+/// reaching past a player by as far as a client sees and anything there reaches, rounded up to
+/// whole chunks.
+fn held_reach(content: &Content) -> Meters {
+    let sight = content.built::<GameSettings>().sight;
+    Meters(sight.0 + sleep::acting_reach(content).0 + CHUNK_SIDE.0 * 2.0)
 }

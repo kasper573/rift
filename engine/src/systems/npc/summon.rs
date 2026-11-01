@@ -19,7 +19,6 @@ use crate::systems::script::{
 use crate::systems::stat;
 use crate::systems::visibility::Presence;
 
-const RING: Meters = Meters(1.5);
 const MAX_SPAWNED: u32 = 20;
 
 /// Hostile or friendly, until set again.
@@ -38,6 +37,9 @@ pub struct SpawnNpcs {
     pub npc: NpcId,
     #[schemars(extend("x-count" = true))]
     pub count: u32,
+    /// How far from whom they appear beside the npcs stand, in a ring around them.
+    #[schemars(extend("default" = 1.5))]
+    pub spread: Meters,
     pub near: SpawnNear,
     pub shown: ShownFor,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
@@ -123,7 +125,8 @@ impl EffectDef<RiftScripting> for SpawnNpcs {
                 format!("a count 1 to {MAX_SPAWNED}, not {}", self.count),
             ));
         }
-        let (npc, count, near, shown) = (self.npc, self.count, self.near, self.shown);
+        let (npc, count, spread, near, shown) =
+            (self.npc, self.count, self.spread, self.near, self.shown);
         Ok(Box::new(move |world, _, cx| {
             let beside = match near {
                 SpawnNear::Owner => cx.owner.or(cx.subject),
@@ -143,6 +146,7 @@ impl EffectDef<RiftScripting> for SpawnNpcs {
                 world,
                 npc,
                 count,
+                spread,
                 beside,
                 only_for,
                 cx.subject.filter(|_| shown == ShownFor::Subject),
@@ -186,6 +190,7 @@ pub fn summon(
     world: &mut World,
     npc: NpcId,
     count: u32,
+    spread: Meters,
     beside: Entity,
     only_for: Option<ClientId>,
     with: Option<Entity>,
@@ -205,7 +210,7 @@ pub fn summon(
             world,
             tag.area,
             &region.mesh(),
-            ring(region, at, index, count),
+            ring(region, at, spread, index, count),
         );
         let summon = super::spawn(world, npc, spot, tag.area, Some(pack));
         world
@@ -235,8 +240,14 @@ pub fn dismiss(world: &mut World, summons: &mut QueryState<(Entity, &'static Sum
     }
 }
 
-fn ring(region: &area::Area, at: Pos<Meters>, index: u32, count: u32) -> Pos<Meters> {
+fn ring(
+    region: &area::Area,
+    at: Pos<Meters>,
+    spread: Meters,
+    index: u32,
+    count: u32,
+) -> Pos<Meters> {
     let angle = std::f32::consts::TAU * index as f32 / count as f32;
-    let spot = at + Offset::new(angle.cos() * RING.0, angle.sin() * RING.0);
+    let spot = at + Offset::new(angle.cos() * spread.0, angle.sin() * spread.0);
     region.mesh().nearest(spot).unwrap_or(at)
 }

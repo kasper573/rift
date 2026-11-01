@@ -14,6 +14,7 @@ use crate::core::script::{
 use crate::core::tick::{Cached, Planner};
 use crate::core::time::WallClock;
 use crate::core::units::Meters;
+use crate::systems::GameSettings;
 use crate::systems::actor::{self, playing};
 use crate::systems::combat::{self, Relation};
 use crate::systems::item::Inventory;
@@ -264,15 +265,14 @@ fn apply(world: &mut World, caster: Entity, intent: ReachIntent, step: CastStep)
     }
 }
 
-/// Everyone reaching for a cast gives chase, at twice their pace.
+/// Everyone reaching for a cast gives chase, at the game's chase pace.
 pub fn chase(world: &World, entity: Entity, into: &mut dyn FnMut(stat::Stat)) {
     if reach::current(world, entity).is_some_and(|intent| intent.cast().is_some()) {
         let base = stat::base(world, entity, stat::StatKind::MovementSpeed);
-        into(stat::StatKind::MovementSpeed.of(base * (CHASE_SPEED_MULTIPLIER - 1.0)));
+        let pace = world.resource::<GameSettings>().chase_pace;
+        into(stat::StatKind::MovementSpeed.of(base * (pace - 1.0)));
     }
 }
-
-const CHASE_SPEED_MULTIPLIER: f32 = 2.0;
 
 fn perform(world: &mut World, caster: Entity, skill: SkillId, rank: Rank, target: ReachTarget) {
     let content = world.resource::<Content>().clone();

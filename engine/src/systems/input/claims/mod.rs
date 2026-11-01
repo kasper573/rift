@@ -30,7 +30,7 @@ use crate::core::units::Meters;
 use crate::systems::interface::CursorShape;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
-use crate::systems::skill::aim::AimGesture;
+use crate::systems::skill::aim::AimClaimant;
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, PartialEq, Debug)]
 pub enum ClickClaim {
@@ -51,9 +51,9 @@ pub fn claim(world: &mut World) -> ClickClaim {
 }
 
 pub fn claim_at(world: &mut World, pointed: Option<&Pointed>) -> ClickClaim {
-    GESTURES
+    CLAIMANTS
         .iter()
-        .find_map(|gesture| gesture.claim(world, pointed))
+        .find_map(|claimant| claimant.claim(world, pointed))
         .unwrap_or(ClickClaim::Nothing)
 }
 
@@ -64,28 +64,28 @@ pub enum Cursor {
     System(SystemCursorIcon),
 }
 
-/// A gesture takes a click by claiming it from where the pointer points into the world, which is
+/// A claimant takes a click by claiming it from where the pointer points into the world, which is
 /// `None` while the pointer is off the world or over the interface.
-pub trait Gesture: Send + Sync {
+pub trait Claimant: Send + Sync {
     fn claim(&self, world: &mut World, pointed: Option<&Pointed>) -> Option<ClickClaim>;
     fn drive(&self, world: &mut World, claim: Option<ClickClaim>, start: bool);
     fn cursor(&self, world: &mut World, claim: ClickClaim) -> Option<Cursor>;
-    /// The mark laid on the ground under what the gesture would take.
+    /// The mark laid on the ground under what the claimant would take.
     fn mark(&self, _world: &mut World, _claim: ClickClaim) -> Option<GroundDecal> {
         None
     }
 }
 
-// The first gesture to claim a click takes it.
-static GESTURES: &[&dyn Gesture] = &[
-    &interface::InterfaceGesture,
-    &locked::LockedGesture,
-    &AimGesture,
-    &attack::AttackGesture,
-    &pickup::PickupGesture,
-    &interact::InteractGesture,
-    &walk::WalkGesture,
-    &default::DefaultGesture,
+// The first claimant to claim a click takes it.
+static CLAIMANTS: &[&dyn Claimant] = &[
+    &interface::InterfaceClaimant,
+    &locked::LockedClaimant,
+    &AimClaimant,
+    &attack::AttackClaimant,
+    &pickup::PickupClaimant,
+    &interact::InteractClaimant,
+    &walk::WalkClaimant,
+    &default::DefaultClaimant,
 ];
 
 pub fn plugin(app: &mut App) {
@@ -119,7 +119,7 @@ struct LockSeen(bool);
 struct GestureIndex(usize);
 
 #[derive(Resource, Default)]
-/// The cursor the area's gestures chose for this frame, `None` where no gesture runs.
+/// The cursor the area's claimants chose for this frame, `None` where no claimant runs.
 struct ChosenCursor(Option<Cursor>);
 
 /// The system draws its cursor as the pointer moves, but a frame reaches the screen a few frames
@@ -148,9 +148,9 @@ fn update(world: &mut World) {
     forget_clicks_across_lock(world);
 
     let pointed = render::pointed(world);
-    let claims: Vec<Option<ClickClaim>> = GESTURES
+    let claims: Vec<Option<ClickClaim>> = CLAIMANTS
         .iter()
-        .map(|gesture| gesture.claim(world, pointed.as_ref()))
+        .map(|claimant| claimant.claim(world, pointed.as_ref()))
         .collect();
     let mut active = world.resource::<Latched>().0;
     let pressed = map::pressed(world, InputAction::Interact);
@@ -162,22 +162,22 @@ fn update(world: &mut World) {
         active = None;
     }
     if let Some(GestureIndex(index)) = active {
-        GESTURES[index].drive(world, claims[index], just);
+        CLAIMANTS[index].drive(world, claims[index], just);
     }
     world.resource_mut::<Latched>().0 = active.filter(|_| pressed);
 
     let mut cursor = None;
     let mut mark = None;
     let mut first_claimant = true;
-    for (gesture, claim) in GESTURES.iter().zip(&claims) {
+    for (claimant, claim) in CLAIMANTS.iter().zip(&claims) {
         let Some(claim) = *claim else {
             continue;
         };
         if first_claimant {
-            mark = gesture.mark(world, claim);
+            mark = claimant.mark(world, claim);
             first_claimant = false;
         }
-        cursor = gesture.cursor(world, claim);
+        cursor = claimant.cursor(world, claim);
         if cursor.is_some() {
             break;
         }

@@ -32,7 +32,7 @@ use engine::systems::quest::{
 };
 use engine::systems::script::condition as script_condition;
 use engine::systems::script::{Place, RiftScripts};
-use engine::systems::skill::{HOTBAR_SLOTS, HotbarEntry, HotbarSlot, Rank, SkillDef};
+use engine::systems::skill::{HotbarEntry, HotbarSlot, Rank, SkillDef};
 use engine::systems::stat::StatKind;
 use serde::Deserialize;
 use strum::{AsRefStr, VariantArray};
@@ -684,6 +684,10 @@ fn hotbar(ui: &mut Ui, cx: &mut FormCx, character: &mut CharacterSnapshot) -> Fo
         });
         ui.label(theme::faint("empty, a worn weapon that grants one fills it").size(12.0));
         sheet::section(ui, "slots");
+        let last_slot = cx
+            .project
+            .settings()
+            .map_or(u32::MAX, |settings| settings.slots.hotbar.saturating_sub(1));
         for (index, entry) in character.hotbar.iter_mut().enumerate() {
             let path = format!("{}/{index}", field!(CharacterSnapshot, hotbar));
             ui.horizontal(|ui| {
@@ -692,7 +696,7 @@ fn hotbar(ui: &mut Ui, cx: &mut FormCx, character: &mut CharacterSnapshot) -> Fo
                 }
                 let mut draft = entry.slot.0;
                 let typed = NumberField::new(&mut draft)
-                    .range(0..=HOTBAR_SLOTS - 1)
+                    .range(0..=last_slot)
                     .unit("slot")
                     .width(SLOT_WIDTH)
                     .show(ui);

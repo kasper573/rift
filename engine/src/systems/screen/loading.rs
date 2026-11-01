@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
 use bevy::prelude::*;
-use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
+use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy_egui::EguiPrimaryContextPass;
 use ui::ink;
 
@@ -15,7 +15,7 @@ use crate::core::math::Rng;
 use crate::core::net::auth::Credentials;
 use crate::core::os::{FetchFailure, Http, Profile, StartParams};
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
-use crate::core::time::Seconds;
+use crate::core::time::{self, Seconds};
 use crate::systems::{install_content, load_content};
 use futures_util::future::BoxFuture;
 use ui::words;
@@ -141,8 +141,8 @@ fn start(world: &mut World, retry: Retry) {
 }
 
 fn poll(world: &mut World) {
-    let now = Seconds(world.resource::<Time>().elapsed_secs());
-    let Some(mut syncing) = world.remove_resource::<Syncing>() else {
+    let now = time::uptime(world);
+    if !world.contains_resource::<Syncing>() {
         let due = world
             .get_resource::<LoadingFailure>()
             .is_some_and(|failure| failure.retry.is_due(now));
@@ -150,10 +150,14 @@ fn poll(world: &mut World) {
             start(world, failure.retry);
         }
         return;
+    }
+    let Some((syncing, outcome)) =
+        super::finished::<Syncing, _>(world, |syncing| &mut syncing.task)
+    else {
+        return;
     };
-    match block_on(future::poll_once(&mut syncing.task)) {
-        None => world.insert_resource(syncing),
-        Some(Ok(brought)) => {
+    match outcome {
+        Ok(brought) => {
             world.resource_mut::<Shown>().progress = syncing.status.latest();
             if let Some(Brought { synced, content }) = brought {
                 install_content(world, synced, content);
@@ -165,19 +169,16 @@ fn poll(world: &mut World) {
             };
             world.resource_mut::<NextState<ClientScreen>>().set(next);
         }
-        Some(Err(SyncError::OtherBuild { server })) => {
+        Err(SyncError::OtherBuild { server }) => {
             world.resource_mut::<Shown>().progress = syncing.status.latest();
             world.insert_resource(LoadingFailure {
                 reason: format!(
                     "The server runs build {server}. Start a desktop client of that build to play."
                 ),
-                retry: Retry {
-                    due: None,
-                    ..syncing.retry
-                },
+                retry: syncing.retry.held(),
             });
         }
-        Some(Err(SyncError::Failed(reason))) => {
+        Err(SyncError::Failed(reason)) => {
             world.resource_mut::<Shown>().progress = syncing.status.latest();
             fail(world, reason, now, syncing.retry);
         }
@@ -196,7 +197,7 @@ fn show(world: &mut World) {
     }
     let failure = world.get_resource::<LoadingFailure>().cloned();
     let veiled = world.resource::<ActiveTransition>().phase() != ScreenTransitionPhase::Idle;
-    let now = Seconds(world.resource::<Time>().elapsed_secs());
+    let now = time::uptime(world);
     let signed_in = world.contains_resource::<Credentials>();
     let model = {
         let shown = world.resource::<Shown>();
@@ -314,7 +315,7 @@ fn card_model(
         lines = vec!["Download failed".to_owned(), failure.reason.clone()];
         retry_in = failure
             .retry
-            .due
+            .due()
             .map(|at| format!("Retrying in {}", (at - now).in_words()));
     }
     CardModel {

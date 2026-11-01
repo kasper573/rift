@@ -262,6 +262,7 @@ fn market() -> Sim {
             json!({
                 "title": "Wares",
                 "mark": "merchant.attention.json",
+                "buys_back": 12,
                 "modules": [
                     {
                         "type": "sells",
@@ -293,6 +294,7 @@ fn market() -> Sim {
             json!({
                 "title": "Exchange",
                 "mark": "collector.attention.json",
+                "buys_back": 12,
                 "modules": [
                     {
                         "type": "sells",
@@ -310,6 +312,7 @@ fn market() -> Sim {
             json!({
                 "title": "Honesty box",
                 "mark": "merchant.attention.json",
+                "buys_back": 12,
                 "modules": [{
                     "type": "sells",
                     "item": "steak.item.json",

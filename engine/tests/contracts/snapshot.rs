@@ -102,7 +102,8 @@ fn a_character_joined_from_a_row_is_that_character() {
     assert!(!memory::set_within(world, player, taunted, Seconds(5.0)));
     assert!(dialogue::heard(world, player, "npc/crier", "news"));
     let mut ledger = ShopLedger::default();
-    ledger.record_sale(id::<ShopDef>(&content, "wares"), sale(&content));
+    let wares = id::<ShopDef>(&content, "wares");
+    ledger.record_sale(wares, sale(&content), wares.get(&content).buys_back);
     assert_eq!(world.get::<ShopLedger>(player), Some(&ledger));
     let history = world.get::<History>(player).expect("history");
     let records: Vec<_> = history.records().collect();

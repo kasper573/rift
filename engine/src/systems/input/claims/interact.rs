@@ -2,14 +2,14 @@ use bevy::prelude::*;
 
 use crate::core::render::Pointed;
 use crate::core::render::world::decal::GroundDecal;
-use crate::systems::input::gestures::{ClickClaim, Cursor, Gesture};
+use crate::systems::input::claims::{Claimant, ClickClaim, Cursor};
 use crate::systems::input::marks;
 use crate::systems::interact::{self, InteractRequest};
 use crate::systems::player::session;
 
-pub struct InteractGesture;
+pub struct InteractClaimant;
 
-impl Gesture for InteractGesture {
+impl Claimant for InteractClaimant {
     fn claim(&self, world: &mut World, pointed: Option<&Pointed>) -> Option<ClickClaim> {
         if !session::is_alive(world) {
             return None;

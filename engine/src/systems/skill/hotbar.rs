@@ -1,10 +1,9 @@
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use super::{
-    BasicAttack, HOTBAR_SLOTS, Hotbar, HotbarEntry, HotbarSlot, ItemId, Learned, SkillId, SkillKind,
-};
+use super::{BasicAttack, Hotbar, HotbarEntry, HotbarSlot, ItemId, Learned, SkillId, SkillKind};
 use crate::core::content::Content;
+use crate::systems::GameSettings;
 use crate::systems::equipment::{self, Equipment};
 use crate::systems::history::HistoryTopic;
 use crate::systems::item::Inventory;
@@ -48,7 +47,7 @@ pub fn assign(
     entry: HotbarEntry,
 ) -> Result<(), String> {
     let content = world.resource::<Content>().clone();
-    if slot.0 >= HOTBAR_SLOTS {
+    if slot.0 >= content.built::<GameSettings>().slots.hotbar {
         return Err("No such slot".to_owned());
     }
     match entry {
@@ -153,6 +152,7 @@ pub fn settle_basic_attack(
         notification::notify(
             world,
             player,
+            None,
             Notification::feed(
                 HistoryTopic::Notification,
                 format!("{} is your basic attack", def.name),

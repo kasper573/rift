@@ -805,7 +805,7 @@ fn press_mark(ui: &Ui, world: &World, slot: HotbarSlot, rect: Rect) {
     let Some(press) = world.resource::<BarState>().presses.get(&slot) else {
         return;
     };
-    if (uptime(world) - press.since).0 >= PRESS_MARK_SECONDS {
+    if (time::uptime(world) - press.since).0 >= PRESS_MARK_SECONDS {
         return;
     }
     let color = match press.outcome {
@@ -843,13 +843,9 @@ const CREAM_HALO: Halo = Halo {
     width: 1.0,
 };
 
-fn uptime(world: &World) -> Seconds {
-    Seconds(world.resource::<Time>().elapsed_secs())
-}
-
 fn press(world: &mut World, slot: HotbarSlot, entry: HotbarEntry) {
     let outcome = fire(world, entry);
-    let since = uptime(world);
+    let since = time::uptime(world);
     let arms = aim::aiming(world).is_some_and(|aimed| entry == HotbarEntry::Skill(aimed.skill));
     let mut state = world.resource_mut::<BarState>();
     state.presses.insert(slot, Press { outcome, since });

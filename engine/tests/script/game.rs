@@ -236,6 +236,7 @@ pub fn game() -> Game {
             json!({
                 "title": "Honesty box",
                 "mark": "merchant.attention.json",
+                "buys_back": 12,
                 "modules": [{
                     "type": "sells",
                     "item": "pass.item.json",

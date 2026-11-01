@@ -6,7 +6,7 @@ use engine::systems::area::AreaDef;
 use engine::systems::movement::{self, Position, position};
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::player::ClientId;
-use engine::systems::visibility::{ClientSight, VIEW_DISTANCE};
+use engine::systems::visibility::{self, ClientSight};
 use serde_json::json;
 use testkit::{Game, Map, Sim};
 
@@ -15,10 +15,19 @@ fn a_player_is_shown_what_stands_in_sight_and_is_there_for_them() {
     let mut sim = field();
     let hero = sim.join(1);
     let other = sim.join(2);
-    let near = spawn(&mut sim, hero, Offset::new(VIEW_DISTANCE.0 - 4.0, 0.0));
-    let far = spawn(&mut sim, hero, Offset::new(VIEW_DISTANCE.0 + 40.0, 0.0));
+    let sight = visibility::sight(&sim.world);
+    let near = spawn(&mut sim, hero, Offset::new(sight.0 - 4.0, 0.0));
+    let far = spawn(&mut sim, hero, Offset::new(sight.0 + 40.0, 0.0));
     let crow = sim.id::<NpcDef>("crow");
-    let theirs = npc::summon(&mut sim.world, crow, 1, hero, Some(ClientId(2)), None)[0];
+    let theirs = npc::summon(
+        &mut sim.world,
+        crow,
+        1,
+        Meters(1.5),
+        hero,
+        Some(ClientId(2)),
+        None,
+    )[0];
     sim.tick();
 
     let (shown, owned) = shown_to(&mut sim, 1);

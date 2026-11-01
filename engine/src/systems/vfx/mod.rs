@@ -58,7 +58,7 @@ pub fn check_sites(loading: &mut Loading) {
     for fixture in VfxFixture::VARIANTS {
         if let Some(vfx) = content.by_path::<VfxDef>(&fixture.path()) {
             let by = format!("the engine, as the {} fixture", fixture.name());
-            played.push((vfx, fixture.sites(), by));
+            played.push((vfx, VfxFixture::SITES, by));
         }
     }
     for (id, status) in loading.rows::<StatusEffectDef>(&content) {
@@ -153,7 +153,7 @@ fn reached(
 }
 
 /// Plays a vfx on one player's screen or interface, shown to that player alone.
-pub fn spawn_for(
+fn spawn_for(
     world: &mut World,
     player: Entity,
     vfx: VfxId,

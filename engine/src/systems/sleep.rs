@@ -9,12 +9,12 @@ use bevy_platform::collections::HashSet;
 use crate::core::chunk::{Chunk, ChunkIndex, InChunk};
 use crate::core::content::Content;
 use crate::core::units::Meters;
+use crate::systems::GameSettings;
 use crate::systems::movement::Position;
 use crate::systems::player::PlayedBy;
 use crate::systems::script::RiftScripts;
 use crate::systems::script::event::RiftEvent;
 use crate::systems::skill::SkillDef;
-use crate::systems::visibility::VIEW_DISTANCE;
 
 /// The chunks awake, and how far from a player's chunk they reach.
 #[derive(Resource)]
@@ -35,7 +35,7 @@ impl Sleep {
     /// what it sees: a skill landing, a script listening.
     pub fn of(content: &Content) -> Sleep {
         Sleep {
-            reach: Meters(VIEW_DISTANCE.0 + acting_reach(content).0),
+            reach: Meters(content.built::<GameSettings>().sight.0 + acting_reach(content).0),
             stood: Vec::new(),
             awake: HashSet::default(),
         }
@@ -99,7 +99,7 @@ pub fn settle(world: &mut World, players: &mut PlayerPositions, filed: &mut File
 /// event listens. What stands that far past a player's sight must be awake for what the player
 /// sees to act as it would.
 pub fn acting_reach(content: &Content) -> Meters {
-    let mut reach = VIEW_DISTANCE;
+    let mut reach = content.built::<GameSettings>().sight;
     for (_, skill) in content.table::<SkillDef>().iter() {
         let lands = skill.range.map_or(0.0, |range| range.0)
             + skill.area.as_ref().map_or(0.0, |area| area.reach().0);

@@ -109,8 +109,9 @@ pub struct SpawnGroundItems {
     pub at: Option<Spot>,
     #[serde(rename = "for")]
     pub for_whom: GroundItemsFor,
+    /// Without one, as long as the game's drops last.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(extend("default" = 60.0))]
+    #[schemars(extend("x-value" = "number"))]
     pub seconds: Option<Condition>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,

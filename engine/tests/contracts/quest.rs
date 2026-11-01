@@ -2,8 +2,7 @@ use bevy_ecs::prelude::*;
 use engine::systems::dialogue::{self, ConversationPanel, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::item::{
-    self, DropItemRequest, DroppedItem, INVENTORY_MAX, Inventory, ItemDef, ItemStack,
-    UseItemRequest,
+    self, DropItemRequest, DroppedItem, Inventory, ItemDef, ItemStack, UseItemRequest,
 };
 use engine::systems::memory::{self, MemoryDef};
 use engine::systems::player::Xp;
@@ -838,13 +837,9 @@ fn slay(sim: &mut Sim, player: Entity, key: &str) {
 }
 
 fn fill_bag(sim: &mut Sim, player: Entity) {
-    let used = sim
-        .world
-        .get::<Inventory>(player)
-        .expect("a bag")
-        .slots
-        .len();
-    for _ in used..INVENTORY_MAX as usize {
+    let used = sim.world.get::<Inventory>(player).expect("a bag");
+    let (used, max) = (used.slots.len(), used.max as usize);
+    for _ in used..max {
         sim.give(player, "pebble", 1);
     }
 }

@@ -18,7 +18,7 @@ use engine::systems::launch::{
     ServerReady,
 };
 use engine::systems::player::SpawnPolicy;
-use engine::systems::probe::ProbeSnapshot;
+use engine::systems::probe::{ProbeQuestion, ProbeSnapshot};
 use engine::systems::{GameSettings, load_content};
 use image::imageops::FilterType;
 use image::{RgbImage, RgbaImage};
@@ -185,7 +185,8 @@ impl Probe {
         }
     }
 
-    fn ask(&mut self, question: &serde_json::Value) -> String {
+    fn ask(&mut self, question: &ProbeQuestion) -> String {
+        let question = serde_json::to_string(question).expect("a question serializes");
         writeln!(self.questions, "{question}").expect("the probe takes a question");
         let mut answer = String::new();
         self.answers
@@ -196,7 +197,7 @@ impl Probe {
     }
 
     fn snapshot(&mut self, content: &Content) -> ProbeSnapshot {
-        let answer = self.ask(&serde_json::json!({ "ask": "snapshot" }));
+        let answer = self.ask(&ProbeQuestion::Snapshot);
         let (snapshot, _) = with_content(ContentScope::of(content), || {
             serde_json::from_str(&answer).expect("a snapshot")
         });
@@ -224,7 +225,7 @@ impl Probe {
     /// The window as it shows now.
     fn look(&mut self, pictures: &Path) -> RgbaImage {
         let path = pictures.join("look.png");
-        let answer = self.ask(&serde_json::json!({ "ask": "picture", "path": path }));
+        let answer = self.ask(&ProbeQuestion::Picture { path: path.clone() });
         assert_eq!(answer.trim(), "true", "the client pictured its window");
         image::open(&path).expect("a picture").to_rgba8()
     }

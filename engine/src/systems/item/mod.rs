@@ -12,7 +12,6 @@ use bevy_ecs::message::Message;
 use bevy_ecs::query::{QueryState, With};
 use bevy_ecs::world::World;
 use bevy_replication::Replicated;
-use bevy_time::Time;
 use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 use strum::{EnumDiscriminants, IntoStaticStr, VariantArray};
@@ -25,8 +24,9 @@ use crate::core::content::{
     RowCheck, serial,
 };
 use crate::core::math::{Offset, Pos};
-use crate::core::time::Seconds;
+use crate::core::time::{self, Seconds};
 use crate::core::units::{MeterPos, Meters};
+use crate::systems::GameSettings;
 use crate::systems::actor::part::ModelPartId;
 use crate::systems::actor::skeleton::{Colours, EquipmentSlot, LocalOffset, LocalTurn, SkeletonId};
 use crate::systems::actor::stance::StanceId;
@@ -42,13 +42,8 @@ use crate::systems::script::{
 use crate::systems::skill::SkillId;
 use crate::systems::visibility::{self, Presence, seen_by};
 
-pub const INVENTORY_MAX: u32 = 25;
-const RESERVATION_TTL: Seconds = Seconds(60.0);
-const DROP_TTL: Seconds = Seconds(120.0);
-const DROP_RADIUS: Meters = Meters(1.0);
 /// How far from a dropped item a click still picks it up.
 const PICK_REACH: Meters = Meters(0.5);
-const PICKUP_RANGE: Meters = Meters(1.0);
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -160,10 +155,11 @@ impl ExchangeRefusal {
 }
 
 impl Inventory {
+    /// The bag of one who carries none: it holds nothing.
     pub fn empty() -> Inventory {
         Inventory {
             slots: Vec::new(),
-            max: INVENTORY_MAX,
+            max: 0,
         }
     }
 
@@ -282,12 +278,9 @@ pub struct Reservation {
 }
 
 impl Reservation {
-    pub fn expired(&self, now: Seconds) -> bool {
-        now - self.at >= RESERVATION_TTL
-    }
-
-    pub fn holder(&self, now: Seconds) -> Option<ClientId> {
-        self.by.filter(|_| !self.expired(now))
+    /// Who holds the claim at `now`, a claim lasting `lasts`.
+    pub fn holder(&self, now: Seconds, lasts: Seconds) -> Option<ClientId> {
+        self.by.filter(|_| now - self.at < lasts)
     }
 
     pub fn allows(&self, account: Option<ClientId>) -> bool {
@@ -810,7 +803,8 @@ pub fn pickable_at(world: &mut World, point: Pos<Meters>) -> Option<Entity> {
 
 pub fn pickups(world: &mut World, intents: &mut reach::Intents) {
     for (player, target) in reach::intending(world, intents, ReachAct::Pickup) {
-        match reach::pursue(world, player, PICKUP_RANGE) {
+        let reach = world.resource::<GameSettings>().drops.pickup_reach;
+        match reach::pursue(world, player, reach) {
             Pursuit::Approaching => {}
             Pursuit::Lost => reach::forget(world, player),
             Pursuit::Arrived => {
@@ -824,13 +818,12 @@ pub fn pickups(world: &mut World, intents: &mut reach::Intents) {
 type OwnedDrops = QueryState<(Entity, &'static Reservation), With<DroppedItem>>;
 
 pub fn expire_drops(world: &mut World, drops: &mut OwnedDrops) {
-    let now = Seconds(world.resource::<Time>().elapsed_secs());
+    let now = time::uptime(world);
+    let last = world.resource::<GameSettings>().drops.last;
     let stale: Vec<Entity> = drops
         .iter(world)
         .filter(|(entity, reservation)| {
-            let ttl = world
-                .get::<DropLife>(*entity)
-                .map_or(DROP_TTL, |life| life.0);
+            let ttl = world.get::<DropLife>(*entity).map_or(last, |life| life.0);
             now - reservation.at >= ttl
         })
         .map(|(entity, _)| entity)
@@ -847,9 +840,11 @@ pub fn reserve(world: &mut World, npc: Entity, attacker: Entity, now: Seconds) {
     if world.get::<Npc>(npc).is_none() {
         return;
     }
-    let claim = world
-        .get::<Reservation>(npc)
-        .is_none_or(|reservation| reservation.holder(now).is_none_or(|by| by == account));
+    let claim = world.get::<Reservation>(npc).is_none_or(|reservation| {
+        reservation
+            .holder(now, world.resource::<GameSettings>().claims_last)
+            .is_none_or(|by| by == account)
+    });
     if claim {
         world.entity_mut(npc).insert(Reservation {
             by: Some(account),
@@ -860,7 +855,8 @@ pub fn reserve(world: &mut World, npc: Entity, attacker: Entity, now: Seconds) {
 
 /// The character credited with the victim's fall: the one that held it.
 pub fn credited(world: &World, victim: Entity, now: Seconds) -> Option<Entity> {
-    let client = world.get::<Reservation>(victim)?.holder(now)?;
+    let lasts = world.resource::<GameSettings>().claims_last;
+    let client = world.get::<Reservation>(victim)?.holder(now, lasts)?;
     world.resource::<Players>().0.get(&client).copied()
 }
 
@@ -894,11 +890,12 @@ pub fn scatter_at(
     }
     let content = world.resource::<Content>().clone();
     let area = area::load(&content, area_id);
-    let now = Seconds(world.resource::<Time>().elapsed_secs());
+    let scatter = content.built::<GameSettings>().drops.scatter;
+    let now = time::uptime(world);
     let count = drops.len();
     let mut items = Vec::with_capacity(count);
     for (index, &(item, stack)) in drops.iter().enumerate() {
-        let pos = scatter_pos(from, index, count, area);
+        let pos = scatter_pos(from, scatter, index, count, area);
         let entity = world
             .spawn((
                 Replicated,
@@ -962,11 +959,17 @@ fn collect(world: &mut World, player: Entity, item: Entity) {
     }
 }
 
-fn scatter_pos(from: Pos<Meters>, index: usize, count: usize, area: &area::Area) -> Pos<Meters> {
+fn scatter_pos(
+    from: Pos<Meters>,
+    scatter: Meters,
+    index: usize,
+    count: usize,
+    area: &area::Area,
+) -> Pos<Meters> {
     if count == 1 {
         return area.mesh().nearest(from).unwrap_or(from);
     }
     let angle = std::f32::consts::TAU * index as f32 / count as f32;
-    let spread = from + Offset::new(angle.cos() * DROP_RADIUS.0, angle.sin() * DROP_RADIUS.0);
+    let spread = from + Offset::new(angle.cos() * scatter.0, angle.sin() * scatter.0);
     area.mesh().nearest(spread).unwrap_or(from)
 }

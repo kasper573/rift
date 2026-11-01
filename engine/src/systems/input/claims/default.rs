@@ -1,15 +1,14 @@
 use bevy::prelude::*;
 
 use crate::core::render::Pointed;
-use crate::systems::input::gestures::{ClickClaim, Cursor, Gesture};
+use crate::systems::input::claims::{Claimant, ClickClaim, Cursor};
 use crate::systems::interface::CursorShape;
-use crate::systems::player::session;
 
-pub struct LockedGesture;
+pub struct DefaultClaimant;
 
-impl Gesture for LockedGesture {
-    fn claim(&self, world: &mut World, _pointed: Option<&Pointed>) -> Option<ClickClaim> {
-        session::is_locked(world).then_some(ClickClaim::Locked)
+impl Claimant for DefaultClaimant {
+    fn claim(&self, _world: &mut World, _pointed: Option<&Pointed>) -> Option<ClickClaim> {
+        Some(ClickClaim::Nothing)
     }
 
     fn drive(&self, _world: &mut World, _claim: Option<ClickClaim>, _start: bool) {}

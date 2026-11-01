@@ -1,6 +1,6 @@
 pub mod camera;
+pub mod claims;
 mod escape;
-pub mod gestures;
 pub mod map;
 pub mod marks;
 
@@ -19,7 +19,7 @@ pub struct PlayerInputPlugin;
 impl Plugin for PlayerInputPlugin {
     fn build(&self, app: &mut App) {
         map::plugin(app);
-        gestures::plugin(app);
+        claims::plugin(app);
         marks::plugin(app);
         camera::plugin(app);
         escape::plugin(app);

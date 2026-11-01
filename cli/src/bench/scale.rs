@@ -154,8 +154,8 @@ fn served_in(
 fn step(bench: &mut Bench, cores: Cores) {
     let clock = bench.play();
     match cores {
-        Cores::One => bench.tick_on(one_core(), clock),
-        Cores::Every => bench.tick(clock),
+        Cores::One => bench.tick(Some(one_core()), clock),
+        Cores::Every => bench.tick(None, clock),
     }
     bench.send_out();
 }

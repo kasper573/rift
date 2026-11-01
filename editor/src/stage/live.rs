@@ -17,6 +17,7 @@ use engine::systems::actor::plate::{self, PlateLabel};
 use engine::systems::actor::{Action, Actor, Appearance, ModelId};
 use engine::systems::area::{self, AreaId, AreaModule};
 use engine::systems::class::ClassDef;
+use engine::systems::combat::Attitude;
 use engine::systems::item::{ItemDef, ItemId, ItemKind, ItemStack};
 use engine::systems::launch::ServerDaylight;
 use engine::systems::movement::Position;
@@ -439,6 +440,7 @@ fn spawn_sturdy(
         held: Vec::new(),
         modules: Vec::new(),
         leash: Meters(0.0),
+        attitude: Attitude::Friendly,
     };
     npc::spawn_actor(world, &def, at, area)
 }

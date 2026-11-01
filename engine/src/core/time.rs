@@ -364,3 +364,8 @@ pub fn server_now(world: &World) -> Option<UnixMillis> {
     let uptime = Seconds(world.get_resource::<Time>()?.elapsed_secs());
     world.get_resource::<ServerClock>()?.now(uptime)
 }
+
+/// How long the world has run, by its own clock.
+pub fn uptime(world: &World) -> Seconds {
+    Seconds(world.resource::<Time>().elapsed_secs())
+}

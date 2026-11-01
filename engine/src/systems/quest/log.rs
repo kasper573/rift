@@ -11,12 +11,10 @@ use super::card::{
     Countdown, QuestCardLook, Standing, caption, inspectable, objective_row, picks, reward_chips,
     time_left,
 };
-use super::{
-    ActiveQuest, FinishedQuest, Parties, QUEST_LOG_CAP, QuestId, QuestLog, QuestRequest,
-    QuestResult,
-};
+use super::{ActiveQuest, FinishedQuest, Parties, QuestId, QuestLog, QuestRequest, QuestResult};
 use crate::core::content::Content;
 use crate::core::time::UnixMillis;
+use crate::systems::GameSettings;
 use crate::systems::dialogue::ChoiceReveal;
 use crate::systems::hud::{self, Confirm, HudWindow};
 use crate::systems::input::map::{self, InputAction};
@@ -210,7 +208,11 @@ fn list(ui: &mut Ui, world: &mut World, page: &Page, listed: &[QuestId], shown: 
     let (title, count) = match page.tab {
         LogTab::Active => (
             "Active quests",
-            format!("{} of {QUEST_LOG_CAP} quests", page.log.active.len()),
+            format!(
+                "{} of {} quests",
+                page.log.active.len(),
+                content.built::<GameSettings>().slots.quest_log
+            ),
         ),
         LogTab::Completed => (
             "Completed",

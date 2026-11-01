@@ -18,7 +18,7 @@ use crate::systems::player::{self, ClientId, Players};
 use crate::systems::script::event::OBJECT_OR_NPC;
 use crate::systems::script::{Condition, EffectCall, Reach, RiftScripting, RunnerKind};
 use crate::systems::text::{self, LineText, Span};
-use crate::systems::visibility::{self, VIEW_DISTANCE};
+use crate::systems::visibility;
 
 pub fn register(app: &mut App) {
     bevy_terminal::register(app, &[], |world, conn, line| {
@@ -66,8 +66,9 @@ pub fn rebroadcast(world: &mut World) {
 pub struct Say {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub text: Vec<Span>,
+    /// Without one, as far as the speaker is seen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(extend("default" = 8.0))]
+    #[schemars(extend("x-value" = "number"))]
     pub within: Option<Condition>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
@@ -96,7 +97,7 @@ impl EffectDef<RiftScripting> for Say {
                 return EffectStep::Done;
             };
             let spoken: Vec<_> = values.iter().map(|value| value(world, cx)).collect();
-            let within = within.as_ref().map_or(VIEW_DISTANCE, |within| {
+            let within = within.as_ref().map_or(visibility::sight(world), |within| {
                 Meters(within(world, cx).as_num() as f32)
             });
             say(world, speaker, LineText::spoken(&spans, &spoken), within);
@@ -142,7 +143,7 @@ pub fn say(world: &mut World, speaker: Entity, text: LineText, within: Meters) {
         .filter(|player| visibility::present(world, speaker, *player))
         .collect();
     for player in listeners {
-        notification::notify_from(
+        notification::notify(
             world,
             player,
             Some(speaker),

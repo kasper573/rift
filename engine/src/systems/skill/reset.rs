@@ -132,6 +132,7 @@ pub fn reset(world: &mut World, player: Entity) {
     notification::notify(
         world,
         player,
+        None,
         Notification::feed(
             HistoryTopic::Notification,
             "Skills reset, skill points returned",

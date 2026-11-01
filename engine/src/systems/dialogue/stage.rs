@@ -28,7 +28,7 @@ use crate::core::babble::{BabbleRank, Babbler, Babbling};
 use crate::core::content::Content;
 use crate::core::gui::{self, Band, Tier};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece, Typewriter};
-use crate::core::time::Seconds;
+use crate::core::time::{self};
 use crate::core::units::MeterPos;
 use crate::systems::actor::Name;
 use crate::systems::actor::render::Said;
@@ -417,7 +417,7 @@ fn show_line(world: &mut World) {
         .as_ref()
         .and_then(|shown| shown.with);
     if let Some(by) = body_of(world, line.by, with) {
-        let since = Seconds(world.resource::<Time>().elapsed_secs());
+        let since = time::uptime(world);
         world.entity_mut(typing).insert(Said {
             by,
             gesture: line

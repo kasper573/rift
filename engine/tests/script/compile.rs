@@ -304,7 +304,7 @@ fn every_capability() -> Vec<Value> {
         json!({ "type": "reset_skills" }),
         json!({ "type": "vfx", "vfx": "fixtures/vfx/damage_taken.vfx.json" }),
         json!({ "type": "set_attitude", "attitude": "hostile" }),
-        json!({ "type": "spawn_npcs", "npc": "fighter.npc.json", "count": 1, "near": "subject", "shown": "everyone" }),
+        json!({ "type": "spawn_npcs", "npc": "fighter.npc.json", "count": 1, "spread": 1.5, "near": "subject", "shown": "everyone" }),
         json!({ "type": "despawn" }),
         json!({ "type": "play_sound", "sfx": "fixtures/interface/ui_pick.sfx", "for": "subject" }),
     ]

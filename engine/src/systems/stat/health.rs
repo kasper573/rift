@@ -10,11 +10,10 @@ use crate::systems::notification;
 use crate::systems::status::boost::Boosts;
 use crate::systems::vfx::{VfxFixture, VfxShaderFixture, fixture};
 
-/// Worn down by damage like anyone, but always left standing.
+/// Worn down by damage like anyone, but always left standing: a blow that would fell it leaves its
+/// health as it was.
 #[derive(Component, Clone, Copy, Debug)]
 pub struct Immortal;
-
-const IMMORTAL_FLOOR: f32 = 1.0;
 
 pub fn current_health(world: &World, entity: Entity) -> f32 {
     base(world, entity, StatKind::Health)
@@ -50,12 +49,11 @@ pub fn apply_damage(world: &mut World, entity: Entity, amount: f32) {
     if is_dead(world, entity) {
         return;
     }
-    let floor = if world.get::<Immortal>(entity).is_some() {
-        IMMORTAL_FLOOR
-    } else {
-        0.0
-    };
-    set_health(world, entity, |health, _| (health - amount).max(floor));
+    let immortal = world.get::<Immortal>(entity).is_some();
+    set_health(world, entity, |health, _| match health - amount {
+        left if left <= 0.0 && immortal => health,
+        left => left.max(0.0),
+    });
     if amount > 0.0 {
         let blows = world.get::<Hurt>(entity).map_or(0, |hurt| hurt.0);
         world.entity_mut(entity).insert(Hurt(blows + 1));

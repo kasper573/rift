@@ -6,10 +6,9 @@ use ui::dusk;
 use ui::egui::emath::TSTransform;
 use ui::egui::{Rect, Vec2};
 
-use super::rows::{self, Clock, Fades, Move, Presence, Swell};
-use super::{Notification, NotificationSent, window_visible};
+use super::rows::{self, Clock, Fades, Move, NoticePlace, Presence, Swell};
+use super::{Notification, NotificationSent};
 use crate::core::text;
-use crate::systems::screen::ClientScreen;
 
 const WIDEST: f32 = 356.0;
 const SIZE: f32 = 16.0;
@@ -19,13 +18,13 @@ const PRESENCE: Presence = Presence {
 };
 
 pub fn toast(world: &mut World, notification_sent: NotificationSent) {
-    let notification = notification_sent.notification;
+    let (notification, stays) = (notification_sent.notification, notification_sent.stays);
     let mut errors = world.resource_mut::<Errors>();
     let clock = errors.clock;
     if let Some(shown) = &mut errors.shown
         && shown.notification == notification
     {
-        shown.until = clock.ends_after(notification.stays());
+        shown.until = clock.ends_after(stays);
         errors.swell.bump();
         return;
     }
@@ -33,7 +32,7 @@ pub fn toast(world: &mut World, notification_sent: NotificationSent) {
     let key = errors.keys;
     errors.shown = Some(ErrorToast {
         key,
-        until: clock.ends_after(notification.stays()),
+        until: clock.ends_after(stays),
         notification,
     });
 }
@@ -47,13 +46,7 @@ pub fn shown(world: &World) -> Option<String> {
 }
 
 pub(super) fn plugin(app: &mut App) {
-    app.init_resource::<Errors>()
-        .add_systems(
-            Update,
-            age.run_if(in_state(ClientScreen::Area))
-                .run_if(window_visible),
-        )
-        .add_systems(OnExit(ClientScreen::Area), rows::forget::<Errors>);
+    rows::place::<Errors>(app);
 }
 
 pub(super) fn draw(world: &mut World, gui: &egui::Context, top: f32) -> f32 {
@@ -120,20 +113,20 @@ struct ErrorToast {
     until: Duration,
 }
 
-fn age(world: &mut World) {
-    let held = rows::hovered(world, &world.resource::<Errors>().drawn);
-    let delta = world.resource::<Time>().delta();
-    let mut errors = world.resource_mut::<Errors>();
-    if held {
-        return;
+impl NoticePlace for Errors {
+    fn drawn(&self) -> &[Rect] {
+        &self.drawn
     }
-    errors.clock.advance(delta);
-    let clock = errors.clock;
-    if errors
-        .shown
-        .as_ref()
-        .is_some_and(|shown| clock.lapsed(shown.until))
-    {
-        errors.shown = None;
+
+    fn advance(&mut self, delta: Duration, _: Duration) {
+        self.clock.advance(delta);
+        let clock = self.clock;
+        if self
+            .shown
+            .as_ref()
+            .is_some_and(|shown| clock.lapsed(shown.until))
+        {
+            self.shown = None;
+        }
     }
 }

@@ -1,7 +1,6 @@
 use std::collections::{BTreeMap, HashMap};
 use ui::egui;
 
-use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 use bevy_egui::helpers::bevy_to_egui_physical_key;
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
@@ -273,7 +272,7 @@ impl InputBinding {
     pub const fn click(button: MouseButton) -> InputBinding {
         InputBinding::Click(ClickGesture {
             button,
-            times: 1,
+            times: Clicks::Single,
             modifiers: KeyModifiers::NONE,
         })
     }
@@ -311,7 +310,9 @@ impl InputBinding {
         let (modifiers, name) = match *self {
             InputBinding::Key(gesture) => (gesture.modifiers, key_name(gesture.key)),
             InputBinding::AnyKey => (KeyModifiers::NONE, "any key".to_owned()),
-            InputBinding::Mouse { button, modifiers } => (modifiers, click_name(button, 1)),
+            InputBinding::Mouse { button, modifiers } => {
+                (modifiers, click_name(button, Clicks::Single))
+            }
             InputBinding::Click(gesture) => {
                 (gesture.modifiers, click_name(gesture.button, gesture.times))
             }
@@ -435,23 +436,6 @@ impl InputMap {
     }
 }
 
-#[derive(SystemParam)]
-pub struct ActionInput<'w> {
-    map: Res<'w, InputMap>,
-    keys: Res<'w, ButtonInput<KeyCode>>,
-    mouse: Res<'w, ButtonInput<MouseButton>>,
-}
-
-impl ActionInput<'_> {
-    pub fn just_pressed(&self, action: InputAction) -> bool {
-        self.map.just_pressed(action, &self.keys, &self.mouse)
-    }
-
-    pub fn clicked(&self, action: InputAction, response: &egui::Response) -> bool {
-        self.map.clicked(action, response, &self.keys)
-    }
-}
-
 pub fn just_pressed(world: &World, action: InputAction) -> bool {
     world.resource::<InputMap>().just_pressed(
         action,
@@ -533,10 +517,42 @@ impl KeyGesture {
 pub struct ClickGesture {
     #[schemars(schema_with = "mouse_button_schema")]
     pub button: MouseButton,
-    #[schemars(extend("x-count" = true))]
-    pub times: u8,
+    #[schemars(with = "u8", extend("x-count" = true, "minimum" = 1, "maximum" = 3))]
+    pub times: Clicks,
     #[serde(flatten)]
     pub modifiers: KeyModifiers,
+}
+
+/// How many clicks in a row make a gesture, as many as a pointer tells apart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(try_from = "u8", into = "u8")]
+pub enum Clicks {
+    Single,
+    Double,
+    Triple,
+}
+
+impl TryFrom<u8> for Clicks {
+    type Error = String;
+
+    fn try_from(times: u8) -> Result<Clicks, String> {
+        match times {
+            1 => Ok(Clicks::Single),
+            2 => Ok(Clicks::Double),
+            3 => Ok(Clicks::Triple),
+            _ => Err(format!("{times} clicks, not 1 to 3")),
+        }
+    }
+}
+
+impl From<Clicks> for u8 {
+    fn from(times: Clicks) -> u8 {
+        match times {
+            Clicks::Single => 1,
+            Clicks::Double => 2,
+            Clicks::Triple => 3,
+        }
+    }
 }
 
 impl ClickGesture {
@@ -545,9 +561,9 @@ impl ClickGesture {
             return false;
         };
         let clicked = match self.times {
-            0 | 1 => response.clicked_by(button),
-            2 => response.double_clicked_by(button),
-            _ => response.triple_clicked_by(button),
+            Clicks::Single => response.clicked_by(button),
+            Clicks::Double => response.double_clicked_by(button),
+            Clicks::Triple => response.triple_clicked_by(button),
         };
         clicked && KeyModifiers::held(keys) == self.modifiers
     }
@@ -681,11 +697,11 @@ fn key_name(key: KeyCode) -> String {
     named.to_owned()
 }
 
-fn click_name(button: MouseButton, times: u8) -> String {
+fn click_name(button: MouseButton, times: Clicks) -> String {
     let press = match times {
-        1 => "",
-        2 => "double-",
-        _ => "multi-",
+        Clicks::Single => "",
+        Clicks::Double => "double-",
+        Clicks::Triple => "triple-",
     };
     format!("{press}{}click", button_prefix(button))
 }

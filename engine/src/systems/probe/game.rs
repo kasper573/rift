@@ -216,9 +216,8 @@ pub struct ProbeBinding {
     pub gesture: ProbeGesture,
 }
 
-/// How a binding is made, with `held` the modifier keys held down while making it. Keys and
-/// buttons go by the names bevy's `KeyCode` and `MouseButton` give them: `KeyI`, `Digit1`,
-/// `Space`; `Left`, `Right`.
+/// How a binding is made, with `held` the modifier keys held down while making it. Keys go by the
+/// names bevy's `KeyCode` gives them: `KeyI`, `Digit1`, `Space`.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 #[serde(tag = "gesture", rename_all = "snake_case")]
 pub enum ProbeGesture {
@@ -230,21 +229,42 @@ pub enum ProbeGesture {
     AnyKey,
     /// Pressed down, without waiting for its release.
     Press {
-        #[schemars(with = "String")]
-        button: MouseButton,
+        button: ProbeButton,
         held: KeyModifiers,
     },
     Click {
-        #[schemars(with = "String")]
-        button: MouseButton,
+        button: ProbeButton,
         times: u8,
         held: KeyModifiers,
     },
     Drag {
-        #[schemars(with = "String")]
-        button: MouseButton,
+        button: ProbeButton,
         held: KeyModifiers,
     },
+}
+
+/// A mouse button, as bevy's `MouseButton` names it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProbeButton {
+    Left,
+    Right,
+    Middle,
+    Back,
+    Forward,
+    Other(u16),
+}
+
+impl From<MouseButton> for ProbeButton {
+    fn from(button: MouseButton) -> ProbeButton {
+        match button {
+            MouseButton::Left => ProbeButton::Left,
+            MouseButton::Right => ProbeButton::Right,
+            MouseButton::Middle => ProbeButton::Middle,
+            MouseButton::Back => ProbeButton::Back,
+            MouseButton::Forward => ProbeButton::Forward,
+            MouseButton::Other(other) => ProbeButton::Other(other),
+        }
+    }
 }
 
 impl From<InputBinding> for ProbeGesture {
@@ -256,16 +276,16 @@ impl From<InputBinding> for ProbeGesture {
             },
             InputBinding::AnyKey => ProbeGesture::AnyKey,
             InputBinding::Mouse { button, modifiers } => ProbeGesture::Press {
-                button,
+                button: button.into(),
                 held: modifiers,
             },
             InputBinding::Click(gesture) => ProbeGesture::Click {
-                button: gesture.button,
-                times: gesture.times,
+                button: gesture.button.into(),
+                times: gesture.times.into(),
                 held: gesture.modifiers,
             },
             InputBinding::Drag(gesture) => ProbeGesture::Drag {
-                button: gesture.button,
+                button: gesture.button.into(),
                 held: gesture.modifiers,
             },
         }

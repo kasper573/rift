@@ -7,7 +7,7 @@ use bevy::prelude::*;
 use crate::core::math::Pos;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::decal::{DecalLook, GroundDecal};
-use crate::core::time::Seconds;
+use crate::core::time::{self, Seconds};
 use crate::core::units::Meters;
 use crate::systems::actor::Hitbox;
 use crate::systems::combat::{self, Relation};
@@ -79,7 +79,7 @@ pub fn under(world: &World, actor: Entity, color: Color) -> Option<GroundDecal> 
 
 /// Lays the mark of a walk asked for to `at`, which fades as the walk sets off.
 pub fn walk_to(world: &mut World, at: Pos<Meters>) {
-    let born = Seconds(world.resource::<Time>().elapsed_secs());
+    let born = time::uptime(world);
     world.spawn((
         WalkMark { born },
         GroundDecal {
@@ -107,20 +107,9 @@ struct MeRing;
 #[derive(Component)]
 struct EngagedRing;
 
-fn show_hover(mark: Res<HoverMark>, mut hover: Query<Entity, With<Hover>>, mut commands: Commands) {
-    let shown = hover.single_mut().ok();
-    match (&mark.0, shown) {
-        (Some(decal), Some(entity)) => {
-            commands.entity(entity).insert(decal.clone());
-        }
-        (Some(decal), None) => {
-            commands.spawn((Hover, decal.clone()));
-        }
-        (None, Some(entity)) => {
-            commands.entity(entity).despawn();
-        }
-        (None, None) => {}
-    }
+fn show_hover(world: &mut World) {
+    let decal = world.resource::<HoverMark>().0.clone();
+    keep::<Hover>(world, decal, Hover);
 }
 
 fn fade_walks(

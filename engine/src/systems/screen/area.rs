@@ -19,7 +19,7 @@ use crate::core::render::transition::{
 };
 use crate::core::render::world::readying;
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
-use crate::core::time::Seconds;
+use crate::core::time::{self, Seconds};
 use crate::core::units::Meters;
 use crate::systems::actor::Actor;
 use crate::systems::area::{self, AreaId, AreaTag, scenery};
@@ -85,7 +85,7 @@ pub fn settled(world: &World) -> bool {
 }
 
 pub fn carry_view_across(world: &mut World) {
-    let now = Seconds(world.resource::<Time>().elapsed_secs());
+    let now = time::uptime(world);
     let Crossing { last_seen, held } = *world.resource::<Crossing>();
     let (last_seen, held) = match session::me(world) {
         Some(character) => match (pose_of(world, character), held, last_seen) {
@@ -137,7 +137,7 @@ fn reveal(world: &mut World, pose: Pose) {
 }
 
 fn restart_patience(world: &mut World) {
-    let now = Seconds(world.resource::<Time>().elapsed_secs());
+    let now = time::uptime(world);
     if let Some(held) = world.resource_mut::<Crossing>().held.as_mut() {
         held.since = now;
     }
@@ -167,7 +167,7 @@ fn pose_of(world: &World, character: Entity) -> Option<Pose> {
 /// deploy shows the loading and reconnect cards over a frozen world and reveals the next one from
 /// where the character lands.
 fn leave_area(world: &mut World) {
-    let now = Seconds(world.resource::<Time>().elapsed_secs());
+    let now = time::uptime(world);
     let Crossing { last_seen, held } = *world.resource::<Crossing>();
     let held = match (last_seen, held) {
         (Some(pose), None) => {

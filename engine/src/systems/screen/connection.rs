@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy::tasks::{IoTaskPool, Task, block_on, futures_lite::future};
+use bevy::tasks::{IoTaskPool, Task};
 use bevy_egui::EguiPrimaryContextPass;
 use ui::egui;
 use ui::ink;
@@ -15,7 +15,8 @@ use crate::core::net::auth::Credentials;
 use crate::core::net::transport::{Connection, read_token};
 use crate::core::os::{FetchFailure, Http, StartParams};
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
-use crate::core::time::Seconds;
+use crate::core::time::{self, Seconds};
+use crate::systems::player::{JoinRequest, session};
 
 pub struct ConnectionPlugin;
 
@@ -38,8 +39,18 @@ impl Plugin for ConnectionPlugin {
     }
 }
 
+/// Set once the server welcomes the connection, until the client asks to join.
 #[derive(Resource)]
-pub struct Announce;
+pub(super) struct Announce;
+
+pub(super) fn announce(world: &mut World) {
+    if world.get_resource::<Announce>().is_none() || session::my_id(world).is_none() {
+        return;
+    }
+    info!("connection welcomed; joining");
+    world.write_message(JoinRequest);
+    world.remove_resource::<Announce>();
+}
 
 #[derive(Resource)]
 pub struct PendingSession {
@@ -68,11 +79,13 @@ fn begin_session(world: &mut World) {
 }
 
 pub(super) fn poll_session(world: &mut World) {
-    let Some(mut pending) = world.remove_resource::<PendingSession>() else {
+    let Some((_, outcome)) =
+        super::finished::<PendingSession, _>(world, |pending| &mut pending.task)
+    else {
         return;
     };
-    match block_on(future::poll_once(&mut pending.task)) {
-        Some(Ok(token)) => match read_token(&token).map(Connection::open) {
+    match outcome {
+        Ok(token) => match read_token(&token).map(Connection::open) {
             Some(Ok(connection)) => {
                 world.insert_resource(connection);
                 world.insert_resource(Announce);
@@ -81,7 +94,7 @@ pub(super) fn poll_session(world: &mut World) {
             Some(Err(error)) => error!("could not open a connection: {error}"),
             None => error!("the server handed out no connect token"),
         },
-        Some(Err(FetchFailure::Status { status: 401, body })) => {
+        Err(FetchFailure::Status { status: 401, body }) => {
             info!("the server refused the sign-in: {body}");
             world.remove_resource::<Credentials>();
             world.insert_resource(SignInFailure(
@@ -92,14 +105,13 @@ pub(super) fn poll_session(world: &mut World) {
                 .set(ClientScreen::SigningIn);
         }
         // Loading again finds out what changed, and catches the client up or relaunches it.
-        Some(Err(FetchFailure::Status { status: 409, body })) => {
+        Err(FetchFailure::Status { status: 409, body }) => {
             info!("the server refused the session: {body}");
             world
                 .resource_mut::<NextState<ClientScreen>>()
                 .set(ClientScreen::Loading);
         }
-        Some(Err(error)) => error!("could not open a session: {error}"),
-        None => world.insert_resource(pending),
+        Err(error) => error!("could not open a session: {error}"),
     }
 }
 
@@ -126,7 +138,7 @@ fn connecting(world: &mut World) {
 }
 
 fn lost(world: &mut World) {
-    let now = Seconds(world.resource::<Time>().elapsed_secs());
+    let now = time::uptime(world);
     let retry = *world.resource::<Retry>();
     let next = retry.failed(now, &mut world.resource_mut::<Rng>());
     world.insert_resource(next);
@@ -144,7 +156,8 @@ fn connection_lost(world: &mut World) {
     };
     let retry = notice_screen(&gui, "lost", world.resource::<Backdrop>().0, notice);
     if retry {
-        world.resource_mut::<Retry>().due = None;
+        let held = world.resource::<Retry>().held();
+        world.insert_resource(held);
         world
             .resource_mut::<NextState<ClientScreen>>()
             .set(ClientScreen::Loading);
@@ -162,7 +175,7 @@ fn retry_when_due(
 ) {
     let now = Seconds(time.elapsed_secs());
     if retry.is_due(now) {
-        retry.due = None;
+        *retry = retry.held();
         next.set(ClientScreen::Loading);
     }
 }

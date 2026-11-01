@@ -1,4 +1,5 @@
 use bevy_ecs::prelude::*;
+use engine::core::units::Meters;
 use engine::systems::combat::{self, AttackRequest};
 use engine::systems::dialogue::{self, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
@@ -128,6 +129,7 @@ fn summons_leave_with_their_owner() {
         &mut sim.world,
         guard,
         2,
+        Meters(1.5),
         player,
         Some(ClientId(1)),
         Some(player),
@@ -315,6 +317,7 @@ fn gambling() -> Value {
                 "type": "spawn_npcs",
                 "npc": "guard.npc.json",
                 "count": 2,
+                "spread": 1.5,
                 "near": "owner",
                 "shown": "subject",
             },
@@ -327,6 +330,7 @@ fn gambling() -> Value {
                 "type": "spawn_npcs",
                 "npc": "gambler_hostile.npc.json",
                 "count": 1,
+                "spread": 1.5,
                 "near": "owner",
                 "shown": "subject",
             },

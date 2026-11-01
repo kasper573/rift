@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "67ea81bb",
+  "content_version": "6b83048c",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -10,5 +10,39 @@
   "daylight": {
     "day_length": 1200.0,
     "start": 10.0
-  }
+  },
+  "sight": 24.0,
+  "chase_pace": 2.0,
+  "corpses_linger": 5.0,
+  "claims_last": 60.0,
+  "slots": {
+    "bag": 25,
+    "hotbar": 40,
+    "quest_log": 20
+  },
+  "drops": {
+    "last": 120.0,
+    "scatter": 1.0,
+    "pickup_reach": 1.0
+  },
+  "reading": {
+    "glance": 2.0,
+    "per_word": 0.3
+  },
+  "words": {
+    "accept_quest": "Accept",
+    "decline_quest": "Decline",
+    "not_yet": "Not yet.",
+    "locked": "You can't do that yet.",
+    "no_longer": "You can't do that any more.",
+    "quest_log_full": "Your quest log is full."
+  },
+  "relations": {
+    "characters": "ally",
+    "characters_and_friendly": "neutral",
+    "characters_and_hostile": "enemy",
+    "friendly": "ally",
+    "npcs_apart": "enemy"
+  },
+  "history_merges_within": 10.0
 }

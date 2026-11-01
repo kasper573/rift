@@ -13,8 +13,7 @@ use crate::systems::hud::{self, Carried, HudWindow};
 use crate::systems::input::map::{self, InputAction, InputMap, input};
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::{
-    DropItemRequest, INVENTORY_MAX, Inventory, ItemDef, ItemId, ItemModuleKind, ItemStack,
-    UseItemRequest, card,
+    DropItemRequest, Inventory, ItemDef, ItemId, ItemModuleKind, ItemStack, UseItemRequest, card,
 };
 use crate::systems::player::session;
 
@@ -251,7 +250,7 @@ fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData) {
 fn inventory_cells(world: &World) -> Vec<CellData> {
     let content = world.resource::<Content>();
     let inventory = session::my_character(world).and_then(|me| me.get::<Inventory>());
-    let max = inventory.map_or(INVENTORY_MAX, |inventory| inventory.max);
+    let max = inventory.map_or(0, |inventory| inventory.max);
     let verdicts = world
         .get_resource::<SlotVerdicts>()
         .map(|verdicts| verdicts.0.as_slice())

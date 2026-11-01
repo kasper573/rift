@@ -25,15 +25,14 @@ use crate::core::content::{
 };
 use crate::core::math::{Percent, Rng};
 use crate::core::time::{GameDay, Seconds, UnixMillis, WallClock};
+use crate::systems::GameSettings;
 use crate::systems::area::{self, AreaDef, AreaId, AreaTag};
 use crate::systems::attention::{AttentionId, AttentionMark};
 use crate::systems::class;
 use crate::systems::dialogue::{self, ChoiceReveal, Revealable};
 use crate::systems::history::{HistoryTopic, RecordTally};
 use crate::systems::interface::InterfaceSound;
-use crate::systems::item::{
-    INVENTORY_MAX, Inventory, ItemDef, ItemId, ItemModuleKind, ItemStack, scatter_at,
-};
+use crate::systems::item::{Inventory, ItemDef, ItemId, ItemModuleKind, ItemStack, scatter_at};
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::npc::NpcId;
 use crate::systems::player::{PlayedBy, player_requests};
@@ -47,8 +46,6 @@ use crate::systems::text::{LineText, Span};
 use crate::systems::visibility::Presence;
 
 pub type QuestId = ContentId<QuestDef>;
-
-pub const QUEST_LOG_CAP: usize = 20;
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -826,6 +823,7 @@ pub fn complete(world: &mut World, player: Entity, quest: QuestId) {
     notification::notify(
         world,
         player,
+        None,
         Notification::new(
             NotificationKind::Milestone {
                 label: "Quest complete".into(),
@@ -857,7 +855,7 @@ pub fn fail(world: &mut World, player: Entity, quest: QuestId) {
     .icon(quest.get(&content).icon(&content).path())
     .failed()
     .sound(InterfaceSound::QuestAbandoned.id(&content));
-    notification::notify(world, player, failed);
+    notification::notify(world, player, None, failed);
     raise(world, quest, EventKind::Failed, player);
 }
 
@@ -948,7 +946,7 @@ fn tell(
     if let Some(sfx) = sfx {
         told = told.sound(sfx);
     }
-    notification::notify(world, player, told);
+    notification::notify(world, player, None, told);
 }
 
 pub fn requests(world: &mut World) {
@@ -1147,12 +1145,13 @@ pub fn check_all(loading: &mut Loading) {
             );
         }
         let slots = quest.rewards().len() + usize::from(!quest.pick_one().is_empty());
-        if slots > INVENTORY_MAX as usize {
+        let bag = content.built::<GameSettings>().slots.bag;
+        if slots > bag as usize {
             check.error(
                 "/modules",
                 "rewards don't fit",
                 format!("{slots} slots"),
-                format!("at most {INVENTORY_MAX} slots of rewards, a pick counting as one"),
+                format!("at most {bag} slots of rewards, a pick counting as one"),
             );
         }
         if quest.decision().is_some() && !quest.pick_one().is_empty() {
@@ -1273,8 +1272,9 @@ pub fn offer_refusal(world: &World, player: Entity, quest: QuestId) -> Option<St
     if log.done_for_now(content, quest, world.resource::<WallClock>().day()) {
         return Some(format!("{} is done for now", def.title));
     }
-    if log.active.len() >= QUEST_LOG_CAP {
-        return Some(format!("Your quest log is full ({QUEST_LOG_CAP})"));
+    let settings = content.built::<GameSettings>();
+    if log.active.len() >= settings.slots.quest_log as usize {
+        return Some(settings.words.quest_log_full.clone());
     }
     None
 }
@@ -1438,7 +1438,7 @@ fn credit_kill(world: &mut World, kill: KillCredited) {
     let clock = *world.resource::<WallClock>();
     announce(world, player, clock);
     for notification in counted {
-        notification::notify(world, player, notification);
+        notification::notify(world, player, None, notification);
     }
     if let Some(client) = world.get::<PlayedBy>(player).map(|owner| owner.client)
         && let Some(area) = world.get::<AreaTag>(player).map(|tag| tag.area)

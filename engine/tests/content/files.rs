@@ -130,6 +130,7 @@ fn npc_fields(name: &str, model: &str) -> Vec<u8> {
         "appearance": { "model": model },
         "stats": testkit::stats(10.0),
         "leash": 8.0,
+        "attitude": "friendly",
     }))
     .expect("json")
 }

@@ -33,7 +33,7 @@ use crate::core::render::world::layers::Layered;
 use crate::core::render::world::rig_clip;
 use crate::core::render::{Animator, Previous, Turns, facing_rotation, ground_height, world_point};
 use crate::core::text::Typewriter;
-use crate::core::time::{Seconds, UnixMillis};
+use crate::core::time::{self, Seconds, UnixMillis};
 use crate::core::units::Meters;
 use crate::core::vfx::cover::Treads;
 use crate::core::vfx::render::SiteExtent;
@@ -258,7 +258,7 @@ impl Puppet {
 /// worn items change keeps its rig and swaps its skins for those of its new look.
 pub fn dress(world: &mut World) {
     let content = world.resource::<Content>().clone();
-    let now = Seconds(world.resource::<Time>().elapsed_secs());
+    let now = time::uptime(world);
     let changed: Vec<(Entity, Dressed, Radians, bool)> = world
         .query::<(
             Entity,
@@ -465,7 +465,7 @@ pub fn adopt_player(
 /// resolves for what it does, and sounds the cues its clip crosses.
 pub fn pose(world: &mut World) {
     let content = world.resource::<Content>().clone();
-    let now = Seconds(world.resource::<Time>().elapsed_secs());
+    let now = time::uptime(world);
     let delta = Seconds(world.resource::<Time>().delta_secs());
     let shown: Vec<(
         Entity,

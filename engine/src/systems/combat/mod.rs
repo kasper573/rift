@@ -4,16 +4,16 @@ pub mod render;
 use bevy_app::App;
 use bevy_ecs::entity::{EntityMapper, MapEntities};
 use bevy_ecs::prelude::*;
-use bevy_time::Time;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::content::Content;
 use crate::core::math::Pos;
 use crate::core::render::Pointed;
-use crate::core::time::Seconds;
+use crate::core::time::{self, Seconds};
 use crate::core::units::Meters;
 use crate::core::vfx::VfxSite;
+use crate::systems::GameSettings;
 use crate::systems::actor::{self, Actor};
 use crate::systems::npc::Pack;
 use crate::systems::player::{self, PlayedBy, player_requests, session};
@@ -38,9 +38,8 @@ pub enum Attitude {
     Hostile,
 }
 
-/// How two actors stand to each other. Every character is every character's ally, as there are no
-/// parties yet; a friendly npc is neutral to them and every other npc their enemy. Npcs side with
-/// their pack and with each other when both are friendly, and stand against everyone else.
+/// How two actors stand to each other: as the game's relations regard the sides they are on, npcs
+/// of one pack always allies.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Relation {
     Own,
@@ -53,26 +52,45 @@ pub fn relation(world: &World, from: Entity, to: Entity) -> Relation {
     if from == to {
         return Relation::Own;
     }
-    match (side(world, from), side(world, to)) {
-        (Side::Character, Side::Character) => Relation::Ally,
-        (Side::Character, Side::Friendly) | (Side::Friendly, Side::Character) => Relation::Neutral,
-        (Side::Character, Side::Wild) | (Side::Wild, Side::Character) => Relation::Enemy,
-        (Side::Friendly, Side::Friendly) => Relation::Ally,
+    let relations = &world.resource::<GameSettings>().relations;
+    let regard = match (side(world, from), side(world, to)) {
+        (Side::Character, Side::Character) => relations.characters,
+        (Side::Character, Side::Friendly) | (Side::Friendly, Side::Character) => {
+            relations.characters_and_friendly
+        }
+        (Side::Character, Side::Hostile) | (Side::Hostile, Side::Character) => {
+            relations.characters_and_hostile
+        }
+        (Side::Friendly, Side::Friendly) => relations.friendly,
         _ => {
             let pack = |entity| world.get::<Pack>(entity).copied();
             match (pack(from), pack(to)) {
-                (Some(a), Some(b)) if a == b => Relation::Ally,
-                _ => Relation::Enemy,
+                (Some(a), Some(b)) if a == b => Regard::Ally,
+                _ => relations.npcs_apart,
             }
         }
+    };
+    match regard {
+        Regard::Ally => Relation::Ally,
+        Regard::Neutral => Relation::Neutral,
+        Regard::Enemy => Relation::Enemy,
     }
+}
+
+/// How one side of the game regards another.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Regard {
+    Ally,
+    Neutral,
+    Enemy,
 }
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Side {
     Character,
     Friendly,
-    Wild,
+    Hostile,
 }
 
 fn side(world: &World, entity: Entity) -> Side {
@@ -81,7 +99,7 @@ fn side(world: &World, entity: Entity) -> Side {
     } else if world.get::<Attitude>(entity) == Some(&Attitude::Friendly) {
         Side::Friendly
     } else {
-        Side::Wild
+        Side::Hostile
     }
 }
 
@@ -141,7 +159,7 @@ pub fn regen(world: &mut World) {
     let Some(regen) = player::def(world.resource::<Content>()).regen() else {
         return;
     };
-    let now = Seconds(world.resource::<Time>().elapsed_secs());
+    let now = time::uptime(world);
     {
         let mut last = world.resource_mut::<RegenAt>();
         if now - last.0 < regen.every {
@@ -179,7 +197,7 @@ pub fn inflict(world: &mut World, target: Entity, attacker: Option<Entity>, dama
     if !stat::stands(world, target) || player::arriving(world, target) {
         return;
     }
-    let time = Seconds(world.resource::<Time>().elapsed_secs());
+    let time = time::uptime(world);
     if let Some(attacker) = attacker {
         add_attacker(world, target, attacker);
         crate::systems::item::reserve(world, target, attacker, time);
@@ -195,7 +213,7 @@ pub fn inflict(world: &mut World, target: Entity, attacker: Option<Entity>, dama
 pub type Standing = QueryState<(Entity, &'static Stats), (Changed<Stats>, Without<Dead>)>;
 
 pub fn defeats(world: &mut World, standing: &mut Standing) {
-    let time = Seconds(world.resource::<Time>().elapsed_secs());
+    let time = time::uptime(world);
     let fallen: Vec<Entity> = standing
         .iter(world)
         .filter(|(_, stats)| stat::dead(stats))

@@ -565,13 +565,18 @@ pub fn ground_height(world: &World, at: Pos<Meters>) -> Meters {
         .map_or(Meters(0.0), |ground| ground.height_at(at))
 }
 
-/// The camera's view through the primary window.
-pub fn view_of(world: &mut World) -> Option<View> {
+/// The size of the primary window, in logical pixels.
+pub fn window_size(world: &mut World) -> Option<Vec2> {
     let window = world
         .query_filtered::<&Window, With<PrimaryWindow>>()
         .single(world)
         .ok()?;
-    let viewport = Vec2::new(window.resolution.width(), window.resolution.height());
+    Some(Vec2::new(window.width(), window.height()))
+}
+
+/// The camera's view through the primary window.
+pub fn view_of(world: &mut World) -> Option<View> {
+    let viewport = window_size(world)?;
     Some(world.resource::<CameraRig>().view(viewport))
 }
 

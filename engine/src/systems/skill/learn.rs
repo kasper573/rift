@@ -189,6 +189,7 @@ fn announce(world: &mut World, player: Entity, learned: &[(NodeKey, Rank)]) {
         notification::notify(
             world,
             player,
+            None,
             Notification::feed(HistoryTopic::Notification, text).icon(skill.icon.path()),
         );
     }

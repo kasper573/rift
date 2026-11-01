@@ -7,13 +7,13 @@ use super::{CastAim, Rank, SkillId, Targeting, UseSkillRequest, casting};
 use crate::core::content::{Content, Fixture};
 use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::render::Pointed;
-use crate::core::time::Seconds;
+use crate::core::time::{self};
 use crate::core::units::Meters;
 use crate::core::vfx::render::ShaderOverlay;
 use crate::core::vfx::{ParamValue, VfxParams, VfxSite};
 use crate::core::{gui, render};
 use crate::systems::actor::{self, Actor};
-use crate::systems::input::gestures::{ClickClaim, Cursor, Gesture};
+use crate::systems::input::claims::{Claimant, ClickClaim, Cursor};
 use crate::systems::interface::{CursorShape, InterfaceSound};
 use crate::systems::player::session;
 use crate::systems::vfx::{VfxShaderFixture, fixture};
@@ -93,7 +93,7 @@ pub fn surface(world: &mut World) {
         return;
     };
     let content = world.resource::<Content>().clone();
-    let uptime = Seconds(world.resource::<Time>().elapsed_secs());
+    let uptime = time::uptime(world);
     let shown = world
         .resource::<Aiming>()
         .surface
@@ -123,9 +123,9 @@ pub fn surface(world: &mut World) {
 
 /// Takes the click while a skill is armed: an actor the skill fits, a point for an area, and the
 /// bare ground for a single-target skill, which puts the skill away.
-pub struct AimGesture;
+pub struct AimClaimant;
 
-impl Gesture for AimGesture {
+impl Claimant for AimClaimant {
     fn claim(&self, world: &mut World, pointed: Option<&Pointed>) -> Option<ClickClaim> {
         let aimed = aiming(world)?;
         if !session::is_alive(world) {

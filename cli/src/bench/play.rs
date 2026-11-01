@@ -14,7 +14,7 @@ use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, start_of};
 use engine::systems::player::{ClientId, Players};
 use engine::systems::script::Place;
 use engine::systems::skill::{CastAim, Hotbar, HotbarEntry, SkillDef, Targeting, UseSkillRequest};
-use engine::systems::visibility::VIEW_DISTANCE;
+use engine::systems::visibility;
 
 /// Ticks between one player's casts: two seconds at the server's rate.
 pub const CAST_EVERY: usize = 60;
@@ -96,7 +96,7 @@ fn player_of(world: &World, conn: Entity) -> Option<Entity> {
 fn nearest_npc(world: &World, at: Pos<Meters>) -> Option<(Entity, Pos<Meters>)> {
     world
         .resource::<ChunkIndex>()
-        .around(at, VIEW_DISTANCE)
+        .around(at, visibility::sight(world))
         .filter(|&near| world.get::<Npc>(near).is_some())
         .filter_map(|near| Some((near, world.get::<Position>(near)?.pos)))
         .min_by(|a, b| a.1.distance(at).0.total_cmp(&b.1.distance(at).0))

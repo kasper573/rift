@@ -66,8 +66,6 @@ use scene::{SCENE, scene_file};
 
 pub type AreaId = ContentId<AreaDef>;
 
-pub const MAX_POPULATION: u32 = 500;
-
 pub fn register(app: &mut App) {
     use bevy_replication::AppReplicationExt;
     app.replicate_once::<AreaTag>();
@@ -115,8 +113,8 @@ pub fn same_area(world: &World, a: Entity, b: Entity) -> bool {
     area(a).is_some() && area(a) == area(b)
 }
 
-pub const MIN_SLOPE: Degrees = Degrees(10.0);
-pub const MAX_SLOPE: Degrees = Degrees(60.0);
+/// Ground can lean no further than upright.
+const UPRIGHT: Degrees = Degrees(90.0);
 
 /// The ground's heights and paint, a tile of each to a file named by the tile's place, and an
 /// overview of each over the whole ground, which answers for the tiles not loaded.
@@ -189,8 +187,8 @@ impl ContentFile for AreaDef {
         cx.range(
             "/max_slope",
             self.max_slope.0,
-            MIN_SLOPE.0,
-            MAX_SLOPE.0,
+            0.0,
+            UPRIGHT.0,
             "degrees of slope",
         );
         cx.range(
@@ -466,13 +464,9 @@ impl AreaModule {
 
     fn check(&self, pointer: &str, cx: &mut RowCheck) {
         match self {
-            AreaModule::Population(population) => cx.range(
-                format!("{pointer}/count"),
-                population.count,
-                1,
-                MAX_POPULATION,
-                "npcs",
-            ),
+            AreaModule::Population(population) => {
+                cx.at_least(format!("{pointer}/count"), population.count, 1, "npcs")
+            }
             AreaModule::Soundscape(soundscape) => soundscape.check(pointer, cx),
             AreaModule::Prop(prop) => prop.check(pointer, cx),
             AreaModule::Scatter(scatter) => scatter.check(pointer, cx),
@@ -907,7 +901,7 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
             let def = content.table::<BlueprintDef>().get(id)?;
             let ground = Ground {
                 size: def.size,
-                max_slope: MAX_SLOPE,
+                max_slope: UPRIGHT,
                 terrains: vec![home_terrain(content)?],
                 heights: Heightfield::flat(def.size),
                 paint: Paint::plain(def.size),
@@ -922,7 +916,7 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
         Pictured::Prop(_) | Pictured::Stage => {
             let ground = Ground {
                 size: PROP_STAGE,
-                max_slope: MAX_SLOPE,
+                max_slope: UPRIGHT,
                 terrains: vec![home_terrain(content)?],
                 heights: Heightfield::flat(PROP_STAGE),
                 paint: Paint::plain(PROP_STAGE),

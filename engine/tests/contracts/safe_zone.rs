@@ -82,10 +82,18 @@ fn a_summoned_monster_follows_its_target_into_a_safe_zone() {
     sim.equip(player, "sword");
     movement::relocate(&mut sim.world, player, DOORSTEP);
     let hunter = sim.id::<NpcDef>("hunter");
-    let guard = npc::summon(&mut sim.world, hunter, 1, player, None, Some(player))
-        .first()
-        .copied()
-        .expect("summoned");
+    let guard = npc::summon(
+        &mut sim.world,
+        hunter,
+        1,
+        Meters(1.5),
+        player,
+        None,
+        Some(player),
+    )
+    .first()
+    .copied()
+    .expect("summoned");
     assert!(hunted_by(&mut sim, guard, player));
 
     let conn = sim.conn(1);

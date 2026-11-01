@@ -18,7 +18,6 @@ use crate::systems::player::Players;
 use crate::systems::{stat, visibility};
 
 const REFRESH_ROUNDS: u32 = 3;
-const MARKED_RANGE: Meters = Meters(visibility::VIEW_DISTANCE.0 + 4.0);
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppReplicationExt;
@@ -155,6 +154,7 @@ impl Planner for MarkAttention {
             .map(|(_, player)| player)
             .collect();
         players.sort_unstable();
+        let sight = visibility::sight(world);
         let targets = self.targets.query(world);
         let chunks = world.resource::<ChunkIndex>();
         let mut seen: Vec<(Entity, Entity)> = players
@@ -171,10 +171,10 @@ impl Planner for MarkAttention {
                     .into_iter()
                     .flat_map(|(area, at)| {
                         chunks
-                            .around(at, Meters(MARKED_RANGE.0 + CHUNK_SIDE.0))
+                            .around(at, Meters(sight.0 + CHUNK_SIDE.0))
                             .filter(move |&target| {
                                 targets.get(target).is_ok_and(|(_, tag, standing)| {
-                                    tag.area == area && standing.pos.distance(at) <= MARKED_RANGE
+                                    tag.area == area && standing.pos.distance(at) <= sight
                                 })
                             })
                     })

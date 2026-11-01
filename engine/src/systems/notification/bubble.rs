@@ -2,7 +2,6 @@ use std::time::Duration;
 use ui::egui;
 
 use bevy::prelude::*;
-use bevy::window::PrimaryWindow;
 use bevy_egui::EguiPrimaryContextPass;
 use ui::egui::{Align, Color32, Layout, Sense, Shape, Stroke, StrokeKind, UiBuilder};
 
@@ -13,28 +12,30 @@ use crate::core::babble::{BabbleId, BabbleRank, Babbler, Babbling};
 use crate::core::content::Content;
 use crate::core::gui::{self, Band};
 use crate::core::math::Pos;
+use crate::core::render::camera;
 use crate::core::render::window_point;
 use crate::core::text::{self, StyledLine, Typewriter};
-use crate::core::time::Seconds;
+use crate::core::time::{self, Seconds};
 use crate::core::units::{MeterPos, Meters};
+use crate::systems::GameSettings;
 use crate::systems::actor::render::Said;
 use crate::systems::actor::{Action, Actor, plate};
 use crate::systems::combat::Attitude;
 use crate::systems::dialogue::stage;
 use crate::systems::hud;
 use crate::systems::movement::{Position, RenderPosition};
+use crate::systems::npc::Npc;
 use crate::systems::npc::NpcId;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
+use crate::systems::skill::{self, Rank};
 use ui::paint;
 
 const LINES: usize = 2;
 const FULL: usize = 3;
 const FULL_IN_SMALL_WINDOW: usize = 2;
 const SMALL_WINDOW: f32 = 960.0;
-const REPLACE_AFTER: Seconds = Seconds(2.0);
 const READ_LINGERS: Seconds = Seconds(0.6);
-const FIGHTING_WITHIN: Meters = Meters(3.0);
 const EDGE: f32 = 8.0;
 const CROWN_GAP: f32 = 4.0;
 
@@ -89,6 +90,7 @@ pub fn say(world: &mut World, notification_sent: NotificationSent) {
     let mut bubbles = world.resource_mut::<Bubbles>();
     let line = SpokenLine {
         notification: notification_sent.notification,
+        stays: notification_sent.stays,
         read_by: None,
         typing: None,
     };
@@ -177,6 +179,7 @@ struct Drawn {
 
 struct SpokenLine {
     notification: Notification,
+    stays: Seconds,
     read_by: Option<Duration>,
     typing: Option<Entity>,
 }
@@ -243,7 +246,7 @@ impl Speaking {
             .find(|shown| shown.notification == line.notification)
         {
             if let Some(read_by) = &mut same.read_by {
-                *read_by = (*read_by).max(clock.ends_after(line.notification.stays()));
+                *read_by = (*read_by).max(clock.ends_after(line.stays));
             }
             return;
         }
@@ -255,20 +258,21 @@ impl Speaking {
         self.newest = Some(line);
     }
 
-    /// Moves the speaker's lines along, and hands back the typing of those it let go.
-    fn tick(&mut self, delta: Duration, typed: &[bool]) -> Vec<Entity> {
+    /// Moves the speaker's lines along, a newer line replacing the oldest once the bubble has
+    /// shown for `glance`, and hands back the typing of those it let go.
+    fn tick(&mut self, delta: Duration, typed: &[bool], glance: Seconds) -> Vec<Entity> {
         self.clock.advance(delta);
         let now = self.clock.now();
         let mut previous_read_by: Option<Duration> = None;
         for (line, &typed) in self.lines.iter_mut().zip(typed) {
             if line.read_by.is_none() && typed {
                 let start = previous_read_by.map_or(now, |previous| previous.max(now));
-                line.read_by = Some(start + Duration::from(line.notification.stays()));
+                line.read_by = Some(start + Duration::from(line.stays));
             }
             previous_read_by = line.read_by;
         }
         let mut dropped = Vec::new();
-        if now >= self.changed + Duration::from(REPLACE_AFTER)
+        if now >= self.changed + Duration::from(glance)
             && let Some(newest) = self.newest.take()
         {
             dropped.extend(self.lines.remove(0).typing);
@@ -342,6 +346,7 @@ fn forget(world: &mut World) {
 
 fn tick(world: &mut World) {
     let delta = world.resource::<Time>().delta();
+    let glance = world.resource::<GameSettings>().reading.glance;
     let mut bubbles = std::mem::take(&mut *world.resource_mut::<Bubbles>());
     let (gone, mut speakers): (Vec<Speaking>, Vec<Speaking>) =
         bubbles.speakers.into_iter().partition(|speaking| {
@@ -360,7 +365,7 @@ fn tick(world: &mut World) {
             continue;
         }
         let typed = typed_lines(world, speaking);
-        let dropped = speaking.tick(delta, &typed);
+        let dropped = speaking.tick(delta, &typed, glance);
         despawn_all(world, dropped);
     }
     speakers.retain(|speaking| !speaking.done());
@@ -372,7 +377,7 @@ fn place(world: &mut World) {
     let Some(gui) = gui::context(world) else {
         return;
     };
-    let Some(window) = window_size(world) else {
+    let Some(window) = camera::window_size(world) else {
         return;
     };
     let now = rows::time(&gui);
@@ -683,7 +688,7 @@ fn framed(body: egui::Vec2, tail: Option<Tail>) -> Vec2 {
 fn start_typing(world: &mut World, speaking: &mut Speaking) {
     let typed = typed_lines(world, speaking);
     let shown = speaking.shown_lines(&typed);
-    let since = Seconds(world.resource::<Time>().elapsed_secs());
+    let since = time::uptime(world);
     for line in &mut speaking.lines[..shown] {
         if line.typing.is_none() {
             let mut typing = world.spawn((line.notification.text.styled(), Typewriter::default()));
@@ -921,22 +926,21 @@ fn dead(world: &World, body: Entity) -> bool {
         .is_some_and(|actor| actor.action == Action::Dead)
 }
 
+/// Whether `body` fights the viewer: hostile, attacking, and the viewer within its attack's reach.
 fn fighting(world: &World, body: Entity, viewer: Option<Pos<Meters>>) -> bool {
     let hostile = world.get::<Attitude>(body) == Some(&Attitude::Hostile);
     let attacking = world
         .get::<Actor>(body)
         .is_some_and(|actor| actor.action == Action::Attack);
-    let close = match (body_at(world, body), viewer) {
-        (Some(at), Some(viewer)) => at.distance(viewer) <= FIGHTING_WITHIN,
+    let content = world.resource::<Content>();
+    let attack = world
+        .get::<Npc>(body)
+        .and_then(|npc| npc.def.get(content).basic_attack);
+    let close = match (body_at(world, body), viewer, attack) {
+        (Some(at), Some(viewer), Some(attack)) => {
+            at.distance(viewer) <= skill::range_of(world, body, attack, Rank::FIRST)
+        }
         _ => false,
     };
     hostile && attacking && close
-}
-
-fn window_size(world: &mut World) -> Option<Vec2> {
-    world
-        .query_filtered::<&Window, With<PrimaryWindow>>()
-        .single(world)
-        .ok()
-        .map(|window| Vec2::new(window.width(), window.height()))
 }

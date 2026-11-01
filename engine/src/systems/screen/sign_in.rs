@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy::tasks::{IoTaskPool, Task, block_on, futures_lite::future};
+use bevy::tasks::{IoTaskPool, Task};
 use bevy_egui::EguiPrimaryContextPass;
 use ui::egui;
 use ui::input::InputField;
@@ -154,13 +154,13 @@ fn any_account(
 }
 
 fn poll(world: &mut World) {
-    let Some(mut waiting) = world.remove_resource::<Waiting>() else {
+    let Some((_, outcome)) = super::finished::<Waiting, _>(world, |waiting| &mut waiting.task)
+    else {
         return;
     };
-    match block_on(future::poll_once(&mut waiting.task)) {
-        Some(Ok(token)) => signed_in(world, &token),
-        Some(Err(failure)) => world.insert_resource(SignInFailure(failure)),
-        None => world.insert_resource(waiting),
+    match outcome {
+        Ok(token) => signed_in(world, &token),
+        Err(failure) => world.insert_resource(SignInFailure(failure)),
     }
 }
 

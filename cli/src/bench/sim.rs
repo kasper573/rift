@@ -14,7 +14,6 @@ use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::player::{ClientId, JoinRequest, SpawnPolicy, SpawnRules};
 use engine::systems::region;
 use engine::systems::script::Place;
-use engine::systems::visibility::VIEW_DISTANCE;
 use engine::systems::worlds;
 use engine::systems::{GameSettings, TICK_HZ, from_client, load_content, server_app, start_server};
 use strum::AsRefStr;
@@ -119,7 +118,8 @@ impl Bench {
         let characters: Vec<Option<(CharacterSnapshot, Place)>> = {
             let mut all = play::characters_in(content, spawn.area);
             if layout == Layout::Congested {
-                all.retain(|(_, start)| start.at.distance(spawn.at) <= VIEW_DISTANCE);
+                let sight = content.built::<GameSettings>().sight;
+                all.retain(|(_, start)| start.at.distance(spawn.at) <= sight);
             }
             all.retain(|(_, start)| start.at.y < peopled);
             if all.is_empty() {
@@ -147,24 +147,18 @@ impl Bench {
         self.worlds.iter().all(|app| region::settled(app.world()))
     }
 
-    /// One tick of every world, as the server steps them.
-    pub fn tick(&mut self, clock: WallClock) {
+    /// One tick of every world, as the server steps them: on `pool`'s threads alone, or on those
+    /// of the pool the bench runs in.
+    pub fn tick(&mut self, pool: Option<&rayon::ThreadPool>, clock: WallClock) {
         let mut views: Vec<Option<&mut World>> = self
             .worlds
             .iter_mut()
             .map(|app| Some(app.world_mut()))
             .collect();
-        worlds::tick(&mut views, clock);
-    }
-
-    /// One tick on `pool`'s threads alone.
-    pub fn tick_on(&mut self, pool: &rayon::ThreadPool, clock: WallClock) {
-        let mut views: Vec<Option<&mut World>> = self
-            .worlds
-            .iter_mut()
-            .map(|app| Some(app.world_mut()))
-            .collect();
-        pool.install(|| worlds::tick(&mut views, clock));
+        match pool {
+            Some(pool) => pool.install(|| worlds::tick(&mut views, clock)),
+            None => worlds::tick(&mut views, clock),
+        }
     }
 
     pub fn connect(&mut self) {

@@ -7,8 +7,8 @@ use ui::egui::emath::TSTransform;
 use ui::egui::{Align, Color32, Layout, Rect, Sense, Stroke, UiBuilder, Vec2};
 use ui::face::Face;
 
-use super::rows::{self, Clock, Fades, Move, Presence};
-use super::{Notification, NotificationKind, NotificationSent, window_visible};
+use super::rows::{self, Clock, Fades, Move, NoticePlace, Presence};
+use super::{Notification, NotificationKind, NotificationSent};
 use crate::core::assets::ImageRef;
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
 use crate::core::gui;
@@ -48,26 +48,20 @@ pub struct IntroPlugin;
 
 impl Plugin for IntroPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ShownIntro>()
-            .add_systems(
-                Update,
-                reveal_when_settled
-                    .after(area::carry_view_across)
-                    .run_if(in_state(ClientScreen::Area)),
-            )
-            .add_systems(
-                Update,
-                age.run_if(in_state(ClientScreen::Area))
-                    .run_if(window_visible),
-            )
-            .add_systems(OnExit(ClientScreen::Area), rows::forget::<ShownIntro>);
+        rows::place::<ShownIntro>(app);
+        app.add_systems(
+            Update,
+            reveal_when_settled
+                .after(area::carry_view_across)
+                .run_if(in_state(ClientScreen::Area)),
+        );
     }
 }
 
 /// An intro arrives with the area it introduces, while the transition into it still plays, so it
 /// waits until the view is revealed.
 pub fn show(world: &mut World, notification_sent: NotificationSent) {
-    world.resource_mut::<ShownIntro>().waiting = Some(notification_sent.notification);
+    world.resource_mut::<ShownIntro>().waiting = Some(notification_sent);
 }
 
 pub fn shown(world: &World) -> Option<(String, String)> {
@@ -190,7 +184,7 @@ pub(super) fn draw(world: &mut World, gui: &egui::Context, top: f32) -> f32 {
 
 #[derive(Resource, Default)]
 struct ShownIntro {
-    waiting: Option<Notification>,
+    waiting: Option<NotificationSent>,
     settled_for: Duration,
     showing: Option<ShowingIntro>,
     clock: Clock,
@@ -217,10 +211,15 @@ fn reveal_when_settled(world: &mut World) {
     if shown.settled_for < BREATH_AFTER_TRANSITION || shown.waiting.is_none() {
         return;
     }
-    let Some(notification) = shown.waiting.take() else {
+    let Some(NotificationSent {
+        notification,
+        stays,
+        ..
+    }) = shown.waiting.take()
+    else {
         return;
     };
-    let until = shown.clock.ends_after(notification.stays());
+    let until = shown.clock.ends_after(stays);
     shown.keys += 1;
     let key = shown.keys;
     let sfx = notification.kind.sfx();
@@ -237,20 +236,21 @@ fn reveal_when_settled(world: &mut World) {
     }
 }
 
-fn age(world: &mut World) {
-    let held = rows::hovered(world, &world.resource::<ShownIntro>().drawn);
-    let delta = world.resource::<Time>().delta();
-    let mut shown = world.resource_mut::<ShownIntro>();
-    if !held {
-        shown.clock.advance(delta);
+impl NoticePlace for ShownIntro {
+    fn drawn(&self) -> &[Rect] {
+        &self.drawn
     }
-    let clock = shown.clock;
-    if shown
-        .showing
-        .as_ref()
-        .is_some_and(|showing| clock.lapsed(showing.until))
-    {
-        shown.showing = None;
+
+    fn advance(&mut self, delta: Duration, _: Duration) {
+        self.clock.advance(delta);
+        let clock = self.clock;
+        if self
+            .showing
+            .as_ref()
+            .is_some_and(|showing| clock.lapsed(showing.until))
+        {
+            self.showing = None;
+        }
     }
 }
 

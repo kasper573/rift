@@ -26,8 +26,6 @@ use crate::systems::{dialogue, drain_requests, notification};
 
 pub type ShopId = ContentId<ShopDef>;
 
-const BUYBACK_KEPT: usize = 12;
-
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
 
@@ -40,6 +38,10 @@ pub fn register(app: &mut App) {
 pub struct ShopDef {
     pub title: String,
     pub mark: AttentionId,
+    /// How many of the wares a player last sold here they may buy back; without any, nothing
+    /// sold here comes back.
+    #[serde(default, skip_serializing_if = "serial::is_zero")]
+    pub buys_back: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<ShopModule>,
 }
@@ -57,6 +59,7 @@ impl ContentFile for ShopDef {
         Ok(ShopDef {
             title: near.name(),
             mark: near.file()?,
+            buys_back: 0,
             modules: Vec::new(),
         })
     }
@@ -333,10 +336,11 @@ impl ShopLedger {
         self.stock.insert((shop, offer), Restock { left, full_at });
     }
 
-    pub fn record_sale(&mut self, shop: ShopId, sale: Sale) {
+    /// Records a sale at `shop`, which keeps `kept` of the latest for buying back.
+    pub fn record_sale(&mut self, shop: ShopId, sale: Sale, kept: u32) {
         let sales = self.sales.entry(shop).or_default();
         sales.push_front(sale);
-        sales.truncate(BUYBACK_KEPT);
+        sales.truncate(kept as usize);
     }
 }
 
@@ -629,6 +633,7 @@ fn sell(world: &mut World, player: Entity, slot: u32, stack: ItemStack) {
         notification::error(world, player, refusal);
         return;
     }
+    let kept = shop.get(world.resource::<Content>()).buys_back;
     let mut ledger = world.entity_mut(player);
     let mut ledger = ledger.entry::<ShopLedger>().or_default().into_mut();
     ledger.record_sale(
@@ -638,6 +643,7 @@ fn sell(world: &mut World, player: Entity, slot: u32, stack: ItemStack) {
             count: stack.count,
             paid,
         },
+        kept,
     );
     react(world, player, |reactions| &reactions.sold);
     traded(world, player, shop, EventKind::Sold, stack);

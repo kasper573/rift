@@ -48,10 +48,6 @@ use crate::systems::script::{
 };
 use crate::systems::stat::{self, StatKind};
 
-pub const HOTBAR_SLOTS: u32 = 40;
-/// An area hits the nearest few, so a crowd never multiplies one cast without bound.
-pub const AREA_TARGETS: usize = 8;
-
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
 
@@ -92,6 +88,10 @@ pub struct SkillDef {
     pub range: Option<Meters>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub area: Option<Shape>,
+    /// How many of those inside its area a cast lands on, the nearest first; without a cap, on
+    /// every one of them.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_targets: Option<u32>,
     #[serde(default, skip_serializing_if = "Seconds::is_zero")]
     pub cooldown: Seconds,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -121,6 +121,7 @@ impl ContentFile for SkillDef {
             target: Targeting::SingleEnemy,
             range: None,
             area: None,
+            max_targets: None,
             cooldown: Seconds(0.0),
             requires: None,
             cost: Vec::new(),
@@ -733,7 +734,7 @@ pub fn targets(world: &World, cx: &FlowCx, skill: SkillId) -> Vec<Entity> {
             inside.sort_by(|(a, da), (b, db)| da.0.total_cmp(&db.0).then(a.cmp(b)));
             inside
                 .into_iter()
-                .take(AREA_TARGETS)
+                .take(def.max_targets.map_or(usize::MAX, |most| most as usize))
                 .map(|(entity, _)| entity)
                 .collect()
         }

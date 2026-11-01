@@ -26,7 +26,7 @@ use crate::core::content::{Content, Fixture};
 use crate::core::gui::{self, Band, ImageSource, WidgetRects};
 use crate::core::math::WindowPx;
 use crate::core::text::{self, StyledLine, TextLook};
-use crate::systems::input::map::{ActionInput, InputAction, InputMap};
+use crate::systems::input::map::{self, InputAction, InputMap};
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::{self, Inventory};
 use crate::systems::player::{self, session};
@@ -583,11 +583,14 @@ fn launcher_pos(slot: usize, screen: Rect) -> Pos2 {
     )
 }
 
-fn toggle_keys(input: ActionInput, mut open: ResMut<Open>) {
+fn toggle_keys(world: &mut World) {
     for window in WINDOWS {
         let title = window.title();
-        if input.just_pressed(window.toggle()) && !open.0.remove(title) {
-            open.0.insert(title);
+        if map::just_pressed(world, window.toggle()) {
+            let mut open = world.resource_mut::<Open>();
+            if !open.0.remove(title) {
+                open.0.insert(title);
+            }
         }
     }
 }

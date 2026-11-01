@@ -2,9 +2,9 @@ mod game;
 mod socket;
 
 pub use game::{
-    ProbeArea, ProbeBinding, ProbeBindings, ProbeGame, ProbeGesture, ProbeInterfaceIcon, ProbeItem,
-    ProbeNamedObject, ProbeNpc, ProbeProp, ProbeQuestion, ProbeResident, ProbeRoaming, ProbeSkill,
-    answer,
+    ProbeArea, ProbeBinding, ProbeBindings, ProbeButton, ProbeGame, ProbeGesture,
+    ProbeInterfaceIcon, ProbeItem, ProbeNamedObject, ProbeNpc, ProbeProp, ProbeQuestion,
+    ProbeResident, ProbeRoaming, ProbeSkill, answer,
 };
 
 use std::collections::HashMap;
@@ -53,7 +53,7 @@ use crate::systems::dialogue::stage;
 use crate::systems::history::widget::{self as history, HistoryBook};
 use crate::systems::history::{HistoryMark, HistoryRecord, HistoryTopic};
 use crate::systems::hud;
-use crate::systems::input::gestures::{self, ClickClaim};
+use crate::systems::input::claims::{self, ClickClaim};
 use crate::systems::input::map::InputMap;
 use crate::systems::item::{self, DroppedItem, Inventory, ItemId};
 use crate::systems::movement::{Position, RenderPosition};
@@ -426,7 +426,6 @@ pub struct ProbeNotifications {
     pub bubbles: Vec<ProbeBubble>,
     pub edge_folds: Vec<u32>,
     pub captions: NotificationRows,
-    pub alerts: NotificationRows,
     pub error: Option<String>,
     pub milestones: NotificationRows,
     pub intro: Option<ProbeIntro>,
@@ -769,7 +768,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         screen: window
             .as_ref()
             .map(|window| Size::new(window.resolution.width(), window.resolution.height())),
-        claim: gestures::claim(world),
+        claim: claims::claim(world),
         stage: stage::view(world).map(|view| ProbeStage {
             node: view.node,
             rect: stage::dialogue_rect(world).map(window_rect),
@@ -1328,7 +1327,7 @@ fn pointed_at(world: &mut World, spot: Pos<Meters>) -> Option<Pointed> {
 }
 
 fn clicked(world: &mut World, pointed: &Pointed) -> Option<Entity> {
-    match gestures::claim_at(world, Some(pointed)) {
+    match claims::claim_at(world, Some(pointed)) {
         ClickClaim::Attack(entity) | ClickClaim::Interact(entity) | ClickClaim::Aim(entity) => {
             Some(entity)
         }
@@ -1503,7 +1502,6 @@ fn notifications(world: &mut World) -> ProbeNotifications {
         bubbles,
         edge_folds,
         captions: notification::captions(world),
-        alerts: notification::alerts(world),
         error: error::shown(world),
         milestones: notification::milestones(world),
         intro: intro::shown(world).map(|(title, text)| ProbeIntro { title, text }),

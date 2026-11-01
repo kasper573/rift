@@ -16,6 +16,7 @@ use crate::core::script::{
     self, Answer, BoxEnding, ChoiceOffer, ChoiceState, DialogueView, RevealDef, ScriptFault,
 };
 use crate::core::units::Meters;
+use crate::systems::GameSettings;
 use crate::systems::actor::Name;
 use crate::systems::attention::{AttentionId, AttentionMark};
 use crate::systems::combat::Attitude;
@@ -32,6 +33,7 @@ use crate::systems::script::{
 };
 use crate::systems::stat;
 use crate::systems::text::LineText;
+use crate::systems::visibility;
 use bust::Expression;
 
 pub fn register(app: &mut App) {
@@ -156,8 +158,6 @@ pub fn heard(world: &World, player: Entity, script: &str, node: &str) -> bool {
         .get::<Heard>(player)
         .is_some_and(|heard| heard.has(script, node))
 }
-
-pub const DEFAULT_REACH: Meters = Meters(2.0);
 
 pub struct Revealable {
     pub needs: bool,
@@ -503,7 +503,7 @@ fn begin(world: &mut World, flow: FlowKey, subject: Entity) -> bool {
             _ => None,
         })
         .reduce(f32::max)
-        .map_or(DEFAULT_REACH, Meters);
+        .map_or_else(|| visibility::sight(world), Meters);
     let tether = with.and_then(|with| Tether::around(world, subject, reach, Some(with)));
     reach::forget(world, subject);
     let step = next_step(world);
@@ -572,6 +572,7 @@ fn tell_ended(world: &mut World, player: Entity, reason: &str) {
     notification::notify(
         world,
         player,
+        None,
         Notification::new(
             NotificationKind::Error {
                 sfx: Some(InterfaceSound::UiClose.id(world.resource::<Content>())),
@@ -655,9 +656,6 @@ fn refresh_view(world: &mut World, player: Entity) {
     }
 }
 
-const LOCKED: &str = "You can't do that yet.";
-const NO_LONGER: &str = "You can't do that any more.";
-
 fn pick(world: &mut World, player: Entity, step: ConversationStep, choice: u32) {
     let Some(session) = world.get::<ConversationSession>(player) else {
         return;
@@ -688,7 +686,7 @@ fn pick(world: &mut World, player: Entity, step: ConversationStep, choice: u32) 
         } => match script::run::choice_state::<RiftScripting>(world, flow, index) {
             ChoiceState::Open => affordable(world, player, &costs).map(|()| Answer::Pick(index)),
             ChoiceState::Locked => Err(unmet(world, player, requires.as_ref())),
-            ChoiceState::Gone => Err(NO_LONGER.to_owned()),
+            ChoiceState::Gone => Err(world.resource::<GameSettings>().words.no_longer.clone()),
         },
         Pick::Card(card) => card(world, player),
     };
@@ -731,8 +729,10 @@ fn affordable(world: &World, player: Entity, costs: &[ItemStack]) -> Result<(), 
 }
 
 fn unmet(world: &World, player: Entity, requires: Option<&Condition>) -> String {
-    condition::first_unmet(world, player, requires)
-        .map_or_else(|| LOCKED.to_owned(), |unmet| format!("Needs {unmet}"))
+    condition::first_unmet(world, player, requires).map_or_else(
+        || world.resource::<GameSettings>().words.locked.clone(),
+        |unmet| format!("Needs {unmet}"),
+    )
 }
 
 fn refuse(world: &mut World, player: Entity, choice: u32, reason: String) {

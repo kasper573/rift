@@ -12,9 +12,10 @@ use ui::raster::raster;
 use super::{Notification, NotificationKind, NotificationSent};
 use crate::core::content::{Content, Fixture};
 use crate::core::math::Rng;
+use crate::core::render::camera;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::window_point;
-use crate::core::time::Seconds;
+use crate::core::time::{self, Seconds};
 use crate::core::units::Meters;
 use crate::core::vfx::render::{
     ParamsUniform, Run, SiteFrame, SiteTexture, compiled_shader, hide, present_shader, screen_piece,
@@ -50,13 +51,11 @@ pub fn pop(
     shader: Option<VfxShaderId>,
     params: VfxParams,
 ) {
-    let sent = NotificationSent {
-        notification: Notification::new(
-            NotificationKind::Pop { shader, params },
-            LineText::plain(text.into()),
-        ),
-        actor: Some(actor),
-    };
+    let notification = Notification::new(
+        NotificationKind::Pop { shader, params },
+        LineText::plain(text.into()),
+    );
+    let sent = NotificationSent::new(world, notification, Some(actor));
     for client in visibility::seen_by(world, actor) {
         visibility::send_to(world, client, sent.clone());
     }
@@ -95,7 +94,7 @@ pub fn show(world: &mut World, sent: NotificationSent) {
     let text = sent.notification.text.plain_words();
     let texture = text_texture(world, &text);
     let piece = screen_piece(world);
-    let born = uptime(world);
+    let born = time::uptime(world);
     let mut pops = world.resource_mut::<Pops>();
     let turn = (pops.rng.rand_float() * 2.0 - 1.0) * SPREAD;
     let speed = SPEED.0 + pops.rng.rand_float() * (SPEED.1 - SPEED.0);
@@ -169,9 +168,9 @@ struct TextTexture {
 struct PopTexts(HashMap<String, TextTexture>);
 
 fn burst(world: &mut World) {
-    let now = uptime(world);
+    let now = time::uptime(world);
     let live = std::mem::take(&mut world.resource_mut::<Pops>().live);
-    let window = window_size(world);
+    let window = camera::window_size(world);
     let mut kept = Vec::with_capacity(live.len());
     for pop in live {
         let age = Seconds(now.0 - pop.born.0);
@@ -265,19 +264,4 @@ fn text_texture(world: &mut World, text: &str) -> TextTexture {
     }
     texts.0.insert(text.to_owned(), texture.clone());
     texture
-}
-
-fn window_size(world: &mut World) -> Option<Vec2> {
-    let window = world
-        .query_filtered::<&Window, With<bevy::window::PrimaryWindow>>()
-        .single(world)
-        .ok()?;
-    Some(Vec2::new(
-        window.resolution.width(),
-        window.resolution.height(),
-    ))
-}
-
-fn uptime(world: &World) -> Seconds {
-    Seconds(world.resource::<Time>().elapsed_secs())
 }

@@ -49,6 +49,23 @@ impl RowCheck {
         }
     }
 
+    pub fn at_least<T: PartialOrd + Display + Copy>(
+        &mut self,
+        pointer: impl Into<String>,
+        value: T,
+        min: T,
+        what: &str,
+    ) {
+        if value < min {
+            self.error(
+                pointer,
+                "out of range",
+                value,
+                format!("at least {min} {what}"),
+            );
+        }
+    }
+
     pub fn text(&mut self, pointer: impl Into<String>, text: &str, min: usize, max: usize) {
         let length = text.chars().count();
         let blank = min > 0 && text.trim().is_empty();

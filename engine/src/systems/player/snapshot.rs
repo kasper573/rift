@@ -14,7 +14,7 @@ use crate::systems::class::{Class, ClassId, NodeKey};
 use crate::systems::dialogue::Heard;
 use crate::systems::equipment::{self, Equipment};
 use crate::systems::history::{History, HistoryEntry};
-use crate::systems::item::{INVENTORY_MAX, Inventory, ItemDef, ItemId, ItemStack};
+use crate::systems::item::{Inventory, ItemDef, ItemId, ItemStack};
 use crate::systems::memory::{Memory, MemoryId};
 use crate::systems::player::{CharacterState, PlayerDef, SpawnPoint, Xp, def};
 use crate::systems::quest::{ActiveQuest, FinishedQuest, Parties, QuestId, QuestLog, QuestResult};
@@ -22,7 +22,7 @@ use crate::systems::script::Place;
 use crate::systems::shop::{Sale, ShopId, ShopLedger};
 use crate::systems::skill::learn::{PlanRefusal, plan};
 use crate::systems::skill::{
-    self, BasicAttack, HOTBAR_SLOTS, Hotbar, HotbarEntry, HotbarSlot, Learned, Rank, SkillId,
+    self, BasicAttack, Hotbar, HotbarEntry, HotbarSlot, Learned, Rank, SkillId,
 };
 use crate::systems::stat::Stats;
 
@@ -272,7 +272,11 @@ pub fn materialize(
             );
         }
         for sale in &visited.sales {
-            ledger.record_sale(visited.shop, sale.clone());
+            ledger.record_sale(
+                visited.shop,
+                sale.clone(),
+                visited.shop.get(content).buys_back,
+            );
         }
     }
     CharacterState {
@@ -285,7 +289,7 @@ pub fn materialize(
         stats,
         inventory: Inventory {
             slots: snapshot.bag.clone(),
-            max: INVENTORY_MAX,
+            max: content.built::<GameSettings>().slots.bag,
         },
         xp: Xp {
             amount: snapshot.xp,
@@ -313,6 +317,7 @@ pub fn materialize(
                 .history
                 .iter()
                 .map(|record| (clock.now.before(record.ago), record.entry.clone())),
+            content.built::<GameSettings>().history_merges_within,
         ),
     }
 }
@@ -434,12 +439,13 @@ fn check_start(
 }
 
 fn check_bag(content: &Content, snapshot: &CharacterSnapshot, check: &mut RowCheck) {
-    if snapshot.bag.len() > INVENTORY_MAX as usize {
+    let slots = content.built::<GameSettings>().slots.bag;
+    if snapshot.bag.len() > slots as usize {
         check.error(
             "/bag",
             "bag too full",
             format!("{} slots", snapshot.bag.len()),
-            format!("at most {INVENTORY_MAX} slots"),
+            format!("at most {slots} slots"),
         );
     }
     for (index, stack) in snapshot.bag.iter().enumerate() {
@@ -559,13 +565,14 @@ fn check_hotbar(content: &Content, snapshot: &CharacterSnapshot, check: &mut Row
     let held = |item: ItemId| {
         snapshot.bag.iter().any(|stack| stack.item == item) || snapshot.equipped.contains(&item)
     };
+    let slots = content.built::<GameSettings>().slots.hotbar;
     for (index, slot) in snapshot.hotbar.iter().enumerate() {
-        if slot.slot.0 >= HOTBAR_SLOTS {
+        if slot.slot.0 >= slots {
             check.error(
                 format!("/hotbar/{index}/slot"),
                 "out of range",
                 slot.slot.0,
-                format!("0 to {}", HOTBAR_SLOTS - 1),
+                format!("0 to {}", slots - 1),
             );
         }
         if snapshot.hotbar[..index]

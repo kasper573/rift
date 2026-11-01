@@ -3,12 +3,12 @@ use bevy::window::SystemCursorIcon;
 
 use crate::core::gui;
 use crate::core::render::Pointed;
-use crate::systems::input::gestures::{ClickClaim, Cursor, Gesture};
+use crate::systems::input::claims::{Claimant, ClickClaim, Cursor};
 use crate::systems::interface::CursorShape;
 
-pub struct InterfaceGesture;
+pub struct InterfaceClaimant;
 
-impl Gesture for InterfaceGesture {
+impl Claimant for InterfaceClaimant {
     fn claim(&self, world: &mut World, pointed: Option<&Pointed>) -> Option<ClickClaim> {
         (pointed.is_none() && gui::pointer_claimed(world)).then_some(ClickClaim::Interface)
     }

@@ -38,12 +38,10 @@ use crate::systems::screen::ClientScreen;
 use crate::systems::script::effect::{self as effects, Audience};
 use crate::systems::script::{Condition, EffectCall, Reach, RiftScripting, condition};
 use crate::systems::text::{self, LineText, Span};
-use crate::systems::visibility;
+use crate::systems::{GameSettings, visibility};
 
 pub type NotificationId = ContentId<NotificationDef>;
 
-const READING_BASE: Seconds = Seconds(2.0);
-const READING_PER_WORD: Seconds = Seconds(0.3);
 const LONGEST_ROW_WORDS: usize = 30;
 const COLUMN_TOP: f32 = 16.0;
 const GROUP_GAP: f32 = 8.0;
@@ -72,10 +70,6 @@ pub enum NotificationKind {
         label: Cow<'static, str>,
         sfx: Option<SfxId>,
     },
-    Alert {
-        label: Cow<'static, str>,
-        sfx: Option<SfxId>,
-    },
     Error {
         sfx: Option<SfxId>,
     },
@@ -89,13 +83,7 @@ pub enum NotificationKind {
         appearance: IntroAppearance,
         sfx: Option<SfxId>,
     },
-    Feed {
-        topic: HistoryTopic,
-        icon: Option<String>,
-        tally: Option<RecordTally>,
-        failure: bool,
-        sfx: Option<SfxId>,
-    },
+    Feed(FeedRow),
     Pop {
         shader: Option<VfxShaderId>,
         params: VfxParams,
@@ -113,12 +101,56 @@ impl NotificationKind {
         match self {
             NotificationKind::Speech { .. } | NotificationKind::Pop { .. } => None,
             NotificationKind::Narration { sfx, .. }
-            | NotificationKind::Alert { sfx, .. }
             | NotificationKind::Error { sfx }
             | NotificationKind::Milestone { sfx, .. }
             | NotificationKind::Intro { sfx, .. }
-            | NotificationKind::Feed { sfx, .. } => *sfx,
+            | NotificationKind::Feed(FeedRow { sfx, .. }) => *sfx,
         }
+    }
+}
+
+/// What a row of the feed says beside its text: under which topic of history, with which icon,
+/// tally and sound, and whether it tells of a failure.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct FeedRow {
+    pub topic: HistoryTopic,
+    pub icon: Option<String>,
+    pub tally: Option<RecordTally>,
+    pub failure: bool,
+    pub sfx: Option<SfxId>,
+}
+
+/// A row of the feed being worded, a notification once sent.
+pub struct FeedLine {
+    row: FeedRow,
+    text: LineText,
+}
+
+impl FeedLine {
+    pub fn icon(mut self, path: String) -> FeedLine {
+        self.row.icon = Some(path);
+        self
+    }
+
+    pub fn tally(mut self, counted: RecordTally) -> FeedLine {
+        self.row.tally = Some(counted);
+        self
+    }
+
+    pub fn failed(mut self) -> FeedLine {
+        self.row.failure = true;
+        self
+    }
+
+    pub fn sound(mut self, heard: SfxId) -> FeedLine {
+        self.row.sfx = Some(heard);
+        self
+    }
+}
+
+impl From<FeedLine> for Notification {
+    fn from(line: FeedLine) -> Notification {
+        Notification::new(NotificationKind::Feed(line.row), line.text)
     }
 }
 
@@ -128,57 +160,63 @@ pub struct NotificationSent {
     /// The actor the notification comes from, when it has one in the world.
     #[entities]
     pub actor: Option<Entity>,
+    /// How long it stays to be read.
+    pub stays: Seconds,
 }
 
-pub fn notify(world: &mut World, player: Entity, notification: Notification) {
-    notify_from(world, player, None, notification);
+impl NotificationSent {
+    /// `notification` from `actor`, staying as long as it says or as the game's players take to
+    /// read it.
+    pub fn new(
+        world: &World,
+        notification: Notification,
+        actor: Option<Entity>,
+    ) -> NotificationSent {
+        let reading = world.resource::<GameSettings>().reading;
+        NotificationSent {
+            stays: notification
+                .lasts
+                .unwrap_or_else(|| reading.of(notification.text.word_count())),
+            notification,
+            actor,
+        }
+    }
 }
 
 /// An error the client raises for itself, shown like one the server sent.
 pub fn local_error(world: &mut World, text: impl Into<String>) {
     let kind = NotificationKind::error(world.resource::<Content>());
-    show(
-        world,
-        NotificationSent {
-            notification: Notification::new(kind, LineText::plain(text.into())),
-            actor: None,
-        },
-    );
+    let notification = Notification::new(kind, LineText::plain(text.into()));
+    let sent = NotificationSent::new(world, notification, None);
+    show(world, sent);
 }
 
 pub fn error(world: &mut World, player: Entity, text: impl Into<String>) {
     let kind = NotificationKind::error(world.resource::<Content>());
-    notify(
-        world,
-        player,
-        Notification::new(kind, LineText::plain(text.into())),
-    );
+    let notification = Notification::new(kind, LineText::plain(text.into()));
+    notify(world, player, None, notification);
 }
 
-pub fn notify_from(
+/// Tells `player` `notification`, from `speaker` where it comes from one they see.
+pub fn notify(
     world: &mut World,
     player: Entity,
     speaker: Option<Entity>,
-    notification: Notification,
+    notification: impl Into<Notification>,
 ) {
+    let notification = notification.into();
     record(world, player, &notification);
     let at = world.resource::<WallClock>().now;
     let speaker = speaker.filter(|&npc| {
         notification.spoken_by(world, npc) && visibility::present(world, npc, player)
     });
-    let live = match notification.kind {
-        NotificationKind::Feed { .. } | NotificationKind::Error { .. } => true,
-        _ => budget::admit(world, player, &notification, speaker, at),
+    let sent = NotificationSent::new(world, notification, speaker);
+    let live = match sent.notification.kind {
+        NotificationKind::Feed(_) | NotificationKind::Error { .. } => true,
+        _ => budget::admit(world, player, &sent, at),
     };
     if live {
-        visibility::send_private(
-            world,
-            player,
-            NotificationSent {
-                notification,
-                actor: speaker,
-            },
-        );
+        visibility::send_private(world, player, sent);
     }
 }
 
@@ -190,10 +228,6 @@ pub fn record(world: &mut World, player: Entity, notification: &Notification) {
 
 pub fn captions(world: &World) -> NotificationRows {
     rows::shown::<rows::Captions>(world)
-}
-
-pub fn alerts(world: &World) -> NotificationRows {
-    rows::shown::<rows::Alerts>(world)
 }
 
 pub fn milestones(world: &World) -> NotificationRows {
@@ -210,50 +244,17 @@ impl Notification {
     }
 
     /// A row of the feed under a topic, bare until given an icon, a tally, a sound or a failure.
-    pub fn feed(topic: HistoryTopic, text: impl Into<String>) -> Notification {
-        Notification::new(
-            NotificationKind::Feed {
+    pub fn feed(topic: HistoryTopic, text: impl Into<String>) -> FeedLine {
+        FeedLine {
+            row: FeedRow {
                 topic,
                 icon: None,
                 tally: None,
                 failure: false,
                 sfx: None,
             },
-            LineText::plain(text),
-        )
-    }
-
-    pub fn icon(mut self, path: String) -> Notification {
-        if let NotificationKind::Feed { icon, .. } = &mut self.kind {
-            *icon = Some(path);
+            text: LineText::plain(text),
         }
-        self
-    }
-
-    pub fn tally(mut self, counted: RecordTally) -> Notification {
-        if let NotificationKind::Feed { tally, .. } = &mut self.kind {
-            *tally = Some(counted);
-        }
-        self
-    }
-
-    pub fn failed(mut self) -> Notification {
-        if let NotificationKind::Feed { failure, .. } = &mut self.kind {
-            *failure = true;
-        }
-        self
-    }
-
-    pub fn sound(mut self, heard: SfxId) -> Notification {
-        if let NotificationKind::Feed { sfx, .. } = &mut self.kind {
-            *sfx = Some(heard);
-        }
-        self
-    }
-
-    pub fn stays(&self) -> Seconds {
-        self.lasts
-            .unwrap_or_else(|| reading(self.text.word_count()))
     }
 
     fn spoken_by(&self, world: &World, npc: Entity) -> bool {
@@ -274,19 +275,19 @@ impl Notification {
                 HistoryTopic::Notification,
                 Some(speaker.get(content).name.as_str()),
             ),
-            NotificationKind::Narration { label, .. } | NotificationKind::Alert { label, .. } => {
+            NotificationKind::Narration { label, .. } => {
                 entry(HistoryTopic::Notification, Some(label))
             }
             NotificationKind::Error { .. } => entry(HistoryTopic::Error, None),
             NotificationKind::Milestone { label, topic, .. } => entry(*topic, Some(label)),
             NotificationKind::Intro { title, .. } => entry(HistoryTopic::Notification, Some(title)),
-            NotificationKind::Feed {
+            NotificationKind::Feed(FeedRow {
                 topic,
                 icon,
                 tally,
                 failure,
                 ..
-            } => entry(*topic, None)
+            }) => entry(*topic, None)
                 .icon(icon.clone())
                 .tally(*tally)
                 .mark(failure.then_some(HistoryMark::Failed)),
@@ -421,7 +422,7 @@ impl EffectDef<RiftScripting> for Notify {
             if let Some(player) = effects::aimed_character(world, cx, &who) {
                 let spoken: Vec<_> = values.iter().map(|value| value(world, cx)).collect();
                 let notification = def.notification(LineText::spoken(&def.text, &spoken));
-                notify_from(world, player, cx.owner, notification);
+                notify(world, player, cx.owner, notification);
             }
             EffectStep::Done
         }))
@@ -515,9 +516,8 @@ pub struct NotificationPlugin;
 
 impl Plugin for NotificationPlugin {
     fn build(&self, app: &mut App) {
-        rows::plugin::<rows::Captions>(app);
-        rows::plugin::<rows::Alerts>(app);
-        rows::plugin::<rows::Milestones>(app);
+        rows::place::<rows::PlacedRows<rows::Captions>>(app);
+        rows::place::<rows::PlacedRows<rows::Milestones>>(app);
         error::plugin(app);
         app.add_plugins((
             bubble::BubblePlugin,
@@ -545,8 +545,7 @@ fn draw_column(world: &mut World) {
         return;
     };
     let screen = gui.content_rect();
-    let alerts = rows::draw_alerts(world, &gui, screen.top() + COLUMN_TOP);
-    let captions = rows::draw_captions(world, &gui, alerts + GROUP_GAP);
+    let captions = rows::draw_captions(world, &gui, screen.top() + COLUMN_TOP);
     let error = error::draw(world, &gui, captions + GROUP_GAP);
     let centre = error + screen.height() * CENTRE_BELOW;
     let intro = intro::draw(world, &gui, centre);
@@ -607,19 +606,12 @@ fn show(world: &mut World, notification_sent: NotificationSent) {
         NotificationKind::Narration { label, .. } => {
             rows::join::<rows::Captions>(world, label.clone(), notification_sent)
         }
-        NotificationKind::Alert { label, .. } => {
-            rows::join::<rows::Alerts>(world, label.clone(), notification_sent)
-        }
         NotificationKind::Error { .. } => error::toast(world, notification_sent),
         NotificationKind::Milestone { label, .. } => {
             rows::join::<rows::Milestones>(world, label.clone(), notification_sent)
         }
         NotificationKind::Intro { .. } => intro::show(world, notification_sent),
-        NotificationKind::Feed { .. } => feed::show(world, notification_sent),
+        NotificationKind::Feed(_) => feed::show(world, notification_sent),
         NotificationKind::Pop { .. } => pop::show(world, notification_sent),
     }
-}
-
-fn reading(words: usize) -> Seconds {
-    Seconds(READING_BASE.0 + READING_PER_WORD.0 * words as f32)
 }

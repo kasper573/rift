@@ -8,13 +8,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::time::{Seconds, UnixMillis, WallClock};
+use crate::systems::GameSettings;
 use crate::systems::player::{ClientId, PlayedBy, Players};
 use crate::systems::text::LineText;
 use crate::systems::visibility;
 use ui::words;
 
 pub const KEPT: usize = 500;
-const MERGE_WITHIN: Seconds = Seconds(10.0);
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -159,20 +159,30 @@ impl History {
         self.records.iter()
     }
 
-    pub fn replayed(records: impl IntoIterator<Item = (UnixMillis, HistoryEntry)>) -> History {
+    /// The history `records` make, like entries within `merges_within` of each other counted as
+    /// one.
+    pub fn replayed(
+        records: impl IntoIterator<Item = (UnixMillis, HistoryEntry)>,
+        merges_within: Seconds,
+    ) -> History {
         let mut history = History::default();
         for (at, entry) in records {
-            history.write(entry, at);
+            history.write(entry, at, merges_within);
         }
         history
     }
 
-    fn write(&mut self, entry: HistoryEntry, now: UnixMillis) -> HistoryRecord {
+    fn write(
+        &mut self,
+        entry: HistoryEntry,
+        now: UnixMillis,
+        merges_within: Seconds,
+    ) -> HistoryRecord {
         let recent = self
             .records
             .iter_mut()
             .rev()
-            .take_while(|record| now.since(record.at) < MERGE_WITHIN);
+            .take_while(|record| now.since(record.at) < merges_within);
         for record in recent {
             if let Some(merged) = record.entry.merged(&entry) {
                 record.entry = merged;
@@ -195,6 +205,7 @@ impl History {
 
 pub fn record(world: &mut World, player: Entity, entry: HistoryEntry) {
     let now = world.resource::<WallClock>().now;
+    let merges_within = world.resource::<GameSettings>().history_merges_within;
     let Some(subject) = world.get::<PlayedBy>(player).map(|owner| owner.client) else {
         return;
     };
@@ -205,7 +216,7 @@ pub fn record(world: &mut World, player: Entity, entry: HistoryEntry) {
         .entry::<History>()
         .or_default()
         .into_mut()
-        .write(entry, now);
+        .write(entry, now, merges_within);
     visibility::send_private(world, player, HistoryNews::Recorded { subject, record });
 }
 

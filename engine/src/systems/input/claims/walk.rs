@@ -4,14 +4,14 @@ use crate::core::math::Pos;
 use crate::core::render::world::decal::GroundDecal;
 use crate::core::render::{self, Pointed};
 use crate::core::units::Meters;
-use crate::systems::input::gestures::{ClickClaim, Cursor, Gesture};
+use crate::systems::input::claims::{Claimant, ClickClaim, Cursor};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::input::marks;
 use crate::systems::interface::CursorShape;
 use crate::systems::player::session;
 use crate::systems::{area, combat, movement};
 
-pub struct WalkGesture;
+pub struct WalkClaimant;
 
 /// The point last asked for. A held button asks again as soon as the pointer moves, so a walk led
 /// by the pointer never reaches its end and waits for the next ask.
@@ -20,7 +20,7 @@ struct WalkState {
     last: Option<Pos<Meters>>,
 }
 
-impl Gesture for WalkGesture {
+impl Claimant for WalkClaimant {
     fn claim(&self, world: &mut World, pointed: Option<&Pointed>) -> Option<ClickClaim> {
         if !session::is_alive(world) {
             return None;

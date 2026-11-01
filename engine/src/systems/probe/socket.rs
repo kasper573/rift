@@ -63,19 +63,7 @@ impl ProbeSocket {
             game,
         }
     }
-}
 
-fn loaded(game: &(Mutex<Option<Content>>, Condvar)) -> Content {
-    let (content, known) = game;
-    let content = known
-        .wait_while(content.lock().expect("the probe's game"), |content| {
-            content.is_none()
-        })
-        .expect("the probe's game");
-    content.clone().expect("a loaded game")
-}
-
-impl ProbeSocket {
     /// The frame questions asked since the last frame.
     pub(super) fn asked(&self) -> Vec<FrameQuestion> {
         self.asked.try_iter().collect()
@@ -90,4 +78,14 @@ impl ProbeSocket {
         *game.lock().expect("the probe's game") = Some(content.clone());
         known.notify_all();
     }
+}
+
+fn loaded(game: &(Mutex<Option<Content>>, Condvar)) -> Content {
+    let (content, known) = game;
+    let content = known
+        .wait_while(content.lock().expect("the probe's game"), |content| {
+            content.is_none()
+        })
+        .expect("the probe's game");
+    content.clone().expect("a loaded game")
 }

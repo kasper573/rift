@@ -3,44 +3,37 @@ use std::marker::PhantomData;
 use std::time::Duration;
 use ui::egui;
 
+use bevy::ecs::component::Mutable;
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use ui::dusk;
 use ui::egui::emath::{TSTransform, easing};
 use ui::egui::{
-    Align, Align2, Color32, FontId, Id, LayerId, Layout, Order, Rect, RichText, Sense, Ui,
-    UiBuilder, Vec2,
+    Align, Color32, FontId, Id, LayerId, Layout, Order, Rect, RichText, Sense, Ui, UiBuilder, Vec2,
 };
 use ui::face::Face;
-use ui::glyph::Mark;
 use ui::ink::Ground;
 
 use super::{NotificationSent, window_visible};
 use crate::core::gui::{self, Band, Tier};
 use crate::core::text::{self, KeyNames, StyledLine, TextLook, TextPiece, TextShadow};
 use crate::core::time::Seconds;
+use crate::systems::GameSettings;
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::screen::ClientScreen;
-use ui::form;
 use ui::paint;
-
-const COUNT_LINGERS: Seconds = Seconds(5.0);
 
 const WHITE: Color32 = Color32::WHITE;
 pub(super) const SLATE_90: Color32 = Color32::from_rgb(228, 234, 239);
 pub(super) const SLATE_40: Color32 = Color32::from_rgb(41, 46, 45);
 const AMBER_80: Color32 = Color32::from_rgb(246, 201, 96);
 const LABEL: f32 = 12.0;
-const CLOSE: f32 = 20.0;
 const CAPTION: f32 = 12.0;
-const BODY: f32 = 16.0;
 
 const CAPTIONS_WIDEST: f32 = 640.0;
 const CAPTION_SIZE: f32 = 17.0;
 const CAPTION_LINES_HIGH: f32 = 46.0;
 const CAPTION_PADDING: Vec2 = Vec2::new(24.0, 8.0);
-const ALERTS_WIDEST: f32 = 580.0;
 const MILESTONE_SIZE: f32 = 34.0;
 const SCREEN_SHARE: f32 = 0.94;
 const LINE_GAP: f32 = 2.0;
@@ -67,26 +60,17 @@ const SHADOW: TextShadow = TextShadow {
 
 pub(super) trait RowPlace: Send + Sync + 'static {
     const ROWS: usize;
-    const REPLACE_AFTER: Seconds;
 }
 
 pub(super) struct Captions;
-pub(super) struct Alerts;
 pub(super) struct Milestones;
 
 impl RowPlace for Captions {
     const ROWS: usize = 3;
-    const REPLACE_AFTER: Seconds = Seconds(2.0);
-}
-
-impl RowPlace for Alerts {
-    const ROWS: usize = 2;
-    const REPLACE_AFTER: Seconds = Seconds(3.0);
 }
 
 impl RowPlace for Milestones {
     const ROWS: usize = 2;
-    const REPLACE_AFTER: Seconds = Seconds(2.0);
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -102,21 +86,51 @@ pub struct NotificationRow {
     pub replaced: u32,
 }
 
-pub(super) fn plugin<P: RowPlace>(app: &mut App) {
-    app.init_resource::<PlacedRows<P>>()
+/// A place on screen notices show in: its clock moves while the game window is on screen and,
+/// where hovering holds it, while the pointer is off it, and it lets go of what lapsed by it.
+pub(super) trait NoticePlace: Resource<Mutability = Mutable> + Default {
+    /// Whether hovering what the place drew holds its notices.
+    const HOLDS: bool = true;
+
+    fn drawn(&self) -> &[Rect];
+
+    /// Moves the place's clock on by `delta` and lets go of what lapsed, a newer notice taking an
+    /// older one's place once that has shown for `glance`.
+    fn advance(&mut self, delta: Duration, glance: Duration);
+}
+
+/// Keeps a place of notices: aging it in an area, and emptying it when the area is left, as all a
+/// place keeps is about the area it was raised in.
+pub(super) fn place<P: NoticePlace>(app: &mut App) {
+    app.init_resource::<P>()
         .add_systems(
             Update,
-            tick::<P>
+            age::<P>
                 .run_if(in_state(ClientScreen::Area))
                 .run_if(window_visible),
         )
-        .add_systems(OnExit(ClientScreen::Area), forget::<PlacedRows<P>>);
+        .add_systems(OnExit(ClientScreen::Area), |world: &mut World| {
+            world.insert_resource(P::default());
+        });
 }
 
-/// Everything a notification place or row keeps is about the area it was raised in, so each one
-/// starts empty when that area is left.
-pub(super) fn forget<R: Resource + Default>(world: &mut World) {
-    world.insert_resource(R::default());
+fn age<P: NoticePlace>(world: &mut World) {
+    if P::HOLDS && hovered(world, world.resource::<P>().drawn()) {
+        return;
+    }
+    let delta = world.resource::<Time>().delta();
+    let glance = world.resource::<GameSettings>().reading.glance.into();
+    world.resource_mut::<P>().advance(delta, glance);
+}
+
+impl<P: RowPlace> NoticePlace for PlacedRows<P> {
+    fn drawn(&self) -> &[Rect] {
+        &self.drawn
+    }
+
+    fn advance(&mut self, delta: Duration, glance: Duration) {
+        self.rows.tick(delta, glance);
+    }
 }
 
 pub(super) fn join<P: RowPlace>(
@@ -132,47 +146,6 @@ pub(super) fn join<P: RowPlace>(
 
 pub(super) fn shown<P: RowPlace>(world: &World) -> NotificationRows {
     world.resource::<PlacedRows<P>>().rows.shown()
-}
-
-pub(super) fn draw_alerts(world: &mut World, gui: &egui::Context, top: f32) -> f32 {
-    let (lines, more) = lines_of::<Alerts>(world);
-    let width = ALERTS_WIDEST.min(gui.content_rect().width() * SCREEN_SHARE);
-    let mut drawn: Vec<Rect> = Vec::new();
-    let next = |drawn: &[Rect]| drawn.last().map_or(top, |last| last.bottom() + ROW_GAP);
-    for line in lines {
-        let area = Stacking::OverWindows
-            .area(gui, Id::new(("alert", line.key)))
-            .anchor(Align2::CENTER_TOP, Vec2::new(0.0, next(&drawn)));
-        let shown = area.show(gui, |ui| {
-            dusk::frame().show(ui, |ui| {
-                ui.set_width(width);
-                let closed = alert_title(ui, &label_text(&line.label, line.replaced));
-                text::show(ui, world, &line.text, look(BODY, dusk::TEXT), None);
-                closed
-            })
-        });
-        drawn.push(shown.response.rect);
-        if shown.inner.inner {
-            world
-                .resource_mut::<PlacedRows<Alerts>>()
-                .rows
-                .close(line.key);
-        }
-    }
-    if let Some(more) = more {
-        let at = next(&drawn);
-        drawn.push(chip_area(
-            world,
-            gui,
-            "alerts-more",
-            at,
-            more,
-            Stacking::OverWindows,
-        ));
-    }
-    let bottom = drawn.last().map_or(top, Rect::bottom);
-    world.resource_mut::<PlacedRows<Alerts>>().drawn = drawn;
-    bottom
 }
 
 pub(super) fn draw_captions(world: &mut World, gui: &egui::Context, top: f32) -> f32 {
@@ -564,7 +537,7 @@ pub(super) struct PlacedRows<P> {
 impl<P: RowPlace> Default for PlacedRows<P> {
     fn default() -> PlacedRows<P> {
         PlacedRows {
-            rows: VoiceRows::new(P::ROWS, P::REPLACE_AFTER),
+            rows: VoiceRows::new(P::ROWS),
             drawn: Vec::new(),
             fades: Fades::default(),
             scrim: Fades::default(),
@@ -609,7 +582,6 @@ impl Default for Look {
 
 struct VoiceRows {
     limit: usize,
-    replace_after: Duration,
     rows: Vec<VoiceRow>,
     turned_away: Option<TurnedAway>,
     clock: Clock,
@@ -632,10 +604,9 @@ struct TurnedAway {
 }
 
 impl VoiceRows {
-    fn new(limit: usize, replace_after: Seconds) -> VoiceRows {
+    fn new(limit: usize) -> VoiceRows {
         VoiceRows {
             limit,
-            replace_after: replace_after.into(),
             rows: Vec::new(),
             turned_away: None,
             clock: Clock::default(),
@@ -645,13 +616,10 @@ impl VoiceRows {
 
     fn join(&mut self, voice: Cow<'static, str>, notification_sent: NotificationSent) {
         let now = self.clock.now();
-        let stays: Duration = notification_sent.notification.stays().into();
+        let stays: Duration = notification_sent.stays.into();
         if let Some(row) = self.rows.iter_mut().find(|row| row.voice == voice) {
             if row.shown.notification == notification_sent.notification {
-                row.read_by = row.read_by.max(
-                    self.clock
-                        .ends_after(notification_sent.notification.stays()),
-                );
+                row.read_by = row.read_by.max(now + stays);
                 return;
             }
             row.replaced += 1;
@@ -664,7 +632,7 @@ impl VoiceRows {
                 until: now,
             });
             turned_away.more += 1;
-            turned_away.until = self.clock.ends_after(COUNT_LINGERS);
+            turned_away.until = turned_away.until.max(now + stays);
             return;
         }
         let after = self.rows.last().map_or(now, |last| last.read_by.max(now));
@@ -680,17 +648,15 @@ impl VoiceRows {
         });
     }
 
-    fn tick(&mut self, delta: Duration, held: bool) {
-        if held {
-            return;
-        }
+    /// Moves the rows along, a newer line replacing a row's once it has shown for `glance`.
+    fn tick(&mut self, delta: Duration, glance: Duration) {
         self.clock.advance(delta);
         let now = self.clock.now();
         for row in &mut self.rows {
-            if now >= row.changed + self.replace_after
+            if now >= row.changed + glance
                 && let Some(newest) = row.newest.take()
             {
-                let stays: Duration = newest.notification.stays().into();
+                let stays: Duration = newest.stays.into();
                 row.read_by = row.read_by.max(now + stays);
                 row.shown = newest;
                 row.changed = now;
@@ -701,10 +667,6 @@ impl VoiceRows {
             .turned_away
             .take()
             .filter(|turned_away| turned_away.until > now);
-    }
-
-    fn close(&mut self, key: u64) {
-        self.rows.retain(|row| row.key != key);
     }
 
     fn labelled_lines(&self) -> Vec<LabelledLine> {
@@ -739,12 +701,6 @@ impl VoiceRows {
             more: self.more().unwrap_or(0),
         }
     }
-}
-
-fn tick<P: RowPlace>(world: &mut World) {
-    let held = hovered(world, &world.resource::<PlacedRows<P>>().drawn);
-    let delta = world.resource::<Time>().delta();
-    world.resource_mut::<PlacedRows<P>>().rows.tick(delta, held);
 }
 
 fn lines_of<P: RowPlace>(world: &World) -> (Vec<LabelledLine>, Option<u32>) {
@@ -826,28 +782,4 @@ fn label_text(label: &str, replaced: u32) -> String {
 
 fn label_width(gui: &egui::Context, label: &str) -> f32 {
     paint::text_size(gui, label, label_font()).x
-}
-
-/// The alert's label over a rule, with the cross that closes it; true once the cross is clicked.
-fn alert_title(ui: &mut Ui, label: &str) -> bool {
-    let closed = ui
-        .horizontal(|ui| {
-            ui.label(RichText::new(label).font(label_font()).color(dusk::TEXT));
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                let (rect, response) = ui.allocate_exact_size(Vec2::splat(CLOSE), Sense::click());
-                response.widget_info(|| {
-                    egui::WidgetInfo::labeled(egui::WidgetType::Button, true, "Close")
-                });
-                if response.hovered() {
-                    ui.painter().rect_filled(rect, 4.0, dusk::HOVER);
-                }
-                Mark::Cross.paint(ui.painter(), rect.shrink(CLOSE * 0.2), dusk::TEXT);
-                response.clicked()
-            })
-            .inner
-        })
-        .inner;
-    form::rule_with(ui, egui::Stroke::new(1.0, dusk::BORDER));
-    ui.add_space(6.0);
-    closed
 }
