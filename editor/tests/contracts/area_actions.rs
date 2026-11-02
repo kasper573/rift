@@ -112,6 +112,7 @@ fn copied_rows_paste_in_the_order_the_scene_lists_them() {
 fn ctrl_g_over_the_scene_graph_groups_the_selection_into_a_new_folder() {
     let scratch = tempfile::tempdir().expect("a scratch folder");
     let mut editor = editor_with_a_door(&scratch);
+    support::read(&editor, &area());
     let mut frames = Frames::new(egui::vec2(1600.0, 900.0));
     let over_the_panel = vec![egui::Event::PointerMoved(egui::pos2(150.0, 400.0))];
     frames.run(over_the_panel.clone(), |ui| {
@@ -160,6 +161,7 @@ fn an_optional_field_set_to_what_the_game_reads_without_it_stays_shown_to_edit_i
         editor.selection = RowSelection::parts(AreaDef::TABLE, area, vec!["/0".to_owned()]);
         frames.run(events, |ui| editor::views::area::show(editor, ui, area))
     };
+    support::read(&editor, &area());
     show(&mut editor, &area(), Vec::new());
     let set_volume = show(&mut editor, &area(), Vec::new()).at("+ volume");
 
@@ -171,6 +173,7 @@ fn an_optional_field_set_to_what_the_game_reads_without_it_stays_shown_to_edit_i
     assert!(!drawn.any(|text| text == "+ volume"), "{drawn:?}");
     assert!(drawn.any(|text| text == "volume"), "{drawn:?}");
     let cellar = path("area", "cellar");
+    support::read(&editor, &cellar);
     show(&mut editor, &cellar, Vec::new());
     let drawn = show(&mut editor, &cellar, Vec::new());
     assert!(drawn.any(|text| text == "+ volume"), "{drawn:?}");
@@ -209,6 +212,7 @@ fn an_object_given_a_script_runs_the_nearest_object_script_or_one_made_for_it() 
             Some("Add a door".to_owned())
         }));
         editor.selection = RowSelection::parts(AreaDef::TABLE, &area(), vec![DOOR.to_owned()]);
+        support::read(&editor, &area());
         let mut frames = Frames::new(egui::vec2(1600.0, 900.0));
         let mut show = |editor: &mut Editor, events: Vec<egui::Event>| {
             frames.run(events, |ui| editor::views::area::show(editor, ui, &area()))
@@ -261,6 +265,7 @@ fn a_population_given_a_roam_rect_first_roams_the_whole_area_it_roamed_without_o
         .whole();
     let mut editor = support::open(game, &scratch);
     editor.selection = RowSelection::parts(AreaDef::TABLE, &area(), vec!["/0".to_owned()]);
+    support::read(&editor, &area());
     let mut frames = Frames::new(egui::vec2(1600.0, 900.0));
     let mut show = |editor: &mut Editor, events: Vec<egui::Event>| {
         frames.run(events, |ui| editor::views::area::show(editor, ui, &area()))

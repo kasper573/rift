@@ -393,6 +393,15 @@ impl Project {
         self.typed.read(&self.files, &self.name(), path)
     }
 
+    /// The content file at `path` as [`Project::read`] reads it, once a read in the background has
+    /// made it: none until then.
+    pub fn read_soon<Row: ContentFile>(
+        &self,
+        path: &str,
+    ) -> Option<Result<Arc<Row>, Arc<Unreadable>>> {
+        self.typed.read_soon(&self.files, &self.name(), path)
+    }
+
     /// The content file `id` names among the files as they stand now, when it reads.
     pub(crate) fn read_id<Row: ContentFile>(&self, id: ContentId<Row>) -> Option<Arc<Row>> {
         self.read(self.reader().path_of(id)?).ok()

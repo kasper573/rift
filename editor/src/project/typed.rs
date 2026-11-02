@@ -1,6 +1,6 @@
 use std::any::{Any, TypeId};
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 
 use engine::core::content::{
     Content, ContentFile, ContentId, FolderReader, ReadRow, SETTINGS_FILE, Unreadable,
@@ -23,6 +23,8 @@ struct Typed {
     paths_revision: u64,
     reader: Arc<FolderReader>,
     read: HashMap<(TypeId, String), Kept>,
+    /// Reads under way in the background, each until it is taken in as read.
+    reading: HashMap<(TypeId, String), Arc<OnceLock<Read>>>,
 }
 
 type Read = Result<Arc<dyn Any + Send + Sync>, Arc<Unreadable>>;
@@ -55,6 +57,42 @@ impl TypedFiles {
         self.read_as(files, name, path, |reader| reader.read::<Row>(path))
     }
 
+    /// The file at `path` as the game reads it once it has been read: the first ask reads it in
+    /// the background, so a large file never holds up a frame, and the asks after it find it read.
+    pub(super) fn read_soon<Row: ContentFile>(
+        &self,
+        files: &ProjectFiles,
+        name: &str,
+        path: &str,
+    ) -> Option<Result<Arc<Row>, Arc<Unreadable>>> {
+        let read = self.with(files, name, |typed| {
+            let key = (TypeId::of::<Row>(), path.to_owned());
+            if let Some(kept) = typed.read.get(&key) {
+                return Some(kept.read.clone());
+            }
+            let Some(reading) = typed.reading.get(&key) else {
+                let slot = Arc::new(OnceLock::new());
+                let (reader, path, filled) = (typed.reader.clone(), path.to_owned(), slot.clone());
+                super::background().spawn(move || {
+                    let _ = filled.set(kept_read(reader.read::<Row>(&path)));
+                });
+                typed.reading.insert(key, slot);
+                return None;
+            };
+            let read = reading.get()?.clone();
+            typed.reading.remove(&key);
+            typed.read.insert(
+                key,
+                Kept {
+                    read: read.clone(),
+                    from: hashes_of(files, path),
+                },
+            );
+            Some(read)
+        })?;
+        Some(read.map(|row| row.downcast::<Row>().expect("read as its own type")))
+    }
+
     pub(super) fn settings(
         &self,
         files: &ProjectFiles,
@@ -82,10 +120,7 @@ impl TypedFiles {
                 .read
                 .entry(key)
                 .or_insert_with(|| Kept {
-                    read: match read(&reader) {
-                        Ok(row) => Ok(Arc::new(row)),
-                        Err(errors) => Err(Arc::new(errors)),
-                    },
+                    read: kept_read(read(&reader)),
                     from: hashes_of(files, path),
                 })
                 .read
@@ -131,6 +166,7 @@ impl TypedFiles {
                     paths_revision: files.paths_revision(),
                     reader: Arc::new(reader),
                     read,
+                    reading: HashMap::new(),
                 })
             }
         };
@@ -157,6 +193,13 @@ impl IdPaths for Content {
             .paths()
             .get(id.index())
             .map(String::as_str)
+    }
+}
+
+fn kept_read<T: Any + Send + Sync>(read: Result<T, Unreadable>) -> Read {
+    match read {
+        Ok(row) => Ok(Arc::new(row)),
+        Err(errors) => Err(Arc::new(errors)),
     }
 }
 

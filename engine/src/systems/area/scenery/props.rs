@@ -46,21 +46,41 @@ pub fn prop_transform(heights: &Heightfield, placed: &PropPlacement) -> Transfor
     }
 }
 
-/// An area's props as its scenery stands them: where each is filed, how far across each is, the
-/// models merged so far, and what stands of them.
+/// An area's props as its scenery stands them: where each is filed and how far across, worked out
+/// off the frame, the models merged so far, and what stands of them.
 pub(super) struct Props {
-    filed: SpatialIndex,
-    /// The most each placed prop measures across, by its index, where its model says.
-    extents: Vec<Option<Meters>>,
+    filed: Making<Arc<Filed>>,
     models: HashMap<PropId, Model>,
     scenes: HashMap<usize, Entity>,
     merged: HashMap<Merge, Merged>,
 }
 
 impl Props {
-    pub(super) fn new(content: &Content, area: &Area) -> Props {
-        let mut filed = SpatialIndex::new(PLACEMENT_CELL);
-        filed.refile_spots(area.props.iter().map(|placed| placed.at));
+    pub(super) fn new(content: &Content, area: &Arc<Area>) -> Props {
+        let (content, area) = (content.clone(), area.clone());
+        Props {
+            filed: Making::Task(
+                AsyncComputeTaskPool::get()
+                    .spawn(async move { Arc::new(Filed::of(&content, &area)) }),
+            ),
+            models: HashMap::default(),
+            scenes: HashMap::default(),
+            merged: HashMap::default(),
+        }
+    }
+}
+
+/// Where each of an area's props is filed, and the most each measures across, by its index, where
+/// its model says.
+struct Filed {
+    index: SpatialIndex,
+    extents: Vec<Option<Meters>>,
+}
+
+impl Filed {
+    fn of(content: &Content, area: &Area) -> Filed {
+        let mut index = SpatialIndex::new(PLACEMENT_CELL);
+        index.refile_spots(area.props.iter().map(|placed| placed.at));
         let models = content.built::<GltfInfos>();
         let mut sizes: HashMap<PropId, Option<f32>> = HashMap::default();
         let extents = area
@@ -74,13 +94,7 @@ impl Props {
                 Some(Meters(size? * placed.scale))
             })
             .collect();
-        Props {
-            filed,
-            extents,
-            models: HashMap::default(),
-            scenes: HashMap::default(),
-            merged: HashMap::default(),
-        }
+        Filed { index, extents }
     }
 }
 
@@ -94,13 +108,17 @@ pub(super) fn stand(
     cut: &Cut,
     budget: &mut Budget,
 ) -> bool {
-    let near: HashSet<usize> = in_leaves(streaming, cut)
-        .filter(|&index| !out_of_sight(streaming, seen, index, 1.0))
+    let Some(filed) = streaming.props.filed.made().cloned() else {
+        budget.defer();
+        return false;
+    };
+    let near: HashSet<usize> = in_leaves(streaming, &filed, cut)
+        .filter(|&index| !out_of_sight(streaming, &filed, seen, index, 1.0))
         .collect();
     let mut whole = stand_scenes(world, streaming, root, &near, budget);
     for &merge in &cut.merges {
         if !streaming.props.merged.contains_key(&merge) {
-            let waiting = gather(streaming, merge, seen.view);
+            let waiting = gather(streaming, &filed, merge, seen.view);
             streaming.props.merged.insert(merge, waiting);
         }
     }
@@ -122,8 +140,11 @@ pub(super) fn stand(
 
 /// Takes down what stood of the props for an earlier view and stands for none in `cut`.
 pub(super) fn clear(world: &mut World, streaming: &mut Streaming, seen: Seen, cut: &Cut) {
-    let kept: HashSet<usize> = in_leaves(streaming, cut)
-        .filter(|&index| !out_of_sight(streaming, seen, index, KEEP_SHARE))
+    let Some(filed) = streaming.props.filed.made().cloned() else {
+        return;
+    };
+    let kept: HashSet<usize> = in_leaves(streaming, &filed, cut)
+        .filter(|&index| !out_of_sight(streaming, &filed, seen, index, KEEP_SHARE))
         .collect();
     let props = &mut streaming.props;
     let gone: Vec<usize> = props
@@ -180,31 +201,44 @@ enum Model {
 }
 
 /// The props standing in the leaves of `cut`.
-fn in_leaves<'a>(streaming: &'a Streaming, cut: &'a Cut) -> impl Iterator<Item = usize> + 'a {
+fn in_leaves<'a>(
+    streaming: &'a Streaming,
+    filed: &'a Filed,
+    cut: &'a Cut,
+) -> impl Iterator<Item = usize> + 'a {
     cut.leaves
         .iter()
-        .flat_map(move |&leaf| props_within(streaming, leaf))
+        .flat_map(move |&leaf| props_within(streaming, filed, leaf))
 }
 
 /// The props standing within a region, each in the one region of a level that holds where it
 /// stands.
-fn props_within(streaming: &Streaming, region: Region) -> impl Iterator<Item = usize> + '_ {
+fn props_within<'a>(
+    streaming: &'a Streaming,
+    filed: &'a Filed,
+    region: Region,
+) -> impl Iterator<Item = usize> + 'a {
     let bounds = streaming.regions.bounds(region);
     let area = &streaming.area;
-    streaming
-        .props
-        .filed
+    filed
+        .index
         .within(bounds)
         .filter(move |&index| regions::holds(bounds, area.props[index].at))
 }
 
 /// Whether a prop spans less than a pixel of the view, or `share` times the reach and more lies
 /// between it and where the view looks.
-fn out_of_sight(streaming: &Streaming, seen: Seen, index: usize, share: f32) -> bool {
+fn out_of_sight(
+    streaming: &Streaming,
+    filed: &Filed,
+    seen: Seen,
+    index: usize,
+    share: f32,
+) -> bool {
     let placed = &streaming.area.props[index];
     let eye = seen.view.eye();
     (placed.at - seen.at).length() > seen.reach.0 * share
-        || streaming.props.extents[index].is_some_and(|extent| {
+        || filed.extents[index].is_some_and(|extent| {
             let ground = streaming.heights.height_at(placed.at).0;
             let from_eye = (placed.at - ground_pos(eye)).length().hypot(eye.y - ground);
             from_eye > seen.view.shown_within(extent).0 * share
@@ -251,12 +285,11 @@ fn stand_scenes(
 
 /// A region's props as it shows them, waiting to merge: every one in it that spans a pixel at the
 /// nearest its band comes to the eye.
-fn gather(streaming: &Streaming, merge: Merge, view: View) -> Merged {
+fn gather(streaming: &Streaming, filed: &Filed, merge: Merge, view: View) -> Merged {
     let nearest = streaming.regions.nearest(merge);
-    let props: Vec<usize> = props_within(streaming, merge.region)
+    let props: Vec<usize> = props_within(streaming, filed, merge.region)
         .filter(|&index| {
-            streaming.props.extents[index]
-                .is_none_or(|extent| nearest.0 <= view.shown_within(extent).0)
+            filed.extents[index].is_none_or(|extent| nearest.0 <= view.shown_within(extent).0)
         })
         .collect();
     let mut models: Vec<PropId> = props

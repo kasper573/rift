@@ -414,6 +414,14 @@ pub fn bottom(editor: &mut Editor, ui: &mut Ui, view_key: &str, tab: BottomTab) 
 fn show_canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
     let Some(snapshot) = AreaSnapshot::for_view(editor, view_key) else {
         let bundle = editor.views.area.view(view_key).bundle.clone();
+        if editor
+            .project
+            .as_ref()
+            .is_some_and(|project| !nodes::read_yet(project, &bundle))
+        {
+            ui.centered_and_justified(|ui| ui.spinner());
+            return;
+        }
         if let Some(Err(errors)) = nodes::read_bundle(editor, &bundle) {
             widgets::unreadable(ui, &bundle, &errors);
             return;
@@ -926,6 +934,9 @@ impl AreaSnapshot {
         let revision = project.files.revision();
         let view = editor.views.area.views.get(view_key)?;
         let bundle = view.bundle.clone();
+        if view.cache.is_none() && !nodes::read_yet(project, &bundle) {
+            return None;
+        }
         let current = view.cache.as_ref().filter(|cache| {
             cache.generation == generation
                 && cache.show_only == view.show_only

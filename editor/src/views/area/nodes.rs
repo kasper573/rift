@@ -124,6 +124,16 @@ fn read_bundle_in(project: &Project, bundle: &str) -> Option<Result<SceneBundle,
     })
 }
 
+/// Whether the area or blueprint at `bundle` of `project` has been read: the first ask starts
+/// reading it in the background.
+pub(crate) fn read_yet(project: &Project, bundle: &str) -> bool {
+    match table_of(bundle) {
+        Some(AreaDef::TABLE) => project.read_soon::<AreaDef>(bundle).is_some(),
+        Some(BlueprintDef::TABLE) => project.read_soon::<BlueprintDef>(bundle).is_some(),
+        _ => true,
+    }
+}
+
 /// The area or blueprint at `bundle`, when it reads.
 pub fn bundle_of(editor: &Editor, bundle: &str) -> Option<SceneBundle> {
     read_bundle(editor, bundle)?.ok()

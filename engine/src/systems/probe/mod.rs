@@ -18,6 +18,7 @@ use bevy::input::mouse::{MouseButtonInput, MouseWheel};
 use bevy::prelude::*;
 use bevy::render::renderer::RenderDevice;
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
+use bevy::tasks::AsyncComputeTaskPool;
 use bevy::window::{CursorOptions, PrimaryWindow};
 use bevy_egui::{EguiOutput, EguiPostUpdateSet, PrimaryEguiContext};
 use schemars::JsonSchema;
@@ -702,23 +703,10 @@ fn publish(world: &mut World) {
     }
     let asked = world.non_send::<Probe>().0.asked();
     let answers = world.non_send::<Probe>().0.answers();
-    let mut snapshotted: Option<String> = None;
+    let mut snapshots = 0;
     for question in asked {
         match question {
-            ProbeFrameQuestion::Snapshot => {
-                let json = match &snapshotted {
-                    Some(json) => json.clone(),
-                    None => {
-                        let snapshot = snapshot(world);
-                        let scope = ContentScope::of(world.resource::<Content>());
-                        let (json, _) = with_content(scope, || {
-                            serde_json::to_string(&snapshot).expect("a serializable snapshot")
-                        });
-                        snapshotted.insert(json).clone()
-                    }
-                };
-                answers.give(&json);
-            }
+            ProbeFrameQuestion::Snapshot => snapshots += 1,
             ProbeFrameQuestion::Picture { path } => {
                 let answers = answers.clone();
                 world.spawn(Screenshot::primary_window()).observe(
@@ -733,6 +721,21 @@ fn publish(world: &mut World) {
                 );
             }
         }
+    }
+    if snapshots > 0 {
+        let snapshot = snapshot(world);
+        let scope = ContentScope::of(world.resource::<Content>());
+        // Writing a snapshot out is long work for a frame, and its answer needs nothing more of it.
+        AsyncComputeTaskPool::get()
+            .spawn(async move {
+                let (json, _) = with_content(scope, || {
+                    serde_json::to_string(&snapshot).expect("a serializable snapshot")
+                });
+                for _ in 0..snapshots {
+                    answers.give(&json);
+                }
+            })
+            .detach();
     }
 }
 

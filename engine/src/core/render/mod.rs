@@ -17,6 +17,7 @@ use std::collections::HashMap;
 
 use bevy::prelude::*;
 use bevy::render::batching::gpu_preprocessing::{GpuPreprocessingMode, GpuPreprocessingSupport};
+use bevy::render::render_asset::RenderAssetBytesPerFrame;
 use bevy::render::{RenderApp, RenderStartup, init_gpu_resource};
 use bevy::sprite_render::Material2dPlugin;
 use schemars::JsonSchema;
@@ -33,6 +34,10 @@ pub use world::sky::SkyLook;
 
 pub struct WorldRenderPlugin;
 
+/// How many bytes of meshes and textures a frame sends to the GPU: a place coming into view loads
+/// many models at once, and sent in one frame they hold it up.
+const UPLOAD_BYTES_PER_FRAME: usize = 8 << 20;
+
 impl Plugin for WorldRenderPlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "present.wesl");
@@ -46,6 +51,7 @@ impl Plugin for WorldRenderPlugin {
             Material2dPlugin::<present::Present>::default(),
             world::WorldScenePlugin,
         ))
+        .insert_resource(RenderAssetBytesPerFrame::new(UPLOAD_BYTES_PER_FRAME))
         .init_resource::<Animator>()
         .init_resource::<CameraPreferences>()
         .init_resource::<present::ScreenGrade>()

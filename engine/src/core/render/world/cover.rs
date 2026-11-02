@@ -802,6 +802,7 @@ pub(super) fn strew_loaded(
             commands.spawn((
                 StrewnChunk {
                     bounds: enclosing(&strewing.places, &bounds),
+                    copies: strewing.places.len(),
                     unstrewn: Some(Unstrewn {
                         places: strewing.places.clone(),
                         mesh,
@@ -824,6 +825,7 @@ pub(super) fn strew_loaded(
 #[derive(Component)]
 pub(super) struct StrewnChunk {
     bounds: Aabb,
+    copies: usize,
     unstrewn: Option<Unstrewn>,
 }
 
@@ -837,7 +839,7 @@ struct Unstrewn {
 }
 
 /// Disables every chunk no camera sees, copies and all, and enables every chunk one comes to see,
-/// strewing its copies the first time, as many a frame as keeps the frame short. A hidden entity still costs every frame's visibility and
+/// strewing its copies the first time, as many copies a frame as keep the frame short. A hidden entity still costs every frame's visibility and
 /// extraction a look, and an area holds far more copies than a view takes in, so the unseen leave
 /// every query instead. Propagation passes a disabled entity over, so this runs once the frame's
 /// propagation is done, and a copy keeps where it stood and whether it showed as it was disabled:
@@ -848,24 +850,24 @@ pub(super) fn cull_strewn_chunks(
     mut commands: Commands,
 ) {
     let mut strewable = COPIES_STREWN_PER_FRAME;
+    let mut switchable = COPIES_SWITCHED_PER_FRAME;
     for (entity, mut chunk, placed, disabled) in &mut chunks {
         let seen = cameras.iter().all(|(camera, _)| !camera.is_active)
             || cameras.iter().any(|(camera, frustum)| {
                 camera.is_active
                     && frustum.intersects_obb(&chunk.bounds, &placed.affine(), true, false)
             });
-        match (seen, disabled) {
-            (true, true) => {
+        if seen != !disabled && switchable > 0 {
+            switchable = switchable.saturating_sub(chunk.copies);
+            if seen {
                 commands
                     .entity(entity)
                     .remove_recursive::<Children, Disabled>();
-            }
-            (false, false) => {
+            } else {
                 commands
                     .entity(entity)
                     .insert_recursive::<Children>(Disabled);
             }
-            _ => {}
         }
         if seen
             && strewable > 0
@@ -893,6 +895,7 @@ pub(super) fn cull_strewn_chunks(
 }
 
 const COPIES_STREWN_PER_FRAME: usize = 2000;
+const COPIES_SWITCHED_PER_FRAME: usize = 4000;
 
 /// The box around every copy at `places` of a mesh within `bounds`.
 fn enclosing(places: &[Place], bounds: &Aabb) -> Aabb {

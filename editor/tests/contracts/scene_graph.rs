@@ -162,6 +162,7 @@ fn hiding_a_row_shows_in_the_open_view_before_the_folder_loads_again() {
     let mut editor = open(painted_game(), &scratch);
     support::settled(&mut editor);
     editor.views.area.ensure_view(&area());
+    support::read(&editor, &area());
     let shown = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
     let rug = nodes::modules(shown.def.nodes())
         .into_iter()
