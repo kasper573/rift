@@ -466,8 +466,6 @@ pub fn client_app(
         bevy::asset::io::AssetSourceId::Default,
         files.source(),
     )
-    // Rendering a frame alongside the next update puts the interface on screen a frame later,
-    // trailing the system cursor, and the client's frames are cheap enough to render in turn.
     .add_plugins(
         DefaultPlugins
             .set(bevy::log::LogPlugin {
@@ -478,8 +476,7 @@ pub fn client_app(
                 primary_window: Some(window),
                 ..default()
             })
-            .set(ImagePlugin::default_nearest())
-            .disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>(),
+            .set(ImagePlugin::default_nearest()),
     );
     // The client shows a world the server plays out in real time, so a frame however long moves it
     // on by all the time the frame took, as the server's world moved on, rather than by the most the
