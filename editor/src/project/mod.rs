@@ -331,6 +331,8 @@ pub struct RefusedEdit {
 
 struct Loaded {
     content: Content,
+    /// The revision of the files the content was loaded from.
+    revision: u64,
     usages: ContentUsages,
     unused: UnusedContent,
     took: Duration,
@@ -493,9 +495,8 @@ impl Project {
         self.loading = None;
         self.stale = false;
         self.unverified = None;
-        match load_for(&self.files, &self.name(), LoadPurpose::Play) {
-            Ok((content, took)) => {
-                let loaded = Loaded::build(content, &self.files, took);
+        match Loaded::of(&self.files, &self.name(), LoadPurpose::Play) {
+            Ok(loaded) => {
                 self.report = None;
                 self.install(loaded);
                 self.verifying = Some(self.files.revision());
@@ -512,9 +513,8 @@ impl Project {
         self.loading = None;
         self.stale = false;
         self.unverified = None;
-        match load(&self.files, &self.root.display().to_string()) {
-            Ok((content, took)) => {
-                let loaded = Loaded::build(content, &self.files, took);
+        match Loaded::of(&self.files, &self.name(), LoadPurpose::Check) {
+            Ok(loaded) => {
                 self.report = None;
                 self.install(loaded);
             }
@@ -562,6 +562,7 @@ impl Project {
         match outcome {
             Ok(loaded) if verified => {
                 self.report = None;
+                self.keep_rows(&loaded);
                 drop_in_background(loaded);
             }
             Ok(loaded) => {
@@ -832,14 +833,13 @@ impl Project {
         let (sender, receiver) = mpsc::channel();
         self.loading = Some(ChannelInbox::new(receiver));
         std::thread::spawn(move || {
-            let outcome = background().install(|| {
-                load(&files, &name).map(|(content, took)| Loaded::build(content, &files, took))
-            });
+            let outcome = background().install(|| Loaded::of(&files, &name, LoadPurpose::Check));
             let _ = sender.send(outcome);
         });
     }
 
     fn install(&mut self, loaded: Loaded) {
+        self.keep_rows(&loaded);
         self.moved_outside.clear();
         self.last_load = Some(loaded.took);
         self.last_usages = Some(loaded.usages_took);
@@ -847,6 +847,15 @@ impl Project {
         self.unused = loaded.unused;
         drop_in_background(self.content.replace(loaded.content));
         self.generation += 1;
+    }
+
+    /// Keeps the rows `loaded` holds as the reads of their files, when it was loaded from the files
+    /// as they stand, so no view reads again what a load just read.
+    fn keep_rows(&self, loaded: &Loaded) {
+        if loaded.revision == self.files.revision() {
+            let rows = loaded.content.read_rows();
+            self.typed.keep(&self.files, &self.name(), rows);
+        }
     }
 
     /// Every file and kept folder that differs from disk, by path.
@@ -1028,17 +1037,26 @@ impl ContentNames for Project {
 }
 
 impl Loaded {
-    fn build(content: Content, files: &ProjectFiles, took: Duration) -> Loaded {
-        let started = Instant::now();
-        let usages = ContentUsages::build(&content, files);
+    /// The files loaded for `purpose`, and the usages they hold, worked out side by side.
+    fn of(files: &ProjectFiles, name: &str, purpose: LoadPurpose) -> Result<Loaded, LoadReport> {
+        let reader = FolderReader::new(systems::making_registry(), Arc::new(files.folder(name)));
+        let (loaded, (usages, usages_took)) = rayon::join(
+            || load_for(files, name, purpose),
+            || {
+                let started = Instant::now();
+                (ContentUsages::build(&reader, files), started.elapsed())
+            },
+        );
+        let (content, took) = loaded?;
         let unused = UnusedContent::find(files, &usages);
-        Loaded {
+        Ok(Loaded {
             content,
+            revision: files.revision(),
             usages,
             unused,
             took,
-            usages_took: started.elapsed(),
-        }
+            usages_took,
+        })
     }
 }
 

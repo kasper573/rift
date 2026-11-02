@@ -22,6 +22,7 @@ use engine::core::units::{MeterPos, MeterSize, Meters};
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::{Footprint, PropDef, PropId};
 use engine::systems::area::{Area, AreaModule, AreaModuleKind, Pictured};
+use rayon::prelude::*;
 use ui::egui::{Color32, Pos2, Rect as ERect, Stroke as EStroke, Vec2};
 
 use super::camera::AreaCanvas;
@@ -522,7 +523,7 @@ fn ground_lines(
 ) -> GroundLines {
     static REVISION: AtomicU64 = AtomicU64::new(0);
     let area = frame.area();
-    let runs: Vec<GroundLine> = frame
+    let outlined: Vec<(&Footing, Color32, bool)> = frame
         .modules
         .iter()
         .zip(frame.shown_modules.iter())
@@ -534,11 +535,19 @@ fn ground_lines(
             if !outlined_on_ground(frame, module) || !(held.asked() || shown_unasked(module)) {
                 return None;
             }
-            Some(GroundLine {
-                points: footing.bent(area),
-                color: wash(module.kind(), &node.pointer, held.selected),
-                bold: held.selected,
-            })
+            Some((
+                footing,
+                wash(module.kind(), &node.pointer, held.selected),
+                held.selected,
+            ))
+        })
+        .collect();
+    let runs: Vec<GroundLine> = outlined
+        .into_par_iter()
+        .map(|(footing, color, bold)| GroundLine {
+            points: footing.bent(area),
+            color,
+            bold,
         })
         .collect();
     GroundLines {

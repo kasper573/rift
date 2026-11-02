@@ -1,5 +1,7 @@
+use std::sync::Arc;
+
 use engine::core::content::id::LeafKind;
-use engine::core::content::{Content, fields_file};
+use engine::core::content::{FolderReader, fields_file};
 use engine::systems::registry;
 use serde_json::json;
 
@@ -10,13 +12,10 @@ use crate::support::game;
 #[test]
 fn a_reference_is_placed_where_it_is_read_not_where_its_key_is_first_written() {
     let game = game().npc("wren", 10.0, json!([]));
-    let folder = tempfile::tempdir().expect("a scratch folder");
-    game.write_to(folder.path());
     let file = fields_file(&path("npc", "wren"));
-    let text = std::fs::read_to_string(folder.path().join(&file)).expect("the npc's file");
-    let content = game.load();
+    let (reader, text) = read_with_text(game, &file);
 
-    let references = registry().references(&content, &file, &text);
+    let references = registry().references(&reader, &file, &text);
 
     let models: Vec<&str> = references
         .iter()
@@ -39,9 +38,9 @@ fn a_blueprint_part_names_its_rows_even_around_a_hole_with_no_default() {
         }]),
     );
     let scene = format!("{}/scene.json", path("blueprint", "rock"));
-    let (content, file, text) = loaded_with_text(game, &scene);
+    let (reader, text) = read_with_text(game, &scene);
 
-    let references = registry().references(&content, &file, &text);
+    let references = registry().references(&reader, &scene, &text);
 
     let props: Vec<(&str, &str)> = references
         .iter()
@@ -51,9 +50,9 @@ fn a_blueprint_part_names_its_rows_even_around_a_hole_with_no_default() {
     assert_eq!(props, [("rock.prop", "/0/prop")]);
 }
 
-fn loaded_with_text(game: testkit::Game, file: &str) -> (Content, String, String) {
-    let folder = tempfile::tempdir().expect("a scratch folder");
-    game.write_to(folder.path());
-    let text = std::fs::read_to_string(folder.path().join(file)).expect("the file");
-    (game.load(), file.to_owned(), text)
+/// What reads `game`'s files, and the text of its file at `file`.
+fn read_with_text(game: testkit::Game, file: &str) -> (FolderReader, String) {
+    let folder = game.folder();
+    let text = String::from_utf8(folder.files[file].to_vec()).expect("a text file");
+    (FolderReader::new(registry(), Arc::new(folder)), text)
 }

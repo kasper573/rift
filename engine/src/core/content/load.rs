@@ -23,6 +23,7 @@ use super::fixture::{Fixture, FixtureIds, FixtureLock};
 use super::fresh::Nearby;
 use super::id::{ContentId, ContentScope, Leaf, LeafKind, nearest, with_content};
 use super::locate::{IndexedValue, JsonIndex, escape};
+use super::reader::FolderReader;
 use super::report::{ContentProblem, ErrorPlace, LoadError, LoadReport, VERSION_RULE, article};
 use super::serial::TypeTag;
 use super::table::{
@@ -167,8 +168,9 @@ impl ModuleSetOf {
 pub struct JsonPart {
     pub table: &'static str,
     pub name: &'static str,
-    /// Reads `value`, the part of the bundle at the given path, in the scope it is called in.
-    pub read: fn(&Content, &str, &serde_json::Value) -> Result<(), ParseError>,
+    /// Reads `value`, the part of the bundle at the given path, in the scope it is called in, as
+    /// the bundle the files of `reader` hold reads it.
+    pub read: fn(&FolderReader, &str, &serde_json::Value) -> Result<(), ParseError>,
 }
 
 impl ContentRegistry {
@@ -528,7 +530,8 @@ impl ContentRegistry {
             .map(Box::as_ref)
     }
 
-    pub fn references(&self, content: &Content, file: &str, text: &str) -> Vec<Reference> {
+    /// Every reference `text`, the file at `file` among the files of `reader`, holds, and where.
+    pub fn references(&self, reader: &FolderReader, file: &str, text: &str) -> Vec<Reference> {
         let json_part = self.json_part_of(file);
         let parse: &dyn Fn(&serde_json::Value) -> ParseResult = if file == SETTINGS_FILE {
             let Some(loader) = self.settings.as_deref() else {
@@ -536,19 +539,24 @@ impl ContentRegistry {
             };
             &|value| loader.parse_value(value)
         } else if let Some((part, bundle)) = json_part {
-            &move |value| (part.read)(content, bundle, value).map(|()| Box::new(()) as _)
+            &move |value| (part.read)(reader, bundle, value).map(|()| Box::new(()) as _)
         } else {
             let Some(loader) = self.loader_of_fields(file) else {
                 return Vec::new();
             };
             &|value| loader.parse_value(value)
         };
-        let Ok(value) = parse_json::<serde_json::Value>(text) else {
+        let unread = reader.scope().paths_only();
+        let mut index = None;
+        let parsed = rayon::in_place_scope(|scope| {
+            scope.spawn(|_| index = Some(JsonIndex::indexed(text)));
+            let value = parse_json::<serde_json::Value>(text).ok()?;
+            let (_, read) = with_content(unread.clone(), || parse(&value));
+            Some((value, read))
+        });
+        let (Some((value, scope)), Some(index)) = (parsed, index) else {
             return Vec::new();
         };
-        let unread = ContentScope::of(content);
-        let (_, scope) = with_content(unread.clone(), || parse(&value));
-        let index = JsonIndex::of(text);
         let probe = |pointers: &[&str]| reads_references(&unread, &value, pointers, parse);
         placed(scope.leaves(), &index, |_| true, probe)
             .into_iter()
@@ -846,7 +854,7 @@ pub(super) fn check_files(
     loading.snapshot = None;
     let read = loading
         .builder
-        .into_rows()
+        .read_rows()
         .into_iter()
         .filter(|read| !misread.contains(&read.path))
         .collect();

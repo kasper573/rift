@@ -73,7 +73,7 @@ pub enum ModuleRule {
 /// collects errors.
 pub struct Table<Row> {
     paths: Vec<String>,
-    rows: Vec<Option<Row>>,
+    rows: Vec<Option<Arc<Row>>>,
 }
 
 impl<Row: ContentFile> Table<Row> {
@@ -98,7 +98,7 @@ impl<Row: ContentFile> Table<Row> {
             .paths
             .binary_search_by(|candidate| candidate.as_bytes().cmp(path.as_bytes()))
             .unwrap_or_else(|_| panic!("{} has no file {path:?}", Row::TABLE));
-        self.rows[index] = Some(row);
+        self.rows[index] = Some(Arc::new(row));
     }
 
     pub fn ids(&self) -> impl ExactSizeIterator<Item = ContentId<Row>> + Clone + '_ {
@@ -108,11 +108,11 @@ impl<Row: ContentFile> Table<Row> {
     pub fn iter(&self) -> impl Iterator<Item = (ContentId<Row>, &Row)> {
         self.ids()
             .zip(&self.rows)
-            .filter_map(|(id, row)| row.as_ref().map(|row| (id, row)))
+            .filter_map(|(id, row)| row.as_deref().map(|row| (id, row)))
     }
 
     pub fn rows(&self) -> impl Iterator<Item = &Row> {
-        self.rows.iter().flatten()
+        self.rows.iter().flatten().map(Arc::as_ref)
     }
 
     pub fn paths(&self) -> &[String] {
@@ -133,7 +133,7 @@ impl<Row: ContentFile> Table<Row> {
     }
 
     pub fn get(&self, id: ContentId<Row>) -> Option<&Row> {
-        self.rows.get(id.index()).and_then(Option::as_ref)
+        self.rows.get(id.index()).and_then(Option::as_deref)
     }
 
     pub fn path(&self, id: ContentId<Row>) -> &str {
@@ -154,9 +154,8 @@ pub trait AnyTable: Any + Send + Sync {
     /// The raw id of the file at `path`, for code that names a table only by its name.
     fn raw_of(&self, path: &str) -> Option<u32>;
     fn as_any(&self) -> &dyn Any;
-    /// Every row the table holds, by its path and with its type, when nothing else holds the
-    /// table.
-    fn into_rows(self: Arc<Self>) -> Vec<ReadRow>;
+    /// Every row the table holds, by its path and with its type, shared with the table.
+    fn read_rows(&self) -> Vec<ReadRow>;
 }
 
 /// A content file read whole, as `FolderReader::read` reads it: its path, its type and its row.
@@ -183,19 +182,15 @@ impl<Row: ContentFile> AnyTable for Table<Row> {
         self
     }
 
-    fn into_rows(self: Arc<Self>) -> Vec<ReadRow> {
-        let Ok(table) = Arc::try_unwrap(self) else {
-            return Vec::new();
-        };
-        table
-            .paths
-            .into_iter()
-            .zip(table.rows)
+    fn read_rows(&self) -> Vec<ReadRow> {
+        self.paths
+            .iter()
+            .zip(&self.rows)
             .filter_map(|(path, row)| {
                 Some(ReadRow {
-                    path,
+                    path: path.clone(),
                     row_type: TypeId::of::<Row>(),
-                    row: Arc::new(row?),
+                    row: row.clone()?,
                 })
             })
             .collect()
@@ -270,6 +265,15 @@ impl Content {
         self.0.built.contains_key(&TypeId::of::<T>())
     }
 
+    /// Every row of every table, by its path and with its type, shared with this content.
+    pub fn read_rows(&self) -> Vec<ReadRow> {
+        self.0
+            .tables
+            .values()
+            .flat_map(|table| table.read_rows())
+            .collect()
+    }
+
     pub fn table_named(&self, name: &str) -> Option<&dyn AnyTable> {
         self.0
             .tables
@@ -284,7 +288,7 @@ impl Content {
             .get_or_init(|| {
                 Arc::new(
                     self.tables()
-                        .map(|(id, table)| (id, (table.name(), table.paths().to_vec())))
+                        .map(|(id, table)| (id, (table.name(), Arc::new(table.paths().to_vec()))))
                         .collect(),
                 )
             })
@@ -315,11 +319,11 @@ impl ContentBuilder {
         self.built.insert(TypeId::of::<T>(), Arc::new(value));
     }
 
-    /// Every row of every table, as `AnyTable::into_rows` gives them.
-    pub fn into_rows(self) -> Vec<ReadRow> {
+    /// Every row of every table, as `AnyTable::read_rows` gives them.
+    pub fn read_rows(&self) -> Vec<ReadRow> {
         self.tables
-            .into_values()
-            .flat_map(AnyTable::into_rows)
+            .values()
+            .flat_map(|table| table.read_rows())
             .collect()
     }
 

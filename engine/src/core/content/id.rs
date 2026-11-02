@@ -168,17 +168,20 @@ impl Leaf {
     /// What is wrong with the leaf, as a content problem, when anything is.
     pub fn reported(&self) -> Option<ContentProblem> {
         let (rule, expected, nearest) = match (&self.kind, self.problem.as_ref()?) {
-            (LeafKind::Row(table), LeafProblem::Unknown { nearest }) => {
+            (LeafKind::Row(table), LeafProblem::Unknown { among }) => {
                 return Some(ContentProblem::unknown_row(
                     table,
                     &self.value,
-                    nearest.as_deref(),
+                    among
+                        .as_ref()
+                        .and_then(|among| among.nearest(&self.value))
+                        .as_deref(),
                 ));
             }
-            (LeafKind::Asset, LeafProblem::Unknown { nearest }) => (
+            (LeafKind::Asset, LeafProblem::Unknown { among }) => (
                 super::MISSING_FILE,
                 "the path of a media file from the game folder".to_owned(),
-                nearest.as_ref(),
+                among.as_ref().and_then(|among| among.nearest(&self.value)),
             ),
             (LeafKind::Asset, LeafProblem::InBundle { bundle }) => (
                 "part of a bundle",
@@ -209,7 +212,7 @@ pub enum LeafKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LeafProblem {
     Unknown {
-        nearest: Option<String>,
+        among: Option<Among>,
     },
     /// A part of `bundle`, which nothing outside it names.
     InBundle {
@@ -218,7 +221,33 @@ pub enum LeafProblem {
     Unsafe,
 }
 
-pub(super) type ScopePaths = HashMap<TypeId, (&'static str, Vec<String>), NoOpHash>;
+/// The paths a path was looked for among and not found, so the nearest of them can be suggested
+/// once the problem is reported: most unknown paths are met while a value is tried as one shape
+/// of several and are never reported, and finding the nearest compares the path with every one.
+#[derive(Clone)]
+pub struct Among(Arc<Vec<String>>);
+
+impl Among {
+    fn nearest(&self, path: &str) -> Option<String> {
+        nearest_path(&self.0, path)
+    }
+}
+
+impl PartialEq for Among {
+    fn eq(&self, other: &Among) -> bool {
+        Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for Among {}
+
+impl std::fmt::Debug for Among {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        write!(f, "Among({} paths)", self.0.len())
+    }
+}
+
+pub(super) type ScopePaths = HashMap<TypeId, (&'static str, Arc<Vec<String>>), NoOpHash>;
 
 /// Resolves paths while reading and collects every reference it met, so one parse reports every
 /// dangling reference instead of stopping at the first.
@@ -252,8 +281,16 @@ impl ContentScope {
         }
     }
 
+    /// The paths this scope resolves content among, with no media checked against them.
+    pub fn paths_only(&self) -> ContentScope {
+        ContentScope {
+            paths: self.paths.clone(),
+            ..ContentScope::new()
+        }
+    }
+
     pub fn table<Row: ContentFile>(&mut self, paths: Vec<String>) {
-        Arc::make_mut(&mut self.paths).insert(TypeId::of::<Row>(), (Row::TABLE, paths));
+        Arc::make_mut(&mut self.paths).insert(TypeId::of::<Row>(), (Row::TABLE, Arc::new(paths)));
     }
 
     pub(super) fn table_by_type(
@@ -262,7 +299,7 @@ impl ContentScope {
         name: &'static str,
         paths: Vec<String>,
     ) {
-        Arc::make_mut(&mut self.paths).insert(type_id, (name, paths));
+        Arc::make_mut(&mut self.paths).insert(type_id, (name, Arc::new(paths)));
     }
 
     /// This scope with every path `renames` names as a key written as its value: the files and
@@ -275,7 +312,7 @@ impl ContentScope {
             let paths = Arc::make_mut(&mut scope.paths)
                 .values_mut()
                 .find(|(name, _)| Some(*name) == table)
-                .map(|(_, paths)| paths)
+                .map(|(_, paths)| Arc::make_mut(paths))
                 .or_else(|| scope.media.as_mut().map(Arc::make_mut));
             if let Some(paths) = paths
                 && let Err(at) = paths.binary_search_by(|path| path.as_bytes().cmp(from.as_bytes()))
@@ -317,7 +354,7 @@ impl ContentScope {
             match &self.media {
                 Some(files) if files.binary_search_by(|f| f.as_str().cmp(path)).is_err() => {
                     Some(LeafProblem::Unknown {
-                        nearest: nearest_path(files.as_slice(), path),
+                        among: Some(Among(files.clone())),
                     })
                 }
                 _ => None,
@@ -386,7 +423,7 @@ impl ContentScope {
             None => (
                 ContentId::new(u32::MAX),
                 Some(LeafProblem::Unknown {
-                    nearest: paths.and_then(|paths| nearest_path(paths, &path)),
+                    among: paths.map(|paths| Among(paths.clone())),
                 }),
             ),
         };

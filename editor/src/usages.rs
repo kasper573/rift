@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use engine::core::content::id::LeafKind;
 use engine::core::content::locate::unescape;
-use engine::core::content::{Content, Reference};
+use engine::core::content::{FolderReader, Reference};
 use engine::systems::registry;
 use rayon::prelude::*;
 use serde_json::Value;
@@ -41,7 +41,7 @@ pub struct ContentUsages {
 }
 
 impl ContentUsages {
-    pub fn build(content: &Content, files: &ProjectFiles) -> ContentUsages {
+    pub fn build(reader: &FolderReader, files: &ProjectFiles) -> ContentUsages {
         let registry = registry();
         let texts: Vec<(&String, String)> = files
             .iter()
@@ -50,7 +50,7 @@ impl ContentUsages {
             .collect();
         let parsed: Vec<(String, Vec<Reference>)> = texts
             .par_iter()
-            .map(|(path, text)| ((*path).clone(), registry.references(content, path, text)))
+            .map(|(path, text)| ((*path).clone(), registry.references(reader, path, text)))
             .collect();
         let mut usages = ContentUsages::default();
         for (file, references) in parsed {

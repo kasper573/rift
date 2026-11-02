@@ -28,6 +28,13 @@ impl JsonIndex {
         }
     }
 
+    /// `text` indexed at once, for a caller that asks for places in all of it anyway.
+    pub fn indexed(text: &str) -> JsonIndex {
+        let index = JsonIndex::of(text);
+        index.values();
+        index
+    }
+
     pub fn position(&self, pointer: &str) -> Option<(usize, usize)> {
         let mut wanted = pointer.to_owned();
         loop {

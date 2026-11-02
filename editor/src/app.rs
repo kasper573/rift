@@ -421,7 +421,7 @@ impl Editor {
             (None, Some(took)) => {
                 let usages = project.last_usages.map_or(0, |d| d.as_millis());
                 self.say(format!(
-                    "Opened {} in {} ms (load) + {usages} ms (usages)",
+                    "Opened {} in {} ms (load), {usages} ms (usages) alongside",
                     folder.display(),
                     took.as_millis()
                 ));

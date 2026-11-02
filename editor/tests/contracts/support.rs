@@ -1,6 +1,5 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::{Duration, Instant};
 use ui::egui;
 
 use editor::app::Editor;
@@ -11,9 +10,9 @@ use engine::core::content::Content;
 use engine::core::math::Pos;
 use engine::core::units::Meters;
 use engine::systems::GameSettings;
+use engine::systems::area::AreaModule;
 use engine::systems::area::object::{ObjectDef, ObjectShape};
 use engine::systems::area::scene::{ModuleNode, SceneFolder, SceneNode};
-use engine::systems::area::{AreaDef, AreaModule};
 use engine::systems::movement::Bodies;
 use serde_json::json;
 use testkit::{Game, Map};
@@ -80,16 +79,6 @@ pub fn settled(editor: &mut Editor) -> &Project {
         panic!("{report}");
     }
     project
-}
-
-/// Waits until the area at `bundle` has been read, as its view reads it in the background.
-pub fn read(editor: &Editor, bundle: &str) {
-    let project = editor.project.as_ref().expect("a project");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while project.read_soon::<AreaDef>(bundle).is_none() {
-        assert!(Instant::now() < deadline, "{bundle} never reads");
-        std::thread::sleep(Duration::from_millis(5));
-    }
 }
 
 /// An object named `name` at a point of the map.

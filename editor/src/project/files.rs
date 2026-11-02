@@ -8,6 +8,7 @@ use std::sync::{Arc, LazyLock, OnceLock};
 use engine::core::content::files::{self, GameFile};
 use engine::core::content::{FileHash, MemoryFolder, SETTINGS_FILE, table_of};
 use engine::systems::registry;
+use rayon::prelude::*;
 use walkdir::WalkDir;
 
 pub type FileBytes = Arc<[u8]>;
@@ -124,17 +125,35 @@ struct Stored {
     json: OnceLock<Option<Arc<serde_json::Value>>>,
 }
 
+impl Stored {
+    fn of(bytes: FileBytes) -> Stored {
+        Stored {
+            hash: hash(&bytes),
+            bytes,
+            json: OnceLock::new(),
+        }
+    }
+}
+
 impl ProjectFiles {
     pub fn read_dir(root: &Path) -> io::Result<ProjectFiles> {
-        let mut files = ProjectFiles::default();
-        for file in content_files(root)? {
-            let bytes = if is_folder(&file) {
-                FileBytes::from([])
-            } else {
-                FileBytes::from(std::fs::read(root.join(&file))?)
-            };
-            files.insert(file, bytes);
-        }
+        let map = content_files(root)?
+            .into_par_iter()
+            .map(|file| {
+                let bytes = if is_folder(&file) {
+                    FileBytes::from([])
+                } else {
+                    FileBytes::from(std::fs::read(root.join(&file))?)
+                };
+                Ok((file, Stored::of(bytes)))
+            })
+            .collect::<io::Result<_>>()?;
+        let mut files = ProjectFiles {
+            map,
+            ..ProjectFiles::default()
+        };
+        files.revision = next_revision();
+        files.paths_changed();
         Ok(files)
     }
 
@@ -152,13 +171,7 @@ impl ProjectFiles {
 
     pub fn insert(&mut self, path: String, bytes: FileBytes) {
         self.revision = next_revision();
-        let hash = hash(&bytes);
-        let stored = Stored {
-            bytes,
-            hash,
-            json: OnceLock::new(),
-        };
-        if self.map.insert(path, stored).is_none() {
+        if self.map.insert(path, Stored::of(bytes)).is_none() {
             self.paths_changed();
         }
     }

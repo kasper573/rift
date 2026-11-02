@@ -7,7 +7,7 @@ use serde_json::Value;
 use super::blueprint::{self, BlueprintDef};
 use super::{AreaModule, AreaModuleKind};
 use crate::core::content::load::{JsonPart, ParseError, parse_value, shape_problem};
-use crate::core::content::{Content, ContentProblem, FileWriter, PartSpec, Parts, serial};
+use crate::core::content::{ContentProblem, FileWriter, FolderReader, PartSpec, Parts, serial};
 use crate::core::script::Variable;
 use crate::systems::script::RiftScripting;
 
@@ -175,11 +175,11 @@ pub fn json_part(table: &'static str) -> JsonPart {
     }
 }
 
-fn read_part(content: &Content, bundle: &str, value: &Value) -> Result<(), ParseError> {
+fn read_part(reader: &FolderReader, bundle: &str, value: &Value) -> Result<(), ParseError> {
     let files = parse_value::<Vec<NodeFile>>(value)?;
-    let variables = content
-        .by_path::<BlueprintDef>(bundle)
-        .map(|blueprint| blueprint.get(content).variables.clone())
+    let variables = reader
+        .read::<BlueprintDef>(bundle)
+        .map(|blueprint| blueprint.variables)
         .unwrap_or_default();
     nodes_of(&files, "", &variables);
     Ok(())
