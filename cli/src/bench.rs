@@ -14,12 +14,12 @@ use engine::core::content::Content;
 use engine::systems::GameSettings;
 use engine::systems::area::{self, AreaModule};
 
-use crate::search::{BUDGET_MS, Search};
+use crate::search::{Search, budget_ms, verdict};
 use sim::{Bench, load};
 
 // Must exceed the budget crossover (and the probe that overshoots it) but stay within RAM: the bench
 // holds every area world in memory at once (~3 MiB each with clients), so this caps peak use near
-// ~15 GiB. The search stops at the 40 ms crossover well before here anyway.
+// ~15 GiB. The search stops at the budget crossover well before here anyway.
 const MAX_AREAS: usize = 5000;
 const MEASURE: usize = 200;
 
@@ -81,7 +81,8 @@ pub fn run(game: Option<&Path>, spread: bool, only: &[BenchPart]) -> Result<(), 
 /// the tick budget.
 fn server(content: &Content, layout: sim::Layout) {
     println!(
-        "[bench] finding the highest A sustained within the {BUDGET_MS:.0}ms budget ({} players)...",
+        "[bench] finding the highest A sustained within the {:.1}ms budget ({} players)...",
+        budget_ms(),
         layout.as_ref()
     );
 
@@ -122,13 +123,13 @@ fn server(content: &Content, layout: sim::Layout) {
         (r.full.mean - r.sim).max(0.0),
     );
     println!(
-        "[bench] capacity: {} isolated areas = {} NPCs + {} players sustained at {:.1}ms/tick (budget {:.0}ms)",
-        areas, npcs, players, r.full.mean, BUDGET_MS,
+        "[bench] capacity: {} isolated areas = {} NPCs + {} players sustained at {:.1}ms/tick (budget {:.1}ms)",
+        areas,
+        npcs,
+        players,
+        r.full.mean,
+        budget_ms(),
     );
-}
-
-fn verdict(mean: f64) -> &'static str {
-    if mean <= BUDGET_MS { "ok" } else { "over" }
 }
 
 struct Point {

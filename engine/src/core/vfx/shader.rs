@@ -6,9 +6,10 @@ use serde::{Deserialize, Serialize};
 use strum::{IntoStaticStr, VariantArray};
 
 use super::ParamValue;
+use super::uniform::{MAX_PATH_POINTS, TREADS};
 use crate::core::content::{
-    Bundle, ContentFile, ContentId, ContentProblem, ErrorPlace, FileWriter, Loading, NamedContent,
-    Nearby, PartSpec, Parts, RowCheck, Shape,
+    Bundle, ContentFile, ContentId, ContentProblem, ErrorPlace, FileShape, FileWriter, Loading,
+    NamedContent, Nearby, PartSpec, Parts, RowCheck,
 };
 use crate::core::math::Rgba;
 
@@ -327,7 +328,8 @@ impl VfxShaderDef {
     /// The source goes first so its lines keep their numbers in what the validator reports; a WESL
     /// header's imports alone go before it, as the module must open with them.
     fn composed(&self, header: &str, source: &str) -> String {
-        let mut composed = String::with_capacity(source.len() + header.len() + PRELUDE.len() + 512);
+        let prelude = prelude();
+        let mut composed = String::with_capacity(source.len() + header.len() + prelude.len() + 512);
         let (imports, declarations) = split_imports(header);
         for import in imports {
             composed.push_str(import);
@@ -341,7 +343,7 @@ impl VfxShaderDef {
             composed.push_str(line);
             composed.push('\n');
         }
-        composed.push_str(PRELUDE);
+        composed.push_str(&prelude);
         composed.push('\n');
         for (index, kind) in SiteKind::VARIANTS.iter().enumerate() {
             composed.push_str(&format!("const SITE_{}: u32 = {index}u;\n", kind.name()));
@@ -424,7 +426,7 @@ pub fn prelude_names() -> Vec<String> {
         "eye".to_owned(),
         "sky_light".to_owned(),
     ];
-    for line in PRELUDE.lines() {
+    for line in prelude().lines() {
         let declared = line
             .strip_prefix("fn ")
             .and_then(|rest| rest.split_once('('))
@@ -453,7 +455,7 @@ impl NamedContent for VfxShaderDef {
 
 impl ContentFile for VfxShaderDef {
     const TABLE: &'static str = "vfx_shader";
-    const SHAPE: Shape = Shape::Bundle;
+    const SHAPE: FileShape = FileShape::Bundle;
 
     fn fresh(near: &Nearby) -> Result<VfxShaderDef, String> {
         Ok(VfxShaderDef {
@@ -642,6 +644,14 @@ const SKY_HEADER: &str = include_str!("sky.wesl");
 const SKY_CHECK_HEADER: &str = include_str!("sky_check.wgsl");
 const WEATHER_HELPERS: &str = include_str!("weather.wgsl");
 
+fn prelude() -> String {
+    PRELUDE.replace("PATH_POINTS", &format!("{MAX_PATH_POINTS}u"))
+}
+
+fn weather_helpers() -> String {
+    WEATHER_HELPERS.replace("TREADS", &format!("{TREADS}u"))
+}
+
 fn quad_header(group: u32) -> String {
     QUAD_HEADER.replace("GROUP", &group.to_string())
 }
@@ -650,9 +660,9 @@ impl Stage {
     fn header(self) -> String {
         match self {
             Stage::Surface => SURFACE_HEADER.to_owned(),
-            Stage::Cover => format!("{COVER_HEADER}\n{WEATHER_HELPERS}"),
-            Stage::Prop => format!("{PROP_HEADER}\n{WEATHER_HELPERS}"),
-            Stage::Sky => format!("{SKY_HEADER}\n{WEATHER_HELPERS}"),
+            Stage::Cover => format!("{COVER_HEADER}\n{}", weather_helpers()),
+            Stage::Prop => format!("{PROP_HEADER}\n{}", weather_helpers()),
+            Stage::Sky => format!("{SKY_HEADER}\n{}", weather_helpers()),
             Stage::Ground | Stage::Billboard => quad_header(WORLD_GROUP),
             Stage::Screen | Stage::Text => quad_header(PRESENT_GROUP),
         }
@@ -662,9 +672,9 @@ impl Stage {
     /// what the runtime header declares and calls what the shader must define.
     fn check_header(self) -> String {
         match self {
-            Stage::Cover => format!("{COVER_CHECK_HEADER}\n{WEATHER_HELPERS}"),
-            Stage::Prop => format!("{PROP_CHECK_HEADER}\n{WEATHER_HELPERS}"),
-            Stage::Sky => format!("{SKY_CHECK_HEADER}\n{WEATHER_HELPERS}"),
+            Stage::Cover => format!("{COVER_CHECK_HEADER}\n{}", weather_helpers()),
+            Stage::Prop => format!("{PROP_CHECK_HEADER}\n{}", weather_helpers()),
+            Stage::Sky => format!("{SKY_CHECK_HEADER}\n{}", weather_helpers()),
             _ => quad_header(WORLD_GROUP),
         }
     }

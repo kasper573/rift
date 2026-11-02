@@ -36,12 +36,12 @@ use crate::views::ViewMap;
 pub struct SkeletonViews {
     pub views: ViewMap<SkeletonView>,
     rigged: HashMap<String, (RiggedFrom, Arc<Rigging>)>,
-    posed: HashMap<(usize, StageKey), Posed>,
+    posed: HashMap<(usize, StageKey), PosedClip>,
 }
 
 /// The keys a clip plays on a rig, with the rig, which the entry holds so no other stands where it
 /// stood.
-pub struct Posed {
+pub struct PosedClip {
     rig: Arc<NodeTree>,
     keys: Option<Arc<ClipKeys>>,
 }

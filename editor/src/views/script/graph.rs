@@ -6,7 +6,7 @@ use ui::words;
 
 use engine::core::script::{Exit, NodeKind};
 use engine::systems::dialogue::bust::Expression;
-use engine::systems::script::{Line, Node, Speaker};
+use engine::systems::script::{Node, ScriptLine, Speaker};
 use engine::systems::text::{Span, plain};
 use serde::{Deserialize, Serialize};
 use ui::egui::emath::TSTransform;
@@ -307,7 +307,7 @@ impl ScriptGraphViewer<'_> {
         }
     }
 
-    fn dialogue_body(&mut self, ui: &mut Ui, name: &str, lines: &[Line]) {
+    fn dialogue_body(&mut self, ui: &mut Ui, name: &str, lines: &[ScriptLine]) {
         let editing = self.selected.len() == 1 && self.selected.contains(name);
         let shown = if editing {
             lines.len()
@@ -375,7 +375,7 @@ impl ScriptGraphViewer<'_> {
         }
     }
 
-    fn face(&self, ui: &mut Ui, line: &Line) {
+    fn face(&self, ui: &mut Ui, line: &ScriptLine) {
         let (rect, _) = ui.allocate_exact_size(Vec2::splat(big(FACE)), egui::Sense::hover());
         let rect = rect.translate(Vec2::new(0.0, big(1.0)));
         let image = self

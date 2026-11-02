@@ -19,7 +19,7 @@ use ui::egui::{Pos2, Stroke, Ui};
 
 use super::params::{ParamSpec, param_control};
 use crate::app::Editor;
-use crate::stage::{self, Posed, PosedActor, PosedSite, PosedVfx, Scene};
+use crate::stage::{self, PosedActor, PosedScene, PosedSite, PosedVfx, Scene};
 use ui::input::NumberField;
 
 const REST_BETWEEN_PLAYS: f32 = 0.5;
@@ -30,22 +30,11 @@ const FIELD_WIDTH: f32 = 72.0;
 
 /// The vfx previews: what the open row asked to see, and the values tried for its parameters in
 /// place of their defaults, which the rest follow as they change.
+#[derive(Default)]
 pub struct VfxViews {
     target: VfxTarget,
-    pub background: bool,
     started: Option<(String, f64)>,
     pub tried: HashMap<String, BTreeMap<String, ParamValue>>,
-}
-
-impl Default for VfxViews {
-    fn default() -> VfxViews {
-        VfxViews {
-            target: VfxTarget::default(),
-            background: true,
-            started: None,
-            tried: HashMap::new(),
-        }
-    }
 }
 
 /// What the vfx plays on: one actor, an area, actors standing in an area, or the whole screen.
@@ -150,10 +139,7 @@ pub fn preview(
     let elapsed = ((now - started) as f32)
         .rem_euclid(total + REST_BETWEEN_PLAYS)
         .min(total);
-    ui.horizontal(|ui| {
-        ui.checkbox(&mut views.background, "background");
-        ui.label(theme::faint(format!("{elapsed:.2} s of {total:.2}")).size(12.0));
-    });
+    ui.label(theme::faint(format!("{elapsed:.2} s of {total:.2}")).size(12.0));
     let tried = views.tried.entry(key.to_owned()).or_default();
     if !specs.is_empty() && ui.button("reset to defaults").clicked() {
         tried.clear();
@@ -175,11 +161,10 @@ pub fn preview(
         params.push((spec.name.clone(), value));
     }
     let params = VfxParams(params);
-    let background = views.background;
     let target = views.target.clone();
     let center = stage::center(&content);
     let footprint = target.footprint(center);
-    let mut posed = Posed::default();
+    let mut posed = PosedScene::default();
     let on = match &target {
         VfxTarget::Actor { model } => {
             let Some(model) = content.by_path::<ModelDef>(model) else {
@@ -211,20 +196,14 @@ pub fn preview(
         params,
         elapsed: Seconds(elapsed),
     });
-    let Some(shown) = stage::show(
-        editor,
-        ui,
-        &format!("vfx/{key}"),
-        Scene::Posed(posed),
-        background,
-    ) else {
+    let Some(shown) = stage::show(editor, ui, &format!("vfx/{key}"), Scene::Posed(posed)) else {
         return;
     };
     if let Some(footprint) = footprint {
         let outline: Vec<Pos2> = footprint
             .outline()
             .into_iter()
-            .map(|point| shown.screen(stage::to_screen(point)))
+            .map(|point| shown.canvas.to_screen(point))
             .collect();
         if let (Some(first), true) = (outline.first().copied(), outline.len() > 1) {
             let mut closed = outline.clone();

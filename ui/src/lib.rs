@@ -43,7 +43,7 @@ pub fn apply(ctx: &Context) {
     ctx.all_styles_mut(style);
 }
 
-pub fn style(style: &mut Style) {
+fn style(style: &mut Style) {
     for (text, role) in [
         (TextStyle::Body, TextRole::Body),
         (TextStyle::Button, TextRole::Button),

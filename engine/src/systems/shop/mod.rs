@@ -21,9 +21,8 @@ use crate::systems::item::{
 };
 use crate::systems::player::conn_player;
 use crate::systems::script::{
-    self, Condition, EffectCall, EffectReach, EventKind, FlowKey, Line, Owner, RiftEvent,
-    RiftInstances, RiftScripting, RunnerKind, ScriptModule, ScriptedRow, condition,
-    effect as effects,
+    self, Condition, EffectCall, EffectReach, EventKind, FlowKey, Owner, RiftEvent, RiftInstances,
+    RiftScripting, RunnerKind, ScriptLine, ScriptModule, ScriptedRow, condition, effect as effects,
 };
 use crate::systems::{dialogue, drain_requests, notification};
 
@@ -177,14 +176,14 @@ pub struct ShopOffer {
     pub count: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub price: Vec<ItemStack>,
-    pub stock: Stock,
+    pub stock: ShopStock,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub requires: Option<Condition>,
 }
 
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case")]
-pub enum Stock {
+pub enum ShopStock {
     Unlimited,
     Limited { count: u32, restock: Seconds },
 }
@@ -207,9 +206,9 @@ pub enum Buys {
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 pub struct ShopReactions {
-    pub bought: Vec<Line>,
-    pub sold: Vec<Line>,
-    pub cant_afford: Vec<Line>,
+    pub bought: Vec<ScriptLine>,
+    pub sold: Vec<ScriptLine>,
+    pub cant_afford: Vec<ScriptLine>,
 }
 
 /// Opens the shop until it closes.
@@ -584,7 +583,7 @@ fn buy(world: &mut World, player: Entity, index: u32) {
         react(world, player, |reactions| &reactions.cant_afford);
         return;
     }
-    if let Stock::Limited { count, restock } = offer.stock {
+    if let ShopStock::Limited { count, restock } = offer.stock {
         let mut ledger = world.entity_mut(player);
         let mut ledger = ledger.entry::<ShopLedger>().or_default().into_mut();
         let entry = ledger.stock.entry((shop, index)).or_insert(Restock {
@@ -749,7 +748,8 @@ fn stock(
     now: UnixMillis,
 ) -> Option<(u32, Option<Seconds>)> {
     let content = world.resource::<Content>();
-    let Stock::Limited { count, .. } = shop.get(content).sells().nth(index as usize)?.stock else {
+    let ShopStock::Limited { count, .. } = shop.get(content).sells().nth(index as usize)?.stock
+    else {
         return None;
     };
     let restock = world
@@ -853,7 +853,7 @@ fn declined(world: &World, player: Entity, shop: ShopId) -> Vec<u32> {
         .collect()
 }
 
-fn react(world: &mut World, player: Entity, pick: fn(&ShopReactions) -> &[Line]) {
+fn react(world: &mut World, player: Entity, pick: fn(&ShopReactions) -> &[ScriptLine]) {
     let content = world.resource::<Content>().clone();
     let Some((shop, nth)) = world.get_mut::<ShopVisit>(player).map(|mut visit| {
         visit.reactions += 1;

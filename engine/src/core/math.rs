@@ -11,6 +11,12 @@ pub type Offset<U> = euclid::Vector2D<f32, U>;
 pub type Size<U> = euclid::Size2D<f32, U>;
 pub type Rect<U> = euclid::Rect<f32, U>;
 
+/// Eases from 0 at `from` to 1 at `to`, flat at both ends.
+pub fn smoothstep(from: f32, to: f32, at: f32) -> f32 {
+    let t = ((at - from) / (to - from)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
 #[derive(Resource)]
 pub struct Rng(oorandom::Rand32);
 

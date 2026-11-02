@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use cargo_metadata::{Metadata, MetadataCommand};
+use cargo_metadata::{Metadata, MetadataCommand, Package};
 use syn::UseTree;
 use syn::visit::{self, Visit};
 use walkdir::{DirEntry, WalkDir};
@@ -14,30 +14,20 @@ fn main() {
         .expect("run `cargo metadata`");
 
     let mut violations = Vec::new();
-    let engine = metadata
-        .packages
-        .iter()
-        .find(|pkg| pkg.name == "engine")
-        .expect("the engine package in the workspace");
-    let src = engine
-        .manifest_path
-        .parent()
-        .expect("a manifest has a parent directory")
-        .as_std_path()
-        .join("src");
-    check_crate(&engine.name, &src, &mut violations);
+    let package = |name: &str| {
+        metadata
+            .packages
+            .iter()
+            .find(|package| package.name == name)
+            .unwrap_or_else(|| panic!("the {name} package in the workspace"))
+    };
+    check_crate(package("engine"), &mut violations);
     for package in metadata
         .packages
         .iter()
         .filter(|package| CONTENT_CODE.contains(&package.name.as_str()))
     {
-        let src = package
-            .manifest_path
-            .parent()
-            .expect("a manifest has a parent directory")
-            .as_std_path()
-            .join("src");
-        check_json_keys(&package.name, &src, &mut violations);
+        check_json_keys(package, &mut violations);
     }
     check_standalone(&metadata, &mut violations);
 
@@ -52,28 +42,18 @@ fn main() {
     std::process::exit(1);
 }
 
-fn check_crate(name: &str, src: &Path, out: &mut Vec<String>) {
-    let files = WalkDir::new(src)
-        .into_iter()
-        .filter_map(Result::ok)
-        .map(DirEntry::into_path)
-        .filter(|path| path.extension().is_some_and(|ext| ext == "rs"));
-    for file in files {
-        let rel = file
-            .strip_prefix(src)
-            .unwrap_or(&file)
-            .to_string_lossy()
-            .replace('\\', "/");
-
+fn check_crate(package: &Package, out: &mut Vec<String>) {
+    let name = &package.name;
+    for (rel, file) in rust_files(package) {
         if rel.starts_with("core/") {
-            for reference in core_to_systems(&file) {
+            for reference in visited(&file, SystemsRefs::default()).hits {
                 out.push(format!(
                     "[{name}] src/{rel}: `{reference}` — core may not depend on any systems layer"
                 ));
             }
         }
         if !rel.starts_with("core/content/") {
-            for (line, call) in content_keys(&file) {
+            for (line, call) in visited(&file, KeyLookups::default()).hits {
                 out.push(format!(
                     "[{name}] src/{rel}:{line}: `{call}` — code names content: use a fixture, or a setting in game.config.json"
                 ));
@@ -85,27 +65,50 @@ fn check_crate(name: &str, src: &Path, out: &mut Vec<String>) {
 /// Code reads and writes JSON through the types that declare its fields; only code that walks a
 /// JSON Schema, and so takes its keys from the schema or names the schema's own, handles JSON by
 /// key.
-fn check_json_keys(name: &str, src: &Path, out: &mut Vec<String>) {
-    let files = WalkDir::new(src)
-        .into_iter()
-        .filter_map(Result::ok)
-        .map(DirEntry::into_path)
-        .filter(|path| path.extension().is_some_and(|ext| ext == "rs"));
-    for file in files {
-        let rel = file
-            .strip_prefix(src)
-            .unwrap_or(&file)
-            .to_string_lossy()
-            .replace('\\', "/");
-        if SCHEMA_WALKERS.contains(&(name, rel.as_str())) {
+fn check_json_keys(package: &Package, out: &mut Vec<String>) {
+    let name = &package.name;
+    for (rel, file) in rust_files(package) {
+        if SCHEMA_WALKERS.contains(&(name.as_str(), rel.as_str())) {
             continue;
         }
-        for (line, access) in json_keys(&file) {
+        for (line, access) in visited(&file, JsonKeys::default()).hits {
             out.push(format!(
                 "[{name}] src/{rel}:{line}: `{access}` — JSON by literal key: read and write it as the type that declares the field"
             ));
         }
     }
+}
+
+/// Every Rust file of the package's `src`, with its path relative to it.
+fn rust_files(package: &Package) -> impl Iterator<Item = (String, PathBuf)> {
+    let src = package
+        .manifest_path
+        .parent()
+        .expect("a manifest has a parent directory")
+        .as_std_path()
+        .join("src");
+    WalkDir::new(&src)
+        .into_iter()
+        .filter_map(Result::ok)
+        .map(DirEntry::into_path)
+        .filter(|path| path.extension().is_some_and(|ext| ext == "rs"))
+        .map(move |file| {
+            let rel = file
+                .strip_prefix(&src)
+                .unwrap_or(&file)
+                .to_string_lossy()
+                .replace('\\', "/");
+            (rel, file)
+        })
+}
+
+fn visited<V: for<'ast> Visit<'ast>>(file: &Path, mut visitor: V) -> V {
+    if let Ok(source) = fs::read_to_string(file)
+        && let Ok(ast) = syn::parse_file(&source)
+    {
+        visitor.visit_file(&ast);
+    }
+    visitor
 }
 
 /// The packages whose code reads and writes game content. Tests and the testkit declare their games
@@ -151,16 +154,6 @@ fn check_standalone(metadata: &Metadata, out: &mut Vec<String>) {
     }
 }
 
-fn core_to_systems(file: &Path) -> BTreeSet<String> {
-    let mut found = SystemsRefs::default();
-    if let Ok(source) = fs::read_to_string(file)
-        && let Ok(ast) = syn::parse_file(&source)
-    {
-        found.visit_file(&ast);
-    }
-    found.hits
-}
-
 #[derive(Default)]
 struct SystemsRefs {
     hits: BTreeSet<String>,
@@ -193,16 +186,6 @@ fn use_reaches_systems(tree: &UseTree) -> bool {
         UseTree::Group(group) => group.items.iter().any(use_reaches_systems),
         UseTree::Glob(_) => false,
     }
-}
-
-fn content_keys(file: &Path) -> Vec<(usize, String)> {
-    let mut found = KeyLookups::default();
-    if let Ok(source) = fs::read_to_string(file)
-        && let Ok(ast) = syn::parse_file(&source)
-    {
-        found.visit_file(&ast);
-    }
-    found.hits
 }
 
 const KEY_LOOKUPS: &[&str] = &["by_path", "id_of"];
@@ -238,16 +221,6 @@ impl<'ast> Visit<'ast> for KeyLookups {
         }
         visit::visit_expr_call(self, call);
     }
-}
-
-fn json_keys(file: &Path) -> Vec<(usize, String)> {
-    let mut found = JsonKeys::default();
-    if let Ok(source) = fs::read_to_string(file)
-        && let Ok(ast) = syn::parse_file(&source)
-    {
-        found.visit_file(&ast);
-    }
-    found.hits
 }
 
 const KEYED_ACCESS: &[&str] = &[

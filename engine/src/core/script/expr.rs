@@ -112,7 +112,7 @@ impl ExprKind {
 }
 
 pub const MAX_DEPTH: usize = 16;
-pub const MAX_NODES: usize = 64;
+pub const MAX_EXPR_NODES: usize = 64;
 pub const MAX_LIST: usize = 32;
 
 impl<V: Vocabulary> Expr<V> {

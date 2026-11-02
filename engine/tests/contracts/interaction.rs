@@ -136,7 +136,7 @@ fn beach() -> Sim {
         ))
         .add((interact::interactions, dialogue::hold, dialogue::refresh));
     script::spawn_stateless(&mut sim.world);
-    region::reach_all(&mut sim.world);
+    region::hold_whole(&mut sim.world);
     sim
 }
 

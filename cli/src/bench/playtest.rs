@@ -1,6 +1,5 @@
 use std::fs::File;
-use std::io::{BufRead, BufReader, Write};
-use std::net::{TcpListener, TcpStream};
+use std::net::TcpListener;
 use std::path::Path;
 use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
@@ -9,7 +8,8 @@ use engine::core::content::{Content, ContentScope, with_content};
 use engine::core::units::Bytes;
 use engine::systems::GameSettings;
 use engine::systems::launch::{
-    self, AuthMode, CLIENT_ENV_PREFIX, ClientConfig, TEST_CHARACTER_ROUTE, TestCharacterRequest,
+    self, AuthMode, CLIENT_ENV_PREFIX, ClientConfig, ProbeDriver, TEST_CHARACTER_ROUTE,
+    TestCharacterRequest,
 };
 use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::probe::{ProbeFrameQuestion, ProbeSnapshot};
@@ -30,8 +30,7 @@ pub struct Playtest {
     content: Content,
     server: GameServer,
     client: Child,
-    questions: TcpStream,
-    answers: BufReader<TcpStream>,
+    probe: ProbeDriver,
     _desktop: BenchDesktop,
     folder: TempDir,
 }
@@ -72,15 +71,13 @@ impl Playtest {
             .stderr(log)
             .spawn()
             .expect("the desktop client runs");
-        let (questions, _) = listener.accept().expect("the client's probe connects");
+        let probe = ProbeDriver::accept(&listener).expect("the client's probe connects");
         desktop.seat(client.id());
-        let answers = BufReader::new(questions.try_clone().expect("a second handle on the probe"));
         Playtest {
             content: content.clone(),
             server,
             client,
-            questions,
-            answers,
+            probe,
             _desktop: desktop,
             folder,
         }
@@ -91,17 +88,12 @@ impl Playtest {
     }
 
     pub fn ask<Answer: DeserializeOwned>(&mut self, question: &ProbeFrameQuestion) -> Answer {
-        let line = in_scope(&self.content, || serde_json::to_string(question))
-            .expect("a serializable question");
-        writeln!(self.questions, "{line}").expect("the client takes questions");
-        let mut answer = String::new();
-        match self.answers.read_line(&mut answer) {
-            Ok(0) => panic!("the client hung up; its log ends:\n{}", self.log_tail()),
-            Ok(_) => {}
-            Err(error) => panic!("the client stopped answering: {error}"),
-        }
+        let answer = self
+            .probe
+            .ask(question)
+            .unwrap_or_else(|problem| panic!("{problem}; its log ends:\n{}", self.log_tail()));
         in_scope(&self.content, || serde_json::from_str(&answer))
-            .unwrap_or_else(|error| panic!("an unreadable answer to {line}: {error}"))
+            .unwrap_or_else(|error| panic!("an unreadable answer to {question:?}: {error}"))
     }
 
     fn log_tail(&self) -> String {

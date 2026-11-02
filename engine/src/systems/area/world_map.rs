@@ -33,7 +33,7 @@ pub struct WorldMapDef {
     #[schemars(transform = keyed_by_area)]
     pub cards: BTreeMap<super::AreaId, AreaCard>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub regions: Vec<Region>,
+    pub regions: Vec<MapRegion>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub notes: Vec<Note>,
 }
@@ -83,7 +83,7 @@ pub struct AreaCard {
 
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Region {
+pub struct MapRegion {
     pub name: String,
     pub cards: Vec<super::AreaId>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

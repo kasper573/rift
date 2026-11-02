@@ -7,7 +7,7 @@ use ui::glyph::{self, CardKind, Mark};
 use ui::ink;
 
 use super::{
-    ActiveQuest, Objective, Parties, Progress, QuestDef, QuestId, QuestLog, clock_label,
+    ActiveQuest, Objective, ObjectiveProgress, Parties, QuestDef, QuestId, QuestLog, clock_label,
     resets_label,
 };
 use crate::core::content::Content;
@@ -41,7 +41,7 @@ impl Plugin for QuestCardPlugin {
 pub struct QuestCardLook {
     pub width: f32,
     pub max_height: f32,
-    pub moment: Option<Moment>,
+    pub moment: Option<QuestMoment>,
 }
 
 /// A quest's card: its face, and whatever `plate` writes under the overview.
@@ -114,29 +114,29 @@ pub fn offer<I: ImageSource + ?Sized>(
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Moment {
+pub enum QuestMoment {
     Offer,
     TurnIn,
     Decision,
 }
 
-impl Moment {
+impl QuestMoment {
     pub fn band(self) -> &'static str {
         match self {
-            Moment::Offer => "quest offer",
-            Moment::TurnIn => "quest complete",
-            Moment::Decision => "a permanent choice",
+            QuestMoment::Offer => "quest offer",
+            QuestMoment::TurnIn => "quest complete",
+            QuestMoment::Decision => "a permanent choice",
         }
     }
 }
 
-fn moment(world: &World) -> Option<(QuestId, Moment)> {
+fn moment(world: &World) -> Option<(QuestId, QuestMoment)> {
     let seen = session::me(world)?;
     let panel = world.get::<Conversation>(seen)?.panel.as_ref()?;
     Some(match *panel {
-        ConversationPanel::QuestOffer(quest) => (quest, Moment::Offer),
-        ConversationPanel::QuestTurnIn(quest) => (quest, Moment::TurnIn),
-        ConversationPanel::QuestDecision(quest) => (quest, Moment::Decision),
+        ConversationPanel::QuestOffer(quest) => (quest, QuestMoment::Offer),
+        ConversationPanel::QuestTurnIn(quest) => (quest, QuestMoment::TurnIn),
+        ConversationPanel::QuestDecision(quest) => (quest, QuestMoment::Decision),
     })
 }
 
@@ -165,9 +165,9 @@ fn show_docked(ui: &mut Ui, world: &mut World, width: f32, most: f32) {
     let parties = world.resource::<Parties>().clone();
     show(ui, world, &content, quest, look, |ui, world| {
         let shown = match moment {
-            Moment::Offer => offer(ui, world, &content, &parties, quest, Some(&inventory)),
-            Moment::TurnIn => turn_in(ui, world, &content, quest, &inventory),
-            Moment::Decision => {
+            QuestMoment::Offer => offer(ui, world, &content, &parties, quest, Some(&inventory)),
+            QuestMoment::TurnIn => turn_in(ui, world, &content, quest, &inventory),
+            QuestMoment::Decision => {
                 decision(ui, &content, quest);
                 Vec::new()
             }
@@ -256,7 +256,7 @@ pub(super) fn objective_row(
     images: &mut (impl ImageSource + ?Sized),
     content: &Content,
     objective: &Objective,
-    progress: &Progress,
+    progress: &ObjectiveProgress,
     standing: Standing,
 ) {
     let standing = match standing {

@@ -64,7 +64,7 @@ pub fn warm_up(bench: &mut Bench, mut step: impl FnMut(&mut Bench)) {
 #[derive(Clone, Copy, PartialEq, AsRefStr)]
 #[strum(serialize_all = "lowercase")]
 pub enum Layout {
-    /// Every player spawns on the spawn tile, so all clients share one identical area-of-interest —
+    /// Every player spawns on the spawn point, so all clients share one identical area-of-interest —
     /// the worst case for replicating nearby entities to many overlapping viewers.
     Congested,
     /// Players spawn across the area's walkable ground, so clients have realistically distinct
@@ -83,7 +83,7 @@ impl Layout {
 
 /// Areas of the content's spawn area, each with its players, stepped as the server steps its own.
 pub struct Bench {
-    pub worlds: Vec<App>,
+    worlds: Vec<App>,
     rosters: Vec<Vec<Entity>>,
     content: Content,
     ticks: usize,
@@ -91,17 +91,12 @@ pub struct Bench {
 
 impl Bench {
     pub fn new(areas: usize, layout: Layout, content: &Content) -> Bench {
-        Bench::with_players(areas, PLAYERS_PER_AREA, layout, content)
+        Bench::with_players_in(areas, PLAYERS_PER_AREA, layout, content, 1.0)
     }
 
     /// `areas` of the spawn area, each with `players` playing in it, each as one of the test
     /// characters in turn. Crowded players play only the characters starting within sight of the
-    /// spawn; spread ones all of them.
-    pub fn with_players(areas: usize, players: usize, layout: Layout, content: &Content) -> Bench {
-        Bench::with_players_in(areas, players, layout, content, 1.0)
-    }
-
-    /// As [`Bench::with_players`], with the players in the first `share` of each area's ground
+    /// spawn; spread ones all of them. The players are in the first `share` of each area's ground
     /// alone, a band across it from its first row, the rest left to nobody.
     pub fn with_players_in(
         areas: usize,

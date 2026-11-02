@@ -76,7 +76,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
 }
 
 pub fn ensure_view(editor: &mut Editor, key: &str) {
-    editor.views.bust.views.ensure_default(key);
+    editor.views.bust.views.view_or_default(key);
 }
 
 pub(crate) fn select_face(editor: &mut Editor, key: &str, face: &faces::BustFace) {

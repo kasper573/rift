@@ -3,18 +3,17 @@
 //! holding the `rift.env` the site hands out, and the window must come to look like the trusted
 //! snapshot of the game's first view.
 
-use std::io::{BufRead, BufReader, Read, Write};
-use std::net::{IpAddr, Ipv4Addr, TcpListener, TcpStream};
+use std::io::Read;
+use std::net::{IpAddr, Ipv4Addr, TcpListener};
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
 use std::sync::Arc;
-use std::sync::mpsc::channel;
 use std::time::{Duration, Instant};
 
 use engine::core::content::{Content, ContentScope, FilesystemFolder, with_content};
 use engine::systems::launch::{
-    self, AuthMode, CLIENT_ENV_PREFIX, ReadyLine, SERVER_ENV_PREFIX, ServerConfig, ServerDaylight,
-    ServerReady,
+    self, AuthMode, CLIENT_ENV_PREFIX, ProbeDriver, SERVER_ENV_PREFIX, ServerConfig,
+    ServerDaylight, ServerReady,
 };
 use engine::systems::probe::{ProbeFrameQuestion, ProbeSnapshot};
 use engine::systems::{GameSettings, load_content};
@@ -166,32 +165,15 @@ const SCREEN: (u32, u32) = (1280, 720);
 const RASTERIZER: &str = "llvmpipe";
 
 /// The desktop client's probe, as its driver.
-struct Probe {
-    questions: TcpStream,
-    answers: BufReader<TcpStream>,
-}
+struct Probe(ProbeDriver);
 
 impl Probe {
     fn accept(driver: &TcpListener) -> Probe {
-        let (stream, _) = driver
-            .accept()
-            .expect("the desktop client's probe connects");
-        let answers = BufReader::new(stream.try_clone().expect("a second handle on the probe"));
-        Probe {
-            questions: stream,
-            answers,
-        }
+        Probe(ProbeDriver::accept(driver).expect("the desktop client's probe connects"))
     }
 
     fn ask(&mut self, question: &ProbeFrameQuestion) -> String {
-        let question = serde_json::to_string(question).expect("a question serializes");
-        writeln!(self.questions, "{question}").expect("the probe takes a question");
-        let mut answer = String::new();
-        self.answers
-            .read_line(&mut answer)
-            .expect("the probe answers");
-        assert!(!answer.is_empty(), "the desktop client hung up");
-        answer
+        self.0.ask(question).expect("the probe answers")
     }
 
     fn snapshot(&mut self, content: &Content) -> ProbeSnapshot {
@@ -410,30 +392,15 @@ fn game_server(binary: &Path, sign_in: &oidc::TokenCheckSettings) -> (Running, S
         test_characters: false,
         ..ServerConfig::local(std::path::absolute(game()).expect("the game"))
     };
-    let mut child = Command::new(binary)
-        .envs(launch::env_of(SERVER_ENV_PREFIX, &config))
-        .envs(launch::env_of(oidc::ENV_PREFIX, sign_in))
-        .stdin(Stdio::piped())
-        .stdout(Stdio::piped())
-        .spawn()
-        .unwrap_or_else(|error| panic!("{} doesn't run: {error}", binary.display()));
-    let stdout = child.stdout.take().expect("a piped stdout");
-    let running = Running(child);
-    let (ready, readied) = channel();
-    std::thread::spawn(move || {
-        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-            match serde_json::from_str::<ReadyLine>(&line) {
-                Ok(line) => {
-                    let _ = ready.send(line.ready);
-                }
-                Err(_) => println!("[game-server] {line}"),
-            }
-        }
-    });
-    let ready = readied
-        .recv_timeout(READY_WITHIN)
-        .expect("the game server gets ready");
-    (running, ready)
+    let (child, ready) = launch::start_game_server(
+        binary,
+        launch::env_of(SERVER_ENV_PREFIX, &config)
+            .into_iter()
+            .chain(launch::env_of(oidc::ENV_PREFIX, sign_in)),
+        READY_WITHIN,
+    )
+    .expect("the game server gets ready");
+    (Running(child), ready)
 }
 
 /// The game server's site at `site`, signing players in on `provider`, once it answers.

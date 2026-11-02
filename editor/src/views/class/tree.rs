@@ -18,7 +18,7 @@ use strum::VariantArray;
 use ui::egui::{Color32, CursorIcon, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
 use ui::{glyph, ink};
 
-use super::{edit, node_of, select_node, write};
+use super::{edit, node_of, select_node};
 use crate::app::Editor;
 use crate::keymap::EditorKey;
 use crate::project::Project;
@@ -136,7 +136,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         canvas(editor, ui, key, &mut class, shown, &mut changed);
     }
     if let Some(label) = changed {
-        write(editor, key, edit(key, label), &class);
+        editor.write_content_as(edit(key, label), key, &class);
     }
 }
 

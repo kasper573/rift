@@ -59,8 +59,14 @@ serde_json = { version = "1", features = ["preserve_order"] }
 strum = { version = "0.28" }
 strsim = "0.11"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "sync", "time"] }
-tower-http = { version = "0.7", features = ["fs", "set-header"] }
+tower-http = { version = "0.7", features = ["normalize-path"] }
 ureq = { version = "3", default-features = false }
+serde_urlencoded = "0.7"
+tempfile = "3"
+walkdir = "2"
+image = { version = "0.25", default-features = false, features = ["png"] }
+oauth2-test-server = "0.2.3"
+openidconnect = "4"
 
 [profile.release]
 lto = false

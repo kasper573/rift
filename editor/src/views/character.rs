@@ -27,7 +27,7 @@ use engine::systems::player::snapshot::{
     SnapshotQuest, SnapshotSkill, SnapshotSlot,
 };
 use engine::systems::quest::{
-    Objective, Parties, Party, QuestDef, QuestId, QuestLog, QuestModule, QuestResult,
+    Objective, Parties, QuestDef, QuestId, QuestLog, QuestModule, QuestParty, QuestResult,
 };
 use engine::systems::script::condition as script_condition;
 use engine::systems::script::{Place, RiftScripts};
@@ -1254,7 +1254,7 @@ fn giver_of<'p>(
     sheet: &Sheet,
     parties: Option<&'p (Content, Parties)>,
     quest: QuestId,
-) -> Option<&'p Party> {
+) -> Option<&'p QuestParty> {
     let (content, parties) = parties?;
     parties.giver(content.by_path::<QuestDef>(&sheet.path_of(quest))?)
 }
@@ -1318,7 +1318,7 @@ impl Moment {
         sheet: &Sheet,
         parties: Option<&'p (Content, Parties)>,
         quest: QuestId,
-    ) -> Option<&'p Party> {
+    ) -> Option<&'p QuestParty> {
         let (content, parties) = parties?;
         let quest = content.by_path::<QuestDef>(&sheet.path_of(quest))?;
         match self {
@@ -1328,7 +1328,13 @@ impl Moment {
         }
     }
 
-    fn hint(&self, cx: &FormCx, sheet: &Sheet, quest: QuestId, party: Option<&Party>) -> String {
+    fn hint(
+        &self,
+        cx: &FormCx,
+        sheet: &Sheet,
+        quest: QuestId,
+        party: Option<&QuestParty>,
+    ) -> String {
         let by = party
             .map(|party| format!("standing by {}", party.name))
             .unwrap_or_else(|| "at its start".to_owned());

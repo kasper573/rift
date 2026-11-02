@@ -77,7 +77,7 @@ fn a_resident_shown_by_condition_follows_the_players_memory() {
     let mut sim = arena();
     let player = sim.join(1);
     sim.equip(player, "sword");
-    region::reach_all(&mut sim.world);
+    region::hold_whole(&mut sim.world);
     let ghost = sim.npc("ghost");
     assert!(visibility::present(&sim.world, ghost, player));
 

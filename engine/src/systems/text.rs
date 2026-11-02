@@ -115,7 +115,6 @@ impl From<Span> for SpanRow {
     }
 }
 
-/// A count of a noun: "1 rank", "3 ranks".
 /// A span of time at a glance: whole seconds under a minute, whole minutes from there.
 pub fn duration(span: Seconds) -> String {
     if span.0 >= 60.0 {

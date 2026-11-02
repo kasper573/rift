@@ -31,7 +31,7 @@ pub struct LightLook {
     pub sun_width: f32,
 }
 /// Lumens per unit of a content light's intensity.
-pub const LUMENS_PER_UNIT: f32 = 4_000.0;
+const LUMENS_PER_UNIT: f32 = 4_000.0;
 /// How far the sun's shadows reach from the camera.
 const SHADOW_REACH: f32 = 70.0;
 

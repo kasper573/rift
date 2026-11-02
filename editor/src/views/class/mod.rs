@@ -1,7 +1,7 @@
 pub mod inspect;
 pub mod tree;
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::BTreeMap;
 use ui::chip;
 use ui::egui;
 use ui::form;
@@ -20,13 +20,14 @@ use crate::levels::{self, Level};
 use crate::project::{ContentEdit, RowSelection};
 use crate::row_form;
 use crate::tabs::shown_path;
+use crate::views::ViewMap;
 
 pub const TREE_PART: &str = "/tree/";
 
 const FIRST_LEVEL_UP: u32 = 100;
 
 pub struct ClassViews {
-    pub pages: HashMap<String, ClassPage>,
+    pub pages: ViewMap<ClassPage>,
     /// Whether a dragged node or frame lands on the grid.
     pub snap: bool,
     pub drag: Option<tree::NodeDrag>,
@@ -36,7 +37,7 @@ pub struct ClassViews {
 impl Default for ClassViews {
     fn default() -> ClassViews {
         ClassViews {
-            pages: HashMap::new(),
+            pages: ViewMap::default(),
             snap: true,
             drag: None,
             frame_drag: None,
@@ -92,7 +93,7 @@ fn page_body(editor: &mut Editor, ui: &mut Ui, key: &str, page: ClassPage) {
             (ClassPage::Tree, "skill tree"),
         ] {
             if chip::mode(ui, label, page == target).clicked() {
-                editor.views.class.pages.insert(key.to_owned(), target);
+                editor.views.class.pages.insert(key, target);
                 if target == ClassPage::Levels {
                     editor.select(RowSelection::row(ClassDef::TABLE, key));
                 }
@@ -130,10 +131,6 @@ pub(crate) fn select_node(editor: &mut Editor, key: &str, node: Option<&str>) {
 
 pub fn edit(key: &str, label: &str) -> ContentEdit {
     ContentEdit::new(format!("{label} · {}", shown_path(key)))
-}
-
-pub fn write(editor: &mut Editor, key: &str, edit: ContentEdit, class: &ClassDef) {
-    editor.write_content_as(edit, key, class);
 }
 
 pub fn levels(ui: &mut Ui, cx: &mut FormCx, value: &mut Value) -> FormChange {

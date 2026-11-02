@@ -6,7 +6,8 @@ use bevy::tasks::futures_lite::future::block_on;
 use engine::core::content::FileHash;
 use engine::core::content::store::ContentStore;
 use engine::core::content::sync::{
-    ContentSource, ServedContent, SyncError, SyncPolicy, SyncStatus, SyncedContent, sync,
+    ContentSource, FILES, MANIFEST, ServedContent, SyncError, SyncPolicy, SyncStatus,
+    SyncedContent, sync,
 };
 use engine::core::content::version;
 use engine::core::os::FetchFailure;
@@ -18,8 +19,6 @@ use testkit::{Game, Map, wav};
 
 use crate::store::TestStore;
 use crate::support::game;
-
-const FILES: &str = "/content/files/";
 
 /// The assets are read from the store as they are asked for, so one the store loses after the
 /// sync reads as missing, and reads again once it is back.
@@ -43,10 +42,7 @@ fn a_first_visit_fetches_everything_keeping_only_it_and_a_later_visit_only_the_m
 
     server.forget_requests();
     let again = run(&server, &store).expect("the next visit syncs");
-    assert_eq!(
-        server.requests.lock().unwrap().as_slice(),
-        ["/content/manifest"]
-    );
+    assert_eq!(server.requests.lock().unwrap().as_slice(), [MANIFEST]);
     assert!(again.manifest.same_content(&synced.manifest));
     assert_eq!(again.assets.len(), synced.assets.len());
 
@@ -397,7 +393,7 @@ impl FakeServer {
             .lock()
             .unwrap()
             .iter()
-            .filter(|path| *path == "/content/manifest")
+            .filter(|path| *path == MANIFEST)
             .count()
     }
 
@@ -409,7 +405,7 @@ impl FakeServer {
 impl ContentSource for FakeServer {
     fn get(&self, path: &str) -> BoxFuture<'static, Result<Vec<u8>, FetchFailure>> {
         self.requests.lock().unwrap().push(path.to_owned());
-        let result = if path == "/content/manifest" {
+        let result = if path == MANIFEST {
             Ok(serde_json::to_vec(&self.served.lock().unwrap().manifest).expect("a manifest"))
         } else if let Some(hash) = path.strip_prefix(FILES) {
             let gone = self

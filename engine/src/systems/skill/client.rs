@@ -15,7 +15,7 @@ pub struct SkillClientPlugin;
 impl Plugin for SkillClientPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(card::SkillCardPlugin)
-            .init_resource::<window::Plan>()
+            .init_resource::<window::SkillPlan>()
             .init_resource::<window::TreeView>()
             .init_resource::<bar::BarState>()
             .init_resource::<aim::Aiming>()

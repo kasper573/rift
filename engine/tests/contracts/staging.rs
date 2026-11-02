@@ -140,7 +140,7 @@ fn sim() -> Sim {
         .add((combat::defeats, skill::hotbar::settle_basic_attack))
         .plan(actor::SettleActions::default());
     script::spawn_stateless(&mut sim.world);
-    region::reach_all(&mut sim.world);
+    region::hold_whole(&mut sim.world);
     let raider = sim.id::<NpcDef>("raider");
     let area = sim.id::<AreaDef>("yard");
     npc::spawn(&mut sim.world, raider, Pos::new(18.0, 7.0), area, None);

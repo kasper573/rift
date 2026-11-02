@@ -8,7 +8,7 @@ use engine::systems::actor::stance::HandIndex;
 use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::PropDef;
-use engine::systems::area::world_map::{Note, Region};
+use engine::systems::area::world_map::{MapRegion, Note};
 use engine::systems::class::ClassDef;
 use engine::systems::dialogue::bust::BustDef;
 use engine::systems::item::ItemDef;
@@ -414,11 +414,7 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
         SceneStep::Section(section) => editor.views.character.section = *section,
         SceneStep::Tree { key, node } => {
             editor.open_tab(EditorTab::for_row(ClassDef::TABLE, key));
-            editor
-                .views
-                .class
-                .pages
-                .insert(key.clone(), class::ClassPage::Tree);
+            editor.views.class.pages.insert(key, class::ClassPage::Tree);
             class::select_node(editor, key, node.as_deref());
         }
         SceneStep::Save => {
@@ -657,7 +653,7 @@ fn world_step(editor: &mut Editor, step: &WorldStep) {
                 return;
             };
             map.change(editor, ContentEdit::new(format!("Add {name}")), |layout| {
-                layout.regions.push(Region {
+                layout.regions.push(MapRegion {
                     name: name.clone(),
                     cards: cards.iter().filter_map(|key| map.atlas.id(key)).collect(),
                     color: None,

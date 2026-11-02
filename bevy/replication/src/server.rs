@@ -130,17 +130,17 @@ pub struct ReplicationInterest(pub Box<dyn Interest>);
 
 impl Default for ReplicationInterest {
     fn default() -> ReplicationInterest {
-        ReplicationInterest(Box::new(Everyone::default()))
+        ReplicationInterest(Box::new(InterestInAll::default()))
     }
 }
 
 /// Every client sees every replicated entity and owns none.
 #[derive(Default)]
-pub struct Everyone {
+pub struct InterestInAll {
     replicated: Vec<Entity>,
 }
 
-impl Interest for Everyone {
+impl Interest for InterestInAll {
     fn prepare(&mut self, world: &mut World) {
         self.replicated = world
             .query_filtered::<Entity, With<Replicated>>()

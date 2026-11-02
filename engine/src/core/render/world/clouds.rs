@@ -12,6 +12,7 @@ use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::core::math::smoothstep;
 use crate::core::units::{Meters, MetersPerSec};
 
 /// How much ground one tile of the field covers, the field repeating past it.
@@ -318,9 +319,4 @@ fn hash(x: u32, y: u32, octave: u32) -> f32 {
         .wrapping_add(octave.wrapping_mul(2_246_822_519));
     state = (state ^ (state >> 13)).wrapping_mul(1_274_126_177);
     (state ^ (state >> 16)) as f32 / u32::MAX as f32
-}
-
-fn smoothstep(from: f32, to: f32, at: f32) -> f32 {
-    let t = ((at - from) / (to - from)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
 }

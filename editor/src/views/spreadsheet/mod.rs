@@ -33,7 +33,7 @@ use crate::row_form::tune::{self, SfxTuneField, sfx_tune_field};
 use crate::schema::{self, SchemaKind};
 use crate::tabs::shown_path;
 use crate::tabs::{EditorTab, file_title};
-use crate::user::{Comparison, SheetFilter, SpreadsheetView};
+use crate::user::{FilterComparison, SheetFilter, SpreadsheetView};
 use strum::VariantArray;
 use ui::controls;
 
@@ -1942,9 +1942,9 @@ fn comparison_picker(ui: &mut Ui, columns: &[SpreadsheetColumn]) -> Option<Sheet
         return None;
     }
     let id = ui.id().with("comparison");
-    let (mut column, mut test, mut value): (usize, Comparison, f64) = ui
+    let (mut column, mut test, mut value): (usize, FilterComparison, f64) = ui
         .memory(|m| m.data.get_temp(id))
-        .unwrap_or((0, Comparison::AtLeast, 0.0));
+        .unwrap_or((0, FilterComparison::AtLeast, 0.0));
     column = column.min(numeric.len() - 1);
     let mut added = None;
     ui.horizontal(|ui| {
@@ -1958,7 +1958,7 @@ fn comparison_picker(ui: &mut Ui, columns: &[SpreadsheetColumn]) -> Option<Sheet
         controls::combo(id.with("test"))
             .selected_text(test.sign())
             .show_ui(ui, |ui| {
-                for &known in Comparison::VARIANTS {
+                for &known in FilterComparison::VARIANTS {
                     ui.selectable_value(&mut test, known, known.sign());
                 }
             });

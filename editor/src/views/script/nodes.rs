@@ -12,8 +12,8 @@ use engine::systems::dialogue::bust::Expression;
 use engine::systems::interact::Verb;
 use engine::systems::item::ItemStack;
 use engine::systems::script::{
-    Condition, EventKind, Line, Node, Place, RiftEffect, RiftEffectKind, RiftEvent, RiftQuery,
-    RiftScripting, RunnerKind, Speaker, Who,
+    Condition, EventKind, Node, Place, RiftEffect, RiftEffectKind, RiftEvent, RiftQuery,
+    RiftScripting, RunnerKind, ScriptLine, Speaker, Who,
 };
 use engine::systems::text::plain;
 use serde::Deserialize;
@@ -112,8 +112,8 @@ impl SpeakerKind {
     }
 }
 
-pub(crate) fn blank_line(by: Speaker) -> Line {
-    Line {
+pub(crate) fn blank_line(by: Speaker) -> ScriptLine {
+    ScriptLine {
         by,
         face: None,
         text: vec![plain("")],

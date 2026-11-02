@@ -30,13 +30,10 @@ dist out="target/dist" *extras="":
     #!/usr/bin/env bash
     set -euo pipefail
     out={{quote(out)}}
-    extras=" {{extras}} "
-    for extra in $extras; do
-      case "$extra" in
-        profiling) ;;
-        *) echo "no extra $extra: the only extra is profiling" >&2; exit 1 ;;
-      esac
-    done
+    case {{quote(extras)}} in
+      "" | profiling) ;;
+      *) echo "no extra {{extras}}: the only extra is profiling" >&2; exit 1 ;;
+    esac
     rm -rf "$out" && mkdir -p "$out"
     # One build for every binary: each target's build script caches whether the tree was dirty
     # when it last ran, so left to themselves the server and the client can disagree.
@@ -46,7 +43,7 @@ dist out="target/dist" *extras="":
     for binary in editor game-server desktop-client rift web-server; do
       cp "target/release/$binary{{exe}}" "$out/"
     done
-    if [ {{quote(os())}} = linux ] && [[ $extras == *" profiling "* ]]; then
+    if [ {{quote(os())}} = linux ] && [ {{quote(extras)}} = profiling ]; then
       RUSTFLAGS="-C force-frame-pointers=yes" cargo build --profile profiling --features profiling -p game-server --bin game-server
       cp target/profiling/game-server "$out/game-server-profiling"
     fi
@@ -70,7 +67,7 @@ archives platform binaries="target/dist" out="target/archives":
       esac
     done
 
-# Players are congested (all on the spawn tile, one shared view) by default; `--spread` spreads them.
+# Players are congested (all on the spawn point, one shared view) by default; `--spread` spreads them.
 [doc("The server's capacity on a generated game, or on GAME followed by the client's frame rate and memory.")]
 bench *args: dist
     target/dist/rift bench {{args}}

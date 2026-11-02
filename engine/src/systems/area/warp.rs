@@ -63,7 +63,7 @@ pub fn warp(world: &mut World, actor: Entity, to: Place) -> Result<(), String> {
     reach::forget(world, actor);
     world.entity_mut(actor).insert(SpawnPoint(to.at));
     if here == Some(to.area) {
-        region::reach(world, to.at);
+        region::hold_around(world, to.at);
         movement::relocate_beside(world, actor, to.at);
     } else {
         world.entity_mut(actor).insert(Crossing {

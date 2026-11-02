@@ -281,7 +281,7 @@ impl QuestDef {
         parties: &Parties,
         active: &ActiveQuest,
         inventory: Option<&Inventory>,
-    ) -> Vec<Progress> {
+    ) -> Vec<ObjectiveProgress> {
         let held = |item| inventory.map_or(0, |inventory| inventory.count(item));
         self.objectives()
             .enumerate()
@@ -296,7 +296,7 @@ impl QuestDef {
                     Objective::Deliver { item } => (held(*item).min(1), 1, false),
                     Objective::Decide { .. } => (0, 1, false),
                 };
-                Progress {
+                ObjectiveProgress {
                     label: self.objective_label(content, parties, active.quest, objective),
                     have,
                     need,
@@ -463,14 +463,14 @@ pub struct QuestDrop {
 }
 
 #[derive(Clone, Debug, PartialEq)]
-pub struct Progress {
+pub struct ObjectiveProgress {
     pub label: String,
     pub have: u32,
     pub need: u32,
     pub counted: bool,
 }
 
-impl Progress {
+impl ObjectiveProgress {
     pub fn done(&self) -> bool {
         self.have >= self.need
     }
@@ -481,12 +481,12 @@ pub struct Parties(Arc<HashMap<QuestId, QuestParties>>);
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct QuestParties {
-    pub givers: Vec<Party>,
-    pub turn_ins: Vec<Party>,
+    pub givers: Vec<QuestParty>,
+    pub turn_ins: Vec<QuestParty>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Party {
+pub struct QuestParty {
     pub name: String,
     pub item: Option<ItemId>,
     pub npc: Option<NpcId>,
@@ -517,11 +517,11 @@ impl Parties {
         self.0.get(&quest)
     }
 
-    pub fn giver(&self, quest: QuestId) -> Option<&Party> {
+    pub fn giver(&self, quest: QuestId) -> Option<&QuestParty> {
         self.get(quest).and_then(|parties| parties.givers.first())
     }
 
-    pub fn turn_in(&self, quest: QuestId) -> Option<&Party> {
+    pub fn turn_in(&self, quest: QuestId) -> Option<&QuestParty> {
         self.get(quest).and_then(|parties| parties.turn_ins.first())
     }
 }
@@ -555,7 +555,7 @@ fn quest_roles(scripts: &RiftScripts) -> Vec<(OwnerRow, QuestRole)> {
     roles
 }
 
-fn party_name(content: &Content, owner: OwnerRow) -> Option<Party> {
+fn party_name(content: &Content, owner: OwnerRow) -> Option<QuestParty> {
     let placed = |npc: NpcId| {
         content.ids::<AreaDef>().any(|area| {
             area::residents(area::placed(content, area)).any(|resident| resident == npc)
@@ -567,7 +567,7 @@ fn party_name(content: &Content, owner: OwnerRow) -> Option<Party> {
             if !placed(npc) {
                 return None;
             }
-            Party {
+            QuestParty {
                 name: npc.get(content).name.to_owned(),
                 item: None,
                 npc: Some(npc),
@@ -577,7 +577,7 @@ fn party_name(content: &Content, owner: OwnerRow) -> Option<Party> {
             let area: AreaId = owner.id();
             let (_, object) = area::objects(area::placed(content, area))
                 .find(|(index, _)| Some(*index) == owner.object)?;
-            Party {
+            QuestParty {
                 name: object.title.clone().or_else(|| object.name.clone())?,
                 item: None,
                 npc: None,
@@ -585,7 +585,7 @@ fn party_name(content: &Content, owner: OwnerRow) -> Option<Party> {
         }
         RunnerKind::Item => {
             let item: ItemId = owner.id();
-            Party {
+            QuestParty {
                 name: item.get(content).name.to_owned(),
                 item: Some(item),
                 npc: None,

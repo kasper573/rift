@@ -38,6 +38,7 @@ pub struct ServerLink {
     epoch: u32,
     received: Vec<Vec<u8>>,
     outgoing: Vec<Vec<u8>>,
+    broken: bool,
 }
 
 impl ServerLink {
@@ -49,6 +50,12 @@ impl ServerLink {
     /// What the transport is to send the server, each piece delivered as one.
     pub fn take_outgoing(&mut self) -> Vec<Vec<u8>> {
         std::mem::take(&mut self.outgoing)
+    }
+
+    /// Whether the server sent anything that isn't of the protocol, which no server of this build
+    /// does: the transport is to end the connection.
+    pub fn broken(&self) -> bool {
+        self.broken
     }
 }
 
@@ -133,15 +140,22 @@ fn receive(world: &mut World) {
     world.resource_scope(|world, protocol: Mut<Protocol>| {
         world.resource_scope(|world, mut entities: Mut<ServerEntities>| {
             for bytes in &frames {
-                apply(world, &protocol, &mut entities, bytes);
+                if apply(world, &protocol, &mut entities, bytes).is_none() {
+                    world.resource_mut::<ServerLink>().broken = true;
+                    break;
+                }
             }
         });
     });
 }
 
-fn apply(world: &mut World, protocol: &Protocol, entities: &mut ServerEntities, bytes: &[u8]) {
-    let frame: ServerFrame =
-        postcard::from_bytes(bytes).expect("the server speaks this client's protocol");
+fn apply(
+    world: &mut World,
+    protocol: &Protocol,
+    entities: &mut ServerEntities,
+    bytes: &[u8],
+) -> Option<()> {
+    let frame: ServerFrame = postcard::from_bytes(bytes).ok()?;
     let despawn = world.resource::<ReplicatedDespawn>().0;
     if let Some(epoch) = frame.fresh {
         world.resource_mut::<ServerLink>().epoch = epoch;
@@ -159,13 +173,13 @@ fn apply(world: &mut World, protocol: &Protocol, entities: &mut ServerEntities, 
         }
     }
     for changes in frame.entities {
-        apply_changes(world, protocol, entities, changes)
-            .expect("the server speaks this client's protocol");
+        apply_changes(world, protocol, entities, changes)?;
     }
     for part in frame.messages {
-        (protocol.server_messages[part.kind as usize].receive)(world, entities, part.bytes)
-            .expect("the server speaks this client's protocol");
+        let rule = protocol.server_messages.get(part.kind as usize)?;
+        (rule.receive)(world, entities, part.bytes).ok()?;
     }
+    Some(())
 }
 
 fn apply_changes(

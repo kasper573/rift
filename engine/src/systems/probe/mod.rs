@@ -948,7 +948,7 @@ fn skills(world: &World, me: Entity) -> Option<ProbeSkills> {
         to_spend: crate::systems::class::points_to_spend(world, me).0,
         learned,
         planned: world
-            .resource::<skill::window::Plan>()
+            .resource::<skill::window::SkillPlan>()
             .0
             .iter()
             .map(rank)

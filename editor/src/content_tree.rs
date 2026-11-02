@@ -19,7 +19,7 @@ use super::browser::{self, BrowserAction, RowMenu};
 use super::tree::{self, Narrowing, TreeDrop, TreeRow, TreeSource, TreeState};
 use super::widgets::{self, KindMark};
 use crate::app::{BottomTab, Editor};
-use crate::icons::{self, IconTone, Preview};
+use crate::icons::{self, IconTone, PictureTexture};
 use crate::import;
 use crate::keymap::EditorKey;
 use crate::modal::{ModalDialog, PickRowDialog, PickRowThen};
@@ -660,7 +660,7 @@ impl<'a> GameFolder<'a> {
         self
     }
 
-    fn preview(&self, path: &str) -> Option<Preview> {
+    fn preview(&self, path: &str) -> Option<PictureTexture> {
         let mut previews = self.previews.as_ref()?.borrow_mut();
         let Previews {
             ctx,

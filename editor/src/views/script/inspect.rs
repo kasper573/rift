@@ -16,7 +16,8 @@ use engine::systems::dialogue::ChoiceReveal;
 use engine::systems::memory::MemoryDef;
 use engine::systems::npc::NpcDef;
 use engine::systems::script::{
-    Choice, DialogueNode, Line, Node, RiftEffect, RiftEvent, ScriptDef, Speaker, VarValue, Variable,
+    Choice, DialogueNode, Node, RiftEffect, RiftEvent, ScriptDef, ScriptLine, Speaker, VarValue,
+    Variable,
 };
 use serde_json::Value;
 use strum::VariantArray;
@@ -1399,7 +1400,7 @@ fn choice_inspector(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, name: &st
 fn speaker_rows(
     ui: &mut Ui,
     cx: &mut FormCx,
-    line: &mut Line,
+    line: &mut ScriptLine,
     path: &str,
     doc: &ScriptDoc,
 ) -> FormChange {

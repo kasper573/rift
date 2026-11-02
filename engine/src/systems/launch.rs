@@ -1,6 +1,10 @@
 use std::collections::BTreeMap;
-use std::net::{IpAddr, Ipv4Addr, SocketAddr};
+use std::io::{BufRead, BufReader, Write};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::channel;
+use std::time::Duration;
 
 use schemars::JsonSchema;
 use serde::de::DeserializeOwned;
@@ -11,6 +15,7 @@ use crate::core::content::version;
 use crate::core::net::auth::TokenClaims;
 use crate::core::time::UtcHour;
 use crate::systems::player::SpawnPolicy;
+use crate::systems::probe::ProbeFrameQuestion;
 use crate::systems::script::Place;
 use crate::systems::staging::Staging;
 
@@ -227,6 +232,72 @@ pub fn env_of<T: Serialize>(prefix: &str, config: &T) -> Vec<(String, String)> {
             (format!("{prefix}{}", field.to_ascii_uppercase()), text)
         })
         .collect()
+}
+
+/// Starts the game server `binary` with `envs` and waits until it prints its ready line, echoing
+/// whatever else it prints. The server is killed when it doesn't get ready within `ready_within`.
+pub fn start_game_server(
+    binary: &Path,
+    envs: impl IntoIterator<Item = (String, String)>,
+    ready_within: Duration,
+) -> Result<(Child, ServerReady), String> {
+    let mut process = Command::new(binary)
+        .envs(envs)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .map_err(|error| format!("{} doesn't run: {error}", binary.display()))?;
+    let stdout = process.stdout.take().expect("a piped stdout");
+    let (ready, readied) = channel();
+    std::thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            match serde_json::from_str::<ReadyLine>(&line) {
+                Ok(line) => {
+                    let _ = ready.send(line.ready);
+                }
+                Err(_) => println!("[game-server] {line}"),
+            }
+        }
+    });
+    match readied.recv_timeout(ready_within) {
+        Ok(ready) => Ok((process, ready)),
+        Err(_) => {
+            let _ = process.kill();
+            let _ = process.wait();
+            Err(format!("{} never got ready", binary.display()))
+        }
+    }
+}
+
+/// The driver of a desktop client's probe: asks it its frame questions and reads its answers.
+pub struct ProbeDriver {
+    questions: TcpStream,
+    answers: BufReader<TcpStream>,
+}
+
+impl ProbeDriver {
+    /// Waits for the client's probe to connect to `listener`.
+    pub fn accept(listener: &TcpListener) -> std::io::Result<ProbeDriver> {
+        let (stream, _) = listener.accept()?;
+        let answers = BufReader::new(stream.try_clone()?);
+        Ok(ProbeDriver {
+            questions: stream,
+            answers,
+        })
+    }
+
+    /// The probe's answer, one line of JSON, to `question`.
+    pub fn ask(&mut self, question: &ProbeFrameQuestion) -> Result<String, String> {
+        let question = serde_json::to_string(question).expect("a question serializes");
+        writeln!(self.questions, "{question}")
+            .map_err(|error| format!("the client takes no question: {error}"))?;
+        let mut answer = String::new();
+        match self.answers.read_line(&mut answer) {
+            Ok(0) => Err("the client hung up".to_owned()),
+            Ok(_) => Ok(answer),
+            Err(error) => Err(format!("the client stopped answering: {error}")),
+        }
+    }
 }
 
 pub fn build_info_line() -> String {

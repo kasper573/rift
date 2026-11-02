@@ -9,7 +9,7 @@ use serde::Serialize;
 use serde::de::DeserializeOwned;
 
 use super::check::RowCheck;
-use super::files::{GameFiles, Shape};
+use super::files::{FileShape, GameFiles};
 use super::fresh::Nearby;
 use super::id::{ContentId, ScopePaths};
 
@@ -17,8 +17,8 @@ use super::id::{ContentId, ScopePaths};
 /// `<name>.<TABLE>/` when the type implements `Bundle`.
 pub trait ContentFile: DeserializeOwned + Serialize + JsonSchema + Send + Sync + 'static {
     const TABLE: &'static str;
-    /// `Shape::Bundle` exactly when the type implements `Bundle`.
-    const SHAPE: Shape = Shape::Json;
+    /// `FileShape::Bundle` exactly when the type implements `Bundle`.
+    const SHAPE: FileShape = FileShape::Json;
     /// Whether every file is in use by being there, offered to pick from rather than named by
     /// another file.
     const PICKED_FROM_TABLE: bool = false;

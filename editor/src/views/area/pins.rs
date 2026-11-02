@@ -307,11 +307,7 @@ pub(crate) fn place_pick_panel(editor: &mut Editor, ui: &mut Ui) {
     let width = ui.available_width();
     let height = (width * area.size.height / area.size.width.max(1.0)).clamp(80.0, 360.0);
     let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
-    let zoom = navigation::fit_zoom(
-        rect.size(),
-        Vec2::new(area.size.width, area.size.height),
-        PX_PER_METER,
-    );
+    let zoom = navigation::fit_zoom(rect.size(), Vec2::new(area.size.width, area.size.height));
     let center = Pos::new(area.size.width / 2.0 - 0.5, area.size.height / 2.0 - 0.5);
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 4.0, theme::INPUT);

@@ -1,4 +1,4 @@
-//! The picker field: how every content relation is assigned. A field holds one [`Pick`] and
+//! The picker field: how every content relation is assigned. A field holds one [`PickedKey`] and
 //! draws it as a chip; clicking the chip opens a popover that lists what a [`PickSource`] offers,
 //! filtered by free text and by the source's category chips, and dropping something dragged
 //! from a browser onto the chip assigns it when the source accepts it.
@@ -33,14 +33,14 @@ use ui::input;
 /// What a picker field holds: a key within a category (a row's key within its table, a file's
 /// path within its kind).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-pub struct Pick {
+pub struct PickedKey {
     pub category: String,
     pub key: String,
 }
 
-impl Pick {
-    pub fn new(category: impl Into<String>, key: impl Into<String>) -> Pick {
-        Pick {
+impl PickedKey {
+    pub fn new(category: impl Into<String>, key: impl Into<String>) -> PickedKey {
+        PickedKey {
             category: category.into(),
             key: key.into(),
         }
@@ -70,15 +70,15 @@ impl Dragged {
 
 /// A chip in the popover that narrows the list to one category.
 #[derive(Clone)]
-pub struct Category {
+pub struct PickerCategory {
     pub id: String,
     pub label: String,
 }
 
 /// One thing a source offers.
 #[derive(Clone)]
-pub struct Candidate {
-    pub pick: Pick,
+pub struct PickerCandidate {
+    pub pick: PickedKey,
     /// The category chip that keeps this candidate listed.
     pub category: String,
     /// A secondary name shown beside the key, when the key alone says little.
@@ -96,24 +96,24 @@ pub struct Candidate {
 pub(crate) trait PickSource {
     fn placeholder(&self) -> String;
     /// The chips offered for quick filtering; none hides the chip row.
-    fn categories(&self, cx: &FormCx) -> Vec<Category>;
-    fn candidates(&self, cx: &FormCx) -> Vec<Candidate>;
+    fn categories(&self, cx: &FormCx) -> Vec<PickerCategory>;
+    fn candidates(&self, cx: &FormCx) -> Vec<PickerCandidate>;
     /// The pick a dragged thing becomes on this field, or why the field refuses it.
-    fn accepts(&self, cx: &FormCx, dragged: &Dragged) -> Result<Pick, String>;
+    fn accepts(&self, cx: &FormCx, dragged: &Dragged) -> Result<PickedKey, String>;
     /// The muted folder and the file a pick is shown as.
-    fn shown(&self, pick: &Pick) -> (String, String);
+    fn shown(&self, pick: &PickedKey) -> (String, String);
     /// The pick's name alone, as a grid labels it.
-    fn short(&self, pick: &Pick) -> String;
+    fn short(&self, pick: &PickedKey) -> String;
     /// What stands for a pick that has no picture.
-    fn icon(&self, pick: &Pick) -> KindIcon;
+    fn icon(&self, pick: &PickedKey) -> KindIcon;
     /// What is said about a pick under the list beyond its name: its picture, its uses.
-    fn describe(&self, cx: &FormCx, pick: &Pick) -> String;
+    fn describe(&self, cx: &FormCx, pick: &PickedKey) -> String;
     /// How the candidates are laid out until the user picks another layout.
     fn layout(&self) -> PickLayout {
         PickLayout::List
     }
     /// The action behind the arrow button beside a held pick.
-    fn opens(&self, _pick: &Pick) -> Option<FormAction> {
+    fn opens(&self, _pick: &PickedKey) -> Option<FormAction> {
         None
     }
     /// "New …" lines at the popover's foot that create and pick in one step.
@@ -131,7 +131,7 @@ pub(crate) enum PickLayout {
 }
 
 pub fn row(ui: &mut Ui, cx: &mut FormCx, table: &str, key: &mut String, path: &str) -> bool {
-    let mut pick = Pick::new(table, key.as_str());
+    let mut pick = PickedKey::new(table, key.as_str());
     let changed = field(ui, cx, &RowSource::table(table, path), &mut pick, path);
     if changed {
         *key = pick.key;
@@ -191,7 +191,7 @@ pub(crate) fn row_among(
     key: &mut String,
     path: &str,
 ) -> bool {
-    let mut pick = Pick::new(table.as_str(), key.as_str());
+    let mut pick = PickedKey::new(table.as_str(), key.as_str());
     let changed = field(ui, cx, &RowSource::tables(tables, path), &mut pick, path);
     if changed {
         *table = pick.category;
@@ -207,7 +207,7 @@ pub(crate) fn asset_of(
     file: &mut String,
     path: &str,
 ) -> bool {
-    let mut pick = Pick::new(<&str>::from(kind), file.as_str());
+    let mut pick = PickedKey::new(<&str>::from(kind), file.as_str());
     let changed = field(ui, cx, &AssetSource::of(kind), &mut pick, path);
     if changed {
         *file = pick.key;
@@ -220,7 +220,7 @@ pub fn field(
     ui: &mut Ui,
     cx: &mut FormCx,
     source: &dyn PickSource,
-    pick: &mut Pick,
+    pick: &mut PickedKey,
     path: &str,
 ) -> bool {
     let id = ui.id().with(path).with("picker");
@@ -292,7 +292,7 @@ pub fn field(
 }
 
 /// The narrowest a pick's folder is shown, cut short; any narrower and only its name shows.
-fn chip(ui: &mut Ui, cx: &mut FormCx, source: &dyn PickSource, pick: &Pick) -> egui::Response {
+fn chip(ui: &mut Ui, cx: &mut FormCx, source: &dyn PickSource, pick: &PickedKey) -> egui::Response {
     let empty = pick.is_empty();
     input::frame()
         .show(ui, |ui| {
@@ -345,7 +345,7 @@ fn popover(
     ui: &mut Ui,
     cx: &mut FormCx,
     source: &dyn PickSource,
-    pick: &mut Pick,
+    pick: &mut PickedKey,
     path: &str,
     id: egui::Id,
 ) -> bool {
@@ -387,7 +387,7 @@ fn popover(
     let categories = &found.categories;
     let all = &found.candidates;
     let total = all.len();
-    let mut candidates: Vec<&Candidate> = all
+    let mut candidates: Vec<&PickerCandidate> = all
         .iter()
         .filter(|candidate| {
             category
@@ -516,7 +516,7 @@ fn popover(
             highlight = highlight.saturating_sub(1);
         }
     }
-    let mut picked: Option<Pick> = None;
+    let mut picked: Option<PickedKey> = None;
     let mut hovered: Option<usize> = None;
     let mut budget = icons::DECODES_PER_FRAME;
     let moved = up || down || left || right;
@@ -647,8 +647,8 @@ fn describe(
     ui: &mut Ui,
     cx: &FormCx,
     source: &dyn PickSource,
-    described: Option<&Candidate>,
-    held: &Pick,
+    described: Option<&PickerCandidate>,
+    held: &PickedKey,
 ) {
     let Some(candidate) = described else {
         ui.label(theme::faint("point at one to read about it").size(11.5));
@@ -682,7 +682,7 @@ fn line(
     ui: &mut Ui,
     cx: &mut FormCx,
     source: &dyn PickSource,
-    candidate: &Candidate,
+    candidate: &PickerCandidate,
     cell: CandidateState,
     budget: &mut u32,
 ) -> egui::Response {
@@ -736,7 +736,7 @@ fn ground(
     ui: &mut Ui,
     cx: &mut FormCx,
     source: &dyn PickSource,
-    candidate: &Candidate,
+    candidate: &PickerCandidate,
     cell: CandidateState,
     budget: &mut u32,
 ) -> egui::Response {
@@ -782,7 +782,7 @@ fn face(
     ui: &Ui,
     cx: &mut FormCx,
     source: &dyn PickSource,
-    pick: &Pick,
+    pick: &PickedKey,
     rect: Rect,
     budget: &mut u32,
 ) {
@@ -811,8 +811,8 @@ fn face(
 #[derive(Clone)]
 struct Found {
     from: (u64, u64),
-    categories: Arc<[Category]>,
-    candidates: Arc<[Candidate]>,
+    categories: Arc<[PickerCategory]>,
+    candidates: Arc<[PickerCandidate]>,
 }
 
 fn found(ui: &Ui, cx: &FormCx, source: &dyn PickSource, id: egui::Id) -> Found {

@@ -15,9 +15,9 @@ mod talk;
 
 pub use art::{
     glb, glb_naming_image, glb_of, glb_with_image_inside, library_glb, png, pose_glb, rig, rig_glb,
-    skin_glb, wav, wav_of,
+    skin_glb, wav,
 };
-pub use crowd::{CROWD_AREA, crowd};
+pub use crowd::crowd;
 pub use game::{
     APEX, BODY, CLIP, Declared, Game, HEIGHTS, Map, ROCK, RUN_PACE, SPRINT_PACE, TURF, WALK_PACE,
     clip, clip_on, hearing, lettering, look, part_file, path, rig_clips, rig_file, speech, stats,

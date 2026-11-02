@@ -111,9 +111,9 @@ pub const GAME_INFO_ROUTE: &str = "/game";
 
 /// How long a CPU profile samples, as pprof's HTTP endpoint is asked.
 #[derive(Deserialize)]
-pub struct CpuProfileQuery {
+pub(crate) struct CpuProfileQuery {
     #[serde(default = "pprof_default_seconds")]
-    pub seconds: u64,
+    pub(crate) seconds: u64,
 }
 
 fn pprof_default_seconds() -> u64 {

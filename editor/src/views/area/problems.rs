@@ -1,6 +1,6 @@
 //! What the loader finds wrong with an area, where the designer can act on it: counted in the
-//! status bar, listed in the Output tab with a way to go there, and shown on the module it is
-//! about with a way to move it where it would be fine.
+//! status bar, and listed in the Output tab with a way to go there and, when the problem knows
+//! where its module would be fine, to move it there.
 
 use engine::core::content::{ContentFile, ErrorPlace, LoadError};
 use engine::core::math::Pos;
@@ -130,10 +130,16 @@ pub fn output(editor: &mut Editor, ui: &mut Ui) {
         ui::words::plural(problems.len())
     )));
     let mut go = None;
+    let mut fix = None;
     for problem in problems.iter().take(SHOWN) {
         ui.horizontal(|ui| {
             if controls::button(ui, "Go to").clicked() {
                 go = Some(problem.clone());
+            }
+            if let Some((bundle, node, to)) = movable(problem)
+                && controls::button(ui, "Move there").clicked()
+            {
+                fix = Some((bundle.to_owned(), node.to_owned(), to));
             }
             ui.label(
                 face::mono(format!(
@@ -152,6 +158,37 @@ pub fn output(editor: &mut Editor, ui: &mut Ui) {
     if let Some(problem) = go {
         go_to(editor, &problem);
     }
+    if let Some((bundle, node, to)) = fix {
+        move_there(editor, &bundle, &node, to);
+    }
+}
+
+/// Moves the module at `node` of `bundle` to where its problem says it would be fine.
+pub fn move_there(editor: &mut Editor, bundle: &str, node: &str, to: Pos<Meters>) {
+    let reader = editor.reader();
+    nodes::change_scene(editor, bundle, |scene| {
+        let module = &mut nodes::module_node_mut(scene, node)?.module;
+        let from = super::shapes::bounds(module, None)?.center();
+        module.shift(to.x - from.x, to.y - from.y);
+        Some(format!(
+            "Move {} to {:.2}, {:.2}",
+            reader
+                .as_ref()
+                .map(|reader| super::shapes::label(module, reader.as_ref()))
+                .unwrap_or_default(),
+            to.x,
+            to.y
+        ))
+    });
+}
+
+/// The module a problem is on and where it suggests moving it, when it does.
+fn movable(problem: &Problem) -> Option<(&str, &str, Pos<Meters>)> {
+    Some((
+        problem.bundle()?,
+        problem.node.as_deref()?,
+        problem.suggested?,
+    ))
 }
 
 const SHOWN: usize = 12;

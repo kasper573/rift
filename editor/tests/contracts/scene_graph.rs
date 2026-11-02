@@ -2,7 +2,7 @@ use std::collections::HashSet;
 
 use editor::app::Editor;
 use editor::project::RowSelection;
-use editor::tree::{DropAt, Toggle, TreeDrop, TreeSource};
+use editor::tree::{DropAt, RowToggle, TreeDrop, TreeSource};
 use editor::user::TreeView;
 use editor::views::area::flags::{SceneFlags, SceneLevel};
 use editor::views::area::nodes::{self, Landing, NodeFlag, SceneTree};
@@ -173,7 +173,7 @@ fn hiding_a_row_shows_in_the_open_view_before_the_folder_loads_again() {
         &mut editor,
         &area(),
         std::slice::from_ref(&rug),
-        Toggle::Hide,
+        RowToggle::Hide,
     );
 
     let hidden = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");

@@ -494,7 +494,7 @@ impl ScriptedRow for ItemDef {
 #[strum_discriminants(name(ItemModuleKind))]
 pub enum ItemModule {
     Flavor(Flavor),
-    Stack(Stack),
+    Stack(StackLimit),
     QuestItem,
     Bound,
     Currency,
@@ -507,7 +507,7 @@ pub struct Flavor {
 }
 
 #[derive(JsonSchema, Clone, Copy, Serialize, Deserialize)]
-pub struct Stack {
+pub struct StackLimit {
     pub max: u32,
 }
 

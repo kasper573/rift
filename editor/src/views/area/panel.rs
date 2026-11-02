@@ -21,7 +21,7 @@ use ui::egui::{Align, Layout, Ui};
 use ui::glyph::{self, Mark};
 
 use super::nodes::SceneBundle;
-use super::scene_tree::{self, SceneAction, SceneNarrowing, SceneSource, Toggle};
+use super::scene_tree::{self, RowToggle, SceneAction, SceneNarrowing, SceneSource};
 use super::{AreaSnapshot, nodes, placement, resize, shapes};
 use crate::app::Editor;
 use crate::content_tree;
@@ -821,10 +821,10 @@ fn act(editor: &mut Editor, view_key: &str, snapshot: &AreaSnapshot, action: Sce
                 .set_open(folders, open);
         }
         SceneAction::ShowEverything => {
-            scene_tree::clear_all(editor, &snapshot.bundle, Toggle::Hide)
+            scene_tree::clear_all(editor, &snapshot.bundle, RowToggle::Hide)
         }
         SceneAction::UnlockEverything => {
-            scene_tree::clear_all(editor, &snapshot.bundle, Toggle::Lock)
+            scene_tree::clear_all(editor, &snapshot.bundle, RowToggle::Lock)
         }
     }
 }
@@ -952,9 +952,9 @@ fn keys(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &AreaSnapsho
     } else if pressed(EditorKey::NewFolder) {
         Some(SceneAction::NewFolder(folder.clone()))
     } else if pressed(EditorKey::Hide) && !selected.is_empty() {
-        Some(SceneAction::Toggle(selected.clone(), Toggle::Hide))
+        Some(SceneAction::Toggle(selected.clone(), RowToggle::Hide))
     } else if pressed(EditorKey::Lock) && !selected.is_empty() {
-        Some(SceneAction::Toggle(selected.clone(), Toggle::Lock))
+        Some(SceneAction::Toggle(selected.clone(), RowToggle::Lock))
     } else if pressed(EditorKey::ShowEverything) {
         Some(SceneAction::ShowEverything)
     } else if pressed(EditorKey::UnlockEverything) {

@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use super::clouds;
 use super::lights;
-use crate::core::math::{Rect, Rgb};
+use crate::core::math::{Rect, Rgb, smoothstep};
 use crate::core::render::Look;
 use crate::core::units::{Degrees, Meters, Stops};
 
@@ -65,8 +65,11 @@ pub struct SkyLook {
     pub shaft_height: Meters,
     pub dry_air: f32,
     pub moist_air: f32,
-    /// The colour a sun reddens toward as it nears the horizon.
+    /// The colour a sun reddens toward as it nears the horizon, the elevation below which it
+    /// begins to, and how far toward it a sun on the horizon has gone, from 0 to 1.
     pub setting_sun: Rgb,
+    pub reddens_below: Degrees,
+    pub reddening: f32,
     /// The full moon's light, and how much of the sun's it sheds.
     pub moonlight: Rgb,
     pub moon_share: f32,
@@ -80,6 +83,10 @@ pub struct SkyLook {
     /// The sun's elevation below which its light is gone, and above which it is full.
     pub sun_gone: Degrees,
     pub sun_full: Degrees,
+    /// How much of an area's ambient light the night leaves it, and how much of it the thickest
+    /// cloud takes, each from 0 to 1.
+    pub night_ambient: f32,
+    pub cloud_dimming: f32,
 }
 
 /// What stands over an area: the air its sun lights, blue by day, or the dark of a cave or a
@@ -264,9 +271,9 @@ pub fn humidity(clouds: f32, water: f32, look: &SkyLook) -> f32 {
 }
 
 /// An area's authored sun as it shines at `daylight` under `clouds` holding `water`: fixed, as
-/// written;
-/// at an hour, climbing from the east over the morning to its authored noon height and bearing
-/// and setting over the evening, reddening as it nears the horizon and going out beneath it.
+/// written; at an hour, climbing from the east over the morning to its authored noon height and
+/// bearing and setting over the evening, reddening as it nears the horizon and going out beneath
+/// it.
 pub fn sun_at(
     daylight: Daylight,
     noon_elevation: Degrees,
@@ -287,11 +294,15 @@ pub fn sun_at(
         },
         Daylight::Hour(hour) => {
             let (elevation, azimuth) = orbit(noon_elevation, noon_azimuth, hour);
-            let warmth = 1.0 - smoothstep(0.0, 25.0, elevation.0);
+            let warmth = 1.0 - smoothstep(0.0, look.sky.reddens_below.0, elevation.0);
             SunLight {
                 elevation,
                 azimuth,
-                color: mix(color, look.sky.setting_sun.color(), warmth * 0.8),
+                color: mix(
+                    color,
+                    look.sky.setting_sun.color(),
+                    warmth * look.sky.reddening,
+                ),
                 illuminance: sun_lux
                     * smoothstep(look.sky.sun_gone.0, look.sky.sun_full.0, elevation.0)
                     * clouded,
@@ -389,24 +400,24 @@ pub fn ambient_at(
     water: f32,
     look: &Look,
 ) -> f32 {
-    daytime(daylight, elevation).map_or(1.0, |lit| 0.12 + 0.88 * lit)
-        * (1.0 - 0.45 * clouds::shade(water, &look.clouds) * clouds)
+    let night = look.sky.night_ambient;
+    daytime(daylight, elevation, &look.sky).map_or(1.0, |lit| night + (1.0 - night) * lit)
+        * (1.0 - look.sky.cloud_dimming * clouds::shade(water, &look.clouds) * clouds)
 }
 
-/// How far into the day a sun at `elevation` is, 0 by night and 1 by day, or nothing when the
-/// light stands fixed or there is no sun to move.
-fn daytime(daylight: Daylight, elevation: Option<Degrees>) -> Option<f32> {
+/// How far into the day a sun at `elevation` is, 0 once the night has fallen and 1 before dusk
+/// begins, or nothing when the light stands fixed or there is no sun to move.
+fn daytime(daylight: Daylight, elevation: Option<Degrees>, look: &SkyLook) -> Option<f32> {
     match (daylight, elevation) {
-        (Daylight::Hour(_), Some(elevation)) => Some(smoothstep(-10.0, 10.0, elevation.0)),
+        (Daylight::Hour(_), Some(elevation)) => Some(smoothstep(
+            look.night_falls.0,
+            look.dusk_begins.0,
+            elevation.0,
+        )),
         _ => None,
     }
 }
 
 fn mix(from: Color, to: Color, by: f32) -> Color {
     Color::LinearRgba(from.to_linear().mix(&to.to_linear(), by))
-}
-
-fn smoothstep(from: f32, to: f32, at: f32) -> f32 {
-    let t = ((at - from) / (to - from)).clamp(0.0, 1.0);
-    t * t * (3.0 - 2.0 * t)
 }

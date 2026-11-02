@@ -97,7 +97,7 @@ pub fn settled(world: &World) -> bool {
 
 /// Holds the ground within reach of `at` at once, before something arrives there: a player
 /// joining, an actor warped or carried in.
-pub fn reach(world: &mut World, at: Pos<Meters>) {
+pub fn hold_around(world: &mut World, at: Pos<Meters>) {
     let content = world.resource::<Content>().clone();
     let area = area::load(&content, world.resource::<WorldArea>().0);
     let reach = world.resource::<Region>().reach;
@@ -108,7 +108,7 @@ pub fn reach(world: &mut World, at: Pos<Meters>) {
 
 /// Holds every tile of the area and brings all of it to life: what a world small enough to hold
 /// whole asks for, as a test's does.
-pub fn reach_all(world: &mut World) {
+pub fn hold_whole(world: &mut World) {
     let content = world.resource::<Content>().clone();
     let area = area::load(&content, world.resource::<WorldArea>().0);
     let wanted: BTreeSet<TileAt> = area.ground_size().each_tile().collect();

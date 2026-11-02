@@ -9,12 +9,12 @@ jsonwebtoken = { version = "11", features = ["rust_crypto"] }
 oauth2 = { version = "5", default-features = false }
 serde.workspace = true
 serde_json.workspace = true
-serde_urlencoded = "0.7"
+serde_urlencoded.workspace = true
 tiny_http = "0.12"
 ureq = { workspace = true, features = ["rustls", "platform-verifier"] }
 
 [dev-dependencies]
-oauth2-test-server = "0.2.3"
+oauth2-test-server.workspace = true
 # The provider signs with keys of this version's types, so the tests sign tokens of their own with it.
 provider-jwt = { package = "jsonwebtoken", version = "10" }
 tokio.workspace = true

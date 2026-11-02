@@ -236,13 +236,6 @@ impl HeightRange {
 /// pixel, the index of the terrain in the area's list.
 pub type PaintMap = GroundGrid<u8>;
 
-/// A terrain and how much of a point it covers, as the paint around the point blends.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Share {
-    pub terrain: u8,
-    pub weight: f32,
-}
-
 impl GroundGrid<u16> {
     pub fn flat(size: GroundSize, range: HeightRange) -> Heightfield {
         GroundGrid::blank(TileGrid::samples(size), range)
@@ -294,7 +287,7 @@ impl GroundGrid<u16> {
     /// Sample `(column, row)`, the nearest past the edge; the overview's nearest where its tile
     /// isn't loaded.
     pub fn sample(&self, column: u32, row: u32) -> Meters {
-        self.scale.height_of(self.value(column, row))
+        self.scale.height_of(self.index(column, row))
     }
 
     /// The ground's height at `at`, between the samples around it.
@@ -404,12 +397,6 @@ impl GroundGrid<u8> {
         )
     }
 
-    /// The terrain painting pixel `(column, row)`, the nearest pixel past the edge; the
-    /// overview's nearest where its tile isn't loaded.
-    pub fn index(&self, column: u32, row: u32) -> u8 {
-        self.value(column, row)
-    }
-
     /// The terrain painting the half metre under `at`.
     pub fn at(&self, at: Pos<Meters>) -> u8 {
         let (column, row) = self.pixel_at(at);
@@ -441,42 +428,9 @@ impl GroundGrid<u8> {
             .collect()
     }
 
-    /// The terrains around `at` and how much of the point each covers, blended between the four
-    /// pixel middles around it: one share of weight 1 inside a field of one terrain, up to four
-    /// along a boundary, so the ground's colour and its cover thin out over a half metre.
-    pub fn blend_at(&self, at: Pos<Meters>) -> Vec<Share> {
-        let step = 1.0 / SAMPLES_PER_METER as f32;
-        let x = (at.x - GROUND_ORIGIN.x) / step - 0.5;
-        let y = (at.y - GROUND_ORIGIN.y) / step - 0.5;
-        let (column, row) = (x.floor(), y.floor());
-        let (fx, fy) = (x - column, y - row);
-        let pixel = |dx: f32, dy: f32| {
-            let column = (column + dx).max(0.0) as u32;
-            let row = (row + dy).max(0.0) as u32;
-            self.index(column, row)
-        };
-        let corners = [
-            (pixel(0.0, 0.0), (1.0 - fx) * (1.0 - fy)),
-            (pixel(1.0, 0.0), fx * (1.0 - fy)),
-            (pixel(0.0, 1.0), (1.0 - fx) * fy),
-            (pixel(1.0, 1.0), fx * fy),
-        ];
-        let mut shares: Vec<Share> = Vec::with_capacity(4);
-        for (terrain, weight) in corners {
-            if weight <= 0.0 {
-                continue;
-            }
-            match shares.iter_mut().find(|share| share.terrain == terrain) {
-                Some(share) => share.weight += weight,
-                None => shares.push(Share { terrain, weight }),
-            }
-        }
-        shares
-    }
-
     /// The terrain painting most of the metre cell `cell`; of equals, the first.
     pub fn dominant(&self, cell: CellPos) -> u8 {
-        dominant_of(cell, |column, row| self.value(column, row))
+        dominant_of(cell, |column, row| self.index(column, row))
     }
 
     /// The terrain painting most of each metre cell of the `size` cells from `origin`, row by
@@ -841,7 +795,7 @@ impl<T: Value> GroundGrid<T> {
             .flat_map(|row| (0..columns).map(move |column| (column, row)))
             .map(|(column, row)| {
                 let (column, row) = self.grid.overview_source(column, row);
-                self.value(column, row)
+                self.index(column, row)
             })
             .collect();
         Some(Tile {
@@ -910,7 +864,7 @@ impl<T: Value> GroundGrid<T> {
 
     /// The value at `(column, row)`, the nearest one past the edge: from its tile when that is
     /// loaded, else the overview's nearest, else blank.
-    fn value(&self, column: u32, row: u32) -> T {
+    pub fn index(&self, column: u32, row: u32) -> T {
         let column = column.min(self.grid.columns.saturating_sub(1));
         let row = row.min(self.grid.rows.saturating_sub(1));
         let at = TileAt {
@@ -956,10 +910,10 @@ impl<T: Value> GroundGrid<T> {
             ];
         }
         [
-            self.value(column, row),
-            self.value(right, row),
-            self.value(column, below),
-            self.value(right, below),
+            self.index(column, row),
+            self.index(right, row),
+            self.index(column, below),
+            self.index(right, below),
         ]
     }
 

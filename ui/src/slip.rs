@@ -13,17 +13,10 @@ pub const SHADOW: Shadow = Shadow {
 };
 
 pub fn show<R>(ui: &mut Ui, add: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
-    show_tinted(ui, Color32::WHITE, add)
-}
-
-fn show_tinted<R>(ui: &mut Ui, tint: Color32, add: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
     let under = ui.painter().add(Shape::Noop);
     let shown = egui::Frame::new().inner_margin(PADDING).show(ui, add);
-    let rect = shown.response.rect;
-    ui.painter().set(under, Shape::Vec(shapes(ui.ctx(), rect)));
-    if tint != Color32::WHITE {
-        ui.painter().rect_filled(rect, CornerRadius::ZERO, tint);
-    }
+    ui.painter()
+        .set(under, Shape::Vec(shapes(ui.ctx(), shown.response.rect)));
     shown
 }
 

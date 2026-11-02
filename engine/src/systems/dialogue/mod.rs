@@ -28,7 +28,7 @@ use crate::systems::player::{CommandLock, player_requests};
 use crate::systems::quest::QuestId;
 use crate::systems::reach::{self, Tether};
 use crate::systems::script::{
-    Condition, EventKind, FlowKey, Line, RiftEffect, RiftEvent, RiftInstances, RiftScripting,
+    Condition, EventKind, FlowKey, RiftEffect, RiftEvent, RiftInstances, RiftScripting, ScriptLine,
     Speaker, condition,
 };
 use crate::systems::stat;
@@ -322,7 +322,7 @@ pub fn close(world: &mut World, flow: FlowKey, subject: Entity, ending: BoxEndin
     }
 }
 
-pub fn remark(world: &mut World, player: Entity, to: Entity, line: &Line) {
+pub fn remark(world: &mut World, player: Entity, to: Entity, line: &ScriptLine) {
     let Some(session) = world.get::<ConversationSession>(player) else {
         return;
     };

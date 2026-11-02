@@ -21,8 +21,8 @@ use super::tile::tiled;
 /// The area's side, in sides of the spawn area: it grows by the square of these.
 const SIDES: [u32; 6] = [1, 2, 3, 4, 6, 8];
 const MEASURE: usize = 100;
-/// A probe of the cell size is a few seconds of ticks: the sizes it tells apart differ by less
-/// than a short run wavers.
+/// How long each size is watched: a few seconds of ticks, as the sizes differ by less than a
+/// short run wavers.
 const WATCH: Duration = Duration::from_secs(4);
 
 pub fn run(game: &Path, content: &Content) {

@@ -133,7 +133,7 @@ pub fn wav() -> Vec<u8> {
 }
 
 /// A WAV of `samples`, a moment long.
-pub fn wav_of(samples: &[i16]) -> Vec<u8> {
+pub(crate) fn wav_of(samples: &[i16]) -> Vec<u8> {
     const RATE: u32 = 8000;
     let spec = hound::WavSpec {
         channels: 1,

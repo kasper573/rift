@@ -32,9 +32,7 @@ use crate::systems::stat::{self, StatKind};
 use crate::systems::{area, drain_requests, reach};
 
 pub fn register(app: &mut App) {
-    use bevy_replication::AppMessageExt;
-
-    use bevy_replication::AppReplicationExt;
+    use bevy_replication::{AppMessageExt, AppReplicationExt};
 
     app.replicate::<Position>()
         .replicate_private_while::<MoveTarget, HeardMove>()

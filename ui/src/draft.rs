@@ -57,10 +57,6 @@ pub fn set_draft(ui: &Ui, id: Id, text: &str) {
     ui.ctx().data_mut(|d| d.insert_temp(id, text.to_owned()));
 }
 
-fn take_draft(ui: &Ui, id: Id) -> Option<String> {
-    ui.ctx().data_mut(|d| d.remove_temp::<String>(id))
-}
-
 pub fn clear_draft(ui: &Ui, id: Id) {
-    take_draft(ui, id);
+    ui.ctx().data_mut(|d| d.remove_temp::<String>(id));
 }

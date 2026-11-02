@@ -6,7 +6,6 @@ pub mod fixture;
 pub mod fresh;
 pub mod gltf;
 pub mod id;
-pub mod key;
 pub mod load;
 pub mod locate;
 pub mod mark;
@@ -25,18 +24,17 @@ pub use asset::{AssetKind, AudioRef, FileSize, ImageRef, ModelRef};
 pub use bundle::{Bundle, PartSpec, Parts, StoredPart};
 pub use check::RowCheck;
 pub use files::{
-    CONFIG_FILE, FIXTURES_DIR, FileType, GameFile, GameFiles, Listing, NOTE_EXTENSION,
-    SETTINGS_FILE, Shape, bundle_of, bundle_tables, content_path, fields_file, is_device,
-    list_files, name_of, numbered, parent_of, table_of, valid_name,
+    CONFIG_FILE, FIXTURES_DIR, FileShape, FileType, GameFile, GameFiles, Listing, NOTE_EXTENSION,
+    SETTINGS_FILE, bundle_of, bundle_tables, content_path, fields_file, is_device, list_files,
+    name_of, numbered, parent_of, table_of, valid_name,
 };
 pub use fixture::Fixture;
 pub use fresh::Nearby;
 pub use id::{ContentId, ContentScope, rescoped, with_content};
-pub use key::key_of;
 pub use load::{
     CheckedFiles, ContentFolder, ContentRegistry, FileHash, FileHashes, FileWriter,
     FilesystemFolder, FolderEntry, JsonPart, LoadPurpose, LoadStep, LoadWarnings, Loading,
-    MemoryFolder, Reference, Settings, load, pointer_of, write,
+    MemoryFolder, Reference, SettingsFile, load, pointer_of, write,
 };
 pub use mark::SchemaMark;
 pub use reader::{FolderReader, Unreadable, WrittenFiles};

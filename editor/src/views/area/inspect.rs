@@ -27,7 +27,6 @@ use engine::systems::area::object::ObjectDef;
 use engine::systems::area::scene::{self, SceneNode, scene_file};
 use engine::systems::area::{AreaDef, AreaModule, SoundscapeDef};
 use engine::systems::script::{RunnerKind, ScriptModule, VarValue, Variable};
-use serde_json::Value;
 
 use super::clipboard::clipboard_panel;
 use super::nodes::SceneDraft;
@@ -163,9 +162,8 @@ fn paint_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &super
                 shapes,
                 ..
             } = editor;
-            let project = project.as_ref().expect("project");
-            let root = Value::Null;
-            let mut cx = FormCx::new(project, &root, shapes, form, &mut actions)
+            let project = project.as_ref().expect("a project");
+            let mut cx = FormCx::schemaless(project, shapes, form, &mut actions)
                 .editing(table_of(&viewed).unwrap_or_default(), Some(&viewed));
             form::kv(ui, "terrain", |ui| {
                 changed = picker::row(
@@ -308,12 +306,12 @@ fn folder_card(editor: &mut Editor, ui: &mut Ui, snapshot: &super::AreaSnapshot,
         ui.add_space(4.0);
         form::kv(ui, "shown", |ui| {
             if ui.checkbox(&mut !flags.hidden.on(), "").clicked() {
-                action = Some(FolderAction::Toggle(scene_tree::Toggle::Hide));
+                action = Some(FolderAction::Toggle(scene_tree::RowToggle::Hide));
             }
         });
         form::kv(ui, "locked", |ui| {
             if ui.checkbox(&mut flags.locked.on(), "").clicked() {
-                action = Some(FolderAction::Toggle(scene_tree::Toggle::Lock));
+                action = Some(FolderAction::Toggle(scene_tree::RowToggle::Lock));
             }
         });
     });
@@ -354,7 +352,7 @@ fn folder_card(editor: &mut Editor, ui: &mut Ui, snapshot: &super::AreaSnapshot,
 }
 
 enum FolderAction {
-    Toggle(scene_tree::Toggle),
+    Toggle(scene_tree::RowToggle),
     MakeBlueprint,
     Ungroup,
     SelectInside,
@@ -386,9 +384,8 @@ fn stamp_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, content: &Conten
                 shapes,
                 ..
             } = editor;
-            let project = project.as_ref().expect("project");
-            let root = Value::Null;
-            let mut cx = FormCx::new(project, &root, shapes, form, &mut actions)
+            let project = project.as_ref().expect("a project");
+            let mut cx = FormCx::schemaless(project, shapes, form, &mut actions)
                 .editing(table_of(&viewed).unwrap_or_default(), Some(&viewed));
             form::kv(ui, "blueprint", |ui| {
                 if picker::row(
@@ -490,10 +487,9 @@ fn stamp_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, content: &Conten
                     shapes,
                     ..
                 } = editor;
-                let project = project.as_ref().expect("project");
+                let project = project.as_ref().expect("a project");
                 let mut actions = Vec::new();
-                let root = Value::Null;
-                let mut cx = FormCx::new(project, &root, shapes, form, &mut actions)
+                let mut cx = FormCx::schemaless(project, shapes, form, &mut actions)
                     .editing(table_of(&viewed).unwrap_or_default(), Some(&viewed));
                 for (name, variable) in &variables {
                     form::kv(ui, name, |ui| {

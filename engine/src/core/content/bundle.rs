@@ -77,12 +77,6 @@ impl PartSpec {
         }
     }
 
-    /// Whether this is a folder of `.ext` files: where a file of that kind made for the bundle
-    /// goes.
-    pub fn keyed_as(&self, ext: &str) -> bool {
-        matches!(*self, PartSpec::Keyed { exts, .. } if exts.contains(&ext))
-    }
-
     pub fn describe(&self) -> String {
         match self {
             PartSpec::File { name, exts } => format!("{name}.{}", exts.join("|")),

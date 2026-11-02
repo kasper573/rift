@@ -15,7 +15,7 @@ struct Site {
     origin: vec2<f32>,
     extent: vec2<f32>,
     metres: vec2<f32>,
-    points: array<vec4<f32>, 8>,
+    points: array<vec4<f32>, PATH_POINTS / 2u>,
 }
 
 const HALF_PI: f32 = 1.5707964;
@@ -209,7 +209,7 @@ fn path_span() -> vec4<f32> {
 
 // A point of a path site, in site uv: the first is where the path starts.
 fn path_point(index: u32) -> vec2<f32> {
-    let word = site.points[min(index, 15u) / 2u];
+    let word = site.points[min(index, PATH_POINTS - 1u) / 2u];
     if (index % 2u) == 0u {
         return word.xy;
     }

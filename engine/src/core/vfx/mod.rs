@@ -37,9 +37,8 @@ pub const MAX_PARAMS: usize = 32;
 pub const MAX_LAYERS: usize = 16;
 
 /// The shortest a layer may run: long enough to be seen.
-pub const SHORTEST_RUN: Seconds = Seconds(SHORTEST_RUN_EXACT as f32);
-// The schema states the bound as written; an f32 widened to f64 would read 0.0500000007.
-const SHORTEST_RUN_EXACT: f64 = 0.05;
+// An f64 so the schema states the bound as written; an f32 widened would read 0.0500000007.
+const SHORTEST_RUN: f64 = 0.05;
 pub const MAX_FRAME_SIDE: u32 = 1024;
 pub const MAX_FRAMES: u32 = 256;
 pub const MAX_FPS: f32 = 120.0;
@@ -108,7 +107,7 @@ pub enum VfxLayer {
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         #[schemars(transform = SchemaMark::ParamsOf.with("shader"))]
         params: BTreeMap<String, ParamFill>,
-        #[schemars(extend("minimum" = SHORTEST_RUN_EXACT))]
+        #[schemars(extend("minimum" = SHORTEST_RUN))]
         duration: Seconds,
         #[serde(default, skip_serializing_if = "Seconds::is_zero")]
         delay: Seconds,
@@ -130,7 +129,7 @@ pub enum SpritePlay {
     #[default]
     Once,
     Loop {
-        #[schemars(extend("minimum" = SHORTEST_RUN_EXACT))]
+        #[schemars(extend("minimum" = SHORTEST_RUN))]
         seconds: Seconds,
     },
 }
@@ -550,7 +549,7 @@ fn check_all(loading: &mut Loading) {
 }
 
 fn check_run(check: &mut RowCheck, pointer: String, run: Seconds) {
-    check.at_least(pointer, run.0, SHORTEST_RUN.0, "seconds");
+    check.at_least(pointer, f64::from(run.0), SHORTEST_RUN, "seconds");
 }
 
 impl SpriteAnchor {

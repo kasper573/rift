@@ -4,7 +4,7 @@ use std::sync::{LazyLock, Mutex, OnceLock, PoisonError};
 
 use engine::core::content::SchemaMark;
 use engine::core::content::fixture::FixtureLock;
-use engine::core::content::load::{ContentShapes, TableShape};
+use engine::core::content::load::TableShape;
 use engine::core::content::{AssetKind, AudioRef};
 use engine::core::content::{
     Content, ContentFile, ContentScope, fields_file, locate, with_content,
@@ -27,10 +27,6 @@ pub struct SchemaShapes {
     pub scene_module: Value,
 }
 
-pub fn shapes() -> ContentShapes {
-    registry().shapes(&schema_settings())
-}
-
 fn schema_settings() -> schemars::generate::SchemaSettings {
     schemars::generate::SchemaSettings::draft2020_12()
         .with(|settings| settings.inline_subschemas = true)
@@ -38,7 +34,7 @@ fn schema_settings() -> schemars::generate::SchemaSettings {
 
 impl SchemaShapes {
     pub fn load() -> SchemaShapes {
-        let shapes = shapes();
+        let shapes = registry().shapes(&schema_settings());
         SchemaShapes {
             order: shapes
                 .tables

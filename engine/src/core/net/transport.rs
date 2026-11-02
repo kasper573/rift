@@ -113,10 +113,16 @@ impl Plugin for ClientTransportPlugin {
 
 fn receive(world: &mut World) {
     let delta = world.resource::<Time<Real>>().delta();
+    let broken = world
+        .get_resource::<ServerLink>()
+        .is_some_and(ServerLink::broken);
     let Some(mut connection) = world.get_resource_mut::<Connection>() else {
         return;
     };
     let Connection { client, transport } = &mut *connection;
+    if broken {
+        client.disconnect();
+    }
     client.update(delta);
     let updated = transport.update(delta, client);
     if client.is_disconnected() {

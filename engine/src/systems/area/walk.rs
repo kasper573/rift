@@ -66,7 +66,7 @@ pub(super) fn held(area: &Area) -> BTreeSet<TileAt> {
 /// Holds `tiles` of `area` besides those held, so its meshes cover them: loads their ground,
 /// triangulates each new one on a core of its own and joins the meshes anew. Whether any tile was
 /// new.
-pub(super) fn hold(area: &Area, tiles: impl IntoIterator<Item = TileAt>) -> bool {
+pub(super) fn hold(area: &Area, tiles: impl IntoIterator<Item = TileAt>) {
     let wanted: BTreeSet<TileAt> = tiles.into_iter().collect();
     let missing: Vec<TileAt> = {
         let held = area.meshes.tiles.read().expect("the tiles lock");
@@ -76,7 +76,7 @@ pub(super) fn hold(area: &Area, tiles: impl IntoIterator<Item = TileAt>) -> bool
             .collect()
     };
     if missing.is_empty() {
-        return false;
+        return;
     }
     let started = std::time::Instant::now();
     let count = missing.len();
@@ -105,7 +105,7 @@ pub(super) fn hold(area: &Area, tiles: impl IntoIterator<Item = TileAt>) -> bool
                 tiles.len(),
                 started.elapsed()
             );
-            return true;
+            return;
         }
     }
 }

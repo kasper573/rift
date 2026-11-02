@@ -1,6 +1,6 @@
 use engine::core::content::AssetKind;
 
-use super::{Candidate, Category, Dragged, Pick, PickLayout, PickSource};
+use super::{Dragged, PickLayout, PickSource, PickedKey, PickerCandidate, PickerCategory};
 use crate::forms::FormCx;
 use crate::icons::{self, KindIcon};
 use crate::moves::file_name;
@@ -25,11 +25,11 @@ impl PickSource for AssetSource {
         format!("{} file", self.spoken())
     }
 
-    fn categories(&self, _cx: &FormCx) -> Vec<Category> {
+    fn categories(&self, _cx: &FormCx) -> Vec<PickerCategory> {
         Vec::new()
     }
 
-    fn candidates(&self, cx: &FormCx) -> Vec<Candidate> {
+    fn candidates(&self, cx: &FormCx) -> Vec<PickerCandidate> {
         let index = cx.files.index();
         index
             .media
@@ -37,8 +37,8 @@ impl PickSource for AssetSource {
             .filter(|path| AssetKind::of(path) == Some(self.kind))
             .map(|path| {
                 let (nearness, hint) = cx.seen_from_here(path);
-                Candidate {
-                    pick: Pick::new(self.spoken(), path),
+                PickerCandidate {
+                    pick: PickedKey::new(self.spoken(), path),
                     category: self.spoken().to_owned(),
                     name: String::new(),
                     hint,
@@ -49,7 +49,7 @@ impl PickSource for AssetSource {
             .collect()
     }
 
-    fn accepts(&self, _cx: &FormCx, dragged: &Dragged) -> Result<Pick, String> {
+    fn accepts(&self, _cx: &FormCx, dragged: &Dragged) -> Result<PickedKey, String> {
         let Dragged::Asset(path) = dragged else {
             return Err(format!(
                 "this field takes {} files, not content files",
@@ -62,25 +62,25 @@ impl PickSource for AssetSource {
                 self.spoken()
             ));
         }
-        Ok(Pick::new(self.spoken(), path.as_str()))
+        Ok(PickedKey::new(self.spoken(), path.as_str()))
     }
 
-    fn shown(&self, pick: &Pick) -> (String, String) {
+    fn shown(&self, pick: &PickedKey) -> (String, String) {
         match pick.key.rsplit_once('/') {
             Some((folder, file)) => (format!("{folder}/"), file.to_owned()),
             None => (String::new(), pick.key.clone()),
         }
     }
 
-    fn short(&self, pick: &Pick) -> String {
+    fn short(&self, pick: &PickedKey) -> String {
         file_name(&pick.key).to_owned()
     }
 
-    fn icon(&self, pick: &Pick) -> KindIcon {
+    fn icon(&self, pick: &PickedKey) -> KindIcon {
         icons::of_media(&pick.key)
     }
 
-    fn describe(&self, cx: &FormCx, pick: &Pick) -> String {
+    fn describe(&self, cx: &FormCx, pick: &PickedKey) -> String {
         let uses = cx.usages.of_media(&pick.key).len();
         format!("used by {uses}")
     }

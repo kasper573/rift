@@ -304,7 +304,7 @@ pub fn center() -> Pos<Meters> {
     PROP_STAGE.bounds().center()
 }
 
-/// A camera at the game's pitch, looking at the middle of the stage from far enough to see a
+/// A camera at the editor's pitch, looking at the middle of the stage from far enough to see a
 /// thing `radius` metres big.
 pub fn framing(radius: f32) -> OrbitCamera {
     OrbitCamera {

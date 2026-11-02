@@ -168,7 +168,7 @@ pub enum RowRef {
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(from = "LineRow", into = "LineRow")]
-pub struct Line {
+pub struct ScriptLine {
     pub by: Speaker,
     pub face: Option<Expression>,
     pub text: Vec<Span>,
@@ -194,15 +194,15 @@ enum SpeakerRow {
     Player,
 }
 
-impl From<LineRow> for Line {
-    fn from(row: LineRow) -> Line {
+impl From<LineRow> for ScriptLine {
+    fn from(row: LineRow) -> ScriptLine {
         let (by, face) = match row.by {
             SpeakerRow::Npc { npc, face } => (Speaker::Npc(npc), face),
             SpeakerRow::Object => (Speaker::Object, None),
             SpeakerRow::Narrator => (Speaker::Narrator, None),
             SpeakerRow::Player => (Speaker::Player, None),
         };
-        Line {
+        ScriptLine {
             by,
             face,
             text: row.text,
@@ -210,8 +210,8 @@ impl From<LineRow> for Line {
     }
 }
 
-impl From<Line> for LineRow {
-    fn from(line: Line) -> LineRow {
+impl From<ScriptLine> for LineRow {
+    fn from(line: ScriptLine) -> LineRow {
         LineRow {
             by: match line.by {
                 Speaker::Npc(npc) => SpeakerRow::Npc {
@@ -235,7 +235,7 @@ pub enum Speaker {
     Player,
 }
 
-impl LineDef<RiftScripting> for Line {
+impl LineDef<RiftScripting> for ScriptLine {
     fn values(&self) -> Vec<&Expr<RiftScripting>> {
         self.text.values()
     }
@@ -289,7 +289,7 @@ impl Vocabulary for RiftScripting {
     type Query = RiftQuery;
     type Reveal = ChoiceReveal;
     type Effect = RiftEffect;
-    type Line = Line;
+    type Line = ScriptLine;
     type Text = Vec<Span>;
     type Place = Place;
     type Row = RowRef;

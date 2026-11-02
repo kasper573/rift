@@ -617,14 +617,13 @@ fn inspect_cards(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, cards: &[
         ui,
         &format!("Stored in {}", shown_path(&WorldMap::Game.path())),
     );
-    let stored: serde_json::Map<String, serde_json::Value> = cards
+    let stored: BTreeMap<&str, &area::world_map::AreaCard> = cards
         .iter()
-        .filter_map(|area| {
-            let json = value::json(map.layout.cards.get(area)?).ok()?;
-            Some((atlas.key(*area).to_owned(), json))
-        })
+        .filter_map(|area| Some((atlas.key(*area), map.layout.cards.get(area)?)))
         .collect();
-    let text = serde_json::to_string_pretty(&stored).unwrap_or_default();
+    let text = value::json(&stored)
+        .and_then(|json| serde_json::to_string_pretty(&json))
+        .unwrap_or_default();
     ui.label(face::mono(text).size(12.0).color(theme::CODE));
     if cards.len() == 1 {
         let info = &atlas.areas[&first];

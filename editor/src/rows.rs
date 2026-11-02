@@ -105,13 +105,13 @@ fn name_kind(path: &str) -> &str {
     file.find('.').map_or("", |dot| &file[dot..])
 }
 
-/// `name` as a name within a file, such as a node's or a variable's: `name` itself when none of
-/// `taken` has it, ignoring case, or else `name_2`, `name_3`, the first that is free.
 /// A name for a variable filling the hole at `pointer`, after the field it fills, none of `taken`.
 pub(crate) fn hole_name(pointer: &str, taken: &HashSet<String>) -> String {
     free_name(pointer.rsplit('/').next().unwrap_or("value"), taken)
 }
 
+/// `name` as a name within a file, such as a node's or a variable's: `name` itself when none of
+/// `taken` has it, ignoring case, or else `name_2`, `name_3`, the first that is free.
 pub(crate) fn free_name(name: &str, taken: &HashSet<String>) -> String {
     let is_taken = |candidate: &str| taken.iter().any(|t| t.eq_ignore_ascii_case(candidate));
     if !is_taken(name) {
@@ -143,7 +143,7 @@ pub(crate) fn name_from(text: &str) -> String {
 pub(crate) fn new_path(files: &ProjectFiles, folder: &str, table: &str, name: &str) -> String {
     let shape = registry()
         .shape_of(table)
-        .unwrap_or(engine::core::content::Shape::Json);
+        .unwrap_or(engine::core::content::FileShape::Json);
     let wanted = engine::core::content::content_path("", name, table, shape);
     free_path(files, folder, &wanted, &[])
 }

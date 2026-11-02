@@ -17,7 +17,7 @@ use crate::core::content::{Content, ContentFile, ContentId, ModuleRule, ModuleSe
 use crate::core::math::{Pos, Rect, Rng};
 use crate::core::time::{self, DayClock, DayCourse, UnixMillis, WallClock};
 use crate::core::units::{Meters, MetersPerSec, PlaybackRate, Radians, Seconds};
-use crate::systems::account::Identity;
+use crate::systems::account::AccountIdentity;
 use crate::systems::actor::{Action, Actor, ActorModel, Appearance, Hitbox, Name, Pose};
 use crate::systems::area::transition::{self, Discovered};
 use crate::systems::area::{self, AreaId, AreaTag};
@@ -343,7 +343,7 @@ pub fn join(world: &mut World) {
         let (at, state) = match world.get::<JoinAs>(client_entity) {
             Some(JoinAs { snapshot, start }) if start.area == zone => {
                 let (snapshot, start) = (snapshot.clone(), *start);
-                region::reach(world, start.at);
+                region::hold_around(world, start.at);
                 (
                     movement::place_beside(world, zone, &area.mesh(), start.at),
                     snapshot::materialize(&content, &snapshot, start, clock),
@@ -351,10 +351,10 @@ pub fn join(world: &mut World) {
             }
             _ => {
                 let name = world
-                    .get::<Identity>(client_entity)
+                    .get::<AccountIdentity>(client_entity)
                     .map_or_else(|| format!("player {}", client.0), |id| id.name.clone());
                 let spawn = spawn_position(world, policy, zone, area);
-                region::reach(world, spawn);
+                region::hold_around(world, spawn);
                 let at = movement::place_beside(world, zone, &area.mesh(), spawn);
                 let fresh = CharacterSnapshot::of_player(&content, &name, def(&content));
                 let start = Place { area: zone, at };

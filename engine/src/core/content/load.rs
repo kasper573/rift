@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 use super::bundle::{Bundle, PartSpec, Parts};
 use super::check::RowCheck;
 use super::files::{
-    CONFIG_FILE, FileType, Listing, SETTINGS_FILE, Shape, bundle_of, fields_file, fixture_dir,
+    CONFIG_FILE, FileShape, FileType, Listing, SETTINGS_FILE, bundle_of, fields_file, fixture_dir,
     table_of,
 };
 use super::fixture::{Fixture, FixtureIds, FixtureLock};
@@ -173,7 +173,12 @@ pub struct JsonPart {
 
 impl ContentRegistry {
     pub fn file<Row: ContentFile>(&mut self) -> &mut ContentRegistry {
-        assert_eq!(Row::SHAPE, Shape::Json, "{} is a bundle type", Row::TABLE);
+        assert_eq!(
+            Row::SHAPE,
+            FileShape::Json,
+            "{} is a bundle type",
+            Row::TABLE
+        );
         self.version.take();
         self.rows.push(Box::new(RowLoader::<Row> {
             parts: None,
@@ -185,7 +190,7 @@ impl ContentRegistry {
     pub fn bundle<Row: Bundle>(&mut self) -> &mut ContentRegistry {
         assert_eq!(
             Row::SHAPE,
-            Shape::Bundle,
+            FileShape::Bundle,
             "{} isn't a bundle type",
             Row::TABLE
         );
@@ -332,7 +337,7 @@ impl ContentRegistry {
         self
     }
 
-    pub fn settings<G: Settings>(&mut self) -> &mut ContentRegistry {
+    pub fn settings<G: SettingsFile>(&mut self) -> &mut ContentRegistry {
         self.version.take();
         self.settings = Some(Box::new(SettingsOf::<G>(PhantomData)));
         self
@@ -414,7 +419,7 @@ impl ContentRegistry {
             .any(|spec| spec.matches(part))
     }
 
-    pub fn shape_of(&self, table: &str) -> Option<Shape> {
+    pub fn shape_of(&self, table: &str) -> Option<FileShape> {
         self.rows
             .iter()
             .find(|row| row.name() == table)
@@ -470,7 +475,7 @@ impl ContentRegistry {
                 };
                 TableShape {
                     table: row.name().to_owned(),
-                    bundle: row.shape() == Shape::Bundle,
+                    bundle: row.shape() == FileShape::Bundle,
                     parts: row.parts().iter().map(PartSpec::describe).collect(),
                     shape: row.schema(settings),
                     fixtures: fixtures().map(|(path, _)| path.clone()).collect(),
@@ -710,7 +715,8 @@ pub(crate) fn entries_in(
     entries
 }
 
-pub trait Settings: DeserializeOwned + Serialize + JsonSchema + Send + Sync + 'static {
+/// The type a game's settings file reads as.
+pub trait SettingsFile: DeserializeOwned + Serialize + JsonSchema + Send + Sync + 'static {
     fn content_version(&self) -> &ContentVersion;
 }
 
@@ -935,12 +941,7 @@ impl Loading {
     }
 
     /// Something the game loads with but should know it pays for, at `pointer` in `file`.
-    pub fn json_warning(
-        &mut self,
-        file: impl Into<String>,
-        pointer: &str,
-        problem: ContentProblem,
-    ) {
+    fn json_warning(&mut self, file: impl Into<String>, pointer: &str, problem: ContentProblem) {
         let file = file.into();
         let at = self.place(&file, pointer);
         self.warnings.push(LoadError { file, at, problem });
@@ -987,7 +988,7 @@ impl Loading {
     }
 
     /// The file holding the fields of `id`: the file itself, or its bundle's config.
-    pub fn row_file<Row: ContentFile>(&mut self, id: ContentId<Row>) -> String {
+    fn row_file<Row: ContentFile>(&mut self, id: ContentId<Row>) -> String {
         fields_file(id.path(&self.content()))
     }
 
@@ -1759,7 +1760,7 @@ fn expected_options(what: &str, options: &[String]) -> String {
 pub(super) trait TableLoader: Send + Sync {
     fn name(&self) -> &'static str;
     fn row_type(&self) -> TypeId;
-    fn shape(&self) -> Shape;
+    fn shape(&self) -> FileShape;
     fn parts(&self) -> &'static [PartSpec];
     fn written_parts(&self) -> &'static [PartSpec];
     fn streamed_parts(&self) -> &'static [PartSpec];
@@ -1809,7 +1810,7 @@ impl<Row: ContentFile> TableLoader for RowLoader<Row> {
         TypeId::of::<Row>()
     }
 
-    fn shape(&self) -> Shape {
+    fn shape(&self) -> FileShape {
         Row::SHAPE
     }
 
@@ -1938,7 +1939,7 @@ pub(super) trait SettingsLoader: Send + Sync {
 
 struct SettingsOf<G>(PhantomData<fn() -> G>);
 
-impl<G: Settings> SettingsLoader for SettingsOf<G> {
+impl<G: SettingsFile> SettingsLoader for SettingsOf<G> {
     fn shape(&self, settings: &SchemaSettings) -> serde_json::Value {
         shape_of::<G>(settings)
     }

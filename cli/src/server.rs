@@ -1,12 +1,10 @@
-use std::io::{BufRead, BufReader};
 use std::net::{IpAddr, Ipv4Addr};
 use std::path::{Path, PathBuf};
-use std::process::{Child, Command, Stdio};
-use std::sync::mpsc::channel;
+use std::process::Child;
 use std::time::Duration;
 
 use engine::core::units::Bytes;
-use engine::systems::launch::{self, ReadyLine, SERVER_ENV_PREFIX, ServerConfig, ServerReady};
+use engine::systems::launch::{self, SERVER_ENV_PREFIX, ServerConfig, ServerReady};
 
 pub const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
@@ -31,27 +29,12 @@ pub struct GameServer {
 
 impl GameServer {
     pub fn start(binary: &Path, config: &ServerConfig) -> GameServer {
-        let mut process = Command::new(binary)
-            .envs(launch::env_of(SERVER_ENV_PREFIX, config))
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .spawn()
-            .unwrap_or_else(|error| panic!("{} doesn't run: {error}", binary.display()));
-        let stdout = process.stdout.take().expect("a piped stdout");
-        let (ready, readied) = channel();
-        std::thread::spawn(move || {
-            for line in BufReader::new(stdout).lines().map_while(Result::ok) {
-                match serde_json::from_str::<ReadyLine>(&line) {
-                    Ok(line) => {
-                        let _ = ready.send(line.ready);
-                    }
-                    Err(_) => println!("[game-server] {line}"),
-                }
-            }
-        });
-        let ready = readied
-            .recv_timeout(READY_WITHIN)
-            .unwrap_or_else(|_| panic!("{} never got ready", binary.display()));
+        let (process, ready) = launch::start_game_server(
+            binary,
+            launch::env_of(SERVER_ENV_PREFIX, config),
+            READY_WITHIN,
+        )
+        .unwrap_or_else(|problem| panic!("{problem}"));
         GameServer { process, ready }
     }
 

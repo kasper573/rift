@@ -1,74 +1,59 @@
-//! The one stage every preview in the editor plays on: the game's starting area behind, and the
-//! plates of the actors standing on it. A scene is either posed by the designer, or taken live from
-//! a server world running the game's own mechanics.
+//! The stage scenes play on: the game's starting area, drawn as the game draws it, with the
+//! actors of a scene standing on it and their plates over them. A scene is either posed by the
+//! designer, or taken live from a server world running the game's own mechanics.
 
 pub mod live;
-pub(crate) mod picture;
 
 use std::collections::{HashMap, HashSet};
-use ui::egui;
-use ui::theme;
+use std::time::Duration;
 
 use bevy::prelude::*;
 use engine::core::content::Content;
 use engine::core::geometry::PlacedShape;
 use engine::core::math::Pos;
+use engine::core::render::camera::world_point;
 use engine::core::units::{Meters, Seconds};
 use engine::core::vfx::{VfxLayer, VfxParams};
 use engine::systems::GameSettings;
 use engine::systems::actor::ModelId;
+use engine::systems::actor::model::ActorModel;
 use engine::systems::actor::plate::{self, PlateLabel};
+use engine::systems::area::Pictured;
 use engine::systems::skill::SkillId;
 use engine::systems::status::StatusEffectId;
-use ui::egui::{Color32, Pos2, Ui, Vec2 as EVec2};
+use ui::egui::{self, Ui, Vec2 as EVec2};
+use ui::theme;
 
 use self::live::LiveWorld;
-use self::picture::Stage;
 use crate::app::Editor;
-use crate::thumbs;
+use crate::views::area::camera::{AreaCanvas, OrbitCamera};
+use crate::views::area::viewport::StandingActor;
+use crate::views::stage::{self as view_stage, StagePicture};
 
-pub const SIZE: [u32; 2] = [384, 288];
-pub(crate) const ZOOM: f32 = 2.0;
+/// The widest a stage is drawn, in points, and how tall it is to that.
+const SIZE: [f32; 2] = [384.0, 288.0];
 const NARROWEST: f32 = 240.0;
-use crate::views::navigation::PX_PER_METER;
+/// How far from its middle the stage takes in.
+const REACH: Meters = Meters(6.0);
 
 #[derive(Default)]
 pub struct Stages {
-    requests: Vec<Request>,
-    stages: HashMap<String, Stage>,
     live: HashMap<String, LiveWorld>,
-    indices: Vec<usize>,
-}
-
-impl Stages {
-    fn stage(&mut self, world: &mut World, key: &str) -> &mut Stage {
-        let indices = &mut self.indices;
-        self.stages.entry(key.to_owned()).or_insert_with(|| {
-            let index = (0..).find(|index| !indices.contains(index)).unwrap_or(0);
-            indices.push(index);
-            Stage::spawn(world, index)
-        })
-    }
-
-    fn render(&mut self, world: &mut World, key: &str, frame: &picture::Frame) {
-        self.stage(world, key);
-        if let Some(stage) = self.stages.get_mut(key) {
-            stage.render(world, frame);
-        }
-    }
+    shown: HashSet<String>,
+    picture: StagePicture,
 }
 
 /// What a window asks to see this frame.
 #[derive(Clone, PartialEq)]
 pub enum Scene {
-    Posed(Posed),
+    Posed(PosedScene),
     Live(Scenario),
 }
 
 /// A scene arranged by the designer: actors standing as told, one vfx played
 /// on a site of it.
 #[derive(Clone, PartialEq, Default)]
-pub struct Posed {
+pub struct PosedScene {
     pub actors: Vec<PosedActor>,
     pub vfx: Option<PosedVfx>,
 }
@@ -124,24 +109,9 @@ pub enum Scenario {
 
 /// Where a stage was drawn, for a window to draw over it.
 pub struct DrawnStage {
-    pub rect: egui::Rect,
-    /// Screen points per world pixel.
-    pub px: f32,
-    pub center: Pos<Meters>,
+    pub canvas: AreaCanvas,
     /// What a live scenario reports: its cast count, or why a cast refuses.
     pub report: Option<String>,
-}
-
-impl DrawnStage {
-    pub fn screen(&self, world: Vec2) -> Pos2 {
-        let offset = world - to_screen(self.center);
-        self.rect.center() + EVec2::new(offset.x * self.px, -offset.y * self.px)
-    }
-}
-
-struct Request {
-    key: String,
-    scene: Scene,
 }
 
 /// Where the stage stands: the game's initial spawn, which every scene is laid out around.
@@ -152,141 +122,104 @@ pub fn center(content: &Content) -> Pos<Meters> {
 /// The width every view gives its preview out of `room`: the stage's own width, narrowing only as
 /// far as the stage stays readable, so previews look alike across views.
 pub(crate) fn preview_width(room: f32) -> f32 {
-    room.clamp(NARROWEST, SIZE[0] as f32)
+    room.clamp(NARROWEST, SIZE[0])
 }
 
-/// Draws the stage for `key` as wide as the window allows, with the game's starting area behind
-/// when `ground` is on, and asks for the scene to be rendered for the next frame.
-pub fn show(
-    editor: &mut Editor,
-    ui: &mut Ui,
-    key: &str,
-    scene: Scene,
-    ground: bool,
-) -> Option<DrawnStage> {
-    let Some(content) = editor.loaded() else {
+/// Draws the stage for `key` as wide as the window allows, playing `scene` on it.
+pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, scene: Scene) -> Option<DrawnStage> {
+    let Some((content, generation)) = editor
+        .project
+        .as_ref()
+        .and_then(|project| Some((project.content.clone()?, project.generation)))
+    else {
         ui.label(theme::muted("the preview plays once the content loads"));
         return None;
     };
-    let center = center(&content);
-    let fit = (ui.available_width() / SIZE[0] as f32).min(1.0);
-    let size = EVec2::new(SIZE[0] as f32, SIZE[1] as f32) * fit;
-    let px = ZOOM * fit;
-    let (rect, _) = ui.allocate_exact_size(size, egui::Sense::hover());
+    let stages = &mut editor.views.stage;
+    stages.shown.insert(key.to_owned());
+    let (actors, has_vfx, report) = match &scene {
+        Scene::Posed(posed) => (posed.actors.clone(), posed.vfx.is_some(), None),
+        Scene::Live(scenario) => {
+            let live = match stages.live.get_mut(key) {
+                Some(live) if live.generation == generation && !live.stale => live,
+                _ => match LiveWorld::build(&content, scenario, generation) {
+                    Ok(live) => stages
+                        .live
+                        .entry(key.to_owned())
+                        .insert_entry(live)
+                        .into_mut(),
+                    Err(problem) => {
+                        ui.label(theme::warn(problem));
+                        return None;
+                    }
+                },
+            };
+            live.reconcile(scenario);
+            live.step(Duration::from_secs_f32(ui.input(|i| i.stable_dt)));
+            (
+                live.actors(),
+                !live.vfx().is_empty(),
+                Some(live.report.clone()),
+            )
+        }
+    };
+    let spawn = &content.built::<GameSettings>().initial_spawn;
+    let picture = stages
+        .picture
+        .of(&content, generation, Pictured::Area(spawn.area));
+    let width = ui.available_width().min(SIZE[0]);
+    let (rect, _) = ui.allocate_exact_size(
+        EVec2::new(width, width * SIZE[1] / SIZE[0]),
+        egui::Sense::hover(),
+    );
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 4.0, theme::CANVAS);
-    if ground {
-        let area = content
-            .built::<GameSettings>()
-            .initial_spawn
-            .area
-            .path(&content)
-            .to_owned();
-        crate::thumbs::areas::draw_area(editor, &painter, &area, rect, center, px);
-    }
-    let shown = DrawnStage {
-        rect,
-        px,
-        center,
-        report: editor
-            .views
-            .stage
-            .live
-            .get(key)
-            .map(|live| live.report.clone()),
+    let Some(picture) = picture else {
+        ui.label(theme::warn("the starting area has no terrain to stand on"));
+        return None;
     };
-    if let Some(stage) = editor.views.stage.stages.get(key) {
-        painter.image(stage.texture, rect, thumbs::FULL_UV, Color32::WHITE);
-        for (top, label) in &stage.plates {
-            plate::draw_label(ui, shown.screen(*top), label);
+    let view_key = format!("stage/{key}");
+    view_stage::show_picture(editor, ui, &painter, rect, &view_key);
+    let camera = OrbitCamera {
+        target: spawn.at,
+        ..view_stage::framing(REACH.0)
+    };
+    let canvas = AreaCanvas::new(rect, camera, picture.1.area.clone());
+    let cast = actors
+        .iter()
+        .map(|actor| standing(&content, &canvas, actor))
+        .collect();
+    for actor in &actors {
+        if let Some(label) = &actor.plate {
+            let height = ActorModel::get(&content, actor.model).hitbox().height;
+            plate::draw_label(ui, canvas.lifted(actor.at, height), label);
         }
-        for problem in &stage.problems {
-            ui.label(theme::warn(problem));
-        }
+    }
+    if has_vfx {
+        ui.label(theme::warn("vfx don't play on the stage yet"));
     }
     ui.ctx().request_repaint();
-    editor.views.stage.requests.push(Request {
-        key: key.to_owned(),
-        scene,
-    });
-    Some(shown)
+    view_stage::request(editor, ui, &view_key, rect, camera, picture, cast);
+    Some(DrawnStage { canvas, report })
 }
 
-/// Renders every stage asked for this frame and lets go of the rest.
-pub fn sync(editor: &mut Editor, world: &mut World) {
-    let requests = std::mem::take(&mut editor.views.stage.requests);
-    let Editor { views, project, .. } = editor;
-    let stages = &mut views.stage;
-    let loaded = project
-        .as_ref()
-        .and_then(|project| Some((project.content.as_ref()?, project.generation)));
-    let wanted: HashSet<&str> = requests
-        .iter()
-        .map(|request| request.key.as_str())
-        .collect();
-    let gone: Vec<String> = stages
-        .stages
-        .keys()
-        .filter(|key| !wanted.contains(key.as_str()) || loaded.is_none())
-        .cloned()
-        .collect();
-    for key in gone {
-        if let Some(stage) = stages.stages.remove(&key) {
-            stages.indices.retain(|index| *index != stage.index);
-            stage.despawn(world);
-        }
-        stages.live.remove(&key);
-    }
-    let Some((content, generation)) = loaded else {
-        return;
-    };
-    let real = world.resource::<Time<Real>>().delta();
-    for request in requests {
-        let frame = match &request.scene {
-            Scene::Posed(posed) => posed_frame(posed, content),
-            Scene::Live(scenario) => {
-                let live = match stages.live.get_mut(&request.key) {
-                    Some(live) if live.generation == generation && !live.stale => live,
-                    _ => match LiveWorld::build(content, scenario, generation) {
-                        Ok(live) => stages
-                            .live
-                            .entry(request.key.clone())
-                            .insert_entry(live)
-                            .into_mut(),
-                        Err(problem) => {
-                            stages.stage(world, &request.key).problems = vec![problem];
-                            continue;
-                        }
-                    },
-                };
-                live.reconcile(scenario);
-                live.step(real);
-                live_frame(live, content)
-            }
-        };
-        stages.render(world, &request.key, &frame);
-    }
+/// Lets go of the live worlds of the stages no window showed since the last call.
+pub fn sync(editor: &mut Editor) {
+    let stages = &mut editor.views.stage;
+    let shown = std::mem::take(&mut stages.shown);
+    stages.live.retain(|key, _| shown.contains(key));
 }
 
-/// A ground point as the stage's flat camera sees it, in its pixels with y up.
-pub(crate) fn to_screen(at: Pos<Meters>) -> Vec2 {
-    Vec2::new(at.x * PX_PER_METER, -at.y * PX_PER_METER)
-}
-
-fn posed_frame<'a>(posed: &Posed, content: &'a Content) -> picture::Frame<'a> {
-    picture::Frame {
-        content,
-        center: center(content),
-        actors: posed.actors.clone(),
-        has_vfx: posed.vfx.is_some(),
-    }
-}
-
-fn live_frame<'a>(live: &mut LiveWorld, content: &'a Content) -> picture::Frame<'a> {
-    picture::Frame {
-        content,
-        center: center(content),
-        actors: live.actors(),
-        has_vfx: !live.vfx().is_empty(),
+fn standing(content: &Content, canvas: &AreaCanvas, actor: &PosedActor) -> StandingActor {
+    let model = ActorModel::get(content, actor.model);
+    let ground = canvas.area().heights.height_at(actor.at);
+    StandingActor {
+        body: model.body(),
+        clip: Some(view_stage::model_idle_clip(model)),
+        transform: Transform::from_translation(world_point(actor.at, ground)),
+        held: None,
+        crossed: Vec::new(),
+        props: Vec::new(),
+        layers: None,
     }
 }

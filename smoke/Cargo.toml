@@ -7,13 +7,13 @@ publish = false
 
 [dependencies]
 engine = { path = "../engine" }
-image = { version = "0.25", default-features = false, features = ["png"] }
-oauth2-test-server = "0.2.3"
+image.workspace = true
+oauth2-test-server.workspace = true
 oidc = { path = "../oidc" }
-openidconnect = "4"
+openidconnect.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-tempfile = "3"
+tempfile.workspace = true
 tokio.workspace = true
 ureq.workspace = true
 web-server = { path = "../web-server" }

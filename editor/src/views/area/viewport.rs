@@ -11,7 +11,8 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::camera::{ClearColorConfig, RenderTarget};
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
-use bevy_egui::EguiUserTextures;
+use bevy::render::render_resource::TextureFormat;
+use bevy_egui::{EguiTextureHandle, EguiUserTextures};
 use engine::core::audio::playback::{self, PlaySfx, SfxPlace};
 use engine::core::content::Content;
 use engine::core::ground::{Heightfield, PaintMap};
@@ -37,7 +38,6 @@ use ui::egui;
 
 use super::camera::OrbitCamera;
 use crate::app::Editor;
-use crate::stage::picture::render_target;
 use crate::views::area::camera::LENS;
 
 const FIRST_LAYER: usize = 400;
@@ -658,4 +658,23 @@ fn run_layers(world: &mut World) {
             stage.asked.stepped,
         );
     }
+}
+/// An offscreen picture of `size` pixels a camera renders to, and the egui texture that shows it.
+fn render_target(
+    world: &mut World,
+    size: [u32; 2],
+    sampler: ImageSampler,
+) -> (Handle<Image>, egui::TextureId) {
+    let mut image = Image::new_target_texture(
+        size[0].max(1),
+        size[1].max(1),
+        TextureFormat::Rgba8UnormSrgb,
+        None,
+    );
+    image.sampler = sampler;
+    let image = world.resource_mut::<Assets<Image>>().add(image);
+    let texture = world
+        .resource_mut::<EguiUserTextures>()
+        .add_image(EguiTextureHandle::Strong(image.clone()));
+    (image, texture)
 }

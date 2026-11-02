@@ -11,7 +11,7 @@ use egui::{
 use crate::face::TextRole;
 use crate::{controls, ink};
 
-pub const RULE_INSET: f32 = 7.0;
+const RULE_INSET: f32 = 7.0;
 const RULE_GAP: f32 = 8.0;
 const SMALL_RULE_INSET: f32 = 4.0;
 const TITLE_BAND: f32 = 36.0;

@@ -20,7 +20,7 @@ use ui::egui_ltreeview::{
 use ui::glyph::Mark;
 
 use super::widgets::{self, KindMark};
-use crate::icons::{self, IconTone, KindIcon, Preview};
+use crate::icons::{self, IconTone, KindIcon, PictureTexture};
 use crate::keymap::EditorKey;
 use crate::picker::Dragged;
 use crate::widgets::Badge;
@@ -56,7 +56,7 @@ pub struct TreeRow {
     /// The row's icon; a folder's is the folder's own.
     pub icon: Option<KindIcon>,
     /// A picture of what the row holds, drawn in place of its icon.
-    pub preview: Option<Preview>,
+    pub preview: Option<PictureTexture>,
     pub name: String,
     /// Read after the name in its own colour, such as a content file's type.
     pub suffix: Option<(String, Color32)>,
@@ -103,16 +103,16 @@ pub enum ToggleState {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Toggle {
+pub enum RowToggle {
     Hide,
     Lock,
 }
 
 /// A press on a row's eye or padlock, and whether Show only was held.
 #[derive(Clone, Debug)]
-pub struct Toggled {
+pub struct RowToggled {
     pub id: String,
-    pub toggle: Toggle,
+    pub toggle: RowToggle,
     pub only: bool,
 }
 
@@ -207,7 +207,7 @@ pub struct TreeResponse<A> {
     pub dropped: Option<(Vec<String>, TreeDrop)>,
     /// A row renamed in place, with the name typed.
     pub renamed: Option<(String, String)>,
-    pub toggled: Option<Toggled>,
+    pub toggled: Option<RowToggled>,
     /// Whether the keys go to the tree.
     pub focused: bool,
 }
@@ -262,7 +262,7 @@ pub fn show<S: TreeSource>(
     let top = ui.cursor().min.y;
     let drawn: RefCell<Vec<DrawnRow>> = RefCell::new(Vec::new());
     let renamed: RefCell<Option<RenameEnd>> = RefCell::new(None);
-    let toggled: RefCell<Option<Toggled>> = RefCell::new(None);
+    let toggled: RefCell<Option<RowToggled>> = RefCell::new(None);
     let picked: RefCell<Option<S::Action>> = RefCell::new(None);
     let rename_tip = renaming
         .as_ref()
@@ -528,7 +528,7 @@ struct RowsCx<'a> {
     drawn: &'a RefCell<Vec<DrawnRow>>,
     renaming: &'a RefCell<Option<Renaming>>,
     renamed: &'a RefCell<Option<RenameEnd>>,
-    toggled: &'a RefCell<Option<Toggled>>,
+    toggled: &'a RefCell<Option<RowToggled>>,
     rename_tip: Option<&'a str>,
 }
 
@@ -842,8 +842,8 @@ fn row_toggles(
     let center_y = ui.max_rect().center().y;
     let mut x = right;
     for (toggle, state) in [
-        (Toggle::Lock, toggles.locked),
-        (Toggle::Hide, toggles.hidden),
+        (RowToggle::Lock, toggles.locked),
+        (RowToggle::Hide, toggles.hidden),
     ] {
         let rect =
             Rect::from_center_size(egui::pos2(x - TOGGLE / 2.0, center_y), Vec2::splat(TOGGLE));
@@ -854,8 +854,8 @@ fn row_toggles(
         };
         let response = ui.interact(rect, ui.id().with(("tree toggle", id, toggle as u8)), sense);
         let (on, off, verb, undo) = match toggle {
-            Toggle::Hide => (Mark::EyeSlash, Mark::Eye, "Hide", "Show"),
-            Toggle::Lock => (Mark::Lock, Mark::Unlock, "Lock", "Unlock"),
+            RowToggle::Hide => (Mark::EyeSlash, Mark::Eye, "Hide", "Show"),
+            RowToggle::Lock => (Mark::Lock, Mark::Unlock, "Lock", "Unlock"),
         };
         let (mark, color) = match state {
             ToggleState::Off if toggles.disabled => (off, ink::wash(theme::FAINT, 0.47)),
@@ -893,7 +893,7 @@ fn row_toggles(
             _ => said,
         };
         if response.on_hover_text(&said).clicked() {
-            *cx.toggled.borrow_mut() = Some(Toggled {
+            *cx.toggled.borrow_mut() = Some(RowToggled {
                 id: id.to_owned(),
                 toggle,
                 only: ui.input(|i| EditorKey::ShowOnly.held(i)),

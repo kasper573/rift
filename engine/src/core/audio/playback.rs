@@ -16,7 +16,7 @@ use crate::core::audio::mix::{AudioCategory, AudioMix};
 use crate::core::audio::output::AudioOutput;
 use crate::core::content::{AssetKind, AudioRef};
 use crate::core::content::{
-    Bundle, Content, ContentFile, ContentId, FileWriter, Nearby, PartSpec, Parts, Shape,
+    Bundle, Content, ContentFile, ContentId, FileShape, FileWriter, Nearby, PartSpec, Parts,
 };
 use crate::core::math::{Pos, Rng, Size};
 use crate::core::units::{Meters, PlaybackRate, Seconds};
@@ -72,7 +72,7 @@ pub const SFX_CLIP: PartSpec = PartSpec::File {
 
 impl ContentFile for SfxDef {
     const TABLE: &'static str = "sfx";
-    const SHAPE: Shape = Shape::Bundle;
+    const SHAPE: FileShape = FileShape::Bundle;
 
     fn fresh(_: &Nearby) -> Result<SfxDef, String> {
         Ok(SfxDef {

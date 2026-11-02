@@ -57,7 +57,7 @@ fn duplicate(editor: &mut Editor, rows: Vec<String>) {
 }
 
 #[test]
-fn duplicating_a_module_places_its_copy_one_tile_on_under_a_fresh_name_in_one_undo_step() {
+fn duplicating_a_module_places_its_copy_a_metre_on_under_a_fresh_name_in_one_undo_step() {
     let scratch = tempfile::tempdir().expect("a scratch folder");
     let mut editor = editor_with_a_door(&scratch);
     let original = doors(&editor);
@@ -75,7 +75,7 @@ fn duplicating_a_module_places_its_copy_one_tile_on_under_a_fresh_name_in_one_un
     assert_eq!(
         (copy.origin.x - was.origin.x, copy.origin.y - was.origin.y),
         (1.0, 1.0),
-        "the copy sits one tile on"
+        "the copy sits a metre on"
     );
     assert_ne!(copies[1].0, copies[0].0);
 
@@ -346,5 +346,45 @@ fn a_door_back_from_a_warps_destination_stands_beside_where_the_warp_lands() {
     assert!(
         back.distance(door) >= spacing && back.distance(door) <= Meters(spacing.0 * 3.0),
         "{back:?}"
+    );
+}
+
+#[test]
+fn a_module_on_ground_nothing_reaches_moves_where_its_problem_suggests() {
+    let scratch = tempfile::tempdir().expect("scratch");
+    let split = Map::of(&["...#...."; 8]);
+    let hermit =
+        json!([{ "type": "resident", "npc": path("npc", "hermit"), "at": { "x": 6.0, "y": 4.0 } }]);
+    let game = Game::new()
+        .npc("hermit", 10.0, json!([]))
+        .area(support::AREA, &split, hermit)
+        .hero(support::AREA, 1.0, 4.0)
+        .engine_rows()
+        .whole();
+    let mut editor = support::open_as_is(game, &scratch);
+    let mut frames = Frames::new(egui::vec2(1600.0, 900.0));
+    let mut show = |editor: &mut Editor, events: Vec<egui::Event>| {
+        frames.run(events, |ui| {
+            editor::views::area::problems::output(editor, ui)
+        })
+    };
+    show(&mut editor, Vec::new());
+    let move_there = show(&mut editor, Vec::new()).at("Move there");
+
+    for events in support::click(move_there) {
+        show(&mut editor, events);
+    }
+
+    support::settled(&mut editor);
+    let at = nodes::modules(&nodes::scene_of(&editor, &area()))
+        .iter()
+        .find_map(|module| match module.module() {
+            AreaModule::Resident(resident) => Some(resident.at),
+            _ => None,
+        })
+        .expect("the hermit stands in the area");
+    assert!(
+        at.x < 3.0,
+        "the hermit stands where the hero can walk: {at:?}"
     );
 }

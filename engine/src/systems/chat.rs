@@ -3,7 +3,7 @@ use std::sync::Arc;
 use bevy_app::App;
 use bevy_ecs::message::{MessageCursor, Messages};
 use bevy_ecs::prelude::*;
-use bevy_replication::{AppMessageExt, ClientLink, FromClient, ToClient};
+use bevy_replication::{AppMessageExt, ClientLink, ToClient};
 use bevy_terminal::{TerminalInput, TerminalLine, TerminalSaid};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -28,7 +28,7 @@ use crate::systems::text::{self, LineText, Span};
 use crate::systems::visibility;
 
 pub fn register(app: &mut App) {
-    bevy_terminal::register(app, &[], |world, conn, line| {
+    bevy_terminal::register(app, |world, conn, line| {
         world.write_message(ToClient {
             client: conn,
             message: line,
@@ -39,11 +39,7 @@ pub fn register(app: &mut App) {
 }
 
 pub fn hear(world: &mut World) {
-    let typed: Vec<FromClient<TerminalInput>> = world
-        .resource_mut::<Messages<FromClient<TerminalInput>>>()
-        .drain()
-        .collect();
-    for typed in typed {
+    for typed in super::drain_requests::<TerminalInput>(world) {
         bevy_terminal::hear(world, typed.client, &typed.message);
     }
 }

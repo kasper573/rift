@@ -168,14 +168,14 @@ pub enum SheetFilter {
     /// A row whose number in the column compares to the value as the test says.
     Compare {
         column: String,
-        test: Comparison,
+        test: FilterComparison,
         value: f64,
     },
 }
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, VariantArray)]
 #[serde(rename_all = "snake_case")]
-pub enum Comparison {
+pub enum FilterComparison {
     Below,
     AtMost,
     Equal,
@@ -183,24 +183,24 @@ pub enum Comparison {
     Above,
 }
 
-impl Comparison {
+impl FilterComparison {
     pub fn holds(self, have: f64, want: f64) -> bool {
         match self {
-            Comparison::Below => have < want,
-            Comparison::AtMost => have <= want,
-            Comparison::Equal => (have - want).abs() < f64::EPSILON,
-            Comparison::AtLeast => have >= want,
-            Comparison::Above => have > want,
+            FilterComparison::Below => have < want,
+            FilterComparison::AtMost => have <= want,
+            FilterComparison::Equal => (have - want).abs() < f64::EPSILON,
+            FilterComparison::AtLeast => have >= want,
+            FilterComparison::Above => have > want,
         }
     }
 
     pub fn sign(self) -> &'static str {
         match self {
-            Comparison::Below => "<",
-            Comparison::AtMost => "≤",
-            Comparison::Equal => "=",
-            Comparison::AtLeast => "≥",
-            Comparison::Above => ">",
+            FilterComparison::Below => "<",
+            FilterComparison::AtMost => "≤",
+            FilterComparison::Equal => "=",
+            FilterComparison::AtLeast => "≥",
+            FilterComparison::Above => ">",
         }
     }
 }

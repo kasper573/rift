@@ -21,7 +21,7 @@ use engine::core::content::{Content, ContentFile, ContentScope, Fixture, rescope
 use engine::core::math::{Pos, Size};
 use engine::core::units::Meters;
 use engine::systems::area::world_map::{
-    AreaCard, Note, Region, RegionColor, WorldMap, WorldMapDef,
+    AreaCard, MapRegion, Note, RegionColor, WorldMap, WorldMapDef,
 };
 use engine::systems::area::{AreaDef, AreaId};
 use serde::Deserialize;
@@ -185,7 +185,7 @@ impl OpenWorldMap {
             .reduce(|a, b| a.union(b))
     }
 
-    pub(crate) fn region_rect(&self, layout: &WorldMapDef, region: &Region) -> Option<Rect> {
+    pub(crate) fn region_rect(&self, layout: &WorldMapDef, region: &MapRegion) -> Option<Rect> {
         region
             .cards
             .iter()
@@ -456,7 +456,7 @@ fn region_from_selection(editor: &mut Editor, map: &OpenWorldMap) {
     next.regions.retain(|region| !region.cards.is_empty());
     let name = format!("Region {}", next.regions.len() + 1);
     let index = next.regions.len();
-    next.regions.push(Region {
+    next.regions.push(MapRegion {
         name: name.clone(),
         cards,
         color: None,

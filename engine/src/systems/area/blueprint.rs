@@ -13,8 +13,8 @@ use crate::core::content::is_device;
 use crate::core::content::load::{ParseError, parse_value, shape_problem};
 use crate::core::content::locate::{escape, unescape};
 use crate::core::content::{
-    Bundle, CONFIG_FILE, Content, ContentFile, ContentId, ContentProblem, ContentScope, FileWriter,
-    Nearby, PartSpec, Parts, RowCheck, Shape, serial, with_content,
+    Bundle, CONFIG_FILE, Content, ContentFile, ContentId, ContentProblem, ContentScope, FileShape,
+    FileWriter, Nearby, PartSpec, Parts, RowCheck, serial, with_content,
 };
 use crate::core::ground::GroundSize;
 use crate::core::math::{Pos, Rect};
@@ -46,7 +46,7 @@ pub struct BlueprintDef {
 
 impl ContentFile for BlueprintDef {
     const TABLE: &'static str = "blueprint";
-    const SHAPE: Shape = Shape::Bundle;
+    const SHAPE: FileShape = FileShape::Bundle;
 
     fn fresh(_: &Nearby) -> Result<BlueprintDef, String> {
         Ok(BlueprintDef {

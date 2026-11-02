@@ -20,7 +20,7 @@ use bevy::camera::primitives::{Frustum, Sphere};
 use bevy::prelude::*;
 use bevy_skeleton_modifiers::core::{BonePose, SkeletonView};
 
-use super::super::camera::{GroundHeights, WorldCamera, ground_pos};
+use crate::core::render::world::camera::{GroundHeights, WorldCamera, ground_pos};
 
 /// Within this distance of the camera a body's layers run every frame, and up to `FAR` every other
 /// frame; beyond it the body plays its clips alone.

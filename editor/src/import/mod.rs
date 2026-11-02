@@ -16,7 +16,7 @@ use ui::egui::{self, Context, Ui};
 use ui::{controls, dialog, form, theme, words};
 
 pub use fbx::glb_of_fbx;
-pub use gather::{Came, Failure, Found, Gathered, gather};
+pub use gather::{Came, GatherFailure, Gathered, GatheredFile, gather};
 
 use crate::app::Editor;
 use crate::content_tree;
@@ -28,7 +28,7 @@ pub struct ImportDialog {
     pub folder: String,
     reading: Option<Reading>,
     pub files: Vec<Incoming>,
-    pub failed: Vec<Failure>,
+    pub failed: Vec<GatherFailure>,
     search: String,
     error: Option<String>,
 }
@@ -80,7 +80,7 @@ pub fn review(
     files: &ProjectFiles,
     folder: &str,
     gathered: Gathered,
-) -> (Vec<Incoming>, Vec<Failure>) {
+) -> (Vec<Incoming>, Vec<GatherFailure>) {
     let types = registry().file_types();
     let incoming = gathered
         .files

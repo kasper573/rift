@@ -12,7 +12,7 @@ use crate::core::content::media::{VisiblePixelColumns, visible_columns};
 use crate::core::content::{AssetKind, FileSize, ImageRef};
 use crate::core::content::{
     Bundle, Content, ContentFile, ContentId, ContentProblem, ContentRegistry, ErrorPlace,
-    FileWriter, LoadStep, Loading, MISSING_FILE, Nearby, PartSpec, Parts, RowCheck, Shape,
+    FileShape, FileWriter, LoadStep, Loading, MISSING_FILE, Nearby, PartSpec, Parts, RowCheck,
 };
 
 pub type BustId = ContentId<BustDef>;
@@ -237,7 +237,7 @@ impl Bundle for BustDef {
 
 impl ContentFile for BustDef {
     const TABLE: &'static str = "bust";
-    const SHAPE: Shape = Shape::Bundle;
+    const SHAPE: FileShape = FileShape::Bundle;
 
     fn fresh(_: &Nearby) -> Result<BustDef, String> {
         Ok(BustDef::default())

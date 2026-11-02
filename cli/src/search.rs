@@ -2,7 +2,16 @@
 //! benchmark (probing area counts) and the loadtest (probing player counts) so both converge with the
 //! same handful of probes instead of crawling linearly.
 
-pub const BUDGET_MS: f64 = 40.0;
+use engine::systems::TICK_HZ;
+
+/// What a tick may take for the server to keep its pace: one tick's period.
+pub fn budget_ms() -> f64 {
+    TICK_HZ.period().as_secs_f64() * 1000.0
+}
+
+pub fn verdict(ms: f64) -> &'static str {
+    if ms <= budget_ms() { "ok" } else { "over" }
+}
 
 pub struct Search {
     max: usize,
@@ -23,7 +32,7 @@ impl Search {
 
     pub fn next_after(&mut self, count: usize, ms: f64) -> Option<usize> {
         let last = (count, ms);
-        if ms <= BUDGET_MS {
+        if ms <= budget_ms() {
             if self.under.is_none_or(|(highest, _)| count >= highest) {
                 self.under = Some(last);
             }
@@ -61,7 +70,7 @@ fn project(
                 return None;
             }
             let guess = if ot > ut {
-                ua as f64 + (BUDGET_MS - ut) * (oa - ua) as f64 / (ot - ut)
+                ua as f64 + (budget_ms() - ut) * (oa - ua) as f64 / (ot - ut)
             } else {
                 (ua + oa) as f64 / 2.0
             };
@@ -71,9 +80,9 @@ fn project(
             let projected = match previous {
                 Some((pa, pt)) if last.0 != pa && last.1 > pt => {
                     let slope = (last.1 - pt) / (last.0 - pa) as f64;
-                    last.0 as f64 + (BUDGET_MS - last.1) / slope
+                    last.0 as f64 + (budget_ms() - last.1) / slope
                 }
-                _ => ua as f64 * BUDGET_MS / ut,
+                _ => ua as f64 * budget_ms() / ut,
             };
             (projected.round() as usize).clamp(ua + 1, max)
         }

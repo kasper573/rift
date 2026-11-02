@@ -23,7 +23,7 @@ use crate::picker::Dragged;
 use crate::project::{Project, RowSelection};
 use crate::scene_graph;
 use crate::tabs::file_title;
-pub use crate::tree::Toggle;
+pub use crate::tree::RowToggle;
 use crate::tree::{self, DropAt, RowToggles, ToggleState, TreeDrop, TreeRow, TreeSource};
 use crate::widgets;
 
@@ -46,7 +46,7 @@ pub enum SceneAction {
     MoveTo(Vec<String>),
     Group(Vec<String>),
     Ungroup(Vec<String>),
-    Toggle(Vec<String>, Toggle),
+    Toggle(Vec<String>, RowToggle),
     ShowOnly(String),
     Copy(Vec<String>),
     Cut(Vec<String>),
@@ -407,13 +407,13 @@ impl<'a> SceneSource<'a> {
             ui,
             "Hide",
             Some(EditorKey::Hide),
-            SceneAction::Toggle(one(), Toggle::Hide),
+            SceneAction::Toggle(one(), RowToggle::Hide),
         );
         item(
             ui,
             "Lock",
             Some(EditorKey::Lock),
-            SceneAction::Toggle(one(), Toggle::Lock),
+            SceneAction::Toggle(one(), RowToggle::Lock),
         );
         ui.separator();
         item(ui, "Copy", Some(EditorKey::Copy), SceneAction::Copy(one()));
@@ -503,13 +503,13 @@ impl<'a> SceneSource<'a> {
             ui,
             "Hide",
             Some(EditorKey::Hide),
-            SceneAction::Toggle(one(), Toggle::Hide),
+            SceneAction::Toggle(one(), RowToggle::Hide),
         );
         item(
             ui,
             "Lock",
             Some(EditorKey::Lock),
-            SceneAction::Toggle(one(), Toggle::Lock),
+            SceneAction::Toggle(one(), RowToggle::Lock),
         );
         item(
             ui,
@@ -580,13 +580,13 @@ impl<'a> SceneSource<'a> {
             ui,
             "Hide",
             Some(EditorKey::Hide),
-            SceneAction::Toggle(all(), Toggle::Hide),
+            SceneAction::Toggle(all(), RowToggle::Hide),
         );
         item(
             ui,
             "Lock",
             Some(EditorKey::Lock),
-            SceneAction::Toggle(all(), Toggle::Lock),
+            SceneAction::Toggle(all(), RowToggle::Lock),
         );
         ui.separator();
         item(ui, "Copy", Some(EditorKey::Copy), SceneAction::Copy(all()));
@@ -1023,7 +1023,7 @@ fn owning_bundle(file: &str) -> Option<String> {
 
 /// Turns `toggle` over on the rows `ids` of `bundle`'s scene as one step: on for all unless all
 /// have it on already.
-pub fn toggle(editor: &mut Editor, bundle: &str, ids: &[String], toggle: Toggle) {
+pub fn toggle(editor: &mut Editor, bundle: &str, ids: &[String], toggle: RowToggle) {
     let flag = flag_of(toggle);
     let pointers: Vec<String> = ids.iter().map(|id| local(id).to_owned()).collect();
     let Some(reader) = editor.reader() else {
@@ -1035,10 +1035,10 @@ pub fn toggle(editor: &mut Editor, bundle: &str, ids: &[String], toggle: Toggle)
             .all(|pointer| nodes::node(scene, pointer).is_some_and(|node| flag.of(node)));
         nodes::SceneTree::new(scene).set_flag(&pointers, flag, !all_on);
         let verb = match (toggle, all_on) {
-            (Toggle::Hide, false) => "Hide",
-            (Toggle::Hide, true) => "Show",
-            (Toggle::Lock, false) => "Lock",
-            (Toggle::Lock, true) => "Unlock",
+            (RowToggle::Hide, false) => "Hide",
+            (RowToggle::Hide, true) => "Show",
+            (RowToggle::Lock, false) => "Lock",
+            (RowToggle::Lock, true) => "Unlock",
         };
         let what = match pointers.as_slice() {
             [one] => shapes::node_label(nodes::node(scene, one)?, reader.as_ref()),
@@ -1049,10 +1049,10 @@ pub fn toggle(editor: &mut Editor, bundle: &str, ids: &[String], toggle: Toggle)
 }
 
 /// Clears `toggle` on every node of `bundle`'s scene as one step.
-pub(crate) fn clear_all(editor: &mut Editor, bundle: &str, toggle: Toggle) {
+pub(crate) fn clear_all(editor: &mut Editor, bundle: &str, toggle: RowToggle) {
     let verb = match toggle {
-        Toggle::Hide => "Show",
-        Toggle::Lock => "Unlock",
+        RowToggle::Hide => "Show",
+        RowToggle::Lock => "Unlock",
     };
     let mut cleared = 0;
     nodes::change_scene(editor, bundle, |scene| {
@@ -1376,10 +1376,10 @@ fn scene_at(snapshot: &AreaSnapshot, level: usize) -> &[SceneNode] {
     }
 }
 
-fn flag_of(toggle: Toggle) -> NodeFlag {
+fn flag_of(toggle: RowToggle) -> NodeFlag {
     match toggle {
-        Toggle::Hide => NodeFlag::Hidden,
-        Toggle::Lock => NodeFlag::Locked,
+        RowToggle::Hide => NodeFlag::Hidden,
+        RowToggle::Lock => NodeFlag::Locked,
     }
 }
 

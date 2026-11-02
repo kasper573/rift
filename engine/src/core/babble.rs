@@ -12,7 +12,7 @@ use crate::core::audio::playback::{HushVoice, PlayClip, SfxPlace, SfxTune};
 use crate::core::content::{AssetKind, AudioRef};
 use crate::core::content::{
     Bundle, Content, ContentFile, ContentId, ContentProblem, ContentRegistry, ErrorPlace,
-    FileWriter, MISSING_FILE, Nearby, PartSpec, Parts, RowCheck, Shape,
+    FileShape, FileWriter, MISSING_FILE, Nearby, PartSpec, Parts, RowCheck,
 };
 use crate::core::math::Rng;
 use crate::core::text::{
@@ -97,7 +97,7 @@ pub const BABBLE_LETTERS: PartSpec = PartSpec::Keyed {
 
 impl ContentFile for BabbleBankDef {
     const TABLE: &'static str = "babble_bank";
-    const SHAPE: Shape = Shape::Bundle;
+    const SHAPE: FileShape = FileShape::Bundle;
 
     fn fresh(_: &Nearby) -> Result<BabbleBankDef, String> {
         Ok(BabbleBankDef {

@@ -279,18 +279,18 @@ pub const TABLE: KindIcon = KindIcon::plain(phosphor::TABLE);
 
 /// The picture a file is known by: the picture itself for an image, or a content file's icon or
 /// image.
-pub struct Picture {
+pub struct FilePicture {
     pub path: String,
 }
 
-pub(crate) fn picture_of(project: &Project, path: &str) -> Option<Picture> {
+pub(crate) fn picture_of(project: &Project, path: &str) -> Option<FilePicture> {
     if AssetKind::of(path) == Some(AssetKind::Image) {
-        return Some(Picture {
+        return Some(FilePicture {
             path: path.to_owned(),
         });
     }
     let whole = |image: &ImageRef| {
-        Some(Picture {
+        Some(FilePicture {
             path: image.as_str().to_owned(),
         })
     };
@@ -310,13 +310,13 @@ pub(crate) fn picture_of(project: &Project, path: &str) -> Option<Picture> {
 
 /// A picture ready to draw: which part of which texture, and its own size in pixels.
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Preview {
+pub struct PictureTexture {
     pub texture: TextureId,
     pub uv: Rect,
     pub size: Vec2,
 }
 
-impl Preview {
+impl PictureTexture {
     /// Draws the picture as large as fits in `rect`, centred, its pixels kept square.
     pub fn paint(self, painter: &Painter, rect: Rect) {
         painter.image(self.texture, self.fit(rect), self.uv, Color32::WHITE);
@@ -340,7 +340,7 @@ pub fn picture(
     project: &Project,
     path: &str,
     budget: &mut u32,
-) -> Option<Preview> {
+) -> Option<PictureTexture> {
     let picture = picture_of(project, path)?;
     shown(ctx, thumbnails, &project.files, &picture, budget)
 }
@@ -352,7 +352,7 @@ pub fn preview(
     project: &Project,
     path: &str,
     budget: &mut u32,
-) -> Option<Preview> {
+) -> Option<PictureTexture> {
     let files = &project.files;
     let picture = picture_of(project, path)?;
     let small = thumbnails
@@ -368,7 +368,7 @@ pub fn preview(
 pub(crate) fn paint_file(
     painter: &Painter,
     rect: Rect,
-    preview: Option<Preview>,
+    preview: Option<PictureTexture>,
     kind: KindIcon,
     tone: IconTone,
 ) {
@@ -382,10 +382,10 @@ fn shown(
     ctx: &egui::Context,
     thumbnails: &mut Thumbnails,
     files: &ProjectFiles,
-    picture: &Picture,
+    picture: &FilePicture,
     budget: &mut u32,
-) -> Option<Preview> {
-    let ready = |thumb: thumbs::Thumbnail, uv: Rect, size: Vec2| Preview {
+) -> Option<PictureTexture> {
+    let ready = |thumb: thumbs::Thumbnail, uv: Rect, size: Vec2| PictureTexture {
         texture: thumb.texture.id(),
         uv,
         size,

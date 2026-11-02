@@ -15,7 +15,7 @@ use bevy_app::App;
 use bevy_ecs::prelude::*;
 use bevy_replication::ClientLink;
 use engine::core::content::id::Leaf;
-use engine::core::content::sync::{ServedContent, well_formed_hash};
+use engine::core::content::sync::{FILES, MANIFEST, ServedContent, well_formed_hash};
 use engine::core::content::{
     Content, ContentScope, FilesystemFolder, LoadPurpose, version, with_content,
 };
@@ -25,7 +25,7 @@ use engine::core::net::auth::TokenClaims;
 use engine::core::net::transport::{STREAM, token_text};
 use engine::core::os::StdinClosed;
 use engine::core::time::{UtcHour, WallClock};
-use engine::systems::account::{AccountId, Identity};
+use engine::systems::account::{AccountId, AccountIdentity};
 use engine::systems::area::{self, transition};
 use engine::systems::launch::{
     AuthMode, BUILD_INFO_FLAG, BuildInfo, LaunchSettings, ReadyLine, SERVER_ENV_PREFIX,
@@ -39,6 +39,7 @@ use engine::systems::worlds::{self, Worlds};
 use engine::systems::{GameSettings, TICK_HZ, load_content, server_app, start_server};
 use metrics::{counter, gauge, histogram};
 use renet2::{DisconnectReason, ServerEvent};
+use serde::de::DeserializeOwned;
 use transport::{TOKEN_LIFETIME, TokenMinter, UdpTransport};
 
 service::heap_profiling!();
@@ -96,7 +97,7 @@ fn main() {
             content: content.clone(),
             pending: Arc::default(),
             online: online.clone(),
-            stages: Arc::new(Mutex::new(stage_sender)),
+            stages: stage_sender,
         }),
         served: Arc::new(served),
         game: service::GameInfo {
@@ -485,8 +486,13 @@ fn seeded(configured: Option<u64>) -> u64 {
 }
 
 /// The whole connection bundle is spawned in one call so `Add` observers on any of its
-/// components (e.g. greeting) observe the complete connection, `Identity` included.
-fn spawn_conn(app: &mut App, client: ClientId, link: ClientLink, identity: Identity) -> Entity {
+/// components observe the complete connection, `Identity` included.
+fn spawn_conn(
+    app: &mut App,
+    client: ClientId,
+    link: ClientLink,
+    identity: AccountIdentity,
+) -> Entity {
     app.world_mut().spawn((link, client, identity)).id()
 }
 
@@ -514,7 +520,9 @@ fn move_client(
 ) {
     for conn in conns.values_mut().filter(|conn| conn.client == client) {
         let mut leaving = worlds.app(conn.world).world_mut().entity_mut(conn.entity);
-        let identity = leaving.take::<Identity>().expect("a connection's identity");
+        let identity = leaving
+            .take::<AccountIdentity>()
+            .expect("a connection's identity");
         let link = leaving.take::<ClientLink>().expect("a connection's link");
         leaving.despawn();
         conn.world = dest;
@@ -526,12 +534,12 @@ fn move_client(
 struct Sessions(Arc<Mutex<HashMap<u64, Pending>>>);
 
 struct Pending {
-    identity: Identity,
+    identity: AccountIdentity,
     minted: Instant,
 }
 
 impl Sessions {
-    fn put(&self, client_id: u64, identity: Identity) {
+    fn put(&self, client_id: u64, identity: AccountIdentity) {
         let mut map = self.0.lock().expect("sessions lock");
         let now = Instant::now();
         map.retain(|_, pending| now.duration_since(pending.minted) < TOKEN_LIFETIME);
@@ -544,7 +552,7 @@ impl Sessions {
         );
     }
 
-    fn take(&self, client_id: u64) -> Option<Identity> {
+    fn take(&self, client_id: u64) -> Option<AccountIdentity> {
         self.0
             .lock()
             .expect("sessions lock")
@@ -561,7 +569,7 @@ struct TestCharacters {
     content: Content,
     pending: Arc<Mutex<HashMap<AccountId, JoinAs>>>,
     online: Online,
-    stages: Arc<Mutex<Sender<StageAsked>>>,
+    stages: Sender<StageAsked>,
 }
 
 impl TestCharacters {
@@ -595,8 +603,8 @@ async fn serve_http(
         .route("/session", post(session))
         .route("/health", get(health))
         .route(service::GAME_INFO_ROUTE, get(game))
-        .route("/content/manifest", get(manifest))
-        .route("/content/files/{hash}", get(content_file));
+        .route(MANIFEST, get(manifest))
+        .route(&format!("{FILES}{{hash}}"), get(content_file));
     if http.test_characters.is_some() {
         router = router
             .route(TEST_CHARACTER_ROUTE, post(test_character))
@@ -649,11 +657,7 @@ async fn content_file(
 }
 
 async fn session(State(http): State<Http>, headers: HeaderMap, body: String) -> Response {
-    let authorization = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default();
-    let identity = match resolve(&http, authorization) {
+    let identity = match resolve(&http, &headers) {
         Ok(identity) => identity,
         Err(status) => return status.into_response(),
     };
@@ -684,25 +688,15 @@ async fn test_character(State(http): State<Http>, headers: HeaderMap, body: Stri
     let Some(characters) = http.test_characters.as_ref() else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let authorization = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default();
-    let identity = match resolve(&http, authorization) {
+    let identity = match resolve(&http, &headers) {
         Ok(identity) => identity,
         Err(status) => return status.into_response(),
     };
     let content = &characters.content;
-    let (request, scope) = with_content(ContentScope::of(content), || {
-        serde_json::from_str::<TestCharacterRequest>(&body)
-    });
-    let request = match request {
+    let request = match parse_in::<TestCharacterRequest>(content, &body) {
         Ok(request) => request,
-        Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+        Err(rejection) => return rejection.into_response(),
     };
-    if let Some(problem) = scope.leaves().iter().find_map(Leaf::reported) {
-        return (StatusCode::BAD_REQUEST, problem.to_string()).into_response();
-    }
     let Some(character) = content.by_path::<CharacterSnapshot>(&request.test_character) else {
         return (
             StatusCode::BAD_REQUEST,
@@ -739,37 +733,21 @@ async fn stage_scene(State(http): State<Http>, headers: HeaderMap, body: String)
     let Some(characters) = http.test_characters.as_ref() else {
         return StatusCode::NOT_FOUND.into_response();
     };
-    let authorization = headers
-        .get(header::AUTHORIZATION)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or_default();
-    let identity = match resolve(&http, authorization) {
+    let identity = match resolve(&http, &headers) {
         Ok(identity) => identity,
         Err(status) => return status.into_response(),
     };
-    let (staging, scope) = with_content(ContentScope::of(&characters.content), || {
-        serde_json::from_str::<Staging>(&body)
-    });
-    let staging = match staging {
+    let staging = match parse_in::<Staging>(&characters.content, &body) {
         Ok(staging) => staging,
-        Err(error) => return (StatusCode::BAD_REQUEST, error.to_string()).into_response(),
+        Err(rejection) => return rejection.into_response(),
     };
-    if let Some(problem) = scope.leaves().iter().find_map(Leaf::reported) {
-        return (StatusCode::BAD_REQUEST, problem.to_string()).into_response();
-    }
     let (answer, staged) = tokio::sync::oneshot::channel();
     let asked = StageAsked {
         account: identity.id,
         staging,
         answer,
     };
-    if characters
-        .stages
-        .lock()
-        .expect("stages lock")
-        .send(asked)
-        .is_err()
-    {
+    if characters.stages.send(asked).is_err() {
         return StatusCode::SERVICE_UNAVAILABLE.into_response();
     }
     match staged.await {
@@ -779,7 +757,22 @@ async fn stage_scene(State(http): State<Http>, headers: HeaderMap, body: String)
     }
 }
 
-fn resolve(http: &Http, authorization: &str) -> Result<Identity, StatusCode> {
+fn parse_in<T: DeserializeOwned>(content: &Content, body: &str) -> Result<T, (StatusCode, String)> {
+    let (parsed, scope) = with_content(ContentScope::of(content), || {
+        serde_json::from_str::<T>(body)
+    });
+    let parsed = parsed.map_err(|error| (StatusCode::BAD_REQUEST, error.to_string()))?;
+    match scope.leaves().iter().find_map(Leaf::reported) {
+        Some(problem) => Err((StatusCode::BAD_REQUEST, problem.to_string())),
+        None => Ok(parsed),
+    }
+}
+
+fn resolve(http: &Http, headers: &HeaderMap) -> Result<AccountIdentity, StatusCode> {
+    let authorization = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default();
     let token = authorization
         .strip_prefix("Bearer ")
         .unwrap_or(authorization);
@@ -793,7 +786,7 @@ fn resolve(http: &Http, authorization: &str) -> Result<Identity, StatusCode> {
     }
     .filter(|claims| !claims.sub.is_empty())
     .ok_or(StatusCode::UNAUTHORIZED)?;
-    Ok(Identity {
+    Ok(AccountIdentity {
         name: claims.display_name(),
         id: AccountId(claims.sub),
     })

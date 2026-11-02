@@ -98,21 +98,36 @@ struct Standing {
 
 /// A point `height` above the ground at `x`, `y`, so a lens frames alike on any area's terrain.
 #[derive(Deserialize, Clone, Copy)]
-#[serde(deny_unknown_fields)]
+#[serde(from = "SpotFile")]
 struct Spot {
+    at: Place,
+    height: Meters,
+}
+
+impl Spot {
+    fn point(self, ground: &Heightfield) -> Vec3 {
+        let at = self.at.ground();
+        world_point(at, Meters(ground.height_at(at).0 + self.height.0))
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct SpotFile {
     x: Meters,
     y: Meters,
     height: Meters,
 }
 
-impl Spot {
-    fn ground(self) -> Pos<Meters> {
-        Pos::new(self.x.0, self.y.0)
-    }
-
-    fn point(self, ground: &Heightfield) -> Vec3 {
-        let at = self.ground();
-        world_point(at, Meters(ground.height_at(at).0 + self.height.0))
+impl From<SpotFile> for Spot {
+    fn from(file: SpotFile) -> Spot {
+        Spot {
+            at: Place {
+                x: file.x,
+                y: file.y,
+            },
+            height: file.height,
+        }
     }
 }
 
@@ -348,7 +363,7 @@ fn set_up(
     scenery::view_from(
         world,
         stood,
-        shot.lens.target.ground(),
+        shot.lens.target.at.ground(),
         Meters(eye.distance(target) * SCENERY_REACH),
         View::new(
             lens,

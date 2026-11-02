@@ -94,12 +94,6 @@ pub struct Wind {
 }
 
 impl Weather {
-    pub const STILL: Weather = Weather {
-        wind: Wind::CALM,
-        clouds: 0.0,
-        water: 0.0,
-    };
-
     /// A light breeze from the south-west under a clear sky, as a day outside has.
     pub fn breezy() -> Weather {
         Weather {
@@ -149,11 +143,6 @@ impl Weather {
 }
 
 impl Wind {
-    pub const CALM: Wind = Wind {
-        direction: Degrees(0.0),
-        strength: 0.0,
-    };
-
     pub fn is_calm(&self) -> bool {
         self.strength <= 0.0
     }

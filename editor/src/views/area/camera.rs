@@ -19,7 +19,7 @@ pub const LENS: Degrees = Degrees(32.0);
 /// How far down the camera looks as it frames an area.
 pub const PITCH: Degrees = Degrees(55.0);
 /// How close the camera may come to its target, and how far a stage's may draw back.
-pub const NEAREST: Meters = Meters(3.0);
+const NEAREST: Meters = Meters(3.0);
 pub const STAGE_FARTHEST: Meters = Meters(400.0);
 /// How far down the camera looks when it looks straight down.
 const TOP_DOWN: Degrees = Degrees(89.0);
@@ -54,7 +54,7 @@ impl Default for OrbitCamera {
 }
 
 impl OrbitCamera {
-    /// A camera at the game's pitch with `bounds` in frame.
+    /// A camera at the editor's pitch with `bounds` in frame.
     pub fn framing(bounds: Rect<Meters>) -> OrbitCamera {
         let mut camera = OrbitCamera::default();
         camera.frame(bounds);

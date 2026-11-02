@@ -73,6 +73,16 @@ pub struct FormCx<'a> {
 }
 
 impl<'a> FormCx<'a> {
+    /// A context for fields edited outside any schema, such as a tool's pickers.
+    pub fn schemaless(
+        project: &'a Project,
+        shapes: &'a SchemaShapes,
+        state: &'a mut FormState,
+        actions: &'a mut Vec<FormAction>,
+    ) -> FormCx<'a> {
+        FormCx::new(project, &Value::Null, shapes, state, actions)
+    }
+
     pub fn new(
         project: &'a Project,
         root: &'a Value,
@@ -1460,21 +1470,17 @@ fn unlisted_item(
     )
 }
 
-// A new list item with a blank name gets one of its own, so it is valid as it lands and can be
-// told from the others.
+/// A new list item with a blank name gets one of its own, so it is valid as it lands and can be
+/// told from the others.
 fn name_newcomer(item: &mut Value, siblings: &[Value], singular: &str) {
-    if item.get("name").and_then(Value::as_str) != Some("") {
+    let Some(name) = item.get_mut("name").filter(|name| *name == "") else {
         return;
-    }
-    let taken: HashSet<&str> = siblings
+    };
+    let taken = siblings
         .iter()
-        .filter_map(|sibling| sibling["name"].as_str())
+        .filter_map(|sibling| Some(sibling.get("name")?.as_str()?.to_owned()))
         .collect();
-    let fresh = (1..)
-        .map(|n| format!("{singular}_{n}"))
-        .find(|candidate| !taken.contains(candidate.as_str()))
-        .unwrap_or_default();
-    item["name"] = Value::String(fresh);
+    *name = Value::String(crate::rows::free_name(singular, &taken));
 }
 
 /// A map's entries, each under its key: typed, or the file it names when `keys` names the table

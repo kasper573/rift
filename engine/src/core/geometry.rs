@@ -287,7 +287,7 @@ impl PlacedShape {
 
 pub fn facing_from(from: Pos<Meters>, toward: Pos<Meters>) -> Radians {
     if from.distance(toward) == Meters(0.0) {
-        Radians(std::f32::consts::FRAC_PI_2)
+        Radians::SOUTH
     } else {
         Radians::of(toward - from)
     }

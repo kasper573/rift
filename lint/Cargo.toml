@@ -8,7 +8,7 @@ description = "The repo's own lints: layering, standalone crates and JSON by lit
 cargo_metadata = "0.23"
 proc-macro2 = { workspace = true, features = ["span-locations"] }
 syn = { workspace = true, features = ["visit"] }
-walkdir = "2"
+walkdir.workspace = true
 
 [lints]
 workspace = true

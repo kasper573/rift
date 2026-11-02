@@ -8,7 +8,7 @@ use crate::script::hunting;
 use crate::{Game, Map, path};
 
 /// The area every player of the crowd starts in.
-pub const CROWD_AREA: &str = "crowd";
+const CROWD_AREA: &str = "crowd";
 
 const SIDE: usize = 96;
 const RAIDERS: u32 = 36;

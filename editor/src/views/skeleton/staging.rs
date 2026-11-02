@@ -1,4 +1,4 @@
-use super::{Chosen, Posed, grips};
+use super::{Chosen, PosedClip, grips};
 use crate::app::Editor;
 use crate::project::GltfCache;
 use crate::project::ProjectFiles;
@@ -290,7 +290,7 @@ pub(crate) fn rig_keys(
     let keys = made_keys(files, gltfs, rig, clip).map(Arc::new);
     views.posed.insert(
         key,
-        Posed {
+        PosedClip {
             rig: rig.clone(),
             keys: keys.clone(),
         },

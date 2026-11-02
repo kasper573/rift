@@ -7,8 +7,8 @@ use super::files::{Listing, list_files, table_of};
 use super::fresh::Nearby;
 use super::id::{ContentId, ContentScope, with_content};
 use super::load::{
-    CheckedFiles, ContentFolder, ContentRegistry, FileWriter, LoadPurpose, Settings, TableLoader,
-    check_files, listing_scope, parse_file, parse_settings, parse_value,
+    CheckedFiles, ContentFolder, ContentRegistry, FileWriter, LoadPurpose, SettingsFile,
+    TableLoader, check_files, listing_scope, parse_file, parse_settings, parse_value,
 };
 use super::report::{ContentProblem, ErrorPlace, LoadError, MISSING_FILE};
 use super::table::ContentFile;
@@ -153,7 +153,7 @@ impl FolderReader {
     }
 
     /// The game's settings, when they read whole.
-    pub fn settings<G: Settings>(&self) -> Result<G, Unreadable> {
+    pub fn settings<G: SettingsFile>(&self) -> Result<G, Unreadable> {
         let parsed = parse_settings(self.registry, self.folder.as_ref(), &self.listed.scope);
         whole(parsed.row, parsed.errors, super::SETTINGS_FILE)
     }
@@ -220,7 +220,7 @@ impl FolderReader {
         .map_err(|error| error.to_string())
     }
 
-    pub fn write_settings<G: Settings>(
+    pub fn write_settings<G: SettingsFile>(
         &self,
         settings: &G,
     ) -> io::Result<BTreeMap<String, Vec<u8>>> {

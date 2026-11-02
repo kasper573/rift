@@ -7,7 +7,7 @@ use std::time::{Duration, Instant};
 
 use bevy_app::{App, Update};
 use bevy_ecs::prelude::*;
-use engine::core::content::sync::Manifest;
+use engine::core::content::sync::{MANIFEST, Manifest};
 use engine::core::net::SessionRequest;
 use engine::core::net::transport::{ClientTransportPlugin, Connection, read_token};
 use engine::systems::TICK_HZ;
@@ -15,7 +15,7 @@ use engine::systems::launch::{TICK_METRIC, fake_token};
 use engine::systems::player::JoinRequest;
 use engine::systems::player::session::{self, ClientSessionPlugin};
 
-use crate::search::{BUDGET_MS, Search};
+use crate::search::{Search, budget_ms, verdict};
 
 /// Search clamp for the player root-find; the real limit is the server's client cap or its tick time.
 const MAX_PLAYERS: usize = 50_000;
@@ -64,7 +64,10 @@ fn run_fixed(http_url: &str, count: usize) {
 /// projection the area benchmark uses. Each probe adjusts the live client pool to the target count
 /// (connect or disconnect) rather than restarting, so the search converges in a handful of probes.
 pub fn run_dyn(http_url: &str) -> Pool {
-    println!("[loadtest] root-finding the {BUDGET_MS:.0}ms/tick player equilibrium ({http_url})");
+    println!(
+        "[loadtest] root-finding the {:.1}ms/tick player equilibrium ({http_url})",
+        budget_ms()
+    );
     let mut clients: Vec<App> = Vec::new();
     let mut next_id = 0usize;
     let mut search = Search::up_to(MAX_PLAYERS);
@@ -73,15 +76,17 @@ pub fn run_dyn(http_url: &str) -> Pool {
         set_player_count(&mut clients, http_url, &mut next_id, target);
         let live = connected_count(&clients);
         let ms = measure_tick_ms(http_url, &mut clients, WINDOW);
-        let verdict = if ms <= BUDGET_MS { "ok" } else { "over" };
-        println!("[loadtest]   {live:>6} players  →  server {ms:6.2}ms/tick  {verdict}");
+        println!(
+            "[loadtest]   {live:>6} players  →  server {ms:6.2}ms/tick  {}",
+            verdict(ms)
+        );
 
         next = search.next_after(live, ms);
         // Couldn't OPEN as many connections as asked (not merely "not all connected yet") while still
         // under budget: the limit is the machine's or server's connection ceiling, not tick time, and
         // that count is the answer. Compare opened connections, not `live`, so a slow handshake isn't
         // mistaken for a ceiling.
-        if clients.len() < target && ms < BUDGET_MS {
+        if clients.len() < target && ms < budget_ms() {
             println!("[loadtest] connection ceiling at {live} players (could not open more)");
             break;
         }
@@ -89,7 +94,8 @@ pub fn run_dyn(http_url: &str) -> Pool {
     match search.sustained() {
         Some((players, ms)) => {
             println!(
-                "[loadtest] equilibrium: ~{players} concurrent players sustained at {ms:.1}ms/tick (budget {BUDGET_MS:.0}ms)"
+                "[loadtest] equilibrium: ~{players} concurrent players sustained at {ms:.1}ms/tick (budget {:.1}ms)",
+                budget_ms()
             );
             set_player_count(&mut clients, http_url, &mut next_id, players);
         }
@@ -209,7 +215,7 @@ fn build_client(http_url: &str, index: usize) -> Option<App> {
 }
 
 fn fetch_token(http_url: &str, account: &str) -> Option<String> {
-    let manifest = ureq::get(format!("{http_url}/content/manifest"))
+    let manifest = ureq::get(format!("{http_url}{MANIFEST}"))
         .call()
         .ok()?
         .body_mut()

@@ -202,9 +202,8 @@ impl PursuitPlan {
         let Some(target) = pursued(world, actor) else {
             return PursuitPlan::Lost;
         };
-        let reach = range;
         if let ReachTarget::Actor(target) = target
-            && let Some(at) = meeting_point(world, actor, target, reach)
+            && let Some(at) = meeting_point(world, actor, target, range)
         {
             return PursuitPlan::Meeting { target, at };
         }
@@ -212,7 +211,7 @@ impl PursuitPlan {
             world,
             actor,
             aim(world, actor, target),
-            reach,
+            range,
         ))
     }
 

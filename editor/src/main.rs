@@ -35,20 +35,12 @@ struct Options {
     /// Prints the build and exits.
     #[arg(long)]
     build_info: bool,
-    /// Prints every row shape as JSON and exits.
-    #[arg(long)]
-    shapes: bool,
 }
 
 fn main() {
     let options = Options::parse();
     if options.build_info {
         println!("{}", launch::build_info_line());
-        return;
-    }
-    if options.shapes {
-        let shapes = editor::schema::shapes();
-        println!("{}", serde_json::to_string_pretty(&shapes).expect("json"));
         return;
     }
     let scene = options.scene.map(|json| {

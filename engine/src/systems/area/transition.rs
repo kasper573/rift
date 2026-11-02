@@ -50,38 +50,8 @@ pub fn departing(world: &mut World) -> Vec<Traveler> {
         .collect();
     crossings
         .into_iter()
-        .filter_map(|(entity, crossing)| {
-            leave(
-                world,
-                entity,
-                crossing.dest_area,
-                crossing.dest,
-                crossing.dest,
-            )
-        })
+        .filter_map(|(entity, crossing)| leave(world, entity, crossing.dest_area, crossing.dest))
         .collect()
-}
-
-pub fn leave(
-    world: &mut World,
-    entity: Entity,
-    dest_area: AreaId,
-    dest: Pos<Meters>,
-    spawn: Pos<Meters>,
-) -> Option<Traveler> {
-    let content = world.resource::<Content>().clone();
-    let mut state = CharacterState::of(world, entity, spawn)?;
-    state.memory.leave_area(&content);
-    let traveler = Traveler {
-        client: world.get::<PlayedBy>(entity)?.client,
-        dest_area,
-        dest,
-        state,
-    };
-    raise_area(world, EventKind::Left, entity);
-    world.resource_mut::<Players>().0.remove(&traveler.client);
-    world.despawn(entity);
-    Some(traveler)
 }
 
 pub fn arrive(world: &mut World, mut traveler: Traveler) -> Entity {
@@ -120,4 +90,25 @@ pub fn raise_area(world: &mut World, kind: EventKind, subject: Entity) {
             _ => true,
         },
     );
+}
+
+fn leave(
+    world: &mut World,
+    entity: Entity,
+    dest_area: AreaId,
+    dest: Pos<Meters>,
+) -> Option<Traveler> {
+    let content = world.resource::<Content>().clone();
+    let mut state = CharacterState::of(world, entity, dest)?;
+    state.memory.leave_area(&content);
+    let traveler = Traveler {
+        client: world.get::<PlayedBy>(entity)?.client,
+        dest_area,
+        dest,
+        state,
+    };
+    raise_area(world, EventKind::Left, entity);
+    world.resource_mut::<Players>().0.remove(&traveler.client);
+    world.despawn(entity);
+    Some(traveler)
 }

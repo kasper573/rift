@@ -72,6 +72,16 @@ impl HotbarShape {
         rows: 1,
     };
 
+    /// The shape as far as a bar of `slots` fills it: no wider than it has slots, and no more rows
+    /// than they fill.
+    pub(crate) fn within(self, slots: u32) -> HotbarShape {
+        let columns = self.columns.clamp(1, slots.max(1));
+        HotbarShape {
+            columns,
+            rows: self.rows.clamp(1, slots.max(1).div_ceil(columns)),
+        }
+    }
+
     pub(crate) fn slots(self) -> u32 {
         self.columns * self.rows
     }

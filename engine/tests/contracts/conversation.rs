@@ -345,7 +345,7 @@ fn inn() -> Sim {
             attention::MarkAttention::default(),
         ));
     script::spawn_stateless(&mut sim.world);
-    region::reach_all(&mut sim.world);
+    region::hold_whole(&mut sim.world);
     sim
 }
 

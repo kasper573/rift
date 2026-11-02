@@ -21,21 +21,6 @@ impl Worlds {
         }
     }
 
-    /// `count` worlds of `area`, as a bench steps them.
-    pub fn copies(area: AreaId, count: usize) -> Worlds {
-        Worlds {
-            areas: vec![area; count],
-        }
-    }
-
-    pub fn len(&self) -> usize {
-        self.areas.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.areas.is_empty()
-    }
-
     /// The area of each world, in the list's order.
     pub fn iter(&self) -> impl Iterator<Item = AreaId> + '_ {
         self.areas.iter().copied()

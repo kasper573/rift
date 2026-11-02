@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "d45c9c89",
+  "content_version": "692e567d",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -187,6 +187,8 @@
         153,
         82
       ],
+      "reddens_below": 25.0,
+      "reddening": 0.8,
       "moonlight": [
         158,
         184,
@@ -198,7 +200,9 @@
       "dusk_begins": 6.0,
       "night_falls": -10.0,
       "sun_gone": -3.0,
-      "sun_full": 8.0
+      "sun_full": 8.0,
+      "night_ambient": 0.12,
+      "cloud_dimming": 0.45
     },
     "clouds": {
       "height": 150.0,

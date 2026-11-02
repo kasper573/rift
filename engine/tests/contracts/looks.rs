@@ -43,7 +43,7 @@ fn an_npcs_script_dresses_it_anew_and_fills_its_hands() {
         let mut sim = Sim::new(game(case.nodes).load());
         sim.serve("room").plan(script::RunFlows::default());
         script::spawn_stateless(&mut sim.world);
-        region::reach_all(&mut sim.world);
+        region::hold_whole(&mut sim.world);
         let guard = sim.npc("guard");
         sim.tick();
 

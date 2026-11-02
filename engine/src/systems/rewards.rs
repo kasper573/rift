@@ -3,7 +3,7 @@ use bevy_ecs::prelude::*;
 
 use crate::core::content::Content;
 use crate::core::math::{Pos, Rng};
-use crate::core::time::{self};
+use crate::core::time;
 use crate::core::units::Meters;
 use crate::systems::GameSettings;
 use crate::systems::combat::Died;

@@ -753,7 +753,6 @@ fn fit(editor: &mut Editor, map: &OpenWorldMap, rect: Rect) {
             view.zoom = navigation::fit_zoom(
                 rect.size() - Vec2::splat(80.0),
                 Vec2::new(bounds.width(), bounds.height()),
-                PX_PER_METER,
             )
             .clamp(MIN_ZOOM, MAX_ZOOM);
         }

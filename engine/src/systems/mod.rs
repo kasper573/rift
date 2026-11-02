@@ -45,7 +45,7 @@ pub mod worlds;
 
 use bevy_app::App;
 use bevy_ecs::message::{Message, Messages};
-use bevy_ecs::prelude::{Entity, Res, ResMut, Resource, World};
+use bevy_ecs::prelude::{Entity, ResMut, Resource, World};
 use bevy_replication::FromClient;
 use schemars::JsonSchema;
 
@@ -57,7 +57,7 @@ use crate::core::babble::{BabblePlugin, Speech};
 use crate::core::content::sync::SyncedContent;
 use crate::core::content::{
     Content, ContentFolder, ContentProblem, ContentRegistry, ContentVersion, LoadPurpose,
-    LoadReport, Loading, MODULES, RowCheck, SETTINGS_FILE, Settings,
+    LoadReport, Loading, MODULES, RowCheck, SETTINGS_FILE, SettingsFile,
 };
 use crate::core::gui::GuiPlugin;
 use crate::core::interpolate::SnapshotPlugin;
@@ -191,17 +191,17 @@ pub struct GameSettings {
     /// How long a player's claim on a foe holds after their last hit: whoever holds it when the
     /// foe falls is credited with the fall, and what it drops is theirs.
     pub claims_last: Seconds,
-    pub slots: Slots,
-    pub drops: Drops,
-    pub reading: Reading,
-    pub notices: Notices,
-    pub words: Words,
+    pub slots: SlotCounts,
+    pub drops: DroppedItems,
+    pub reading: ReadingPace,
+    pub notices: NoticeTimes,
+    pub words: GameWords,
     pub typing: Typing,
     pub lettering: Lettering,
     pub speech: Speech,
     pub hearing: Hearing,
     pub look: Look,
-    pub relations: Relations,
+    pub relations: SideRelations,
     /// How soon after each other like entries of a player's history count as one, a run of loot
     /// or kills read as a tally.
     pub history_merges_within: Seconds,
@@ -210,7 +210,7 @@ pub struct GameSettings {
 /// How much a player keeps.
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Slots {
+pub struct SlotCounts {
     /// Stacks of items in a bag; the most rewards a quest may hand out at once.
     pub bag: u32,
     /// Slots of a hotbar, however a player lays them out.
@@ -223,7 +223,7 @@ pub struct Slots {
 /// npcs hostile to them.
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Relations {
+pub struct SideRelations {
     /// Characters to each other.
     pub characters: combat::Regard,
     pub characters_and_friendly: combat::Regard,
@@ -237,7 +237,7 @@ pub struct Relations {
 /// What the game says in its own voice where the engine puts it into words.
 #[derive(JsonSchema, Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Words {
+pub struct GameWords {
     /// The player's choice taking up a quest offered to them.
     pub accept_quest: String,
     /// The player's choice turning a quest offer down.
@@ -262,12 +262,12 @@ pub struct Words {
 /// stays at least a glance before a newer one in its place replaces it.
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Reading {
+pub struct ReadingPace {
     pub glance: Seconds,
     pub per_word: Seconds,
 }
 
-impl Reading {
+impl ReadingPace {
     /// How long a notice of `words` stays.
     pub fn of(self, words: usize) -> Seconds {
         Seconds(self.glance.0 + self.per_word.0 * words as f32)
@@ -277,7 +277,7 @@ impl Reading {
 /// How the notices that aren't read move.
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Notices {
+pub struct NoticeTimes {
     /// How long a number bursting out of an actor flies before it is gone.
     pub pops_last: Seconds,
     /// How long an area stands settled after it comes into view before its intro lands, so the
@@ -288,7 +288,7 @@ pub struct Notices {
 /// What becomes of items on the ground.
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 #[serde(deny_unknown_fields)]
-pub struct Drops {
+pub struct DroppedItems {
     /// How long an item lies on the ground, unless what dropped it says otherwise.
     pub last: Seconds,
     /// How far from where they fell several items lie, around it.
@@ -377,12 +377,8 @@ pub fn server_app(
                 (
                     item::pickups,
                     interact::interactions,
-                    (
-                        dialogue::hold,
-                        dialogue::refresh.run_if(on_replication_tick),
-                    )
-                        .chain(),
-                    (shop::hold, shop::refresh.run_if(on_replication_tick)).chain(),
+                    (dialogue::hold, dialogue::refresh.run_if(replication_tick)).chain(),
+                    (shop::hold, shop::refresh.run_if(replication_tick)).chain(),
                     item::expire_drops,
                     player::join,
                     player::respawn,
@@ -394,7 +390,7 @@ pub fn server_app(
                     chat::rebroadcast,
                     belongings::notify_changes,
                     history::backfill,
-                    identity::name_replicated.run_if(on_replication_tick),
+                    identity::name_replicated.run_if(replication_tick),
                 )
                     .chain(),
             )
@@ -538,9 +534,8 @@ pub fn client_app(
     app
 }
 
-/// One tick of one area's world, as [`worlds::tick`] steps each awake one. The world is stepped
-/// rather than its `App`, which can't cross threads; for a headless app this is what
-/// `App::update` does.
+/// One tick of one area's world. The world is stepped rather than its `App`, which can't cross
+/// threads; for a headless app this is what `App::update` does.
 pub fn step_area(world: &mut World, clock: WallClock) {
     world.insert_resource(clock);
     world.run_schedule(bevy_app::Main);
@@ -705,7 +700,7 @@ pub fn tables() -> ContentRegistry {
     registry
 }
 
-impl Settings for GameSettings {
+impl SettingsFile for GameSettings {
     fn content_version(&self) -> &ContentVersion {
         &self.content_version
     }
@@ -785,8 +780,6 @@ fn check_settings(loading: &mut Loading) {
     }
 }
 
-/// The rules of a look a schema can't state: a camera that can see, between its own limits, with
-/// its zooms in order.
 fn check_typing(check: &mut RowCheck, typing: &Typing) {
     check.at_least("/typing/slowest", typing.slowest.0, 1.0, "letters a second");
     check.range(
@@ -879,6 +872,8 @@ fn check_hearing(check: &mut RowCheck, hearing: &Hearing) {
     check.at_least("/hearing/glide", hearing.glide.0, 0.01, "seconds");
 }
 
+/// The rules of a look a schema can't state: a camera that can see, between its own limits, with
+/// its zooms in order.
 fn check_look(check: &mut RowCheck, look: &Look) {
     let camera = &look.camera;
     check.range("/look/camera/fov", camera.fov.0, 1.0, 170.0, "degrees");
@@ -951,10 +946,6 @@ struct ReplicationClock(u64);
 
 fn advance_replication_clock(mut clock: ResMut<ReplicationClock>) {
     clock.0 = clock.0.wrapping_add(1);
-}
-
-fn on_replication_tick(clock: Res<ReplicationClock>) -> bool {
-    clock.0.is_multiple_of(REPLICATION_INTERVAL)
 }
 
 /// Whether this tick is one the server replicates on; a world without the clock replicates every

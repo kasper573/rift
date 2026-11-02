@@ -18,13 +18,13 @@ use engine::systems::item::ItemId;
 use engine::systems::npc::{NpcDef, NpcModule};
 use engine::systems::player::PlayerDef;
 use engine::systems::player::snapshot::CharacterSnapshot;
-use engine::systems::quest::card::{Moment, QuestCardLook};
+use engine::systems::quest::card::{QuestCardLook, QuestMoment};
 use engine::systems::quest::{self, Parties, QuestDef};
 use engine::systems::script::{EffectReach, RiftScripts};
 use engine::systems::skill::SkillDef;
 use engine::systems::status::StatusEffectDef;
 use strum::VariantArray;
-use ui::card::{self};
+use ui::card;
 use ui::egui::{self, Ui, Vec2};
 use ui::face;
 use ui::glyph::{self, Mark};
@@ -204,7 +204,7 @@ fn show_status(editor: &mut Editor, ui: &mut Ui, key: &str) {
         effect,
         applied: state.status_applied,
     });
-    stage::show(editor, ui, &format!("status_effect/{key}"), scene, true);
+    stage::show(editor, ui, &format!("status_effect/{key}"), scene);
 }
 
 /// A skill cast on a loop by a character set up to cast it, at whatever it targets, in a game
@@ -219,7 +219,7 @@ fn show_skill(editor: &mut Editor, ui: &mut Ui, key: &str) {
         return;
     };
     let scene = Scene::Live(Scenario::Skill { skill });
-    if let Some(shown) = stage::show(editor, ui, &format!("skill/{key}"), scene, true)
+    if let Some(shown) = stage::show(editor, ui, &format!("skill/{key}"), scene)
         && let Some(report) = shown.report
     {
         ui.label(theme::muted(report).size(12.0));
@@ -509,7 +509,7 @@ fn quest_card(ui: &mut Ui, images: &mut ProjectImages, content: &Content, key: &
     let look = QuestCardLook {
         width: width.min(card::DOCKED_WIDTH),
         max_height: card::MAX_HEIGHT,
-        moment: Some(Moment::Offer),
+        moment: Some(QuestMoment::Offer),
     };
     ui.vertical(|ui| {
         ui.set_width(width);

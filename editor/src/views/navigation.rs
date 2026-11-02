@@ -77,8 +77,9 @@ pub(crate) fn pixels_per_unit(available: Vec2, content: Vec2) -> f32 {
     (available.x / content.x.max(1.0)).min(available.y / content.y.max(1.0))
 }
 
-pub(crate) fn fit_zoom(available: Vec2, content_tiles: Vec2, tile_px: f32) -> f32 {
-    pixels_per_unit(available, content_tiles) / tile_px
+/// The zoom that fits `content`, in metres, into `available` pixels.
+pub(crate) fn fit_zoom(available: Vec2, content: Vec2) -> f32 {
+    pixels_per_unit(available, content) / PX_PER_METER
 }
 
 fn offset<U>(v: Vec2) -> Offset<U> {

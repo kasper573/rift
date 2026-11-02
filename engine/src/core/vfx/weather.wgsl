@@ -7,8 +7,6 @@
 // The engine paints the weather into a picture a texel per value, and `read_weather` reads it
 // out as each entry of the header starts.
 
-const TREADS: u32 = 24u;
-
 struct Weather {
     wind: vec2<f32>,
     time: f32,

@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use bevy_terminal::{LineTone, TerminalInput};
+use bevy_terminal::TerminalInput;
 use ui::egui;
 use ui::egui::{Id, Stroke, Ui};
 use ui::face::TextRole;
@@ -48,11 +48,9 @@ fn log(ui: &mut Ui, world: &World) {
     sheet::scroll(ui, area, |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         for line in world.resource::<TerminalLog>().lines() {
-            let color = match line.tone {
-                LineTone::Said => ink::INK,
-                LineTone::Failed => ink::RUBRIC,
-            };
-            ui.add(egui::Label::new(TextRole::Mono.rich(line.text.as_str()).color(color)).wrap());
+            ui.add(
+                egui::Label::new(TextRole::Mono.rich(line.text.as_str()).color(ink::INK)).wrap(),
+            );
             ui.add_space(2.0);
             form::rule_with(ui, Stroke::new(1.0, ink::ink_wash(0.12)));
             ui.add_space(4.0);

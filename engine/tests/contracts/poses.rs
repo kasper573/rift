@@ -46,7 +46,7 @@ fn a_script_sits_a_body_down_and_stands_it_up_through_the_clips_its_skeleton_nam
             .add(actor::playing::progress)
             .plan(script::RunFlows::default());
         script::spawn_stateless(&mut sim.world);
-        region::reach_all(&mut sim.world);
+        region::hold_whole(&mut sim.world);
         let guard = sim.npc("guard");
         sim.tick();
 

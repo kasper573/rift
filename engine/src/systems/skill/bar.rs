@@ -35,7 +35,7 @@ use crate::systems::reach::Engaged;
 use crate::systems::script::condition;
 use crate::systems::settings::{HotbarKey, HotbarShape, UserSettings};
 use crate::systems::skill::{CastAim, aim};
-use crate::systems::{notification, stat};
+use crate::systems::{GameSettings, notification, stat};
 use ui::paint;
 use ui::panel::{self, GripCorner};
 
@@ -72,6 +72,7 @@ impl HudWidget for HotbarWidget {
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
         let shape = shown_shape(world, ui.ctx());
+        let slots = slots(world);
         let framed = slip::show(ui, |ui| {
             ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing = Vec2::splat(GAP);
@@ -89,7 +90,10 @@ impl HudWidget for HotbarWidget {
                     .show(ui, |ui| {
                         for row in 0..shape.rows {
                             for column in 0..shape.columns {
-                                hotbar_slot(ui, world, HotbarSlot(row * shape.columns + column));
+                                let slot = row * shape.columns + column;
+                                if slot < slots {
+                                    hotbar_slot(ui, world, HotbarSlot(slot));
+                                }
                             }
                             ui.end_row();
                         }
@@ -145,7 +149,7 @@ pub fn pin(world: &mut World, entry: HotbarEntry) {
     let Some(me) = session::me(world) else {
         return;
     };
-    let shown = world.resource::<UserSettings>().hotbar_shape().slots();
+    let shown = shown(world);
     let free = world
         .get::<Hotbar>(me)
         .map_or(Some(HotbarSlot(0)), |hotbar| hotbar.first_free(shown));
@@ -184,8 +188,7 @@ pub fn keys(world: &mut World) {
     let Some(me) = session::me(world) else {
         return;
     };
-    let shape = world.resource::<UserSettings>().hotbar_shape();
-    let pressed = (0..shape.slots())
+    let pressed = (0..shown(world))
         .map(HotbarSlot)
         .find(|slot| key_pressed(world, *slot));
     let Some(slot) = pressed else {
@@ -255,12 +258,11 @@ pub fn forget(mut state: ResMut<BarState>) {
 }
 
 pub fn report(world: &World) -> Vec<SlotReport> {
-    let shape = world.resource::<UserSettings>().hotbar_shape();
     let hotbar = session::my_character(world)
         .and_then(|me| me.get::<Hotbar>())
         .cloned()
         .unwrap_or_default();
-    (0..shape.slots())
+    (0..shown(world))
         .map(HotbarSlot)
         .map(|slot| {
             let entry = hotbar.entry(slot);
@@ -359,12 +361,12 @@ impl SlotView {
                 let held = world
                     .get::<Inventory>(me)
                     .map_or(0, |inventory| inventory.count(item));
-                let worn = equipment::wears(world, me, item);
+                let holds = super::hotbar::holds_item(world, me, item);
                 SlotView {
                     icon: Some(def.icon.clone()),
                     count: held,
-                    dimmed: held == 0 && !worn,
-                    fill: if held == 0 && !worn {
+                    dimmed: !holds,
+                    fill: if !holds {
                         SlotFill::Blocked(Glyph::Zero)
                     } else {
                         SlotFill::Ready
@@ -1026,8 +1028,7 @@ fn capture(world: &mut World, slot: HotbarSlot) {
         );
         return;
     }
-    let shown = world.resource::<UserSettings>().hotbar_shape().slots();
-    let holder = (0..shown)
+    let holder = (0..shown(world))
         .map(HotbarSlot)
         .filter(|other| *other != slot)
         .find(
@@ -1083,7 +1084,7 @@ fn rebind_panel(ui: &mut Ui, world: &World, bar: Rect) {
 
 /// The shape drawn now: the saved one, or the one the grip is being dragged toward, in whole slots.
 fn shown_shape(world: &mut World, gui: &egui::Context) -> HotbarShape {
-    let saved = world.resource::<UserSettings>().hotbar_shape();
+    let saved = shape(world);
     let Some(resizing) = world.resource::<BarState>().resizing else {
         return saved;
     };
@@ -1102,6 +1103,7 @@ fn shown_shape(world: &mut World, gui: &egui::Context) -> HotbarShape {
                 .round()
                 .max(1.0) as u32,
         }
+        .within(slots(world))
     });
     if !down {
         world.resource_mut::<BarState>().resizing = None;
@@ -1117,7 +1119,7 @@ fn resize(world: &mut World, ui: &Ui, grip: &egui::Response, outer: Rect, corner
         && let Some(grab) = ui.input(|input| input.pointer.press_origin())
     {
         world.resource_mut::<BarState>().resizing = Some(Resizing {
-            from: world.resource::<UserSettings>().hotbar_shape(),
+            from: shape(world),
             grab,
             corner,
         });
@@ -1125,4 +1127,26 @@ fn resize(world: &mut World, ui: &Ui, grip: &egui::Response, outer: Rect, corner
     if world.resource::<BarState>().resizing.is_some() {
         paint::dashed_rect(ui.painter(), outer, Stroke::new(1.0, ink::OCHRE), 5.0, 3.0);
     }
+}
+
+/// How many slots the game's hotbar has.
+fn slots(world: &World) -> u32 {
+    world
+        .resource::<Content>()
+        .built::<GameSettings>()
+        .slots
+        .hotbar
+}
+
+/// The bar as the player shaped it, as far as the game's hotbar fills it.
+fn shape(world: &World) -> HotbarShape {
+    world
+        .resource::<UserSettings>()
+        .hotbar_shape()
+        .within(slots(world))
+}
+
+/// How many slots the bar shows.
+fn shown(world: &World) -> u32 {
+    shape(world).slots().min(slots(world))
 }

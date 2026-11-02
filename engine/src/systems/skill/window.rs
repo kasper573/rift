@@ -92,25 +92,25 @@ impl Default for TreeView {
 
 /// The rank each node is picked up to in the window, not yet confirmed.
 #[derive(Resource, Default, Clone, Debug, PartialEq)]
-pub struct Plan(pub BTreeMap<NodeKey, Rank>);
+pub struct SkillPlan(pub BTreeMap<NodeKey, Rank>);
 
 /// Picks the server has since learned, or that lost their footing, leave the plan.
 pub fn settle_plan(world: &mut World) {
     let Some(sheet) = Sheet::of(world) else {
-        world.resource_mut::<Plan>().0.clear();
+        world.resource_mut::<SkillPlan>().0.clear();
         return;
     };
     let content = world.resource::<Content>().clone();
     let def = sheet.class.get(&content);
-    let mut plan = world.resource::<Plan>().clone();
+    let mut plan = world.resource::<SkillPlan>().clone();
     plan.0
         .retain(|key, rank| sheet.learned.rank(key) < *rank && def.tree.node(key).is_some());
-    if plan != *world.resource::<Plan>() {
-        *world.resource_mut::<Plan>() = plan;
+    if plan != *world.resource::<SkillPlan>() {
+        *world.resource_mut::<SkillPlan>() = plan;
     }
 }
 
-pub fn forget_plan(mut plan: ResMut<Plan>) {
+pub fn forget_plan(mut plan: ResMut<SkillPlan>) {
     plan.0.clear();
 }
 
@@ -135,7 +135,7 @@ impl Sheet {
         })
     }
 
-    fn planned_ranks(&self, plan: &Plan) -> BTreeMap<NodeKey, Rank> {
+    fn planned_ranks(&self, plan: &SkillPlan) -> BTreeMap<NodeKey, Rank> {
         let mut ranks = self.learned.0.clone();
         for (key, rank) in &plan.0 {
             ranks.insert(key.clone(), *rank);
@@ -143,7 +143,7 @@ impl Sheet {
         ranks
     }
 
-    fn picked_cost(&self, content: &Content, def: &ClassDef, plan: &Plan) -> SkillPoints {
+    fn picked_cost(&self, content: &Content, def: &ClassDef, plan: &SkillPlan) -> SkillPoints {
         plan.0
             .iter()
             .filter_map(|(key, rank)| {
@@ -180,7 +180,7 @@ impl NodeState {
 fn header(ui: &mut Ui, world: &mut World, sheet: &Sheet) {
     let content = world.resource::<Content>().clone();
     let def = sheet.class.get(&content);
-    let plan = world.resource::<Plan>().clone();
+    let plan = world.resource::<SkillPlan>().clone();
     let picked = sheet.picked_cost(&content, def, &plan);
     let left = SkillPoints(sheet.to_spend.0.saturating_sub(picked.0));
     ui.horizontal(|ui| {
@@ -303,7 +303,7 @@ fn tree(ui: &mut Ui, world: &mut World, sheet: &Sheet, viewport: Rect) -> TreeVi
 fn draw_canvas(ui: &mut Ui, world: &mut World, sheet: &Sheet, def: &ClassDef, place: Placement) {
     let content = world.resource::<Content>().clone();
     let tree = &def.tree;
-    let plan = world.resource::<Plan>().clone();
+    let plan = world.resource::<SkillPlan>().clone();
     let planned = sheet.planned_ranks(&plan);
     if let Some(backdrop) = &def.backdrop
         && let Some(image) = gui::image(world, &backdrop.image)
@@ -449,7 +449,7 @@ fn raise(world: &mut World, sheet: &Sheet, key: &NodeKey, state: NodeState) {
         return;
     };
     let skill = node.skill.get(&content);
-    let plan = world.resource::<Plan>().clone();
+    let plan = world.resource::<SkillPlan>().clone();
     let current = plan.0.get(key).copied().unwrap_or(sheet.learned.rank(key));
     let next = Rank(current.0 + 1);
     let cost = SkillPoints(skill.cost_to(next).0 - skill.cost_to(current).0);
@@ -458,13 +458,16 @@ fn raise(world: &mut World, sheet: &Sheet, key: &NodeKey, state: NodeState) {
         InterfaceSound::UiRefuse.play(world);
         return;
     }
-    world.resource_mut::<Plan>().0.insert(key.clone(), next);
+    world
+        .resource_mut::<SkillPlan>()
+        .0
+        .insert(key.clone(), next);
     InterfaceSound::UiPick.play(world);
 }
 
 /// The last rank picked on the node leaves the plan, and with it every pick that stood on it.
 fn lower(world: &mut World, sheet: &Sheet, key: &NodeKey) {
-    let mut plan = world.resource::<Plan>().clone();
+    let mut plan = world.resource::<SkillPlan>().clone();
     let Some(current) = plan.0.get(key).copied() else {
         InterfaceSound::UiRefuse.play(world);
         return;
@@ -498,12 +501,12 @@ fn lower(world: &mut World, sheet: &Sheet, key: &NodeKey) {
             None => break,
         }
     }
-    *world.resource_mut::<Plan>() = plan;
+    *world.resource_mut::<SkillPlan>() = plan;
     InterfaceSound::UiMove.play(world);
 }
 
 fn dock(ui: &mut Ui, world: &mut World, sheet: &Sheet, room: Rect) {
-    let plan = world.resource::<Plan>().clone();
+    let plan = world.resource::<SkillPlan>().clone();
     if plan.0.is_empty() {
         return;
     }
@@ -534,7 +537,7 @@ fn dock(ui: &mut Ui, world: &mut World, sheet: &Sheet, room: Rect) {
                 world.write_message(LearnSkillsRequest { ranks });
                 InterfaceSound::UiChime.play(world);
             } else if reset.clicked() {
-                world.resource_mut::<Plan>().0.clear();
+                world.resource_mut::<SkillPlan>().0.clear();
                 InterfaceSound::UiMove.play(world);
             }
         },

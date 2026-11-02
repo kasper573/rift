@@ -33,7 +33,7 @@ pub const NAME_RULE: &str = "1 to 64 of a to z, 0 to 9, _ and -, not starting wi
 /// How a content file of a type is kept: one `<name>.<type>.json`, or a bundle folder
 /// `<name>.<type>/` of its `config.json` and the parts its type declares.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub enum Shape {
+pub enum FileShape {
     Json,
     Bundle,
 }
@@ -44,7 +44,7 @@ pub enum GameFile {
     Settings,
     Content {
         table: &'static str,
-        shape: Shape,
+        shape: FileShape,
     },
     Media(AssetKind),
     Note,
@@ -57,7 +57,7 @@ pub enum GameFile {
 #[derive(Clone, Copy, Debug)]
 pub struct FileType {
     pub table: &'static str,
-    pub shape: Shape,
+    pub shape: FileShape,
     pub parts: &'static [PartSpec],
 }
 
@@ -124,10 +124,10 @@ pub fn classify(
         let bundle = rest.and_then(|table| {
             types
                 .iter()
-                .find(|ty| ty.table == table && ty.shape == Shape::Bundle)
+                .find(|ty| ty.table == table && ty.shape == FileShape::Bundle)
         });
         return match bundle {
-            Some(ty) => content_named(stem, name, ty, Shape::Bundle),
+            Some(ty) => content_named(stem, name, ty, FileShape::Bundle),
             None => Ok(None),
         };
     }
@@ -146,7 +146,9 @@ pub fn classify(
         .filter(|table| !table.is_empty() && !table.contains('.'))
     {
         return match types.iter().find(|ty| ty.table == table) {
-            Some(ty) if ty.shape == Shape::Json => content_named(stem, name, ty, Shape::Json),
+            Some(ty) if ty.shape == FileShape::Json => {
+                content_named(stem, name, ty, FileShape::Json)
+            }
             Some(ty) => Err(ContentProblem::new(
                 "bundle kept as one file",
                 format!("file {name}"),
@@ -155,7 +157,7 @@ pub fn classify(
                     ty.table, ty.table
                 ),
             )),
-            None => Err(unknown_type(name, table, types, Shape::Json)),
+            None => Err(unknown_type(name, table, types, FileShape::Json)),
         };
     }
     match AssetKind::of(name) {
@@ -173,7 +175,7 @@ fn content_named(
     stem: &str,
     name: &str,
     ty: &FileType,
-    shape: Shape,
+    shape: FileShape,
 ) -> Result<Option<GameFile>, ContentProblem> {
     if !valid_name(stem) {
         return Err(ContentProblem::new(
@@ -196,7 +198,7 @@ fn misplaced_settings(name: &str) -> ContentProblem {
     )
 }
 
-fn unknown_type(name: &str, table: &str, types: &[FileType], shape: Shape) -> ContentProblem {
+fn unknown_type(name: &str, table: &str, types: &[FileType], shape: FileShape) -> ContentProblem {
     let known: Vec<String> = types
         .iter()
         .filter(|ty| ty.shape == shape)
@@ -265,10 +267,10 @@ pub fn fields_file(path: &str) -> String {
 }
 
 /// The path of the content file of `table` named `name` in `folder`.
-pub fn content_path(folder: &str, name: &str, table: &str, shape: Shape) -> String {
+pub fn content_path(folder: &str, name: &str, table: &str, shape: FileShape) -> String {
     let file = match shape {
-        Shape::Json => format!("{name}.{table}.json"),
-        Shape::Bundle => format!("{name}.{table}"),
+        FileShape::Json => format!("{name}.{table}.json"),
+        FileShape::Bundle => format!("{name}.{table}"),
     };
     match folder {
         "" => file,
@@ -307,7 +309,7 @@ pub fn bundle_of<'f>(file: &'f str, bundles: &[&str]) -> Option<(&'f str, &'f st
 pub fn bundle_tables(types: &[FileType]) -> Vec<&'static str> {
     types
         .iter()
-        .filter(|ty| ty.shape == Shape::Bundle)
+        .filter(|ty| ty.shape == FileShape::Bundle)
         .map(|ty| ty.table)
         .collect()
 }
@@ -347,7 +349,7 @@ fn walk(
             Ok(Some(GameFile::Other)) => listing.other.push(path),
             Ok(Some(GameFile::Media(_))) => listing.media.push(path),
             Ok(Some(GameFile::Content { table, shape })) => {
-                if shape == Shape::Bundle {
+                if shape == FileShape::Bundle {
                     let declared = types
                         .iter()
                         .find(|ty| ty.table == table)

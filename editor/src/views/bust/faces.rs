@@ -15,7 +15,7 @@ use engine::core::content::ContentFile;
 use engine::core::script::Node;
 use engine::systems::dialogue::bust::{BUST_FACES, BustDef, GenericExpression};
 use engine::systems::npc::NpcDef;
-use engine::systems::script::{Line, ScriptDef, Speaker};
+use engine::systems::script::{ScriptDef, ScriptLine, Speaker};
 use strum::VariantArray;
 use ui::egui::{Color32, Rect as ERect, Sense, Ui, Vec2};
 use ui::glyph::Mark;
@@ -288,7 +288,7 @@ pub fn lines(editor: &Editor, key: &str) -> Vec<FaceLine> {
     found
 }
 
-pub(crate) fn face_lines(script: &ScriptDef) -> impl Iterator<Item = (&String, &Line)> {
+pub(crate) fn face_lines(script: &ScriptDef) -> impl Iterator<Item = (&String, &ScriptLine)> {
     script.nodes.iter().flat_map(|(name, node)| {
         let lines = match node {
             Node::Dialogue(dialogue) => dialogue.lines.as_slice(),
@@ -299,14 +299,17 @@ pub(crate) fn face_lines(script: &ScriptDef) -> impl Iterator<Item = (&String, &
 }
 
 /// Whether a line is spoken by an npc shown in the bust at `key`.
-pub(crate) fn speaks_with(editor: &Editor, key: &str) -> Option<impl Fn(&Line) -> bool + use<>> {
+pub(crate) fn speaks_with(
+    editor: &Editor,
+    key: &str,
+) -> Option<impl Fn(&ScriptLine) -> bool + use<>> {
     let reader = editor.reader()?;
     let speakers: Vec<String> = super::users(editor, key)
         .into_iter()
         .filter(|(table, _)| table == NpcDef::TABLE)
         .map(|(_, key)| key)
         .collect();
-    Some(move |line: &Line| match line.by {
+    Some(move |line: &ScriptLine| match line.by {
         Speaker::Npc(npc) => reader
             .path_of(npc)
             .is_some_and(|npc| speakers.iter().any(|speaker| speaker == npc)),

@@ -14,6 +14,6 @@ pub use protocol::{
     ToClient,
 };
 pub use server::{
-    ClientLink, Everyone, Interest, Replicated, ReplicationInterest, Sender, Sending,
+    ClientLink, Interest, InterestInAll, Replicated, ReplicationInterest, Sender, Sending,
     ServerReplicationPlugin, ServerSystems,
 };

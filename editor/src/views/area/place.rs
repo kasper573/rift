@@ -1,6 +1,6 @@
 //! The Place tool: a prop from the palette follows the pointer over the terrain as a ghost, snapped
 //! to the half metre and turned as asked, and a click stands one where it is; a blueprint from the
-//! Blueprints tab is stamped as before.
+//! Blueprints tab is stamped where a click puts it.
 
 use engine::core::math::Pos;
 use engine::core::units::{Degrees, Meters};
@@ -20,7 +20,7 @@ use crate::tabs::file_title;
 use crate::views::snap;
 
 /// How far one press of the turn key turns a prop.
-pub const TURN_STEP: Degrees = Degrees(15.0);
+const TURN_STEP: Degrees = Degrees(15.0);
 
 pub fn input(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame) {
     let view = editor.views.area.view(view_key);

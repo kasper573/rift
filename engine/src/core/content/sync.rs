@@ -21,6 +21,9 @@ use crate::core::os::FetchFailure;
 use crate::core::time::Backoff;
 use crate::core::units::Seconds;
 
+/// Where the server serves its content's manifest.
+pub const MANIFEST: &str = "/content/manifest";
+
 /// Where the server serves a content file by its hash.
 pub const FILES: &str = "/content/files/";
 
@@ -138,8 +141,8 @@ impl Default for SyncPolicy {
 pub struct SyncProgress {
     pub name: Option<String>,
     pub phase: SyncPhase,
-    pub read: Counted,
-    pub fetched: Counted,
+    pub read: SyncTally,
+    pub fetched: SyncTally,
     pub files_in_index: usize,
     pub rows_changed: bool,
     pub retrying: usize,
@@ -147,16 +150,16 @@ pub struct SyncProgress {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
-pub struct Counted {
+pub struct SyncTally {
     pub bytes: u64,
     pub bytes_total: u64,
     pub files: usize,
     pub files_total: usize,
 }
 
-impl Counted {
-    fn of(files: &[IndexedFile]) -> Counted {
-        Counted {
+impl SyncTally {
+    fn of(files: &[IndexedFile]) -> SyncTally {
+        SyncTally {
             bytes: 0,
             bytes_total: files.iter().map(|file| file.held.size).sum(),
             files: 0,
@@ -388,7 +391,7 @@ pub fn well_formed_hash(hash: &str) -> bool {
     hash.len() == 64 && hash.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
 }
 
-pub fn unpack_rows(bundle: &[u8]) -> io::Result<Vec<(String, Vec<u8>)>> {
+fn unpack_rows(bundle: &[u8]) -> io::Result<Vec<(String, Vec<u8>)>> {
     use std::io::Read;
     let decoder = flate2::read::GzDecoder::new(bundle);
     let mut archive = tar::Archive::new(decoder);
@@ -449,7 +452,7 @@ impl Run<'_> {
                 ..SyncProgress::default()
             }
         });
-        let manifest = self.fetch_with_retries("/content/manifest", None).await?;
+        let manifest = self.fetch_with_retries(MANIFEST, None).await?;
         let manifest: Manifest = serde_json::from_slice(&manifest)
             .map_err(|error| Attempt::Failed(format!("the manifest did not parse: {error}")))?;
         self.status
@@ -477,7 +480,7 @@ impl Run<'_> {
         self.status.update(|progress| {
             progress.phase = SyncPhase::Reading;
             progress.files_in_index = index.files.len();
-            progress.read = Counted::of(&kept);
+            progress.read = SyncTally::of(&kept);
         });
         let mut held: HashMap<String, Arc<[u8]>> = HashMap::new();
         let spoilt: Vec<IndexedFile> = kept
@@ -498,7 +501,7 @@ impl Run<'_> {
                 updating: !stored.is_empty(),
             };
             progress.rows_changed = !stored.is_empty() && !stored.contains(&manifest.rows.hash);
-            progress.fetched = Counted::of(&missing);
+            progress.fetched = SyncTally::of(&missing);
         });
         let mut downloads = stream::iter(missing)
             .map(|file| async move {

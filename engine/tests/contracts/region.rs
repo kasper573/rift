@@ -1,5 +1,4 @@
 use bevy_ecs::prelude::*;
-use engine::core::ground::TileAt;
 use engine::core::math::Pos;
 use engine::systems::area::{self, AreaDef};
 use engine::systems::movement::Position;
@@ -26,7 +25,6 @@ fn an_areas_ground_and_what_stands_on_it_come_to_life_as_a_player_comes_near() {
     let mut sim = Sim::new(content.clone());
     sim.serve("field").add((sleep::settle, region::settle));
     let field = area::load(&content, sim.id::<AreaDef>("field"));
-    let (near, far) = (TileAt { column: 0, row: 0 }, TileAt { column: 2, row: 0 });
     let crows = |world: &mut World| -> Vec<f32> {
         let mut crows: Vec<f32> = world
             .query_filtered::<&Position, With<Npc>>()
@@ -44,7 +42,6 @@ fn an_areas_ground_and_what_stands_on_it_come_to_life_as_a_player_comes_near() {
         [10.0],
         "only what stands near the player"
     );
-    assert!(field.held().contains(&near) && !field.held().contains(&far));
     assert!(field.mesh().walkable(Pos::new(20.0, 6.0)));
     assert!(!field.mesh().walkable(Pos::new(540.0, 6.0)));
 
@@ -61,7 +58,6 @@ fn an_areas_ground_and_what_stands_on_it_come_to_life_as_a_player_comes_near() {
         crows(&mut sim.world)
     );
     assert_eq!(crows(&mut sim.world), [10.0, 550.0]);
-    assert!(field.held().contains(&far));
     assert!(field.mesh().walkable(Pos::new(540.0, 6.0)));
 
     sim.world

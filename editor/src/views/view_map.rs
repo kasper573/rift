@@ -54,10 +54,6 @@ impl<V> ViewMap<V> {
 }
 
 impl<V: Default> ViewMap<V> {
-    pub fn ensure_default(&mut self, key: &str) {
-        self.0.entry(key.to_owned()).or_default();
-    }
-
     /// The view of `key`, made as a fresh view when it isn't yet.
     pub fn view_or_default(&mut self, key: &str) -> &mut V {
         self.0.entry(key.to_owned()).or_default()

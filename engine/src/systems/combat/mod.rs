@@ -24,9 +24,8 @@ use crate::systems::vfx::{self, VfxFixture};
 use crate::systems::visibility;
 
 pub fn register(app: &mut App) {
-    use bevy_replication::AppMessageExt;
+    use bevy_replication::{AppMessageExt, AppReplicationExt};
 
-    use bevy_replication::AppReplicationExt;
     app.add_mapped_client_message::<AttackRequest>()
         .replicate::<Attitude>();
 }
@@ -207,11 +206,11 @@ pub fn inflict(world: &mut World, target: Entity, attacker: Option<Entity>, dama
     stat::apply_damage(world, target, damage);
 }
 
-/// The one place a fallen actor is declared dead. Every health change lands before this runs, so
-/// however health reached zero, the death is recorded and announced exactly once.
-/// Whoever's stats just left them no health falls: an entity falls only as its stats change.
+/// The actors still standing whose stats just changed: an entity falls only as its stats change.
 pub type Standing = QueryState<(Entity, &'static Stats), (Changed<Stats>, Without<Dead>)>;
 
+/// The one place a fallen actor is declared dead. Every health change lands before this runs, so
+/// however health reached zero, the death is recorded and announced exactly once.
 pub fn defeats(world: &mut World, standing: &mut Standing) {
     let time = time::uptime(world);
     let fallen: Vec<Entity> = standing

@@ -13,28 +13,7 @@ use testkit::{BODY, Game, Map, RUN_PACE, SPRINT_PACE, Sim, WALK_PACE, path, rig_
 const TICKS: usize = 240;
 
 #[test]
-fn asking_for_a_point_further_along_the_line_walks_on_as_if_asked_for_it_at_first() {
-    for end in [
-        Offset::new(8.0, 0.0),
-        Offset::new(0.0, -8.0),
-        Offset::new(-7.0, 7.0),
-    ] {
-        let once = Walk::start().toward(end).trail();
-        let mut walk = Walk::start().toward(end * 0.375);
-        let mut ticks = 0;
-        let extended = walk.trail_while(|walk| {
-            ticks += 1;
-            if ticks == 12 {
-                walk.ask(end);
-            }
-        });
-
-        assert_same_trail(&extended, &once, &format!("walking toward {end:?}"));
-    }
-}
-
-#[test]
-fn asking_again_or_for_every_point_along_a_walk_as_it_goes_walks_it_as_one() {
+fn asking_again_or_further_along_as_a_walk_goes_walks_on_as_one_without_a_pause() {
     let straight = [
         Offset::new(8.0, 0.0),
         Offset::new(0.0, -8.0),
@@ -47,10 +26,18 @@ fn asking_again_or_for_every_point_along_a_walk_as_it_goes_walks_it_as_one() {
     ];
     for end in straight {
         let once = Walk::start().toward(end).trail();
+        let mut walk = Walk::start().toward(end * 0.375);
+        let mut ticks = 0;
+        let extended = walk.trail_while(|walk| {
+            ticks += 1;
+            if ticks == 12 {
+                walk.ask(end);
+            }
+        });
+        assert_same_trail(&extended, &once, &format!("walking on toward {end:?}"));
         let again = Walk::start().toward(end).trail_while(|walk| walk.ask(end));
         assert_same_trail(&again, &once, &format!("asking again toward {end:?}"));
         for ahead in 1..=3 {
-            let once = Walk::start().toward(end).trail();
             assert_same_trail(
                 &spam(&once, ahead),
                 &once,
@@ -61,21 +48,9 @@ fn asking_again_or_for_every_point_along_a_walk_as_it_goes_walks_it_as_one() {
     for end in oblique {
         let once = Walk::start().toward(end).trail();
         assert_same_trail(&spam(&once, 1), &once, &format!("toward {end:?}"));
-    }
-}
-
-#[test]
-fn asking_for_points_further_along_a_walk_as_it_goes_never_holds_it_up() {
-    for end in [
-        Offset::new(8.0, 3.0),
-        Offset::new(-3.0, 7.0),
-        Offset::new(5.0, -6.0),
-    ] {
         for ahead in 2..=3 {
-            let once = Walk::start().toward(end).trail();
             let spammed = spam(&once, ahead);
             let arrived = arrival(&once);
-
             assert_eq!(arrival(&spammed), arrived, "{ahead} ahead toward {end:?}");
             assert_eq!(spammed.last(), Some(&end));
             assert!(
@@ -86,6 +61,23 @@ fn asking_for_points_further_along_a_walk_as_it_goes_never_holds_it_up() {
             );
         }
     }
+
+    let end = Offset::new(8.0, 0.0);
+    let drifted = Offset::new(8.0, 0.4);
+    let mut walk = Walk::start().toward(end);
+    let mut ticks = 0;
+    let trail = walk.trail_while(|walk| {
+        ticks += 1;
+        if ticks == 10 {
+            walk.ask(drifted);
+        }
+    });
+    assert_arrives(&trail, drifted, "a goal drifted a little");
+    let arrived = arrival(&trail);
+    assert!(
+        trail[..=arrived].windows(2).all(|pair| pair[0] != pair[1]),
+        "paused on the way to the drifted goal"
+    );
 }
 
 #[test]
@@ -109,27 +101,6 @@ fn a_point_on_the_way_ends_the_walk_there() {
         .expect("the walk to reach the point on the way");
     assert_same_trail(&cut[..arrived], &once[..arrived], "up to the stop");
     assert!(cut[arrived..].iter().all(at_stop));
-}
-
-#[test]
-fn a_goal_that_drifts_a_little_as_the_walk_goes_is_walked_on_to_without_a_pause() {
-    let end = Offset::new(8.0, 0.0);
-    let drifted = Offset::new(8.0, 0.4);
-    let mut walk = Walk::start().toward(end);
-    let mut ticks = 0;
-    let trail = walk.trail_while(|walk| {
-        ticks += 1;
-        if ticks == 10 {
-            walk.ask(drifted);
-        }
-    });
-
-    assert_arrives(&trail, drifted, "a goal drifted a little");
-    let arrived = arrival(&trail);
-    assert!(
-        trail[..=arrived].windows(2).all(|pair| pair[0] != pair[1]),
-        "paused on the way to the drifted goal"
-    );
 }
 
 #[test]

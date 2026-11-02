@@ -497,7 +497,7 @@ fn intro_row(title: &str) -> serde_json::Value {
 
 fn island(game: &Content) -> Sim {
     let mut sim = area(game, "island");
-    region::reach_all(&mut sim.world);
+    region::hold_whole(&mut sim.world);
     sim
 }
 

@@ -159,7 +159,7 @@ impl<V: Vocabulary> Procedure<V> {
             .collect()
     }
 
-    pub fn run_entry(&self) -> Option<StepIndex> {
+    fn run_entry(&self) -> Option<StepIndex> {
         self.entries
             .iter()
             .find(|(_, event)| event.is_run())
@@ -301,7 +301,7 @@ fn compile_modules<'c, V: Vocabulary>(
     }
 }
 
-pub fn compile_binding<'c, V: Vocabulary>(
+fn compile_binding<'c, V: Vocabulary>(
     content: &'c Content,
     binding: &Binding<'c, V>,
 ) -> Result<Arc<Procedure<V>>, ScriptError> {
@@ -1362,10 +1362,10 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
                 format!("expressions nest at most {} deep", expr::MAX_DEPTH),
             ));
         }
-        if expr.size() > expr::MAX_NODES {
+        if expr.size() > expr::MAX_EXPR_NODES {
             return Err(ScriptFault::new(
                 "out of range",
-                format!("expressions hold at most {} nodes", expr::MAX_NODES),
+                format!("expressions hold at most {} nodes", expr::MAX_EXPR_NODES),
             ));
         }
         self.typed_inner(expr)

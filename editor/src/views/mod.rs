@@ -114,7 +114,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
     share_content(editor, world);
     take_settings(editor, world);
     sound::sync(editor, world);
-    crate::stage::sync(editor, world);
+    crate::stage::sync(editor);
     area::viewport::sync(editor, world);
     crate::thumbs::props::sync(editor, world);
     crate::thumbs::areas::sync(editor, world);
@@ -145,14 +145,14 @@ fn take_settings(editor: &Editor, world: &mut World) {
     else {
         return;
     };
-    mirror(world, &settings.look);
-    mirror(world, &settings.hearing);
-    mirror(world, &settings.speech);
-    mirror(world, &settings.lettering);
-    mirror(world, &settings.typing.pace_for(None));
+    insert_if_changed(world, &settings.look);
+    insert_if_changed(world, &settings.hearing);
+    insert_if_changed(world, &settings.speech);
+    insert_if_changed(world, &settings.lettering);
+    insert_if_changed(world, &settings.typing.pace_for(None));
 }
 
-fn mirror<R: Resource + Clone + PartialEq>(world: &mut World, value: &R) {
+fn insert_if_changed<R: Resource + Clone + PartialEq>(world: &mut World, value: &R) {
     if world.get_resource::<R>() != Some(value) {
         world.insert_resource(value.clone());
     }

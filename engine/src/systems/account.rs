@@ -2,7 +2,7 @@ use bevy_ecs::component::Component;
 
 #[derive(Component, Clone, Debug, PartialEq, Eq)]
 #[component(immutable)]
-pub struct Identity {
+pub struct AccountIdentity {
     pub id: AccountId,
     pub name: String,
 }

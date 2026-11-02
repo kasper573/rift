@@ -11,11 +11,11 @@ use super::fbx::glb_of_fbx;
 /// not be read or converted.
 #[derive(Default)]
 pub struct Gathered {
-    pub files: Vec<Found>,
-    pub failed: Vec<Failure>,
+    pub files: Vec<GatheredFile>,
+    pub failed: Vec<GatherFailure>,
 }
 
-pub struct Found {
+pub struct GatheredFile {
     pub path: String,
     pub bytes: Vec<u8>,
     pub came: Came,
@@ -29,7 +29,7 @@ pub enum Came {
     Converted { from: String },
 }
 
-pub struct Failure {
+pub struct GatherFailure {
     pub path: String,
     pub why: String,
 }
@@ -50,7 +50,7 @@ pub fn gather(sources: &[impl AsRef<Path>], reading: &dyn Fn(&str)) -> Gathered 
             reading(&name);
             match std::fs::read(source) {
                 Ok(bytes) => take(&mut gathered, name, bytes, Came::AsIs, reading),
-                Err(error) => gathered.failed.push(Failure {
+                Err(error) => gathered.failed.push(GatherFailure {
                     path: name,
                     why: error.to_string(),
                 }),
@@ -64,7 +64,7 @@ fn walk(folder: &Path, path: &str, gathered: &mut Gathered, reading: &dyn Fn(&st
     let entries = match std::fs::read_dir(folder) {
         Ok(entries) => entries,
         Err(error) => {
-            gathered.failed.push(Failure {
+            gathered.failed.push(GatherFailure {
                 path: path.to_owned(),
                 why: error.to_string(),
             });
@@ -83,7 +83,7 @@ fn walk(folder: &Path, path: &str, gathered: &mut Gathered, reading: &dyn Fn(&st
         reading(&inner);
         match std::fs::read(&at) {
             Ok(bytes) => take(gathered, inner, bytes, Came::AsIs, reading),
-            Err(error) => gathered.failed.push(Failure {
+            Err(error) => gathered.failed.push(GatherFailure {
                 path: inner,
                 why: error.to_string(),
             }),
@@ -97,14 +97,14 @@ fn take(gathered: &mut Gathered, path: String, bytes: Vec<u8>, came: Came, readi
     match extension(&path).as_deref() {
         Some("zip") => unpack(gathered, &path, &bytes, reading),
         Some("fbx") => match glb_of_fbx(&bytes) {
-            Ok(glb) => gathered.files.push(Found {
+            Ok(glb) => gathered.files.push(GatheredFile {
                 path: format!("{}.glb", &path[..path.len() - ".fbx".len()]),
                 bytes: glb,
                 came: Came::Converted { from: path },
             }),
-            Err(why) => gathered.failed.push(Failure { path, why }),
+            Err(why) => gathered.failed.push(GatherFailure { path, why }),
         },
-        _ => gathered.files.push(Found { path, bytes, came }),
+        _ => gathered.files.push(GatheredFile { path, bytes, came }),
     }
 }
 
@@ -113,7 +113,7 @@ fn unpack(gathered: &mut Gathered, path: &str, bytes: &[u8], reading: &dyn Fn(&s
     let mut archive = match zip::ZipArchive::new(std::io::Cursor::new(bytes)) {
         Ok(archive) => archive,
         Err(error) => {
-            gathered.failed.push(Failure {
+            gathered.failed.push(GatherFailure {
                 path: path.to_owned(),
                 why: error.to_string(),
             });
@@ -124,7 +124,7 @@ fn unpack(gathered: &mut Gathered, path: &str, bytes: &[u8], reading: &dyn Fn(&s
         let mut file = match archive.by_index(index) {
             Ok(file) => file,
             Err(error) => {
-                gathered.failed.push(Failure {
+                gathered.failed.push(GatherFailure {
                     path: format!("{path} #{index}"),
                     why: error.to_string(),
                 });
@@ -135,7 +135,7 @@ fn unpack(gathered: &mut Gathered, path: &str, bytes: &[u8], reading: &dyn Fn(&s
             continue;
         }
         let Some(inside) = file.enclosed_name() else {
-            gathered.failed.push(Failure {
+            gathered.failed.push(GatherFailure {
                 path: format!("{path}: {}", String::from_utf8_lossy(file.name_raw())),
                 why: "a path that leads out of the archive".to_owned(),
             });
@@ -161,7 +161,7 @@ fn unpack(gathered: &mut Gathered, path: &str, bytes: &[u8], reading: &dyn Fn(&s
                 },
                 reading,
             ),
-            Err(error) => gathered.failed.push(Failure {
+            Err(error) => gathered.failed.push(GatherFailure {
                 path: inner,
                 why: error.to_string(),
             }),

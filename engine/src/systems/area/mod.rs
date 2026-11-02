@@ -44,8 +44,8 @@ use crate::core::content::ErrorPlace;
 use crate::core::content::SchemaMark;
 use crate::core::content::{AssetKind, AudioRef};
 use crate::core::content::{
-    Bundle, Content, ContentFile, ContentId, ContentProblem, ContentRegistry, FileWriter,
-    LoadPurpose, LoadStep, Loading, NamedContent, Nearby, PartSpec, Parts, RowCheck, Shape,
+    Bundle, Content, ContentFile, ContentId, ContentProblem, ContentRegistry, FileShape,
+    FileWriter, LoadPurpose, LoadStep, Loading, NamedContent, Nearby, PartSpec, Parts, RowCheck,
     fields_file, serial,
 };
 use crate::core::ground::{
@@ -164,7 +164,7 @@ pub struct AreaDef {
 
 impl ContentFile for AreaDef {
     const TABLE: &'static str = "area";
-    const SHAPE: Shape = Shape::Bundle;
+    const SHAPE: FileShape = FileShape::Bundle;
 
     fn fresh(near: &Nearby) -> Result<AreaDef, String> {
         let size = GroundSize {
@@ -759,14 +759,13 @@ impl Area {
         walk::held(self)
     }
 
-    /// Holds `tiles` besides those held: loads their ground and lays the meshes over them. Whether
-    /// any was new.
-    pub fn hold(&self, tiles: impl IntoIterator<Item = TileAt>) -> bool {
+    /// Holds `tiles` besides those held: loads their ground and lays the meshes over them.
+    pub fn hold(&self, tiles: impl IntoIterator<Item = TileAt>) {
         walk::hold(self, tiles)
     }
 
     /// Holds every tile of the area, as a check of the whole area or a tool editing it needs.
-    pub fn hold_all(&self) -> bool {
+    pub fn hold_all(&self) {
         self.hold(self.ground_size().each_tile())
     }
 

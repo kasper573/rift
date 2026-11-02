@@ -59,6 +59,37 @@ pub struct Heavens {
 }
 
 impl Heavens {
+    /// The world lit from `toward` in `color`, `strength` times as strong as the full sun, shining
+    /// fully once the light clears the horizon; the moon standing toward `moon`, and `night` of
+    /// the way into the night, under clouds that look as `look` says.
+    pub fn new(
+        toward: Vec3,
+        color: Color,
+        strength: f32,
+        moon: Vec3,
+        night: f32,
+        look: &CloudLook,
+    ) -> Heavens {
+        let linear = color.to_linear() * strength;
+        Heavens {
+            toward,
+            shining: (toward.y * 10.0 + 0.5).clamp(0.0, 1.0),
+            color: Vec4::new(linear.red, linear.green, linear.blue, 1.0),
+            moon,
+            night,
+            ..Heavens::clear(look)
+        }
+    }
+
+    /// These heavens with the clouds covering `clouds` of the sky, carried `drift` along.
+    pub fn covered(self, clouds: f32, drift: Vec2, look: &CloudLook) -> Heavens {
+        Heavens {
+            drift,
+            cloud_edge: clouds::edge(clouds, look),
+            ..self
+        }
+    }
+
     /// A sky of no light under clouds that look as `look` says, covering none of it.
     pub fn clear(look: &CloudLook) -> Heavens {
         Heavens {
@@ -77,10 +108,6 @@ impl Heavens {
         }
     }
 }
-
-/// The dome the sky is painted on.
-#[derive(Component)]
-pub struct SkyDome;
 
 impl From<&SkyMaterial> for VfxShaderKey {
     fn from(sky: &SkyMaterial) -> VfxShaderKey {
@@ -123,7 +150,6 @@ impl Material for SkyMaterial {
 /// The dome the sky drawn with `material` is painted on, round whatever camera looks at it.
 pub fn dome(meshes: &mut Assets<Mesh>, material: Handle<SkyMaterial>) -> impl Bundle {
     (
-        SkyDome,
         Mesh3d(meshes.add(Sphere::new(1.0).mesh().uv(48, 24))),
         MeshMaterial3d(material),
         Transform::default(),
@@ -131,37 +157,4 @@ pub fn dome(meshes: &mut Assets<Mesh>, material: Handle<SkyMaterial>) -> impl Bu
         NotShadowCaster,
         NotShadowReceiver,
     )
-}
-
-impl Heavens {
-    /// The world lit from `toward` in `color`, `strength` times as strong as the full sun, shining
-    /// fully once the light clears the horizon; the moon standing toward `moon`, and `night` of
-    /// the way into the night, under clouds that look as `look` says.
-    pub fn new(
-        toward: Vec3,
-        color: Color,
-        strength: f32,
-        moon: Vec3,
-        night: f32,
-        look: &CloudLook,
-    ) -> Heavens {
-        let linear = color.to_linear() * strength;
-        Heavens {
-            toward,
-            shining: (toward.y * 10.0 + 0.5).clamp(0.0, 1.0),
-            color: Vec4::new(linear.red, linear.green, linear.blue, 1.0),
-            moon,
-            night,
-            ..Heavens::clear(look)
-        }
-    }
-
-    /// These heavens with the clouds covering `clouds` of the sky, carried `drift` along.
-    pub fn covered(self, clouds: f32, drift: Vec2, look: &CloudLook) -> Heavens {
-        Heavens {
-            drift,
-            cloud_edge: clouds::edge(clouds, look),
-            ..self
-        }
-    }
 }

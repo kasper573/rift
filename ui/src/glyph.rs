@@ -376,7 +376,7 @@ pub fn hatch(painter: &Painter, rect: Rect, color: Color32) {
 }
 
 /// Hatching across `rect` with `step` between its lines.
-pub fn hatch_every(painter: &Painter, rect: Rect, color: Color32, step: f32) {
+pub(crate) fn hatch_every(painter: &Painter, rect: Rect, color: Color32, step: f32) {
     let stroke = Stroke::new(1.0, color);
     let span = rect.width() + rect.height();
     let mut offset = 0.0;

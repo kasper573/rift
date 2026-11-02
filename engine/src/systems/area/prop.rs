@@ -6,8 +6,8 @@ use serde::{Deserialize, Serialize};
 use crate::core::content::gltf::GltfInfo;
 use crate::core::content::{AssetKind, FileSize, ModelRef};
 use crate::core::content::{
-    Bundle, ContentFile, ContentId, FileHashes, FileWriter, Loading, Nearby, PartSpec, Parts,
-    RowCheck, Shape, serial,
+    Bundle, ContentFile, ContentId, FileHashes, FileShape, FileWriter, Loading, Nearby, PartSpec,
+    Parts, RowCheck, serial,
 };
 use crate::core::math::{Offset, Pos, Rect, Rng};
 use crate::core::units::{Degrees, Meters};
@@ -121,7 +121,7 @@ impl Bundle for PropDef {
 
 impl ContentFile for PropDef {
     const TABLE: &'static str = "prop";
-    const SHAPE: Shape = Shape::Bundle;
+    const SHAPE: FileShape = FileShape::Bundle;
 
     fn fresh(_: &Nearby) -> Result<PropDef, String> {
         Ok(PropDef {

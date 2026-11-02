@@ -21,7 +21,7 @@ use ui::egui::{Sense, Stroke, Ui, Vec2};
 use ui::glyph::{self, Mark};
 
 use super::tree::{self, CarriedNode, NodeSkill};
-use super::{edit, node_of, select_node, write};
+use super::{edit, node_of, select_node};
 use crate::app::Editor;
 use crate::forms::{self, FormChange, FormCx};
 use crate::project::RowSelection;
@@ -87,11 +87,11 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, selection: &RowSelection) {
     let mut class = (*read).clone();
     if removed {
         tree::remove_node(&mut class.tree, &node);
-        write(editor, &key, edit(&key, "Remove node"), &class);
+        editor.write_content_as(edit(&key, "Remove node"), &key, &class);
         select_node(editor, &key, None);
     } else if changed.is_some() {
         class.tree.0.insert(node, held);
-        write(editor, &key, edit(&key, "Edit node").merging(), &class);
+        editor.write_content_as(edit(&key, "Edit node").merging(), &key, &class);
     }
 }
 

@@ -7,8 +7,8 @@ use engine::core::audio::playback::SFX_CLIP;
 use engine::core::babble::BABBLE_LETTERS;
 use engine::core::babble::{Semitones, Speech, SpeechGaps, VoiceShift};
 use engine::core::content::{
-    CONFIG_FILE, Content, ContentFile, ContentId, ContentRegistry, LoadReport, MemoryFolder,
-    SETTINGS_FILE, Shape, content_path, name_of, table_of, version,
+    CONFIG_FILE, Content, ContentFile, ContentId, ContentRegistry, FileShape, LoadReport,
+    MemoryFolder, SETTINGS_FILE, content_path, name_of, table_of, version,
 };
 use engine::core::ground::{GroundSize, HeightRange, MIN_SIDE, PaintMap, SAMPLES_PER_METER};
 use engine::core::math::Rgb;
@@ -807,7 +807,7 @@ impl Game {
 fn fields_path(table: &str, name: &str) -> String {
     let file = path(table, name);
     match engine::systems::registry().shape_of(table) {
-        Some(Shape::Bundle) => format!("{file}/{CONFIG_FILE}"),
+        Some(FileShape::Bundle) => format!("{file}/{CONFIG_FILE}"),
         _ => file,
     }
 }
@@ -963,6 +963,8 @@ pub fn look() -> Look {
             dry_air: 0.006,
             moist_air: 0.04,
             setting_sun: Rgb([255, 153, 82]),
+            reddens_below: Degrees(25.0),
+            reddening: 0.8,
             moonlight: Rgb([158, 184, 255]),
             moon_share: 0.06,
             adapting: 0.5,
@@ -971,6 +973,8 @@ pub fn look() -> Look {
             night_falls: Degrees(-10.0),
             sun_gone: Degrees(-3.0),
             sun_full: Degrees(8.0),
+            night_ambient: 0.12,
+            cloud_dimming: 0.45,
         },
         clouds: CloudLook {
             height: Meters(150.0),

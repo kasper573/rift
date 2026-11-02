@@ -16,7 +16,7 @@ use engine::systems::registry;
 use engine::systems::script::{RiftScripts, RunnerKind, ScriptDef};
 use engine::systems::skill::SkillDef;
 
-use super::{Candidate, Category, Dragged, Pick, PickLayout, PickSource};
+use super::{Dragged, PickLayout, PickSource, PickedKey, PickerCandidate, PickerCategory};
 use crate::forms::{FormAction, FormCx};
 use crate::icons::{self, KindIcon};
 use crate::tabs::file_title;
@@ -72,12 +72,12 @@ impl PickSource for RowSource {
         self.spoken()
     }
 
-    fn categories(&self, cx: &FormCx) -> Vec<Category> {
+    fn categories(&self, cx: &FormCx) -> Vec<PickerCategory> {
         if self.several() {
             return self
                 .tables
                 .iter()
-                .map(|table| Category {
+                .map(|table| PickerCategory {
                     id: table.clone(),
                     label: table.replace('_', " "),
                 })
@@ -95,7 +95,7 @@ impl PickSource for RowSource {
             owners.dedup();
             return owners
                 .into_iter()
-                .map(|owner| Category {
+                .map(|owner| PickerCategory {
                     label: owner.clone(),
                     id: owner,
                 })
@@ -104,7 +104,7 @@ impl PickSource for RowSource {
         Vec::new()
     }
 
-    fn candidates(&self, cx: &FormCx) -> Vec<Candidate> {
+    fn candidates(&self, cx: &FormCx) -> Vec<PickerCandidate> {
         let places = self
             .tables
             .iter()
@@ -121,8 +121,8 @@ impl PickSource for RowSource {
                     table.clone()
                 };
                 let (nearness, from_here) = cx.seen_from_here(key);
-                listed.push(Candidate {
-                    pick: Pick::new(table.as_str(), key),
+                listed.push(PickerCandidate {
+                    pick: PickedKey::new(table.as_str(), key),
                     category,
                     name: display_name(cx, table, key),
                     hint: match pick_hint(cx, places.as_ref(), table, key) {
@@ -137,7 +137,7 @@ impl PickSource for RowSource {
         listed
     }
 
-    fn accepts(&self, cx: &FormCx, dragged: &Dragged) -> Result<Pick, String> {
+    fn accepts(&self, cx: &FormCx, dragged: &Dragged) -> Result<PickedKey, String> {
         let Dragged::Row { table, key } = dragged else {
             return Err(format!("this field takes {}, not a file", self.spoken()));
         };
@@ -147,10 +147,10 @@ impl PickSource for RowSource {
         if let Some(reason) = blocked(cx, table, &self.path, key) {
             return Err(format!("{}: {reason}", file_title(key)));
         }
-        Ok(Pick::new(table.as_str(), key.as_str()))
+        Ok(PickedKey::new(table.as_str(), key.as_str()))
     }
 
-    fn shown(&self, pick: &Pick) -> (String, String) {
+    fn shown(&self, pick: &PickedKey) -> (String, String) {
         let folder = parent_of(&pick.key);
         let prefix = if folder.is_empty() {
             String::new()
@@ -160,15 +160,15 @@ impl PickSource for RowSource {
         (prefix, file_title(&pick.key).to_owned())
     }
 
-    fn short(&self, pick: &Pick) -> String {
+    fn short(&self, pick: &PickedKey) -> String {
         name_of(&pick.key).to_owned()
     }
 
-    fn icon(&self, pick: &Pick) -> KindIcon {
+    fn icon(&self, pick: &PickedKey) -> KindIcon {
         icons::of_table(&pick.category)
     }
 
-    fn describe(&self, cx: &FormCx, pick: &Pick) -> String {
+    fn describe(&self, cx: &FormCx, pick: &PickedKey) -> String {
         let uses = cx.usages.of_content(&pick.key).len();
         match icons::picture_of(cx.project, &pick.key) {
             Some(picture) => format!("{} · used by {uses}", picture.path),
@@ -185,7 +185,7 @@ impl PickSource for RowSource {
         }
     }
 
-    fn opens(&self, pick: &Pick) -> Option<FormAction> {
+    fn opens(&self, pick: &PickedKey) -> Option<FormAction> {
         Some(FormAction::OpenRow {
             table: pick.category.clone(),
             key: pick.key.clone(),
