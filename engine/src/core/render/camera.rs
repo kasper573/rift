@@ -494,6 +494,33 @@ impl View {
         self.world_from_view.translation()
     }
 
+    /// The farthest from `from` the view takes in of ground no lower than `lowest`; none while it
+    /// takes in the sky over the horizon.
+    pub fn ground_reach(&self, from: Pos<Meters>, lowest: Meters) -> Option<Meters> {
+        let corners = [
+            Vec2::ZERO,
+            Vec2::new(self.viewport.x, 0.0),
+            Vec2::new(0.0, self.viewport.y),
+            self.viewport,
+        ];
+        corners
+            .into_iter()
+            .try_fold(Meters(0.0), |farthest, corner| {
+                let ray = self.ray(corner);
+                if ray.direction.y >= 0.0 {
+                    return None;
+                }
+                let along = (lowest.0 - ray.origin.y) / ray.direction.y;
+                let lands = ground_pos(ray.origin + *ray.direction * along.max(0.0));
+                Some(Meters(farthest.0.max((lands - from).length())))
+            })
+    }
+
+    /// How many pixels of the viewport a metre spans `distance` off the eye, across the view.
+    pub fn pixels_per_meter(&self, distance: Meters) -> f32 {
+        self.viewport.y / 2.0 * self.clip_from_view.y_axis.y / distance.0.max(NEAR)
+    }
+
     pub fn view_proj(&self) -> Mat4 {
         self.clip_from_view * self.world_from_view.to_matrix().inverse()
     }

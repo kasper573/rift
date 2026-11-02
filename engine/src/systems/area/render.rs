@@ -10,7 +10,7 @@ use crate::core::content::Content;
 use crate::core::math::{Pos, Rect};
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::sky::Daylight;
-use crate::core::render::{CameraFraming, CameraRig};
+use crate::core::render::{CameraFraming, CameraRig, camera};
 use crate::core::render::{GroundHeights, WorldCamera, ground_height, world_point};
 use crate::core::units::{MeterSize, Meters};
 use crate::core::vfx::render::SiteExtent;
@@ -114,7 +114,10 @@ fn follow_view(world: &mut World) {
         return;
     };
     let reach = view_reach(rig.framing());
-    scenery::view_from(world, stood, at, reach);
+    let Some(view) = camera::view_of(world) else {
+        return;
+    };
+    scenery::view_from(world, stood, at, reach, view);
 }
 
 /// How far around the character the covers, props and lights stand: the ground the camera takes

@@ -12,7 +12,7 @@ use bevy::render::render_resource::{TextureFormat, TextureUsages};
 use bevy_egui::{EguiTextureHandle, EguiUserTextures};
 use engine::core::math::{Pos, Rect as MRect};
 use engine::core::render::Look;
-use engine::core::render::camera::{self as world_camera};
+use engine::core::render::camera::{self as world_camera, View};
 use engine::core::render::world::sky::Daylight;
 use engine::core::units::{MeterSize, Meters};
 use engine::systems::area::scenery::{self, Scenery};
@@ -68,6 +68,7 @@ struct Drawing {
     bounds: MRect<Meters>,
     scenery: Option<Scenery>,
     camera: Entity,
+    view: View,
     target: Handle<Image>,
     readback: Option<Entity>,
     frames: u32,
@@ -161,6 +162,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
                         stood,
                         bounds.center(),
                         Meters(bounds.size.width.hypot(bounds.size.height)),
+                        drawing.view,
                     );
                     scenery::light(world, &area, Daylight::Fixed, stood, drawing.camera);
                     drawing.scenery = Some(stood);
@@ -269,6 +271,8 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
         };
         let center = Vec3::new(width / 2.0, 0.0, height / 2.0);
         let distance = height / 2.0 / (LENS.radians().0 / 2.0).tan() * 1.02;
+        let eye =
+            Transform::from_translation(center + Vec3::Y * distance).looking_at(center, -Vec3::Z);
         let camera = world
             .spawn((
                 Camera3d::default(),
@@ -281,8 +285,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
                 world_camera::lens(LENS, size[0], size[1]),
                 world_camera::picture(grade),
                 RenderLayers::from_layers(&[LAYER]),
-                Transform::from_translation(center + Vec3::Y * distance)
-                    .looking_at(center, -Vec3::Z),
+                eye,
             ))
             .id();
         thumbnails.drawing = Some(Drawing {
@@ -291,6 +294,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
             bounds,
             scenery: None,
             camera,
+            view: View::new(eye, Vec2::new(size[0] as f32, size[1] as f32), LENS),
             target,
             readback: None,
             frames: 0,

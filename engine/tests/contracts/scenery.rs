@@ -17,8 +17,9 @@ use bevy::shader::Shader;
 use bevy::world_serialization::WorldSerializationPlugin;
 use engine::core::content::Content;
 use engine::core::math::Pos;
+use engine::core::render::View;
 use engine::core::render::world::{self, WorldScenePlugin};
-use engine::core::units::{MeterSize, Meters};
+use engine::core::units::{Degrees, MeterSize, Meters};
 use engine::core::vfx::cover::CoverMaterial;
 use engine::core::vfx::render::VfxMaterialsPlugin;
 use engine::core::vfx::shader::Stage;
@@ -139,6 +140,7 @@ fn stand(app: &mut App, area: &Arc<Area>) -> scenery::Scenery {
         stood,
         bounds.center(),
         Meters(bounds.size.width.hypot(bounds.size.height)),
+        overhead(bounds.center(), 10.0),
     );
     assert!(
         settle(app, |app| {
@@ -192,7 +194,13 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
     let content = app.world().resource::<Content>().clone();
     let stood = scenery::spawn(app.world_mut(), &content, &area, RenderLayers::default());
     let reach = Meters(64.0);
-    scenery::view_from(app.world_mut(), stood, Pos::new(16.0, 8.0), reach);
+    scenery::view_from(
+        app.world_mut(),
+        stood,
+        Pos::new(16.0, 8.0),
+        reach,
+        overhead(Pos::new(16.0, 8.0), 10.0),
+    );
     assert!(settle(&mut app, |app| {
         !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
     }));
@@ -213,7 +221,13 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
         "nothing stands far east of the view"
     );
 
-    scenery::view_from(app.world_mut(), stood, Pos::new(496.0, 8.0), reach);
+    scenery::view_from(
+        app.world_mut(),
+        stood,
+        Pos::new(496.0, 8.0),
+        reach,
+        overhead(Pos::new(496.0, 8.0), 10.0),
+    );
     assert!(settle(&mut app, |app| {
         !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
     }));
@@ -227,11 +241,48 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
         "the pebbles strewn east stand once the view reaches them"
     );
 
-    scenery::view_from(app.world_mut(), stood, Pos::new(16.0, 8.0), reach);
+    scenery::view_from(
+        app.world_mut(),
+        stood,
+        Pos::new(16.0, 8.0),
+        reach,
+        overhead(Pos::new(16.0, 8.0), 10.0),
+    );
     assert!(settle(&mut app, |app| {
         !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
     }));
     assert_eq!(held(&app), west, "back west, the tufts are gone again");
+
+    // From so high over the east that a pebble or a tuft spans less than a pixel, neither stands.
+    scenery::view_from(
+        app.world_mut(),
+        stood,
+        Pos::new(496.0, 8.0),
+        reach,
+        overhead(Pos::new(496.0, 8.0), 20_000.0),
+    );
+    assert!(settle(&mut app, |app| {
+        !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
+    }));
+    assert_eq!(
+        (
+            tufts_standing(&mut app),
+            pebbles_between(&mut app, 432.0, 480.0)
+        ),
+        (0, 0),
+        "from high above, neither the tufts nor the pebbles stand"
+    );
+}
+
+/// A view of 1280 by 720 pixels looking straight down on `at` from `height` metres up, through a
+/// lens long enough that a pebble a centimetre across spans pixels from hundreds of metres off.
+fn overhead(at: Pos<Meters>, height: f32) -> View {
+    let below = Vec3::new(at.x, 0.0, at.y);
+    View::new(
+        Transform::from_translation(below + Vec3::Y * height).looking_at(below, -Vec3::Z),
+        Vec2::new(1280.0, 720.0),
+        Degrees(0.1),
+    )
 }
 
 /// How many of the tufts stand, each at its own place along the middle of the field.

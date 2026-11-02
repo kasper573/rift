@@ -182,9 +182,9 @@ struct RenderedView {
     cast: Option<(Vec<StandingActor>, Vec<Entity>)>,
 }
 
-/// How far around the camera's target the covers, props and lights stand, in the camera's
-/// distance from it: the ground it takes in, and as far again around.
-const VIEW_REACH_PER_DISTANCE: f32 = 4.0;
+/// How far around the camera's target the covers, props and lights stand while it takes in the
+/// horizon, in the camera's distance from it.
+const HORIZON_REACH_PER_DISTANCE: f32 = 4.0;
 
 struct Stood {
     scenery: Scenery,
@@ -331,15 +331,17 @@ impl RenderedView {
             self.stroke = None;
         }
         world.insert_resource(scenery::climate(&area));
-        if let Some(stood) = &self.stood {
-            scenery::view_from(
-                world,
-                stood.scenery,
-                request.camera.target,
-                Meters(request.camera.distance.0 * VIEW_REACH_PER_DISTANCE),
-            );
-        }
         let ground = area.heights.height_at(request.camera.target);
+        if let Some(stood) = &self.stood {
+            let viewport = Vec2::new(request.size[0] as f32, request.size[1] as f32);
+            let view = request.camera.view(ground, viewport);
+            let reach = view
+                .ground_reach(request.camera.target, area.heights.range().lowest)
+                .unwrap_or(Meters(
+                    request.camera.distance.0 * HORIZON_REACH_PER_DISTANCE,
+                ));
+            scenery::view_from(world, stood.scenery, request.camera.target, reach, view);
+        }
         if let Some(mut transform) = world.get_mut::<Transform>(self.camera) {
             *transform = request.camera.transform(ground);
         }

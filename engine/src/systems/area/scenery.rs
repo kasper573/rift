@@ -31,7 +31,7 @@ use crate::core::content::{Content, FileHash, FileHashes};
 use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::ground::{Heightfield, OVERVIEW_STRIDE, PaintMap, SAMPLES_PER_METER, TileAt};
 use crate::core::math::{Pos, Rect, Rng, Size};
-use crate::core::render::camera::WorldPicture;
+use crate::core::render::camera::{View, WorldPicture, ground_pos};
 use crate::core::render::present::AreaGrade;
 use crate::core::render::world::clouds::{self, CloudSheet};
 use crate::core::render::world::cover;
@@ -126,6 +126,17 @@ pub fn spawn(
     let covers = cover_layers(world, content, area);
     let mut props = SpatialIndex::new(PLACEMENT_CELL);
     props.refile_spots(area.props.iter().map(|placed| placed.at));
+    let models = content.built::<GltfInfos>();
+    let prop_extents = area
+        .props
+        .iter()
+        .map(|placed| {
+            let bounds = models.0.get(&placed.prop.get(content).model.path())?.bounds;
+            Some(Meters(
+                (bounds.max - bounds.min).max_element() * placed.scale,
+            ))
+        })
+        .collect();
     let mut lights = SpatialIndex::new(PLACEMENT_CELL);
     lights.refile_spots(area.lights.iter().map(|light| light.at));
     world.entity_mut(root).insert(Streaming {
@@ -136,6 +147,7 @@ pub fn spawn(
         terrain,
         covers,
         props,
+        prop_extents,
         lights,
         view: None,
         stood: Stood::default(),
@@ -150,11 +162,12 @@ pub fn spawn(
     }
 }
 
-/// Tells the scenery where the view is, and how far around it the covers, props and lights are to
-/// stand; the ground stands whole, finer the nearer the view. What stands follows over the frames.
-pub fn view_from(world: &mut World, scenery: Scenery, at: Pos<Meters>, reach: Meters) {
+/// Tells the scenery where `view` looks at, and how far around it the covers, props and lights
+/// are to stand: a cover's pieces and a prop only where they span a pixel of the view. The ground
+/// stands whole, finer the nearer the view. What stands follows over the frames.
+pub fn view_from(world: &mut World, scenery: Scenery, at: Pos<Meters>, reach: Meters, view: View) {
     if let Some(mut streaming) = world.get_mut::<Streaming>(scenery.root) {
-        streaming.view = Some((at, reach));
+        streaming.view = Some(Seen { at, reach, view });
     }
 }
 
@@ -266,18 +279,30 @@ struct Streaming {
     terrain: Entity,
     covers: Vec<CoverLayer>,
     props: SpatialIndex,
+    /// The most each placed prop measures across, by its index, where its model says.
+    prop_extents: Vec<Option<Meters>>,
     lights: SpatialIndex,
-    view: Option<(Pos<Meters>, Meters)>,
+    view: Option<Seen>,
     stood: Stood,
     /// The tiles of ground being loaded, for the near chunks waiting on them.
     loading: HashMap<TileAt, Task<()>>,
     settled: bool,
 }
 
+/// Where the view looks at, how far around it the scenery stands, and the view.
+#[derive(Clone, Copy)]
+struct Seen {
+    at: Pos<Meters>,
+    reach: Meters,
+    view: View,
+}
+
 #[derive(Default)]
 struct Stood {
     ground: HashMap<Node, Entity>,
-    covers: HashMap<(usize, usize, (u32, u32)), Entity>,
+    /// Each chunk of a cover's piece looked at, with what stands of it: none where it holds
+    /// nothing of the piece.
+    covers: HashMap<(usize, usize, (u32, u32)), Option<Entity>>,
     props: HashMap<usize, Entity>,
     lights: HashMap<usize, Entity>,
 }
@@ -294,9 +319,11 @@ struct CoverLayer {
 }
 
 /// A piece of a cover as its layer stands it: its shape (none for the sheet) and how it is
-/// spread, and for a prop the model it strews and the material its copies are drawn with.
+/// spread, the most a copy of it measures across where that is known, and for a prop the model it
+/// strews and the material its copies are drawn with.
 struct LayerPiece {
     shape: Option<CoverPiece>,
+    extent: Option<Meters>,
     spread: cover::Spread,
     strewn: Option<Strewn>,
 }
@@ -327,6 +354,9 @@ const PLACEMENT_CELL: Meters = Meters(32.0);
 /// How far past its reach the view keeps what stands, so pacing back and forth over the edge
 /// stands nothing twice.
 const KEEP_SHARE: f32 = 1.25;
+/// How many pixels a cover's piece or a prop must span to stand: smaller, a view shows only the
+/// colour of the ground under it.
+const FEWEST_PIXELS: f32 = 1.0;
 /// How much stands in one frame where scenery is paced, and among the props how many whose model
 /// no earlier prop asked for: a model's load falls on the frames after the prop that starts it.
 const CHUNKS_PER_FRAME: usize = 4;
@@ -344,16 +374,17 @@ fn stream(world: &mut World) {
         let Some(mut streaming) = world.entity_mut(root).take::<Streaming>() else {
             continue;
         };
-        let Some((at, reach)) = streaming.view else {
+        let Some(seen) = streaming.view else {
             world.entity_mut(root).insert(streaming);
             continue;
         };
+        let Seen { at, reach, .. } = seen;
         let keep = Meters(reach.0 * KEEP_SHARE);
         let mut budget = Budget::new(framed);
         stream_ground(world, &mut streaming, at, &mut budget);
         share_pictures(world, &streaming);
-        stream_covers(world, &mut streaming, root, at, reach, keep, &mut budget);
-        stream_props(world, &mut streaming, root, at, reach, keep, &mut budget);
+        stream_covers(world, &mut streaming, root, seen, &mut budget);
+        stream_props(world, &mut streaming, root, seen, &mut budget);
         stream_lights(world, &mut streaming, root, at, reach, keep);
         streaming.settled = !budget.spent;
         world.entity_mut(root).insert(streaming);
@@ -622,6 +653,11 @@ fn far(from: Pos<Meters>, to: Pos<Meters>, by: Meters) -> bool {
     (from - to).length() > by.0
 }
 
+/// How far off the eye of `view` something `extent` across still spans a pixel.
+fn shown_within(view: &View, extent: Meters) -> Meters {
+    Meters(extent.0 * view.pixels_per_meter(Meters(1.0)) / FEWEST_PIXELS)
+}
+
 fn distance_to(bounds: Rect<Meters>, at: Pos<Meters>) -> f32 {
     let dx = (bounds.min().x - at.x).max(at.x - bounds.max().x).max(0.0);
     let dy = (bounds.min().y - at.y).max(at.y - bounds.max().y).max(0.0);
@@ -632,11 +668,10 @@ fn stream_covers(
     world: &mut World,
     streaming: &mut Streaming,
     root: Entity,
-    at: Pos<Meters>,
-    reach: Meters,
-    keep: Meters,
+    seen: Seen,
     budget: &mut Budget,
 ) {
+    let Seen { at, reach, view } = seen;
     let (columns, rows) = streaming.paint.pixels();
     let chunk_side = cover::CHUNK_CELLS as f32 / SAMPLES_PER_METER as f32;
     let chunk_bounds = |chunk: (u32, u32)| {
@@ -645,15 +680,37 @@ fn stream_covers(
             Size::new(chunk_side, chunk_side),
         )
     };
+    let eye = view.eye();
+    let from_eye = |chunk: (u32, u32)| {
+        let bounds = chunk_bounds(chunk);
+        let across = distance_to(bounds, ground_pos(eye));
+        let below = eye.y - streaming.heights.height_at(bounds.center()).0;
+        Meters(across.hypot(below))
+    };
+    let shown: Vec<Vec<Option<Meters>>> = streaming
+        .covers
+        .iter()
+        .map(|layer| {
+            layer
+                .pieces
+                .iter()
+                .map(|piece| piece.extent.map(|extent| shown_within(&view, extent)))
+                .collect()
+        })
+        .collect();
+    let out_of_sight = |(layer, piece, chunk): (usize, usize, (u32, u32)), share: f32| {
+        distance_to(chunk_bounds(chunk), at) > reach.0 * share
+            || shown[layer][piece].is_some_and(|within| from_eye(chunk).0 > within.0 * share)
+    };
     let gone: Vec<_> = streaming
         .stood
         .covers
         .keys()
-        .filter(|(.., chunk)| distance_to(chunk_bounds(*chunk), at) > keep.0)
+        .filter(|key| out_of_sight(**key, KEEP_SHARE))
         .copied()
         .collect();
     for key in gone {
-        if let Some(entity) = streaming.stood.covers.remove(&key) {
+        if let Some(Some(entity)) = streaming.stood.covers.remove(&key) {
             world.despawn(entity);
         }
     }
@@ -673,16 +730,13 @@ fn stream_covers(
                 for chunk_column in first.0..=last.0 {
                     let chunk = (chunk_column, chunk_row);
                     let key = (layer, piece, chunk);
-                    if streaming.stood.covers.contains_key(&key)
-                        || distance_to(chunk_bounds(chunk), at) > reach.0
-                    {
+                    if streaming.stood.covers.contains_key(&key) || out_of_sight(key, 1.0) {
                         continue;
                     }
                     if !budget.take(|budget| &mut budget.covers) {
                         return;
                     }
-                    let entity = spawn_cover_chunk(world, streaming, layer, piece, chunk, root)
-                        .unwrap_or_else(|| world.spawn(ChildOf(root)).id());
+                    let entity = spawn_cover_chunk(world, streaming, layer, piece, chunk, root);
                     streaming.stood.covers.insert(key, entity);
                 }
             }
@@ -694,17 +748,26 @@ fn stream_props(
     world: &mut World,
     streaming: &mut Streaming,
     root: Entity,
-    at: Pos<Meters>,
-    reach: Meters,
-    keep: Meters,
+    seen: Seen,
     budget: &mut Budget,
 ) {
+    let Seen { at, reach, view } = seen;
     let area = streaming.area.clone();
+    let eye = view.eye();
+    let out_of_sight = |index: usize, share: f32| {
+        let placed = &area.props[index];
+        far(placed.at, at, Meters(reach.0 * share))
+            || streaming.prop_extents[index].is_some_and(|extent| {
+                let ground = streaming.heights.height_at(placed.at).0;
+                let from_eye = (placed.at - ground_pos(eye)).length().hypot(eye.y - ground);
+                from_eye > shown_within(&view, extent).0 * share
+            })
+    };
     let gone: Vec<usize> = streaming
         .stood
         .props
         .keys()
-        .filter(|&&index| far(area.props[index].at, at, keep))
+        .filter(|&&index| out_of_sight(index, KEEP_SHARE))
         .copied()
         .collect();
     for index in gone {
@@ -715,9 +778,7 @@ fn stream_props(
     let mut near: Vec<usize> = streaming
         .props
         .near(at, reach)
-        .filter(|&index| {
-            !streaming.stood.props.contains_key(&index) && !far(area.props[index].at, at, reach)
-        })
+        .filter(|&index| !streaming.stood.props.contains_key(&index) && !out_of_sight(index, 1.0))
         .collect();
     near.sort_by(|&a, &b| {
         let apart = |index: usize| (area.props[index].at - at).length();
@@ -974,7 +1035,7 @@ pub fn lay_ground(world: &mut World, scenery: Scenery, heights: &Heightfield, pa
         .stood
         .covers
         .drain()
-        .map(|(_, entity)| entity)
+        .filter_map(|(_, entity)| entity)
         .collect();
     for entity in covers {
         world.despawn(entity);
@@ -1045,6 +1106,13 @@ fn cover_layers(world: &mut World, content: &Content, area: &Area) -> Vec<CoverL
         let bounds = models.0.get(&prop.get(content).model.path())?.bounds;
         Some((bounds.max.x - bounds.min.x, bounds.max.z - bounds.min.z))
     };
+    let extent = |shape: &PieceShape| match shape {
+        PieceShape::Blade { width, height } => Some(width.0.max(height.0)),
+        PieceShape::Prop { prop } => {
+            let bounds = models.0.get(&prop.get(content).model.path())?.bounds;
+            Some((bounds.max - bounds.min).max_element())
+        }
+    };
     let mut layers = Vec::new();
     for (slot, terrain) in area.terrains.iter().enumerate() {
         let ground = terrain.get(content);
@@ -1081,6 +1149,7 @@ fn cover_layers(world: &mut World, content: &Content, area: &Area) -> Vec<CoverL
         let ground_color = ground.color.color().to_linear();
         let sheet = cover_def.sheet.map(|_| LayerPiece {
             shape: None,
+            extent: None,
             spread: cover::Spread {
                 piece: 0,
                 per_square_meter: 0.0,
@@ -1112,6 +1181,7 @@ fn cover_layers(world: &mut World, content: &Content, area: &Area) -> Vec<CoverL
                     PieceShape::Blade { .. } => None,
                 };
                 LayerPiece {
+                    extent: extent(&piece.shape).map(|extent| Meters(extent * piece.size.max)),
                     shape: Some(piece.clone()),
                     spread,
                     strewn,
@@ -1164,6 +1234,7 @@ fn spawn_cover_chunk(
         shape,
         spread,
         strewn,
+        ..
     } = &layer.pieces[piece];
     let seed = chunk_seed(
         layer.seed,
