@@ -24,7 +24,7 @@ use crate::core::ground::Heightfield;
 use crate::core::math::Pos;
 use crate::core::render::camera::{View, ground_pos};
 use crate::core::render::world::fade::Fades;
-use crate::core::render::world::lod::{Levels, Simplifier};
+use crate::core::render::world::lod::{MeshLevels, Simplifier};
 use crate::core::render::world::material::{MaterialLook, MaterialLooks, Surfaces};
 use crate::core::render::world::merged::{
     self, MergedMesh, MergedModel, MergedPlace, ModelSources,
@@ -62,14 +62,16 @@ impl Props {
         let mut filed = SpatialIndex::new(PLACEMENT_CELL);
         filed.refile_spots(area.props.iter().map(|placed| placed.at));
         let models = content.built::<GltfInfos>();
+        let mut sizes: HashMap<PropId, Option<f32>> = HashMap::default();
         let extents = area
             .props
             .iter()
             .map(|placed| {
-                let bounds = models.0.get(&placed.prop.get(content).model.path())?.bounds;
-                Some(Meters(
-                    (bounds.max - bounds.min).max_element() * placed.scale,
-                ))
+                let size = *sizes.entry(placed.prop).or_insert_with(|| {
+                    let bounds = models.0.get(&placed.prop.get(content).model.path())?.bounds;
+                    Some((bounds.max - bounds.min).max_element())
+                });
+                Some(Meters(size? * placed.scale))
             })
             .collect();
         Props {
@@ -386,15 +388,14 @@ fn prepare_models(world: &mut World, streaming: &mut Streaming, wanted: HashSet<
     }
 }
 
-/// The meshes of a scene the scenery stands, each with its stand-ins and how many times its size
-/// it is drawn.
+/// The meshes of a scene the scenery stands, each with the mesh it was spawned with and how many
+/// times its size it is drawn.
 #[derive(Component)]
 struct Leveled(Vec<LeveledMesh>);
 
 struct LeveledMesh {
     mesh: Entity,
     full: Handle<Mesh>,
-    levels: Arc<Levels>,
     scale: f32,
 }
 
@@ -413,9 +414,9 @@ pub(super) struct Standing<'w, 's> {
     leveled: Query<'w, 's, &'static Leveled>,
 }
 
-/// A scene the scenery stands, each time it has spawned, keeps its meshes' stand-ins and draws
-/// each at the level the scenery's view takes it in at; a mesh it leveled before keeps the mesh
-/// it was spawned with as its own.
+/// A scene the scenery stands, each time it has spawned, has its meshes simplified into their
+/// stand-ins and draws each at the level the scenery's view takes it in at, once it has them; a
+/// mesh it leveled before keeps the mesh it was spawned with as its own.
 pub(super) fn level_ready_scene(
     ready: On<WorldInstanceReady>,
     tree: SceneTree,
@@ -460,18 +461,17 @@ pub(super) fn level_ready_scene(
                         || drawn.get(mesh).ok().map(|drawn| drawn.0.clone()),
                         |leveled| Some(leveled.full.clone()),
                     )?;
-                let levels = simplifier.levels_of(&full)?;
+                simplifier.simplify(&full);
                 Some(LeveledMesh {
                     mesh,
                     full,
-                    levels,
                     scale: scale_of(mesh),
                 })
             })
             .collect(),
     );
     if let (Some(seen), Ok(at)) = (streaming.view, transforms.get(scene)) {
-        for (mesh, level) in levels_for(seen.view, at.translation, &leveled) {
+        for (mesh, level) in levels_for(simplifier.levels(), seen.view, at.translation, &leveled) {
             if let Ok(mut drawn) = drawn.get_mut(mesh) {
                 drawn.set_if_neq(Mesh3d(level.clone()));
             }
@@ -482,12 +482,13 @@ pub(super) fn level_ready_scene(
 
 /// Draws every standing prop's meshes at the level `view` takes them in at.
 pub(super) fn level_props(world: &mut World, streaming: &Streaming, view: &View) {
+    let levels = world.resource::<MeshLevels>();
     let changes: Vec<(Entity, Handle<Mesh>)> = streaming
         .props
         .scenes
         .values()
         .filter_map(|&prop| Some((world.get::<Leveled>(prop)?, world.get::<Transform>(prop)?)))
-        .flat_map(|(leveled, at)| levels_for(*view, at.translation, leveled))
+        .flat_map(|(leveled, at)| levels_for(levels, *view, at.translation, leveled))
         .filter(|(mesh, level)| {
             world
                 .get::<Mesh3d>(*mesh)
@@ -503,14 +504,17 @@ pub(super) fn level_props(world: &mut World, streaming: &Streaming, view: &View)
 }
 
 /// The level each of a scene's meshes is drawn at, seen in `view` with the scene at `at`.
-fn levels_for(
+fn levels_for<'a>(
+    levels: &'a MeshLevels,
     view: View,
     at: Vec3,
-    leveled: &Leveled,
-) -> impl Iterator<Item = (Entity, &Handle<Mesh>)> {
+    leveled: &'a Leveled,
+) -> impl Iterator<Item = (Entity, &'a Handle<Mesh>)> {
     let distance = Meters(view.eye().distance(at));
     leveled.0.iter().map(move |mesh| {
-        let level = mesh.levels.for_view(&view, distance, mesh.scale);
+        let level = levels
+            .of(&mesh.full)
+            .and_then(|levels| levels.for_view(&view, distance, mesh.scale));
         (mesh.mesh, level.unwrap_or(&mesh.full))
     })
 }

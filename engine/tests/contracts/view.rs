@@ -23,7 +23,7 @@ use engine::core::render::world::WorldScenePlugin;
 use engine::core::render::world::body::{Body, BodyPlugin};
 use engine::core::render::world::fade::Fades;
 use engine::core::render::world::layers::JointLayersPlugin;
-use engine::core::render::world::lod::Simplifier;
+use engine::core::render::world::lod::{MeshLevels, Simplifier};
 use engine::core::render::world::material::{FadeStyle, WorldMaterial, world_material};
 use engine::core::render::{Animator, CameraRig, capsule_hit, facing_rotation, world_point};
 use engine::core::text::Typewriter;
@@ -841,11 +841,19 @@ fn a_mesh_far_off_the_eye_draws_with_fewer_triangles_none_straying_a_pixel() {
         .resource_mut::<Assets<Mesh>>()
         .add(Sphere::new(1.0).mesh().ico(40).expect("an ico sphere"));
     let held = ball.clone();
+    app.world_mut()
+        .run_system_once(move |mut simplifier: Simplifier| simplifier.simplify(&held))
+        .expect("the simplifier runs");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while app.world().resource::<MeshLevels>().of(&ball).is_none() {
+        assert!(Instant::now() < deadline, "the ball is simplified");
+        app.update();
+    }
     let levels = app
-        .world_mut()
-        .run_system_once(move |mut simplifier: Simplifier| simplifier.levels_of(&held))
-        .expect("the simplifier runs")
-        .expect("the ball is loaded");
+        .world()
+        .resource::<MeshLevels>()
+        .of(&ball)
+        .expect("the ball's levels");
     let meshes = app.world().resource::<Assets<Mesh>>();
     let depth = |mesh: &Handle<Mesh>| {
         triangles(meshes.get(mesh).expect("a level is held"))

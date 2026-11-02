@@ -94,6 +94,7 @@ impl Plugin for WorldScenePlugin {
                 cover::strew_loaded,
                 terrain::stack_pictures,
                 material::forget_dropped,
+                lod::finish_simplifying,
                 lod::forget_dropped,
                 cover::forget_dropped,
             ),

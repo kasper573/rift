@@ -2,7 +2,7 @@
 //! and where a layer is metal, the surface it lays, baked once for each way of painting it, off the
 //! main thread, and shared by every mesh painted alike.
 
-use std::sync::LazyLock;
+use std::sync::{Arc, LazyLock};
 
 use bevy::asset::RenderAssetUsages;
 use bevy::ecs::system::SystemParam;
@@ -43,11 +43,13 @@ pub struct Painted {
     pub surface: Option<Handle<Image>>,
 }
 
-/// Every paint asked for, baked once its images load, and the materials drawn with each.
+/// Every paint asked for, baked once its images load, and the materials drawn with each; and the
+/// images bakes in flight read, each copied once for all of them.
 #[derive(Resource, Default)]
 pub struct Paints {
     baked: HashMap<Paint, PaintState>,
     materials: HashMap<(AssetId<WorldMaterial>, AssetId<Image>), Handle<WorldMaterial>>,
+    sources: HashMap<AssetId<Image>, Arc<Image>>,
 }
 
 enum PaintState {
@@ -55,22 +57,36 @@ enum PaintState {
         base: Handle<Image>,
         masks: Vec<Handle<Image>>,
     },
-    Baking(Task<Baked>),
+    Baking(Task<Option<Baked>>),
     Done(Painted),
     Failed,
 }
 
 /// Takes in every paint whose bake has finished.
 pub(super) fn advance_bakes(mut paints: ResMut<Paints>, mut images: ResMut<Assets<Image>>) {
-    for baking in paints.baked.values_mut() {
+    let paints = paints.as_mut();
+    for (paint, baking) in paints.baked.iter_mut() {
         if let PaintState::Baking(task) = baking
             && let Some(baked) = check_ready(task)
         {
-            *baking = PaintState::Done(Painted {
-                colour: images.add(baked.colour),
-                surface: baked.surface.map(|surface| images.add(surface)),
-            });
+            *baking = match baked {
+                Some(baked) => PaintState::Done(Painted {
+                    colour: images.add(baked.colour),
+                    surface: baked.surface.map(|surface| images.add(surface)),
+                }),
+                None => {
+                    warn!("could not paint {}: its masks do not fit it", paint.base);
+                    PaintState::Failed
+                }
+            };
         }
+    }
+    let waiting = paints
+        .baked
+        .values()
+        .any(|baking| matches!(baking, PaintState::Loading { .. } | PaintState::Baking(_)));
+    if !waiting {
+        paints.sources.clear();
     }
 }
 
@@ -107,8 +123,8 @@ impl Painter<'_> {
             images,
             ..
         } = self;
-        let baking = paints
-            .baked
+        let Paints { baked, sources, .. } = &mut **paints;
+        let baking = baked
             .entry(paint.clone())
             .or_insert_with(|| PaintState::Loading {
                 base: assets.load(paint.base.clone()),
@@ -124,25 +140,26 @@ impl Painter<'_> {
             if failed(base) || masks.iter().any(failed) {
                 warn!("could not paint {}: an image did not load", paint.base);
                 *baking = PaintState::Failed;
-            } else if loaded(base) && masks.iter().all(loaded) {
-                let layers: Option<Vec<(&Image, &PaintLayer)>> = masks
+            } else if images.contains(&*base) && masks.iter().all(loaded) {
+                let mut source = |image: &Handle<Image>| {
+                    sources
+                        .entry(image.id())
+                        .or_insert_with(|| Arc::new(images.get(image).cloned().unwrap_or_default()))
+                        .clone()
+                };
+                let base = source(base);
+                let layers: Vec<(Arc<Image>, PaintLayer)> = masks
                     .iter()
                     .zip(&paint.layers)
-                    .map(|(mask, layer)| Some((images.get(mask)?, layer)))
+                    .map(|(mask, layer)| (source(mask), layer.clone()))
                     .collect();
-                let started = images
-                    .get(base.id())
-                    .zip(layers)
-                    .and_then(|(base, layers)| Bake::start(base, &layers, finish));
-                *baking = match started {
-                    Some(bake) => PaintState::Baking(
-                        AsyncComputeTaskPool::get().spawn(async { bake.finish() }),
-                    ),
-                    None => {
-                        warn!("could not paint {}: its masks do not fit it", paint.base);
-                        PaintState::Failed
-                    }
-                };
+                *baking = PaintState::Baking(AsyncComputeTaskPool::get().spawn(async move {
+                    let layers: Vec<(&Image, &PaintLayer)> = layers
+                        .iter()
+                        .map(|(mask, layer)| (&**mask, layer))
+                        .collect();
+                    bake(&base, &layers, finish)
+                }));
             }
         }
         match baking {
@@ -200,7 +217,7 @@ pub fn bake(
 }
 
 /// A paint's pixels read from its images, ready to bake apart from them.
-pub struct Bake {
+struct Bake {
     width: u32,
     height: u32,
     colour: Vec<u8>,
@@ -222,7 +239,7 @@ struct Laid {
 impl Bake {
     /// Begins baking `layers` over `base` for surfaces of `finish`: none when a mask is not the
     /// size of the base.
-    pub fn start(
+    fn start(
         base: &Image,
         layers: &[(&Image, &PaintLayer)],
         finish: SurfaceFinish,
@@ -271,7 +288,7 @@ impl Bake {
     }
 
     /// Bakes every row, across the threads.
-    pub fn finish(mut self) -> Baked {
+    fn finish(mut self) -> Baked {
         let width = self.width as usize;
         let srgb = &*SRGB;
         let (masks, layers) = (&self.masks, &self.layers);

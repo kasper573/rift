@@ -42,6 +42,7 @@ use crate::core::render::camera::{View, WorldPicture};
 use crate::core::render::present::AreaGrade;
 use crate::core::render::world::clouds::{self, CloudSheet};
 use crate::core::render::world::lights::{self, Flicker};
+use crate::core::render::world::lod::MeshLevels;
 use crate::core::render::world::sky::{self, Daylight, SunLight};
 use crate::core::render::world::terrain::{
     self, ChunkPaint, ChunkPaints, GroundLayer, GroundMaterial,
@@ -71,7 +72,8 @@ pub struct SceneryPlugin;
 
 impl Plugin for SceneryPlugin {
     fn build(&self, app: &mut App) {
-        app.add_systems(Update, stream)
+        app.init_resource::<TakenDown>()
+            .add_systems(Update, (take_down, stream))
             .add_observer(props::level_ready_scene);
     }
 }
@@ -347,12 +349,14 @@ const COVERS_PER_FRAME: usize = 16;
 const PROPS_PER_FRAME: usize = 16;
 const FRESH_MODELS_PER_FRAME: usize = 1;
 const MERGES_PER_FRAME: usize = 4;
+const PARTS_TAKEN_DOWN_PER_FRAME: usize = 2000;
 
 fn stream(world: &mut World) {
     let roots: Vec<Entity> = world
         .query_filtered::<Entity, With<Streaming>>()
         .iter(world)
         .collect();
+    let simplified = world.is_resource_changed::<MeshLevels>();
     for root in roots {
         let Some(mut streaming) = world.entity_mut(root).take::<Streaming>() else {
             continue;
@@ -362,6 +366,9 @@ fn stream(world: &mut World) {
             continue;
         };
         if streaming.stood_for == Some(seen) && streaming.loading.is_empty() {
+            if simplified {
+                props::level_props(world, &streaming, &seen.view);
+            }
             world.entity_mut(root).insert(streaming);
             continue;
         }
@@ -738,10 +745,45 @@ fn stream_lights(
     }
 }
 
+/// Takes `scenery` out of the view at once, and out of the world a few parts a frame, so a
+/// whole area going doesn't hold up a frame.
 pub fn despawn(world: &mut World, scenery: Scenery) {
-    if world.get_entity(scenery.root).is_ok() {
-        world.despawn(scenery.root);
+    let Ok(mut root) = world.get_entity_mut(scenery.root) else {
+        return;
+    };
+    root.remove::<Streaming>().insert(Visibility::Hidden);
+    world.resource_mut::<TakenDown>().0.push(scenery.root);
+}
+
+/// Sceneries out of the view, still being taken out of the world.
+#[derive(Resource, Default)]
+struct TakenDown(Vec<Entity>);
+
+fn take_down(world: &mut World) {
+    let mut left = PARTS_TAKEN_DOWN_PER_FRAME;
+    while left > 0
+        && let Some(&root) = world.resource::<TakenDown>().0.last()
+    {
+        let part = world
+            .get::<Children>(root)
+            .and_then(|children| children.last().copied());
+        let Some(part) = part else {
+            world.resource_mut::<TakenDown>().0.pop();
+            if let Ok(root) = world.get_entity_mut(root) {
+                root.despawn();
+            }
+            continue;
+        };
+        left = left.saturating_sub(parts_of(world, part));
+        world.despawn(part);
     }
+}
+
+/// How many entities `entity` is, with everything under it.
+fn parts_of(world: &World, entity: Entity) -> usize {
+    1 + world.get::<Children>(entity).map_or(0, |children| {
+        children.iter().map(|child| parts_of(world, child)).sum()
+    })
 }
 
 /// Lights `area` for the hour under its weather: its sun turned and coloured, or by night the full

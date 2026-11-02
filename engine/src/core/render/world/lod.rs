@@ -8,41 +8,63 @@ use bevy::ecs::system::SystemParam;
 use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
+use bevy::tasks::futures::check_ready;
+use bevy::tasks::{AsyncComputeTaskPool, Task};
 use meshopt::SimplifyOptions;
 
 use crate::core::render::camera::View;
 use crate::core::units::Meters;
 
-/// Simplifies the meshes of the world into their stand-ins, each once.
+/// Simplifies the meshes of the world into their stand-ins, each once, off the frame.
 #[derive(SystemParam)]
 pub struct Simplifier<'w> {
     levels: ResMut<'w, MeshLevels>,
-    meshes: ResMut<'w, Assets<Mesh>>,
+    meshes: Res<'w, Assets<Mesh>>,
 }
 
-/// The levels of every mesh simplified so far, by the mesh they stand in for.
+/// The levels of every mesh simplified so far, or being simplified, by the mesh they stand in
+/// for. It changes as each mesh's levels are made.
 #[derive(Resource, Default)]
-pub(super) struct MeshLevels(HashMap<AssetId<Mesh>, Arc<Levels>>);
+pub struct MeshLevels(HashMap<AssetId<Mesh>, Simplifying>);
+
+enum Simplifying {
+    Making(Task<Vec<(Mesh, f32)>>),
+    Made(Arc<Levels>),
+}
 
 /// The stand-ins for a mesh, finest first, each with about half the triangles of the one before
 /// and how far its shape strays from the mesh's, in the mesh's own units.
 pub struct Levels(Vec<(Handle<Mesh>, f32)>);
 
 impl Simplifier<'_> {
-    /// The levels of `mesh`, simplified the first time they are asked for; none until it loads.
-    pub fn levels_of(&mut self, mesh: &Handle<Mesh>) -> Option<Arc<Levels>> {
-        if let Some(levels) = self.levels.0.get(&mesh.id()) {
-            return Some(levels.clone());
+    /// Starts simplifying `mesh` the first time it is asked for, once it has loaded.
+    pub fn simplify(&mut self, mesh: &Handle<Mesh>) {
+        if self.levels.0.contains_key(&mesh.id()) {
+            return;
         }
-        let simplified = simplified(self.meshes.get(mesh)?);
-        let levels = Arc::new(Levels(
-            simplified
-                .into_iter()
-                .map(|(level, strays)| (self.meshes.add(level), strays))
-                .collect(),
-        ));
-        self.levels.0.insert(mesh.id(), levels.clone());
-        Some(levels)
+        let Some(full) = self.meshes.get(mesh) else {
+            return;
+        };
+        let full = full.clone();
+        let task = AsyncComputeTaskPool::get().spawn(async move { simplified(&full) });
+        self.levels
+            .bypass_change_detection()
+            .0
+            .insert(mesh.id(), Simplifying::Making(task));
+    }
+
+    pub fn levels(&self) -> &MeshLevels {
+        &self.levels
+    }
+}
+
+impl MeshLevels {
+    /// The levels of `mesh`, once they are made.
+    pub fn of(&self, mesh: &Handle<Mesh>) -> Option<&Levels> {
+        match self.0.get(&mesh.id())? {
+            Simplifying::Made(levels) => Some(levels),
+            Simplifying::Making(_) => None,
+        }
     }
 }
 
@@ -56,6 +78,26 @@ impl Levels {
             .rev()
             .find(|(_, strays)| *strays <= allowed)
             .map(|(level, _)| level)
+    }
+}
+
+/// Takes in the levels simplified since the last frame.
+pub(super) fn finish_simplifying(mut levels: ResMut<MeshLevels>, mut meshes: ResMut<Assets<Mesh>>) {
+    let mut finished = false;
+    for simplifying in levels.bypass_change_detection().0.values_mut() {
+        if let Simplifying::Making(task) = simplifying
+            && let Some(made) = check_ready(task)
+        {
+            *simplifying = Simplifying::Made(Arc::new(Levels(
+                made.into_iter()
+                    .map(|(level, strays)| (meshes.add(level), strays))
+                    .collect(),
+            )));
+            finished = true;
+        }
+    }
+    if finished {
+        levels.set_changed();
     }
 }
 

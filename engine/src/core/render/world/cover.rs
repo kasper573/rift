@@ -837,7 +837,7 @@ struct Unstrewn {
 }
 
 /// Disables every chunk no camera sees, copies and all, and enables every chunk one comes to see,
-/// strewing its copies the first time. A hidden entity still costs every frame's visibility and
+/// strewing its copies the first time, as many a frame as keeps the frame short. A hidden entity still costs every frame's visibility and
 /// extraction a look, and an area holds far more copies than a view takes in, so the unseen leave
 /// every query instead. Propagation passes a disabled entity over, so this runs once the frame's
 /// propagation is done, and a copy keeps where it stood and whether it showed as it was disabled:
@@ -847,6 +847,7 @@ pub(super) fn cull_strewn_chunks(
     mut chunks: Query<(Entity, &mut StrewnChunk, &GlobalTransform, Has<Disabled>)>,
     mut commands: Commands,
 ) {
+    let mut strewable = COPIES_STREWN_PER_FRAME;
     for (entity, mut chunk, placed, disabled) in &mut chunks {
         let seen = cameras.iter().all(|(camera, _)| !camera.is_active)
             || cameras.iter().any(|(camera, frustum)| {
@@ -866,7 +867,11 @@ pub(super) fn cull_strewn_chunks(
             }
             _ => {}
         }
-        if seen && let Some(unstrewn) = chunk.unstrewn.take() {
+        if seen
+            && strewable > 0
+            && let Some(unstrewn) = chunk.unstrewn.take()
+        {
+            strewable = strewable.saturating_sub(unstrewn.places.len());
             let copies: Vec<_> = unstrewn
                 .places
                 .iter()
@@ -886,6 +891,8 @@ pub(super) fn cull_strewn_chunks(
         }
     }
 }
+
+const COPIES_STREWN_PER_FRAME: usize = 2000;
 
 /// The box around every copy at `places` of a mesh within `bounds`.
 fn enclosing(places: &[Place], bounds: &Aabb) -> Aabb {
