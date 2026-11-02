@@ -1,12 +1,15 @@
+use crate::widgets::Badge;
 use engine::core::content::ContentFile;
 use engine::core::script::node::Node;
 use engine::systems::area::AreaModule;
+use engine::systems::area::AreaModuleKind;
 use engine::systems::area::scene::SCENE_FILE;
 use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::quest::QuestDef;
 use engine::systems::script::{RiftEffect, ScriptDef};
 use ui::egui;
 use ui::egui::{Sense, Ui};
+use ui::face;
 use ui::sheet;
 use ui::theme;
 
@@ -34,17 +37,14 @@ pub(super) fn quest_parties_sections(editor: &mut Editor, ui: &mut Ui, quest: &s
         }
         for party in rows {
             ui.horizontal(|ui| {
-                widgets::badge(
-                    ui,
-                    if party.object.is_some() {
-                        "object"
-                    } else {
-                        &party.table
-                    },
-                );
+                if party.object.is_some() {
+                    widgets::badge(ui, Badge::of_module(AreaModuleKind::Object));
+                } else {
+                    widgets::table_mark(ui, &party.table);
+                }
                 let row = shown_path(&party.key);
                 if ui
-                    .add(egui::Label::new(theme::mono(row).size(13.0)).sense(Sense::click()))
+                    .add(egui::Label::new(face::mono(row).size(13.0)).sense(Sense::click()))
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
                 {

@@ -6,7 +6,6 @@ struct Cut {
     in_progress: f32,
     time: f32,
     tile: f32,
-    pixel: f32,
     from_radius: f32,
     to_radius: f32,
     from_anchor: vec2<f32>,
@@ -92,7 +91,7 @@ fn ease(x: f32) -> f32 {
 }
 
 fn world_pixel(p: vec2<f32>, grid: vec2<f32>) -> vec2<f32> {
-    return grid + (floor((p - grid) / cut.pixel) + 0.5) * cut.pixel;
+    return grid + floor(p - grid) + 0.5;
 }
 
 fn cell_of(p: vec2<f32>, grid: vec2<f32>) -> vec2<f32> {
@@ -151,7 +150,7 @@ fn iris(p: vec2<f32>) -> vec3<f32> {
 fn diamond(p: vec2<f32>, grid: vec2<f32>) -> f32 {
     let q = p - grid;
     let inside = q - floor(q / cut.tile) * cut.tile;
-    let l = (floor(inside / cut.pixel) + 0.5) * cut.pixel / cut.tile - 0.5;
+    let l = (floor(inside) + 0.5) / cut.tile - 0.5;
     return abs(l.x) + abs(l.y);
 }
 
@@ -290,7 +289,7 @@ fn mosaic(p: vec2<f32>) -> vec3<f32> {
         let blocks = floor(cut.out_progress * 15.0 + 0.5) + 1.0;
         var color = held(p);
         if blocks > 1.0 {
-            color = held(block(p, cut.from_grid, cut.pixel * blocks));
+            color = held(block(p, cut.from_grid, blocks));
         }
         return color * mix(1.0, 0.8, cut.out_progress);
     }
@@ -302,7 +301,7 @@ fn mosaic(p: vec2<f32>) -> vec3<f32> {
     let blocks = floor((1.0 - k) * 15.0 + 0.5) + 1.0;
     var color = live(p);
     if blocks > 1.0 {
-        color = live(block(p, cut.to_grid, cut.pixel * blocks));
+        color = live(block(p, cut.to_grid, blocks));
     }
     return color * mix(0.8, 1.0, k);
 }
@@ -317,9 +316,9 @@ fn bayer8(a: vec2<f32>) -> f32 {
 }
 
 fn dither(p: vec2<f32>) -> vec3<f32> {
-    let from_order = 0.5 * bayer8(floor((p - cut.from_grid) / cut.pixel))
+    let from_order = 0.5 * bayer8(floor(p - cut.from_grid))
         + 0.5 * (1.0 - clamp(distance(world_pixel(p, cut.from_grid), cut.from_anchor) / cut.from_radius, 0.0, 1.0));
-    let to_order = 0.5 * bayer8(floor((p - cut.to_grid) / cut.pixel))
+    let to_order = 0.5 * bayer8(floor(p - cut.to_grid))
         + 0.5 * clamp(distance(world_pixel(p, cut.to_grid), cut.to_anchor) / cut.to_radius, 0.0, 1.0);
     if to_order < cut.in_progress {
         return live(p);

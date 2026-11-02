@@ -27,21 +27,29 @@ use crate::systems::player::snapshot::CharacterSnapshot;
 use crate::systems::script::Place;
 use crate::systems::skill::{SkillDef, SkillId};
 
-/// A question for the probe, one JSON line each, answered with one JSON line before the next is
-/// asked. Positions are metres on the ground of the area asked about.
+/// A question for the probe that only a frame of a running client answers, one JSON line each,
+/// answered with one JSON line before the next is asked.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 #[serde(tag = "ask", rename_all = "snake_case")]
-pub enum ProbeQuestion {
+pub enum ProbeFrameQuestion {
     /// Answered with a [`super::ProbeSnapshot`] of a frame after the question.
     Snapshot,
     /// The window as drawn a frame after the question, written as a PNG at `path`. Answered with
     /// a boolean: whether it was written.
     Picture { path: std::path::PathBuf },
+}
+
+/// A question for the probe about the game itself, which `rift ask` answers as well as a client,
+/// one JSON line each, answered with one JSON line before the next is asked. Positions are metres
+/// on the ground of the area asked about.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+#[serde(tag = "ask", rename_all = "snake_case")]
+pub enum ProbeGameQuestion {
     /// Answered with [`ProbeGame`].
     Game,
-    /// Each question about the game in turn, in one line rather than one each. Answered with a
-    /// list of their answers, in the same order.
-    Batch { questions: Vec<ProbeQuestion> },
+    /// Each question in turn, in one line rather than one each. Answered with a list of their
+    /// answers, each of its question's kind, in the same order.
+    Batch { questions: Vec<ProbeGameQuestion> },
     /// Whether `at` is walkable ground. Answered with a boolean.
     Walkable {
         area: AreaId,
@@ -292,33 +300,32 @@ impl From<InputBinding> for ProbeGesture {
     }
 }
 
-/// What the game itself answers to `question`, or nothing for a question about a frame.
-pub fn answer(content: &Content, question: &ProbeQuestion) -> Option<String> {
+/// What the game answers to `question`, as the line the probe answers with.
+pub fn answer(content: &Content, question: &ProbeGameQuestion) -> String {
     let (answer, _) = with_content(ContentScope::of(content), || {
         answer_in_scope(content, question)
     });
-    answer.map(|answer| answer.to_string())
+    answer.to_string()
 }
 
-fn answer_in_scope(content: &Content, question: &ProbeQuestion) -> Option<Value> {
-    let answer = match question {
-        ProbeQuestion::Snapshot | ProbeQuestion::Picture { .. } => return None,
-        ProbeQuestion::Game => json(&game(content)),
-        ProbeQuestion::Batch { questions } => Value::Array(
+fn answer_in_scope(content: &Content, question: &ProbeGameQuestion) -> Value {
+    match question {
+        ProbeGameQuestion::Game => json(&game(content)),
+        ProbeGameQuestion::Batch { questions } => Value::Array(
             questions
                 .iter()
                 .map(|question| answer_in_scope(content, question))
-                .collect::<Option<_>>()?,
+                .collect(),
         ),
-        &ProbeQuestion::Walkable { area, at } => json(&mesh(content, area, &[at]).walkable(at)),
-        &ProbeQuestion::Connects { area, from, to } => {
+        &ProbeGameQuestion::Walkable { area, at } => json(&mesh(content, area, &[at]).walkable(at)),
+        &ProbeGameQuestion::Connects { area, from, to } => {
             json(&mesh(content, area, &[from, to]).connects(from, to))
         }
-        &ProbeQuestion::Route { area, from, to } => {
+        &ProbeGameQuestion::Route { area, from, to } => {
             json(&mesh(content, area, &[from, to]).route(from, to))
         }
-        &ProbeQuestion::Nearest { area, at } => json(&mesh(content, area, &[at]).nearest(at)),
-        &ProbeQuestion::ReachableNear {
+        &ProbeGameQuestion::Nearest { area, at } => json(&mesh(content, area, &[at]).nearest(at)),
+        &ProbeGameQuestion::ReachableNear {
             area,
             from,
             goal,
@@ -330,10 +337,9 @@ fn answer_in_scope(content: &Content, question: &ProbeQuestion) -> Option<Value>
             });
             json(&reached)
         }
-        &ProbeQuestion::Safe { area, at } => json(&area::load(content, area).safe(at)),
-        &ProbeQuestion::Pictured { area, at } => json(&pictured(content, area, at)),
-    };
-    Some(answer)
+        &ProbeGameQuestion::Safe { area, at } => json(&area::load(content, area).safe(at)),
+        &ProbeGameQuestion::Pictured { area, at } => json(&pictured(content, area, at)),
+    }
 }
 
 fn json(value: &impl Serialize) -> Value {

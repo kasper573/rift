@@ -1,10 +1,12 @@
 use std::collections::{BTreeMap, HashSet};
 use ui::controls;
 use ui::egui;
+use ui::face;
 use ui::panel;
 use ui::theme;
 use ui::words;
 
+use crate::widgets::Badge;
 use engine::core::content::files::NAME_RULE;
 use engine::core::content::serial::TypeTag;
 use engine::core::content::{
@@ -105,6 +107,11 @@ fn name_kind(path: &str) -> &str {
 
 /// `name` as a name within a file, such as a node's or a variable's: `name` itself when none of
 /// `taken` has it, ignoring case, or else `name_2`, `name_3`, the first that is free.
+/// A name for a variable filling the hole at `pointer`, after the field it fills, none of `taken`.
+pub(crate) fn hole_name(pointer: &str, taken: &HashSet<String>) -> String {
+    free_name(pointer.rsplit('/').next().unwrap_or("value"), taken)
+}
+
 pub(crate) fn free_name(name: &str, taken: &HashSet<String>) -> String {
     let is_taken = |candidate: &str| taken.iter().any(|t| t.eq_ignore_ascii_case(candidate));
     if !is_taken(name) {
@@ -928,7 +935,7 @@ pub(crate) fn delete_body(editor: &mut Editor, ui: &mut Ui, dialog: &mut DeleteD
         .show(ui, |ui| {
             for (index, group) in dialog.groups.iter_mut().enumerate() {
                 let title = group_title(project, group);
-                panel::card(ui, false, |ui| {
+                panel::tile_across(ui, false, |ui| {
                     ui.horizontal(|ui| {
                         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                             let candidates = candidates(&group.target);
@@ -936,12 +943,14 @@ pub(crate) fn delete_body(editor: &mut Editor, ui: &mut Ui, dialog: &mut DeleteD
                             ui.with_layout(
                                 egui::Layout::left_to_right(egui::Align::Center),
                                 |ui| {
-                                    let badge = if group.kind.is_empty() {
-                                        &group.table
+                                    if group.kind.is_empty() {
+                                        widgets::table_mark(ui, &group.table);
                                     } else {
-                                        &group.kind
-                                    };
-                                    widgets::badge(ui, badge);
+                                        widgets::badge(
+                                            ui,
+                                            Badge::of_tag(&group.kind, Some(&group.table)),
+                                        );
+                                    }
                                     ui.add(egui::Label::new(theme::strong(&title)).truncate());
                                 },
                             );
@@ -1026,7 +1035,7 @@ fn decision_picker(
             _ => remove_label.clone(),
         };
         controls::combo(("decision", index))
-            .selected_text(theme::mono(label).size(13.0))
+            .selected_text(face::mono(label).size(13.0))
             .show_ui(ui, |ui| {
                 if unpackable
                     && ui
@@ -1080,7 +1089,7 @@ fn decision_picker(
                 .show_ui(ui, |ui| {
                     for candidate in candidates {
                         if ui
-                            .selectable_label(picked == *candidate, theme::mono(candidate))
+                            .selectable_label(picked == *candidate, face::mono(candidate))
                             .on_hover_text(candidate.as_str())
                             .clicked()
                         {
@@ -1103,10 +1112,10 @@ fn usage_lines(ui: &mut Ui, index: usize, lines: &[(String, String)]) {
         .show(ui, |ui| {
             for (row, detail) in lines {
                 if row.is_empty() {
-                    ui.label(theme::mono(detail).size(12.5).color(theme::TEXT));
+                    ui.label(face::mono(detail).size(12.5).color(theme::TEXT));
                     ui.label("");
                 } else {
-                    ui.label(theme::mono(row).size(12.5).color(theme::TEXT));
+                    ui.label(face::mono(row).size(12.5).color(theme::TEXT));
                     ui.label(theme::muted(detail).monospace().size(12.5));
                 }
                 ui.end_row();

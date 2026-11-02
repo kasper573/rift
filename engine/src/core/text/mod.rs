@@ -1,6 +1,6 @@
 mod paint;
 
-pub use paint::{Hand, TextLook, TextShadow, measure, show, show_shadowed};
+pub use paint::{Hand, TextLook, measure, show, show_shadowed};
 
 use std::borrow::Cow;
 use std::collections::HashMap;
@@ -13,6 +13,7 @@ use strum::{IntoStaticStr, VariantArray};
 use ui::egui::Color32;
 use ui::ink::Prose;
 
+use crate::core::content::SchemaMark;
 use crate::core::units::{Radians, RadiansPerSec};
 
 #[derive(Component, Clone, Debug, Default, PartialEq)]
@@ -110,7 +111,7 @@ impl KeyNames {
 }
 
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, PartialOrd)]
-#[schemars(extend("x-unit" = "letters/s"))]
+#[schemars(transform = SchemaMark::Unit.with("letters/s"))]
 pub struct LettersPerSecond(pub f32);
 
 /// How styled text sets its voices, key caps, halos and motions; sizes are shares of the text's

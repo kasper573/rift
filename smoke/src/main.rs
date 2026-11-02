@@ -12,13 +12,11 @@ use std::sync::mpsc::channel;
 use std::time::{Duration, Instant};
 
 use engine::core::content::{Content, ContentScope, FilesystemFolder, with_content};
-use engine::core::time::UtcHour;
 use engine::systems::launch::{
     self, AuthMode, CLIENT_ENV_PREFIX, ReadyLine, SERVER_ENV_PREFIX, ServerConfig, ServerDaylight,
     ServerReady,
 };
-use engine::systems::player::SpawnPolicy;
-use engine::systems::probe::{ProbeQuestion, ProbeSnapshot};
+use engine::systems::probe::{ProbeFrameQuestion, ProbeSnapshot};
 use engine::systems::{GameSettings, load_content};
 use image::imageops::FilterType;
 use image::{RgbImage, RgbaImage};
@@ -185,7 +183,7 @@ impl Probe {
         }
     }
 
-    fn ask(&mut self, question: &ProbeQuestion) -> String {
+    fn ask(&mut self, question: &ProbeFrameQuestion) -> String {
         let question = serde_json::to_string(question).expect("a question serializes");
         writeln!(self.questions, "{question}").expect("the probe takes a question");
         let mut answer = String::new();
@@ -197,7 +195,7 @@ impl Probe {
     }
 
     fn snapshot(&mut self, content: &Content) -> ProbeSnapshot {
-        let answer = self.ask(&ProbeQuestion::Snapshot);
+        let answer = self.ask(&ProbeFrameQuestion::Snapshot);
         let (snapshot, _) = with_content(ContentScope::of(content), || {
             serde_json::from_str(&answer).expect("a snapshot")
         });
@@ -225,7 +223,7 @@ impl Probe {
     /// The window as it shows now.
     fn look(&mut self, pictures: &Path) -> RgbaImage {
         let path = pictures.join("look.png");
-        let answer = self.ask(&ProbeQuestion::Picture { path: path.clone() });
+        let answer = self.ask(&ProbeFrameQuestion::Picture { path: path.clone() });
         assert_eq!(answer.trim(), "true", "the client pictured its window");
         image::open(&path).expect("a picture").to_rgba8()
     }
@@ -405,20 +403,12 @@ fn desktop_client(
 /// The game server on the game, taking the seeded player's tokens, once players can connect.
 fn game_server(binary: &Path, sign_in: &oidc::TokenCheckSettings) -> (Running, ServerReady) {
     let config = ServerConfig {
-        bind: LOCALHOST,
-        port: 0,
-        udp_port: 0,
-        public_ip: LOCALHOST,
-        max_clients: 8,
-        content_dir: std::path::absolute(game()).expect("the game"),
-        player_spawn_policy: SpawnPolicy::Map,
         player_immortal: true,
         daylight: ServerDaylight::Still,
         rng_seed: Some(SEED),
-        daily_reset_utc_hour: UtcHour::MIDNIGHT,
         auth: AuthMode::Oidc,
         test_characters: false,
-        exit_on_stdin_eof: true,
+        ..ServerConfig::local(std::path::absolute(game()).expect("the game"))
     };
     let mut child = Command::new(binary)
         .envs(launch::env_of(SERVER_ENV_PREFIX, &config))

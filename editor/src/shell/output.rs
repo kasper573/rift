@@ -1,6 +1,7 @@
 use ui::controls;
 use ui::egui;
 use ui::egui::{Align, Layout, RichText, Ui};
+use ui::face;
 use ui::panel;
 use ui::theme;
 use ui::words;
@@ -71,11 +72,11 @@ fn moved_outside(editor: &mut Editor, ui: &mut Ui) {
         return;
     };
     let mut point = false;
-    panel::card(ui, true, |ui| {
+    panel::tile_across(ui, true, |ui| {
         ui.label(theme::warn(summary).size(13.0));
         for step in moved.iter().take(SHOWN) {
             ui.label(
-                theme::mono(format!("{}  →  {}", step.from, step.to))
+                face::mono(format!("{}  →  {}", step.from, step.to))
                     .size(12.5)
                     .color(theme::CODE),
             );

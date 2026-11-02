@@ -2,9 +2,9 @@ mod game;
 mod socket;
 
 pub use game::{
-    ProbeArea, ProbeBinding, ProbeBindings, ProbeButton, ProbeGame, ProbeGesture,
-    ProbeInterfaceIcon, ProbeItem, ProbeNamedObject, ProbeNpc, ProbeProp, ProbeQuestion,
-    ProbeResident, ProbeRoaming, ProbeSkill, answer,
+    ProbeArea, ProbeBinding, ProbeBindings, ProbeButton, ProbeFrameQuestion, ProbeGame,
+    ProbeGameQuestion, ProbeGesture, ProbeInterfaceIcon, ProbeItem, ProbeNamedObject, ProbeNpc,
+    ProbeProp, ProbeResident, ProbeRoaming, ProbeSkill, answer,
 };
 
 use std::collections::HashMap;
@@ -68,19 +68,16 @@ use crate::systems::skill::{self, Rank, SkillId, bar::SlotReport};
 use crate::systems::stat::{StatKind, Stats};
 use crate::systems::status::{self, StatusCategory, StatusEffectId};
 
-/// The probe's question `line`, where it is one only a frame answers.
-fn frame_question(line: &str) -> Option<socket::FrameQuestion> {
-    match serde_json::from_str::<ProbeQuestion>(line) {
-        Ok(ProbeQuestion::Snapshot) => Some(socket::FrameQuestion::Snapshot),
-        Ok(ProbeQuestion::Picture { path }) => Some(socket::FrameQuestion::Picture(path)),
-        _ => None,
-    }
+/// The probe's question `line`, where it is one only a frame answers: a question that names no
+/// place of the game, so it reads before the game is loaded.
+fn frame_question(line: &str) -> Option<ProbeFrameQuestion> {
+    serde_json::from_str(line).ok()
 }
 
-/// The probe's question `line`, read against the game it names places of.
-pub fn read_question(content: &Content, line: &str) -> Result<ProbeQuestion, String> {
+/// The probe's question about the game `line`, read against the game it names places of.
+pub fn read_question(content: &Content, line: &str) -> Result<ProbeGameQuestion, String> {
     let (question, scope) = with_content(ContentScope::of(content), || {
-        serde_json::from_str::<ProbeQuestion>(line)
+        serde_json::from_str::<ProbeGameQuestion>(line)
     });
     let question = question.map_err(|error| error.to_string())?;
     match scope
@@ -99,22 +96,23 @@ pub fn schema() -> String {
     serde_json::to_string_pretty(&schema).expect("a serializable schema")
 }
 
-/// Everything the probe speaks, for its schema: a question, and the answers of each kind.
+/// Everything the probe speaks, for its schema: the questions of each kind, and the answers of
+/// each kind.
 #[derive(JsonSchema)]
-#[allow(dead_code)]
-struct ProbeProtocol {
-    question: ProbeQuestion,
-    snapshot: ProbeSnapshot,
-    game: ProbeGame,
+pub struct ProbeProtocol {
+    pub frame_question: ProbeFrameQuestion,
+    pub game_question: ProbeGameQuestion,
+    pub snapshot: ProbeSnapshot,
+    pub game: ProbeGame,
     #[schemars(with = "bool")]
-    yes: bool,
+    pub yes: bool,
     #[schemars(with = "Option<PosSchema>")]
-    point: Option<Pos<Meters>>,
+    pub point: Option<Pos<Meters>>,
     #[schemars(with = "Option<Vec<PosSchema>>")]
-    route: Option<Vec<Pos<Meters>>>,
+    pub route: Option<Vec<Pos<Meters>>>,
     #[schemars(with = "Vec<PosSchema>")]
-    points: Vec<Pos<Meters>>,
-    batch: Vec<serde_json::Value>,
+    pub points: Vec<Pos<Meters>>,
+    pub batch: Vec<serde_json::Value>,
 }
 
 /// Answers the driver at `driver`: the frame after it asks for a snapshot answers it, and every
@@ -423,31 +421,12 @@ pub struct ProbeChoice {
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeNotifications {
-    pub bubbles: Vec<ProbeBubble>,
+    pub bubbles: Vec<bubble::ShownBubble>,
     pub edge_folds: Vec<u32>,
     pub captions: NotificationRows,
     pub error: Option<String>,
     pub milestones: NotificationRows,
-    pub intro: Option<ProbeIntro>,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct ProbeBubble {
-    pub speaker: String,
-    pub npc: NpcId,
-    #[schemars(with = "Option<u64>")]
-    pub body: Option<Entity>,
-    pub replaced: u32,
-    pub lines: Vec<String>,
-    pub folded: bool,
-    #[schemars(with = "Option<RectSchema>")]
-    pub rect: Option<Rect<WindowPx>>,
-}
-
-#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct ProbeIntro {
-    pub title: String,
-    pub text: String,
+    pub intro: Option<intro::ShownIntro>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -704,7 +683,7 @@ fn publish(world: &mut World) {
     let mut snapshotted: Option<String> = None;
     for question in asked {
         match question {
-            socket::FrameQuestion::Snapshot => {
+            ProbeFrameQuestion::Snapshot => {
                 let json = match &snapshotted {
                     Some(json) => json.clone(),
                     None => {
@@ -718,7 +697,7 @@ fn publish(world: &mut World) {
                 };
                 answers.give(&json);
             }
-            socket::FrameQuestion::Picture(path) => {
+            ProbeFrameQuestion::Picture { path } => {
                 let answers = answers.clone();
                 world.spawn(Screenshot::primary_window()).observe(
                     move |captured: On<ScreenshotCaptured>| {
@@ -771,7 +750,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         claim: claims::claim(world),
         stage: stage::view(world).map(|view| ProbeStage {
             node: view.node,
-            rect: stage::dialogue_rect(world).map(window_rect),
+            rect: stage::dialogue_rect(world).map(gui::window_rect),
             with: view.with,
             line: view.line,
             lines: view.lines,
@@ -787,7 +766,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                     gets: choice.gets,
                     locked: choice.locked,
                     selected: choice.selected,
-                    rect: rows.get(&index).copied().map(window_rect),
+                    rect: rows.get(&index).copied().map(gui::window_rect),
                 })
                 .collect(),
         }),
@@ -806,13 +785,13 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         },
         item_card: item::card::shown(world).map(|(item, rect)| ProbeItemCard {
             item,
-            rect: window_rect(rect),
+            rect: gui::window_rect(rect),
         }),
         skill_card: skill::card::shown(world)
             .zip(hud::pinned_rect::<SkillId>(world))
             .map(|(skill, rect)| ProbeSkillCard {
                 skill,
-                rect: window_rect(rect),
+                rect: gui::window_rect(rect),
             }),
         shop: shop::counter::view(world).map(|shown| ProbeShop {
             shop: shown.shop,
@@ -991,10 +970,10 @@ fn tree_view(world: &World) -> Option<ProbeTreeView> {
     let window = hud::window_rect(world, &skill::window::SkillsWindow)?;
     let view = world.resource::<skill::window::TreeView>();
     Some(ProbeTreeView {
-        window: window_rect(window),
+        window: gui::window_rect(window),
         max: hud::window_limit(world, &skill::window::SkillsWindow)
             .map(|max| Size::new(max.x, max.y)),
-        viewport: window_rect(view.viewport),
+        viewport: gui::window_rect(view.viewport),
         canvas: Size::new(view.content.x, view.content.y),
         panned: Offset::new(view.offset.x, view.offset.y),
     })
@@ -1464,7 +1443,7 @@ fn ui(world: &mut World) -> Vec<ProbeUiElement> {
                 slider,
                 checked,
                 labelled_by,
-                rect: window_rect(rect),
+                rect: gui::window_rect(rect),
             })
         })
         .collect()
@@ -1488,19 +1467,7 @@ fn shown_role(role: accesskit::Role) -> bool {
 }
 
 fn notifications(world: &mut World) -> ProbeNotifications {
-    let content = world.resource::<Content>().clone();
-    let bubbles = bubble::shown(world)
-        .into_iter()
-        .map(|shown| ProbeBubble {
-            speaker: shown.speaker.get(&content).name.to_owned(),
-            npc: shown.speaker,
-            body: shown.body,
-            replaced: shown.replaced,
-            lines: shown.lines,
-            folded: shown.folded,
-            rect: shown.rect.map(window_rect),
-        })
-        .collect();
+    let bubbles = bubble::shown(world);
     let edge_folds = bubble::edge_folds(world);
     ProbeNotifications {
         bubbles,
@@ -1508,15 +1475,8 @@ fn notifications(world: &mut World) -> ProbeNotifications {
         captions: notification::captions(world),
         error: error::shown(world),
         milestones: notification::milestones(world),
-        intro: intro::shown(world).map(|(title, text)| ProbeIntro { title, text }),
+        intro: intro::shown(world),
     }
-}
-
-fn window_rect(rect: egui::Rect) -> Rect<WindowPx> {
-    Rect::new(
-        Pos::new(rect.min.x, rect.min.y),
-        Size::new(rect.width(), rect.height()),
-    )
 }
 
 fn covered(world: &mut World) -> Vec<Rect<WindowPx>> {
@@ -1534,7 +1494,7 @@ fn covered(world: &mut World) -> Vec<Rect<WindowPx>> {
         .filter(|area| area.interactable)
         .map(|area| area.rect().expand(reach))
         .filter(|rect| rect.width() > 0.0 && rect.height() > 0.0)
-        .map(window_rect)
+        .map(gui::window_rect)
         .collect()
 }
 

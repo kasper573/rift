@@ -12,6 +12,7 @@ use engine::systems::class::ClassDef;
 use engine::systems::dialogue::bust::BustDef;
 use engine::systems::npc::NpcDef;
 use ui::egui::{self, Ui};
+use ui::face;
 use ui::theme;
 
 use crate::app::Editor;
@@ -65,7 +66,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         .inner_margin(crate::widgets::VIEW_PADDING)
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
-            ui.label(theme::mono(shown_path(key)).color(theme::CODE));
+            ui.label(face::mono(shown_path(key)).color(theme::CODE));
             ui.add_space(4.0);
             egui::ScrollArea::both()
                 .id_salt(("bust-page", key))

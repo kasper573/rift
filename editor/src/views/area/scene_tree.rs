@@ -5,6 +5,7 @@ use ui::menu;
 use ui::theme;
 use ui::words;
 
+use crate::widgets::Badge;
 use engine::core::content::{ContentFile, ErrorPlace, table_of};
 use engine::systems::area::blueprint::{BlueprintDef, Placement};
 use engine::systems::area::scene::{MAX_FOLDER_DEPTH, SceneNode, scene_file};
@@ -131,7 +132,7 @@ impl<'a> SceneSource<'a> {
     ) -> SceneSource<'a> {
         let SceneNarrowing { filter, view, kept } = narrowing;
         let in_place: Vec<String> = (1..=snapshot.in_place.len())
-            .map(|depth| super::place_id_of(&snapshot.in_place[..depth]))
+            .map(|depth| super::place_id(&snapshot.in_place[..depth]))
             .collect();
         let mut source = SceneSource {
             snapshot,
@@ -257,10 +258,7 @@ impl<'a> SceneSource<'a> {
         }
         Some(TreeRow {
             name: format!("new {}", kind.tag().replace('_', " ")),
-            badge: Some((
-                widgets::badge_letter(kind.tag()),
-                widgets::badge_color(kind.tag()),
-            )),
+            badge: Some(Badge::of_module(*kind)),
             dim: true,
             detail: "click the map".to_owned(),
             ..TreeRow::default()
@@ -745,7 +743,7 @@ impl TreeSource for SceneSource<'_> {
             row.detail = count.to_string();
             row.spoken = Some(format!("{name}, folder, {count} inside"));
         } else if let SceneNode::Module(module) = node {
-            row.badge = Some((widgets::badge_letter(kind), widgets::badge_color(kind)));
+            row.badge = Some(Badge::of_module(module.module.kind()));
             row.detail = shapes::node_detail(&module.module, self.snapshot.reader.as_ref());
             row.spoken = Some(format!("{name}, {}", kind.replace('_', " ")));
             if let AreaModule::Blueprint(placement) = &module.module {
@@ -876,7 +874,7 @@ pub fn add_menu(ui: &mut Ui, folder: &str, snapshot: &AreaSnapshot) -> Option<Sc
         };
         ui.label(theme::faint(group.to_uppercase()).size(11.0));
         for &(kind, description) in *kinds {
-            if super::modules::module_menu_row(ui, kind.tag(), description) {
+            if super::modules::module_menu_row(ui, kind, description) {
                 picked = Some(SceneAction::Add {
                     folder: folder.to_owned(),
                     kind,
@@ -918,7 +916,7 @@ pub(crate) fn selected_ids(snapshot: &AreaSnapshot, selection: &RowSelection) ->
     }
     match snapshot.in_place.last() {
         Some(place) if place.blueprint == *key => {
-            let prefix = super::place_id_of(&snapshot.in_place);
+            let prefix = super::place_id(&snapshot.in_place);
             selection
                 .parts
                 .iter()
@@ -1237,13 +1235,13 @@ pub(crate) fn move_rows(
 }
 
 fn folder_is_level_top(snapshot: &AreaSnapshot, folder: &str, level: usize) -> bool {
-    level > 0 && super::place_id_of(&snapshot.in_place[..level]) == folder
+    level > 0 && super::place_id(&snapshot.in_place[..level]) == folder
 }
 
 fn level_prefix(snapshot: &AreaSnapshot, level: usize) -> String {
     match level {
         0 => String::new(),
-        depth => format!("{}/in", super::place_id_of(&snapshot.in_place[..depth])),
+        depth => format!("{}/in", super::place_id(&snapshot.in_place[..depth])),
     }
 }
 
@@ -1325,14 +1323,14 @@ fn folder_is_place(snapshot: &AreaSnapshot, id: &str) -> bool {
 
 /// Whether the row `id` is a placement edited in place, opened on its blueprint's scene.
 fn is_place_row(snapshot: &AreaSnapshot, id: &str) -> bool {
-    (1..=snapshot.in_place.len()).any(|depth| super::place_id_of(&snapshot.in_place[..depth]) == id)
+    (1..=snapshot.in_place.len()).any(|depth| super::place_id(&snapshot.in_place[..depth]) == id)
 }
 
 /// The row of the innermost placement edited in place, "" for none.
 pub(crate) fn place_row(snapshot: &AreaSnapshot) -> String {
     match snapshot.in_place.len() {
         0 => String::new(),
-        depth => super::place_id_of(&snapshot.in_place[..depth]),
+        depth => super::place_id(&snapshot.in_place[..depth]),
     }
 }
 
@@ -1738,7 +1736,7 @@ pub(crate) fn folders_of(snapshot: &AreaSnapshot, level: usize) -> Vec<(String, 
         "(top level)".to_owned(),
         match level {
             0 => String::new(),
-            depth => super::place_id_of(&snapshot.in_place[..depth]),
+            depth => super::place_id(&snapshot.in_place[..depth]),
         },
     )];
     let mut labels: HashMap<String, String> = HashMap::new();

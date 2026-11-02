@@ -2,6 +2,7 @@ use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::core::content::SchemaMark;
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, FlowCx, NEXT, ScriptFault};
 use crate::systems::npc::Npc;
 use crate::systems::script::{
@@ -11,7 +12,7 @@ use crate::systems::{combat, stat};
 
 /// Restores health up to the maximum.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "stat"))]
+#[schemars(transform = SchemaMark::System.with("stat"))]
 pub struct Heal {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
@@ -37,7 +38,7 @@ pub enum Fully {
 
 /// Takes health, credited to an npc owner.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "stat"))]
+#[schemars(transform = SchemaMark::System.with("stat"))]
 pub struct Damage {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]

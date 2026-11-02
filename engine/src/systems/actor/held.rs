@@ -12,6 +12,7 @@ use super::ActorModel;
 use super::skeleton::Hand;
 use super::stance::{self, HandIndex, HandRole, StanceId};
 use crate::core::content::Content;
+use crate::core::content::SchemaMark;
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
 use crate::systems::item::ItemId;
 use crate::systems::script::event::NPC;
@@ -31,7 +32,7 @@ pub struct ScriptedStance(pub StanceId);
 /// Fills the hands of the npc whose script this is with items to show, each placed in turn as
 /// equipping places it; what that puts back is left out.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "npc body"))]
+#[schemars(transform = SchemaMark::System.with("npc body"))]
 pub struct SetHeld {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<ItemId>,

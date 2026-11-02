@@ -5,6 +5,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{Cooldowns, Learned};
+use crate::core::content::SchemaMark;
 use crate::core::script::{Answer, Arrow, Compiler, EffectDef, EffectStep, ScriptFault};
 use crate::systems::class::{self, SkillPoints};
 use crate::systems::history::{HistoryTopic, RecordTally};
@@ -19,14 +20,14 @@ use ui::words::counted;
 /// Asks the player before forgetting every learned rank and returning the points. The answer
 /// picks the output, so whatever the reset costs is wired after it by the script.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "skill"))]
+#[schemars(transform = SchemaMark::System.with("skill"))]
 pub struct ResetSkills {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
     pub who: Option<Condition>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub accepted: Arrow,
-    #[schemars(extend("x-fails" = true))]
+    #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub declined: Arrow,
 }

@@ -19,8 +19,8 @@ use bevy::light::NotShadowCaster;
 use bevy::light::atmosphere::ScatteringMedium;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
-use bevy::tasks::futures_lite::future;
-use bevy::tasks::{IoTaskPool, Task, block_on};
+use bevy::tasks::futures::check_ready;
+use bevy::tasks::{IoTaskPool, Task};
 use bevy::world_serialization::WorldInstanceReady;
 
 use super::lighting::DomeLook;
@@ -451,7 +451,7 @@ fn stream_ground(
 ) {
     streaming
         .loading
-        .retain(|_, task| block_on(future::poll_once(task)).is_none());
+        .retain(|_, task| check_ready(task).is_none());
     let wanted = nodes_for(&streaming.heights, at);
     let gone: Vec<Node> = streaming
         .stood

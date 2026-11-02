@@ -3,6 +3,7 @@ use engine::core::babble::{BABBLE_LETTERS, BabbleBankDef, BabbleDef, LETTERS};
 use engine::core::content::{Content, ContentFile, MODULES, NamedContent};
 use engine::core::units::Seconds;
 use engine::systems::GameSettings;
+use engine::systems::area::Pictured;
 use std::collections::{BTreeMap, HashMap};
 
 use engine::systems::actor::MaterialDef;
@@ -25,6 +26,7 @@ use engine::systems::status::StatusEffectDef;
 use strum::VariantArray;
 use ui::card::{self};
 use ui::egui::{self, Ui, Vec2};
+use ui::face;
 use ui::glyph::{self, Mark};
 use ui::theme;
 use ui::words;
@@ -177,7 +179,7 @@ fn show_status(editor: &mut Editor, ui: &mut Ui, key: &str) {
     });
     ui.horizontal(|ui| {
         controls::combo("preview-status-model")
-            .selected_text(theme::mono(chosen.as_str()).size(13.0))
+            .selected_text(face::mono(chosen.as_str()).size(13.0))
             .width(160.0)
             .show_ui(ui, |ui| {
                 for candidate in &models {
@@ -345,11 +347,11 @@ fn show_material(editor: &mut Editor, ui: &mut Ui, key: &str) {
                 if mask.inverted {
                     name.push_str(" · inverted");
                 }
-                ui.label(theme::mono(name).size(13.0));
+                ui.label(face::mono(name).size(13.0));
                 for (channel, tint) in mask.painting() {
                     chip::swatch(
                         ui,
-                        theme::mono(format!("{} {tint}", ["r", "g", "b", "a"][channel])).size(12.0),
+                        face::mono(format!("{} {tint}", ["r", "g", "b", "a"][channel])).size(12.0),
                         colour_of(tint),
                     );
                 }
@@ -421,6 +423,7 @@ fn draw_preview(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, pose: 
         &view_key,
         Vec2::new(width, width * 1.1),
         &mut state,
+        Pictured::Stage,
     );
     editor.views.preview.stages.insert(view_key, state);
     let Some(turntable) = turntable else {

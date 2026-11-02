@@ -5,12 +5,8 @@ use std::process::{Child, Command, Stdio};
 use std::sync::mpsc::channel;
 use std::time::Duration;
 
-use engine::core::time::UtcHour;
 use engine::core::units::Bytes;
-use engine::systems::launch::{
-    self, AuthMode, ReadyLine, SERVER_ENV_PREFIX, ServerConfig, ServerDaylight, ServerReady,
-};
-use engine::systems::player::SpawnPolicy;
+use engine::systems::launch::{self, ReadyLine, SERVER_ENV_PREFIX, ServerConfig, ServerReady};
 
 pub const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
@@ -21,20 +17,9 @@ pub const SEED: u64 = 1931;
 /// immortal and signed in without asking, its day turning. A bench says what else it needs.
 pub fn bench_config(game: &Path) -> ServerConfig {
     ServerConfig {
-        bind: LOCALHOST,
-        port: 0,
-        udp_port: 0,
-        public_ip: LOCALHOST,
-        max_clients: 8,
-        content_dir: absolute(game),
-        player_spawn_policy: SpawnPolicy::Map,
         player_immortal: true,
-        daylight: ServerDaylight::Turning,
         rng_seed: Some(SEED),
-        daily_reset_utc_hour: UtcHour::MIDNIGHT,
-        auth: AuthMode::Fake,
-        test_characters: true,
-        exit_on_stdin_eof: true,
+        ..ServerConfig::local(absolute(game))
     }
 }
 

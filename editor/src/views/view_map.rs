@@ -23,6 +23,23 @@ impl<V> ViewMap<V> {
         self.0.get(key)
     }
 
+    pub fn get_mut(&mut self, key: &str) -> Option<&mut V> {
+        self.0.get_mut(key)
+    }
+
+    /// The view of `key`, made by `make` when it isn't yet.
+    pub fn view_or_insert_with(&mut self, key: &str, make: impl FnOnce() -> V) -> &mut V {
+        self.0.entry(key.to_owned()).or_insert_with(make)
+    }
+
+    pub fn values_mut(&mut self) -> impl Iterator<Item = &mut V> {
+        self.0.values_mut()
+    }
+
+    pub fn clear(&mut self) {
+        self.0.clear();
+    }
+
     pub fn view(&self, key: &str) -> &V {
         self.0
             .get(key)
@@ -39,5 +56,10 @@ impl<V> ViewMap<V> {
 impl<V: Default> ViewMap<V> {
     pub fn ensure_default(&mut self, key: &str) {
         self.0.entry(key.to_owned()).or_default();
+    }
+
+    /// The view of `key`, made as a fresh view when it isn't yet.
+    pub fn view_or_default(&mut self, key: &str) -> &mut V {
+        self.0.entry(key.to_owned()).or_default()
     }
 }

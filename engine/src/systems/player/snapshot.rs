@@ -2,6 +2,7 @@ use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::core::content::SchemaMark;
 use crate::core::content::{
     Content, ContentFile, ContentProblem, Loading, NamedContent, Nearby, RowCheck, id, serial,
 };
@@ -35,7 +36,7 @@ pub struct CharacterSnapshot {
     pub appearance: Appearance,
     #[serde(default, skip_serializing_if = "serial::is_zero")]
     pub xp: u32,
-    #[schemars(extend("x-usage" = "learned ranks, by node of the class tree"))]
+    #[schemars(transform = SchemaMark::Usage.with("learned ranks, by node of the class tree"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<SnapshotSkill>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -44,7 +45,7 @@ pub struct CharacterSnapshot {
     pub basic_attack: Option<SkillId>,
     #[serde(default, skip_serializing_if = "Stats::is_empty")]
     pub stats: Stats,
-    #[schemars(extend("x-usage" = "from the bag"))]
+    #[schemars(transform = SchemaMark::Usage.with("from the bag"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub bag: Vec<ItemStack>,
     /// Put on in order, each where equipping puts it.

@@ -12,7 +12,7 @@ use engine::systems::launch::{
     self, AuthMode, CLIENT_ENV_PREFIX, ClientConfig, TEST_CHARACTER_ROUTE, TestCharacterRequest,
 };
 use engine::systems::player::snapshot::CharacterSnapshot;
-use engine::systems::probe::{ProbeQuestion, ProbeSnapshot};
+use engine::systems::probe::{ProbeFrameQuestion, ProbeSnapshot};
 use engine::systems::staging::{STAGING_ROUTE, Staging};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
@@ -87,10 +87,10 @@ impl Playtest {
     }
 
     pub fn snapshot(&mut self) -> ProbeSnapshot {
-        self.ask(&ProbeQuestion::Snapshot)
+        self.ask(&ProbeFrameQuestion::Snapshot)
     }
 
-    pub fn ask<Answer: DeserializeOwned>(&mut self, question: &ProbeQuestion) -> Answer {
+    pub fn ask<Answer: DeserializeOwned>(&mut self, question: &ProbeFrameQuestion) -> Answer {
         let line = in_scope(&self.content, || serde_json::to_string(question))
             .expect("a serializable question");
         writeln!(self.questions, "{line}").expect("the client takes questions");

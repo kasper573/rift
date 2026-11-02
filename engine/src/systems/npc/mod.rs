@@ -9,6 +9,7 @@ use bevy_ecs::message::{MessageCursor, Messages};
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryState;
 
+use crate::core::content::SchemaMark;
 use crate::core::tick::Planner;
 use bevy_ecs::world::DeferredWorld;
 use bevy_replication::Replicated;
@@ -222,15 +223,15 @@ pub struct NpcDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bust: Option<BustId>,
     pub stats: Stats,
-    #[schemars(extend("x-usage" = "the skill a click on a target uses"))]
+    #[schemars(transform = SchemaMark::Usage.with("the skill a click on a target uses"))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub basic_attack: Option<SkillId>,
-    #[schemars(extend("x-usage" = "known at these ranks, for the scripts that will cast them"))]
+    #[schemars(transform = SchemaMark::Usage.with("known at these ranks, for the scripts that will cast them"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<NpcSkill>,
     /// What its hands show, each placed in turn as equipping places it: looks alone, granting no
     /// skill, stat or drop.
-    #[schemars(extend("x-usage" = "shown in its hands"))]
+    #[schemars(transform = SchemaMark::Usage.with("shown in its hands"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub held: Vec<ItemId>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -362,11 +363,11 @@ pub struct Loot {
 #[derive(JsonSchema, Clone, Copy, Serialize, Deserialize)]
 pub struct LootItem {
     pub item: ItemId,
-    #[schemars(extend("x-count" = true))]
+    #[schemars(transform = SchemaMark::Count.with(true))]
     #[schemars(extend("default" = serial::one()))]
     #[serde(default = "serial::one", skip_serializing_if = "serial::is_one")]
     pub amount: u32,
-    #[schemars(extend("x-blank" = "always"))]
+    #[schemars(transform = SchemaMark::Blank.with("always"))]
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub chance: Option<Percent>,
 }

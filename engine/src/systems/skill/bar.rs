@@ -204,7 +204,7 @@ pub fn cancel_rebind(world: &mut World) -> bool {
 /// Uses what a slot holds: a skill is cast or aimed, an item is used from the bag. A slot drawn as
 /// cooling or blocked counts its press as denied whatever the use comes to.
 pub fn fire(world: &mut World, entry: HotbarEntry) -> HotbarPress {
-    let ready = matches!(SlotView::of(world, entry).fill, Fill::Ready);
+    let ready = matches!(SlotView::of(world, entry).fill, SlotFill::Ready);
     let used = match entry {
         HotbarEntry::Empty => false,
         HotbarEntry::Skill(skill) => use_skill(world, skill),
@@ -269,8 +269,8 @@ pub fn report(world: &World) -> Vec<SlotReport> {
             SlotReport {
                 entry,
                 key: key_name(world, slot),
-                cooling: matches!(view.fill, Fill::Cooling { .. }),
-                blocked: matches!(view.fill, Fill::Blocked(_)),
+                cooling: matches!(view.fill, SlotFill::Cooling { .. }),
+                blocked: matches!(view.fill, SlotFill::Blocked(_)),
                 dimmed: view.dimmed,
                 rebinding: state.rebinding == Some(slot),
                 pressed: state.presses.get(&slot).map(|press| press.outcome),
@@ -304,7 +304,7 @@ struct Resizing {
 /// How a slot is drawn over its icon: free, draining while a cooldown runs, or held under a
 /// hatched fill with the glyph of what blocks it.
 #[derive(Clone, Copy, Debug, PartialEq)]
-enum Fill {
+enum SlotFill {
     Ready,
     Cooling { fraction: f32, left: Seconds },
     Blocked(Glyph),
@@ -321,7 +321,7 @@ struct SlotView {
     icon: Option<ImageRef>,
     count: u32,
     dimmed: bool,
-    fill: Fill,
+    fill: SlotFill,
     name: String,
 }
 
@@ -331,7 +331,7 @@ impl SlotView {
             icon: None,
             count: 0,
             dimmed: false,
-            fill: Fill::Ready,
+            fill: SlotFill::Ready,
             name: "empty".to_owned(),
         }
     }
@@ -365,9 +365,9 @@ impl SlotView {
                     count: held,
                     dimmed: held == 0 && !worn,
                     fill: if held == 0 && !worn {
-                        Fill::Blocked(Glyph::Zero)
+                        SlotFill::Blocked(Glyph::Zero)
                     } else {
-                        Fill::Ready
+                        SlotFill::Ready
                     },
                     name: def.name.clone(),
                 }
@@ -387,11 +387,11 @@ fn worn_item(world: &World, slot: &EquipmentPlace) -> Option<ItemId> {
     equipment::in_slot(world, session::me(world)?, slot)
 }
 
-fn skill_fill(world: &World, me: Entity, skill: SkillId, rank: Rank) -> Fill {
+fn skill_fill(world: &World, me: Entity, skill: SkillId, rank: Rank) -> SlotFill {
     let content = world.resource::<Content>();
     let def = skill.get(content);
     if stat::is_dead(world, me) {
-        return Fill::Blocked(Glyph::Cross);
+        return SlotFill::Blocked(Glyph::Cross);
     }
     if let Some(now) = time::server_now(world)
         && let Some(ready) = world
@@ -405,13 +405,13 @@ fn skill_fill(world: &World, me: Entity, skill: SkillId, rank: Rank) -> Fill {
             .0
             .max(left.0)
             .max(0.001);
-        return Fill::Cooling {
+        return SlotFill::Cooling {
             fraction: (left.0 / whole).clamp(0.0, 1.0),
             left,
         };
     }
     if condition::first_unmet(world, me, def.requires.iter()).is_some() {
-        return Fill::Blocked(Glyph::Lock);
+        return SlotFill::Blocked(Glyph::Lock);
     }
     let bag = world.get::<Inventory>(me);
     if def
@@ -419,9 +419,9 @@ fn skill_fill(world: &World, me: Entity, skill: SkillId, rank: Rank) -> Fill {
         .iter()
         .any(|stack| bag.map_or(0, |bag| bag.count(stack.item)) < stack.count)
     {
-        return Fill::Blocked(Glyph::Zero);
+        return SlotFill::Blocked(Glyph::Zero);
     }
-    Fill::Ready
+    SlotFill::Ready
 }
 
 fn hotbar_slot(ui: &mut Ui, world: &mut World, index: HotbarSlot) {
@@ -754,11 +754,11 @@ fn slot_tooltip(
     }
 }
 
-fn overlay(ui: &Ui, rect: Rect, fill: Fill) {
+fn overlay(ui: &Ui, rect: Rect, fill: SlotFill) {
     let painter = ui.painter();
     match fill {
-        Fill::Ready => {}
-        Fill::Cooling { fraction, left } => {
+        SlotFill::Ready => {}
+        SlotFill::Cooling { fraction, left } => {
             let height = rect.height() * fraction;
             let wash = Rect::from_min_max(Pos2::new(rect.min.x, rect.max.y - height), rect.max);
             painter.rect_filled(wash.shrink(1.0), 2.0, ink::wash(ink::RUBRIC, 0.45));
@@ -774,7 +774,7 @@ fn overlay(ui: &Ui, rect: Rect, fill: Fill) {
                 );
             }
         }
-        Fill::Blocked(blocked) => {
+        SlotFill::Blocked(blocked) => {
             painter.rect_filled(rect.shrink(1.0), 2.0, ink::wash(ink::CREAM, 0.55));
             glyph::hatch(painter, rect.shrink(1.0), ink::ink_wash(0.3));
             match blocked {

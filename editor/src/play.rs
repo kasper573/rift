@@ -7,13 +7,13 @@ use std::time::{Duration, Instant};
 use ui::chip;
 use ui::dialog;
 use ui::egui;
+use ui::face;
 use ui::form;
 use ui::sheet;
 use ui::theme;
 use ui::words;
 
 use engine::core::content::{Content, ContentFile, ContentScope, version, with_content};
-use engine::core::time::UtcHour;
 use engine::systems::GameSettings;
 use engine::systems::class::ClassDef;
 use engine::systems::launch::{
@@ -21,7 +21,6 @@ use engine::systems::launch::{
     SERVER_ENV_PREFIX, ServerConfig, ServerReady, TEST_CHARACTER_ROUTE, TestCharacterRequest,
     fake_token,
 };
-use engine::systems::player::SpawnPolicy;
 use engine::systems::player::snapshot::{CharacterSnapshot, CharacterStart};
 use engine::systems::script::Place;
 use process_wrap::std::{ChildWrapper, CommandWrap};
@@ -758,7 +757,7 @@ pub(crate) fn binaries_body(editor: &mut Editor, ui: &mut Ui) -> bool {
     form::kv(ui, "folder", |ui| {
         let response = input::boxed(ui, Some("pick…"), |ui| {
             ui.add(
-                egui::Label::new(theme::mono(shell::pretty_path(&folder)).size(13.0))
+                egui::Label::new(face::mono(shell::pretty_path(&folder)).size(13.0))
                     .sense(egui::Sense::click()),
             )
         });
@@ -771,17 +770,13 @@ pub(crate) fn binaries_body(editor: &mut Editor, ui: &mut Ui) -> bool {
         ui.horizontal(|ui| {
             ui.add_sized(
                 egui::vec2(150.0, 20.0),
-                egui::Label::new(theme::mono(name).size(13.0)),
+                egui::Label::new(face::mono(name).size(13.0)),
             );
-            ui.label(
-                theme::mono(value)
-                    .size(13.0)
-                    .color(if state == Some(false) {
-                        theme::DANGER
-                    } else {
-                        theme::TEXT
-                    }),
-            );
+            ui.label(face::mono(value).size(13.0).color(if state == Some(false) {
+                theme::DANGER
+            } else {
+                theme::TEXT
+            }));
             ui.with_layout(
                 egui::Layout::right_to_left(egui::Align::Center),
                 |ui| match state {
@@ -889,22 +884,7 @@ fn editor_folder(editor: &Editor) -> PathBuf {
 }
 
 fn spawn_server(binaries: &Path, folder: &Path, sender: Sender<OutputLine>) -> io::Result<Process> {
-    let config = ServerConfig {
-        bind: LOCALHOST,
-        port: 0,
-        udp_port: 0,
-        public_ip: LOCALHOST,
-        max_clients: 8,
-        content_dir: folder.to_path_buf(),
-        player_spawn_policy: SpawnPolicy::Map,
-        player_immortal: false,
-        daylight: launch::ServerDaylight::Turning,
-        rng_seed: None,
-        daily_reset_utc_hour: UtcHour::MIDNIGHT,
-        auth: launch::AuthMode::Fake,
-        test_characters: true,
-        exit_on_stdin_eof: true,
-    };
+    let config = ServerConfig::local(folder.to_path_buf());
     let mut command = Command::new(binaries.join(SERVER));
     command.envs(launch::env_of(SERVER_ENV_PREFIX, &config));
     spawn(command, SERVER, sender)

@@ -4,64 +4,49 @@
 use engine::core::units::Degrees;
 use engine::systems::area::AreaModuleKind;
 use engine::systems::area::prop::PropDef;
-use ui::egui::{self, Sense, Stroke, Ui, Vec2};
-use ui::theme;
+use ui::egui::{Stroke, Ui, Vec2};
 
-use super::super::area::camera::{self, AreaCanvas};
 use super::super::area::overlays::module_color;
 use super::super::area::shapes::draw_footprint;
 use super::super::stage;
 use crate::app::Editor;
 
 pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef, size: Vec2) {
-    let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
-    let painter = ui.painter_at(rect);
-    painter.rect_filled(rect, 4.0, theme::CANVAS);
-    let Some(picture) = super::picture(editor, key) else {
-        painter.text(
-            rect.center(),
-            egui::Align2::CENTER_CENTER,
-            "no terrain to stand the prop on",
-            egui::FontId::proportional(13.0),
-            theme::MUTED,
-        );
+    let Some(pictured) = editor
+        .project
+        .as_ref()
+        .and_then(|project| project.content.as_ref())
+        .and_then(|content| super::pictured(content, key))
+    else {
         return;
     };
-    let view_key = format!("prop:{key}");
-    stage::show_picture(editor, ui, &painter, rect, &view_key);
-    let dt = ui.input(|i| i.stable_dt).min(0.1);
-    let view = editor.views.prop.views.view_mut(key);
-    let busy = camera::navigate(
+    super::ensure_view(editor, key);
+    let mut state = std::mem::take(&mut editor.views.prop.views.view_mut(key).stage);
+    let turntable = stage::turntable(
+        editor,
         ui,
-        &response,
-        &mut view.turntable,
-        rect.height(),
-        camera::STAGE_FARTHEST,
+        &format!("prop:{key}"),
+        size,
+        &mut state,
+        pictured,
     );
-    if busy && response.dragged_by(egui::PointerButton::Secondary) {
-        editor.views.toggles.turning = false;
-    }
-    if response.double_clicked() {
-        view.turntable.target = stage::center();
-    }
-    if editor.views.toggles.turning {
-        stage::spin(&mut view.turntable, dt);
-        ui.ctx().request_repaint();
-    }
-    let camera = view.turntable;
+    let view = editor.views.prop.views.view_mut(key);
+    view.stage = state;
+    let Some(turntable) = turntable else {
+        return;
+    };
     let footprint = view
         .drag
         .as_ref()
         .map_or_else(|| row.footprint.clone(), |drag| drag.footprint.clone());
-    let canvas = AreaCanvas::new(rect, camera, picture.1.area.clone());
     draw_footprint(
-        &painter,
-        &canvas,
+        &ui.painter_at(turntable.rect),
+        &turntable.canvas,
         &footprint,
         stage::center(),
         Degrees(0.0),
         1.0,
         Stroke::new(1.5, module_color(AreaModuleKind::Prop)),
     );
-    stage::request(editor, ui, &view_key, rect, camera, picture, Vec::new());
+    turntable.stand(editor, ui, Vec::new());
 }

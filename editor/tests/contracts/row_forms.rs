@@ -279,7 +279,8 @@ fn a_spreadsheet_cell_is_edited_from_the_keyboard_alone() {
     press(&mut editor, Vec::new());
 
     let tab = || key(egui::Key::Tab, egui::Modifiers::NONE);
-    editor.views.spreadsheet.state_mut("npc").selected = Some((wolf.clone(), "name".to_owned()));
+    editor.views.spreadsheet.view_or_default("npc").selected =
+        Some((wolf.clone(), "name".to_owned()));
     for events in [
         enter(),
         key(egui::Key::A, egui::Modifiers::COMMAND),
@@ -393,7 +394,7 @@ fn pasting_into_the_spreadsheet_writes_each_cell_its_column_reads_and_skips_the_
         frames.run(Vec::new(), |ui| {
             spreadsheet::show(&mut editor, ui, "memory")
         });
-        editor.views.spreadsheet.state_mut("memory").selected =
+        editor.views.spreadsheet.view_or_default("memory").selected =
             Some((bribed.clone(), "resets".to_owned()));
 
         frames.run(paste, |ui| spreadsheet::show(&mut editor, ui, "memory"));
@@ -421,7 +422,7 @@ fn a_cells_picker_makes_a_new_file_beside_the_row_and_names_it_in_the_cell() {
         frames.run(events, |ui| spreadsheet::show(editor, ui, "npc"))
     };
     sheet(&mut editor, Vec::new());
-    editor.views.spreadsheet.state_mut("npc").selected =
+    editor.views.spreadsheet.view_or_default("npc").selected =
         Some((orc.clone(), "appearance.model".to_owned()));
     sheet(&mut editor, key(egui::Key::Enter, egui::Modifiers::NONE));
     sheet(&mut editor, Vec::new());

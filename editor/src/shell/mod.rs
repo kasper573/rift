@@ -40,7 +40,7 @@ use crate::views::{
     self, area, bust, character, class, item, model, model_part, prop, skeleton, spreadsheet,
     stance, vfx, world,
 };
-use crate::widgets::CONTENT_PADDING;
+use crate::widgets::VIEW_PADDING;
 use crate::{content_tree, row_form, widgets};
 
 pub fn show(editor: &mut Editor, ctx: &Context) {
@@ -552,7 +552,7 @@ impl TabViewer for Viewer<'_> {
             | EditorTab::Game
             | EditorTab::Asset { .. } => {
                 egui::Frame::new()
-                    .inner_margin(CONTENT_PADDING)
+                    .inner_margin(VIEW_PADDING)
                     .show(ui, |ui| {
                         ui.set_min_size(ui.available_size());
                         match tab {

@@ -4,9 +4,7 @@
 //! has a wide land to fill in rather than a flat one.
 
 use std::path::Path;
-use std::str::FromStr;
 
-use clap::Args;
 use engine::core::content::fresh::Nearby;
 use engine::core::content::{ContentFile, FolderReader};
 use engine::core::ground::{GroundSize, HeightRange, Heightfield, PaintMap};
@@ -18,109 +16,62 @@ use engine::systems::area::terrain::TerrainId;
 use engine::systems::area::{AreaDef, AreaModule, Population};
 use engine::systems::npc::NpcId;
 use noise::{Fbm, NoiseFn, Perlin};
+use serde::Deserialize;
 
 use crate::folder;
 
-#[derive(Args, Debug)]
+/// How an area is laid out from noise, read from a JSON file.
+#[derive(Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
 pub struct Land {
     /// The area's name.
-    #[arg(long)]
     pub name: String,
     /// The area's width, in metres.
-    #[arg(long)]
     pub width: u32,
     /// The area's height, in metres.
-    #[arg(long)]
     pub height: u32,
     /// What the noise is drawn from: the same seed lays out the same land.
-    #[arg(long)]
     pub seed: u64,
     /// How far the ground rises from its lowest point to its highest, in metres.
-    #[arg(long)]
     pub relief: f32,
     /// How wide the ground's features are, in metres: hills and hollows about this far apart.
-    #[arg(long)]
     pub wavelength: f32,
     /// The terrains that paint the ground, from the lowest ground to the highest, each a terrain
     /// file's path in the game folder; the first is the ground where nothing is painted.
-    #[arg(long = "terrain", required = true)]
     pub terrains: Vec<String>,
-    /// Props strewn where a terrain lies: TERRAIN:PROP:PER_SQUARE_METER, with TERRAIN the index
-    /// of one of the terrains given, PROP a prop file's path, and after another colon the scale
-    /// the copies range over as MIN-MAX.
-    #[arg(long = "scatter")]
-    pub scatters: Vec<ScatterArg>,
-    /// Npcs roaming the land: NPC:PER_SQUARE_KILOMETER, with NPC an npc file's path.
-    #[arg(long = "population")]
-    pub populations: Vec<PopulationArg>,
+    /// Props strewn where a terrain lies.
+    #[serde(default)]
+    pub scatters: Vec<LandScatter>,
+    /// Npcs roaming the land.
+    #[serde(default)]
+    pub populations: Vec<LandPopulation>,
 }
 
-/// A `--scatter` as it is written, TERRAIN:PROP:PER_SQUARE_METER with the scale MIN-MAX optional.
-#[derive(Clone, Debug)]
-pub struct ScatterArg {
-    terrain: usize,
-    prop: String,
-    per_square_meter: f32,
-    scale: ScaleRange,
+/// A prop strewn where one of the land's terrains lies, `per_square_meter` over its ground, its
+/// copies scaled over `scale`.
+#[derive(Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct LandScatter {
+    pub terrain: String,
+    pub prop: String,
+    pub per_square_meter: f32,
+    #[serde(default)]
+    pub scale: ScaleRange,
 }
 
-impl FromStr for ScatterArg {
-    type Err = String;
-
-    fn from_str(spec: &str) -> Result<ScatterArg, String> {
-        let mut parts = spec.split(':');
-        let (Some(terrain), Some(prop), Some(density)) = (parts.next(), parts.next(), parts.next())
-        else {
-            return Err(format!(
-                "a scatter is TERRAIN:PROP:PER_SQUARE_METER, not {spec}"
-            ));
-        };
-        let scale = match parts.next() {
-            None => ScaleRange::default(),
-            Some(range) => {
-                let (min, max) = range
-                    .split_once('-')
-                    .ok_or_else(|| format!("a scale range is MIN-MAX, not {range}"))?;
-                ScaleRange {
-                    min: min.parse().map_err(|_| format!("{min} is not a scale"))?,
-                    max: max.parse().map_err(|_| format!("{max} is not a scale"))?,
-                }
-            }
-        };
-        Ok(ScatterArg {
-            terrain: terrain
-                .parse()
-                .map_err(|_| format!("{terrain} is not the index of a terrain"))?,
-            prop: prop.to_owned(),
-            per_square_meter: density
-                .parse()
-                .map_err(|_| format!("{density} is not a density"))?,
-            scale,
-        })
-    }
+/// An npc roaming the land, `per_square_kilometer` over all of it.
+#[derive(Deserialize, Debug)]
+#[serde(deny_unknown_fields)]
+pub struct LandPopulation {
+    pub npc: String,
+    pub per_square_kilometer: f32,
 }
 
-/// A `--population` as it is written, NPC:PER_SQUARE_KILOMETER.
-#[derive(Clone, Debug)]
-pub struct PopulationArg {
-    npc: String,
-    per_square_kilometer: f32,
-}
-
-impl FromStr for PopulationArg {
-    type Err = String;
-
-    fn from_str(spec: &str) -> Result<PopulationArg, String> {
-        let (npc, density) = spec
-            .split_once(':')
-            .ok_or_else(|| format!("a population is NPC:PER_SQUARE_KILOMETER, not {spec}"))?;
-        Ok(PopulationArg {
-            npc: npc.to_owned(),
-            per_square_kilometer: density
-                .parse()
-                .map_err(|_| format!("{density} is not a density"))?,
-        })
-    }
+/// The land the JSON file at `path` lays out.
+pub fn read_land(path: &Path) -> Result<Land, String> {
+    let text = std::fs::read_to_string(path)
+        .map_err(|error| format!("{} doesn't read: {error}", path.display()))?;
+    serde_json::from_str(&text).map_err(|error| format!("{}: {error}", path.display()))
 }
 
 pub fn run(game: &Path, area_path: &str, land: &Land) -> Result<(), String> {
@@ -139,12 +90,12 @@ pub fn run(game: &Path, area_path: &str, land: &Land) -> Result<(), String> {
     let scatters: Vec<ScatterSpec> = land
         .scatters
         .iter()
-        .map(|arg| ScatterSpec::resolve(arg, &reader, land.terrains.len()))
+        .map(|scatter| ScatterSpec::resolve(scatter, &reader, &land.terrains))
         .collect::<Result<_, _>>()?;
     let populations: Vec<PopulationSpec> = land
         .populations
         .iter()
-        .map(|arg| PopulationSpec::resolve(arg, &reader))
+        .map(|population| PopulationSpec::resolve(population, &reader))
         .collect::<Result<_, _>>()?;
 
     if land.relief <= 0.0 {
@@ -261,22 +212,20 @@ struct ScatterSpec {
 
 impl ScatterSpec {
     fn resolve(
-        arg: &ScatterArg,
+        scatter: &LandScatter,
         reader: &FolderReader,
-        terrains: usize,
+        terrains: &[String],
     ) -> Result<ScatterSpec, String> {
-        if arg.terrain >= terrains {
-            return Err(format!(
-                "terrain {} is not among the {terrains} given",
-                arg.terrain
-            ));
-        }
+        let terrain = terrains
+            .iter()
+            .position(|terrain| *terrain == scatter.terrain)
+            .ok_or_else(|| format!("{} is not among the land's terrains", scatter.terrain))?;
         Ok(ScatterSpec {
-            terrain: arg.terrain as u8,
-            prop: reader.id_at(&arg.prop)?,
-            per_square_meter: arg.per_square_meter,
-            scale: arg.scale,
-            label: format!("{} on terrain {}", arg.prop, arg.terrain),
+            terrain: terrain as u8,
+            prop: reader.id_at(&scatter.prop)?,
+            per_square_meter: scatter.per_square_meter,
+            scale: scatter.scale,
+            label: format!("{} on {}", scatter.prop, scatter.terrain),
         })
     }
 
@@ -330,11 +279,14 @@ struct PopulationSpec {
 }
 
 impl PopulationSpec {
-    fn resolve(arg: &PopulationArg, reader: &FolderReader) -> Result<PopulationSpec, String> {
+    fn resolve(
+        population: &LandPopulation,
+        reader: &FolderReader,
+    ) -> Result<PopulationSpec, String> {
         Ok(PopulationSpec {
-            npc: reader.id_at(&arg.npc)?,
-            per_square_kilometer: arg.per_square_kilometer,
-            label: arg.npc.clone(),
+            npc: reader.id_at(&population.npc)?,
+            per_square_kilometer: population.per_square_kilometer,
+            label: population.npc.clone(),
         })
     }
 

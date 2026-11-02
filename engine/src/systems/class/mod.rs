@@ -12,6 +12,7 @@ use serde::{Deserialize, Serialize};
 use ui::egui;
 
 use crate::core::content::ImageRef;
+use crate::core::content::SchemaMark;
 use crate::core::content::{
     Content, ContentFile, ContentId, Loading, NamedContent, Nearby, RowCheck,
 };
@@ -279,7 +280,7 @@ pub fn check_all(loading: &mut Loading) {
 
 /// Grants experience as kills do.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "class"))]
+#[schemars(transform = SchemaMark::System.with("class"))]
 pub struct GrantXp {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]

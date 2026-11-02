@@ -69,12 +69,12 @@ enum Command {
     Schema(Schema),
     /// Lays out an area of GAME from noise, as a landscape starts: its ground rising and falling,
     /// painted by height from the lowest terrain given to the highest, strewn with props and
-    /// roamed by npcs as asked. Writes the area's bundle at AREA, a path in the game folder.
+    /// roamed by npcs as the JSON file LAND asks. Writes the area's bundle at AREA, a path in the
+    /// game folder.
     Landscape {
         game: PathBuf,
         area: String,
-        #[command(flatten)]
-        land: landscape::Land,
+        land: PathBuf,
     },
 }
 
@@ -115,7 +115,9 @@ fn main() {
         Command::Schema(Schema::Probe) => println!("{}", engine::systems::probe::schema()),
         Command::Schema(Schema::Server) => println!("{}", engine::systems::launch::server_schema()),
         Command::Landscape { game, area, land } => {
-            if let Err(failure) = landscape::run(&game, &area, &land) {
+            let laid =
+                landscape::read_land(&land).and_then(|land| landscape::run(&game, &area, &land));
+            if let Err(failure) = laid {
                 eprintln!("{failure}");
                 std::process::exit(1);
             }

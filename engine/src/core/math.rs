@@ -1,3 +1,4 @@
+use crate::core::content::SchemaMark;
 use std::ops::Range;
 use ui::egui;
 
@@ -65,7 +66,7 @@ impl Rng {
     Default,
 )]
 #[serde(from = "[u8; 4]", into = "[u8; 4]")]
-#[schemars(extend("x-color" = true))]
+#[schemars(transform = SchemaMark::Color.with(true))]
 pub struct Rgba(pub u32);
 
 impl Rgba {
@@ -99,7 +100,7 @@ impl From<Rgba> for egui::Color32 {
 /// A colour with no alpha, written `[r, g, b]`: lights, the sun and a grade are never translucent.
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, PartialEq, Eq, Hash, Debug, Default)]
 #[serde(transparent)]
-#[schemars(extend("x-color" = true))]
+#[schemars(transform = SchemaMark::Color.with(true))]
 pub struct Rgb(pub [u8; 3]);
 
 impl Rgb {

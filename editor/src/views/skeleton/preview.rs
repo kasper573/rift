@@ -34,6 +34,7 @@ use super::{
 };
 use crate::app::Editor;
 use crate::tabs::shown_path;
+use engine::systems::area::Pictured;
 
 /// What a skeleton view's stage shows, the same on every page.
 pub struct SkeletonPreview {
@@ -174,7 +175,14 @@ pub fn show(
         (ui.available_height() - below).max(140.0),
     );
     let mut state = std::mem::take(&mut editor.views.skeleton.views.view_mut(key).preview.stage);
-    let turntable = stage::turntable(editor, ui, &format!("skeleton:{key}"), size, &mut state);
+    let turntable = stage::turntable(
+        editor,
+        ui,
+        &format!("skeleton:{key}"),
+        size,
+        &mut state,
+        Pictured::Stage,
+    );
     editor.views.skeleton.views.view_mut(key).preview.stage = state;
     let turntable = turntable?;
     let mut staged = place(

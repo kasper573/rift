@@ -3,6 +3,7 @@ use std::ops::BitOrAssign;
 use ui::chip;
 use ui::controls::{self, Pill};
 use ui::egui;
+use ui::face;
 use ui::form;
 use ui::menu;
 use ui::panel;
@@ -10,6 +11,7 @@ use ui::sheet;
 use ui::theme;
 
 use engine::core::content::AssetKind;
+use engine::core::content::SchemaMark;
 use engine::core::content::fixture::FixtureLock;
 use engine::core::content::{
     Content, ContentFile, LoadReport, fields_file, parent_of, with_content,
@@ -500,7 +502,7 @@ fn plain(
     if let Some(kind) = geometry_of(schema) {
         return geometry(ui, cx, kind, value, path);
     }
-    if let Some(blank) = schema.get("x-blank").and_then(Value::as_str) {
+    if let Some(blank) = SchemaMark::Blank.text_on(schema) {
         let present = schema::non_null(cx.root, schema);
         match schema::kind(cx.root, present) {
             SchemaKind::Integer => {
@@ -514,28 +516,28 @@ fn plain(
     }
     let schema = schema::non_null(cx.root, schema);
     if let Some(marker) = schema::marker(schema) {
-        if let Some(kind) = NameKind::of_marker(marker) {
+        if let Some(kind) = NameKind::of_mark(marker) {
             return named(ui, cx, kind, value, path);
         }
         match marker {
-            "x-table" => {
+            SchemaMark::Table => {
                 return reference(ui, cx, schema, value, path);
             }
-            "x-asset" => return asset(ui, cx, schema, value, path),
-            "x-place" => return place(ui, cx, schema, value, path),
-            "x-color" => return color(ui, schema, value, path),
-            "x-face" => return face(ui, cx, value, path),
-            "x-span" => {
+            SchemaMark::Asset => return asset(ui, cx, schema, value, path),
+            SchemaMark::Place => return place(ui, cx, schema, value, path),
+            SchemaMark::Color => return color(ui, cx, schema, value, path),
+            SchemaMark::Face => return face(ui, cx, value, path),
+            SchemaMark::Span => {
                 return as_type(ui, cx, value, path, |ui, cx, span| {
                     spans::edit(ui, cx, span, path)
                 });
             }
-            "x-condition" => {
+            SchemaMark::Condition => {
                 return as_type(ui, cx, value, path, |ui, cx, typed| {
                     condition::edit(ui, cx, typed, path)
                 });
             }
-            "x-assignment" => {
+            SchemaMark::Assignment => {
                 return as_type(ui, cx, value, path, |ui, cx, typed| {
                     assignment(ui, cx, typed, path)
                 });
@@ -625,7 +627,7 @@ pub(crate) fn object_without(
         let nested = present
             && schema::marker(resolved).is_none()
             && matches!(schema::kind(cx.root, resolved), SchemaKind::Object);
-        if let Some(sibling) = field.get("x-params-of").and_then(Value::as_str) {
+        if let Some(sibling) = SchemaMark::ParamsOf.text_on(field) {
             changed |= params_map(
                 ui,
                 cx,
@@ -785,7 +787,8 @@ fn params_map(ui: &mut Ui, cx: &mut FormCx, at: ParamsMapField, parent: &mut Val
     let value_schema = schema::resolve(cx.root, field)
         .get("additionalProperties")
         .unwrap_or(&Value::Null);
-    let typed = schema::marker(schema::resolve(cx.root, value_schema)) == Some("x-param-fill");
+    let typed =
+        schema::marker(schema::resolve(cx.root, value_schema)) == Some(SchemaMark::ParamFill);
     let fields = parent.as_object_mut().expect("object");
     let entries = fields
         .entry(name.to_owned())
@@ -1009,9 +1012,9 @@ enum FieldGeometry {
 }
 
 fn geometry_of(schema: &Value) -> Option<FieldGeometry> {
-    if schema.get("x-pos").is_some() {
+    if SchemaMark::Pos.is_on(schema) {
         Some(FieldGeometry::Pos)
-    } else if schema.get("x-rect").is_some() {
+    } else if SchemaMark::Rect.is_on(schema) {
         Some(FieldGeometry::Rect)
     } else {
         None
@@ -1154,11 +1157,11 @@ fn is_one_value(schema: &Value) -> bool {
 }
 
 fn describe(schema: &Value) -> String {
-    if schema::marker(schema) == Some("x-condition") {
+    if schema::marker(schema) == Some(SchemaMark::Condition) {
         return "Expression".to_owned();
     }
     if let Some(marker) = schema::marker(schema) {
-        return schema::title(marker.trim_start_matches("x-"));
+        return schema::title(marker.word());
     }
     if let SchemaKind::Enum(values) = schema::kind(schema, schema)
         && let [only] = values.as_slice()
@@ -1184,7 +1187,7 @@ fn array(ui: &mut Ui, cx: &mut FormCx, items: &Value, value: &mut Value, path: &
     }
     let mut changed = FormChange::default();
     let item_schema = schema::resolve(cx.root, items);
-    if schema::marker(item_schema) == Some("x-span") {
+    if schema::marker(item_schema) == Some(SchemaMark::Span) {
         return as_type(ui, cx, value, path, |ui, cx, line| {
             spans::line_field(ui, cx, line, path)
         });
@@ -1248,7 +1251,7 @@ fn array(ui: &mut Ui, cx: &mut FormCx, items: &Value, value: &mut Value, path: &
                 .map(str::to_owned)
                 .collect();
             if boxed {
-                panel::card(ui, false, |ui| {
+                panel::tile_across(ui, false, |ui| {
                     ui.horizontal(|ui| {
                         match schema::kind(cx.root, item_schema) {
                             SchemaKind::Union(variants) => {
@@ -1309,7 +1312,7 @@ fn array(ui: &mut Ui, cx: &mut FormCx, items: &Value, value: &mut Value, path: &
                             let locked = pinned.iter().any(|pin| pin == *name);
                             let present = item.get(*name).is_some_and(|v| !v.is_null());
                             let resolved = schema::resolve(cx.root, field);
-                            let is_reference = schema::marker(resolved) == Some("x-table");
+                            let is_reference = schema::marker(resolved) == Some(SchemaMark::Table);
                             if is_reference {
                                 let mut draft = item
                                     .get(*name)
@@ -1338,7 +1341,7 @@ fn array(ui: &mut Ui, cx: &mut FormCx, items: &Value, value: &mut Value, path: &
                             } else {
                                 let mut draft = if present {
                                     item[*name].clone()
-                                } else if field.get("x-blank").is_some() {
+                                } else if SchemaMark::Blank.is_on(field) {
                                     Value::Null
                                 } else {
                                     schema::template(cx.root, field, cx.nearby())
@@ -1441,7 +1444,7 @@ fn unlisted_item(
                 .or_else(|| nearby.content(table)),
         );
     }
-    let kind = schema::marker(item_schema).and_then(NameKind::of_marker)?;
+    let kind = schema::marker(item_schema).and_then(NameKind::of_mark)?;
     let row = cx.row_table.as_deref().zip(cx.row_key.as_deref());
     let item_path = format!("{path}/{}", list.len());
     let choices = cx
@@ -1519,13 +1522,13 @@ fn map(
                     (MapKeys::Files(_), _) => {
                         ui.add_sized(
                             egui::vec2(110.0, 18.0),
-                            egui::Label::new(theme::mono(shown_path(key)).size(13.0)).truncate(),
+                            egui::Label::new(face::mono(shown_path(key)).size(13.0)).truncate(),
                         )
                         .on_hover_text(key.as_str());
                     }
                     (MapKeys::Names(_), Some(names)) => {
                         let known = names.iter().find(|name| name.name == *key);
-                        let text = theme::mono(key.as_str()).size(13.0);
+                        let text = face::mono(key.as_str()).size(13.0);
                         let text = if known.is_some() {
                             text
                         } else {
@@ -1742,7 +1745,7 @@ pub(crate) fn inline_fields_of<T: Serialize + DeserializeOwned>(
             value[name] = fresh;
         }
         let child = &mut value[name];
-        if schema::marker(resolved) == Some("x-condition") {
+        if schema::marker(resolved) == Some(SchemaMark::Condition) {
             if ui.available_size_before_wrap().x < NESTED_CONDITION_ROOM {
                 ui.end_row();
             }
@@ -1854,10 +1857,10 @@ pub(crate) fn quantity(
     unit: Option<&str>,
     path: &str,
 ) -> FormChange {
-    let schema = match unit {
-        Some(unit) => serde_json::json!({ "type": "number", "x-unit": unit }),
-        None => serde_json::json!({ "type": "number" }),
-    };
+    let mut schema = serde_json::json!({ "type": "number" });
+    if let Some(unit) = unit {
+        SchemaMark::Unit.put(&mut schema, unit);
+    }
     let Ok(mut json) = value::json(amount) else {
         return FormChange::default();
     };
@@ -1882,7 +1885,7 @@ fn number_field(
         .as_f64()
         .map(|number| number.to_string())
         .unwrap_or_default();
-    let unit = schema["x-unit"].as_str().map(str::to_owned);
+    let unit = SchemaMark::Unit.text_on(schema).map(str::to_owned);
     let autofocus = std::mem::take(&mut cx.autofocus);
     let typed = typed(ui, id, &current, |ui, draft| {
         let mut field = InputField::new(draft);
@@ -1964,7 +1967,7 @@ const INLINE_TEXT_WIDTH: f32 = 150.0;
 const INPUT_AROUND_TEXT: f32 = 40.0;
 
 fn inline_width(ui: &Ui, field: &Value) -> f32 {
-    let Some(blank) = field.get("x-blank").and_then(Value::as_str) else {
+    let Some(blank) = SchemaMark::Blank.text_on(field) else {
         return if schema::type_names(field).contains(&"string") {
             INLINE_TEXT_WIDTH
         } else {
@@ -2021,24 +2024,29 @@ fn enum_combo(
 }
 
 /// A colour picker for `value`, with an alpha channel unless `schema` holds three channels only.
-pub fn color(ui: &mut Ui, schema: &Value, value: &mut Value, path: &str) -> FormChange {
-    let opaque = schema.get("maxItems").and_then(Value::as_u64) == Some(3);
-    let edited = if opaque {
-        let mut rgb = value::rgb(value);
-        ui.color_edit_button_srgb(&mut rgb)
-            .changed()
-            .then(|| rgb.to_vec())
+pub fn color(
+    ui: &mut Ui,
+    cx: &mut FormCx,
+    schema: &Value,
+    value: &mut Value,
+    path: &str,
+) -> FormChange {
+    let changed = |picked: bool| {
+        if picked {
+            FormChange::at(path)
+        } else {
+            FormChange::default()
+        }
+    };
+    if schema.get("maxItems").and_then(Value::as_u64) == Some(3) {
+        as_type(ui, cx, value, path, |ui, _, rgb: &mut [u8; 3]| {
+            changed(ui.color_edit_button_srgb(rgb).changed())
+        })
     } else {
-        let mut rgba = value::rgba(value);
-        ui.color_edit_button_srgba_unmultiplied(&mut rgba)
-            .changed()
-            .then(|| rgba.to_vec())
-    };
-    let Some(channels) = edited else {
-        return FormChange::default();
-    };
-    *value = Value::Array(channels.into_iter().map(Value::from).collect());
-    FormChange::at(path)
+        as_type(ui, cx, value, path, |ui, _, rgba: &mut [u8; 4]| {
+            changed(ui.color_edit_button_srgba_unmultiplied(rgba).changed())
+        })
+    }
 }
 
 pub(crate) fn raw_json(ui: &mut Ui, cx: &mut FormCx, value: &mut Value, path: &str) -> FormChange {
@@ -2090,8 +2098,8 @@ fn asset(
     value: &mut Value,
     path: &str,
 ) -> FormChange {
-    let Some(kind) = schema["x-asset"]
-        .as_str()
+    let Some(kind) = SchemaMark::Asset
+        .text_on(schema)
         .and_then(|kind| kind.parse::<AssetKind>().ok())
     else {
         return FormChange::default();

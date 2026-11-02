@@ -27,7 +27,7 @@ pub struct Treads {
 /// What the weather is made of: the moment, the shown area's climate and daylight, where the camera
 /// looks and who treads the ground.
 #[derive(SystemParam)]
-pub(super) struct Sky<'w, 's> {
+pub(super) struct WeatherSources<'w, 's> {
     time: Res<'w, Time>,
     climate: Option<Res<'w, Climate>>,
     daylight: Option<Res<'w, Daylight>>,
@@ -37,18 +37,18 @@ pub(super) struct Sky<'w, 's> {
 
 /// Every frame the covers learn the wind, the moment and who treads through them.
 pub(super) fn blow(
-    sky: Sky,
+    sources: WeatherSources,
     picture: Res<WeatherImage>,
     mut images: ResMut<Assets<Image>>,
     mut last: Local<Weather>,
 ) {
-    let Sky {
+    let WeatherSources {
         time,
         climate,
         daylight,
         rig,
         treading,
-    } = sky;
+    } = sources;
     let subject = rig.map_or(Vec3::ZERO, |rig| rig.target());
     let mut treads: Vec<(f32, Vec4)> = treading
         .iter()

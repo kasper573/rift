@@ -5,6 +5,7 @@ use std::collections::{BTreeMap, HashMap};
 use std::mem;
 use ui::chip;
 use ui::egui;
+use ui::face;
 use ui::theme;
 
 use engine::core::geometry::{PlacedShape, Shape};
@@ -110,7 +111,7 @@ pub fn preview(
         VfxTarget::Actor { model } => {
             controls::combo("preview-model")
                 .width(160.0)
-                .selected_text(theme::mono(model.as_str()).size(13.0))
+                .selected_text(face::mono(model.as_str()).size(13.0))
                 .show_ui(ui, |ui| {
                     for candidate in &models {
                         ui.selectable_value(model, candidate.clone(), candidate);
@@ -193,7 +194,7 @@ pub fn preview(
             let footprint = footprint.expect("a crowd has a footprint");
             let models: Vec<_> = content.table::<ModelDef>().ids().collect();
             if !models.is_empty() {
-                for (index, at) in stage::spread(&footprint, *count).into_iter().enumerate() {
+                for (index, at) in footprint.spread(*count).into_iter().enumerate() {
                     posed
                         .actors
                         .push(PosedActor::standing(models[index % models.len()], at));
@@ -294,7 +295,7 @@ fn shape_fields(ui: &mut Ui, shape: &mut Shape) {
     let mut picked = current;
     controls::combo("preview-shape")
         .width(80.0)
-        .selected_text(theme::mono(current).size(13.0))
+        .selected_text(face::mono(current).size(13.0))
         .show_ui(ui, |ui| {
             for kind in kinds {
                 ui.selectable_value(&mut picked, kind, kind);

@@ -1,11 +1,14 @@
+use std::sync::Arc;
+
 use bevy_app::App;
-use bevy_ecs::message::Messages;
+use bevy_ecs::message::{MessageCursor, Messages};
 use bevy_ecs::prelude::*;
 use bevy_replication::{AppMessageExt, ClientLink, FromClient, ToClient};
 use bevy_terminal::{TerminalInput, TerminalLine, TerminalSaid};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::core::content::SchemaMark;
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault, ValueType};
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::actor::Name as ActorName;
@@ -16,7 +19,11 @@ use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::npc::Npc;
 use crate::systems::player::{self, ClientId, Players};
 use crate::systems::script::event::OBJECT_OR_NPC;
-use crate::systems::script::{Condition, EffectCall, EffectReach, RiftScripting, RunnerKind};
+use crate::systems::script::{
+    Condition, EffectCall, EffectReach, EventKind, Owner, RiftEvent, RiftInstances, RiftScripting,
+    RunnerKind,
+};
+use crate::systems::stat;
 use crate::systems::text::{self, LineText, Span};
 use crate::systems::visibility;
 
@@ -41,6 +48,20 @@ pub fn hear(world: &mut World) {
     }
 }
 
+/// Raises `heard` on every scripted object and npc in earshot of a player who said what it listens
+/// for: a listed word or phrase among the player's words, whatever their case.
+pub fn overhear(world: &mut World, mut cursor: Local<MessageCursor<TerminalSaid>>) {
+    let saids: Vec<TerminalSaid> = cursor
+        .read(world.resource::<Messages<TerminalSaid>>())
+        .cloned()
+        .collect();
+    for said in saids {
+        if let Some(speaker) = player::conn_player(world, said.conn) {
+            raise_heard(world, speaker, &said.text);
+        }
+    }
+}
+
 pub fn rebroadcast(world: &mut World) {
     let saids: Vec<TerminalSaid> = world
         .resource_mut::<Messages<TerminalSaid>>()
@@ -62,13 +83,13 @@ pub fn rebroadcast(world: &mut World) {
 
 /// A chat line and a speech bubble from the owner.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "chat"))]
+#[schemars(transform = SchemaMark::System.with("chat"))]
 pub struct Say {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub text: Vec<Span>,
     /// Without one, as far as the speaker is seen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(extend("x-value" = "number"))]
+    #[schemars(transform = SchemaMark::Value.with("number"))]
     pub within: Option<Condition>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
@@ -150,6 +171,59 @@ pub fn say(world: &mut World, speaker: Entity, text: LineText, within: Meters) {
             Notification::new(kind.clone(), text.clone()),
         );
     }
+}
+
+fn raise_heard(world: &mut World, speaker: Entity, said: &str) {
+    let (Some(at), Some(area)) = (
+        position(world, speaker),
+        world.get::<AreaTag>(speaker).map(|tag| tag.area),
+    ) else {
+        return;
+    };
+    let listeners: Vec<(Owner, Meters)> = world
+        .resource::<RiftInstances>()
+        .owners_answering(EventKind::Heard)
+        .iter()
+        .filter_map(|&owner| {
+            let Owner::Entity(_, listener) = owner else {
+                return None;
+            };
+            let in_earshot = listener != speaker
+                && !stat::is_dead(world, listener)
+                && world.get::<AreaTag>(listener).map(|tag| tag.area) == Some(area)
+                && visibility::coexist(world, listener, speaker);
+            let distance = position(world, listener)?.distance(at);
+            in_earshot.then_some((owner, distance))
+        })
+        .collect();
+    let spoken = Arc::new(spoken_words(said));
+    for (owner, distance) in listeners {
+        let spoken = spoken.clone();
+        world.resource_mut::<RiftInstances>().raise(
+            owner,
+            EventKind::Heard,
+            Some(speaker),
+            Vec::new(),
+            move |event| match event {
+                RiftEvent::Heard { words, within } => {
+                    distance <= *within && words.iter().any(|phrase| says(&spoken, phrase))
+                }
+                _ => false,
+            },
+        );
+    }
+}
+
+fn says(spoken: &[String], phrase: &str) -> bool {
+    let phrase = spoken_words(phrase);
+    !phrase.is_empty() && spoken.windows(phrase.len()).any(|run| run == phrase)
+}
+
+fn spoken_words(text: &str) -> Vec<String> {
+    text.split(|c: char| !c.is_alphanumeric())
+        .filter(|word| !word.is_empty())
+        .map(str::to_lowercase)
+        .collect()
 }
 
 fn broadcast(world: &mut World, text: String) {

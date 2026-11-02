@@ -7,7 +7,7 @@ use ui::input::InputField;
 use ui::{ink, sheet};
 
 use crate::systems::hud::{self, HudWindow};
-use crate::systems::input::map::{self, InputAction};
+use crate::systems::input::map::{InputAction, InputMap};
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::terminal::TerminalLog;
 use ui::form;
@@ -63,7 +63,9 @@ fn log(ui: &mut Ui, world: &World) {
 // Focus is asked for after the field draws, so the key that opened the terminal is never typed
 // into it; a field that sends on its return key loses focus, so it takes it straight back.
 fn command_line(ui: &mut Ui, world: &mut World, arrived: bool) {
-    let send = map::shortcut(world, InputAction::SubmitText);
+    let send = world
+        .resource::<InputMap>()
+        .shortcut(InputAction::SubmitText);
     let mut draft = std::mem::take(&mut world.resource_mut::<TerminalView>().draft);
     let field = ui
         .horizontal(|ui| {

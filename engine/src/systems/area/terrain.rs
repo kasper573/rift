@@ -2,6 +2,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::audio::playback::SfxId;
+use crate::core::content::SchemaMark;
 use std::collections::BTreeMap;
 
 use crate::core::content::ImageRef;
@@ -57,7 +58,7 @@ pub const LARGEST_TILE: Meters = Meters(64.0);
 pub struct Cover {
     pub shader: VfxShaderId,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    #[schemars(extend("x-params-of" = "shader"))]
+    #[schemars(transform = SchemaMark::ParamsOf.with("shader"))]
     pub params: BTreeMap<String, ParamFill>,
     #[serde(default, skip_serializing_if = "serial::is_zero_u64")]
     pub seed: u64,

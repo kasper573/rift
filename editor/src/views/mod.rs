@@ -66,7 +66,7 @@ pub struct EditorViews {
     pub bust: bust::BustViews,
     pub skeleton: skeleton::SkeletonViews,
     pub prop: prop::PropViews,
-    pub spreadsheet: spreadsheet::SpreadsheetViews,
+    pub spreadsheet: ViewMap<spreadsheet::SpreadsheetState>,
     pub sound: sound::SoundViews,
     pub character: character::CharacterView,
     pub class: class::ClassViews,
@@ -199,11 +199,8 @@ pub(crate) fn bottom_show(editor: &mut Editor, ui: &mut Ui, tab: BottomTab) {
     match (crate::tabs::active_tab(editor), tab) {
         (
             Some(EditorTab::Area { key } | EditorTab::Blueprint { key }),
-            BottomTab::Blueprints | BottomTab::Palette,
+            BottomTab::Blueprints | BottomTab::Palette | BottomTab::Listen,
         ) => area::bottom(editor, ui, &area::view_key(&key), tab),
-        (Some(EditorTab::Area { .. } | EditorTab::Blueprint { .. }), BottomTab::Listen) => {
-            sound::panel(editor, ui)
-        }
         (Some(EditorTab::Script(owner)), BottomTab::MayDo | BottomTab::UsedBy | BottomTab::Run) => {
             script::bottom(editor, ui, &owner, tab)
         }

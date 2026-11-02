@@ -4,6 +4,7 @@ use std::fmt::Display;
 
 use egui::{Color32, RichText, Ui, Vec2};
 
+use crate::face;
 use crate::face::{Face, TextRole};
 use crate::{ink, sheet, theme};
 
@@ -28,7 +29,7 @@ pub fn kv_text(ui: &mut Ui, key: &str, value: impl Into<String>) {
 
 pub fn kv_code(ui: &mut Ui, key: &str, value: impl Into<String>) {
     kv(ui, key, |ui| {
-        ui.add(egui::Label::new(theme::mono(value.into())).truncate());
+        ui.add(egui::Label::new(face::mono(value.into())).truncate());
     });
 }
 

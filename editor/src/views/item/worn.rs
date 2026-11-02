@@ -10,11 +10,13 @@ use engine::systems::actor::appearance::{self, Appearance};
 use engine::systems::actor::model::ActorModel;
 use engine::systems::item::{ItemDef, Wear, WornLook};
 use ui::egui::{self, Ui, Vec2};
+use ui::face;
 use ui::{chip, controls, form, theme};
 
 use crate::app::Editor;
 use crate::tabs::shown_path;
 use crate::views::stage::{self, StageState};
+use engine::systems::area::Pictured;
 
 /// What the worn page's stage shows: the look of a skeleton, by its path, on a model of it; the
 /// stage is framed for the first model it shows.
@@ -95,7 +97,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         let shown = model.as_deref().map_or("no model", shown_path).to_owned();
         let mut chosen = model.clone().unwrap_or_default();
         controls::combo(("worn-model", key))
-            .selected_text(theme::mono(shown).size(13.0))
+            .selected_text(face::mono(shown).size(13.0))
             .width(220.0)
             .show_ui(ui, |ui| {
                 for path in &models {
@@ -143,7 +145,14 @@ fn stand(
         .stage
         .take()
         .unwrap_or_else(|| StageState::framing(built.hitbox().height.0.max(1.0) * 0.7));
-    let turntable = stage::turntable(editor, ui, &format!("worn:{key}"), size, &mut state);
+    let turntable = stage::turntable(
+        editor,
+        ui,
+        &format!("worn:{key}"),
+        size,
+        &mut state,
+        Pictured::Stage,
+    );
     editor.views.item.view_mut(key).worn.stage = Some(state);
     let Some(turntable) = turntable else {
         return;
@@ -172,7 +181,7 @@ fn laid(ui: &mut Ui, content: &Content, look: &WornLook) {
         .show(ui, |ui| {
             for part in &look.parts {
                 let def = part.get(content);
-                ui.label(theme::mono(shown_path(part.path(content))).size(13.0));
+                ui.label(face::mono(shown_path(part.path(content))).size(13.0));
                 ui.label(theme::muted(format!(
                     "covers {}",
                     words(def.covers.iter().map(|region| region.as_str()))
@@ -195,7 +204,7 @@ fn laid(ui: &mut Ui, content: &Content, look: &WornLook) {
     ui.horizontal_wrapped(|ui| {
         ui.label(theme::muted("paints"));
         for (tint, colour) in &look.colours.0 {
-            chip::swatch(ui, theme::mono(tint.as_str()).size(13.0), (*colour).into());
+            chip::swatch(ui, face::mono(tint.as_str()).size(13.0), (*colour).into());
         }
     });
 }

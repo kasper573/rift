@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 use strum::IntoStaticStr;
 
 use crate::core::content::Content;
+use crate::core::content::SchemaMark;
 use crate::core::math::{Pos, Rng};
 use crate::core::par;
 use crate::core::script::{
@@ -432,10 +433,10 @@ fn destination(
 /// Walks to a random spot within `leash` of the npc's home, the npc's own leash when none is
 /// given, or wherever it roams.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "npc body"))]
+#[schemars(transform = SchemaMark::System.with("npc body"))]
 pub struct Wander {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(extend("x-value" = "number"))]
+    #[schemars(transform = SchemaMark::Value.with("number"))]
     pub leash: Option<Condition>,
     #[schemars(extend("minimum" = Priority::LOWEST, "maximum" = Priority::HIGHEST))]
     pub priority: u8,
@@ -445,7 +446,7 @@ pub struct Wander {
 
 /// Walks to a place, an object or an actor.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "npc body"))]
+#[schemars(transform = SchemaMark::System.with("npc body"))]
 pub struct WalkTo {
     pub to: WalkTarget,
     #[schemars(extend("default" = 1.0))]
@@ -456,11 +457,11 @@ pub struct WalkTo {
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub arrived: Arrow,
     /// Taken when no way leads there.
-    #[schemars(extend("x-fails" = true))]
+    #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub blocked: Arrow,
     /// Taken when another act of at least its priority takes the body.
-    #[schemars(extend("x-fails" = true))]
+    #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub interrupted: Arrow,
 }
@@ -476,7 +477,7 @@ pub enum WalkTarget {
 
 /// Chases and swings at a target.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "npc body"))]
+#[schemars(transform = SchemaMark::System.with("npc body"))]
 pub struct Attack {
     #[schemars(extend("default" = {"type": "subject"}))]
     pub target: Condition,
@@ -486,18 +487,18 @@ pub struct Attack {
     pub priority: u8,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub defeated: Arrow,
-    #[schemars(extend("x-fails" = true))]
+    #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub lost: Arrow,
     /// Taken when another act of at least its priority takes the body.
-    #[schemars(extend("x-fails" = true))]
+    #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub interrupted: Arrow,
 }
 
 /// Interrupts the body.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "npc body"))]
+#[schemars(transform = SchemaMark::System.with("npc body"))]
 pub struct Stop {
     #[schemars(extend("minimum" = Priority::LOWEST, "maximum" = Priority::HIGHEST))]
     pub priority: u8,
@@ -508,7 +509,7 @@ pub struct Stop {
 /// Turns an actor toward a place, an actor or a point: the owner when it is an actor such as an
 /// npc, else the subject, unless `who` names someone.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "actor"))]
+#[schemars(transform = SchemaMark::System.with("actor"))]
 pub struct FaceToward {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]

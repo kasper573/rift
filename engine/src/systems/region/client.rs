@@ -1,8 +1,8 @@
 //! On a client, the ground around the player's own character is held: what the client predicts
 //! walks on, and what it checks a click against.
 
-use bevy::tasks::futures_lite::future;
-use bevy::tasks::{IoTaskPool, Task, block_on};
+use bevy::tasks::futures::check_ready;
+use bevy::tasks::{IoTaskPool, Task};
 use bevy_app::{App, Plugin, PreUpdate};
 use bevy_ecs::prelude::*;
 
@@ -54,7 +54,7 @@ fn follow(world: &mut World) {
     }
     let mut holding = world.resource_mut::<Holding>();
     if let Some(task) = holding.task.as_mut() {
-        if block_on(future::poll_once(task)).is_none() {
+        if check_ready(task).is_none() {
             return;
         }
         holding.task = None;

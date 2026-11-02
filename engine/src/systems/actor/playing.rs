@@ -7,6 +7,7 @@ use super::skeleton::{Declared, GestureName, MoveName};
 use super::stance::StanceId;
 use super::{Action, Actor, ActorModel, Appearance, Pose};
 use crate::core::audio::playback::SfxId;
+use crate::core::content::SchemaMark;
 use crate::core::content::{Content, serial};
 use crate::core::math::Rng;
 use crate::core::script::{Answer, Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
@@ -111,7 +112,7 @@ pub enum Wait {
 /// Plays an action, or a move the actor's stance turns into a clip, waiting for its apex or end
 /// when asked.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "actor"))]
+#[schemars(transform = SchemaMark::System.with("actor"))]
 pub struct Animate {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
@@ -125,7 +126,7 @@ pub struct Animate {
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
     /// Taken when the action can't play or is cut short.
-    #[schemars(extend("x-fails" = true))]
+    #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub interrupted: Arrow,
 }
@@ -242,7 +243,7 @@ pub fn play(
 
 /// Puts an actor in a stance with nothing in its hands, or out of the one a script put it in.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "actor"))]
+#[schemars(transform = SchemaMark::System.with("actor"))]
 pub struct SetStance {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
@@ -289,7 +290,7 @@ impl EffectDef<RiftScripting> for SetStance {
 /// pose or leaving the old one, waiting for that clip to play through when asked. A pose whose sets
 /// name no such clip is taken or left at once.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "actor"))]
+#[schemars(transform = SchemaMark::System.with("actor"))]
 pub struct SetPose {
     pub pose: Pose,
     #[serde(default, skip_serializing_if = "serial::is_false")]

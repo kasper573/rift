@@ -13,6 +13,7 @@ pub use shader::{
 
 use std::collections::BTreeMap;
 
+use crate::core::content::SchemaMark;
 use crate::core::math::PosSchema;
 use bevy_ecs::entity::MapEntities;
 use bevy_ecs::prelude::*;
@@ -105,7 +106,7 @@ pub enum VfxLayer {
         shader: VfxShaderId,
         /// Keyed by the shader's declared parameters, each filled or left to its default.
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-        #[schemars(extend("x-params-of" = "shader"))]
+        #[schemars(transform = SchemaMark::ParamsOf.with("shader"))]
         params: BTreeMap<String, ParamFill>,
         #[schemars(extend("minimum" = SHORTEST_RUN_EXACT))]
         duration: Seconds,
@@ -138,7 +139,7 @@ pub enum SpritePlay {
 /// row's declared parameters, filled by whoever plays the vfx.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(untagged)]
-#[schemars(extend("x-param-fill" = true))]
+#[schemars(transform = SchemaMark::ParamFill.with(true))]
 pub enum ParamFill {
     Param { param: String },
     Value(ParamValue),

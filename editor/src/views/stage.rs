@@ -10,6 +10,7 @@ use engine::core::units::{Degrees, Meters, Radians};
 use engine::systems::area::scenery::Sources;
 use engine::systems::area::{self, Kept, PROP_STAGE, Picture, Pictured};
 use ui::egui::{self, Color32, Pos2, Rect, Stroke, Ui};
+use ui::face;
 use ui::{chip, theme};
 
 use crate::tabs::shown_path;
@@ -128,7 +129,7 @@ pub fn bar<T>(
         .show(
             ui,
             |ui| {
-                ui.label(theme::mono(shown_path(key)).color(theme::CODE));
+                ui.label(face::mono(shown_path(key)).color(theme::CODE));
                 ui.add_space(8.0);
                 left(ui)
             },
@@ -164,6 +165,16 @@ impl StageState {
             picture: StagePicture::default(),
         }
     }
+
+    /// The picture of what the stage shows, `pictured`, drawn anew when the content changes.
+    pub fn picture(
+        &mut self,
+        content: &Content,
+        generation: u64,
+        pictured: Pictured,
+    ) -> Option<(u64, Arc<Picture>)> {
+        self.picture.of(content, generation, pictured)
+    }
 }
 
 /// The stage drawn this frame with the camera moved as the pointer asks, for a view to draw over
@@ -176,29 +187,28 @@ pub struct Turntable {
     picture: (u64, Arc<Picture>),
 }
 
-/// Draws the stage `view_key` keeps in `state` over `size`, or says why there is nothing to stand
-/// on.
+/// Draws `pictured` on the stage `view_key` keeps in `state` over `size`, or says why there is
+/// nothing to stand on.
 pub fn turntable(
     editor: &mut Editor,
     ui: &mut Ui,
     view_key: &str,
     size: Vec2,
     state: &mut StageState,
+    pictured: Pictured,
 ) -> Option<Turntable> {
     let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 4.0, theme::CANVAS);
     let picture = editor.project.as_ref().and_then(|project| {
         let content = project.content.clone()?;
-        state
-            .picture
-            .of(&content, project.generation, Pictured::Stage)
+        state.picture(&content, project.generation, pictured)
     });
     let Some(picture) = picture else {
         painter.text(
             rect.center(),
             egui::Align2::CENTER_CENTER,
-            "no terrain to stand the rig on",
+            "no terrain to stand on",
             egui::FontId::proportional(13.0),
             theme::MUTED,
         );

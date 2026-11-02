@@ -4,6 +4,7 @@ use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::core::content::SchemaMark;
 use crate::core::content::{Content, ContentFile, ContentId, NamedContent, Nearby};
 use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault, Value, ValueType,
@@ -152,7 +153,7 @@ pub fn forget(world: &mut World, player: Entity, key: MemoryId) {
 
 /// Sets a memory, timed now.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "memory"))]
+#[schemars(transform = SchemaMark::System.with("memory"))]
 pub struct Remember {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
@@ -166,7 +167,7 @@ pub struct Remember {
 
 /// Sets memories back to zero.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "memory"))]
+#[schemars(transform = SchemaMark::System.with("memory"))]
 pub struct Forget {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]

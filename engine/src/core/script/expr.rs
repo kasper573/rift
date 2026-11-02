@@ -1,3 +1,4 @@
+use crate::core::content::SchemaMark;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{EnumDiscriminants, EnumString, IntoStaticStr, VariantArray};
@@ -6,7 +7,7 @@ use super::Vocabulary;
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize, EnumDiscriminants)]
 #[serde(tag = "type", rename_all = "snake_case", bound = "")]
-#[schemars(rename = "Expr", bound = "", extend("x-condition" = true))]
+#[schemars(rename = "Expr", bound = "", transform = SchemaMark::Condition.with(true))]
 #[strum_discriminants(
     name(ExprKind),
     derive(EnumString, IntoStaticStr, VariantArray),

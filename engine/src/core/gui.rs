@@ -12,6 +12,8 @@ use ui::egui::load::SizedTexture;
 use ui::egui::{LayerId, Order};
 
 use crate::core::content::ImageRef;
+use crate::core::math::{Pos, Rect, Size};
+use crate::core::units::WindowPx;
 
 /// Each band draws in its own egui order, so it stacks the same however the frame's systems run.
 #[derive(SystemSet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -141,6 +143,14 @@ impl Plugin for GuiPlugin {
                 read_cursor.after(EguiPostUpdateSet::ProcessOutput),
             );
     }
+}
+
+/// `rect` of the interface in window pixels, as reported.
+pub fn window_rect(rect: egui::Rect) -> Rect<WindowPx> {
+    Rect::new(
+        Pos::new(rect.min.x, rect.min.y),
+        Size::new(rect.width(), rect.height()),
+    )
 }
 
 pub fn context(world: &World) -> Option<egui::Context> {

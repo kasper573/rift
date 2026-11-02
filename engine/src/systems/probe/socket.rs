@@ -1,23 +1,17 @@
 use std::io::{BufRead, BufReader, Write};
 use std::net::{SocketAddr, TcpStream};
-use std::path::PathBuf;
 use std::sync::mpsc::{Receiver, channel};
 use std::sync::{Arc, Condvar, Mutex};
 
+use super::ProbeFrameQuestion;
 use crate::core::content::Content;
 
 // The driver asks with a line and waits for its answer: a snapshot of a frame after it, or what the
 // game says, answered on the socket's own thread once the game is loaded.
 pub(super) struct ProbeSocket {
-    asked: Receiver<FrameQuestion>,
+    asked: Receiver<ProbeFrameQuestion>,
     answers: Answers,
     game: Arc<(Mutex<Option<Content>>, Condvar)>,
-}
-
-/// A question only a frame answers.
-pub(super) enum FrameQuestion {
-    Snapshot,
-    Picture(PathBuf),
 }
 
 /// Where answers go, from whichever thread has one. A driver that hung up wants no more of them.
@@ -53,7 +47,7 @@ impl ProbeSocket {
                 let content = loaded(&thread_game);
                 let question = super::read_question(&content, &line)
                     .unwrap_or_else(|error| panic!("the probe's driver asked {line}: {error}"));
-                let answer = super::answer(&content, &question).expect("a question about the game");
+                let answer = super::answer(&content, &question);
                 thread_answers.give(&answer);
             }
         });
@@ -65,7 +59,7 @@ impl ProbeSocket {
     }
 
     /// The frame questions asked since the last frame.
-    pub(super) fn asked(&self) -> Vec<FrameQuestion> {
+    pub(super) fn asked(&self) -> Vec<ProbeFrameQuestion> {
         self.asked.try_iter().collect()
     }
 

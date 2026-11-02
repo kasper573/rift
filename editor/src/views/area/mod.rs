@@ -1,6 +1,7 @@
 pub mod blueprint;
 pub mod brush;
 pub mod camera;
+pub mod clipboard;
 pub mod contours;
 pub mod flags;
 pub mod inspect;
@@ -14,7 +15,6 @@ pub mod pins;
 pub mod place;
 pub mod placement;
 pub mod population;
-pub mod preview;
 pub mod problems;
 pub mod resize;
 pub mod scatter;
@@ -36,6 +36,7 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
 use ui::controls;
 use ui::egui;
+use ui::face;
 
 use ui::theme;
 use ui::words;
@@ -74,6 +75,7 @@ use crate::keymap::EditorKey;
 use crate::play;
 use crate::project::{AreaCameraState, Project, RowSelection};
 use crate::tabs::{EditorTab, file_title};
+use crate::views::ViewMap;
 use crate::widgets;
 
 /// The key of the view of an area or blueprint bundle.
@@ -92,7 +94,7 @@ fn camera_key(project: &Project, view_key: &str) -> String {
 
 #[derive(Default)]
 pub struct AreaViews {
-    pub views: HashMap<String, AreaViewState>,
+    pub views: ViewMap<AreaViewState>,
     pub viewports: Viewports,
     pub hover: Option<AreaHover>,
     pub active: Option<String>,
@@ -328,16 +330,15 @@ impl AreaViews {
 
     pub fn ensure_view(&mut self, bundle: &str) -> &mut AreaViewState {
         self.views
-            .entry(view_key(bundle))
-            .or_insert_with(|| AreaViewState::new(bundle))
+            .view_or_insert_with(&view_key(bundle), || AreaViewState::new(bundle))
     }
 
     pub fn view(&self, key: &str) -> &AreaViewState {
-        &self.views[key]
+        self.views.view(key)
     }
 
     pub fn view_mut(&mut self, key: &str) -> &mut AreaViewState {
-        self.views.get_mut(key).expect("an open area view")
+        self.views.view_mut(key)
     }
 
     /// Points what the views place at where `moved` took it.
@@ -367,6 +368,10 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, bundle: &str) {
 }
 
 pub fn bottom(editor: &mut Editor, ui: &mut Ui, view_key: &str, tab: BottomTab) {
+    if tab == BottomTab::Listen {
+        super::sound::panel(editor, ui);
+        return;
+    }
     if editor
         .project
         .as_ref()
@@ -463,21 +468,13 @@ fn banners(editor: &mut Editor, ui: &mut Ui, view_key: &str, canvas_rect: ERect)
                 placement::placements_of(&snapshot.content, id).direct.len()
             });
         let label = snapshot
-            .scene_node(&place_id(
-                editor
-                    .views
-                    .area
-                    .view(view_key)
-                    .in_place
-                    .iter()
-                    .map(String::as_str),
-            ))
+            .scene_node(&place_id(&snapshot.in_place))
             .and_then(|node| node.label().map(str::to_owned))
             .unwrap_or_else(|| file_title(&place.blueprint).to_owned());
         chip(&mut child, &mut |ui| {
             glyph::show(ui, Mark::Grid, 14.0, theme::WARN);
             ui.label(
-                theme::mono(format!(
+                face::mono(format!(
                     "Editing {label}'s blueprint · {count} placement{} change",
                     words::plural(count)
                 ))
@@ -500,7 +497,7 @@ fn banners(editor: &mut Editor, ui: &mut Ui, view_key: &str, canvas_rect: ERect)
         chip(&mut child, &mut |ui| {
             glyph::show(ui, Mark::Eye, 13.0, theme::MUTED);
             ui.label(
-                theme::mono(format!("Showing only {name}"))
+                face::mono(format!("Showing only {name}"))
                     .size(13.0)
                     .color(theme::TEXT),
             );
@@ -518,7 +515,7 @@ fn banners(editor: &mut Editor, ui: &mut Ui, view_key: &str, canvas_rect: ERect)
         chip(&mut child, &mut |ui| {
             glyph::show(ui, Mark::Play, 13.0, theme::MUTED);
             ui.label(
-                theme::mono(format!(
+                face::mono(format!(
                     "{hidden} hidden module{} play{} too",
                     words::plural(hidden),
                     if hidden == 1 { "s" } else { "" }
@@ -915,7 +912,7 @@ impl AreaSnapshot {
     /// The snapshot of `bundle`, through its view when one is open.
     pub fn for_bundle(editor: &mut Editor, bundle: &str) -> Option<Self> {
         let key = view_key(bundle);
-        if editor.views.area.views.contains_key(&key) {
+        if editor.views.area.views.contains(&key) {
             return Self::for_view(editor, &key);
         }
         let content = editor.project.as_ref()?.content.clone()?;
@@ -1126,7 +1123,7 @@ fn snapshot_parts(
     }];
     for (depth, place) in in_place.iter().enumerate() {
         levels.push(SceneLevel {
-            under: place_id_of(&in_place[..=depth]),
+            under: place_id(&in_place[..=depth]),
             scene: &place.def.scene,
         });
     }
@@ -1177,13 +1174,13 @@ fn snapshot_parts(
     })
 }
 
-/// The tree row of the placement edited in place at the end of the chain of `nodes`.
-fn place_id<'a>(nodes: impl IntoIterator<Item = &'a str>) -> String {
-    nodes.into_iter().collect::<Vec<_>>().join("/in")
-}
-
-pub(super) fn place_id_of(chain: &[placement::AreaPlacement]) -> String {
-    place_id(chain.iter().map(|place| place.node.as_str()))
+/// The tree row of the placement edited in place at the end of `chain`.
+pub(super) fn place_id(chain: &[placement::AreaPlacement]) -> String {
+    chain
+        .iter()
+        .map(|place| place.node.as_str())
+        .collect::<Vec<_>>()
+        .join("/in")
 }
 
 /// How tall a module stands over the ground, for picking it by its body: a prop by its model, a
@@ -1277,20 +1274,9 @@ fn remember_camera(editor: &mut Editor, view_key: &str) {
     let Some(project) = &editor.project else {
         return;
     };
-    let view = editor.views.area.view(view_key);
     let key = camera_key(project, view_key);
-    let camera = view.camera;
-    let changed = editor
-        .settings
-        .cameras
-        .get(&key)
-        .is_none_or(|known| !known.near(&camera));
-    if changed {
-        editor.settings.cameras.insert(key, camera);
-        if editor.frame.is_multiple_of(120) {
-            editor.save_settings();
-        }
-    }
+    let camera = editor.views.area.view(view_key).camera;
+    editor.settings.cameras.insert(key, camera);
 }
 
 pub(crate) fn open_area_at(

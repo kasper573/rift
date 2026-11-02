@@ -1,6 +1,7 @@
 use std::sync::Arc;
 use ui::chip;
 use ui::egui;
+use ui::face;
 
 use crate::views::navigation::PX_PER_METER;
 use ui::draft;
@@ -179,7 +180,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
                         if ui
                             .selectable_label(
                                 other == key,
-                                theme::mono(shown_path(other)).size(12.5),
+                                face::mono(shown_path(other)).size(12.5),
                             )
                             .clicked()
                         {
@@ -394,7 +395,7 @@ fn identity(
             controls::combo("character-class")
                 .width(ui.available_width() - 8.0)
                 .truncate()
-                .selected_text(theme::mono(shown_path(&current)).size(13.0))
+                .selected_text(face::mono(shown_path(&current)).size(13.0))
                 .show_ui(ui, |ui| {
                     for class in classes {
                         ui.selectable_value(&mut picked, class.clone(), shown_path(class));
@@ -547,7 +548,7 @@ fn equipment(
                 let mut picked = current.clone();
                 controls::combo(("equipped", index))
                     .width(ui.available_width() - 8.0)
-                    .selected_text(theme::mono(shown_path(&current)).size(13.0))
+                    .selected_text(face::mono(shown_path(&current)).size(13.0))
                     .show_ui(ui, |ui| {
                         for item in &wearable {
                             ui.selectable_value(&mut picked, item.clone(), shown_path(item));
@@ -616,7 +617,7 @@ fn skills(
                 let mut picked = learned.node.clone();
                 controls::combo(("learned-node", index))
                     .width(170.0)
-                    .selected_text(theme::mono(learned.node.as_str()).size(13.0))
+                    .selected_text(face::mono(learned.node.as_str()).size(13.0))
                     .show_ui(ui, |ui| {
                         for node in tree.0.keys() {
                             ui.selectable_value(&mut picked, node.clone(), node.as_str());
@@ -798,7 +799,7 @@ fn start(
                     ui.label(theme::faint("· the initial spawn").size(12.0));
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         ui.add(
-                            egui::Label::new(theme::mono(shown_path(&area_key)).size(13.0))
+                            egui::Label::new(face::mono(shown_path(&area_key)).size(13.0))
                                 .truncate(),
                         );
                     });
@@ -812,7 +813,7 @@ fn start(
         });
         form::kv(ui, "at", |ui| {
             if at_spawn {
-                ui.label(theme::mono(format!("{}, {}", at.x, at.y)).size(13.0));
+                ui.label(face::mono(format!("{}, {}", at.x, at.y)).size(13.0));
                 ui.label(theme::faint("m").size(12.0));
             } else if let CharacterStart::At(place) = &mut character.start {
                 let (mut x, mut y) = (at.x, at.y);
@@ -827,8 +828,8 @@ fn start(
         {
             let size = area::load(&content, area_id).size;
             let (rect, _) = ui.allocate_exact_size(MAP, egui::Sense::hover());
-            let px_per_tile = 8.0;
-            let half = MAP / px_per_tile / 2.0;
+            let px_per_meter = 8.0;
+            let half = MAP / px_per_meter / 2.0;
             let center = Pos::<Meters>::new(
                 kept_in_view(at.x, half.x, size.width),
                 kept_in_view(at.y, half.y, size.height),
@@ -841,7 +842,7 @@ fn start(
                     crate::views::navigation::Viewport {
                         screen: rect,
                         center,
-                        zoom: px_per_tile / PX_PER_METER,
+                        zoom: px_per_meter / PX_PER_METER,
                     },
                     egui::Color32::WHITE,
                 ),
@@ -849,8 +850,8 @@ fn start(
             }
             let marker = rect.center()
                 + egui::vec2(
-                    (at.x - center.x) * px_per_tile,
-                    (at.y - center.y) * px_per_tile,
+                    (at.x - center.x) * px_per_meter,
+                    (at.y - center.y) * px_per_meter,
                 );
             ui.painter().circle(
                 marker,
@@ -925,7 +926,7 @@ fn areas_known(ui: &mut Ui, sheet: &Sheet, character: &mut CharacterSnapshot) ->
                 .show(ui, |ui| {
                     for area in &unknown {
                         if ui
-                            .selectable_label(false, theme::mono(shown_path(area)).size(12.5))
+                            .selectable_label(false, face::mono(shown_path(area)).size(12.5))
                             .clicked()
                         {
                             add = sheet.reader.id_of::<AreaDef>(area);
@@ -946,49 +947,49 @@ fn areas_known(ui: &mut Ui, sheet: &Sheet, character: &mut CharacterSnapshot) ->
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, VariantArray)]
-pub enum Standing {
+pub enum QuestStanding {
     NotTaken,
     Active,
     Completed,
     Failed,
 }
 
-impl Standing {
+impl QuestStanding {
     pub fn label(self) -> &'static str {
         match self {
-            Standing::NotTaken => "not taken",
-            Standing::Active => "in progress",
-            Standing::Completed => "completed",
-            Standing::Failed => "failed",
+            QuestStanding::NotTaken => "not taken",
+            QuestStanding::Active => "in progress",
+            QuestStanding::Completed => "completed",
+            QuestStanding::Failed => "failed",
         }
     }
 
-    pub(crate) fn of_log(log: &QuestLog, quest: QuestId) -> Standing {
+    pub(crate) fn of_log(log: &QuestLog, quest: QuestId) -> QuestStanding {
         if log.active(quest).is_some() {
-            return Standing::Active;
+            return QuestStanding::Active;
         }
         match log.finished(quest).map(|finished| finished.result) {
-            Some(QuestResult::Completed) => Standing::Completed,
-            Some(QuestResult::Failed) => Standing::Failed,
-            None => Standing::NotTaken,
+            Some(QuestResult::Completed) => QuestStanding::Completed,
+            Some(QuestResult::Failed) => QuestStanding::Failed,
+            None => QuestStanding::NotTaken,
         }
     }
 
-    fn of(state: Option<QuestState>) -> Standing {
+    fn of(state: Option<QuestState>) -> QuestStanding {
         match state {
-            Some(QuestState::Active) => Standing::Active,
-            Some(QuestState::Completed) => Standing::Completed,
-            Some(QuestState::Failed) => Standing::Failed,
-            None => Standing::NotTaken,
+            Some(QuestState::Active) => QuestStanding::Active,
+            Some(QuestState::Completed) => QuestStanding::Completed,
+            Some(QuestState::Failed) => QuestStanding::Failed,
+            None => QuestStanding::NotTaken,
         }
     }
 
     fn state(self) -> Option<QuestState> {
         match self {
-            Standing::NotTaken => None,
-            Standing::Active => Some(QuestState::Active),
-            Standing::Completed => Some(QuestState::Completed),
-            Standing::Failed => Some(QuestState::Failed),
+            QuestStanding::NotTaken => None,
+            QuestStanding::Active => Some(QuestState::Active),
+            QuestStanding::Completed => Some(QuestState::Completed),
+            QuestStanding::Failed => Some(QuestState::Failed),
         }
     }
 }
@@ -1092,7 +1093,7 @@ fn quests(
                     .quests
                     .iter()
                     .position(|entry| entry.quest == quest);
-                let standing = Standing::of(entry.map(|index| character.quests[index].state));
+                let standing = QuestStanding::of(entry.map(|index| character.quests[index].state));
                 let giver =
                     giver_of(sheet, parties.as_ref(), quest).map(|party| party.name.clone());
                 let requires = sheet.read(cx, quest).and_then(|def| {
@@ -1104,7 +1105,7 @@ fn quests(
                     })
                 });
                 let subtitle = match standing {
-                    Standing::NotTaken => requires
+                    QuestStanding::NotTaken => requires
                         .map(|requires| format!("needs {requires}"))
                         .or_else(|| giver.clone().map(|giver| format!("offered by {giver}")))
                         .unwrap_or_default(),
@@ -1113,10 +1114,10 @@ fn quests(
                         .map(|giver| format!("from {giver}"))
                         .unwrap_or_default(),
                 };
-                panel::card(ui, standing == Standing::Active, |ui| {
+                panel::tile_across(ui, standing == QuestStanding::Active, |ui| {
                     ui.horizontal(|ui| {
                         ui.vertical(|ui| {
-                            ui.label(theme::mono(shown_path(&path)).size(13.0));
+                            ui.label(face::mono(shown_path(&path)).size(13.0));
                             if !subtitle.is_empty() {
                                 ui.label(theme::faint(subtitle).size(12.0));
                             }
@@ -1124,9 +1125,9 @@ fn quests(
                         ui.with_layout(Layout::right_to_left(Align::Min), |ui| {
                             let mut picked = standing;
                             controls::combo(("quest-state", &path))
-                                .selected_text(theme::mono(standing.label()).size(12.5))
+                                .selected_text(face::mono(standing.label()).size(12.5))
                                 .show_ui(ui, |ui| {
-                                    for &option in Standing::VARIANTS {
+                                    for &option in QuestStanding::VARIANTS {
                                         ui.selectable_value(&mut picked, option, option.label());
                                     }
                                 });
@@ -1136,7 +1137,7 @@ fn quests(
                             }
                         });
                     });
-                    if standing == Standing::Active
+                    if standing == QuestStanding::Active
                         && let Some(index) = entry
                         && let Some(entry) = character.quests.get_mut(index)
                     {
@@ -1258,7 +1259,7 @@ fn giver_of<'p>(
     parties.giver(content.by_path::<QuestDef>(&sheet.path_of(quest))?)
 }
 
-fn set_standing(character: &mut CharacterSnapshot, quest: QuestId, standing: Standing) {
+fn set_standing(character: &mut CharacterSnapshot, quest: QuestId, standing: QuestStanding) {
     character.quests.retain(|entry| entry.quest != quest);
     if let Some(state) = standing.state() {
         character.quests.push(SnapshotQuest {
@@ -1376,9 +1377,9 @@ fn apply_moment(
         })
     });
     match &moment {
-        Moment::JustOffered => set_standing(character, quest, Standing::NotTaken),
+        Moment::JustOffered => set_standing(character, quest, QuestStanding::NotTaken),
         Moment::ObjectivesMet | Moment::ReadyToHandIn | Moment::Decided(_) => {
-            set_standing(character, quest, Standing::Active);
+            set_standing(character, quest, QuestStanding::Active);
             if let Some(entry) = character
                 .quests
                 .iter_mut()
@@ -1395,8 +1396,8 @@ fn apply_moment(
                 }
             }
         }
-        Moment::Completed => set_standing(character, quest, Standing::Completed),
-        Moment::Failed => set_standing(character, quest, Standing::Failed),
+        Moment::Completed => set_standing(character, quest, QuestStanding::Completed),
+        Moment::Failed => set_standing(character, quest, QuestStanding::Failed),
     }
     if let Some(place) = beside_party {
         character.start = CharacterStart::At(place);
@@ -1449,7 +1450,7 @@ fn memories(
             ui.end_row();
             for (key, def) in order.iter().take(order.len() - hidden) {
                 let entry = held(key);
-                ui.label(theme::mono(shown_path(key)).size(13.0))
+                ui.label(face::mono(shown_path(key)).size(13.0))
                     .on_hover_text(&def.label);
                 let value = entry.map(|entry| &entry.value);
                 match def.ty {

@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{DroppedItem, Inventory, ItemId, ItemStack};
 use crate::core::content::Content;
+use crate::core::content::SchemaMark;
 use crate::core::math::Pos;
 use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, Eval, FlowCx, NEXT, REFUSED, ScriptFault, ValueType,
@@ -20,7 +21,7 @@ use crate::systems::visibility::Presence;
 
 /// Takes and gives items in one exchange, all or nothing.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "item"))]
+#[schemars(transform = SchemaMark::System.with("item"))]
 pub struct Items {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
@@ -31,14 +32,14 @@ pub struct Items {
     pub give: Vec<ItemStack>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub done: Arrow,
-    #[schemars(extend("x-fails" = true))]
+    #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub refused: Arrow,
 }
 
 /// Uses an item as the player would.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "item"))]
+#[schemars(transform = SchemaMark::System.with("item"))]
 pub struct UseItem {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
@@ -46,14 +47,14 @@ pub struct UseItem {
     pub item: ItemId,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub used: Arrow,
-    #[schemars(extend("x-fails" = true))]
+    #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub refused: Arrow,
 }
 
 /// Puts an item on, swapping with the slot.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "item"))]
+#[schemars(transform = SchemaMark::System.with("item"))]
 pub struct Equip {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
@@ -61,14 +62,14 @@ pub struct Equip {
     pub item: ItemId,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub done: Arrow,
-    #[schemars(extend("x-fails" = true))]
+    #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub refused: Arrow,
 }
 
 /// Takes an item off, from wherever it is worn.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "item"))]
+#[schemars(transform = SchemaMark::System.with("item"))]
 pub struct Unequip {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
@@ -76,31 +77,31 @@ pub struct Unequip {
     pub item: ItemId,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub done: Arrow,
-    #[schemars(extend("x-fails" = true))]
+    #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub refused: Arrow,
 }
 
 /// Drops items to the ground at their feet.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "item"))]
+#[schemars(transform = SchemaMark::System.with("item"))]
 pub struct DropItems {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
     pub who: Option<Condition>,
     pub item: ItemId,
-    #[schemars(extend("x-count" = true))]
+    #[schemars(transform = SchemaMark::Count.with(true))]
     pub count: Condition,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub done: Arrow,
-    #[schemars(extend("x-fails" = true))]
+    #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub refused: Arrow,
 }
 
 /// Scatters items as loot at a place or actor.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "item"))]
+#[schemars(transform = SchemaMark::System.with("item"))]
 pub struct SpawnGroundItems {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub items: Vec<ItemStack>,
@@ -110,7 +111,7 @@ pub struct SpawnGroundItems {
     pub for_whom: GroundItemsFor,
     /// Without one, as long as the game's drops last.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(extend("x-value" = "number"))]
+    #[schemars(transform = SchemaMark::Value.with("number"))]
     pub seconds: Option<Condition>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
@@ -118,7 +119,7 @@ pub struct SpawnGroundItems {
 
 /// Removes ground items in range.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "item"))]
+#[schemars(transform = SchemaMark::System.with("item"))]
 pub struct ClearGroundItems {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub at: Option<Spot>,
@@ -130,7 +131,7 @@ pub struct ClearGroundItems {
 
 /// Moves items from one bag to another.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "item"))]
+#[schemars(transform = SchemaMark::System.with("item"))]
 pub struct MoveItems {
     #[schemars(extend("default" = {"type": "subject"}))]
     pub from: Condition,
@@ -140,7 +141,7 @@ pub struct MoveItems {
     pub items: Vec<ItemStack>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub done: Arrow,
-    #[schemars(extend("x-fails" = true))]
+    #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub refused: Arrow,
 }

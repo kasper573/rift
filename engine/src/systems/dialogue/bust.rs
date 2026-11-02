@@ -7,6 +7,7 @@ use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, EnumString, VariantArray};
 
+use crate::core::content::SchemaMark;
 use crate::core::content::media::{VisiblePixelColumns, visible_columns};
 use crate::core::content::{AssetKind, FileSize, ImageRef};
 use crate::core::content::{
@@ -175,7 +176,7 @@ impl JsonSchema for Expression {
 
     fn json_schema(generator: &mut SchemaGenerator) -> Schema {
         let mut schema = String::json_schema(generator);
-        schema.insert("x-face".to_owned(), true.into());
+        SchemaMark::Face.set(&mut schema, true);
         schema
     }
 

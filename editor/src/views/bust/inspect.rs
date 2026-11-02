@@ -5,6 +5,7 @@ use ui::controls;
 use ui::dialog;
 use ui::draft;
 use ui::egui;
+use ui::face;
 use ui::form;
 use ui::panel;
 use ui::theme;
@@ -47,7 +48,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, selection: &RowSelection) {
 
 fn face_card(editor: &mut Editor, ui: &mut Ui, key: &str, face: &BustFace, faces: &[BustFace]) {
     ui.label(
-        theme::mono(format!("{} › {}", shown_path(key), face.name))
+        face::mono(format!("{} › {}", shown_path(key), face.name))
             .color(theme::CODE)
             .size(12.0),
     );
@@ -68,7 +69,7 @@ fn face_card(editor: &mut Editor, ui: &mut Ui, key: &str, face: &BustFace, faces
     let mut remove_with: Option<String> = None;
     let lines = faces::lines(editor, key);
     let uses_of_face = lines.iter().filter(|line| line.face == face.name).count();
-    panel::card(ui, true, |ui| {
+    panel::tile_across(ui, true, |ui| {
         let kind = if face.own { "" } else { "generic" };
         if face.own {
             panel::header(ui, &face.name, kind, |ui| {
@@ -95,7 +96,7 @@ fn face_card(editor: &mut Editor, ui: &mut Ui, key: &str, face: &BustFace, faces
                     rename_to = Some(wanted);
                 }
             } else {
-                ui.label(theme::mono(&face.name));
+                ui.label(face::mono(&face.name));
                 ui.label(theme::faint(format!(
                     "one of the {} every bust has",
                     GenericExpression::VARIANTS.len()
@@ -103,7 +104,7 @@ fn face_card(editor: &mut Editor, ui: &mut Ui, key: &str, face: &BustFace, faces
             }
         });
         form::kv(ui, "file", |ui| {
-            ui.label(theme::mono(face.part()).color(theme::CODE).size(12.5));
+            ui.label(face::mono(face.part()).color(theme::CODE).size(12.5));
             ui.label(theme::faint("drop a PNG onto its card to replace it").size(12.0));
         });
         form::kv_text(ui, "size", size_text(&face.name, own_size, &sizes));
@@ -122,15 +123,15 @@ fn face_card(editor: &mut Editor, ui: &mut Ui, key: &str, face: &BustFace, faces
     let mut open = None;
     for line in own_lines.iter().take(shown) {
         ui.horizontal(|ui| {
-            widgets::badge(ui, ScriptDef::TABLE);
+            widgets::table_mark(ui, ScriptDef::TABLE);
             if ui
-                .link(theme::mono(shown_path(&line.script)).size(12.5))
+                .link(face::mono(shown_path(&line.script)).size(12.5))
                 .clicked()
             {
                 open = Some(line.script.clone());
             }
             ui.label(theme::muted("›").size(12.0));
-            ui.label(theme::mono(&line.node).size(12.5));
+            ui.label(face::mono(&line.node).size(12.5));
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 ui.label(theme::faint(&line.face).size(12.0));
             });

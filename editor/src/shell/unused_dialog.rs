@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use ui::controls;
 use ui::egui;
+use ui::face;
 use ui::theme;
 use ui::words;
 
@@ -264,7 +265,7 @@ fn group_lines(
                     Mark::CaretRight
                 };
                 glyph::show(ui, mark, 11.0, theme::FAINT);
-                ui.label(theme::mono(&group.label).color(theme::TEXT));
+                ui.label(face::mono(&group.label).color(theme::TEXT));
             })
             .response
             .interact(egui::Sense::click());
@@ -276,7 +277,7 @@ fn group_lines(
             }
         }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(theme::mono(group.members.len().to_string()).color(theme::MUTED));
+            ui.label(face::mono(group.members.len().to_string()).color(theme::MUTED));
         });
     });
     if !open {
@@ -286,7 +287,7 @@ fn group_lines(
         ui.horizontal(|ui| {
             ui.add_space(24.0);
             let mut on = !dialog.unticked.contains(&member.item);
-            if ui.checkbox(&mut on, theme::mono(&member.name)).changed() {
+            if ui.checkbox(&mut on, face::mono(&member.name)).changed() {
                 toggles.push((vec![member.item.clone()], on));
             }
             if !member.note.is_empty() {

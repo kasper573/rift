@@ -493,7 +493,7 @@ pub fn corners(rect: Rect) -> [Pos2; 4] {
 }
 
 fn draw_caption(painter: &Painter, atlas: &WorldAtlas, card: &MapCard, dimmed: bool) {
-    let name = atlas.file_name(card.area);
+    let name = atlas.card_name(card.area);
     let ink = if dimmed { theme::FAINT } else { theme::TEXT };
     let top = card.art.max.y + 2.0;
     let width = card.caption_width - 2.0 * PAD;
@@ -1028,7 +1028,7 @@ fn draw_edge_tags(painter: &Painter, atlas: &WorldAtlas, cards: &[MapCard], rect
         painter,
         card.frame.left_bottom() + Vec2::new(0.0, 4.0),
         Align2::LEFT_TOP,
-        atlas.file_name(card.area),
+        atlas.card_name(card.area),
         theme::PANEL,
         theme::TEXT,
         11.0,
@@ -1053,7 +1053,7 @@ fn draw_edge_tags(painter: &Painter, atlas: &WorldAtlas, cards: &[MapCard], rect
         let tx = reach(d.x, inset.min.x, inset.max.x, origin.x);
         let ty = reach(d.y, inset.min.y, inset.max.y, origin.y);
         let at = (origin + d * tx.min(ty).max(0.0)).clamp(inset.min, inset.max);
-        let name = atlas.file_name(to);
+        let name = atlas.card_name(to);
         let (text, anchor) = if tx < ty {
             if d.x > 0.0 {
                 (format!("{name} →"), Align2::RIGHT_CENTER)

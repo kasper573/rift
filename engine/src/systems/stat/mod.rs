@@ -6,6 +6,7 @@ pub use health::{
     regenerate, revive, stands,
 };
 
+use crate::core::content::SchemaMark;
 use std::collections::BTreeMap;
 
 use bevy_app::App;
@@ -167,10 +168,7 @@ fn schema_with_units(schema: &mut schemars::Schema) {
             kind.unit(),
             properties.get_mut(&name).and_then(|v| v.as_object_mut()),
         ) {
-            property.insert(
-                "x-unit".to_owned(),
-                serde_json::Value::String(unit.to_owned()),
-            );
+            property.insert(SchemaMark::Unit.key().to_owned(), unit.into());
         }
     }
 }

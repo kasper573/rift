@@ -3,7 +3,7 @@ use ui::egui;
 
 use bevy::prelude::*;
 use ui::egui::{Color32, Id, LayerId, Order, Pos2, Rect, Sense, Ui, Vec2};
-use ui::motion::{Clock, SheetPose};
+use ui::motion::{SheetClock, SheetPose};
 use ui::panel;
 use ui::sheet::{self, Depth, Sheet};
 
@@ -63,10 +63,11 @@ pub(crate) fn sheet_pose(
 ) -> Option<SheetPose> {
     let seconds = motion_step(gui);
     let mut clocks = world.resource_mut::<SheetClocks>();
-    let clock = clocks
-        .0
-        .entry(key)
-        .or_insert(if open { Clock::OPEN } else { Clock::CLOSED });
+    let clock = clocks.0.entry(key).or_insert(if open {
+        SheetClock::OPEN
+    } else {
+        SheetClock::CLOSED
+    });
     clock.run(open, seconds);
     (!clock.is_closed() || open).then(|| clock.pose())
 }
@@ -242,7 +243,7 @@ const MIN_WINDOW: Vec2 = Vec2::new(100.0, 100.0);
 const MAX_STEP: f32 = 1.0 / 30.0;
 
 #[derive(Resource, Default)]
-pub(super) struct SheetClocks(HashMap<&'static str, Clock>);
+pub(super) struct SheetClocks(HashMap<&'static str, SheetClock>);
 
 #[derive(Clone, Copy)]
 pub(super) struct Held {

@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use ui::controls;
 use ui::dialog;
 use ui::egui;
+use ui::face;
 use ui::form;
 use ui::input;
 use ui::panel;
@@ -129,11 +130,11 @@ fn new_game(editor: &mut Editor, ctx: &Context, mut dialog: NewGameDialog) -> Op
                         ui.set_width(300.0);
                         sheet::section(ui, "Copied");
                         let files = files::content_files(source).unwrap_or_default();
-                        ui.label(theme::mono(format!(
+                        ui.label(face::mono(format!(
                             "{SETTINGS_FILE}   name → {}",
                             dialog.name
                         )));
-                        ui.label(theme::mono(format!(
+                        ui.label(face::mono(format!(
                             "every other file · {}",
                             files.len() - 1
                         )));

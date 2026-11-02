@@ -6,6 +6,7 @@ use engine::systems::shop::ShopDef;
 use ui::chip;
 use ui::egui;
 use ui::egui::{Align, Layout, RichText, Ui, Vec2};
+use ui::face;
 use ui::glyph::{self, Mark};
 use ui::menu;
 use ui::sheet;
@@ -265,7 +266,7 @@ fn results(
                         last_kind = row.kind;
                     }
                     let response = ui.add(
-                        egui::Button::new(theme::mono(&row.label).size(12.5))
+                        egui::Button::new(face::mono(&row.label).size(12.5))
                             .frame(false)
                             .min_size(Vec2::new(ui.available_width(), 20.0)),
                     );
@@ -331,7 +332,7 @@ fn color_menu(editor: &mut Editor, ui: &mut Ui) -> Option<ColorBy> {
                     sheet::section(ui, field.table.table());
                     last_table = Some(field.table);
                 }
-                let button = egui::Button::new(theme::mono(field.path_text()).size(12.5))
+                let button = egui::Button::new(face::mono(field.path_text()).size(12.5))
                     .frame(false)
                     .selected(current == Some(&field));
                 if ui.add(button).clicked() {

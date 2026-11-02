@@ -8,13 +8,12 @@ use engine::systems::actor::skeleton::{
     Clasp, Clip, Hand, JointName, LocalOffset, LocalTurn, SkeletonDef,
 };
 use ui::egui::{self, RichText, Ui, Vec2};
+use ui::face;
 use ui::{chip, controls, form, panel, theme};
 
 use super::preview;
 use super::rigging::{Rigging, joint_names};
 use crate::app::Editor;
-
-const FIRST_HAND_NAMES: [&str; 2] = ["right", "left"];
 
 #[derive(Default)]
 pub struct HandsState {
@@ -122,10 +121,7 @@ fn list(
     {
         let mut more = hands.to_vec();
         more.push(Hand {
-            name: FIRST_HAND_NAMES.get(hands.len()).map_or_else(
-                || format!("hand {}", hands.len() + 1),
-                |name| (*name).to_owned(),
-            ),
+            name: format!("hand {}", hands.len() + 1),
             joint: JointName::new(joint),
             offset: LocalOffset::default(),
             turn: LocalTurn::default(),
@@ -182,7 +178,7 @@ fn fields(
             ui.end_row();
             ui.label(theme::muted("joint"));
             ui.horizontal(|ui| {
-                ui.label(theme::mono(edited.joint.as_str()));
+                ui.label(face::mono(edited.joint.as_str()));
                 let on = picking == Some(Picking::Joint);
                 if ui
                     .toggle_value(&mut on.clone(), "click it on the stage")
@@ -221,7 +217,7 @@ fn fields(
                 ui.label(theme::muted("fingers"));
                 ui.horizontal_wrapped(|ui| {
                     for finger in &fingers {
-                        ui.label(theme::mono(finger.as_str()));
+                        ui.label(face::mono(finger.as_str()));
                     }
                     let on = picking == Some(Picking::Fingers);
                     if ui

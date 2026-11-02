@@ -80,7 +80,7 @@ impl Plugin for PopPlugin {
                     .in_set(WorldViewSystems)
                     .run_if(in_state(ClientScreen::Area)),
             )
-            .add_systems(OnExit(ClientScreen::Area), forget);
+            .add_systems(OnExit(ClientScreen::Area), super::forget::<Pops>);
     }
 }
 
@@ -95,6 +95,9 @@ pub fn show(world: &mut World, sent: NotificationSent) {
     let text = sent.notification.text.plain_words();
     let texture = text_texture(world, &text);
     let piece = screen_piece(world);
+    world
+        .entity_mut(piece)
+        .insert(DespawnOnExit(ClientScreen::Area));
     let born = time::uptime(world);
     let mut pops = world.resource_mut::<Pops>();
     let turn = (pops.rng.rand_float() * 2.0 - 1.0) * SPREAD;
@@ -217,13 +220,6 @@ fn burst(world: &mut World) {
         kept.push(pop);
     }
     world.resource_mut::<Pops>().live = kept;
-}
-
-fn forget(world: &mut World) {
-    let live = std::mem::take(&mut world.resource_mut::<Pops>().live);
-    for pop in live {
-        world.despawn(pop.piece);
-    }
 }
 
 /// Where a pop bursts from, in window pixels: low on the actor's body, toward its feet.

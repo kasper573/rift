@@ -6,15 +6,16 @@ use ui::dusk;
 use ui::egui::emath::TSTransform;
 use ui::egui::{Rect, Vec2};
 
-use super::rows::{self, Clock, Fades, Move, NoticePlace, Presence, Swell};
+use super::rows::{self, Clock, NoticePlace};
 use super::{Notification, NotificationSent};
 use crate::core::text;
+use ui::motion::{Swell, Transit, TransitMove, Transits};
 
 const WIDEST: f32 = 356.0;
 const SIZE: f32 = 16.0;
-const PRESENCE: Presence = Presence {
-    enter: Move::new(Vec2::new(0.0, -100.0), 0.9, 0.25),
-    exit: Move::new(Vec2::new(0.0, -30.0), 0.94, 0.2),
+const TRANSIT: Transit = Transit {
+    enter: TransitMove::new(Vec2::new(0.0, -100.0), 0.9, 0.25),
+    exit: TransitMove::new(Vec2::new(0.0, -30.0), 0.94, 0.2),
 };
 
 pub fn toast(world: &mut World, notification_sent: NotificationSent) {
@@ -58,7 +59,7 @@ pub(super) fn draw(world: &mut World, gui: &egui::Context, top: f32) -> f32 {
         .shown
         .as_ref()
         .map(|shown| (shown.key, (shown.key, shown.notification.clone())));
-    let toasts = errors.fades.sync(now, PRESENCE, current);
+    let toasts = errors.fades.sync(now, TRANSIT, current);
     let width = gui.content_rect().width();
     let mut drawn: Vec<Rect> = Vec::new();
     for ((key, notification), look) in toasts {
@@ -100,7 +101,7 @@ pub(super) fn draw(world: &mut World, gui: &egui::Context, top: f32) -> f32 {
 #[derive(Resource, Default)]
 struct Errors {
     shown: Option<ErrorToast>,
-    fades: Fades<(u64, Notification)>,
+    fades: Transits<(u64, Notification)>,
     drawn: Vec<Rect>,
     swell: Swell,
     clock: Clock,

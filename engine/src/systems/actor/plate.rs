@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use ui::dusk;
 use ui::egui;
 
 use bevy::prelude::*;
@@ -13,7 +14,7 @@ use crate::core::gui::{self, Band, GuiImage};
 use crate::core::math::Pos;
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::render::window_point;
-use crate::core::text::{self, TextShadow};
+use crate::core::text;
 use crate::core::units::Meters;
 use crate::systems::actor::{Action, Actor, Hitbox, Name};
 use crate::systems::area::AreaObject;
@@ -30,11 +31,6 @@ const ICON: f32 = 22.0;
 const ICON_GAP: f32 = 2.0;
 const TEXT_SIZE: f32 = 12.0;
 const HOSTILE: Color32 = Prose::Danger.on(Ground::Dusk);
-const PLAYER: Color32 = Color32::from_rgb(104, 168, 235);
-const SHADOW: TextShadow = TextShadow {
-    offset: egui::vec2(1.0, 1.0),
-    color: Color32::BLACK,
-};
 
 pub struct PlatePlugin;
 
@@ -89,7 +85,7 @@ impl PlateLabel {
         PlateLabel {
             name: Some(name.to_owned()),
             role: None,
-            color: PLAYER,
+            color: dusk::PLAYER,
         }
     }
 }
@@ -229,7 +225,7 @@ fn draw_plate(ui: &mut egui::Ui, plate: &Plate) {
             name,
             name_font(),
             plate.label.color,
-            SHADOW,
+            dusk::SMALL_TEXT_SHADOW,
             TSTransform::IDENTITY,
         );
     }
@@ -239,7 +235,7 @@ fn draw_plate(ui: &mut egui::Ui, plate: &Plate) {
             &role_text(role),
             role_font(),
             Color32::WHITE.gamma_multiply(0.7),
-            SHADOW,
+            dusk::SMALL_TEXT_SHADOW,
             TSTransform::IDENTITY,
         );
     }

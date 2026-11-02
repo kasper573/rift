@@ -64,7 +64,8 @@ fn a_closed_script_view_leaves_its_keys_to_the_view_shown_where_it_was() {
         });
     };
     sheet(&mut editor, over());
-    editor.views.spreadsheet.state_mut("npc").selected = Some((wolf.clone(), "name".to_owned()));
+    editor.views.spreadsheet.view_or_default("npc").selected =
+        Some((wolf.clone(), "name".to_owned()));
     for events in [
         key(egui::Key::Enter, egui::Modifiers::NONE),
         key(egui::Key::A, egui::Modifiers::COMMAND),

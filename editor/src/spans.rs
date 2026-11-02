@@ -198,9 +198,9 @@ pub fn retype(spans: &[Span], before: &str, after: &str) -> Option<Vec<Span>> {
         return None;
     }
     let run = cells.run_at(removed.start);
-    let inserted: Vec<Cell> = new[prefix..new.len() - suffix]
+    let inserted: Vec<GlyphCell> = new[prefix..new.len() - suffix]
         .iter()
-        .map(|&c| Cell::Char(c, run))
+        .map(|&c| GlyphCell::Char(c, run))
         .collect();
     cells.cells.splice(removed, inserted);
     Some(cells.spans())
@@ -308,7 +308,7 @@ pub fn restyle(
     let mut restyled: HashMap<usize, usize> = HashMap::new();
     let end = end.min(cells.len());
     for cell in &mut cells[start.min(end)..end] {
-        if let Cell::Char(_, run) = cell {
+        if let GlyphCell::Char(_, run) = cell {
             *run = *restyled.entry(*run).or_insert_with(|| {
                 let mut style = runs[*run].clone();
                 apply(&mut style);
@@ -508,11 +508,11 @@ fn token(span: &Span) -> String {
 /// was written in, and a value or input span sits whole on the first cell of its token.
 struct Cells {
     runs: Vec<Vec<Fx>>,
-    cells: Vec<Cell>,
+    cells: Vec<GlyphCell>,
 }
 
 #[derive(Clone)]
-enum Cell {
+enum GlyphCell {
     Char(char, usize),
     Atom(Span),
     WithinAtom,
@@ -531,15 +531,17 @@ impl Cells {
             };
             cells.runs.push(fx.clone());
             let run = cells.runs.len() - 1;
-            cells.cells.extend(text.chars().map(|c| Cell::Char(c, run)));
+            cells
+                .cells
+                .extend(text.chars().map(|c| GlyphCell::Char(c, run)));
         }
         cells
     }
 
     fn insert_atom(&mut self, at: usize, span: Span) {
         let width = token(&span).chars().count();
-        let cells = std::iter::once(Cell::Atom(span)).chain(std::iter::repeat_n(
-            Cell::WithinAtom,
+        let cells = std::iter::once(GlyphCell::Atom(span)).chain(std::iter::repeat_n(
+            GlyphCell::WithinAtom,
             width.saturating_sub(1),
         ));
         self.cells.splice(at..at, cells);
@@ -547,13 +549,13 @@ impl Cells {
 
     /// Whether a cut at `at` would split a value or input span.
     fn cuts_atom(&self, at: usize) -> bool {
-        matches!(self.cells.get(at), Some(Cell::WithinAtom))
+        matches!(self.cells.get(at), Some(GlyphCell::WithinAtom))
     }
 
     /// The run text typed at `at` joins: the one before it, else the one after, else plain text.
     fn run_at(&mut self, at: usize) -> usize {
         let neighbour = |index: Option<usize>| match index.and_then(|i| self.cells.get(i)) {
-            Some(Cell::Char(_, run)) => Some(*run),
+            Some(GlyphCell::Char(_, run)) => Some(*run),
             _ => None,
         };
         neighbour(at.checked_sub(1))
@@ -569,18 +571,18 @@ impl Cells {
         let mut run: Option<(usize, String)> = None;
         for cell in &self.cells {
             match cell {
-                Cell::Char(c, of) => match &mut run {
+                GlyphCell::Char(c, of) => match &mut run {
                     Some((current, text)) if current == of => text.push(*c),
                     _ => {
                         spans.extend(run.take().map(|run| self.span_of(run)));
                         run = Some((*of, c.to_string()));
                     }
                 },
-                Cell::Atom(span) => {
+                GlyphCell::Atom(span) => {
                     spans.extend(run.take().map(|run| self.span_of(run)));
                     spans.push(span.clone());
                 }
-                Cell::WithinAtom => {}
+                GlyphCell::WithinAtom => {}
             }
         }
         spans.extend(run.map(|run| self.span_of(run)));

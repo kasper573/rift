@@ -15,9 +15,7 @@ use ui::float;
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
 use bevy_egui::input::egui_wants_any_keyboard_input;
-use ui::egui::{
-    Align2, Color32, Id, LayerId, Pos2, Rect, Sense, Shape, Stroke, StrokeKind, Ui, Vec2,
-};
+use ui::egui::{Align2, Color32, Id, LayerId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
 use ui::face::{self, TextRole};
 use ui::{controls, ink, sheet, slip};
 
@@ -183,7 +181,7 @@ pub(crate) fn launchers_width() -> f32 {
 }
 
 /// Where every widget and window of the interface stood when last drawn.
-pub(crate) fn pieces(world: &World) -> Vec<Rect> {
+pub(crate) fn drawn_rects(world: &World) -> Vec<Rect> {
     world
         .resource::<WidgetRects>()
         .0
@@ -449,43 +447,34 @@ fn draw_confirm(world: &mut World) {
             if pending.is_none() {
                 ui.disable();
             }
-            let under = ui.painter().add(Shape::Noop);
-            let framed = egui::Frame::new()
-                .inner_margin(dialog::PADDING)
-                .show(ui, |ui| {
-                    let padding = 2.0 * f32::from(dialog::PADDING);
-                    ui.set_width(NOTE.x - padding);
-                    ui.set_min_height(NOTE.y - padding);
-                    dialog::title(ui, &text.title);
-                    for line in &text.body {
-                        ui.add(egui::Label::new(face::body(line)).wrap());
+            let padding = egui::Margin::same(dialog::PADDING);
+            sheet::note_shadowed(ui, padding, pose.shadow, |ui| {
+                let padding = 2.0 * f32::from(dialog::PADDING);
+                ui.set_width(NOTE.x - padding);
+                ui.set_min_height(NOTE.y - padding);
+                dialog::title(ui, &text.title);
+                for line in &text.body {
+                    ui.add(egui::Label::new(face::body(line)).wrap());
+                }
+                ui.add_space(12.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
+                    let keep = controls::primary(ui, text.cancel.as_str());
+                    if let Some(pending) = pending.as_mut()
+                        && !pending.focused
+                    {
+                        keep.request_focus();
+                        pending.focused = true;
                     }
-                    ui.add_space(12.0);
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Max), |ui| {
-                        let keep = controls::primary(ui, text.cancel.as_str());
-                        if let Some(pending) = pending.as_mut()
-                            && !pending.focused
-                        {
-                            keep.request_focus();
-                            pending.focused = true;
-                        }
-                        if controls::danger(ui, text.confirm.as_str()).clicked() {
-                            decided = Some(true);
-                        }
-                        let keep_pressed =
-                            keep_key.is_some_and(|key| ui.input_mut(|i| i.consume_shortcut(&key)));
-                        if keep.clicked() || keep_pressed {
-                            decided = Some(false);
-                        }
-                    });
+                    if controls::danger(ui, text.confirm.as_str()).clicked() {
+                        decided = Some(true);
+                    }
+                    let keep_pressed =
+                        keep_key.is_some_and(|key| ui.input_mut(|i| i.consume_shortcut(&key)));
+                    if keep.clicked() || keep_pressed {
+                        decided = Some(false);
+                    }
                 });
-            let note = framed.response.rect;
-            let shapes = vec![
-                Shape::Rect(pose.shadow.as_shape(note, 0.0)),
-                sheet::vellum_shape(ui.ctx(), note),
-            ];
-            ui.painter().set(under, Shape::Vec(shapes));
-            sheet::rule(ui.painter(), note, sheet::RULE_INSET);
+            });
         });
     let Some(pending) = pending else {
         return;

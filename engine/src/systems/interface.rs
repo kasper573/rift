@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::audio::playback::{PlaySfx, SfxDef, SfxPlace};
 use crate::core::content::ImageRef;
+use crate::core::content::SchemaMark;
 use crate::core::content::{Content, ContentFile, Fixture, Nearby};
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
@@ -25,9 +26,9 @@ impl ContentFile for CursorDef {
 
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Hotspot {
-    #[schemars(extend("x-unit" = "px"))]
+    #[schemars(transform = SchemaMark::Unit.with("px"))]
     pub x: u16,
-    #[schemars(extend("x-unit" = "px"))]
+    #[schemars(transform = SchemaMark::Unit.with("px"))]
     pub y: u16,
 }
 

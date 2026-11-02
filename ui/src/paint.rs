@@ -6,6 +6,13 @@ use egui::{Align2, Color32, Context, FontId, Painter, Pos2, Rect, Shape, Stroke,
 
 use crate::{glyph, ink, theme};
 
+/// A copy of text drawn under it, `offset` points away, in `color`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TextShadow {
+    pub offset: Vec2,
+    pub color: Color32,
+}
+
 /// The edge of `rect` in dashes of `dash` with `gap` between, laid inside it on whole pixels.
 pub fn dashed_rect(painter: &Painter, rect: Rect, stroke: Stroke, dash: f32, gap: f32) {
     let rect = rect.round_to_pixels(painter.pixels_per_point());

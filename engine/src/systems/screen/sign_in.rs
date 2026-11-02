@@ -5,13 +5,13 @@ use ui::egui;
 use ui::input::InputField;
 use ui::{controls, ink};
 
-use super::{ClientScreen, note, pace_as_before, pace_slowly, panel, system_screen};
+use super::{ClientScreen, frame_as_before, frame_slowly, note, panel, system_screen};
 use crate::core::content::Content;
 use crate::core::gui::{self, Band};
 use crate::core::net::auth::Credentials;
 use crate::core::os::{SignIn, StartParams, sign_in_in_browser};
 use crate::systems::GameSettings;
-use crate::systems::input::map::{self, InputAction};
+use crate::systems::input::map::{InputAction, InputMap};
 use crate::systems::launch::fake_token;
 use oidc::AuthorizationPage;
 
@@ -20,8 +20,8 @@ pub struct SignInPlugin;
 impl Plugin for SignInPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<AccountName>()
-            .add_systems(OnEnter(ClientScreen::SigningIn), pace_slowly)
-            .add_systems(OnExit(ClientScreen::SigningIn), (forget, pace_as_before))
+            .add_systems(OnEnter(ClientScreen::SigningIn), frame_slowly)
+            .add_systems(OnExit(ClientScreen::SigningIn), (forget, frame_as_before))
             .add_systems(Update, poll.run_if(in_state(ClientScreen::SigningIn)))
             .add_systems(
                 EguiPrimaryContextPass,
@@ -66,7 +66,9 @@ fn sign_in_screen(world: &mut World) {
         .name
         .clone();
     let mut name = std::mem::take(&mut world.resource_mut::<AccountName>().0);
-    let submit = map::shortcut(world, InputAction::SubmitText);
+    let submit = world
+        .resource::<InputMap>()
+        .shortcut(InputAction::SubmitText);
     let choice = system_screen(&gui, "sign-in", Some(ink::VEIL), |ui| {
         panel(ui, &game, |ui| match (&sign_in, waiting) {
             (_, Some(page)) => browser_waits(ui, page),

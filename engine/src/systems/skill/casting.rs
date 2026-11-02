@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{Cooldowns, Rank, SkillId, Targeting};
 use crate::core::content::Content;
+use crate::core::content::SchemaMark;
 use crate::core::math::Pos;
 use crate::core::par;
 use crate::core::script::{
@@ -46,7 +47,7 @@ pub enum CastAim {
 
 /// A script casts a skill as a player would: aimed, checked, walked into range and performed.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "skill"))]
+#[schemars(transform = SchemaMark::System.with("skill"))]
 pub struct UseSkill {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
@@ -58,7 +59,7 @@ pub struct UseSkill {
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
     /// Taken when the skill can't be cast, without telling anyone why.
-    #[schemars(extend("x-fails" = true))]
+    #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub refused: Arrow,
 }

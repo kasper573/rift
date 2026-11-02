@@ -7,6 +7,7 @@ use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 use strum::{EnumDiscriminants, IntoStaticStr, VariantArray};
 
+use crate::core::content::SchemaMark;
 use crate::core::content::fixture::FixtureLock;
 use crate::core::content::{Content, ContentFile, Fixture, Nearby, RowCheck, serial};
 use crate::core::text::{InputRef, KeyCap, KeyNames, TextPiece};
@@ -101,7 +102,7 @@ impl Fixture for InputFixture {
             .map(|&action| FixtureLock::Variants {
                 list: format!("{}/bindings", action.pointer()),
                 variants: action
-                    .gestures()
+                    .readings()
                     .iter()
                     .flat_map(|gesture| gesture.bindings())
                     .map(|kind| <&'static str>::from(*kind).to_owned())
@@ -133,10 +134,10 @@ impl InputAction {
         format!("/actions/{}", <&'static str>::from(self))
     }
 
-    pub fn gestures(self) -> &'static [GestureKind] {
+    pub fn readings(self) -> &'static [ActionReading] {
         match self {
             InputAction::Advance | InputAction::PickChoice => {
-                &[GestureKind::Press, GestureKind::Click]
+                &[ActionReading::Press, ActionReading::Click]
             }
             InputAction::Select
             | InputAction::InspectItem
@@ -148,35 +149,35 @@ impl InputAction {
             | InputAction::LowerRank
             | InputAction::InspectSkill
             | InputAction::UseSlot
-            | InputAction::SlotOptions => &[GestureKind::Click],
-            InputAction::CarryItem => &[GestureKind::Drag],
-            InputAction::SubmitText | InputAction::TakeDefault => &[GestureKind::Shortcut],
-            _ => &[GestureKind::Press],
+            | InputAction::SlotOptions => &[ActionReading::Click],
+            InputAction::CarryItem => &[ActionReading::Drag],
+            InputAction::SubmitText | InputAction::TakeDefault => &[ActionReading::Shortcut],
+            _ => &[ActionReading::Press],
         }
     }
 }
 
 /// The ways the game reads an action.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum GestureKind {
+pub enum ActionReading {
     Press,
     Click,
     Drag,
     Shortcut,
 }
 
-impl GestureKind {
+impl ActionReading {
     /// The bindings the game reads for the gesture.
     pub fn bindings(self) -> &'static [InputBindingKind] {
         match self {
-            GestureKind::Press => &[
+            ActionReading::Press => &[
                 InputBindingKind::Key,
                 InputBindingKind::AnyKey,
                 InputBindingKind::Mouse,
             ],
-            GestureKind::Click => &[InputBindingKind::Click],
-            GestureKind::Drag => &[InputBindingKind::Drag],
-            GestureKind::Shortcut => &[InputBindingKind::Key],
+            ActionReading::Click => &[InputBindingKind::Click],
+            ActionReading::Drag => &[InputBindingKind::Drag],
+            ActionReading::Shortcut => &[InputBindingKind::Key],
         }
     }
 }
@@ -224,12 +225,13 @@ impl ContentFile for InputDef {
 fn actions_schema(generator: &mut SchemaGenerator) -> Schema {
     let actions = generator.subschema_for::<InputAction>();
     let bound = generator.subschema_for::<BoundAction>();
-    json_schema!({
+    let mut schema = json_schema!({
         "type": "object",
         "propertyNames": actions,
         "additionalProperties": bound,
-        "x-fixed-rows": true,
-    })
+    });
+    SchemaMark::FixedRows.set(&mut schema, true);
+    schema
 }
 
 #[derive(
@@ -347,62 +349,6 @@ impl InputMap {
         self.bindings(action).first().map(InputBinding::name)
     }
 
-    pub fn just_pressed(
-        &self,
-        action: InputAction,
-        keys: &ButtonInput<KeyCode>,
-        mouse: &ButtonInput<MouseButton>,
-    ) -> bool {
-        self.bindings(action).iter().any(|binding| match *binding {
-            InputBinding::Key(gesture) => gesture.just_pressed(keys),
-            InputBinding::AnyKey => keys.get_just_pressed().next().is_some(),
-            InputBinding::Mouse { button, modifiers } => {
-                mouse.just_pressed(button) && KeyModifiers::held(keys) == modifiers
-            }
-            InputBinding::Click(_) | InputBinding::Drag(_) => false,
-        })
-    }
-
-    pub fn pressed(
-        &self,
-        action: InputAction,
-        keys: &ButtonInput<KeyCode>,
-        mouse: &ButtonInput<MouseButton>,
-    ) -> bool {
-        self.bindings(action).iter().any(|binding| match *binding {
-            InputBinding::Key(gesture) => gesture.pressed(keys),
-            InputBinding::AnyKey => keys.get_pressed().next().is_some(),
-            InputBinding::Mouse { button, modifiers } => {
-                mouse.pressed(button) && KeyModifiers::held(keys) == modifiers
-            }
-            InputBinding::Click(_) | InputBinding::Drag(_) => false,
-        })
-    }
-
-    pub fn clicked(
-        &self,
-        action: InputAction,
-        response: &egui::Response,
-        keys: &ButtonInput<KeyCode>,
-    ) -> bool {
-        self.bindings(action).iter().any(|binding| match binding {
-            InputBinding::Click(gesture) => gesture.clicked(response, keys),
-            _ => false,
-        })
-    }
-
-    pub fn drag_started(
-        &self,
-        action: InputAction,
-        response: &egui::Response,
-        keys: &ButtonInput<KeyCode>,
-    ) -> bool {
-        self.bindings(action).iter().any(|binding| match binding {
-            InputBinding::Drag(gesture) => gesture.started(response, keys),
-            _ => false,
-        })
-    }
-
     pub fn shortcut(&self, action: InputAction) -> Option<egui::KeyboardShortcut> {
         self.bindings(action)
             .iter()
@@ -413,17 +359,6 @@ impl InputMap {
                 )),
                 _ => None,
             })
-    }
-
-    pub fn just_pressed_index(
-        &self,
-        actions: &[InputAction],
-        keys: &ButtonInput<KeyCode>,
-        mouse: &ButtonInput<MouseButton>,
-    ) -> Option<usize> {
-        actions
-            .iter()
-            .position(|action| self.just_pressed(*action, keys, mouse))
     }
 
     fn key_names(&self) -> KeyNames {
@@ -437,45 +372,51 @@ impl InputMap {
 }
 
 pub fn just_pressed(world: &World, action: InputAction) -> bool {
-    world.resource::<InputMap>().just_pressed(
-        action,
-        world.resource::<ButtonInput<KeyCode>>(),
-        world.resource::<ButtonInput<MouseButton>>(),
-    )
+    let keys = world.resource::<ButtonInput<KeyCode>>();
+    let mouse = world.resource::<ButtonInput<MouseButton>>();
+    bindings(world, action).any(|binding| match *binding {
+        InputBinding::Key(gesture) => gesture.just_pressed(keys),
+        InputBinding::AnyKey => keys.get_just_pressed().next().is_some(),
+        InputBinding::Mouse { button, modifiers } => {
+            mouse.just_pressed(button) && KeyModifiers::held(keys) == modifiers
+        }
+        InputBinding::Click(_) | InputBinding::Drag(_) => false,
+    })
 }
 
 pub fn just_pressed_index(world: &World, actions: &[InputAction]) -> Option<usize> {
-    world.resource::<InputMap>().just_pressed_index(
-        actions,
-        world.resource::<ButtonInput<KeyCode>>(),
-        world.resource::<ButtonInput<MouseButton>>(),
-    )
+    actions
+        .iter()
+        .position(|action| just_pressed(world, *action))
 }
 
 pub fn pressed(world: &World, action: InputAction) -> bool {
-    world.resource::<InputMap>().pressed(
-        action,
-        world.resource::<ButtonInput<KeyCode>>(),
-        world.resource::<ButtonInput<MouseButton>>(),
-    )
+    let keys = world.resource::<ButtonInput<KeyCode>>();
+    let mouse = world.resource::<ButtonInput<MouseButton>>();
+    bindings(world, action).any(|binding| match *binding {
+        InputBinding::Key(gesture) => gesture.pressed(keys),
+        InputBinding::AnyKey => keys.get_pressed().next().is_some(),
+        InputBinding::Mouse { button, modifiers } => {
+            mouse.pressed(button) && KeyModifiers::held(keys) == modifiers
+        }
+        InputBinding::Click(_) | InputBinding::Drag(_) => false,
+    })
 }
 
 pub fn clicked(world: &World, action: InputAction, response: &egui::Response) -> bool {
-    world
-        .resource::<InputMap>()
-        .clicked(action, response, world.resource::<ButtonInput<KeyCode>>())
+    let keys = world.resource::<ButtonInput<KeyCode>>();
+    bindings(world, action).any(|binding| match binding {
+        InputBinding::Click(gesture) => gesture.clicked(response, keys),
+        _ => false,
+    })
 }
 
 pub fn drag_started(world: &World, action: InputAction, response: &egui::Response) -> bool {
-    world.resource::<InputMap>().drag_started(
-        action,
-        response,
-        world.resource::<ButtonInput<KeyCode>>(),
-    )
-}
-
-pub fn shortcut(world: &World, action: InputAction) -> Option<egui::KeyboardShortcut> {
-    world.resource::<InputMap>().shortcut(action)
+    let keys = world.resource::<ButtonInput<KeyCode>>();
+    bindings(world, action).any(|binding| match binding {
+        InputBinding::Drag(gesture) => gesture.started(response, keys),
+        _ => false,
+    })
 }
 
 pub fn input(action: InputAction) -> TextPiece {
@@ -517,7 +458,7 @@ impl KeyGesture {
 pub struct ClickGesture {
     #[schemars(schema_with = "mouse_button_schema")]
     pub button: MouseButton,
-    #[schemars(with = "u8", extend("x-count" = true, "minimum" = 1, "maximum" = 3))]
+    #[schemars(with = "u8", extend("minimum" = 1, "maximum" = 3), transform = SchemaMark::Count.with(true))]
     pub times: Clicks,
     #[serde(flatten)]
     pub modifiers: KeyModifiers,
@@ -723,4 +664,8 @@ fn capitalized(name: String) -> String {
         .next()
         .map(|first| first.to_uppercase().chain(letters).collect())
         .unwrap_or_default()
+}
+
+fn bindings(world: &World, action: InputAction) -> impl Iterator<Item = &InputBinding> {
+    world.resource::<InputMap>().bindings(action).iter()
 }

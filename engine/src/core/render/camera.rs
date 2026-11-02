@@ -12,8 +12,6 @@ use bevy::light::{ShadowFilteringMethod, VolumetricFog};
 use bevy::pbr::ScreenSpaceAmbientOcclusion;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
-use bevy::render::renderer::RenderAdapterInfo;
-use bevy::render::settings::Backends;
 use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
 use bevy::window::PrimaryWindow;
 use schemars::JsonSchema;
@@ -90,30 +88,13 @@ pub struct WorldCamera;
 #[derive(Component, Clone, Copy)]
 pub struct WorldPicture(pub PictureGrade);
 
-/// Whether the GPU draws the full picture: the sky scattering the sun's light and lighting the
-/// world, the sun's shafts in the air, creases shaded by ambient occlusion, and the picture
-/// settling over the frames by temporal anti-aliasing and the temporal shadow filter, which the
-/// clearings' frame-stepped dither relies on to read as a translucency. GL has no compute shaders
-/// for the sky, cannot read the depth the shafts are marched against, has too few storage
-/// textures for the occlusion, and binds a texture with one sampler where the temporal pass
-/// samples its history two ways, so there the picture is drawn plain: the authored ambient alone
-/// lights what the sun does not, the shadows take a gaussian filter and the dither stands still.
-#[derive(Resource, Clone, Copy, Debug, PartialEq, Eq)]
-pub struct FullPicture(pub bool);
-
-impl FullPicture {
-    pub fn on(adapter: Option<&RenderAdapterInfo>) -> FullPicture {
-        FullPicture(adapter.is_none_or(|adapter| Backends::from(adapter.backend) != Backends::GL))
-    }
-}
-
 /// How many steps the air is marched in along each pixel's ray for the sun's shafts.
 const AIR_STEPS: u32 = 32;
 
 /// How every camera that draws the world finishes its picture: in a high range of light, the air
-/// lit by the sun's shafts, creases shaded by what stands around them, soft shadows, and where
-/// the GPU draws the full picture (`finish_new_picture`) under the sky's own scattering and lighting
-/// and all of it settled over the frames by temporal anti-aliasing; then what the light catches
+/// lit by the sun's shafts, creases shaded by what stands around them, soft shadows, under the
+/// sky's own scattering and lighting (`sky::show`), and all of it settled over the frames by
+/// temporal anti-aliasing (`finish_new_picture`); then what the light catches
 /// blooms over its rim, the light is opened up and mapped to the screen's range by a filmic
 /// curve, which deepens the shade and lifts the light, dithered
 /// against banding, and smoothed once more by morphological anti-aliasing over the finished
@@ -167,12 +148,11 @@ pub fn grading(tone: Tone, grade: PictureGrade) -> ColorGrading {
     }
 }
 
-/// A new picture is finished at once, before it draws a frame: what settles it over the frames
-/// where the GPU draws the full picture, a gaussian shadow filter where it does not, and the rest
-/// as the player's video preferences ask. The sky it sees is the shown area's (`sky::show`).
+/// A new picture is finished at once, before it draws a frame: what settles it over the frames,
+/// which the clearings' frame-stepped dither relies on to read as a translucency, and the rest as
+/// the player's video preferences ask. The sky it sees is the shown area's (`sky::show`).
 pub(super) fn finish_new_picture(
     add: On<Add<WorldPicture>>,
-    full: Res<FullPicture>,
     video: Res<VideoPreferences>,
     grades: Query<&WorldPicture>,
     mut commands: Commands,
@@ -181,38 +161,28 @@ pub(super) fn finish_new_picture(
         return;
     };
     let mut picture = commands.entity(add.entity);
-    if full.0 {
-        picture.insert((
-            TemporalAntiAliasing::default(),
-            ShadowFilteringMethod::Temporal,
-        ));
-    } else {
-        picture.insert(ShadowFilteringMethod::Gaussian);
-    }
-    finish(&mut picture, *full, *video, grade);
+    picture.insert((
+        TemporalAntiAliasing::default(),
+        ShadowFilteringMethod::Temporal,
+    ));
+    finish(&mut picture, *video, grade);
 }
 
 /// Every picture is finished anew as the player's video preferences or its grade change.
 pub(super) fn refinish_pictures(
-    full: Res<FullPicture>,
     video: Res<VideoPreferences>,
     pictures: Query<(Entity, Ref<WorldPicture>)>,
     mut commands: Commands,
 ) {
     for (picture, grade) in &pictures {
         if video.is_changed() || (grade.is_changed() && !grade.is_added()) {
-            finish(&mut commands.entity(picture), *full, *video, grade.0);
+            finish(&mut commands.entity(picture), *video, grade.0);
         }
     }
 }
 
-fn finish(
-    picture: &mut EntityCommands,
-    full: FullPicture,
-    video: VideoPreferences,
-    grade: PictureGrade,
-) {
-    match video.ambient_occlusion.level().filter(|_| full.0) {
+fn finish(picture: &mut EntityCommands, video: VideoPreferences, grade: PictureGrade) {
+    match video.ambient_occlusion.level() {
         Some(quality_level) => picture.insert(ScreenSpaceAmbientOcclusion {
             quality_level,
             ..default()
@@ -231,7 +201,7 @@ fn finish(
         Some(preset) => picture.insert(Smaa { preset }),
         None => picture.remove::<Smaa>(),
     };
-    if full.0 && video.light_shafts {
+    if video.light_shafts {
         picture.insert(VolumetricFog {
             ambient_color: grade.air_color.color(),
             ambient_intensity: grade.air_glow,

@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use ui::drag;
 use ui::egui;
 use ui::float;
+use ui::theme;
 
 use bevy::prelude::*;
 use ui::controls::{self, Pill};
@@ -54,7 +55,7 @@ impl HudWindow for SkillsWindow {
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
         let Some(sheet) = Sheet::of(world) else {
-            ui.label(face::faint("No class yet"));
+            ui.label(theme::faint("No class yet"));
             return;
         };
         header(ui, world, &sheet);

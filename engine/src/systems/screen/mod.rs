@@ -9,8 +9,8 @@ use ui::float;
 
 use bevy::ecs::component::Mutable;
 use bevy::prelude::*;
-use bevy::tasks::futures_lite::future;
-use bevy::tasks::{Task, block_on};
+use bevy::tasks::Task;
+use bevy::tasks::futures::check_ready;
 use bevy::winit::{UpdateMode, WinitSettings};
 use connection::PendingSession;
 use ui::controls;
@@ -95,7 +95,12 @@ impl Plugin for ClientScreenPlugin {
         ))
         .add_systems(
             Update,
-            (connection::poll_session, drive, connection::announce).chain(),
+            (
+                connection::poll_session,
+                drive,
+                connection::join_once_welcomed,
+            )
+                .chain(),
         );
     }
 }
@@ -201,7 +206,7 @@ pub(crate) fn note(ui: &mut Ui, text: &str) {
 
 /// A screen that waits on another thread or the network needs only a few frames a second, and
 /// every frame beyond those is time the work it waits on can't have.
-fn pace_slowly(world: &mut World) {
+fn frame_slowly(world: &mut World) {
     if !world.contains_resource::<PacedFrom>() {
         let before = world.resource::<WinitSettings>().clone();
         world.insert_resource(PacedFrom(before));
@@ -212,7 +217,7 @@ fn pace_slowly(world: &mut World) {
     });
 }
 
-fn pace_as_before(world: &mut World) {
+fn frame_as_before(world: &mut World) {
     if let Some(PacedFrom(before)) = world.remove_resource::<PacedFrom>() {
         world.insert_resource(before);
     }
@@ -249,6 +254,6 @@ fn finished<R: Resource<Mutability = Mutable>, T>(
     task: impl FnOnce(&mut R) -> &mut Task<T>,
 ) -> Option<(R, T)> {
     let mut held = world.get_resource_mut::<R>()?;
-    let outcome = block_on(future::poll_once(task(&mut held)))?;
+    let outcome = check_ready(task(&mut held))?;
     Some((world.remove_resource::<R>()?, outcome))
 }

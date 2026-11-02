@@ -1,10 +1,19 @@
-use engine::core::content::LoadError;
+use engine::core::content::{ContentFile, LoadError};
+use engine::systems::area::blueprint::BlueprintDef;
+use engine::systems::area::{AreaDef, AreaModuleKind};
+use engine::systems::item::ItemDef;
+use engine::systems::npc::NpcDef;
+use engine::systems::quest::QuestDef;
+use engine::systems::script::RunnerKind;
+use engine::systems::shop::ShopDef;
+use engine::systems::skill::SkillDef;
+use engine::systems::status::StatusEffectDef;
 use ui::egui;
 use ui::egui::{Color32, FontId, Rect, Response, RichText, Sense, Ui, Vec2};
 use ui::glyph;
 use ui::{ink, theme};
 
-use crate::icons::{IconTone, KindIcon};
+use crate::icons::{self, IconTone, KindFamily, KindIcon};
 use crate::keymap::EditorKey;
 use crate::tabs::shown_path;
 
@@ -44,23 +53,23 @@ pub(crate) fn kind_option(ui: &mut Ui, kind: KindIcon, label: &str, selected: bo
 
 /// What stands for a kind: a file kind's icon, or the lettered badge of a module kind.
 #[derive(Clone, Copy)]
-pub(crate) enum KindMark<'a> {
+pub(crate) enum KindMark {
     Icon(KindIcon),
-    Badge(&'a str),
+    Badge(Badge),
 }
 
-impl KindMark<'_> {
+impl KindMark {
     fn color(self) -> Color32 {
         match self {
             KindMark::Icon(icon) => icon.color(IconTone::Normal),
-            KindMark::Badge(kind) => badge_color(kind),
+            KindMark::Badge(badge) => badge.color,
         }
     }
 
     fn paint(self, painter: &egui::Painter, rect: Rect) {
         match self {
             KindMark::Icon(icon) => icon.paint(painter, rect, IconTone::Normal),
-            KindMark::Badge(kind) => paint_badge(painter, rect, kind),
+            KindMark::Badge(badge) => paint_badge(painter, rect, badge),
         }
     }
 }
@@ -104,51 +113,83 @@ fn paint_kind(ui: &Ui, kind: KindIcon, id: egui::Id, laid: egui::AtomLayoutRespo
 
 const BADGE_SIZE: f32 = 16.0;
 
-pub fn badge(ui: &mut Ui, kind: &str) {
+pub(crate) fn badge(ui: &mut Ui, badge: Badge) {
+    mark(ui, KindMark::Badge(badge));
+}
+
+/// What stands for a kind, at a badge's size.
+pub(crate) fn mark(ui: &mut Ui, mark: KindMark) {
     let (rect, _) = ui.allocate_exact_size(Vec2::splat(BADGE_SIZE), Sense::hover());
-    paint_badge(ui.painter(), rect, kind);
+    mark.paint(ui.painter(), rect);
 }
 
-pub(crate) fn badge_color(kind: &str) -> Color32 {
-    match kind {
-        "population" | "resident" | "npc" | "player" | "nameplate" | "tint" | "voice" => ink::OCHRE,
-        "object" | "safe_zone" | "area" | "walk" | "terrain" => ink::VERDIGRIS,
-        "script" | "shown" | "requires" => ink::TYRIAN,
-        "soundscape" | "sfx" | "babble" | "step" => ink::GOLD,
-        "loot" | "item" | "stack" | "reward" | "hold" | "deliver" | "offer" | "shop" => ink::AZURE,
-        "blueprint" | "prop" | "scatter" | "light" | "model" | "bust" => ink::INK2,
-        "respawn" | "quest" | "defeat" | "hand_in" | "task" | "decide" | "pick_one" => ink::RUBRIC,
-        _ => ink::INK3,
+/// What stands for the content files of `table`: their icon.
+pub(crate) fn table_mark(ui: &mut Ui, table: &str) {
+    mark(ui, KindMark::Icon(icons::of_table(table)));
+}
+
+/// A letter in a coloured square, as the editor marks a kind of module or step.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Badge {
+    pub letter: char,
+    pub color: Color32,
+}
+
+impl Badge {
+    /// The badge of a kind of area module.
+    pub(crate) fn of_module(kind: AreaModuleKind) -> Badge {
+        let (letter, color) = match kind {
+            AreaModuleKind::Object => ('P', ink::VERDIGRIS),
+            AreaModuleKind::SafeZone => ('Z', ink::VERDIGRIS),
+            AreaModuleKind::Soundscape => ('A', ink::GOLD),
+            AreaModuleKind::Prop | AreaModuleKind::Scatter => ('T', ink::INK2),
+            AreaModuleKind::Light => ('L', ink::INK2),
+            AreaModuleKind::Blueprint => ('L', ink::INK2),
+            AreaModuleKind::Population | AreaModuleKind::Resident => ('N', ink::OCHRE),
+            AreaModuleKind::Script => ('S', ink::TYRIAN),
+        };
+        Badge { letter, color }
+    }
+
+    /// The badge of a kind only its schema's tag names, among those of the content files of
+    /// `table`: its first letter, in the colour of the table's family.
+    pub(crate) fn of_tag(tag: &str, table: Option<&str>) -> Badge {
+        Badge {
+            letter: tag
+                .chars()
+                .next()
+                .map_or(' ', |first| first.to_ascii_uppercase()),
+            color: table
+                .and_then(KindFamily::of_table)
+                .map_or(ink::INK3, KindFamily::color),
+        }
     }
 }
 
-pub(crate) fn badge_letter(kind: &str) -> String {
-    match kind {
-        "script" => "S".to_owned(),
-        "population" | "resident" | "npc" => "N".to_owned(),
-        "object" => "P".to_owned(),
-        "safe_zone" => "Z".to_owned(),
-        "soundscape" => "A".to_owned(),
-        "blueprint" => "L".to_owned(),
-        "prop" | "scatter" => "T".to_owned(),
-        "loot" | "item" => "I".to_owned(),
-        "respawn" => "F".to_owned(),
-        "quest" => "R".to_owned(),
-        "tint" | "voice" | "nameplate" => "L".to_owned(),
-        other => other
-            .chars()
-            .next()
-            .map(|c| c.to_ascii_uppercase().to_string())
-            .unwrap_or_default(),
-    }
+/// What runs a script: an object of an area, by its badge, or the content files of a table, by
+/// their icon.
+pub(crate) fn runner_mark(kind: RunnerKind) -> KindMark {
+    let table = match kind {
+        RunnerKind::Object => return KindMark::Badge(Badge::of_module(AreaModuleKind::Object)),
+        RunnerKind::Any => return KindMark::Badge(Badge::of_tag(kind.into(), None)),
+        RunnerKind::Npc => NpcDef::TABLE,
+        RunnerKind::Item => ItemDef::TABLE,
+        RunnerKind::Area => AreaDef::TABLE,
+        RunnerKind::Quest => QuestDef::TABLE,
+        RunnerKind::Shop => ShopDef::TABLE,
+        RunnerKind::Skill => SkillDef::TABLE,
+        RunnerKind::StatusEffect => StatusEffectDef::TABLE,
+        RunnerKind::Blueprint => BlueprintDef::TABLE,
+    };
+    KindMark::Icon(icons::of_table(table))
 }
 
-fn paint_badge(painter: &egui::Painter, rect: Rect, kind: &str) {
-    painter.rect_filled(rect, 3.0, badge_color(kind));
+fn paint_badge(painter: &egui::Painter, rect: Rect, badge: Badge) {
+    painter.rect_filled(rect, 3.0, badge.color);
     painter.text(
         rect.center(),
         egui::Align2::CENTER_CENTER,
-        badge_letter(kind),
+        badge.letter,
         FontId::monospace(rect.height() * 0.7),
         ink::CREAM,
     );
@@ -176,5 +217,4 @@ pub fn unreadable(ui: &mut Ui, path: &str, errors: &[LoadError]) {
 }
 
 /// The gutter every tab's content keeps from the tab body's edge, so views line up.
-pub(crate) const CONTENT_PADDING: egui::Margin = egui::Margin::symmetric(16, 10);
 pub(crate) const VIEW_PADDING: egui::Margin = egui::Margin::symmetric(12, 8);

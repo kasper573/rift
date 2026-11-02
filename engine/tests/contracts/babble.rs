@@ -4,7 +4,7 @@ use bevy::asset::io::AssetSourceId;
 use bevy::asset::{AssetApp, AssetPlugin};
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
-use engine::core::assets::SyncedFiles;
+use engine::core::assets::SyncedAssetReader;
 use engine::core::audio::loader::SoundClip;
 use engine::core::audio::playback::{HushVoice, PlayClip, SfxPlace};
 use engine::core::babble::{BabbleId, BabblePlugin, BabbleRank, Babbling};
@@ -156,7 +156,7 @@ struct Hushed(usize);
 
 fn voice_app() -> App {
     let mut app = App::new();
-    let files = SyncedFiles::default();
+    let files = SyncedAssetReader::default();
     app.insert_resource(files.clone());
     AssetApp::register_asset_source(&mut app, AssetSourceId::Default, files.source());
     app.add_plugins((

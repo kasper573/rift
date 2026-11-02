@@ -24,32 +24,30 @@ fn a_landscape_rises_over_its_relief_painted_in_bands_strewn_and_roamed_where_as
         .write_to(folder.path());
     let relief = 10.0;
     let wilds = "wilds.area";
+    let recipes = tempfile::tempdir().expect("a folder for the recipe");
+    let land = recipes.path().join("wilds.json");
+    let recipe = json!({
+        "name": "Wilds",
+        "width": 256,
+        "height": 128,
+        "seed": 3,
+        "relief": relief,
+        "wavelength": 32.0,
+        "terrains": [path("terrain", TURF), path("terrain", ROCK)],
+        "scatters": [{
+            "terrain": path("terrain", TURF),
+            "prop": path("prop", "pine"),
+            "per_square_meter": 0.05,
+            "scale": { "min": 0.5, "max": 1.5 },
+        }],
+        "populations": [{ "npc": path("npc", "wolf"), "per_square_kilometer": 1000.0 }],
+    });
+    std::fs::write(&land, recipe.to_string()).expect("the land's recipe writes");
     let laid = Command::new(env!("CARGO_BIN_EXE_rift"))
         .args(["landscape"])
         .arg(folder.path())
-        .args([
-            wilds,
-            "--name",
-            "Wilds",
-            "--width",
-            "256",
-            "--height",
-            "128",
-            "--seed",
-            "3",
-            "--relief",
-            &relief.to_string(),
-            "--wavelength",
-            "32",
-            "--terrain",
-            &path("terrain", TURF),
-            "--terrain",
-            &path("terrain", ROCK),
-            "--scatter",
-            &format!("0:{}:0.05:0.5-1.5", path("prop", "pine")),
-            "--population",
-            &format!("{}:1000", path("npc", "wolf")),
-        ])
+        .arg(wilds)
+        .arg(&land)
         .output()
         .expect("rift runs");
     assert!(

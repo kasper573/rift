@@ -7,6 +7,7 @@ pub mod settings;
 pub mod tune;
 pub mod usages;
 
+use crate::widgets::Badge;
 use engine::core::audio::playback::SfxDef;
 use engine::core::content::serial::TypeTag;
 use engine::core::content::{ContentFile, MODULES, ModuleRule, fields_file, name_of};
@@ -114,6 +115,11 @@ fn row_form(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, wide: bool
         return;
     };
     let fixture = editor.shapes.is_fixture(table, key);
+    let shown = ShownRow {
+        table,
+        key,
+        fixture,
+    };
     let selected_module: Option<usize> = editor
         .selection
         .parts
@@ -160,9 +166,7 @@ fn row_form(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, wide: bool
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
                         ui.set_width(LEFT_COLUMN);
-                        changed |= row_card(
-                            ui, &mut cx, table, key, fixture, root, &mut value, &mut typed,
-                        );
+                        changed |= row_card(ui, &mut cx, shown, root, &mut value, &mut typed);
                     });
                     ui.add_space(16.0);
                     ui.vertical(|ui| {
@@ -182,9 +186,7 @@ fn row_form(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, wide: bool
                 if wide {
                     ui.set_max_width(SINGLE_COLUMN);
                 }
-                changed |= row_card(
-                    ui, &mut cx, table, key, fixture, root, &mut value, &mut typed,
-                );
+                changed |= row_card(ui, &mut cx, shown, root, &mut value, &mut typed);
                 if has_modules {
                     ui.add_space(10.0);
                     modules_changed |= modules_column(
@@ -270,19 +272,29 @@ fn row_form(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str, wide: bool
 /// A change a row's own body made to the file as its type, written once the form is drawn.
 type TypedWrite = Box<dyn FnOnce(&mut Editor) -> bool>;
 
-#[allow(clippy::too_many_arguments)]
+/// The row a form shows: its table, its key and whether it is one of the engine's fixtures.
+#[derive(Clone, Copy)]
+struct ShownRow<'a> {
+    table: &'a str,
+    key: &'a str,
+    fixture: bool,
+}
+
 fn row_card(
     ui: &mut Ui,
     cx: &mut FormCx,
-    table: &str,
-    key: &str,
-    fixture: bool,
+    shown: ShownRow,
     schema: &Value,
     value: &mut Value,
     typed: &mut Option<TypedWrite>,
 ) -> FormChange {
+    let ShownRow {
+        table,
+        key,
+        fixture,
+    } = shown;
     let mut changed = FormChange::default();
-    panel::card(ui, false, |ui| {
+    panel::tile_across(ui, false, |ui| {
         let mut open_folder = None;
         panel::header_with(
             ui,
@@ -440,7 +452,7 @@ fn modules_column(
             } else {
                 summary_of(cx, module)
             };
-            panel::card(ui, is_selected, |ui| {
+            panel::tile_across(ui, is_selected, |ui| {
                 let header = ui
                     .horizontal(|ui| {
                         ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -682,9 +694,11 @@ pub(super) fn add_module_popup(
                         .layout(Layout::left_to_right(Align::Center)),
                 );
                 if blocked {
-                    child.add_enabled_ui(false, |ui| widgets::badge(ui, &variant.tag));
+                    child.add_enabled_ui(false, |ui| {
+                        widgets::badge(ui, Badge::of_tag(&variant.tag, Some(table)))
+                    });
                 } else {
-                    widgets::badge(&mut child, &variant.tag);
+                    widgets::badge(&mut child, Badge::of_tag(&variant.tag, Some(table)));
                 }
                 child.vertical(|ui| {
                     ui.spacing_mut().item_spacing.y = 0.0;

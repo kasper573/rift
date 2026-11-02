@@ -31,7 +31,7 @@ use engine::systems::stat::{self, StatKind, Stats};
 use engine::systems::status::{self, StatusEffectId};
 use engine::systems::{GameSettings, TICK_HZ, from_client, server_app, start_server};
 
-use super::{PosedActor, Scenario, spread};
+use super::{PosedActor, Scenario};
 
 const SEED: u64 = 0x57a6e;
 const TICKS_PER_FRAME_AT_MOST: u32 = 6;
@@ -365,7 +365,8 @@ fn skill_setup(
             });
             let footprint = PlacedShape::cast(shape, spawn.at, point);
             let mut targets = Vec::new();
-            let spots: Vec<Pos<Meters>> = spread(&footprint, CROWD * 2)
+            let spots: Vec<Pos<Meters>> = footprint
+                .spread(CROWD * 2)
                 .into_iter()
                 .filter(|spot| spot.distance(spawn.at).0 >= CLEAR_OF_CASTER)
                 .take(CROWD as usize)

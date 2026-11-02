@@ -21,6 +21,7 @@ use super::area::viewport::StageClip;
 use super::stage::{self, StageToggle};
 use crate::app::Editor;
 use crate::row_form;
+use engine::systems::area::Pictured;
 
 pub struct ModelPartView {
     /// The mesh shown: the one cut for this build, or with `None` the one every build wears.
@@ -117,7 +118,14 @@ pub(super) fn stand(
     skin: Skin,
 ) {
     let mut state = std::mem::take(&mut editor.views.model_part.view_mut(key).stage);
-    let turntable = stage::turntable(editor, ui, &format!("model_part:{key}"), size, &mut state);
+    let turntable = stage::turntable(
+        editor,
+        ui,
+        &format!("model_part:{key}"),
+        size,
+        &mut state,
+        Pictured::Stage,
+    );
     editor.views.model_part.view_mut(key).stage = state;
     let Some(turntable) = turntable else {
         return;
@@ -152,7 +160,7 @@ fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelPartDef) {
             (mesh.as_str().to_owned(), triangles, weight)
         })
         .collect();
-    panel::titled_card(ui, false, "Meshes", |ui| {
+    panel::titled_tile(ui, false, "Meshes", |ui| {
         for (file, triangles, weight) in &meshes {
             form::kv(ui, file, |ui| {
                 if let Some(triangles) = triangles {

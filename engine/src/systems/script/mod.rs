@@ -17,6 +17,7 @@ use serde::{Deserialize, Serialize};
 use strum::{EnumString, IntoStaticStr, VariantArray};
 
 use crate::core::audio::playback::SfxId;
+use crate::core::content::SchemaMark;
 use crate::core::content::{
     Content, ContentFile, ContentId, ContentProblem, Loading, ModuleSet, fields_file,
 };
@@ -125,7 +126,7 @@ pub struct Place {
 
 #[derive(JsonSchema, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[schemars(inline, extend("x-place" = true))]
+#[schemars(inline, transform = SchemaMark::Place.with(true))]
 struct PlaceRow {
     area: AreaId,
     x: f32,

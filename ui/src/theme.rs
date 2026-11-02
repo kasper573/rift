@@ -3,13 +3,13 @@
 use egui::{Color32, FontFamily, RichText};
 
 use crate::face::Face;
-use crate::ink;
+use crate::ink::{self, Ground, Prose};
 
 pub const TEXT: Color32 = ink::INK;
 pub const MUTED: Color32 = ink::INK2;
 pub const FAINT: Color32 = ink::INK3;
 pub const CODE: Color32 = ink::INK2;
-pub const DANGER: Color32 = ink::RUBRIC;
+pub const DANGER: Color32 = Prose::Danger.on(Ground::Paper);
 pub const OK: Color32 = ink::VERDIGRIS;
 pub const WARN: Color32 = ink::OCHRE;
 pub const ACCENT: Color32 = ink::RUBRIC;
@@ -48,10 +48,6 @@ pub fn faint(text: impl Into<String>) -> RichText {
 
 pub fn code(text: impl Into<String>) -> RichText {
     RichText::new(text).monospace().color(CODE)
-}
-
-pub fn mono(text: impl Into<String>) -> RichText {
-    RichText::new(text).monospace()
 }
 
 pub fn strong(text: impl Into<String>) -> RichText {

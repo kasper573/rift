@@ -133,7 +133,7 @@ pub const fn shadow(depth: Depth) -> Shadow {
     }
 }
 
-pub(crate) const CONTACT_SHADOW: Shadow = Shadow {
+const SHEET_CONTACT_SHADOW: Shadow = Shadow {
     offset: [0, 2],
     blur: 3,
     spread: 0,
@@ -161,16 +161,27 @@ pub fn radial(painter: &Painter, rect: Rect) {
 }
 
 pub fn note<R>(ui: &mut Ui, padding: Margin, add: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
+    note_shadowed(ui, padding, shadow(Depth::Front), add)
+}
+
+/// A note casting `cast` rather than the shadow of a note at the front, as one rising or settling
+/// does.
+pub fn note_shadowed<R>(
+    ui: &mut Ui,
+    padding: Margin,
+    cast: Shadow,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> InnerResponse<R> {
     let under = ui.painter().add(Shape::Noop);
     let framed = egui::Frame::new().inner_margin(padding).show(ui, add);
-    paint_note(ui.painter(), under, framed.response.rect);
+    paint_note(ui.painter(), under, framed.response.rect, cast);
     framed
 }
 
-pub(crate) fn paint_note(painter: &Painter, under: ShapeIdx, rect: Rect) {
+pub(crate) fn paint_note(painter: &Painter, under: ShapeIdx, rect: Rect, cast: Shadow) {
     let mut shapes = vec![
-        Shape::Rect(shadow(Depth::Front).as_shape(rect, CornerRadius::ZERO)),
-        Shape::Rect(CONTACT_SHADOW.as_shape(rect, CornerRadius::ZERO)),
+        Shape::Rect(cast.as_shape(rect, CornerRadius::ZERO)),
+        Shape::Rect(SHEET_CONTACT_SHADOW.as_shape(rect, CornerRadius::ZERO)),
     ];
     shapes.push(vellum_shape(painter.ctx(), rect));
     painter.set(under, Shape::Vec(shapes));

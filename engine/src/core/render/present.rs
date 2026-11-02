@@ -62,10 +62,6 @@ impl WorldTargets {
     }
 }
 
-/// Window pixels per pixel of the world's render target.
-#[derive(Resource, Default, Clone, Copy)]
-pub struct PresentScale(pub f32);
-
 #[derive(Resource, ShaderType, Clone, Copy, PartialEq, Debug)]
 pub struct ScreenGrade {
     pub scale: Vec3,
@@ -211,11 +207,9 @@ pub(super) fn fit(
     mut camera: Query<(&mut RenderTarget, &mut Projection), With<WorldCamera>>,
     mut quad: Query<(&mut Transform, &MeshMaterial2d<Present>), With<Screen>>,
     mut materials: ResMut<Assets<Present>>,
-    mut scale: ResMut<PresentScale>,
 ) {
     let (width, height) = (window.resolution.width(), window.resolution.height());
     let (target_w, target_h) = target_size(&window);
-    scale.0 = height / target_h as f32;
     if targets.size != (target_w, target_h) {
         // A fresh live texture rather than a resized one: the screen's bind group would keep the old
         // texture otherwise. The held frame keeps its size and is stretched over the window, so a
@@ -239,9 +233,8 @@ pub(super) fn fit(
 pub(super) fn apply_present(world: &mut World) {
     let frame = Seconds(world.resource::<Time>().delta_secs());
     let view = camera::view_of(world);
-    let scale = world.resource::<PresentScale>().0.max(0.01);
     let cut = world.resource_scope(|world, mut transition: Mut<ActiveTransition>| {
-        transition.advance(frame, world, view, scale)
+        transition.advance(frame, world, view)
     });
     let grade = *world.resource::<ScreenGrade>();
     let area = *world.resource::<AreaGrade>();
@@ -294,12 +287,9 @@ fn world_target(width: u32, height: u32) -> Image {
     target
 }
 
-/// The world's picture over the window's size, rounded to whole even pixels.
+/// The world's picture over the window's size, rounded to whole pixels.
 pub(crate) fn target_size(window: &Window) -> (u32, u32) {
-    let scaled = |logical: f32| {
-        let px = logical.round().max(2.0) as u32;
-        px + (px & 1)
-    };
+    let pixels = |logical: f32| logical.round().max(1.0) as u32;
     let res = &window.resolution;
-    (scaled(res.width()), scaled(res.height()))
+    (pixels(res.width()), pixels(res.height()))
 }

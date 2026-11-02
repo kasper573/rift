@@ -1,6 +1,7 @@
 use std::collections::BTreeSet;
 use ui::controls;
 use ui::egui;
+use ui::face;
 use ui::form;
 use ui::sheet;
 use ui::theme;
@@ -167,7 +168,7 @@ fn may_do(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
             ui.label(theme::muted("as").size(13.0));
             controls::combo(pick_id)
                 .selected_text(
-                    theme::mono(
+                    face::mono(
                         bound
                             .get(picked)
                             .map(|b| b.label.clone())
@@ -741,7 +742,7 @@ fn used_by(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
                         );
                         ui.add_sized(
                             egui::vec2(120.0, 20.0),
-                            egui::Label::new(theme::mono(&row.name).size(13.0)).truncate(),
+                            egui::Label::new(face::mono(&row.name).size(13.0)).truncate(),
                         );
                         ui.label(theme::muted(&row.what).size(13.0));
                     })

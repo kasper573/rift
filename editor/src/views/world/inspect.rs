@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use ui::controls;
 use ui::draft;
 use ui::egui;
+use ui::face;
 use ui::form;
 use ui::panel;
 use ui::sheet;
@@ -75,7 +76,7 @@ pub fn inspect_parts(editor: &mut Editor, ui: &mut Ui, selection: &RowSelection)
 
 fn crumb(ui: &mut Ui, tail: &str) {
     ui.label(
-        theme::mono(format!("World · {tail}"))
+        face::mono(format!("World · {tail}"))
             .size(12.5)
             .color(theme::MUTED),
     );
@@ -123,7 +124,7 @@ fn lens_panel(editor: &mut Editor, ui: &mut Ui, atlas: &WorldAtlas) {
                 .or_default()
                 .entry(source)
                 .or_default()
-                .push(atlas.file_name(*area));
+                .push(atlas.card_name(*area));
         }
     }
     if by_kind.is_empty() {
@@ -150,8 +151,7 @@ fn lens_panel(editor: &mut Editor, ui: &mut Ui, atlas: &WorldAtlas) {
             ui.horizontal(|ui| {
                 let name = ui
                     .add(
-                        egui::Label::new(theme::mono(&source.name).size(12.5))
-                            .sense(Sense::click()),
+                        egui::Label::new(face::mono(&source.name).size(12.5)).sense(Sense::click()),
                     )
                     .on_hover_cursor(egui::CursorIcon::PointingHand);
                 if name.clicked() {
@@ -195,11 +195,11 @@ fn color_panel(editor: &mut Editor, ui: &mut Ui, atlas: &WorldAtlas) {
     form::kv(ui, "value", |ui| {
         controls::combo("color-value")
             .width(ui.available_width() - 8.0)
-            .selected_text(theme::mono(next.field.text()).size(12.5))
+            .selected_text(face::mono(next.field.text()).size(12.5))
             .show_ui(ui, |ui| {
                 for field in fields {
                     let text = field.text();
-                    ui.selectable_value(&mut next.field, field, theme::mono(text));
+                    ui.selectable_value(&mut next.field, field, face::mono(text));
                 }
             });
     });
@@ -207,7 +207,7 @@ fn color_panel(editor: &mut Editor, ui: &mut Ui, atlas: &WorldAtlas) {
         form::kv(ui, "of", |ui| {
             controls::combo("color-of")
                 .width(ui.available_width() - 8.0)
-                .selected_text(theme::mono(next.of.label()).size(12.5))
+                .selected_text(face::mono(next.of.label()).size(12.5))
                 .show_ui(ui, |ui| {
                     for &of in ColorOf::VARIANTS {
                         ui.selectable_value(&mut next.of, of, of.label());
@@ -218,7 +218,7 @@ fn color_panel(editor: &mut Editor, ui: &mut Ui, atlas: &WorldAtlas) {
     form::kv(ui, "show", |ui| {
         controls::combo("color-show")
             .width(ui.available_width() - 8.0)
-            .selected_text(theme::mono(next.show.label()).size(12.5))
+            .selected_text(face::mono(next.show.label()).size(12.5))
             .show_ui(ui, |ui| {
                 for &show in ColorShow::VARIANTS {
                     ui.selectable_value(&mut next.show, show, show.label());
@@ -261,19 +261,19 @@ fn color_panel(editor: &mut Editor, ui: &mut Ui, atlas: &WorldAtlas) {
             for (row, bump) in rows.iter().zip(&bumps) {
                 ui.horizontal(|ui| {
                     let ink = if *bump { theme::WARN } else { theme::TEXT };
-                    ui.label(theme::mono(name_of(row.key)).size(12.5).color(ink));
+                    ui.label(face::mono(name_of(row.key)).size(12.5).color(ink));
                     if *bump {
                         ui.label(Mark::Raise.text(12.0).color(ink));
                     }
                 });
                 ui.label(
-                    theme::mono(
+                    face::mono(
                         row.distance
                             .map_or_else(|| "–".to_owned(), |d| d.to_string()),
                     )
                     .size(12.5),
                 );
-                ui.label(theme::mono(row.range.text()).size(12.5));
+                ui.label(face::mono(row.range.text()).size(12.5));
                 ui.end_row();
             }
         });
@@ -338,7 +338,7 @@ fn line_panel(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap) {
                 ui.label(theme::faint("·").size(12.0));
                 for &area in &step.areas {
                     let label = egui::Label::new(
-                        theme::faint(atlas.file_name(area)).monospace().size(12.0),
+                        theme::faint(atlas.card_name(area)).monospace().size(12.0),
                     )
                     .sense(Sense::click());
                     if ui.add(label).clicked() {
@@ -356,7 +356,7 @@ fn line_panel(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap) {
             editor.views.world.quest_line = Some(line.category.clone());
         }
         ui.label(
-            theme::mono(
+            face::mono(
                 line.quests
                     .iter()
                     .map(|quest| name_of(quest))
@@ -388,7 +388,7 @@ fn route_panel(editor: &mut Editor, ui: &mut Ui, atlas: &WorldAtlas) {
             sheet::section(ui, &format!("{heading} · {} warps", hops.len()));
             for hop in hops {
                 ui.horizontal(|ui| {
-                    ui.label(theme::mono(atlas.file_name(hop.from)).size(12.5));
+                    ui.label(face::mono(atlas.card_name(hop.from)).size(12.5));
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
                         ui.label(
                             theme::faint(&atlas.owners[hop.owner].name)
@@ -435,8 +435,8 @@ fn route_panel(editor: &mut Editor, ui: &mut Ui, atlas: &WorldAtlas) {
         .map(|warp| {
             format!(
                 "{} → {}",
-                atlas.file_name(warp.from),
-                atlas.file_name(warp.to)
+                atlas.card_name(warp.from),
+                atlas.card_name(warp.to)
             )
         })
         .collect();
@@ -472,16 +472,16 @@ fn inspect_edge(editor: &mut Editor, ui: &mut Ui, atlas: &WorldAtlas, a: &str, b
     for (from, to) in [(a, b), (b, a)] {
         sheet::section(
             ui,
-            &format!("{} → {}", atlas.file_name(from), atlas.file_name(to)),
+            &format!("{} → {}", atlas.card_name(from), atlas.card_name(to)),
         );
         let mut any = false;
         for warp in atlas.warps_between(from, to) {
             any = true;
             let owner = &atlas.owners[warp.owner];
             ui.horizontal(|ui| {
-                widgets::badge(ui, owner.kind.into());
+                widgets::mark(ui, widgets::runner_mark(owner.kind));
                 let name =
-                    egui::Label::new(theme::mono(&owner.name).size(12.5)).sense(Sense::click());
+                    egui::Label::new(face::mono(&owner.name).size(12.5)).sense(Sense::click());
                 if ui.add(name).on_hover_text(&owner.label).clicked() {
                     opened = Some(owner.opens.clone());
                 }
@@ -508,7 +508,7 @@ fn inspect_cards(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, cards: &[
     let atlas = &map.atlas;
     let first = cards[0];
     let first_key = atlas.key(first);
-    let first_name = atlas.file_name(first);
+    let first_name = atlas.card_name(first);
     let card = map.layout.cards[&first];
     let title = match cards.len() {
         1 => first_name.to_owned(),
@@ -524,7 +524,7 @@ fn inspect_cards(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, cards: &[
     let mut next = map.layout.clone();
     let mut label: Option<String> = None;
     let mut open_area = false;
-    panel::card(ui, true, |ui| {
+    panel::tile_across(ui, true, |ui| {
         panel::title(ui, &title);
         if cards.len() == 1 {
             form::kv(ui, "area", |ui| {
@@ -625,7 +625,7 @@ fn inspect_cards(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, cards: &[
         })
         .collect();
     let text = serde_json::to_string_pretty(&stored).unwrap_or_default();
-    ui.label(theme::mono(text).size(12.0).color(theme::CODE));
+    ui.label(face::mono(text).size(12.0).color(theme::CODE));
     if cards.len() == 1 {
         let info = &atlas.areas[&first];
         ui.add_space(8.0);
@@ -651,7 +651,7 @@ fn inspect_region(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, index: u
     let region = &map.layout.regions[index];
     let mut next = map.layout.clone();
     let mut label: Option<String> = None;
-    panel::card(ui, true, |ui| {
+    panel::tile_across(ui, true, |ui| {
         panel::title(ui, &region.name);
         form::kv(ui, "name", |ui| {
             let id = ui.id().with(("region-name", index));
@@ -671,7 +671,7 @@ fn inspect_region(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, index: u
             let current = region_color_name(picked);
             controls::combo(("region-color", index))
                 .width(ui.available_width() - 8.0)
-                .selected_text(theme::mono(current).size(12.5).color(region_color(picked)))
+                .selected_text(face::mono(current).size(12.5).color(region_color(picked)))
                 .show_ui(ui, |ui| {
                     for color in [None]
                         .into_iter()
@@ -692,7 +692,7 @@ fn inspect_region(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, index: u
         let holds: Vec<&str> = region
             .cards
             .iter()
-            .map(|area| map.atlas.file_name(*area))
+            .map(|area| map.atlas.card_name(*area))
             .collect();
         form::kv_text(
             ui,

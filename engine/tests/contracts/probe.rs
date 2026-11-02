@@ -2,7 +2,7 @@ use engine::core::content::{Content, ContentScope, with_content};
 use engine::core::math::Pos;
 use engine::core::units::Meters;
 use engine::systems::area::AreaDef;
-use engine::systems::probe::{ProbeGame, ProbeQuestion, answer};
+use engine::systems::probe::{ProbeGame, ProbeGameQuestion, answer};
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use testkit::{Game, Map, path};
@@ -33,7 +33,7 @@ fn a_driver_finds_the_games_things_through_the_probe() {
         .by_path::<AreaDef>(&path("area", "yard"))
         .expect("the yard");
 
-    let game: ProbeGame = ask(&content, &ProbeQuestion::Game);
+    let game: ProbeGame = ask(&content, &ProbeGameQuestion::Game);
     assert_eq!(game.initial_spawn.at, Pos::new(8.0, 1.0));
     let yard = game
         .areas
@@ -63,16 +63,16 @@ fn a_driver_finds_the_games_things_through_the_probe() {
 
     let walkable: Vec<bool> = ask(
         &content,
-        &ProbeQuestion::Batch {
+        &ProbeGameQuestion::Batch {
             questions: [Pos::new(1.5, 1.5), Pos::new(4.5, 2.5)]
-                .map(|at| ProbeQuestion::Walkable { area, at })
+                .map(|at| ProbeGameQuestion::Walkable { area, at })
                 .to_vec(),
         },
     );
     assert_eq!(walkable, [true, false]);
     let route: Option<Vec<Pos<Meters>>> = ask(
         &content,
-        &ProbeQuestion::Route {
+        &ProbeGameQuestion::Route {
             area,
             from: Pos::new(2.0, 3.0),
             to: Pos::new(8.0, 3.0),
@@ -83,8 +83,8 @@ fn a_driver_finds_the_games_things_through_the_probe() {
     assert!(corners.len() > 1, "the way bends around the wall");
 }
 
-fn ask<Answer: DeserializeOwned>(content: &Content, question: &ProbeQuestion) -> Answer {
-    let line = answer(content, question).expect("an answer without a frame");
+fn ask<Answer: DeserializeOwned>(content: &Content, question: &ProbeGameQuestion) -> Answer {
+    let line = answer(content, question);
     with_content(ContentScope::of(content), || serde_json::from_str(&line))
         .0
         .unwrap_or_else(|error| panic!("an unreadable answer {line}: {error}"))

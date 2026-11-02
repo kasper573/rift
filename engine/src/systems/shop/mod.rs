@@ -7,6 +7,7 @@ use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::core::content::SchemaMark;
 use crate::core::content::{
     Content, ContentFile, ContentId, ContentProblem, Loading, ModuleRule, ModuleSet, NamedContent,
     Nearby, serial,
@@ -170,7 +171,7 @@ impl ShopDef {
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 pub struct ShopOffer {
     pub item: ItemId,
-    #[schemars(extend("x-count" = true))]
+    #[schemars(transform = SchemaMark::Count.with(true))]
     #[schemars(extend("default" = serial::one()))]
     #[serde(default = "serial::one", skip_serializing_if = "serial::is_one")]
     pub count: u32,
@@ -213,7 +214,7 @@ pub struct ShopReactions {
 
 /// Opens the shop until it closes.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "shop"))]
+#[schemars(transform = SchemaMark::System.with("shop"))]
 pub struct OpenShop {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]

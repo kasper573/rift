@@ -1,3 +1,4 @@
+use crate::core::content::SchemaMark;
 use std::collections::HashSet;
 
 use schemars::JsonSchema;
@@ -18,7 +19,7 @@ pub struct DialogueNode<V: Vocabulary> {
     pub choices: Vec<Choice<V>>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,
-    #[schemars(extend("x-fails" = true))]
+    #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub left: Arrow,
 }

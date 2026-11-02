@@ -569,7 +569,7 @@ const OTHER_KIND: &str = "other files";
 
 /// Every kind of file Show ▾ offers: every type of content the game can hold, media, notes and
 /// files the game never reads.
-fn kind_mark(kind: &str) -> KindMark<'_> {
+fn kind_mark(kind: &str) -> KindMark {
     KindMark::Icon(match kind {
         MEDIA_KIND => icons::IMAGE,
         NOTES_KIND => icons::NOTE,

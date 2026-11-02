@@ -38,7 +38,7 @@ use crate::core::content::Content;
 use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::gui::{self, Band, WidgetRects};
 use crate::core::math::{Pos, Rgba, Size};
-use crate::core::render::present::{self, PRESENT_LAYER, PresentScale};
+use crate::core::render::present::{self, PRESENT_LAYER};
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::billboard::Billboard;
 use crate::core::render::world::cover::CoverMaterial;
@@ -364,10 +364,7 @@ impl SiteFrame {
                     rect: Rect::from_corners(Vec2::ZERO, Vec2::ONE),
                     pixel: Vec2::ONE / size,
                 };
-                let px = world
-                    .get_resource::<PresentScale>()
-                    .map_or(1.0, |scale| scale.0.max(0.01));
-                SiteFrame::screen(size, Some(texture), px)
+                SiteFrame::screen(size, Some(texture))
             }
             VfxSite::Widget(_) => return None,
         };
@@ -501,9 +498,8 @@ impl SiteFrame {
         }
     }
 
-    /// A screen `size` pixels across, `px` of them to a world pixel, drawn over `texture` when
-    /// there is a frame to work on.
-    fn screen(size: Vec2, texture: Option<SiteTexture>, px: f32) -> SiteFrame {
+    /// A screen `size` pixels across, drawn over `texture` when there is a frame to work on.
+    fn screen(size: Vec2, texture: Option<SiteTexture>) -> SiteFrame {
         SiteFrame {
             kind: SiteKind::Screen,
             place: SitePlace::Screen {
@@ -511,7 +507,7 @@ impl SiteFrame {
                 z: SCREEN_Z,
             },
             size,
-            px,
+            px: 1.0,
             facing: Radians::default(),
             heading: Radians::default(),
             body: SiteBody::image(),

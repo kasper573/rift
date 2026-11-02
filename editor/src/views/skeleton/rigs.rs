@@ -10,6 +10,7 @@ use engine::core::content::ModelRef;
 use engine::core::content::gltf::NodeTree;
 use engine::systems::actor::skeleton::{JointName, SkeletonDef, SourceRig};
 use ui::egui::{self, RichText, Ui, Vec2};
+use ui::face;
 use ui::{controls, form, panel, theme, words};
 
 use super::rigging::{self, JointFile, Rigging, Tops};
@@ -125,7 +126,7 @@ fn our_rig(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, riggi
         let name = JointName::new(tree.nodes[top].name.clone());
         let mut on = hangs.get(&name).cloned();
         ui.horizontal(|ui| {
-            ui.label(theme::mono(name.as_str()));
+            ui.label(face::mono(name.as_str()));
             ui.label(theme::muted("hangs on"));
             controls::combo(("hang", key, name.as_str()))
                 .selected_text(on.as_ref().map_or("nothing", JointName::as_str))
@@ -282,7 +283,7 @@ fn pairs(
                 if ui
                     .add(egui::Button::selectable(
                         lit,
-                        theme::mono(his.as_str()).size(12.5),
+                        face::mono(his.as_str()).size(12.5),
                     ))
                     .clicked()
                 {
@@ -526,7 +527,7 @@ fn picker_list(ui: &mut Ui, picker: &mut FilePicker, files: &[JointFile]) -> boo
                 ui.horizontal(|ui| {
                     let mut on = picker.ticked.contains(&file.path);
                     if ui
-                        .checkbox(&mut on, theme::mono(&file.path).size(12.0))
+                        .checkbox(&mut on, face::mono(&file.path).size(12.0))
                         .changed()
                     {
                         if !many {

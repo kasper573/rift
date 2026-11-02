@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use ui::controls;
 use ui::drag;
 use ui::egui;
+use ui::face;
 use ui::form;
 use ui::menu;
 use ui::paint;
@@ -9,6 +10,7 @@ use ui::panel;
 use ui::sheet;
 use ui::theme;
 
+use crate::widgets::Badge;
 use engine::core::content::serial::TypeTag;
 use engine::core::content::{ContentFile, FolderReader};
 use engine::core::script::Expr;
@@ -60,7 +62,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, selection: &RowSelection) {
                 .id_salt(("class-node", &key, &node))
                 .show(ui, |ui| {
                     ui.label(
-                        theme::mono(format!("{} › node {node}", shown_path(&key)))
+                        face::mono(format!("{} › node {node}", shown_path(&key)))
                             .color(theme::CODE)
                             .size(12.0),
                     );
@@ -142,9 +144,9 @@ fn requirements(
     for (index, requirement) in requires.iter_mut().enumerate() {
         let item_path = format!("{path}/{index}");
         let kind = TypeTag::of(requirement).unwrap_or_default();
-        panel::card(ui, false, |ui| {
+        panel::tile_across(ui, false, |ui| {
             ui.horizontal(|ui| {
-                widgets::badge(ui, &kind);
+                widgets::badge(ui, Badge::of_tag(&kind, Some(ClassDef::TABLE)));
                 ui.label(theme::strong(schema::title(&kind)));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     if glyph::button(ui, Mark::Cross, 11.0, theme::FAINT, "Remove")
@@ -257,7 +259,7 @@ fn requirement_body(
                     .selected_text(if needed.as_str().is_empty() {
                         theme::muted("pick a node…")
                     } else {
-                        theme::mono(needed.as_str()).size(13.0)
+                        face::mono(needed.as_str()).size(13.0)
                     })
                     .show_ui(ui, |ui| {
                         for other in around.tree.0.keys().filter(|other| *other != node) {

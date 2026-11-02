@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::Home;
 use crate::core::content::Content;
+use crate::core::content::SchemaMark;
 use crate::core::math::{Offset, Pos};
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, REFUSED, ScriptFault};
 use crate::core::units::Meters;
@@ -21,7 +22,7 @@ use crate::systems::visibility::Presence;
 
 /// Hostile or friendly, until set again.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "npc"))]
+#[schemars(transform = SchemaMark::System.with("npc"))]
 pub struct SetAttitude {
     pub attitude: Attitude,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
@@ -30,10 +31,10 @@ pub struct SetAttitude {
 
 /// Spawns a pack of npcs nearby.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "npc"))]
+#[schemars(transform = SchemaMark::System.with("npc"))]
 pub struct SpawnNpcs {
     pub npc: NpcId,
-    #[schemars(extend("x-count" = true))]
+    #[schemars(transform = SchemaMark::Count.with(true))]
     pub count: u32,
     /// How far from whom they appear beside the npcs stand, in a ring around them.
     #[schemars(extend("default" = 1.5))]
@@ -60,14 +61,14 @@ pub enum ShownFor {
 
 /// Removes an npc that spawn_npcs made.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "npc"))]
+#[schemars(transform = SchemaMark::System.with("npc"))]
 pub struct Despawn {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
     pub who: Option<Condition>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub done: Arrow,
-    #[schemars(extend("x-fails" = true))]
+    #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub refused: Arrow,
 }

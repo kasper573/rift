@@ -8,6 +8,7 @@ pub mod turntable;
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use engine::core::content::Content;
 use engine::core::content::ContentFile;
 use engine::core::content::gltf::{self, Triangle};
 use engine::core::content::media::GltfInfos;
@@ -21,9 +22,10 @@ use ui::egui::{self, Ui};
 use ui::{chip, controls};
 
 use super::area::camera::OrbitCamera;
-use super::stage::{self, StagePicture, StageToggle};
+use super::stage::{self, StageState, StageToggle};
 use crate::app::Editor;
 use crate::project::ContentEdit;
+use crate::project::files::{bundle_of, folder_entry};
 use crate::row_form;
 use crate::tabs::shown_path;
 use crate::views::ViewMap;
@@ -39,10 +41,9 @@ pub struct PropViews {
 }
 
 pub struct PropView {
-    pub turntable: OrbitCamera,
+    pub stage: StageState,
     pub top: OrbitCamera,
     pub drag: Option<footprint::Drag>,
-    picture: StagePicture,
     geometry: Option<Arc<Geometry>>,
 }
 
@@ -95,19 +96,18 @@ pub fn ensure_view(editor: &mut Editor, key: &str) {
         return;
     }
     let radius = model_bounds(editor, key).map_or(1.0, |(min, max)| (max - min).length() / 2.0);
-    let turntable = stage::framing(radius);
+    let stage = StageState::framing(radius);
     let mut top = OrbitCamera {
         yaw: Radians(0.0),
-        ..turntable
+        ..stage.camera
     };
     top.top_down();
     editor.views.prop.views.insert(
         key,
         PropView {
-            turntable,
+            stage,
             top,
             drag: None,
-            picture: StagePicture::default(),
             geometry: None,
         },
     );
@@ -211,10 +211,11 @@ pub fn replace_model(editor: &mut Editor, key: &str, bytes: Vec<u8>) -> bool {
         return false;
     }
     let model = row.model.path();
-    let bundle = format!(
-        "{}/",
-        model.rsplit_once('/').map_or("", |(bundle, _)| bundle)
-    );
+    let Some((bundle, _)) = bundle_of(&model) else {
+        editor.toast(format!("{model} is not a part of a prop's folder"));
+        return false;
+    };
+    let bundle = folder_entry(bundle);
     let old_textures: Vec<String> = project
         .files
         .paths_under(&bundle)
@@ -274,15 +275,20 @@ pub(super) fn picture(editor: &mut Editor, key: &str) -> Option<(u64, Arc<Pictur
     let project = editor.project.as_ref()?;
     let content = project.content.clone()?;
     let generation = project.generation;
-    let id = content.by_path::<PropDef>(key)?;
+    let pictured = pictured(&content, key)?;
     ensure_view(editor, key);
     editor
         .views
         .prop
         .views
         .view_mut(key)
-        .picture
-        .of(&content, generation, Pictured::Prop(id))
+        .stage
+        .picture(&content, generation, pictured)
+}
+
+/// The prop at `key` as its stage pictures it.
+pub(super) fn pictured(content: &Content, key: &str) -> Option<Pictured> {
+    content.by_path::<PropDef>(key).map(Pictured::Prop)
 }
 
 enum HeaderAction {

@@ -2,6 +2,7 @@ use std::any::TypeId;
 use std::collections::{BTreeMap, HashMap};
 use std::sync::{LazyLock, Mutex, OnceLock, PoisonError};
 
+use engine::core::content::SchemaMark;
 use engine::core::content::fixture::FixtureLock;
 use engine::core::content::load::{ContentShapes, TableShape};
 use engine::core::content::{AssetKind, AudioRef};
@@ -202,9 +203,9 @@ pub(crate) fn non_null<'a>(root: &'a Value, schema: &'a Value) -> &'a Value {
 }
 
 pub(crate) fn number_shorthand(root: &Value, field: &Value, number: f64) -> Option<String> {
-    if non_null(root, field)["x-unit"] == "%" {
+    if SchemaMark::Unit.text_on(non_null(root, field)) == Some("%") {
         Some(format!("{number}%"))
-    } else if field.get("x-count").is_some() {
+    } else if SchemaMark::Count.is_on(field) {
         Some(format!("× {number}"))
     } else {
         None
@@ -213,7 +214,7 @@ pub(crate) fn number_shorthand(root: &Value, field: &Value, number: f64) -> Opti
 
 /// What the entries of the field `schema` describes are, as its type says in a few words.
 pub fn usage(schema: &Value) -> Option<&str> {
-    schema.get("x-usage").and_then(Value::as_str)
+    SchemaMark::Usage.text_on(schema)
 }
 
 /// Whether the objects `schema` describes hold no field but their tag.
@@ -286,13 +287,10 @@ fn entry_cells(root: &Value, shape: &Value, entry: &Value) -> Vec<String> {
         .into_iter()
         .filter_map(|(name, field)| match entry.get(name.as_str()) {
             Some(value) if !value.is_null() => Some(cell(root, field, value)),
-            _ if field.get("x-count").is_some() => field
+            _ if SchemaMark::Count.is_on(field) => field
                 .get("default")
                 .map(|default| cell(root, field, default)),
-            _ => field
-                .get("x-blank")
-                .and_then(Value::as_str)
-                .map(str::to_owned),
+            _ => SchemaMark::Blank.text_on(field).map(str::to_owned),
         })
         .collect()
 }
@@ -302,7 +300,7 @@ fn cell(root: &Value, field: &Value, value: &Value) -> String {
         Value::String(text) => text.clone(),
         Value::Number(number) => {
             let number = number.as_f64().unwrap_or(0.0);
-            if non_null(root, field)["x-unit"] == "%" {
+            if SchemaMark::Unit.text_on(non_null(root, field)) == Some("%") {
                 format!("{number}%")
             } else {
                 number.to_string()
@@ -349,7 +347,7 @@ pub(crate) fn blank_meaning<'a>(schema: &'a Value, value: &Value) -> Vec<&'a str
     properties(schema)
         .into_iter()
         .filter(|(name, _)| value.get(name.as_str()).is_none_or(Value::is_null))
-        .filter_map(|(_, field)| field.get("x-blank").and_then(Value::as_str))
+        .filter_map(|(_, field)| SchemaMark::Blank.text_on(field))
         .collect()
 }
 
@@ -614,7 +612,7 @@ pub fn required(schema: &Value) -> Vec<&str> {
 /// Whether `schema`, a map, keys rows the engine fixes: a sheet lists them, and none is added,
 /// removed or renamed.
 pub(crate) fn fixed_rows(schema: &Value) -> bool {
-    schema.get("x-fixed-rows").and_then(Value::as_bool) == Some(true)
+    SchemaMark::FixedRows.on(schema).and_then(Value::as_bool) == Some(true)
 }
 
 pub fn description(schema: &Value) -> Option<&str> {
@@ -623,26 +621,22 @@ pub fn description(schema: &Value) -> Option<&str> {
 
 /// The game system a node belongs to, as its definition declares it.
 pub(crate) fn system_of(schema: &Value) -> Option<&str> {
-    schema.get("x-system")?.as_str()
+    SchemaMark::System.text_on(schema)
 }
 
 /// Whether the output a field holds is the one taken when what its node does fails.
 pub fn fails(schema: &Value) -> bool {
-    schema.get("x-fails").and_then(Value::as_bool) == Some(true)
+    SchemaMark::Fails.on(schema).and_then(Value::as_bool) == Some(true)
 }
 
 /// Whether the field holds an arrow to another node, or a list of them.
 pub(crate) fn leads_out(field: &Value) -> bool {
-    let is_arrow = |schema: &Value| marker(schema) == Some("x-arrow");
+    let is_arrow = |schema: &Value| marker(schema) == Some(SchemaMark::Arrow);
     is_arrow(field) || field.get("items").is_some_and(is_arrow)
 }
 
-pub fn marker(schema: &Value) -> Option<&str> {
-    schema
-        .as_object()?
-        .keys()
-        .find(|key| key.starts_with("x-"))
-        .map(String::as_str)
+pub fn marker(schema: &Value) -> Option<SchemaMark> {
+    SchemaMark::first_on(schema)
 }
 
 fn is_var_fill(schema: &Value) -> bool {
@@ -653,7 +647,7 @@ fn is_var_fill(schema: &Value) -> bool {
 }
 
 pub fn table_of(schema: &Value) -> Option<&str> {
-    schema.get("x-table").and_then(Value::as_str)
+    SchemaMark::Table.text_on(schema)
 }
 
 /// The table whose files a map's keys name, when they name files.
@@ -856,7 +850,7 @@ pub fn template(root: &Value, schema: &Value, nearby: Nearby) -> Value {
     if let Some(default) = schema.get("default") {
         return default.clone();
     }
-    if let Some(wanted) = schema.get("x-value").and_then(Value::as_str) {
+    if let Some(wanted) = SchemaMark::Value.text_on(schema) {
         let least = minimum(schema).unwrap_or(0.0);
         return match wanted {
             "integer" => Value::from(least as i64),
@@ -866,8 +860,8 @@ pub fn template(root: &Value, schema: &Value, nearby: Nearby) -> Value {
         };
     }
     let fresh = match marker(resolve(root, schema)) {
-        Some("x-place") => nearby.place(),
-        Some("x-assignment") => nearby.assignment(),
+        Some(SchemaMark::Place) => nearby.place(),
+        Some(SchemaMark::Assignment) => nearby.assignment(),
         _ => None,
     };
     if let Some(fresh) = fresh {
@@ -931,7 +925,7 @@ fn named(schema: &Value, nearby: Nearby) -> Option<String> {
     if let Some(table) = table_of(schema) {
         return nearby.content(table);
     }
-    let kind = schema.get("x-asset").and_then(Value::as_str)?;
+    let kind = SchemaMark::Asset.text_on(schema)?;
     nearby.media(kind.parse().ok()?)
 }
 
@@ -953,11 +947,20 @@ pub(crate) fn variable_schema(ty: VariableType, table: Option<&str>) -> Value {
         VariableType::Number => json!({ "type": "number" }),
         VariableType::Boolean => json!({ "type": "boolean" }),
         VariableType::Text | VariableType::Name => json!({ "type": "string" }),
-        VariableType::Row => json!({ "type": "string", "x-table": table.unwrap_or_default() }),
+        VariableType::Row => marked(
+            json!({ "type": "string" }),
+            SchemaMark::Table,
+            table.unwrap_or_default(),
+        ),
         VariableType::Audio => schema_of::<AudioRef>(),
         VariableType::Place => schema_of::<Place>(),
-        VariableType::Condition => json!({ "x-condition": true }),
+        VariableType::Condition => marked(json!({}), SchemaMark::Condition, true),
     }
+}
+
+fn marked(mut schema: Value, mark: SchemaMark, value: impl Into<Value>) -> Value {
+    mark.put(&mut schema, value);
+    schema
 }
 
 pub fn title(name: &str) -> String {
@@ -1148,11 +1151,13 @@ fn collect_holeable(
 ) {
     let schema = settle(root, schema, value);
     let kind = match marker(schema) {
-        Some("x-name") => Some(VariableType::Name),
-        Some("x-condition") => Some(VariableType::Condition),
-        Some("x-place") => Some(VariableType::Place),
-        Some("x-table") => Some(VariableType::Row),
-        Some("x-asset") => (schema["x-asset"] == "audio").then_some(VariableType::Audio),
+        Some(SchemaMark::Name) => Some(VariableType::Name),
+        Some(SchemaMark::Condition) => Some(VariableType::Condition),
+        Some(SchemaMark::Place) => Some(VariableType::Place),
+        Some(SchemaMark::Table) => Some(VariableType::Row),
+        Some(SchemaMark::Asset) => {
+            (SchemaMark::Asset.text_on(schema) == Some("audio")).then_some(VariableType::Audio)
+        }
         Some(_) => return,
         None => match kind(root, schema) {
             SchemaKind::Text => Some(VariableType::Text),

@@ -7,6 +7,7 @@ use engine::core::render::world::body::Skin;
 use engine::systems::actor::part::ModelPartDef;
 use engine::systems::actor::skeleton::{Colours, SkeletonDef, misfit_problem};
 use ui::egui::{self, Ui, Vec2};
+use ui::face;
 use ui::{form, theme};
 
 use crate::app::Editor;
@@ -143,7 +144,7 @@ fn joints(ui: &mut Ui, rows: &[JointRow]) {
             for row in rows {
                 ui.horizontal(|ui| {
                     ui.add_space(row.depth as f32 * 12.0);
-                    ui.label(theme::mono(&row.name).size(12.5));
+                    ui.label(face::mono(&row.name).size(12.5));
                     if let Some(hand) = &row.hand {
                         ui.label(theme::faint(format!("hand · {hand}")).size(12.0));
                     }

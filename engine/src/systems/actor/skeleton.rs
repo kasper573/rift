@@ -13,6 +13,7 @@ use super::stance::StanceId;
 use super::{Action, Motion, Pose};
 use crate::core::audio::playback::SfxId;
 use crate::core::content::ModelRef;
+use crate::core::content::SchemaMark;
 use crate::core::content::gltf::Misfit;
 use crate::core::content::{
     ContentFile, ContentId, ContentProblem, ModuleRule, ModuleSet, NamedContent, Nearby, RowCheck,
@@ -50,35 +51,33 @@ impl NameKind {
         NameKind::Tint,
     ];
 
-    /// The schema key a field of this kind of name carries.
-    pub fn marker(self) -> &'static str {
+    /// The mark a field of this kind of name carries in its schema.
+    pub fn mark(self) -> SchemaMark {
         match self {
-            NameKind::Move => "x-move",
-            NameKind::Gesture => "x-gesture",
-            NameKind::Joint => "x-joint",
-            NameKind::Group => "x-group",
-            NameKind::Build => "x-build",
-            NameKind::Region => "x-region",
-            NameKind::Slot => "x-slot",
-            NameKind::Tint => "x-tint",
+            NameKind::Move => SchemaMark::Move,
+            NameKind::Gesture => SchemaMark::Gesture,
+            NameKind::Joint => SchemaMark::Joint,
+            NameKind::Group => SchemaMark::Group,
+            NameKind::Build => SchemaMark::Build,
+            NameKind::Region => SchemaMark::Region,
+            NameKind::Slot => SchemaMark::Slot,
+            NameKind::Tint => SchemaMark::Tint,
         }
     }
 
-    /// The kind whose marker is the schema key `marker`.
-    pub fn of_marker(marker: &str) -> Option<NameKind> {
-        NameKind::ALL
-            .into_iter()
-            .find(|kind| kind.marker() == marker)
+    /// The kind whose mark is `mark`.
+    pub fn of_mark(mark: SchemaMark) -> Option<NameKind> {
+        NameKind::ALL.into_iter().find(|kind| kind.mark() == mark)
     }
 
-    fn mark(self, schema: &mut schemars::Schema) {
-        schema.insert(self.marker().to_owned(), true.into());
+    fn set_on(self, schema: &mut schemars::Schema) {
+        self.mark().set(schema, true);
     }
 }
 
 macro_rules! name_type {
     ($(#[$doc:meta])* $name:ident, $kind:expr) => {
-        name_type!(@named [$(#[$doc])*] [#[schemars(transform = |schema: &mut schemars::Schema| $kind.mark(schema))]] $name);
+        name_type!(@named [$(#[$doc])*] [#[schemars(transform = |schema: &mut schemars::Schema| $kind.set_on(schema))]] $name);
     };
     ($(#[$doc:meta])* $name:ident) => {
         name_type!(@named [$(#[$doc])*] [] $name);
@@ -183,7 +182,7 @@ pub struct SkeletonTint {
 #[schemars(transform = |schema: &mut schemars::Schema| {
     let mut names = schemars::Schema::default();
     names.insert("type".to_owned(), "string".into());
-    NameKind::Tint.mark(&mut names);
+    NameKind::Tint.set_on(&mut names);
     schema.insert("propertyNames".to_owned(), names.into());
 })]
 pub struct Colours(pub BTreeMap<TintName, Rgb>);

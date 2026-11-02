@@ -41,6 +41,7 @@ use crate::core::audio::soundscape::{
     SoundscapeChannel, SoundscapeLayer, SoundscapeShape, SoundscapeZone,
 };
 use crate::core::content::ErrorPlace;
+use crate::core::content::SchemaMark;
 use crate::core::content::{AssetKind, AudioRef};
 use crate::core::content::{
     Bundle, Content, ContentFile, ContentId, ContentProblem, ContentRegistry, FileWriter,
@@ -381,7 +382,18 @@ pub enum AreaModule {
 }
 
 #[derive(
-    Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, EnumString, IntoStaticStr, VariantArray,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    EnumString,
+    IntoStaticStr,
+    VariantArray,
 )]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
@@ -574,7 +586,7 @@ impl SoundscapeDef {
 #[serde(deny_unknown_fields)]
 pub struct Population {
     pub npc: NpcId,
-    #[schemars(extend("x-count" = true))]
+    #[schemars(transform = SchemaMark::Count.with(true))]
     pub count: u32,
     #[schemars(with = "Option<serial::RectRow>")]
     #[serde(

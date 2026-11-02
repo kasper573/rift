@@ -47,7 +47,12 @@ pub fn window(gui: &Context, text: &str, add: impl FnOnce(&mut Ui)) {
         });
     if let Some((shown, under)) = shown.zip(under) {
         let painter = gui.layer_painter(shown.response.layer_id);
-        sheet::paint_note(&painter, under, shown.response.rect);
+        sheet::paint_note(
+            &painter,
+            under,
+            shown.response.rect,
+            sheet::shadow(sheet::Depth::Front),
+        );
     }
 }
 

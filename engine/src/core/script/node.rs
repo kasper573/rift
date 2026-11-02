@@ -7,6 +7,7 @@ use strum::{EnumDiscriminants, EnumString, IntoStaticStr, VariantArray};
 use super::dialogue::DialogueNode;
 use super::expr::Expr;
 use super::{Arrow, EffectDef, ScriptId, VarValue, Vocabulary};
+use crate::core::content::SchemaMark;
 use crate::core::units::Seconds;
 
 pub const MAX_NODES: usize = 2_000;
@@ -27,7 +28,7 @@ pub const MAX_LIVE_FLOWS: usize = 32;
 )]
 pub enum Node<V: Vocabulary> {
     /// Starts a flow at an event; its cause is the subject.
-    #[schemars(extend("x-system" = "flow"))]
+    #[schemars(transform = SchemaMark::System.with("flow"))]
     On {
         #[serde(flatten)]
         event: V::Event,
@@ -35,7 +36,7 @@ pub enum Node<V: Vocabulary> {
         next: Arrow,
     },
     /// Takes yes when the test holds, else no.
-    #[schemars(extend("x-system" = "flow"))]
+    #[schemars(transform = SchemaMark::System.with("flow"))]
     If {
         test: Expr<V>,
         #[serde(default, skip_serializing_if = "Arrow::is_none")]
@@ -44,15 +45,15 @@ pub enum Node<V: Vocabulary> {
         no: Arrow,
     },
     /// Picks an output by weight.
-    #[schemars(extend("x-system" = "flow"))]
+    #[schemars(transform = SchemaMark::System.with("flow"))]
     Random {
         weights: Vec<u32>,
         outputs: Vec<Arrow>,
     },
     /// Runs each a number of times, then goes on.
-    #[schemars(extend("x-system" = "flow"))]
+    #[schemars(transform = SchemaMark::System.with("flow"))]
     Repeat {
-        #[schemars(extend("x-count" = true))]
+        #[schemars(transform = SchemaMark::Count.with(true))]
         times: Expr<V>,
         at_most: u32,
         #[serde(default, skip_serializing_if = "Arrow::is_none")]
@@ -61,7 +62,7 @@ pub enum Node<V: Vocabulary> {
         then: Arrow,
     },
     /// Pauses for seconds, or one tick at 0.
-    #[schemars(extend("x-system" = "flow"))]
+    #[schemars(transform = SchemaMark::System.with("flow"))]
     Wait {
         seconds: Expr<V>,
         at_most: Seconds,
@@ -69,14 +70,14 @@ pub enum Node<V: Vocabulary> {
         next: Arrow,
     },
     /// Writes locals and owner state in order.
-    #[schemars(extend("x-system" = "flow"))]
+    #[schemars(transform = SchemaMark::System.with("flow"))]
     Set {
         values: Vec<Assignment<V>>,
         #[serde(default, skip_serializing_if = "Arrow::is_none")]
         next: Arrow,
     },
     /// Calls another script and goes on when it ends.
-    #[schemars(extend("x-system" = "flow"))]
+    #[schemars(transform = SchemaMark::System.with("flow"))]
     Run {
         script: ScriptId<V>,
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -87,13 +88,13 @@ pub enum Node<V: Vocabulary> {
         next: Arrow,
     },
     /// Ends a called script, handing back a value.
-    #[schemars(extend("x-system" = "flow"))]
+    #[schemars(transform = SchemaMark::System.with("flow"))]
     Return {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         value: Option<Expr<V>>,
     },
     /// Lines and choices spoken to the subject.
-    #[schemars(extend("x-system" = "dialogue"))]
+    #[schemars(transform = SchemaMark::System.with("dialogue"))]
     Dialogue(DialogueNode<V>),
     #[serde(untagged)]
     Effect(V::Effect),
@@ -101,7 +102,7 @@ pub enum Node<V: Vocabulary> {
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(bound = "")]
-#[schemars(bound = "", extend("x-assignment" = true))]
+#[schemars(bound = "", transform = SchemaMark::Assignment.with(true))]
 pub struct Assignment<V: Vocabulary> {
     #[serde(flatten)]
     pub target: Target,

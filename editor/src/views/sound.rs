@@ -2,11 +2,12 @@ use std::collections::{HashMap, HashSet};
 use std::path::Path;
 use std::sync::Arc;
 use ui::egui;
+use ui::face;
 use ui::theme;
 
 use bevy::asset::{AssetPath, AssetServer};
 use bevy::prelude::{Entity, World};
-use engine::core::assets::SyncedFiles;
+use engine::core::assets::SyncedAssetReader;
 use engine::core::audio::playback::{self, PlaySfx, SfxDef, SfxPlace};
 use engine::core::audio::soundscape::{SoundscapeChannel, SoundscapeLayer, SoundscapeZone};
 use engine::core::babble::{BabbleDef, BabbleRank, Babbling};
@@ -134,7 +135,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
             .filter_map(|path| Some((path.clone(), project.files.get(path)?.clone())))
             .collect();
         world
-            .resource::<SyncedFiles>()
+            .resource::<SyncedAssetReader>()
             .replace(SyncedAssets::held(assets));
         if let Some((_, before)) = &views.synced {
             let server = world.resource::<AssetServer>();
@@ -256,14 +257,14 @@ pub fn panel(editor: &Editor, ui: &mut Ui) {
                 } else {
                     format!("{:.1} m out · {:.0}%", heard.outside.0, heard.gain * 100.0)
                 };
-                ui.label(theme::mono(channel.0.to_string()));
-                ui.label(theme::mono(format!(
+                ui.label(face::mono(channel.0.to_string()));
+                ui.label(face::mono(format!(
                     "{} · {:.2}",
                     layer.src.as_str(),
                     layer.volume
                 )));
-                ui.label(theme::mono(&heard.name));
-                ui.label(theme::mono(reach));
+                ui.label(face::mono(&heard.name));
+                ui.label(face::mono(reach));
                 ui.end_row();
             }
         });

@@ -8,7 +8,7 @@ use clap::error::ErrorKind;
 use clap::{CommandFactory, Parser};
 use editor::app::{EditorLaunch, EditorPlugin};
 use editor::scenes::SceneStep;
-use engine::core::assets::SyncedFiles;
+use engine::core::assets::SyncedAssetReader;
 use engine::core::assets::loader::PngLoader;
 use engine::core::audio::playback::SfxPlugin;
 use engine::core::babble::BabblePlugin;
@@ -65,7 +65,7 @@ fn main() {
         user: options.user_folder,
         frame_log: options.frame_log,
     };
-    let files = SyncedFiles::default();
+    let files = SyncedAssetReader::default();
     let mut app = App::new();
     app.insert_resource(files.clone())
         .insert_resource(Rng::from_entropy());

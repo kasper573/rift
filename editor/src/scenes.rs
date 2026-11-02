@@ -21,6 +21,7 @@ use crate::clipboard::{Clipboard, SceneClip};
 use crate::modal::ModalDialog;
 use crate::project::{ContentEdit, RowSelection};
 use crate::tabs::EditorTab;
+use crate::user::SheetFilter;
 use crate::views::area::resize::ResizeDialog;
 use crate::views::area::{self as area_view, blueprint};
 use crate::views::bust;
@@ -190,7 +191,7 @@ pub enum SheetStep {
         #[serde(default)]
         order: SortOrder,
     },
-    Filter(String),
+    Filter(Vec<SheetFilter>),
     Cell {
         key: String,
         column: String,
@@ -499,7 +500,7 @@ fn sheet_step(editor: &mut Editor, step: &SheetStep) {
         editing,
     } = step
     {
-        let state = editor.views.spreadsheet.state_mut(&table);
+        let state = editor.views.spreadsheet.view_or_default(&table);
         state.selected = Some((key.clone(), column.clone()));
         state.editing = editing.then(|| column.clone());
         editor.select(RowSelection {
@@ -520,7 +521,7 @@ fn sheet_step(editor: &mut Editor, step: &SheetStep) {
         SheetStep::Sort { column, order } => {
             view.sort = Some((column.clone(), matches!(order, SortOrder::Desc)));
         }
-        SheetStep::Filter(text) => view.filter = text.clone(),
+        SheetStep::Filter(filters) => view.filters = filters.clone(),
         SheetStep::Open(_) | SheetStep::Cell { .. } => return,
     }
     editor.settings.views.insert(table, view);

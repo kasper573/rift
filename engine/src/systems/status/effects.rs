@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{AspectSource, StatusCategory, StatusEffectId, boost};
 use crate::core::content::Content;
+use crate::core::content::SchemaMark;
 use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, Expr, NEXT, ScriptFault, ValueType,
 };
@@ -18,7 +19,7 @@ use crate::systems::stat::{Stat, StatKind};
 
 /// Puts a status on actors, at a power and for a time; without seconds it holds until removed.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "status"))]
+#[schemars(transform = SchemaMark::System.with("status"))]
 pub struct ApplyStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
@@ -36,7 +37,7 @@ pub struct ApplyStatus {
 
 /// Takes a status off actors: one effect, every status of a category, or every status at all.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "status"))]
+#[schemars(transform = SchemaMark::System.with("status"))]
 pub struct RemoveStatus {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
@@ -52,7 +53,7 @@ pub struct RemoveStatus {
 /// A stat modifier held on the subject for as long as the aspect whose script this is stays
 /// active on it: a status, a worn or carried item, a passive skill.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "status"))]
+#[schemars(transform = SchemaMark::System.with("status"))]
 pub struct Boost {
     pub stat: StatKind,
     #[schemars(extend("default" = 1.0))]

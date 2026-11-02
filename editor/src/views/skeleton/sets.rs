@@ -18,6 +18,7 @@ use engine::systems::actor::{Action, Motion, Pose};
 use engine::systems::dialogue::bust::GenericExpression;
 use strum::VariantArray;
 use ui::egui::{self, RichText, Ui, Vec2};
+use ui::face;
 use ui::input::NumberField;
 use ui::{chip, controls, form, panel, theme, words};
 
@@ -227,7 +228,7 @@ pub fn fill(
 
 /// A cell a build leaves empty, filled from the first build's: its stance (none for base), its
 /// row, and each clip it was rewritten from with the clip it became.
-struct Fill {
+struct EmptyCellFill {
     stance: Option<StanceId>,
     row: SetRow,
     cell: ClipCell,
@@ -240,7 +241,7 @@ fn fills(
     rigging: &Rigging,
     build: &BuildName,
     replace: &[(String, String)],
-) -> Vec<Fill> {
+) -> Vec<EmptyCellFill> {
     let rewrite = |clip: &Clip| -> Option<Clip> {
         let mut path = clip.file().as_str().to_owned();
         for (from, to) in replace.iter().filter(|(from, _)| !from.is_empty()) {
@@ -280,7 +281,7 @@ fn fills(
                     .zip(&rewritten)
                     .map(|(named, (_, to))| clip_ref(to.clone(), named.only().cloned()))
                     .collect();
-                filled.push(Fill {
+                filled.push(EmptyCellFill {
                     stance,
                     row,
                     cell: cell_of(clips, cell.order()),
@@ -320,17 +321,14 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigg
     let width = ui.available_width();
     let [left, right] = panel::split(ui, (width * 0.55).clamp(360.0, 900.0));
     panel::body(ui, left, |ui| {
-        table(
-            editor,
-            ui,
+        let cx = SetsCx {
             key,
-            &content,
+            content: &content,
             def,
             rigging,
-            build.as_ref(),
-            &columns,
-            &rows,
-        );
+            build: build.as_ref(),
+        };
+        table(editor, ui, cx, &columns, &rows);
     });
     let open = editor.views.skeleton.views.view(key).sets.open.clone();
     panel::body(ui, right, |ui| {
@@ -350,20 +348,33 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigg
     });
 }
 
+/// What the sets page draws from: the skeleton at `key` as `def` and rigged, the content its
+/// stances are read in, and the build shown.
+#[derive(Clone, Copy)]
+struct SetsCx<'a> {
+    key: &'a str,
+    content: &'a Content,
+    def: &'a SkeletonDef,
+    rigging: &'a Rigging,
+    build: Option<&'a BuildName>,
+}
+
 /// The table of cells, and below it the cell clicked open: its clips, to pick from every clip that
 /// plays.
-#[allow(clippy::too_many_arguments)]
 fn table(
     editor: &mut Editor,
     ui: &mut Ui,
-    key: &str,
-    content: &Content,
-    def: &SkeletonDef,
-    rigging: &Rigging,
-    build: Option<&BuildName>,
+    cx: SetsCx,
     columns: &[Option<StanceId>],
     rows: &[SetRow],
 ) {
+    let SetsCx {
+        key,
+        content,
+        def,
+        rigging,
+        build,
+    } = cx;
     let open = editor.views.skeleton.views.view(key).sets.open.clone();
     let mut picked: Option<(SetRow, Option<String>)> = None;
     let height = ui.available_height();
@@ -387,7 +398,7 @@ fn table(
                     }
                     ui.end_row();
                     for row in rows {
-                        ui.label(theme::mono(row.label()));
+                        ui.label(face::mono(row.label()));
                         for column in columns {
                             let path = column.map(|stance| stance.path(content).to_owned());
                             let lit = open
@@ -410,17 +421,7 @@ fn table(
     if let Some((row, stance)) = editor.views.skeleton.views.view(key).sets.open.clone() {
         ui.add_space(6.0);
         form::rule(ui);
-        picker(
-            editor,
-            ui,
-            key,
-            content,
-            def,
-            rigging,
-            build,
-            &row,
-            stance.as_deref(),
-        );
+        picker(editor, ui, cx, &row, stance.as_deref());
     }
 }
 
@@ -684,18 +685,14 @@ fn cell(
 }
 
 /// The open cell: its clips and how they take turns, and every clip that plays to pick from.
-#[allow(clippy::too_many_arguments)]
-fn picker(
-    editor: &mut Editor,
-    ui: &mut Ui,
-    key: &str,
-    content: &Content,
-    def: &SkeletonDef,
-    rigging: &Rigging,
-    build: Option<&BuildName>,
-    row: &SetRow,
-    stance: Option<&str>,
-) {
+fn picker(editor: &mut Editor, ui: &mut Ui, cx: SetsCx, row: &SetRow, stance: Option<&str>) {
+    let SetsCx {
+        key,
+        content,
+        def,
+        rigging,
+        build,
+    } = cx;
     let column = stance.and_then(|path| content.by_path::<StanceDef>(path));
     let current = own_set(def, build, column).and_then(|set| row.get(set));
     let mut chosen: Option<Option<ClipCell>> = None;
@@ -745,7 +742,7 @@ fn picker(
                 if ui
                     .add(egui::Button::selectable(
                         lit,
-                        theme::mono(clip_label(Some(clip))).size(12.5),
+                        face::mono(clip_label(Some(clip))).size(12.5),
                     ))
                     .on_hover_text("play it on the stage")
                     .clicked()
@@ -830,7 +827,7 @@ fn picker(
                     if ui
                         .add(egui::Button::selectable(
                             lit,
-                            theme::mono(found.clip.to_string()).size(12.0),
+                            face::mono(found.clip.to_string()).size(12.0),
                         ))
                         .clicked()
                     {

@@ -1,21 +1,24 @@
 use std::time::Duration;
+use ui::dusk;
 use ui::egui;
 
 use bevy::prelude::*;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::egui::emath::TSTransform;
 use ui::egui::{Align, Color32, Layout, Rect, Sense, Stroke, UiBuilder, Vec2};
 use ui::face::Face;
 
-use super::rows::{self, Clock, Fades, Move, NoticePlace, Presence};
+use super::rows::{self, Clock, NoticePlace};
 use super::{Notification, NotificationKind, NotificationSent};
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
 use crate::core::content::ImageRef;
 use crate::core::gui;
 use crate::core::math::Rgba;
-use crate::core::text::{self, TextMotion, TextShadow};
+use crate::core::text::{self, TextMotion};
 use crate::systems::GameSettings;
 use crate::systems::screen::{ClientScreen, area};
+use ui::motion::{Transit, TransitMove, Transits};
 use ui::paint;
 
 const TITLE_SIZE: f32 = 44.0;
@@ -26,13 +29,9 @@ const RULE_GAP: f32 = 16.0;
 const WIDEST: f32 = 560.0;
 const PADDING: Vec2 = Vec2::new(40.0, 16.0);
 const ROW_GAP: f32 = 8.0;
-const SHADOW: TextShadow = TextShadow {
-    offset: Vec2::new(0.0, 2.0),
-    color: Color32::from_black_alpha(204),
-};
-const PRESENCE: Presence = Presence {
-    enter: Move::new(Vec2::new(0.0, 14.0), 0.94, 0.8),
-    exit: Move::new(Vec2::new(0.0, -8.0), 1.04, 0.6),
+const TRANSIT: Transit = Transit {
+    enter: TransitMove::new(Vec2::new(0.0, 14.0), 0.94, 0.8),
+    exit: TransitMove::new(Vec2::new(0.0, -8.0), 1.04, 0.6),
 };
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -46,7 +45,7 @@ pub struct IntroPlugin;
 
 impl Plugin for IntroPlugin {
     fn build(&self, app: &mut App) {
-        rows::place::<ShownIntro>(app);
+        rows::place::<IntroShowing>(app);
         app.add_systems(
             Update,
             reveal_when_settled
@@ -59,26 +58,36 @@ impl Plugin for IntroPlugin {
 /// An intro arrives with the area it introduces, while the transition into it still plays, so it
 /// waits until the view is revealed.
 pub fn show(world: &mut World, notification_sent: NotificationSent) {
-    world.resource_mut::<ShownIntro>().waiting = Some(notification_sent);
+    world.resource_mut::<IntroShowing>().waiting = Some(notification_sent);
 }
 
-pub fn shown(world: &World) -> Option<(String, String)> {
-    let showing = world.resource::<ShownIntro>().showing.as_ref()?;
+/// The intro on show: its title and its words.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ShownIntro {
+    pub title: String,
+    pub text: String,
+}
+
+pub fn shown(world: &World) -> Option<ShownIntro> {
+    let showing = world.resource::<IntroShowing>().showing.as_ref()?;
     let notification = &showing.notification;
     let NotificationKind::Intro { title, .. } = &notification.kind else {
         return None;
     };
-    Some((title.to_string(), notification.text.plain_words()))
+    Some(ShownIntro {
+        title: title.to_string(),
+        text: notification.text.plain_words(),
+    })
 }
 
 pub(super) fn draw(world: &mut World, gui: &egui::Context, top: f32) -> f32 {
     let now = rows::time(gui);
-    let mut shown = world.resource_mut::<ShownIntro>();
+    let mut shown = world.resource_mut::<IntroShowing>();
     let current = shown
         .showing
         .as_ref()
         .map(|showing| (showing.key, (showing.key, showing.notification.clone())));
-    let intros = shown.fades.sync(now, PRESENCE, current);
+    let intros = shown.fades.sync(now, TRANSIT, current);
     let width = gui.content_rect().width();
     let mut drawn: Vec<Rect> = Vec::new();
     for ((key, notification), look) in intros {
@@ -150,7 +159,7 @@ pub(super) fn draw(world: &mut World, gui: &egui::Context, top: f32) -> f32 {
                             title,
                             title_font.clone(),
                             tint,
-                            SHADOW,
+                            dusk::TEXT_SHADOW,
                             shift,
                         );
                         let (lines, _) = ui.allocate_exact_size(line_size, Sense::hover());
@@ -176,17 +185,17 @@ pub(super) fn draw(world: &mut World, gui: &egui::Context, top: f32) -> f32 {
         drawn.push(shown.inner);
     }
     let bottom = drawn.iter().map(Rect::bottom).fold(top, f32::max);
-    world.resource_mut::<ShownIntro>().drawn = drawn;
+    world.resource_mut::<IntroShowing>().drawn = drawn;
     bottom
 }
 
 #[derive(Resource, Default)]
-struct ShownIntro {
+struct IntroShowing {
     waiting: Option<NotificationSent>,
     settled_for: Duration,
     showing: Option<ShowingIntro>,
     clock: Clock,
-    fades: Fades<(u64, Notification)>,
+    fades: Transits<(u64, Notification)>,
     drawn: Vec<Rect>,
     keys: u64,
 }
@@ -201,7 +210,7 @@ fn reveal_when_settled(world: &mut World) {
     let delta = world.resource::<Time>().delta();
     let settled = area::settled(world);
     let after = Duration::from(world.resource::<GameSettings>().notices.intro_after);
-    let mut shown = world.resource_mut::<ShownIntro>();
+    let mut shown = world.resource_mut::<IntroShowing>();
     shown.settled_for = if settled {
         shown.settled_for + delta
     } else {
@@ -235,7 +244,7 @@ fn reveal_when_settled(world: &mut World) {
     }
 }
 
-impl NoticePlace for ShownIntro {
+impl NoticePlace for IntroShowing {
     fn drawn(&self) -> &[Rect] {
         &self.drawn
     }

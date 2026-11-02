@@ -9,6 +9,7 @@ pub mod id;
 pub mod key;
 pub mod load;
 pub mod locate;
+pub mod mark;
 pub mod media;
 pub mod reader;
 pub mod report;
@@ -37,6 +38,7 @@ pub use load::{
     FilesystemFolder, FolderEntry, JsonPart, LoadPurpose, LoadStep, LoadWarnings, Loading,
     MemoryFolder, Reference, Settings, load, pointer_of, write,
 };
+pub use mark::SchemaMark;
 pub use reader::{FolderReader, Unreadable, WrittenFiles};
 pub use report::{ContentProblem, ErrorPlace, LoadError, LoadReport, MISSING_FILE};
 pub use table::{

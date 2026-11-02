@@ -5,7 +5,7 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy_egui::EguiPrimaryContextPass;
 use ui::ink;
 
-use super::{ClientScreen, Notice, Retry, notice_screen, pace_as_before, pace_slowly};
+use super::{ClientScreen, Notice, Retry, frame_as_before, frame_slowly, notice_screen};
 use crate::core::content::sync::{
     ContentSource, SyncError, SyncPhase, SyncPolicy, SyncProgress, SyncStatus, SyncedContent, sync,
 };
@@ -96,12 +96,12 @@ fn begin(world: &mut World) {
 fn forget(world: &mut World) {
     world.remove_resource::<Syncing>();
     world.remove_resource::<LoadingFailure>();
-    pace_as_before(world);
+    frame_as_before(world);
     *world.resource_mut::<Shown>() = Shown::default();
 }
 
 fn start(world: &mut World, retry: Retry) {
-    pace_slowly(world);
+    frame_slowly(world);
     let http = world.resource::<Http>().clone();
     let store = world.resource::<Profile>().content_store();
     let base = world.resource::<StartParams>().game_server_url.clone();

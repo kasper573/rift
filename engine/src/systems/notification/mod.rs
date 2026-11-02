@@ -22,6 +22,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::audio::playback::{PlaySfx, SfxId, SfxPlace};
 use crate::core::content::ImageRef;
+use crate::core::content::SchemaMark;
 use crate::core::content::{Content, ContentFile, ContentId, Fixture, Loading, Nearby, RowCheck};
 use crate::core::gui::{self, Band};
 use crate::core::math::{Pos, Rgba};
@@ -392,7 +393,7 @@ impl From<&NotificationDefKind> for NotificationKind {
 
 /// Shows a notification.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "notification"))]
+#[schemars(transform = SchemaMark::System.with("notification"))]
 pub struct Notify {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
@@ -614,4 +615,10 @@ fn show(world: &mut World, notification_sent: NotificationSent) {
         NotificationKind::Feed(_) => feed::show(world, notification_sent),
         NotificationKind::Pop { .. } => pop::show(world, notification_sent),
     }
+}
+
+/// Forgets what a kind of notice shows once the area it was shown in is left; what it spawned
+/// goes with the area by itself.
+fn forget<R: Resource + Default>(world: &mut World) {
+    world.insert_resource(R::default());
 }

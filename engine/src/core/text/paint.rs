@@ -12,6 +12,7 @@ use ui::egui::{
 };
 use ui::face::{Face, TextRole};
 use ui::ink::Ground;
+use ui::paint::TextShadow;
 
 use super::{KeyNames, Lettering, SpanInk, StyledLine, Swing, TextMotion, TextPiece, TextVoice};
 
@@ -141,12 +142,6 @@ pub fn measure(
 }
 
 const HALO_STEPS: usize = 8;
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct TextShadow {
-    pub offset: Vec2,
-    pub color: Color32,
-}
 
 /// `shift` moves and scales the drawing about the text's centre while the space it takes stays put,
 /// so a moving title never reflows what is around it.

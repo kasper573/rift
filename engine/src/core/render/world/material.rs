@@ -22,7 +22,6 @@ use bevy::world_serialization::WorldInstanceReady;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::camera::FullPicture;
 use crate::core::render::Look;
 use crate::core::vfx::shader::PARAMS_BYTES;
 use crate::core::vfx::uniform::{ParamsUniform, SiteUniform, VfxShaderKey, WeatherImage};
@@ -42,9 +41,7 @@ pub fn textures(material: &StandardMaterial) -> impl Iterator<Item = &Handle<Ima
     .flatten()
 }
 
-/// How the world draws a mesh beyond its standard material: its fade, whether the picture it is
-/// drawn in settles over the frames, which the clearing's dither steps on for (it stands still
-/// otherwise), and the game's shader when one draws the mesh, with its parameters, the weather it
+/// How the world draws a mesh beyond its standard material: its fade, and the game's shader when one draws the mesh, with its parameters, the weather it
 /// reads and the site its prelude reads, which a material has none of.
 #[derive(Asset, AsBindGroup, Clone, Debug, TypePath)]
 #[bind_group_data(WorldLookKey)]
@@ -58,7 +55,6 @@ pub struct WorldLook {
     #[uniform(103)]
     pub site: SiteUniform,
     pub shader: Option<Handle<Shader>>,
-    pub settling: bool,
 }
 
 /// A material of a scene drawn by a shader of the game's: the material by the name its model gives
@@ -97,18 +93,15 @@ impl Default for FadeStyle {
     }
 }
 
-/// What a world material's shaders are built for: a settling picture or a still one, and the
-/// game's shader when one draws it.
+/// What a world material's shaders are built for: the game's shader when one draws it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct WorldLookKey {
-    settling: bool,
     shader: Option<VfxShaderKey>,
 }
 
 impl From<&WorldLook> for WorldLookKey {
     fn from(look: &WorldLook) -> WorldLookKey {
         WorldLookKey {
-            settling: look.settling,
             shader: look.shader.as_ref().map(VfxShaderKey::of),
         }
     }
@@ -129,7 +122,7 @@ impl MaterialExtension for WorldLook {
         _layout: &MeshVertexBufferLayoutRef,
         key: MaterialExtensionKey<WorldLook>,
     ) -> Result<(), SpecializedMeshPipelineError> {
-        let WorldLookKey { settling, shader } = key.bind_group_data;
+        let WorldLookKey { shader } = key.bind_group_data;
         if let Some(shader) = shader {
             let shader = shader.handle();
             descriptor.vertex.shader = shader.clone();
@@ -143,9 +136,6 @@ impl MaterialExtension for WorldLook {
                     .shader_defs
                     .push("VERTEX_OUTPUT_INSTANCE_INDEX".into());
             }
-        }
-        if settling && let Some(fragment) = descriptor.fragment.as_mut() {
-            fragment.shader_defs.push("SETTLING".into());
         }
         Ok(())
     }
@@ -213,11 +203,7 @@ pub struct SurfaceFinish {
 /// where it is mostly clear, and any other is masked at a cutoff of zero, which drops nothing by
 /// itself: bevy lets a material's shaders drop pixels only when its alpha mode says they may, and
 /// the fade drops them in every pass.
-pub fn world_material(
-    base: StandardMaterial,
-    full: FullPicture,
-    finish: &SurfaceFinish,
-) -> WorldMaterial {
+pub fn world_material(base: StandardMaterial, finish: &SurfaceFinish) -> WorldMaterial {
     ExtendedMaterial {
         base: StandardMaterial {
             alpha_mode: world_alpha(base.alpha_mode),
@@ -229,7 +215,6 @@ pub fn world_material(
             weather: Handle::default(),
             site: SiteUniform::default(),
             shader: None,
-            settling: full.0,
         },
     }
 }
@@ -250,12 +235,11 @@ pub(super) fn dielectric(base: StandardMaterial, finish: &SurfaceFinish) -> Stan
 /// and as translucent as the look says.
 pub fn looked_material(
     base: StandardMaterial,
-    full: FullPicture,
     finish: &SurfaceFinish,
     look: &MaterialLook,
     weather: Handle<Image>,
 ) -> WorldMaterial {
-    let mut material = world_material(base, full, finish);
+    let mut material = world_material(base, finish);
     material.base.double_sided = false;
     material.base.cull_mode = None;
     material.base.diffuse_transmission = look.translucency;
@@ -294,7 +278,6 @@ pub(super) struct Wardrobe<'w> {
     standard: Res<'w, Assets<StandardMaterial>>,
     materials: ResMut<'w, Assets<WorldMaterial>>,
     cache: ResMut<'w, MaterialCache>,
-    full: Res<'w, FullPicture>,
     weather: Option<Res<'w, WeatherImage>>,
     look: Option<Res<'w, Look>>,
 }
@@ -308,7 +291,6 @@ impl Wardrobe<'_> {
         look: Option<&MaterialLook>,
     ) -> Option<Handle<WorldMaterial>> {
         let base = self.standard.get(standard)?.clone();
-        let full = *self.full;
         let finish = self.look.as_ref()?.materials;
         let weather = self
             .weather
@@ -316,8 +298,8 @@ impl Wardrobe<'_> {
             .map(|weather| weather.0.clone())
             .unwrap_or_default();
         let make = |base: StandardMaterial| match look {
-            Some(look) => looked_material(base, full, &finish, look, weather),
-            None => world_material(base, full, &finish),
+            Some(look) => looked_material(base, &finish, look, weather),
+            None => world_material(base, &finish),
         };
         let key = (
             standard.id(),

@@ -1,20 +1,21 @@
 use std::collections::BTreeMap;
 use std::iter;
 use ui::egui;
+use ui::theme;
 
 use bevy::prelude::*;
 use bevy::window::{MonitorSelection, PresentMode, PrimaryWindow, WindowMode};
 use serde::{Deserialize, Serialize};
 use strum::VariantArray;
 use ui::egui::Ui;
-use ui::{controls, face, sheet};
+use ui::{controls, sheet};
 
 use crate::core::audio::mix::{AudioCategory, AudioFader, AudioMix, AudioVolume};
 use crate::core::math::{Pos, Size};
 use crate::core::os::Profile;
+use crate::core::render::CameraPreferences;
 use crate::core::render::transition::{ScreenTransition, ScreenTransitionPreference};
-use crate::core::render::video::{AmbientOcclusionQuality, VideoPreferences};
-use crate::core::render::{CameraPreferences, FullPicture};
+use crate::core::render::video::VideoPreferences;
 use crate::core::text::{LettersPerSecond, Typing};
 use crate::core::units::{Degrees, WindowPx};
 use crate::systems::hud::HudWindow;
@@ -100,34 +101,14 @@ impl HudWindow for SettingsWindow {
         WINDOW_SIZE
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
-        let offered = VideoOffered {
-            full_picture: world.resource::<FullPicture>().0,
-        };
         let typing = world.get_resource::<Typing>().copied();
         sheet::scroll(ui, egui::ScrollArea::vertical().auto_shrink(false), |ui| {
-            show_settings(
-                ui,
-                &mut world.resource_mut::<UserSettings>(),
-                offered,
-                typing,
-            )
+            show_settings(ui, &mut world.resource_mut::<UserSettings>(), typing)
         });
     }
 }
 
-/// The video settings this client can honour beside those every client can; the rest show, locked.
-#[derive(Clone, Copy)]
-struct VideoOffered {
-    /// The light shafts and the ambient occlusion, which only the full picture draws.
-    full_picture: bool,
-}
-
-fn show_settings(
-    ui: &mut Ui,
-    settings: &mut Mut<UserSettings>,
-    offered: VideoOffered,
-    typing: Option<Typing>,
-) {
+fn show_settings(ui: &mut Ui, settings: &mut Mut<UserSettings>, typing: Option<Typing>) {
     ui.spacing_mut().slider_width = SLIDER_WIDTH;
     sheet::section(ui, "Interface");
     let mut snapping = settings.snapping_enabled();
@@ -180,7 +161,7 @@ fn show_settings(
     });
     ui.add_space(8.0);
     sheet::section(ui, "Video");
-    show_video(ui, settings, offered);
+    show_video(ui, settings);
     ui.add_space(8.0);
     sheet::section(ui, "Audio");
     form(ui, "audio", |ui| {
@@ -197,7 +178,7 @@ fn show_settings(
     });
 }
 
-fn show_video(ui: &mut Ui, settings: &mut Mut<UserSettings>, offered: VideoOffered) {
+fn show_video(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
     let mut fullscreen = settings.window.fullscreen;
     if ui.checkbox(&mut fullscreen, "Fullscreen").changed() {
         settings.window.fullscreen = fullscreen;
@@ -220,12 +201,11 @@ fn show_video(ui: &mut Ui, settings: &mut Mut<UserSettings>, offered: VideoOffer
     {
         settings.video.bloom = bloom;
     }
-    let mut light_shafts = settings.video.light_shafts && offered.full_picture;
-    if supported_only(ui, offered.full_picture, |ui| {
-        ui.checkbox(&mut light_shafts, "Light shafts")
-            .on_hover_text("The sun's rays show in the air")
-    })
-    .changed()
+    let mut light_shafts = settings.video.light_shafts;
+    if ui
+        .checkbox(&mut light_shafts, "Light shafts")
+        .on_hover_text("The sun's rays show in the air")
+        .changed()
     {
         settings.video.light_shafts = light_shafts;
     }
@@ -236,15 +216,9 @@ fn show_video(ui: &mut Ui, settings: &mut Mut<UserSettings>, offered: VideoOffer
             settings.video.shadows = shadows;
         }
         ui.end_row();
-        let label = ui.add_enabled(offered.full_picture, egui::Label::new("Ambient occlusion"));
-        let current = if offered.full_picture {
-            settings.video.ambient_occlusion
-        } else {
-            AmbientOcclusionQuality::Off
-        };
-        if let Some(occlusion) = supported_only(ui, offered.full_picture, |ui| {
-            picker(ui, "ambient occlusion", current, label.id)
-        }) {
+        let label = ui.label("Ambient occlusion");
+        let current = settings.video.ambient_occlusion;
+        if let Some(occlusion) = picker(ui, "ambient occlusion", current, label.id) {
             settings.video.ambient_occlusion = occlusion;
         }
         ui.end_row();
@@ -255,16 +229,6 @@ fn show_video(ui: &mut Ui, settings: &mut Mut<UserSettings>, offered: VideoOffer
         }
         ui.end_row();
     });
-}
-
-/// `add`'s controls, dimmed and locked with the reason on hover where the graphics driver can't
-/// honour them, in which case they must show what is drawn: off.
-fn supported_only<R>(ui: &mut Ui, supported: bool, add: impl FnOnce(&mut Ui) -> R) -> R {
-    let shown = ui.add_enabled_ui(supported, add);
-    shown
-        .response
-        .on_disabled_hover_text("Not supported by this graphics driver");
-    shown.inner
 }
 
 fn form(ui: &mut Ui, id: &str, add: impl FnOnce(&mut Ui)) {
@@ -290,7 +254,7 @@ fn text_speed_slider(
         {
             settings.text.letters_per_second = Some(LettersPerSecond(speed.round()));
         }
-        ui.label(face::faint(format!("{:.0} letters/s", speed.round())));
+        ui.label(theme::faint(format!("{:.0} letters/s", speed.round())));
     });
 }
 
@@ -324,7 +288,7 @@ fn fader_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, fader: AudioFader
         {
             settings.set_volume(fader, AudioVolume((volume * 100.0).round() / 100.0));
         }
-        ui.label(face::faint(format!("{:.0}%", volume * 100.0)));
+        ui.label(theme::faint(format!("{:.0}%", volume * 100.0)));
     });
 }
 

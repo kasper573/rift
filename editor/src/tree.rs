@@ -23,6 +23,7 @@ use super::widgets::{self, KindMark};
 use crate::icons::{self, IconTone, KindIcon, Preview};
 use crate::keymap::EditorKey;
 use crate::picker::Dragged;
+use crate::widgets::Badge;
 
 /// What a tree lists and what may be done to its rows. The game folder and a scene each implement
 /// it; the tree brings the behaviour, the keys and the looks once.
@@ -71,7 +72,7 @@ pub struct TreeRow {
     /// What assistive tech reads for the row, when more than its name.
     pub spoken: Option<String>,
     /// A letter in a coloured square in place of the icon, as the editor marks module kinds.
-    pub badge: Option<(String, Color32)>,
+    pub badge: Option<Badge>,
     /// The row's eye and padlock, when it has them.
     pub toggles: Option<RowToggles>,
     /// A closed folder with something selected inside.
@@ -598,12 +599,12 @@ impl LazyRow {
 fn row_icon(ui: &mut Ui, row: &TreeRow, open: bool) {
     let center = ui.max_rect().center();
     let badge = row.badge.as_ref().filter(|_| !row.folder);
-    if let Some((letter, color)) = badge {
+    if let Some(&Badge { letter, color }) = badge {
         let rect = Rect::from_center_size(center, Vec2::splat(14.0));
         let color = if row.dim {
             color.gamma_multiply(0.5)
         } else {
-            *color
+            color
         };
         ui.painter().rect_filled(rect, 3.0, color);
         ui.painter().text(

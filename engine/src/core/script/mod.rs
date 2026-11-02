@@ -28,6 +28,7 @@ use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use strum::{EnumString, IntoStaticStr, VariantArray};
 
+use crate::core::content::SchemaMark;
 use crate::core::content::{Content, ContentFile, ContentId, Nearby};
 
 /// The output an effect takes when nothing else is said.
@@ -37,7 +38,7 @@ pub const REFUSED: &str = "refused";
 
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Debug, Default, PartialEq, Eq)]
 #[serde(transparent)]
-#[schemars(extend("x-arrow" = true))]
+#[schemars(transform = SchemaMark::Arrow.with(true))]
 pub struct Arrow(Option<String>);
 
 impl Arrow {

@@ -14,7 +14,7 @@ pub fn tooltip(response: &Response, add: impl FnOnce(&mut Ui)) {
     let gui = &response.ctx;
     let key = response.id.with("tooltip");
     if !response.contains_pointer() || gui.dragged_id().is_some() || egui::Popup::is_any_open(gui) {
-        gui.data_mut(|data| data.remove::<Pointed>(key));
+        gui.data_mut(|data| data.remove::<Hovered>(key));
         return;
     }
     let (delay, grace) = {
@@ -27,10 +27,10 @@ pub fn tooltip(response: &Response, add: impl FnOnce(&mut Ui)) {
     let (now, pass) = (gui.input(|input| input.time), gui.cumulative_pass_nr());
     let since = gui.data_mut(|data| {
         let since = data
-            .get_temp::<Pointed>(key)
+            .get_temp::<Hovered>(key)
             .filter(|pointed| pointed.pass + 1 >= pass)
             .map_or(now, |pointed| pointed.since);
-        data.insert_temp(key, Pointed { since, pass });
+        data.insert_temp(key, Hovered { since, pass });
         since
     });
     let follows_another = egui::Tooltip::seconds_since_last_tooltip(gui) < grace;
@@ -125,7 +125,7 @@ impl Afterimage {
 }
 
 #[derive(Clone, Copy)]
-struct Pointed {
+struct Hovered {
     since: f64,
     pass: u64,
 }

@@ -11,6 +11,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::VariantArray;
 
+use crate::core::content::SchemaMark;
 use crate::core::content::{Content, Fixture, Loading, RowCheck};
 use crate::core::geometry::{PlacedShape, Shape, facing_from};
 use crate::core::math::Pos;
@@ -192,7 +193,7 @@ pub fn expire(world: &mut World, instances: &mut QueryState<(Entity, &VfxInstanc
 /// the screen of each character named.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[schemars(extend("x-system" = "vfx"))]
+#[schemars(transform = SchemaMark::System.with("vfx"))]
 pub struct PlayVfx {
     pub vfx: VfxId,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -202,7 +203,7 @@ pub struct PlayVfx {
     pub site: VfxTarget,
     /// Keyed by the vfx's declared parameters, each given or left to the layers' own values.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    #[schemars(extend("x-params-of" = "vfx"))]
+    #[schemars(transform = SchemaMark::ParamsOf.with("vfx"))]
     pub params: BTreeMap<String, Condition>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub next: Arrow,

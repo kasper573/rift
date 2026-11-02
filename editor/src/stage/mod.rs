@@ -6,7 +6,6 @@ pub mod live;
 pub(crate) mod picture;
 
 use std::collections::{HashMap, HashSet};
-use std::f32::consts::PI;
 use ui::egui;
 use ui::theme;
 
@@ -32,8 +31,6 @@ pub const SIZE: [u32; 2] = [384, 288];
 pub(crate) const ZOOM: f32 = 2.0;
 const NARROWEST: f32 = 240.0;
 use crate::views::navigation::PX_PER_METER;
-const SPREAD_CANDIDATES: usize = 4096;
-const SPREAD_ROUNDS: usize = 12;
 
 #[derive(Default)]
 pub struct Stages {
@@ -126,7 +123,7 @@ pub enum Scenario {
 }
 
 /// Where a stage was drawn, for a window to draw over it.
-pub struct Shown {
+pub struct DrawnStage {
     pub rect: egui::Rect,
     /// Screen points per world pixel.
     pub px: f32,
@@ -135,7 +132,7 @@ pub struct Shown {
     pub report: Option<String>,
 }
 
-impl Shown {
+impl DrawnStage {
     pub fn screen(&self, world: Vec2) -> Pos2 {
         let offset = world - to_screen(self.center);
         self.rect.center() + EVec2::new(offset.x * self.px, -offset.y * self.px)
@@ -166,7 +163,7 @@ pub fn show(
     key: &str,
     scene: Scene,
     ground: bool,
-) -> Option<Shown> {
+) -> Option<DrawnStage> {
     let Some(content) = editor.loaded() else {
         ui.label(theme::muted("the preview plays once the content loads"));
         return None;
@@ -187,7 +184,7 @@ pub fn show(
             .to_owned();
         crate::thumbs::areas::draw_area(editor, &painter, &area, rect, center, px);
     }
-    let shown = Shown {
+    let shown = DrawnStage {
         rect,
         px,
         center,
@@ -276,69 +273,6 @@ pub(crate) fn to_screen(at: Pos<Meters>) -> Vec2 {
     Vec2::new(at.x * PX_PER_METER, -at.y * PX_PER_METER)
 }
 
-/// `count` points spread evenly over the footprint, the same every time: a sunflower spiral over
-/// the footprint's reach, kept where it falls inside, gives the candidates; picks start at even
-/// strides through them and relax to the middle of the candidates nearest each, so they end up
-/// evenly apart and well inside whatever the shape is.
-pub fn spread(footprint: &PlacedShape, count: u32) -> Vec<Pos<Meters>> {
-    let reach = footprint.reach().0.max(0.1);
-    let golden = PI * (3.0 - 5f32.sqrt());
-    let inside: Vec<Pos<Meters>> = (0..SPREAD_CANDIDATES)
-        .map(|index| {
-            let radius = reach * ((index as f32 + 0.5) / SPREAD_CANDIDATES as f32).sqrt();
-            let angle = index as f32 * golden;
-            Pos::new(
-                footprint.at.x + radius * angle.cos(),
-                footprint.at.y + radius * angle.sin(),
-            )
-        })
-        .filter(|point| footprint.contains(*point))
-        .collect();
-    if inside.is_empty() {
-        return vec![footprint.at; count as usize];
-    }
-    let mut picks: Vec<usize> = (0..count)
-        .map(|k| {
-            let stride = (k as f32 + 0.5) * inside.len() as f32 / count as f32;
-            (stride as usize).min(inside.len() - 1)
-        })
-        .collect();
-    let nearest = |to: Pos<Meters>, among: &[usize]| {
-        among
-            .iter()
-            .copied()
-            .min_by(|a, b| {
-                (inside[*a] - to)
-                    .length()
-                    .total_cmp(&(inside[*b] - to).length())
-            })
-            .unwrap_or(0)
-    };
-    let all: Vec<usize> = (0..inside.len()).collect();
-    for _ in 0..SPREAD_ROUNDS {
-        let mut sums = vec![(Vec2::ZERO, 0usize); picks.len()];
-        for point in &inside {
-            let owner = picks
-                .iter()
-                .enumerate()
-                .min_by(|a, b| {
-                    (inside[*a.1] - *point)
-                        .length()
-                        .total_cmp(&(inside[*b.1] - *point).length())
-                })
-                .map_or(0, |(owner, _)| owner);
-            sums[owner].0 += Vec2::new(point.x, point.y);
-            sums[owner].1 += 1;
-        }
-        for (pick, (sum, members)) in picks.iter_mut().zip(sums) {
-            if members > 0 {
-                let mean = sum / members as f32;
-                *pick = nearest(Pos::new(mean.x, mean.y), &all);
-            }
-        }
-    }
-    picks.into_iter().map(|pick| inside[pick]).collect()
-}
 fn posed_frame<'a>(posed: &Posed, content: &'a Content) -> picture::Frame<'a> {
     picture::Frame {
         content,

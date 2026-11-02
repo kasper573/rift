@@ -1,13 +1,14 @@
 use std::borrow::Cow;
 use std::marker::PhantomData;
 use std::time::Duration;
+use ui::dusk;
 use ui::egui;
 
 use bevy::ecs::component::Mutable;
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use ui::egui::emath::{TSTransform, easing};
+use ui::egui::emath::TSTransform;
 use ui::egui::{
     Align, Color32, FontId, Id, LayerId, Layout, Order, Rect, RichText, Sense, Ui, UiBuilder, Vec2,
 };
@@ -16,11 +17,12 @@ use ui::ink::Ground;
 
 use super::{NotificationSent, window_visible};
 use crate::core::gui::{self, Band, Tier};
-use crate::core::text::{self, KeyNames, StyledLine, TextLook, TextPiece, TextShadow};
+use crate::core::text::{self, KeyNames, StyledLine, TextLook, TextPiece};
 use crate::core::units::Seconds;
 use crate::systems::GameSettings;
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::screen::ClientScreen;
+use ui::motion::{Transit, TransitMove, TransitPose, Transits};
 use ui::paint;
 
 const WHITE: Color32 = Color32::WHITE;
@@ -41,21 +43,17 @@ const ROW_GAP: f32 = 4.0;
 const CHIP_GAP: f32 = 8.0;
 const MILESTONE_GAP: f32 = 16.0;
 
-const SCRIM_PRESENCE: Presence = Presence {
-    enter: Move::new(Vec2::new(0.0, 12.0), 0.97, 0.36),
-    exit: Move::new(Vec2::new(0.0, 8.0), 0.98, 0.24),
+const SCRIM_TRANSIT: Transit = Transit {
+    enter: TransitMove::new(Vec2::new(0.0, 12.0), 0.97, 0.36),
+    exit: TransitMove::new(Vec2::new(0.0, 8.0), 0.98, 0.24),
 };
-const CAPTION_PRESENCE: Presence = Presence {
-    enter: Move::new(Vec2::new(0.0, 8.0), 1.0, 0.34),
-    exit: Move::new(Vec2::new(0.0, -6.0), 1.0, 0.22),
+const CAPTION_TRANSIT: Transit = Transit {
+    enter: TransitMove::new(Vec2::new(0.0, 8.0), 1.0, 0.34),
+    exit: TransitMove::new(Vec2::new(0.0, -6.0), 1.0, 0.22),
 };
-const MILESTONE_PRESENCE: Presence = Presence {
-    enter: Move::new(Vec2::ZERO, 1.25, 0.52),
-    exit: Move::new(Vec2::new(0.0, -14.0), 1.04, 0.35),
-};
-const SHADOW: TextShadow = TextShadow {
-    offset: Vec2::new(0.0, 2.0),
-    color: Color32::from_black_alpha(204),
+const MILESTONE_TRANSIT: Transit = Transit {
+    enter: TransitMove::new(Vec2::ZERO, 1.25, 0.52),
+    exit: TransitMove::new(Vec2::new(0.0, -14.0), 1.04, 0.35),
 };
 
 pub(super) trait RowPlace: Send + Sync + 'static {
@@ -154,10 +152,10 @@ pub(super) fn draw_captions(world: &mut World, gui: &egui::Context, top: f32) ->
     let mut placed = world.resource_mut::<PlacedRows<Captions>>();
     let scrim = placed
         .scrim
-        .sync(now, SCRIM_PRESENCE, (!lines.is_empty()).then_some((0, ())));
+        .sync(now, SCRIM_TRANSIT, (!lines.is_empty()).then_some((0, ())));
     let rows = placed.fades.sync(
         now,
-        CAPTION_PRESENCE,
+        CAPTION_TRANSIT,
         lines.into_iter().map(|line| (line.key, line)),
     );
     let Some(&((), scrim)) = scrim.first() else {
@@ -181,7 +179,7 @@ pub(super) fn draw_captions(world: &mut World, gui: &egui::Context, top: f32) ->
     let screen = gui.content_rect();
     let room =
         (CAPTIONS_WIDEST.min(screen.width() * SCREEN_SHARE) - 2.0 * CAPTION_PADDING.x).max(0.0);
-    let measured: Vec<(LabelledLine, Look, Vec2)> = rows
+    let measured: Vec<(LabelledLine, TransitPose, Vec2)> = rows
         .into_iter()
         .map(|(line, row)| {
             let size = text::measure(gui, world, &line.text, look(CAPTION_SIZE, WHITE), room);
@@ -234,7 +232,7 @@ pub(super) fn draw_milestones(world: &mut World, gui: &egui::Context, top: f32) 
     let (lines, more) = lines_of::<Milestones>(world);
     let rows = world.resource_mut::<PlacedRows<Milestones>>().fades.sync(
         now,
-        MILESTONE_PRESENCE,
+        MILESTONE_TRANSIT,
         lines.into_iter().map(|line| (line.key, line)),
     );
     if rows.is_empty() && more.is_none() {
@@ -309,9 +307,6 @@ pub(super) fn hovered(world: &World, rects: &[Rect]) -> bool {
     pointer.is_some_and(|at| rects.iter().any(|rect| rect.contains(at)))
 }
 
-const BUMP_SCALE: f32 = 1.08;
-const BUMP_SECONDS: f64 = 0.25;
-
 /// The time a notification place has been on show. It only moves while the place is not held,
 /// so a notification read under the pointer keeps its time.
 #[derive(Default, Clone, Copy)]
@@ -332,33 +327,6 @@ impl Clock {
 
     pub(super) fn lapsed(self, deadline: Duration) -> bool {
         self.0 >= deadline
-    }
-}
-
-/// A toast's swell after a repeat bumps it: armed by the bump, timed from the next draw.
-#[derive(Default, Clone, Copy)]
-pub(super) struct Swell {
-    bumped: bool,
-    started: Option<f64>,
-}
-
-impl Swell {
-    pub(super) fn bump(&mut self) {
-        self.bumped = true;
-    }
-
-    pub(super) fn start_if_bumped(&mut self, now: f64) {
-        if std::mem::take(&mut self.bumped) {
-            self.started = Some(now);
-        }
-    }
-
-    /// How far the toast is scaled now, easing back to its size.
-    pub(super) fn scale(self, now: f64) -> f32 {
-        self.started.map_or(1.0, |at| {
-            let t = ((now - at) / BUMP_SECONDS).clamp(0.0, 1.0) as f32;
-            1.0 + (BUMP_SCALE - 1.0) * (1.0 - easing::cubic_out(t))
-        })
     }
 }
 
@@ -414,109 +382,6 @@ pub(super) fn column_area(
         .fixed_pos(egui::pos2(gui.content_rect().left(), top))
 }
 
-pub(super) struct Fades<T> {
-    items: Vec<Fading<T>>,
-}
-
-impl<T> Default for Fades<T> {
-    fn default() -> Fades<T> {
-        Fades { items: Vec::new() }
-    }
-}
-
-impl<T: Clone> Fades<T> {
-    /// Brings the place up to what it shows now, in the order given. An item that just left keeps
-    /// the slot it had while it fades out.
-    pub(super) fn sync(
-        &mut self,
-        now: f64,
-        presence: Presence,
-        current: impl IntoIterator<Item = (u64, T)>,
-    ) -> Vec<(T, Look)> {
-        let mut previous: Vec<Option<Fading<T>>> = std::mem::take(&mut self.items)
-            .into_iter()
-            .map(Some)
-            .collect();
-        let mut items: Vec<Fading<T>> = Vec::new();
-        for (key, item) in current {
-            let kept = previous
-                .iter_mut()
-                .find_map(|slot| slot.take_if(|fading| fading.key == key));
-            items.push(match kept {
-                Some(mut fading) => {
-                    fading.item = item;
-                    if fading.leaving {
-                        fading.leaving = false;
-                        fading.since = now;
-                    }
-                    fading
-                }
-                None => Fading {
-                    key,
-                    item,
-                    since: now,
-                    leaving: false,
-                },
-            });
-        }
-        for (index, slot) in previous.into_iter().enumerate() {
-            let Some(mut fading) = slot else {
-                continue;
-            };
-            if !fading.leaving {
-                fading.leaving = true;
-                fading.since = now;
-            }
-            if now - fading.since < presence.exit.seconds {
-                items.insert(index.min(items.len()), fading);
-            }
-        }
-        self.items = items;
-        self.items
-            .iter()
-            .map(|fading| (fading.item.clone(), fading.look(now, presence)))
-            .collect()
-    }
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct Presence {
-    pub enter: Move,
-    pub exit: Move,
-}
-
-#[derive(Clone, Copy)]
-pub(super) struct Move {
-    offset: Vec2,
-    scale: f32,
-    seconds: f64,
-}
-
-impl Move {
-    pub(super) const fn new(offset: Vec2, scale: f32, seconds: f64) -> Move {
-        Move {
-            offset,
-            scale,
-            seconds,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub(super) struct Look {
-    pub opacity: f32,
-    pub offset: Vec2,
-    pub scale: f32,
-}
-
-impl Look {
-    /// The transform that gives whatever is drawn in `rect` this look, scaled about its centre.
-    pub(super) fn around(self, rect: Rect) -> TSTransform {
-        let centre = rect.center().to_vec2();
-        TSTransform::new(centre * (1.0 - self.scale) + self.offset, self.scale)
-    }
-}
-
 #[derive(Clone, PartialEq)]
 pub(super) struct LabelledLine {
     pub key: u64,
@@ -529,8 +394,8 @@ pub(super) struct LabelledLine {
 pub(super) struct PlacedRows<P> {
     rows: VoiceRows,
     drawn: Vec<Rect>,
-    fades: Fades<LabelledLine>,
-    scrim: Fades<()>,
+    fades: Transits<LabelledLine>,
+    scrim: Transits<()>,
     place: PhantomData<fn() -> P>,
 }
 
@@ -539,43 +404,9 @@ impl<P: RowPlace> Default for PlacedRows<P> {
         PlacedRows {
             rows: VoiceRows::new(P::ROWS),
             drawn: Vec::new(),
-            fades: Fades::default(),
-            scrim: Fades::default(),
+            fades: Transits::default(),
+            scrim: Transits::default(),
             place: PhantomData,
-        }
-    }
-}
-
-struct Fading<T> {
-    key: u64,
-    item: T,
-    since: f64,
-    leaving: bool,
-}
-
-impl<T> Fading<T> {
-    fn look(&self, now: f64, presence: Presence) -> Look {
-        let (step, away) = if self.leaving {
-            let t = ((now - self.since) / presence.exit.seconds).clamp(0.0, 1.0) as f32;
-            (presence.exit, easing::cubic_in(t))
-        } else {
-            let t = ((now - self.since) / presence.enter.seconds).clamp(0.0, 1.0) as f32;
-            (presence.enter, 1.0 - easing::cubic_out(t))
-        };
-        Look {
-            opacity: 1.0 - away,
-            offset: step.offset * away,
-            scale: 1.0 + (step.scale - 1.0) * away,
-        }
-    }
-}
-
-impl Default for Look {
-    fn default() -> Look {
-        Look {
-            opacity: 1.0,
-            offset: Vec2::ZERO,
-            scale: 1.0,
         }
     }
 }
@@ -750,7 +581,7 @@ fn caption_row(ui: &mut Ui, world: &World, line: &LabelledLine, size: Vec2) {
     );
 }
 
-fn milestone_row(ui: &mut Ui, world: &World, line: &LabelledLine, row: Look) -> Rect {
+fn milestone_row(ui: &mut Ui, world: &World, line: &LabelledLine, row: TransitPose) -> Rect {
     ui.spacing_mut().item_spacing.y = LINE_GAP;
     let shift = TSTransform::new(row.offset, row.scale);
     let label = text::show_shadowed(
@@ -758,7 +589,7 @@ fn milestone_row(ui: &mut Ui, world: &World, line: &LabelledLine, row: Look) -> 
         &label_text(&line.label, line.replaced),
         label_font(),
         WHITE.gamma_multiply(0.85),
-        SHADOW,
+        dusk::TEXT_SHADOW,
         shift,
     );
     let words = line.text.plain(world.resource::<KeyNames>());
@@ -767,7 +598,7 @@ fn milestone_row(ui: &mut Ui, world: &World, line: &LabelledLine, row: Look) -> 
         &words,
         Face::BookBold.id(MILESTONE_SIZE),
         AMBER_80,
-        SHADOW,
+        dusk::TEXT_SHADOW,
         shift,
     );
     label.rect.union(words.rect)

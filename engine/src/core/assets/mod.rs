@@ -35,12 +35,14 @@ fn drawn_only(settings: &mut GltfLoaderSettings) {
     settings.load_materials = RenderAssetUsages::RENDER_WORLD;
 }
 
+/// The reader bevy loads every asset through: the assets of the latest sync, swapped whole when
+/// the content syncs again.
 #[derive(Resource, Clone, Default)]
-pub struct SyncedFiles(Arc<RwLock<SyncedAssets>>);
+pub struct SyncedAssetReader(Arc<RwLock<SyncedAssets>>);
 
-impl SyncedFiles {
-    pub fn replace(&self, files: SyncedAssets) {
-        *self.0.write().expect("synced files lock") = files;
+impl SyncedAssetReader {
+    pub fn replace(&self, assets: SyncedAssets) {
+        *self.0.write().expect("synced assets lock") = assets;
     }
 
     pub fn source(&self) -> AssetSourceBuilder {
@@ -48,17 +50,15 @@ impl SyncedFiles {
         AssetSourceBuilder::new(move || Box::new(files.clone()) as Box<dyn ErasedAssetReader>)
     }
 
-    /// The bytes of the file at `path` from the game folder, when it is there.
-    pub fn bytes(&self, path: &str) -> Option<Arc<[u8]>> {
-        self.0.read().expect("synced files lock").read(path)
-    }
-
     fn get(&self, path: &Path) -> Option<Arc<[u8]>> {
-        self.bytes(path.to_str()?)
+        self.0
+            .read()
+            .expect("synced assets lock")
+            .read(path.to_str()?)
     }
 }
 
-impl AssetReader for SyncedFiles {
+impl AssetReader for SyncedAssetReader {
     async fn read<'a>(&'a self, path: &'a Path) -> Result<impl Reader + 'a, AssetReaderError> {
         self.get(path)
             .map(|bytes| VecReader::new(bytes.to_vec()))

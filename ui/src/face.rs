@@ -161,10 +161,6 @@ pub fn secondary(text: impl Into<String>) -> RichText {
     TextRole::Body.rich(text).color(ink::INK2)
 }
 
-pub fn faint(text: impl Into<String>) -> RichText {
-    TextRole::Body.rich(text).color(ink::INK3)
-}
-
 pub fn small(text: impl Into<String>) -> RichText {
     TextRole::Small.rich(text)
 }

@@ -32,7 +32,7 @@ pub struct AreaScreenPlugin;
 
 impl Plugin for AreaScreenPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Crossing>()
+        app.init_resource::<AreaCrossing>()
             .add_systems(
                 Update,
                 (
@@ -55,7 +55,7 @@ impl Plugin for AreaScreenPlugin {
 }
 
 #[derive(Resource, Default, Clone, Copy)]
-struct Crossing {
+struct AreaCrossing {
     last_seen: Option<Pose>,
     held: Option<Held>,
 }
@@ -79,13 +79,13 @@ struct Held {
 
 /// The view is revealed when no crossing is held under the veil and no transition plays over it.
 pub fn settled(world: &World) -> bool {
-    world.resource::<Crossing>().held.is_none()
+    world.resource::<AreaCrossing>().held.is_none()
         && world.resource::<ActiveTransition>().phase() == ScreenTransitionPhase::Idle
 }
 
 pub fn carry_view_across(world: &mut World) {
     let now = time::uptime(world);
-    let Crossing { last_seen, held } = *world.resource::<Crossing>();
+    let AreaCrossing { last_seen, held } = *world.resource::<AreaCrossing>();
     let (last_seen, held) = match session::me(world) {
         Some(character) => match (pose_of(world, character), held, last_seen) {
             (None, _, _) => (last_seen, held),
@@ -127,7 +127,7 @@ pub fn carry_view_across(world: &mut World) {
             _ => (None, held),
         },
     };
-    *world.resource_mut::<Crossing>() = Crossing { last_seen, held };
+    *world.resource_mut::<AreaCrossing>() = AreaCrossing { last_seen, held };
 }
 
 fn reveal(world: &mut World, pose: Pose) {
@@ -137,7 +137,7 @@ fn reveal(world: &mut World, pose: Pose) {
 
 fn restart_patience(world: &mut World) {
     let now = time::uptime(world);
-    if let Some(held) = world.resource_mut::<Crossing>().held.as_mut() {
+    if let Some(held) = world.resource_mut::<AreaCrossing>().held.as_mut() {
         held.since = now;
     }
 }
@@ -167,7 +167,7 @@ fn pose_of(world: &World, character: Entity) -> Option<Pose> {
 /// where the character lands.
 fn leave_area(world: &mut World) {
     let now = time::uptime(world);
-    let Crossing { last_seen, held } = *world.resource::<Crossing>();
+    let AreaCrossing { last_seen, held } = *world.resource::<AreaCrossing>();
     let held = match (last_seen, held) {
         (Some(pose), None) => {
             transition::freeze(world, pose.at, pose.heading);
@@ -179,7 +179,7 @@ fn leave_area(world: &mut World) {
             None
         }
     };
-    *world.resource_mut::<Crossing>() = Crossing {
+    *world.resource_mut::<AreaCrossing>() = AreaCrossing {
         last_seen: None,
         held,
     };

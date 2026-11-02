@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::net::{IpAddr, SocketAddr};
+use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 use std::path::{Path, PathBuf};
 
 use schemars::JsonSchema;
@@ -39,12 +39,12 @@ pub fn server_schema() -> String {
     serde_json::to_string_pretty(&schema).expect("a serializable schema")
 }
 
+/// Everything a game server speaks to whoever runs it, for its schema.
 #[derive(JsonSchema)]
-#[allow(dead_code)]
-struct ServerProtocol {
-    ready: ReadyLine,
-    test_character: TestCharacterRequest,
-    stage: Staging,
+pub struct ServerProtocol {
+    pub ready: ReadyLine,
+    pub test_character: TestCharacterRequest,
+    pub stage: Staging,
 }
 
 /// What a binary starts with: its environment, over the [`LAUNCH_FILE`] beside it.
@@ -159,6 +159,31 @@ pub struct ServerConfig {
     pub auth: AuthMode,
     pub test_characters: bool,
     pub exit_on_stdin_eof: bool,
+}
+
+impl ServerConfig {
+    /// A server for a tool on this machine to play `content_dir` on alone: on any free ports of
+    /// the loopback, signing players in without asking, handing out test characters and stopping
+    /// with the tool that started it.
+    pub fn local(content_dir: PathBuf) -> ServerConfig {
+        let loopback = IpAddr::V4(Ipv4Addr::LOCALHOST);
+        ServerConfig {
+            bind: loopback,
+            port: 0,
+            udp_port: 0,
+            public_ip: loopback,
+            max_clients: 8,
+            content_dir,
+            player_spawn_policy: SpawnPolicy::Map,
+            player_immortal: false,
+            daylight: ServerDaylight::Turning,
+            rng_seed: None,
+            daily_reset_utc_hour: UtcHour::MIDNIGHT,
+            auth: AuthMode::Fake,
+            test_characters: true,
+            exit_on_stdin_eof: true,
+        }
+    }
 }
 
 /// Whether a game's day turns on the server, or holds at its start hour, as tests that compare how

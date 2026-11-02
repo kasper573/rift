@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use ui::controls;
 use ui::egui;
+use ui::face;
 use ui::form;
 use ui::menu;
 use ui::panel;
@@ -69,7 +70,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, selection: &RowSe
             }
             many => {
                 breadcrumb(ui, &format!("{} › {} nodes", doc.at.title(), many.len()));
-                panel::card(ui, true, |ui| {
+                panel::tile_across(ui, true, |ui| {
                     panel::title(ui, &format!("{} nodes", many.len()));
                     for name in many {
                         if let (Some(node), Some(project)) =
@@ -77,7 +78,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, selection: &RowSe
                         {
                             let summary = nodes::summary(node, &doc.text(project));
                             ui.horizontal(|ui| {
-                                ui.label(theme::mono(name).size(12.5));
+                                ui.label(face::mono(name).size(12.5));
                                 ui.label(theme::muted(words::clip(&summary, 50)).size(12.5));
                             });
                         }
@@ -120,7 +121,7 @@ pub fn script_row(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
     let mut picked = None;
     let changed = {
         let mut cx = doc.form_cx(editor, root, &mut actions);
-        panel::card(ui, false, |ui| {
+        panel::tile_across(ui, false, |ui| {
             panel::header(ui, shown_path(&key), what, |ui| {
                 let menu = RowMenu::of(&key);
                 picked = browser::row_menu(ui, &menu, false);
@@ -285,7 +286,7 @@ fn variables_section(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
                 .filter(|(_, node)| nodes::node_vars(&doc.reader, node).contains(name))
                 .map(|(node_name, _)| node_name.clone())
                 .collect();
-            panel::card(ui, false, |ui| {
+            panel::tile_across(ui, false, |ui| {
                 panel::header(ui, name, "", |ui| {
                     if ui.button("Remove the variable").clicked() {
                         script.variables.remove(name);
@@ -426,7 +427,7 @@ fn run_by_section(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
         for caller in &callers {
             let response = ui
                 .horizontal(|ui| {
-                    widgets::badge(ui, "script");
+                    widgets::table_mark(ui, ScriptDef::TABLE);
                     ui.label(
                         theme::strong(shown_path(&caller.key))
                             .monospace()
@@ -467,7 +468,7 @@ fn run_by_section(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
         sheet::section(ui, "Speaks for");
         for npc in &speakers {
             ui.horizontal(|ui| {
-                widgets::badge(ui, "npc");
+                widgets::table_mark(ui, NpcDef::TABLE);
                 ui.label(theme::strong(shown_path(npc)).monospace().size(13.0));
                 let through = callers
                     .iter()
@@ -532,7 +533,7 @@ fn node_inspector(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, name: &str)
     let title = super::graph::card_title(name, &node);
     let changed = {
         let mut cx = doc.form_cx(editor, root, &mut actions);
-        panel::card(ui, true, |ui| {
+        panel::tile_across(ui, true, |ui| {
             panel::header(ui, &title, "", |ui| {
                 if ui
                     .add(widgets::shortcut_button("Rename…", EditorKey::Rename))
@@ -733,8 +734,7 @@ fn fill_hole(
                 .iter()
                 .find(|var| var.field.pointer == pointer)
                 .and_then(|var| var.field.table.clone());
-            let base = pointer.rsplit('/').next().unwrap_or("value");
-            let name = rows::free_name(base, &script.variables.keys().cloned().collect());
+            let name = rows::hole_name(&pointer, &script.variables.keys().cloned().collect());
             script.variables.insert(
                 name.clone(),
                 Variable {
@@ -788,8 +788,7 @@ fn arrows_rows(ui: &mut Ui, outs: &[nodes::NodePort], unwired: &[String]) -> Opt
                 ui.label(theme::muted("→").size(13.0));
                 if ui
                     .add(
-                        egui::Label::new(theme::mono(target).size(13.0))
-                            .sense(egui::Sense::click()),
+                        egui::Label::new(face::mono(target).size(13.0)).sense(egui::Sense::click()),
                     )
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
                     .clicked()
@@ -849,7 +848,7 @@ fn node_extras(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, shown: Shown) 
         sheet::section(ui, "Arrows in");
         for (from, label) in ins {
             ui.horizontal(|ui| {
-                ui.label(theme::mono(from).size(12.5));
+                ui.label(face::mono(from).size(12.5));
                 ui.label(theme::muted(label).size(12.5));
             });
         }
@@ -917,7 +916,7 @@ fn memory_row_card(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, memory: &s
         };
         let mut cx = FormCx::new(project, schema, shapes, form, &mut actions)
             .editing(MemoryDef::TABLE, Some(memory));
-        panel::card(ui, false, |ui| {
+        panel::tile_across(ui, false, |ui| {
             panel::header(ui, shown_path(memory), "row", |ui| {
                 if ui.button("Open the row").clicked() {
                     cx.actions.push(FormAction::OpenRow {
@@ -954,12 +953,12 @@ fn keeps_cards(ui: &mut Ui, doc: &ScriptDoc) {
             "values that last one flow".to_owned(),
         ),
     ] {
-        panel::card(ui, false, |ui| {
+        panel::tile_across(ui, false, |ui| {
             panel::title(ui, title);
             ui.label(theme::muted(format!("{names} · {sentence}")).size(13.0));
         });
     }
-    panel::card(ui, false, |ui| {
+    panel::tile_across(ui, false, |ui| {
         panel::title(ui, "variables");
         let text = format!("{} · each runner's values", names_of(&script.variables));
         ui.label(theme::muted(text).size(13.0));
@@ -1001,7 +1000,7 @@ fn bounds_card(ui: &mut Ui, doc: &ScriptDoc, name: &str, node: &Node) {
     } else {
         (body.len() + 1) * at_most as usize
     };
-    panel::card(ui, false, |ui| {
+    panel::tile_across(ui, false, |ui| {
         panel::subtitled(ui, "bounds", "compiler");
         form::kv_text(ui, "steps", format!("at most {steps} between two waits"));
         form::kv_text(
@@ -1078,7 +1077,7 @@ fn dialogue_form(
     let count = node.lines.len();
     for (index, line) in node.lines.iter_mut().enumerate() {
         let line_path = format!("{path}/lines/{index}");
-        panel::card(ui, false, |ui| {
+        panel::tile_across(ui, false, |ui| {
             let title = format!("line {}", index + 1);
             if count > 1 {
                 panel::header(ui, &title, "", |ui| {
@@ -1199,7 +1198,7 @@ fn choice_card(ui: &mut Ui, cx: &mut FormCx, choice: &mut Choice, at: &ChoiceAt)
     let mut changed = FormChange::default();
     let mut menu = ChoiceMenu::default();
     let mut go: Option<String> = None;
-    panel::card(ui, false, |ui| {
+    panel::tile_across(ui, false, |ui| {
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
             ui.menu_button(Mark::More.text(16.0).color(theme::FAINT), |ui| {
                 if index > 0 && ui.button("Move up").clicked() {
@@ -1269,7 +1268,7 @@ fn choice_card(ui: &mut Ui, cx: &mut FormCx, choice: &mut Choice, at: &ChoiceAt)
                 for &option in ChoiceReveal::VARIANTS {
                     let on = choice.reveal.contains(&option);
                     if ui
-                        .selectable_label(on, theme::mono(<&str>::from(option)).size(12.0))
+                        .selectable_label(on, face::mono(<&str>::from(option)).size(12.0))
                         .clicked()
                     {
                         if on {
@@ -1318,7 +1317,7 @@ fn choice_card(ui: &mut Ui, cx: &mut FormCx, choice: &mut Choice, at: &ChoiceAt)
                     .unwrap_or_else(|| target.clone());
                 if ui
                     .add(
-                        egui::Label::new(theme::mono(format!("→ {what}")).size(13.0))
+                        egui::Label::new(face::mono(format!("→ {what}")).size(13.0))
                             .sense(egui::Sense::click()),
                     )
                     .on_hover_cursor(egui::CursorIcon::PointingHand)
@@ -1410,7 +1409,7 @@ fn speaker_rows(
     let mut picked = current;
     form::kv(ui, "by", |ui| {
         controls::combo(ui.id().with(path).with("speaker"))
-            .selected_text(theme::mono(current.name()).size(13.0))
+            .selected_text(face::mono(current.name()).size(13.0))
             .width(ui.available_width())
             .show_ui(ui, |ui| {
                 for &option in SpeakerKind::options(doc.kind) {

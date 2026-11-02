@@ -3,6 +3,7 @@
 
 use std::collections::BTreeMap;
 
+use engine::core::content::SchemaMark;
 use engine::core::content::{Content, ContentFile, ContentNames, NamedContent};
 use engine::systems::actor::model::Skeletons;
 pub use engine::systems::actor::skeleton::NameKind;
@@ -19,7 +20,7 @@ pub(crate) fn kind_of_schema(schema: &serde_json::Value) -> Option<NameKind> {
     schema
         .as_object()?
         .keys()
-        .find_map(|marker| NameKind::of_marker(marker))
+        .find_map(|key| SchemaMark::of_key(key).and_then(NameKind::of_mark))
 }
 
 /// Whether names of `kind` are made up where a skeleton lists them, rather than picked.

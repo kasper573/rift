@@ -14,6 +14,7 @@ use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::de::{self, Deserializer};
 use serde::{Deserialize, Serialize, Serializer};
 
+use super::SchemaMark;
 use super::files::{bundle_of, name_of, table_of};
 use super::report::ContentProblem;
 use super::table::{Content, ContentFile};
@@ -107,7 +108,7 @@ impl<Row: ContentFile> JsonSchema for ContentId<Row> {
 
     fn json_schema(generator: &mut SchemaGenerator) -> Schema {
         let mut schema = String::json_schema(generator);
-        schema.insert("x-table".to_owned(), Row::TABLE.into());
+        SchemaMark::Table.set(&mut schema, Row::TABLE);
         schema
     }
 

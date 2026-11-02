@@ -19,21 +19,21 @@ use crate::views::stage;
 
 /// What the stage plays: an engine action, a pose, a move or a gesture, as a stance resolves it.
 #[derive(Clone, Debug, PartialEq)]
-pub struct Shown {
+pub struct PlayedMotion {
     pub motion: Motion,
     pub pose: Pose,
 }
 
-impl Default for Shown {
-    fn default() -> Shown {
-        Shown {
+impl Default for PlayedMotion {
+    fn default() -> PlayedMotion {
+        PlayedMotion {
             motion: Motion::Action(Action::Idle),
             pose: Pose::Idle,
         }
     }
 }
 
-impl Shown {
+impl PlayedMotion {
     pub fn label(&self) -> String {
         match (&self.motion, self.pose) {
             (Motion::Action(Action::Idle), pose) if pose != Pose::Idle => {
@@ -155,8 +155,8 @@ fn hitbox(editor: &mut Editor, ui: &Ui, key: &str, row: &ModelDef, turntable: &s
 struct Scene {
     stances: Vec<(String, String)>,
     stance: Option<String>,
-    choices: Vec<Shown>,
-    shown: Shown,
+    choices: Vec<PlayedMotion>,
+    shown: PlayedMotion,
     playing: Option<Playing>,
 }
 
@@ -181,9 +181,9 @@ impl Scene {
         let stance_id = stance
             .as_deref()
             .and_then(|path| content.by_path::<StanceDef>(path));
-        let mut choices: Vec<Shown> = Action::VARIANTS
+        let mut choices: Vec<PlayedMotion> = Action::VARIANTS
             .iter()
-            .map(|action| Shown {
+            .map(|action| PlayedMotion {
                 motion: Motion::Action(*action),
                 pose: Pose::Idle,
             })
@@ -200,7 +200,7 @@ impl Scene {
                     ]
                     .into_iter()
                     .filter(|motion| model.plays(stance_id, motion))
-                    .map(|motion| Shown {
+                    .map(|motion| PlayedMotion {
                         pose: match motion {
                             Motion::Action(_) => *pose,
                             _ => Pose::Idle,
@@ -212,14 +212,14 @@ impl Scene {
         let mut moves: Vec<_> = skeleton.def.moves().cloned().collect();
         moves.sort();
         moves.dedup();
-        choices.extend(moves.into_iter().map(|name| Shown {
+        choices.extend(moves.into_iter().map(|name| PlayedMotion {
             motion: Motion::Move(name),
             pose: Pose::Idle,
         }));
         let mut gestures: Vec<_> = skeleton.def.gestures().cloned().collect();
         gestures.sort();
         gestures.dedup();
-        choices.extend(gestures.into_iter().map(|name| Shown {
+        choices.extend(gestures.into_iter().map(|name| PlayedMotion {
             motion: Motion::Gesture(name),
             pose: Pose::Idle,
         }));

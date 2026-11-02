@@ -13,6 +13,7 @@ use super::material;
 use super::part::ModelPartId;
 use super::skeleton::{Colours, EquipmentSlot};
 use super::{ActorModel, Hitbox, ModelId};
+use crate::core::content::SchemaMark;
 use crate::core::content::{Content, RowCheck};
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
 use crate::systems::item::{ItemId, Wear, WornLook};
@@ -228,7 +229,7 @@ pub fn check(content: &Content, appearance: &Appearance, pointer: &str, cx: &mut
 /// Dresses the npc whose script this is in a new appearance; one its model cannot wear is refused
 /// as the game loads.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "npc body"))]
+#[schemars(transform = SchemaMark::System.with("npc body"))]
 pub struct SetAppearance {
     pub appearance: Appearance,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]

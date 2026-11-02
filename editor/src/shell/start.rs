@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 use ui::controls;
 use ui::dialog;
 use ui::egui;
+use ui::face;
 use ui::panel;
 use ui::theme;
 use ui::words;
@@ -215,7 +216,7 @@ fn recover_dialog(editor: &mut Editor, ctx: &Context) {
                             let name = content_of(&file.path)
                                 .map(|(_, key)| shown_path(key).to_owned())
                                 .unwrap_or_else(|| file.path.clone());
-                            ui.label(theme::mono(name).size(13.0));
+                            ui.label(face::mono(name).size(13.0));
                             ui.label(
                                 theme::faint(if file.bytes.is_some() {
                                     "unsaved edits"

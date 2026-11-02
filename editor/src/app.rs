@@ -143,7 +143,6 @@ pub struct Editor {
     pub play: play::PlayTest,
     pub pick: Option<PlacePick>,
     pub quit: bool,
-    pub frame: u64,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, IntoStaticStr)]
@@ -225,7 +224,6 @@ impl Editor {
             play: PlayTest::default(),
             pick: None,
             quit: false,
-            frame: 0,
         }
     }
 
@@ -820,7 +818,6 @@ fn editor_ui(world: &mut World) {
     };
     let frame_ms = world.resource::<Time>().delta_secs() * 1000.0;
     let (ui_ms, tab) = world.resource_scope(|world, mut editor: Mut<Editor>| {
-        editor.frame += 1;
         let started = Instant::now();
         shell::show(&mut editor, &ctx);
         if editor.settings.frame_rate {

@@ -3,20 +3,22 @@ use ui::egui;
 
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 use ui::egui::{Align, Color32, Layout, Sense, Shape, Stroke, StrokeKind, UiBuilder};
 
-use super::rows::{self, Clock, Fades, Look, Move, Presence};
+use super::rows::{self, Clock};
 use super::{Notification, NotificationKind, NotificationSent, window_visible};
 use crate::core::audio::playback::SfxPlace;
 use crate::core::babble::{BabbleId, BabbleRank, Babbler, Babbling};
 use crate::core::content::Content;
 use crate::core::gui::{self, Band};
-use crate::core::math::Pos;
+use crate::core::math::{self, Pos, RectSchema};
 use crate::core::render::camera;
 use crate::core::render::window_point;
 use crate::core::text::{self, StyledLine, Typewriter};
 use crate::core::time;
-use crate::core::units::{MeterPos, Meters, Seconds};
+use crate::core::units::{MeterPos, Meters, Seconds, WindowPx};
 use crate::systems::GameSettings;
 use crate::systems::actor::render::Said;
 use crate::systems::actor::{Action, Actor, plate};
@@ -29,6 +31,7 @@ use crate::systems::npc::NpcId;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::skill::{self, Rank};
+use ui::motion::{Transit, TransitMove, TransitPose, Transits};
 use ui::paint;
 
 const LINES: usize = 2;
@@ -53,9 +56,9 @@ const INK: Color32 = rows::SLATE_90;
 const FILL: Color32 = rows::SLATE_40;
 const OUTLINE: Color32 = Color32::from_rgb(73, 74, 80);
 // The offsets are those of a bubble whose tail points down; `Tail::turn` turns them to its tail.
-const PRESENCE: Presence = Presence {
-    enter: Move::new(egui::vec2(0.0, 10.0), 0.82, 0.32),
-    exit: Move::new(egui::vec2(0.0, -8.0), 0.94, 0.2),
+const TRANSIT: Transit = Transit {
+    enter: TransitMove::new(egui::vec2(0.0, 10.0), 0.82, 0.32),
+    exit: TransitMove::new(egui::vec2(0.0, -8.0), 0.94, 0.2),
 };
 
 pub struct BubblePlugin;
@@ -75,7 +78,7 @@ impl Plugin for BubblePlugin {
                     .in_set(Band::World)
                     .run_if(in_state(ClientScreen::Area)),
             )
-            .add_systems(OnExit(ClientScreen::Area), forget);
+            .add_systems(OnExit(ClientScreen::Area), super::forget::<Bubbles>);
     }
 }
 
@@ -121,15 +124,17 @@ pub fn edge_folds(world: &World) -> Vec<u32> {
     world.resource::<Bubbles>().edge_folds.clone()
 }
 
-pub fn shown(world: &World) -> Vec<NotificationBubble> {
+pub fn shown(world: &World) -> Vec<ShownBubble> {
+    let content = world.resource::<Content>();
     world
         .resource::<Bubbles>()
         .speakers
         .iter()
-        .map(|speaking| NotificationBubble {
-            speaker: speaking.speaker,
+        .map(|speaking| ShownBubble {
+            speaker: speaking.speaker.get(content).name.to_owned(),
+            npc: speaking.speaker,
             body: speaking.body,
-            rect: speaking.drawn.map(|drawn| drawn.rect),
+            rect: speaking.drawn.map(|drawn| gui::window_rect(drawn.rect)),
             replaced: speaking.replaced,
             lines: speaking
                 .lines
@@ -141,10 +146,16 @@ pub fn shown(world: &World) -> Vec<NotificationBubble> {
         .collect()
 }
 
-pub struct NotificationBubble {
-    pub speaker: NpcId,
+/// A speech bubble on show: who speaks it, by name and file, over which body, how many lines
+/// replaced others in it, its lines, whether it is folded, and where it is drawn.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ShownBubble {
+    pub speaker: String,
+    pub npc: NpcId,
+    #[schemars(with = "Option<u64>")]
     pub body: Option<Entity>,
-    pub rect: Option<egui::Rect>,
+    #[schemars(with = "Option<RectSchema>")]
+    pub rect: Option<math::Rect<WindowPx>>,
     pub replaced: u32,
     pub lines: Vec<String>,
     pub folded: bool,
@@ -154,7 +165,7 @@ pub struct NotificationBubble {
 struct Bubbles {
     speakers: Vec<Speaking>,
     edge_folds: Vec<u32>,
-    fades: Fades<BubbleDraw>,
+    fades: Transits<BubbleDraw>,
     arrivals: u64,
 }
 
@@ -335,13 +346,6 @@ impl BubbleDraw {
     }
 }
 
-fn forget(world: &mut World) {
-    let bubbles = std::mem::take(&mut *world.resource_mut::<Bubbles>());
-    for speaking in &bubbles.speakers {
-        despawn_all(world, speaking.typing());
-    }
-}
-
 fn tick(world: &mut World) {
     let delta = world.resource::<Time>().delta();
     let glance = world.resource::<GameSettings>().reading.glance;
@@ -488,14 +492,14 @@ fn place(world: &mut World) {
         draw.rect = egui_rect(perch.rect(size));
         draws.push((draw.key, draw));
     }
-    let shown = bubbles.fades.sync(now, PRESENCE, draws);
+    let shown = bubbles.fades.sync(now, TRANSIT, draws);
     *world.resource_mut::<Bubbles>() = bubbles;
     for (draw, look) in shown {
         paint(world, &gui, &draw, look);
     }
 }
 
-fn paint(world: &mut World, gui: &egui::Context, draw: &BubbleDraw, look: Look) {
+fn paint(world: &mut World, gui: &egui::Context, draw: &BubbleDraw, look: TransitPose) {
     let area = gui::world_area(world, ("bubble", draw.key))
         .fade_in(false)
         .fixed_pos(draw.rect.min);
@@ -569,7 +573,7 @@ fn paint(world: &mut World, gui: &egui::Context, draw: &BubbleDraw, look: Look) 
         }
         ui.allocate_rect(draw.rect, Sense::hover());
     });
-    let look = Look {
+    let look = TransitPose {
         offset: Tail::turn(draw.tail, look.offset),
         ..look
     };
@@ -689,7 +693,11 @@ fn start_typing(world: &mut World, speaking: &mut Speaking) {
     let since = time::uptime(world);
     for line in &mut speaking.lines[..shown] {
         if line.typing.is_none() {
-            let mut typing = world.spawn((line.notification.text.styled(), Typewriter::default()));
+            let mut typing = world.spawn((
+                line.notification.text.styled(),
+                Typewriter::default(),
+                DespawnOnExit(ClientScreen::Area),
+            ));
             if let Some(by) = speaking.body {
                 typing.insert(Said {
                     by,
@@ -765,7 +773,7 @@ fn spot(world: &mut World, speaking: &Speaking, window: Vec2) -> Spot {
 
 impl Room {
     fn of(world: &World, window: Vec2) -> Room {
-        let taken = hud::pieces(world)
+        let taken = hud::drawn_rects(world)
             .into_iter()
             .chain(stage::rects(world))
             .map(|rect| Rect::new(rect.min.x, rect.min.y, rect.max.x, rect.max.y))

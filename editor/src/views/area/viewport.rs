@@ -153,7 +153,7 @@ impl StandingActor {
 
 /// The picture a viewport last drew, for the view to show and draw over.
 #[derive(Clone, Copy)]
-pub struct Shown {
+pub struct DrawnViewport {
     pub texture: egui::TextureId,
     pub size: [u32; 2],
     /// The camera the picture was drawn from, which the overlays project through so they agree
@@ -199,9 +199,9 @@ impl Viewports {
     }
 
     /// The picture last drawn for the view `key`.
-    pub fn shown(&self, key: &str) -> Option<Shown> {
+    pub fn shown(&self, key: &str) -> Option<DrawnViewport> {
         let viewport = self.shown.get(key)?;
-        Some(Shown {
+        Some(DrawnViewport {
             texture: viewport.texture,
             size: viewport.size,
             camera: viewport.rendered,

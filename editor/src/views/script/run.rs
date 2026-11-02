@@ -3,6 +3,7 @@ use std::str::FromStr;
 use std::time::Duration;
 use ui::draft;
 use ui::egui;
+use ui::face;
 use ui::form;
 use ui::menu;
 use ui::panel;
@@ -15,7 +16,7 @@ use bevy::time::TimeUpdateStrategy;
 use bevy_replication::ToClient;
 use engine::core::content::{Content, ContentFile, ContentScope, FolderReader};
 use engine::core::math::Pos;
-use engine::core::script::{FlowSteering, Pause, RunnerKindDef, Value as ScriptValue, ValueType};
+use engine::core::script::{FlowSteering, Pause, Value as ScriptValue, ValueType};
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::core::units::Meters;
 use engine::systems::actor::Name;
@@ -52,7 +53,7 @@ use crate::project::files::content_of;
 use crate::stage::live;
 use crate::tabs::EditorTab;
 use crate::tabs::shown_path;
-use crate::views::character::Standing;
+use crate::views::character::QuestStanding;
 use crate::widgets;
 use ui::input::{InputField, NumberField};
 
@@ -188,7 +189,7 @@ pub fn panel(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
             start = true;
         }
         controls::combo(("run-event", doc.at.slug()))
-            .selected_text(theme::mono(&setup.event).size(13.0))
+            .selected_text(face::mono(&setup.event).size(13.0))
             .show_ui(ui, |ui| {
                 for event in &events {
                     ui.selectable_value(&mut setup.event, event.clone(), event);
@@ -206,8 +207,8 @@ pub fn panel(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
                         panel::tile(true)
                             .inner_margin(egui::Margin::symmetric(6, 2))
                             .show(ui, |ui| {
-                                widgets::badge(ui, owner.row.kind.name());
-                                ui.label(theme::mono(&owner.label).size(13.0));
+                                widgets::mark(ui, widgets::runner_mark(owner.row.kind));
+                                ui.label(face::mono(&owner.label).size(13.0));
                                 ui.label(RichText::new("→").size(12.0).color(theme::ACCENT));
                             });
                     })
@@ -223,7 +224,7 @@ pub fn panel(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
             _ => {
                 controls::combo(("run-owner", doc.at.slug()))
                     .selected_text(
-                        theme::mono(
+                        face::mono(
                             bound
                                 .get(setup.owner)
                                 .map(|b| b.label.clone())
@@ -241,7 +242,7 @@ pub fn panel(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
         ui.label(theme::muted("by").size(13.0));
         controls::combo(("run-character", doc.at.slug()))
             .selected_text(
-                theme::mono(
+                face::mono(
                     setup
                         .character
                         .as_ref()
@@ -439,7 +440,7 @@ pub fn panel(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
                     if !title.is_empty() {
                         ui.add_sized(
                             egui::vec2(120.0, 18.0),
-                            egui::Label::new(theme::mono(&title).size(13.0)).truncate(),
+                            egui::Label::new(face::mono(&title).size(13.0)).truncate(),
                         );
                     }
                     ui.add(egui::Label::new(theme::muted(detail).monospace().size(12.5)).wrap());
@@ -628,7 +629,7 @@ pub fn inspector(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) -> bool {
             .unwrap_or_default(),
     };
     sheet::section(ui, "Owner");
-    panel::card(ui, false, |ui| {
+    panel::tile_across(ui, false, |ui| {
         panel::title(ui, &label);
         form::kv_text(ui, "state", state_names);
         form::kv_text(
@@ -678,13 +679,13 @@ fn character_card(
         .map(|class| class.get(content).levels.len())
         .unwrap_or(0);
     let area_key = run.area.path(content).to_owned();
-    panel::card(ui, false, |ui| {
+    panel::tile_across(ui, false, |ui| {
         panel::title(ui, &name);
         form::kv(ui, "level", |ui| {
             let mut picked = level;
             controls::combo("run-level")
                 .width(ui.available_width() - 8.0)
-                .selected_text(theme::mono(level.to_string()))
+                .selected_text(face::mono(level.to_string()))
                 .show_ui(ui, |ui| {
                     for tier in 1..=tiers.max(1) as u32 {
                         ui.selectable_value(&mut picked, tier, tier.to_string());
@@ -706,7 +707,7 @@ fn character_card(
             let mut picked = class;
             controls::combo("run-class")
                 .width(ui.available_width() - 8.0)
-                .selected_text(theme::mono(&current))
+                .selected_text(face::mono(&current))
                 .show_ui(ui, |ui| {
                     for (id, key) in &classes {
                         ui.selectable_value(&mut picked, Some(*id), key);
@@ -752,7 +753,7 @@ fn memories_card(ui: &mut Ui, run: &mut ScriptRun, content: &Content, read: &[St
     }
     let all: Vec<String> = content.table::<MemoryDef>().paths().to_vec();
     let mut add: Option<String> = None;
-    panel::card(ui, false, |ui| {
+    panel::tile_across(ui, false, |ui| {
         panel::title(ui, "memories");
         if shown.is_empty() {
             ui.label(theme::muted("none set · unset reads as zero").size(13.0));
@@ -879,7 +880,7 @@ fn quests_card(
     }
     let all: Vec<String> = content.table::<QuestDef>().paths().to_vec();
     let mut add: Option<String> = None;
-    panel::card(ui, false, |ui| {
+    panel::tile_across(ui, false, |ui| {
         panel::title(ui, "quests");
         if shown.is_empty() {
             ui.label(theme::muted("none taken").size(13.0));
@@ -888,16 +889,16 @@ fn quests_card(
             let Some(id) = content.by_path::<QuestDef>(key) else {
                 continue;
             };
-            let standing = Standing::of_log(&log, id);
+            let standing = QuestStanding::of_log(&log, id);
             ui.horizontal(|ui| {
                 if controls::keyed(ui, shown_path(key), None, true).clicked() {
                     *open = Some(EditorTab::for_row(QuestDef::TABLE, key));
                 }
                 let mut picked = standing;
                 controls::combo(("run-quest", key))
-                    .selected_text(theme::mono(run_label(standing)))
+                    .selected_text(face::mono(run_label(standing)))
                     .show_ui(ui, |ui| {
-                        for &option in Standing::VARIANTS {
+                        for &option in QuestStanding::VARIANTS {
                             ui.selectable_value(&mut picked, option, run_label(option));
                         }
                     });
@@ -947,7 +948,7 @@ fn bag_card(
     }
     let all: Vec<String> = content.table::<ItemDef>().paths().to_vec();
     let mut add: Option<String> = None;
-    panel::card(ui, false, |ui| {
+    panel::tile_across(ui, false, |ui| {
         panel::title(ui, "bag");
         if shown.is_empty() {
             ui.label(theme::muted("empty").size(13.0));
@@ -994,7 +995,7 @@ fn add_popup(ui: &mut Ui, label: &str, all: &[String], shown: &[String]) -> Opti
                 for key in all.iter().filter(|key| !shown.contains(key)) {
                     any = true;
                     if ui
-                        .selectable_label(false, theme::mono(shown_path(key)).size(12.5))
+                        .selectable_label(false, face::mono(shown_path(key)).size(12.5))
                         .clicked()
                     {
                         add = Some(key.clone());
@@ -1008,9 +1009,9 @@ fn add_popup(ui: &mut Ui, label: &str, all: &[String], shown: &[String]) -> Opti
     add
 }
 
-fn run_label(standing: Standing) -> &'static str {
+fn run_label(standing: QuestStanding) -> &'static str {
     match standing {
-        Standing::Active => "active",
+        QuestStanding::Active => "active",
         other => other.label(),
     }
 }
@@ -1020,7 +1021,7 @@ fn set_quest_standing(
     subject: Entity,
     content: &Content,
     quest: QuestId,
-    standing: Standing,
+    standing: QuestStanding,
 ) {
     let day = world.resource::<WallClock>().day();
     let Some(mut log) = world.get_mut::<QuestLog>(subject) else {
@@ -1030,15 +1031,16 @@ fn set_quest_standing(
     log.finished.retain(|finished| finished.quest != quest);
     log.tracked.retain(|tracked| *tracked != quest);
     match standing {
-        Standing::NotTaken => {}
-        Standing::Active => log.active.push(ActiveQuest::fresh(content, quest)),
-        Standing::Completed => {
+        QuestStanding::NotTaken => {}
+        QuestStanding::Active => log.active.push(ActiveQuest::fresh(content, quest)),
+        QuestStanding::Completed => {
             log.finished
                 .push(FinishedQuest::new(quest, QuestResult::Completed, day))
         }
-        Standing::Failed => log
-            .finished
-            .push(FinishedQuest::new(quest, QuestResult::Failed, day)),
+        QuestStanding::Failed => {
+            log.finished
+                .push(FinishedQuest::new(quest, QuestResult::Failed, day))
+        }
     }
 }
 

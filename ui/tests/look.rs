@@ -3,7 +3,7 @@ use strum::VariantArray;
 use ui::card::{self, Card};
 use ui::face::{self, Face};
 use ui::glyph::{CardKind, Icon, Mark, Weight};
-use ui::motion::{self, Clock};
+use ui::motion::{self, SheetClock};
 use ui::sheet::{Depth, Sheet};
 use ui::{controls, ink};
 
@@ -96,11 +96,11 @@ fn every_kind_glyph_decodes_into_a_texture() {
 
 #[test]
 fn a_sheet_opens_in_its_time_closes_quicker_and_reverses_from_where_it_is() {
-    let mut clock = Clock::CLOSED;
+    let mut clock = SheetClock::CLOSED;
     assert!(clock.is_closed());
     clock.run(true, motion::SHEET_OPEN_SECS);
     assert!(clock.is_open());
-    let mut opening = Clock::CLOSED;
+    let mut opening = SheetClock::CLOSED;
     opening.run(true, motion::SHEET_CLOSE_SECS);
     assert!(
         !opening.is_open(),
@@ -117,12 +117,12 @@ fn a_sheet_opens_in_its_time_closes_quicker_and_reverses_from_where_it_is() {
 
 #[test]
 fn a_sheet_rests_flat_once_open_and_starts_faint_and_lifted() {
-    let closed = Clock::CLOSED.pose();
-    let open = Clock::OPEN.pose();
+    let closed = SheetClock::CLOSED.pose();
+    let open = SheetClock::OPEN.pose();
     assert_eq!(open, motion::SheetPose::REST);
     assert_eq!(closed.opacity, 0.0);
     assert!(closed.dy < 0.0);
-    let mut mid = Clock::CLOSED;
+    let mut mid = SheetClock::CLOSED;
     mid.run(true, motion::SHEET_OPEN_SECS / 2.0);
     let pose = mid.pose();
     assert!(pose.opacity > closed.opacity && pose.opacity < open.opacity);
@@ -297,7 +297,7 @@ fn a_sheet_in_motion_keeps_its_pin_where_it_falls_within_a_pixel_at_rest() {
     let rect = Rect::from_min_size(Pos2::new(210.3, 140.6), Vec2::new(400.0, 230.0));
     let pin = Pos2::new(355.25, 148.75);
     let within = |at: Pos2| at - Pos2::new(at.x.round(), at.y.round());
-    let mut clock = Clock::CLOSED;
+    let mut clock = SheetClock::CLOSED;
     for _ in 0..12 {
         clock.run(true, motion::SHEET_OPEN_SECS / 12.0);
         let posed = clock.pose().transform(&ctx, rect, pin) * pin;

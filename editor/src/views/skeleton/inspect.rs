@@ -33,11 +33,11 @@ pub fn show(
     if let Some(content) = &content {
         chosen(editor, ui, key, def, content);
     }
-    panel::titled_card(ui, false, "Rig", |ui| {
+    panel::titled_tile(ui, false, "Rig", |ui| {
         rig(ui, key, def, rigging, content.as_ref());
     });
     ui.add_space(8.0);
-    panel::card(ui, false, |ui| match page {
+    panel::tile_across(ui, false, |ui| match page {
         SkeletonPage::Rigs => sources(ui, def, rigging),
         SkeletonPage::Sets => sets(editor, ui, content.as_ref(), def, rigging),
         SkeletonPage::Hands => hand(editor, ui, key, def),
@@ -54,7 +54,7 @@ fn chosen(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, conten
                 return;
             };
             let mut edited = None;
-            panel::titled_card(ui, false, &format!("Grip · {}", hand.name), |ui| {
+            panel::titled_tile(ui, false, &format!("Grip · {}", hand.name), |ui| {
                 edited = super::grips::fields(editor, ui, key, index, &def.hands);
             });
             if let Some(hand) = edited {
@@ -69,7 +69,7 @@ fn chosen(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, conten
                 return;
             };
             let mut sized = None;
-            panel::titled_card(
+            panel::titled_tile(
                 ui,
                 false,
                 &format!("Hitbox · {}", shown_path(&path)),

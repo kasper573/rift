@@ -9,11 +9,13 @@ use engine::systems::area::AreaDef;
 use engine::systems::area::scene::scene_file;
 use ui::controls;
 use ui::egui::Ui;
+use ui::face;
 use ui::theme;
 
 use super::nodes;
 use crate::app::Editor;
 use crate::project::RowSelection;
+use crate::project::files::bundle_of;
 use crate::scene_graph;
 use crate::tabs::EditorTab;
 
@@ -47,9 +49,8 @@ impl Problem {
 
     /// The bundle the problem is in, when it is in an area's or a blueprint's files.
     pub fn bundle(&self) -> Option<&str> {
-        self.file
-            .strip_suffix(&format!("/{}", scene_name()))
-            .or_else(|| self.file.rsplit_once('/').map(|(bundle, _)| bundle))
+        bundle_of(&self.file)
+            .map(|(bundle, _)| bundle)
             .filter(|bundle| {
                 engine::core::content::table_of(bundle).is_some_and(|table| {
                     table == AreaDef::TABLE
@@ -135,7 +136,7 @@ pub fn output(editor: &mut Editor, ui: &mut Ui) {
                 go = Some(problem.clone());
             }
             ui.label(
-                theme::mono(format!(
+                face::mono(format!(
                     "{}  {}",
                     crate::project::problem_place(&problem.file, &problem.pointer),
                     problem.text

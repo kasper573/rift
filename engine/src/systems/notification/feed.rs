@@ -6,7 +6,7 @@ use bevy::prelude::*;
 use ui::egui::{Color32, Id, Pos2, Rect, Vec2};
 use ui::ink::{self, Ground};
 
-use super::rows::{self, Clock, Fades, Move, NoticePlace, Presence, Swell};
+use super::rows::{self, Clock, NoticePlace};
 use super::{FeedRow, Notification, NotificationKind, NotificationSent};
 use crate::core::gui::{self, Band};
 use crate::core::text::{self, StyledLine, TextLook};
@@ -16,6 +16,7 @@ use crate::systems::history::RecordTally;
 use crate::systems::history::widget::tallied;
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
+use ui::motion::{Swell, Transit, TransitMove, Transits};
 
 const SHOWN: usize = 5;
 const WIDEST: f32 = 360.0;
@@ -28,9 +29,9 @@ const HALO: Color32 = Color32::from_rgba_premultiplied(10, 7, 5, 210);
 const FAILED: Color32 = Color32::from_rgb(0xF0, 0x8A, 0x7E);
 /// How quickly a line glides to the height the lines under it leave it, per second.
 const GLIDE: f32 = 14.0;
-const PRESENCE: Presence = Presence {
-    enter: Move::new(Vec2::new(0.0, 10.0), 0.92, 0.22),
-    exit: Move::new(Vec2::new(0.0, -8.0), 1.0, 0.35),
+const TRANSIT: Transit = Transit {
+    enter: TransitMove::new(Vec2::new(0.0, 10.0), 0.92, 0.22),
+    exit: TransitMove::new(Vec2::new(0.0, -8.0), 1.0, 0.35),
 };
 
 pub struct FeedPlugin;
@@ -87,7 +88,7 @@ pub fn rows(world: &World) -> Vec<String> {
 #[derive(Resource, Default)]
 struct Feed {
     toasts: Vec<FeedToast>,
-    fades: Fades<FeedToast>,
+    fades: Transits<FeedToast>,
     /// How high above the head each line is drawn now, gliding toward where it belongs.
     heights: HashMap<u64, f32>,
     drawn_at: Option<f64>,
@@ -139,7 +140,7 @@ fn draw(world: &mut World) {
         .iter()
         .map(|toast| (toast.key, toast.clone()))
         .collect();
-    let toasts = feed.fades.sync(now, PRESENCE, current);
+    let toasts = feed.fades.sync(now, TRANSIT, current);
     let mut stacked = 0.0;
     let mut heights = HashMap::new();
     for (toast, look) in toasts.into_iter().rev() {

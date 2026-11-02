@@ -8,6 +8,7 @@ use engine::systems::actor::skeleton::SkeletonDef;
 use engine::systems::actor::stance::{Pairing, StanceDef};
 use engine::systems::item::{ItemDef, Wear};
 use ui::egui::{self, RichText, Ui, Vec2};
+use ui::face;
 use ui::{controls, form, sheet, theme};
 
 use crate::app::Editor;
@@ -54,7 +55,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         .inner_margin(crate::widgets::VIEW_PADDING)
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
-            ui.label(theme::mono(shown_path(key)).color(theme::CODE));
+            ui.label(face::mono(shown_path(key)).color(theme::CODE));
             ui.add_space(4.0);
             let Some(content) = editor.loaded() else {
                 return;

@@ -7,6 +7,7 @@ use ui::panel;
 use ui::theme;
 
 use crate::app::Editor;
+use crate::widgets::VIEW_PADDING;
 
 pub enum ReportAction {
     None,
@@ -31,7 +32,7 @@ pub fn panel(ui: &mut Ui, folder: &str, text: &str, closable: bool) -> ReportAct
             .max_height(ui.available_height() - 60.0)
             .show(ui, |ui| {
                 egui::Frame::new()
-                    .inner_margin(egui::Margin::symmetric(12, 8))
+                    .inner_margin(VIEW_PADDING)
                     .show(ui, |ui| {
                         ui.spacing_mut().item_spacing.y = 2.0;
                         for line in text.lines() {

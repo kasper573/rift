@@ -4,6 +4,7 @@ use ui::egui;
 use ui::egui::{Color32, Ui, Vec2};
 use ui::face::{self, TextRole};
 use ui::ink::{self, Ground};
+use ui::theme;
 use ui::{panel, sheet};
 
 use super::{
@@ -277,7 +278,7 @@ fn record_row(ui: &mut Ui, world: &mut World, record: &HistoryRecord, clock: Loc
             ui.add_space(6.0);
             ui.horizontal(|ui| {
                 ui.label(face::bold(who).color(ink::VERDIGRIS));
-                ui.label(face::faint(format!("· {time}")));
+                ui.label(theme::faint(format!("· {time}")));
             });
             return;
         }

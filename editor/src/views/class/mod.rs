@@ -78,7 +78,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         ClassPage::Levels => {}
     }
     egui::Frame::new()
-        .inner_margin(crate::widgets::CONTENT_PADDING)
+        .inner_margin(crate::widgets::VIEW_PADDING)
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
             page_body(editor, ui, key, page);

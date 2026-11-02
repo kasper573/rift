@@ -125,14 +125,6 @@ impl OrbitCamera {
     pub fn view(&self, ground: Meters, viewport: Vec2) -> View {
         View::new(self.transform(ground), viewport, LENS)
     }
-
-    /// Whether two cameras look alike enough that neither needs remembering over the other.
-    pub fn near(&self, other: &OrbitCamera) -> bool {
-        self.target.distance(other.target).0 < 0.01
-            && (self.yaw.0 - other.yaw.0).abs() < 0.001
-            && (self.pitch.0 - other.pitch.0).abs() < 0.001
-            && (self.distance.0 - other.distance.0).abs() < 0.01
-    }
 }
 
 /// Moves `camera` as the pointer asks of `response`: the right button orbits, the middle button or

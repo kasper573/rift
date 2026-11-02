@@ -25,7 +25,6 @@ const PLACE: Color32 = AZURE;
 pub const NAME: Color32 = VERDIGRIS;
 pub const ITEM: Color32 = GOLD;
 pub const MAGIC: Color32 = TYRIAN;
-pub const DANGER: Color32 = RUBRIC;
 
 /// What text is laid on: the paper of sheets, slips and cards, or the dusk of the notices that float
 /// over the world, where the paper's inks would sink into the dark.
@@ -53,7 +52,7 @@ impl Prose {
             (Ground::Paper, Prose::Name) => NAME,
             (Ground::Paper, Prose::Item) => ITEM,
             (Ground::Paper, Prose::Magic) => MAGIC,
-            (Ground::Paper, Prose::Danger) => DANGER,
+            (Ground::Paper, Prose::Danger) => RUBRIC,
             (Ground::Dusk, Prose::Place) => Color32::from_rgb(104, 168, 235),
             (Ground::Dusk, Prose::Name) => Color32::from_rgb(114, 180, 111),
             (Ground::Dusk, Prose::Item) => Color32::from_rgb(246, 201, 96),

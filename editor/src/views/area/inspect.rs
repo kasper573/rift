@@ -2,17 +2,20 @@ use std::collections::{BTreeMap, HashSet};
 use ui::chip;
 use ui::controls;
 use ui::egui::Ui;
+use ui::face;
 use ui::form;
 use ui::glyph::Mark;
 use ui::panel;
 use ui::sheet;
 use ui::theme;
 
+use crate::widgets::Badge;
 use engine::core::content::{Content, ContentFile, FolderReader, table_of};
 use engine::core::ground::GroundSize;
 use engine::core::math::{Pos, Rng};
 use engine::core::script::VariableType;
 use engine::core::units::{Degrees, MeterSize, Meters};
+use engine::systems::area::AreaModuleKind;
 use engine::systems::area::TerrainDef;
 use engine::systems::area::prop::PropDef;
 use strum::VariantArray;
@@ -26,10 +29,11 @@ use engine::systems::area::{AreaDef, AreaModule, SoundscapeDef};
 use engine::systems::script::{RunnerKind, ScriptModule, VarValue, Variable};
 use serde_json::Value;
 
+use super::clipboard::clipboard_panel;
 use super::nodes::SceneDraft;
+use super::pins::place_pick_panel;
 use super::placement::{self, placement_extras};
 use super::population::from_npc;
-use super::preview::{clipboard_panel, pick_preview};
 use super::soundscape::soundscape_extras;
 use super::{AreaTool, AreaViewState, nodes, scene_tree, stamp};
 use crate::app::Editor;
@@ -44,7 +48,7 @@ use crate::{picker, rows, schema};
 /// The view's inspector: a paste or a pick under way, the selected nodes, the blueprint parts
 /// edited in place, or else the card of the tool in hand.
 pub fn sidebar(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
-    if !editor.views.area.views.contains_key(view_key) {
+    if !editor.views.area.views.contains(view_key) {
         return;
     }
     if editor.views.area.view(view_key).paste.is_some() {
@@ -52,7 +56,7 @@ pub fn sidebar(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
         return;
     }
     if editor.pick.is_some() {
-        pick_preview(editor, ui);
+        place_pick_panel(editor, ui);
         return;
     }
     let Some(snapshot) = super::AreaSnapshot::for_view(editor, view_key) else {
@@ -241,7 +245,7 @@ fn prop_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, prop: &str) {
             );
         }
         form::kv(ui, "turned", |ui| {
-            ui.label(theme::mono(format!("{}°", view.place_yaw.0.round())));
+            ui.label(face::mono(format!("{}°", view.place_yaw.0.round())));
             controls::key_hint_text(ui, &EditorKey::TurnClockwise.name(), "turns");
         });
         form::kv(ui, "snap", |ui| {
@@ -274,10 +278,10 @@ fn folder_card(editor: &mut Editor, ui: &mut Ui, snapshot: &super::AreaSnapshot,
         return;
     };
     let label = node.label().unwrap_or_default().to_owned();
-    let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
+    let mut counts: BTreeMap<AreaModuleKind, usize> = BTreeMap::new();
     nodes::walk(nodes::children_of(&node), &mut |_, child| {
-        if !nodes::is_folder(child) {
-            *counts.entry(nodes::kind_tag(child)).or_default() += 1;
+        if let SceneNode::Module(module) = child {
+            *counts.entry(module.module.kind()).or_default() += 1;
         }
     });
     let flags = snapshot.flags.row(pointer);
@@ -288,7 +292,7 @@ fn folder_card(editor: &mut Editor, ui: &mut Ui, snapshot: &super::AreaSnapshot,
             .size(13.0),
     );
     ui.add_space(4.0);
-    panel::card(ui, true, |ui| {
+    panel::tile_across(ui, true, |ui| {
         let state = if flags.hidden.on() { "hidden" } else { "" };
         panel::subtitled(ui, &format!("folder {label}"), state);
         ui.add_space(4.0);
@@ -297,8 +301,8 @@ fn folder_card(editor: &mut Editor, ui: &mut Ui, snapshot: &super::AreaSnapshot,
         }
         for (kind, count) in &counts {
             ui.horizontal(|ui| {
-                widgets::badge(ui, kind);
-                ui.label(theme::mono(format!("{count} × {}", schema::title(kind))).size(13.0));
+                widgets::badge(ui, Badge::of_module(*kind));
+                ui.label(face::mono(format!("{count} × {}", schema::title(kind.tag()))).size(13.0));
             });
         }
         ui.add_space(4.0);
@@ -357,7 +361,7 @@ enum FolderAction {
 }
 
 fn tool_card(ui: &mut Ui, title: &str, body: impl FnOnce(&mut Ui)) {
-    panel::card(ui, true, |ui| {
+    panel::tile_across(ui, true, |ui| {
         ui.horizontal(|ui| {
             ui.label(theme::strong(title).monospace());
         });
@@ -443,13 +447,13 @@ fn stamp_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, content: &Conten
                 Some(n) => format!("{n} m"),
             };
             controls::combo((view_key, "spacing"))
-                .selected_text(theme::mono(label))
+                .selected_text(face::mono(label))
                 .width(ui.available_width())
                 .show_ui(ui, |ui| {
                     if ui
                         .selectable_label(
                             settings.spacing.is_none(),
-                            theme::mono(format!("footprint · {} × {}", footprint.0, footprint.1)),
+                            face::mono(format!("footprint · {} × {}", footprint.0, footprint.1)),
                         )
                         .clicked()
                     {
@@ -460,7 +464,7 @@ fn stamp_card(editor: &mut Editor, ui: &mut Ui, view_key: &str, content: &Conten
                         if ui
                             .selectable_label(
                                 settings.spacing == Some(n),
-                                theme::mono(format!("{n} m")),
+                                face::mono(format!("{n} m")),
                             )
                             .clicked()
                         {
@@ -577,8 +581,18 @@ fn show_parts(editor: &mut Editor, ui: &mut Ui, view_key: &str, selection: &RowS
             label = nodes::module_node(&draft.nodes, node)
                 .map(|module| super::shapes::label(&module.module, reader.as_ref()))
                 .unwrap_or_default();
-            changed =
-                module_inspector(ui, &mut cx, view, &bundle, size, &mut draft, node, &mut out);
+            changed = module_inspector(
+                ui,
+                &mut cx,
+                view,
+                ModuleSpot {
+                    bundle: &bundle,
+                    size,
+                    node,
+                },
+                &mut draft,
+                &mut out,
+            );
         } else {
             label = format!("{} modules", selected.len());
             ui.label(
@@ -592,7 +606,7 @@ fn show_parts(editor: &mut Editor, ui: &mut Ui, view_key: &str, selection: &RowS
             );
             ui.label(theme::muted(spans(&draft.nodes, &selected, reader.as_ref())).size(12.5));
             ui.add_space(4.0);
-            panel::card(ui, true, |ui| {
+            panel::tile_across(ui, true, |ui| {
                 panel::header(ui, &format!("{} modules", selected.len()), "", |ui| {
                     if ui.button("Copy").clicked() {
                         out.actions.push(super::AreaAction::Copy);
@@ -661,23 +675,29 @@ fn show_parts(editor: &mut Editor, ui: &mut Ui, view_key: &str, selection: &RowS
     }
     if editor.pick.is_some() {
         ui.add_space(6.0);
-        pick_preview(editor, ui);
+        place_pick_panel(editor, ui);
     }
 }
 
 /// The card of the module at `node` of the scene `draft` of the area or blueprint at `bundle`: its
 /// fields as the game reads them, a blueprint's holes among them, and what its kind adds.
-#[allow(clippy::too_many_arguments)]
+/// Where a module an inspector shows is: the bundle, the size of its ground and its node.
+#[derive(Clone, Copy)]
+struct ModuleSpot<'a> {
+    bundle: &'a str,
+    size: GroundSize,
+    node: &'a str,
+}
+
 fn module_inspector(
     ui: &mut Ui,
     cx: &mut FormCx,
     view: Option<&mut AreaViewState>,
-    bundle: &str,
-    size: GroundSize,
+    spot: ModuleSpot,
     draft: &mut SceneDraft,
-    node: &str,
     out: &mut Followups,
 ) -> bool {
+    let ModuleSpot { bundle, size, node } = spot;
     let path = node.to_owned();
     let reader = cx.project.reader();
     let Some(module) = nodes::module_node(&draft.nodes, node) else {
@@ -705,7 +725,7 @@ fn module_inspector(
         return false;
     };
     let mut changed = false;
-    panel::card(ui, true, |ui| {
+    panel::tile_across(ui, true, |ui| {
         panel::header(ui, &shown_kind, "", |ui| {
             if ui.button("Copy").clicked() {
                 out.actions.push(super::AreaAction::Copy);
@@ -756,7 +776,7 @@ fn module_inspector(
                 && !def.variables.is_empty()
             {
                 sheet::section(ui, &format!("Values · {}", file_title(&placed)));
-                panel::titled_card(ui, false, "values", |ui| {
+                panel::titled_tile(ui, false, "values", |ui| {
                     changed |= placement::placement_card(ui, cx, placement, &def, &path);
                 });
             }
@@ -957,8 +977,7 @@ fn apply_hole(
                     }
                     (_, value) => value,
                 });
-            let base = pointer.rsplit('/').next().unwrap_or("value");
-            let name = rows::free_name(base, &draft.variables.keys().cloned().collect());
+            let name = rows::hole_name(&pointer, &draft.variables.keys().cloned().collect());
             module.holes.0.insert(pointer, name.clone());
             draft.variables.insert(
                 name,

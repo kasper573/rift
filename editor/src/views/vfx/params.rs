@@ -12,6 +12,7 @@ use strum::VariantArray;
 use ui::chip;
 use ui::controls;
 use ui::egui::{Color32, Ui};
+use ui::face;
 use ui::form;
 use ui::glyph::{self, Mark};
 use ui::theme;
@@ -195,7 +196,7 @@ pub fn param_fill(
             };
             controls::combo(ui.id().with(path).with("source"))
                 .width(SOURCE_WIDTH)
-                .selected_text(theme::mono(source).size(12.5))
+                .selected_text(face::mono(source).size(12.5))
                 .show_ui(ui, |ui| {
                     if ui.selectable_label(false, "value").clicked() {
                         set(fills, Some(ParamFill::Value(spec.default)));
@@ -258,7 +259,7 @@ fn params(ui: &mut Ui, cx: &mut FormCx, params: &mut Vec<ShaderParam>, path: &st
                 });
                 controls::combo(("param-kind", index))
                     .width(90.0)
-                    .selected_text(theme::mono(kind_name(param.kind)).size(13.0))
+                    .selected_text(face::mono(kind_name(param.kind)).size(13.0))
                     .show_ui(ui, |ui| {
                         for &kind in ParamKind::VARIANTS {
                             ui.selectable_value(&mut picked, kind, kind_name(kind));

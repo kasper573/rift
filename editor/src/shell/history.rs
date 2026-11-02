@@ -1,5 +1,6 @@
 use std::time::SystemTime;
 use ui::egui;
+use ui::face;
 use ui::sheet;
 use ui::theme;
 use ui::words;
@@ -216,7 +217,7 @@ fn step_card(editor: &Editor, ui: &mut Ui) {
             let name = content_of(&change.file)
                 .map(|(_, key)| shown_path(key).to_owned())
                 .unwrap_or_else(|| change.file.clone());
-            ui.label(theme::mono(name).size(13.0));
+            ui.label(face::mono(name).size(13.0));
             ui.label(
                 theme::muted(touched(
                     before.and_then(|b| b.bytes.as_ref()),

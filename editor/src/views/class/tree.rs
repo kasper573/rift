@@ -128,16 +128,12 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
     );
     ui.add_space(4.0);
     if changed.is_none() {
-        canvas(
-            editor,
-            ui,
-            key,
-            &mut class,
-            &tree,
-            read.backdrop.as_ref(),
-            &skills,
-            &mut changed,
-        );
+        let shown = TreeShown {
+            tree: &tree,
+            backdrop: read.backdrop.as_ref(),
+            skills: &skills,
+        };
+        canvas(editor, ui, key, &mut class, shown, &mut changed);
     }
     if let Some(label) = changed {
         write(editor, key, edit(key, label), &class);
@@ -295,17 +291,27 @@ fn nodes_frame(tree: &SkillTree) -> Rect {
         .map_or(DEFAULT_FRAME, |nodes| nodes.expand(FRAME_AROUND_NODES))
 }
 
-#[expect(clippy::too_many_arguments)]
+/// What a class's skill tree shows: its nodes, the picture behind them and each node's skill.
+#[derive(Clone, Copy)]
+struct TreeShown<'a> {
+    tree: &'a SkillTree,
+    backdrop: Option<&'a TreeBackdrop>,
+    skills: &'a BTreeMap<NodeKey, NodeSkill>,
+}
+
 fn canvas(
     editor: &mut Editor,
     ui: &mut Ui,
     key: &str,
     class: &mut ClassDef,
-    tree: &SkillTree,
-    backdrop: Option<&TreeBackdrop>,
-    skills: &BTreeMap<NodeKey, NodeSkill>,
+    shown: TreeShown,
     changed: &mut Option<&'static str>,
 ) {
+    let TreeShown {
+        tree,
+        backdrop,
+        skills,
+    } = shown;
     let selected = node_of(&editor.selection)
         .filter(|_| editor.selection.keys.first().is_some_and(|k| k == key))
         .map(NodeKey::from);
@@ -771,17 +777,20 @@ fn dragged_frame(drag: &FrameDrag, pointer: Pos2) -> Rect {
 }
 
 fn snapped_rect(rect: Rect) -> Rect {
-    let snap = |value: f32| (value / GRID).round() * GRID;
-    let min = Pos2::new(snap(rect.min.x), snap(rect.min.y));
-    let max = Pos2::new(snap(rect.max.x), snap(rect.max.y));
+    let min = Pos2::new(on_grid(rect.min.x), on_grid(rect.min.y));
+    let max = Pos2::new(on_grid(rect.max.x), on_grid(rect.max.y));
     Rect::from_min_max(min, max.max(min + Vec2::splat(GRID)))
 }
 
 fn snapped(at: CanvasPoint) -> CanvasPoint {
     CanvasPoint {
-        x: (at.x / GRID).round() * GRID,
-        y: (at.y / GRID).round() * GRID,
+        x: on_grid(at.x),
+        y: on_grid(at.y),
     }
+}
+
+fn on_grid(value: f32) -> f32 {
+    (value / GRID).round() * GRID
 }
 
 fn free_spot(tree: &SkillTree) -> CanvasPoint {

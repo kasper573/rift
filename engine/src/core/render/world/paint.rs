@@ -9,7 +9,8 @@ use bevy::ecs::system::SystemParam;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-use bevy::tasks::{AsyncComputeTaskPool, Task, block_on, futures_lite::future};
+use bevy::tasks::futures::check_ready;
+use bevy::tasks::{AsyncComputeTaskPool, Task};
 use rayon::prelude::*;
 
 use super::material::{SurfaceFinish, WorldMaterial};
@@ -63,7 +64,7 @@ enum PaintState {
 pub(super) fn advance_bakes(mut paints: ResMut<Paints>, mut images: ResMut<Assets<Image>>) {
     for baking in paints.baked.values_mut() {
         if let PaintState::Baking(task) = baking
-            && let Some(baked) = block_on(future::poll_once(task))
+            && let Some(baked) = check_ready(task)
         {
             *baking = PaintState::Done(Painted {
                 colour: images.add(baked.colour),

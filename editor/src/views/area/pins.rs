@@ -2,21 +2,28 @@ use engine::core::content::Content;
 use engine::core::content::{SETTINGS_FILE, name_of};
 use engine::core::math::Pos;
 use engine::core::units::Meters;
+use engine::field;
+use engine::systems::GameSettings;
+use engine::systems::area;
 use engine::systems::area::scene::SCENE_FILE;
 use engine::systems::area::{AreaDef, AreaId, AreaModule, check_place};
 use engine::systems::script::Place;
 use ui::egui;
-use ui::egui::{Color32, Pos2, Stroke as EStroke, Vec2};
+use ui::egui::{Color32, Pos2, Sense, Stroke as EStroke, Ui, Vec2};
 use ui::theme;
+use ui::{controls, face, form, sheet};
 
 use super::{AreaFrame, nodes};
 use crate::app::{Editor, PlacePick};
+use crate::forms;
+use crate::keymap::EditorKey;
 use crate::project::ContentEdit;
 use crate::project::files::content_of;
 use crate::scene_graph;
 use crate::tabs::shown_path;
+use crate::views::navigation::{self, PX_PER_METER};
 
-const INITIAL_SPAWN: &str = "/initial_spawn";
+const INITIAL_SPAWN: &str = field!(GameSettings, initial_spawn);
 
 #[derive(Clone, Debug)]
 pub struct ArrivalPin {
@@ -38,7 +45,7 @@ pub fn arrivals(editor: &Editor, area_key: &str) -> Vec<ArrivalPin> {
     };
     let mut out = Vec::new();
     for usage in project.usages.of_content(area_key) {
-        let Some(parent) = usage.pointer.strip_suffix("/area") else {
+        let Some(parent) = usage.pointer.strip_suffix(field!(Place, area)) else {
             continue;
         };
         let Some(place) = project.value_at::<Place>(&usage.file, parent) else {
@@ -245,4 +252,126 @@ pub(crate) fn set_spawn(editor: &mut Editor, area_key: &str, at: Pos<Meters>) {
         return;
     }
     editor.apply(edit);
+}
+
+/// The panel a place is picked in for a file's field: an area chosen, then a spot on its map.
+pub(crate) fn place_pick_panel(editor: &mut Editor, ui: &mut Ui) {
+    let Some(pick) = editor.pick.clone() else {
+        return;
+    };
+    let Some(project) = editor.project.as_ref() else {
+        return;
+    };
+    let Some(content) = project.content.clone() else {
+        return;
+    };
+    let mut area_key = pick.area.clone().or_else(|| {
+        let place = project.value_at::<Place>(&pick.file, &pick.pointer)?;
+        project.reader().path_of(place.area).map(str::to_owned)
+    });
+    let mut areas: Vec<String> = content
+        .ids::<area::AreaDef>()
+        .map(|id| id.path(&content).to_owned())
+        .collect();
+    areas.sort();
+    sheet::section(ui, "Pick a place");
+    controls::combo("pick-area")
+        .width(ui.available_width())
+        .selected_text(face::mono(
+            area_key
+                .clone()
+                .unwrap_or_else(|| "choose an area".to_owned()),
+        ))
+        .show_ui(ui, |ui| {
+            for key in &areas {
+                if ui
+                    .selectable_label(area_key.as_deref() == Some(key.as_str()), key)
+                    .clicked()
+                {
+                    area_key = Some(key.clone());
+                }
+            }
+        });
+    if area_key != pick.area
+        && let Some(pick) = editor.pick.as_mut()
+    {
+        pick.area = area_key.clone();
+    }
+    let Some(area_key) = area_key else {
+        return;
+    };
+    let Some(area_id) = content.by_path::<area::AreaDef>(&area_key) else {
+        return;
+    };
+    let area = area::load(&content, area_id);
+    let width = ui.available_width();
+    let height = (width * area.size.height / area.size.width.max(1.0)).clamp(80.0, 360.0);
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(width, height), Sense::click());
+    let zoom = navigation::fit_zoom(
+        rect.size(),
+        Vec2::new(area.size.width, area.size.height),
+        PX_PER_METER,
+    );
+    let center = Pos::new(area.size.width / 2.0 - 0.5, area.size.height / 2.0 - 0.5);
+    let painter = ui.painter_at(rect);
+    painter.rect_filled(rect, 4.0, theme::INPUT);
+    crate::thumbs::areas::draw_area(
+        editor,
+        &painter,
+        &area_key,
+        rect,
+        center,
+        zoom * PX_PER_METER,
+    );
+    let canvas = navigation::Viewport {
+        screen: rect,
+        center,
+        zoom,
+    };
+    for arrival in arrivals(editor, &area_key) {
+        let at = canvas.to_screen(arrival.at);
+        painter.circle_filled(at, 3.0, egui::Color32::from_rgb(255, 190, 90));
+        painter.circle_stroke(at, 3.0, egui::Stroke::new(1.0, egui::Color32::BLACK));
+    }
+    painter.rect_stroke(
+        rect,
+        4.0,
+        egui::Stroke::new(1.0, theme::BORDER),
+        egui::StrokeKind::Inside,
+    );
+    let alt = ui.input(|i| EditorKey::Unsnapped.held(i));
+    if let Some(pointer) = response.hover_pos() {
+        let ground = canvas.to_ground(pointer);
+        let picked = PickedPlace::at(&content, area_id, ground, alt);
+        let at = picked.at;
+        let (ok, why) = match &picked.verdict {
+            Ok(()) => (true, "outside every warp object".to_owned()),
+            Err(problem) => (false, problem.expected.clone()),
+        };
+        painter.circle_stroke(
+            canvas.to_screen(at),
+            5.0,
+            egui::Stroke::new(2.0, picked.color()),
+        );
+        response.clone().on_hover_ui(|ui| {
+            ui.label(theme::strong(format!(
+                "{}, {} · {}",
+                forms::metres(at.x),
+                forms::metres(at.y),
+                if ok { "walkable" } else { "refused" }
+            )));
+            ui.label(theme::muted(format!("{why} · click to pick")).size(12.0));
+        });
+        if response.clicked() {
+            picked.commit(editor, &area_key);
+        }
+    }
+    form::hint(
+        ui,
+        &format!(
+            "Click a cell for its centre, {} click for any point, in 1/16 m. {} keeps the old place.",
+            EditorKey::Unsnapped.name(),
+            EditorKey::Cancel.name()
+        ),
+    );
 }

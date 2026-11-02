@@ -5,6 +5,7 @@ use engine::core::content::media::GltfInfos;
 use engine::systems::actor::appearance;
 use engine::systems::actor::model::{MAX_CHARACTER_TRIANGLES, ModelDef};
 use ui::egui::Ui;
+use ui::face;
 use ui::{form, panel, theme};
 
 use crate::app::Editor;
@@ -32,7 +33,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
     });
     if editor.views.model.view(key).hitbox_chosen {
         let mut sized = None;
-        panel::titled_card(ui, false, "Hitbox", |ui| {
+        panel::titled_tile(ui, false, "Hitbox", |ui| {
             sized = super::hitbox::fields(ui, row.hitbox);
         });
         if let Some(hitbox) = sized {
@@ -40,7 +41,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
         }
         ui.add_space(8.0);
     }
-    panel::titled_card(ui, false, "Body", |ui| {
+    panel::titled_tile(ui, false, "Body", |ui| {
         form::kv_text(
             ui,
             "build",
@@ -51,7 +52,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ModelDef) {
                 for (part, mesh) in parts {
                     form::kv(ui, shown_path(part), |ui| match mesh {
                         Some((file, triangles)) => {
-                            ui.label(theme::mono(file).size(12.5));
+                            ui.label(face::mono(file).size(12.5));
                             ui.label(theme::faint(format!("{triangles} triangles")).size(12.0));
                         }
                         None => {

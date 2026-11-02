@@ -1,4 +1,5 @@
 use bevy_ecs::prelude::*;
+use bevy_terminal::TerminalSaid;
 use engine::core::content::Content;
 use engine::core::math::{Offset, Pos};
 use engine::core::units::Meters;
@@ -16,7 +17,7 @@ use engine::systems::quest::{self, QuestDef};
 use engine::systems::region;
 use engine::systems::status::{self, StatusEffectDef};
 use engine::systems::text::LineText;
-use engine::systems::{actor, belongings, class, script, stat, vfx};
+use engine::systems::{actor, belongings, chat, class, script, stat, vfx};
 use serde_json::json;
 use testkit::{Game, Map, Sim, path};
 
@@ -121,6 +122,30 @@ fn a_character_speaks_to_players_on_its_errand_from_its_own_body() {
         vec![None],
         "a line someone else speaks names no body"
     );
+}
+
+#[test]
+fn a_character_answers_the_words_it_listens_for_when_a_player_says_them_in_earshot() {
+    let mut sim = island(&game());
+    let player = sim.join(1);
+    let talker = sim.npc("talker");
+    let at = position(&sim.world, talker).expect("position");
+    sim.run(0.5);
+    let greeting = sim.spoken("greeting");
+
+    for (stands, said, answered) in [
+        (Offset::new(0.0, 8.0), "Well met!", false),
+        (Offset::new(1.0, 0.0), "Lovely weather.", false),
+        (Offset::new(1.0, 0.0), "Well... MET, stranger!", true),
+    ] {
+        movement::relocate(&mut sim.world, player, at + stands);
+        sim.run(0.5);
+        sim.forget_notified();
+        say(&mut sim, 1, said);
+        sim.run(0.5);
+        let told = sim.told(1).contains(&greeting);
+        assert_eq!(told, answered, "{said:?} from {stands:?}");
+    }
 }
 
 #[test]
@@ -345,6 +370,8 @@ fn game() -> Content {
             "npc",
             json!({
                 "interacted": { "type": "on", "event": "interacted", "verb": "talk", "reach": 3.0, "next": "hello" },
+                "heard": { "type": "on", "event": "heard", "words": ["well met"], "within": 4.0, "next": "greet" },
+                "greet": { "type": "notify", "notification": "greeting.notification.json" },
                 "hello": {
                     "type": "dialogue",
                     "lines": [{ "by": { "type": "narrator" }, "text": ["Fine weather."] }],
@@ -424,6 +451,11 @@ fn game() -> Content {
             "threat",
             json!({ "kind": { "type": "speech", "speaker": "chief.npc.json" }, "text": ["I'll grind your bones!"] }),
         )
+        .row(
+            "notification",
+            "greeting",
+            json!({ "kind": { "type": "narration", "label": "Talker" }, "text": ["Well met yourself."] }),
+        )
         .row("notification", "island_intro", intro_row("The island"))
         .row("notification", "forest_intro", intro_row("The forest"))
         .memory("heard_gulls", "never")
@@ -476,6 +508,7 @@ fn area(game: &Content, key: &str) -> Sim {
         .accept::<AreaDrawn>()
         .accept::<InteractRequest>()
         .accept::<ConversationRequest>()
+        .message::<TerminalSaid>()
         .add((movement::file_by_chunk, status::expire))
         .add((
             vfx::expire,
@@ -494,13 +527,27 @@ fn area(game: &Content, key: &str) -> Sim {
             script::RunFlows::default(),
             movement::AdvanceWalks::default(),
         ))
-        .add((interact::interactions, dialogue::hold, dialogue::refresh))
+        .add((
+            interact::interactions,
+            dialogue::hold,
+            dialogue::refresh,
+            chat::overhear,
+        ))
         .plan(stat::SettleHealth::default())
         .add(combat::defeats)
         .plan(actor::SettleActions::default())
         .add(belongings::notify_changes);
     script::spawn_stateless(&mut sim.world);
     sim
+}
+
+/// The client's player says `text` aloud, as a line typed into the terminal.
+fn say(sim: &mut Sim, client: u32, text: &str) {
+    let conn = sim.conn(client);
+    sim.world.write_message(TerminalSaid {
+        conn,
+        text: text.to_owned(),
+    });
 }
 
 /// Hands `player` over from one area's server to the other's, and lets it settle in.

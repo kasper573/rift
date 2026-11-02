@@ -3,6 +3,7 @@ use ui::egui;
 use ui::paint;
 use ui::theme;
 
+use crate::widgets::Badge;
 use engine::core::audio::mix::AudioCategory;
 use engine::core::audio::soundscape::SoundscapeShape;
 use engine::core::content::{FolderReader, Nearby};
@@ -85,7 +86,7 @@ fn menu_id(view_key: &str) -> egui::Id {
     egui::Id::new((view_key, "context"))
 }
 
-pub(crate) fn module_menu_row(ui: &mut Ui, kind: &str, description: &str) -> bool {
+pub(crate) fn module_menu_row(ui: &mut Ui, kind: AreaModuleKind, description: &str) -> bool {
     let (rect, response) = ui.allocate_exact_size(
         Vec2::new(ui.available_width().min(260.0), 34.0),
         egui::Sense::click(),
@@ -98,10 +99,10 @@ pub(crate) fn module_menu_row(ui: &mut Ui, kind: &str, description: &str) -> boo
             .max_rect(rect.shrink2(Vec2::new(6.0, 2.0)))
             .layout(egui::Layout::left_to_right(egui::Align::Center)),
     );
-    widgets::badge(&mut child, kind);
+    widgets::badge(&mut child, Badge::of_module(kind));
     child.vertical(|ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
-        ui.label(RichText::new(kind).monospace().color(theme::TEXT));
+        ui.label(RichText::new(kind.tag()).monospace().color(theme::TEXT));
         ui.label(RichText::new(description).size(11.5).color(theme::MUTED));
     });
     response.clicked()
@@ -206,7 +207,7 @@ pub(super) fn show_add_menu(ui: &mut Ui, editor: &mut Editor, view_key: &str, fr
             ui.add_space(2.0);
             ui.label(RichText::new(*group).size(11.0).color(ui::theme::FAINT));
             for &(kind, description) in *kinds {
-                if module_menu_row(ui, kind.tag(), description) {
+                if module_menu_row(ui, kind, description) {
                     action = Some(MenuAction::Add(kind));
                     ui.close();
                 }

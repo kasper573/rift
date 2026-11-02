@@ -5,6 +5,7 @@ use std::time::Duration;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::core::content::SchemaMark;
 use crate::core::math::{Offset, Pos, Rect, Rng, Size};
 
 #[derive(
@@ -21,7 +22,7 @@ use crate::core::math::{Offset, Pos, Rect, Rng, Size};
     derive_more::Sub,
     derive_more::SubAssign,
 )]
-#[schemars(extend("x-unit" = "m"))]
+#[schemars(transform = SchemaMark::Unit.with("m"))]
 pub struct Meters(pub f32);
 
 /// An amount of memory.
@@ -40,7 +41,7 @@ impl Bytes {
 #[derive(
     JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd,
 )]
-#[schemars(extend("x-unit" = "EV"))]
+#[schemars(transform = SchemaMark::Unit.with("EV"))]
 pub struct Stops(pub f32);
 
 impl Stops {
@@ -182,7 +183,7 @@ impl GridDims for GridSize {
     derive_more::Sub,
     derive_more::SubAssign,
 )]
-#[schemars(extend("x-unit" = "s"))]
+#[schemars(transform = SchemaMark::Unit.with("s"))]
 pub struct Seconds(pub f32);
 
 #[derive(
@@ -200,7 +201,7 @@ pub struct Seconds(pub f32);
     derive_more::Sub,
     derive_more::SubAssign,
 )]
-#[schemars(extend("x-unit" = "ms"))]
+#[schemars(transform = SchemaMark::Unit.with("ms"))]
 pub struct Millis(pub f32);
 
 #[derive(
@@ -209,7 +210,7 @@ pub struct Millis(pub f32);
 pub struct PlaybackRate(pub f32);
 
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, PartialOrd)]
-#[schemars(extend("x-unit" = "Hz"))]
+#[schemars(transform = SchemaMark::Unit.with("Hz"))]
 pub struct Hertz(pub f32);
 
 impl Hertz {
@@ -362,19 +363,19 @@ fn unit_pair(seconds: u32) -> (TimeUnit, TimeUnit) {
 #[derive(
     JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd,
 )]
-#[schemars(extend("x-unit" = "°"))]
+#[schemars(transform = SchemaMark::Unit.with("°"))]
 pub struct Degrees(pub f32);
 
 #[derive(
     JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd,
 )]
-#[schemars(extend("x-unit" = "rad"))]
+#[schemars(transform = SchemaMark::Unit.with("rad"))]
 pub struct Radians(pub f32);
 
 #[derive(
     JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd,
 )]
-#[schemars(extend("x-unit" = "rad/s"))]
+#[schemars(transform = SchemaMark::Unit.with("rad/s"))]
 pub struct RadiansPerSec(pub f32);
 
 impl Degrees {
@@ -432,7 +433,7 @@ pub struct WindowPx(pub f32);
 #[derive(
     JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, PartialOrd, Default,
 )]
-#[schemars(extend("x-unit" = "%"))]
+#[schemars(transform = SchemaMark::Unit.with("%"))]
 pub struct Percent(pub f32);
 
 impl Percent {

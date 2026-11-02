@@ -18,6 +18,7 @@ use strum::{EnumDiscriminants, IntoStaticStr, VariantArray};
 
 use crate::core::audio::playback::SfxId;
 use crate::core::content::ImageRef;
+use crate::core::content::SchemaMark;
 use crate::core::content::media::ImageSizes;
 use crate::core::content::{
     Content, ContentFile, ContentId, Loading, ModuleRule, ModuleSet, NamedContent, Nearby,
@@ -75,7 +76,7 @@ pub struct ItemStack {
 #[serde(deny_unknown_fields)]
 struct ItemStackRow {
     item: ItemId,
-    #[schemars(extend("x-count" = true))]
+    #[schemars(transform = SchemaMark::Count.with(true))]
     #[schemars(extend("default" = serial::one()))]
     #[serde(default = "serial::one", skip_serializing_if = "serial::is_one")]
     count: u32,
@@ -590,7 +591,7 @@ pub enum ItemKind {
         wear: Wear,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         requires: Option<Condition>,
-        #[schemars(extend("x-usage" = "known while worn"))]
+        #[schemars(transform = SchemaMark::Usage.with("known while worn"))]
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         grants: Vec<SkillId>,
     },

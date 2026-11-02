@@ -13,6 +13,7 @@ use std::sync::Arc;
 use ui::chip;
 use ui::drag;
 use ui::egui;
+use ui::face;
 use ui::menu;
 use ui::theme;
 
@@ -308,7 +309,7 @@ fn chip(ui: &mut Ui, cx: &mut FormCx, source: &dyn PickSource, pick: &Pick) -> e
                     face(ui, cx, source, pick, rect, &mut unlimited);
                     let (prefix, text) = source.shown(pick);
                     let name = egui::WidgetText::from(
-                        theme::mono(text.clone()).size(13.0).color(theme::CODE),
+                        face::mono(text.clone()).size(13.0).color(theme::CODE),
                     )
                     .into_galley(
                         ui,
@@ -535,7 +536,7 @@ fn popover(
                     ui.horizontal(|ui| {
                         let in_row = candidates.iter().enumerate().skip(row * columns);
                         for (index, &candidate) in in_row.take(columns) {
-                            let cell = Cell {
+                            let cell = CandidateState {
                                 lit: index == highlight,
                                 held: candidate.pick == *pick,
                             };
@@ -621,12 +622,12 @@ const LINE_ICON: f32 = 16.0;
 
 /// How a candidate stands among the rest: under the keyboard, and whether the field holds it.
 #[derive(Clone, Copy)]
-struct Cell {
+struct CandidateState {
     lit: bool,
     held: bool,
 }
 
-impl Cell {
+impl CandidateState {
     fn fill(self, hovered: bool) -> Color32 {
         if self.lit {
             theme::ACCENT_SOFT
@@ -654,7 +655,7 @@ fn describe(
         return;
     };
     ui.horizontal(|ui| {
-        ui.label(theme::mono(source.shown(&candidate.pick).1).size(12.5));
+        ui.label(face::mono(source.shown(&candidate.pick).1).size(12.5));
         if !candidate.name.is_empty() {
             ui.label(theme::muted(&candidate.name).size(12.0));
         }
@@ -682,7 +683,7 @@ fn line(
     cx: &mut FormCx,
     source: &dyn PickSource,
     candidate: &Candidate,
-    cell: Cell,
+    cell: CandidateState,
     budget: &mut u32,
 ) -> egui::Response {
     let width = ui.available_width();
@@ -736,7 +737,7 @@ fn ground(
     cx: &mut FormCx,
     source: &dyn PickSource,
     candidate: &Candidate,
-    cell: Cell,
+    cell: CandidateState,
     budget: &mut u32,
 ) -> egui::Response {
     let (rect, response) = ui.allocate_exact_size(Vec2::new(TILE, TILE), Sense::click());

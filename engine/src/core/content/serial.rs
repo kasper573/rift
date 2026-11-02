@@ -1,6 +1,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
+use crate::core::content::SchemaMark;
 use crate::core::math::{Pos, Rect, Size};
 
 /// The variant a value of a tagged enum is, by the tag every tagged content type writes it with.
@@ -22,7 +23,7 @@ impl TypeTag {
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[schemars(extend("x-rect" = true))]
+#[schemars(transform = SchemaMark::Rect.with(true))]
 pub struct RectRow {
     x: f32,
     y: f32,
@@ -71,7 +72,7 @@ pub fn opt_rect_from<'de, U, D: Deserializer<'de>>(
 
 #[derive(Serialize, Deserialize, JsonSchema)]
 #[serde(deny_unknown_fields)]
-#[schemars(extend("x-pos" = true))]
+#[schemars(transform = SchemaMark::Pos.with(true))]
 pub struct PosRow {
     x: f32,
     y: f32,

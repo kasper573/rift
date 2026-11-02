@@ -69,7 +69,7 @@ fn bindings(
     capturing: bool,
 ) -> bool {
     let reads: Vec<InputBindingKind> = action
-        .gestures()
+        .readings()
         .iter()
         .flat_map(|gesture| gesture.bindings())
         .copied()

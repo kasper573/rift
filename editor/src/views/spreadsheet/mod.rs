@@ -1,8 +1,9 @@
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 use ui::chip;
 use ui::egui;
+use ui::face;
 use ui::form;
 use ui::input;
 use ui::menu;
@@ -32,8 +33,9 @@ use crate::row_form::tune::{self, SfxTuneField, sfx_tune_field};
 use crate::schema::{self, SchemaKind};
 use crate::tabs::shown_path;
 use crate::tabs::{EditorTab, file_title};
-use crate::user::SpreadsheetView;
-use ui::input::InputField;
+use crate::user::{Comparison, SheetFilter, SpreadsheetView};
+use strum::VariantArray;
+use ui::controls;
 
 mod bindings;
 
@@ -41,18 +43,6 @@ const ROW_H: f32 = 29.0;
 const FILE_W: f32 = 110.0;
 const CELL_W: f32 = 84.0;
 const MAX_DEFAULT_COLUMNS: usize = 9;
-const CAN_BE_FOUGHT: &str = "can be fought";
-
-#[derive(Default)]
-pub struct SpreadsheetViews {
-    pub views: HashMap<String, SpreadsheetState>,
-}
-
-impl SpreadsheetViews {
-    pub fn state_mut(&mut self, table: &str) -> &mut SpreadsheetState {
-        self.views.entry(table.to_owned()).or_default()
-    }
-}
 
 #[derive(Default)]
 pub struct SpreadsheetState {
@@ -539,14 +529,6 @@ fn save_view(editor: &mut Editor, table: &str, view: SpreadsheetView) {
     editor.save_settings();
 }
 
-fn named_filters(editor: &Editor, table: &str) -> BTreeMap<&'static str, BTreeSet<String>> {
-    let mut named = BTreeMap::new();
-    if table == NpcDef::TABLE {
-        named.insert(CAN_BE_FOUGHT, can_be_fought(editor));
-    }
-    named
-}
-
 fn can_be_fought(editor: &Editor) -> BTreeSet<String> {
     let Some(content) = editor
         .project
@@ -566,54 +548,26 @@ fn can_be_fought(editor: &Editor) -> BTreeSet<String> {
         .collect()
 }
 
-fn filters_of(view: &SpreadsheetView) -> Vec<String> {
-    view.filter
-        .split(';')
-        .map(str::trim)
-        .filter(|f| !f.is_empty())
-        .map(str::to_owned)
-        .collect()
-}
-
 fn passes(
     row: &SpreadsheetRow,
-    filter: &str,
-    named: &BTreeMap<&'static str, BTreeSet<String>>,
+    filter: &SheetFilter,
+    fought: &BTreeSet<String>,
     columns: &[SpreadsheetColumn],
 ) -> bool {
-    if let Some(keys) = named.get(filter) {
-        return keys.contains(&row.key);
+    match filter {
+        SheetFilter::CanBeFought => fought.contains(&row.key),
+        SheetFilter::Has(tag) => row.has_module(tag),
+        SheetFilter::Lacks(tag) => !row.has_module(tag),
+        SheetFilter::Compare {
+            column,
+            test,
+            value,
+        } => columns
+            .iter()
+            .find(|known| known.id == *column)
+            .and_then(|column| column.number(row))
+            .is_none_or(|have| test.holds(have, *value)),
     }
-    if let Some(tag) = filter.strip_prefix("has ") {
-        return row.has_module(tag);
-    }
-    if let Some(tag) = filter.strip_prefix("lacks ") {
-        return !row.has_module(tag);
-    }
-    for operator in [">=", "<=", "=", ">", "<"] {
-        if let Some((column_id, wanted)) = filter.split_once(operator) {
-            let (column_id, wanted) = (column_id.trim(), wanted.trim());
-            let Some(column) = columns
-                .iter()
-                .find(|c| c.id == column_id || c.title == column_id)
-            else {
-                return true;
-            };
-            return match (column.number(row), wanted.parse::<f64>()) {
-                (Some(have), Ok(want)) => match operator {
-                    ">=" => have >= want,
-                    "<=" => have <= want,
-                    ">" => have > want,
-                    "<" => have < want,
-                    _ => (have - want).abs() < f64::EPSILON,
-                },
-                _ => column
-                    .text(row)
-                    .is_some_and(|text| operator == "=" && text.eq_ignore_ascii_case(wanted)),
-            };
-        }
-    }
-    true
 }
 
 fn matches_search(row: &SpreadsheetRow, search: &str, columns: &[SpreadsheetColumn]) -> bool {
@@ -664,12 +618,14 @@ pub fn shown_rows(
     let all = rows_cached(editor, table);
     let columns = columns_cached(editor, table, &all);
     let view = view_of(editor, table, &columns);
-    let named = named_filters(editor, table);
-    let filters = filters_of(&view);
+    let fought = if view.filters.contains(&SheetFilter::CanBeFought) {
+        can_be_fought(editor)
+    } else {
+        BTreeSet::new()
+    };
     let search = editor
         .views
         .spreadsheet
-        .views
         .get(table)
         .map(|state| state.search.clone())
         .unwrap_or_default();
@@ -677,9 +633,9 @@ pub fn shown_rows(
     let mut rows: Vec<SpreadsheetRow> = all
         .iter()
         .filter(|row| {
-            filters
+            view.filters
                 .iter()
-                .all(|filter| passes(row, filter, &named, &columns))
+                .all(|filter| passes(row, filter, &fought, &columns))
         })
         .filter(|row| matches_search(row, &search, &columns))
         .cloned()
@@ -695,13 +651,13 @@ pub fn shown_rows(
 
 fn rows_cached(editor: &mut Editor, table: &str) -> Arc<Vec<SpreadsheetRow>> {
     let revision = files_revision(editor);
-    if let Some((built_for, rows)) = &editor.views.spreadsheet.state_mut(table).rows
+    if let Some((built_for, rows)) = &editor.views.spreadsheet.view_or_default(table).rows
         && *built_for == revision
     {
         return rows.clone();
     }
     let rows = Arc::new(rows_of(editor, table));
-    editor.views.spreadsheet.state_mut(table).rows = Some((revision, rows.clone()));
+    editor.views.spreadsheet.view_or_default(table).rows = Some((revision, rows.clone()));
     rows
 }
 
@@ -711,13 +667,13 @@ fn columns_cached(
     rows: &[SpreadsheetRow],
 ) -> Arc<Vec<SpreadsheetColumn>> {
     let revision = files_revision(editor);
-    if let Some((built_for, columns)) = &editor.views.spreadsheet.state_mut(table).columns
+    if let Some((built_for, columns)) = &editor.views.spreadsheet.view_or_default(table).columns
         && *built_for == revision
     {
         return columns.clone();
     }
     let columns = Arc::new(columns_of(editor, table, rows));
-    editor.views.spreadsheet.state_mut(table).columns = Some((revision, columns.clone()));
+    editor.views.spreadsheet.view_or_default(table).columns = Some((revision, columns.clone()));
     columns
 }
 
@@ -743,7 +699,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, table: &str) {
         }
     });
     egui::Frame::new()
-        .inner_margin(crate::widgets::CONTENT_PADDING)
+        .inner_margin(crate::widgets::VIEW_PADDING)
         .show(ui, |ui| {
             ui.set_min_size(ui.available_size());
             sheet(editor, ui, table);
@@ -781,7 +737,7 @@ fn toolbar(
     total: usize,
 ) -> bool {
     let mut changed = false;
-    let mut filters = filters_of(view);
+    let mut filters = view.filters.clone();
     let module_tags: Vec<String> = editor
         .shapes
         .module_variants(table)
@@ -789,13 +745,13 @@ fn toolbar(
         .map(|v| v.tag)
         .collect();
     ui.horizontal(|ui| {
-        let state = editor.views.spreadsheet.state_mut(table);
+        let state = editor.views.spreadsheet.view_or_default(table);
         ui.allocate_ui(Vec2::new(220.0, 26.0), |ui| {
             input::search(ui, &mut state.search, "Filter rows", None);
         });
         let mut removed = None;
         for (index, filter) in filters.iter().enumerate() {
-            let (_, closed) = chip::closable(ui, filter);
+            let (_, closed) = chip::closable(ui, &filter.label());
             if closed {
                 removed = Some(index);
             }
@@ -805,43 +761,25 @@ fn toolbar(
             changed = true;
         }
         menu::button(ui, "+ filter", |ui| {
-            if table == NpcDef::TABLE && ui.button(CAN_BE_FOUGHT).clicked() {
-                filters.push(CAN_BE_FOUGHT.to_owned());
-                changed = true;
-                ui.close();
+            let mut offered: Vec<SheetFilter> = Vec::new();
+            if table == NpcDef::TABLE {
+                offered.push(SheetFilter::CanBeFought);
             }
-            for tag in &module_tags {
-                if ui.button(format!("has {tag}")).clicked() {
-                    filters.push(format!("has {tag}"));
-                    changed = true;
-                    ui.close();
-                }
-            }
-            for tag in &module_tags {
-                if ui.button(format!("lacks {tag}")).clicked() {
-                    filters.push(format!("lacks {tag}"));
+            offered.extend(module_tags.iter().cloned().map(SheetFilter::Has));
+            offered.extend(module_tags.iter().cloned().map(SheetFilter::Lacks));
+            for filter in offered {
+                if ui.button(filter.label()).clicked() {
+                    filters.push(filter);
                     changed = true;
                     ui.close();
                 }
             }
             ui.separator();
-            ui.label(theme::faint("a column test, like damage > 5"));
-            let id = ui.id().with("custom-filter");
-            let mut text: String = ui.memory(|m| m.data.get_temp(id)).unwrap_or_default();
-            let response = InputField::new(&mut text)
-                .hint("column > value")
-                .width(160.0)
-                .show(ui);
-            if response.lost_focus()
-                && ui.input(|i| EditorKey::Confirm.pressed(i))
-                && !text.trim().is_empty()
-            {
-                filters.push(text.trim().to_owned());
-                text.clear();
+            if let Some(compare) = comparison_picker(ui, columns) {
+                filters.push(compare);
                 changed = true;
                 ui.close();
             }
-            ui.memory_mut(|m| m.data.insert_temp(id, text));
         });
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             ui.label(theme::muted(format!("{shown} of {total} rows")));
@@ -871,7 +809,7 @@ fn toolbar(
         });
     });
     if changed {
-        view.filter = filters.join(";");
+        view.filters = filters;
     }
     changed
 }
@@ -905,7 +843,7 @@ fn table_body(
     let grid_focused = ui.memory(|m| m.has_focus(grid));
     let keyboard_free = grid_focused || !ui.ctx().egui_wants_keyboard_input();
     let (selected, anchor, editing) = {
-        let state = editor.views.spreadsheet.state_mut(table);
+        let state = editor.views.spreadsheet.view_or_default(table);
         (
             state.selected.clone(),
             state.anchor.clone(),
@@ -1182,7 +1120,7 @@ fn table_body(
     }
     let hit_any = hit.is_some();
     if let Some(hit) = hit {
-        let state = editor.views.spreadsheet.state_mut(table);
+        let state = editor.views.spreadsheet.view_or_default(table);
         let same = state.selected.as_ref() == Some(&(hit.key.clone(), hit.column.clone()));
         if hit.extend && state.selected.is_some() {
             state.anchor = Some((hit.key.clone(), hit.column.clone()));
@@ -1221,7 +1159,7 @@ fn table_body(
         );
     }
     if settled {
-        editor.views.spreadsheet.state_mut(table).editing = None;
+        editor.views.spreadsheet.view_or_default(table).editing = None;
     }
     if settled || keyboard_free || editing.is_some() {
         keys(editor, ui, table, rows, shown, &range, settled);
@@ -1336,7 +1274,7 @@ fn edit_cell(
     let Some(project) = project.as_ref() else {
         return CellEdit::Cancelled;
     };
-    let state = views.spreadsheet.state_mut(table);
+    let state = views.spreadsheet.view_or_default(table);
     let autofocus = std::mem::take(&mut state.focus_editor);
     let mut cx = FormCx::new(project, root, shapes, &mut state.form, &mut actions)
         .editing(table, Some(&row.file));
@@ -1491,7 +1429,6 @@ fn hold_keyboard(
     let picked = editor
         .views
         .spreadsheet
-        .views
         .get(table)
         .is_some_and(|state| state.selected.is_some() && state.editing.is_none());
     ui.memory_mut(|memory| {
@@ -1525,7 +1462,7 @@ fn keys(
     range: &BTreeSet<(usize, usize)>,
     settled: bool,
 ) {
-    let state = editor.views.spreadsheet.state_mut(table);
+    let state = editor.views.spreadsheet.view_or_default(table);
     let Some((key, column_id)) = state.selected.clone() else {
         return;
     };
@@ -1758,7 +1695,7 @@ fn status(
     shown: &[SpreadsheetColumn],
     view: &SpreadsheetView,
 ) {
-    let state = editor.views.spreadsheet.state_mut(table);
+    let state = editor.views.spreadsheet.view_or_default(table);
     let mut left = Vec::new();
     if let Some((key, column_id)) = &state.selected
         && let Some(column) = shown.iter().find(|c| c.id == *column_id)
@@ -1802,7 +1739,6 @@ pub fn inspect(editor: &mut Editor, ui: &mut Ui, selection: &RowSelection) {
     let Some(key) = editor
         .views
         .spreadsheet
-        .views
         .get(&table)
         .and_then(|state| state.selected.as_ref())
         .map(|(key, _)| key.clone())
@@ -1822,7 +1758,7 @@ pub fn inspect(editor: &mut Editor, ui: &mut Ui, selection: &RowSelection) {
         return;
     };
     ui.label(
-        theme::mono(format!("{table} · table › {}", column.title))
+        face::mono(format!("{table} · table › {}", column.title))
             .color(theme::CODE)
             .size(12.0),
     );
@@ -1869,7 +1805,7 @@ pub fn inspect(editor: &mut Editor, ui: &mut Ui, selection: &RowSelection) {
         counts.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
         for (text, count) in counts.iter().take(8) {
             ui.horizontal(|ui| {
-                ui.label(theme::mono(text).size(12.0));
+                ui.label(face::mono(text).size(12.0));
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                     ui.label(theme::muted(count.to_string()));
                 });
@@ -1996,4 +1932,45 @@ pub(crate) fn sheet_part(column: &str) -> String {
 /// The column a part of a row selection stands for, when it stands for one of a sheet.
 pub(crate) fn sheet_column(part: &str) -> Option<&str> {
     part.strip_prefix(SHEET_PART_PREFIX)
+}
+
+/// A test of a numeric column against a value, built from a column, a comparison and a number
+/// picked in turn, once added.
+fn comparison_picker(ui: &mut Ui, columns: &[SpreadsheetColumn]) -> Option<SheetFilter> {
+    let numeric: Vec<&SpreadsheetColumn> = columns.iter().filter(|column| column.numeric).collect();
+    if numeric.is_empty() {
+        return None;
+    }
+    let id = ui.id().with("comparison");
+    let (mut column, mut test, mut value): (usize, Comparison, f64) = ui
+        .memory(|m| m.data.get_temp(id))
+        .unwrap_or((0, Comparison::AtLeast, 0.0));
+    column = column.min(numeric.len() - 1);
+    let mut added = None;
+    ui.horizontal(|ui| {
+        controls::combo(id.with("column"))
+            .selected_text(&numeric[column].title)
+            .show_ui(ui, |ui| {
+                for (index, known) in numeric.iter().enumerate() {
+                    ui.selectable_value(&mut column, index, &known.title);
+                }
+            });
+        controls::combo(id.with("test"))
+            .selected_text(test.sign())
+            .show_ui(ui, |ui| {
+                for &known in Comparison::VARIANTS {
+                    ui.selectable_value(&mut test, known, known.sign());
+                }
+            });
+        input::NumberField::new(&mut value).width(64.0).show(ui);
+        if ui.button("add").clicked() {
+            added = Some(SheetFilter::Compare {
+                column: numeric[column].id.clone(),
+                test,
+                value,
+            });
+        }
+    });
+    ui.memory_mut(|m| m.data.insert_temp(id, (column, test, value)));
+    added
 }

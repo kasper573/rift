@@ -97,7 +97,7 @@ fn card<L: Level>(
     changed: &mut FormChange,
 ) -> bool {
     let mut removed = false;
-    panel::card(ui, false, |ui| {
+    panel::tile_across(ui, false, |ui| {
         ui.horizontal(|ui| {
             ui.label(theme::strong(format!("{} {}", L::NAME, index + 1)));
             if let Some(note) = note {

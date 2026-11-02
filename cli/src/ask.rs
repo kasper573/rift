@@ -15,8 +15,7 @@ pub fn run(game: &Path) {
     for line in std::io::stdin().lock().lines().map_while(Result::ok) {
         let question = probe::read_question(&content, &line)
             .unwrap_or_else(|error| panic!("asked {line}: {error}"));
-        let answer = probe::answer(&content, &question)
-            .unwrap_or_else(|| panic!("only a desktop client answers {line}, from a frame"));
+        let answer = probe::answer(&content, &question);
         writeln!(out, "{answer}").expect("stdout takes answers");
         out.flush().expect("stdout takes answers");
     }

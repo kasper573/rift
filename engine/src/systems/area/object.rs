@@ -8,6 +8,7 @@ use schemars::{JsonSchema, Schema, SchemaGenerator};
 use serde::{Deserialize, Serialize};
 
 use crate::core::content::Content;
+use crate::core::content::SchemaMark;
 use crate::core::ground::TileAt;
 use crate::core::math::{Offset, Pos, Rect, Size};
 use crate::core::par;
@@ -38,7 +39,7 @@ pub fn register(app: &mut App) {
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 pub struct ObjectDef {
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    #[schemars(extend("x-name" = true))]
+    #[schemars(transform = SchemaMark::Name.with(true))]
     pub name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub title: Option<String>,
@@ -69,9 +70,9 @@ pub enum ObjectShape {
 #[derive(JsonSchema, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
 enum ShapeRow {
-    #[schemars(extend("x-pos" = true))]
+    #[schemars(transform = SchemaMark::Pos.with(true))]
     Point { x: f32, y: f32 },
-    #[schemars(extend("x-rect" = true))]
+    #[schemars(transform = SchemaMark::Rect.with(true))]
     Rect { x: f32, y: f32, w: f32, h: f32 },
 }
 
@@ -308,7 +309,7 @@ pub struct TrackUnderfoot {
     objects: Cached<(Entity, &'static AreaObject, &'static AreaTag), ()>,
     watchers: Vec<Watcher>,
     placed: Vec<Placed>,
-    crossings: Vec<Crossing>,
+    crossings: Vec<FootingChange>,
 }
 
 /// Players and npcs: whatever stands on objects.
@@ -383,7 +384,7 @@ impl Planner for TrackUnderfoot {
                 let (stood, inside): (&[Entity], &[Entity]) =
                     before.map_or((&[], &[]), |before| (&before.standing, &before.inside));
                 let standing = standing_on(world, actor, stood, &now);
-                (now != inside || standing != stood).then_some(Crossing {
+                (now != inside || standing != stood).then_some(FootingChange {
                     actor,
                     is_npc: world.get::<Npc>(actor).is_some(),
                     now,
@@ -395,7 +396,7 @@ impl Planner for TrackUnderfoot {
 
     fn apply(&mut self, world: &mut World) {
         for crossing in self.crossings.drain(..) {
-            let Crossing {
+            let FootingChange {
                 actor,
                 is_npc,
                 now,
@@ -430,7 +431,7 @@ impl Planner for TrackUnderfoot {
 const OBJECT_CELL: Meters = Meters(8.0);
 
 /// Where an actor stands this tick, found to differ from where it stood.
-struct Crossing {
+struct FootingChange {
     actor: Entity,
     is_npc: bool,
     now: Vec<Entity>,

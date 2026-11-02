@@ -4,6 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use super::AreaTag;
 use super::transition::Crossing;
+use crate::core::content::SchemaMark;
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
 use crate::systems::npc::Npc;
 use crate::systems::player::SpawnPoint;
@@ -14,7 +15,7 @@ use crate::systems::{dialogue, movement, reach, region};
 
 /// Moves an actor to a place, setting its spawn point.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "area"))]
+#[schemars(transform = SchemaMark::System.with("area"))]
 pub struct Warp {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]

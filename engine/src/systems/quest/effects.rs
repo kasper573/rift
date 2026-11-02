@@ -5,6 +5,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::{Objective, QuestId};
+use crate::core::content::SchemaMark;
 use crate::core::content::{Content, Fixture};
 use crate::core::script::{
     Answer, Arrow, Compiler, EffectDef, EffectStep, NEXT, REFUSED, ScriptFault,
@@ -21,7 +22,7 @@ use crate::systems::text::LineText;
 
 /// Shows the offer card and pauses.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "quest"))]
+#[schemars(transform = SchemaMark::System.with("quest"))]
 pub struct OfferQuest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
@@ -29,17 +30,17 @@ pub struct OfferQuest {
     pub quest: QuestId,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub accepted: Arrow,
-    #[schemars(extend("x-fails" = true))]
+    #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub declined: Arrow,
-    #[schemars(extend("x-fails" = true))]
+    #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub refused: Arrow,
 }
 
 /// Takes the quest at once.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "quest"))]
+#[schemars(transform = SchemaMark::System.with("quest"))]
 pub struct AcceptQuest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
@@ -47,14 +48,14 @@ pub struct AcceptQuest {
     pub quest: QuestId,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub done: Arrow,
-    #[schemars(extend("x-fails" = true))]
+    #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub refused: Arrow,
 }
 
 /// Shows the turn-in card and pauses.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "quest"))]
+#[schemars(transform = SchemaMark::System.with("quest"))]
 pub struct TurnIn {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
@@ -62,18 +63,18 @@ pub struct TurnIn {
     pub quest: QuestId,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub done: Arrow,
-    #[schemars(extend("x-fails" = true))]
+    #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub refused: Arrow,
     /// Taken when the card is closed without handing in.
-    #[schemars(extend("x-fails" = true))]
+    #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub cancelled: Arrow,
 }
 
 /// Fails an active quest.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "quest"))]
+#[schemars(transform = SchemaMark::System.with("quest"))]
 pub struct FailQuest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
@@ -85,7 +86,7 @@ pub struct FailQuest {
 
 /// Completes a task objective.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "quest"))]
+#[schemars(transform = SchemaMark::System.with("quest"))]
 pub struct CompleteTask {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]
@@ -98,7 +99,7 @@ pub struct CompleteTask {
 
 /// Decides a quest's path.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[schemars(extend("x-system" = "quest"))]
+#[schemars(transform = SchemaMark::System.with("quest"))]
 pub struct Decide {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     #[schemars(extend("default" = {"type": "subject"}))]

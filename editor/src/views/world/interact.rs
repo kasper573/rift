@@ -90,7 +90,7 @@ impl MapDrag {
                 (*offset, *snap) = if EditorKey::Unsnapped.held_among(modifiers) {
                     (delta, None)
                 } else {
-                    snapped(map, cards, delta, scale)
+                    snapped_to_neighbours(map, cards, delta, scale)
                 };
             }
             MapDrag::Note { from, offset, .. } => *offset = (p - *from) / scale,
@@ -651,7 +651,7 @@ impl Axis {
     }
 }
 
-fn snapped(
+fn snapped_to_neighbours(
     map: &OpenWorldMap,
     moving: &[String],
     delta: Vec2,
@@ -686,8 +686,8 @@ fn snapped(
                             shift,
                             note: format!(
                                 "{} snapped {how} {}",
-                                atlas.file_name(*mover),
-                                atlas.file_name(*other)
+                                atlas.card_name(*mover),
+                                atlas.card_name(*other)
                             ),
                         });
                     }

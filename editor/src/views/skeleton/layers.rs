@@ -12,6 +12,7 @@ use engine::systems::actor::Action;
 use engine::systems::actor::skeleton::{GroupName, JointName, Layer, Leg, SkeletonDef};
 use strum::VariantArray;
 use ui::egui::{self, RichText, Ui, Vec2};
+use ui::face;
 use ui::input::NumberField;
 use ui::{chip, controls, form, panel, sheet, theme};
 
@@ -476,7 +477,7 @@ fn fields(ui: &mut Ui, key: &str, rig: &NodeTree, from: &Option<String>, layer: 
                     for (index, leg) in legs.iter_mut().enumerate() {
                         ui.horizontal(|ui| {
                             ui.add(egui::TextEdit::singleline(&mut leg.name).desired_width(80.0));
-                            ui.label(theme::mono(
+                            ui.label(face::mono(
                                 leg.joints
                                     .iter()
                                     .map(JointName::as_str)

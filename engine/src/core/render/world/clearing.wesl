@@ -27,12 +27,9 @@ fn clear_pixel(pixel: vec2<f32>) {
     }
 }
 
-// Interleaved gradient noise, stepped on by the golden ratio each frame where the picture
-// settles.
+// Interleaved gradient noise, stepped on by the golden ratio each frame, which the picture's
+// settling over the frames blends into a translucency.
 fn dither(pixel: vec2<f32>) -> f32 {
-    var p = pixel;
-    @if(SETTLING) {
-        p += 5.588238 * f32(view.frame_count % 64u);
-    }
+    let p = pixel + 5.588238 * f32(view.frame_count % 64u);
     return fract(52.9829189 * fract(0.06711056 * p.x + 0.00583715 * p.y));
 }

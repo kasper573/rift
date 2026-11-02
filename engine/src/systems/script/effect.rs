@@ -5,6 +5,7 @@ use strum::{EnumDiscriminants, EnumString, IntoStaticStr};
 
 use super::{Condition, EffectReach, RiftScripting};
 use crate::core::audio::playback::SfxId;
+use crate::core::content::SchemaMark;
 use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, Eval, FlowCx, NEXT, REFUSED, ScriptFault, ValueType,
 };
@@ -196,7 +197,7 @@ pub fn show_error(world: &mut World, cx: &FlowCx, reason: impl Into<String>) {
 /// Plays a sound at the owner or the subject.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
-#[schemars(extend("x-system" = "audio"))]
+#[schemars(transform = SchemaMark::System.with("audio"))]
 pub struct PlaySound {
     pub sfx: super::Fill<SfxId>,
     #[serde(rename = "for")]

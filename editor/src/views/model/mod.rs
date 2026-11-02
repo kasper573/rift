@@ -20,11 +20,12 @@ use crate::app::Editor;
 use crate::project::ContentEdit;
 use crate::row_form;
 use crate::tabs::shown_path;
+use engine::systems::area::Pictured;
 
 pub struct ModelView {
     /// The stance the stage shows the model in, by its file's path.
     pub stance: Option<String>,
-    pub shown: look::Shown,
+    pub shown: look::PlayedMotion,
     pub scrub: super::cues::Scrub,
     pub stage: stage::StageState,
     pub hitbox: hitbox::HitboxHandles,
@@ -73,7 +74,7 @@ pub fn ensure_view(editor: &mut Editor, key: &str) {
         key,
         ModelView {
             stance: None,
-            shown: look::Shown::default(),
+            shown: look::PlayedMotion::default(),
             scrub: super::cues::Scrub::default(),
             stage: stage::StageState::framing(height.max(1.0) * 0.7),
             hitbox: hitbox::HitboxHandles::default(),
@@ -108,7 +109,14 @@ pub(super) fn turntable(
 ) -> Option<stage::Turntable> {
     ensure_view(editor, key);
     let mut state = std::mem::take(&mut editor.views.model.view_mut(key).stage);
-    let turntable = stage::turntable(editor, ui, &format!("model:{key}"), size, &mut state);
+    let turntable = stage::turntable(
+        editor,
+        ui,
+        &format!("model:{key}"),
+        size,
+        &mut state,
+        Pictured::Stage,
+    );
     editor.views.model.view_mut(key).stage = state;
     turntable
 }

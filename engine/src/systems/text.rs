@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use strum::{IntoStaticStr, VariantArray};
 use ui::ink::Prose;
 
+use crate::core::content::SchemaMark;
 use crate::core::script::{Expr, Value};
 use crate::core::text::{StyledLine, StyledSpan, TextMotion, TextPiece, TextVoice};
 use crate::core::units::{Millis, Seconds};
@@ -14,7 +15,7 @@ use crate::systems::script::RiftScripting;
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(try_from = "SpanRow", into = "SpanRow")]
-#[schemars(extend("x-span" = true))]
+#[schemars(transform = SchemaMark::Span.with(true))]
 pub enum Span {
     Text {
         text: String,

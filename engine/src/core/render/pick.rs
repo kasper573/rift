@@ -33,13 +33,6 @@ pub fn capsule_hit(ray: Ray3d, foot: Vec3, radius: f32, height: f32) -> Option<f
     (apart <= radius).then_some(along)
 }
 
-/// How far along the ray a point `reach` metres about `center` is hit, if it is.
-pub fn sphere_hit(ray: Ray3d, center: Vec3, reach: f32) -> Option<f32> {
-    let along = (center - ray.origin).dot(*ray.direction).max(0.0);
-    let nearest = ray.origin + *ray.direction * along;
-    (nearest.distance(center) <= reach).then_some(along)
-}
-
 /// How far along the ray its nearest point to the segment lies, and how far apart the two are
 /// there.
 fn ray_segment(ray: Ray3d, a: Vec3, b: Vec3) -> (f32, f32) {

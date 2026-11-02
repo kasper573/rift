@@ -1,6 +1,7 @@
+use egui::emath::easing;
 use egui::emath::{Rot2, TSTransform};
 use egui::epaint::{ClippedShape, Mesh, Primitive, Shadow};
-use egui::{Color32, Context, LayerId, Pos2, Rect};
+use egui::{Color32, Context, LayerId, Pos2, Rect, Vec2};
 
 use crate::sheet;
 
@@ -20,13 +21,13 @@ fn ease_in(t: f32) -> f32 {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Clock {
+pub struct SheetClock {
     progress: f32,
 }
 
-impl Clock {
-    pub const OPEN: Clock = Clock { progress: 1.0 };
-    pub const CLOSED: Clock = Clock { progress: 0.0 };
+impl SheetClock {
+    pub const OPEN: SheetClock = SheetClock { progress: 1.0 };
+    pub const CLOSED: SheetClock = SheetClock { progress: 0.0 };
 
     pub fn run(&mut self, open: bool, seconds: f32) {
         let step = if open {
@@ -173,6 +174,180 @@ pub fn posed(ctx: &Context, layer: LayerId, rest: Rect, pose: CardPose) -> Vec<M
             mesh
         })
         .collect()
+}
+
+const SWELL_SCALE: f32 = 1.08;
+const SWELL_SECONDS: f64 = 0.25;
+
+/// A swell that draws the eye to something shown again: armed by the bump, timed from the next
+/// draw.
+#[derive(Default, Clone, Copy)]
+pub struct Swell {
+    bumped: bool,
+    started: Option<f64>,
+}
+
+impl Swell {
+    pub fn bump(&mut self) {
+        self.bumped = true;
+    }
+
+    pub fn start_if_bumped(&mut self, now: f64) {
+        if std::mem::take(&mut self.bumped) {
+            self.started = Some(now);
+        }
+    }
+
+    /// How far the bumped thing is scaled now, easing back to its size.
+    pub fn scale(self, now: f64) -> f32 {
+        self.started.map_or(1.0, |at| {
+            let t = ((now - at) / SWELL_SECONDS).clamp(0.0, 1.0) as f32;
+            1.0 + (SWELL_SCALE - 1.0) * (1.0 - easing::cubic_out(t))
+        })
+    }
+}
+
+/// The items of a place as they come and go, each keyed: a new one enters, one gone leaves from
+/// where it stood, by the place's [`Transit`].
+pub struct Transits<T> {
+    items: Vec<Transiting<T>>,
+}
+
+impl<T> Default for Transits<T> {
+    fn default() -> Transits<T> {
+        Transits { items: Vec::new() }
+    }
+}
+
+impl<T: Clone> Transits<T> {
+    /// Brings the place up to what it shows now, in the order given. An item that just left keeps
+    /// the slot it had while it fades out.
+    pub fn sync(
+        &mut self,
+        now: f64,
+        transit: Transit,
+        current: impl IntoIterator<Item = (u64, T)>,
+    ) -> Vec<(T, TransitPose)> {
+        let mut previous: Vec<Option<Transiting<T>>> = std::mem::take(&mut self.items)
+            .into_iter()
+            .map(Some)
+            .collect();
+        let mut items: Vec<Transiting<T>> = Vec::new();
+        for (key, item) in current {
+            let kept = previous
+                .iter_mut()
+                .find_map(|slot| slot.take_if(|transiting| transiting.key == key));
+            items.push(match kept {
+                Some(mut transiting) => {
+                    transiting.item = item;
+                    if transiting.leaving {
+                        transiting.leaving = false;
+                        transiting.since = now;
+                    }
+                    transiting
+                }
+                None => Transiting {
+                    key,
+                    item,
+                    since: now,
+                    leaving: false,
+                },
+            });
+        }
+        for (index, slot) in previous.into_iter().enumerate() {
+            let Some(mut transiting) = slot else {
+                continue;
+            };
+            if !transiting.leaving {
+                transiting.leaving = true;
+                transiting.since = now;
+            }
+            if now - transiting.since < transit.exit.seconds {
+                items.insert(index.min(items.len()), transiting);
+            }
+        }
+        self.items = items;
+        self.items
+            .iter()
+            .map(|transiting| (transiting.item.clone(), transiting.pose(now, transit)))
+            .collect()
+    }
+}
+
+/// How the items of a place enter and leave.
+#[derive(Clone, Copy)]
+pub struct Transit {
+    pub enter: TransitMove,
+    pub exit: TransitMove,
+}
+
+/// The way an item travels on entering or leaving: from or to `offset` and `scale`, over
+/// `seconds`.
+#[derive(Clone, Copy)]
+pub struct TransitMove {
+    offset: Vec2,
+    scale: f32,
+    seconds: f64,
+}
+
+impl TransitMove {
+    pub const fn new(offset: Vec2, scale: f32, seconds: f64) -> TransitMove {
+        TransitMove {
+            offset,
+            scale,
+            seconds,
+        }
+    }
+}
+
+/// Where an item stands in its transit: how opaque, moved and scaled.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct TransitPose {
+    pub opacity: f32,
+    pub offset: Vec2,
+    pub scale: f32,
+}
+
+impl TransitPose {
+    /// The transform that gives whatever is drawn in `rect` this pose, scaled about its centre.
+    pub fn around(self, rect: Rect) -> TSTransform {
+        let centre = rect.center().to_vec2();
+        TSTransform::new(centre * (1.0 - self.scale) + self.offset, self.scale)
+    }
+}
+
+struct Transiting<T> {
+    key: u64,
+    item: T,
+    since: f64,
+    leaving: bool,
+}
+
+impl<T> Transiting<T> {
+    fn pose(&self, now: f64, transit: Transit) -> TransitPose {
+        let (step, away) = if self.leaving {
+            let t = ((now - self.since) / transit.exit.seconds).clamp(0.0, 1.0) as f32;
+            (transit.exit, easing::cubic_in(t))
+        } else {
+            let t = ((now - self.since) / transit.enter.seconds).clamp(0.0, 1.0) as f32;
+            (transit.enter, 1.0 - easing::cubic_out(t))
+        };
+        TransitPose {
+            opacity: 1.0 - away,
+            offset: step.offset * away,
+            scale: 1.0 + (step.scale - 1.0) * away,
+        }
+    }
+}
+
+impl Default for TransitPose {
+    fn default() -> TransitPose {
+        TransitPose {
+            opacity: 1.0,
+            offset: Vec2::ZERO,
+            scale: 1.0,
+        }
+    }
 }
 
 fn lerp(from: f32, to: f32, t: f32) -> f32 {

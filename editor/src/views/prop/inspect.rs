@@ -42,7 +42,7 @@ fn model_card(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef) {
         .and_then(|project| project.files.get(&path))
         .map(|bytes| FileSize(bytes.len()));
     let flat_shaded = super::geometry(editor, key).map(|geometry| geometry.flat_shaded);
-    panel::card(ui, false, |ui| {
+    panel::tile_across(ui, false, |ui| {
         panel::header(ui, "Model", "", |ui| {
             if ui.button("Replace model…").clicked() {
                 browse(editor, key);
@@ -122,7 +122,7 @@ fn footprint_card(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef) {
         .as_ref()
         .and_then(|project| Bodies::of(project.content.as_ref()?));
     let mut refit = false;
-    panel::card(ui, false, |ui| {
+    panel::tile_across(ui, false, |ui| {
         panel::subtitled(ui, "Footprint", FootprintKind::of(&row.footprint).label());
         ui.add_space(4.0);
         if let Footprint::Polygon { points, fitted_to } = &row.footprint {

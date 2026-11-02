@@ -14,6 +14,7 @@ use engine::systems::area::{Picture, Pictured};
 use engine::systems::item::card::{self as item_card, CardLook};
 use engine::systems::item::{self, CARD_SIZE, ICON_SIZE, ItemDef, Wear, widget};
 use ui::egui::{self, Sense, Ui, Vec2};
+use ui::face;
 use ui::{card, chip, form, panel, sheet, theme};
 
 use super::area::camera;
@@ -227,7 +228,7 @@ fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef) {
         ui.add_space(8.0);
     }
     let checks = pictures(editor, key);
-    panel::titled_card(ui, false, "Pictures", |ui| {
+    panel::titled_tile(ui, false, "Pictures", |ui| {
         for check in &checks {
             let thumb = editor.thumb(&ctx, &check.path);
             form::kv(ui, check.field, |ui| {
@@ -261,7 +262,7 @@ fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef) {
         }
     });
     ui.add_space(8.0);
-    panel::titled_card(ui, false, "Look", |ui| match look_path(editor, row) {
+    panel::titled_tile(ui, false, "Look", |ui| match look_path(editor, row) {
         Some(look) => {
             ui.horizontal(|ui| {
                 let side = Vec2::splat(64.0);
@@ -275,7 +276,7 @@ fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef) {
                         ui.ctx().request_repaint();
                     }
                 }
-                ui.label(theme::mono(shown_path(&look)).size(13.0));
+                ui.label(face::mono(shown_path(&look)).size(13.0));
             });
         }
         None => {

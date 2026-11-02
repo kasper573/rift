@@ -24,11 +24,10 @@ use bevy::light::DirectionalLightShadowMap;
 use bevy::pbr::MaterialPlugin;
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
-use bevy::render::renderer::RenderAdapterInfo;
 use bevy::world_serialization::{WorldAssetRoot, WorldInstance, WorldInstanceSpawner};
 
 use super::Look;
-use super::camera::{self, CameraRig, FullPicture};
+use super::camera::{self, CameraRig};
 use super::video::VideoPreferences;
 
 /// The width of each cascade of the sun's shadow map in texels.
@@ -98,11 +97,6 @@ impl Plugin for WorldScenePlugin {
                 .after(camera::place)
                 .before(bevy::transform::TransformSystems::Propagate),
         );
-    }
-
-    fn finish(&self, app: &mut App) {
-        let full = FullPicture::on(app.world().get_resource::<RenderAdapterInfo>());
-        app.insert_resource(full);
     }
 }
 

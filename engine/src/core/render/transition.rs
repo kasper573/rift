@@ -75,9 +75,7 @@ pub fn covering(transition: Res<ActiveTransition>) -> bool {
 }
 
 pub fn freeze(world: &mut World, viewed_at: Pos<Meters>, heading: Radians) {
-    let scale = world.resource::<present::PresentScale>().0.max(0.01);
-    let Some(from) =
-        camera::view_of(world).and_then(|view| target_marks(world, &view, scale, viewed_at))
+    let Some(from) = camera::view_of(world).and_then(|view| target_marks(world, &view, viewed_at))
     else {
         return;
     };
@@ -125,7 +123,6 @@ impl ActiveTransition {
         frame: Seconds,
         world: &World,
         view: Option<View>,
-        scale: f32,
     ) -> CutUniform {
         let Some(cut) = &mut self.0 else {
             return CutUniform::IDLE;
@@ -136,12 +133,12 @@ impl ActiveTransition {
             self.0 = None;
             return CutUniform::IDLE;
         }
-        let size = view.map_or(Vec2::ONE, |view| view.viewport() / scale);
+        let size = view.map_or(Vec2::ONE, |view| view.viewport());
         let to = cut
             .arrival
             .as_ref()
             .zip(view.as_ref())
-            .and_then(|(arrival, view)| target_marks(world, view, scale, arrival.viewed_at))
+            .and_then(|(arrival, view)| target_marks(world, view, arrival.viewed_at))
             .unwrap_or(cut.from);
         CutUniform {
             style: cut.style as u32,
@@ -149,7 +146,6 @@ impl ActiveTransition {
             in_progress: progress.uncover,
             time: cut.played.0,
             tile: GRID_TEXELS,
-            pixel: 1.0,
             from_radius: radius(cut.from, size),
             to_radius: radius(to, size),
             from_anchor: cut.from.viewed,
@@ -170,7 +166,6 @@ pub(super) struct CutUniform {
     in_progress: f32,
     time: f32,
     tile: f32,
-    pixel: f32,
     from_radius: f32,
     to_radius: f32,
     from_anchor: Vec2,
@@ -189,7 +184,6 @@ impl CutUniform {
         in_progress: 1.0,
         time: 0.0,
         tile: 1.0,
-        pixel: 1.0,
         from_radius: 1.0,
         to_radius: 1.0,
         from_anchor: Vec2::ZERO,
@@ -265,14 +259,9 @@ fn fraction(elapsed: Seconds, span: Seconds) -> f32 {
     (elapsed.0 / span.0).clamp(0.0, 1.0)
 }
 
-fn target_marks(
-    world: &World,
-    view: &View,
-    scale: f32,
-    viewed_at: Pos<Meters>,
-) -> Option<TargetMarks> {
+fn target_marks(world: &World, view: &View, viewed_at: Pos<Meters>) -> Option<TargetMarks> {
     let ground = camera::ground_height(world, viewed_at);
-    let viewed = view.project(camera::world_point(viewed_at, ground))? / scale;
+    let viewed = view.project(camera::world_point(viewed_at, ground))?;
     Some(TargetMarks { viewed })
 }
 

@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::core::content::SchemaMark;
 use crate::core::content::locate::escape;
 use crate::core::content::{
     ContentFile, ContentProblem, Fixture, Loading, Nearby, RowCheck, serial,
@@ -29,7 +30,7 @@ pub const MAX_NOTE: usize = 280;
 #[serde(deny_unknown_fields)]
 pub struct WorldMapDef {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    #[schemars(extend("propertyNames" = { "type": "string", "x-table": super::AreaDef::TABLE }))]
+    #[schemars(transform = keyed_by_area)]
     pub cards: BTreeMap<super::AreaId, AreaCard>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub regions: Vec<Region>,
@@ -136,4 +137,11 @@ pub fn check_all(loading: &mut Loading) {
             }
         }
     }
+}
+
+/// A map's keys are areas, as their paths.
+fn keyed_by_area(schema: &mut schemars::Schema) {
+    let mut names = schemars::json_schema!({ "type": "string" });
+    SchemaMark::Table.set(&mut names, super::AreaDef::TABLE);
+    schema.insert("propertyNames".to_owned(), names.into());
 }

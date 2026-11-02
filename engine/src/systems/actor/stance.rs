@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::core::content::SchemaMark;
 use crate::core::content::{Content, ContentFile, ContentId, NamedContent, Nearby, RowCheck};
 use crate::systems::item::{ItemId, Wear};
 
@@ -30,7 +31,7 @@ pub struct StanceDef {
 /// How many hands an item of the stance takes: one, or two side by side.
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(transparent)]
-#[schemars(extend("x-count" = true))]
+#[schemars(transform = SchemaMark::Count.with(true))]
 pub struct HandCount(pub u8);
 
 /// The hand a stance's clips were made for, where equipping puts its item unless the wearer

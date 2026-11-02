@@ -49,7 +49,7 @@ use bevy_ecs::prelude::{Entity, Res, ResMut, Resource, World};
 use bevy_replication::FromClient;
 use schemars::JsonSchema;
 
-use crate::core::assets::SyncedFiles;
+use crate::core::assets::SyncedAssetReader;
 use crate::core::audio::Hearing;
 use crate::core::audio::playback::{SfxDef, SfxPlugin};
 use crate::core::audio::soundscape::SoundscapePlugin;
@@ -390,6 +390,7 @@ pub fn server_app(
                     combat::defeats,
                     skill::hotbar::settle_basic_attack,
                     chat::hear,
+                    chat::overhear,
                     chat::rebroadcast,
                     belongings::notify_changes,
                     history::backfill,
@@ -461,7 +462,7 @@ pub fn client_app(
     };
 
     let mut app = App::new();
-    let files = SyncedFiles::default();
+    let files = SyncedAssetReader::default();
     app.insert_resource(files.clone());
     app.insert_resource(Rng::from_entropy());
     bevy::asset::AssetApp::register_asset_source(
@@ -582,7 +583,7 @@ pub fn install_content(world: &mut World, synced: SyncedContent, content: Conten
         .get_resource::<SyncedContent>()
         .map(|before| synced.changed_assets(before));
     world
-        .resource::<SyncedFiles>()
+        .resource::<SyncedAssetReader>()
         .replace(synced.assets.clone());
     if let Some(changed) = changed {
         let assets = world.resource::<bevy::asset::AssetServer>();

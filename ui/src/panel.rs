@@ -5,6 +5,7 @@ use std::hash::Hash;
 
 use egui::{Align, Id, Layout, Painter, Pos2, Rect, Response, Sense, Stroke, Ui, UiBuilder, Vec2};
 
+use crate::face;
 use crate::face::TextRole;
 use crate::glyph::Mark;
 use crate::{ink, sheet, theme};
@@ -19,8 +20,8 @@ pub fn tile(selected: bool) -> egui::Frame {
         .inner_margin(egui::Margin::symmetric(10, 8))
 }
 
-/// A card across the width available, picked out when it is `selected`.
-pub fn card<R>(
+/// A tile across the width available, picked out when it is `selected`.
+pub fn tile_across<R>(
     ui: &mut Ui,
     selected: bool,
     add: impl FnOnce(&mut Ui) -> R,
@@ -31,14 +32,14 @@ pub fn card<R>(
     })
 }
 
-/// A card under its `name`.
-pub fn titled_card<R>(
+/// A tile under its `name`.
+pub fn titled_tile<R>(
     ui: &mut Ui,
     selected: bool,
     name: &str,
     add: impl FnOnce(&mut Ui) -> R,
 ) -> egui::InnerResponse<R> {
-    card(ui, selected, |ui| {
+    tile_across(ui, selected, |ui| {
         title(ui, name);
         ui.add_space(4.0);
         add(ui)
@@ -91,7 +92,7 @@ pub fn well() -> egui::Frame {
 /// Text to read or copy as it is, such as a path or a report.
 pub fn code_block(ui: &mut Ui, text: &str) {
     well().show(ui, |ui| {
-        ui.add(egui::Label::new(theme::mono(text).size(12.5)).selectable(true));
+        ui.add(egui::Label::new(face::mono(text).size(12.5)).selectable(true));
     });
 }
 

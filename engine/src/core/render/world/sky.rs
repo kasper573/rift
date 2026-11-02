@@ -20,7 +20,6 @@ use super::clouds;
 use super::lights;
 use crate::core::math::{Rect, Rgb};
 use crate::core::render::Look;
-use crate::core::render::camera::FullPicture;
 use crate::core::units::{Degrees, Meters, Stops};
 
 /// How far into the air the haze is worked out, in metres of the world.
@@ -99,15 +98,12 @@ impl Sky {
     }
 }
 
-/// Lets `camera` see `sky` and be lit by it, where the GPU draws the full picture: the air drawn
+/// Lets `camera` see `sky` and be lit by it: the air drawn
 /// behind the world, hazing the distance and shedding its light from above, or none from the dark.
 /// The camera keeps the means to draw the air for as long as it lives and only their strength
 /// changes from sky to sky, since making them anew fills the GPU's command memory with the work
 /// of making them, which it keeps for good.
 pub fn show(world: &mut World, camera: Entity, sky: Sky) {
-    if !world.resource::<FullPicture>().0 {
-        return;
-    }
     let Some(sky_light) = world.get_resource::<Look>().map(|look| look.sky.sky_light) else {
         return;
     };

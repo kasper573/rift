@@ -6,6 +6,7 @@ use schemars::generate::SchemaSettings;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use super::SchemaMark;
 use super::load::ContentRegistry;
 
 /// Eight hex digits of the hash over every row shape, so a folder states which engine shapes it
@@ -42,7 +43,7 @@ fn canonical(value: Value) -> Value {
                 .into_iter()
                 .filter(|(key, _)| {
                     !matches!(key.as_str(), "title" | "description" | "$schema")
-                        && !key.starts_with("x-")
+                        && SchemaMark::of_key(key).is_none()
                 })
                 .map(|(key, value)| (key, canonical(value)))
                 .collect::<BTreeMap<String, Value>>()

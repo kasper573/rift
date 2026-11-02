@@ -3,6 +3,7 @@ use std::collections::BTreeMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::core::content::SchemaMark;
 use crate::core::content::{Loading, RowCheck, serial};
 use crate::core::math::{Pos, Rgb};
 use crate::core::render::camera::Tone;
@@ -49,7 +50,7 @@ pub struct Sun {
 pub struct DomeLook {
     pub shader: VfxShaderId,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    #[schemars(extend("x-params-of" = "shader"))]
+    #[schemars(transform = SchemaMark::ParamsOf.with("shader"))]
     pub params: BTreeMap<String, ParamValue>,
 }
 

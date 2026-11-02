@@ -7,6 +7,7 @@ use std::collections::BTreeMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::core::content::SchemaMark;
 use crate::core::content::{ContentFile, ContentId, Loading, Nearby, RowCheck, serial};
 use crate::core::vfx::shader::{Stage, VfxShaderDef};
 use crate::core::vfx::{ParamValue, VfxShaderId};
@@ -22,7 +23,7 @@ pub type PropMaterialId = ContentId<PropMaterialDef>;
 pub struct PropMaterialDef {
     pub shader: VfxShaderId,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
-    #[schemars(extend("x-params-of" = "shader"))]
+    #[schemars(transform = SchemaMark::ParamsOf.with("shader"))]
     pub params: BTreeMap<String, ParamValue>,
     #[serde(default, skip_serializing_if = "serial::is_zero_f32")]
     pub translucency: f32,

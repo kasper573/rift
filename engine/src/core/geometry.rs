@@ -1,3 +1,6 @@
+use std::f32::consts::PI;
+
+use bevy::math::Vec2;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -126,6 +129,70 @@ impl JsonSchema for PlacedShape {
 }
 
 impl PlacedShape {
+    /// `count` points spread evenly over the shape, the same every time: a sunflower spiral over
+    /// the shape's reach, kept where it falls inside, gives the candidates; picks start at even
+    /// strides through them and relax to the middle of the candidates nearest each, so they end up
+    /// evenly apart and well inside whatever the shape is.
+    pub fn spread(&self, count: u32) -> Vec<Pos<Meters>> {
+        let reach = self.reach().0.max(0.1);
+        let golden = PI * (3.0 - 5f32.sqrt());
+        let inside: Vec<Pos<Meters>> = (0..SPREAD_CANDIDATES)
+            .map(|index| {
+                let radius = reach * ((index as f32 + 0.5) / SPREAD_CANDIDATES as f32).sqrt();
+                let angle = index as f32 * golden;
+                Pos::new(
+                    self.at.x + radius * angle.cos(),
+                    self.at.y + radius * angle.sin(),
+                )
+            })
+            .filter(|point| self.contains(*point))
+            .collect();
+        if inside.is_empty() {
+            return vec![self.at; count as usize];
+        }
+        let mut picks: Vec<usize> = (0..count)
+            .map(|k| {
+                let stride = (k as f32 + 0.5) * inside.len() as f32 / count as f32;
+                (stride as usize).min(inside.len() - 1)
+            })
+            .collect();
+        let nearest = |to: Pos<Meters>, among: &[usize]| {
+            among
+                .iter()
+                .copied()
+                .min_by(|a, b| {
+                    (inside[*a] - to)
+                        .length()
+                        .total_cmp(&(inside[*b] - to).length())
+                })
+                .unwrap_or(0)
+        };
+        let all: Vec<usize> = (0..inside.len()).collect();
+        for _ in 0..SPREAD_ROUNDS {
+            let mut sums = vec![(Vec2::ZERO, 0usize); picks.len()];
+            for point in &inside {
+                let owner = picks
+                    .iter()
+                    .enumerate()
+                    .min_by(|a, b| {
+                        (inside[*a.1] - *point)
+                            .length()
+                            .total_cmp(&(inside[*b.1] - *point).length())
+                    })
+                    .map_or(0, |(owner, _)| owner);
+                sums[owner].0 += Vec2::new(point.x, point.y);
+                sums[owner].1 += 1;
+            }
+            for (pick, (sum, members)) in picks.iter_mut().zip(sums) {
+                if members > 0 {
+                    let mean = sum / members as f32;
+                    *pick = nearest(Pos::new(mean.x, mean.y), &all);
+                }
+            }
+        }
+        picks.into_iter().map(|pick| inside[pick]).collect()
+    }
+
     /// Where a cast from `from` toward `point` lays a shape down: a circle or a rectangle sits on
     /// the point, a cone or a line reaches out from the caster toward it.
     pub fn cast(shape: Shape, from: Pos<Meters>, point: Pos<Meters>) -> PlacedShape {
@@ -275,3 +342,7 @@ impl From<WirePlacedShape> for PlacedShape {
         }
     }
 }
+
+/// How many candidate points a spread picks among, and how many rounds its picks relax over.
+const SPREAD_CANDIDATES: usize = 4096;
+const SPREAD_ROUNDS: usize = 12;

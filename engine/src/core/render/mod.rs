@@ -7,11 +7,11 @@ pub mod video;
 pub mod world;
 
 pub use camera::{
-    CameraFraming, CameraPreferences, CameraRig, FullPicture, GroundHeights, PictureGrade, View,
-    WorldCamera, Zoom, Zooms, cursor_ground, cursor_ray, facing_rotation, ground_height,
-    ground_pos, view_of, window_point, world_point,
+    CameraFraming, CameraPreferences, CameraRig, GroundHeights, PictureGrade, View, WorldCamera,
+    Zoom, Zooms, cursor_ground, cursor_ray, facing_rotation, ground_height, ground_pos, view_of,
+    window_point, world_point,
 };
-pub use pick::{Pointed, capsule_hit, pointed, sphere_hit};
+pub use pick::{Pointed, capsule_hit, pointed};
 
 use std::collections::HashMap;
 
@@ -50,7 +50,6 @@ impl Plugin for WorldRenderPlugin {
         .init_resource::<CameraPreferences>()
         .init_resource::<present::ScreenGrade>()
         .init_resource::<present::AreaGrade>()
-        .init_resource::<present::PresentScale>()
         .init_resource::<transition::ActiveTransition>()
         .init_resource::<transition::ScreenTransitionPreference>()
         .init_resource::<icons::ResidentIcons>()

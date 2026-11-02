@@ -7,7 +7,7 @@ pub use berth::{
     Aim, Approach, ApproachPlan, Berths, approach, place_beside, reachable, relocate_beside,
     settle, vacant_near,
 };
-pub use navmesh::{Island, NavMesh, TileLayer};
+pub use navmesh::{Island, NavMesh, TileLayer, kept_clear};
 pub use predict::request_walk;
 pub use spots::{Bodies, Spot, Spots, crowding, spot_of};
 
@@ -283,7 +283,7 @@ pub fn goto(world: &mut World, entity: Entity, pos: Pos<Meters>) {
 pub struct AdvanceWalks {
     movers: Cached<Entity, With<MoveTarget>>,
     walking: Option<QueryState<Movers, With<MoveTarget>>>,
-    strides: Vec<Stride>,
+    strides: Vec<MoverStep>,
     /// Each mover's stride, under the mover's index.
     stride_of: Vec<Option<u32>>,
 }
@@ -328,14 +328,14 @@ impl Planner for AdvanceWalks {
             else {
                 continue;
             };
-            let Stride::Walk {
+            let MoverStep::Walk {
                 at,
                 planned,
                 reached,
                 heading,
                 speed,
                 gait,
-            } = std::mem::replace(&mut self.strides[slot as usize], Stride::Halt)
+            } = std::mem::replace(&mut self.strides[slot as usize], MoverStep::Halt)
             else {
                 halted.push(id);
                 continue;
@@ -372,7 +372,7 @@ impl Planner for AdvanceWalks {
 }
 
 /// What a mover's tick comes to, worked out from the world as the tick found it.
-enum Stride {
+enum MoverStep {
     /// The walk ends where the mover stands: it fell, or no way leads to its goal.
     Halt,
     Walk {
@@ -388,22 +388,22 @@ enum Stride {
     },
 }
 
-fn stride(world: &World, id: Entity, dt: Seconds) -> Stride {
+fn stride(world: &World, id: Entity, dt: Seconds) -> MoverStep {
     if stat::is_dead(world, id) {
-        return Stride::Halt;
+        return MoverStep::Halt;
     }
     let (Some(goal), Some(mut at)) = (
         world.get::<MoveTarget>(id).map(|goal| goal.pos),
         position(world, id),
     ) else {
-        return Stride::Halt;
+        return MoverStep::Halt;
     };
     let held = world.get::<Path>(id);
     let planned = match held {
         Some(path) if path.end() == Some(goal) => None,
         _ => match plan(world, id, goal) {
             Some(corners) => Some(corners),
-            None => return Stride::Halt,
+            None => return MoverStep::Halt,
         },
     };
     let corners = planned
@@ -413,7 +413,7 @@ fn stride(world: &World, id: Entity, dt: Seconds) -> Stride {
     let speed = speed_of(world, id);
     let gait = gait_of(world, id, speed);
     let (reached, heading) = walk(&mut at, corners, speed * dt);
-    Stride::Walk {
+    MoverStep::Walk {
         at,
         planned,
         reached,

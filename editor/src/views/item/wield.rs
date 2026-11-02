@@ -10,6 +10,7 @@ use engine::systems::actor::render;
 use engine::systems::actor::skeleton::SkeletonDef;
 use engine::systems::actor::stance::{HandRole, PropHand, StanceDef};
 use engine::systems::actor::{Action, ModelDef, Motion, Pose, held};
+use engine::systems::area::Pictured;
 use engine::systems::item::{Grip, ItemDef, ItemKind, PropAxis, Wear};
 use strum::VariantArray;
 use ui::egui::{self, RichText, Ui, Vec2};
@@ -20,7 +21,7 @@ use crate::project::ContentEdit;
 use crate::tabs::shown_path;
 use crate::views::area::viewport::{StageClip, StandingProp};
 use crate::views::cues::{self, Scrub};
-use crate::views::model::look::Shown;
+use crate::views::model::look::PlayedMotion;
 use crate::views::stage::{self, StageState};
 
 /// What the wield page's stage shows: a model, by its path, in a stance playing an action, pose or
@@ -28,7 +29,7 @@ use crate::views::stage::{self, StageState};
 pub struct WieldView {
     pub model: Option<String>,
     pub stance: Option<String>,
-    pub shown: Shown,
+    pub shown: PlayedMotion,
     pub scrub: Scrub,
     pub stage: StageState,
 }
@@ -38,7 +39,7 @@ impl Default for WieldView {
         WieldView {
             model: None,
             stance: None,
-            shown: Shown {
+            shown: PlayedMotion {
                 motion: Motion::Action(Action::Idle),
                 pose: Pose::Idle,
             },
@@ -209,9 +210,9 @@ fn stage_side(editor: &mut Editor, ui: &mut Ui, key: &str, stance_path: &str, gr
         form::hint(ui, "No model with hands loaded, so nothing holds the item.");
         return;
     };
-    let mut choices: Vec<Shown> = Action::VARIANTS
+    let mut choices: Vec<PlayedMotion> = Action::VARIANTS
         .iter()
-        .map(|action| Shown {
+        .map(|action| PlayedMotion {
             motion: Motion::Action(*action),
             pose: Pose::Idle,
         })
@@ -219,7 +220,7 @@ fn stage_side(editor: &mut Editor, ui: &mut Ui, key: &str, stance_path: &str, gr
     let mut moves: Vec<_> = model.skeleton().def.moves().cloned().collect();
     moves.sort();
     moves.dedup();
-    choices.extend(moves.into_iter().map(|name| Shown {
+    choices.extend(moves.into_iter().map(|name| PlayedMotion {
         motion: Motion::Move(name),
         pose: Pose::Idle,
     }));
@@ -292,7 +293,14 @@ fn stage_side(editor: &mut Editor, ui: &mut Ui, key: &str, stance_path: &str, gr
         .unwrap_or_default();
     let size = Vec2::new(ui.available_width(), ui.available_height() - 24.0);
     let mut state = std::mem::take(&mut editor.views.item.view_mut(key).wield.stage);
-    let turntable = stage::turntable(editor, ui, &format!("wield:{key}"), size, &mut state);
+    let turntable = stage::turntable(
+        editor,
+        ui,
+        &format!("wield:{key}"),
+        size,
+        &mut state,
+        Pictured::Stage,
+    );
     editor.views.item.view_mut(key).wield.stage = state;
     if let Some(turntable) = turntable {
         let held = clip.as_ref().map(|_| playhead.seconds());
@@ -326,7 +334,7 @@ pub fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str) {
         return;
     };
     let def = stance.get(&content);
-    panel::titled_card(ui, false, "Wield", |ui| {
+    panel::titled_tile(ui, false, "Wield", |ui| {
         form::kv_text(
             ui,
             "hands",

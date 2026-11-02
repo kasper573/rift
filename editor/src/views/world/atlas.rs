@@ -307,7 +307,7 @@ impl WorldAtlas {
     }
 
     /// What a card is called on the map: its file's name, without the folders holding it.
-    pub fn file_name(&self, id: AreaId) -> &str {
+    pub fn card_name(&self, id: AreaId) -> &str {
         name_of(self.key(id))
     }
 

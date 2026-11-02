@@ -42,15 +42,15 @@ impl Plugin for ConnectionPlugin {
 
 /// Set once the server welcomes the connection, until the client asks to join.
 #[derive(Resource)]
-pub(super) struct Announce;
+pub(super) struct JoinOnWelcome;
 
-pub(super) fn announce(world: &mut World) {
-    if world.get_resource::<Announce>().is_none() || session::my_id(world).is_none() {
+pub(super) fn join_once_welcomed(world: &mut World) {
+    if world.get_resource::<JoinOnWelcome>().is_none() || session::my_id(world).is_none() {
         return;
     }
     info!("connection welcomed; joining");
     world.write_message(JoinRequest);
-    world.remove_resource::<Announce>();
+    world.remove_resource::<JoinOnWelcome>();
 }
 
 #[derive(Resource)]
@@ -89,7 +89,7 @@ pub(super) fn poll_session(world: &mut World) {
         Ok(token) => match read_token(&token).map(Connection::open) {
             Some(Ok(connection)) => {
                 world.insert_resource(connection);
-                world.insert_resource(Announce);
+                world.insert_resource(JoinOnWelcome);
                 info!("connection opened");
             }
             Some(Err(error)) => error!("could not open a connection: {error}"),

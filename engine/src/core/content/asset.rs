@@ -1,3 +1,4 @@
+use super::SchemaMark;
 use std::borrow::Cow;
 use std::fmt::{Display, Formatter};
 
@@ -59,7 +60,7 @@ macro_rules! asset_ref {
             fn json_schema(generator: &mut SchemaGenerator) -> Schema {
                 let mut schema = String::json_schema(generator);
                 let kind: &'static str = AssetKind::$kind.into();
-                schema.insert("x-asset".to_owned(), kind.into());
+                SchemaMark::Asset.set(&mut schema, kind);
                 schema
             }
 

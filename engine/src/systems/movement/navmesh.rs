@@ -737,6 +737,15 @@ fn point_in(rng: &mut Rng, [a, b, c]: [Pos<Meters>; 3]) -> Pos<Meters> {
     a + (b - a) * (r1 * (1.0 - r2)) + (c - a) * (r1 * r2)
 }
 
+/// The ground walkers `radius` round keep clear of around an obstacle of `outline`, as the outlines
+/// that together hold it.
+pub fn kept_clear(outline: &[Pos<Meters>], radius: Meters) -> Vec<Vec<Pos<Meters>>> {
+    grown(outline, radius)
+        .into_iter()
+        .map(|grown| grown.into_iter().map(|at| Pos::new(at.x, at.y)).collect())
+        .collect()
+}
+
 /// The outlines of `obstacles` that reach into `rect` once grown by `radius`, grown.
 fn reaching<'a>(
     obstacles: &'a [Vec<Pos<Meters>>],

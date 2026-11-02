@@ -40,7 +40,7 @@ const BEHIND_SHADOW: Shadow = Shadow {
     spread: 0,
     color: Color32::from_black_alpha(90),
 };
-pub(crate) const CONTACT_SHADOW: Shadow = Shadow {
+const CARD_CONTACT_SHADOW: Shadow = Shadow {
     offset: [0, 1],
     blur: 2,
     spread: 0,
@@ -208,7 +208,7 @@ impl<'a> Card<'a> {
         };
         vec![
             Shape::Rect(shadow.as_shape(outer, CORNER)),
-            Shape::Rect(CONTACT_SHADOW.as_shape(outer, CORNER)),
+            Shape::Rect(CARD_CONTACT_SHADOW.as_shape(outer, CORNER)),
             Shape::rect_filled(outer, CORNER, ink::CREAM),
             Shape::rect_stroke(
                 frame.shrink(FRAME_STROKE),

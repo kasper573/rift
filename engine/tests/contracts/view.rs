@@ -17,6 +17,7 @@ use engine::core::audio::playback::{PlaySfx, SfxDef, SfxId, SfxPlace};
 use engine::core::content::gltf::PLACEHOLDER_LIFT;
 use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER};
 use engine::core::math::Pos;
+use engine::core::render::View;
 use engine::core::render::camera::ground_hit;
 use engine::core::render::world::WorldScenePlugin;
 use engine::core::render::world::body::{Body, BodyPlugin};
@@ -25,7 +26,6 @@ use engine::core::render::world::layers::JointLayersPlugin;
 use engine::core::render::world::lod::Simplifier;
 use engine::core::render::world::material::{FadeStyle, WorldMaterial, world_material};
 use engine::core::render::{Animator, CameraRig, capsule_hit, facing_rotation, world_point};
-use engine::core::render::{FullPicture, View};
 use engine::core::text::Typewriter;
 use engine::core::units::{Degrees, MeterPos, Meters, MetersPerSec, PlaybackRate, Radians};
 use engine::core::vfx::render::VfxMaterialsPlugin;
@@ -903,11 +903,7 @@ fn a_thing_hiding_the_subject_fades_on_its_own_and_shares_its_look_again_once_wh
     let look = app
         .world_mut()
         .resource_mut::<Assets<WorldMaterial>>()
-        .add(world_material(
-            StandardMaterial::default(),
-            FullPicture(false),
-            &finish,
-        ));
+        .add(world_material(StandardMaterial::default(), &finish));
     let mut tree = |at: Vec3| {
         let world = app.world_mut();
         let tree = world

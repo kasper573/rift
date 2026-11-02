@@ -5,6 +5,7 @@ use std::time::SystemTime;
 use engine::core::time::UnixMillis;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
+use strum::VariantArray;
 
 use crate::views::area::camera::OrbitCamera;
 
@@ -141,6 +142,8 @@ pub struct StampSettings {
     /// How many quarter turns clockwise each placement is turned.
     pub quarter_turns: u8,
     pub spacing: Option<u32>,
+    /// The blueprint's variables as last set, as their files write them: they name files, so they
+    /// read only against the game as it stands when the stamp places, not as settings load.
     pub values: BTreeMap<String, serde_json::Value>,
 }
 
@@ -149,7 +152,73 @@ pub struct StampSettings {
 pub struct SpreadsheetView {
     pub columns: Vec<String>,
     pub sort: Option<(String, bool)>,
-    pub filter: String,
+    pub filters: Vec<SheetFilter>,
+}
+
+/// A test a sheet's rows pass to show.
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum SheetFilter {
+    /// An npc some script lets a player fight.
+    CanBeFought,
+    /// A row holding a module of the tag.
+    Has(String),
+    /// A row holding no module of the tag.
+    Lacks(String),
+    /// A row whose number in the column compares to the value as the test says.
+    Compare {
+        column: String,
+        test: Comparison,
+        value: f64,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, VariantArray)]
+#[serde(rename_all = "snake_case")]
+pub enum Comparison {
+    Below,
+    AtMost,
+    Equal,
+    AtLeast,
+    Above,
+}
+
+impl Comparison {
+    pub fn holds(self, have: f64, want: f64) -> bool {
+        match self {
+            Comparison::Below => have < want,
+            Comparison::AtMost => have <= want,
+            Comparison::Equal => (have - want).abs() < f64::EPSILON,
+            Comparison::AtLeast => have >= want,
+            Comparison::Above => have > want,
+        }
+    }
+
+    pub fn sign(self) -> &'static str {
+        match self {
+            Comparison::Below => "<",
+            Comparison::AtMost => "≤",
+            Comparison::Equal => "=",
+            Comparison::AtLeast => "≥",
+            Comparison::Above => ">",
+        }
+    }
+}
+
+impl SheetFilter {
+    /// The filter as its chip reads.
+    pub fn label(&self) -> String {
+        match self {
+            SheetFilter::CanBeFought => "can be fought".to_owned(),
+            SheetFilter::Has(tag) => format!("has {tag}"),
+            SheetFilter::Lacks(tag) => format!("lacks {tag}"),
+            SheetFilter::Compare {
+                column,
+                test,
+                value,
+            } => format!("{column} {} {value}", test.sign()),
+        }
+    }
 }
 
 impl EditorSettings {

@@ -7,6 +7,7 @@ use ui::panel;
 use ui::theme;
 use ui::words;
 
+use crate::widgets::Badge;
 use engine::core::content::{ContentFile, name_of};
 use engine::core::script::Variable;
 use engine::field;
@@ -98,7 +99,7 @@ fn boxes(editor: &mut Editor, ui: &mut Ui, snapshot: &AreaSnapshot) {
     let mut renamed = None;
     let mut variables_changed = None;
     let mut actions = Vec::new();
-    panel::card(ui, false, |ui| {
+    panel::tile_across(ui, false, |ui| {
         ui.horizontal(|ui| {
             let mark = if folded {
                 Mark::CaretRight
@@ -449,7 +450,7 @@ fn filter_row(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
                 panel.filter.clear();
             }
         },
-        |ui| tree::show_menu(ui, view, &kinds, &|kind| KindMark::Badge(kind), &mut []),
+        |ui| tree::show_menu(ui, view, &kinds, &module_mark, &mut []),
     );
     if changed {
         editor.save_settings();
@@ -457,6 +458,14 @@ fn filter_row(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
 }
 
 /// Every kind of node Show ▾ offers: every kind of module.
+/// The mark of a kind of module the scene's filter shows or hides, by its tag.
+fn module_mark(tag: &str) -> KindMark {
+    KindMark::Badge(
+        tag.parse::<AreaModuleKind>()
+            .map_or_else(|_| Badge::of_tag(tag, None), Badge::of_module),
+    )
+}
+
 fn scene_kinds() -> Vec<String> {
     AreaModuleKind::VARIANTS
         .iter()
