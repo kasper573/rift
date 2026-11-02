@@ -18,8 +18,9 @@ use crate::core::render::window_point;
 use crate::core::time;
 use crate::core::units::{Meters, Seconds};
 use crate::core::vfx::render::{
-    ParamsUniform, Run, SiteFrame, SiteTexture, compiled_shader, hide, present_shader, screen_piece,
+    Run, SiteFrame, SiteTexture, compiled_shader, hide, present_shader, screen_piece,
 };
+use crate::core::vfx::uniform::ParamsUniform;
 use crate::core::vfx::{VfxParams, VfxShaderId};
 use crate::systems::GameSettings;
 use crate::systems::actor::Hitbox;

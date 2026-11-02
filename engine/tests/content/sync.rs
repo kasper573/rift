@@ -52,12 +52,12 @@ fn a_first_visit_fetches_everything_keeping_only_it_and_a_later_visit_only_the_m
 
     let file = &again.index.files[0];
     let bytes = again.assets.read(&file.path).expect("the asset reads");
-    store.drop_entry(&file.hash);
+    store.drop_entry(&file.held.hash);
     assert!(
         again.assets.read(&file.path).is_none(),
         "lost from the store"
     );
-    store.put(&file.hash, &bytes);
+    store.put(&file.held.hash, &bytes);
     assert_eq!(again.assets.read(&file.path).as_deref(), Some(&bytes[..]));
 }
 
@@ -122,35 +122,38 @@ fn a_bad_hash_is_fetched_again() {
         .corrupt_once
         .lock()
         .unwrap()
-        .insert(file.hash.clone());
+        .insert(file.held.hash.clone());
     let fresh = TestStore::default();
     server.forget_requests();
     let synced = run(&server, &fresh).expect("a corrupt download is retried");
     let fetched_twice = server
         .requested_hashes()
         .iter()
-        .filter(|hash| **hash == file.hash)
+        .filter(|hash| **hash == file.held.hash)
         .count();
     assert_eq!(fetched_twice, 2);
     assert_eq!(
         blake3::hash(&synced.assets.read(&file.path).expect("the asset reads"))
             .to_hex()
             .as_str(),
-        file.hash
+        file.held.hash
     );
 
-    store.put(&file.hash, b"rotten on the device");
+    store.put(&file.held.hash, b"rotten on the device");
     server.forget_requests();
     let synced = run(&server, &store).expect("a corrupt stored file is refetched");
-    assert_eq!(server.requested_hashes(), std::slice::from_ref(&file.hash));
+    assert_eq!(
+        server.requested_hashes(),
+        std::slice::from_ref(&file.held.hash)
+    );
     assert_eq!(
         blake3::hash(&synced.assets.read(&file.path).expect("the asset reads"))
             .to_hex()
             .as_str(),
-        file.hash
+        file.held.hash
     );
-    let repaired = store.read(&file.hash).expect("stored again");
-    assert_eq!(blake3::hash(&repaired).to_hex().as_str(), file.hash);
+    let repaired = store.read(&file.held.hash).expect("stored again");
+    assert_eq!(blake3::hash(&repaired).to_hex().as_str(), file.held.hash);
 }
 
 #[test]
@@ -201,7 +204,7 @@ fn a_deploy_fetches_only_what_changed_and_drops_what_it_replaced() {
     let expected: HashSet<String> = [
         v2.manifest.index.hash.clone(),
         v2.manifest.rows.hash.clone(),
-        new_sound.hash.clone(),
+        new_sound.held.hash.clone(),
     ]
     .into_iter()
     .collect();
@@ -212,7 +215,7 @@ fn a_deploy_fetches_only_what_changed_and_drops_what_it_replaced() {
     );
     assert!(!v2.manifest.same_content(&v1.manifest));
     let kept: HashSet<String> = store.hashes().into_iter().collect();
-    assert!(!kept.contains(&old_sound.hash));
+    assert!(!kept.contains(&old_sound.held.hash));
     assert!(!kept.contains(&v1.manifest.rows.hash));
     assert_eq!(kept, expected_hashes(&server.served.lock().unwrap(), &v2));
 }
@@ -283,20 +286,23 @@ fn a_streamed_part_is_fetched_as_it_is_first_read_and_kept() {
     let (tile, overview) = (indexed("paint/0_0.png"), indexed("paint_overview.png"));
     assert!(tile.streamed && !overview.streamed);
     let requested = server.requested_hashes();
-    assert!(requested.contains(&overview.hash) && !requested.contains(&tile.hash));
-    assert!(!store.hashes().contains(&tile.hash));
+    assert!(requested.contains(&overview.held.hash) && !requested.contains(&tile.held.hash));
+    assert!(!store.hashes().contains(&tile.held.hash));
 
     server.forget_requests();
     let bytes = synced.assets.read(&tile.path).expect("the tile reads");
-    assert_eq!(FileHash::of(&bytes).hash, tile.hash);
-    assert_eq!(server.requested_hashes(), std::slice::from_ref(&tile.hash));
-    assert!(store.hashes().contains(&tile.hash));
+    assert_eq!(FileHash::of(&bytes).hash, tile.held.hash);
+    assert_eq!(
+        server.requested_hashes(),
+        std::slice::from_ref(&tile.held.hash)
+    );
+    assert!(store.hashes().contains(&tile.held.hash));
     server.forget_requests();
     assert!(synced.assets.read(&tile.path).is_some());
     assert!(server.requested_hashes().is_empty(), "kept once fetched");
 
     run(&server, &store).expect("the next visit syncs");
-    assert!(store.hashes().contains(&tile.hash), "a visit keeps it");
+    assert!(store.hashes().contains(&tile.held.hash), "a visit keeps it");
 }
 
 /// A small game with a sound to fetch.
@@ -351,7 +357,7 @@ fn expected_hashes(served: &ServedContent, index: &SyncedContent) -> HashSet<Str
         .files
         .iter()
         .filter(|file| !file.streamed)
-        .map(|file| file.hash.clone())
+        .map(|file| file.held.hash.clone())
         .chain([
             served.manifest.index.hash.clone(),
             served.manifest.rows.hash.clone(),

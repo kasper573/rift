@@ -18,7 +18,7 @@ use bevy::pbr::{
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_resource::{
-    AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+    AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError,
 };
 use bevy::shader::{Shader, ShaderRef};
 use bevy::sprite_render::{
@@ -29,10 +29,10 @@ use bevy_egui::EguiPrimaryContextPass;
 use ui::egui::Color32;
 use ui::egui::load::SizedTexture;
 
-use super::shader::PARAMS_BYTES;
+use super::uniform::{MAX_PATH_POINTS, ParamsUniform, SiteUniform, VfxShaderKey, WeatherImage};
 use super::{
-    BodyShape, CompiledVfxShaders, ParamKind, ParamValue, SiteKind, Stage, VfxDef, VfxInstance,
-    VfxLayer, VfxParams, VfxShaderDef, VfxShaderId, VfxSite, sprite_cell,
+    BodyShape, CompiledVfxShaders, ParamValue, SiteKind, Stage, VfxDef, VfxInstance, VfxLayer,
+    VfxParams, VfxShaderDef, VfxShaderId, VfxSite, sprite_cell,
 };
 use crate::core::content::Content;
 use crate::core::geometry::{PlacedShape, Shape};
@@ -41,6 +41,7 @@ use crate::core::math::{Pos, Rgba, Size};
 use crate::core::render::present::{self, PRESENT_LAYER, PresentScale};
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::billboard::Billboard;
+use crate::core::render::world::cover::CoverMaterial;
 use crate::core::render::world::decal::LIFT;
 use crate::core::render::world::material::WorldMaterial;
 use crate::core::render::world::terrain;
@@ -58,11 +59,11 @@ impl Plugin for VfxMaterialsPlugin {
         app.add_plugins(Material2dPlugin::<VfxMaterial>::default())
             .add_plugins(MaterialPlugin::<VfxWorldMaterial>::default())
             .add_plugins(MaterialPlugin::<SurfaceMaterial>::default())
-            .add_plugins(MaterialPlugin::<super::cover::CoverMaterial>::default())
+            .add_plugins(MaterialPlugin::<CoverMaterial>::default())
             .add_plugins(MaterialPlugin::<super::sky::SkyMaterial>::default())
             .init_resource::<VfxShaders>()
             .init_resource::<VfxAssets>()
-            .init_resource::<super::cover::WeatherImage>()
+            .init_resource::<WeatherImage>()
             .add_systems(
                 Update,
                 (
@@ -113,9 +114,6 @@ pub struct SiteExtent {
 /// sparks, mist) can drift clear of the body and dissolve; the prelude fades the margin's outer
 /// edge, and the screen is drawn as is.
 pub const MARGIN: Meters = Meters(2.0);
-
-/// How many points of a path site a shader can read; a longer path keeps its first ones.
-pub const MAX_PATH_POINTS: usize = 16;
 
 /// How many of a sprite's or a site's own pixels make a metre of the world.
 pub const TEXELS_PER_METER: f32 = 16.0;
@@ -228,35 +226,6 @@ pub struct SurfaceVfx {
     #[uniform(101)]
     pub params: ParamsUniform,
     pub shader: Handle<Shader>,
-}
-
-/// The site as the prelude's `site` reads it, built by `SiteFrame::uniform`.
-#[derive(ShaderType, Clone, Copy, Debug, Default, PartialEq)]
-pub struct SiteUniform {
-    rect: Vec4,
-    size: Vec2,
-    pixel: Vec2,
-    kind: u32,
-    facing: f32,
-    heading: f32,
-    progress: f32,
-    time: f32,
-    overscan: Vec2,
-    shape: u32,
-    point_count: u32,
-    image: u32,
-    origin: Vec2,
-    extent: Vec2,
-    metres: Vec2,
-    points: [Vec4; MAX_PATH_POINTS / 2],
-}
-
-impl SiteUniform {}
-
-/// A shader's parameters laid out as its `Params` struct, built by `ParamsUniform::pack`.
-#[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
-pub struct ParamsUniform {
-    words: [Vec4; PARAMS_BYTES / 16],
 }
 
 /// A piece that draws over the presented frame, hidden until something is presented on it: for
@@ -662,80 +631,6 @@ impl Default for SitePath {
             count: 0,
             points: [Vec4::ZERO; MAX_PATH_POINTS / 2],
         }
-    }
-}
-
-impl ParamsUniform {
-    /// Each parameter the shader declares from `value`, or its default when that gives nothing or
-    /// a value of another kind, laid out as the shader's `Params` struct.
-    pub fn pack(
-        shader: &VfxShaderDef,
-        value: impl Fn(&str) -> Option<ParamValue>,
-    ) -> ParamsUniform {
-        let mut floats = [0.0f32; PARAMS_BYTES / 4];
-        for slot in shader.layout() {
-            let value = value(&slot.name)
-                .filter(|value| value.kind() == slot.kind)
-                .unwrap_or(slot.default);
-            let at = slot.offset / 4;
-            match (slot.kind, value) {
-                (ParamKind::Number, ParamValue::Number(number)) => floats[at] = number,
-                (ParamKind::Bool, ParamValue::Bool(flag)) => floats[at] = f32::from(u8::from(flag)),
-                (ParamKind::Color, ParamValue::Color(color)) => {
-                    let linear = color.color().to_linear();
-                    floats[at..at + 4].copy_from_slice(&[
-                        linear.red,
-                        linear.green,
-                        linear.blue,
-                        linear.alpha,
-                    ]);
-                }
-                _ => {}
-            }
-        }
-        let mut words = [Vec4::ZERO; PARAMS_BYTES / 16];
-        let (chunks, _) = floats.as_chunks::<4>();
-        for (word, chunk) in words.iter_mut().zip(chunks) {
-            *word = Vec4::from_array(*chunk);
-        }
-        ParamsUniform { words }
-    }
-}
-
-impl ParamsUniform {
-    /// The parameters bit for bit, so materials filled alike can be told apart from others.
-    pub fn bits(&self) -> [u32; PARAMS_BYTES / 4] {
-        let mut bits = [0; PARAMS_BYTES / 4];
-        for (word, value) in self.words.iter().flat_map(Vec4::to_array).enumerate() {
-            bits[word] = value.to_bits();
-        }
-        bits
-    }
-}
-
-impl Default for ParamsUniform {
-    fn default() -> ParamsUniform {
-        ParamsUniform {
-            words: [Vec4::ZERO; PARAMS_BYTES / 16],
-        }
-    }
-}
-
-/// Which compiled shader a material draws with, as its pipeline is specialized by. Every compiled
-/// shader is held under a uuid, so the key copies and the pipeline finds the shader by it.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-pub struct VfxShaderKey(Uuid);
-
-impl VfxShaderKey {
-    pub fn of(shader: &Handle<Shader>) -> VfxShaderKey {
-        VfxShaderKey(match shader.id() {
-            AssetId::Uuid { uuid } => uuid,
-            AssetId::Index { .. } => Uuid::nil(),
-        })
-    }
-
-    pub fn handle(self) -> Handle<Shader> {
-        Handle::Uuid(self.0, PhantomData)
     }
 }
 

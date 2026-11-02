@@ -190,19 +190,22 @@ impl Bundle for BustDef {
     fn read_parts(&mut self, parts: &mut Parts) {
         let keyed = parts.keyed(BUST_FACES);
         for &expression in GenericExpression::VARIANTS {
-            let part = BUST_FACES.named(expression.as_ref(), "png");
-            if parts.has(&part) {
-                *self.generic.of_mut(expression) = ImageRef::new(parts.path(&part));
-            } else {
-                parts.error(
+            match keyed.iter().find(|(name, _)| *name == expression.as_ref()) {
+                Some((_, file)) => {
+                    *self.generic.of_mut(expression) = ImageRef::new(parts.path(file))
+                }
+                None => parts.error(
                     "",
                     ErrorPlace::WholeFile,
                     ContentProblem::new(
                         MISSING_FILE,
-                        format!("no {part}"),
-                        "a face for every generic expression in faces/",
+                        format!("no face for {}", expression.as_ref()),
+                        format!(
+                            "a face for every generic expression, {}",
+                            BUST_FACES.describe()
+                        ),
                     ),
-                );
+                ),
             }
         }
         self.own = keyed

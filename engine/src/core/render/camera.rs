@@ -26,6 +26,8 @@ use crate::core::render::video::VideoPreferences;
 use crate::core::units::{Degrees, Meters, Radians, Seconds, Stops};
 
 const NEAR: f32 = 0.5;
+/// How many pixels a thing must span to be drawn: smaller, a view shows only what lies behind it.
+const FEWEST_PIXELS: f32 = 1.0;
 /// How far a ray is followed through the world before it is given up as hitting nothing.
 const REACH: f32 = 200.0;
 const MARCH_STEP: f32 = 0.25;
@@ -469,19 +471,19 @@ impl CameraRig {
 pub struct View {
     world_from_view: GlobalTransform,
     clip_from_view: Mat4,
+    clip_from_world: Mat4,
     viewport: Vec2,
 }
 
 impl View {
     pub fn new(camera: Transform, viewport: Vec2, fov: Degrees) -> View {
         let aspect = viewport.x / viewport.y.max(1.0);
+        let clip_from_view =
+            bevy::math::proj::perspective_infinite_reverse(fov.radians().0, aspect, NEAR);
         View {
             world_from_view: GlobalTransform::from(camera),
-            clip_from_view: bevy::math::proj::perspective_infinite_reverse(
-                fov.radians().0,
-                aspect,
-                NEAR,
-            ),
+            clip_from_view,
+            clip_from_world: clip_from_view * camera.to_matrix().inverse(),
             viewport,
         }
     }
@@ -521,8 +523,13 @@ impl View {
         self.viewport.y / 2.0 * self.clip_from_view.y_axis.y / distance.0.max(NEAR)
     }
 
+    /// How far off the eye a thing `extent` across still spans enough pixels to be drawn.
+    pub fn shown_within(&self, extent: Meters) -> Meters {
+        Meters(extent.0 * self.pixels_per_meter(Meters(1.0)) / FEWEST_PIXELS)
+    }
+
     pub fn view_proj(&self) -> Mat4 {
-        self.clip_from_view * self.world_from_view.to_matrix().inverse()
+        self.clip_from_world
     }
 
     /// The ray from the eye through a point of the viewport, in window pixels from its top left.
@@ -538,7 +545,7 @@ impl View {
 
     /// Where a point of the world shows in the viewport, none behind the eye.
     pub fn project(&self, world: Vec3) -> Option<Vec2> {
-        let clip = self.view_proj() * world.extend(1.0);
+        let clip = self.clip_from_world * world.extend(1.0);
         if clip.w <= 0.0 {
             return None;
         }

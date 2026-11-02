@@ -210,6 +210,14 @@ pub struct ScriptDef<V: Vocabulary> {
     pub nodes: BTreeMap<String, Node<V>>,
 }
 
+/// Whether `name` may name a node of a script: letters, digits and underscores, at least one.
+pub fn valid_node_name(name: &str) -> bool {
+    !name.is_empty()
+        && name
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'_')
+}
+
 impl<V: Vocabulary> ScriptDef<V> {
     /// A script with no nodes yet, run by owners of `kind`.
     pub fn running_on(kind: V::RunnerKind) -> ScriptDef<V> {

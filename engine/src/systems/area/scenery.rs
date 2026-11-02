@@ -13,6 +13,7 @@ use std::sync::Arc;
 use bevy::app::Propagate;
 use bevy::camera::primitives::MeshAabb;
 use bevy::camera::visibility::RenderLayers;
+use bevy::ecs::system::SystemParam;
 use bevy::gltf::Gltf;
 use bevy::light::NotShadowCaster;
 use bevy::light::atmosphere::ScatteringMedium;
@@ -20,6 +21,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::tasks::futures_lite::future;
 use bevy::tasks::{IoTaskPool, Task, block_on};
+use bevy::world_serialization::WorldInstanceReady;
 
 use super::lighting::DomeLook;
 use super::prop::PropId;
@@ -35,19 +37,22 @@ use crate::core::render::camera::{View, WorldPicture, ground_pos};
 use crate::core::render::present::AreaGrade;
 use crate::core::render::world::clouds::{self, CloudSheet};
 use crate::core::render::world::cover;
+use crate::core::render::world::cover::CoverMaterial;
 use crate::core::render::world::fade::Fades;
 use crate::core::render::world::lights::{self, Flicker};
-use crate::core::render::world::material::{MaterialLook, MaterialLooks};
+use crate::core::render::world::lod::{Levels, Simplifier};
+use crate::core::render::world::material::{MaterialLook, MaterialLooks, Surfaces};
 use crate::core::render::world::sky::{self, Daylight, SunLight};
 use crate::core::render::world::terrain::{self, GroundLayer, GroundMaterial};
 use crate::core::render::{Look, camera, world_point};
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::{MeterSize, Meters, Radians, Seconds};
 use crate::core::vfx::ParamFill;
-use crate::core::vfx::cover::{self as cover_vfx, Climate, CoverMaterial};
-use crate::core::vfx::render::{self as vfx_render, ParamsUniform, Run, SiteFrame, SiteUniform};
+use crate::core::vfx::cover::Climate;
+use crate::core::vfx::render::{self as vfx_render, Run, SiteFrame};
 use crate::core::vfx::shader::Stage;
 use crate::core::vfx::sky::{self as sky_vfx, Heavens, SkyMaterial};
+use crate::core::vfx::uniform::{ParamsUniform, SiteUniform, WeatherImage};
 
 /// An area's scenery as it stands in a world: everything hangs under `root`, the terrain mesh is
 /// `terrain`, `sun` is the directional light when the area has one, the sun by day and the full
@@ -69,7 +74,8 @@ pub struct SceneryPlugin {
 impl Plugin for SceneryPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Paced(self.paced))
-            .add_systems(Update, stream);
+            .add_systems(Update, stream)
+            .add_observer(level_ready_scene);
     }
 }
 
@@ -153,6 +159,7 @@ pub fn spawn(
         stood: Stood::default(),
         loading: HashMap::default(),
         settled: false,
+        stood_for: None,
     });
     Scenery {
         root,
@@ -163,8 +170,9 @@ pub fn spawn(
 }
 
 /// Tells the scenery where `view` looks at, and how far around it the covers, props and lights
-/// are to stand: a cover's pieces and a prop only where they span a pixel of the view. The ground
-/// stands whole, finer the nearer the view. What stands follows over the frames.
+/// are to stand: a cover's pieces and a prop only where they span a pixel of the view, a prop's
+/// meshes no finer than the view shows them. The ground stands whole, finer the nearer the view.
+/// What stands follows over the frames.
 pub fn view_from(world: &mut World, scenery: Scenery, at: Pos<Meters>, reach: Meters, view: View) {
     if let Some(mut streaming) = world.get_mut::<Streaming>(scenery.root) {
         streaming.view = Some(Seen { at, reach, view });
@@ -287,10 +295,13 @@ struct Streaming {
     /// The tiles of ground being loaded, for the near chunks waiting on them.
     loading: HashMap<TileAt, Task<()>>,
     settled: bool,
+    /// The view all that it takes in stands for, once it does, so a view that stays put costs
+    /// nothing to stream.
+    stood_for: Option<Seen>,
 }
 
 /// Where the view looks at, how far around it the scenery stands, and the view.
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 struct Seen {
     at: Pos<Meters>,
     reach: Meters,
@@ -354,9 +365,6 @@ const PLACEMENT_CELL: Meters = Meters(32.0);
 /// How far past its reach the view keeps what stands, so pacing back and forth over the edge
 /// stands nothing twice.
 const KEEP_SHARE: f32 = 1.25;
-/// How many pixels a cover's piece or a prop must span to stand: smaller, a view shows only the
-/// colour of the ground under it.
-const FEWEST_PIXELS: f32 = 1.0;
 /// How much stands in one frame where scenery is paced, and among the props how many whose model
 /// no earlier prop asked for: a model's load falls on the frames after the prop that starts it.
 const CHUNKS_PER_FRAME: usize = 4;
@@ -378,6 +386,11 @@ fn stream(world: &mut World) {
             world.entity_mut(root).insert(streaming);
             continue;
         };
+        if streaming.stood_for == Some(seen) && streaming.loading.is_empty() {
+            share_pictures(world, &streaming);
+            world.entity_mut(root).insert(streaming);
+            continue;
+        }
         let Seen { at, reach, .. } = seen;
         let keep = Meters(reach.0 * KEEP_SHARE);
         let mut budget = Budget::new(framed);
@@ -385,8 +398,10 @@ fn stream(world: &mut World) {
         share_pictures(world, &streaming);
         stream_covers(world, &mut streaming, root, seen, &mut budget);
         stream_props(world, &mut streaming, root, seen, &mut budget);
+        level_props(world, &streaming, &seen.view);
         stream_lights(world, &mut streaming, root, at, reach, keep);
         streaming.settled = !budget.spent;
+        streaming.stood_for = streaming.settled.then_some(seen);
         world.entity_mut(root).insert(streaming);
     }
 }
@@ -653,11 +668,6 @@ fn far(from: Pos<Meters>, to: Pos<Meters>, by: Meters) -> bool {
     (from - to).length() > by.0
 }
 
-/// How far off the eye of `view` something `extent` across still spans a pixel.
-fn shown_within(view: &View, extent: Meters) -> Meters {
-    Meters(extent.0 * view.pixels_per_meter(Meters(1.0)) / FEWEST_PIXELS)
-}
-
 fn distance_to(bounds: Rect<Meters>, at: Pos<Meters>) -> f32 {
     let dx = (bounds.min().x - at.x).max(at.x - bounds.max().x).max(0.0);
     let dy = (bounds.min().y - at.y).max(at.y - bounds.max().y).max(0.0);
@@ -681,11 +691,14 @@ fn stream_covers(
         )
     };
     let eye = view.eye();
-    let from_eye = |chunk: (u32, u32)| {
-        let bounds = chunk_bounds(chunk);
-        let across = distance_to(bounds, ground_pos(eye));
-        let below = eye.y - streaming.heights.height_at(bounds.center()).0;
-        Meters(across.hypot(below))
+    let mut eye_distances: HashMap<(u32, u32), Meters> = HashMap::default();
+    let mut from_eye = |chunk: (u32, u32)| {
+        *eye_distances.entry(chunk).or_insert_with(|| {
+            let bounds = chunk_bounds(chunk);
+            let across = distance_to(bounds, ground_pos(eye));
+            let below = eye.y - streaming.heights.height_at(bounds.center()).0;
+            Meters(across.hypot(below))
+        })
     };
     let shown: Vec<Vec<Option<Meters>>> = streaming
         .covers
@@ -694,11 +707,11 @@ fn stream_covers(
             layer
                 .pieces
                 .iter()
-                .map(|piece| piece.extent.map(|extent| shown_within(&view, extent)))
+                .map(|piece| piece.extent.map(|extent| view.shown_within(extent)))
                 .collect()
         })
         .collect();
-    let out_of_sight = |(layer, piece, chunk): (usize, usize, (u32, u32)), share: f32| {
+    let mut out_of_sight = |(layer, piece, chunk): (usize, usize, (u32, u32)), share: f32| {
         distance_to(chunk_bounds(chunk), at) > reach.0 * share
             || shown[layer][piece].is_some_and(|within| from_eye(chunk).0 > within.0 * share)
     };
@@ -760,7 +773,7 @@ fn stream_props(
             || streaming.prop_extents[index].is_some_and(|extent| {
                 let ground = streaming.heights.height_at(placed.at).0;
                 let from_eye = (placed.at - ground_pos(eye)).length().hypot(eye.y - ground);
-                from_eye > shown_within(&view, extent).0 * share
+                from_eye > view.shown_within(extent).0 * share
             })
     };
     let gone: Vec<usize> = streaming
@@ -801,6 +814,135 @@ fn stream_props(
         let entity = spawn_prop(world, &streaming.content, &streaming.heights, placed, root);
         streaming.stood.props.insert(index, entity);
     }
+}
+
+/// The meshes of a scene the scenery stands, each with its stand-ins and how many times its size
+/// it is drawn.
+#[derive(Component)]
+struct Leveled(Vec<LeveledMesh>);
+
+struct LeveledMesh {
+    mesh: Entity,
+    full: Handle<Mesh>,
+    levels: Arc<Levels>,
+    scale: f32,
+}
+
+/// How a scene hangs together: each entity's parent, children and place under its parent.
+#[derive(SystemParam)]
+struct SceneTree<'w, 's> {
+    parents: Query<'w, 's, &'static ChildOf>,
+    children: Query<'w, 's, &'static Children>,
+    transforms: Query<'w, 's, &'static Transform>,
+}
+
+/// The sceneries standing, and the scenes they stand that keep stand-ins for their meshes.
+#[derive(SystemParam)]
+struct Standing<'w, 's> {
+    streams: Query<'w, 's, &'static Streaming>,
+    leveled: Query<'w, 's, &'static Leveled>,
+}
+
+/// A scene the scenery stands, each time it has spawned, keeps its meshes' stand-ins and draws
+/// each at the level the scenery's view takes it in at; a mesh it leveled before keeps the mesh
+/// it was spawned with as its own.
+fn level_ready_scene(
+    ready: On<WorldInstanceReady>,
+    tree: SceneTree,
+    standing: Standing,
+    mut drawn: Query<&mut Mesh3d>,
+    surfaces: Surfaces,
+    mut simplifier: Simplifier,
+    mut commands: Commands,
+) {
+    let SceneTree {
+        parents,
+        children,
+        transforms,
+    } = tree;
+    let scene = ready.entity;
+    let Some(streaming) = parents
+        .get(scene)
+        .ok()
+        .and_then(|parent| standing.streams.get(parent.parent()).ok())
+    else {
+        return;
+    };
+    let scale_of = |mesh: Entity| {
+        std::iter::successors(Some(mesh), |&at| {
+            (at != scene)
+                .then(|| parents.get(at).ok().map(ChildOf::parent))
+                .flatten()
+        })
+        .filter_map(|at| transforms.get(at).ok())
+        .map(|transform| transform.scale.max_element())
+        .product()
+    };
+    let before = standing.leveled.get(scene).ok();
+    let leveled = Leveled(
+        children
+            .iter_descendants(scene)
+            .filter(|&mesh| !surfaces.cut_out(mesh))
+            .filter_map(|mesh| {
+                let full = before
+                    .and_then(|before| before.0.iter().find(|leveled| leveled.mesh == mesh))
+                    .map_or_else(
+                        || drawn.get(mesh).ok().map(|drawn| drawn.0.clone()),
+                        |leveled| Some(leveled.full.clone()),
+                    )?;
+                let levels = simplifier.levels_of(&full)?;
+                Some(LeveledMesh {
+                    mesh,
+                    full,
+                    levels,
+                    scale: scale_of(mesh),
+                })
+            })
+            .collect(),
+    );
+    if let (Some(seen), Ok(at)) = (streaming.view, transforms.get(scene)) {
+        for (mesh, level) in levels_for(seen.view, at.translation, &leveled) {
+            if let Ok(mut drawn) = drawn.get_mut(mesh) {
+                drawn.set_if_neq(Mesh3d(level.clone()));
+            }
+        }
+    }
+    commands.entity(scene).insert(leveled);
+}
+
+/// Draws every standing prop's meshes at the level `view` takes them in at.
+fn level_props(world: &mut World, streaming: &Streaming, view: &View) {
+    let changes: Vec<(Entity, Handle<Mesh>)> = streaming
+        .stood
+        .props
+        .values()
+        .filter_map(|&prop| Some((world.get::<Leveled>(prop)?, world.get::<Transform>(prop)?)))
+        .flat_map(|(leveled, at)| levels_for(*view, at.translation, leveled))
+        .filter(|(mesh, level)| {
+            world
+                .get::<Mesh3d>(*mesh)
+                .is_some_and(|drawn| drawn.0 != **level)
+        })
+        .map(|(mesh, level)| (mesh, level.clone()))
+        .collect();
+    for (mesh, level) in changes {
+        if let Some(mut drawn) = world.get_mut::<Mesh3d>(mesh) {
+            drawn.0 = level;
+        }
+    }
+}
+
+/// The level each of a scene's meshes is drawn at, seen in `view` with the scene at `at`.
+fn levels_for(
+    view: View,
+    at: Vec3,
+    leveled: &Leveled,
+) -> impl Iterator<Item = (Entity, &Handle<Mesh>)> {
+    let distance = Meters(view.eye().distance(at));
+    leveled.0.iter().map(move |mesh| {
+        let level = mesh.levels.for_view(&view, distance, mesh.scale);
+        (mesh.mesh, level.unwrap_or(&mesh.full))
+    })
 }
 
 fn stream_lights(
@@ -947,7 +1089,7 @@ fn spawn_dome(
     let material = SkyMaterial {
         site: SiteUniform::default(),
         params,
-        weather: world.resource::<cover_vfx::WeatherImage>().0.clone(),
+        weather: world.resource::<WeatherImage>().0.clone(),
         heavens: Heavens::clear(world.resource::<CloudSheet>().look()),
         clouds: world.resource::<CloudSheet>().field(),
         shader,
@@ -1134,10 +1276,10 @@ fn cover_layers(world: &mut World, content: &Content, area: &Area) -> Vec<CoverL
             }
         });
         let material = |world: &mut World, strewn: Option<&cover::Spread>| {
-            let weather = world.resource::<cover_vfx::WeatherImage>().0.clone();
+            let weather = world.resource::<WeatherImage>().0.clone();
             world
                 .resource_mut::<Assets<CoverMaterial>>()
-                .add(cover_vfx::material(
+                .add(cover::material(
                     frame.uniform(run, Stage::Cover),
                     params,
                     shader.clone(),

@@ -217,10 +217,13 @@ pub fn valid_name(name: &str) -> bool {
     (1..=64).contains(&name.len())
         && !base.is_empty()
         && !base.starts_with('-')
-        && base
-            .bytes()
-            .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_' || b == b'-')
+        && base.chars().all(name_char)
         && !is_device(base)
+}
+
+/// Whether `c` may stand in a file's or a folder's name.
+pub fn name_char(c: char) -> bool {
+    c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_' || c == '-'
 }
 
 /// Whether `name` is one Windows keeps for a device, which no file can be named.

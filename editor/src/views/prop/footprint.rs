@@ -104,7 +104,13 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef, size: Ve
     stage::show_picture(editor, ui, &painter, rect, &view_key);
     let bounds = super::model_bounds(editor, key);
     let view = editor.views.prop.views.view_mut(key);
-    camera::navigate(ui, &response, &mut view.top, rect.height());
+    camera::navigate(
+        ui,
+        &response,
+        &mut view.top,
+        rect.height(),
+        camera::STAGE_FARTHEST,
+    );
     view.top.top_down();
     let camera = view.top;
     let canvas = AreaCanvas::new(rect, camera, picture.1.area.clone());

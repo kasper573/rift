@@ -3,6 +3,7 @@ pub mod play;
 pub mod render;
 pub mod shader;
 pub mod sky;
+pub mod uniform;
 
 pub use play::{LayerTime, sprite_cell};
 pub use shader::{

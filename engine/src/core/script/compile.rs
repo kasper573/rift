@@ -495,6 +495,13 @@ fn compile_source<'c, V: Vocabulary>(
     let names: Vec<&'c str> = source.nodes.keys().map(String::as_str).collect();
     let mut seen = HashSet::new();
     for name in &names {
+        if !super::valid_node_name(name) {
+            return Err(fail(
+                "invalid name",
+                Some(name),
+                "letters, digits and underscores".to_owned(),
+            ));
+        }
         if !seen.insert(name.to_ascii_lowercase()) {
             return Err(fail(
                 "duplicate name",

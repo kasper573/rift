@@ -10,6 +10,7 @@ pub mod decal;
 pub mod fade;
 pub mod layers;
 pub mod lights;
+pub mod lod;
 pub mod mannequin;
 pub mod material;
 pub mod paint;
@@ -55,6 +56,7 @@ impl Plugin for WorldScenePlugin {
         .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP })
         .init_resource::<VideoPreferences>()
         .init_resource::<material::MaterialCache>()
+        .init_resource::<lod::MeshLevels>()
         .init_resource::<cover::TexturedCovers>()
         .init_resource::<cover::CopyMeshes>()
         .add_observer(material::dress_scenes)
@@ -75,6 +77,7 @@ impl Plugin for WorldScenePlugin {
                 cover::strew_loaded,
                 terrain::stack_pictures,
                 material::forget_dropped,
+                lod::forget_dropped,
                 cover::forget_dropped,
             ),
         )

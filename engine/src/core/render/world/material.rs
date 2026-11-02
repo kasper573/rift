@@ -23,11 +23,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::camera::FullPicture;
-use super::fade::Fades;
 use crate::core::render::Look;
-use crate::core::vfx::cover::WeatherImage;
-use crate::core::vfx::render::{ParamsUniform, SiteUniform, VfxShaderKey};
 use crate::core::vfx::shader::PARAMS_BYTES;
+use crate::core::vfx::uniform::{ParamsUniform, SiteUniform, VfxShaderKey, WeatherImage};
 
 pub type WorldMaterial = ExtendedMaterial<StandardMaterial, WorldLook>;
 
@@ -153,6 +151,36 @@ impl MaterialExtension for WorldLook {
     }
 }
 
+/// What the meshes of the world are drawn with, as loaded or as dressed for the world.
+#[derive(SystemParam)]
+pub struct Surfaces<'w, 's> {
+    loaded: Query<'w, 's, &'static MeshMaterial3d<StandardMaterial>>,
+    dressed: Query<'w, 's, &'static MeshMaterial3d<WorldMaterial>>,
+    standard: Res<'w, Assets<StandardMaterial>>,
+    world: Res<'w, Assets<WorldMaterial>>,
+}
+
+impl Surfaces<'_, '_> {
+    /// Whether `mesh` is cut out by its texture's alpha, as foliage is: its outline is drawn by
+    /// its texture rather than by its triangles.
+    pub fn cut_out(&self, mesh: Entity) -> bool {
+        let dressed = self
+            .dressed
+            .get(mesh)
+            .ok()
+            .and_then(|material| self.world.get(&material.0))
+            .map(|material| material.base.alpha_mode);
+        let loaded = || {
+            self.loaded
+                .get(mesh)
+                .ok()
+                .and_then(|material| self.standard.get(&material.0))
+                .map(|material| world_alpha(material.alpha_mode))
+        };
+        matches!(dressed.or_else(loaded), Some(AlphaMode::Mask(cutoff)) if cutoff > 0.0)
+    }
+}
+
 fn world_alpha(alpha: AlphaMode) -> AlphaMode {
     match alpha {
         AlphaMode::Mask(cutoff) => AlphaMode::Mask(cutoff),
@@ -237,11 +265,6 @@ pub fn looked_material(
     material
 }
 
-/// A mesh drawn with its own material rather than one shared with everything that looks alike, so
-/// its fade can move on its own.
-#[derive(Component)]
-pub struct OwnMaterial;
-
 /// What tells a look apart from another: its shader, its parameters and its translucency bit for
 /// bit.
 type LookKey = (AssetId<Shader>, [u32; PARAMS_BYTES / 4], u32);
@@ -277,13 +300,12 @@ pub(super) struct Wardrobe<'w> {
 }
 
 impl Wardrobe<'_> {
-    /// The world material standing in for `standard` under `look`: one of the mesh's own when
-    /// `own`, else the one every mesh with that standard material and look shares.
+    /// The world material standing in for `standard` under `look`, which every mesh with that
+    /// standard material and look shares.
     fn material_for(
         &mut self,
         standard: &Handle<StandardMaterial>,
         look: Option<&MaterialLook>,
-        own: bool,
     ) -> Option<Handle<WorldMaterial>> {
         let base = self.standard.get(standard)?.clone();
         let full = *self.full;
@@ -297,31 +319,28 @@ impl Wardrobe<'_> {
             Some(look) => looked_material(base, full, &finish, look, weather),
             None => world_material(base, full, &finish),
         };
-        Some(if own {
-            self.materials.add(make(base))
-        } else {
-            let key = (
-                standard.id(),
-                look.map(|look| {
-                    (
-                        look.shader.id(),
-                        look.params.bits(),
-                        look.translucency.to_bits(),
-                    )
-                }),
-            );
+        let key = (
+            standard.id(),
+            look.map(|look| {
+                (
+                    look.shader.id(),
+                    look.params.bits(),
+                    look.translucency.to_bits(),
+                )
+            }),
+        );
+        Some(
             self.cache
                 .0
                 .entry(key)
                 .or_insert_with(|| self.materials.add(make(base)))
-                .clone()
-        })
+                .clone(),
+        )
     }
 }
 
 /// Every scene that finishes spawning trades its standard materials for world ones, each drawn
-/// by the game's shader when the scene's looks name its material: the meshes of a prop that
-/// fades get materials of their own.
+/// by the game's shader when the scene's looks name its material.
 pub(super) fn dress_scenes(
     ready: On<WorldInstanceReady>,
     children: Query<&Children>,
@@ -330,12 +349,12 @@ pub(super) fn dress_scenes(
         &MeshMaterial3d<StandardMaterial>,
         Option<&GltfMaterialName>,
     )>,
-    roots: Query<(Has<Fades>, Option<&MaterialLooks>)>,
+    looks: Query<&MaterialLooks>,
     mut wardrobe: Wardrobe,
     mut commands: Commands,
 ) {
     let root = ready.entity;
-    let (own, looks) = roots.get(root).unwrap_or((false, None));
+    let looks = looks.get(root).ok();
     for entity in children.iter_descendants(root) {
         let Ok((entity, material, name)) = meshes.get(entity) else {
             continue;
@@ -343,14 +362,12 @@ pub(super) fn dress_scenes(
         let look = looks
             .zip(name)
             .and_then(|(looks, name)| looks.0.iter().find(|look| look.material == name.0));
-        let Some(dressed) = wardrobe.material_for(&material.0, look, own) else {
+        let Some(dressed) = wardrobe.material_for(&material.0, look) else {
             continue;
         };
-        let mut mesh = commands.entity(entity);
-        mesh.remove::<MeshMaterial3d<StandardMaterial>>()
+        commands
+            .entity(entity)
+            .remove::<MeshMaterial3d<StandardMaterial>>()
             .insert(MeshMaterial3d(dressed));
-        if own {
-            mesh.insert(OwnMaterial);
-        }
     }
 }

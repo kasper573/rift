@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::audio::loader::SoundClip;
 use crate::core::audio::mix::AudioCategory;
 use crate::core::audio::playback::{HushVoice, PlayClip, SfxPlace, SfxTune};
-use crate::core::content::AudioRef;
+use crate::core::content::{AssetKind, AudioRef};
 use crate::core::content::{
     Bundle, Content, ContentFile, ContentId, ContentProblem, ContentRegistry, ErrorPlace,
     FileWriter, MISSING_FILE, Nearby, PartSpec, Parts, RowCheck, Shape,
@@ -84,15 +84,15 @@ impl ContentFile for BabbleDef {
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 pub struct BabbleBankDef {
-    /// The bundle's folder of one clip per letter.
+    /// The clip of each letter, by its place in [`LETTERS`]; none where the bundle lacks it.
     #[serde(skip)]
-    pub letters: String,
+    pub letters: Vec<Option<AudioRef>>,
     pub volume: f32,
 }
 
 pub const BABBLE_LETTERS: PartSpec = PartSpec::Keyed {
     folder: "letters",
-    exts: &["wav"],
+    exts: AssetKind::Audio.extensions(),
 };
 
 impl ContentFile for BabbleBankDef {
@@ -101,7 +101,7 @@ impl ContentFile for BabbleBankDef {
 
     fn fresh(_: &Nearby) -> Result<BabbleBankDef, String> {
         Ok(BabbleBankDef {
-            letters: String::new(),
+            letters: Vec::new(),
             volume: 1.0,
         })
     }
@@ -115,8 +115,17 @@ impl Bundle for BabbleBankDef {
     const PARTS: &'static [PartSpec] = &[BABBLE_LETTERS];
 
     fn read_parts(&mut self, parts: &mut Parts) {
-        self.letters = parts.path("letters");
-        for (key, part) in parts.keyed(BABBLE_LETTERS) {
+        let keyed = parts.keyed(BABBLE_LETTERS);
+        self.letters = LETTERS
+            .chars()
+            .map(|letter| {
+                keyed
+                    .iter()
+                    .find(|(key, _)| key.chars().eq([letter]))
+                    .map(|(_, part)| AudioRef::new(parts.path(part)))
+            })
+            .collect();
+        for (key, part) in keyed {
             let letter = key.len() == 1 && LETTERS.contains(key);
             if !letter {
                 parts.error(
@@ -128,7 +137,9 @@ impl Bundle for BabbleBankDef {
         }
         let missing: Vec<char> = LETTERS
             .chars()
-            .filter(|letter| !parts.has(&BABBLE_LETTERS.named(&letter.to_string(), "wav")))
+            .zip(&self.letters)
+            .filter(|(_, clip)| clip.is_none())
+            .map(|(letter, _)| letter)
             .collect();
         if !missing.is_empty() {
             let missing: String = missing.into_iter().collect();
@@ -138,7 +149,10 @@ impl Bundle for BabbleBankDef {
                 ContentProblem::new(
                     MISSING_FILE,
                     format!("no clip for {missing}"),
-                    "letters/a.wav to letters/z.wav in the bundle",
+                    format!(
+                        "a clip for every letter, a to z, {}",
+                        BABBLE_LETTERS.describe()
+                    ),
                 ),
             );
         }
@@ -198,19 +212,13 @@ impl Plugin for BabblePlugin {
     }
 }
 
-pub fn letter_files(bank: &BabbleBankDef) -> impl Iterator<Item = AudioRef> + '_ {
-    LETTERS
-        .chars()
-        .map(move |letter| AudioRef::new(format!("{}/{letter}.wav", bank.letters)))
-}
-
 #[derive(Resource, Default)]
-struct BabbleClips(Vec<Vec<Handle<SoundClip>>>);
+struct BabbleClips(Vec<Vec<Option<Handle<SoundClip>>>>);
 
 impl BabbleClips {
     fn letter(&self, bank: BabbleBankId, letter: char) -> Option<Handle<SoundClip>> {
         let index = LETTERS.find(letter)?;
-        self.0.get(bank.index())?.get(index).cloned()
+        self.0.get(bank.index())?.get(index)?.clone()
     }
 }
 
@@ -219,8 +227,11 @@ fn load_clips(assets: Res<AssetServer>, content: Res<Content>, mut clips: ResMut
     clips.0 = table
         .ids()
         .map(|id| {
-            letter_files(table.row(id))
-                .map(|file| assets.load(file.path()))
+            table
+                .row(id)
+                .letters
+                .iter()
+                .map(|clip| clip.as_ref().map(|clip| assets.load(clip.path())))
                 .collect()
         })
         .collect();

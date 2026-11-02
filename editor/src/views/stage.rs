@@ -206,7 +206,13 @@ pub fn turntable(
     };
     show_picture(editor, ui, &painter, rect, view_key);
     let dt = ui.input(|i| i.stable_dt).min(0.1);
-    let busy = camera::navigate(ui, &response, &mut state.camera, rect.height());
+    let busy = camera::navigate(
+        ui,
+        &response,
+        &mut state.camera,
+        rect.height(),
+        camera::STAGE_FARTHEST,
+    );
     let toggles = &mut editor.views.toggles;
     if busy && response.dragged_by(egui::PointerButton::Secondary) {
         toggles.turning = false;

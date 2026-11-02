@@ -26,8 +26,6 @@ pub struct Capsule {
     pub height: Meters,
 }
 
-impl Capsule {}
-
 /// A region in metres, laid down at a point and turned toward a heading: the circle and the
 /// rectangle sit centred on the point, the cone's apex and the line's start are the point.
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]

@@ -126,6 +126,38 @@ fn may_do_lists_exactly_what_a_script_reaches() {
 }
 
 #[test]
+fn a_node_is_named_by_letters_digits_and_underscores_alone() {
+    for (name, kept) in [
+        ("Hello_2", true),
+        ("has space", false),
+        ("dash-ed", false),
+        ("ünï", false),
+        ("", false),
+    ] {
+        let content = game()
+            .row(
+                "script",
+                "named",
+                json!({
+                    "runs_on": RunnerKind::Npc,
+                    "nodes": {
+                        "on": entry(RunnerKind::Npc, name),
+                        name: { "type": "wait", "seconds": 1, "at_most": 1.0 },
+                    },
+                }),
+            )
+            .load();
+        let script: ScriptModule = parse_in(&content, json!({ "script": path("script", "named") }));
+        let compiled = compile_in(&content, RunnerKind::Npc, &[&script]);
+        assert_eq!(
+            compiled.as_ref().map(|_| ()).map_err(|error| error.rule),
+            if kept { Ok(()) } else { Err("invalid name") },
+            "a node named {name:?}"
+        );
+    }
+}
+
+#[test]
 fn a_loop_without_a_wait_is_refused() {
     let error = compile(RunnerKind::Npc, &[&module("compile_loop")])
         .err()

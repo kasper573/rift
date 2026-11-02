@@ -7,7 +7,7 @@
 //! and blocking paint from them.
 
 use std::io::Cursor;
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, Mutex, RwLock};
 
 use rayon::prelude::*;
 use schemars::JsonSchema;
@@ -304,13 +304,14 @@ impl GroundGrid<u16> {
         let (u, v) = (x - column, y - row);
         let (column, row) = (column.max(0.0) as u32, row.max(0.0) as u32);
         let lerp = |a: Meters, b: Meters, t: f32| Meters(a.0 + (b.0 - a.0) * t);
-        let top = lerp(self.sample(column, row), self.sample(column + 1, row), u);
-        let bottom = lerp(
-            self.sample(column, row + 1),
-            self.sample(column + 1, row + 1),
-            u,
-        );
-        lerp(top, bottom, v)
+        let [top_left, top_right, bottom_left, bottom_right] = self
+            .square(column, row)
+            .map(|level| self.scale.height_of(level));
+        lerp(
+            lerp(top_left, top_right, u),
+            lerp(bottom_left, bottom_right, u),
+            v,
+        )
     }
 
     /// The steepest slope between neighbouring samples under each metre cell of the `size` cells
@@ -634,24 +635,20 @@ struct Tile<T> {
 }
 
 /// A tile of the ground as it is held: its values once loaded, else the file to read them from,
-/// or nothing where the ground is blank.
+/// or nothing where the ground is blank. `loading` is held while the file is read, so callers
+/// asking for the tile at once wait for the one reading rather than read it again.
 #[derive(Debug)]
 struct Slot<T> {
     loaded: RwLock<Option<Arc<Tile<T>>>>,
+    loading: Mutex<()>,
     stored: Option<StoredPart>,
 }
 
 impl<T: Value> Slot<T> {
-    fn blank() -> Slot<T> {
+    fn new(loaded: Option<Arc<Tile<T>>>, stored: Option<StoredPart>) -> Slot<T> {
         Slot {
-            loaded: RwLock::new(None),
-            stored: None,
-        }
-    }
-
-    fn holding(tile: Arc<Tile<T>>, stored: Option<StoredPart>) -> Slot<T> {
-        Slot {
-            loaded: RwLock::new(Some(tile)),
+            loaded: RwLock::new(loaded),
+            loading: Mutex::new(()),
             stored,
         }
     }
@@ -668,7 +665,9 @@ impl<T: Value> Slot<T> {
 impl<T: Value> GroundGrid<T> {
     fn blank(grid: TileGrid, scale: T::Scale) -> GroundGrid<T> {
         GroundGrid {
-            tiles: (0..grid.count()).map(|_| Arc::new(Slot::blank())).collect(),
+            tiles: (0..grid.count())
+                .map(|_| Arc::new(Slot::new(None, None)))
+                .collect(),
             grid,
             scale,
             overview: None,
@@ -696,7 +695,7 @@ impl<T: Value> GroundGrid<T> {
                     values,
                     encoded: None,
                 };
-                Arc::new(Slot::holding(Arc::new(tile), None))
+                Arc::new(Slot::new(Some(Arc::new(tile)), None))
             })
             .collect();
         GroundGrid {
@@ -717,17 +716,14 @@ impl<T: Value> GroundGrid<T> {
 
     /// Keeps `part` as the tile at `at`, to read when the tile is first loaded.
     pub fn store(&mut self, at: TileAt, part: StoredPart) {
-        self.tiles[self.grid.index(at)] = Arc::new(Slot {
-            loaded: RwLock::new(None),
-            stored: Some(part),
-        });
+        self.tiles[self.grid.index(at)] = Arc::new(Slot::new(None, Some(part)));
     }
 
     /// Reads the tile at `at` from its PNG, refusing one that isn't the tile's picture.
     pub fn decode_tile(&mut self, at: TileAt, bytes: &[u8]) -> Result<(), ContentProblem> {
         let tile = self.grid.decode_tile(at, bytes)?;
         let slot = &mut self.tiles[self.grid.index(at)];
-        *slot = Arc::new(Slot::holding(Arc::new(tile), slot.stored.clone()));
+        *slot = Arc::new(Slot::new(Some(Arc::new(tile)), slot.stored.clone()));
         Ok(())
     }
 
@@ -760,15 +756,19 @@ impl<T: Value> GroundGrid<T> {
         if slot.is_loaded() {
             return Ok(());
         }
+        let _reading = slot
+            .loading
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if slot.is_loaded() {
+            return Ok(());
+        }
         let bytes = stored.read().map_err(|error| {
             ContentProblem::new("unreadable file", error.to_string(), "a readable file")
         })?;
         let mut tile = self.grid.decode_tile(at, &bytes)?;
         tile.encoded = None;
-        let mut loaded = slot.loaded.write().expect("a ground tile lock");
-        if loaded.is_none() {
-            *loaded = Some(Arc::new(tile));
-        }
+        *slot.loaded.write().expect("a ground tile lock") = Some(Arc::new(tile));
         Ok(())
     }
 
@@ -928,6 +928,41 @@ impl<T: Value> GroundGrid<T> {
         self.overview_value(column, row)
     }
 
+    /// The values at `(column, row)` and at its neighbours to the right, below and across, each the
+    /// nearest past the edge: read from one tile at once where all four lie in it.
+    fn square(&self, column: u32, row: u32) -> [T; 4] {
+        let last_column = self.grid.columns.saturating_sub(1);
+        let last_row = self.grid.rows.saturating_sub(1);
+        let (column, row) = (column.min(last_column), row.min(last_row));
+        let (right, below) = ((column + 1).min(last_column), (row + 1).min(last_row));
+        let at = TileAt {
+            column: column / TILE_PIXELS,
+            row: row / TILE_PIXELS,
+        };
+        if right / TILE_PIXELS == at.column
+            && below / TILE_PIXELS == at.row
+            && let Some(slot) = self.tiles.get(self.grid.index(at))
+            && let Some(tile) = slot.loaded.read().expect("a ground tile lock").as_ref()
+        {
+            let (first_column, first_row) = self.grid.first(at);
+            let value = |column: u32, row: u32| {
+                tile.values[((row - first_row) * tile.columns + (column - first_column)) as usize]
+            };
+            return [
+                value(column, row),
+                value(right, row),
+                value(column, below),
+                value(right, below),
+            ];
+        }
+        [
+            self.value(column, row),
+            self.value(right, row),
+            self.value(column, below),
+            self.value(right, below),
+        ]
+    }
+
     /// The overview's value nearest `(column, row)`, blank without one.
     fn overview_value(&self, column: u32, row: u32) -> T {
         match &self.overview {
@@ -956,10 +991,7 @@ impl<T: Value> GroundGrid<T> {
                 continue;
             }
             if Arc::get_mut(slot).is_none() {
-                *slot = Arc::new(Slot {
-                    loaded: RwLock::new(slot.tile()),
-                    stored: None,
-                });
+                *slot = Arc::new(Slot::new(slot.tile(), None));
             }
             let slot = Arc::get_mut(slot).expect("a slot of this copy's own");
             slot.stored = None;

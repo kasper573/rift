@@ -51,8 +51,7 @@ pub struct FileIndex {
 #[serde(deny_unknown_fields)]
 pub struct IndexedFile {
     pub path: String,
-    pub hash: String,
-    pub size: u64,
+    pub held: FileHash,
     /// Whether a client fetches the file as it is first read rather than with the rest.
     pub streamed: bool,
 }
@@ -80,8 +79,7 @@ impl ServedContent {
             if super::is_media_file(path) {
                 index.files.push(IndexedFile {
                     path: path.clone(),
-                    hash: stamp.hash.clone(),
-                    size: stamp.size,
+                    held: stamp.clone(),
                     streamed: registry.is_streamed(path),
                 });
                 files.insert(stamp.hash.clone(), Arc::from(bytes));
@@ -160,7 +158,7 @@ impl Counted {
     fn of(files: &[IndexedFile]) -> Counted {
         Counted {
             bytes: 0,
-            bytes_total: files.iter().map(|file| file.size).sum(),
+            bytes_total: files.iter().map(|file| file.held.size).sum(),
             files: 0,
             files_total: files.len(),
         }
@@ -296,13 +294,7 @@ impl SyncedContent {
                 .index
                 .files
                 .iter()
-                .map(|file| {
-                    let hash = FileHash {
-                        hash: file.hash.clone(),
-                        size: file.size,
-                    };
-                    (file.path.clone(), hash)
-                })
+                .map(|file| (file.path.clone(), file.held.clone()))
                 .collect(),
         }
     }
@@ -312,12 +304,12 @@ impl SyncedContent {
             .index
             .files
             .iter()
-            .map(|file| (file.path.as_str(), file.hash.as_str()))
+            .map(|file| (file.path.as_str(), file.held.hash.as_str()))
             .collect();
         self.index
             .files
             .iter()
-            .filter(|file| old.get(file.path.as_str()) != Some(&file.hash.as_str()))
+            .filter(|file| old.get(file.path.as_str()) != Some(&file.held.hash.as_str()))
             .map(|file| file.path.clone())
             .collect()
     }
@@ -479,9 +471,9 @@ impl Run<'_> {
         let (kept, mut missing): (Vec<IndexedFile>, Vec<IndexedFile>) = index
             .files
             .iter()
-            .filter(|file| !file.streamed || stored.contains(&file.hash))
+            .filter(|file| !file.streamed || stored.contains(&file.held.hash))
             .cloned()
-            .partition(|file| stored.contains(&file.hash));
+            .partition(|file| stored.contains(&file.held.hash));
         self.status.update(|progress| {
             progress.phase = SyncPhase::Reading;
             progress.files_in_index = index.files.len();
@@ -491,10 +483,10 @@ impl Run<'_> {
         let spoilt: Vec<IndexedFile> = kept
             .into_par_iter()
             .filter(|file| {
-                let intact = self.read_verified(&file.hash).is_some();
+                let intact = self.read_verified(&file.held.hash).is_some();
                 if intact {
                     self.status
-                        .update(|progress| progress.read.advance(file.size));
+                        .update(|progress| progress.read.advance(file.held.size));
                 }
                 !intact && !file.streamed
             })
@@ -510,9 +502,9 @@ impl Run<'_> {
         });
         let mut downloads = stream::iter(missing)
             .map(|file| async move {
-                let (bytes, kept) = self.fetch_file(&file.hash).await?;
+                let (bytes, kept) = self.fetch_file(&file.held.hash).await?;
                 self.status
-                    .update(|progress| progress.fetched.advance(file.size));
+                    .update(|progress| progress.fetched.advance(file.held.size));
                 Ok((file.path, bytes, kept)) as Fetched
             })
             .buffer_unordered(self.policy.at_once);
@@ -527,7 +519,7 @@ impl Run<'_> {
         let keep: HashSet<&str> = index
             .files
             .iter()
-            .map(|file| file.hash.as_str())
+            .map(|file| file.held.hash.as_str())
             .chain([manifest.index.hash.as_str(), manifest.rows.hash.as_str()])
             .collect();
         for hash in &stored {
@@ -541,7 +533,7 @@ impl Run<'_> {
             .files
             .iter()
             .filter(|file| !held.contains_key(&file.path))
-            .map(|file| (file.path.clone(), file.hash.clone()))
+            .map(|file| (file.path.clone(), file.held.hash.clone()))
             .collect();
         let streamed = index
             .files

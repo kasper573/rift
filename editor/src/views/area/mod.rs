@@ -673,6 +673,7 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<StandingA
     let (generation, revision) = editor.project.as_ref().map_or((0, 0), |project| {
         (project.generation, project.files.revision())
     });
+    let seen = *frame.canvas.view();
     let view = editor.views.area.view_mut(view_key);
     let previews = view.population_previews.clone();
     let stand = |npc: engine::systems::npc::NpcId, at: Pos<Meters>, facing: Degrees, pose| {
@@ -680,13 +681,19 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<StandingA
         let npc = content.by_path::<NpcDef>(npc)?;
         let def = npc.get(content);
         let model = ActorModel::get(content, def.appearance.model);
+        let ground = area.heights.height_at(at);
+        let body = model.hitbox();
+        let middle = world_point(at, ground + Meters(body.height.0 / 2.0));
+        let extent = Meters(body.height.0.max(body.radius.0 * 2.0));
+        if middle.distance(seen.eye()) > seen.shown_within(extent).0 {
+            return None;
+        }
         let hands = held::listed(content, model.hands().len(), &def.held).hands;
         let stance = stance::of_hands(content, &hands);
         let clip = StageClip::played(
             model.skeleton(),
             model.standing_clip(stance, &Motion::Action(Action::Idle), pose),
         );
-        let ground = area.heights.height_at(at);
         Some(StandingActor {
             body: model.dressed(content, &look(content, &def.appearance, &BTreeMap::new())),
             clip: Some(clip),

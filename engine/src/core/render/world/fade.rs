@@ -27,10 +27,22 @@ pub struct ClearingLook {
     pub radius: Meters,
 }
 
-/// A thing that fades when it hides the camera's subject.
-#[derive(Component, Default)]
+/// A thing that fades when it hides the camera's subject. Whole, it shares its materials with
+/// everything that looks alike; while it fades its meshes wear materials of their own, so its
+/// fade moves on its own, and `shared` keeps the ones they wear again once it is whole.
+#[derive(Component)]
 pub struct Fades {
     shown: f32,
+    shared: Vec<(Entity, Handle<WorldMaterial>)>,
+}
+
+impl Default for Fades {
+    fn default() -> Fades {
+        Fades {
+            shown: 1.0,
+            shared: Vec::new(),
+        }
+    }
 }
 
 /// The things that fade, with the meshes and materials they are drawn from.
@@ -39,7 +51,7 @@ pub(super) struct Fading<'w, 's> {
     children: Query<'w, 's, &'static Children>,
     bounds: Query<'w, 's, (&'static Aabb, &'static GlobalTransform)>,
     roots: Query<'w, 's, (Entity, &'static mut Fades)>,
-    materials_of: Query<'w, 's, &'static MeshMaterial3d<WorldMaterial>>,
+    materials_of: Query<'w, 's, &'static mut MeshMaterial3d<WorldMaterial>>,
     materials: ResMut<'w, Assets<WorldMaterial>>,
 }
 
@@ -92,20 +104,39 @@ pub(super) fn fade_occluders(
         } else {
             fades.shown + step.copysign(wanted - fades.shown)
         };
-        for entity in children.iter_descendants(root) {
-            let Ok(handle) = materials_of.get(entity) else {
+        if fades.shown == 1.0 {
+            for (mesh, shared) in std::mem::take(&mut fades.shared) {
+                if let Ok(mut worn) = materials_of.get_mut(mesh) {
+                    worn.0 = shared;
+                }
+            }
+            continue;
+        }
+        if fades.shared.is_empty() {
+            for mesh in children.iter_descendants(root) {
+                let Ok(mut worn) = materials_of.get_mut(mesh) else {
+                    continue;
+                };
+                let Some(own) = materials.get(&worn.0).cloned() else {
+                    continue;
+                };
+                let shared = std::mem::replace(&mut worn.0, materials.add(own));
+                fades.shared.push((mesh, shared));
+            }
+        }
+        let style = FadeStyle {
+            shown: fades.shown,
+            focus,
+            focus_radius: if around_eye { f32::MAX } else { focus_radius },
+        };
+        for (mesh, _) in &fades.shared {
+            let Ok(worn) = materials_of.get(*mesh) else {
                 continue;
             };
-            let Some(shown) = materials.get(&handle.0) else {
-                continue;
-            };
-            let style = FadeStyle {
-                shown: fades.shown,
-                focus,
-                focus_radius: if around_eye { f32::MAX } else { focus_radius },
-            };
-            if shown.extension.style != style
-                && let Some(mut material) = materials.get_mut(&handle.0)
+            if materials
+                .get(&worn.0)
+                .is_some_and(|material| material.extension.style != style)
+                && let Some(mut material) = materials.get_mut(&worn.0)
             {
                 material.extension.style = style;
             }

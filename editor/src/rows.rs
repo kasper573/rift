@@ -127,7 +127,7 @@ pub(crate) fn name_from(text: &str) -> String {
         .to_lowercase()
         .chars()
         .map(|c| if c == ' ' { '_' } else { c })
-        .filter(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == '_' || *c == '-')
+        .filter(|&c| engine::core::content::files::name_char(c))
         .collect()
 }
 

@@ -13,7 +13,7 @@ use ui::theme;
 use ui::words;
 
 use super::brush::{SculptMode, Stroke, StrokeKind};
-use super::camera::{self};
+use super::camera::{self, OrbitCamera};
 use super::modules::{context_menu_at, open_add_menu, show_add_menu};
 use super::select::{
     copy_selection, delete_selection, duplicate_selection, move_selection, paste_anchor,
@@ -198,12 +198,14 @@ pub fn input(
 }
 
 fn navigate(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame) -> bool {
+    let farthest = OrbitCamera::framing_distance(frame.canvas.area().size.bounds());
     let view = editor.views.area.view_mut(view_key);
     camera::navigate(
         ui,
         frame.response,
         &mut view.camera,
         frame.canvas.screen.height(),
+        farthest,
     )
 }
 

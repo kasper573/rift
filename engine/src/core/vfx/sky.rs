@@ -15,7 +15,7 @@ use bevy::shader::Shader;
 
 use crate::core::render::world::clouds::{self, CLOUD_TILE, CloudLook, SECOND_SHIFT};
 
-use super::render::{ParamsUniform, SiteUniform, VfxShaderKey};
+use super::uniform::{ParamsUniform, SiteUniform, VfxShaderKey};
 
 /// A shader painting the sky's dome, with the parameters it is filled with, the weather it reads,
 /// the sky's lights, and the field of cloud drifting over the area.

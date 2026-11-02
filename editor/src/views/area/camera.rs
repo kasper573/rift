@@ -18,9 +18,9 @@ use crate::keymap::EditorKey;
 pub const LENS: Degrees = Degrees(32.0);
 /// How far down the camera looks as it frames an area.
 pub const PITCH: Degrees = Degrees(55.0);
-/// How close the camera may come to its target, and how far it may draw back.
+/// How close the camera may come to its target, and how far a stage's may draw back.
 pub const NEAREST: Meters = Meters(3.0);
-const FARTHEST: Meters = Meters(400.0);
+pub const STAGE_FARTHEST: Meters = Meters(400.0);
 /// How far down the camera looks when it looks straight down.
 const TOP_DOWN: Degrees = Degrees(89.0);
 const LOWEST_PITCH: Degrees = Degrees(5.0);
@@ -28,8 +28,10 @@ const LOWEST_PITCH: Degrees = Degrees(5.0);
 const ORBIT_PER_PIXEL: f32 = 0.4;
 /// How much of the frame an area fills when the camera frames it.
 const FRAME_MARGIN: f32 = 1.15;
-/// How far apart the points of a ground line are, so it bends with the terrain.
+/// How far apart the points of a ground line are, so it bends with the terrain: no closer on
+/// the ground than the terrain bends, and no closer on the screen than the bend still shows.
 const LINE_STEP: f32 = 0.5;
+const LINE_STEP_PIXELS: f32 = 4.0;
 
 /// A camera looking at a point of the ground from a yaw, a pitch and a distance.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -63,10 +65,14 @@ impl OrbitCamera {
     pub fn frame(&mut self, bounds: Rect<Meters>) {
         let center = bounds.center();
         self.target = Pos::new(center.x, center.y);
+        self.distance = OrbitCamera::framing_distance(bounds);
+    }
+
+    /// How far off the camera sees all of `bounds`.
+    pub fn framing_distance(bounds: Rect<Meters>) -> Meters {
         let span = bounds.size.width.max(bounds.size.height).max(1.0);
         let half_fov = LENS.radians().0 / 2.0;
-        self.distance =
-            Meters((span * FRAME_MARGIN / 2.0 / half_fov.tan()).clamp(NEAREST.0, FARTHEST.0));
+        Meters((span * FRAME_MARGIN / 2.0 / half_fov.tan()).max(NEAREST.0))
     }
 
     /// Looks straight down from north.
@@ -93,9 +99,13 @@ impl OrbitCamera {
         self.target = Pos::new(self.target.x + moved.x, self.target.y + moved.y);
     }
 
-    /// Draws back by `factor` (closer under one).
-    pub fn zoom(&mut self, factor: f32) {
-        self.distance = Meters((self.distance.0 * factor).clamp(NEAREST.0, FARTHEST.0));
+    /// Draws back by `factor` (closer under one), no farther than `farthest`.
+    pub fn zoom(&mut self, factor: f32, farthest: Meters) {
+        self.distance = Meters(
+            (self.distance.0 * factor)
+                .min(farthest.0.max(self.distance.0))
+                .max(NEAREST.0),
+        );
     }
 
     /// Metres of ground a pixel of the viewport spans at the target, over `height` pixels.
@@ -126,13 +136,14 @@ impl OrbitCamera {
 }
 
 /// Moves `camera` as the pointer asks of `response`: the right button orbits, the middle button or
-/// Space with the left drags the ground along, the wheel draws back and in. Answers whether the
-/// pointer is busy with the camera.
+/// Space with the left drags the ground along, the wheel draws back and in, as far as `farthest`.
+/// Answers whether the pointer is busy with the camera.
 pub(crate) fn navigate(
     ui: &Ui,
     response: &Response,
     camera: &mut OrbitCamera,
     height: f32,
+    farthest: Meters,
 ) -> bool {
     if response.dragged_by(PointerButton::Secondary) {
         let delta = response.drag_delta();
@@ -152,9 +163,9 @@ pub(crate) fn navigate(
         let scroll = ui.input(|i| i.smooth_scroll_delta);
         let pinch = ui.input(|i| i.zoom_delta());
         if pinch != 1.0 {
-            camera.zoom(1.0 / pinch);
+            camera.zoom(1.0 / pinch, farthest);
         } else if scroll.y != 0.0 {
-            camera.zoom((-scroll.y / 240.0).exp2());
+            camera.zoom((-scroll.y / 240.0).exp2(), farthest);
         }
     }
     false
@@ -184,6 +195,11 @@ impl AreaCanvas {
 
     pub fn area(&self) -> &Arc<Area> {
         &self.area
+    }
+
+    /// The camera's projection of the world onto the screen rectangle.
+    pub fn view(&self) -> &View {
+        &self.view
     }
 
     /// Where a point of the ground shows on the screen.
@@ -252,9 +268,12 @@ impl AreaCanvas {
         let mut out = Vec::new();
         for pair in points.windows(2) {
             let (from, to) = (pair[0], pair[1]);
-            let length = from.distance(to).0;
-            let steps = (length / LINE_STEP).ceil().max(1.0) as usize;
-            for step in 0..steps {
+            let start = self.to_screen(from);
+            let on_ground = from.distance(to).0 / LINE_STEP;
+            let on_screen = start.distance(self.to_screen(to)) / LINE_STEP_PIXELS;
+            let steps = on_ground.min(on_screen).ceil().max(1.0) as usize;
+            out.push(start);
+            for step in 1..steps {
                 let t = step as f32 / steps as f32;
                 out.push(self.to_screen(from.lerp(to, t)));
             }

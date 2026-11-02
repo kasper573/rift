@@ -3,21 +3,32 @@ use std::time::{Duration, Instant};
 
 use bevy::animation::AnimationPlugin;
 use bevy::asset::AssetPlugin;
+use bevy::camera::primitives::Aabb;
+use bevy::camera::visibility::VisibilityPlugin;
+use bevy::ecs::system::RunSystemOnce;
 use bevy::gltf::GltfPlugin;
+use bevy::light::atmosphere::ScatteringMedium;
 use bevy::prelude::*;
+use bevy::shader::Shader;
 use bevy::time::TimeUpdateStrategy;
+use bevy::window::PrimaryWindow;
 use bevy::world_serialization::WorldSerializationPlugin;
 use engine::core::audio::playback::{PlaySfx, SfxDef, SfxId, SfxPlace};
 use engine::core::content::gltf::PLACEHOLDER_LIFT;
 use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER};
 use engine::core::math::Pos;
 use engine::core::render::camera::ground_hit;
+use engine::core::render::world::WorldScenePlugin;
 use engine::core::render::world::body::{Body, BodyPlugin};
+use engine::core::render::world::fade::Fades;
 use engine::core::render::world::layers::JointLayersPlugin;
-use engine::core::render::world::material::WorldMaterial;
+use engine::core::render::world::lod::Simplifier;
+use engine::core::render::world::material::{FadeStyle, WorldMaterial, world_material};
 use engine::core::render::{Animator, CameraRig, capsule_hit, facing_rotation, world_point};
+use engine::core::render::{FullPicture, View};
 use engine::core::text::Typewriter;
 use engine::core::units::{Degrees, MeterPos, Meters, MetersPerSec, PlaybackRate, Radians};
+use engine::core::vfx::render::VfxMaterialsPlugin;
 use engine::systems::actor::held::Held;
 use engine::systems::actor::render::{self, HeldProp, RenderActor};
 use engine::systems::actor::skeleton::GestureName;
@@ -818,4 +829,182 @@ fn props(app: &mut App) -> Vec<(Entity, engine::systems::item::ItemId)> {
 /// The cues of the plain skeleton's attack: its apex.
 fn attacked() -> serde_json::Value {
     json!({ "clip": testkit::clip("attack"), "cues": [{ "at": APEX.0, "apex": true }] })
+}
+
+/// A mesh far off the eye draws with fewer triangles the farther it is, its full mesh up close,
+/// and the shape it is drawn with never strays from the mesh's by a pixel of the view.
+#[test]
+fn a_mesh_far_off_the_eye_draws_with_fewer_triangles_none_straying_a_pixel() {
+    let mut app = drawn_world();
+    let ball = app
+        .world_mut()
+        .resource_mut::<Assets<Mesh>>()
+        .add(Sphere::new(1.0).mesh().ico(40).expect("an ico sphere"));
+    let held = ball.clone();
+    let levels = app
+        .world_mut()
+        .run_system_once(move |mut simplifier: Simplifier| simplifier.levels_of(&held))
+        .expect("the simplifier runs")
+        .expect("the ball is loaded");
+    let meshes = app.world().resource::<Assets<Mesh>>();
+    let depth = |mesh: &Handle<Mesh>| {
+        triangles(meshes.get(mesh).expect("a level is held"))
+            .iter()
+            .map(|[a, b, c]| 1.0 - ((*a + *b + *c) / 3.0).length())
+            .fold(0.0f32, f32::max)
+    };
+    let full = triangles(meshes.get(&ball).expect("the ball")).len();
+    let own_depth = depth(&ball);
+    let mut drawn = full;
+    for distance in [2.0, 50.0, 500.0, 5000.0] {
+        let view = View::new(
+            Transform::from_xyz(0.0, 0.0, distance).looking_at(Vec3::ZERO, Vec3::Y),
+            WINDOW,
+            Degrees(45.0),
+        );
+        let level = levels.for_view(&view, Meters(distance), 1.0);
+        let count = level.map_or(full, |level| {
+            triangles(meshes.get(level).expect("a level is held")).len()
+        });
+        let stray =
+            view.pixels_per_meter(Meters(distance)) * (level.map_or(own_depth, depth) - own_depth);
+        assert!(
+            count <= drawn && stray < 1.0,
+            "{distance} m off, the ball draws {count} triangles (nearer {drawn}), straying {stray} px"
+        );
+        drawn = count;
+    }
+    let close = View::new(
+        Transform::from_xyz(0.0, 0.0, 2.0).looking_at(Vec3::ZERO, Vec3::Y),
+        WINDOW,
+        Degrees(1.0),
+    );
+    assert!(
+        levels.for_view(&close, Meters(2.0), 1.0).is_none() && drawn * 10 < full,
+        "through a long lens up close the ball draws its own mesh, far off a tenth of its {full} \
+         triangles at most: {drawn}"
+    );
+}
+
+/// What hides the camera's subject fades on its own, things that look alike staying whole, and
+/// once it is whole again it looks alike with them again, holding no look of its own.
+#[test]
+fn a_thing_hiding_the_subject_fades_on_its_own_and_shares_its_look_again_once_whole() {
+    let mut app = drawn_world();
+    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+        50,
+    )));
+    app.world_mut().spawn((Window::default(), PrimaryWindow));
+    let mut rig = CameraRig::new(testkit::look().camera);
+    rig.look_at(Pos::new(0.0, 0.0), Meters(0.0));
+    let between = (rig.eye() + rig.target()) / 2.0;
+    app.insert_resource(rig);
+    let finish = testkit::look().materials;
+    let look = app
+        .world_mut()
+        .resource_mut::<Assets<WorldMaterial>>()
+        .add(world_material(
+            StandardMaterial::default(),
+            FullPicture(false),
+            &finish,
+        ));
+    let mut tree = |at: Vec3| {
+        let world = app.world_mut();
+        let tree = world
+            .spawn((
+                Fades::default(),
+                Transform::from_translation(at),
+                Visibility::default(),
+            ))
+            .id();
+        world
+            .spawn((
+                Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0)),
+                MeshMaterial3d(look.clone()),
+                Transform::default(),
+                Visibility::default(),
+                ChildOf(tree),
+            ))
+            .id()
+    };
+    let (hiding, aside) = (tree(between), tree(between + Vec3::new(40.0, 0.0, 40.0)));
+    let worn = |app: &App, mesh: Entity| {
+        app.world()
+            .get::<MeshMaterial3d<WorldMaterial>>(mesh)
+            .expect("the mesh wears a world material")
+            .0
+            .clone()
+    };
+    for _ in 0..20 {
+        app.update();
+    }
+    let faded = worn(&app, hiding);
+    let style = app
+        .world()
+        .resource::<Assets<WorldMaterial>>()
+        .get(&faded)
+        .map(|material| material.extension.style);
+    assert!(
+        faded != look && worn(&app, aside) == look && style.is_some_and(|style| style.shown < 1.0),
+        "the tree between the camera and its subject fades in a look of its own, the other stays as it was: {style:?}"
+    );
+
+    let mut rig = *app.world().resource::<CameraRig>();
+    rig.look_at(Pos::new(-60.0, -60.0), Meters(0.0));
+    app.insert_resource(rig);
+    drop(faded);
+    for _ in 0..20 {
+        app.update();
+    }
+    assert!(
+        worn(&app, hiding) == look
+            && app.world().resource::<Assets<WorldMaterial>>().len() == 1
+            && app
+                .world()
+                .resource::<Assets<WorldMaterial>>()
+                .get(&look)
+                .map(|material| material.extension.style)
+                == Some(FadeStyle::default()),
+        "once whole, the tree looks alike with the other again and no look of its own is left"
+    );
+}
+
+/// A world drawn as the client draws it, with no window shown.
+fn drawn_world() -> App {
+    let mut app = App::new();
+    app.add_plugins((
+        MinimalPlugins,
+        AssetPlugin::default(),
+        WorldSerializationPlugin,
+        AnimationPlugin,
+        GltfPlugin::default(),
+        TransformPlugin,
+        VisibilityPlugin,
+    ))
+    .init_asset::<Shader>()
+    .init_asset::<Mesh>()
+    .init_asset::<Image>()
+    .init_asset::<StandardMaterial>()
+    .init_asset::<ScatteringMedium>()
+    .init_asset::<bevy::mesh::skinning::SkinnedMeshInverseBindposes>()
+    .add_plugins((VfxMaterialsPlugin, WorldScenePlugin))
+    .insert_resource(testkit::look());
+    app.finish();
+    app.cleanup();
+    app
+}
+
+/// The corners of every triangle of `mesh`.
+fn triangles(mesh: &Mesh) -> Vec<[Vec3; 3]> {
+    let positions = mesh
+        .attribute(Mesh::ATTRIBUTE_POSITION)
+        .and_then(|positions| positions.as_float3())
+        .expect("a mesh of positions");
+    let indices: Vec<usize> = mesh.indices().expect("an indexed mesh").iter().collect();
+    indices
+        .as_chunks::<3>()
+        .0
+        .iter()
+        .map(|corners| corners.map(|corner| Vec3::from(positions[corner])))
+        .collect()
 }

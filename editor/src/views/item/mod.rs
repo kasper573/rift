@@ -200,7 +200,13 @@ fn drop_strip(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef, size: 
     stage::show_picture(editor, ui, &painter, rect, &view_key);
     let dt = ui.input(|i| i.stable_dt).min(0.1);
     let view = editor.views.item.view_mut(key);
-    let busy = camera::navigate(ui, &response, &mut view.camera, rect.height());
+    let busy = camera::navigate(
+        ui,
+        &response,
+        &mut view.camera,
+        rect.height(),
+        camera::STAGE_FARTHEST,
+    );
     if busy && response.dragged_by(egui::PointerButton::Secondary) {
         editor.views.toggles.turning = false;
     }

@@ -292,7 +292,7 @@ fn a_bust_missing_a_generic_face_is_refused_naming_it() {
         rules_in(&report, "hero.bust"),
         vec![(
             "missing file",
-            "a face for every generic expression in faces/"
+            "a face for every generic expression, faces/<name>.png"
         )]
     );
 }

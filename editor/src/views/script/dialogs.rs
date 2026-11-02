@@ -54,12 +54,7 @@ pub fn rename_node_dialog(
         if taken {
             ui.colored_label(theme::DANGER, "that name is taken");
         }
-        let ok = !dialog.draft.trim().is_empty()
-            && !taken
-            && dialog
-                .draft
-                .chars()
-                .all(|c| c.is_ascii_alphanumeric() || c == '_');
+        let ok = !taken && engine::core::script::valid_node_name(&dialog.draft);
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             if ui.add_enabled(ok, egui::Button::new("Rename")).clicked() || (ok && pressed.confirm)

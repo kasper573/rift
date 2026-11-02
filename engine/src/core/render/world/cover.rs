@@ -11,14 +11,114 @@ use bevy::color::Mix;
 use bevy::ecs::entity_disabling::Disabled;
 use bevy::gltf::{Gltf, GltfMaterial, GltfMesh, GltfNode};
 use bevy::light::NotShadowCaster;
+use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::mesh::{Indices, MeshTag, PrimitiveTopology, VertexAttributeValues};
+use bevy::pbr::{
+    ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
+};
 use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
+use bevy::render::render_resource::{
+    AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+};
+use bevy::shader::Shader;
 
 use crate::core::ground::{Heightfield, SAMPLES_PER_METER};
 use crate::core::math::{Pos, Rng};
 use crate::core::units::{GROUND_ORIGIN, Meters};
-use crate::core::vfx::cover::CoverMaterial;
+use crate::core::vfx::uniform::{ParamsUniform, SiteUniform, VfxShaderKey};
+
+/// A cover's material: the engine's lit surface under the content shader its ground names.
+pub type CoverMaterial = ExtendedMaterial<StandardMaterial, CoverVfx>;
+
+#[derive(Asset, TypePath, AsBindGroup, Clone, Debug, Default)]
+#[bind_group_data(VfxShaderKey)]
+pub struct CoverVfx {
+    #[uniform(100)]
+    pub site: SiteUniform,
+    #[uniform(101)]
+    pub params: ParamsUniform,
+    #[texture(102, sample_type = "float", filterable = false)]
+    pub weather: Handle<Image>,
+    #[uniform(103)]
+    pub strewn: StrewnUniform,
+    pub shader: Handle<Shader>,
+}
+
+/// What every strewn copy a material draws shares: which piece of its cover it is and the colours
+/// its tint lies between. Off on a sheet's or blades' material, whose vertices carry their own.
+#[derive(ShaderType, Clone, Copy, Debug, Default)]
+pub struct StrewnUniform {
+    pub color_from: Vec4,
+    pub color_to: Vec4,
+    pub piece: u32,
+    pub on: u32,
+}
+
+impl From<&CoverVfx> for VfxShaderKey {
+    fn from(vfx: &CoverVfx) -> VfxShaderKey {
+        VfxShaderKey::of(&vfx.shader)
+    }
+}
+
+impl MaterialExtension for CoverVfx {
+    fn specialize(
+        _pipeline: &MaterialExtensionPipeline,
+        descriptor: &mut RenderPipelineDescriptor,
+        _layout: &MeshVertexBufferLayoutRef,
+        key: MaterialExtensionKey<Self>,
+    ) -> Result<(), SpecializedMeshPipelineError> {
+        let shader = key.bind_group_data.handle();
+        descriptor.vertex.shader = shader.clone();
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            fragment.shader = shader;
+        }
+        Ok(())
+    }
+}
+
+/// A cover's material, coloured by its vertices: blended, for a sheet or blades that write no
+/// depth and take no ink, or masked, for the copies of a prop `strewn` as it spreads, which stand
+/// solid like any other. Both of a face's sides are drawn and lit alike by the normal its piece
+/// carries, never turned over on the far side, since foliage points its normals where its light
+/// should fall rather than off its faces.
+pub fn material(
+    site: SiteUniform,
+    params: ParamsUniform,
+    shader: Handle<Shader>,
+    weather: Handle<Image>,
+    strewn: Option<&Spread>,
+) -> CoverMaterial {
+    let alpha_mode = match strewn {
+        Some(_) => AlphaMode::Mask(0.5),
+        None => AlphaMode::Blend,
+    };
+    let strewn = strewn.map_or_else(StrewnUniform::default, |spread| StrewnUniform {
+        color_from: spread.color.0.to_vec4(),
+        color_to: spread.color.1.to_vec4(),
+        piece: spread.piece,
+        on: 1,
+    });
+    ExtendedMaterial {
+        base: StandardMaterial {
+            base_color: Color::WHITE,
+            perceptual_roughness: 1.0,
+            metallic: 0.0,
+            reflectance: 0.0,
+            double_sided: false,
+            cull_mode: None,
+            alpha_mode,
+            ..default()
+        },
+        extension: CoverVfx {
+            site,
+            params,
+            weather,
+            strewn,
+            shader,
+        },
+    }
+}
 
 /// Cells of paint along a chunk's side; a chunk is one mesh, culled as one.
 pub const CHUNK_CELLS: u32 = 16;
