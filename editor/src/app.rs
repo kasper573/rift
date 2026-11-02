@@ -13,7 +13,8 @@ use bevy_egui::{
     EguiContext, EguiPlugin, EguiPreUpdateSet, EguiPrimaryContextPass, PrimaryEguiContext,
 };
 use engine::core::content::{Content, ContentFile, FolderReader, Unreadable, fields_file, version};
-use engine::core::units::Millis;
+use engine::core::render::video::VideoPreferences;
+use engine::core::units::{Meters, Millis};
 use engine::systems;
 use engine::systems::area::scenery;
 use engine::systems::frame_rate::{self, FrameCountPlugin, FrameRates};
@@ -86,6 +87,7 @@ impl Plugin for EditorPlugin {
                 theme_context.after(EguiPreUpdateSet::InitContexts),
             )
             .add_systems(EguiPrimaryContextPass, editor_ui)
+            .add_systems(Update, show_video)
             .add_systems(Background, background);
     }
 }
@@ -97,12 +99,14 @@ const FRAME_RATE_MARGIN: f32 = 8.0;
 struct FrameLog(BufWriter<File>);
 
 /// What the frame log tells of a frame: how long it took and its interface of that, the active
-/// tab, how many entities, images and meshes the world holds, and how its scenery stands.
+/// tab and its camera, how many entities, images and meshes the world holds, and how its scenery stands.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct FrameRecord {
     pub frame: Millis,
     pub ui: Millis,
     pub tab: Option<String>,
+    /// How far the open area or blueprint view's camera stands from what it looks at.
+    pub camera: Option<Meters>,
     pub entities: usize,
     pub images: usize,
     pub meshes: usize,
@@ -854,8 +858,8 @@ fn editor_ui(world: &mut World) {
         };
         context.get_mut().clone()
     };
-    let frame_ms = world.resource::<Time>().delta_secs() * 1000.0;
-    let (ui_ms, tab) = world.resource_scope(|world, mut editor: Mut<Editor>| {
+    let frame_ms = world.resource::<Time<Real>>().delta_secs() * 1000.0;
+    let (ui_ms, tab, camera) = world.resource_scope(|world, mut editor: Mut<Editor>| {
         let started = Instant::now();
         shell::show(&mut editor, &ctx);
         if editor.settings.frame_rate {
@@ -874,6 +878,11 @@ fn editor_ui(world: &mut World) {
         (
             ui_ms,
             crate::tabs::active_tab(&editor).map(|tab| tab.title()),
+            editor
+                .views
+                .area
+                .camera_state()
+                .map(|state| state.camera.distance),
         )
     });
     if world.contains_resource::<FrameLog>() {
@@ -881,6 +890,7 @@ fn editor_ui(world: &mut World) {
             frame: Millis(frame_ms),
             ui: Millis(ui_ms),
             tab,
+            camera,
             entities: world.query::<Entity>().iter(world).count(),
             images: world.resource::<Assets<Image>>().len(),
             meshes: world.resource::<Assets<Mesh>>().len(),
@@ -895,6 +905,11 @@ fn editor_ui(world: &mut World) {
     if world.resource::<Editor>().quit {
         world.write_message(bevy::app::AppExit::Success);
     }
+}
+
+/// The editor's window and views are shown as its video settings ask.
+fn show_video(editor: Res<Editor>, mut video: ResMut<VideoPreferences>) {
+    video.set_if_neq(editor.settings.video);
 }
 
 fn background(world: &mut World) {

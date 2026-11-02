@@ -15,7 +15,7 @@ pub use typed::IdPaths;
 use std::collections::{BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, TryRecvError};
-use std::sync::{Arc, Mutex, PoisonError};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
 use engine::core::content::ErrorPlace::WholeFile;
@@ -294,6 +294,9 @@ pub struct Project {
     unverified: Option<Unverified>,
     checked: Option<Checked>,
     refused: Option<RefusedEdit>,
+    /// The revision of the files whose load to be worked on is being held to every rule, while
+    /// it is.
+    verifying: Option<u64>,
 }
 
 // An edit is adopted at once and its content loaded on a thread, so the interface never waits on
@@ -378,8 +381,9 @@ impl Project {
             unverified: None,
             checked: None,
             refused: None,
+            verifying: None,
         };
-        project.reload();
+        project.open_load();
         Ok(project)
     }
 
@@ -473,9 +477,29 @@ impl Project {
             })
     }
 
-    /// Loads the files as they stand, waiting for it: for opening a folder and taking in what
+    /// Loads the files as they stand to be worked on at once, trusting them as play does, and holds
+    /// them to every rule meanwhile: the problems found come in as they would from any load, while
+    /// the content worked on stays the one already loaded.
+    fn open_load(&mut self) {
+        self.loading = None;
+        self.stale = false;
+        self.unverified = None;
+        match load_for(&self.files, &self.name(), LoadPurpose::Play) {
+            Ok((content, took)) => {
+                let loaded = Loaded::build(content, &self.files, took);
+                self.report = None;
+                self.install(loaded);
+                self.verifying = Some(self.files.revision());
+                self.begin_load();
+            }
+            Err(report) => self.report = Some(report),
+        }
+    }
+
+    /// Loads the files as they stand, held to every rule, waiting for it: for taking in what
     /// changed on disk, when there is nothing to show yet anyway.
     pub fn reload(&mut self) {
+        self.verifying = None;
         self.loading = None;
         self.stale = false;
         self.unverified = None;
@@ -525,7 +549,12 @@ impl Project {
     }
 
     fn take(&mut self, outcome: Result<Loaded, LoadReport>) {
+        let verified = self.verifying.take() == Some(self.files.revision()) && !self.stale;
         match outcome {
+            Ok(loaded) if verified => {
+                self.report = None;
+                drop_in_background(loaded);
+            }
             Ok(loaded) => {
                 if !self.stale {
                     self.unverified = None;
@@ -794,8 +823,9 @@ impl Project {
         let (sender, receiver) = mpsc::channel();
         self.loading = Some(ChannelInbox::new(receiver));
         std::thread::spawn(move || {
-            let outcome =
-                load(&files, &name).map(|(content, took)| Loaded::build(content, &files, took));
+            let outcome = background().install(|| {
+                load(&files, &name).map(|(content, took)| Loaded::build(content, &files, took))
+            });
             let _ = sender.send(outcome);
         });
     }
@@ -806,7 +836,7 @@ impl Project {
         self.last_usages = Some(loaded.usages_took);
         self.usages = loaded.usages;
         self.unused = loaded.unused;
-        self.content = Some(loaded.content);
+        drop_in_background(self.content.replace(loaded.content));
         self.generation += 1;
     }
 
@@ -1084,10 +1114,43 @@ fn read_entry(root: &Path, entry: &str) -> Option<FileBytes> {
     std::fs::read(root.join(entry)).ok().map(FileBytes::from)
 }
 
+/// The pool the editor works on in the background with, such as loading the folder or holding an
+/// area's ground: a share of the cores, so that the frames keep coming meanwhile.
+pub(crate) fn background() -> &'static rayon::ThreadPool {
+    static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
+    POOL.get_or_init(|| {
+        let threads = std::thread::available_parallelism()
+            .map_or(1, |cores| (cores.get() / BACKGROUND_SHARE).max(1));
+        rayon::ThreadPoolBuilder::new()
+            .num_threads(threads)
+            .thread_name(|index| format!("background-{index}"))
+            .build()
+            .expect("a background pool")
+    })
+}
+
+/// Lets go of `value` on the background pool: content let go of holds so much that freeing it
+/// would hold up a frame.
+fn drop_in_background<T: Send + 'static>(value: T) {
+    background().spawn(move || drop(value));
+}
+
+/// How many of the machine's threads go to each of the background pool's.
+const BACKGROUND_SHARE: usize = 8;
+
 pub fn load(files: &ProjectFiles, name: &str) -> Result<(Content, Duration), LoadReport> {
+    load_for(files, name, LoadPurpose::Check)
+}
+
+/// The files loaded for `purpose`, and how long it took.
+fn load_for(
+    files: &ProjectFiles,
+    name: &str,
+    purpose: LoadPurpose,
+) -> Result<(Content, Duration), LoadReport> {
     let started = Instant::now();
     let folder = Arc::new(files.folder(name));
-    systems::load_making(folder, "the folder did not load")
+    systems::load_making(folder, "the folder did not load", purpose)
         .map(|content| (content, started.elapsed()))
 }
 

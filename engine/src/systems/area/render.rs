@@ -22,7 +22,7 @@ pub struct AreaRenderPlugin;
 
 impl Plugin for AreaRenderPlugin {
     fn build(&self, app: &mut App) {
-        app.add_plugins(SceneryPlugin { paced: true })
+        app.add_plugins(SceneryPlugin)
             .init_resource::<ShownArea>()
             .init_resource::<Daylight>()
             .add_systems(

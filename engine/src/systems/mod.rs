@@ -556,17 +556,18 @@ pub fn load_content(
     )
 }
 
-/// Loads a game still being made, through `making_registry`, held to every rule.
+/// Loads a game still being made, through `making_registry`, for `purpose`.
 pub fn load_making(
     folder: std::sync::Arc<dyn ContentFolder>,
     outcome: &str,
+    purpose: LoadPurpose,
 ) -> Result<Content, LoadReport> {
     crate::core::content::load(
         making_registry(),
         folder,
         crate::core::content::version::build(),
         outcome,
-        LoadPurpose::Check,
+        purpose,
     )
 }
 
@@ -688,6 +689,7 @@ pub fn tables() -> ContentRegistry {
         .hook(LoadStep::Expand, script::build_all)
         .hook(LoadStep::Across, shop::check_all)
         .hook(LoadStep::Across, quest::check_all)
+        .hook(LoadStep::Settings, quest::check_rewards)
         .hook(LoadStep::Across, notification::check_all)
         .hook(LoadStep::Across, script::check_all)
         .hook(LoadStep::Across, class::check_all)

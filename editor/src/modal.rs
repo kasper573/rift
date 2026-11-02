@@ -21,6 +21,7 @@ pub enum ModalDialog {
     Close(CloseDialog),
     Binaries,
     Keys,
+    Video,
     Resize(ResizeDialog),
     Arrange(ArrangeDialog),
     PickRow(PickRowDialog),

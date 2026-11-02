@@ -119,7 +119,7 @@ fn client(game: Game, folder: &Path) -> (App, Arc<Area>) {
         bevy::pbr::PbrPlugin::default(),
         VfxMaterialsPlugin,
         WorldScenePlugin,
-        scenery::SceneryPlugin { paced: false },
+        scenery::SceneryPlugin,
     ))
     .insert_resource(testkit::look())
     .insert_resource(content);

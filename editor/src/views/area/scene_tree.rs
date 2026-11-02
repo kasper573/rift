@@ -307,14 +307,7 @@ impl<'a> SceneSource<'a> {
     }
 
     fn count_inside(&self, id: &str) -> usize {
-        let Some(node) = self.snapshot.scene_node(id) else {
-            return 0;
-        };
-        let mut count = 0;
-        nodes::walk(nodes::children_of(node), &mut |_, child| {
-            count += usize::from(!nodes::is_folder(child));
-        });
-        count
+        self.snapshot.count_inside(id)
     }
 
     fn label_of(&self, id: &str) -> String {
@@ -977,7 +970,12 @@ fn problems(project: &Project, snapshot: &AreaSnapshot) -> HashMap<String, Strin
             broken_bundles.entry(bundle).or_insert(text);
         }
     }
-    nodes::walk(snapshot.nodes(), &mut |pointer, node| {
+    let walked = if broken_bundles.is_empty() {
+        &[][..]
+    } else {
+        snapshot.nodes()
+    };
+    nodes::walk(walked, &mut |pointer, node| {
         if let Some(placement) = nodes::placement_of(node)
             && let Some(blueprint) = snapshot.reader.path_of(placement.blueprint)
             && let Some(text) = broken_bundles.get(blueprint)

@@ -214,6 +214,10 @@ fn top_bar(editor: &mut Editor, root: &mut egui::Ui) {
                         unused_dialog::find_unused(editor);
                         ui.close();
                     }
+                    if ui.button("Video settings…").clicked() {
+                        editor.dialogs.push(ModalDialog::Video);
+                        ui.close();
+                    }
                     if ui.button("Game binaries…").clicked() {
                         editor.dialogs.push(ModalDialog::Binaries);
                         ui.close();

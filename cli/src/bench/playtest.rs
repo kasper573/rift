@@ -5,8 +5,9 @@ use std::process::{Child, Command, Stdio};
 use std::time::{Duration, Instant};
 
 use engine::core::content::{Content, ContentScope, with_content};
+use engine::core::os::Profile;
+use engine::core::render::video::VideoPreferences;
 use engine::core::units::Bytes;
-use engine::systems::GameSettings;
 use engine::systems::launch::{
     self, AuthMode, CLIENT_ENV_PREFIX, ClientConfig, ProbeDriver, TEST_CHARACTER_ROUTE,
     TestCharacterRequest,
@@ -14,6 +15,7 @@ use engine::systems::launch::{
 use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::probe::{ProbeFrameQuestion, ProbeSnapshot};
 use engine::systems::staging::{STAGING_ROUTE, Staging};
+use engine::systems::{GameSettings, settings};
 use serde::Serialize;
 use serde::de::DeserializeOwned;
 use tempfile::TempDir;
@@ -37,9 +39,10 @@ pub struct Playtest {
 
 impl Playtest {
     /// The game's first test character, at the game's initial spawn, in a client on a desktop of the
-    /// bench's own.
-    pub fn start(game: &Path, content: &Content) -> Playtest {
+    /// bench's own, shown as `video` asks.
+    pub fn start(game: &Path, content: &Content, video: VideoPreferences) -> Playtest {
         let folder = tempfile::tempdir().expect("a folder for the client's profile and log");
+        settings::save_video(&Profile(folder.path().join("profile")), video);
         let server = GameServer::start(&binaries::beside(GAME_SERVER), &bench_config(game));
         let character = content
             .ids::<CharacterSnapshot>()

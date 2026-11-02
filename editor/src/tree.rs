@@ -210,6 +210,8 @@ pub struct TreeResponse<A> {
     pub toggled: Option<RowToggled>,
     /// Whether the keys go to the tree.
     pub focused: bool,
+    /// The row under the pointer.
+    pub hovered: Option<String>,
 }
 
 /// Draws the tree of `source`. `open` holds the folders open while nothing narrows the rows, kept
@@ -326,6 +328,13 @@ pub fn show<S: TreeSource>(
         renamed: None,
         toggled: toggled.into_inner(),
         focused: ui.memory(|m| m.has_focus(id)),
+        hovered: ui
+            .input(|i| i.pointer.hover_pos())
+            .filter(|&pointer| {
+                response.rect.contains(pointer) && ui.rect_contains_pointer(response.rect)
+            })
+            .and_then(|pointer| drawn.iter().find(|row| row.contains(pointer)))
+            .map(|row| row.id.clone()),
     };
     match renamed.into_inner() {
         Some(RenameEnd::Typed(id, text)) => {

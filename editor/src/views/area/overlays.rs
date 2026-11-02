@@ -1,20 +1,30 @@
 //! What the view draws over the viewport's picture: the area's edge, its modules as outlines on
 //! the ground, the navmesh, the height contours and every prop's footprint, each bent over the
-//! terrain the way the picture shows it.
+//! terrain the way the picture shows it: the modules shaped as rectangles as lines the viewport
+//! draws in its picture, the rest over it. Scatters and blueprint placements, which can tile a
+//! whole area, are outlined only when selected or hovered, and a module is named only when
+//! hovered, on the map or in the scene tree.
 
 use std::cell::RefCell;
 use std::collections::{HashMap, HashSet};
+use std::hash::{Hash, Hasher};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use ui::egui;
 use ui::ink;
 use ui::theme;
 
-use engine::core::math::Rect;
-use engine::core::units::MeterSize;
+use bevy::math::Vec3;
+use engine::core::content::{Content, FolderReader};
+use engine::core::math::{Pos, Rect};
+use engine::core::render::world_point;
+use engine::core::units::{MeterPos, MeterSize, Meters};
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::{Footprint, PropDef, PropId};
-use engine::systems::area::{AreaModule, AreaModuleKind, Pictured};
+use engine::systems::area::{Area, AreaModule, AreaModuleKind, Pictured};
 use ui::egui::{Color32, Pos2, Rect as ERect, Stroke as EStroke, Vec2};
 
+use super::camera::AreaCanvas;
 use super::{AreaFrame, AreaTool, selected_parts, shapes};
 use crate::app::Editor;
 use crate::forms;
@@ -23,8 +33,10 @@ const LABEL_GAP: f32 = 2.0;
 const LABEL_SHIFTS: u32 = 3;
 /// The side of the cells of the screen placed labels are filed by.
 const LABEL_CELL: f32 = 64.0;
-/// How many pixels across a module must show before it is labelled unasked.
-const LABEL_PIXELS: f32 = 48.0;
+/// The size of a label's text, monospaced, so a label's size is known before it is laid out.
+const LABEL_TEXT: f32 = 11.5;
+/// The room the shortest label takes on the screen.
+const LABEL_SPOT: Vec2 = Vec2::new(48.0, 20.0);
 
 /// The edge of the area's ground, or a blueprint's canvas with its size.
 pub(super) fn overlay_bounds(painter: &egui::Painter, frame: &AreaFrame) {
@@ -160,6 +172,133 @@ pub(crate) fn module_color(kind: AreaModuleKind) -> Color32 {
     }
 }
 
+/// Where a module lies on the ground, worked out once for a snapshot so that a frame only projects
+/// it: its rectangle, the rectangle a glance at it measures (a prop's footprint), the middle of
+/// that on the ground and the corners of its rectangle on the ground.
+pub struct Footing {
+    bounds: Rect<Meters>,
+    glanced: Rect<Meters>,
+    middle: Vec3,
+    corners: [Vec3; 4],
+    /// The way round the rectangle on the ground, bent over the terrain, once it is outlined.
+    bent: OnceLock<Arc<[Vec3]>>,
+}
+
+impl Footing {
+    pub(super) fn of(
+        content: &Content,
+        reader: &FolderReader,
+        area: &Area,
+        module: &AreaModule,
+        bounds: Rect<Meters>,
+    ) -> Footing {
+        let glanced = match module {
+            AreaModule::Prop(prop) => reader
+                .path_of(prop.prop)
+                .and_then(|path| content.by_path::<PropDef>(path))
+                .and_then(|id| {
+                    id.get(content)
+                        .footprint
+                        .bounds(prop.at, prop.yaw, prop.scale)
+                })
+                .unwrap_or(bounds),
+            _ => bounds,
+        };
+        let on_ground = |at: Pos<Meters>| world_point(at, area.heights.height_at(at));
+        Footing {
+            bounds,
+            glanced,
+            middle: on_ground(glanced.center()),
+            corners: engine::core::geometry::corners(bounds).map(on_ground),
+            bent: OnceLock::new(),
+        }
+    }
+
+    /// The way round the rectangle on the ground, closed back to its start, each side bent over
+    /// the terrain in pieces no longer than `BENT_STEP`.
+    fn bent(&self, area: &Area) -> Arc<[Vec3]> {
+        self.bent
+            .get_or_init(|| {
+                let corners = engine::core::geometry::corners(self.bounds);
+                let mut round: Vec<Vec3> = (0..4)
+                    .flat_map(|side| {
+                        let (from, to) = (corners[side], corners[(side + 1) % 4]);
+                        let pieces = (from.distance(to).0 / BENT_STEP.0)
+                            .ceil()
+                            .clamp(1.0, MOST_PIECES) as usize;
+                        (0..pieces).map(move |piece| from.lerp(to, piece as f32 / pieces as f32))
+                    })
+                    .map(|at| world_point(at, area.heights.height_at(at)))
+                    .collect();
+                round.push(round[0]);
+                round.into()
+            })
+            .clone()
+    }
+
+    /// The box on the screen around the rectangle.
+    fn screen_box(&self, canvas: &AreaCanvas) -> ERect {
+        ERect::from_points(&self.corners.map(|corner| canvas.point(corner)))
+    }
+}
+
+/// How long the pieces of a module's outline are at most, and how many a side takes at most: the
+/// outline bends with the terrain as far as a view shows the bends.
+const BENT_STEP: Meters = Meters(4.0);
+const MOST_PIECES: f32 = 32.0;
+
+/// The outlines of the modules the view draws on the ground, as lines the viewport draws in its
+/// picture, numbered so it lays them again only when they change.
+#[derive(Clone, Default)]
+pub struct GroundLines {
+    pub revision: u64,
+    pub runs: Arc<[GroundLine]>,
+}
+
+/// The outlines the view draws over the ground, each kept with what it was laid for: the scene's as
+/// the view holds it, and the module the pointer is over where the scene's leave it out, kept apart
+/// so the pointer moving over the map lays only its own.
+#[derive(Default)]
+pub struct Outlines {
+    pub scene: Option<(u64, GroundLines)>,
+    pub pointed: Option<(u64, GroundLines)>,
+}
+
+impl Outlines {
+    /// Both sets of lines, the scene's first.
+    pub fn lines(&self) -> [GroundLines; 2] {
+        [&self.scene, &self.pointed].map(|kept| {
+            kept.as_ref()
+                .map(|(_, lines)| lines.clone())
+                .unwrap_or_default()
+        })
+    }
+}
+
+/// One closed line over the ground, its colour, and whether it is drawn bold.
+pub struct GroundLine {
+    pub points: Arc<[Vec3]>,
+    pub color: Color32,
+    pub bold: bool,
+}
+
+/// How the view holds a module: selected, hovered on the map or in the scene tree, or one of the
+/// parts the selection names.
+struct Held {
+    selected: bool,
+    hovered: bool,
+    part: bool,
+}
+
+impl Held {
+    fn asked(&self) -> bool {
+        self.selected || self.hovered || self.part
+    }
+}
+
+/// Every module of the view's scene shown on the map: those outlined on the ground as lines the
+/// viewport draws, laid again only when what is outlined changes, the rest drawn over the picture,
+/// and each hovered module, on the map or in the scene tree, named.
 pub(super) fn overlay_modules(
     editor: &mut Editor,
     painter: &egui::Painter,
@@ -169,6 +308,8 @@ pub(super) fn overlay_modules(
     let canvas = &frame.canvas;
     let parts: HashSet<String> = selected_parts(editor, &frame.bundle);
     let selected: HashSet<String> = frame.selected_modules(&parts).into_iter().collect();
+    let view = editor.views.area.view(view_key);
+    let row = view.hovered_row().map(str::to_owned);
     if let Some((bounds, label)) = frame.folder_box(&parts) {
         painter.add(egui::Shape::dashed_line(
             &canvas.outline(bounds.inflate(0.2, 0.2)),
@@ -176,62 +317,100 @@ pub(super) fn overlay_modules(
             6.0,
             4.0,
         ));
-        frame.labels.chip(
-            canvas.rect(bounds).min + Vec2::new(0.0, -4.0),
-            label,
-            theme::ACCENT,
-        );
+        if row.as_ref().is_some_and(|row| parts.contains(row)) {
+            frame.labels.chip(
+                canvas.rect(bounds).min + Vec2::new(0.0, -4.0),
+                label,
+                theme::ACCENT,
+            );
+        }
     }
-    let view = editor.views.area.view(view_key);
     let editing = view.in_place.first().cloned();
-    let hovered = match view.tool {
+    let pointed = match view.tool {
         AreaTool::Select | AreaTool::Module => frame.hit_pointer(),
         _ => None,
     };
+    let held = |pointer: &str| Held {
+        selected: !selected.is_empty() && selected.contains(pointer),
+        hovered: pointed.as_deref() == Some(pointer)
+            || row.as_deref().is_some_and(|row| holds(row, pointer)),
+        part: !parts.is_empty() && parts.contains(pointer),
+    };
+    let held_unpointed = |pointer: &str| Held {
+        hovered: row.as_deref().is_some_and(|row| holds(row, pointer)),
+        ..held(pointer)
+    };
+    let wash = |kind: AreaModuleKind, pointer: &str, selected: bool| {
+        let alpha = if editing.as_deref().is_some_and(|e| e != pointer) {
+            0.24
+        } else if selected {
+            1.0
+        } else {
+            0.67
+        };
+        ink::wash(module_color(kind), alpha)
+    };
+    let key = |pointed: Option<&String>| {
+        let mut hasher = std::hash::DefaultHasher::new();
+        let mut asked: Vec<&String> = selected.iter().chain(&parts).collect();
+        asked.sort_unstable();
+        (frame.made, pointed, &row, &editing, asked).hash(&mut hasher);
+        hasher.finish()
+    };
+    let (scene_key, pointed_key) = (key(None), key(pointed.as_ref()));
+    let view = editor.views.area.view_mut(view_key);
+    if view
+        .outlines
+        .scene
+        .as_ref()
+        .is_none_or(|(kept, _)| *kept != scene_key)
+    {
+        let lines = ground_lines(frame, &|pointer| Some(held_unpointed(pointer)), &wash);
+        view.outlines.scene = Some((scene_key, lines));
+    }
+    if view
+        .outlines
+        .pointed
+        .as_ref()
+        .is_none_or(|(kept, _)| *kept != pointed_key)
+    {
+        let only_pointed = |pointer: &str| {
+            (pointed.as_deref() == Some(pointer) && !held_unpointed(pointer).asked())
+                .then(|| held(pointer))
+        };
+        let lines = ground_lines(frame, &only_pointed, &wash);
+        view.outlines.pointed = Some((pointed_key, lines));
+    }
     let mut dots = shapes::Dots::default();
     let mut footprints: HashMap<PropId, Option<&Footprint>> = HashMap::new();
-    for (node, &shown) in frame.modules.iter().zip(frame.shown_modules.iter()) {
-        if !shown {
+    let placed = frame
+        .modules
+        .iter()
+        .zip(frame.shown_modules.iter())
+        .zip(frame.footings.iter());
+    for ((node, &shown), footing) in placed {
+        let Some(footing) = footing.as_ref().filter(|_| shown) else {
+            continue;
+        };
+        let module = node.module();
+        let held = held(&node.pointer);
+        let on_ground = outlined_on_ground(frame, module);
+        if on_ground && !held.hovered && !held.part {
             continue;
         }
-        let module = node.module();
-        let Some(bounds) = frame.bounds_of(node) else {
+        if !on_ground && !held.asked() && !shown_unasked(module) {
             continue;
-        };
-        let footprint = match module {
-            AreaModule::Prop(prop) => *footprints.entry(prop.prop).or_insert_with(|| {
-                frame
-                    .reader
-                    .path_of(prop.prop)
-                    .and_then(|path| frame.content.by_path::<PropDef>(path))
-                    .map(|id| &id.get(&frame.content).footprint)
-            }),
-            _ => None,
-        };
-        let ground = match (module, footprint) {
-            (AreaModule::Prop(prop), Some(footprint)) => footprint
-                .bounds(prop.at, prop.yaw, prop.scale)
-                .unwrap_or(bounds),
-            _ => bounds,
-        };
-        let Some((at, across)) = canvas.glance(ground) else {
+        }
+        let Some((at, across)) = canvas.glance_from(footing.middle, footing.glanced) else {
             continue;
         };
         if !canvas.shows(at, across) {
             continue;
         }
-        let kind = module.kind();
-        let is_selected = !selected.is_empty() && selected.contains(&node.pointer);
-        let is_hovered = hovered.as_ref() == Some(&node.pointer);
-        let is_part = !parts.is_empty() && parts.contains(&node.pointer);
-        let screen_box = || canvas.rect(bounds);
-        if let AreaModule::Blueprint(placement) = module
-            && frame
-                .reader
-                .path_of(placement.blueprint)
-                .and_then(|path| frame.content.by_path::<BlueprintDef>(path))
-                .is_none()
-        {
+        let bounds = footing.bounds;
+        let color = wash(module.kind(), &node.pointer, held.selected);
+        let width = if held.selected { 2.0 } else { 1.0 };
+        if !loads(frame, module) {
             painter.add(egui::Shape::dashed_line(
                 &canvas.outline(bounds),
                 EStroke::new(1.5, theme::DANGER),
@@ -239,7 +418,7 @@ pub(super) fn overlay_modules(
                 3.0,
             ));
             frame.labels.chip(
-                screen_box().min + Vec2::new(0.0, -4.0),
+                footing.screen_box(canvas).min + Vec2::new(0.0, -4.0),
                 format!(
                     "{} doesn't load",
                     shapes::label(module, frame.reader.as_ref())
@@ -248,109 +427,185 @@ pub(super) fn overlay_modules(
             );
             continue;
         }
-        if kind == AreaModuleKind::Blueprint && !is_selected && !is_hovered {
-            continue;
-        }
-        let color = module_color(kind);
-        let dim = editing.as_ref().is_some_and(|e| *e != node.pointer);
-        let alpha = if dim {
-            0.24
-        } else if is_selected {
-            1.0
-        } else {
-            0.67
-        };
-        let color = ink::wash(color, alpha);
-        let width = if is_selected { 2.0 } else { 1.0 };
-        if !is_selected && !is_hovered && !is_part && !shapes::shows_shape(across) {
-            dots.add(painter, at, color);
-            continue;
-        }
-        match module {
-            AreaModule::Soundscape(_) if shapes::is_ellipse(module) => {
-                painter.add(egui::Shape::closed_line(
-                    canvas.ellipse(bounds),
-                    EStroke::new(width, color),
-                ));
+        if !on_ground {
+            if !held.asked() && !shapes::shows_shape(across) {
+                dots.add(painter, at, color);
+                continue;
             }
-            AreaModule::Prop(prop) => match footprint {
-                Some(footprint) => shapes::draw_footprint(
-                    painter,
-                    canvas,
-                    footprint,
-                    prop.at,
-                    prop.yaw,
-                    prop.scale,
-                    EStroke::new(width, color),
-                ),
-                None => {
-                    painter.add(egui::Shape::closed_line(
-                        canvas.circle(prop.at, 0.25),
-                        EStroke::new(width, color),
-                    ));
-                }
-            },
-            AreaModule::Light(light) => {
-                let foot = canvas.to_screen(light.at);
-                let bulb = canvas.lifted(light.at, light.height);
-                painter.line_segment([foot, bulb], EStroke::new(width, ink::wash(color, 0.6)));
-                painter.circle_stroke(bulb, 5.0, EStroke::new(width, color));
-                painter.add(egui::Shape::dashed_line(
-                    &canvas.circle(light.at, light.radius.0),
-                    EStroke::new(1.0, ink::wash(color, 0.5)),
-                    6.0,
-                    6.0,
-                ));
-            }
-            AreaModule::Resident(resident) => {
-                painter.add(egui::Shape::closed_line(
-                    canvas.circle(resident.at, 0.35),
-                    EStroke::new(width, color),
-                ));
-                let heading = resident.at
-                    + resident
-                        .facing
-                        .rotate(engine::core::math::Offset::new(0.0, -0.7));
-                painter.add(egui::Shape::line(
-                    canvas.polyline(&[resident.at, heading]),
-                    EStroke::new(width, color),
-                ));
-            }
-            AreaModule::Object(_) if shapes::is_point(module) => {
-                let center = bounds.center();
-                painter.add(egui::Shape::closed_line(
-                    canvas.circle(engine::core::math::Pos::new(center.x, center.y), 0.35),
-                    EStroke::new(width, color),
-                ));
-            }
-            _ => {
-                painter.add(egui::Shape::closed_line(
-                    canvas.outline(bounds),
-                    EStroke::new(width, color),
-                ));
-            }
-        }
-        if is_selected || is_hovered {
-            frame.labels.chip(
-                screen_box().min + Vec2::new(0.0, -4.0),
-                shapes::label(module, frame.reader.as_ref()),
-                color,
-            );
-        } else if kind == AreaModuleKind::Population && across >= LABEL_PIXELS {
-            frame.labels.aside(
-                screen_box().min + Vec2::new(0.0, -4.0),
-                shapes::label(module, frame.reader.as_ref()),
-                color,
+            let footprint = match module {
+                AreaModule::Prop(prop) => *footprints.entry(prop.prop).or_insert_with(|| {
+                    frame
+                        .reader
+                        .path_of(prop.prop)
+                        .and_then(|path| frame.content.by_path::<PropDef>(path))
+                        .map(|id| &id.get(&frame.content).footprint)
+                }),
+                _ => None,
+            };
+            draw_shape(
+                painter,
+                canvas,
+                module,
+                bounds,
+                footprint,
+                EStroke::new(width, color),
             );
         }
-        if is_part && shapes::has_size(module) {
-            for corner in engine::core::geometry::corners(bounds) {
+        if held.hovered {
+            let anchor = footing.screen_box(canvas).min + Vec2::new(0.0, -4.0);
+            let label = || shapes::label(module, frame.reader.as_ref());
+            if pointed.as_deref() == Some(node.pointer.as_str()) {
+                frame.labels.chip(anchor, label(), color);
+            } else {
+                frame.labels.aside(anchor, label, color);
+            }
+        }
+        if held.part && shapes::has_size(module) {
+            for corner in footing.corners {
                 painter.rect_filled(
-                    ERect::from_center_size(canvas.to_screen(corner), Vec2::splat(6.0)),
+                    ERect::from_center_size(canvas.point(corner), Vec2::splat(6.0)),
                     0.0,
                     color,
                 );
             }
+        }
+    }
+}
+
+/// Whether the tree row `row` holds the module at `pointer`: the module's own row, or a folder
+/// above it, "" the whole scene.
+fn holds(row: &str, pointer: &str) -> bool {
+    pointer
+        .strip_prefix(row)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
+}
+
+/// Whether a module shows on the map when nothing asks for it: a scatter or a blueprint placement,
+/// which can tile a whole area, only when selected or hovered.
+fn shown_unasked(module: &AreaModule) -> bool {
+    !matches!(module, AreaModule::Scatter(_) | AreaModule::Blueprint(_))
+}
+
+/// Whether a module is outlined on the ground by the rectangle it takes, as a line the viewport
+/// draws: every module shaped as its rectangle, rather than as a point, a circle or a footprint.
+fn outlined_on_ground(frame: &AreaFrame, module: &AreaModule) -> bool {
+    match module {
+        AreaModule::Soundscape(_) => !shapes::is_ellipse(module),
+        AreaModule::Object(_) => !shapes::is_point(module),
+        AreaModule::Blueprint(_) => loads(frame, module),
+        AreaModule::SafeZone(_) | AreaModule::Scatter(_) | AreaModule::Population(_) => true,
+        AreaModule::Prop(_)
+        | AreaModule::Light(_)
+        | AreaModule::Resident(_)
+        | AreaModule::Script(_) => false,
+    }
+}
+
+/// Whether a module loads: a blueprint placement whose blueprint does; every other module.
+fn loads(frame: &AreaFrame, module: &AreaModule) -> bool {
+    match module {
+        AreaModule::Blueprint(placement) => frame
+            .reader
+            .path_of(placement.blueprint)
+            .and_then(|path| frame.content.by_path::<BlueprintDef>(path))
+            .is_some(),
+        _ => true,
+    }
+}
+
+/// The outlines on the ground of every module that shows as one and that `held` says how the view
+/// holds.
+fn ground_lines(
+    frame: &AreaFrame,
+    held: &dyn Fn(&str) -> Option<Held>,
+    wash: &dyn Fn(AreaModuleKind, &str, bool) -> Color32,
+) -> GroundLines {
+    static REVISION: AtomicU64 = AtomicU64::new(0);
+    let area = frame.area();
+    let runs: Vec<GroundLine> = frame
+        .modules
+        .iter()
+        .zip(frame.shown_modules.iter())
+        .zip(frame.footings.iter())
+        .filter_map(|((node, &shown), footing)| {
+            let footing = footing.as_ref().filter(|_| shown)?;
+            let module = node.module();
+            let held = held(&node.pointer)?;
+            if !outlined_on_ground(frame, module) || !(held.asked() || shown_unasked(module)) {
+                return None;
+            }
+            Some(GroundLine {
+                points: footing.bent(area),
+                color: wash(module.kind(), &node.pointer, held.selected),
+                bold: held.selected,
+            })
+        })
+        .collect();
+    GroundLines {
+        revision: REVISION.fetch_add(1, Ordering::Relaxed),
+        runs: runs.into(),
+    }
+}
+
+/// A module drawn over the picture by its own shape.
+fn draw_shape(
+    painter: &egui::Painter,
+    canvas: &AreaCanvas,
+    module: &AreaModule,
+    bounds: Rect<Meters>,
+    footprint: Option<&Footprint>,
+    stroke: EStroke,
+) {
+    match module {
+        AreaModule::Soundscape(_) => {
+            painter.add(egui::Shape::closed_line(canvas.ellipse(bounds), stroke));
+        }
+        AreaModule::Prop(prop) => match footprint {
+            Some(footprint) => shapes::draw_footprint(
+                painter, canvas, footprint, prop.at, prop.yaw, prop.scale, stroke,
+            ),
+            None => {
+                painter.add(egui::Shape::closed_line(
+                    canvas.circle(prop.at, 0.25),
+                    stroke,
+                ));
+            }
+        },
+        AreaModule::Light(light) => {
+            let foot = canvas.to_screen(light.at);
+            let bulb = canvas.lifted(light.at, light.height);
+            painter.line_segment(
+                [foot, bulb],
+                EStroke::new(stroke.width, ink::wash(stroke.color, 0.6)),
+            );
+            painter.circle_stroke(bulb, 5.0, stroke);
+            painter.add(egui::Shape::dashed_line(
+                &canvas.circle(light.at, light.radius.0),
+                EStroke::new(1.0, ink::wash(stroke.color, 0.5)),
+                6.0,
+                6.0,
+            ));
+        }
+        AreaModule::Resident(resident) => {
+            painter.add(egui::Shape::closed_line(
+                canvas.circle(resident.at, 0.35),
+                stroke,
+            ));
+            let heading = resident.at
+                + resident
+                    .facing
+                    .rotate(engine::core::math::Offset::new(0.0, -0.7));
+            painter.add(egui::Shape::line(
+                canvas.polyline(&[resident.at, heading]),
+                stroke,
+            ));
+        }
+        _ => {
+            let center = bounds.center();
+            painter.add(egui::Shape::closed_line(
+                canvas.circle(Pos::new(center.x, center.y), 0.35),
+                stroke,
+            ));
         }
     }
 }
@@ -390,14 +645,19 @@ pub(super) fn overlay_soundscape_reach(
 
 /// The labels drawn over the map this frame, each kept clear of those before it: those it must
 /// show, and those it shows only where they find room, so however many ask, the labels never pile
-/// over one another.
+/// over one another. Of those shown where they find room, one at most begins on each spot a label
+/// takes, so however many ask, no more are named than the screen has room for.
 #[derive(Default)]
-pub struct AreaLabels(RefCell<Vec<AreaLabel>>);
+pub struct AreaLabels {
+    labels: RefCell<Vec<AreaLabel>>,
+    spots: RefCell<HashSet<(i32, i32)>>,
+}
 
 struct AreaLabel {
     bottom_left: Pos2,
     text: String,
     color: Color32,
+    /// Whether the label must show, else only where it finds room.
     needed: bool,
 }
 
@@ -406,23 +666,36 @@ impl AreaLabels {
         self.push(bottom_left, text.into(), color, true);
     }
 
-    /// A label shown only where it finds room among the others.
-    pub fn aside(&self, bottom_left: Pos2, text: impl Into<String>, color: Color32) {
-        self.push(bottom_left, text.into(), color, false);
+    /// A label shown only where it finds room among the others, its text asked for only when no
+    /// other has begun on its spot.
+    pub fn aside(&self, bottom_left: Pos2, text: impl FnOnce() -> String, color: Color32) {
+        let spot = (
+            (bottom_left.x / LABEL_SPOT.x).floor() as i32,
+            (bottom_left.y / LABEL_SPOT.y).floor() as i32,
+        );
+        if self.spots.borrow_mut().insert(spot) {
+            self.push(bottom_left, text(), color, false);
+        }
     }
 
     pub fn draw(&self, painter: &egui::Painter) {
         let mut placed = Placed::default();
         let clip = painter.clip_rect();
-        let (needed, aside): (Vec<AreaLabel>, Vec<AreaLabel>) =
-            self.0.take().into_iter().partition(|label| label.needed);
+        let (needed, aside): (Vec<AreaLabel>, Vec<AreaLabel>) = self
+            .labels
+            .take()
+            .into_iter()
+            .partition(|label| label.needed);
+        let font = egui::FontId::monospace(LABEL_TEXT);
+        let glyph = painter
+            .layout_no_wrap("0".to_owned(), font.clone(), theme::TEXT)
+            .size();
         for label in needed.into_iter().chain(aside) {
             if !clip.contains(label.bottom_left) {
                 continue;
             }
-            let galley =
-                painter.layout_no_wrap(label.text, egui::FontId::monospace(11.5), theme::TEXT);
-            let size = galley.size() + Vec2::new(14.0, 6.0);
+            let size = Vec2::new(glyph.x * label.text.chars().count() as f32, glyph.y)
+                + Vec2::new(14.0, 6.0);
             let preferred = ERect::from_min_size(label.bottom_left - Vec2::new(0.0, size.y), size);
             let back = match placed.free_slot(preferred) {
                 Some(slot) => slot,
@@ -430,6 +703,7 @@ impl AreaLabels {
                 None => continue,
             };
             placed.add(back);
+            let galley = painter.layout_no_wrap(label.text, font.clone(), theme::TEXT);
             ui::slip::paint(painter, back);
             painter.rect_filled(
                 ERect::from_min_size(back.min, Vec2::new(3.0, back.height())),
@@ -441,7 +715,7 @@ impl AreaLabels {
     }
 
     fn push(&self, bottom_left: Pos2, text: String, color: Color32, needed: bool) {
-        self.0.borrow_mut().push(AreaLabel {
+        self.labels.borrow_mut().push(AreaLabel {
             bottom_left,
             text,
             color,

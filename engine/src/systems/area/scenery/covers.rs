@@ -16,7 +16,7 @@ use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 
 use super::regions::{Cut, Merge, Region};
-use super::{Budget, KEEP_SHARE, PLACEMENT_CELL, Seen, Streaming, distance_to};
+use super::{Budget, KEEP_SHARE, Making, PLACEMENT_CELL, Seen, Streaming, distance_to, mesh_bytes};
 use crate::core::assets;
 use crate::core::content::Content;
 use crate::core::content::media::GltfInfos;
@@ -89,11 +89,23 @@ enum CopyState {
 }
 
 /// What stands of a merged region: waiting on the models of the props its covers strew, its
-/// meshes being made, or standing.
+/// meshes being made, or standing, those made rising a few a frame.
 enum Merged {
     Waiting,
-    Merging(Task<Vec<FarMesh>>),
-    Standing(Vec<Entity>),
+    Merging(Making<Vec<FarMesh>>),
+    Standing {
+        stood: Vec<Entity>,
+        rising: Vec<FarMesh>,
+    },
+}
+
+impl Merged {
+    fn into_made(self) -> Option<Vec<FarMesh>> {
+        match self {
+            Merged::Merging(making) => making.into_made(),
+            _ => None,
+        }
+    }
 }
 
 /// A merged mesh of a cover's piece over a region, and for a strewn prop the material of its
@@ -121,8 +133,8 @@ impl Covers {
         self.stale
             .extend(self.chunks.drain().filter_map(|(_, chunk)| chunk));
         for (_, merged) in self.merged.drain() {
-            if let Merged::Standing(meshes) = merged {
-                self.stale.extend(meshes);
+            if let Merged::Standing { stood, .. } = merged {
+                self.stale.extend(stood);
             }
         }
     }
@@ -178,8 +190,8 @@ pub(super) fn clear(world: &mut World, streaming: &mut Streaming, seen: Seen, cu
     let wanted: HashSet<Merge> = cut.merges.iter().copied().collect();
     covers.merged.retain(|merge, merged| {
         let keep = wanted.contains(merge);
-        if !keep && let Merged::Standing(meshes) = merged {
-            for &mesh in meshes.iter() {
+        if !keep && let Merged::Standing { stood, .. } = merged {
+            for &mesh in stood.iter() {
                 world.despawn(mesh);
             }
         }
@@ -326,17 +338,42 @@ fn stand_merge(
         .entry(merge)
         .or_insert(Merged::Waiting);
     match merged {
-        Merged::Standing(_) => return true,
-        Merged::Merging(task) => {
-            let Some(meshes) = check_ready(task) else {
+        Merged::Standing { rising, .. } if rising.is_empty() => return true,
+        Merged::Standing { .. } => {
+            let covers = &mut streaming.covers;
+            let Some(Merged::Standing { stood, rising }) = covers.merged.get_mut(&merge) else {
                 return false;
             };
-            let standing = spawn_merged(world, &streaming.covers, meshes, root);
-            streaming
+            while rising
+                .last()
+                .is_some_and(|next| budget.send(mesh_bytes(&next.mesh)))
+            {
+                if let Some(next) = rising.pop()
+                    && let Some(standing) = spawn_merged(world, &covers.layers, next, root)
+                {
+                    stood.push(standing);
+                }
+            }
+            return rising.is_empty();
+        }
+        Merged::Merging(making) => {
+            if making.made().is_none() {
+                return false;
+            }
+            let rising = streaming
                 .covers
                 .merged
-                .insert(merge, Merged::Standing(standing));
-            return true;
+                .remove(&merge)
+                .and_then(Merged::into_made)
+                .unwrap_or_default();
+            streaming.covers.merged.insert(
+                merge,
+                Merged::Standing {
+                    stood: Vec::new(),
+                    rising,
+                },
+            );
+            return stand_merge(world, streaming, root, seen, merge, pieces, budget);
         }
         Merged::Waiting => {}
     }
@@ -379,40 +416,36 @@ fn stand_merge(
         pixels_per_meter: seen.view.pixels_per_meter(streaming.regions.nearest(merge)),
     };
     let task = AsyncComputeTaskPool::get().spawn(async move { region.covers(&far_pieces) });
-    streaming.covers.merged.insert(merge, Merged::Merging(task));
+    streaming
+        .covers
+        .merged
+        .insert(merge, Merged::Merging(Making::Task(task)));
     false
 }
 
 fn spawn_merged(
     world: &mut World,
-    covers: &Covers,
-    meshes: Vec<FarMesh>,
+    layers: &[CoverLayer],
+    far: FarMesh,
     root: Entity,
-) -> Vec<Entity> {
-    meshes
-        .into_iter()
-        .filter_map(|far| {
-            let piece = &covers.layers[far.layer].pieces[far.piece];
-            let material = match &piece.strewn {
-                Some(strewn) => {
-                    cover::merged_material(world, &strewn.material, far.material.as_ref())?
-                }
-                None => covers.layers[far.layer].blended.clone(),
-            };
-            let mesh = world.resource_mut::<Assets<Mesh>>().add(far.mesh);
-            Some(
-                world
-                    .spawn((
-                        Mesh3d(mesh),
-                        MeshMaterial3d(material),
-                        far.bounds,
-                        NotShadowCaster,
-                        ChildOf(root),
-                    ))
-                    .id(),
-            )
-        })
-        .collect()
+) -> Option<Entity> {
+    let piece = &layers[far.layer].pieces[far.piece];
+    let material = match &piece.strewn {
+        Some(strewn) => cover::merged_material(world, &strewn.material, far.material.as_ref())?,
+        None => layers[far.layer].blended.clone(),
+    };
+    let mesh = world.resource_mut::<Assets<Mesh>>().add(far.mesh);
+    Some(
+        world
+            .spawn((
+                Mesh3d(mesh),
+                MeshMaterial3d(material),
+                far.bounds,
+                NotShadowCaster,
+                ChildOf(root),
+            ))
+            .id(),
+    )
 }
 
 /// A region as its covers are merged off the main thread: the ground they grow on, which region,

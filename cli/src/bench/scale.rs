@@ -10,6 +10,7 @@ use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use engine::core::content::Content;
+use engine::core::render::video::VideoPreferences;
 use engine::core::units::Bytes;
 use engine::systems::GameSettings;
 
@@ -178,7 +179,7 @@ struct Seen {
 
 /// The client's frame rate and memory, standing where the game starts.
 fn client(game: &Path, content: &Content) -> Seen {
-    let mut me = Playtest::start(game, content);
+    let mut me = Playtest::start(game, content, VideoPreferences::default());
     settled_in_world(&mut me);
     let first = me.snapshot().frame;
     let since = Instant::now();

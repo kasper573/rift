@@ -31,7 +31,7 @@ const FRAME_MARGIN: f32 = 1.15;
 /// How far apart the points of a ground line are, so it bends with the terrain: no closer on
 /// the ground than the terrain bends, and no closer on the screen than the bend still shows.
 const LINE_STEP: f32 = 0.5;
-const LINE_STEP_PIXELS: f32 = 4.0;
+const LINE_STEP_PIXELS: f32 = 12.0;
 /// How long a ground line must show before it bends: a shorter one runs straight between its ends,
 /// as the terrain under it bends it by less than shows.
 const BEND_PIXELS: f32 = 32.0;
@@ -206,7 +206,13 @@ impl AreaCanvas {
     /// put far off it.
     pub fn lifted(&self, at: Pos<Meters>, height: Meters) -> Pos2 {
         let ground = self.area.heights.height_at(at);
-        match self.view.project(world_point(at, ground + height)) {
+        self.point(world_point(at, ground + height))
+    }
+
+    /// Where a point of the world shows on the screen; a point behind the camera is put far off
+    /// it.
+    pub fn point(&self, world: Vec3) -> Pos2 {
+        match self.view.project(world) {
             Some(window) => self.screen.min + ui::egui::Vec2::new(window.x, window.y),
             None => Pos2::new(-1.0e5, -1.0e5),
         }
@@ -236,7 +242,14 @@ impl AreaCanvas {
     /// across the rectangle shows there; none behind the camera.
     pub fn glance(&self, ground: Rect<Meters>) -> Option<(Pos2, f32)> {
         let middle = ground.center();
-        let at = world_point(middle, self.area.heights.height_at(middle));
+        self.glance_from(
+            world_point(middle, self.area.heights.height_at(middle)),
+            ground,
+        )
+    }
+
+    /// As [`AreaCanvas::glance`], the middle of the rectangle standing at `at`.
+    pub fn glance_from(&self, at: Vec3, ground: Rect<Meters>) -> Option<(Pos2, f32)> {
         let window = self.view.project(at)?;
         let from_eye = Meters(self.view.eye().distance(at));
         let across =

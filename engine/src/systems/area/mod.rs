@@ -303,12 +303,13 @@ struct GroundParts {
 /// Reads one grid of the ground from the bundle into `ground`: every tile, refusing at its file
 /// one that isn't a tile of a ground of `size` or doesn't decode, and the overview, which a ground
 /// with any tile must keep. A load to play leaves the tiles stored, to read as they are first
-/// needed; a check decodes them all and holds the overview to what they say. A tile the bundle
+/// needed; a check decodes them all, on every core, and holds the overview to what they say. A tile the bundle
 /// leaves out stays as it is.
 fn read_ground<T: GroundValue>(parts: &mut Parts, specs: GroundParts, ground: &mut GroundGrid<T>) {
     let (across, down) = ground.size().tiles();
     let tiles = parts.keyed(specs.tiles);
     let any_tile = !tiles.is_empty();
+    let mut files = HashMap::new();
     for (key, file) in tiles {
         let Some(at) = TileAt::from_key(key).filter(|at| at.column < across && at.row < down)
         else {
@@ -327,15 +328,12 @@ fn read_ground<T: GroundValue>(parts: &mut Parts, specs: GroundParts, ground: &m
             );
             continue;
         };
-        if parts.purpose() == LoadPurpose::Play {
-            ground.store(at, parts.stored(file));
-            continue;
-        }
-        let Some(bytes) = parts.bytes(file) else {
-            continue;
-        };
-        if let Err(problem) = ground.decode_tile(at, &bytes) {
-            parts.error(file, ErrorPlace::WholeFile, problem);
+        ground.store(at, parts.stored(file));
+        files.insert(at, file);
+    }
+    if parts.purpose() == LoadPurpose::Check {
+        for (at, problem) in ground.load_all() {
+            parts.error(files[&at], ErrorPlace::WholeFile, problem);
         }
     }
     let overview = if any_tile {
@@ -754,6 +752,18 @@ impl Area {
         walk::mesh(self, wild && !self.safe_zones.is_empty(), flies)
     }
 
+    /// The ground everyone walks, with the ground within a tile of `at` held first: for a look at
+    /// one place of an area whose ground may not be held there yet.
+    pub fn mesh_near(&self, at: Pos<Meters>) -> HeldMesh {
+        self.hold(self.tiles_around(at, TILE_SIDE));
+        self.mesh()
+    }
+
+    /// Whether everyone walks at `at`, once the ground there is held.
+    pub fn walkable_if_held(&self, at: Pos<Meters>) -> Option<bool> {
+        walk::holds(self, [self.ground_size().tile_at(at)]).then(|| self.mesh().walkable(at))
+    }
+
     /// The tiles of ground held: those loaded, whose ground the meshes cover.
     pub fn held(&self) -> BTreeSet<TileAt> {
         walk::held(self)
@@ -762,6 +772,11 @@ impl Area {
     /// Holds `tiles` besides those held: loads their ground and lays the meshes over them.
     pub fn hold(&self, tiles: impl IntoIterator<Item = TileAt>) {
         walk::hold(self, tiles)
+    }
+
+    /// Whether every tile holding ground of `rect` is held, so the meshes cover it.
+    pub fn holds(&self, rect: Rect<Meters>) -> bool {
+        walk::holds(self, self.ground_size().tiles_within(rect))
     }
 
     /// Holds every tile of the area, as a check of the whole area or a tool editing it needs.
@@ -875,8 +890,18 @@ pub enum Kept<'a> {
 }
 
 /// The picture of `pictured`, drawing the module nodes `kept`. A blueprint is pictured on its own
-/// flat canvas with its holes filled by their defaults.
+/// flat canvas with its holes filled by their defaults. An area with every node kept is the one
+/// that loaded; its meshes cover the tiles held, as any area's do.
 pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Picture> {
+    if let (Pictured::Area(id), Kept::All) = (pictured, kept)
+        && let Some(area) = loaded(content, id)
+    {
+        return Some(Picture {
+            area: area.clone(),
+            placed: placed(content, id).to_vec(),
+            placements: placements(content, id).to_vec(),
+        });
+    }
     let mut errors = Vec::new();
     let keep: &dyn Fn(&[&str]) -> bool = match kept {
         Kept::All => &|_| true,
@@ -950,7 +975,6 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
         &flattening.modules,
         &flattening.placements,
     );
-    area.hold_all();
     Some(Picture {
         area: Arc::new(area),
         placed: flattening.modules,
@@ -1557,12 +1581,11 @@ pub fn check_place(content: &Content, place: script::Place) -> Result<(), Conten
     else {
         return Ok(());
     };
-    area.hold(area.tiles_around(place.at, TILE_SIDE));
+    let mesh = area.mesh_near(place.at);
     let key = place.area.path(content);
     let warps = warp_objects(content, place.area);
     let problem = |rule: &'static str, found: String| {
-        let nearest = area
-            .mesh()
+        let nearest = mesh
             .nearest_where(place.at, area.bodies.spacing(), |at| {
                 !warps.iter().any(|(_, object)| object.shape.covers(at))
             })
@@ -1574,7 +1597,7 @@ pub fn check_place(content: &Content, place: script::Place) -> Result<(), Conten
         )
         .near(nearest)
     };
-    if !area.mesh().walkable(place.at) {
+    if !mesh.walkable(place.at) {
         return Err(problem(
             "not walkable",
             format!("{key} {}", describe_point(place.at)),

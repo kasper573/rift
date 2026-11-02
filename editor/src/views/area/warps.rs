@@ -66,18 +66,18 @@ pub(crate) fn return_door(editor: &mut Editor, frame: &AreaSnapshot, node: &str)
     let here = area::load(&content, here_id);
     let there = area::load(&content, there_id);
     let door_bounds = object.shape.bounds();
-    let back_to = here
-        .mesh()
-        .nearest_where(door_bounds.center(), here.bodies.spacing(), |at| {
-            !door_bounds.contains(at)
-        });
+    let back_to = here.mesh_near(door_bounds.center()).nearest_where(
+        door_bounds.center(),
+        here.bodies.spacing(),
+        |at| !door_bounds.contains(at),
+    );
     let Some(back_to) = back_to else {
         editor.toast("No walkable cell outside the door to come back to");
         return;
     };
     let Some(beside_arrival) =
         there
-            .mesh()
+            .mesh_near(target_at)
             .nearest_where(target_at, there.bodies.spacing(), |at| {
                 at.distance(target_at) >= there.bodies.spacing()
             })

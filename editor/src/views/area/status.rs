@@ -59,10 +59,10 @@ pub(super) fn status_bar(
         ));
         if frame.in_map(ground) {
             let area = frame.area();
-            let mut what = if area.mesh().walkable(ground) {
-                "walkable".to_owned()
-            } else {
-                "blocked".to_owned()
+            let mut what = match area.walkable_if_held(ground) {
+                Some(true) => "walkable".to_owned(),
+                Some(false) => "blocked".to_owned(),
+                None => "ground loading".to_owned(),
             };
             let index = usize::from(area.paint.at(ground)).min(area.terrains.len() - 1);
             let terrain = area.terrains[index].get(&frame.content);

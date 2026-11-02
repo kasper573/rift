@@ -10,6 +10,7 @@ use ui::theme;
 use ui::words;
 
 use engine::core::content::{ContentFile, SETTINGS_FILE, fields_file, version};
+use engine::core::render::video;
 use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::player::PlayerDef;
@@ -593,6 +594,28 @@ fn one(editor: &mut Editor, ctx: &Context, dialog: ModalDialog) -> Option<ModalD
                 }
             });
             open.then_some(ModalDialog::Binaries)
+        }
+        ModalDialog::Video => {
+            let mut open = true;
+            let mut pressed = dialog::Keys::default();
+            dialog::card(ctx, "video", 360.0, |ui| {
+                pressed = dialog::keys(ui);
+                dialog::title(ui, "Video settings");
+                ui.add_space(8.0);
+                let mut video = editor.settings.video;
+                video::controls(ui, &mut video);
+                if video != editor.settings.video {
+                    editor.settings.video = video;
+                    editor.save_settings();
+                }
+                ui.add_space(8.0);
+                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    if ui.button("Done").clicked() {
+                        open = false;
+                    }
+                });
+            });
+            (open && !pressed.cancel).then_some(ModalDialog::Video)
         }
         ModalDialog::Keys => {
             let mut open = true;

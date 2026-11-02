@@ -9,6 +9,7 @@ use std::path::Path;
 use std::time::Duration;
 
 use engine::core::content::Content;
+use engine::core::render::video::VideoPreferences;
 use engine::core::units::Bytes;
 use engine::systems::script::Place;
 use engine::systems::staging::Staging;
@@ -44,7 +45,7 @@ const GPU_SLACK: Slack = Slack {
 
 /// Fails naming what grew.
 pub fn run(game: &Path, content: &Content) -> Result<(), String> {
-    let mut me = Playtest::start(game, content);
+    let mut me = Playtest::start(game, content, VideoPreferences::default());
     let home = settled_in_world(&mut me);
     let Some(away) = away_from(&me, home) else {
         println!("[memory-bench] not benched: no warp out of the spawn area");

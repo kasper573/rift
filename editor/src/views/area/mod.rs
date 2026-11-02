@@ -45,6 +45,7 @@ use bevy::prelude::Transform;
 use engine::core::content::media::GltfInfos;
 use engine::core::content::{Content, ContentFile, FolderReader, table_of};
 use engine::core::math::{Pos, Rect, Size};
+use engine::core::render::camera::View;
 use engine::core::render::{facing_rotation, world_point};
 use engine::core::units::{Degrees, MeterSize, Meters};
 use engine::systems::actor::appearance::look;
@@ -65,7 +66,7 @@ use self::brush::{Brush, SculptMode, Stroke};
 use self::camera::{AreaCanvas, OrbitCamera, StandingBox};
 use self::flags::{SceneFlags, SceneLevel};
 use self::overlays::{
-    AreaLabels, overlay_bounds, overlay_contours, overlay_footprints, overlay_modules,
+    AreaLabels, Footing, overlay_bounds, overlay_contours, overlay_footprints, overlay_modules,
     overlay_navmesh, overlay_soundscape_reach,
 };
 use self::status::status_bar;
@@ -204,6 +205,11 @@ pub struct AreaViewState {
     pub placing: Option<AreaModuleKind>,
     pub scene: panel::ScenePanel,
     pub contours: contours::ContourCache,
+    /// The row of the scene tree the pointer is over.
+    pub tree_hover: Option<String>,
+    /// A row held hovered as if the pointer were over it, "" the whole scene.
+    pub held_hover: Option<String>,
+    outlines: overlays::Outlines,
     cache: Option<SnapshotCache>,
     preview_places: HashMap<String, PreviewPlaces>,
     fitted: bool,
@@ -229,6 +235,11 @@ impl AreaViewState {
     pub fn look_from(&mut self, distance: Meters) {
         self.looks_from = Some(distance);
         self.fitted = false;
+    }
+
+    /// The row of the scene tree hovered: the one under the pointer, else one held hovered.
+    pub fn hovered_row(&self) -> Option<&str> {
+        self.tree_hover.as_deref().or(self.held_hover.as_deref())
     }
 
     pub fn toggle(&mut self, overlay: AreaOverlay) {
@@ -624,6 +635,8 @@ fn canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: AreaSnapsh
     }
     if modules || !editor.selection.parts.is_empty() {
         overlay_modules(editor, &painter, view_key, &frame);
+    } else {
+        editor.views.area.view_mut(view_key).outlines = overlays::Outlines::default();
     }
     if let Some(place) = frame.in_place.last() {
         placement::overlay_in_place(editor, &painter, &frame, place);
@@ -658,6 +671,7 @@ fn request_viewport(editor: &mut Editor, ui: &Ui, view_key: &str, frame: &AreaFr
         paint: stroke.paint.clone(),
     });
     let camera = view.camera;
+    let lines = view.outlines.lines();
     let repaint = view.stroke.is_some() || ghost_moves(view);
     editor.views.area.viewports.request(Request {
         key: view_key.to_owned(),
@@ -669,6 +683,7 @@ fn request_viewport(editor: &mut Editor, ui: &Ui, view_key: &str, frame: &AreaFr
         stroke,
         ghost,
         cast,
+        lines,
     });
     if repaint {
         ui.ctx().request_repaint();
@@ -690,16 +705,20 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<StandingA
     let seen = *frame.canvas.view();
     let view = editor.views.area.view_mut(view_key);
     let previews = view.population_previews.clone();
+    let resolve = |npc: engine::systems::npc::NpcId| {
+        frame
+            .reader
+            .path_of(npc)
+            .and_then(|npc| content.by_path::<NpcDef>(npc))
+    };
     let stand = |npc: engine::systems::npc::NpcId, at: Pos<Meters>, facing: Degrees, pose| {
-        let npc = frame.reader.path_of(npc)?;
-        let npc = content.by_path::<NpcDef>(npc)?;
         let def = npc.get(content);
         let model = ActorModel::get(content, def.appearance.model);
         let ground = area.heights.height_at(at);
         let body = model.hitbox();
         let middle = world_point(at, ground + Meters(body.height.0 / 2.0));
         let extent = Meters(body.height.0.max(body.radius.0 * 2.0));
-        if middle.distance(seen.eye()) > seen.shown_within(extent).0 {
+        if !in_sight(&seen, middle, extent) {
             return None;
         }
         let hands = held::listed(content, model.hands().len(), &def.held).hands;
@@ -724,13 +743,10 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<StandingA
     };
     let mut cast = Vec::new();
     for placed in &frame.picture.placed {
-        if let AreaModule::Resident(resident) = &placed.module {
-            cast.extend(stand(
-                resident.npc,
-                resident.at,
-                resident.facing,
-                resident.pose,
-            ));
+        if let AreaModule::Resident(resident) = &placed.module
+            && let Some(npc) = resolve(resident.npc)
+        {
+            cast.extend(stand(npc, resident.at, resident.facing, resident.pose));
         }
     }
     for node in frame.modules.iter() {
@@ -741,14 +757,16 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<StandingA
             continue;
         }
         let preview = previews.get(&node.pointer).copied().unwrap_or_default();
-        if preview.hidden {
+        let Some(npc) = resolve(population.npc).filter(|_| !preview.hidden) else {
             continue;
-        }
+        };
         let kept = view.preview_places.get(&node.pointer).filter(|kept| {
             (kept.generation, kept.revision, kept.seed) == (generation, revision, preview.seed)
         });
+        let roams = population.roams.unwrap_or_else(|| area.size.bounds());
         let places = match kept {
             Some(kept) => kept.places.clone(),
+            None if !area.holds(roams) => continue,
             None => {
                 let places = population::population_places(area, population, preview.seed);
                 view.preview_places.insert(
@@ -765,7 +783,7 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<StandingA
         };
         for at in places {
             cast.extend(stand(
-                population.npc,
+                npc,
                 at,
                 Degrees(((at.x * 37.0 + at.y * 91.0) % 360.0).abs()),
                 engine::systems::actor::Pose::Idle,
@@ -774,6 +792,23 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<StandingA
     }
     cast
 }
+
+/// Whether a body `extent` across with its middle at `middle` shows in `view` tall enough to make
+/// out as a figure: one smaller is left unstood, as the rigs a cast animates cost alike however
+/// few pixels they cover.
+fn in_sight(view: &View, middle: bevy::math::Vec3, extent: Meters) -> bool {
+    let across = extent.0 * view.pixels_per_meter(Meters(middle.distance(view.eye())));
+    let viewport = view.viewport();
+    let reach = across / 2.0;
+    across >= CAST_PIXELS
+        && view.project(middle).is_some_and(|window| {
+            (-reach..=viewport.x + reach).contains(&window.x)
+                && (-reach..=viewport.y + reach).contains(&window.y)
+        })
+}
+
+/// How many pixels tall the cast's figures must show to stand in the view.
+const CAST_PIXELS: f32 = 16.0;
 
 /// Says what locks the module under the pointer, since a click passes through it.
 fn locked_tip(editor: &Editor, view_key: &str, frame: &AreaFrame) {
@@ -854,6 +889,10 @@ pub struct SnapshotParts {
     pub modules: Arc<nodes::SceneModules>,
     /// Whether the map draws each of `modules`, by its place among them.
     pub shown_modules: Arc<[bool]>,
+    /// Where each of `modules` lies on the ground, by its place among them, when it takes room.
+    pub footings: Arc<[Option<Footing>]>,
+    /// How many modules each folder counted so far holds, by its tree row.
+    inside: Arc<std::sync::Mutex<HashMap<String, usize>>>,
     pub in_place: Vec<placement::AreaPlacement>,
     pub placement_bounds: Arc<HashMap<String, Rect<Meters>>>,
     targets: Arc<[MapTarget]>,
@@ -983,6 +1022,25 @@ impl AreaSnapshot {
         Some(node)
     }
 
+    /// How many modules the folder of the tree row `id` holds, however deep.
+    pub(crate) fn count_inside(&self, id: &str) -> usize {
+        let mut counted = self
+            .inside
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(&count) = counted.get(id) {
+            return count;
+        }
+        let mut count = 0;
+        if let Some(node) = self.scene_node(id) {
+            nodes::walk(nodes::children_of(node), &mut |_, child| {
+                count += usize::from(!nodes::is_folder(child));
+            });
+        }
+        counted.insert(id.to_owned(), count);
+        count
+    }
+
     pub(crate) fn module_node(&self, pointer: &str) -> Option<&ModuleNode> {
         self.modules.get(pointer).map(|module| &module.node)
     }
@@ -1047,6 +1105,9 @@ impl AreaSnapshot {
     /// The modules the selection `parts` takes on the map: those selected, and every visible,
     /// unlocked module inside a selected folder.
     pub fn selected_modules(&self, parts: &HashSet<String>) -> Vec<String> {
+        if parts.is_empty() {
+            return Vec::new();
+        }
         let folders: Vec<String> = parts
             .iter()
             .filter(|part| self.scene_node(part).is_some_and(nodes::is_folder))
@@ -1155,6 +1216,8 @@ fn snapshot_parts(
                 area::Kept::All
             };
             let picture = Arc::new(area::picture(content, pictured, kept)?);
+            let held = picture.area.clone();
+            crate::project::background().spawn(move || held.hold_all());
             let placement_bounds = Arc::new(placement::placement_bounds(&picture.placed));
             (picture, placement_bounds)
         }
@@ -1182,6 +1245,22 @@ fn snapshot_parts(
         .iter()
         .map(|module| !flags.hidden(&module.pointer))
         .collect();
+    let footings = modules
+        .iter()
+        .map(|module| {
+            let bounds = shapes::bounds(
+                module.module(),
+                placement_bounds.get(&module.pointer).copied(),
+            )?;
+            Some(Footing::of(
+                content,
+                &reader,
+                &picture.area,
+                module.module(),
+                bounds,
+            ))
+        })
+        .collect();
     static MADE: AtomicU64 = AtomicU64::new(0);
     Some(SnapshotParts {
         made: MADE.fetch_add(1, Ordering::Relaxed),
@@ -1189,6 +1268,8 @@ fn snapshot_parts(
         picture,
         modules: Arc::new(modules),
         shown_modules,
+        footings,
+        inside: Arc::default(),
         def,
         reader,
         flags: Arc::new(flags),

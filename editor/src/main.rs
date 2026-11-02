@@ -80,11 +80,7 @@ fn main() {
                 .set(ImagePlugin::default_nearest()),
         )
         .add_plugins((SfxPlugin, StyledTextPlugin, BabblePlugin))
-        .add_plugins((
-            WorldScenePlugin,
-            VfxMaterialsPlugin,
-            SceneryPlugin { paced: false },
-        ))
+        .add_plugins((WorldScenePlugin, VfxMaterialsPlugin, SceneryPlugin))
         .add_plugins(EditorPlugin { launch })
         .run();
 }

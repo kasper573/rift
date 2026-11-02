@@ -124,6 +124,39 @@ pub fn slider(ui: &mut Ui, value: &mut f32, range: RangeInclusive<f32>) -> Respo
     response
 }
 
+/// A choice among every variant of `T`, labelled by `label`, answering the one picked when it
+/// isn't `current`.
+pub fn variant_picker<T: strum::VariantArray + AsRef<str> + Copy + PartialEq>(
+    ui: &mut Ui,
+    id_salt: impl egui::AsIdSalt,
+    current: T,
+    label: egui::Id,
+) -> Option<T> {
+    let mut picked = current;
+    combo(id_salt)
+        .selected_text(current.as_ref())
+        .show_ui(ui, |ui| {
+            for &variant in T::VARIANTS {
+                ui.selectable_value(&mut picked, variant, variant.as_ref());
+            }
+        })
+        .response
+        .labelled_by(label);
+    (picked != current).then_some(picked)
+}
+
+/// A form's rows, each a label and its field, laid out under `id_salt`.
+pub fn form(ui: &mut Ui, id_salt: impl egui::AsIdSalt, add: impl FnOnce(&mut Ui)) {
+    egui::Grid::new(id_salt)
+        .num_columns(2)
+        .min_col_width(FORM_LABEL_WIDTH)
+        .spacing(FORM_SPACING)
+        .show(ui, add);
+}
+
+const FORM_LABEL_WIDTH: f32 = 100.0;
+const FORM_SPACING: Vec2 = Vec2::new(16.0, 8.0);
+
 pub fn combo(id_salt: impl egui::AsIdSalt) -> egui::ComboBox {
     egui::ComboBox::from_id_salt(id_salt)
         .popup_style(egui::style::StyleModifier::from(

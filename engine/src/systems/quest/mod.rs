@@ -1145,16 +1145,6 @@ pub fn check_all(loading: &mut Loading) {
                 "at least one objective module",
             );
         }
-        let slots = quest.rewards().len() + usize::from(!quest.pick_one().is_empty());
-        let bag = content.built::<GameSettings>().slots.bag;
-        if slots > bag as usize {
-            check.error(
-                "/modules",
-                "rewards don't fit",
-                format!("{slots} slots"),
-                format!("at most {bag} slots of rewards, a pick counting as one"),
-            );
-        }
         if quest.decision().is_some() && !quest.pick_one().is_empty() {
             check.error(
                 "/modules",
@@ -1188,6 +1178,25 @@ pub fn check_all(loading: &mut Loading) {
             );
         }
         loading.row_errors(id, check);
+    }
+}
+
+/// Every quest's rewards against the bag they must fit in, which the game's settings size.
+pub fn check_rewards(loading: &mut Loading) {
+    let content = loading.content();
+    let bag = content.built::<GameSettings>().slots.bag;
+    for (id, quest) in loading.rows::<QuestDef>(&content) {
+        let slots = quest.rewards().len() + usize::from(!quest.pick_one().is_empty());
+        if slots > bag as usize {
+            let mut check = RowCheck::default();
+            check.error(
+                "/modules",
+                "rewards don't fit",
+                format!("{slots} slots"),
+                format!("at most {bag} slots of rewards, a pick counting as one"),
+            );
+            loading.row_errors(id, check);
+        }
     }
 }
 

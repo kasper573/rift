@@ -16,7 +16,7 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
 
 use super::regions::{self, Cut, Merge, Region};
-use super::{Budget, KEEP_SHARE, PLACEMENT_CELL, Seen, Streaming};
+use super::{Budget, KEEP_SHARE, Making, PLACEMENT_CELL, Seen, Streaming, mesh_bytes};
 use crate::core::assets;
 use crate::core::content::Content;
 use crate::core::content::media::GltfInfos;
@@ -138,8 +138,8 @@ pub(super) fn clear(world: &mut World, streaming: &mut Streaming, seen: Seen, cu
     let wanted: HashSet<Merge> = cut.merges.iter().copied().collect();
     props.merged.retain(|merge, merged| {
         let keep = wanted.contains(merge);
-        if !keep && let Merged::Standing(meshes) = merged {
-            for &mesh in meshes.iter() {
+        if !keep && let Merged::Standing { stood, .. } = merged {
+            for &mesh in stood.iter() {
                 world.despawn(mesh);
             }
         }
@@ -148,14 +148,26 @@ pub(super) fn clear(world: &mut World, streaming: &mut Streaming, seen: Seen, cu
 }
 
 /// What stands of a merged region: the props it shows and their models, waiting on some of those
-/// to be ready to merge; its meshes being made; or standing.
+/// to be ready to merge; its meshes being made; or standing, those made rising a few a frame.
 enum Merged {
     Waiting {
         props: Vec<usize>,
         models: Vec<PropId>,
     },
-    Merging(Task<Vec<MergedMesh>>),
-    Standing(Vec<Entity>),
+    Merging(Making<Vec<MergedMesh>>),
+    Standing {
+        stood: Vec<Entity>,
+        rising: Vec<MergedMesh>,
+    },
+}
+
+impl Merged {
+    fn into_made(self) -> Option<Vec<MergedMesh>> {
+        match self {
+            Merged::Merging(making) => making.into_made(),
+            _ => None,
+        }
+    }
 }
 
 /// A prop's model as merged regions need it: loading, being made ready to merge, or ready.
@@ -222,14 +234,12 @@ fn stand_scenes(
             return false;
         }
         let placed = &area.props[index];
-        if budget.framed {
-            let model = placed.prop.get(&streaming.content).model.path();
-            let scene = GltfAssetLabel::Scene(0).from_asset(model);
-            if world.resource::<AssetServer>().get_path_id(scene).is_none()
-                && !budget.take(|budget| &mut budget.fresh)
-            {
-                return false;
-            }
+        let model = placed.prop.get(&streaming.content).model.path();
+        let scene = GltfAssetLabel::Scene(0).from_asset(model);
+        if world.resource::<AssetServer>().get_path_id(scene).is_none()
+            && !budget.take(|budget| &mut budget.fresh)
+        {
+            return false;
         }
         let scene = spawn_prop(world, &streaming.content, &streaming.heights, placed, root);
         streaming.props.scenes.insert(index, scene);
@@ -272,13 +282,34 @@ fn stand_merge(
         return false;
     };
     match merged {
-        Merged::Standing(_) => true,
-        Merged::Merging(task) => {
-            let Some(meshes) = check_ready(task) else {
+        Merged::Standing { stood, rising } => {
+            while rising
+                .last()
+                .is_some_and(|next| budget.send(mesh_bytes(&next.mesh)))
+            {
+                if let Some(next) = rising.pop() {
+                    stood.push(spawn_merged(world, next, root));
+                }
+            }
+            rising.is_empty()
+        }
+        Merged::Merging(making) => {
+            if making.made().is_none() {
                 return false;
-            };
-            *merged = Merged::Standing(spawn_merged(world, meshes, root));
-            true
+            }
+            let rising = props
+                .merged
+                .remove(&merge)
+                .and_then(Merged::into_made)
+                .unwrap_or_default();
+            props.merged.insert(
+                merge,
+                Merged::Standing {
+                    stood: Vec::new(),
+                    rising,
+                },
+            );
+            stand_merge(world, streaming, root, merge, view, budget)
         }
         Merged::Waiting {
             props: shown,
@@ -306,7 +337,9 @@ fn stand_merge(
                 .collect();
             let task = AsyncComputeTaskPool::get()
                 .spawn(async move { merged::merge(&places, pixels_per_meter) });
-            props.merged.insert(merge, Merged::Merging(task));
+            props
+                .merged
+                .insert(merge, Merged::Merging(Making::Task(task)));
             false
         }
     }
@@ -482,30 +515,24 @@ fn levels_for(
     })
 }
 
-fn spawn_merged(world: &mut World, meshes: Vec<MergedMesh>, root: Entity) -> Vec<Entity> {
-    meshes
-        .into_iter()
-        .map(
-            |MergedMesh {
-                 material,
-                 shadow,
-                 mesh,
-                 bounds,
-             }| {
-                let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
-                let mut merged = world.spawn((
-                    Mesh3d(mesh),
-                    MeshMaterial3d(material),
-                    bounds,
-                    ChildOf(root),
-                ));
-                if !shadow {
-                    merged.insert(NotShadowCaster);
-                }
-                merged.id()
-            },
-        )
-        .collect()
+fn spawn_merged(world: &mut World, merged: MergedMesh, root: Entity) -> Entity {
+    let MergedMesh {
+        material,
+        shadow,
+        mesh,
+        bounds,
+    } = merged;
+    let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
+    let mut merged = world.spawn((
+        Mesh3d(mesh),
+        MeshMaterial3d(material),
+        bounds,
+        ChildOf(root),
+    ));
+    if !shadow {
+        merged.insert(NotShadowCaster);
+    }
+    merged.id()
 }
 
 /// The materials of `def`'s model the game's shaders draw, each with its parameters.

@@ -308,10 +308,7 @@ fn set_by(editor: &Editor, bundle: &str) -> HashMap<String, (usize, usize)> {
 }
 
 fn header(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &AreaSnapshot) {
-    let mut count = 0;
-    nodes::walk(snapshot.nodes(), &mut |_, node| {
-        count += usize::from(!nodes::is_folder(node));
-    });
+    let count = snapshot.modules.iter().len();
     let selected = scene_tree::selected_ids(snapshot, &editor.selection).len();
     let flagged = snapshot.flags.said();
     let (hidden, locked) = (snapshot.flags.hidden, snapshot.flags.locked);
@@ -534,6 +531,7 @@ fn scene_graph(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &Area
         .inner;
     let hovered = ui.ui_contains_pointer();
     drop(source);
+    view.tree_hover = response.hovered.clone();
     let shown_kinds = settings.scene_trees.entry(key).or_default();
     if changed {
         shown_kinds.open = open;

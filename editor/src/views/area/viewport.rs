@@ -37,10 +37,14 @@ use engine::systems::area::{Area, Picture};
 use ui::egui;
 
 use super::camera::OrbitCamera;
+use super::overlays::GroundLines;
 use crate::app::Editor;
 use crate::views::area::camera::LENS;
 
 const FIRST_LAYER: usize = 400;
+/// How wide the outlines over the ground are drawn, and those of what is selected.
+const LINE_PIXELS: f32 = 1.0;
+const BOLD_LINE_PIXELS: f32 = 2.0;
 
 /// What a view asks its viewport to show this frame.
 pub struct Request {
@@ -55,6 +59,8 @@ pub struct Request {
     pub stroke: Option<StrokeTerrain>,
     pub ghost: Option<Ghost>,
     pub cast: Vec<StandingActor>,
+    /// The sets of outlines drawn over the ground, each laid apart from the others.
+    pub lines: [GroundLines; 2],
 }
 
 /// A terrain mid-stroke, numbered so it is laid again only when the stroke moves on.
@@ -180,6 +186,8 @@ struct RenderedView {
     stroke: Option<u64>,
     ghost: Option<(String, Entity)>,
     cast: Option<(Vec<StandingActor>, Vec<Entity>)>,
+    /// For each set of outlines, the revision laid, and the thin and the bold lines' gizmos.
+    lines: [Option<(u64, [Entity; 2])>; 2],
 }
 
 /// How far around the camera's target the covers, props and lights stand while it takes in the
@@ -287,6 +295,7 @@ impl RenderedView {
             stroke: None,
             ghost: None,
             cast: None,
+            lines: [None; 2],
         }
     }
 
@@ -350,6 +359,45 @@ impl RenderedView {
         self.haunt(world, request.ghost);
         sound(world, &area, &request.cast);
         self.people(world, request.cast);
+        for (set, lines) in request.lines.iter().enumerate() {
+            self.outline(world, set, lines);
+        }
+    }
+
+    /// Lays the outlines over the ground anew when they changed: drawn over the picture, every
+    /// line as many pixels wide however far off.
+    fn outline(&mut self, world: &mut World, set: usize, lines: &GroundLines) {
+        if self.lines[set].is_some_and(|(revision, _)| revision == lines.revision) {
+            return;
+        }
+        let mut drawn = [GizmoAsset::default(), GizmoAsset::default()];
+        for line in lines.runs.iter() {
+            let [r, g, b, a] = line.color.to_srgba_unmultiplied();
+            drawn[usize::from(line.bold)]
+                .linestrip(line.points.iter().copied(), Color::srgba_u8(r, g, b, a));
+        }
+        let handles = drawn.map(|asset| world.resource_mut::<Assets<GizmoAsset>>().add(asset));
+        let entities = match self.lines[set] {
+            Some((_, entities)) => entities,
+            None => [LINE_PIXELS, BOLD_LINE_PIXELS].map(|width| {
+                world
+                    .spawn((
+                        Gizmo {
+                            line_config: GizmoLineConfig { width, ..default() },
+                            depth_bias: -1.0,
+                            ..default()
+                        },
+                        ChildOf(self.root),
+                    ))
+                    .id()
+            }),
+        };
+        for (entity, handle) in entities.into_iter().zip(handles) {
+            if let Some(mut gizmo) = world.get_mut::<Gizmo>(entity) {
+                gizmo.handle = handle;
+            }
+        }
+        self.lines[set] = Some((lines.revision, entities));
     }
 
     /// Lays the terrain as the stroke shapes it, once per step of the stroke.

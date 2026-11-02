@@ -567,6 +567,50 @@ impl<T: Value> Default for GroundGrid<T> {
     }
 }
 
+/// Reads a grid's values as [`GroundGrid::index`] does, keeping hold of the tile it read last, so
+/// reads that fall in one tile look it up once.
+pub struct GroundReader<'a, T: Value> {
+    ground: &'a GroundGrid<T>,
+    held: Option<(TileAt, Option<Arc<Tile<T>>>)>,
+}
+
+impl<T: Value> GroundReader<'_, T> {
+    pub fn index(&mut self, column: u32, row: u32) -> T {
+        let ground = self.ground;
+        let column = column.min(ground.grid.columns.saturating_sub(1));
+        let row = row.min(ground.grid.rows.saturating_sub(1));
+        let at = TileAt {
+            column: column / TILE_PIXELS,
+            row: row / TILE_PIXELS,
+        };
+        let tile = match &self.held {
+            Some((holding, tile)) if *holding == at => tile,
+            _ => {
+                let tile = ground
+                    .tiles
+                    .get(ground.grid.index(at))
+                    .and_then(|slot| slot.tile());
+                &self.held.insert((at, tile)).1
+            }
+        };
+        match tile {
+            Some(tile) => {
+                let (first_column, first_row) = ground.grid.first(at);
+                tile.values[((row - first_row) * tile.columns + (column - first_column)) as usize]
+            }
+            None => ground.overview_value(column, row),
+        }
+    }
+}
+
+impl GroundReader<'_, u16> {
+    /// Sample `(column, row)`, as [`Heightfield::sample`] reads it.
+    pub fn sample(&mut self, column: u32, row: u32) -> Meters {
+        let level = self.index(column, row);
+        self.ground.scale.height_of(level)
+    }
+}
+
 /// A window of values read out of the tiles, row by row.
 struct Window<T> {
     columns: u32,
@@ -671,14 +715,6 @@ impl<T: Value> GroundGrid<T> {
     /// Keeps `part` as the tile at `at`, to read when the tile is first loaded.
     pub fn store(&mut self, at: TileAt, part: StoredPart) {
         self.tiles[self.grid.index(at)] = Arc::new(Slot::new(None, Some(part)));
-    }
-
-    /// Reads the tile at `at` from its PNG, refusing one that isn't the tile's picture.
-    pub fn decode_tile(&mut self, at: TileAt, bytes: &[u8]) -> Result<(), ContentProblem> {
-        let tile = self.grid.decode_tile(at, bytes)?;
-        let slot = &mut self.tiles[self.grid.index(at)];
-        *slot = Arc::new(Slot::new(Some(Arc::new(tile)), slot.stored.clone()));
-        Ok(())
     }
 
     /// Reads the overview from its PNG, refusing one that isn't the ground's.
@@ -880,6 +916,14 @@ impl<T: Value> GroundGrid<T> {
                 [((row - first_row) * tile.columns + (column - first_column)) as usize];
         }
         self.overview_value(column, row)
+    }
+
+    /// A reader of values near one another, for many reads at once.
+    pub fn reader(&self) -> GroundReader<'_, T> {
+        GroundReader {
+            ground: self,
+            held: None,
+        }
     }
 
     /// The values at `(column, row)` and at its neighbours to the right, below and across, each the

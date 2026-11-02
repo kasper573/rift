@@ -4,14 +4,21 @@
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
+use bevy::mesh::MeshTag;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
 use bevy::prelude::*;
+use bevy::render::MainWorld;
+use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_resource::{
-    AsBindGroup, Extent3d, ShaderType, TextureDataOrder, TextureDimension, TextureFormat,
-    TextureViewDescriptor, TextureViewDimension,
+    AsBindGroup, Extent3d, Origin3d, TexelCopyBufferLayout, TexelCopyTextureInfo, TextureAspect,
+    TextureDataOrder, TextureDimension, TextureFormat, TextureViewDescriptor, TextureViewDimension,
 };
+use bevy::render::renderer::RenderQueue;
+use bevy::render::texture::GpuImage;
 use bevy::shader::ShaderRef;
+use bevy::tasks::futures::check_ready;
+use bevy::tasks::{AsyncComputeTaskPool, Task};
 use image::RgbaImage;
 use image::imageops::{self, FilterType};
 
@@ -38,19 +45,20 @@ pub struct GroundLayer {
 
 /// What the ground is painted from: the terrains' pictures as one stack, white at the bottom for
 /// a terrain that has none; for each terrain its colour and tile in the first row and its
-/// picture's place in the stack in the second; and the paint of the chunk the material draws,
-/// a terrain's place in the area's list for each pixel, with where its pixels lie.
+/// picture's place in the stack in the second; and the paint of every chunk that stands, a
+/// terrain's place in the area's list for each pixel, each chunk's on the layer of `paints` its
+/// [`MeshTag`] names, with where its pixels lie in the pixel of `grids` it names.
 #[derive(Asset, AsBindGroup, Clone, Debug, TypePath)]
 pub struct GroundLook {
     #[texture(100, dimension = "2d_array")]
     #[sampler(101)]
     pub pictures: Handle<Image>,
-    #[texture(102, sample_type = "u_int")]
-    pub paint: Handle<Image>,
+    #[texture(102, dimension = "2d_array", sample_type = "u_int")]
+    pub paints: Handle<Image>,
     #[texture(103, sample_type = "float", filterable = false)]
     pub layers: Handle<Image>,
-    #[uniform(104)]
-    pub grid: PaintGrid,
+    #[texture(104, sample_type = "float", filterable = false)]
+    pub grids: Handle<Image>,
 }
 
 impl MaterialExtension for GroundLook {
@@ -59,29 +67,32 @@ impl MaterialExtension for GroundLook {
     }
 }
 
-/// Where a paint texture's pixels lie on the ground: `pixels_per_metre` to the metre from the
-/// edge of the first at `origin`.
-#[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
-pub struct PaintGrid {
-    pub origin: Vec2,
-    pub pixels_per_metre: f32,
+/// Where a chunk's paint pixels lie on the ground: `pixels_per_metre` to the metre from the edge
+/// of the first at `origin`.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct PaintGrid {
+    origin: Vec2,
+    pixels_per_metre: f32,
 }
 
-/// A ground whose pictures are still loading: its layers, and each picture in their order.
+/// A ground whose pictures are still loading, or being stacked once they have: its layers, and
+/// each picture in their order.
 #[derive(Component)]
 pub struct GroundPictures {
     layers: Vec<GroundLayer>,
     loading: Vec<Handle<Image>>,
+    stacking: Option<Task<(Image, Image)>>,
 }
 
-/// The material every chunk of the ground is painted from in `layers`, the pictures white until
-/// they load, and what waits for them to. It paints nothing itself: a chunk's material is
-/// [`chunk_material`], sharing its pictures and layers.
+/// The material every chunk of the ground is painted with in `layers`, the pictures white until
+/// they load, and what waits for them to. It paints no chunk until [`ChunkPaints`] lays its paint,
+/// `paint_side` pixels square.
 pub fn ground_material(
     layers: &[GroundLayer],
     finish: &SurfaceFinish,
     assets: &AssetServer,
     images: &mut Assets<Image>,
+    paint_side: u32,
 ) -> (GroundMaterial, GroundPictures) {
     let loading = layers
         .iter()
@@ -91,17 +102,15 @@ pub fn ground_material(
         base: dielectric(StandardMaterial::default(), finish),
         extension: GroundLook {
             pictures: images.add(stack(1, &[])),
-            paint: images.add(paint_image(&[0], 1, 1)),
+            paints: images.add(paints_image(paint_side, FIRST_LAYERS, Vec::new())),
             layers: images.add(layers_image(layers, &vec![0; layers.len()])),
-            grid: PaintGrid {
-                origin: Vec2::ZERO,
-                pixels_per_metre: 1.0,
-            },
+            grids: images.add(grids_image(FIRST_LAYERS, Vec::new())),
         },
     };
     let waiting = GroundPictures {
         layers: layers.to_vec(),
         loading,
+        stacking: None,
     };
     (material, waiting)
 }
@@ -115,61 +124,223 @@ pub struct ChunkSamples {
     pub stride: u32,
 }
 
-/// The material a chunk is painted with: the ground's pictures and layers, and the paint under
-/// the chunk at the chunk's stride, a pixel beyond each edge so the paint blends across into the
-/// chunks beside it.
-pub fn chunk_material(
-    ground: &GroundMaterial,
-    paint: &PaintMap,
-    chunk: ChunkSamples,
-    images: &mut Assets<Image>,
-) -> GroundMaterial {
-    let (image, grid) = chunk_paint(paint, chunk);
-    ExtendedMaterial {
-        base: ground.base.clone(),
-        extension: GroundLook {
-            pictures: ground.extension.pictures.clone(),
-            paint: images.add(image),
-            layers: ground.extension.layers.clone(),
-            grid,
-        },
+/// The paint under each chunk of a ground that stands, each on a layer of the stack its
+/// material reads, at the place the chunk's [`MeshTag`] names: so every chunk draws with the
+/// ground's one material, which the renderer then draws them all with alike. A chunk's paint goes
+/// to the GPU as its layer alone, through [`LaidPaints`]; the stack is kept here as well, to start
+/// a larger one from when more chunks stand than it has room for.
+pub struct ChunkPaints {
+    material: Handle<GroundMaterial>,
+    /// The pixels along a chunk's paint, every chunk's alike.
+    side: u32,
+    free: Vec<u32>,
+    taken: u32,
+    paints: Vec<u8>,
+    grids: Vec<u8>,
+}
+
+impl ChunkPaints {
+    /// The paints of the ground painted with `material`, as [`ground_material`] made it for
+    /// `side` pixels square.
+    pub fn new(material: Handle<GroundMaterial>, side: u32) -> ChunkPaints {
+        ChunkPaints {
+            material,
+            side,
+            free: Vec::new(),
+            taken: 0,
+            paints: vec![0; (side * side * FIRST_LAYERS) as usize],
+            grids: vec![0; FIRST_LAYERS as usize * GRID_BYTES],
+        }
+    }
+
+    pub fn material(&self) -> &Handle<GroundMaterial> {
+        &self.material
+    }
+
+    /// Lays a chunk's `paint` on a free layer, the one the tag returned names.
+    pub fn lay(&mut self, world: &mut World, paint: &ChunkPaint) -> MeshTag {
+        let layer = self.free.pop().unwrap_or_else(|| {
+            self.taken += 1;
+            self.taken - 1
+        });
+        self.write(world, paint, layer);
+        MeshTag::new(layer)
+    }
+
+    /// Lays a chunk's `paint` anew on the layer `tag` names.
+    pub fn relay(&mut self, world: &mut World, paint: &ChunkPaint, tag: &MeshTag) {
+        self.write(world, paint, tag.value);
+    }
+
+    /// Frees the layer `tag` names, for the next chunk to stand.
+    pub fn lift(&mut self, tag: &MeshTag) {
+        self.free.push(tag.value);
+    }
+
+    fn layers(&self) -> u32 {
+        (self.grids.len() / GRID_BYTES) as u32
+    }
+
+    fn write(&mut self, world: &mut World, paint: &ChunkPaint, layer: u32) {
+        if layer >= self.layers() {
+            let layers = (layer + 1).next_power_of_two().max(FIRST_LAYERS);
+            self.paints
+                .resize((self.side * self.side * layers) as usize, 0);
+            self.grids.resize(layers as usize * GRID_BYTES, 0);
+            let mut images = world.resource_mut::<Assets<Image>>();
+            let paints = images.add(paints_image(self.side, layers, self.paints.clone()));
+            let grids = images.add(grids_image(layers, self.grids.clone()));
+            if let Some(mut material) = world
+                .resource_mut::<Assets<GroundMaterial>>()
+                .get_mut(&self.material)
+            {
+                material.extension.paints = paints;
+                material.extension.grids = grids;
+            }
+        }
+        let side = self.side as usize;
+        let ChunkPaint { data, across, grid } = paint;
+        let first = layer as usize * side * side;
+        let laid = &mut self.paints[first..first + side * side];
+        for (row, pixels) in data.chunks(*across as usize).enumerate().take(side) {
+            let width = pixels.len().min(side);
+            laid[row * side..row * side + width].copy_from_slice(&pixels[..width]);
+        }
+        let at = layer as usize * GRID_BYTES;
+        let pixel = [grid.origin.x, grid.origin.y, grid.pixels_per_metre, 0.0];
+        for (index, value) in pixel.iter().enumerate() {
+            self.grids[at + index * 4..at + index * 4 + 4].copy_from_slice(&value.to_le_bytes());
+        }
+        let Some(material) = world
+            .resource::<Assets<GroundMaterial>>()
+            .get(&self.material)
+        else {
+            return;
+        };
+        let layer = LaidLayer {
+            paints: material.extension.paints.id(),
+            grids: material.extension.grids.id(),
+            layer,
+            side: self.side,
+            paint: self.paints[first..first + side * side].to_vec(),
+            grid: self.grids[at..at + GRID_BYTES].to_vec(),
+        };
+        if let Some(mut laid) = world.get_resource_mut::<LaidPaints>() {
+            laid.0.push(layer);
+        }
     }
 }
 
-/// Lays `paint` anew under the chunk `material` draws.
-pub fn repaint_chunk(
-    material: &mut GroundMaterial,
-    paint: &PaintMap,
-    chunk: ChunkSamples,
-    images: &mut Assets<Image>,
+/// The layers of the grounds' paints laid since the render world last took them, each to be
+/// written into its texture alone rather than the whole stack sent again.
+#[derive(Resource, Default)]
+pub struct LaidPaints(Vec<LaidLayer>);
+
+/// One chunk's paint and grid, to write into the layer it lies on.
+struct LaidLayer {
+    paints: AssetId<Image>,
+    grids: AssetId<Image>,
+    layer: u32,
+    side: u32,
+    paint: Vec<u8>,
+    grid: Vec<u8>,
+}
+
+/// Takes the layers laid in the main world into the render world.
+pub(super) fn extract_laid(mut main: ResMut<MainWorld>, mut laid: ResMut<LaidPaints>) {
+    if let Some(mut taken) = main.get_resource_mut::<LaidPaints>() {
+        laid.0.append(&mut taken.0);
+    }
+}
+
+/// Writes each layer laid into its textures, once they are on the GPU. A texture made since holds
+/// the layers laid before it already, so a layer whose texture isn't there is dropped.
+pub(super) fn write_laid(
+    mut laid: ResMut<LaidPaints>,
+    images: Res<RenderAssets<GpuImage>>,
+    queue: Res<RenderQueue>,
 ) {
-    let (image, grid) = chunk_paint(paint, chunk);
-    material.extension.paint = images.add(image);
-    material.extension.grid = grid;
+    for layer in laid.0.drain(..) {
+        let (Some(paints), Some(grids)) = (images.get(layer.paints), images.get(layer.grids))
+        else {
+            continue;
+        };
+        queue.write_texture(
+            TexelCopyTextureInfo {
+                texture: &paints.texture,
+                mip_level: 0,
+                origin: Origin3d {
+                    x: 0,
+                    y: 0,
+                    z: layer.layer,
+                },
+                aspect: TextureAspect::All,
+            },
+            &layer.paint,
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(layer.side),
+                rows_per_image: Some(layer.side),
+            },
+            Extent3d {
+                width: layer.side,
+                height: layer.side,
+                depth_or_array_layers: 1,
+            },
+        );
+        queue.write_texture(
+            TexelCopyTextureInfo {
+                texture: &grids.texture,
+                mip_level: 0,
+                origin: Origin3d {
+                    x: layer.layer,
+                    y: 0,
+                    z: 0,
+                },
+                aspect: TextureAspect::All,
+            },
+            &layer.grid,
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(GRID_BYTES as u32),
+                rows_per_image: Some(1),
+            },
+            Extent3d {
+                width: 1,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+    }
 }
 
-/// Gives a chunk's material the ground's pictures and layers once they differ, as they do once
-/// the pictures have loaded.
-pub fn share_pictures(material: &mut GroundMaterial, ground: &GroundMaterial) -> bool {
-    let (pictures, layers) = (&ground.extension.pictures, &ground.extension.layers);
-    if material.extension.pictures == *pictures && material.extension.layers == *layers {
-        return false;
-    }
-    material.extension.pictures = pictures.clone();
-    material.extension.layers = layers.clone();
-    true
-}
+/// How many chunks' paint a ground holds room for at first; it doubles whenever more stand.
+const FIRST_LAYERS: u32 = 64;
+/// The bytes of a chunk's grid: its pixel of four floats.
+const GRID_BYTES: usize = 16;
 
 /// Stacks every waiting ground's pictures once they have all loaded, or failed, which leaves
-/// that terrain unpictured.
+/// that terrain unpictured: on a task, so the frames keep coming while each is scaled down level
+/// by level.
 pub(super) fn stack_pictures(
-    waiting: Query<(Entity, &GroundPictures, &MeshMaterial3d<GroundMaterial>)>,
+    mut waiting: Query<(Entity, &mut GroundPictures, &MeshMaterial3d<GroundMaterial>)>,
     assets: Res<AssetServer>,
     mut images: ResMut<Assets<Image>>,
     mut materials: ResMut<Assets<GroundMaterial>>,
     mut commands: Commands,
 ) {
-    for (entity, ground, material) in &waiting {
+    for (entity, mut ground, material) in &mut waiting {
+        if let Some(task) = &mut ground.stacking {
+            let Some((pictures, layers)) = check_ready(task) else {
+                continue;
+            };
+            commands.entity(entity).remove::<GroundPictures>();
+            if let Some(mut material) = materials.get_mut(&material.0) {
+                material.extension.pictures = images.add(pictures);
+                material.extension.layers = images.add(layers);
+            }
+            continue;
+        }
         if ground
             .loading
             .iter()
@@ -177,79 +348,122 @@ pub(super) fn stack_pictures(
         {
             continue;
         }
-        commands.entity(entity).remove::<GroundPictures>();
-        let Some(mut material) = materials.get_mut(&material.0) else {
-            continue;
-        };
-        let mut loaded = ground.loading.iter().map(|picture| {
-            let image = images.get(picture)?.clone().try_into_dynamic().ok()?;
-            Some(imageops::resize(
-                &image.to_rgba8(),
-                GROUND_PICTURE,
-                GROUND_PICTURE,
-                FilterType::Triangle,
-            ))
-        });
-        let mut stacked = Vec::new();
-        let places: Vec<u32> = ground
-            .layers
+        let loaded: Vec<Option<Image>> = ground
+            .loading
             .iter()
-            .map(|layer| {
-                let picture = layer.picture.as_ref().and_then(|_| loaded.next().flatten());
-                picture.map_or(0, |picture| {
-                    stacked.push(picture);
-                    stacked.len() as u32
-                })
-            })
+            .map(|picture| images.get(picture).cloned())
             .collect();
-        material.extension.pictures = images.add(stack(GROUND_PICTURE, &stacked));
-        material.extension.layers = images.add(layers_image(&ground.layers, &places));
+        let layers = ground.layers.clone();
+        ground.stacking =
+            Some(AsyncComputeTaskPool::get().spawn(async move { stacked(&layers, loaded) }));
     }
 }
 
-/// The paint under a chunk, a pixel per `stride` of the paint's from a pixel before the chunk's
-/// first sample to one past its last, each the terrain at the middle of the pixels it stands for.
-fn chunk_paint(paint: &PaintMap, chunk: ChunkSamples) -> (Image, PaintGrid) {
-    let stride = chunk.stride.max(1);
-    let across = chunk.side.div_ceil(stride) + 2;
-    let first = (
-        chunk.first.0 as i64 - stride as i64,
-        chunk.first.1 as i64 - stride as i64,
-    );
-    let middle = (stride / 2) as i64;
-    let pixel = |column: u32, row: u32| {
-        let at = (
-            first.0 + column as i64 * stride as i64 + middle,
-            first.1 + row as i64 * stride as i64 + middle,
-        );
-        paint.index(at.0.max(0) as u32, at.1.max(0) as u32)
-    };
-    let data: Vec<u8> = (0..across)
-        .flat_map(|row| (0..across).map(move |column| (column, row)))
-        .map(|(column, row)| pixel(column, row))
+/// The pictures of `layers`, `loaded` in their order, as one stack, and the image saying where in
+/// it each layer's lies.
+fn stacked(layers: &[GroundLayer], loaded: Vec<Option<Image>>) -> (Image, Image) {
+    let mut loaded = loaded.into_iter().map(|image| {
+        let image = image?.try_into_dynamic().ok()?;
+        Some(imageops::resize(
+            &image.to_rgba8(),
+            GROUND_PICTURE,
+            GROUND_PICTURE,
+            FilterType::Triangle,
+        ))
+    });
+    let mut stacked = Vec::new();
+    let places: Vec<u32> = layers
+        .iter()
+        .map(|layer| {
+            let picture = layer.picture.as_ref().and_then(|_| loaded.next().flatten());
+            picture.map_or(0, |picture| {
+                stacked.push(picture);
+                stacked.len() as u32
+            })
+        })
         .collect();
-    let step = stride as f32 / SAMPLES_PER_METER as f32;
-    let grid = PaintGrid {
-        origin: Vec2::new(
-            GROUND_ORIGIN.x + first.0 as f32 / SAMPLES_PER_METER as f32,
-            GROUND_ORIGIN.y + first.1 as f32 / SAMPLES_PER_METER as f32,
-        ),
-        pixels_per_metre: 1.0 / step,
-    };
-    (paint_image(&data, across, across), grid)
+    (
+        stack(GROUND_PICTURE, &stacked),
+        layers_image(layers, &places),
+    )
 }
 
-/// A paint as a picture a pixel per entry, each the terrain's place in the area's list.
-fn paint_image(data: &[u8], columns: u32, rows: u32) -> Image {
+/// The paint under a chunk, as [`ChunkPaints`] lays it: a pixel per `stride` of the paint's from a
+/// pixel before the chunk's first sample to one past its last, `across` along each side, each the
+/// terrain at the middle of the pixels it stands for.
+pub struct ChunkPaint {
+    data: Vec<u8>,
+    across: u32,
+    grid: PaintGrid,
+}
+
+impl ChunkPaint {
+    pub fn of(paint: &PaintMap, chunk: ChunkSamples) -> ChunkPaint {
+        let stride = chunk.stride.max(1);
+        let across = chunk.side.div_ceil(stride) + 2;
+        let first = (
+            chunk.first.0 as i64 - stride as i64,
+            chunk.first.1 as i64 - stride as i64,
+        );
+        let middle = (stride / 2) as i64;
+        let mut paint = paint.reader();
+        let mut pixel = |column: u32, row: u32| {
+            let at = (
+                first.0 + column as i64 * stride as i64 + middle,
+                first.1 + row as i64 * stride as i64 + middle,
+            );
+            paint.index(at.0.max(0) as u32, at.1.max(0) as u32)
+        };
+        let data: Vec<u8> = (0..across)
+            .flat_map(|row| (0..across).map(move |column| (column, row)))
+            .map(|(column, row)| pixel(column, row))
+            .collect();
+        let step = stride as f32 / SAMPLES_PER_METER as f32;
+        let grid = PaintGrid {
+            origin: Vec2::new(
+                GROUND_ORIGIN.x + first.0 as f32 / SAMPLES_PER_METER as f32,
+                GROUND_ORIGIN.y + first.1 as f32 / SAMPLES_PER_METER as f32,
+            ),
+            pixels_per_metre: 1.0 / step,
+        };
+        ChunkPaint { data, across, grid }
+    }
+}
+
+/// `layers` chunks' paint, each `side` pixels square, a pixel per entry, each the terrain's place
+/// in the area's list: the layers `held` holds first, and none painted after them.
+fn paints_image(side: u32, layers: u32, mut held: Vec<u8>) -> Image {
+    held.resize((side * side * layers) as usize, 0);
+    let mut image = Image::new(
+        Extent3d {
+            width: side.max(1),
+            height: side.max(1),
+            depth_or_array_layers: layers,
+        },
+        TextureDimension::D2,
+        held,
+        TextureFormat::R8Uint,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.texture_view_descriptor = Some(TextureViewDescriptor {
+        dimension: Some(TextureViewDimension::D2Array),
+        ..default()
+    });
+    image
+}
+
+/// `layers` chunks' grids, a pixel each, the grids `held` holds first.
+fn grids_image(layers: u32, mut held: Vec<u8>) -> Image {
+    held.resize(layers as usize * GRID_BYTES, 0);
     Image::new(
         Extent3d {
-            width: columns.max(1),
-            height: rows.max(1),
+            width: layers.max(1),
+            height: 1,
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,
-        data.to_vec(),
-        TextureFormat::R8Uint,
+        held,
+        TextureFormat::Rgba32Float,
         RenderAssetUsages::RENDER_WORLD,
     )
 }
@@ -327,7 +541,8 @@ fn stack(side: u32, pictures: &[RgbaImage]) -> Image {
 
 /// The mesh of the chunk of ground `columns`×`rows` samples from sample `first`, taking every
 /// `stride`-th sample, in the world's metres from the ground's corner, with a skirt hanging from
-/// its edges so a coarser chunk beside it shows no gap where their heights differ.
+/// its edges so a coarser chunk beside it shows no gap where their heights differ. Its paint is
+/// read by where it lies, so it carries no uv.
 pub fn chunk(
     heights: &Heightfield,
     first: (u32, u32),
@@ -347,7 +562,7 @@ pub fn chunk(
     let skirt = 2 * (across + down);
     let mut positions = Vec::with_capacity((across * down + skirt) as usize);
     let mut normals = Vec::with_capacity(positions.capacity());
-    let mut uvs = Vec::with_capacity(positions.capacity());
+    let mut heights = heights.reader();
     for row in 0..down {
         for column in 0..across {
             let (c, r) = sample_at(column, row);
@@ -358,10 +573,6 @@ pub fn chunk(
             let south =
                 heights.sample(c, r + stride).0 - heights.sample(c, r.saturating_sub(stride)).0;
             normals.push(Vec3::new(-east, 2.0 * step, -south).normalize().to_array());
-            uvs.push([
-                column as f32 / (across - 1).max(1) as f32,
-                row as f32 / (down - 1).max(1) as f32,
-            ]);
         }
     }
     let mut indices = Vec::with_capacity((((across - 1) * (down - 1) + skirt) * 6) as usize);
@@ -386,21 +597,21 @@ pub fn chunk(
         let [x, y, z] = positions[vertex as usize];
         positions.push([x, y - SKIRT, z]);
         normals.push(normals[vertex as usize]);
-        uvs.push(uvs[vertex as usize]);
     }
     for (index, &vertex) in rim.iter().enumerate() {
         let next = rim[(index + 1) % rim.len()];
         let (low, low_next) = (hem + index as u32, hem + ((index + 1) % rim.len()) as u32);
         indices.extend([vertex, low, next, next, low, low_next]);
     }
-    Mesh::new(
+    let mut mesh = Mesh::new(
         PrimitiveTopology::TriangleList,
-        RenderAssetUsages::default(),
+        RenderAssetUsages::RENDER_WORLD,
     )
     .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-    .with_inserted_indices(Indices::U32(indices))
+    .with_inserted_indices(Indices::U32(indices));
+    mesh.compress_indices();
+    mesh
 }
 
 /// How far a chunk's skirt hangs below its edge: past any height step between the samples a

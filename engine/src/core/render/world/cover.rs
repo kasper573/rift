@@ -1081,6 +1081,7 @@ fn assemble(
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_1, tips)
     .with_inserted_indices(Indices::U32(indices));
+    mesh.compress_indices();
     if let Some(colors) = colors {
         mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
     }

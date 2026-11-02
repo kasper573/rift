@@ -161,11 +161,11 @@ impl ModelParts {
     }
 }
 
-/// The props at `places` merged, a mesh for each material they are drawn in and each way they
+/// The props at `places` merged, meshes for each material they are drawn in and each way they
 /// cast a shadow, seen at `pixels_per_meter`, every piece at the level [`Shape::level`] picks for
-/// its share of what its prop covers.
+/// its share of what its prop covers. A mesh holds at most [`MOST_MERGED_VERTICES`].
 pub fn merge(places: &[MergedPlace], pixels_per_meter: f32) -> Vec<MergedMesh> {
-    let mut merging: HashMap<(AssetId<WorldMaterial>, bool), Merging> = HashMap::default();
+    let mut merging: HashMap<(AssetId<WorldMaterial>, bool), Vec<Merging>> = HashMap::default();
     for place in places {
         let model = &place.model;
         let scale = place.transform.scale.x.abs();
@@ -174,14 +174,29 @@ pub fn merge(places: &[MergedPlace], pixels_per_meter: f32) -> Vec<MergedMesh> {
             let placed = place.transform * piece.transform;
             let share = piece.shape.triangles() as f32 / model.triangles.max(1) as f32;
             let level = piece.shape.level(pixels_per_meter * scale, covered * share);
-            merging
+            let meshes = merging
                 .entry((piece.material.id(), place.shadow))
-                .or_insert_with(|| Merging::new(piece.material.clone(), place.shadow))
-                .add(&piece.shape.vertices, level, place.transform, placed);
+                .or_default();
+            if meshes.last().is_none_or(|last| {
+                last.positions.len() + level.vertices.len() > MOST_MERGED_VERTICES
+            }) {
+                meshes.push(Merging::new(piece.material.clone(), place.shadow));
+            }
+            if let Some(last) = meshes.last_mut() {
+                last.add(&piece.shape.vertices, level, place.transform, placed);
+            }
         }
     }
-    merging.into_values().map(Merging::finish).collect()
+    merging
+        .into_values()
+        .flatten()
+        .map(Merging::finish)
+        .collect()
 }
+
+/// The most vertices a merged mesh holds: as many as two-byte indices reach, so a region's props
+/// go to the GPU as several small meshes, a few a frame, rather than one large one.
+pub const MOST_MERGED_VERTICES: usize = u16::MAX as usize;
 
 impl Shape {
     /// The shape of `vertices` at its own triangles, then coarser and coarser: what the simplifier
@@ -416,7 +431,7 @@ impl Merging {
 
     fn finish(self) -> MergedMesh {
         // Only the GPU reads a merged mesh, which would otherwise be held twice.
-        let mesh = Mesh::new(
+        let mut mesh = Mesh::new(
             PrimitiveTopology::TriangleList,
             RenderAssetUsages::RENDER_WORLD,
         )
@@ -427,6 +442,7 @@ impl Merging {
         .with_inserted_attribute(ATTRIBUTE_PIECE_ORIGIN, self.origins)
         .with_inserted_attribute(ATTRIBUTE_PIECE_TURN, self.turns)
         .with_inserted_indices(Indices::U32(self.indices));
+        mesh.compress_indices();
         MergedMesh {
             material: self.material,
             shadow: self.shadow,

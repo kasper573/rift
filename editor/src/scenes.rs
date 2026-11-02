@@ -60,6 +60,11 @@ pub enum SceneStep {
     Camera {
         distance: Meters,
     },
+    /// Holds the row `row` of the open area's scene tree hovered, "" the whole scene, as the
+    /// pointer over it would.
+    Hover {
+        row: String,
+    },
     Resize(String),
     Row {
         table: String,
@@ -137,6 +142,7 @@ pub enum SceneStep {
 pub enum DialogName {
     Keys,
     Binaries,
+    Video,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -324,6 +330,11 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
                 editor.views.area.ensure_view(&bundle).look_from(*distance);
             }
         }
+        SceneStep::Hover { row } => {
+            if let Some(bundle) = last_opened_bundle(editor) {
+                editor.views.area.ensure_view(&bundle).held_hover = Some(row.clone());
+            }
+        }
         SceneStep::Part { table, key, nodes } => {
             editor.select(RowSelection {
                 table: table.clone(),
@@ -440,6 +451,7 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
         }
         SceneStep::Dialog(DialogName::Keys) => editor.dialogs.push(ModalDialog::Keys),
         SceneStep::Dialog(DialogName::Binaries) => editor.dialogs.push(ModalDialog::Binaries),
+        SceneStep::Dialog(DialogName::Video) => editor.dialogs.push(ModalDialog::Video),
         SceneStep::Import { folder, sources } => {
             import::begin(editor, folder.clone(), sources.clone())
         }

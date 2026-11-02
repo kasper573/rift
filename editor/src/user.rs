@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use engine::core::render::video::VideoPreferences;
 use engine::core::time::UnixMillis;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
@@ -45,14 +46,14 @@ impl UserFolder {
         self.root.join("profiles")
     }
 
-    pub(crate) fn load_settings(&self) -> EditorSettings {
+    pub fn load_settings(&self) -> EditorSettings {
         std::fs::read_to_string(self.settings_file())
             .ok()
             .and_then(|text| serde_json::from_str(&text).ok())
             .unwrap_or_default()
     }
 
-    pub(crate) fn save_settings(&self, settings: &EditorSettings) {
+    pub fn save_settings(&self, settings: &EditorSettings) {
         let _ = std::fs::create_dir_all(&self.root);
         if let Ok(text) = serde_json::to_string_pretty(settings) {
             let _ = std::fs::write(self.settings_file(), text + "\n");
@@ -115,6 +116,8 @@ pub struct EditorSettings {
     pub boxes_folded: bool,
     /// Whether the meter of frames drawn a second shows.
     pub frame_rate: bool,
+    /// How the editor's window and its views of the world are shown, as the game's are.
+    pub video: VideoPreferences,
 }
 
 /// How a tree is shown: the folders open, by path, and the kinds of rows left out.

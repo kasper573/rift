@@ -959,7 +959,7 @@ pub fn look() -> Look {
             moisture_of_cloud: 0.3,
             sky_share: 0.25,
             sky_light: 0.3,
-            shaft_height: Meters(40.0),
+            air_height: Meters(40.0),
             dry_air: 0.006,
             moist_air: 0.04,
             setting_sun: Rgb([255, 153, 82]),

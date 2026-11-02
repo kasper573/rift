@@ -224,11 +224,7 @@ pub fn area(folder: &Path, shot: &Path, out: &Path) {
         .add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
             1.0 / 60.0,
         )))
-        .add_plugins((
-            WorldScenePlugin,
-            VfxMaterialsPlugin,
-            SceneryPlugin { paced: false },
-        ))
+        .add_plugins((WorldScenePlugin, VfxMaterialsPlugin, SceneryPlugin))
         .insert_resource(content.built::<GameSettings>().look.clone())
         .insert_resource(content)
         .init_resource::<Read>()

@@ -25,6 +25,7 @@ use bevy::light::DirectionalLightShadowMap;
 use bevy::pbr::MaterialPlugin;
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
+use bevy::render::{ExtractSchedule, Render, RenderApp, RenderSystems};
 use bevy::world_serialization::{WorldAssetRoot, WorldInstance, WorldInstanceSpawner};
 
 use super::Look;
@@ -46,6 +47,18 @@ impl Plugin for WorldScenePlugin {
         bevy::asset::embedded_asset!(app, "decal.wesl");
         bevy::asset::embedded_asset!(app, "ground.wesl");
         app.register_asset_loader(crate::core::assets::loader::PngLoader);
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app
+                .init_resource::<terrain::LaidPaints>()
+                .add_systems(ExtractSchedule, terrain::extract_laid)
+                .add_systems(
+                    Render,
+                    terrain::write_laid.in_set(RenderSystems::PrepareResources),
+                );
+        }
+        if app.get_sub_app(RenderApp).is_some() {
+            app.init_resource::<terrain::LaidPaints>();
+        }
         app.add_plugins((
             MaterialPlugin::<material::WorldMaterial>::default(),
             MaterialPlugin::<decal::DecalMaterial>::default(),
@@ -72,6 +85,8 @@ impl Plugin for WorldScenePlugin {
             Update,
             (
                 camera::refinish_pictures,
+                super::video::show_window.run_if(resource_changed::<VideoPreferences>),
+                sky::thin_haze,
                 lights::cast_shadows,
                 lights::flicker,
                 mannequin::hold,

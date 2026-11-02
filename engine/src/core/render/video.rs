@@ -1,15 +1,26 @@
-//! How much of the world's picture the player has drawn, traded against the frame rate: each costly
-//! part of its finish at a quality the player picks, all at their best unless picked otherwise.
+//! How the world's picture is shown, traded against the frame rate: the window it fills, whether
+//! frames wait on the display, and each costly part of its finish at a quality the player picks,
+//! all at their best unless picked otherwise. The game's settings and the editor pick them through
+//! the same controls.
 
 use bevy::anti_alias::smaa::SmaaPreset;
 use bevy::pbr::ScreenSpaceAmbientOcclusionQualityLevel;
 use bevy::prelude::*;
+use bevy::window::{MonitorSelection, PresentMode, PrimaryWindow, WindowMode};
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, VariantArray};
+use ui::controls;
+use ui::egui::Ui;
 
 #[derive(Resource, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 #[serde(default)]
 pub struct VideoPreferences {
+    /// The window fills the screen it is on.
+    pub fullscreen: bool,
+    /// Each frame waits for the display's refresh. Off unless asked for, so frames go out without
+    /// waiting on it: a desktop may hold that wait up, as some do for tens of milliseconds at every
+    /// mouse press and release, and the whole frame would wait too.
+    pub vsync: bool,
     /// The sun's and the moon's.
     pub shadows: ShadowQuality,
     /// How the creases between things darken where little light reaches.
@@ -24,12 +35,91 @@ pub struct VideoPreferences {
 impl Default for VideoPreferences {
     fn default() -> VideoPreferences {
         VideoPreferences {
+            fullscreen: false,
+            vsync: false,
             shadows: ShadowQuality::default(),
             ambient_occlusion: AmbientOcclusionQuality::default(),
             light_shafts: true,
             anti_aliasing: AntiAliasingQuality::default(),
             bloom: true,
         }
+    }
+}
+
+impl VideoPreferences {
+    /// Every costly part of the finish off, in a window.
+    pub fn lowest() -> VideoPreferences {
+        VideoPreferences {
+            fullscreen: false,
+            vsync: false,
+            shadows: ShadowQuality::Off,
+            ambient_occlusion: AmbientOcclusionQuality::Off,
+            light_shafts: false,
+            anti_aliasing: AntiAliasingQuality::Off,
+            bloom: false,
+        }
+    }
+}
+
+/// The controls the player picks `video` with.
+pub fn controls(ui: &mut Ui, video: &mut VideoPreferences) {
+    ui.checkbox(&mut video.fullscreen, "Fullscreen");
+    ui.checkbox(&mut video.vsync, "VSync").on_hover_text(
+        "Each frame waits for the display's refresh: less heat and power, a little more delay",
+    );
+    ui.checkbox(&mut video.bloom, "Bloom")
+        .on_hover_text("What the light catches glows over its rim");
+    ui.checkbox(&mut video.light_shafts, "Light shafts")
+        .on_hover_text("The sun's rays show in the air");
+    ui.add_space(4.0);
+    controls::form(ui, "video", |ui| {
+        let label = ui.label("Shadows");
+        if let Some(shadows) = controls::variant_picker(ui, "shadows", video.shadows, label.id) {
+            video.shadows = shadows;
+        }
+        ui.end_row();
+        let label = ui.label("Ambient occlusion");
+        let current = video.ambient_occlusion;
+        if let Some(occlusion) =
+            controls::variant_picker(ui, "ambient occlusion", current, label.id)
+        {
+            video.ambient_occlusion = occlusion;
+        }
+        ui.end_row();
+        let label = ui.label("Anti-aliasing");
+        let current = video.anti_aliasing;
+        if let Some(anti_aliasing) =
+            controls::variant_picker(ui, "anti-aliasing", current, label.id)
+        {
+            video.anti_aliasing = anti_aliasing;
+        }
+        ui.end_row();
+    });
+}
+
+/// The primary window fills its screen and waits on its refresh as the preferences ask.
+pub(super) fn show_window(
+    video: Res<VideoPreferences>,
+    window: Option<Single<&mut Window, With<PrimaryWindow>>>,
+) {
+    let Some(mut window) = window else {
+        return;
+    };
+    let mode = if video.fullscreen {
+        WindowMode::BorderlessFullscreen(MonitorSelection::Current)
+    } else {
+        WindowMode::Windowed
+    };
+    let present_mode = if video.vsync {
+        PresentMode::AutoVsync
+    } else {
+        PresentMode::AutoNoVsync
+    };
+    if window.mode != mode {
+        window.mode = mode;
+    }
+    if window.present_mode != present_mode {
+        window.present_mode = present_mode;
     }
 }
 

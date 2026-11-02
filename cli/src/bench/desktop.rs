@@ -83,7 +83,7 @@ impl BenchDesktop {
     /// manager would: an unfocused window draws at a fraction of the frames.
     pub fn seat(&self, pid: u32) {
         let (pid, width, height) = (pid.to_string(), SCREEN.0.to_string(), SCREEN.1.to_string());
-        let seated = Command::new("xdotool")
+        let seated = xdotool()
             .args([
                 "search",
                 "--sync",
@@ -101,7 +101,7 @@ impl BenchDesktop {
             .expect("xdotool runs: the bench seats the client's window on its screen");
         assert!(
             seated.success(),
-            "xdotool could not seat the client's window"
+            "xdotool could not seat the client's window: did it exit?"
         );
     }
 
@@ -114,7 +114,7 @@ impl BenchDesktop {
             (SCREEN.0 / 2).to_string(),
             (SCREEN.1 / 2).to_string(),
         );
-        let scrolled = Command::new("xdotool")
+        let scrolled = xdotool()
             .args([
                 "search",
                 "--sync",
@@ -145,7 +145,9 @@ impl BenchDesktop {
     }
 }
 
-const SCREEN: (u32, u32) = (1280, 720);
+const SCREEN: (u32, u32) = (2560, 1440);
+/// How long xdotool may wait for a window, which never shows if its program has died.
+const WINDOW_WITHIN: Duration = Duration::from_secs(60);
 const READY_WITHIN: Duration = Duration::from_secs(20);
 
 static DESKTOPS: AtomicUsize = AtomicUsize::new(0);
@@ -218,6 +220,15 @@ impl Drop for Speakers {
             .args(["unload-module", &self.module])
             .status();
     }
+}
+
+/// xdotool, given up on once it has waited `WINDOW_WITHIN`.
+fn xdotool() -> Command {
+    let mut command = Command::new("timeout");
+    command
+        .arg(WINDOW_WITHIN.as_secs().to_string())
+        .arg("xdotool");
+    command
 }
 
 fn wayland_socket(name: &str) -> PathBuf {

@@ -343,7 +343,7 @@ fn card_menu(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, hit: &MapGrou
     };
     let cell = snap(hit.at, false);
     let place = Place { area: id, at: cell };
-    if area::load(&map.content, id).mesh().walkable(cell) {
+    if area::load(&map.content, id).mesh_near(cell).walkable(cell) {
         let character = play::current_character(editor).unwrap_or_else(|| "…".to_owned());
         if ui
             .add(widgets::shortcut_button(
@@ -580,7 +580,7 @@ fn keys(
         && let Some(hit) = &hover
         && let Some(id) = map.atlas.id(&hit.area)
         && area::load(&map.content, id)
-            .mesh()
+            .mesh_near(snap(hit.at, false))
             .walkable(snap(hit.at, false))
     {
         play::start(

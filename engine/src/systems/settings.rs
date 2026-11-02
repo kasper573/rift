@@ -4,7 +4,6 @@ use ui::egui;
 use ui::theme;
 
 use bevy::prelude::*;
-use bevy::window::{MonitorSelection, PresentMode, PrimaryWindow, WindowMode};
 use serde::{Deserialize, Serialize};
 use strum::VariantArray;
 use ui::egui::Ui;
@@ -15,7 +14,7 @@ use crate::core::math::{Pos, Size};
 use crate::core::os::Profile;
 use crate::core::render::CameraPreferences;
 use crate::core::render::transition::{ScreenTransition, ScreenTransitionPreference};
-use crate::core::render::video::VideoPreferences;
+use crate::core::render::video::{self, VideoPreferences};
 use crate::core::text::{LettersPerSecond, Typing};
 use crate::core::units::{Degrees, WindowPx};
 use crate::systems::hud::HudWindow;
@@ -25,13 +24,18 @@ use crate::systems::skill::HotbarSlot;
 
 const WINDOW_SIZE: egui::Vec2 = egui::Vec2::new(400.0, 410.0);
 const SLIDER_WIDTH: f32 = 150.0;
-const LABEL_WIDTH: f32 = 100.0;
-const FORM_SPACING: egui::Vec2 = egui::Vec2::new(16.0, 8.0);
 
 pub(crate) fn plugin(app: &mut App) {
     let settings = UserSettings::load(app.world().resource::<Profile>());
     app.insert_resource(settings)
         .add_systems(Update, (persist, apply, apply_video, pace_typing));
+}
+
+/// Saves `video` as the player's video preferences in `profile`, keeping their other settings.
+pub fn save_video(profile: &Profile, video: VideoPreferences) {
+    let mut settings = UserSettings::load(profile);
+    settings.video = video;
+    settings.save(profile);
 }
 
 #[derive(Resource, Serialize, Deserialize, Default)]
@@ -50,8 +54,6 @@ pub(crate) struct UserSettings {
     camera: CameraSettings,
     #[serde(default)]
     video: VideoPreferences,
-    #[serde(default)]
-    window: WindowSettings,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -138,7 +140,7 @@ fn show_settings(ui: &mut Ui, settings: &mut Mut<UserSettings>, typing: Option<T
         settings.toggle_quick_cast();
     }
     ui.add_space(4.0);
-    form(ui, "interface", |ui| {
+    controls::form(ui, ("settings", "interface"), |ui| {
         if let Some(typing) = typing {
             let label = ui.label("Text speed");
             text_speed_slider(ui, settings, typing, label.id);
@@ -146,14 +148,15 @@ fn show_settings(ui: &mut Ui, settings: &mut Mut<UserSettings>, typing: Option<T
         }
         let label = ui.label("Area transition");
         let current = settings.screen_transition();
-        if let Some(transition) = picker(ui, "area transition", current, label.id) {
+        if let Some(transition) = controls::variant_picker(ui, "area transition", current, label.id)
+        {
             settings.set_screen_transition(transition);
         }
         ui.end_row();
     });
     ui.add_space(8.0);
     sheet::section(ui, "Camera");
-    form(ui, "camera", |ui| {
+    controls::form(ui, ("settings", "camera"), |ui| {
         let label = ui.label("Turn speed");
         let mut turn_speed = settings.camera.turn_speed.0;
         if ui
@@ -174,7 +177,7 @@ fn show_settings(ui: &mut Ui, settings: &mut Mut<UserSettings>, typing: Option<T
     show_video(ui, settings);
     ui.add_space(8.0);
     sheet::section(ui, "Audio");
-    form(ui, "audio", |ui| {
+    controls::form(ui, ("settings", "audio"), |ui| {
         for fader in iter::once(AudioFader::Master).chain(
             AudioCategory::VARIANTS
                 .iter()
@@ -189,64 +192,11 @@ fn show_settings(ui: &mut Ui, settings: &mut Mut<UserSettings>, typing: Option<T
 }
 
 fn show_video(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
-    let mut fullscreen = settings.window.fullscreen;
-    if ui.checkbox(&mut fullscreen, "Fullscreen").changed() {
-        settings.window.fullscreen = fullscreen;
+    let mut video = settings.video;
+    video::controls(ui, &mut video);
+    if video != settings.video {
+        settings.video = video;
     }
-    let mut vsync = settings.window.vsync;
-    if ui
-        .checkbox(&mut vsync, "VSync")
-        .on_hover_text(
-            "Each frame waits for the display's refresh: less heat and power, a little more delay",
-        )
-        .changed()
-    {
-        settings.window.vsync = vsync;
-    }
-    let mut bloom = settings.video.bloom;
-    if ui
-        .checkbox(&mut bloom, "Bloom")
-        .on_hover_text("What the light catches glows over its rim")
-        .changed()
-    {
-        settings.video.bloom = bloom;
-    }
-    let mut light_shafts = settings.video.light_shafts;
-    if ui
-        .checkbox(&mut light_shafts, "Light shafts")
-        .on_hover_text("The sun's rays show in the air")
-        .changed()
-    {
-        settings.video.light_shafts = light_shafts;
-    }
-    ui.add_space(4.0);
-    form(ui, "video", |ui| {
-        let label = ui.label("Shadows");
-        if let Some(shadows) = picker(ui, "shadows", settings.video.shadows, label.id) {
-            settings.video.shadows = shadows;
-        }
-        ui.end_row();
-        let label = ui.label("Ambient occlusion");
-        let current = settings.video.ambient_occlusion;
-        if let Some(occlusion) = picker(ui, "ambient occlusion", current, label.id) {
-            settings.video.ambient_occlusion = occlusion;
-        }
-        ui.end_row();
-        let label = ui.label("Anti-aliasing");
-        let current = settings.video.anti_aliasing;
-        if let Some(anti_aliasing) = picker(ui, "anti-aliasing", current, label.id) {
-            settings.video.anti_aliasing = anti_aliasing;
-        }
-        ui.end_row();
-    });
-}
-
-fn form(ui: &mut Ui, id: &str, add: impl FnOnce(&mut Ui)) {
-    egui::Grid::new(("settings", id))
-        .num_columns(2)
-        .min_col_width(LABEL_WIDTH)
-        .spacing(FORM_SPACING)
-        .show(ui, add);
 }
 
 fn text_speed_slider(
@@ -266,26 +216,6 @@ fn text_speed_slider(
         }
         ui.label(theme::faint(format!("{:.0} letters/s", speed.round())));
     });
-}
-
-/// A choice among every variant of `T`, answering the one picked when it isn't `current`.
-fn picker<T: VariantArray + AsRef<str> + Copy + PartialEq>(
-    ui: &mut Ui,
-    id: &str,
-    current: T,
-    label: egui::Id,
-) -> Option<T> {
-    let mut picked = current;
-    controls::combo(id)
-        .selected_text(current.as_ref())
-        .show_ui(ui, |ui| {
-            for &variant in T::VARIANTS {
-                ui.selectable_value(&mut picked, variant, variant.as_ref());
-            }
-        })
-        .response
-        .labelled_by(label);
-    (picked != current).then_some(picked)
 }
 
 fn fader_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, fader: AudioFader, label: egui::Id) {
@@ -485,18 +415,6 @@ fn default_turn_speed() -> Degrees {
     CameraPreferences::default().turn_speed
 }
 
-/// The window's screen mode and refresh, on a platform where the window is the client's own.
-#[derive(Serialize, Deserialize, Default)]
-struct WindowSettings {
-    #[serde(default)]
-    fullscreen: bool,
-    /// Off unless asked for, so frames go out without waiting on the display's refresh: a desktop
-    /// may hold that wait up, as some do for tens of milliseconds at every mouse press and
-    /// release, and the whole frame would wait too.
-    #[serde(default)]
-    vsync: bool,
-}
-
 #[derive(Serialize, Deserialize, Default)]
 struct ScreenSettings {
     #[serde(default)]
@@ -543,31 +461,8 @@ fn pace_typing(settings: Res<UserSettings>, typing: Option<Res<Typing>>, mut com
     }
 }
 
-fn apply_video(
-    settings: Res<UserSettings>,
-    mut video: ResMut<VideoPreferences>,
-    window: Option<Single<&mut Window, With<PrimaryWindow>>>,
-) {
-    if !settings.is_changed() {
-        return;
-    }
-    video.set_if_neq(settings.video);
-    if let Some(mut window) = window {
-        let mode = if settings.window.fullscreen {
-            WindowMode::BorderlessFullscreen(MonitorSelection::Current)
-        } else {
-            WindowMode::Windowed
-        };
-        let present_mode = if settings.window.vsync {
-            PresentMode::AutoVsync
-        } else {
-            PresentMode::AutoNoVsync
-        };
-        if window.mode != mode {
-            window.mode = mode;
-        }
-        if window.present_mode != present_mode {
-            window.present_mode = present_mode;
-        }
+fn apply_video(settings: Res<UserSettings>, mut video: ResMut<VideoPreferences>) {
+    if settings.is_changed() {
+        video.set_if_neq(settings.video);
     }
 }

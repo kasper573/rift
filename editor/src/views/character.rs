@@ -1377,7 +1377,7 @@ fn apply_moment(
         let there = area::load(content, home.area);
         let spacing = there.bodies.spacing();
         let beside = there
-            .mesh()
+            .mesh_near(home.at)
             .nearest_where(home.at, spacing, |at| at.distance(home.at) >= spacing)?;
         Some(Place {
             area: sheet.now(content, home.area)?,

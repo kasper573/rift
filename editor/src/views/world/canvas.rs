@@ -1266,10 +1266,10 @@ fn ground_facts(map: &OpenWorldMap, hit: &MapGroundHit) -> String {
     let info = &atlas.areas[&id];
     let cell = snap(hit.at, false);
     let loaded = area::load(&map.content, id);
-    let walkable = if loaded.mesh().walkable(cell) {
-        "walkable"
-    } else {
-        "not walkable"
+    let walkable = match loaded.walkable_if_held(cell) {
+        Some(true) => "walkable",
+        Some(false) => "not walkable",
+        None => "ground loading",
     };
     let safe = if loaded.safe_zones.iter().any(|zone| zone.contains(cell)) {
         "in a safe zone"

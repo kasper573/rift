@@ -39,7 +39,9 @@ use crate::core::render::world::layers::Layered;
 use crate::core::render::world::sky::Daylight;
 use crate::core::render::{self, CameraRig, GroundHeights, Pointed, ground_height, world_point};
 use crate::core::time;
-use crate::core::units::{Bytes, MeterSize, Meters, PlaybackRate, Radians, Seconds, WindowPx};
+use crate::core::units::{
+    Bytes, MeterSize, Meters, Millis, PlaybackRate, Radians, Seconds, WindowPx,
+};
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
 use crate::systems::actor::held::{self, Held};
 use crate::systems::actor::render::Puppet;
@@ -123,13 +125,25 @@ pub fn install(app: &mut App, driver: std::net::SocketAddr) {
         .init_resource::<TerrainSent>()
         .init_resource::<DrawnUi>()
         .init_resource::<VfxSeen>()
+        .init_resource::<FrameTimes>()
         .add_observer(remember_vfx)
         .add_systems(PreUpdate, (count_input, read_accessibly))
         .add_systems(
             PostUpdate,
             (copy_drawn_ui, count_clicks).after(EguiPostUpdateSet::ProcessOutput),
         )
-        .add_systems(Last, publish);
+        .add_systems(Last, (time_frame, publish).chain());
+}
+
+/// How long each frame took since the last snapshot.
+#[derive(Resource, Default)]
+struct FrameTimes(std::collections::VecDeque<Millis>);
+
+fn time_frame(time: Res<Time<Real>>, mut times: ResMut<FrameTimes>) {
+    if times.0.len() == FRAMES_KEPT {
+        times.0.pop_front();
+    }
+    times.0.push_back(Millis(time.delta_secs() * 1000.0));
 }
 
 /// One frame of the client. Content ids (de)serialize by key, so a driver reads a snapshot within a
@@ -178,7 +192,15 @@ pub struct ProbeSnapshot {
     pub daylight: Daylight,
     /// What the GPU holds in buffers and textures for the client.
     pub gpu_memory: Bytes,
+    /// How long each frame took since the previous snapshot, the latest `FRAMES_KEPT` of them.
+    pub frame_times: Vec<Millis>,
+    /// Whether the scenery has yet to stand all the view takes in: until it has, some of what the
+    /// view shows is missing.
+    pub scenery_standing: bool,
 }
+
+/// The most frame times a snapshot carries: some half a minute of frames however fast they come.
+pub const FRAMES_KEPT: usize = 8192;
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug)]
 pub struct ProbeInput {
@@ -869,6 +891,8 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
             .copied()
             .unwrap_or_default(),
         gpu_memory: gpu_memory(world),
+        frame_times: world.resource_mut::<FrameTimes>().0.drain(..).collect(),
+        scenery_standing: area::scenery::standing(world) || render::world::readying(world),
         view,
         area,
     }

@@ -18,7 +18,8 @@ use serde::{Deserialize, Serialize};
 
 use super::clouds;
 use super::lights;
-use crate::core::math::{Rect, Rgb, smoothstep};
+use crate::core::ground::Heightfield;
+use crate::core::math::{Pos, Rect, Rgb, smoothstep};
 use crate::core::render::Look;
 use crate::core::units::{Degrees, Meters, Stops};
 
@@ -59,10 +60,11 @@ pub struct SkyLook {
     pub sky_share: f32,
     /// How much the sky lights everything from above, of the atmosphere's own brightness.
     pub sky_light: f32,
-    /// How high the air the sun's shafts show in reaches over an area, and how thick it is dry
-    /// and saturated: dry air thin, so the shafts show only where the light breaks through, and
-    /// moist air thick enough that the light stands in it in shafts.
-    pub shaft_height: Meters,
+    /// How high the low air reaches over the ground: the air the haze lies in, which a camera
+    /// above it sees the ground through only the depth of, and the sun's shafts show in. And how
+    /// thick it is dry and saturated: dry air thin, so the shafts show only where the light breaks
+    /// through, and moist air thick enough that the light stands in it in shafts.
+    pub air_height: Meters,
     pub dry_air: f32,
     pub moist_air: f32,
     /// The colour a sun reddens toward as it nears the horizon, the elevation below which it
@@ -206,7 +208,7 @@ pub fn atmosphere(
 /// The air standing over `ground` as moist as `humidity`, which the sun's light shafts show in.
 pub fn air(ground: Rect<Meters>, humidity: f32, look: &SkyLook) -> impl Bundle {
     let center = ground.center();
-    let height = look.shaft_height.0;
+    let height = look.air_height.0;
     (
         FogVolume {
             density_factor: look.dry_air
@@ -222,6 +224,52 @@ pub fn air(ground: Rect<Meters>, humidity: f32, look: &SkyLook) -> impl Bundle {
             ground.size.height,
         )),
     )
+}
+
+/// The haze a camera sees the world over `heights` through, as it lies in the low air: from within
+/// that air, as authored; from above it, thinner by as many times as the camera stands higher than
+/// the air reaches, since the camera's line of sight to the ground crosses only the air's depth of
+/// it.
+#[derive(Component, Clone)]
+pub struct Haze {
+    pub fog: DistanceFog,
+    pub air_height: Meters,
+    pub heights: Heightfield,
+}
+
+/// Every camera's haze, thinned by how high above the low air the camera stands.
+pub(super) fn thin_haze(
+    mut cameras: Query<(&Haze, &GlobalTransform, Option<&mut DistanceFog>, Entity)>,
+    mut commands: Commands,
+) {
+    for (haze, placed, fog, camera) in &mut cameras {
+        let eye = placed.translation();
+        let above = eye.y - haze.heights.height_at(Pos::new(eye.x, eye.z)).0;
+        let thinned = (above / haze.air_height.0.max(f32::EPSILON)).max(1.0);
+        let mut seen = haze.fog.clone();
+        if let FogFalloff::Linear { start, end } = &mut seen.falloff {
+            *start *= thinned;
+            *end *= thinned;
+        }
+        match fog {
+            Some(mut fog) => {
+                if linear(&fog.falloff) != linear(&seen.falloff) || fog.color != seen.color {
+                    *fog = seen;
+                }
+            }
+            None => {
+                commands.entity(camera).insert(seen);
+            }
+        }
+    }
+}
+
+/// Where a linear haze begins and ends, none for another falloff.
+fn linear(falloff: &FogFalloff) -> Option<(f32, f32)> {
+    match *falloff {
+        FogFalloff::Linear { start, end } => Some((start, end)),
+        _ => None,
+    }
 }
 
 /// The haze the camera sees the world through under a `sun` and a `sky`: clear up close,

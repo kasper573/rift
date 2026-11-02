@@ -1,6 +1,7 @@
 mod client;
 mod desktop;
 mod editor;
+mod frames;
 mod memory;
 mod play;
 mod playtest;

@@ -377,6 +377,7 @@ pub fn request(
         stroke: None,
         ghost: None,
         cast,
+        lines: Default::default(),
     });
 }
 

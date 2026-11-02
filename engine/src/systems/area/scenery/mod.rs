@@ -24,10 +24,12 @@ use std::sync::Arc;
 use bevy::app::Propagate;
 use bevy::camera::visibility::RenderLayers;
 use bevy::light::atmosphere::ScatteringMedium;
-use bevy::platform::collections::HashMap;
+use bevy::mesh::MeshTag;
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use bevy::tasks::futures::check_ready;
-use bevy::tasks::{IoTaskPool, Task};
+use bevy::tasks::{AsyncComputeTaskPool, IoTaskPool, Task};
+use rayon::prelude::*;
 
 use super::lighting::DomeLook;
 use super::prop::PropId;
@@ -41,7 +43,9 @@ use crate::core::render::present::AreaGrade;
 use crate::core::render::world::clouds::{self, CloudSheet};
 use crate::core::render::world::lights::{self, Flicker};
 use crate::core::render::world::sky::{self, Daylight, SunLight};
-use crate::core::render::world::terrain::{self, GroundLayer, GroundMaterial};
+use crate::core::render::world::terrain::{
+    self, ChunkPaint, ChunkPaints, GroundLayer, GroundMaterial,
+};
 use crate::core::render::{Look, camera, world_point};
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::{MeterSize, Meters};
@@ -61,22 +65,16 @@ pub struct Scenery {
     pub sky: Option<Entity>,
 }
 
-/// Stands scenery as the view moves: a few pieces a frame where `paced`, so the frames of a client
-/// at play keep coming, else whatever the view takes in at once.
-pub struct SceneryPlugin {
-    pub paced: bool,
-}
+/// Stands scenery as the view moves, a few pieces a frame, so the frames keep coming however much
+/// the view takes in at once.
+pub struct SceneryPlugin;
 
 impl Plugin for SceneryPlugin {
     fn build(&self, app: &mut App) {
-        app.insert_resource(Paced(self.paced))
-            .add_systems(Update, stream)
+        app.add_systems(Update, stream)
             .add_observer(props::level_ready_scene);
     }
 }
-
-#[derive(Resource)]
-struct Paced(bool);
 
 /// Stands `area` in the world on `layers`: its sun, sky and air at once, and its ground, covers,
 /// props and lights as the view comes to them, from where [`view_from`] says it is.
@@ -124,7 +122,7 @@ pub fn spawn(
             .as_ref()
             .and_then(|look| spawn_dome(world, content, look, root));
     }
-    let terrain = spawn_terrain(world, content, area, &look, root);
+    let (terrain, paints) = spawn_terrain(world, content, area, &look, root);
     let props = Props::new(content, area);
     let covers = Covers::new(world, content, area);
     let mut lights = SpatialIndex::new(PLACEMENT_CELL);
@@ -135,6 +133,7 @@ pub fn spawn(
         heights: area.heights.clone(),
         paint: area.paint.clone(),
         terrain,
+        paints,
         regions: Regions::of(area),
         covers,
         props,
@@ -142,6 +141,7 @@ pub fn spawn(
         view: None,
         stood: Stood::default(),
         loading: HashMap::default(),
+        making: HashMap::default(),
         settled: false,
         stood_for: None,
     });
@@ -260,6 +260,13 @@ pub fn standing(world: &mut World) -> bool {
         .any(|streaming| !streaming.settled)
 }
 
+/// Whether `scenery` stands all its view takes in.
+pub fn stood(world: &World, scenery: Scenery) -> bool {
+    world
+        .get::<Streaming>(scenery.root)
+        .is_some_and(|streaming| streaming.settled)
+}
+
 /// How many sceneries stand.
 pub fn sceneries(world: &mut World) -> usize {
     world.query::<&Streaming>().iter(world).count()
@@ -274,6 +281,7 @@ struct Streaming {
     heights: Heightfield,
     paint: PaintMap,
     terrain: Entity,
+    paints: ChunkPaints,
     regions: Regions,
     covers: Covers,
     props: Props,
@@ -282,6 +290,8 @@ struct Streaming {
     stood: Stood,
     /// The tiles of ground being loaded, for the near chunks waiting on them.
     loading: HashMap<TileAt, Task<()>>,
+    /// The chunks of ground being made, each its mesh and the paint under it.
+    making: HashMap<Node, Making<(Mesh, ChunkPaint)>>,
     settled: bool,
     /// The view all that it takes in stands for, once it does, so a view that stays put costs
     /// nothing to stream.
@@ -314,6 +324,9 @@ struct Node {
 /// The samples along a leaf chunk's side, and how near the view a node must lie, in its own
 /// sides, to be cut into finer ones.
 const LEAF_SAMPLES: u32 = 128;
+/// The pixels along every chunk's paint: a pixel per stride of its samples, and one beyond each
+/// edge.
+const PAINT_SIDE: u32 = LEAF_SAMPLES + 2;
 const SPLIT_WITHIN: f32 = 1.5;
 /// The level from which a chunk's stride is the overview's, so it stands from the overview alone;
 /// a finer chunk waits for the tiles of ground under it.
@@ -324,9 +337,12 @@ const PLACEMENT_CELL: Meters = Meters(32.0);
 /// How far past its reach the view keeps what stands, so pacing back and forth over the edge
 /// stands nothing twice.
 const KEEP_SHARE: f32 = 1.25;
-/// How much stands in one frame where scenery is paced, and among the props how many whose model
-/// no earlier prop asked for: a model's load falls on the frames after the prop that starts it.
-const CHUNKS_PER_FRAME: usize = 4;
+/// How many bytes of new meshes a frame sends to the GPU: what stands past them waits for the
+/// next frame, so a view taking in much at once costs many frames a little rather than one frame a
+/// lot. A piece larger than this stands in a frame of its own.
+const MESH_BYTES_PER_FRAME: usize = 2 << 20;
+/// How much stands in one frame, and among the props how many whose model no earlier prop asked
+/// for: a model's load falls on the frames after the prop that starts it.
 const COVERS_PER_FRAME: usize = 16;
 const PROPS_PER_FRAME: usize = 16;
 const FRESH_MODELS_PER_FRAME: usize = 1;
@@ -337,7 +353,6 @@ fn stream(world: &mut World) {
         .query_filtered::<Entity, With<Streaming>>()
         .iter(world)
         .collect();
-    let framed = world.resource::<Paced>().0;
     for root in roots {
         let Some(mut streaming) = world.entity_mut(root).take::<Streaming>() else {
             continue;
@@ -347,15 +362,13 @@ fn stream(world: &mut World) {
             continue;
         };
         if streaming.stood_for == Some(seen) && streaming.loading.is_empty() {
-            share_pictures(world, &streaming);
             world.entity_mut(root).insert(streaming);
             continue;
         }
         let Seen { at, reach, .. } = seen;
         let keep = Meters(reach.0 * KEEP_SHARE);
-        let mut budget = Budget::new(framed);
+        let mut budget = Budget::new();
         stream_ground(world, &mut streaming, at, &mut budget);
-        share_pictures(world, &streaming);
         let cut = streaming.regions.cut(&streaming.heights, seen);
         let props_stand = props::stand(world, &mut streaming, root, seen, &cut, &mut budget);
         let covers_stand = covers::stand(world, &mut streaming, root, seen, &cut, &mut budget);
@@ -373,10 +386,9 @@ fn stream(world: &mut World) {
     }
 }
 
-/// What a frame may still stand, where frames are paced.
+/// What a frame may still stand.
 struct Budget {
-    framed: bool,
-    chunks: usize,
+    mesh_bytes: usize,
     covers: usize,
     props: usize,
     fresh: usize,
@@ -386,10 +398,9 @@ struct Budget {
 }
 
 impl Budget {
-    fn new(framed: bool) -> Budget {
+    fn new() -> Budget {
         Budget {
-            framed,
-            chunks: CHUNKS_PER_FRAME,
+            mesh_bytes: MESH_BYTES_PER_FRAME,
             covers: COVERS_PER_FRAME,
             props: PROPS_PER_FRAME,
             fresh: FRESH_MODELS_PER_FRAME,
@@ -403,10 +414,18 @@ impl Budget {
         self.spent = true;
     }
 
-    fn take(&mut self, left: fn(&mut Budget) -> &mut usize) -> bool {
-        if !self.framed {
-            return true;
+    /// Whether the frame sends meshes of `bytes` to the GPU: when it has room for them, or has sent
+    /// none yet.
+    fn send(&mut self, bytes: usize) -> bool {
+        if bytes > self.mesh_bytes && self.mesh_bytes < MESH_BYTES_PER_FRAME {
+            self.spent = true;
+            return false;
         }
+        self.mesh_bytes = self.mesh_bytes.saturating_sub(bytes);
+        true
+    }
+
+    fn take(&mut self, left: fn(&mut Budget) -> &mut usize) -> bool {
         let left = left(self);
         if *left == 0 {
             self.spent = true;
@@ -426,12 +445,13 @@ fn stream_ground(
     streaming
         .loading
         .retain(|_, task| check_ready(task).is_none());
-    let wanted = nodes_for(&streaming.heights, at);
+    let wanted: HashSet<Node> = nodes_for(&streaming.heights, at).into_iter().collect();
+    streaming.making.retain(|node, _| wanted.contains(node));
     let gone: Vec<Node> = streaming
         .stood
         .ground
         .keys()
-        .filter(|node| !wanted.contains(node))
+        .filter(|&node| !wanted.contains(node))
         .copied()
         .collect();
     let mut missing: Vec<Node> = wanted
@@ -442,7 +462,7 @@ fn stream_ground(
     if missing.is_empty() {
         for node in gone {
             if let Some(entity) = streaming.stood.ground.remove(&node) {
-                world.despawn(entity);
+                take_down_chunk(world, &mut streaming.paints, entity);
             }
         }
         return;
@@ -450,12 +470,23 @@ fn stream_ground(
     missing.sort_by_key(|node| node.level);
     for node in missing {
         if !ground_under(streaming, node) {
+            budget.defer();
             continue;
         }
-        if !budget.take(|budget| &mut budget.chunks) {
+        let making = streaming.making.entry(node).or_insert_with(|| {
+            Making::Task(make_chunk(&streaming.heights, &streaming.paint, node))
+        });
+        let Some((mesh, _)) = making.made() else {
+            budget.defer();
+            continue;
+        };
+        if !budget.send(mesh_bytes(mesh)) {
             break;
         }
-        let entity = spawn_chunk(world, streaming, node);
+        let Some((mesh, paint)) = streaming.making.remove(&node).and_then(Making::into_made) else {
+            continue;
+        };
+        let entity = spawn_chunk(world, streaming, mesh, &paint);
         streaming.stood.ground.insert(node, entity);
     }
     if wanted
@@ -464,7 +495,7 @@ fn stream_ground(
     {
         for node in gone {
             if let Some(entity) = streaming.stood.ground.remove(&node) {
-                world.despawn(entity);
+                take_down_chunk(world, &mut streaming.paints, entity);
             }
         }
     }
@@ -504,37 +535,6 @@ fn ground_under(streaming: &mut Streaming, node: Node) -> bool {
         streaming.loading.insert(tile, task);
     }
     ready
-}
-
-/// Gives every chunk the ground's pictures once they have loaded.
-fn share_pictures(world: &mut World, streaming: &Streaming) {
-    let Some(ground) = chunk_material_of(world, streaming.terrain) else {
-        return;
-    };
-    let chunks: Vec<Handle<GroundMaterial>> = streaming
-        .stood
-        .ground
-        .values()
-        .filter_map(|&chunk| chunk_material_of(world, chunk))
-        .collect();
-    let mut materials = world.resource_mut::<Assets<GroundMaterial>>();
-    let Some(ground) = materials.get(&ground).cloned() else {
-        return;
-    };
-    for chunk in chunks {
-        let shared = materials
-            .get(&chunk)
-            .is_some_and(|material| material.extension.pictures != ground.extension.pictures);
-        if shared && let Some(mut material) = materials.get_mut(&chunk) {
-            terrain::share_pictures(&mut material, &ground);
-        }
-    }
-}
-
-fn chunk_material_of(world: &World, entity: Entity) -> Option<Handle<GroundMaterial>> {
-    world
-        .get::<MeshMaterial3d<GroundMaterial>>(entity)
-        .map(|material| material.0.clone())
 }
 
 /// The nodes of the quadtree over the ground's samples that stand for the view at `at`: every node
@@ -592,28 +592,77 @@ fn node_rect(node: Node) -> NodeRect {
     }
 }
 
-fn spawn_chunk(world: &mut World, streaming: &Streaming, node: Node) -> Entity {
-    let mesh = chunk_mesh(&streaming.heights, node);
+/// What a task makes for the scenery, kept once it is made until a frame has room to stand it.
+enum Making<T> {
+    Task(Task<T>),
+    Made(T),
+}
+
+impl<T> Making<T> {
+    /// What the task made, once it has.
+    fn made(&mut self) -> Option<&T> {
+        if let Making::Task(task) = self
+            && let Some(made) = check_ready(task)
+        {
+            *self = Making::Made(made);
+        }
+        match self {
+            Making::Made(made) => Some(made),
+            Making::Task(_) => None,
+        }
+    }
+
+    fn into_made(self) -> Option<T> {
+        match self {
+            Making::Made(made) => Some(made),
+            Making::Task(_) => None,
+        }
+    }
+}
+
+/// The bytes `mesh` takes on the GPU.
+fn mesh_bytes(mesh: &Mesh) -> usize {
+    mesh.get_vertex_buffer_size() + mesh.get_index_buffer_bytes().map_or(0, <[u8]>::len)
+}
+
+/// Makes the chunk of ground `node` on a task: its mesh and the paint under it.
+fn make_chunk(heights: &Heightfield, paint: &PaintMap, node: Node) -> Task<(Mesh, ChunkPaint)> {
+    let (heights, paint) = (heights.clone(), paint.clone());
+    AsyncComputeTaskPool::get().spawn(async move { made_chunk(&heights, &paint, node) })
+}
+
+fn made_chunk(heights: &Heightfield, paint: &PaintMap, node: Node) -> (Mesh, ChunkPaint) {
+    (
+        chunk_mesh(heights, node),
+        ChunkPaint::of(paint, chunk_samples(node)),
+    )
+}
+
+fn spawn_chunk(
+    world: &mut World,
+    streaming: &mut Streaming,
+    mesh: Mesh,
+    paint: &ChunkPaint,
+) -> Entity {
     let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
-    let ground = chunk_material_of(world, streaming.terrain).expect("the ground's material");
-    let material = world.resource_scope(|world, mut images: Mut<Assets<Image>>| {
-        let mut materials = world.resource_mut::<Assets<GroundMaterial>>();
-        let ground = materials
-            .get(&ground)
-            .cloned()
-            .expect("the ground's material");
-        let material =
-            terrain::chunk_material(&ground, &streaming.paint, chunk_samples(node), &mut images);
-        materials.add(material)
-    });
+    let tag = streaming.paints.lay(world, paint);
     world
         .spawn((
             Mesh3d(mesh),
-            MeshMaterial3d(material),
+            MeshMaterial3d(streaming.paints.material().clone()),
+            tag,
             Transform::default(),
             ChildOf(streaming.terrain),
         ))
         .id()
+}
+
+/// Takes down a chunk of ground, freeing the layer its paint lay on.
+fn take_down_chunk(world: &mut World, paints: &mut ChunkPaints, chunk: Entity) {
+    if let Some(tag) = world.get::<MeshTag>(chunk) {
+        paints.lift(tag);
+    }
+    world.despawn(chunk);
 }
 
 fn chunk_samples(node: Node) -> terrain::ChunkSamples {
@@ -765,7 +814,14 @@ pub fn light(world: &mut World, area: &Area, daylight: Daylight, scenery: Scener
             humidity(area, &look),
             &look.sky,
         );
-        camera.insert((ambient, haze));
+        camera.insert((
+            ambient,
+            sky::Haze {
+                fog: haze,
+                air_height: look.sky.air_height,
+                heights: area.heights.clone(),
+            },
+        ));
         if let Some(grade) = grade {
             camera.insert(camera::grading(tone, grade));
         }
@@ -860,49 +916,58 @@ pub fn lay_ground(world: &mut World, scenery: Scenery, heights: &Heightfield, pa
     };
     streaming.heights = heights.clone();
     streaming.paint = paint.clone();
-    for (&node, &entity) in &streaming.stood.ground {
-        let mesh = chunk_mesh(&streaming.heights, node);
+    streaming.making.clear();
+    let stood: Vec<(Node, Entity)> = streaming
+        .stood
+        .ground
+        .iter()
+        .map(|(&node, &entity)| (node, entity))
+        .collect();
+    let made: Vec<(Entity, Mesh, ChunkPaint)> = stood
+        .into_par_iter()
+        .map(|(node, entity)| {
+            let (mesh, paint) = made_chunk(heights, paint, node);
+            (entity, mesh, paint)
+        })
+        .collect();
+    for (entity, mesh, paint) in made {
         let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
         if let Ok(mut chunk) = world.get_entity_mut(entity) {
             chunk.insert(Mesh3d(mesh));
         }
-        let Some(material) = chunk_material_of(world, entity) else {
+        let Some(tag) = world.get::<MeshTag>(entity).cloned() else {
             continue;
         };
-        world.resource_scope(|world, mut images: Mut<Assets<Image>>| {
-            let mut materials = world.resource_mut::<Assets<GroundMaterial>>();
-            if let Some(mut material) = materials.get_mut(&material) {
-                terrain::repaint_chunk(&mut material, paint, chunk_samples(node), &mut images);
-            }
-        });
+        streaming.paints.relay(world, &paint, &tag);
     }
     streaming.covers.ground_changed();
     world.entity_mut(scenery.root).insert(streaming);
 }
 
-/// The ground's root, holding the material its chunks are painted from.
+/// The ground's root, holding the material its chunks are painted with, and their paint.
 fn spawn_terrain(
     world: &mut World,
     content: &Content,
     area: &Area,
     look: &Look,
     root: Entity,
-) -> Entity {
+) -> (Entity, ChunkPaints) {
     let layers = ground_layers(content, area);
     let (material, pictures) = world.resource_scope(|world, mut images: Mut<Assets<Image>>| {
         let assets = world.resource::<AssetServer>();
-        terrain::ground_material(&layers, &look.materials, assets, &mut images)
+        terrain::ground_material(&layers, &look.materials, assets, &mut images, PAINT_SIDE)
     });
     let material = world.resource_mut::<Assets<GroundMaterial>>().add(material);
-    world
+    let terrain = world
         .spawn((
-            MeshMaterial3d(material),
+            MeshMaterial3d(material.clone()),
             pictures,
             Transform::default(),
             Visibility::default(),
             ChildOf(root),
         ))
-        .id()
+        .id();
+    (terrain, ChunkPaints::new(material, PAINT_SIDE))
 }
 
 /// Each of the area's terrains as the ground is painted with it.

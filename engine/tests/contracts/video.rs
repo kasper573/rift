@@ -35,13 +35,7 @@ fn a_players_video_preferences_draw_the_world_as_picked_from_the_moment_they_are
     let cases = [
         (
             "everything off",
-            VideoPreferences {
-                shadows: ShadowQuality::Off,
-                ambient_occlusion: AmbientOcclusionQuality::Off,
-                light_shafts: false,
-                anti_aliasing: AntiAliasingQuality::Off,
-                bloom: false,
-            },
+            VideoPreferences::lowest(),
             Drawn {
                 shadows: None,
                 occlusion: None,
@@ -53,6 +47,8 @@ fn a_players_video_preferences_draw_the_world_as_picked_from_the_moment_they_are
         (
             "everything low",
             VideoPreferences {
+                fullscreen: false,
+                vsync: false,
                 shadows: ShadowQuality::Low,
                 ambient_occlusion: AmbientOcclusionQuality::Low,
                 light_shafts: true,

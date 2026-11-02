@@ -63,6 +63,12 @@ pub(super) fn held(area: &Area) -> BTreeSet<TileAt> {
         .collect()
 }
 
+/// Whether every one of `tiles` of `area` is held.
+pub(super) fn holds(area: &Area, tiles: impl IntoIterator<Item = TileAt>) -> bool {
+    let held = area.meshes.tiles.read().expect("the tiles lock");
+    tiles.into_iter().all(|at| held.contains_key(&at))
+}
+
 /// Holds `tiles` of `area` besides those held, so its meshes cover them: loads their ground,
 /// triangulates each new one on a core of its own and joins the meshes anew. Whether any tile was
 /// new.

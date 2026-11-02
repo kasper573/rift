@@ -28,7 +28,8 @@ use crate::views::navigation::Viewport;
 /// How many pixels the longer side of an area's render spans.
 const LONGEST: u32 = 512;
 const LAYER: usize = 398;
-/// How many frames the scenery gets to load and settle before it is read back.
+/// How many frames at least the scenery gets to load and settle before it is read back, once it
+/// stands.
 const SETTLE_FRAMES: u32 = 8;
 /// How many frames an area that never draws is waited on.
 const GIVE_UP_FRAMES: u32 = 900;
@@ -176,8 +177,9 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
             }
             (Some(_), _) => {}
         }
-        if drawing.scenery.is_some()
+        if let Some(stood) = drawing.scenery
             && drawing.readback.is_none()
+            && scenery::stood(world, stood)
             && drawing.frames >= SETTLE_FRAMES
         {
             drawing.readback = Some(
