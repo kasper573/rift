@@ -33,7 +33,7 @@ pub struct ItemView {
     pub worn: worn::WornView,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default, Debug, serde::Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ItemPage {
     #[default]

@@ -163,7 +163,7 @@ fn a_sheet_lies_on_the_terrain_or_flat_at_a_level_weighted_as_the_cells_around_e
  {
     let heights = slope();
     let west = |column: u32, _: u32| if column < 8 { 1.0 } else { 0.0 };
-    let mesh = sheet(&patch(&heights, &west), None, DARK).expect("a sheet");
+    let mesh = sheet(&patch(&heights, &west), None, DARK, 1).expect("a sheet");
     assert!(
         colors(&mesh)
             .iter()
@@ -190,7 +190,7 @@ fn a_sheet_lies_on_the_terrain_or_flat_at_a_level_weighted_as_the_cells_around_e
         );
     }
     let level = 1.0;
-    let pool = sheet(&patch(&heights, &west), Some(level), DARK).expect("a pool");
+    let pool = sheet(&patch(&heights, &west), Some(level), DARK, 1).expect("a pool");
     for (position, mark) in positions(&pool).iter().zip(marks(&pool)) {
         assert_eq!(position[1], level, "a pool lies flat at its level");
         let ground = heights.height_at(Pos::new(position[0], position[2])).0;
@@ -202,7 +202,7 @@ fn a_sheet_lies_on_the_terrain_or_flat_at_a_level_weighted_as_the_cells_around_e
     }
     let none = |_: u32, _: u32| 0.0;
     assert!(
-        sheet(&patch(&heights, &none), None, DARK).is_none(),
+        sheet(&patch(&heights, &none), None, DARK, 1).is_none(),
         "nothing painted, no sheet"
     );
 }

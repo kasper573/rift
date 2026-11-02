@@ -1,0 +1,554 @@
+//! The props of an area's scenery, over the regions it is cut into for the view. A prop in a leaf
+//! stands as a scene of its own, which fades when it hides the camera's subject and draws its
+//! meshes no finer than the view shows them. The props in every coarser region are merged, a mesh
+//! for each material they are drawn in, so a view over a whole area draws a few meshes rather
+//! than an entity for every prop.
+
+use std::sync::Arc;
+
+use bevy::ecs::system::{SystemParam, SystemState};
+use bevy::gltf::Gltf;
+use bevy::light::NotShadowCaster;
+use bevy::platform::collections::{HashMap, HashSet};
+use bevy::prelude::*;
+use bevy::tasks::futures::check_ready;
+use bevy::tasks::{AsyncComputeTaskPool, Task};
+use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
+
+use super::regions::{self, Cut, Merge, Region};
+use super::{Budget, KEEP_SHARE, PLACEMENT_CELL, Seen, Streaming};
+use crate::core::assets;
+use crate::core::content::Content;
+use crate::core::content::media::GltfInfos;
+use crate::core::ground::Heightfield;
+use crate::core::math::Pos;
+use crate::core::render::camera::{View, ground_pos};
+use crate::core::render::world::fade::Fades;
+use crate::core::render::world::lod::{Levels, Simplifier};
+use crate::core::render::world::material::{MaterialLook, MaterialLooks, Surfaces};
+use crate::core::render::world::merged::{
+    self, MergedMesh, MergedModel, MergedPlace, ModelSources,
+};
+use crate::core::render::world_point;
+use crate::core::spatial::SpatialIndex;
+use crate::core::units::Meters;
+use crate::core::vfx::render as vfx_render;
+use crate::core::vfx::uniform::ParamsUniform;
+use crate::systems::area::prop::{PropDef, PropId};
+use crate::systems::area::{Area, PropPlacement};
+
+/// The transform a prop placed at `placed` stands with on `heights`.
+pub fn prop_transform(heights: &Heightfield, placed: &PropPlacement) -> Transform {
+    Transform {
+        translation: world_point(placed.at, heights.height_at(placed.at) - placed.sunk),
+        rotation: Quat::from_rotation_y(-placed.yaw.radians().0),
+        scale: Vec3::splat(placed.scale),
+    }
+}
+
+/// An area's props as its scenery stands them: where each is filed, how far across each is, the
+/// models merged so far, and what stands of them.
+pub(super) struct Props {
+    filed: SpatialIndex,
+    /// The most each placed prop measures across, by its index, where its model says.
+    extents: Vec<Option<Meters>>,
+    models: HashMap<PropId, Model>,
+    scenes: HashMap<usize, Entity>,
+    merged: HashMap<Merge, Merged>,
+}
+
+impl Props {
+    pub(super) fn new(content: &Content, area: &Area) -> Props {
+        let mut filed = SpatialIndex::new(PLACEMENT_CELL);
+        filed.refile_spots(area.props.iter().map(|placed| placed.at));
+        let models = content.built::<GltfInfos>();
+        let extents = area
+            .props
+            .iter()
+            .map(|placed| {
+                let bounds = models.0.get(&placed.prop.get(content).model.path())?.bounds;
+                Some(Meters(
+                    (bounds.max - bounds.min).max_element() * placed.scale,
+                ))
+            })
+            .collect();
+        Props {
+            filed,
+            extents,
+            models: HashMap::default(),
+            scenes: HashMap::default(),
+            merged: HashMap::default(),
+        }
+    }
+}
+
+/// Stands what `cut` takes in of the area's props: a scene for each in a leaf, and the merged
+/// meshes of every coarser region; whether all of it stands.
+pub(super) fn stand(
+    world: &mut World,
+    streaming: &mut Streaming,
+    root: Entity,
+    seen: Seen,
+    cut: &Cut,
+    budget: &mut Budget,
+) -> bool {
+    let near: HashSet<usize> = in_leaves(streaming, cut)
+        .filter(|&index| !out_of_sight(streaming, seen, index, 1.0))
+        .collect();
+    let mut whole = stand_scenes(world, streaming, root, &near, budget);
+    for &merge in &cut.merges {
+        if !streaming.props.merged.contains_key(&merge) {
+            let waiting = gather(streaming, merge, seen.view);
+            streaming.props.merged.insert(merge, waiting);
+        }
+    }
+    let wanted_models: HashSet<PropId> = cut
+        .merges
+        .iter()
+        .filter_map(|merge| match streaming.props.merged.get(merge) {
+            Some(Merged::Waiting { models, .. }) => Some(models.iter().copied()),
+            _ => None,
+        })
+        .flatten()
+        .collect();
+    prepare_models(world, streaming, wanted_models);
+    for &merge in &cut.merges {
+        whole &= stand_merge(world, streaming, root, merge, seen.view, budget);
+    }
+    whole
+}
+
+/// Takes down what stood of the props for an earlier view and stands for none in `cut`.
+pub(super) fn clear(world: &mut World, streaming: &mut Streaming, seen: Seen, cut: &Cut) {
+    let kept: HashSet<usize> = in_leaves(streaming, cut)
+        .filter(|&index| !out_of_sight(streaming, seen, index, KEEP_SHARE))
+        .collect();
+    let props = &mut streaming.props;
+    let gone: Vec<usize> = props
+        .scenes
+        .keys()
+        .filter(|index| !kept.contains(*index))
+        .copied()
+        .collect();
+    for index in gone {
+        if let Some(scene) = props.scenes.remove(&index) {
+            world.despawn(scene);
+        }
+    }
+    let wanted: HashSet<Merge> = cut.merges.iter().copied().collect();
+    props.merged.retain(|merge, merged| {
+        let keep = wanted.contains(merge);
+        if !keep && let Merged::Standing(meshes) = merged {
+            for &mesh in meshes.iter() {
+                world.despawn(mesh);
+            }
+        }
+        keep
+    });
+}
+
+/// What stands of a merged region: the props it shows and their models, waiting on some of those
+/// to be ready to merge; its meshes being made; or standing.
+enum Merged {
+    Waiting {
+        props: Vec<usize>,
+        models: Vec<PropId>,
+    },
+    Merging(Task<Vec<MergedMesh>>),
+    Standing(Vec<Entity>),
+}
+
+/// A prop's model as merged regions need it: loading, being made ready to merge, or ready.
+enum Model {
+    Loading(Handle<Gltf>, MaterialLooks),
+    Preparing(Task<MergedModel>),
+    Ready(Arc<MergedModel>),
+}
+
+/// The props standing in the leaves of `cut`.
+fn in_leaves<'a>(streaming: &'a Streaming, cut: &'a Cut) -> impl Iterator<Item = usize> + 'a {
+    cut.leaves
+        .iter()
+        .flat_map(move |&leaf| props_within(streaming, leaf))
+}
+
+/// The props standing within a region, each in the one region of a level that holds where it
+/// stands.
+fn props_within(streaming: &Streaming, region: Region) -> impl Iterator<Item = usize> + '_ {
+    let bounds = streaming.regions.bounds(region);
+    let area = &streaming.area;
+    streaming
+        .props
+        .filed
+        .within(bounds)
+        .filter(move |&index| regions::holds(bounds, area.props[index].at))
+}
+
+/// Whether a prop spans less than a pixel of the view, or `share` times the reach and more lies
+/// between it and where the view looks.
+fn out_of_sight(streaming: &Streaming, seen: Seen, index: usize, share: f32) -> bool {
+    let placed = &streaming.area.props[index];
+    let eye = seen.view.eye();
+    (placed.at - seen.at).length() > seen.reach.0 * share
+        || streaming.props.extents[index].is_some_and(|extent| {
+            let ground = streaming.heights.height_at(placed.at).0;
+            let from_eye = (placed.at - ground_pos(eye)).length().hypot(eye.y - ground);
+            from_eye > seen.view.shown_within(extent).0 * share
+        })
+}
+
+/// Stands a scene for every prop of `near` that has none, nearest first, as far as the budget
+/// goes; whether all of them stand.
+fn stand_scenes(
+    world: &mut World,
+    streaming: &mut Streaming,
+    root: Entity,
+    near: &HashSet<usize>,
+    budget: &mut Budget,
+) -> bool {
+    let at = streaming.view.map_or(Pos::new(0.0, 0.0), |seen| seen.at);
+    let area = streaming.area.clone();
+    let mut missing: Vec<usize> = near
+        .iter()
+        .filter(|index| !streaming.props.scenes.contains_key(*index))
+        .copied()
+        .collect();
+    missing.sort_by(|&a, &b| {
+        let apart = |index: usize| (area.props[index].at - at).length();
+        apart(a).total_cmp(&apart(b))
+    });
+    for index in missing {
+        if !budget.take(|budget| &mut budget.props) {
+            return false;
+        }
+        let placed = &area.props[index];
+        if budget.framed {
+            let model = placed.prop.get(&streaming.content).model.path();
+            let scene = GltfAssetLabel::Scene(0).from_asset(model);
+            if world.resource::<AssetServer>().get_path_id(scene).is_none()
+                && !budget.take(|budget| &mut budget.fresh)
+            {
+                return false;
+            }
+        }
+        let scene = spawn_prop(world, &streaming.content, &streaming.heights, placed, root);
+        streaming.props.scenes.insert(index, scene);
+    }
+    true
+}
+
+/// A region's props as it shows them, waiting to merge: every one in it that spans a pixel at the
+/// nearest its band comes to the eye.
+fn gather(streaming: &Streaming, merge: Merge, view: View) -> Merged {
+    let nearest = streaming.regions.nearest(merge);
+    let props: Vec<usize> = props_within(streaming, merge.region)
+        .filter(|&index| {
+            streaming.props.extents[index]
+                .is_none_or(|extent| nearest.0 <= view.shown_within(extent).0)
+        })
+        .collect();
+    let mut models: Vec<PropId> = props
+        .iter()
+        .map(|&index| streaming.area.props[index].prop)
+        .collect();
+    models.sort_unstable();
+    models.dedup();
+    Merged::Waiting { props, models }
+}
+
+/// Stands the merged meshes of a region, once the models of its props are ready to merge and its
+/// meshes are made; whether they stand.
+fn stand_merge(
+    world: &mut World,
+    streaming: &mut Streaming,
+    root: Entity,
+    merge: Merge,
+    view: View,
+    budget: &mut Budget,
+) -> bool {
+    let pixels_per_meter = view.pixels_per_meter(streaming.regions.nearest(merge));
+    let props = &mut streaming.props;
+    let Some(merged) = props.merged.get_mut(&merge) else {
+        return false;
+    };
+    match merged {
+        Merged::Standing(_) => true,
+        Merged::Merging(task) => {
+            let Some(meshes) = check_ready(task) else {
+                return false;
+            };
+            *merged = Merged::Standing(spawn_merged(world, meshes, root));
+            true
+        }
+        Merged::Waiting {
+            props: shown,
+            models,
+        } => {
+            let ready = |prop: &PropId| match props.models.get(prop) {
+                Some(Model::Ready(model)) => Some(model.clone()),
+                _ => None,
+            };
+            if !models.iter().all(|prop| ready(prop).is_some())
+                || !budget.take(|budget| &mut budget.merges)
+            {
+                return false;
+            }
+            let places: Vec<MergedPlace> = shown
+                .iter()
+                .filter_map(|&index| {
+                    let placed = &streaming.area.props[index];
+                    Some(MergedPlace {
+                        model: ready(&placed.prop)?,
+                        transform: prop_transform(&streaming.heights, placed),
+                        shadow: placed.prop.get(&streaming.content).shadow,
+                    })
+                })
+                .collect();
+            let task = AsyncComputeTaskPool::get()
+                .spawn(async move { merged::merge(&places, pixels_per_meter) });
+            props.merged.insert(merge, Merged::Merging(task));
+            false
+        }
+    }
+}
+
+/// Sets every model of `wanted` on its way to being ready to merge: loading it, then making it
+/// ready off the main thread once it and its materials have loaded.
+fn prepare_models(world: &mut World, streaming: &mut Streaming, wanted: HashSet<PropId>) {
+    let models = &mut streaming.props.models;
+    for prop in wanted {
+        if models.contains_key(&prop) {
+            continue;
+        }
+        let def = prop.get(&streaming.content);
+        let gltf = assets::model(world.resource::<AssetServer>(), def.model.path());
+        models.insert(
+            prop,
+            Model::Loading(gltf, looks_of(world, &streaming.content, def)),
+        );
+    }
+    let mut sources = None;
+    for model in models.values_mut() {
+        match model {
+            Model::Loading(gltf, looks) => {
+                let sources =
+                    sources.get_or_insert_with(|| SystemState::<ModelSources>::new(world));
+                let parts = sources
+                    .get_mut(world)
+                    .ok()
+                    .and_then(|mut sources| sources.parts(gltf, looks));
+                if let Some(parts) = parts {
+                    *model = Model::Preparing(
+                        AsyncComputeTaskPool::get().spawn(async move { parts.prepare() }),
+                    );
+                }
+            }
+            Model::Preparing(task) => {
+                if let Some(ready) = check_ready(task) {
+                    *model = Model::Ready(Arc::new(ready));
+                }
+            }
+            Model::Ready(_) => {}
+        }
+    }
+}
+
+/// The meshes of a scene the scenery stands, each with its stand-ins and how many times its size
+/// it is drawn.
+#[derive(Component)]
+struct Leveled(Vec<LeveledMesh>);
+
+struct LeveledMesh {
+    mesh: Entity,
+    full: Handle<Mesh>,
+    levels: Arc<Levels>,
+    scale: f32,
+}
+
+/// How a scene hangs together: each entity's parent, children and place under its parent.
+#[derive(SystemParam)]
+pub(super) struct SceneTree<'w, 's> {
+    parents: Query<'w, 's, &'static ChildOf>,
+    children: Query<'w, 's, &'static Children>,
+    transforms: Query<'w, 's, &'static Transform>,
+}
+
+/// The sceneries standing, and the scenes they stand that keep stand-ins for their meshes.
+#[derive(SystemParam)]
+pub(super) struct Standing<'w, 's> {
+    streams: Query<'w, 's, &'static Streaming>,
+    leveled: Query<'w, 's, &'static Leveled>,
+}
+
+/// A scene the scenery stands, each time it has spawned, keeps its meshes' stand-ins and draws
+/// each at the level the scenery's view takes it in at; a mesh it leveled before keeps the mesh
+/// it was spawned with as its own.
+pub(super) fn level_ready_scene(
+    ready: On<WorldInstanceReady>,
+    tree: SceneTree,
+    standing: Standing,
+    mut drawn: Query<&mut Mesh3d>,
+    surfaces: Surfaces,
+    mut simplifier: Simplifier,
+    mut commands: Commands,
+) {
+    let SceneTree {
+        parents,
+        children,
+        transforms,
+    } = tree;
+    let scene = ready.entity;
+    let Some(streaming) = parents
+        .get(scene)
+        .ok()
+        .and_then(|parent| standing.streams.get(parent.parent()).ok())
+    else {
+        return;
+    };
+    let scale_of = |mesh: Entity| {
+        std::iter::successors(Some(mesh), |&at| {
+            (at != scene)
+                .then(|| parents.get(at).ok().map(ChildOf::parent))
+                .flatten()
+        })
+        .filter_map(|at| transforms.get(at).ok())
+        .map(|transform| transform.scale.max_element())
+        .product()
+    };
+    let before = standing.leveled.get(scene).ok();
+    let leveled = Leveled(
+        children
+            .iter_descendants(scene)
+            .filter(|&mesh| !surfaces.cut_out(mesh))
+            .filter_map(|mesh| {
+                let full = before
+                    .and_then(|before| before.0.iter().find(|leveled| leveled.mesh == mesh))
+                    .map_or_else(
+                        || drawn.get(mesh).ok().map(|drawn| drawn.0.clone()),
+                        |leveled| Some(leveled.full.clone()),
+                    )?;
+                let levels = simplifier.levels_of(&full)?;
+                Some(LeveledMesh {
+                    mesh,
+                    full,
+                    levels,
+                    scale: scale_of(mesh),
+                })
+            })
+            .collect(),
+    );
+    if let (Some(seen), Ok(at)) = (streaming.view, transforms.get(scene)) {
+        for (mesh, level) in levels_for(seen.view, at.translation, &leveled) {
+            if let Ok(mut drawn) = drawn.get_mut(mesh) {
+                drawn.set_if_neq(Mesh3d(level.clone()));
+            }
+        }
+    }
+    commands.entity(scene).insert(leveled);
+}
+
+/// Draws every standing prop's meshes at the level `view` takes them in at.
+pub(super) fn level_props(world: &mut World, streaming: &Streaming, view: &View) {
+    let changes: Vec<(Entity, Handle<Mesh>)> = streaming
+        .props
+        .scenes
+        .values()
+        .filter_map(|&prop| Some((world.get::<Leveled>(prop)?, world.get::<Transform>(prop)?)))
+        .flat_map(|(leveled, at)| levels_for(*view, at.translation, leveled))
+        .filter(|(mesh, level)| {
+            world
+                .get::<Mesh3d>(*mesh)
+                .is_some_and(|drawn| drawn.0 != **level)
+        })
+        .map(|(mesh, level)| (mesh, level.clone()))
+        .collect();
+    for (mesh, level) in changes {
+        if let Some(mut drawn) = world.get_mut::<Mesh3d>(mesh) {
+            drawn.0 = level;
+        }
+    }
+}
+
+/// The level each of a scene's meshes is drawn at, seen in `view` with the scene at `at`.
+fn levels_for(
+    view: View,
+    at: Vec3,
+    leveled: &Leveled,
+) -> impl Iterator<Item = (Entity, &Handle<Mesh>)> {
+    let distance = Meters(view.eye().distance(at));
+    leveled.0.iter().map(move |mesh| {
+        let level = mesh.levels.for_view(&view, distance, mesh.scale);
+        (mesh.mesh, level.unwrap_or(&mesh.full))
+    })
+}
+
+fn spawn_merged(world: &mut World, meshes: Vec<MergedMesh>, root: Entity) -> Vec<Entity> {
+    meshes
+        .into_iter()
+        .map(
+            |MergedMesh {
+                 material,
+                 shadow,
+                 mesh,
+                 bounds,
+             }| {
+                let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
+                let mut merged = world.spawn((
+                    Mesh3d(mesh),
+                    MeshMaterial3d(material),
+                    bounds,
+                    ChildOf(root),
+                ));
+                if !shadow {
+                    merged.insert(NotShadowCaster);
+                }
+                merged.id()
+            },
+        )
+        .collect()
+}
+
+/// The materials of `def`'s model the game's shaders draw, each with its parameters.
+fn looks_of(world: &World, content: &Content, def: &PropDef) -> MaterialLooks {
+    MaterialLooks(
+        def.materials
+            .iter()
+            .filter_map(|(name, material)| {
+                let material = material.get(content);
+                Some(MaterialLook {
+                    material: name.clone(),
+                    shader: vfx_render::compiled_shader(world, material.shader)?,
+                    params: ParamsUniform::pack(material.shader.get(content), |param| {
+                        material.params.get(param).copied()
+                    }),
+                    translucency: material.translucency,
+                })
+            })
+            .collect(),
+    )
+}
+
+fn spawn_prop(
+    world: &mut World,
+    content: &Content,
+    heights: &Heightfield,
+    placed: &PropPlacement,
+    root: Entity,
+) -> Entity {
+    let def = placed.prop.get(content);
+    let scene = assets::model_scene(world.resource::<AssetServer>(), def.model.path());
+    let looks = looks_of(world, content, def);
+    let mut prop = world.spawn((
+        WorldAssetRoot(scene),
+        prop_transform(heights, placed),
+        looks,
+        ChildOf(root),
+    ));
+    if def.fade {
+        prop.insert(Fades::default());
+    }
+    if !def.shadow {
+        prop.insert(NotShadowCaster);
+    }
+    prop.id()
+}

@@ -31,7 +31,7 @@ pub struct Playtest {
     server: GameServer,
     client: Child,
     probe: ProbeDriver,
-    _desktop: BenchDesktop,
+    desktop: BenchDesktop,
     folder: TempDir,
 }
 
@@ -78,7 +78,7 @@ impl Playtest {
             server,
             client,
             probe,
-            _desktop: desktop,
+            desktop,
             folder,
         }
     }
@@ -127,6 +127,11 @@ impl Playtest {
     /// is drawing, not answering.
     pub fn linger(&mut self, lasting: Duration) {
         std::thread::sleep(lasting);
+    }
+
+    /// Turns the mouse wheel over the game `clicks` notches, toward the player when positive.
+    pub fn scroll(&self, clicks: i32) {
+        self.desktop.scroll(self.client.id(), clicks);
     }
 
     pub fn client_memory(&self) -> Bytes {

@@ -11,6 +11,7 @@ path = "src/main.rs"
 [dependencies]
 rayon = { workspace = true }
 engine = { path = "../engine" }
+editor = { path = "../editor" }
 testkit = { path = "../testkit" }
 service = { path = "../service" }
 bevy.workspace = true

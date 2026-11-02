@@ -1,6 +1,7 @@
 use std::path::PathBuf;
 
 use engine::core::content::ContentFile;
+use engine::core::units::Meters;
 use engine::systems::actor::Action;
 use engine::systems::actor::model::ModelDef;
 use engine::systems::actor::skeleton::{BuildName, Clip, SkeletonDef};
@@ -13,7 +14,7 @@ use engine::systems::class::ClassDef;
 use engine::systems::dialogue::bust::BustDef;
 use engine::systems::item::ItemDef;
 use engine::systems::script::ScriptDef;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use strum::VariantNames;
 
 use crate::app::{BottomTab, Editor};
@@ -37,7 +38,7 @@ use crate::views::world::{
 };
 use crate::{import, rows};
 
-#[derive(Clone, Debug, Deserialize, VariantNames)]
+#[derive(Clone, Debug, Deserialize, Serialize, VariantNames)]
 #[serde(rename_all = "snake_case")]
 #[strum(serialize_all = "snake_case")]
 pub enum SceneStep {
@@ -55,6 +56,10 @@ pub enum SceneStep {
         terrain: Option<String>,
     },
     Overlay(area_view::AreaOverlay),
+    /// Looks at the middle of the open area or blueprint from `distance` off.
+    Camera {
+        distance: Meters,
+    },
     Resize(String),
     Row {
         table: String,
@@ -127,21 +132,21 @@ pub enum SceneStep {
     Asset(String),
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum DialogName {
     Keys,
     Binaries,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ModelStep {
     Open(String),
     Bottom(BottomTab),
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum BustStep {
     Open(String),
@@ -150,7 +155,7 @@ pub enum BustStep {
     Drop(PathBuf),
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SkeletonStep {
     Open(String),
@@ -181,7 +186,7 @@ pub enum SkeletonStep {
     },
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SheetStep {
     Open(String),
@@ -200,7 +205,7 @@ pub enum SheetStep {
     },
 }
 
-#[derive(Clone, Copy, Debug, Default, Deserialize)]
+#[derive(Clone, Copy, Debug, Default, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SortOrder {
     Asc,
@@ -208,7 +213,7 @@ pub enum SortOrder {
     Desc,
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorldStep {
     Open,
@@ -237,14 +242,14 @@ pub enum WorldStep {
     },
 }
 
-#[derive(Clone, Debug, Deserialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorldLens {
     Row { table: String, key: String },
     Text(String),
 }
 
-#[derive(Clone, Copy, Debug, Deserialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum WorldLayer {
     Residents,
@@ -312,6 +317,11 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
         SceneStep::Overlay(overlay) => {
             if let Some(bundle) = last_opened_bundle(editor) {
                 editor.views.area.ensure_view(&bundle).toggle(*overlay);
+            }
+        }
+        SceneStep::Camera { distance } => {
+            if let Some(bundle) = last_opened_bundle(editor) {
+                editor.views.area.ensure_view(&bundle).look_from(*distance);
             }
         }
         SceneStep::Part { table, key, nodes } => {

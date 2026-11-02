@@ -28,7 +28,7 @@ use crate::app::Editor;
 use crate::views::cues;
 
 /// A row of the table: what is asked of the skeleton.
-#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Deserialize, serde::Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SetRow {
     Action(Action),

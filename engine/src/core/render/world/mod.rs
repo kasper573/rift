@@ -13,6 +13,7 @@ pub mod lights;
 pub mod lod;
 pub mod mannequin;
 pub mod material;
+pub mod merged;
 pub mod paint;
 pub mod rig_clip;
 pub mod sky;
@@ -58,6 +59,7 @@ impl Plugin for WorldScenePlugin {
         .init_resource::<material::MaterialCache>()
         .init_resource::<lod::MeshLevels>()
         .init_resource::<cover::TexturedCovers>()
+        .init_resource::<cover::MergedCovers>()
         .init_resource::<cover::CopyMeshes>()
         .add_observer(material::dress_scenes)
         .add_observer(mannequin::start)

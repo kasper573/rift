@@ -6,12 +6,13 @@ use std::time::{Duration, Instant};
 
 use engine::core::content::Content;
 use engine::core::math::Pos;
+use engine::core::render::camera::Zoom;
 use engine::core::render::transition::ScreenTransitionPhase;
 use engine::core::units::{MeterPos, Meters};
-use engine::systems::area;
 use engine::systems::probe::ProbeSnapshot;
 use engine::systems::script::{EffectReach, OwnerRow, Place, RiftScripts};
 use engine::systems::staging::Staging;
+use engine::systems::{GameSettings, area};
 
 use super::playtest::Playtest;
 
@@ -49,6 +50,8 @@ pub fn run(game: &Path, content: &Content) {
         }
         None => skipped("crossing", "no warp out of the spawn area"),
     }
+    zoom_out(&mut me);
+    scenes.push(watch(&mut me, "wide", Duration::from_secs(4)));
     report(&scenes);
 }
 
@@ -62,6 +65,23 @@ pub fn settled_in_world(me: &mut Playtest) -> Place {
         at: seen.me.expect("the player").at,
     }
 }
+
+/// Turns the mouse wheel away from the player past the widest zoom, and waits for the view to have
+/// come to it.
+fn zoom_out(me: &mut Playtest) {
+    me.scroll(-i32::from(Zoom::STEPS));
+    me.wait_until("the camera's widest zoom", |snapshot| {
+        snapshot
+            .view
+            .as_ref()
+            .is_some_and(|view| view.zoom == Zoom::Wide.step())
+    });
+    let ease = me.content().built::<GameSettings>().look.camera.zoom_ease;
+    me.linger(Duration::from_secs_f32(ease.0 * EASES_TO_ARRIVE));
+}
+
+/// How many times its ease the camera takes to come within a hundredth of a zoom it eases to.
+const EASES_TO_ARRIVE: f32 = 5.0;
 
 /// Where the first warp out of `home` into another area leads.
 pub fn away_from(me: &Playtest, home: Place) -> Option<Place> {

@@ -3,7 +3,7 @@
 //! terrain the way the picture shows it.
 
 use std::cell::RefCell;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use ui::egui;
 use ui::ink;
 use ui::theme;
@@ -11,7 +11,7 @@ use ui::theme;
 use engine::core::math::Rect;
 use engine::core::units::MeterSize;
 use engine::systems::area::blueprint::BlueprintDef;
-use engine::systems::area::prop::PropDef;
+use engine::systems::area::prop::{Footprint, PropDef, PropId};
 use engine::systems::area::{AreaModule, AreaModuleKind, Pictured};
 use ui::egui::{Color32, Pos2, Rect as ERect, Stroke as EStroke, Vec2};
 
@@ -21,6 +21,10 @@ use crate::forms;
 
 const LABEL_GAP: f32 = 2.0;
 const LABEL_SHIFTS: u32 = 3;
+/// The side of the cells of the screen placed labels are filed by.
+const LABEL_CELL: f32 = 64.0;
+/// How many pixels across a module must show before it is labelled unasked.
+const LABEL_PIXELS: f32 = 48.0;
 
 /// The edge of the area's ground, or a blueprint's canvas with its size.
 pub(super) fn overlay_bounds(painter: &egui::Painter, frame: &AreaFrame) {
@@ -112,8 +116,23 @@ pub(super) fn overlay_contours(
 /// keeps clear of it.
 pub(super) fn overlay_footprints(painter: &egui::Painter, frame: &AreaFrame) {
     let color = ink::wash(module_color(AreaModuleKind::Prop), 0.6);
+    let mut dots = shapes::Dots::default();
     for prop in &frame.area().props {
         let def = prop.prop.get(&frame.content);
+        let ground = def
+            .footprint
+            .bounds(prop.at, prop.yaw, prop.scale)
+            .unwrap_or_else(|| shapes::cell_rect(prop.at));
+        let Some((at, across)) = frame.canvas.glance(ground) else {
+            continue;
+        };
+        if !frame.canvas.shows(at, across) {
+            continue;
+        }
+        if !shapes::shows_shape(across) {
+            dots.add(painter, at, color);
+            continue;
+        }
         shapes::draw_footprint(
             painter,
             &frame.canvas,
@@ -169,21 +188,43 @@ pub(super) fn overlay_modules(
         AreaTool::Select | AreaTool::Module => frame.hit_pointer(),
         _ => None,
     };
-    for node in frame.modules.iter() {
-        if frame.flags.hidden(&node.pointer) {
+    let mut dots = shapes::Dots::default();
+    let mut footprints: HashMap<PropId, Option<&Footprint>> = HashMap::new();
+    for (node, &shown) in frame.modules.iter().zip(frame.shown_modules.iter()) {
+        if !shown {
             continue;
         }
         let module = node.module();
         let Some(bounds) = frame.bounds_of(node) else {
             continue;
         };
-        if !canvas.sees(bounds) {
+        let footprint = match module {
+            AreaModule::Prop(prop) => *footprints.entry(prop.prop).or_insert_with(|| {
+                frame
+                    .reader
+                    .path_of(prop.prop)
+                    .and_then(|path| frame.content.by_path::<PropDef>(path))
+                    .map(|id| &id.get(&frame.content).footprint)
+            }),
+            _ => None,
+        };
+        let ground = match (module, footprint) {
+            (AreaModule::Prop(prop), Some(footprint)) => footprint
+                .bounds(prop.at, prop.yaw, prop.scale)
+                .unwrap_or(bounds),
+            _ => bounds,
+        };
+        let Some((at, across)) = canvas.glance(ground) else {
+            continue;
+        };
+        if !canvas.shows(at, across) {
             continue;
         }
         let kind = module.kind();
-        let is_selected = selected.contains(&node.pointer);
+        let is_selected = !selected.is_empty() && selected.contains(&node.pointer);
         let is_hovered = hovered.as_ref() == Some(&node.pointer);
-        let label = shapes::label(module, frame.reader.as_ref());
+        let is_part = !parts.is_empty() && parts.contains(&node.pointer);
+        let screen_box = || canvas.rect(bounds);
         if let AreaModule::Blueprint(placement) = module
             && frame
                 .reader
@@ -198,8 +239,11 @@ pub(super) fn overlay_modules(
                 3.0,
             ));
             frame.labels.chip(
-                canvas.rect(bounds).min + Vec2::new(0.0, -4.0),
-                format!("{label} doesn't load"),
+                screen_box().min + Vec2::new(0.0, -4.0),
+                format!(
+                    "{} doesn't load",
+                    shapes::label(module, frame.reader.as_ref())
+                ),
                 theme::DANGER,
             );
             continue;
@@ -218,7 +262,10 @@ pub(super) fn overlay_modules(
         };
         let color = ink::wash(color, alpha);
         let width = if is_selected { 2.0 } else { 1.0 };
-        let screen_box = canvas.rect(bounds);
+        if !is_selected && !is_hovered && !is_part && !shapes::shows_shape(across) {
+            dots.add(painter, at, color);
+            continue;
+        }
         match module {
             AreaModule::Soundscape(_) if shapes::is_ellipse(module) => {
                 painter.add(egui::Shape::closed_line(
@@ -226,30 +273,23 @@ pub(super) fn overlay_modules(
                     EStroke::new(width, color),
                 ));
             }
-            AreaModule::Prop(prop) => {
-                let def = frame
-                    .reader
-                    .path_of(prop.prop)
-                    .and_then(|path| frame.content.by_path::<PropDef>(path))
-                    .map(|id| id.get(&frame.content));
-                match def {
-                    Some(def) => shapes::draw_footprint(
-                        painter,
-                        &frame.canvas,
-                        &def.footprint,
-                        prop.at,
-                        prop.yaw,
-                        prop.scale,
+            AreaModule::Prop(prop) => match footprint {
+                Some(footprint) => shapes::draw_footprint(
+                    painter,
+                    canvas,
+                    footprint,
+                    prop.at,
+                    prop.yaw,
+                    prop.scale,
+                    EStroke::new(width, color),
+                ),
+                None => {
+                    painter.add(egui::Shape::closed_line(
+                        canvas.circle(prop.at, 0.25),
                         EStroke::new(width, color),
-                    ),
-                    None => {
-                        painter.add(egui::Shape::closed_line(
-                            canvas.circle(prop.at, 0.25),
-                            EStroke::new(width, color),
-                        ));
-                    }
+                    ));
                 }
-            }
+            },
             AreaModule::Light(light) => {
                 let foot = canvas.to_screen(light.at);
                 let bulb = canvas.lifted(light.at, light.height);
@@ -290,12 +330,20 @@ pub(super) fn overlay_modules(
                 ));
             }
         }
-        if is_selected || is_hovered || kind == AreaModuleKind::Population {
-            frame
-                .labels
-                .chip(screen_box.min + Vec2::new(0.0, -4.0), label, color);
+        if is_selected || is_hovered {
+            frame.labels.chip(
+                screen_box().min + Vec2::new(0.0, -4.0),
+                shapes::label(module, frame.reader.as_ref()),
+                color,
+            );
+        } else if kind == AreaModuleKind::Population && across >= LABEL_PIXELS {
+            frame.labels.aside(
+                screen_box().min + Vec2::new(0.0, -4.0),
+                shapes::label(module, frame.reader.as_ref()),
+                color,
+            );
         }
-        if parts.contains(&node.pointer) && shapes::has_size(module) {
+        if is_part && shapes::has_size(module) {
             for corner in engine::core::geometry::corners(bounds) {
                 painter.rect_filled(
                     ERect::from_center_size(canvas.to_screen(corner), Vec2::splat(6.0)),
@@ -340,6 +388,9 @@ pub(super) fn overlay_soundscape_reach(
     }
 }
 
+/// The labels drawn over the map this frame, each kept clear of those before it: those it must
+/// show, and those it shows only where they find room, so however many ask, the labels never pile
+/// over one another.
 #[derive(Default)]
 pub struct AreaLabels(RefCell<Vec<AreaLabel>>);
 
@@ -347,21 +398,25 @@ struct AreaLabel {
     bottom_left: Pos2,
     text: String,
     color: Color32,
+    needed: bool,
 }
 
 impl AreaLabels {
     pub fn chip(&self, bottom_left: Pos2, text: impl Into<String>, color: Color32) {
-        self.0.borrow_mut().push(AreaLabel {
-            bottom_left,
-            text: text.into(),
-            color,
-        });
+        self.push(bottom_left, text.into(), color, true);
+    }
+
+    /// A label shown only where it finds room among the others.
+    pub fn aside(&self, bottom_left: Pos2, text: impl Into<String>, color: Color32) {
+        self.push(bottom_left, text.into(), color, false);
     }
 
     pub fn draw(&self, painter: &egui::Painter) {
-        let mut placed: Vec<ERect> = Vec::new();
+        let mut placed = Placed::default();
         let clip = painter.clip_rect();
-        for label in self.0.take() {
+        let (needed, aside): (Vec<AreaLabel>, Vec<AreaLabel>) =
+            self.0.take().into_iter().partition(|label| label.needed);
+        for label in needed.into_iter().chain(aside) {
             if !clip.contains(label.bottom_left) {
                 continue;
             }
@@ -369,8 +424,12 @@ impl AreaLabels {
                 painter.layout_no_wrap(label.text, egui::FontId::monospace(11.5), theme::TEXT);
             let size = galley.size() + Vec2::new(14.0, 6.0);
             let preferred = ERect::from_min_size(label.bottom_left - Vec2::new(0.0, size.y), size);
-            let back = free_slot(preferred, &placed);
-            placed.push(back);
+            let back = match placed.free_slot(preferred) {
+                Some(slot) => slot,
+                None if label.needed => preferred,
+                None => continue,
+            };
+            placed.add(back);
             ui::slip::paint(painter, back);
             painter.rect_filled(
                 ERect::from_min_size(back.min, Vec2::new(3.0, back.height())),
@@ -380,15 +439,48 @@ impl AreaLabels {
             painter.galley(back.min + Vec2::new(9.0, 3.0), galley, theme::TEXT);
         }
     }
+
+    fn push(&self, bottom_left: Pos2, text: String, color: Color32, needed: bool) {
+        self.0.borrow_mut().push(AreaLabel {
+            bottom_left,
+            text,
+            color,
+            needed,
+        });
+    }
 }
 
-fn free_slot(preferred: ERect, placed: &[ERect]) -> ERect {
-    let row = preferred.height() + LABEL_GAP;
-    let shifted = (1..=LABEL_SHIFTS)
-        .flat_map(|shift| [-(shift as f32), shift as f32])
-        .map(|rows| preferred.translate(Vec2::new(0.0, rows * row)));
-    std::iter::once(preferred)
-        .chain(shifted)
-        .find(|slot| !placed.iter().any(|other| other.intersects(*slot)))
-        .unwrap_or(preferred)
+/// The labels placed so far, filed by the cells of the screen they cover.
+#[derive(Default)]
+struct Placed(HashMap<(i32, i32), Vec<ERect>>);
+
+impl Placed {
+    /// Where a label wanting `preferred` goes clear of those placed: there, or a few rows above or
+    /// below; none where all of those are taken.
+    fn free_slot(&self, preferred: ERect) -> Option<ERect> {
+        let row = preferred.height() + LABEL_GAP;
+        let shifted = (1..=LABEL_SHIFTS)
+            .flat_map(|shift| [-(shift as f32), shift as f32])
+            .map(|rows| preferred.translate(Vec2::new(0.0, rows * row)));
+        std::iter::once(preferred).chain(shifted).find(|slot| {
+            !cells(*slot).any(|cell| {
+                self.0
+                    .get(&cell)
+                    .is_some_and(|rects| rects.iter().any(|other| other.intersects(*slot)))
+            })
+        })
+    }
+
+    fn add(&mut self, rect: ERect) {
+        for cell in cells(rect) {
+            self.0.entry(cell).or_default().push(rect);
+        }
+    }
+}
+
+/// The cells of the screen `rect` covers.
+fn cells(rect: ERect) -> impl Iterator<Item = (i32, i32)> {
+    let cell = |at: f32| (at / LABEL_CELL).floor() as i32;
+    (cell(rect.min.y)..=cell(rect.max.y))
+        .flat_map(move |row| (cell(rect.min.x)..=cell(rect.max.x)).map(move |column| (column, row)))
 }

@@ -13,9 +13,11 @@ use bevy_egui::{
     EguiContext, EguiPlugin, EguiPreUpdateSet, EguiPrimaryContextPass, PrimaryEguiContext,
 };
 use engine::core::content::{Content, ContentFile, FolderReader, Unreadable, fields_file, version};
+use engine::core::units::Millis;
 use engine::systems;
+use engine::systems::area::scenery;
 use engine::systems::frame_rate::{self, FrameCountPlugin, FrameRates};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use strum::IntoStaticStr;
 use ui::egui_dock::DockState;
@@ -90,9 +92,45 @@ impl Plugin for EditorPlugin {
 
 const FRAME_RATE_MARGIN: f32 = 8.0;
 
-/// A line per frame: frame ms, ui ms, the active tab, entities, images, meshes.
+/// A line per frame, each a [`FrameRecord`] in JSON.
 #[derive(Resource)]
 struct FrameLog(BufWriter<File>);
+
+/// What the frame log tells of a frame: how long it took and its interface of that, the active
+/// tab, how many entities, images and meshes the world holds, and how its scenery stands.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct FrameRecord {
+    pub frame: Millis,
+    pub ui: Millis,
+    pub tab: Option<String>,
+    pub entities: usize,
+    pub images: usize,
+    pub meshes: usize,
+    pub scenery: SceneryState,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum SceneryState {
+    /// No view draws an area.
+    None,
+    /// What a view takes in is still being stood or readied.
+    Standing,
+    /// Every view's scenery stands whole.
+    Stood,
+}
+
+impl SceneryState {
+    fn of(world: &mut World) -> SceneryState {
+        if scenery::sceneries(world) == 0 {
+            SceneryState::None
+        } else if scenery::standing(world) || engine::core::render::world::readying(world) {
+            SceneryState::Standing
+        } else {
+            SceneryState::Stood
+        }
+    }
+}
 
 /// Where the editor edits the world its views draw: a schedule of its own after `Update`, since
 /// an exclusive system sharing a schedule may despawn an entity between another system queueing a
@@ -145,7 +183,7 @@ pub struct Editor {
     pub quit: bool,
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, IntoStaticStr)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Deserialize, Serialize, IntoStaticStr)]
 #[serde(rename_all = "snake_case")]
 pub enum BottomTab {
     #[default]
@@ -839,16 +877,20 @@ fn editor_ui(world: &mut World) {
         )
     });
     if world.contains_resource::<FrameLog>() {
-        let entities = world.query::<Entity>().iter(world).count();
-        let images = world.resource::<Assets<Image>>().len();
-        let meshes = world.resource::<Assets<Mesh>>().len();
+        let record = FrameRecord {
+            frame: Millis(frame_ms),
+            ui: Millis(ui_ms),
+            tab,
+            entities: world.query::<Entity>().iter(world).count(),
+            images: world.resource::<Assets<Image>>().len(),
+            meshes: world.resource::<Assets<Mesh>>().len(),
+            scenery: SceneryState::of(world),
+        };
         let mut log = world.resource_mut::<FrameLog>();
-        let _ = writeln!(
-            log.0,
-            "{frame_ms:.3}\t{ui_ms:.3}\t{}\t{entities}\t{images}\t{meshes}",
-            tab.unwrap_or_default()
-        )
-        .and_then(|()| log.0.flush());
+        let _ = serde_json::to_writer(&mut log.0, &record)
+            .map_err(std::io::Error::from)
+            .and_then(|()| writeln!(log.0))
+            .and_then(|()| log.0.flush());
     }
     if world.resource::<Editor>().quit {
         world.write_message(bevy::app::AppExit::Success);

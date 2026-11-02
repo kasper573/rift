@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use super::camera::AreaCanvas;
 use engine::core::audio::soundscape::SoundscapeShape;
 use engine::core::content::name_of;
@@ -12,6 +14,10 @@ use ui::egui;
 use ui::egui::Stroke as EStroke;
 
 use crate::project::IdPaths;
+
+/// How many pixels across a shape's box must be on the screen before the shape is drawn.
+const SHAPE_PIXELS: f32 = 12.0;
+const DOT_PIXELS: f32 = 3.0;
 
 /// Where `module` takes room on the map; a placement by what its blueprint brings, when known.
 pub fn bounds(module: &AreaModule, placement_bounds: Option<Rect<Meters>>) -> Option<Rect<Meters>> {
@@ -191,6 +197,35 @@ fn sized_rect(module: &mut AreaModule) -> Option<&mut Rect<Meters>> {
         AreaModule::Scatter(scatter) => Some(&mut scatter.region),
         AreaModule::Population(population) => population.roams.as_mut(),
         _ => None,
+    }
+}
+
+/// Whether a shape `across` pixels wide on the screen is big enough there to draw as it lies on
+/// the terrain, rather than as one of the [`Dots`].
+pub(crate) fn shows_shape(across: f32) -> bool {
+    across >= SHAPE_PIXELS
+}
+
+/// Shapes too small on the screen to make out, each a dot where it lies, and as many as lie on
+/// one dot's spot a single dot of their colour, so however many there are, no more are drawn than
+/// the screen has room for.
+#[derive(Default)]
+pub(crate) struct Dots(HashSet<(i32, i32, [u8; 4])>);
+
+impl Dots {
+    pub(crate) fn add(&mut self, painter: &egui::Painter, at: egui::Pos2, color: egui::Color32) {
+        let spot = (
+            (at.x / DOT_PIXELS).floor() as i32,
+            (at.y / DOT_PIXELS).floor() as i32,
+            color.to_array(),
+        );
+        if self.0.insert(spot) {
+            painter.rect_filled(
+                egui::Rect::from_center_size(at, egui::Vec2::splat(DOT_PIXELS)),
+                0.0,
+                color,
+            );
+        }
     }
 }
 

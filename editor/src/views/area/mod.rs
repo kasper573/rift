@@ -56,13 +56,13 @@ use engine::systems::area::prop::PropDef;
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{self, AreaDef, AreaId, AreaModule, AreaModuleKind, Picture, Pictured};
 use engine::systems::npc::NpcDef;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, VariantArray};
 use ui::egui::{Color32, Pos2, Rect as ERect, Sense, Ui, Vec2};
 use ui::glyph::{self, Mark};
 
 use self::brush::{Brush, SculptMode, Stroke};
-use self::camera::{AreaCanvas, OrbitCamera};
+use self::camera::{AreaCanvas, OrbitCamera, StandingBox};
 use self::flags::{SceneFlags, SceneLevel};
 use self::overlays::{
     AreaLabels, overlay_bounds, overlay_contours, overlay_footprints, overlay_modules,
@@ -119,7 +119,9 @@ pub enum AreaAction {
     ReturnDoor(String),
 }
 
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, VariantArray, AsRefStr, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, VariantArray, AsRefStr, Deserialize, Serialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum AreaTool {
     #[default]
@@ -132,7 +134,7 @@ pub enum AreaTool {
 }
 
 /// What the view can draw over its picture.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AreaOverlay {
     Navmesh,
@@ -205,6 +207,8 @@ pub struct AreaViewState {
     cache: Option<SnapshotCache>,
     preview_places: HashMap<String, PreviewPlaces>,
     fitted: bool,
+    /// How far off the camera looks at the middle once it is fitted, when asked for.
+    looks_from: Option<Meters>,
 }
 
 impl AreaViewState {
@@ -219,6 +223,12 @@ impl AreaViewState {
     pub(crate) fn set_tool(&mut self, tool: AreaTool) {
         self.tool = tool;
         self.cancel_gesture();
+    }
+
+    /// Fits the camera anew, looking at the middle from `distance` off.
+    pub fn look_from(&mut self, distance: Meters) {
+        self.looks_from = Some(distance);
+        self.fitted = false;
     }
 
     pub fn toggle(&mut self, overlay: AreaOverlay) {
@@ -439,7 +449,14 @@ fn fit_once(editor: &mut Editor, view_key: &str, snapshot: &AreaSnapshot) {
     if view.fitted {
         return;
     }
-    view.camera = remembered.unwrap_or_else(|| OrbitCamera::framing(snapshot.size().bounds()));
+    let framing = OrbitCamera::framing(snapshot.size().bounds());
+    view.camera = match view.looks_from.take() {
+        Some(distance) => OrbitCamera {
+            distance,
+            ..framing
+        },
+        None => remembered.unwrap_or(framing),
+    };
     view.fitted = true;
 }
 
@@ -808,8 +825,8 @@ impl Deref for AreaSnapshot {
 struct MapTarget {
     pointer: String,
     bounds: Rect<Meters>,
-    /// How tall the module stands over its bounds, for a pick to catch it above the ground.
-    height: f32,
+    /// What the module stands over its bounds, for a pick to catch it above the ground.
+    body: Option<StandingBox>,
     shown: bool,
     locked: bool,
 }
@@ -835,6 +852,8 @@ pub struct SnapshotParts {
     pub reader: Arc<FolderReader>,
     pub flags: Arc<SceneFlags>,
     pub modules: Arc<nodes::SceneModules>,
+    /// Whether the map draws each of `modules`, by its place among them.
+    pub shown_modules: Arc<[bool]>,
     pub in_place: Vec<placement::AreaPlacement>,
     pub placement_bounds: Arc<HashMap<String, Rect<Meters>>>,
     targets: Arc<[MapTarget]>,
@@ -978,10 +997,11 @@ impl AreaSnapshot {
 
     /// Where `module`, one of the bundle's own, takes room on the map.
     pub(crate) fn bounds_of(&self, module: &nodes::SceneModule) -> Option<Rect<Meters>> {
-        shapes::bounds(
-            module.module(),
-            self.placement_bounds.get(&module.pointer).copied(),
-        )
+        let placed = match module.module() {
+            AreaModule::Blueprint(_) => self.placement_bounds.get(&module.pointer).copied(),
+            _ => None,
+        };
+        shapes::bounds(module.module(), placed)
     }
 
     /// Whether the map lets the pointer at the module: not hidden, not locked, and not outside the
@@ -1013,15 +1033,12 @@ impl AreaSnapshot {
         if !self.in_place.is_empty() {
             return None;
         }
+        let ray = canvas.ray(screen);
         let standing = self
             .targets
             .iter()
-            .filter(|target| target.shown && !target.locked && target.height > 0.0)
-            .filter_map(|target| {
-                canvas
-                    .hits_box(screen, target.bounds, target.height)
-                    .map(|along| (along, target))
-            })
+            .filter(|target| target.shown && !target.locked)
+            .filter_map(|target| Some((target.body?.entered_by(ray)?, target)))
             .min_by(|a, b| a.0.total_cmp(&b.0))
             .map(|(_, target)| target.pointer.clone());
         standing.or_else(|| self.hit(ground?))
@@ -1039,10 +1056,10 @@ impl AreaSnapshot {
             .iter()
             .filter(|module| {
                 parts.contains(&module.pointer)
-                    || (self.pickable(&module.pointer)
-                        && folders
-                            .iter()
-                            .any(|folder| module.pointer.starts_with(folder)))
+                    || (folders
+                        .iter()
+                        .any(|folder| module.pointer.starts_with(folder))
+                        && self.pickable(&module.pointer))
             })
             .map(|module| module.pointer.clone())
             .collect()
@@ -1147,17 +1164,23 @@ fn snapshot_parts(
         .iter()
         .filter(|module| is_selectable(module.module()))
         .filter_map(|module| {
+            let bounds = shapes::bounds(
+                module.module(),
+                placement_bounds.get(&module.pointer).copied(),
+            )?;
+            let height = standing_height(content, &reader, module.module());
             Some(MapTarget {
-                bounds: shapes::bounds(
-                    module.module(),
-                    placement_bounds.get(&module.pointer).copied(),
-                )?,
-                height: standing_height(content, &reader, module.module()),
+                bounds,
+                body: (height > 0.0).then(|| StandingBox::on(&picture.area, bounds, height)),
                 shown: !flags.hidden(&module.pointer),
                 locked: flags.locked(&module.pointer),
                 pointer: module.pointer.clone(),
             })
         })
+        .collect();
+    let shown_modules = modules
+        .iter()
+        .map(|module| !flags.hidden(&module.pointer))
         .collect();
     static MADE: AtomicU64 = AtomicU64::new(0);
     Some(SnapshotParts {
@@ -1165,6 +1188,7 @@ fn snapshot_parts(
         pictured,
         picture,
         modules: Arc::new(modules),
+        shown_modules,
         def,
         reader,
         flags: Arc::new(flags),

@@ -1,56 +1,52 @@
 //! What stands in a world for an area: its ground as coloured meshes of its chunks, the covers
-//! its terrains grow, its props as scenes on the ground, its point lights, its sun, the sky its
-//! sun lights and the air over it, every one a child of one root. The client stands the area the
-//! player is in; the editor stands the area it edits, on render layers of its own, and both light
-//! it alike for the hour. The ground stands whole, finer the nearer the view, and the covers,
-//! props and lights stand within the view's reach alone, a few a frame through `SceneryPlugin`
-//! as the view moves, so an area costs what the view takes in, however far it stretches.
+//! its terrains grow, its props on the ground, its point lights, its sun, the sky its sun lights
+//! and the air over it, every one a child of one root. The client stands the area the player is
+//! in; the editor stands the area it edits, on render layers of its own, and both light it alike
+//! for the hour. The ground stands whole, finer the nearer the view, and the covers, props and
+//! lights stand within the view's reach alone, a few a frame through `SceneryPlugin` as the view
+//! moves, the props near the eye as scenes and the rest merged, so an area costs what the view
+//! takes in, however far it stretches.
+
+mod covers;
+mod props;
+mod regions;
+
+pub use props::prop_transform;
+
+use covers::Covers;
+use props::Props;
+use regions::Regions;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
 use std::sync::Arc;
 
 use bevy::app::Propagate;
-use bevy::camera::primitives::MeshAabb;
 use bevy::camera::visibility::RenderLayers;
-use bevy::ecs::system::SystemParam;
-use bevy::gltf::Gltf;
-use bevy::light::NotShadowCaster;
 use bevy::light::atmosphere::ScatteringMedium;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::tasks::futures::check_ready;
 use bevy::tasks::{IoTaskPool, Task};
-use bevy::world_serialization::WorldInstanceReady;
 
 use super::lighting::DomeLook;
 use super::prop::PropId;
-use super::terrain::{CoverPiece, PieceShape};
-use super::{Area, Lighting, PointLightDef, PropPlacement};
-use crate::core::assets;
-use crate::core::content::media::GltfInfos;
+use super::terrain::PieceShape;
+use super::{Area, Lighting, PointLightDef};
 use crate::core::content::{Content, FileHash, FileHashes};
-use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::ground::{Heightfield, OVERVIEW_STRIDE, PaintMap, SAMPLES_PER_METER, TileAt};
 use crate::core::math::{Pos, Rect, Rng, Size};
-use crate::core::render::camera::{View, WorldPicture, ground_pos};
+use crate::core::render::camera::{View, WorldPicture};
 use crate::core::render::present::AreaGrade;
 use crate::core::render::world::clouds::{self, CloudSheet};
-use crate::core::render::world::cover;
-use crate::core::render::world::cover::CoverMaterial;
-use crate::core::render::world::fade::Fades;
 use crate::core::render::world::lights::{self, Flicker};
-use crate::core::render::world::lod::{Levels, Simplifier};
-use crate::core::render::world::material::{MaterialLook, MaterialLooks, Surfaces};
 use crate::core::render::world::sky::{self, Daylight, SunLight};
 use crate::core::render::world::terrain::{self, GroundLayer, GroundMaterial};
 use crate::core::render::{Look, camera, world_point};
 use crate::core::spatial::SpatialIndex;
-use crate::core::units::{MeterSize, Meters, Radians, Seconds};
-use crate::core::vfx::ParamFill;
+use crate::core::units::{MeterSize, Meters};
 use crate::core::vfx::cover::Climate;
-use crate::core::vfx::render::{self as vfx_render, Run, SiteFrame};
-use crate::core::vfx::shader::Stage;
+use crate::core::vfx::render as vfx_render;
 use crate::core::vfx::sky::{self as sky_vfx, Heavens, SkyMaterial};
 use crate::core::vfx::uniform::{ParamsUniform, SiteUniform, WeatherImage};
 
@@ -75,7 +71,7 @@ impl Plugin for SceneryPlugin {
     fn build(&self, app: &mut App) {
         app.insert_resource(Paced(self.paced))
             .add_systems(Update, stream)
-            .add_observer(level_ready_scene);
+            .add_observer(props::level_ready_scene);
     }
 }
 
@@ -129,20 +125,8 @@ pub fn spawn(
             .and_then(|look| spawn_dome(world, content, look, root));
     }
     let terrain = spawn_terrain(world, content, area, &look, root);
-    let covers = cover_layers(world, content, area);
-    let mut props = SpatialIndex::new(PLACEMENT_CELL);
-    props.refile_spots(area.props.iter().map(|placed| placed.at));
-    let models = content.built::<GltfInfos>();
-    let prop_extents = area
-        .props
-        .iter()
-        .map(|placed| {
-            let bounds = models.0.get(&placed.prop.get(content).model.path())?.bounds;
-            Some(Meters(
-                (bounds.max - bounds.min).max_element() * placed.scale,
-            ))
-        })
-        .collect();
+    let props = Props::new(content, area);
+    let covers = Covers::new(world, content, area);
     let mut lights = SpatialIndex::new(PLACEMENT_CELL);
     lights.refile_spots(area.lights.iter().map(|light| light.at));
     world.entity_mut(root).insert(Streaming {
@@ -151,9 +135,9 @@ pub fn spawn(
         heights: area.heights.clone(),
         paint: area.paint.clone(),
         terrain,
+        regions: Regions::of(area),
         covers,
         props,
-        prop_extents,
         lights,
         view: None,
         stood: Stood::default(),
@@ -276,6 +260,11 @@ pub fn standing(world: &mut World) -> bool {
         .any(|streaming| !streaming.settled)
 }
 
+/// How many sceneries stand.
+pub fn sceneries(world: &mut World) -> usize {
+    world.query::<&Streaming>().iter(world).count()
+}
+
 /// What an area's scenery stands as the view moves: the area and what it's drawn from, where the
 /// view is, and what stands now, by what it stands for.
 #[derive(Component)]
@@ -285,10 +274,9 @@ struct Streaming {
     heights: Heightfield,
     paint: PaintMap,
     terrain: Entity,
-    covers: Vec<CoverLayer>,
-    props: SpatialIndex,
-    /// The most each placed prop measures across, by its index, where its model says.
-    prop_extents: Vec<Option<Meters>>,
+    regions: Regions,
+    covers: Covers,
+    props: Props,
     lights: SpatialIndex,
     view: Option<Seen>,
     stood: Stood,
@@ -311,37 +299,7 @@ struct Seen {
 #[derive(Default)]
 struct Stood {
     ground: HashMap<Node, Entity>,
-    /// Each chunk of a cover's piece looked at, with what stands of it: none where it holds
-    /// nothing of the piece.
-    covers: HashMap<(usize, usize, (u32, u32)), Option<Entity>>,
-    props: HashMap<usize, Entity>,
     lights: HashMap<usize, Entity>,
-}
-
-/// A cover a terrain grows, ready to stand chunk by chunk: its slot among the area's terrains, its
-/// pieces, the material its sheets and blades are drawn with, and the cover's seed.
-struct CoverLayer {
-    slot: usize,
-    seed: u64,
-    sheet_level: Option<f32>,
-    ground_color: LinearRgba,
-    pieces: Vec<LayerPiece>,
-    blended: Handle<CoverMaterial>,
-}
-
-/// A piece of a cover as its layer stands it: its shape (none for the sheet) and how it is
-/// spread, the most a copy of it measures across where that is known, and for a prop the model it
-/// strews and the material its copies are drawn with.
-struct LayerPiece {
-    shape: Option<CoverPiece>,
-    extent: Option<Meters>,
-    spread: cover::Spread,
-    strewn: Option<Strewn>,
-}
-
-struct Strewn {
-    gltf: Handle<Gltf>,
-    material: Handle<CoverMaterial>,
 }
 
 /// A chunk of the ground at a level of detail: the node of the quadtree over the samples it is,
@@ -360,7 +318,8 @@ const SPLIT_WITHIN: f32 = 1.5;
 /// The level from which a chunk's stride is the overview's, so it stands from the overview alone;
 /// a finer chunk waits for the tiles of ground under it.
 const OVERVIEW_LEVEL: u32 = OVERVIEW_STRIDE.trailing_zeros();
-/// How placements are filed to be found near the view.
+/// How placements are filed to be found near the view, and the side of the leaves of the
+/// quadtree the props stand over.
 const PLACEMENT_CELL: Meters = Meters(32.0);
 /// How far past its reach the view keeps what stands, so pacing back and forth over the edge
 /// stands nothing twice.
@@ -371,6 +330,7 @@ const CHUNKS_PER_FRAME: usize = 4;
 const COVERS_PER_FRAME: usize = 16;
 const PROPS_PER_FRAME: usize = 16;
 const FRESH_MODELS_PER_FRAME: usize = 1;
+const MERGES_PER_FRAME: usize = 4;
 
 fn stream(world: &mut World) {
     let roots: Vec<Entity> = world
@@ -396,9 +356,16 @@ fn stream(world: &mut World) {
         let mut budget = Budget::new(framed);
         stream_ground(world, &mut streaming, at, &mut budget);
         share_pictures(world, &streaming);
-        stream_covers(world, &mut streaming, root, seen, &mut budget);
-        stream_props(world, &mut streaming, root, seen, &mut budget);
-        level_props(world, &streaming, &seen.view);
+        let cut = streaming.regions.cut(&streaming.heights, seen);
+        let props_stand = props::stand(world, &mut streaming, root, seen, &cut, &mut budget);
+        let covers_stand = covers::stand(world, &mut streaming, root, seen, &cut, &mut budget);
+        if props_stand && covers_stand {
+            props::clear(world, &mut streaming, seen, &cut);
+            covers::clear(world, &mut streaming, seen, &cut);
+        } else {
+            budget.defer();
+        }
+        props::level_props(world, &streaming, &seen.view);
         stream_lights(world, &mut streaming, root, at, reach, keep);
         streaming.settled = !budget.spent;
         streaming.stood_for = streaming.settled.then_some(seen);
@@ -413,6 +380,7 @@ struct Budget {
     covers: usize,
     props: usize,
     fresh: usize,
+    merges: usize,
     /// Whether the frame left something to stand.
     spent: bool,
 }
@@ -425,8 +393,14 @@ impl Budget {
             covers: COVERS_PER_FRAME,
             props: PROPS_PER_FRAME,
             fresh: FRESH_MODELS_PER_FRAME,
+            merges: MERGES_PER_FRAME,
             spent: false,
         }
+    }
+
+    /// Leaves something to stand on a later frame, as it waits on what is being made or loaded.
+    fn defer(&mut self) {
+        self.spent = true;
     }
 
     fn take(&mut self, left: fn(&mut Budget) -> &mut usize) -> bool {
@@ -674,277 +648,6 @@ fn distance_to(bounds: Rect<Meters>, at: Pos<Meters>) -> f32 {
     (dx * dx + dy * dy).sqrt()
 }
 
-fn stream_covers(
-    world: &mut World,
-    streaming: &mut Streaming,
-    root: Entity,
-    seen: Seen,
-    budget: &mut Budget,
-) {
-    let Seen { at, reach, view } = seen;
-    let (columns, rows) = streaming.paint.pixels();
-    let chunk_side = cover::CHUNK_CELLS as f32 / SAMPLES_PER_METER as f32;
-    let chunk_bounds = |chunk: (u32, u32)| {
-        Rect::new(
-            PaintMap::pixel_pos(chunk.0 * cover::CHUNK_CELLS, chunk.1 * cover::CHUNK_CELLS),
-            Size::new(chunk_side, chunk_side),
-        )
-    };
-    let eye = view.eye();
-    let mut eye_distances: HashMap<(u32, u32), Meters> = HashMap::default();
-    let mut from_eye = |chunk: (u32, u32)| {
-        *eye_distances.entry(chunk).or_insert_with(|| {
-            let bounds = chunk_bounds(chunk);
-            let across = distance_to(bounds, ground_pos(eye));
-            let below = eye.y - streaming.heights.height_at(bounds.center()).0;
-            Meters(across.hypot(below))
-        })
-    };
-    let shown: Vec<Vec<Option<Meters>>> = streaming
-        .covers
-        .iter()
-        .map(|layer| {
-            layer
-                .pieces
-                .iter()
-                .map(|piece| piece.extent.map(|extent| view.shown_within(extent)))
-                .collect()
-        })
-        .collect();
-    let mut out_of_sight = |(layer, piece, chunk): (usize, usize, (u32, u32)), share: f32| {
-        distance_to(chunk_bounds(chunk), at) > reach.0 * share
-            || shown[layer][piece].is_some_and(|within| from_eye(chunk).0 > within.0 * share)
-    };
-    let gone: Vec<_> = streaming
-        .stood
-        .covers
-        .keys()
-        .filter(|key| out_of_sight(**key, KEEP_SHARE))
-        .copied()
-        .collect();
-    for key in gone {
-        if let Some(Some(entity)) = streaming.stood.covers.remove(&key) {
-            world.despawn(entity);
-        }
-    }
-    let first = (
-        ((at.x - reach.0) / chunk_side).floor().max(0.0) as u32,
-        ((at.y - reach.0) / chunk_side).floor().max(0.0) as u32,
-    );
-    let last = (
-        (((at.x + reach.0) / chunk_side).floor().max(0.0) as u32)
-            .min(columns.div_ceil(cover::CHUNK_CELLS).saturating_sub(1)),
-        (((at.y + reach.0) / chunk_side).floor().max(0.0) as u32)
-            .min(rows.div_ceil(cover::CHUNK_CELLS).saturating_sub(1)),
-    );
-    for layer in 0..streaming.covers.len() {
-        for piece in 0..streaming.covers[layer].pieces.len() {
-            for chunk_row in first.1..=last.1 {
-                for chunk_column in first.0..=last.0 {
-                    let chunk = (chunk_column, chunk_row);
-                    let key = (layer, piece, chunk);
-                    if streaming.stood.covers.contains_key(&key) || out_of_sight(key, 1.0) {
-                        continue;
-                    }
-                    if !budget.take(|budget| &mut budget.covers) {
-                        return;
-                    }
-                    let entity = spawn_cover_chunk(world, streaming, layer, piece, chunk, root);
-                    streaming.stood.covers.insert(key, entity);
-                }
-            }
-        }
-    }
-}
-
-fn stream_props(
-    world: &mut World,
-    streaming: &mut Streaming,
-    root: Entity,
-    seen: Seen,
-    budget: &mut Budget,
-) {
-    let Seen { at, reach, view } = seen;
-    let area = streaming.area.clone();
-    let eye = view.eye();
-    let out_of_sight = |index: usize, share: f32| {
-        let placed = &area.props[index];
-        far(placed.at, at, Meters(reach.0 * share))
-            || streaming.prop_extents[index].is_some_and(|extent| {
-                let ground = streaming.heights.height_at(placed.at).0;
-                let from_eye = (placed.at - ground_pos(eye)).length().hypot(eye.y - ground);
-                from_eye > view.shown_within(extent).0 * share
-            })
-    };
-    let gone: Vec<usize> = streaming
-        .stood
-        .props
-        .keys()
-        .filter(|&&index| out_of_sight(index, KEEP_SHARE))
-        .copied()
-        .collect();
-    for index in gone {
-        if let Some(entity) = streaming.stood.props.remove(&index) {
-            world.despawn(entity);
-        }
-    }
-    let mut near: Vec<usize> = streaming
-        .props
-        .near(at, reach)
-        .filter(|&index| !streaming.stood.props.contains_key(&index) && !out_of_sight(index, 1.0))
-        .collect();
-    near.sort_by(|&a, &b| {
-        let apart = |index: usize| (area.props[index].at - at).length();
-        apart(a).total_cmp(&apart(b))
-    });
-    for index in near {
-        if !budget.take(|budget| &mut budget.props) {
-            return;
-        }
-        let placed = &area.props[index];
-        if budget.framed {
-            let model = placed.prop.get(&streaming.content).model.path();
-            let scene = GltfAssetLabel::Scene(0).from_asset(model);
-            if world.resource::<AssetServer>().get_path_id(scene).is_none()
-                && !budget.take(|budget| &mut budget.fresh)
-            {
-                return;
-            }
-        }
-        let entity = spawn_prop(world, &streaming.content, &streaming.heights, placed, root);
-        streaming.stood.props.insert(index, entity);
-    }
-}
-
-/// The meshes of a scene the scenery stands, each with its stand-ins and how many times its size
-/// it is drawn.
-#[derive(Component)]
-struct Leveled(Vec<LeveledMesh>);
-
-struct LeveledMesh {
-    mesh: Entity,
-    full: Handle<Mesh>,
-    levels: Arc<Levels>,
-    scale: f32,
-}
-
-/// How a scene hangs together: each entity's parent, children and place under its parent.
-#[derive(SystemParam)]
-struct SceneTree<'w, 's> {
-    parents: Query<'w, 's, &'static ChildOf>,
-    children: Query<'w, 's, &'static Children>,
-    transforms: Query<'w, 's, &'static Transform>,
-}
-
-/// The sceneries standing, and the scenes they stand that keep stand-ins for their meshes.
-#[derive(SystemParam)]
-struct Standing<'w, 's> {
-    streams: Query<'w, 's, &'static Streaming>,
-    leveled: Query<'w, 's, &'static Leveled>,
-}
-
-/// A scene the scenery stands, each time it has spawned, keeps its meshes' stand-ins and draws
-/// each at the level the scenery's view takes it in at; a mesh it leveled before keeps the mesh
-/// it was spawned with as its own.
-fn level_ready_scene(
-    ready: On<WorldInstanceReady>,
-    tree: SceneTree,
-    standing: Standing,
-    mut drawn: Query<&mut Mesh3d>,
-    surfaces: Surfaces,
-    mut simplifier: Simplifier,
-    mut commands: Commands,
-) {
-    let SceneTree {
-        parents,
-        children,
-        transforms,
-    } = tree;
-    let scene = ready.entity;
-    let Some(streaming) = parents
-        .get(scene)
-        .ok()
-        .and_then(|parent| standing.streams.get(parent.parent()).ok())
-    else {
-        return;
-    };
-    let scale_of = |mesh: Entity| {
-        std::iter::successors(Some(mesh), |&at| {
-            (at != scene)
-                .then(|| parents.get(at).ok().map(ChildOf::parent))
-                .flatten()
-        })
-        .filter_map(|at| transforms.get(at).ok())
-        .map(|transform| transform.scale.max_element())
-        .product()
-    };
-    let before = standing.leveled.get(scene).ok();
-    let leveled = Leveled(
-        children
-            .iter_descendants(scene)
-            .filter(|&mesh| !surfaces.cut_out(mesh))
-            .filter_map(|mesh| {
-                let full = before
-                    .and_then(|before| before.0.iter().find(|leveled| leveled.mesh == mesh))
-                    .map_or_else(
-                        || drawn.get(mesh).ok().map(|drawn| drawn.0.clone()),
-                        |leveled| Some(leveled.full.clone()),
-                    )?;
-                let levels = simplifier.levels_of(&full)?;
-                Some(LeveledMesh {
-                    mesh,
-                    full,
-                    levels,
-                    scale: scale_of(mesh),
-                })
-            })
-            .collect(),
-    );
-    if let (Some(seen), Ok(at)) = (streaming.view, transforms.get(scene)) {
-        for (mesh, level) in levels_for(seen.view, at.translation, &leveled) {
-            if let Ok(mut drawn) = drawn.get_mut(mesh) {
-                drawn.set_if_neq(Mesh3d(level.clone()));
-            }
-        }
-    }
-    commands.entity(scene).insert(leveled);
-}
-
-/// Draws every standing prop's meshes at the level `view` takes them in at.
-fn level_props(world: &mut World, streaming: &Streaming, view: &View) {
-    let changes: Vec<(Entity, Handle<Mesh>)> = streaming
-        .stood
-        .props
-        .values()
-        .filter_map(|&prop| Some((world.get::<Leveled>(prop)?, world.get::<Transform>(prop)?)))
-        .flat_map(|(leveled, at)| levels_for(*view, at.translation, leveled))
-        .filter(|(mesh, level)| {
-            world
-                .get::<Mesh3d>(*mesh)
-                .is_some_and(|drawn| drawn.0 != **level)
-        })
-        .map(|(mesh, level)| (mesh, level.clone()))
-        .collect();
-    for (mesh, level) in changes {
-        if let Some(mut drawn) = world.get_mut::<Mesh3d>(mesh) {
-            drawn.0 = level;
-        }
-    }
-}
-
-/// The level each of a scene's meshes is drawn at, seen in `view` with the scene at `at`.
-fn levels_for(
-    view: View,
-    at: Vec3,
-    leveled: &Leveled,
-) -> impl Iterator<Item = (Entity, &Handle<Mesh>)> {
-    let distance = Meters(view.eye().distance(at));
-    leveled.0.iter().map(move |mesh| {
-        let level = mesh.levels.for_view(&view, distance, mesh.scale);
-        (mesh.mesh, level.unwrap_or(&mesh.full))
-    })
-}
-
 fn stream_lights(
     world: &mut World,
     streaming: &mut Streaming,
@@ -1173,15 +876,7 @@ pub fn lay_ground(world: &mut World, scenery: Scenery, heights: &Heightfield, pa
             }
         });
     }
-    let covers: Vec<Entity> = streaming
-        .stood
-        .covers
-        .drain()
-        .filter_map(|(_, entity)| entity)
-        .collect();
-    for entity in covers {
-        world.despawn(entity);
-    }
+    streaming.covers.ground_changed();
     world.entity_mut(scenery.root).insert(streaming);
 }
 
@@ -1225,276 +920,6 @@ fn ground_layers(content: &Content, area: &Area) -> Vec<GroundLayer> {
             }
         })
         .collect()
-}
-
-/// Each terrain with a cover, readied to lay it chunk by chunk as the view comes: the material
-/// its sheets and blades are drawn with, through the terrain's cover shader with the area as its
-/// site, and its pieces with how each is spread, a prop piece with its model loading.
-fn cover_layers(world: &mut World, content: &Content, area: &Area) -> Vec<CoverLayer> {
-    let bounds = area.size.bounds();
-    let site = PlacedShape {
-        at: Pos::new(
-            bounds.origin.x + bounds.size.width / 2.0,
-            bounds.origin.y + bounds.size.height / 2.0,
-        ),
-        facing: Radians::default(),
-        shape: Shape::Rect {
-            width: Meters(bounds.size.width),
-            height: Meters(bounds.size.height),
-        },
-    };
-    let models = content.built::<GltfInfos>();
-    let prop_bounds = |prop: PropId| {
-        let bounds = models.0.get(&prop.get(content).model.path())?.bounds;
-        Some((bounds.max.x - bounds.min.x, bounds.max.z - bounds.min.z))
-    };
-    let extent = |shape: &PieceShape| match shape {
-        PieceShape::Blade { width, height } => Some(width.0.max(height.0)),
-        PieceShape::Prop { prop } => {
-            let bounds = models.0.get(&prop.get(content).model.path())?.bounds;
-            Some((bounds.max - bounds.min).max_element())
-        }
-    };
-    let mut layers = Vec::new();
-    for (slot, terrain) in area.terrains.iter().enumerate() {
-        let ground = terrain.get(content);
-        let Some(cover_def) = &ground.cover else {
-            continue;
-        };
-        let Some(shader) = vfx_render::compiled_shader(world, cover_def.shader) else {
-            continue;
-        };
-        let frame = SiteFrame::of_area(&site, |at| area.heights.height_at(at));
-        let run = Run {
-            progress: 0.0,
-            time: Seconds(0.0),
-        };
-        let params = ParamsUniform::pack(cover_def.shader.get(content), |name| {
-            match cover_def.params.get(name)? {
-                ParamFill::Value(value) => Some(*value),
-                ParamFill::Param { .. } => None,
-            }
-        });
-        let material = |world: &mut World, strewn: Option<&cover::Spread>| {
-            let weather = world.resource::<WeatherImage>().0.clone();
-            world
-                .resource_mut::<Assets<CoverMaterial>>()
-                .add(cover::material(
-                    frame.uniform(run, Stage::Cover),
-                    params,
-                    shader.clone(),
-                    weather,
-                    strewn,
-                ))
-        };
-        let blended = material(world, None);
-        let ground_color = ground.color.color().to_linear();
-        let sheet = cover_def.sheet.map(|_| LayerPiece {
-            shape: None,
-            extent: None,
-            spread: cover::Spread {
-                piece: 0,
-                per_square_meter: 0.0,
-                size: (1.0, 1.0),
-                color: (ground_color, ground_color),
-            },
-            strewn: None,
-        });
-        let pieces: Vec<LayerPiece> = sheet
-            .into_iter()
-            .chain(cover_def.pieces.iter().enumerate().map(|(index, piece)| {
-                let spread = cover::Spread {
-                    piece: index as u32,
-                    per_square_meter: piece.per_square_meter(piece.shape.base_area(prop_bounds)),
-                    size: (piece.size.min, piece.size.max),
-                    color: (
-                        piece.color.from.color().to_linear(),
-                        piece.color.to.color().to_linear(),
-                    ),
-                };
-                let strewn = match &piece.shape {
-                    PieceShape::Prop { prop } => Some(Strewn {
-                        gltf: assets::model(
-                            world.resource::<AssetServer>(),
-                            prop.get(content).model.path(),
-                        ),
-                        material: material(world, Some(&spread)),
-                    }),
-                    PieceShape::Blade { .. } => None,
-                };
-                LayerPiece {
-                    extent: extent(&piece.shape).map(|extent| Meters(extent * piece.size.max)),
-                    shape: Some(piece.clone()),
-                    spread,
-                    strewn,
-                }
-            }))
-            .collect();
-        layers.push(CoverLayer {
-            slot,
-            seed: cover_def.seed,
-            sheet_level: cover_def
-                .sheet
-                .and_then(|sheet| sheet.level)
-                .map(|level| level.0),
-            ground_color,
-            pieces,
-            blended,
-        });
-    }
-    layers
-}
-
-/// A chunk of a cover's piece, stood under `root`: its sheet or blades, or for a prop the copies
-/// it strews once the prop has loaded; none where the chunk holds nothing of the piece.
-fn spawn_cover_chunk(
-    world: &mut World,
-    streaming: &Streaming,
-    layer: usize,
-    piece: usize,
-    chunk: (u32, u32),
-    root: Entity,
-) -> Option<Entity> {
-    let layer = &streaming.covers[layer];
-    let (columns, rows) = streaming.paint.pixels();
-    let share = |column: u32, row: u32| {
-        if usize::from(streaming.paint.index(column, row)) == layer.slot {
-            1.0
-        } else {
-            0.0
-        }
-    };
-    let first = (chunk.0 * cover::CHUNK_CELLS, chunk.1 * cover::CHUNK_CELLS);
-    let patch = cover::Patch {
-        heights: &streaming.heights,
-        first,
-        columns: cover::CHUNK_CELLS.min(columns - first.0),
-        rows: cover::CHUNK_CELLS.min(rows - first.1),
-        share: &share,
-    };
-    let LayerPiece {
-        shape,
-        spread,
-        strewn,
-        ..
-    } = &layer.pieces[piece];
-    let seed = chunk_seed(
-        layer.seed,
-        [
-            layer.slot as u64,
-            u64::from(spread.piece),
-            u64::from(chunk.1),
-            u64::from(chunk.0),
-        ],
-    );
-    let mesh = match shape.as_ref().map(|piece| &piece.shape) {
-        None => cover::sheet(&patch, layer.sheet_level, layer.ground_color),
-        Some(PieceShape::Blade { width, height }) => cover::blades(
-            &patch,
-            &cover::BladeShape {
-                width: width.0,
-                height: height.0,
-            },
-            spread,
-            seed,
-        ),
-        Some(PieceShape::Prop { .. }) => {
-            let Strewn { gltf, material } = strewn.as_ref()?;
-            let places = cover::strew_places(&patch, spread, seed);
-            if places.is_empty() {
-                return None;
-            }
-            return Some(
-                world
-                    .spawn((
-                        cover::Strewing {
-                            gltf: gltf.clone(),
-                            places,
-                            material: material.clone(),
-                        },
-                        Transform::default(),
-                        Visibility::default(),
-                        ChildOf(root),
-                    ))
-                    .id(),
-            );
-        }
-    }?;
-    let bounds = mesh.get_aabb()?;
-    let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
-    Some(
-        world
-            .spawn((
-                Mesh3d(mesh),
-                MeshMaterial3d(layer.blended.clone()),
-                bounds,
-                NotShadowCaster,
-                ChildOf(root),
-            ))
-            .id(),
-    )
-}
-
-/// A seed of its own for every chunk of every piece, mixed from the cover's seed and where the
-/// chunk lies, so changing the cover's seed rescatters everything and nothing else repeats.
-fn chunk_seed(seed: u64, parts: [u64; 4]) -> u64 {
-    let mut mixed = seed ^ 0x9E37_79B9_7F4A_7C15;
-    for part in parts {
-        mixed ^= part.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        mixed ^= mixed >> 31;
-    }
-    mixed
-}
-
-/// The transform a prop placed at `placed` stands with on `heights`.
-pub fn prop_transform(heights: &Heightfield, placed: &PropPlacement) -> Transform {
-    Transform {
-        translation: world_point(placed.at, heights.height_at(placed.at) - placed.sunk),
-        rotation: Quat::from_rotation_y(-placed.yaw.radians().0),
-        scale: Vec3::splat(placed.scale),
-    }
-}
-
-fn spawn_prop(
-    world: &mut World,
-    content: &Content,
-    heights: &Heightfield,
-    placed: &PropPlacement,
-    root: Entity,
-) -> Entity {
-    let def = placed.prop.get(content);
-    let scene = assets::model_scene(world.resource::<AssetServer>(), def.model.path());
-    let looks = MaterialLooks(
-        def.materials
-            .iter()
-            .filter_map(|(name, material)| {
-                let material = material.get(content);
-                Some(MaterialLook {
-                    material: name.clone(),
-                    shader: vfx_render::compiled_shader(world, material.shader)?,
-                    params: ParamsUniform::pack(material.shader.get(content), |param| {
-                        material.params.get(param).copied()
-                    }),
-                    translucency: material.translucency,
-                })
-            })
-            .collect(),
-    );
-    let mut prop = world.spawn((
-        WorldAssetRoot(scene),
-        prop_transform(heights, placed),
-        looks,
-        ChildOf(root),
-    ));
-    if def.fade {
-        prop.insert(Fades::default());
-    }
-    if !def.shadow {
-        prop.insert(NotShadowCaster);
-    }
-    prop.id()
 }
 
 fn spawn_light(

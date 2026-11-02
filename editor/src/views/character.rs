@@ -33,7 +33,7 @@ use engine::systems::script::condition as script_condition;
 use engine::systems::script::{Place, RiftScripts};
 use engine::systems::skill::{HotbarEntry, HotbarSlot, Rank, SkillDef};
 use engine::systems::stat::StatKind;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, VariantArray};
 use ui::controls;
 use ui::egui::{Align, Layout, Ui, Vec2};
@@ -63,7 +63,9 @@ pub struct CharacterView {
     pub more_memories: bool,
 }
 
-#[derive(Clone, Copy, PartialEq, Eq, Default, Debug, Deserialize, VariantArray, AsRefStr)]
+#[derive(
+    Clone, Copy, PartialEq, Eq, Default, Debug, Deserialize, Serialize, VariantArray, AsRefStr,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CharacterSection {
     #[default]

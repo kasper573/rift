@@ -105,6 +105,34 @@ impl BenchDesktop {
         );
     }
 
+    /// Turns the mouse wheel `clicks` notches over the middle of the window of the client `pid`,
+    /// toward the player when positive and away when negative, as a player would.
+    pub fn scroll(&self, pid: u32, clicks: i32) {
+        let button = if clicks > 0 { "4" } else { "5" };
+        let (pid, x, y) = (
+            pid.to_string(),
+            (SCREEN.0 / 2).to_string(),
+            (SCREEN.1 / 2).to_string(),
+        );
+        let scrolled = Command::new("xdotool")
+            .args([
+                "search",
+                "--sync",
+                "--onlyvisible",
+                "--pid",
+                &pid,
+                "--name",
+                ".",
+            ])
+            .args(["mousemove", "--sync", "--window", "%1", &x, &y])
+            .args(["click", "--repeat", &clicks.unsigned_abs().to_string()])
+            .args(["--delay", "100", button])
+            .env("DISPLAY", &self.display)
+            .status()
+            .expect("xdotool runs: the bench turns the mouse wheel over the client");
+        assert!(scrolled.success(), "xdotool could not scroll the client");
+    }
+
     /// The environment that puts a client on this desktop.
     pub fn env(&self) -> [(&str, &str); 3] {
         [

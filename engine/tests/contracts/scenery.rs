@@ -6,6 +6,7 @@ use std::time::{Duration, Instant};
 use bevy::animation::AnimationPlugin;
 use bevy::asset::AssetPlugin;
 use bevy::camera::CameraProjection;
+use bevy::camera::primitives::Aabb;
 use bevy::camera::visibility::{RenderLayers, VisibilityPlugin, VisibleEntities};
 use bevy::ecs::entity_disabling::Disabled;
 use bevy::ecs::query::Allow;
@@ -19,6 +20,8 @@ use engine::core::content::Content;
 use engine::core::math::Pos;
 use engine::core::render::View;
 use engine::core::render::world::cover::CoverMaterial;
+use engine::core::render::world::material::WorldMaterial;
+use engine::core::render::world::terrain::GroundMaterial;
 use engine::core::render::world::{self, WorldScenePlugin};
 use engine::core::units::{Degrees, MeterSize, Meters};
 use engine::core::vfx::render::VfxMaterialsPlugin;
@@ -113,6 +116,7 @@ fn client(game: Game, folder: &Path) -> (App, Arc<Area>) {
     .init_asset::<ScatteringMedium>()
     .init_asset::<SkinnedMeshInverseBindposes>()
     .add_plugins((
+        bevy::pbr::PbrPlugin::default(),
         VfxMaterialsPlugin,
         WorldScenePlugin,
         scenery::SceneryPlugin { paced: false },
@@ -179,9 +183,9 @@ fn settle(app: &mut App, done: impl Fn(&mut App) -> bool) -> bool {
 }
 
 /// What stands of an area follows the view: its props and the copies its covers strew stand
-/// within the view's reach and go as the view leaves them behind, and its ground stands finer
-/// near the view than far from it, so a long field costs what the view takes in, not what the
-/// field holds.
+/// within the view's reach and go as the view leaves them behind, its ground stands finer near the
+/// view than far from it, and what the view takes in from afar stands merged into a few meshes, so
+/// a long field costs what the view takes in, not what the field holds.
 #[test]
 fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves() {
     let folder = tempfile::tempdir().expect("a scratch folder");
@@ -206,10 +210,10 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
     }));
     let west = held(&app);
     let (columns, rows) = area.heights.samples();
+    let ground = ground_vertices(&mut app);
     assert!(
-        west.vertices < (columns * rows) as usize,
-        "the ground stands coarser far from the view: {} vertices for {} samples",
-        west.vertices,
+        ground < (columns * rows) as usize,
+        "the ground stands coarser far from the view: {ground} vertices for {} samples",
         columns * rows
     );
     assert_eq!(
@@ -272,6 +276,82 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
         (0, 0),
         "from high above, neither the tufts nor the pebbles stand"
     );
+
+    // From high over the middle, taking in the whole field, everything stands merged: no tuft or
+    // pebble in the east stands on its own, while meshes over it hold them.
+    scenery::view_from(
+        app.world_mut(),
+        stood,
+        Pos::new(256.0, 8.0),
+        Meters(512.0),
+        overhead(Pos::new(256.0, 8.0), 300.0),
+    );
+    assert!(settle(&mut app, |app| {
+        !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
+    }));
+    assert_eq!(
+        (
+            tufts_standing(&mut app),
+            pebbles_between(&mut app, 256.0, 512.0)
+        ),
+        (0, 0),
+        "taking in the whole field, nothing east stands on its own"
+    );
+    assert!(
+        merged_over::<WorldMaterial>(&mut app, Vec3::new(492.0, 0.0, 8.0))
+            && merged_over::<CoverMaterial>(&mut app, Vec3::new(460.0, 0.0, 8.0)),
+        "the tufts and the pebbles stand merged"
+    );
+
+    scenery::view_from(
+        app.world_mut(),
+        stood,
+        Pos::new(496.0, 8.0),
+        reach,
+        overhead(Pos::new(496.0, 8.0), 10.0),
+    );
+    assert!(settle(&mut app, |app| {
+        !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
+    }));
+    assert_eq!(
+        (
+            tufts_standing(&mut app),
+            merged_over::<WorldMaterial>(&mut app, Vec3::new(492.0, 0.0, 8.0))
+        ),
+        (8, false),
+        "coming near, the tufts stand on their own again"
+    );
+}
+
+/// How many vertices the ground's chunks hold.
+fn ground_vertices(app: &mut App) -> usize {
+    let world = app.world_mut();
+    let chunks: Vec<Handle<Mesh>> = world
+        .query_filtered::<&Mesh3d, With<MeshMaterial3d<GroundMaterial>>>()
+        .iter(world)
+        .map(|mesh| mesh.0.clone())
+        .collect();
+    let meshes = world.resource::<Assets<Mesh>>();
+    chunks
+        .iter()
+        .filter_map(|chunk| meshes.get(chunk))
+        .map(Mesh::count_vertices)
+        .sum()
+}
+
+/// Whether a mesh drawn in `M` standing at the world's origin, as merged meshes stand, holds what
+/// stands over `at`.
+fn merged_over<M: Material>(app: &mut App, at: Vec3) -> bool {
+    let world = app.world_mut();
+    world
+        .query_filtered::<(&Aabb, &Transform), With<MeshMaterial3d<M>>>()
+        .iter(world)
+        .any(|(bounds, placed)| {
+            let (low, high) = (Vec3::from(bounds.min()), Vec3::from(bounds.max()));
+            placed.translation == Vec3::ZERO
+                && (low.x..=high.x).contains(&at.x)
+                && (low.z..=high.z).contains(&at.z)
+        })
 }
 
 /// A view of 1280 by 720 pixels looking straight down on `at` from `height` metres up, through a

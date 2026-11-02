@@ -68,7 +68,7 @@ archives platform binaries="target/dist" out="target/archives":
     done
 
 # Players are congested (all on the spawn point, one shared view) by default; `--spread` spreads them.
-[doc("The server's capacity on a generated game, or on GAME followed by the client's frame rate and memory.")]
+[doc("The server's capacity on a generated game, or on GAME followed by the client's and the editor's frame rates and memory.")]
 bench *args: dist
     target/dist/rift bench {{args}}
 

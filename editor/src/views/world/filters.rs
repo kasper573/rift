@@ -7,7 +7,7 @@ use engine::systems::item::ItemDef;
 use engine::systems::npc::NpcDef;
 use engine::systems::quest::QuestDef;
 use engine::systems::shop::ShopDef;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use strum::VariantArray;
 
@@ -110,7 +110,9 @@ pub(crate) fn tag_line(sources: &[AtlasSource]) -> String {
         .join(" · ")
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, VariantArray, Deserialize)]
+#[derive(
+    Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, VariantArray, Deserialize, Serialize,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum ColorTable {
     Npc,
@@ -132,7 +134,7 @@ impl ColorTable {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct ColorField {
     pub table: ColorTable,
     pub path: Vec<String>,

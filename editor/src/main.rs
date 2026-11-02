@@ -29,7 +29,8 @@ struct Options {
     /// Keeps settings, journal and import records here instead of in the user's folder.
     #[arg(long, value_name = "PATH")]
     user_folder: Option<PathBuf>,
-    /// Writes a line per frame: frame ms, ui ms, the active tab, entities, images, meshes.
+    /// Writes a line of JSON per frame: how long it took, the active tab, what the world holds and
+    /// how its scenery stands.
     #[arg(long, value_name = "PATH")]
     frame_log: Option<PathBuf>,
     /// Prints the build and exits.

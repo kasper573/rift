@@ -22,7 +22,7 @@ use std::sync::Arc;
 use engine::core::content::Content;
 use engine::core::content::gltf::{ClipKeys, NodeTree};
 use engine::systems::actor::skeleton::{SkeletonDef, SkeletonId};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use ui::chip;
 use ui::egui::{self, Ui};
 
@@ -49,7 +49,7 @@ pub struct PosedClip {
 /// A stage clip as a key: what it plays and through which pairs.
 type StageKey = (String, usize, Option<Vec<(String, String)>>);
 
-#[derive(Clone, Copy, PartialEq, Eq, Default, Debug, Deserialize)]
+#[derive(Clone, Copy, PartialEq, Eq, Default, Debug, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum SkeletonPage {
     #[default]

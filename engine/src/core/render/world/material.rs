@@ -16,12 +16,13 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{
     AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
 };
-use bevy::shader::{Shader, ShaderRef};
+use bevy::shader::{Shader, ShaderDefVal, ShaderRef};
 use bevy::world_serialization::WorldInstanceReady;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use super::merged;
 use crate::core::render::Look;
 use crate::core::vfx::shader::PARAMS_BYTES;
 use crate::core::vfx::uniform::{ParamsUniform, SiteUniform, VfxShaderKey, WeatherImage};
@@ -116,26 +117,35 @@ impl MaterialExtension for WorldLook {
         embedded("fade_prepass.wesl")
     }
 
+    /// The game's shader draws a mesh merged of many props from where each vertex says its piece
+    /// stands, at shader locations past every one bevy's own meshes use.
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
         descriptor: &mut RenderPipelineDescriptor,
-        _layout: &MeshVertexBufferLayoutRef,
+        layout: &MeshVertexBufferLayoutRef,
         key: MaterialExtensionKey<WorldLook>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         let WorldLookKey { shader } = key.bind_group_data;
-        if let Some(shader) = shader {
-            let shader = shader.handle();
-            descriptor.vertex.shader = shader.clone();
-            descriptor
-                .vertex
-                .shader_defs
-                .push("VERTEX_OUTPUT_INSTANCE_INDEX".into());
-            if let Some(fragment) = descriptor.fragment.as_mut() {
-                fragment.shader = shader;
-                fragment
-                    .shader_defs
-                    .push("VERTEX_OUTPUT_INSTANCE_INDEX".into());
-            }
+        let Some(shader) = shader else {
+            return Ok(());
+        };
+        let mut defs: Vec<ShaderDefVal> = vec!["VERTEX_OUTPUT_INSTANCE_INDEX".into()];
+        if layout.0.contains(merged::ATTRIBUTE_PIECE_ORIGIN) {
+            let pieces = layout.0.get_layout(&[
+                merged::ATTRIBUTE_PIECE_ORIGIN.at_shader_location(14),
+                merged::ATTRIBUTE_PIECE_TURN.at_shader_location(15),
+            ])?;
+            descriptor.vertex.buffers[0]
+                .attributes
+                .extend(pieces.attributes);
+            defs.push("MERGED".into());
+        }
+        let shader = shader.handle();
+        descriptor.vertex.shader = shader.clone();
+        descriptor.vertex.shader_defs.extend(defs.iter().cloned());
+        if let Some(fragment) = descriptor.fragment.as_mut() {
+            fragment.shader = shader;
+            fragment.shader_defs.extend(defs);
         }
         Ok(())
     }
@@ -167,8 +177,13 @@ impl Surfaces<'_, '_> {
                 .and_then(|material| self.standard.get(&material.0))
                 .map(|material| world_alpha(material.alpha_mode))
         };
-        matches!(dressed.or_else(loaded), Some(AlphaMode::Mask(cutoff)) if cutoff > 0.0)
+        dressed.or_else(loaded).is_some_and(cuts_out)
     }
+}
+
+/// Whether a material of `alpha` cuts its shape out of its texture, as foliage does.
+fn cuts_out(alpha: AlphaMode) -> bool {
+    matches!(alpha, AlphaMode::Mask(cutoff) if cutoff > 0.0)
 }
 
 fn world_alpha(alpha: AlphaMode) -> AlphaMode {
@@ -285,7 +300,7 @@ pub(super) struct Wardrobe<'w> {
 impl Wardrobe<'_> {
     /// The world material standing in for `standard` under `look`, which every mesh with that
     /// standard material and look shares.
-    fn material_for(
+    pub(super) fn material_for(
         &mut self,
         standard: &Handle<StandardMaterial>,
         look: Option<&MaterialLook>,
@@ -318,6 +333,13 @@ impl Wardrobe<'_> {
                 .or_insert_with(|| self.materials.add(make(base)))
                 .clone(),
         )
+    }
+
+    /// Whether a mesh drawn in `material` is cut out of its texture, as foliage is.
+    pub(super) fn cuts_out(&self, material: &Handle<WorldMaterial>) -> bool {
+        self.materials
+            .get(material)
+            .is_some_and(|material| cuts_out(material.base.alpha_mode))
     }
 }
 

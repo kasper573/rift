@@ -55,8 +55,8 @@ rift format <game>                   # rewrites every file that doesn't read as 
 rift ask <game>                      # the probe's questions about the game itself, without a client
 rift render area <game> <shot> <out> # a picture of an area, drawn off screen through the world's own camera
 rift bench                           # the server's capacity, on a large game generated in code
-rift bench <game>                    # …on the game, then the desktop client's frame rate and memory (Linux)
-rift bench <game> --only memory      # …only the parts named: server, client, memory
+rift bench <game>                    # …on the game, then the client's and the editor's frame rates and memory (Linux)
+rift bench <game> --only memory      # …only the parts named: server, client, editor, memory
 rift bench <game> --only scale       # …the spawn area grown side by side, against as many areas: run only when named
 rift loadtest --http <url> --ws <url> [count]
 rift profile --out <dir> [game]      # game-server-profiling under load, sampled by perf (Linux)
@@ -68,7 +68,8 @@ rift schema server                   # …of what a game server prints once read
 game's first test character, staging each scene on the server. The client plays on a desktop of the
 bench's own: a headless `weston` screen it draws on through `Xwayland`, its window seated there by
 `xdotool`, and a silent sink on a PulseAudio-compatible sound server (`pactl`). Its frame rate is then its own, and nothing reaches the
-machine's display or speakers.
+machine's display or speakers. The editor plays on such a desktop too: it opens each of the game's
+areas, seen whole and close up, and its frame rate is taken once all the view takes in stands.
 
 ## A game is a folder
 

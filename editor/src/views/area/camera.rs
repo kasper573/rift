@@ -32,6 +32,9 @@ const FRAME_MARGIN: f32 = 1.15;
 /// the ground than the terrain bends, and no closer on the screen than the bend still shows.
 const LINE_STEP: f32 = 0.5;
 const LINE_STEP_PIXELS: f32 = 4.0;
+/// How long a ground line must show before it bends: a shorter one runs straight between its ends,
+/// as the terrain under it bends it by less than shows.
+const BEND_PIXELS: f32 = 32.0;
 
 /// A camera looking at a point of the ground from a yaw, a pitch and a distance.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -229,6 +232,27 @@ impl AreaCanvas {
         1.0 / self.camera.metres_per_pixel(self.screen.height())
     }
 
+    /// Where the middle of a rectangle of ground shows on the screen, and about how many pixels
+    /// across the rectangle shows there; none behind the camera.
+    pub fn glance(&self, ground: Rect<Meters>) -> Option<(Pos2, f32)> {
+        let middle = ground.center();
+        let at = world_point(middle, self.area.heights.height_at(middle));
+        let window = self.view.project(at)?;
+        let from_eye = Meters(self.view.eye().distance(at));
+        let across =
+            ground.size.width.max(ground.size.height) * self.view.pixels_per_meter(from_eye);
+        Some((
+            self.screen.min + ui::egui::Vec2::new(window.x, window.y),
+            across,
+        ))
+    }
+
+    /// Whether any of a shape `across` pixels wide around `at` on the screen is within the
+    /// camera's window.
+    pub fn shows(&self, at: Pos2, across: f32) -> bool {
+        self.screen.expand(across / 2.0).contains(at)
+    }
+
     /// Whether any of `ground` is within the camera's window.
     pub fn sees(&self, ground: Rect<Meters>) -> bool {
         self.screen.intersects(self.rect(ground))
@@ -258,20 +282,25 @@ impl AreaCanvas {
     /// A line through `points` on the ground, bent over the terrain.
     pub(crate) fn polyline(&self, points: &[Pos<Meters>]) -> Vec<Pos2> {
         let mut out = Vec::new();
+        let Some(&first) = points.first() else {
+            return out;
+        };
+        let mut start = self.to_screen(first);
+        out.push(start);
         for pair in points.windows(2) {
             let (from, to) = (pair[0], pair[1]);
-            let start = self.to_screen(from);
-            let on_ground = from.distance(to).0 / LINE_STEP;
-            let on_screen = start.distance(self.to_screen(to)) / LINE_STEP_PIXELS;
-            let steps = on_ground.min(on_screen).ceil().max(1.0) as usize;
-            out.push(start);
-            for step in 1..steps {
-                let t = step as f32 / steps as f32;
-                out.push(self.to_screen(from.lerp(to, t)));
+            let end = self.to_screen(to);
+            let across = start.distance(end);
+            if across >= BEND_PIXELS {
+                let on_ground = from.distance(to).0 / LINE_STEP;
+                let steps = on_ground.min(across / LINE_STEP_PIXELS).ceil().max(1.0) as usize;
+                for step in 1..steps {
+                    let t = step as f32 / steps as f32;
+                    out.push(self.to_screen(from.lerp(to, t)));
+                }
             }
-        }
-        if let Some(last) = points.last() {
-            out.push(self.to_screen(*last));
+            out.push(end);
+            start = end;
         }
         out
     }
@@ -305,23 +334,32 @@ impl AreaCanvas {
             })
             .collect()
     }
+}
 
-    /// Whether the ray through `screen` passes through the box standing on `bounds`, `height`
-    /// high over the ground, and how far along the ray it enters.
-    pub(crate) fn hits_box(&self, screen: Pos2, bounds: Rect<Meters>, height: f32) -> Option<f32> {
-        let ray = self.ray(screen);
-        let floor = engine::core::geometry::corners(bounds)
-            .iter()
-            .map(|corner| self.area.heights.height_at(*corner).0)
-            .fold(f32::INFINITY, f32::min);
-        let ceiling = engine::core::geometry::corners(bounds)
-            .iter()
-            .map(|corner| self.area.heights.height_at(*corner).0)
-            .fold(f32::NEG_INFINITY, f32::max)
-            + height;
-        let min = Vec3::new(bounds.min().x, floor, bounds.min().y);
-        let max = Vec3::new(bounds.max().x, ceiling, bounds.max().y);
-        ray_box(ray, min, max)
+/// A box standing on the terrain, as a pick finds a module's body above the ground.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct StandingBox {
+    min: Vec3,
+    max: Vec3,
+}
+
+impl StandingBox {
+    /// The box over `bounds`, from the lowest ground under its corners to `height` over the
+    /// highest.
+    pub fn on(area: &Area, bounds: Rect<Meters>, height: f32) -> StandingBox {
+        let grounds =
+            engine::core::geometry::corners(bounds).map(|corner| area.heights.height_at(corner).0);
+        let floor = grounds.iter().copied().fold(f32::INFINITY, f32::min);
+        let ceiling = grounds.iter().copied().fold(f32::NEG_INFINITY, f32::max) + height;
+        StandingBox {
+            min: Vec3::new(bounds.min().x, floor, bounds.min().y),
+            max: Vec3::new(bounds.max().x, ceiling, bounds.max().y),
+        }
+    }
+
+    /// How far along `ray` it enters the box, if it does.
+    pub fn entered_by(&self, ray: Ray3d) -> Option<f32> {
+        ray_box(ray, self.min, self.max)
     }
 }
 

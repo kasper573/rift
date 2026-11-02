@@ -71,12 +71,10 @@ pub(super) fn forget_dropped(
 }
 
 /// How far a stand-in's shape may stray from its mesh's, in pixels of the view it is seen in.
-const STRAY_PIXELS: f32 = 0.5;
+pub(super) const STRAY_PIXELS: f32 = 0.5;
 
-/// The stand-ins for `mesh`, halving its triangles each time while the simplifier still can,
-/// collapsing across the seams of its texture coordinates and normals as well, which a shape seen
-/// at under a pixel's stray doesn't show; none for a mesh that isn't a list of triangles over
-/// positions, that morphs, or whose data only the GPU holds.
+/// The stand-ins for `mesh`, as [`simplify`] makes them; none for a mesh that isn't a list of
+/// triangles over positions, that morphs, or whose data only the GPU holds.
 fn simplified(mesh: &Mesh) -> Vec<(Mesh, f32)> {
     let (Ok(Some(VertexAttributeValues::Float32x3(positions))), Ok(Some(indices)), Ok(false)) = (
         mesh.try_attribute_option(Mesh::ATTRIBUTE_POSITION),
@@ -89,6 +87,17 @@ fn simplified(mesh: &Mesh) -> Vec<(Mesh, f32)> {
         return Vec::new();
     }
     let indices: Vec<u32> = indices.iter().map(|index| index as u32).collect();
+    simplify(&indices, positions)
+        .into_iter()
+        .map(|(kept, strays)| (level(mesh, kept), strays))
+        .collect()
+}
+
+/// The triangles of the mesh `indices` draw over `positions`, coarser and coarser: halved each
+/// time while the simplifier still can, collapsing across the seams of the mesh's texture
+/// coordinates and normals as well, which a shape seen at under a pixel's stray doesn't show,
+/// each with how far its shape strays from the mesh's, in the mesh's own units.
+pub(super) fn simplify(indices: &[u32], positions: &[[f32; 3]]) -> Vec<(Vec<u32>, f32)> {
     let mut levels = Vec::new();
     let mut triangles = indices.len() / 3;
     loop {
@@ -98,7 +107,7 @@ fn simplified(mesh: &Mesh) -> Vec<(Mesh, f32)> {
         }
         let mut strays = 0.0;
         let kept = meshopt::simplify_decoder(
-            &indices,
+            indices,
             positions,
             target * 3,
             f32::MAX,
@@ -109,7 +118,7 @@ fn simplified(mesh: &Mesh) -> Vec<(Mesh, f32)> {
         if kept_triangles == 0 || kept_triangles * 4 > triangles * 3 {
             return levels;
         }
-        levels.push((level(mesh, kept), strays));
+        levels.push((kept, strays));
         triangles = kept_triangles;
     }
 }

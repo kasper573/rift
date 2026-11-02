@@ -24,7 +24,7 @@ use engine::systems::area::world_map::{
     AreaCard, MapRegion, Note, RegionColor, WorldMap, WorldMapDef,
 };
 use engine::systems::area::{AreaDef, AreaId};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use ui::egui::{Color32, Pos2, Rect, Ui, Vec2};
 
 use crate::app::Editor;
@@ -58,7 +58,7 @@ pub struct WorldView {
     drag: Option<interact::MapDrag>,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 pub struct MapRoute {
     pub from: String,
     pub to: String,
@@ -96,7 +96,7 @@ impl Default for MapLayers {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum MapPart {
     Card(String),

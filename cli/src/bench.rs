@@ -1,5 +1,6 @@
 mod client;
 mod desktop;
+mod editor;
 mod memory;
 mod play;
 mod playtest;
@@ -30,6 +31,8 @@ pub enum BenchPart {
     Server,
     /// The desktop client's frame rate.
     Client,
+    /// The editor's frame rate on every area, seen whole and close up.
+    Editor,
     /// Whether the client and the server hold their memory level as a player plays.
     Memory,
     /// How the server and the client fare as the spawn area grows, against as many areas holding
@@ -37,8 +40,8 @@ pub enum BenchPart {
     Scale,
 }
 
-/// The server bench on the crowd, or on `game` followed by the client and memory benches, or only
-/// the parts named. Fails naming what the memory bench saw grow.
+/// The server bench on the crowd, or on `game` followed by the client, editor and memory benches,
+/// or only the parts named. Fails naming what the memory bench saw grow.
 pub fn run(game: Option<&Path>, spread: bool, only: &[BenchPart]) -> Result<(), String> {
     let runs =
         |part| (only.is_empty() && !matches!(part, BenchPart::Scale)) || only.contains(&part);
@@ -49,7 +52,7 @@ pub fn run(game: Option<&Path>, spread: bool, only: &[BenchPart]) -> Result<(), 
     };
     match game {
         None if only.iter().any(|&part| part != BenchPart::Server) => {
-            Err("the client and memory benches play a game: name one".to_owned())
+            Err("the client, editor and memory benches play a game: name one".to_owned())
         }
         None => {
             let folder = tempfile::tempdir().expect("a folder to write the crowd into");
@@ -64,6 +67,9 @@ pub fn run(game: Option<&Path>, spread: bool, only: &[BenchPart]) -> Result<(), 
             }
             if runs(BenchPart::Client) {
                 client::run(game, &content);
+            }
+            if runs(BenchPart::Editor) {
+                editor::run(game, &content);
             }
             if runs(BenchPart::Scale) {
                 scale::run(game, &content);
