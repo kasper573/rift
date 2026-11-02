@@ -17,7 +17,9 @@ pub struct Pointed {
 /// Where the pointer points, while it is over the world rather than the interface.
 pub fn pointed(world: &mut World) -> Option<Pointed> {
     let ray = camera::cursor_ray(world)?;
-    let ground = world.resource::<GroundHeights>().hit(ray);
+    let ground = world
+        .get_resource::<GroundHeights>()
+        .and_then(|ground| ground.hit(ray));
     Some(Pointed { ray, ground })
 }
 

@@ -48,8 +48,8 @@ use crate::core::content::{
     fields_file, serial,
 };
 use crate::core::ground::{
-    GroundGrid, GroundSize, GroundValue, Heightfield, MAX_TERRAINS, MIN_SIDE, PaintMap, TILE_SIDE,
-    TileAt,
+    GroundGrid, GroundSize, GroundValue, HeightRange, Heightfield, MAX_TERRAINS, MIN_SIDE,
+    PaintMap, TILE_SIDE, TileAt,
 };
 use crate::core::math::{Offset, Pos, Rect, Size};
 use crate::core::spatial::SpatialIndex;
@@ -143,6 +143,8 @@ pub const PAINT_OVERVIEW: PartSpec = PartSpec::File {
 pub struct AreaDef {
     pub name: String,
     pub size: GroundSize,
+    /// The heights the ground's tiles span: changing it stretches the land with it.
+    pub height_range: HeightRange,
     /// How steep a slope still walks.
     pub max_slope: Degrees,
     /// The terrains the paint names by their index here: the first is the ground where nothing is
@@ -168,15 +170,20 @@ impl ContentFile for AreaDef {
             width: 16,
             height: 12,
         };
+        let height_range = HeightRange {
+            lowest: Meters(-8.0),
+            highest: Meters(16.0),
+        };
         Ok(AreaDef {
             name: near.name(),
             size,
+            height_range,
             max_slope: Degrees(38.0),
             terrains: vec![near.file()?],
             lighting: Lighting::day(),
             weather: Weather::breezy(),
             scene: Vec::new(),
-            heights: Heightfield::flat(size),
+            heights: Heightfield::flat(size, height_range),
             paint: PaintMap::plain(size),
         })
     }
@@ -184,6 +191,7 @@ impl ContentFile for AreaDef {
     fn check(&self, cx: &mut RowCheck) {
         cx.text("/name", &self.name, 1, 60);
         self.size.check("/size", MIN_SIDE, cx);
+        self.height_range.check("/height_range", cx);
         cx.range(
             "/max_slope",
             self.max_slope.0,
@@ -216,7 +224,7 @@ impl Bundle for AreaDef {
 
     fn read_parts(&mut self, parts: &mut Parts) {
         scene::read(&mut self.scene, &BTreeMap::new(), parts);
-        self.heights = Heightfield::flat(self.size);
+        self.heights = Heightfield::flat(self.size, self.height_range);
         self.paint = PaintMap::plain(self.size);
         read_ground(
             parts,
@@ -886,7 +894,7 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
                 size: def.size,
                 max_slope: UPRIGHT,
                 terrains: vec![home_terrain(content)?],
-                heights: Heightfield::flat(def.size),
+                heights: Heightfield::flat(def.size, home_range(content)?),
                 paint: PaintMap::plain(def.size),
                 lighting: Lighting::day(),
                 weather: Weather::breezy(),
@@ -901,7 +909,7 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
                 size: PROP_STAGE,
                 max_slope: UPRIGHT,
                 terrains: vec![home_terrain(content)?],
-                heights: Heightfield::flat(PROP_STAGE),
+                heights: Heightfield::flat(PROP_STAGE, home_range(content)?),
                 paint: PaintMap::plain(PROP_STAGE),
                 lighting: Lighting::day(),
                 weather: Weather::breezy(),
@@ -954,6 +962,12 @@ pub fn home_terrain(content: &Content) -> Option<TerrainId> {
                 .copied()
         });
     home.or_else(|| content.ids::<TerrainDef>().next())
+}
+
+/// The heights the game's first area spans, for a stage or a blueprint's canvas to stand within.
+fn home_range(content: &Content) -> Option<HeightRange> {
+    let spawn = content.built::<GameSettings>().initial_spawn;
+    Some(content.table::<AreaDef>().get(spawn.area)?.height_range)
 }
 
 pub fn of(world: &World, entity: Entity) -> Option<&Area> {

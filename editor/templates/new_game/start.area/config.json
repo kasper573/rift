@@ -4,6 +4,10 @@
     "width": 16,
     "height": 12
   },
+  "height_range": {
+    "lowest": -8.0,
+    "highest": 16.0
+  },
   "max_slope": 38.0,
   "terrains": [
     "grass.terrain.json"

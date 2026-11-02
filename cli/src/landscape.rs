@@ -9,7 +9,7 @@ use std::str::FromStr;
 use clap::Args;
 use engine::core::content::fresh::Nearby;
 use engine::core::content::{ContentFile, FolderReader};
-use engine::core::ground::{GroundSize, Heightfield, PaintMap};
+use engine::core::ground::{GroundSize, HeightRange, Heightfield, PaintMap};
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::units::Meters;
 use engine::systems::area::prop::{PropId, ScaleRange, Scatter};
@@ -147,7 +147,14 @@ pub fn run(game: &Path, area_path: &str, land: &Land) -> Result<(), String> {
         .map(|arg| PopulationSpec::resolve(arg, &reader))
         .collect::<Result<_, _>>()?;
 
-    area.heights = heights(area.size, land);
+    if land.relief <= 0.0 {
+        return Err(format!("a relief of {} m lays out no land", land.relief));
+    }
+    area.height_range = HeightRange {
+        lowest: Meters(0.0),
+        highest: Meters(land.relief),
+    };
+    area.heights = heights(area.size, area.height_range, land);
     area.paint = paint(area.size, &area.heights, land.terrains.len());
     area.scene = scatters
         .iter()
@@ -162,7 +169,7 @@ pub fn run(game: &Path, area_path: &str, land: &Land) -> Result<(), String> {
 }
 
 /// The ground from the noise, lifted and stretched to rise over the relief exactly.
-fn heights(size: GroundSize, land: &Land) -> Heightfield {
+fn heights(size: GroundSize, range: HeightRange, land: &Land) -> Heightfield {
     let noise = Fbm::<Perlin>::new(land.seed as u32);
     let (columns, rows) = size.samples();
     let raw: Vec<f32> = (0..rows)
@@ -178,7 +185,7 @@ fn heights(size: GroundSize, land: &Land) -> Heightfield {
     let low = raw.iter().copied().fold(f32::INFINITY, f32::min);
     let high = raw.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     let span = (high - low).max(f32::EPSILON);
-    Heightfield::from_fn(size, |column, row| {
+    Heightfield::from_fn(size, range, |column, row| {
         Meters((raw[(row * columns + column) as usize] - low) / span * land.relief)
     })
 }

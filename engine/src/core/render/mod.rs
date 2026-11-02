@@ -48,7 +48,6 @@ impl Plugin for WorldRenderPlugin {
         ))
         .init_resource::<Animator>()
         .init_resource::<CameraPreferences>()
-        .init_resource::<GroundHeights>()
         .init_resource::<present::ScreenGrade>()
         .init_resource::<present::AreaGrade>()
         .init_resource::<present::PresentScale>()

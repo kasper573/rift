@@ -10,7 +10,7 @@ use engine::core::content::{
     CONFIG_FILE, Content, ContentFile, ContentId, ContentRegistry, LoadReport, MemoryFolder,
     SETTINGS_FILE, Shape, content_path, name_of, table_of, version,
 };
-use engine::core::ground::{GroundSize, MIN_SIDE, PaintMap, SAMPLES_PER_METER};
+use engine::core::ground::{GroundSize, HeightRange, MIN_SIDE, PaintMap, SAMPLES_PER_METER};
 use engine::core::math::Rgb;
 use engine::core::render::{
     CameraFraming, ClearingLook, CloudLook, LightLook, Look, PictureGrade, SkyLook, SurfaceFinish,
@@ -69,6 +69,12 @@ pub const APEX: Millis = Millis(100.0);
 pub const WALK_PACE: MetersPerSec = MetersPerSec(Meters(1.0));
 pub const RUN_PACE: MetersPerSec = MetersPerSec(Meters(3.0));
 pub const SPRINT_PACE: MetersPerSec = MetersPerSec(Meters(6.0));
+
+/// The heights every declared area's ground spans.
+pub const HEIGHTS: HeightRange = HeightRange {
+    lowest: Meters(-8.0),
+    highest: Meters(16.0),
+};
 
 /// The skeleton every declared model wears unless the test names another.
 pub const BODY: &str = "body";
@@ -647,6 +653,7 @@ impl Game {
             json!({
                 "name": name,
                 "size": { "width": size.width, "height": size.height },
+                "height_range": HEIGHTS,
                 "max_slope": 38.0,
                 "terrains": [path("terrain", TURF), path("terrain", ROCK)],
                 "lighting": {

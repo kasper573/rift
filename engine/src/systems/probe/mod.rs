@@ -1285,7 +1285,9 @@ fn aim(world: &mut World, entity: Entity, at: Pos<Meters>, capsule: Capsule) -> 
         return at;
     };
     let ray = Ray3d::new(eye, direction);
-    let ground = world.resource::<GroundHeights>().hit(ray);
+    let ground = world
+        .get_resource::<GroundHeights>()
+        .and_then(|ground| ground.hit(ray));
     let pointed = Pointed { ray, ground };
     match (clicked(world, &pointed), ground) {
         (Some(clicked), Some(ground)) if clicked == entity => ground,

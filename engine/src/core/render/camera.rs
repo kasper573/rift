@@ -19,7 +19,7 @@ use bevy::window::PrimaryWindow;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::ground::{HIGHEST, Heightfield, LOWEST};
+use crate::core::ground::Heightfield;
 use crate::core::gui;
 use crate::core::math::{Pos, Rect, Rgb};
 use crate::core::render::video::VideoPreferences;
@@ -525,7 +525,7 @@ impl View {
 
 /// The ground on view: the shown area's heights and how far it reaches, for everything that stands
 /// on the ground or points at it.
-#[derive(Resource, Clone, Default)]
+#[derive(Resource, Clone)]
 pub struct GroundHeights {
     pub heights: Heightfield,
     pub bounds: Rect<Meters>,
@@ -552,8 +552,9 @@ pub fn ground_hit(heights: &Heightfield, bounds: Rect<Meters>, ray: Ray3d) -> Op
         let at = ground_pos(point);
         bounds.contains(at) && point.y <= heights.height_at(at).0
     };
-    let mut t = if origin.y > HIGHEST.0 && direction.y < 0.0 {
-        (HIGHEST.0 - origin.y) / direction.y
+    let range = heights.range();
+    let mut t = if origin.y > range.highest.0 && direction.y < 0.0 {
+        (range.highest.0 - origin.y) / direction.y
     } else {
         0.0
     };
@@ -564,7 +565,7 @@ pub fn ground_hit(heights: &Heightfield, bounds: Rect<Meters>, ray: Ray3d) -> Op
     while t < end {
         let next = t + MARCH_STEP;
         let point = origin + direction * next;
-        if point.y < LOWEST.0 && direction.y < 0.0 {
+        if point.y < range.lowest.0 && direction.y < 0.0 {
             return None;
         }
         if under(next) {
@@ -636,7 +637,7 @@ pub fn cursor_ray(world: &mut World) -> Option<Ray3d> {
 /// The ground under the pointer.
 pub fn cursor_ground(world: &mut World) -> Option<Pos<Meters>> {
     let ray = cursor_ray(world)?;
-    world.resource::<GroundHeights>().hit(ray)
+    world.get_resource::<GroundHeights>()?.hit(ray)
 }
 
 /// Where a point `height` above the ground at `at` shows in the window.

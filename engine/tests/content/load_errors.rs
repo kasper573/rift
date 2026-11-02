@@ -186,6 +186,28 @@ fn an_areas_terrain_parts_are_held_to_its_size_and_depth() {
         );
     }
 
+    // The heights an area spans hold ground level and some height besides.
+    for (lowest, highest, rule) in [
+        (1.0, 16.0, "above ground level"),
+        (-8.0, -1.0, "below ground level"),
+        (0.0, 0.0, "empty range"),
+    ] {
+        let report = game()
+            .area("cove", &Map::open(8, 8), json!([]))
+            .edit("area", "cove", |cove| {
+                cove["height_range"] = json!({ "lowest": lowest, "highest": highest });
+            })
+            .try_load()
+            .err()
+            .expect("refused");
+        assert!(
+            rules_in(&report, "cove.area/config.json")
+                .iter()
+                .any(|(found, _)| *found == rule),
+            "{lowest} to {highest} m: {report}"
+        );
+    }
+
     // A ground with tiles keeps an overview of them, and it must say what the tiles say.
     let size = GroundSize {
         width: 8,

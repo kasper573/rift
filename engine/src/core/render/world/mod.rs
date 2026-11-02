@@ -57,7 +57,6 @@ impl Plugin for WorldScenePlugin {
         .init_resource::<material::MaterialCache>()
         .init_resource::<cover::TexturedCovers>()
         .init_resource::<cover::CopyMeshes>()
-        .init_resource::<super::GroundHeights>()
         .add_observer(material::dress_scenes)
         .add_observer(mannequin::start)
         .add_observer(camera::finish_new_picture)
@@ -88,7 +87,10 @@ impl Plugin for WorldScenePlugin {
         )
         .add_systems(
             PostUpdate,
-            (decal::lay_decals, billboard::face_camera)
+            (
+                decal::lay_decals.run_if(resource_exists::<super::GroundHeights>),
+                billboard::face_camera,
+            )
                 .run_if(resource_exists::<CameraRig>)
                 .after(camera::place)
                 .before(bevy::transform::TransformSystems::Propagate),

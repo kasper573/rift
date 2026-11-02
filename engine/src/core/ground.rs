@@ -24,10 +24,6 @@ pub const MIN_SIDE: u32 = 8;
 /// The terrains one area's paint can name: a byte per half metre.
 pub const MAX_TERRAINS: usize = 256;
 pub const SAMPLES_PER_METER: u32 = 2;
-/// The heights a sample can hold, the two ends of its 16 bits; ground level lies on a step of
-/// its own, so flat ground stands at exactly nothing.
-pub const LOWEST: Meters = Meters(-8.0);
-pub const HIGHEST: Meters = Meters(16.0);
 /// The ground is cut into tiles this wide, a whole number of chunks, each a file of its own.
 pub const TILE_CHUNKS: u32 = 8;
 pub const TILE_SIDE: Meters = Meters(CHUNK_SIDE.0 * TILE_CHUNKS as f32);
@@ -36,8 +32,6 @@ pub const TILE_SIDE: Meters = Meters(CHUNK_SIDE.0 * TILE_CHUNKS as f32);
 pub const OVERVIEW_STRIDE: u32 = 8;
 
 const TILE_PIXELS: u32 = TILE_SIDE.0 as u32 * SAMPLES_PER_METER;
-const STEP: f32 = (HIGHEST.0 - LOWEST.0) / u16::MAX as f32;
-const GROUND_LEVEL: u16 = (-LOWEST.0 / STEP) as u16;
 
 /// A stretch of ground in whole metres, as an area's and a blueprint's canvas are measured.
 #[derive(JsonSchema, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -174,9 +168,69 @@ fn plain_number(text: &str) -> Option<u32> {
 }
 
 /// The height of the ground at every half metre of an area, as its `height/` tiles hold it:
-/// 16-bit grey from [`LOWEST`] to [`HIGHEST`]. Sample `(2x, 2y)` is the height at the centre of
-/// the metre cell `(x, y)`. Tiles share the samples on their seams.
+/// 16-bit grey across the area's [`HeightRange`]. Sample `(2x, 2y)` is the height at the centre
+/// of the metre cell `(x, y)`. Tiles share the samples on their seams.
 pub type Heightfield = GroundGrid<u16>;
+
+/// The heights the 16 bits of an area's height tiles span, bottom level to top: wide enough for
+/// its lowest and highest ground, as narrow as it allows for the finest steps. Ground level lies
+/// on a step of its own, so flat ground stands at exactly nothing.
+///
+/// By default it holds ground level alone, as a ground not read yet does.
+#[derive(JsonSchema, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HeightRange {
+    pub lowest: Meters,
+    pub highest: Meters,
+}
+
+impl HeightRange {
+    /// Refuses a range that doesn't hold ground level, or holds no height but it.
+    pub fn check(&self, pointer: &str, cx: &mut RowCheck) {
+        if self.lowest.0 > 0.0 {
+            cx.error(
+                format!("{pointer}/lowest"),
+                "above ground level",
+                self.lowest.0,
+                "meters at or below 0",
+            );
+        }
+        if self.highest.0 < 0.0 {
+            cx.error(
+                format!("{pointer}/highest"),
+                "below ground level",
+                self.highest.0,
+                "meters at or above 0",
+            );
+        }
+        if self.highest.0 <= self.lowest.0 {
+            cx.error(
+                pointer,
+                "empty range",
+                format!("{} to {} m", self.lowest.0, self.highest.0),
+                "a lowest height below the highest",
+            );
+        }
+    }
+
+    fn step(self) -> f32 {
+        (self.highest.0 - self.lowest.0) / u16::MAX as f32
+    }
+
+    fn ground_level(self) -> u16 {
+        (-self.lowest.0 / self.step()).round() as u16
+    }
+
+    fn level_of(self, height: Meters) -> u16 {
+        (height.0 / self.step() + self.ground_level() as f32)
+            .round()
+            .clamp(0.0, u16::MAX as f32) as u16
+    }
+
+    fn height_of(self, level: u16) -> Meters {
+        Meters((level as f32 - self.ground_level() as f32) * self.step())
+    }
+}
 
 /// Which terrain paints every half metre of an area, as its `paint/` tiles hold it: a byte per
 /// pixel, the index of the terrain in the area's list.
@@ -190,15 +244,24 @@ pub struct Share {
 }
 
 impl GroundGrid<u16> {
-    pub fn flat(size: GroundSize) -> Heightfield {
-        GroundGrid::blank(TileGrid::samples(size))
+    pub fn flat(size: GroundSize, range: HeightRange) -> Heightfield {
+        GroundGrid::blank(TileGrid::samples(size), range)
     }
 
-    /// A heightfield of `size` whose sample `(column, row)` is `height(column, row)`.
-    pub fn from_fn(size: GroundSize, height: impl Fn(u32, u32) -> Meters + Sync) -> Heightfield {
-        GroundGrid::filled(TileGrid::samples(size), |column, row| {
-            level_of(height(column, row))
+    /// A heightfield of `size` over `range` whose sample `(column, row)` is `height(column, row)`.
+    pub fn from_fn(
+        size: GroundSize,
+        range: HeightRange,
+        height: impl Fn(u32, u32) -> Meters + Sync,
+    ) -> Heightfield {
+        GroundGrid::filled(TileGrid::samples(size), range, |column, row| {
+            range.level_of(height(column, row))
         })
+    }
+
+    /// The heights the samples span.
+    pub fn range(&self) -> HeightRange {
+        self.scale
     }
 
     /// Samples across and down.
@@ -210,12 +273,13 @@ impl GroundGrid<u16> {
     /// the new edge is cut, and new ground is flat at the old edge's height.
     pub fn resized(&self, size: GroundSize) -> Heightfield {
         self.load_all();
-        Heightfield::from_fn(size, |column, row| self.sample(column, row))
+        Heightfield::from_fn(size, self.scale, |column, row| self.sample(column, row))
     }
 
     /// Sets sample `(column, row)` to `height`, kept within the range the file holds.
     pub fn set_sample(&mut self, column: u32, row: u32, height: Meters) {
-        self.put(column, row, level_of(height));
+        let level = self.scale.level_of(height);
+        self.put(column, row, level);
     }
 
     /// Where sample `(column, row)` lies on the ground.
@@ -230,7 +294,7 @@ impl GroundGrid<u16> {
     /// Sample `(column, row)`, the nearest past the edge; the overview's nearest where its tile
     /// isn't loaded.
     pub fn sample(&self, column: u32, row: u32) -> Meters {
-        height_of(self.value(column, row))
+        self.scale.height_of(self.value(column, row))
     }
 
     /// The ground's height at `at`, between the samples around it.
@@ -259,7 +323,8 @@ impl GroundGrid<u16> {
             size.height * SAMPLES_PER_METER + 1,
         );
         let step = 1.0 / SAMPLES_PER_METER as f32;
-        let height = |column: u32, row: u32| height_of(samples.at(column, row)).0;
+        let range = self.scale;
+        let height = |column: u32, row: u32| range.height_of(samples.at(column, row)).0;
         size.cells()
             .map(|cell| {
                 let (column, row) = (
@@ -297,12 +362,12 @@ impl GroundGrid<u16> {
 impl GroundGrid<u8> {
     /// All the first terrain.
     pub fn plain(size: GroundSize) -> PaintMap {
-        GroundGrid::blank(TileGrid::pixels(size))
+        GroundGrid::blank(TileGrid::pixels(size), ())
     }
 
     /// A paint of `size` whose pixel `(column, row)` is the terrain `index(column, row)`.
     pub fn from_fn(size: GroundSize, index: impl Fn(u32, u32) -> u8 + Sync) -> PaintMap {
-        GroundGrid::filled(TileGrid::pixels(size), index)
+        GroundGrid::filled(TileGrid::pixels(size), (), index)
     }
 
     /// Pixels across and down.
@@ -457,33 +522,29 @@ fn dominant_of(cell: CellPos, pixel: impl Fn(u32, u32) -> u8) -> u8 {
         .map_or(0, |(index, _)| index as u8)
 }
 
-fn level_of(height: Meters) -> u16 {
-    (height.0 / STEP + GROUND_LEVEL as f32)
-        .round()
-        .clamp(0.0, u16::MAX as f32) as u16
-}
-
-fn height_of(level: u16) -> Meters {
-    Meters((level as f32 - GROUND_LEVEL as f32) * STEP)
-}
-
 /// The values a grid over the ground can hold, kept out of reach so the ground's two grids are the
 /// only ones.
 mod values {
-    use super::GROUND_LEVEL;
+    use super::HeightRange;
 
     /// A value of the ground as its files hold it.
     pub trait Value: Copy + PartialEq + Send + Sync + std::fmt::Debug + 'static {
-        /// What the ground is where no file says otherwise.
-        const BLANK: Self;
+        /// What a grid's values stand for, beside the values.
+        type Scale: Copy + Default + PartialEq + Send + Sync + std::fmt::Debug + 'static;
         const CHANNELS: Channels;
+        /// What the ground is where no file says otherwise.
+        fn blank(scale: Self::Scale) -> Self;
         fn decode(bytes: Vec<u8>) -> Vec<Self>;
         fn encode(values: &[Self]) -> Vec<u8>;
     }
 
     impl Value for u16 {
-        const BLANK: u16 = GROUND_LEVEL;
+        type Scale = HeightRange;
         const CHANNELS: Channels = Channels::Grey16;
+
+        fn blank(range: HeightRange) -> u16 {
+            range.ground_level()
+        }
 
         fn decode(bytes: Vec<u8>) -> Vec<u16> {
             bytes
@@ -503,8 +564,12 @@ mod values {
     }
 
     impl Value for u8 {
-        const BLANK: u8 = 0;
+        type Scale = ();
         const CHANNELS: Channels = Channels::Grey8;
+
+        fn blank(_: ()) -> u8 {
+            0
+        }
 
         fn decode(bytes: Vec<u8>) -> Vec<u8> {
             bytes
@@ -531,6 +596,7 @@ use values::{Channels, Value};
 #[derive(Clone, Debug)]
 pub struct GroundGrid<T: Value> {
     grid: TileGrid,
+    scale: T::Scale,
     overview: Option<Arc<Tile<T>>>,
     tiles: Vec<Arc<Slot<T>>>,
 }
@@ -539,6 +605,7 @@ impl<T: Value> Default for GroundGrid<T> {
     fn default() -> GroundGrid<T> {
         GroundGrid {
             grid: TileGrid::default(),
+            scale: T::Scale::default(),
             overview: None,
             tiles: Vec::new(),
         }
@@ -599,15 +666,20 @@ impl<T: Value> Slot<T> {
 }
 
 impl<T: Value> GroundGrid<T> {
-    fn blank(grid: TileGrid) -> GroundGrid<T> {
+    fn blank(grid: TileGrid, scale: T::Scale) -> GroundGrid<T> {
         GroundGrid {
             tiles: (0..grid.count()).map(|_| Arc::new(Slot::blank())).collect(),
             grid,
+            scale,
             overview: None,
         }
     }
 
-    fn filled(grid: TileGrid, value: impl Fn(u32, u32) -> T + Sync) -> GroundGrid<T> {
+    fn filled(
+        grid: TileGrid,
+        scale: T::Scale,
+        value: impl Fn(u32, u32) -> T + Sync,
+    ) -> GroundGrid<T> {
         let tiles = (0..grid.count())
             .into_par_iter()
             .map(|index| {
@@ -629,6 +701,7 @@ impl<T: Value> GroundGrid<T> {
             .collect();
         GroundGrid {
             grid,
+            scale,
             overview: None,
             tiles,
         }
@@ -636,6 +709,10 @@ impl<T: Value> GroundGrid<T> {
 
     pub fn size(&self) -> GroundSize {
         self.grid.size
+    }
+
+    fn blank_value(&self) -> T {
+        T::blank(self.scale)
     }
 
     /// Keeps `part` as the tile at `at`, to read when the tile is first loaded.
@@ -709,7 +786,7 @@ impl<T: Value> GroundGrid<T> {
     /// Whether every value is blank, without loading: a tile with a file to load counts as not.
     fn is_blank(&self) -> bool {
         self.tiles.iter().all(|slot| match slot.tile() {
-            Some(tile) => tile.values.iter().all(|value| *value == T::BLANK),
+            Some(tile) => tile.values.iter().all(|value| *value == self.blank_value()),
             None => slot.stored.is_none(),
         })
     }
@@ -721,7 +798,7 @@ impl<T: Value> GroundGrid<T> {
             return stored.read().ok().map(Arc::from);
         }
         let tile = slot.tile()?;
-        if tile.values.iter().all(|value| *value == T::BLANK) {
+        if tile.values.iter().all(|value| *value == self.blank_value()) {
             return None;
         }
         Some(tile.png())
@@ -821,7 +898,7 @@ impl<T: Value> GroundGrid<T> {
             row: row / TILE_PIXELS,
         };
         let Some(slot) = self.tiles.get(self.grid.index(at)) else {
-            return T::BLANK;
+            return self.blank_value();
         };
         if let Some(tile) = slot.loaded.read().expect("a ground tile lock").as_ref() {
             let (first_column, first_row) = self.grid.first(at);
@@ -838,7 +915,7 @@ impl<T: Value> GroundGrid<T> {
                 let (column, row) = self.grid.overview_nearest(column, row);
                 overview.values[(row * overview.columns + column) as usize]
             }
-            None => T::BLANK,
+            None => self.blank_value(),
         }
     }
 
@@ -846,13 +923,14 @@ impl<T: Value> GroundGrid<T> {
     /// taking a tile of this copy's own where one is shared with another.
     fn put(&mut self, column: u32, row: u32, value: T) {
         let grid = self.grid;
+        let blank = self.blank_value();
         for (index, local) in grid.holders(column, row) {
             let at = grid.at(index);
             self.load(at).ok();
             let slot = &mut self.tiles[index];
             let unchanged = match slot.tile() {
                 Some(tile) => tile.values[local] == value,
-                None => value == T::BLANK,
+                None => value == blank,
             };
             if unchanged {
                 continue;
@@ -871,7 +949,7 @@ impl<T: Value> GroundGrid<T> {
                 Arc::new(Tile {
                     columns,
                     rows,
-                    values: vec![T::BLANK; (columns * rows) as usize],
+                    values: vec![blank; (columns * rows) as usize],
                     encoded: None,
                 })
             });
@@ -884,12 +962,13 @@ impl<T: Value> GroundGrid<T> {
 
 impl<T: Value> PartialEq for GroundGrid<T> {
     fn eq(&self, other: &GroundGrid<T>) -> bool {
-        if self.grid != other.grid {
+        if self.grid != other.grid || self.scale != other.scale {
             return false;
         }
         self.load_all();
         other.load_all();
-        let blank = |tile: &Arc<Tile<T>>| tile.values.iter().all(|value| *value == T::BLANK);
+        let blank =
+            |tile: &Arc<Tile<T>>| tile.values.iter().all(|value| *value == self.blank_value());
         self.tiles
             .iter()
             .zip(&other.tiles)

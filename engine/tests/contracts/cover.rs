@@ -6,6 +6,7 @@ use engine::core::render::world::cover::{
     BladeShape, Mark, Patch, Piece, Spread, blades, copy_meshes, sheet, strew_places,
 };
 use engine::core::units::Meters;
+use testkit::HEIGHTS;
 
 const SIZE: GroundSize = GroundSize {
     width: 16,
@@ -26,7 +27,7 @@ const SPREAD: Spread = Spread {
 
 /// Ground rising a metre every four metres eastward.
 fn slope() -> Heightfield {
-    Heightfield::from_fn(SIZE, |column, _| {
+    Heightfield::from_fn(SIZE, HEIGHTS, |column, _| {
         Meters(column as f32 / SAMPLES_PER_METER as f32 / 4.0)
     })
 }

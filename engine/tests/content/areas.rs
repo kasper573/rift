@@ -6,7 +6,7 @@ use engine::core::vfx::shader::Stage;
 use engine::systems::area::scenery::{Sources, prop_transform};
 use engine::systems::area::{self, AreaDef, AreaId};
 use serde_json::{Value, json};
-use testkit::{Game, Map, path};
+use testkit::{Game, HEIGHTS, Map, path};
 
 use crate::support::game;
 
@@ -26,6 +26,7 @@ fn hill() -> Heightfield {
             width: 8,
             height: 8,
         },
+        HEIGHTS,
         |column, _| {
             let x = column as f32 / ground::SAMPLES_PER_METER as f32 + GROUND_ORIGIN.x;
             Meters(match x {
@@ -281,51 +282,69 @@ fn an_areas_heights_and_paint_write_back_as_they_were_read() {
         width: 300,
         height: 20,
     };
-    let mut ridge = Heightfield::flat(wide);
+    let mut ridge = Heightfield::flat(wide, HEIGHTS);
     for column in 0..=wide.width * ground::SAMPLES_PER_METER {
         for row in 0..=wide.height * ground::SAMPLES_PER_METER {
             ridge.set_sample(column, row, Meters((column % 7) as f32 * 0.25));
         }
     }
     let striped = PaintMap::from_fn(wide, |column, _| (column / 100 % 2) as u8);
-    let ridge_game = wide.each_tile().fold(
-        crate::support::game()
-            .area("ridge", &Map::open(300, 20), json!([]))
-            .part("area", "ridge", "height_overview.png", overview(&ridge))
-            .part(
-                "area",
-                "ridge",
-                "paint_overview.png",
-                overview_paint(&striped),
-            ),
-        |game, at| {
-            let game = match ridge.encode_tile(at) {
-                Some(bytes) => game.part(
+    let ridge_game = || {
+        wide.each_tile().fold(
+            crate::support::game()
+                .area("ridge", &Map::open(300, 20), json!([]))
+                .part("area", "ridge", "height_overview.png", overview(&ridge))
+                .part(
                     "area",
                     "ridge",
-                    &format!("height/{}.png", at.key()),
-                    bytes.to_vec(),
+                    "paint_overview.png",
+                    overview_paint(&striped),
                 ),
-                None => game,
-            };
-            match striped.encode_tile(at) {
-                Some(bytes) => game.part(
-                    "area",
-                    "ridge",
-                    &format!("paint/{}.png", at.key()),
-                    bytes.to_vec(),
-                ),
-                None => game,
-            }
-        },
-    );
-    let content = ridge_game.load();
+            |game, at| {
+                let game = match ridge.encode_tile(at) {
+                    Some(bytes) => game.part(
+                        "area",
+                        "ridge",
+                        &format!("height/{}.png", at.key()),
+                        bytes.to_vec(),
+                    ),
+                    None => game,
+                };
+                match striped.encode_tile(at) {
+                    Some(bytes) => game.part(
+                        "area",
+                        "ridge",
+                        &format!("paint/{}.png", at.key()),
+                        bytes.to_vec(),
+                    ),
+                    None => game,
+                }
+            },
+        )
+    };
+    let content = ridge_game().load();
     let read = area::load(&content, area_id(&content, "ridge"));
     assert_eq!(wide.tiles(), (2, 1));
     assert_eq!(read.heights, ridge);
     assert_eq!(read.paint, striped);
     let seam = Pos::new(255.5, 3.0);
     assert_eq!(read.heights.height_at(seam), ridge.height_at(seam));
+
+    // Its tiles hold levels across the area's range: twice the range is the same land twice as
+    // high.
+    let content = ridge_game()
+        .edit("area", "ridge", |ridge| {
+            ridge["height_range"] = json!({ "lowest": -16.0, "highest": 32.0 });
+        })
+        .load();
+    let stretched = area::load(&content, area_id(&content, "ridge"));
+    for at in [Pos::new(3.5, 3.0), seam] {
+        let (was, is) = (ridge.height_at(at).0, stretched.heights.height_at(at).0);
+        assert!(
+            (is - 2.0 * was).abs() < 1e-3,
+            "{at:?}: {was} m stretched to {is} m"
+        );
+    }
 }
 
 fn tile_paint(paint: &PaintMap) -> Vec<u8> {

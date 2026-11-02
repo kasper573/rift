@@ -101,7 +101,7 @@ pub fn tiled(game: &Path, content: &Content, side: u32, into: &Path) -> Result<(
     let (columns, rows) = (width * SAMPLES_PER_METER, height * SAMPLES_PER_METER);
     let mut tiled = area.clone();
     tiled.size = size;
-    tiled.heights = Heightfield::from_fn(size, |column, row| {
+    tiled.heights = Heightfield::from_fn(size, area.heights.range(), |column, row| {
         area.heights.sample(column % columns, row % rows)
     });
     tiled.paint = PaintMap::from_fn(size, |column, row| {

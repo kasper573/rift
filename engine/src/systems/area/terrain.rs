@@ -9,7 +9,6 @@ use crate::core::content::media::{GltfInfos, ImageSizes};
 use crate::core::content::{
     ContentFile, ContentId, Loading, NamedContent, Nearby, RowCheck, serial,
 };
-use crate::core::ground;
 use crate::core::math::Rgba;
 use crate::core::render::world::terrain::GROUND_PICTURE;
 use crate::core::units::Meters;
@@ -189,15 +188,6 @@ impl ContentFile for TerrainDef {
             );
         }
         if let Some(cover) = &self.cover {
-            if let Some(level) = cover.sheet.and_then(|sheet| sheet.level) {
-                cx.range(
-                    "/cover/sheet/level",
-                    level.0,
-                    ground::LOWEST.0,
-                    ground::HIGHEST.0,
-                    "m",
-                );
-            }
             if cover.pieces.len() > MAX_PIECES {
                 cx.error(
                     "/cover/pieces",

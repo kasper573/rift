@@ -27,7 +27,7 @@ use engine::systems::area::{self, AreaDef, AreaTag};
 use engine::systems::item::ItemDef;
 use engine::systems::movement::RenderPosition;
 use serde_json::json;
-use testkit::{APEX, BODY, CLIP, Game, Map, WALK_PACE, path};
+use testkit::{APEX, BODY, CLIP, Game, HEIGHTS, Map, WALK_PACE, path};
 
 const SIZE: GroundSize = GroundSize {
     width: 32,
@@ -37,7 +37,7 @@ const WINDOW: Vec2 = Vec2::new(1280.0, 720.0);
 
 /// A hill four metres high in the middle of the ground, sloping down a metre every two.
 fn hill() -> Heightfield {
-    Heightfield::from_fn(SIZE, |column, row| {
+    Heightfield::from_fn(SIZE, HEIGHTS, |column, row| {
         let x = column as f32 / SAMPLES_PER_METER as f32;
         let y = row as f32 / SAMPLES_PER_METER as f32;
         let out = ((x - 16.0).powi(2) + (y - 16.0).powi(2)).sqrt();
