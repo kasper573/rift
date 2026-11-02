@@ -44,6 +44,7 @@ impl Plugin for WorldScenePlugin {
         bevy::asset::embedded_asset!(app, "fade_prepass.wesl");
         bevy::asset::embedded_asset!(app, "decal.wesl");
         bevy::asset::embedded_asset!(app, "ground.wesl");
+        app.register_asset_loader(crate::core::assets::loader::PngLoader);
         app.add_plugins((
             MaterialPlugin::<material::WorldMaterial>::default(),
             MaterialPlugin::<decal::DecalMaterial>::default(),

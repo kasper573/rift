@@ -67,10 +67,10 @@ enum Command {
     /// Prints the JSON Schema of a protocol the binaries speak.
     #[command(subcommand)]
     Schema(Schema),
-    /// Lays out an area of GAME from noise, as a landscape starts: its ground rising and falling,
-    /// painted by height from the lowest terrain given to the highest, strewn with props and
-    /// roamed by npcs as the JSON file LAND asks. Writes the area's bundle at AREA, a path in the
-    /// game folder.
+    /// Lays out the area at AREA, a path in GAME, as the JSON file LAND asks: its ground shaped
+    /// and worn by rain, and its biomes placed by climate, each painting its ground, growing its
+    /// props and roaming its monsters. A run replaces what an earlier one laid out and keeps the
+    /// rest of the area's scene.
     Landscape {
         game: PathBuf,
         area: String,

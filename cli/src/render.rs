@@ -23,7 +23,7 @@ use engine::core::content::Content;
 use engine::core::ground::Heightfield;
 use engine::core::math::Pos;
 use engine::core::render::Look;
-use engine::core::render::camera::{self, world_point};
+use engine::core::render::camera::{self, View, world_point};
 use engine::core::render::world::WorldScenePlugin;
 use engine::core::render::world::body;
 use engine::core::render::world::layers::Layered;
@@ -38,10 +38,14 @@ use engine::systems::actor::model::{ActorModel, ModelId};
 use engine::systems::actor::skeleton::Clip;
 use engine::systems::actor::stance::{self, HandIndex};
 use engine::systems::actor::{Action, Appearance, ModelDef, Motion, Pose, appearance, render};
-use engine::systems::area::scenery;
+use engine::systems::area::scenery::{self, SceneryPlugin};
 use engine::systems::area::{self, Area, AreaDef, Kept, Pictured};
 use engine::systems::item::{ItemDef, Wear};
 use serde::Deserialize;
+
+/// How far around the target the scenery stands, in times the eye's distance from it: as far as a
+/// lens looking down at the target takes in, and the haze beyond.
+const SCENERY_REACH: f32 = 4.0;
 
 /// Frames the picture settles for once every body stands dressed, while what it shows loads and
 /// the frames it is smoothed over fill.
@@ -102,8 +106,12 @@ struct Spot {
 }
 
 impl Spot {
+    fn ground(self) -> Pos<Meters> {
+        Pos::new(self.x.0, self.y.0)
+    }
+
     fn point(self, ground: &Heightfield) -> Vec3 {
-        let at = Pos::new(self.x.0, self.y.0);
+        let at = self.ground();
         world_point(at, Meters(ground.height_at(at).0 + self.height.0))
     }
 }
@@ -201,7 +209,11 @@ pub fn area(folder: &Path, shot: &Path, out: &Path) {
         .add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
             1.0 / 60.0,
         )))
-        .add_plugins((WorldScenePlugin, VfxMaterialsPlugin))
+        .add_plugins((
+            WorldScenePlugin,
+            VfxMaterialsPlugin,
+            SceneryPlugin { paced: false },
+        ))
         .insert_resource(content.built::<GameSettings>().look.clone())
         .insert_resource(content)
         .init_resource::<Read>()
@@ -254,7 +266,7 @@ fn step(world: &mut World) {
                     all &= standing.hung;
                 }
                 drive(world, bodies);
-                if all {
+                if all && !scenery::standing(world) {
                     taking.stage = Stage::Settling(0);
                 }
             }
@@ -316,6 +328,9 @@ fn set_up(
         return None;
     }
     let grade = world.resource::<Look>().picture;
+    let eye = shot.lens.eye.point(&picture.area.heights);
+    let target = shot.lens.target.point(&picture.area.heights);
+    let lens = Transform::from_translation(eye).looking_at(target, Vec3::Y);
     let camera = world
         .spawn((
             Camera3d::default(),
@@ -326,11 +341,21 @@ fn set_up(
             RenderTarget::Image(image.clone().into()),
             camera::lens(shot.lens.fov, shot.width, shot.height),
             camera::picture(grade),
-            Transform::from_translation(shot.lens.eye.point(&picture.area.heights))
-                .looking_at(shot.lens.target.point(&picture.area.heights), Vec3::Y),
+            lens,
         ))
         .id();
     let stood = scenery::spawn(world, content, &picture.area, default());
+    scenery::view_from(
+        world,
+        stood,
+        shot.lens.target.ground(),
+        Meters(eye.distance(target) * SCENERY_REACH),
+        View::new(
+            lens,
+            Vec2::new(shot.width as f32, shot.height as f32),
+            shot.lens.fov,
+        ),
+    );
     let daylight = shot.hour.map_or(Daylight::Fixed, Daylight::Hour);
     world.insert_resource(daylight);
     scenery::light(world, &picture.area, daylight, stood, camera);

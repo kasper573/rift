@@ -484,8 +484,7 @@ pub fn client_app(
             })
             .set(ImagePlugin::default_nearest())
             .disable::<bevy::render::pipelined_rendering::PipelinedRenderingPlugin>(),
-    )
-    .register_asset_loader(crate::core::assets::loader::PngLoader);
+    );
     // The client shows a world the server plays out in real time, so a frame however long moves it
     // on by all the time the frame took, as the server's world moved on, rather than by the most the
     // engine otherwise lets one frame take.

@@ -49,6 +49,25 @@ impl RowCheck {
         }
     }
 
+    /// `value` more than `floor` and at most `max`.
+    pub fn above_up_to<T: PartialOrd + Display + Copy>(
+        &mut self,
+        pointer: impl Into<String>,
+        value: T,
+        floor: T,
+        max: T,
+        what: &str,
+    ) {
+        if value <= floor || value > max {
+            self.error(
+                pointer,
+                "out of range",
+                value,
+                format!("{what} more than {floor}, up to {max}"),
+            );
+        }
+    }
+
     pub fn at_least<T: PartialOrd + Display + Copy>(
         &mut self,
         pointer: impl Into<String>,

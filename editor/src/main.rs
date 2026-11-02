@@ -9,7 +9,6 @@ use clap::{CommandFactory, Parser};
 use editor::app::{EditorLaunch, EditorPlugin};
 use editor::scenes::SceneStep;
 use engine::core::assets::SyncedAssetReader;
-use engine::core::assets::loader::PngLoader;
 use engine::core::audio::playback::SfxPlugin;
 use engine::core::babble::BabblePlugin;
 use engine::core::math::Rng;
@@ -87,7 +86,6 @@ fn main() {
                 })
                 .set(ImagePlugin::default_nearest()),
         )
-        .register_asset_loader(PngLoader)
         .add_plugins((SfxPlugin, StyledTextPlugin, BabblePlugin))
         .add_plugins((
             WorldScenePlugin,

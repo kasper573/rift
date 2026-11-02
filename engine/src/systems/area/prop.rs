@@ -301,10 +301,10 @@ impl ScaleRange {
 impl Scatter {
     pub fn check(&self, pointer: &str, cx: &mut RowCheck) {
         cx.count(format!("{pointer}/props"), self.props.len(), 1, 16, "props");
-        cx.range(
+        cx.above_up_to(
             format!("{pointer}/per_square_meter"),
             self.per_square_meter,
-            0.01,
+            0.0,
             MAX_DENSITY,
             "props per square metre,",
         );

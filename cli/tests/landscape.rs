@@ -1,70 +1,67 @@
+use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 
 use engine::core::content::{FilesystemFolder, FolderReader};
+use engine::core::ground::PaintMap;
 use engine::core::math::Rect;
 use engine::core::units::Meters;
 use engine::systems::area::scene::SceneNode;
 use engine::systems::area::{AreaDef, AreaModule};
 use engine::systems::registry;
-use serde_json::json;
+use serde_json::{Value, json};
 use testkit::{Game, Map, ROCK, TURF, path};
 
-/// A landscape rises over its relief exactly, lays each terrain over as much ground as the next
-/// from the lowest ground up, strews a prop only where its terrain lies, and has npcs roam it.
+/// A land rises over its relief exactly; its biomes each cover a share of it, the cold one on the
+/// heights as the height chills the climate; each grows its props and roams its monsters only
+/// where it lies; and running it again replaces what it laid out, keeping what a designer added.
 #[test]
-fn a_landscape_rises_over_its_relief_painted_in_bands_strewn_and_roamed_where_asked() {
+fn a_land_lays_out_its_biomes_by_climate_and_keeps_what_a_designer_added() {
     let folder = tempfile::tempdir().expect("a scratch folder");
     Game::new()
-        .terrains()
-        .area("start", &Map::open(16, 16), json!([]))
+        .area(
+            "start",
+            &Map::open(16, 16),
+            json!([{ "type": "safe_zone", "rect": { "x": 1.0, "y": 1.0, "w": 6.0, "h": 6.0 } }]),
+        )
         .hero("start", 4.0, 4.0)
         .prop("pine", json!({ "type": "circle", "radius": 0.5 }))
         .npc("wolf", 10.0, json!([]))
         .write_to(folder.path());
     let relief = 10.0;
-    let wilds = "wilds.area";
-    let recipes = tempfile::tempdir().expect("a folder for the recipe");
-    let land = recipes.path().join("wilds.json");
-    let recipe = json!({
+    let biome = |name: &str, temperature: f32, terrain: &str, props: Value, monsters: Value| {
+        json!({
+            "name": name,
+            "temperature": temperature,
+            "moisture": 0.5,
+            "ground": [{ "terrain": path("terrain", terrain) }],
+            "props": props,
+            "monsters": monsters,
+        })
+    };
+    let land = json!({
         "name": "Wilds",
-        "width": 256,
-        "height": 128,
+        "width": 512,
+        "height": 512,
         "seed": 3,
         "relief": relief,
-        "wavelength": 32.0,
-        "terrains": [path("terrain", TURF), path("terrain", ROCK)],
-        "scatters": [{
-            "terrain": path("terrain", TURF),
-            "prop": path("prop", "pine"),
-            "per_square_meter": 0.05,
-            "scale": { "min": 0.5, "max": 1.5 },
-        }],
-        "populations": [{ "npc": path("npc", "wolf"), "per_square_kilometer": 1000.0 }],
+        "shape": { "wavelength": 128.0, "warp": 0.5, "mountains": 0.5, "roughness": 0.2 },
+        "erosion": { "drops_per_square_meter": 0.05 },
+        "climate": { "wavelength": 256.0, "height_chill": 1.0, "runoff_wetness": 0.3, "blend": 0.05 },
+        "biomes": [
+            biome("Fells", 0.0, ROCK, json!([]), json!([])),
+            biome(
+                "Woods",
+                1.0,
+                TURF,
+                json!([{ "props": [path("prop", "pine")], "per_square_meter": 0.005, "clumping": 0.5 }]),
+                json!([{ "npc": path("npc", "wolf"), "per_square_kilometer": 100.0 }]),
+            ),
+        ],
     });
-    std::fs::write(&land, recipe.to_string()).expect("the land's recipe writes");
-    let laid = Command::new(env!("CARGO_BIN_EXE_rift"))
-        .args(["landscape"])
-        .arg(folder.path())
-        .arg(wilds)
-        .arg(&land)
-        .output()
-        .expect("rift runs");
-    assert!(
-        laid.status.success(),
-        "{}",
-        String::from_utf8_lossy(&laid.stderr)
-    );
 
-    let reader = FolderReader::new(
-        registry(),
-        Arc::new(FilesystemFolder(folder.path().to_path_buf())),
-    );
-    let area: AreaDef = reader
-        .read(wilds)
-        .map_err(|errors| format!("{} problem(s)", errors.len()))
-        .expect("the wilds read as the editor writes them");
-    let area = &area;
+    landscape(folder.path(), &land);
+    let area = read(folder.path());
     assert_eq!(area.name, "Wilds");
 
     let (columns, rows) = area.heights.samples();
@@ -76,90 +73,121 @@ fn a_landscape_rises_over_its_relief_painted_in_bands_strewn_and_roamed_where_as
     let highest = heights.iter().copied().fold(f32::NEG_INFINITY, f32::max);
     assert!((lowest - 0.0).abs() < 1e-3 && (highest - relief).abs() < 1e-3);
 
-    let (columns, rows) = area.paint.pixels();
-    let pixels: Vec<(u32, u32)> = (0..rows)
-        .flat_map(|row| (0..columns).map(move |column| (column, row)))
-        .collect();
-    let rock = pixels
-        .iter()
-        .filter(|&&(column, row)| area.paint.index(column, row) == 1)
-        .count();
-    let share = rock as f32 / pixels.len() as f32;
+    let painted = |terrain: u8| -> Vec<f32> {
+        let (columns, rows) = area.paint.pixels();
+        (0..rows)
+            .flat_map(|row| (0..columns).map(move |column| (column, row)))
+            .filter(|&(column, row)| area.paint.index(column, row) == terrain)
+            .map(|(column, row)| area.heights.height_at(PaintMap::pixel_pos(column, row)).0)
+            .collect()
+    };
+    let (rock, turf) = (painted(0), painted(1));
+    let share = rock.len() as f32 / (rock.len() + turf.len()) as f32;
     assert!(
-        (0.45..=0.55).contains(&share),
-        "rock over {share} of the ground"
+        (0.25..=0.75).contains(&share),
+        "the fells cover {share} of the land"
     );
-    let (_, highest_turf) = heights_where(area, &pixels, 0);
-    let (lowest_rock, _) = heights_where(area, &pixels, 1);
+    let mean = |heights: &[f32]| heights.iter().sum::<f32>() / heights.len() as f32;
     assert!(
-        highest_turf <= lowest_rock + 1e-3,
-        "the rock lies above the turf: turf up to {highest_turf}, rock from {lowest_rock}"
+        mean(&rock) > mean(&turf),
+        "the fells lie higher: {} m against {} m",
+        mean(&rock),
+        mean(&turf)
     );
 
-    let (scatters, populations): (Vec<Rect<Meters>>, Vec<Rect<Meters>>) = {
-        let mut scatters = Vec::new();
-        let mut populations = Vec::new();
-        for module in modules(&area.scene) {
-            match module {
-                AreaModule::Scatter(scatter) => scatters.push(scatter.region),
-                AreaModule::Population(population) => {
-                    populations.push(population.roams.expect("a population roams a block"));
-                }
-                _ => panic!("the landscape laid out a module of another kind"),
-            }
-        }
-        (scatters, populations)
-    };
+    let laid = laid_out(&area.scene);
+    let (scatters, populations): (Vec<_>, Vec<_>) = modules(&laid)
+        .into_iter()
+        .partition(|module| matches!(module, AreaModule::Scatter(_)));
     assert!(!scatters.is_empty() && !populations.is_empty());
-    let bounds = area.size.bounds();
-    for region in scatters.iter().chain(&populations) {
+    for scatter in &scatters {
+        let AreaModule::Scatter(scatter) = scatter else {
+            unreachable!()
+        };
         assert!(
-            bounds.contains_rect(region),
-            "{region:?} lies within the land"
+            share_painted(&area, &scatter.region, 1) > 0.0,
+            "pines grow only where the woods reach"
         );
     }
-    for region in &scatters {
-        let within: Vec<&(u32, u32)> = pixels
-            .iter()
-            .filter(|&&(column, row)| {
-                region.contains(engine::core::ground::PaintMap::pixel_pos(column, row))
-            })
-            .collect();
-        let turf = within
-            .iter()
-            .filter(|&&&(column, row)| area.paint.index(column, row) == 0)
-            .count();
-        assert!(turf * 2 > within.len(), "a scatter lies mostly on turf");
+    for population in &populations {
+        let AreaModule::Population(population) = population else {
+            panic!("the land laid out a module of another kind")
+        };
+        let roams = population.roams.expect("a population roams a tile");
+        assert!(area.size.bounds().contains_rect(&roams));
+        assert!(
+            share_painted(&area, &roams, 1) > 0.0,
+            "wolves roam only where the woods reach"
+        );
     }
-    let strewn = scatters.iter().map(|region| region.area()).sum::<f32>();
+
+    landscape(folder.path(), &land);
+    let again = read(folder.path());
+    let folders = again
+        .scene
+        .iter()
+        .filter(|node| matches!(node, SceneNode::Folder(_)))
+        .count();
+    assert_eq!(folders, 1, "a second run replaces what the first laid out");
     assert!(
-        strewn < bounds.area() * 0.75,
-        "the rock stays unstrewn: {strewn} of {} m²",
-        bounds.area()
+        modules(&again.scene)
+            .iter()
+            .any(|module| matches!(module, AreaModule::SafeZone(_))),
+        "what a designer added stays"
     );
 }
 
-/// The lowest and highest ground painted `terrain`.
-fn heights_where(area: &AreaDef, pixels: &[(u32, u32)], terrain: u8) -> (f32, f32) {
-    pixels
-        .iter()
-        .filter(|&&(column, row)| area.paint.index(column, row) == terrain)
-        .map(|&(column, row)| {
-            area.heights
-                .height_at(engine::core::ground::PaintMap::pixel_pos(column, row))
-                .0
-        })
-        .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), height| {
-            (low.min(height), high.max(height))
-        })
+fn landscape(game: &Path, land: &Value) {
+    let recipes = tempfile::tempdir().expect("a folder for the recipe");
+    let recipe = recipes.path().join("land.json");
+    std::fs::write(&recipe, land.to_string()).expect("the land's recipe writes");
+    let laid = Command::new(env!("CARGO_BIN_EXE_rift"))
+        .args(["landscape"])
+        .arg(game)
+        .arg(path("area", "start"))
+        .arg(&recipe)
+        .output()
+        .expect("rift runs");
+    assert!(
+        laid.status.success(),
+        "{}",
+        String::from_utf8_lossy(&laid.stderr)
+    );
 }
 
-fn modules(nodes: &[SceneNode]) -> Vec<&AreaModule> {
+fn read(game: &Path) -> AreaDef {
+    FolderReader::new(registry(), Arc::new(FilesystemFolder(game.to_path_buf())))
+        .read(&path("area", "start"))
+        .map_err(|errors| format!("{} problem(s)", errors.len()))
+        .expect("the land reads as the editor writes it")
+}
+
+/// The share of `region` painted `terrain`.
+fn share_painted(area: &AreaDef, region: &Rect<Meters>, terrain: u8) -> f32 {
+    let (columns, rows) = area.paint.pixels();
+    let within: Vec<u8> = (0..rows)
+        .flat_map(|row| (0..columns).map(move |column| (column, row)))
+        .filter(|&(column, row)| region.contains(PaintMap::pixel_pos(column, row)))
+        .map(|(column, row)| area.paint.index(column, row))
+        .collect();
+    within.iter().filter(|&&painted| painted == terrain).count() as f32 / within.len() as f32
+}
+
+/// The modules of the one folder the land laid out.
+fn laid_out(scene: &[SceneNode]) -> Vec<SceneNode> {
+    scene
+        .iter()
+        .filter(|node| matches!(node, SceneNode::Folder(_)))
+        .cloned()
+        .collect()
+}
+
+fn modules(nodes: &[SceneNode]) -> Vec<AreaModule> {
     nodes
         .iter()
         .flat_map(|node| match node {
             SceneNode::Folder(folder) => modules(&folder.children),
-            SceneNode::Module(module) => vec![&module.module],
+            SceneNode::Module(module) => vec![module.module.clone()],
         })
         .collect()
 }
