@@ -3638,6 +3638,7 @@ dependencies = [
  "flate2",
  "futures-timer",
  "futures-util",
+ "geo",
  "getrandom 0.4.3",
  "glam 0.32.1",
  "gltf",

@@ -307,8 +307,17 @@ impl<'a> Parts<'a> {
         });
         match parsed {
             Ok(value) => {
-                self.errors
-                    .extend(reference_errors(&file, scope.leaves(), &index, |_| true));
+                self.errors.extend(reference_errors(
+                    &file,
+                    scope.leaves(),
+                    &index,
+                    |pointers| {
+                        pointers
+                            .iter()
+                            .map(|pointer| (*pointer).to_owned())
+                            .collect()
+                    },
+                ));
                 self.media.extend(named_media(scope.leaves()));
                 Some(value)
             }

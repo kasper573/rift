@@ -93,6 +93,7 @@ flate2 = "1"
 postcard.workspace = true
 gltf = { version = "1.4", default-features = false, features = ["names", "utils"] }
 polyanya = "0.17"
+geo = { version = "0.33", default-features = false, features = ["earcut"] }
 glam = "0.32"
 bevy_skeleton_modifiers = { version = "0.1.1", default-features = false }
 image = { version = "0.25", default-features = false, features = ["png"] }

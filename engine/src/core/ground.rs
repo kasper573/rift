@@ -856,14 +856,25 @@ impl<T: Value> GroundGrid<T> {
     /// gives it, read a tile at a time.
     fn window(&self, column: u32, row: u32, columns: u32, rows: u32) -> Window<T> {
         let mut values = Vec::with_capacity((columns * rows) as usize);
+        let last_column = self.grid.columns.saturating_sub(1);
+        let last_row = self.grid.rows.saturating_sub(1);
+        let end = column + columns;
         let mut held: Option<(TileAt, Option<Arc<Tile<T>>>)> = None;
         for row in row..row + rows {
-            let row = row.min(self.grid.rows.saturating_sub(1));
-            for column in column..column + columns {
-                let column = column.min(self.grid.columns.saturating_sub(1));
+            let row = row.min(last_row);
+            let mut from = column;
+            while from < end {
+                let clamped = from.min(last_column);
                 let at = TileAt {
-                    column: column / TILE_PIXELS,
+                    column: clamped / TILE_PIXELS,
                     row: row / TILE_PIXELS,
+                };
+                let (first_column, first_row) = self.grid.first(at);
+                let past_edge = from > last_column;
+                let until = if past_edge {
+                    end
+                } else {
+                    end.min(first_column + TILE_PIXELS).min(last_column + 1)
                 };
                 let tile = match &held {
                     Some((holding, tile)) if *holding == at => tile,
@@ -875,14 +886,23 @@ impl<T: Value> GroundGrid<T> {
                         &held.insert((at, tile)).1
                     }
                 };
-                values.push(match tile {
+                let run = (until - from) as usize;
+                match tile {
                     Some(tile) => {
-                        let (first_column, first_row) = self.grid.first(at);
-                        tile.values
-                            [((row - first_row) * tile.columns + (column - first_column)) as usize]
+                        let start =
+                            ((row - first_row) * tile.columns + (clamped - first_column)) as usize;
+                        if past_edge {
+                            values.extend(std::iter::repeat_n(tile.values[start], run));
+                        } else {
+                            values.extend_from_slice(&tile.values[start..start + run]);
+                        }
                     }
-                    None => self.overview_value(column, row),
-                });
+                    None => values.extend(
+                        (from..until)
+                            .map(|column| self.overview_value(column.min(last_column), row)),
+                    ),
+                }
+                from = until;
             }
         }
         Window { columns, values }

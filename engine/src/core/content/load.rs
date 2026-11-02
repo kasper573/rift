@@ -544,7 +544,7 @@ impl ContentRegistry {
         let unread = ContentScope::of(content);
         let (_, scope) = with_content(unread.clone(), || parse(&value));
         let index = JsonIndex::of(text);
-        let probe = |pointer: &str| reads_reference(&unread, &value, pointer, parse);
+        let probe = |pointers: &[&str]| reads_references(&unread, &value, pointers, parse);
         placed(scope.leaves(), &index, |_| true, probe)
             .into_iter()
             .filter_map(|(leaf, found)| {
@@ -1427,7 +1427,7 @@ fn parse_read(
         Ok(row) => {
             parsed.row = Some(row);
             parsed.media = named_media(read_scope.leaves());
-            let probe = |pointer: &str| reads_reference(scope, &value, pointer, parse);
+            let probe = |pointers: &[&str]| reads_references(scope, &value, pointers, parse);
             parsed.errors.extend(reference_errors(
                 &read.file,
                 read_scope.leaves(),
@@ -1468,7 +1468,7 @@ pub fn reference_errors(
     file: &str,
     leaves: &[Leaf],
     index: &JsonIndex,
-    probe: impl Fn(&str) -> bool,
+    probe: impl Fn(&[&str]) -> HashSet<String>,
 ) -> Vec<LoadError> {
     placed(leaves, index, |leaf| leaf.problem.is_some(), probe)
         .into_iter()
@@ -1489,13 +1489,13 @@ pub fn reference_errors(
 /// Where each leaf is written: an occurrence of its value. The parse may meet the leaves in another
 /// order than the file has them (flattened fields are read in declaration order), so leaves are
 /// matched to occurrences per value. When a value is written in more places than it is read as a
-/// reference (a script node named like a quest), `probe` tells which places are references. Only
-/// the leaves `needed` picks are placed.
+/// reference (a script node named like a quest), `probe` tells which of those places are
+/// references, all in one go. Only the leaves `needed` picks are placed.
 fn placed<'a>(
     leaves: &'a [Leaf],
     index: &'a JsonIndex,
     needed: impl Fn(&Leaf) -> bool,
-    probe: impl Fn(&str) -> bool,
+    probe: impl Fn(&[&str]) -> HashSet<String>,
 ) -> Vec<(&'a Leaf, Option<&'a IndexedValue>)> {
     if !leaves.iter().any(&needed) {
         return leaves.iter().map(|leaf| (leaf, None)).collect();
@@ -1510,23 +1510,30 @@ fn placed<'a>(
     for (at, leaf) in leaves.iter().enumerate() {
         by_value.entry(leaf.value.as_str()).or_default().push(at);
     }
+    let groups: Vec<(Vec<usize>, Vec<&'a IndexedValue>)> = by_value
+        .into_iter()
+        .filter(|(_, read)| read.iter().any(|&at| needed(&leaves[at])))
+        .map(|(value, read)| (read, occurrences.remove(value).unwrap_or_default()))
+        .collect();
+    let ambiguous: Vec<&str> = groups
+        .iter()
+        .filter(|(read, written)| written.len() > read.len())
+        .flat_map(|(_, written)| written.iter().map(|place| place.pointer.as_str()))
+        .collect();
+    let references = if ambiguous.is_empty() {
+        HashSet::new()
+    } else {
+        probe(&ambiguous)
+    };
     let mut found: Vec<Option<&'a IndexedValue>> = vec![None; leaves.len()];
-    for (value, read) in by_value {
-        if !read.iter().any(|&at| needed(&leaves[at])) {
-            continue;
-        }
-        let written = occurrences.remove(value).unwrap_or_default();
+    for (read, written) in groups {
         let places = if written.len() > read.len() {
-            let references: Vec<&IndexedValue> = written
+            let probed: Vec<&IndexedValue> = written
                 .iter()
                 .copied()
-                .filter(|place| probe(&place.pointer))
+                .filter(|place| references.contains(&place.pointer))
                 .collect();
-            if references.is_empty() {
-                written
-            } else {
-                references
-            }
+            if probed.is_empty() { written } else { probed }
         } else {
             written
         };
@@ -1537,22 +1544,58 @@ fn placed<'a>(
     leaves.iter().zip(found).collect()
 }
 
-/// Whether `value`, parsed by `parse`, reads the string at `pointer` as a reference: a stand-in
-/// written there comes back as a leaf.
-fn reads_reference(
+/// Which of `pointers` in `value` the parse reads as a reference: each place is given a marker of
+/// its own and the whole is parsed once, a place whose marker the parse refuses put back as it was
+/// and the rest parsed again.
+fn reads_references(
     scope: &ContentScope,
     value: &serde_json::Value,
-    pointer: &str,
+    pointers: &[&str],
     parse: &dyn Fn(&serde_json::Value) -> ParseResult,
-) -> bool {
-    const PROBE: &str = "\u{1}probe";
+) -> HashSet<String> {
     let mut probed = value.clone();
-    let Some(slot) = probed.pointer_mut(pointer) else {
-        return false;
-    };
-    *slot = serde_json::Value::String(PROBE.to_owned());
-    let (_, scope) = with_content(scope.clone(), || parse(&probed));
-    scope.leaves().iter().any(|leaf| leaf.value == PROBE)
+    let mut markers: HashMap<String, &str> = HashMap::new();
+    for (index, pointer) in pointers.iter().enumerate() {
+        if let Some(slot) = probed.pointer_mut(pointer) {
+            let marker = format!("\u{1}probe{index}");
+            *slot = serde_json::Value::String(marker.clone());
+            markers.insert(marker, pointer);
+        }
+    }
+    loop {
+        let (result, read) = with_content(scope.clone(), || parse(&probed));
+        let Err(error) = result else {
+            return read
+                .leaves()
+                .iter()
+                .filter_map(|leaf| markers.get(&leaf.value))
+                .map(|pointer| (*pointer).to_owned())
+                .collect();
+        };
+        let refused: Vec<String> = markers
+            .iter()
+            .filter(|(_, pointer)| within(pointer, &error.pointer))
+            .map(|(marker, _)| marker.clone())
+            .collect();
+        if refused.is_empty() {
+            return HashSet::new();
+        }
+        for marker in refused {
+            let pointer = markers.remove(&marker).expect("a refused marker");
+            if let (Some(slot), Some(original)) =
+                (probed.pointer_mut(pointer), value.pointer(pointer))
+            {
+                *slot = original.clone();
+            }
+        }
+    }
+}
+
+/// Whether `pointer` is `node` or lies inside it.
+fn within(pointer: &str, node: &str) -> bool {
+    pointer
+        .strip_prefix(node)
+        .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
 pub fn pointer_of(path: &serde_path_to_error::Path) -> String {

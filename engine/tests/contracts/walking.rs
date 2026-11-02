@@ -301,6 +301,47 @@ fn a_walk_goes_round_what_blocks_and_through_a_notch_a_body_fits() {
         round_the_end(&around),
         "squeezed through a notch too narrow"
     );
+
+    // A cup open toward the walker: the walk leaves it and goes round, off every side.
+    let cup = [
+        (-3.0, -2.0),
+        (3.0, -2.0),
+        (3.0, 2.0),
+        (2.0, 2.0),
+        (2.0, -1.0),
+        (-2.0, -1.0),
+        (-2.0, 2.0),
+        (-3.0, 2.0),
+    ];
+    let points: Vec<Value> = cup.iter().map(|(x, y)| json!({ "x": x, "y": y })).collect();
+    let round_the_cup = Walk::among(
+        json!({ "type": "polygon", "points": points }),
+        json!([{ "type": "prop", "prop": path("prop", "block"), "at": { "x": 7.0, "y": 7.0 } }]),
+        Pos::new(7.0, 9.5),
+    )
+    .toward(Offset::new(0.0, -6.0))
+    .trail();
+    assert_arrives(&round_the_cup, Offset::new(0.0, -6.0), "round the cup");
+    let sides: Vec<(Pos<Meters>, Pos<Meters>)> = (0..cup.len())
+        .map(|at| {
+            let corner = |(x, y): (f32, f32)| Pos::new(7.0 + x, 7.0 + y);
+            (corner(cup[at]), corner(cup[(at + 1) % cup.len()]))
+        })
+        .collect();
+    for at in &round_the_cup {
+        let stands = Pos::new(7.0, 9.5) + *at;
+        let gap = sides
+            .iter()
+            .map(|&(a, b)| distance_to_side(stands, a, b))
+            .fold(f32::INFINITY, f32::min);
+        assert!(gap >= radius - give, "{stands:?} is {gap} m from the cup");
+    }
+}
+
+fn distance_to_side(at: Pos<Meters>, a: Pos<Meters>, b: Pos<Meters>) -> f32 {
+    let along = b - a;
+    let t = ((at - a).dot(along) / along.square_length()).clamp(0.0, 1.0);
+    (at - (a + along * t)).length()
 }
 
 #[test]

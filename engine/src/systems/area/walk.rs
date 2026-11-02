@@ -171,12 +171,15 @@ fn triangulate(area: &Area, at: TileAt) -> [TileLayer; KINDS] {
         .iter()
         .map(|zone| corners(*zone).to_vec())
         .collect();
-    let mut wild_ground = ground.clone();
-    wild_ground.extend(zones.iter().cloned());
-    let lay = |obstacles: &[Vec<Pos<Meters>>]| {
-        NavMesh::triangulate(tile, bounds, obstacles, area.bodies.radius)
-    };
-    [lay(&ground), lay(&wild_ground), lay(&[]), lay(&zones)]
+    let radius = area.bodies.radius;
+    let [walks, wild] =
+        NavMesh::triangulate_sharing(tile, bounds, radius, &ground, [&[], &zones[..]]);
+    [
+        walks,
+        wild,
+        NavMesh::triangulate(tile, bounds, &[], radius),
+        NavMesh::triangulate(tile, bounds, &zones, radius),
+    ]
 }
 
 /// Where the ground of the tile at `at` blocks: the cells painted mostly with a terrain that

@@ -4,6 +4,7 @@ use crate::core::geometry::corners;
 use crate::core::math::{Offset, Pos, Rect, Rng};
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::{MeterPos, Meters};
+use geo::TriangulateEarcut;
 use glam::Vec2;
 use polyanya::{Coords, Layer, Mesh, Polygon, Triangulation, Vertex};
 
@@ -58,42 +59,44 @@ pub struct Island(usize);
 impl NavMesh {
     /// The ground of `tile`, within `bounds` shrunk by `radius`, less every obstacle reaching into
     /// it grown by `radius`, triangulated on its own: a point on the layer is a place a body of
-    /// that radius fits, give or take a tenth of the radius. A grown outline keeps only the points
-    /// that each add more ground than a sixteenth of the radius squared, which lets a body a tenth
-    /// of its radius in at most between the points kept round an outline its own size, and spares
-    /// the mesh most of the points a rounded outline or a run of blocked cells brings.
+    /// that radius fits, kept off an obstacle by at most a tenth of the radius more.
     pub fn triangulate(
         tile: Rect<Meters>,
         bounds: Rect<Meters>,
         obstacles: &[Vec<Pos<Meters>>],
         radius: Meters,
     ) -> TileLayer {
+        let [layer] = NavMesh::triangulate_sharing(tile, bounds, radius, obstacles, [&[]]);
+        layer
+    }
+
+    /// Layers of `tile` as [`NavMesh::triangulate`] lays them, each less the `shared` obstacles
+    /// and its own besides: the shared ones are grown once for them all.
+    pub fn triangulate_sharing<const LAYERS: usize>(
+        tile: Rect<Meters>,
+        bounds: Rect<Meters>,
+        radius: Meters,
+        shared: &[Vec<Pos<Meters>>],
+        own: [&[Vec<Pos<Meters>>]; LAYERS],
+    ) -> [TileLayer; LAYERS] {
         let ground = bounds.inflate(-radius.0, -radius.0);
         let Some(rect) = tile.intersection(&ground).filter(|rect| !rect.is_empty()) else {
-            return TileLayer {
+            return std::array::from_fn(|_| TileLayer {
                 rect: Rect::zero(),
                 layer: Layer::default(),
-            };
+            });
         };
         let mut triangulation = Triangulation::from_outer_edges(&corners(rect).map(vec2));
-        triangulation.set_agent_radius(radius.0);
-        triangulation.set_agent_radius_simplification(radius.0 * radius.0 / 16.0);
-        triangulation.agent_radius_on_outer_edge(false);
-        triangulation.add_obstacles(
-            obstacles
-                .iter()
-                .filter(|outline| outline.len() >= 3)
-                .filter(|outline| {
-                    Rect::from_points(outline.iter().copied())
-                        .inflate(radius.0, radius.0)
-                        .intersects(&rect)
-                })
-                .map(|outline| outline.iter().copied().map(vec2).collect::<Vec<_>>()),
-        );
-        TileLayer {
-            rect,
-            layer: triangulation.as_layer(),
-        }
+        triangulation.add_obstacles(reaching(shared, rect, radius));
+        triangulation.prebuild();
+        own.map(|obstacles| {
+            let mut triangulation = triangulation.clone();
+            triangulation.add_obstacles(reaching(obstacles, rect, radius));
+            TileLayer {
+                rect,
+                layer: triangulation.as_layer(),
+            }
+        })
     }
 
     /// The mesh the tiles make, joined along the seams where they meet: a polygon's neighbours
@@ -432,6 +435,8 @@ const CIRCLE_SIDES: usize = 24;
 /// cut the same outline at the same seam, so their vertices there differ by the rounding alone,
 /// far under a millimetre.
 const SEAM_SNAP: f32 = 1e-3;
+/// How far past the walker's radius a grown obstacle may reach, as a share of the radius.
+const OVERREACH: f32 = 0.1;
 
 /// The layer's lists trimmed to what they hold: built by pushing, they keep room for as much again.
 fn fit(layer: &mut Layer) {
@@ -730,4 +735,167 @@ fn point_in_outline(rng: &mut Rng, outline: &[Pos<Meters>]) -> Option<Pos<Meters
 fn point_in(rng: &mut Rng, [a, b, c]: [Pos<Meters>; 3]) -> Pos<Meters> {
     let (r1, r2) = (rng.rand_float().sqrt(), rng.rand_float());
     a + (b - a) * (r1 * (1.0 - r2)) + (c - a) * (r1 * r2)
+}
+
+/// The outlines of `obstacles` that reach into `rect` once grown by `radius`, grown.
+fn reaching<'a>(
+    obstacles: &'a [Vec<Pos<Meters>>],
+    rect: Rect<Meters>,
+    radius: Meters,
+) -> impl Iterator<Item = Vec<Vec2>> + 'a {
+    obstacles
+        .iter()
+        .filter(|outline| outline.len() >= 3)
+        .filter(move |outline| {
+            Rect::from_points(outline.iter().copied())
+                .inflate(radius.0, radius.0)
+                .intersects(&rect)
+        })
+        .flat_map(move |outline| grown(outline, radius))
+}
+
+/// `outline` grown by `radius` all round, as outlines whose ground together holds every point
+/// within `radius` of it and reaches at most a tenth of `radius` further. A convex outline grows
+/// into one: its edges pushed out, its corners rounded by edges touching the rounding. Any other
+/// grows as the triangles it splits into, the ground of their growths overlapping as theirs does.
+fn grown(outline: &[Pos<Meters>], radius: Meters) -> Vec<Vec<Vec2>> {
+    let mut points: Vec<Vec2> = outline.iter().copied().map(vec2).collect();
+    points.dedup_by(|a, b| a.distance_squared(*b) < AREA_EPSILON);
+    if points.len() > 1 && points[0].distance_squared(points[points.len() - 1]) < AREA_EPSILON {
+        points.pop();
+    }
+    if points.len() < 3 {
+        return Vec::new();
+    }
+    if signed_area(&points) < 0.0 {
+        points.reverse();
+    }
+    if is_convex(&points) {
+        return vec![grown_convex(&points, radius.0)];
+    }
+    let polygon = geo::Polygon::new(
+        points.iter().map(|point| (point.x, point.y)).collect(),
+        Vec::new(),
+    );
+    polygon
+        .earcut_triangles_iter()
+        .filter_map(|triangle| {
+            let mut corners = triangle
+                .to_array()
+                .map(|corner| Vec2::new(corner.x, corner.y))
+                .to_vec();
+            let area = signed_area(&corners);
+            if area.abs() < AREA_EPSILON {
+                return None;
+            }
+            if area < 0.0 {
+                corners.reverse();
+            }
+            Some(grown_convex(&corners, radius.0))
+        })
+        .collect()
+}
+
+/// The convex, counter-clockwise `corners` grown by `radius`: every edge of the growth lies on a
+/// line touching the rounded outline `radius` out, and every corner of it lies at most a tenth of
+/// `radius` further, with as few corners as that allows.
+fn grown_convex(corners: &[Vec2], radius: f32) -> Vec<Vec2> {
+    let farthest = radius * (1.0 + OVERREACH);
+    let widest_step = 2.0 * (1.0 / (1.0 + OVERREACH)).acos();
+    let outward = |from: Vec2, to: Vec2| {
+        let along = (to - from).normalize_or_zero();
+        Vec2::new(along.y, -along.x)
+    };
+    let count = corners.len();
+    let mut touching: Vec<Line> = Vec::with_capacity(count * 2);
+    for at in 0..count {
+        let before = corners[(at + count - 1) % count];
+        let corner = corners[at];
+        let after = corners[(at + 1) % count];
+        let (from, to) = (outward(before, corner), outward(corner, after));
+        let turn = from.perp_dot(to).atan2(from.dot(to)).max(0.0);
+        let steps = (turn / widest_step).floor() as usize;
+        let start = from.y.atan2(from.x);
+        touching.extend((1..=steps).map(|index| {
+            let angle = start + turn * index as f32 / (steps + 1) as f32;
+            let normal = Vec2::new(angle.cos(), angle.sin());
+            Line {
+                through: corner + normal * radius,
+                normal,
+            }
+        }));
+        touching.push(Line {
+            through: corner + to * radius,
+            normal: to,
+        });
+    }
+    let reaches =
+        |point: Option<Vec2>| point.is_some_and(|point| beyond(corners, point) <= farthest);
+    let mut at = 0;
+    while touching.len() > 3 && at < touching.len() {
+        let next = (at + 2) % touching.len();
+        if reaches(touching[at].meeting(&touching[next])) {
+            let dropped = (at + 1) % touching.len();
+            touching.remove(dropped);
+            if dropped < at {
+                at -= 1;
+            }
+        } else {
+            at += 1;
+        }
+    }
+    (0..touching.len())
+        .filter_map(|at| touching[at].meeting(&touching[(at + 1) % touching.len()]))
+        .collect()
+}
+
+/// A straight line, by a point on it and the way it faces.
+struct Line {
+    through: Vec2,
+    normal: Vec2,
+}
+
+impl Line {
+    /// Where the line crosses `other`; none when they run alike or turn back on each other.
+    fn meeting(&self, other: &Line) -> Option<Vec2> {
+        let turn = self.normal.perp_dot(other.normal);
+        if turn <= AREA_EPSILON {
+            return None;
+        }
+        let along = self.normal.perp();
+        let t = (other.through - self.through).dot(other.normal) / along.dot(other.normal);
+        Some(self.through + along * t)
+    }
+}
+
+/// How far `point` lies outside the convex, counter-clockwise `corners`.
+fn beyond(corners: &[Vec2], point: Vec2) -> f32 {
+    let count = corners.len();
+    (0..count)
+        .map(|at| {
+            let (a, b) = (corners[at], corners[(at + 1) % count]);
+            let along = b - a;
+            let t = ((point - a).dot(along) / along.length_squared()).clamp(0.0, 1.0);
+            point.distance(a + along * t)
+        })
+        .fold(f32::INFINITY, f32::min)
+}
+
+fn signed_area(points: &[Vec2]) -> f32 {
+    (0..points.len())
+        .map(|at| points[at].perp_dot(points[(at + 1) % points.len()]))
+        .sum::<f32>()
+        / 2.0
+}
+
+fn is_convex(points: &[Vec2]) -> bool {
+    let count = points.len();
+    (0..count).all(|at| {
+        let (a, b, c) = (
+            points[at],
+            points[(at + 1) % count],
+            points[(at + 2) % count],
+        );
+        (b - a).perp_dot(c - b) >= -AREA_EPSILON
+    })
 }
