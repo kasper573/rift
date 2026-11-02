@@ -1398,29 +1398,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "bevy_kira_audio"
-version = "0.27.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a4d0b81ff8aa81c82c86c009088b22f7cf2b4c3f8c77027c3a035c70e5888aad"
-dependencies = [
- "anyhow",
- "bevy_app",
- "bevy_asset",
- "bevy_curve",
- "bevy_ecs",
- "bevy_log",
- "bevy_math",
- "bevy_platform 0.20.0",
- "bevy_reflect 0.20.0",
- "bevy_transform",
- "bevy_utils 0.20.0",
- "kira",
- "parking_lot",
- "thiserror 2.0.21",
- "uuid",
-]
-
-[[package]]
 name = "bevy_light"
 version = "0.20.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3645,7 +3622,6 @@ dependencies = [
  "bevy_ecs",
  "bevy_egui",
  "bevy_input",
- "bevy_kira_audio",
  "bevy_math",
  "bevy_platform 0.20.0",
  "bevy_replication",
@@ -3688,7 +3664,6 @@ dependencies = [
  "smallvec",
  "strsim",
  "strum",
- "symphonia",
  "tar",
  "tempfile",
  "testkit",
@@ -9783,7 +9758,6 @@ checksum = "7cc1186384beb7dd8eedea376413fd654937285ea6c9cfbb928dc3043ea4b606"
 dependencies = [
  "getrandom 0.4.3",
  "js-sys",
- "rand 0.10.3",
  "serde_core",
  "wasm-bindgen",
 ]

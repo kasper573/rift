@@ -97,7 +97,10 @@ fn a_stack_without_limit_holds_every_coin_in_one_slot() {
 
 #[test]
 fn refusals_read_as_what_is_needed() {
-    let content = goods().load();
+    let content = goods()
+        .area("field", &Map::open(4, 4), json!([]))
+        .hero("field", 1.0, 1.0)
+        .load();
     let [gold] = items(&content, ["gold"]);
     assert_eq!(
         ExchangeRefusal::NoRoom { slots: 1 }.describe(&content),

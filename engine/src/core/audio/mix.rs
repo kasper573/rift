@@ -92,7 +92,12 @@ impl AudioMix {
         *level = volume.clamped();
     }
 
+    /// How loud a fader plays what it holds, against its sounds' own level.
+    pub fn amplitude(&self, fader: AudioFader) -> f32 {
+        self.level(fader).amplitude()
+    }
+
     pub fn gain(&self, category: AudioCategory) -> f32 {
-        self.master.amplitude() * self.level(AudioFader::Category(category)).amplitude()
+        self.amplitude(AudioFader::Master) * self.amplitude(AudioFader::Category(category))
     }
 }

@@ -4,8 +4,8 @@ use bevy::asset::io::AssetSourceId;
 use bevy::asset::{AssetApp, AssetPlugin};
 use bevy::prelude::*;
 use bevy::time::TimeUpdateStrategy;
-use bevy_kira_audio::AudioSource;
 use engine::core::assets::SyncedFiles;
+use engine::core::audio::loader::SoundClip;
 use engine::core::audio::playback::{HushVoice, PlayClip, SfxPlace};
 use engine::core::babble::{BabbleId, BabblePlugin, BabbleRank, Babbling};
 use engine::core::content::Content;
@@ -165,7 +165,7 @@ fn voice_app() -> App {
         StyledTextPlugin,
         BabblePlugin,
     ))
-    .init_asset::<AudioSource>()
+    .init_asset::<SoundClip>()
     .add_message::<PlayClip>()
     .add_message::<HushVoice>()
     .insert_resource(TimeUpdateStrategy::ManualDuration(FRAME))

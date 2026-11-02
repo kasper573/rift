@@ -2,11 +2,11 @@ use std::time::Duration;
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
-use bevy_kira_audio::prelude::AudioSource;
 use bevy_replication::AppReplicationExt;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::core::audio::loader::SoundClip;
 use crate::core::audio::mix::AudioCategory;
 use crate::core::audio::playback::{HushVoice, PlayClip, SfxPlace, SfxTune};
 use crate::core::content::AudioRef;
@@ -205,10 +205,10 @@ pub fn letter_files(bank: &BabbleBankDef) -> impl Iterator<Item = AudioRef> + '_
 }
 
 #[derive(Resource, Default)]
-struct BabbleClips(Vec<Vec<Handle<AudioSource>>>);
+struct BabbleClips(Vec<Vec<Handle<SoundClip>>>);
 
 impl BabbleClips {
-    fn letter(&self, bank: BabbleBankId, letter: char) -> Option<Handle<AudioSource>> {
+    fn letter(&self, bank: BabbleBankId, letter: char) -> Option<Handle<SoundClip>> {
         let index = LETTERS.find(letter)?;
         self.0.get(bank.index())?.get(index).cloned()
     }

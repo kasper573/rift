@@ -64,12 +64,8 @@ bevy_replication.workspace = true
 bevy_time = { workspace = true, features = ["std"] }
 bevy_input = { workspace = true, features = ["serialize"] }
 bevy_math = { workspace = true, features = ["serialize"] }
-bevy_kira_audio = { version = "0.27", default-features = false }
-# bevy_kira_audio fails to build without kira's symphonia feature, which otherwise only its own audio
-# loaders turn on.
-kira = { version = "0.12", default-features = false, features = ["symphonia"] }
+kira = { version = "0.12", default-features = false, features = ["cpal", "flac", "wav", "pcm"] }
 base64 = "0.23"
-symphonia = { version = "0.6", default-features = false, features = ["flac", "wav", "pcm"] }
 futures-timer = "3"
 futures-util = { version = "0.3", default-features = false, features = ["alloc"] }
 derive_more = { version = "2", features = ["add", "add_assign"] }

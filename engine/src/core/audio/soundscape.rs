@@ -2,11 +2,15 @@ use std::collections::{BTreeMap, HashMap};
 use std::time::Duration;
 
 use bevy::prelude::*;
-use bevy_kira_audio::prelude::{Audio, AudioControl, AudioInstance, AudioSource, AudioTween};
+use kira::sound::streaming::StreamingSoundHandle;
+use kira::sound::{FromFileError, PlaybackState};
+use kira::{Easing, Panning, StartTime, Tween};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::audio::mix::{AudioCategory, AudioMix};
+use crate::core::audio::loader::SoundTrack;
+use crate::core::audio::mix::AudioCategory;
+use crate::core::audio::output::AudioOutput;
 use crate::core::audio::playback::{Listener, PositionalAudio};
 use crate::core::audio::{Hearing, decibels};
 use crate::core::content::AudioRef;
@@ -77,7 +81,7 @@ pub struct SoundscapeLayer {
 #[derive(Resource, Default)]
 pub struct SoundscapeMixer {
     clock_start: Duration,
-    sources: HashMap<AudioRef, Handle<AudioSource>>,
+    sources: HashMap<AudioRef, Handle<SoundTrack>>,
     voices: Vec<SoundscapeVoice>,
     refused: Option<Vec<WantedLayer>>,
 }
@@ -86,7 +90,7 @@ pub struct SoundscapeVoice {
     pub channel: SoundscapeChannel,
     pub category: AudioCategory,
     pub src: AudioRef,
-    instance: Handle<AudioInstance>,
+    playing: StreamingSoundHandle<FromFileError>,
     share: f32,
     volume: f32,
     pan: f32,
@@ -153,14 +157,18 @@ impl SoundscapeVoice {
         }
     }
 
-    fn apply(&mut self, instance: &mut AudioInstance, gain: f32, elapsed: Seconds) {
-        let mixed = (self.level() * gain, self.pan);
+    fn apply(&mut self, elapsed: Seconds) {
+        let mixed = (self.level(), self.pan);
         if self.applied == Some(mixed) {
             return;
         }
-        let tween = AudioTween::linear(elapsed.into());
-        instance.set_decibels(decibels(mixed.0), tween);
-        instance.set_panning(mixed.1, tween);
+        let tween = Tween {
+            start_time: StartTime::Immediate,
+            duration: elapsed.into(),
+            easing: Easing::Linear,
+        };
+        self.playing.set_volume(decibels(mixed.0), tween);
+        self.playing.set_panning(Panning(mixed.1), tween);
         self.applied = Some(mixed);
     }
 }
@@ -199,18 +207,18 @@ fn load_sources(
         .collect();
 }
 
-#[expect(clippy::too_many_arguments)]
 fn mix(
     soundscape: Res<Soundscape>,
     listener: Res<Listener>,
     hearing: Res<Hearing>,
     time: Res<Time<Real>>,
-    audio_mix: Res<AudioMix>,
-    audio: Res<Audio>,
-    sources: Res<Assets<AudioSource>>,
-    mut instances: ResMut<Assets<AudioInstance>>,
+    tracks: Res<Assets<SoundTrack>>,
+    output: Option<NonSendMut<AudioOutput>>,
     mut mixer: ResMut<SoundscapeMixer>,
 ) {
+    let Some(mut output) = output else {
+        return;
+    };
     let mixer = &mut *mixer;
     let wanted = listener
         .0
@@ -227,16 +235,17 @@ fn mix(
     mixer.voices.retain_mut(|voice| {
         let playing = wanted.iter().find(|layer| voice.plays(layer));
         voice.approach(playing, elapsed, hearing.glide);
-        let Some(mut instance) = instances.get_mut(&voice.instance) else {
-            warn!("soundscape voice {} failed to start", voice.src.as_str());
+        if voice.playing.state() == PlaybackState::Stopped {
+            let error = voice.playing.pop_error().map(|error| error.to_string());
+            warn!("soundscape voice {} stopped: {error:?}", voice.src.as_str());
             mixer.refused = Some(wanted.clone());
             return false;
-        };
+        }
         if playing.is_none() && voice.share <= 0.0 {
-            instance.stop(AudioTween::default());
+            voice.playing.stop(Tween::default());
             return false;
         }
-        voice.apply(&mut instance, audio_mix.gain(voice.category), elapsed);
+        voice.apply(elapsed);
         true
     });
     if mixer.refused.is_some() {
@@ -246,25 +255,40 @@ fn mix(
         if mixer.voices.iter().any(|voice| voice.plays(layer)) {
             continue;
         }
-        let Some(source) = mixer.sources.get(&layer.src) else {
+        let Some(track) = mixer
+            .sources
+            .get(&layer.src)
+            .and_then(|source| tracks.get(source))
+        else {
             continue;
         };
-        let Some(clip) = sources.get(source) else {
-            continue;
+        let stream = match track.stream() {
+            Ok(stream) => stream,
+            Err(error) => {
+                warn!(
+                    "soundscape track {} unreadable: {error}",
+                    layer.src.as_str()
+                );
+                mixer.refused = Some(wanted.clone());
+                return;
+            }
         };
         // Unheard tracks are virtual: one starts where it would be had it played all along.
-        let instance = audio
-            .play(source.clone())
-            .looped()
-            .start_from(clock.as_secs_f64() % clip.sound.duration().as_secs_f64())
-            .with_volume(decibels(0.0))
-            .with_panning(layer.pan)
-            .handle();
+        let at = clock.as_secs_f64() % track.lasts.as_secs_f64().max(f64::EPSILON);
+        let sound = stream
+            .loop_region(..)
+            .start_position(at)
+            .volume(decibels(0.0))
+            .panning(Panning(layer.pan));
+        let Some(playing) = output.play(layer.category, sound) else {
+            mixer.refused = Some(wanted.clone());
+            return;
+        };
         mixer.voices.push(SoundscapeVoice {
             channel: layer.channel,
             category: layer.category,
             src: layer.src.clone(),
-            instance,
+            playing,
             share: 0.0,
             volume: layer.volume,
             pan: layer.pan,

@@ -103,15 +103,13 @@ impl WaveformCache {
 }
 
 fn analyse(bytes: &[u8]) -> Option<Waveform> {
-    let decoded = sound::decode(bytes.to_vec()).ok()?;
-    let channels = decoded.channels.max(1);
-    let frames = decoded.samples.len() / channels;
+    let decoded = sound::decode(bytes).ok()?;
+    let frames = decoded.frames.len();
     let ms = (frames as f64 * 1000.0 / decoded.sample_rate.max(1) as f64).round() as u32;
     let mut bins = vec![0.0f32; BINS];
-    for (index, sample) in decoded.samples.iter().enumerate() {
-        let bin = (index / channels) * BINS / frames.max(1);
-        let bin = bin.min(BINS - 1);
-        bins[bin] = bins[bin].max(sample.abs());
+    for (index, frame) in decoded.frames.iter().enumerate() {
+        let bin = (index * BINS / frames.max(1)).min(BINS - 1);
+        bins[bin] = bins[bin].max(frame.left.abs()).max(frame.right.abs());
     }
     let peak = bins.iter().cloned().fold(0.0f32, f32::max).max(1e-6);
     for bin in &mut bins {

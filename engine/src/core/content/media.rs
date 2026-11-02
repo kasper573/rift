@@ -188,12 +188,8 @@ fn decode(path: &str, bytes: &[u8]) -> MediaCheck {
         Some(AssetKind::Image) => decode_png(bytes)
             .map(Decoded::Image)
             .map_err(unreadable_image),
-        Some(AssetKind::Audio) => super::sound::decode(bytes.to_vec())
-            .and_then(|audio| {
-                let length = audio.length();
-                audio.into_sound()?;
-                Ok(Decoded::Sound(length))
-            })
+        Some(AssetKind::Audio) => super::sound::decode(bytes)
+            .map(|sound| Decoded::Sound(Seconds(sound.duration().as_secs_f32())))
             .map_err(unreadable_sound),
         Some(AssetKind::Model) => {
             gltf::inspect(bytes)
@@ -224,7 +220,7 @@ fn measure(path: &str, bytes: &[u8]) -> MediaCheck {
     }
 }
 
-fn unreadable_sound(error: symphonia::core::errors::Error) -> MediaProblem {
+fn unreadable_sound(error: kira::sound::FromFileError) -> MediaProblem {
     MediaProblem {
         rule: "unreadable sound",
         found: error.to_string(),

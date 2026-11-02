@@ -1,10 +1,11 @@
 pub mod loader;
 pub mod mix;
+pub mod output;
 pub mod playback;
 pub mod soundscape;
 
 use bevy::prelude::Resource;
-use bevy_kira_audio::prelude::Decibels;
+use kira::Decibels;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 

@@ -192,9 +192,8 @@ const STEER: f32 = 0.3;
 /// off the average instead, keeping playback speed flat rather than wobbling once per snapshot.
 const SMOOTHING_SNAPSHOTS: f32 = 2.0;
 
-/// Past this many queued snapshots the consumer has fallen so far behind (a long stall, a
-/// backgrounded tab) that draining smoothly is pointless; playback resyncs straight to the newest
-/// snapshot.
+/// Past this many queued snapshots the consumer has fallen so far behind (a long stall) that
+/// draining smoothly is pointless; playback resyncs straight to the newest snapshot.
 const MAX_QUEUE: usize = 6;
 
 /// Seconds of buffered playback the speed steering aims to keep ahead of the playhead. The lead
