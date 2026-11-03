@@ -29,6 +29,7 @@ image = { workspace = true, features = ["gif"] }
 dirs = "7"
 ureq = { workspace = true }
 rayon.workspace = true
+thread-priority.workspace = true
 base64 = "0.23"
 walkdir.workspace = true
 imbl = "7"

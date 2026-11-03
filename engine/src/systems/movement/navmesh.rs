@@ -294,13 +294,25 @@ impl NavMesh {
         self.draw_by_area(rng, 0..self.by_area.polygons.len(), fits)
     }
 
+    /// A point within `bounds` that `fits`, each spot as likely as any other of the same size:
+    /// drawn over the bounds and kept where the mesh walks, which costs next to nothing where the
+    /// mesh covers much of them, else drawn over the mesh's ground cut to them.
     pub fn random_point_within(
         &self,
         rng: &mut Rng,
         bounds: Rect<Meters>,
         fits: impl Fn(Pos<Meters>) -> bool,
     ) -> Option<Pos<Meters>> {
-        draw(rng, self.clipped(&corners(bounds), |_| true), fits)
+        (0..DRAWS)
+            .map(|_| {
+                bounds.origin
+                    + Offset::new(
+                        rng.rand_float() * bounds.width(),
+                        rng.rand_float() * bounds.height(),
+                    )
+            })
+            .find(|&at| self.walkable(at) && fits(at))
+            .or_else(|| draw(rng, self.clipped(&corners(bounds), |_| true), fits))
     }
 
     /// The ground within `radius` of `center` an actor at `from` can reach, as triangles to draw

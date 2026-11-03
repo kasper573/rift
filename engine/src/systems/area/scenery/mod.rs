@@ -745,10 +745,15 @@ fn stream_lights(
 }
 
 /// Takes `scenery` out of the view at once, and out of the world a few parts a frame, so a
-/// whole area going doesn't hold up a frame.
+/// whole area going doesn't hold up a frame. What its streaming held, which may be the last of
+/// a whole area, is let go of off the frame.
 pub fn despawn(world: &mut World, scenery: Scenery) {
-    if let Ok(mut root) = world.get_entity_mut(scenery.root) {
-        root.remove::<Streaming>();
+    if let Ok(mut root) = world.get_entity_mut(scenery.root)
+        && let Some(streaming) = root.take::<Streaming>()
+    {
+        AsyncComputeTaskPool::get()
+            .spawn(async move { drop(streaming) })
+            .detach();
     }
     take_away(world, scenery.root);
 }

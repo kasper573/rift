@@ -34,8 +34,8 @@ use crate::app::Editor;
 const TURN: Degrees = Degrees(24.0);
 const YAW: Degrees = Degrees(30.0);
 
-/// A picture of the stage, made again when the project's content moves, and numbered anew only
-/// when the files its scenery is made from change, so the stage stands again only then.
+/// A picture of the stage, made again when the project's content moves, and kept as it was while
+/// the files its scenery is made from stay as they were, so the stage stands again only then.
 #[derive(Default)]
 pub(crate) struct StagePicture {
     made: Option<Made>,
@@ -43,37 +43,35 @@ pub(crate) struct StagePicture {
 
 struct Made {
     generation: u64,
-    number: u64,
     sources: Sources,
     picture: Arc<Picture>,
 }
 
 impl StagePicture {
-    /// The picture of `pictured` as `content` stands at `generation`, with its number.
+    /// The picture of `pictured` as `content` stands at `generation`.
     pub fn of(
         &mut self,
         content: &Content,
         generation: u64,
         pictured: Pictured,
-    ) -> Option<(u64, Arc<Picture>)> {
+    ) -> Option<Arc<Picture>> {
         if let Some(made) = &self.made
             && made.generation == generation
         {
-            return Some((made.number, made.picture.clone()));
+            return Some(made.picture.clone());
         }
-        let picture = Arc::new(area::picture(content, pictured, Kept::All)?);
-        let sources = Sources::of(content, &picture.area);
-        let number = match &self.made {
-            Some(made) if made.sources == sources => made.number,
-            _ => generation,
+        let made = Arc::new(area::picture(content, pictured, Kept::All)?);
+        let sources = Sources::of(content, &made.area);
+        let picture = match self.made.take() {
+            Some(kept) if kept.sources == sources => kept.picture,
+            _ => made,
         };
         self.made = Some(Made {
             generation,
-            number,
             sources,
             picture: picture.clone(),
         });
-        Some((number, picture))
+        Some(picture)
     }
 }
 
@@ -172,7 +170,7 @@ impl StageState {
         content: &Content,
         generation: u64,
         pictured: Pictured,
-    ) -> Option<(u64, Arc<Picture>)> {
+    ) -> Option<Arc<Picture>> {
         self.picture.of(content, generation, pictured)
     }
 }
@@ -184,7 +182,7 @@ pub struct Turntable {
     pub response: Response,
     pub canvas: AreaCanvas,
     view_key: String,
-    picture: (u64, Arc<Picture>),
+    picture: Arc<Picture>,
 }
 
 /// Draws `pictured` on the stage `view_key` keeps in `state` over `size`, or says why there is
@@ -236,7 +234,7 @@ pub fn turntable(
     }
     let mut camera = state.camera;
     camera.target += state.following;
-    let canvas = AreaCanvas::new(rect, camera, picture.1.area.clone());
+    let canvas = AreaCanvas::new(rect, camera, picture.area.clone());
     Some(Turntable {
         rect,
         response,
@@ -353,7 +351,7 @@ pub fn request(
     view_key: &str,
     rect: Rect,
     camera: OrbitCamera,
-    (made, picture): (u64, Arc<Picture>),
+    picture: Arc<Picture>,
     cast: Vec<StandingActor>,
 ) {
     let Some(project) = editor.project.as_ref() else {
@@ -372,7 +370,6 @@ pub fn request(
         size,
         camera,
         picture,
-        made,
         content,
         stroke: None,
         ghost: None,

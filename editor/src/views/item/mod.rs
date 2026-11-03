@@ -349,7 +349,7 @@ fn look_path(editor: &Editor, row: &ItemDef) -> Option<String> {
     Some(reader.path_of(row.look)?.to_owned())
 }
 
-fn picture(editor: &mut Editor, key: &str, row: &ItemDef) -> Option<(u64, Arc<Picture>)> {
+fn picture(editor: &mut Editor, key: &str, row: &ItemDef) -> Option<Arc<Picture>> {
     let project = editor.project.as_ref()?;
     let content = project.content.clone()?;
     let generation = project.generation;

@@ -184,7 +184,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, scene: Scene) -> Option
         target: spawn.at,
         ..view_stage::framing(REACH.0)
     };
-    let canvas = AreaCanvas::new(rect, camera, picture.1.area.clone());
+    let canvas = AreaCanvas::new(rect, camera, picture.area.clone());
     let cast = actors
         .iter()
         .map(|actor| standing(&content, &canvas, actor))

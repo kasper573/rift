@@ -56,8 +56,8 @@ use crate::core::audio::soundscape::SoundscapePlugin;
 use crate::core::babble::{BabblePlugin, Speech};
 use crate::core::content::sync::SyncedContent;
 use crate::core::content::{
-    Content, ContentFolder, ContentProblem, ContentRegistry, ContentVersion, LoadPurpose,
-    LoadReport, Loading, MODULES, RowCheck, SETTINGS_FILE, SettingsFile,
+    Content, ContentFile, ContentFolder, ContentProblem, ContentRegistry, ContentVersion,
+    LoadPurpose, LoadReport, Loading, MODULES, RowCheck, SETTINGS_FILE, SettingsFile,
 };
 use crate::core::gui::GuiPlugin;
 use crate::core::interpolate::SnapshotPlugin;
@@ -925,7 +925,8 @@ fn check_reach(loading: &mut Loading, content: &Content, spawn: script::Place) {
                 .near(problem.nearest),
         );
     }
-    for (site, problem) in area::check_islands(content, spawn) {
+    let rechecks = |id: area::AreaId| loading.rechecks(area::AreaDef::TABLE, id.path(content));
+    for (site, problem) in area::check_islands(content, spawn, rechecks) {
         match site {
             area::IslandSite::Scene(file, pointer) => loading.json_error(&file, &pointer, problem),
             area::IslandSite::Spawn => loading.json_error(SETTINGS_FILE, "/initial_spawn", problem),

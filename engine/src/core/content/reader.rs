@@ -1,14 +1,14 @@
 use std::any::Any;
 use std::collections::BTreeMap;
 use std::io;
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use super::files::{Listing, list_files, table_of};
 use super::fresh::Nearby;
 use super::id::{ContentId, ContentScope, with_content};
 use super::load::{
-    CheckedFiles, ContentFolder, ContentRegistry, FileWriter, LoadPurpose, SettingsFile,
-    TableLoader, check_files, listing_scope, parse_file, parse_settings, parse_value,
+    CheckedFiles, ContentFolder, ContentRegistry, FileWriter, SettingsFile, TableLoader, Unvouched,
+    check_files, listing_scope, parse_file, parse_settings, parse_value,
 };
 use super::report::{ContentProblem, ErrorPlace, LoadError, MISSING_FILE};
 use super::table::ContentFile;
@@ -21,6 +21,7 @@ pub struct FolderReader {
     registry: &'static ContentRegistry,
     folder: Arc<dyn ContentFolder>,
     listed: Arc<Listed>,
+    unvouched: OnceLock<Unvouched>,
 }
 
 /// What the folder's paths say it holds: worked out once for every reader of the same paths.
@@ -53,6 +54,7 @@ impl FolderReader {
                 errors,
                 scope,
             }),
+            unvouched: OnceLock::new(),
         }
     }
 
@@ -64,6 +66,7 @@ impl FolderReader {
             registry: self.registry,
             folder,
             listed: self.listed.clone(),
+            unvouched: OnceLock::new(),
         }
     }
 
@@ -108,7 +111,7 @@ impl FolderReader {
             &self.folder,
             &self.listed.listing,
             scope,
-            LoadPurpose::Check,
+            self.rechecks(loader.name(), path),
             path,
         );
         whole(parsed.row, parsed.errors, path)
@@ -188,7 +191,7 @@ impl FolderReader {
             &self.folder,
             &self.listed.listing,
             &scope,
-            LoadPurpose::Check,
+            self.rechecks(loader.name(), path),
             path,
         );
         let row = read_whole(parsed.row, parsed.errors, path).map_err(|errors| told(&errors))?;
@@ -372,5 +375,15 @@ fn unknown_type(path: &str, table: &str) -> LoadError {
             format!("a {table} file"),
             "a type this game registers",
         ),
+    }
+}
+
+impl FolderReader {
+    /// Whether a read holds the content file at `path` of `table` to the thorough checks, as a
+    /// check load would.
+    fn rechecks(&self, table: &str, path: &str) -> bool {
+        self.unvouched
+            .get_or_init(|| Unvouched::of(self.folder.as_ref(), &self.listed.listing))
+            .reach(&self.listed.listing, table, path)
     }
 }

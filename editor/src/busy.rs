@@ -82,9 +82,9 @@ impl Busy {
 }
 
 impl Editor {
-    /// Runs `work` on a thread of its own, then `then` with what it made, the editor waiting for
-    /// both, after every step it already waits on. `work` starts only once those are done, so it
-    /// starts from what they leave.
+    /// Runs `work` off the frame on the background pool, then `then` with what it made, the
+    /// editor waiting for both, after every step it already waits on. `work` starts only once
+    /// those are done, so it starts from what they leave.
     pub fn run_busy<T: Send + 'static>(
         &mut self,
         label: impl Into<String>,
@@ -250,7 +250,9 @@ impl<T: Send + 'static> Wait for OffFrame<T> {
         let state = match self.state.take().expect("a step finishes once") {
             OffFrameState::Waiting(work) => {
                 let progress = progress.clone();
-                OffFrameState::Running(std::thread::spawn(move || work(&progress)))
+                OffFrameState::Running(std::thread::spawn(move || {
+                    crate::project::background().install(|| work(&progress))
+                }))
             }
             OffFrameState::Running(running) if running.is_finished() => {
                 OffFrameState::Made(joined(running))

@@ -608,8 +608,14 @@ struct Placed {
 
 impl Placing {
     /// Places all of `new` as one step labelled `label`, or as many as the game takes, in order.
+    /// A single module leaves no subset to look for: the load after the step refuses it as it
+    /// refuses any edit.
     fn place(&self, new: Vec<SceneNode>, label: &str) -> Placed {
-        let mut reason = match self.check(&new) {
+        let checked = match new.len() {
+            1 => Ok(()),
+            _ => self.check(&new),
+        };
+        let mut reason = match checked {
             Ok(()) => {
                 return Placed {
                     edit: self.edit(&new, label.to_owned()),

@@ -21,13 +21,13 @@ use std::time::{Duration, Instant, SystemTime};
 
 use engine::core::content::ErrorPlace::WholeFile;
 use engine::core::content::{
-    CheckedFiles, Content, ContentFile, ContentId, ContentNames, ContentProblem, FolderReader,
-    LoadError, LoadPurpose, LoadReport, MISSING_FILE, NamedContent, ReadRow, SETTINGS_FILE,
-    Unreadable, parent_of, table_of,
+    CheckedFiles, Content, ContentFile, ContentId, ContentNames, ContentProblem, FileHashes,
+    FolderReader, LoadError, LoadPurpose, LoadReport, MISSING_FILE, NamedContent, ReadRow,
+    SETTINGS_FILE, Unreadable, parent_of, table_of,
 };
 use engine::systems::{self, GameSettings};
 
-use self::files::content_holding;
+use self::files::{Vouched, content_holding};
 use self::watch::FolderChange;
 use crate::busy::Progress;
 use crate::inbox::ChannelInbox;
@@ -337,6 +337,8 @@ struct Loaded {
     unused: UnusedContent,
     took: Duration,
     usages_took: Duration,
+    /// The files it loaded from, when it held them to every rule.
+    vouched: Option<Arc<Vouched>>,
 }
 
 /// The problems a load found in one file, by JSON pointer (an empty pointer for the file as a
@@ -554,6 +556,13 @@ impl Project {
     }
 
     fn take(&mut self, outcome: Result<Loaded, LoadReport>) {
+        if let Ok(Loaded {
+            vouched: Some(vouched),
+            ..
+        }) = &outcome
+        {
+            self.files.vouch(vouched.clone());
+        }
         let verified = self.verifying.take() == Some(self.files.revision()) && !self.stale;
         match outcome {
             Ok(loaded) if verified => {
@@ -612,11 +621,26 @@ impl Project {
         }
     }
 
+    /// Applies `edit` as [`Project::prepare`], [`PreparedEdit::check`] and [`Project::commit`] do,
+    /// here and now.
     pub fn apply(
         &mut self,
         edit: ContentEdit,
         viewpoint: EditViewpoint,
     ) -> Result<(), Box<EditRefusal>> {
+        if edit.changes.iter().any(|change| change.bytes.is_none()) {
+            self.settle();
+        }
+        match self.prepare(edit)? {
+            Some(prepared) => self.commit(prepared.check(), viewpoint),
+            None => Ok(()),
+        }
+    }
+
+    /// `edit` worked out against the files as they stand, ready to be checked on any thread: none
+    /// when it changes nothing. What names a removed file is known only from the usages of a
+    /// settled load.
+    pub fn prepare(&self, edit: ContentEdit) -> Result<Option<PreparedEdit>, Box<EditRefusal>> {
         if let Some(reason) = &self.read_only {
             return Err(Box::new(EditRefusal {
                 file: String::new(),
@@ -629,8 +653,13 @@ impl Project {
                 errors: 1,
             }));
         }
-        let mut changes: Vec<FileChange> = edit
-            .changes
+        let ContentEdit {
+            label,
+            changes,
+            merge,
+            amends,
+        } = edit;
+        let mut changes: Vec<FileChange> = changes
             .into_iter()
             .filter(
                 |change| match (&change.bytes, self.files.get(&change.file)) {
@@ -641,22 +670,84 @@ impl Project {
             )
             .collect();
         if changes.is_empty() {
-            return Ok(());
+            return Ok(None);
         }
         let filled = self.filled_folders(&changes);
         changes.extend(filled.into_iter().map(|entry| FileChange {
             file: entry,
             bytes: None,
         }));
-        let continues = edit.merge || edit.amends.is_some();
-        if changes.iter().any(|change| change.bytes.is_none()) {
-            self.settle();
+        let mut touched: BTreeSet<String> = changes.iter().map(|c| c.file.clone()).collect();
+        // The game decodes only the media its content names, so a media file is checked through
+        // whatever names it, and whatever named a file removed must do without it.
+        for change in &changes {
+            let naming = match content_holding(&change.file) {
+                Some(content) if change.bytes.is_none() => self.usages.of_content(content),
+                Some(_) => continue,
+                None => self.usages.of_media(&change.file),
+            };
+            touched.extend(naming.iter().map(|usage| usage.file.clone()));
         }
+        let touched: Vec<String> = touched.into_iter().collect();
+        // Files that loaded whole and haven't changed since have no errors an edit may keep.
+        let clean = self.loads() && !self.loading();
+        let known = match &self.checked {
+            _ if clean => Known::Found(HashSet::new()),
+            Some(checked)
+                if checked.revision == self.files.revision() && checked.touched == touched =>
+            {
+                Known::Found(checked.errors.iter().map(error_key).collect())
+            }
+            _ => Known::Unchecked(self.reader()),
+        };
         let next = self.files.with(&changes);
-        let (introduced, checked, read) = self.introduced_errors(&next, &changes);
-        if !introduced.is_empty() {
-            return Err(Box::new(EditRefusal::of_errors(&introduced)));
+        Ok(Some(PreparedEdit {
+            label,
+            merge,
+            amends,
+            from: self.files.revision(),
+            next_reader: self.reader_of(&next),
+            next,
+            changes,
+            touched,
+            known,
+        }))
+    }
+
+    /// Takes in `checked`, unless it brings problems into the files it touches that they did not
+    /// have before: what refuses an edit, so the editor never writes content the game would
+    /// refuse. An edit prepared against files that have changed since is checked again here.
+    pub fn commit(
+        &mut self,
+        checked: CheckedEdit,
+        viewpoint: EditViewpoint,
+    ) -> Result<(), Box<EditRefusal>> {
+        if checked.from != self.files.revision() {
+            let edit = ContentEdit {
+                label: checked.label,
+                changes: checked.changes,
+                merge: checked.merge,
+                amends: checked.amends,
+            };
+            return match self.prepare(edit)? {
+                Some(prepared) => self.commit(prepared.check(), viewpoint),
+                None => Ok(()),
+            };
         }
+        if !checked.introduced.is_empty() {
+            return Err(Box::new(EditRefusal::of_errors(&checked.introduced)));
+        }
+        let CheckedEdit {
+            label,
+            merge,
+            amends,
+            next,
+            changes,
+            checked,
+            read,
+            ..
+        } = checked;
+        let continues = merge || amends.is_some();
         self.checked = Some(checked);
         let before: Vec<FileChange> = changes
             .iter()
@@ -671,7 +762,7 @@ impl Project {
             Some(_) => {}
             None if loads => {
                 self.unverified = Some(Unverified {
-                    label: edit.label.clone(),
+                    label: label.clone(),
                     later: 0,
                     files: self.files.clone(),
                     history: self.history.clone(),
@@ -681,18 +772,18 @@ impl Project {
         }
         self.adopt(next);
         self.typed.keep(&self.files, read);
-        let amended = edit.amends.as_deref().is_some_and(|step| {
+        let amended = amends.as_deref().is_some_and(|step| {
             self.history
-                .amend_last(step, &edit.label, changes.clone(), &before)
+                .amend_last(step, &label, changes.clone(), &before)
         });
         let merged = amended
-            || (edit.merge
+            || (merge
                 && self
                     .history
-                    .merge_into_last(&edit.label, changes.clone(), &before));
+                    .merge_into_last(&label, changes.clone(), &before));
         if !merged {
             self.history.push(EditStep {
-                label: edit.label,
+                label,
                 before,
                 after: changes,
                 selection: viewpoint.selection,
@@ -750,59 +841,6 @@ impl Project {
             files: self.files.clone(),
             known: OnceLock::new(),
         }
-    }
-
-    /// The problems `changes` bring into the files they touch, and into the files naming what they
-    /// remove, that those files did not have before: what refuses an edit, so the editor never
-    /// writes content the game would refuse. What names a removed file is known only from the
-    /// usages of a settled load. Also every problem the touched files have after `changes`, and
-    /// the content among them that reads whole after them.
-    fn introduced_errors(
-        &self,
-        next: &ProjectFiles,
-        changes: &[FileChange],
-    ) -> (Vec<LoadError>, Checked, Vec<ReadRow>) {
-        let mut touched: BTreeSet<String> = changes.iter().map(|c| c.file.clone()).collect();
-        // The game decodes only the media its content names, so a media file is checked through
-        // whatever names it, and whatever named a file removed must do without it.
-        for change in changes {
-            let naming = match content_holding(&change.file) {
-                Some(content) if change.bytes.is_none() => self.usages.of_content(content),
-                Some(_) => continue,
-                None => self.usages.of_media(&change.file),
-            };
-            touched.extend(naming.iter().map(|usage| usage.file.clone()));
-        }
-        let touched: Vec<String> = touched.into_iter().collect();
-        // Files that loaded whole and haven't changed since have no errors an edit may keep.
-        let clean = self.loads() && !self.loading();
-        let known: HashSet<(String, &str, String)> = match &self.checked {
-            _ if clean => HashSet::new(),
-            Some(checked)
-                if checked.revision == self.files.revision() && checked.touched == touched =>
-            {
-                checked.errors.iter().map(error_key).collect()
-            }
-            _ => self
-                .reader()
-                .check(&touched)
-                .errors
-                .iter()
-                .map(error_key)
-                .collect(),
-        };
-        let CheckedFiles { errors, read } = self.reader_of(next).check(&touched);
-        let introduced = errors
-            .iter()
-            .filter(|error| !known.contains(&error_key(error)))
-            .cloned()
-            .collect();
-        let checked = Checked {
-            revision: next.revision(),
-            touched,
-            errors,
-        };
-        (introduced, checked, read)
     }
 
     fn adopt(&mut self, next: ProjectFiles) {
@@ -1025,7 +1063,10 @@ impl Loaded {
         );
         let (content, took) = loaded?;
         let unused = UnusedContent::find(files, &usages);
+        let vouched = (purpose == LoadPurpose::Check)
+            .then(|| Arc::new(Vouched::of(files, content.built::<FileHashes>())));
         Ok(Loaded {
+            vouched,
             content,
             revision: files.revision(),
             usages,
@@ -1093,6 +1134,88 @@ fn moved_outside(usages: &ContentUsages, files: &ProjectFiles) -> Vec<MovedOutsi
     let mut moved: Vec<MovedOutside> = content.chain(media).collect();
     moved.sort_by(|a, b| a.from.cmp(&b.from));
     moved
+}
+
+/// An edit worked out against the files as they stand, to be checked on any thread.
+pub struct PreparedEdit {
+    label: String,
+    merge: bool,
+    amends: Option<String>,
+    /// The revision of the files it was worked out against.
+    from: u64,
+    next: ProjectFiles,
+    next_reader: FolderReader,
+    changes: Vec<FileChange>,
+    /// The files whose problems the edit may change.
+    touched: Vec<String>,
+    known: Known,
+}
+
+/// The problems the touched files have as they stand: found already, or to be found by reading
+/// them.
+enum Known {
+    Found(HashSet<(String, &'static str, String)>),
+    Unchecked(Arc<FolderReader>),
+}
+
+/// An edit and what checking the files after it found.
+pub struct CheckedEdit {
+    label: String,
+    merge: bool,
+    amends: Option<String>,
+    from: u64,
+    next: ProjectFiles,
+    changes: Vec<FileChange>,
+    /// The problems it brings into the files it touches that they did not have before.
+    introduced: Vec<LoadError>,
+    checked: Checked,
+    /// The content among the touched files that reads whole after it.
+    read: Vec<ReadRow>,
+}
+
+impl PreparedEdit {
+    /// The bytes of the content the check reads: what it costs.
+    pub fn weight(&self) -> usize {
+        self.touched
+            .iter()
+            .filter_map(|file| self.next.get(file))
+            .map(|bytes| bytes.len())
+            .sum()
+    }
+
+    /// Checks the files the edit touches as they stand and after it.
+    pub fn check(self) -> CheckedEdit {
+        let known = match &self.known {
+            Known::Found(known) => known.clone(),
+            Known::Unchecked(reader) => reader
+                .check(&self.touched)
+                .errors
+                .iter()
+                .map(error_key)
+                .collect(),
+        };
+        let CheckedFiles { errors, read } = self.next_reader.check(&self.touched);
+        let introduced = errors
+            .iter()
+            .filter(|error| !known.contains(&error_key(error)))
+            .cloned()
+            .collect();
+        CheckedEdit {
+            label: self.label,
+            merge: self.merge,
+            amends: self.amends,
+            from: self.from,
+            checked: Checked {
+                revision: self.next.revision(),
+                touched: self.touched,
+                errors,
+            },
+            next: self.next,
+            changes: self.changes,
+            introduced,
+            read,
+        }
+    }
 }
 
 /// The files as they stand, to load whole as an edit would leave them.
@@ -1257,16 +1380,26 @@ fn read_entry(root: &Path, entry: &str) -> Option<FileBytes> {
     std::fs::read(root.join(entry)).ok().map(FileBytes::from)
 }
 
-/// The pool the editor works on in the background with, such as loading the folder or holding an
-/// area's ground: a share of the cores, so that the frames keep coming meanwhile.
+/// The pool the editor works off the frame with, such as loading the folder, holding an area's
+/// ground or what the editor waits on, and what that work runs in parallel: a thread for every
+/// core at the lowest priority, so the frames always come first and the work takes what cores
+/// they leave.
 pub(crate) fn background() -> &'static rayon::ThreadPool {
     static POOL: OnceLock<rayon::ThreadPool> = OnceLock::new();
     POOL.get_or_init(|| {
-        let threads = std::thread::available_parallelism()
-            .map_or(1, |cores| (cores.get() / BACKGROUND_SHARE).max(1));
         rayon::ThreadPoolBuilder::new()
-            .num_threads(threads)
+            .num_threads(
+                std::thread::available_parallelism()
+                    .map_or(1, |threads| threads.get() / 2)
+                    .max(1),
+            )
             .thread_name(|index| format!("background-{index}"))
+            .start_handler(|_| {
+                // A thread left at the priority it had still works, only competing with frames.
+                let _ = thread_priority::set_current_thread_priority(
+                    thread_priority::ThreadPriority::Min,
+                );
+            })
             .build()
             .expect("a background pool")
     })
@@ -1277,9 +1410,6 @@ pub(crate) fn background() -> &'static rayon::ThreadPool {
 pub(crate) fn drop_in_background<T: Send + 'static>(value: T) {
     background().spawn(move || drop(value));
 }
-
-/// How many of the machine's threads go to each of the background pool's.
-const BACKGROUND_SHARE: usize = 8;
 
 pub fn load(files: &ProjectFiles) -> Result<(Content, Duration), LoadReport> {
     load_for(files, LoadPurpose::Check)

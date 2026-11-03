@@ -619,8 +619,9 @@ pub trait ContentFolder: Send + Sync {
     fn read(&self, file: &str) -> io::Result<Vec<u8>>;
 
     /// The hash of `file` when the folder holds it as this build's loader already checked it
-    /// elsewhere, so a load takes its hash and its media as they are rather than working them out
-    /// again.
+    /// elsewhere, in a folder that loaded whole, so a load takes its hash and its media as they
+    /// are rather than working them out again, and leaves out the thorough checks that rest only
+    /// on files vouched for.
     fn checked(&self, _file: &str) -> Option<FileHash> {
         None
     }
@@ -744,9 +745,11 @@ pub fn load(
 ) -> Result<Content, LoadReport> {
     let version = registry.version();
     let (listing, errors) = super::files::list_files(folder.as_ref(), &registry.file_types());
+    let unvouched = Unvouched::of(folder.as_ref(), &listing);
     let mut loading = Loading {
         folder: folder.clone(),
         listing: Arc::new(listing),
+        unvouched,
         builder: ContentBuilder::default(),
         snapshot: None,
         errors,
@@ -818,6 +821,7 @@ pub(super) fn check_files(
         .cloned()
         .collect();
     let mut loading = Loading {
+        unvouched: Unvouched::of(folder.as_ref(), &listing),
         folder,
         listing,
         builder: ContentBuilder::default(),
@@ -889,6 +893,7 @@ fn content_of(listing: &Listing, file: &str) -> Option<String> {
 pub struct Loading {
     folder: Arc<dyn ContentFolder>,
     listing: Arc<Listing>,
+    unvouched: Unvouched,
     builder: ContentBuilder,
     snapshot: Option<Content>,
     errors: Vec<LoadError>,
@@ -905,6 +910,13 @@ impl Loading {
     /// as where every area walks.
     pub fn thorough(&self) -> bool {
         self.purpose == LoadPurpose::Check
+    }
+
+    /// Whether the load holds the row at `path` of `table` to the thorough checks that rest only
+    /// on the row's own files and on files outside `table`: a thorough load does, unless the
+    /// folder vouches for every one of those files, which then pass as they did.
+    pub fn rechecks(&self, table: &str, path: &str) -> bool {
+        self.thorough() && self.unvouched.reach(&self.listing, table, path)
     }
 
     /// `work` on every item, across the threads.
@@ -1093,14 +1105,21 @@ impl Loading {
                     .map(move |path| (index, path))
             })
             .collect();
+        let jobs: Vec<(usize, String, bool)> = jobs
+            .into_iter()
+            .map(|(index, path)| {
+                let thorough = self.rechecks(registry.row_loaders()[index].name(), &path);
+                (index, path, thorough)
+            })
+            .collect();
         let root = self.folder.clone();
         let listing = self.listing.clone();
-        let purpose = self.purpose;
-        let parsed: Vec<(usize, String, ParsedFile)> = self.each(jobs, |(index, path)| {
-            let loader = registry.row_loaders()[index].as_ref();
-            let parsed = parse_file(registry, loader, &root, &listing, &scope, purpose, &path);
-            (index, path, parsed)
-        });
+        let parsed: Vec<(usize, String, ParsedFile)> =
+            self.each(jobs, |(index, path, thorough)| {
+                let loader = registry.row_loaders()[index].as_ref();
+                let parsed = parse_file(registry, loader, &root, &listing, &scope, thorough, &path);
+                (index, path, parsed)
+            });
 
         let mut rows: Vec<Vec<(String, Box<dyn Any + Send + Sync>)>> =
             registry.row_loaders().iter().map(|_| Vec::new()).collect();
@@ -1176,18 +1195,7 @@ impl Loading {
     }
 
     fn hash_files(&mut self) {
-        let mut files: Vec<String> = Vec::new();
-        if self.listing.settings {
-            files.push(SETTINGS_FILE.to_owned());
-        }
-        for paths in self.listing.content.values() {
-            for path in paths {
-                match self.listing.parts.get(path) {
-                    Some(parts) => files.extend(parts.iter().map(|part| format!("{path}/{part}"))),
-                    None => files.push(path.clone()),
-                }
-            }
-        }
+        let mut files = content_files(&self.listing);
         files.extend(self.media.iter().cloned());
         let root = self.folder.clone();
         let hashed: Vec<(String, io::Result<FileHash>)> = self.each(files, |file| {
@@ -1273,6 +1281,46 @@ impl FileHash {
 
 pub struct FileHashes(pub BTreeMap<String, FileHash>);
 
+/// The content files of a folder it doesn't vouch for ([`ContentFolder::checked`]).
+pub(super) struct Unvouched(Vec<String>);
+
+impl Unvouched {
+    pub(super) fn of(folder: &dyn ContentFolder, listing: &Listing) -> Unvouched {
+        let mut files = content_files(listing);
+        files.retain(|file| folder.checked(file).is_none());
+        Unvouched(files)
+    }
+
+    /// Whether any of them is a file of the row at `path` of `table`, or lies outside `table`.
+    pub(super) fn reach(&self, listing: &Listing, table: &str, path: &str) -> bool {
+        let rows = listing.content.get(table).map_or(&[][..], Vec::as_slice);
+        self.0.iter().any(|file| {
+            let row = listing.bundle_holding(file).unwrap_or(file);
+            row == path
+                || rows
+                    .binary_search_by(|listed| listed.as_str().cmp(row))
+                    .is_err()
+        })
+    }
+}
+
+/// The settings and every file of every content file the listing holds.
+fn content_files(listing: &Listing) -> Vec<String> {
+    let mut files: Vec<String> = Vec::new();
+    if listing.settings {
+        files.push(SETTINGS_FILE.to_owned());
+    }
+    for paths in listing.content.values() {
+        for path in paths {
+            match listing.parts.get(path) {
+                Some(parts) => files.extend(parts.iter().map(|part| format!("{path}/{part}"))),
+                None => files.push(path.clone()),
+            }
+        }
+    }
+    files
+}
+
 pub(super) struct ParsedFile {
     pub(super) row: Option<Box<dyn Any + Send + Sync>>,
     index: Option<Arc<JsonIndex>>,
@@ -1334,7 +1382,7 @@ pub(super) fn parse_file(
     root: &Arc<dyn ContentFolder>,
     listing: &Listing,
     scope: &ContentScope,
-    purpose: LoadPurpose,
+    thorough: bool,
     path: &str,
 ) -> ParsedFile {
     let file = read_file(root.as_ref(), &fields_file(path));
@@ -1343,7 +1391,7 @@ pub(super) fn parse_file(
     });
     if let Some(row) = parsed.row.as_mut() {
         let parts = listing.parts.get(path).map_or(&[][..], Vec::as_slice);
-        let mut reader = Parts::new(path, parts, root, scope, purpose);
+        let mut reader = Parts::new(path, parts, root, scope, thorough);
         loader.read_parts(row.as_mut(), &mut reader);
         let read = reader.finish();
         parsed.errors.extend(read.errors);

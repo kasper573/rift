@@ -98,7 +98,7 @@ pub(super) fn overlay_contours(
         .area
         .view_mut(view_key)
         .contours
-        .of(frame.made, &frame.area().heights);
+        .of(&frame.picture.area);
     for contour in contours.iter() {
         let major = (contour.height.0 / 5.0).fract().abs() < 0.01;
         let color = if major {

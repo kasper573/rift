@@ -51,9 +51,8 @@ pub struct Request {
     pub key: String,
     pub size: [u32; 2],
     pub camera: OrbitCamera,
+    /// What the view shows: a new picture stands the scenery again.
     pub picture: Arc<Picture>,
-    /// The number of the snapshot the picture came from: a new one stands the scenery again.
-    pub made: u64,
     pub content: Content,
     /// The terrain as a brush stroke is shaping it, shown in place of the picture's.
     pub stroke: Option<StrokeTerrain>,
@@ -196,7 +195,6 @@ const HORIZON_REACH_PER_DISTANCE: f32 = 4.0;
 
 struct Stood {
     scenery: Scenery,
-    made: u64,
     area: Arc<Area>,
 }
 
@@ -319,7 +317,7 @@ impl RenderedView {
         let stale = self
             .stood
             .as_ref()
-            .is_none_or(|stood| stood.made != request.made);
+            .is_none_or(|stood| !Arc::ptr_eq(&stood.area, &area));
         if stale && scenery::shaders_ready(world, &request.content, &area) {
             let stood = scenery::spawn(
                 world,
@@ -334,7 +332,6 @@ impl RenderedView {
             scenery::light(world, &area, Daylight::Fixed, stood, self.camera);
             self.stood = Some(Stood {
                 scenery: stood,
-                made: request.made,
                 area: area.clone(),
             });
             self.stroke = None;

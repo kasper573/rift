@@ -276,7 +276,7 @@ pub(crate) fn model_bounds(
 }
 
 /// The picture of the prop at `key` on its stage, made again when the project's content moves.
-pub(super) fn picture(editor: &mut Editor, key: &str) -> Option<(u64, Arc<Picture>)> {
+pub(super) fn picture(editor: &mut Editor, key: &str) -> Option<Arc<Picture>> {
     let project = editor.project.as_ref()?;
     let content = project.content.clone()?;
     let generation = project.generation;

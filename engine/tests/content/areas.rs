@@ -1,4 +1,10 @@
-use engine::core::content::{Content, LoadReport, write};
+use std::io;
+use std::sync::Arc;
+
+use engine::core::content::{
+    Content, ContentFolder, FileHash, FolderEntry, LoadPurpose, LoadReport, MemoryFolder,
+    SETTINGS_FILE, load, version, write,
+};
 use engine::core::ground::{self as ground, GroundSize, Heightfield, MIN_SIDE, PaintMap, TileAt};
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::units::{GROUND_ORIGIN, Meters};
@@ -553,4 +559,87 @@ fn an_areas_scenery_stands_again_only_when_a_file_it_is_made_from_changes() {
     for (case, changed, stands_again) in cases {
         assert_eq!(sources(changed) != as_it_was, stands_again, "{case}");
     }
+}
+
+/// A folder vouching for every file it holds but those under `unvouched`, as one whose files
+/// loaded whole elsewhere does.
+struct Vouching {
+    folder: MemoryFolder,
+    unvouched: Vec<String>,
+}
+
+impl ContentFolder for Vouching {
+    fn name(&self) -> String {
+        self.folder.name()
+    }
+
+    fn entries(&self, dir: &str) -> Vec<FolderEntry> {
+        self.folder.entries(dir)
+    }
+
+    fn read(&self, file: &str) -> io::Result<Vec<u8>> {
+        self.folder.read(file)
+    }
+
+    fn checked(&self, file: &str) -> Option<FileHash> {
+        let unvouched = self
+            .unvouched
+            .iter()
+            .any(|path| file == path || file.starts_with(&format!("{path}/")));
+        if unvouched {
+            return None;
+        }
+        Some(FileHash::of(&self.folder.read(file).ok()?))
+    }
+}
+
+#[test]
+fn a_check_holds_an_area_to_the_rules_its_ground_and_paths_need_again_only_when_it_could_break_them()
+ {
+    let split = Map::of(&[
+        "......#.....",
+        "......#.....",
+        "......#.....",
+        "......#.....",
+    ]);
+    let open = Map::of(&["........", "........", "........", "........"]);
+    let stranded = json!([
+        { "type": "resident", "npc": path("npc", "hermit"), "at": { "x": 9.0, "y": 2.0 } },
+    ]);
+    let game = Game::new()
+        .npc("hermit", 10.0, json!([]))
+        .area("field", &split, stranded)
+        .area("meadow", &open, json!([]))
+        .hero("field", 2.0, 2.0);
+    let refuses = |unvouched: &[&str]| {
+        let folder = Vouching {
+            folder: game.folder(),
+            unvouched: unvouched.iter().map(|path| path.to_string()).collect(),
+        };
+        let loaded = load(
+            game.registry(),
+            Arc::new(folder),
+            version::build(),
+            "the test game did not load",
+            LoadPurpose::Check,
+        );
+        loaded.err().is_some_and(|report| {
+            report
+                .errors
+                .iter()
+                .any(|error| error.problem.rule == "unreachable")
+        })
+    };
+    let field = path("area", "field");
+    let meadow = path("area", "meadow");
+    let hermit = path("npc", "hermit");
+
+    assert!(refuses(&[field.as_str()]), "the area itself changed");
+    assert!(refuses(&[hermit.as_str()]), "what the area names changed");
+    assert!(refuses(&[SETTINGS_FILE]), "the game's settings changed");
+    assert!(!refuses(&[meadow.as_str()]), "only another area changed");
+    assert!(
+        !refuses(&[]),
+        "nothing changed since the folder loaded whole"
+    );
 }

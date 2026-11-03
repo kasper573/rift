@@ -275,11 +275,13 @@ pub struct PopulationPreview {
     pub seed: u64,
 }
 
-/// Where a population's preview stands its bodies, kept until the files or the preview's seed
-/// change: placing them draws from the whole wild mesh, too slow to repeat every frame.
+/// Where a population's preview stands its bodies, kept until the content, the population's count
+/// or bounds, or the preview's seed change: placing them draws from the wild mesh, too slow to
+/// repeat every frame.
 struct PreviewPlaces {
     generation: u64,
-    revision: u64,
+    count: u32,
+    roams: Option<Rect<Meters>>,
     seed: u64,
     places: Vec<Pos<Meters>>,
 }
@@ -686,7 +688,6 @@ fn request_viewport(editor: &mut Editor, ui: &Ui, view_key: &str, frame: &AreaFr
         size,
         camera,
         picture: frame.picture.clone(),
-        made: frame.made,
         content: frame.content.clone(),
         stroke,
         ghost,
@@ -707,9 +708,10 @@ fn ghost_moves(view: &AreaViewState) -> bool {
 fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<StandingActor> {
     let content = &frame.content;
     let area = frame.area();
-    let (generation, revision) = editor.project.as_ref().map_or((0, 0), |project| {
-        (project.generation, project.files.revision())
-    });
+    let generation = editor
+        .project
+        .as_ref()
+        .map_or(0, |project| project.generation);
     let seen = *frame.canvas.view();
     let view = editor.views.area.view_mut(view_key);
     let previews = view.population_previews.clone();
@@ -769,7 +771,8 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<StandingA
             continue;
         };
         let kept = view.preview_places.get(&node.pointer).filter(|kept| {
-            (kept.generation, kept.revision, kept.seed) == (generation, revision, preview.seed)
+            (kept.generation, kept.count, kept.roams, kept.seed)
+                == (generation, population.count, population.roams, preview.seed)
         });
         let roams = population.roams.unwrap_or_else(|| area.size.bounds());
         let places = match kept {
@@ -781,7 +784,8 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<StandingA
                     node.pointer.clone(),
                     PreviewPlaces {
                         generation,
-                        revision,
+                        count: population.count,
+                        roams: population.roams,
                         seed: preview.seed,
                         places: places.clone(),
                     },

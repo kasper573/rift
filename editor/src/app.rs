@@ -32,7 +32,7 @@ use crate::project::journal::{RecoveryJournal, RecoveryJournalData, RecoveryJour
 use crate::project::lock::ProjectLock;
 use crate::project::watch::FolderWatcher;
 use crate::project::{
-    self, AppliedStep, ContentEdit, EditRefusal, EditViewpoint, Project, RowSelection,
+    self, AppliedStep, CheckedEdit, ContentEdit, EditRefusal, EditViewpoint, Project, RowSelection,
 };
 use crate::row_form;
 use crate::scenes::{self, SceneStep};
@@ -95,6 +95,8 @@ impl Plugin for EditorPlugin {
 }
 
 const FRAME_RATE_MARGIN: f32 = 8.0;
+/// The most bytes of content an edit's check reads on the frame: one reading more checks off it.
+const CHECKED_ON_THE_FRAME: usize = 256 << 10;
 
 /// A line per frame, each a [`FrameRecord`] in JSON.
 #[derive(Resource)]
@@ -495,13 +497,15 @@ impl Editor {
     }
 
     /// Applies `edit`, or says why it was refused. An edit that must wait for the folder's loads
-    /// to be in is applied once they are, the editor waiting for it, and refused by a toast.
+    /// to be in is applied once they are, and one whose check reads more than a frame can afford
+    /// is checked off the frame, the editor waiting for either; such an edit is refused by a toast.
     pub fn try_apply(&mut self, edit: ContentEdit) -> Result<(), String> {
-        if self
-            .project
-            .as_ref()
-            .is_some_and(|project| project.waits_on_load(&edit))
-        {
+        let waits = self.busy.is_busy()
+            || self
+                .project
+                .as_ref()
+                .is_some_and(|project| project.waits_on_load(&edit));
+        if waits {
             self.when_settled(edit.label.clone(), move |editor| {
                 let _ = editor.try_apply(edit);
             });
@@ -517,8 +521,47 @@ impl Editor {
             .iter()
             .map(|change| change.file.clone())
             .collect();
+        let prepared = match &mut self.project {
+            Some(project) => {
+                if edit.changes.iter().any(|change| change.bytes.is_none()) {
+                    project.settle();
+                }
+                project.prepare(edit)
+            }
+            None => return Err("no folder is open".to_owned()),
+        };
+        let prepared = match prepared {
+            Ok(Some(prepared)) => prepared,
+            Ok(None) => return Ok(()),
+            Err(refusal) => {
+                self.refused(&label, &refusal);
+                return Err(refusal.sentence());
+            }
+        };
+        if prepared.weight() > CHECKED_ON_THE_FRAME {
+            self.run_busy(
+                label.clone(),
+                move |_| prepared.check(),
+                move |editor, checked| {
+                    let _ = editor.commit(&label, &files, checked, viewpoint);
+                },
+            );
+            return Ok(());
+        }
+        self.commit(&label, &files, prepared.check(), viewpoint)
+    }
+
+    /// Takes in the edit labelled `label` of `files` that `checked` checked, or says why it was
+    /// refused.
+    fn commit(
+        &mut self,
+        label: &str,
+        files: &[String],
+        checked: CheckedEdit,
+        viewpoint: EditViewpoint,
+    ) -> Result<(), String> {
         let outcome = match &mut self.project {
-            Some(project) => project.apply(edit, viewpoint),
+            Some(project) => project.commit(checked, viewpoint),
             None => return Err("no folder is open".to_owned()),
         };
         match outcome {
@@ -534,7 +577,7 @@ impl Editor {
                 Ok(())
             }
             Err(refusal) => {
-                self.refused(&label, &refusal);
+                self.refused(label, &refusal);
                 Err(refusal.sentence())
             }
         }

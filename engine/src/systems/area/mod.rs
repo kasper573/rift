@@ -45,8 +45,8 @@ use crate::core::content::SchemaMark;
 use crate::core::content::{AssetKind, AudioRef};
 use crate::core::content::{
     Bundle, Content, ContentFile, ContentId, ContentProblem, ContentRegistry, FileShape,
-    FileWriter, LoadPurpose, LoadStep, Loading, NamedContent, Nearby, PartSpec, Parts, RowCheck,
-    fields_file, serial,
+    FileWriter, LoadStep, Loading, NamedContent, Nearby, PartSpec, Parts, RowCheck, fields_file,
+    serial,
 };
 use crate::core::ground::{
     GroundGrid, GroundSize, GroundValue, HeightRange, Heightfield, MAX_TERRAINS, MIN_SIDE,
@@ -303,7 +303,8 @@ struct GroundParts {
 /// Reads one grid of the ground from the bundle into `ground`: every tile, refusing at its file
 /// one that isn't a tile of a ground of `size` or doesn't decode, and the overview, which a ground
 /// with any tile must keep. A load to play leaves the tiles stored, to read as they are first
-/// needed; a check decodes them all, on every core, and holds the overview to what they say. A tile the bundle
+/// needed; a check decodes them all, on every core, and holds the overview to what they say,
+/// unless the folder vouches for every tile and the overview as they stand. A tile the bundle
 /// leaves out stays as it is.
 fn read_ground<T: GroundValue>(parts: &mut Parts, specs: GroundParts, ground: &mut GroundGrid<T>) {
     let (across, down) = ground.size().tiles();
@@ -331,16 +332,22 @@ fn read_ground<T: GroundValue>(parts: &mut Parts, specs: GroundParts, ground: &m
         ground.store(at, parts.stored(file));
         files.insert(at, file);
     }
-    if parts.purpose() == LoadPurpose::Check {
-        for (at, problem) in ground.load_all() {
-            parts.error(files[&at], ErrorPlace::WholeFile, problem);
-        }
-    }
     let overview = if any_tile {
         parts.required(specs.overview)
     } else {
         parts.file(specs.overview)
     };
+    let check = parts.thorough()
+        && files
+            .values()
+            .copied()
+            .chain(overview)
+            .any(|file| !parts.vouched(file));
+    if check {
+        for (at, problem) in ground.load_all() {
+            parts.error(files[&at], ErrorPlace::WholeFile, problem);
+        }
+    }
     let Some(file) = overview else {
         return;
     };
@@ -351,7 +358,7 @@ fn read_ground<T: GroundValue>(parts: &mut Parts, specs: GroundParts, ground: &m
         parts.error(file, ErrorPlace::WholeFile, problem);
         return;
     }
-    if parts.purpose() == LoadPurpose::Check && !ground.overview_is_current() {
+    if check && !ground.overview_is_current() {
         parts.error(
             file,
             ErrorPlace::WholeFile,
@@ -1101,7 +1108,7 @@ fn build_all(loading: &mut Loading) {
             build_area(&content, &ground, bodies, modules, placements(&content, id));
         check.extend(budget);
         check_placed(&content, id, modules, &mut check);
-        if loading.thorough() {
+        if loading.rechecks(AreaDef::TABLE, id.path(&content)) {
             check_terrains(&content, id, def, loading);
             area.hold_all();
             check_footing(&content, id, &area, modules, &mut check);
@@ -1466,11 +1473,16 @@ pub enum IslandSite {
     Spawn,
 }
 
-/// Every resident, population, warp and the spawn standing on ground that nothing reaches: no warp
-/// into its area and not the spawn connects to it. An area nothing enters is left alone.
-pub fn check_islands(content: &Content, spawn: script::Place) -> Vec<(IslandSite, ContentProblem)> {
+/// Every resident, population, warp and the spawn standing on ground that nothing reaches, in the
+/// areas `rechecks` asks for: no warp into its area and not the spawn connects to it. An area
+/// nothing enters is left alone.
+pub fn check_islands(
+    content: &Content,
+    spawn: script::Place,
+    rechecks: impl Fn(AreaId) -> bool,
+) -> Vec<(IslandSite, ContentProblem)> {
     let mut problems = Vec::new();
-    for id in content.ids::<AreaDef>() {
+    for id in content.ids::<AreaDef>().filter(|id| rechecks(*id)) {
         let Some(area) = content
             .built::<Areas>()
             .0

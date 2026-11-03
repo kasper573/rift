@@ -6,6 +6,7 @@ use std::sync::Arc;
 use engine::core::ground::Heightfield;
 use engine::core::math::Pos;
 use engine::core::units::Meters;
+use engine::systems::area::Area;
 
 /// Metres of height between contour lines.
 const INTERVAL: f32 = 1.0;
@@ -19,16 +20,20 @@ pub struct Contour {
 /// The contours last traced, with the snapshot they were traced from.
 #[derive(Default)]
 pub struct ContourCache {
-    made: Option<u64>,
+    traced: Option<Arc<Area>>,
     contours: Arc<Vec<Contour>>,
 }
 
 impl ContourCache {
-    /// The contours of `heights`, traced anew when `made` is not the snapshot they came from.
-    pub fn of(&mut self, made: u64, heights: &Heightfield) -> Arc<Vec<Contour>> {
-        if self.made != Some(made) {
-            self.contours = Arc::new(trace(heights));
-            self.made = Some(made);
+    /// The contours of `area`'s ground, traced anew when they were traced for another area.
+    pub fn of(&mut self, area: &Arc<Area>) -> Arc<Vec<Contour>> {
+        if !self
+            .traced
+            .as_ref()
+            .is_some_and(|traced| Arc::ptr_eq(traced, area))
+        {
+            self.contours = Arc::new(trace(&area.heights));
+            self.traced = Some(area.clone());
         }
         self.contours.clone()
     }

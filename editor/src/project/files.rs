@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fmt;
 use std::io;
 use std::ops::Bound;
@@ -9,7 +9,7 @@ use std::time::SystemTime;
 
 use engine::core::content::files;
 use engine::core::content::{
-    ContentFolder, FileHash, FolderEntry, SETTINGS_FILE, entries_in, table_of,
+    ContentFolder, FileHash, FileHashes, FolderEntry, SETTINGS_FILE, entries_in, table_of,
 };
 use engine::systems::registry;
 use imbl::ordmap::DiffItem;
@@ -37,6 +37,30 @@ pub struct ProjectFiles {
     revision: u64,
     paths_revision: u64,
     disk_revision: u64,
+    vouched: Option<Arc<Vouched>>,
+}
+
+/// The files of a copy that loaded whole, by their stamps there, with their hashes: what the
+/// folder vouches for to the loader while a file keeps its stamp and no path came or went.
+pub(crate) struct Vouched {
+    paths_revision: u64,
+    files: HashMap<String, (FileStamp, FileHash)>,
+}
+
+impl Vouched {
+    /// The files of `sound`, a copy that loaded whole with `hashes`.
+    pub(crate) fn of(sound: &ProjectFiles, hashes: &FileHashes) -> Vouched {
+        Vouched {
+            paths_revision: sound.paths_revision,
+            files: hashes
+                .0
+                .iter()
+                .filter_map(|(file, hash)| {
+                    Some((file.clone(), (sound.stamp_of(file)?, hash.clone())))
+                })
+                .collect(),
+        }
+    }
 }
 
 /// Which version of a file an entry holds: two entries with the same stamp hold the same bytes, so
@@ -151,6 +175,7 @@ impl ProjectFiles {
             revision: next_revision(),
             paths_revision: next_revision(),
             disk_revision: next_revision(),
+            vouched: None,
         }
     }
 
@@ -217,6 +242,11 @@ impl ProjectFiles {
             }
             self.paths_revision = next_revision();
         }
+    }
+
+    /// Vouches to the loader for `vouched`, wherever these files hold them still.
+    pub(crate) fn vouch(&mut self, vouched: Arc<Vouched>) {
+        self.vouched = Some(vouched);
     }
 
     /// Which change the files are at: files at the same revision hold the same, whichever copy
@@ -481,6 +511,15 @@ impl ContentFolder for ProjectFiles {
             .filter(|_| !is_folder(file))
             .map(|bytes| bytes.to_vec())
             .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("missing {file}")))
+    }
+
+    fn checked(&self, file: &str) -> Option<FileHash> {
+        let vouched = self
+            .vouched
+            .as_ref()
+            .filter(|vouched| vouched.paths_revision == self.paths_revision)?;
+        let (stamp, hash) = vouched.files.get(file)?;
+        (self.stamp_of(file) == Some(*stamp)).then(|| hash.clone())
     }
 }
 

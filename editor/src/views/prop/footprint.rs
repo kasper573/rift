@@ -113,7 +113,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef, size: Ve
     );
     view.top.top_down();
     let camera = view.top;
-    let canvas = AreaCanvas::new(rect, camera, picture.1.area.clone());
+    let canvas = AreaCanvas::new(rect, camera, picture.area.clone());
     let at = stage::center();
     let color = module_color(AreaModuleKind::Prop);
     if let Some((min, max)) = bounds {
