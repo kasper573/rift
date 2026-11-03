@@ -23,7 +23,7 @@ use bevy::render::render_resource::{
 };
 use bevy::shader::Shader;
 
-use super::merged::{self, Shape};
+use super::merged::{self, MOST_MERGED_VERTICES, Shape};
 use crate::core::ground::{Heightfield, SAMPLES_PER_METER};
 use crate::core::math::{Pos, Rng};
 use crate::core::units::{GROUND_ORIGIN, Meters};
@@ -259,9 +259,9 @@ fn draw(spread: &Spread, rng: &mut Rng) -> (f32, f32) {
 /// A sheet over the patch's painted cells: a quad for every `stride` cells each way, each vertex
 /// weighted by how heavily the cells around it are painted, lying a hair over the ground or, at a
 /// `level`, flat at that height with the depth of ground beneath each vertex. Its uv runs over the
-/// whole area, so a shader's pattern crosses from chunk to chunk unbroken. None when nothing is
-/// painted.
-pub fn sheet(patch: &Patch, level: Option<f32>, color: LinearRgba, stride: u32) -> Option<Mesh> {
+/// whole area, so a shader's pattern crosses from chunk to chunk unbroken. As meshes of a bounded
+/// size, none when nothing is painted.
+pub fn sheet(patch: &Patch, level: Option<f32>, color: LinearRgba, stride: u32) -> Vec<Mesh> {
     let (columns, rows) = (patch.columns, patch.rows);
     let (area_columns, area_rows) = patch.heights.samples();
     let step = 1.0 / SAMPLES_PER_METER as f32;
@@ -324,7 +324,7 @@ pub fn sheet(patch: &Patch, level: Option<f32>, color: LinearRgba, stride: u32) 
         }
     }
     if !any {
-        return None;
+        return Vec::new();
     }
     let (quads_across, quads_down) = (across.len() as u32 - 1, down.len() as u32 - 1);
     let across = quads_across + 1;
@@ -337,20 +337,13 @@ pub fn sheet(patch: &Patch, level: Option<f32>, color: LinearRgba, stride: u32) 
         }
     }
     let colors = vec![color.to_f32_array(); positions.len()];
-    Some(assemble(
-        positions,
-        normals,
-        uvs,
-        tips,
-        Some(colors),
-        indices,
-    ))
+    assemble(positions, normals, uvs, tips, Some(colors), indices)
 }
 
 /// The patch's blades: each cell grows its share of the spread, a triangle per blade of the
 /// `shape` at its own size and colour, its uv running across and up, scattered the same way for
-/// the same `seed`. None when nothing grows.
-pub fn blades(patch: &Patch, shape: &BladeShape, spread: &Spread, seed: u64) -> Option<Mesh> {
+/// the same `seed`. As meshes of a bounded size, none when nothing grows.
+pub fn blades(patch: &Patch, shape: &BladeShape, spread: &Spread, seed: u64) -> Vec<Mesh> {
     let mut positions: Vec<[f32; 3]> = Vec::new();
     let mut normals = Vec::new();
     let mut uvs = Vec::new();
@@ -386,17 +379,10 @@ pub fn blades(patch: &Patch, shape: &BladeShape, spread: &Spread, seed: u64) -> 
         tips.extend([mark(0.0), mark(0.0), mark(1.0)]);
     }
     if positions.is_empty() {
-        return None;
+        return Vec::new();
     }
     let indices = (0..positions.len() as u32).collect();
-    Some(assemble(
-        positions,
-        normals,
-        uvs,
-        tips,
-        Some(colors),
-        indices,
-    ))
+    assemble(positions, normals, uvs, tips, Some(colors), indices)
 }
 
 /// Where the patch's strewn copies stand, each cell holding its share of the spread, turned any
@@ -498,7 +484,7 @@ impl CopyModel {
 }
 
 /// The copies of `model` at `places`, strewn by `spread` and seen at `pixels_per_meter`, merged
-/// into a mesh for each material the model is drawn in: every copy at the level its pixels need,
+/// into meshes of a bounded size for each material the model is drawn in: every copy at the level its pixels need,
 /// each vertex marked as a blade's is and coloured by its copy's tint, for a material whose
 /// copies carry their own marks. Empty when there is nothing to strew.
 pub fn merged_copies(
@@ -510,7 +496,7 @@ pub fn merged_copies(
     model
         .shapes
         .iter()
-        .filter_map(|copy| {
+        .flat_map(|copy| {
             let share = copy.shape.triangles() as f32 / model.triangles.max(1) as f32;
             let mut positions = Vec::new();
             let mut normals = Vec::new();
@@ -548,12 +534,10 @@ pub fn merged_copies(
                 }
                 indices.extend(level.indices.iter().map(|index| base + index));
             }
-            (!indices.is_empty()).then(|| {
-                (
-                    copy.material.clone(),
-                    assemble(positions, normals, uvs, tips, Some(colors), indices),
-                )
-            })
+            assemble(positions, normals, uvs, tips, Some(colors), indices)
+                .into_iter()
+                .map(|mesh| (copy.material.clone(), mesh))
+                .collect::<Vec<_>>()
         })
         .collect()
 }
@@ -699,7 +683,7 @@ fn merged(piece: PieceVertices, height: f32) -> Mesh {
             .pack()
         })
         .collect();
-    assemble(
+    mesh_of(
         piece
             .positions
             .iter()
@@ -1073,7 +1057,86 @@ pub(super) fn piece_vertices(piece: &Piece) -> Option<PieceVertices> {
     })
 }
 
+/// The meshes of `indices`' triangles over the vertices, each holding at most
+/// [`MOST_MERGED_VERTICES`], so a large cover goes to the GPU as several small meshes, a few a
+/// frame, rather than one large one.
 fn assemble(
+    positions: Vec<[f32; 3]>,
+    normals: Vec<[f32; 3]>,
+    uvs: Vec<[f32; 2]>,
+    tips: Vec<[f32; 2]>,
+    colors: Option<Vec<[f32; 4]>>,
+    indices: Vec<u32>,
+) -> Vec<Mesh> {
+    if positions.len() <= MOST_MERGED_VERTICES {
+        return vec![mesh_of(positions, normals, uvs, tips, colors, indices)];
+    }
+    let mut meshes = Vec::new();
+    let mut taken = vec![None; positions.len()];
+    let mut part = Part::default();
+    for triangle in indices.as_chunks::<3>().0 {
+        let fresh = triangle
+            .iter()
+            .filter(|&&vertex| taken[vertex as usize].is_none())
+            .count();
+        if part.sources.len() + fresh > MOST_MERGED_VERTICES {
+            for &source in &part.sources {
+                taken[source as usize] = None;
+            }
+            meshes.push(std::mem::take(&mut part).mesh(&positions, &normals, &uvs, &tips, &colors));
+        }
+        for &vertex in triangle {
+            let index = *taken[vertex as usize].get_or_insert_with(|| {
+                part.sources.push(vertex);
+                part.sources.len() as u32 - 1
+            });
+            part.indices.push(index);
+        }
+    }
+    if !part.indices.is_empty() {
+        meshes.push(part.mesh(&positions, &normals, &uvs, &tips, &colors));
+    }
+    meshes
+}
+
+/// A mesh being cut out of a larger one: the vertices it takes, by their index there, and its
+/// triangles over them.
+#[derive(Default)]
+struct Part {
+    sources: Vec<u32>,
+    indices: Vec<u32>,
+}
+
+impl Part {
+    fn mesh(
+        self,
+        positions: &[[f32; 3]],
+        normals: &[[f32; 3]],
+        uvs: &[[f32; 2]],
+        tips: &[[f32; 2]],
+        colors: &Option<Vec<[f32; 4]>>,
+    ) -> Mesh {
+        mesh_of(
+            picked(&self.sources, positions),
+            picked(&self.sources, normals),
+            picked(&self.sources, uvs),
+            picked(&self.sources, tips),
+            colors
+                .as_deref()
+                .map(|colors| picked(&self.sources, colors)),
+            self.indices,
+        )
+    }
+}
+
+fn picked<T: Copy>(sources: &[u32], values: &[T]) -> Vec<T> {
+    sources
+        .iter()
+        .map(|&source| values[source as usize])
+        .collect()
+}
+
+fn mesh_of(
     positions: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
     uvs: Vec<[f32; 2]>,

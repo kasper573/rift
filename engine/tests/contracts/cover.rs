@@ -69,6 +69,12 @@ fn between(color: [f32; 4], from: LinearRgba, to: LinearRgba) -> bool {
     })
 }
 
+/// The one mesh `meshes` holds, as a patch this small makes.
+fn one(meshes: Vec<Mesh>) -> Mesh {
+    let [mesh] = <[Mesh; 1]>::try_from(meshes).expect("one mesh");
+    mesh
+}
+
 fn marks(mesh: &Mesh) -> Vec<Mark> {
     match mesh.attribute(Mesh::ATTRIBUTE_UV_1).expect("marks") {
         VertexAttributeValues::Float32x2(marks) => marks.iter().map(|uv| Mark::of(*uv)).collect(),
@@ -83,10 +89,13 @@ fn blades_grow_as_thick_as_their_ground_is_painted_rooted_on_the_terrain_each_it
     let full = |_: u32, _: u32| 1.0;
     let half = |_: u32, _: u32| 0.5;
     let none = |_: u32, _: u32| 0.0;
-    let count = |share: &dyn Fn(u32, u32) -> f32, seed: u64| {
-        blades(&patch(&heights, share), &BLADE, &SPREAD, seed)
-            .map_or(0, |mesh| mesh.count_vertices() / 3)
+    let count_of = |share: &dyn Fn(u32, u32) -> f32, spread: &Spread, seed: u64| {
+        blades(&patch(&heights, share), &BLADE, spread, seed)
+            .iter()
+            .map(|mesh| mesh.count_vertices() / 3)
+            .sum::<usize>()
     };
+    let count = |share: &dyn Fn(u32, u32) -> f32, seed: u64| count_of(share, &SPREAD, seed);
     let whole = (SIZE.width * SIZE.height) as f32 * SPREAD.per_square_meter;
     assert!(
         (count(&full, 7) as f32 - whole).abs() <= whole * 0.05,
@@ -100,7 +109,24 @@ fn blades_grow_as_thick_as_their_ground_is_painted_rooted_on_the_terrain_each_it
         whole / 2.0
     );
     assert_eq!(count(&none, 7), 0, "unpainted ground grows nothing");
-    let grown = |seed| blades(&patch(&heights, &full), &BLADE, &SPREAD, seed).expect("grass");
+    let dense = Spread {
+        per_square_meter: 400.0,
+        ..SPREAD
+    };
+    let meshes = blades(&patch(&heights, &full), &BLADE, &dense, 7);
+    assert!(
+        meshes.len() > 1
+            && meshes
+                .iter()
+                .all(|mesh| mesh.count_vertices() <= u16::MAX as usize),
+        "a dense cover comes as several meshes of a bounded size"
+    );
+    let dense_whole = whole * dense.per_square_meter / SPREAD.per_square_meter;
+    assert!(
+        (count_of(&full, &dense, 7) as f32 - dense_whole).abs() <= dense_whole * 0.05,
+        "a dense cover grows every blade over its meshes"
+    );
+    let grown = |seed| one(blades(&patch(&heights, &full), &BLADE, &SPREAD, seed));
     assert_eq!(
         positions(&grown(7)),
         positions(&grown(7)),
@@ -163,7 +189,7 @@ fn a_sheet_lies_on_the_terrain_or_flat_at_a_level_weighted_as_the_cells_around_e
  {
     let heights = slope();
     let west = |column: u32, _: u32| if column < 8 { 1.0 } else { 0.0 };
-    let mesh = sheet(&patch(&heights, &west), None, DARK, 1).expect("a sheet");
+    let mesh = one(sheet(&patch(&heights, &west), None, DARK, 1));
     assert!(
         colors(&mesh)
             .iter()
@@ -190,7 +216,7 @@ fn a_sheet_lies_on_the_terrain_or_flat_at_a_level_weighted_as_the_cells_around_e
         );
     }
     let level = 1.0;
-    let pool = sheet(&patch(&heights, &west), Some(level), DARK, 1).expect("a pool");
+    let pool = one(sheet(&patch(&heights, &west), Some(level), DARK, 1));
     for (position, mark) in positions(&pool).iter().zip(marks(&pool)) {
         assert_eq!(position[1], level, "a pool lies flat at its level");
         let ground = heights.height_at(Pos::new(position[0], position[2])).0;
@@ -202,7 +228,7 @@ fn a_sheet_lies_on_the_terrain_or_flat_at_a_level_weighted_as_the_cells_around_e
     }
     let none = |_: u32, _: u32| 0.0;
     assert!(
-        sheet(&patch(&heights, &none), None, DARK, 1).is_none(),
+        sheet(&patch(&heights, &none), None, DARK, 1).is_empty(),
         "nothing painted, no sheet"
     );
 }

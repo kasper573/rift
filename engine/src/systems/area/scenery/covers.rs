@@ -44,7 +44,7 @@ const PIXELS_PER_TRIANGLE: f32 = 16.0;
 /// what stands of them chunk by chunk, and what stands of them merged.
 pub(super) struct Covers {
     layers: Vec<CoverLayer>,
-    chunks: HashMap<ChunkKey, Option<Entity>>,
+    chunks: HashMap<ChunkKey, Vec<Entity>>,
     merged: HashMap<Merge, Merged>,
     /// What stood for ground since sculpted or painted anew, standing until what stands for the
     /// ground as it is now does.
@@ -133,7 +133,7 @@ impl Covers {
     /// Stands everything again over ground sculpted or painted anew.
     pub(super) fn ground_changed(&mut self) {
         self.stale
-            .extend(self.chunks.drain().filter_map(|(_, chunk)| chunk));
+            .extend(self.chunks.drain().flat_map(|(_, chunk)| chunk));
         for (_, merged) in self.merged.drain() {
             if let Merged::Standing { stood, .. } = merged {
                 self.stale.extend(stood);
@@ -200,8 +200,10 @@ pub(super) fn clear(
     }
     covers.chunks.retain(|key, chunk| {
         let keep = kept.contains(key) || !unstood.stands_over(chunk_bounds(key.2));
-        if !keep && let Some(chunk) = chunk {
-            take_away(world, *chunk);
+        if !keep {
+            for &part in chunk.iter() {
+                take_away(world, part);
+            }
         }
         keep
     });
@@ -765,7 +767,7 @@ fn cover_layers(world: &mut World, content: &Content, area: &Area) -> Vec<CoverL
 }
 
 /// A chunk of a cover's piece, stood under `root`: its sheet or blades, or for a prop the copies
-/// it strews once the prop has loaded; none where the chunk holds nothing of the piece.
+/// it strews once the prop has loaded; nothing where the chunk holds nothing of the piece.
 fn spawn_cover_chunk(
     world: &mut World,
     streaming: &Streaming,
@@ -773,7 +775,7 @@ fn spawn_cover_chunk(
     piece: usize,
     chunk: (u32, u32),
     root: Entity,
-) -> Option<Entity> {
+) -> Vec<Entity> {
     let layer = &streaming.covers.layers[layer];
     let (columns, rows) = streaming.paint.pixels();
     let share = |column: u32, row: u32| {
@@ -806,7 +808,7 @@ fn spawn_cover_chunk(
             u64::from(chunk.0),
         ],
     );
-    let mesh = match shape.as_ref().map(|piece| &piece.shape) {
+    let meshes = match shape.as_ref().map(|piece| &piece.shape) {
         None => cover::sheet(&patch, layer.sheet_level, layer.ground_color, 1),
         Some(PieceShape::Blade { width, height }) => cover::blades(
             &patch,
@@ -818,12 +820,14 @@ fn spawn_cover_chunk(
             seed,
         ),
         Some(PieceShape::Prop { .. }) => {
-            let Strewn { gltf, material, .. } = strewn.as_ref()?;
+            let Some(Strewn { gltf, material, .. }) = strewn.as_ref() else {
+                return Vec::new();
+            };
             let places = cover::strew_places(&patch, spread, seed);
             if places.is_empty() {
-                return None;
+                return Vec::new();
             }
-            return Some(
+            return vec![
                 world
                     .spawn((
                         cover::Strewing {
@@ -836,22 +840,27 @@ fn spawn_cover_chunk(
                         ChildOf(root),
                     ))
                     .id(),
-            );
+            ];
         }
-    }?;
-    let bounds = mesh.get_aabb()?;
-    let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
-    Some(
-        world
-            .spawn((
-                Mesh3d(mesh),
-                MeshMaterial3d(layer.blended.clone()),
-                bounds,
-                NotShadowCaster,
-                ChildOf(root),
-            ))
-            .id(),
-    )
+    };
+    meshes
+        .into_iter()
+        .filter_map(|mesh| {
+            let bounds = mesh.get_aabb()?;
+            let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
+            Some(
+                world
+                    .spawn((
+                        Mesh3d(mesh),
+                        MeshMaterial3d(layer.blended.clone()),
+                        bounds,
+                        NotShadowCaster,
+                        ChildOf(root),
+                    ))
+                    .id(),
+            )
+        })
+        .collect()
 }
 
 /// A seed of its own for every chunk of every piece, mixed from the cover's seed and where the
