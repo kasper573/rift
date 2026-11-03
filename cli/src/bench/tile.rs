@@ -19,7 +19,7 @@ use engine::systems::npc::{NpcDef, NpcId};
 use engine::systems::player::snapshot::{CharacterSnapshot, CharacterStart, start_of};
 use engine::systems::script::Place;
 
-use crate::folder::{reader_of, write};
+use crate::folder::{read, reader_of, write};
 
 /// Writes into `into` the game at `game` with its spawn area laid out `side` by `side` times.
 pub fn tiled(game: &Path, content: &Content, side: u32, into: &Path) -> Result<(), String> {
@@ -30,14 +30,7 @@ pub fn tiled(game: &Path, content: &Content, side: u32, into: &Path) -> Result<(
     let tiles: Vec<(u32, u32)> = (0..side)
         .flat_map(|row| (0..side).map(move |column| (column, row)))
         .collect();
-    let residents = residents_of(
-        content
-            .built::<GameSettings>()
-            .initial_spawn
-            .area
-            .get(content),
-        content,
-    );
+    let residents = residents_of(spawn.area.get(content), content);
     let reader = reader_of(into);
     let mut copies = BTreeMap::new();
     for &tile in tiles.iter().skip(1) {
@@ -48,9 +41,7 @@ pub fn tiled(game: &Path, content: &Content, side: u32, into: &Path) -> Result<(
                 NpcDef::TABLE,
                 NpcDef::SHAPE,
             );
-            let def: NpcDef = reader
-                .read(npc)
-                .map_err(|errors| format!("{npc} doesn't read: {} problem(s)", errors.len()))?;
+            let def: NpcDef = read(&reader, npc)?;
             write(into, reader.write(&copy, &def))?;
             copies.insert((tile, npc.clone()), copy);
         }
@@ -69,9 +60,7 @@ pub fn tiled(game: &Path, content: &Content, side: u32, into: &Path) -> Result<(
                 CharacterSnapshot::TABLE,
                 CharacterSnapshot::SHAPE,
             );
-            let mut snapshot: CharacterSnapshot = reader.read(character).map_err(|errors| {
-                format!("{character} doesn't read: {} problem(s)", errors.len())
-            })?;
+            let mut snapshot: CharacterSnapshot = read(&reader, character)?;
             let start = start_of(content, &snapshot);
             snapshot.start = CharacterStart::At(Place {
                 area: start.area,
@@ -84,15 +73,14 @@ pub fn tiled(game: &Path, content: &Content, side: u32, into: &Path) -> Result<(
         }
     }
 
+    // A fresh reader: it lists the folder as it was when made, before the copies were written.
     let reader = reader_of(into);
     let npc_of = |path: &str| reader.id_at::<NpcId>(path);
     let mut resident_copies = BTreeMap::new();
     for ((tile, npc), copy) in &copies {
         resident_copies.insert((*tile, npc_of(npc)?), npc_of(copy)?);
     }
-    let area: AreaDef = reader
-        .read(&area_path)
-        .map_err(|errors| format!("{area_path} doesn't read: {} problem(s)", errors.len()))?;
+    let area: AreaDef = read(&reader, &area_path)?;
     let (width, height) = (area.size.width, area.size.height);
     let size = GroundSize {
         width: width * side,

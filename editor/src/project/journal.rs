@@ -24,7 +24,11 @@ pub struct RecoveryJournal {
 
 /// A change of the files and of what the editor knows of the disk, as [`RecoveryJournal::due`]
 /// tells them apart.
-pub type JournalRevision = (u64, u64);
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct JournalRevision {
+    pub files: u64,
+    pub disk: u64,
+}
 
 enum JournalWork {
     Write(Box<dyn FnOnce() -> RecoveryJournalData + Send>),

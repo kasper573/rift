@@ -144,7 +144,6 @@ pub fn spawn(
         stood: Stood::default(),
         loading: HashMap::default(),
         making: HashMap::default(),
-        settled: false,
         stood_for: None,
     });
     Scenery {
@@ -266,14 +265,14 @@ pub fn standing(world: &mut World) -> bool {
     world
         .query::<&Streaming>()
         .iter(world)
-        .any(|streaming| !streaming.settled)
+        .any(|streaming| streaming.stood_for.is_none())
 }
 
 /// Whether `scenery` stands all its view takes in.
 pub fn stood(world: &World, scenery: Scenery) -> bool {
     world
         .get::<Streaming>(scenery.root)
-        .is_some_and(|streaming| streaming.settled)
+        .is_some_and(|streaming| streaming.stood_for.is_some())
 }
 
 /// How many sceneries stand.
@@ -301,7 +300,6 @@ struct Streaming {
     loading: HashMap<TileAt, Task<()>>,
     /// The chunks of ground being made, each its mesh and the paint under it.
     making: HashMap<Node, Making<(Mesh, ChunkPaint)>>,
-    settled: bool,
     /// The view all that it takes in stands for, once it does, so a view that stays put costs
     /// nothing to stream.
     stood_for: Option<Seen>,
@@ -357,12 +355,13 @@ struct Node {
     row: u32,
 }
 
-/// The samples along a leaf chunk's side, and how near the view a node must lie, in its own
-/// sides, to be cut into finer ones.
+/// The samples along a leaf chunk's side.
 const LEAF_SAMPLES: u32 = 128;
 /// The pixels along every chunk's paint: a pixel per stride of its samples, and one beyond each
 /// edge.
 const PAINT_SIDE: u32 = LEAF_SAMPLES + 2;
+/// How near the view a node of the ground or a region of the scenery must lie, in its own sides,
+/// to be cut into finer ones.
 const SPLIT_WITHIN: f32 = 1.5;
 /// The level from which a chunk's stride is the overview's, so it stands from the overview alone;
 /// a finer chunk waits for the tiles of ground under it.
@@ -423,8 +422,7 @@ fn stream(world: &mut World) {
         }
         props::level_props(world, &streaming, &seen);
         stream_lights(world, &mut streaming, root, at, reach, keep);
-        streaming.settled = !budget.spent;
-        streaming.stood_for = streaming.settled.then_some(seen);
+        streaming.stood_for = (!budget.spent).then_some(seen);
         world.entity_mut(root).insert(streaming);
     }
 }
@@ -502,14 +500,6 @@ fn stream_ground(
         .filter(|&node| !streaming.stood.ground.contains_key(node))
         .copied()
         .collect();
-    if missing.is_empty() {
-        for node in gone {
-            if let Some(entity) = streaming.stood.ground.remove(&node) {
-                take_down_chunk(world, &mut streaming.paints, entity);
-            }
-        }
-        return;
-    }
     missing.sort_by_key(|node| node.level);
     for node in missing {
         if !ground_under(streaming, node) {
@@ -551,12 +541,7 @@ fn ground_under(streaming: &mut Streaming, node: Node) -> bool {
         return true;
     }
     let (heights, paint) = (&streaming.heights, &streaming.paint);
-    let rect = node_rect(node);
-    let side = rect.side as f32 / SAMPLES_PER_METER as f32;
-    let bounds = Rect::new(
-        Heightfield::sample_pos(rect.first.0, rect.first.1),
-        Size::new(side, side),
-    );
+    let bounds = node_rect(node).bounds();
     let mut ready = true;
     for tile in heights.size().tiles_within(bounds) {
         if heights.is_loaded(tile) && paint.is_loaded(tile) {
@@ -600,12 +585,8 @@ fn nodes_for(heights: &Heightfield, at: Pos<Meters>) -> Vec<Node> {
         if rect.first.0 >= columns - 1 || rect.first.1 >= rows - 1 {
             continue;
         }
-        let side = (rect.side as f32) / SAMPLES_PER_METER as f32;
-        let bounds = Rect::new(
-            Heightfield::sample_pos(rect.first.0, rect.first.1),
-            Size::new(side, side),
-        );
-        let near = distance_to(bounds, at) < side * SPLIT_WITHIN;
+        let bounds = rect.bounds();
+        let near = distance_to(bounds, at) < bounds.size.width * SPLIT_WITHIN;
         if node.level > 0 && near {
             for (dc, dr) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
                 open.push(Node {
@@ -632,6 +613,66 @@ fn node_rect(node: Node) -> NodeRect {
     NodeRect {
         first: (node.column * side, node.row * side),
         side,
+    }
+}
+
+impl NodeRect {
+    /// The ground the node's samples span.
+    fn bounds(&self) -> Rect<Meters> {
+        let side = self.side as f32 / SAMPLES_PER_METER as f32;
+        Rect::new(
+            Heightfield::sample_pos(self.first.0, self.first.1),
+            Size::new(side, side),
+        )
+    }
+}
+
+/// What stands of a merged region: waiting on what it merges, its meshes `M` being made, or
+/// standing, those made rising as many a frame as the budget sends.
+enum Merged<W, M> {
+    Waiting(W),
+    Merging(Making<Vec<M>>),
+    Standing { stood: Vec<Entity>, rising: Vec<M> },
+}
+
+impl<W, M> Merged<W, M> {
+    /// Stands what is made, as many a frame as `budget` sends of the `bytes` each takes, each by
+    /// `spawn`: whether all of it stands, none while waiting.
+    fn rise(
+        &mut self,
+        budget: &mut Budget,
+        bytes: impl Fn(&M) -> usize,
+        mut spawn: impl FnMut(M) -> Option<Entity>,
+    ) -> Option<bool> {
+        if let Merged::Merging(making) = self {
+            let Some(made) = making.made() else {
+                return Some(false);
+            };
+            let rising = std::mem::take(made);
+            *self = Merged::Standing {
+                stood: Vec::new(),
+                rising,
+            };
+        }
+        let Merged::Standing { stood, rising } = self else {
+            return None;
+        };
+        while rising.last().is_some_and(|next| budget.send(bytes(next))) {
+            if let Some(next) = rising.pop()
+                && let Some(standing) = spawn(next)
+            {
+                stood.push(standing);
+            }
+        }
+        Some(rising.is_empty())
+    }
+
+    /// What stands of the region.
+    fn stood(&self) -> &[Entity] {
+        match self {
+            Merged::Standing { stood, .. } => stood,
+            Merged::Waiting(_) | Merged::Merging(_) => &[],
+        }
     }
 }
 
@@ -675,9 +716,10 @@ fn make_chunk(heights: &Heightfield, paint: &PaintMap, node: Node) -> Task<(Mesh
 }
 
 fn made_chunk(heights: &Heightfield, paint: &PaintMap, node: Node) -> (Mesh, ChunkPaint) {
+    let samples = chunk_samples(node);
     (
-        chunk_mesh(heights, node),
-        ChunkPaint::of(paint, chunk_samples(node)),
+        terrain::chunk(heights, samples),
+        ChunkPaint::of(paint, samples),
     )
 }
 
@@ -715,19 +757,6 @@ fn chunk_samples(node: Node) -> terrain::ChunkSamples {
         side: rect.side,
         stride: 1 << node.level,
     }
-}
-
-fn chunk_mesh(heights: &Heightfield, node: Node) -> Mesh {
-    let (columns, rows) = heights.samples();
-    let rect = node_rect(node);
-    let stride = 1 << node.level;
-    terrain::chunk(
-        heights,
-        rect.first,
-        rect.side.min(columns - 1 - rect.first.0),
-        rect.side.min(rows - 1 - rect.first.1),
-        stride,
-    )
 }
 
 fn far(from: Pos<Meters>, to: Pos<Meters>, by: Meters) -> bool {

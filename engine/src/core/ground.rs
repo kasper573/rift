@@ -9,6 +9,7 @@
 use std::io::Cursor;
 use std::sync::{Arc, Mutex, RwLock};
 
+use bevy::log::warn;
 use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -141,6 +142,14 @@ impl TileAt {
             column: plain_number(column)?,
             row: plain_number(row)?,
         })
+    }
+
+    /// The tile holding the value at `(column, row)`.
+    fn holding(column: u32, row: u32) -> TileAt {
+        TileAt {
+            column: column / TILE_PIXELS,
+            row: row / TILE_PIXELS,
+        }
     }
 
     /// The ground the tile covers, cut to a ground of `size`.
@@ -405,27 +414,12 @@ impl GroundGrid<u8> {
 
     /// The highest terrain index any pixel names, every tile loaded.
     pub fn highest(&self) -> u8 {
-        self.used().last().copied().unwrap_or(0)
-    }
-
-    /// Every terrain index some pixel names, lowest first, every tile loaded.
-    pub fn used(&self) -> Vec<u8> {
         self.load_all();
-        let mut seen = [false; MAX_TERRAINS];
-        for slot in &self.tiles {
-            match slot.tile() {
-                Some(tile) => {
-                    for index in &tile.values {
-                        seen[usize::from(*index)] = true;
-                    }
-                }
-                None => seen[0] = true,
-            }
-        }
-        (0..MAX_TERRAINS)
-            .filter(|index| seen[*index])
-            .map(|index| index as u8)
-            .collect()
+        self.tiles
+            .iter()
+            .filter_map(|slot| slot.tile()?.values.iter().copied().max())
+            .max()
+            .unwrap_or(0)
     }
 
     /// The terrain painting most of the metre cell `cell`; of equals, the first.
@@ -579,10 +573,7 @@ impl<T: Value> GroundReader<'_, T> {
         let ground = self.ground;
         let column = column.min(ground.grid.columns.saturating_sub(1));
         let row = row.min(ground.grid.rows.saturating_sub(1));
-        let at = TileAt {
-            column: column / TILE_PIXELS,
-            row: row / TILE_PIXELS,
-        };
+        let at = TileAt::holding(column, row);
         let tile = match &self.held {
             Some((holding, tile)) if *holding == at => tile,
             _ => {
@@ -594,10 +585,7 @@ impl<T: Value> GroundReader<'_, T> {
             }
         };
         match tile {
-            Some(tile) => {
-                let (first_column, first_row) = ground.grid.first(at);
-                tile.values[((row - first_row) * tile.columns + (column - first_column)) as usize]
-            }
+            Some(tile) => tile.values[tile.offset(ground.grid.first(at), column, row)],
             None => ground.overview_value(column, row),
         }
     }
@@ -630,6 +618,13 @@ struct Tile<T> {
     rows: u32,
     values: Vec<T>,
     encoded: Option<Arc<[u8]>>,
+}
+
+impl<T> Tile<T> {
+    /// Where among the values of the tile beginning at `first` the value at `(column, row)` lies.
+    fn offset(&self, first: (u32, u32), column: u32, row: u32) -> usize {
+        ((row - first.1) * self.columns + (column - first.0)) as usize
+    }
 }
 
 /// A tile of the ground as it is held: its values once loaded, else the file to read them from,
@@ -720,11 +715,11 @@ impl<T: Value> GroundGrid<T> {
     /// Reads the overview from its PNG, refusing one that isn't the ground's.
     pub fn decode_overview(&mut self, bytes: &[u8]) -> Result<(), ContentProblem> {
         let (columns, rows) = self.grid.overview_dims();
-        let picture = Picture::decode(bytes, columns, rows, T::CHANNELS)?;
+        let pixels = decode_png(bytes, columns, rows, T::CHANNELS)?;
         self.overview = Some(Arc::new(Tile {
             columns,
             rows,
-            values: T::decode(picture.bytes),
+            values: T::decode(pixels),
             encoded: Some(Arc::from(bytes)),
         }));
         Ok(())
@@ -776,7 +771,7 @@ impl<T: Value> GroundGrid<T> {
     /// Whether every value is blank, without loading: a tile with a file to load counts as not.
     fn is_blank(&self) -> bool {
         self.tiles.iter().all(|slot| match slot.tile() {
-            Some(tile) => tile.values.iter().all(|value| *value == self.blank_value()),
+            Some(tile) => tile.is_blank(self.blank_value()),
             None => slot.stored.is_none(),
         })
     }
@@ -788,7 +783,7 @@ impl<T: Value> GroundGrid<T> {
             return stored.read().ok().map(Arc::from);
         }
         let tile = slot.tile()?;
-        if tile.values.iter().all(|value| *value == self.blank_value()) {
+        if tile.is_blank(self.blank_value()) {
             return None;
         }
         Some(tile.png())
@@ -803,7 +798,7 @@ impl<T: Value> GroundGrid<T> {
         {
             return Some(bytes.to_vec());
         }
-        Some(Picture::encode(
+        Some(encode_png(
             &T::encode(&overview.values),
             overview.columns,
             overview.rows,
@@ -842,7 +837,7 @@ impl<T: Value> GroundGrid<T> {
         })
     }
 
-    /// The `columns` × `rows` values from `(column, row)`, row by row, each as [`GroundGrid::value`]
+    /// The `columns` × `rows` values from `(column, row)`, row by row, each as [`GroundGrid::index`]
     /// gives it, read a tile at a time.
     fn window(&self, column: u32, row: u32, columns: u32, rows: u32) -> Window<T> {
         let mut values = Vec::with_capacity((columns * rows) as usize);
@@ -855,16 +850,13 @@ impl<T: Value> GroundGrid<T> {
             let mut from = column;
             while from < end {
                 let clamped = from.min(last_column);
-                let at = TileAt {
-                    column: clamped / TILE_PIXELS,
-                    row: row / TILE_PIXELS,
-                };
-                let (first_column, first_row) = self.grid.first(at);
+                let at = TileAt::holding(clamped, row);
+                let first = self.grid.first(at);
                 let past_edge = from > last_column;
                 let until = if past_edge {
                     end
                 } else {
-                    end.min(first_column + TILE_PIXELS).min(last_column + 1)
+                    end.min(first.0 + TILE_PIXELS).min(last_column + 1)
                 };
                 let tile = match &held {
                     Some((holding, tile)) if *holding == at => tile,
@@ -879,8 +871,7 @@ impl<T: Value> GroundGrid<T> {
                 let run = (until - from) as usize;
                 match tile {
                     Some(tile) => {
-                        let start =
-                            ((row - first_row) * tile.columns + (clamped - first_column)) as usize;
+                        let start = tile.offset(first, clamped, row);
                         if past_edge {
                             values.extend(std::iter::repeat_n(tile.values[start], run));
                         } else {
@@ -903,17 +894,12 @@ impl<T: Value> GroundGrid<T> {
     pub fn index(&self, column: u32, row: u32) -> T {
         let column = column.min(self.grid.columns.saturating_sub(1));
         let row = row.min(self.grid.rows.saturating_sub(1));
-        let at = TileAt {
-            column: column / TILE_PIXELS,
-            row: row / TILE_PIXELS,
-        };
+        let at = TileAt::holding(column, row);
         let Some(slot) = self.tiles.get(self.grid.index(at)) else {
             return self.blank_value();
         };
         if let Some(tile) = slot.loaded.read().expect("a ground tile lock").as_ref() {
-            let (first_column, first_row) = self.grid.first(at);
-            return tile.values
-                [((row - first_row) * tile.columns + (column - first_column)) as usize];
+            return tile.values[tile.offset(self.grid.first(at), column, row)];
         }
         self.overview_value(column, row)
     }
@@ -933,19 +919,13 @@ impl<T: Value> GroundGrid<T> {
         let last_row = self.grid.rows.saturating_sub(1);
         let (column, row) = (column.min(last_column), row.min(last_row));
         let (right, below) = ((column + 1).min(last_column), (row + 1).min(last_row));
-        let at = TileAt {
-            column: column / TILE_PIXELS,
-            row: row / TILE_PIXELS,
-        };
-        if right / TILE_PIXELS == at.column
-            && below / TILE_PIXELS == at.row
+        let at = TileAt::holding(column, row);
+        if TileAt::holding(right, below) == at
             && let Some(slot) = self.tiles.get(self.grid.index(at))
             && let Some(tile) = slot.loaded.read().expect("a ground tile lock").as_ref()
         {
-            let (first_column, first_row) = self.grid.first(at);
-            let value = |column: u32, row: u32| {
-                tile.values[((row - first_row) * tile.columns + (column - first_column)) as usize]
-            };
+            let first = self.grid.first(at);
+            let value = |column: u32, row: u32| tile.values[tile.offset(first, column, row)];
             return [
                 value(column, row),
                 value(right, row),
@@ -979,7 +959,12 @@ impl<T: Value> GroundGrid<T> {
         let blank = self.blank_value();
         for (index, local) in grid.holders(column, row) {
             let at = grid.at(index);
-            self.load(at).ok();
+            if let Err(problem) = self.load(at) {
+                warn!(
+                    "ground tile {} doesn't load, and is set anew: {problem}",
+                    at.key()
+                );
+            }
             let slot = &mut self.tiles[index];
             let unchanged = match slot.tile() {
                 Some(tile) => tile.values[local] == value,
@@ -1017,25 +1002,27 @@ impl<T: Value> PartialEq for GroundGrid<T> {
         }
         self.load_all();
         other.load_all();
-        let blank =
-            |tile: &Arc<Tile<T>>| tile.values.iter().all(|value| *value == self.blank_value());
         self.tiles
             .iter()
             .zip(&other.tiles)
             .all(|(a, b)| match (a.tile(), b.tile()) {
                 (Some(a), Some(b)) => Arc::ptr_eq(&a, &b) || a.values == b.values,
-                (Some(tile), None) | (None, Some(tile)) => blank(&tile),
+                (Some(tile), None) | (None, Some(tile)) => tile.is_blank(self.blank_value()),
                 (None, None) => true,
             })
     }
 }
 
 impl<T: Value> Tile<T> {
+    fn is_blank(&self, blank: T) -> bool {
+        self.values.iter().all(|value| *value == blank)
+    }
+
     /// The tile's PNG: the file it came from while it is as it holds it, else encoded now.
     fn png(&self) -> Arc<[u8]> {
         match &self.encoded {
             Some(bytes) => bytes.clone(),
-            None => Arc::from(Picture::encode(
+            None => Arc::from(encode_png(
                 &T::encode(&self.values),
                 self.columns,
                 self.rows,
@@ -1117,11 +1104,11 @@ impl TileGrid {
 
     fn decode_tile<T: Value>(&self, at: TileAt, bytes: &[u8]) -> Result<Tile<T>, ContentProblem> {
         let (columns, rows) = self.tile_dims(at);
-        let picture = Picture::decode(bytes, columns, rows, T::CHANNELS)?;
+        let pixels = decode_png(bytes, columns, rows, T::CHANNELS)?;
         Ok(Tile {
             columns,
             rows,
-            values: T::decode(picture.bytes),
+            values: T::decode(pixels),
             encoded: Some(Arc::from(bytes)),
         })
     }
@@ -1201,80 +1188,66 @@ impl TileGrid {
     }
 }
 
-struct Picture {
-    bytes: Vec<u8>,
+/// The greyscale PNG `bytes` hold, as its raw pixel bytes: refused unless it is `columns` ×
+/// `rows` of `channels`.
+fn decode_png(
+    bytes: &[u8],
+    columns: u32,
+    rows: u32,
+    channels: Channels,
+) -> Result<Vec<u8>, ContentProblem> {
+    let unreadable = |found: String| ContentProblem::new("unreadable image", found, "a PNG");
+    let mut reader = png::Decoder::new(Cursor::new(bytes))
+        .read_info()
+        .map_err(|error| unreadable(error.to_string()))?;
+    let info = reader.info();
+    if (info.width, info.height) != (columns, rows) {
+        return Err(ContentProblem::new(
+            "wrong size",
+            format!("{} × {} px", info.width, info.height),
+            format!("{columns} × {rows} px over this ground"),
+        ));
+    }
+    let (depth, expected) = png_depth(channels);
+    if (info.color_type, info.bit_depth) != (png::ColorType::Grayscale, depth) {
+        return Err(ContentProblem::new(
+            "wrong format",
+            format!("{:?} {:?}", info.color_type, info.bit_depth),
+            expected,
+        ));
+    }
+    let size = reader
+        .output_buffer_size()
+        .ok_or_else(|| unreadable("an image too large to decode".to_owned()))?;
+    let mut pixels = vec![0; size];
+    let frame = reader
+        .next_frame(&mut pixels)
+        .map_err(|error| unreadable(error.to_string()))?;
+    pixels.truncate(frame.buffer_size());
+    pixels.shrink_to_fit();
+    Ok(pixels)
 }
 
-impl Picture {
-    fn decode(
-        bytes: &[u8],
-        columns: u32,
-        rows: u32,
-        channels: Channels,
-    ) -> Result<Picture, ContentProblem> {
-        let unreadable = |found: String| ContentProblem::new("unreadable image", found, "a PNG");
-        let mut reader = png::Decoder::new(Cursor::new(bytes))
-            .read_info()
-            .map_err(|error| unreadable(error.to_string()))?;
-        let info = reader.info();
-        if (info.width, info.height) != (columns, rows) {
-            return Err(ContentProblem::new(
-                "wrong size",
-                format!("{} × {} px", info.width, info.height),
-                format!("{columns} × {rows} px over this ground"),
-            ));
-        }
-        let (want_color, want_depth, expected) = match channels {
-            Channels::Grey16 => (
-                png::ColorType::Grayscale,
-                png::BitDepth::Sixteen,
-                "16-bit greyscale",
-            ),
-            Channels::Grey8 => (
-                png::ColorType::Grayscale,
-                png::BitDepth::Eight,
-                "8-bit greyscale",
-            ),
-        };
-        if (info.color_type, info.bit_depth) != (want_color, want_depth) {
-            return Err(ContentProblem::new(
-                "wrong format",
-                format!("{:?} {:?}", info.color_type, info.bit_depth),
-                expected,
-            ));
-        }
-        let size = reader
-            .output_buffer_size()
-            .ok_or_else(|| unreadable("an image too large to decode".to_owned()))?;
-        let mut pixels = vec![0; size];
-        let frame = reader
-            .next_frame(&mut pixels)
-            .map_err(|error| unreadable(error.to_string()))?;
-        pixels.truncate(frame.buffer_size());
-        pixels.shrink_to_fit();
-        Ok(Picture { bytes: pixels })
-    }
+/// Raw pixel `bytes` of `channels` as a `columns` × `rows` greyscale PNG.
+fn encode_png(bytes: &[u8], columns: u32, rows: u32, channels: Channels) -> Vec<u8> {
+    let mut out = Vec::new();
+    let mut encoder = png::Encoder::new(&mut out, columns, rows);
+    encoder.set_color(png::ColorType::Grayscale);
+    encoder.set_depth(png_depth(channels).0);
+    let mut writer = encoder
+        .write_header()
+        .expect("a png header writes to memory");
+    writer
+        .write_image_data(bytes)
+        .expect("png pixels write to memory");
+    writer.finish().expect("a png finishes in memory");
+    out
+}
 
-    fn encode(bytes: &[u8], columns: u32, rows: u32, channels: Channels) -> Vec<u8> {
-        let mut out = Vec::new();
-        let mut encoder = png::Encoder::new(&mut out, columns, rows);
-        match channels {
-            Channels::Grey16 => {
-                encoder.set_color(png::ColorType::Grayscale);
-                encoder.set_depth(png::BitDepth::Sixteen);
-            }
-            Channels::Grey8 => {
-                encoder.set_color(png::ColorType::Grayscale);
-                encoder.set_depth(png::BitDepth::Eight);
-            }
-        }
-        let mut writer = encoder
-            .write_header()
-            .expect("a png header writes to memory");
-        writer
-            .write_image_data(bytes)
-            .expect("png pixels write to memory");
-        writer.finish().expect("a png finishes in memory");
-        out
+/// The PNG bit depth `channels` are kept at, and how a reader would name it.
+fn png_depth(channels: Channels) -> (png::BitDepth, &'static str) {
+    match channels {
+        Channels::Grey16 => (png::BitDepth::Sixteen, "16-bit greyscale"),
+        Channels::Grey8 => (png::BitDepth::Eight, "8-bit greyscale"),
     }
 }

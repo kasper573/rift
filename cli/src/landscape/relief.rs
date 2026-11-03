@@ -8,7 +8,7 @@ use engine::core::units::{Degrees, Meters};
 use noise::{Fbm, MultiFractal, NoiseFn, Perlin, RidgedMulti};
 use rayon::prelude::*;
 
-use super::Land;
+use super::{Land, Stream};
 
 pub struct Relief {
     origin: Pos<Meters>,
@@ -31,12 +31,11 @@ impl Relief {
         let bounds = size.bounds();
         let columns = (bounds.size.width / spacing).ceil() as usize + 1;
         let rows = (bounds.size.height / spacing).ceil() as usize + 1;
-        let seed = land.seed as u32;
-        let hills = Fbm::<Perlin>::new(seed).set_octaves(6);
-        let ranges = RidgedMulti::<Perlin>::new(seed.wrapping_add(1)).set_octaves(5);
-        let where_ranges = Fbm::<Perlin>::new(seed.wrapping_add(2)).set_octaves(3);
-        let bend_x = Fbm::<Perlin>::new(seed.wrapping_add(3)).set_octaves(4);
-        let bend_y = Fbm::<Perlin>::new(seed.wrapping_add(4)).set_octaves(4);
+        let hills = Fbm::<Perlin>::new(land.seed_of(Stream::Hills)).set_octaves(6);
+        let ranges = RidgedMulti::<Perlin>::new(land.seed_of(Stream::Ranges)).set_octaves(5);
+        let where_ranges = Fbm::<Perlin>::new(land.seed_of(Stream::WhereRanges)).set_octaves(3);
+        let bend_x = Fbm::<Perlin>::new(land.seed_of(Stream::BendX)).set_octaves(4);
+        let bend_y = Fbm::<Perlin>::new(land.seed_of(Stream::BendY)).set_octaves(4);
         let raw: Vec<f32> = (0..rows * columns)
             .into_par_iter()
             .map(|index| {
@@ -153,7 +152,7 @@ impl Relief {
     /// The ground's samples: the lattice between its nodes and the bumps underfoot, lifted and
     /// stretched to rise over the relief exactly.
     pub fn heightfield(&self, size: GroundSize, range: HeightRange, land: &Land) -> Heightfield {
-        let bumps = Fbm::<Perlin>::new((land.seed as u32).wrapping_add(5)).set_octaves(3);
+        let bumps = Fbm::<Perlin>::new(land.seed_of(Stream::Bumps)).set_octaves(3);
         let bump_wavelength = f64::from(self.spacing * NODES_PER_BUMP);
         let roughness = land.shape.roughness.0;
         let (columns, rows) = size.samples();

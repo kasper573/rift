@@ -274,7 +274,7 @@ fn mix(
             }
         };
         // Unheard tracks are virtual: one starts where it would be had it played all along.
-        let at = clock.as_secs_f64() % track.lasts.as_secs_f64().max(f64::EPSILON);
+        let at = clock.as_secs_f64() % f64::from(track.lasts.0).max(f64::EPSILON);
         let sound = stream
             .loop_region(..)
             .start_position(at)

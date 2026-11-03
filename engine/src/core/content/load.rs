@@ -13,6 +13,7 @@ use schemars::generate::SchemaSettings;
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 
+use super::asset::AssetKind;
 use super::bundle::{Bundle, PartSpec, Parts};
 use super::check::RowCheck;
 use super::files::{
@@ -816,7 +817,7 @@ pub(super) fn check_files(
         .collect();
     let parts: Vec<String> = files
         .iter()
-        .filter(|file| super::is_media_file(file))
+        .filter(|file| AssetKind::of(file).is_some())
         .filter(|file| listing.bundle_holding(file).is_some())
         .cloned()
         .collect();
@@ -1058,7 +1059,7 @@ impl Loading {
             .flat_map(|(bundle, parts)| {
                 parts
                     .iter()
-                    .filter(|part| super::is_media_file(part))
+                    .filter(|part| AssetKind::of(part).is_some())
                     .map(move |part| format!("{bundle}/{part}"))
             })
             .collect();

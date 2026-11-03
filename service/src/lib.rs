@@ -57,6 +57,11 @@ macro_rules! heap_profiling {
 )]
 mod profiling;
 
+/// What the allocator holds for live allocations, where it reports that.
+pub fn allocated_bytes() -> Option<u64> {
+    profiling::allocated_bytes()
+}
+
 pub async fn serve(name: &str, at: SocketAddr, router: Router) {
     let app = track(router, recorder());
     let listener = TcpListener::bind(at)

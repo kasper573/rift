@@ -544,13 +544,7 @@ pub fn load_content(
     outcome: &str,
     purpose: LoadPurpose,
 ) -> Result<Content, LoadReport> {
-    crate::core::content::load(
-        registry(),
-        folder,
-        crate::core::content::version::build(),
-        outcome,
-        purpose,
-    )
+    load_through(registry(), folder, outcome, purpose)
 }
 
 /// Loads a game still being made, through `making_registry`, for `purpose`.
@@ -559,8 +553,17 @@ pub fn load_making(
     outcome: &str,
     purpose: LoadPurpose,
 ) -> Result<Content, LoadReport> {
+    load_through(making_registry(), folder, outcome, purpose)
+}
+
+fn load_through(
+    registry: &ContentRegistry,
+    folder: std::sync::Arc<dyn ContentFolder>,
+    outcome: &str,
+    purpose: LoadPurpose,
+) -> Result<Content, LoadReport> {
     crate::core::content::load(
-        making_registry(),
+        registry,
         folder,
         crate::core::content::version::build(),
         outcome,

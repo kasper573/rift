@@ -1,25 +1,18 @@
 use std::sync::Arc;
 
-use editor::busy::Progress;
 use editor::project::watch::FolderChange;
 use editor::project::{
     ContentEdit, EditViewpoint, FileBytes, FileChange, Project, RowSelection, json_bytes,
 };
-use editor::schema::SchemaShapes;
 use engine::core::content::SETTINGS_FILE;
 
-use crate::support::game_folder;
+use crate::support::{game_folder, open_project};
 
 #[test]
 fn an_outside_change_restarts_the_saved_marker_at_the_disk_state() {
     let scratch = tempfile::tempdir().expect("a scratch folder");
     let folder = game_folder(scratch.path().join("game"));
-    let mut project = Project::open(
-        &folder,
-        Arc::new(SchemaShapes::load()),
-        &Progress::default(),
-    )
-    .expect("opens");
+    let mut project = open_project(&folder);
 
     project
         .apply(rename(&project, "Lowtide"), viewpoint())
@@ -50,12 +43,7 @@ fn an_outside_change_restarts_the_saved_marker_at_the_disk_state() {
 fn a_folder_made_then_filled_saves_as_the_disk_reads_it_back_and_undo_keeps_it() {
     let scratch = tempfile::tempdir().expect("a scratch folder");
     let folder = game_folder(scratch.path().join("game"));
-    let mut project = Project::open(
-        &folder,
-        Arc::new(SchemaShapes::load()),
-        &Progress::default(),
-    )
-    .expect("opens");
+    let mut project = open_project(&folder);
     for (file, label) in [("props/", "New folder"), ("props/crate.md", "New note")] {
         let mut edit = ContentEdit::new(label);
         edit.write(file, FileBytes::from(b"".as_slice()));
@@ -78,12 +66,7 @@ fn a_folder_made_then_filled_saves_as_the_disk_reads_it_back_and_undo_keeps_it()
 fn the_unsaved_files_follow_edits_saves_and_changes_on_disk() {
     let scratch = tempfile::tempdir().expect("a scratch folder");
     let folder = game_folder(scratch.path().join("game"));
-    let mut project = Project::open(
-        &folder,
-        Arc::new(SchemaShapes::load()),
-        &Progress::default(),
-    )
-    .expect("opens");
+    let mut project = open_project(&folder);
     assert!(project.unsaved().is_empty());
 
     project
@@ -126,12 +109,7 @@ fn the_unsaved_files_follow_edits_saves_and_changes_on_disk() {
 fn the_saved_step_stays_marked_through_undo_until_a_new_edit_discards_it() {
     let scratch = tempfile::tempdir().expect("a scratch folder");
     let folder = game_folder(scratch.path().join("game"));
-    let mut project = Project::open(
-        &folder,
-        Arc::new(SchemaShapes::load()),
-        &Progress::default(),
-    )
-    .expect("opens");
+    let mut project = open_project(&folder);
     for name in ["One", "Two"] {
         project
             .apply(rename(&project, name), viewpoint())
@@ -160,12 +138,7 @@ fn the_saved_step_stays_marked_through_undo_until_a_new_edit_discards_it() {
 fn undoing_a_merged_step_restores_every_file_it_came_to_touch() {
     let scratch = tempfile::tempdir().expect("a scratch folder");
     let folder = game_folder(scratch.path().join("game"));
-    let mut project = Project::open(
-        &folder,
-        Arc::new(SchemaShapes::load()),
-        &Progress::default(),
-    )
-    .expect("opens");
+    let mut project = open_project(&folder);
     let settings = project.files.get(SETTINGS_FILE);
     let note = "notes/plan.md";
 

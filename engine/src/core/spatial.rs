@@ -29,30 +29,33 @@ impl SpatialIndex {
 
     /// Files `extents` anew, each by its place among them.
     pub fn refile(&mut self, extents: impl IntoIterator<Item = Rect<Meters>>) {
+        let cell = self.cell;
+        self.refile_spans(
+            extents
+                .into_iter()
+                .map(|extent| (cell_of(cell, extent.min()), cell_of(cell, extent.max()))),
+        );
+    }
+
+    /// Files `spots` anew, each by its place among them: extents of no size, each under one cell.
+    pub fn refile_spots(&mut self, spots: impl IntoIterator<Item = Pos<Meters>>) {
+        let cell = self.cell;
+        self.refile_spans(spots.into_iter().map(|spot| {
+            let at = cell_of(cell, spot);
+            (at, at)
+        }));
+    }
+
+    fn refile_spans(&mut self, spans: impl Iterator<Item = (Cell, Cell)>) {
         self.filed.clear();
         self.bounds = None;
-        let cell = self.cell;
-        for (index, extent) in extents.into_iter().enumerate() {
-            let (first, last) = (cell_of(cell, extent.min()), cell_of(cell, extent.max()));
+        for (index, (first, last)) in spans.enumerate() {
             for row in first.0..=last.0 {
                 for column in first.1..=last.1 {
                     self.filed.push(((row, column), first, index as u32));
                 }
             }
             self.widen(first, last);
-        }
-        self.sort_filed();
-    }
-
-    /// Files `spots` anew, each by its place among them: extents of no size, each under one cell.
-    pub fn refile_spots(&mut self, spots: impl IntoIterator<Item = Pos<Meters>>) {
-        self.filed.clear();
-        self.bounds = None;
-        let cell = self.cell;
-        for (index, spot) in spots.into_iter().enumerate() {
-            let at = cell_of(cell, spot);
-            self.filed.push((at, at, index as u32));
-            self.widen(at, at);
         }
         self.sort_filed();
     }

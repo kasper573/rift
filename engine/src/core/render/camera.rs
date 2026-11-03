@@ -1,8 +1,7 @@
 //! The camera: a perspective view pitched down on a point of the ground, turned to any yaw, tilted
 //! between looking down and looking out toward the horizon, set to one of three distances, and the
-//! ray it casts through the pointer. The view is a pure
-//! projection of the rig, so the probe, the plates and the picking all project the way the camera
-//! draws.
+//! ray it casts through the pointer. The view is a pure projection of the rig, so the probe, the
+//! plates and the picking all project the way the camera draws.
 
 use bevy::anti_alias::smaa::Smaa;
 use bevy::anti_alias::taa::TemporalAntiAliasing;
@@ -96,11 +95,11 @@ const AIR_STEPS: u32 = 32;
 /// How every camera that draws the world finishes its picture: in a high range of light, the air
 /// lit by the sun's shafts, creases shaded by what stands around them, soft shadows, under the
 /// sky's own scattering and lighting (`sky::show`), and all of it settled over the frames by
-/// temporal anti-aliasing (`finish_new_picture`); then what the light catches
-/// blooms over its rim, the light is opened up and mapped to the screen's range by a filmic
-/// curve, which deepens the shade and lifts the light, dithered
-/// against banding, and smoothed once more by morphological anti-aliasing over the finished
-/// picture, which takes the clearings along with the geometry's edges. The shafts, the shaded
+/// temporal anti-aliasing (`finish_new_picture`); then what the light catches blooms over its rim,
+/// the light is opened up and mapped to the screen's range by a filmic curve, which deepens the
+/// shade and lifts the light, dithered against banding, and smoothed once more by morphological
+/// anti-aliasing over the finished picture, which takes the clearings along with the geometry's
+/// edges. The shafts, the shaded
 /// creases, the bloom and the smoothing are drawn as the player's `VideoPreferences` ask.
 pub fn picture(grade: PictureGrade) -> impl Bundle {
     (

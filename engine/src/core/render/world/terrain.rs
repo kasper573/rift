@@ -557,17 +557,19 @@ fn stack(side: u32, pictures: &[RgbaImage]) -> Image {
     image
 }
 
-/// The mesh of the chunk of ground `columns`×`rows` samples from sample `first`, taking every
-/// `stride`-th sample, in the world's metres from the ground's corner, with a skirt hanging from
-/// its edges so a coarser chunk beside it shows no gap where their heights differ. Its paint is
-/// read by where it lies, so it carries no uv.
-pub fn chunk(
-    heights: &Heightfield,
-    first: (u32, u32),
-    columns: u32,
-    rows: u32,
-    stride: u32,
-) -> Mesh {
+/// The mesh of the chunk of ground `samples` takes, cut at the ground's far edges, in the world's
+/// metres from the ground's corner, with a skirt hanging from its edges so a coarser chunk beside
+/// it shows no gap where their heights differ. Its paint is read by where it lies, so it carries
+/// no uv.
+pub fn chunk(heights: &Heightfield, samples: ChunkSamples) -> Mesh {
+    let ChunkSamples {
+        first,
+        side,
+        stride,
+    } = samples;
+    let (all_columns, all_rows) = heights.samples();
+    let columns = side.min(all_columns - 1 - first.0);
+    let rows = side.min(all_rows - 1 - first.1);
     let step = stride as f32 / SAMPLES_PER_METER as f32;
     let (across, down) = (columns.div_ceil(stride) + 1, rows.div_ceil(stride) + 1);
     let last = (first.0 + columns, first.1 + rows);
@@ -594,13 +596,7 @@ pub fn chunk(
         }
     }
     let mut indices = Vec::with_capacity((((across - 1) * (down - 1) + skirt) * 6) as usize);
-    for row in 0..down - 1 {
-        for column in 0..across - 1 {
-            let corner = row * across + column;
-            let (east, south, far) = (corner + 1, corner + across, corner + across + 1);
-            indices.extend([corner, south, east, east, south, far]);
-        }
-    }
+    indices.extend(grid_indices(across, down));
     let rim: Vec<u32> = (0..across)
         .chain((1..down).map(|row| row * across + across - 1))
         .chain(
@@ -662,14 +658,7 @@ pub fn patch(heights: &Heightfield, at: Vec2, size: Vec2, yaw: f32, lift: f32) -
             uvs.push([u, v]);
         }
     }
-    let mut indices = Vec::with_capacity(((across - 1) * (down - 1) * 6) as usize);
-    for row in 0..down - 1 {
-        for column in 0..across - 1 {
-            let corner = row * across + column;
-            let (east, south, far) = (corner + 1, corner + across, corner + across + 1);
-            indices.extend([corner, south, east, east, south, far]);
-        }
-    }
+    let indices: Vec<u32> = grid_indices(across, down).collect();
     Mesh::new(
         PrimitiveTopology::TriangleList,
         RenderAssetUsages::default(),
@@ -678,4 +667,16 @@ pub fn patch(heights: &Heightfield, at: Vec2, size: Vec2, yaw: f32, lift: f32) -
     .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
     .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
     .with_inserted_indices(Indices::U32(indices))
+}
+
+/// The triangles of a grid of vertices `across` × `down`, laid row by row: two a quad, each wound
+/// to face up.
+pub(super) fn grid_indices(across: u32, down: u32) -> impl Iterator<Item = u32> {
+    (0..down.saturating_sub(1)).flat_map(move |row| {
+        (0..across.saturating_sub(1)).flat_map(move |column| {
+            let corner = row * across + column;
+            let (east, south, far) = (corner + 1, corner + across, corner + across + 1);
+            [corner, south, east, east, south, far]
+        })
+    })
 }

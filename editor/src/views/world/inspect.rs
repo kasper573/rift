@@ -9,6 +9,7 @@ use ui::sheet;
 use ui::theme;
 use ui::words;
 
+use engine::core::content::serial::json_of;
 use engine::core::content::{ContentFile, Fixture, name_of};
 use engine::systems::area::world_map::{MAX_NOTE, MAX_SIZE, MIN_SIZE, RegionColor, WorldMap};
 use engine::systems::area::{self, AreaId};
@@ -25,7 +26,6 @@ use crate::browser::{self, BrowserAction};
 use crate::keymap::EditorKey;
 use crate::project::{ContentEdit, RowSelection};
 use crate::tabs::{EditorTab, shown_path};
-use crate::value;
 use crate::views::area as area_view;
 use crate::widgets;
 use ui::input::{InputField, NumberField};
@@ -621,7 +621,7 @@ fn inspect_cards(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap, cards: &[
         .iter()
         .filter_map(|area| Some((atlas.key(*area), map.layout.cards.get(area)?)))
         .collect();
-    let text = value::json(&stored)
+    let text = json_of(&stored)
         .and_then(|json| serde_json::to_string_pretty(&json))
         .unwrap_or_default();
     ui.label(face::mono(text).size(12.0).color(theme::CODE));

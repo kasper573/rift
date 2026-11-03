@@ -191,35 +191,15 @@ impl Planner for DriveBodies {
                 Drive::Start => start_waiting(world, npc),
                 Drive::Walk(current, plan) => {
                     let outcome = walk_on(world, npc, current, plan);
-                    if !current.started
-                        && let Some(mut body) = world.get_mut::<Body>(npc)
-                        && let Some(running) = body.current.as_mut()
-                    {
-                        running.started = true;
-                    }
-                    if let Some(output) = outcome {
-                        done(world, npc, current, output);
-                    }
+                    carry_on(world, npc, current, outcome);
                 }
                 Drive::Step(current) => {
                     let outcome = step(world, npc, current);
-                    if !current.started
-                        && let Some(mut body) = world.get_mut::<Body>(npc)
-                        && let Some(running) = body.current.as_mut()
-                    {
-                        running.started = true;
-                    }
-                    if let Some(output) = outcome {
-                        done(world, npc, current, output);
-                    }
+                    carry_on(world, npc, current, outcome);
                 }
                 Drive::Wander(ground) => {
                     wander_to(world, npc, ground);
-                    if let Some(mut body) = world.get_mut::<Body>(npc)
-                        && let Some(running) = body.current.as_mut()
-                    {
-                        running.started = true;
-                    }
+                    mark_started(world, npc);
                 }
                 Drive::Done(current, output) => done(world, npc, current, output),
             }
@@ -317,6 +297,23 @@ fn wander_to(world: &mut World, npc: Entity, ground: Vec<[Pos<Meters>; 3]>) {
 }
 
 /// Ends the npc's current act with its outcome, and takes up the next waiting.
+fn carry_on(world: &mut World, npc: Entity, current: Running, outcome: Option<Outcome>) {
+    if !current.started {
+        mark_started(world, npc);
+    }
+    if let Some(output) = outcome {
+        done(world, npc, current, output);
+    }
+}
+
+fn mark_started(world: &mut World, npc: Entity) {
+    if let Some(mut body) = world.get_mut::<Body>(npc)
+        && let Some(running) = body.current.as_mut()
+    {
+        running.started = true;
+    }
+}
+
 fn done(world: &mut World, npc: Entity, current: Running, output: Outcome) {
     reach::forget(world, npc);
     if let Some(mut body) = world.get_mut::<Body>(npc) {

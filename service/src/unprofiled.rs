@@ -6,6 +6,10 @@ use axum::response::{IntoResponse, Response};
 
 use crate::CpuProfileQuery;
 
+pub fn allocated_bytes() -> Option<u64> {
+    None
+}
+
 pub async fn heap_profile() -> Response {
     (
         StatusCode::NOT_FOUND,

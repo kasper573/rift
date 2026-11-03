@@ -1,6 +1,5 @@
 use std::io::{self, Cursor};
 use std::sync::Arc;
-use std::time::Duration;
 
 use bevy::asset::io::Reader;
 use bevy::asset::{Asset, AssetLoader, LoadContext};
@@ -9,7 +8,8 @@ use kira::sound::FromFileError;
 use kira::sound::static_sound::StaticSoundData;
 use kira::sound::streaming::StreamingSoundData;
 
-use crate::core::content::AssetKind;
+use crate::core::content::{AssetKind, sound};
+use crate::core::units::Seconds;
 
 /// A sound decoded whole, to start the moment it is asked for: an effect's or a voice's clip.
 #[derive(Asset, TypePath, Clone)]
@@ -19,7 +19,7 @@ pub struct SoundClip(pub StaticSoundData);
 #[derive(Asset, TypePath, Clone)]
 pub struct SoundTrack {
     encoded: Arc<[u8]>,
-    pub lasts: Duration,
+    pub lasts: Seconds,
 }
 
 impl SoundTrack {
@@ -44,8 +44,8 @@ impl AssetLoader for ClipLoader {
     ) -> Result<SoundClip, io::Error> {
         let mut encoded = Vec::new();
         reader.read_to_end(&mut encoded).await?;
-        let sound = StaticSoundData::from_cursor(Cursor::new(encoded)).map_err(undecodable)?;
-        Ok(SoundClip(sound))
+        let clip = sound::decode(&encoded).map_err(io::Error::other)?;
+        Ok(SoundClip(clip))
     }
 
     fn extensions(&self) -> &[&str] {
@@ -70,17 +70,11 @@ impl AssetLoader for TrackLoader {
         let mut encoded = Vec::new();
         reader.read_to_end(&mut encoded).await?;
         let encoded: Arc<[u8]> = encoded.into();
-        let lasts = StreamingSoundData::from_cursor(Cursor::new(encoded.clone()))
-            .map_err(undecodable)?
-            .duration();
+        let lasts = sound::length(encoded.clone()).map_err(io::Error::other)?;
         Ok(SoundTrack { encoded, lasts })
     }
 
     fn extensions(&self) -> &[&str] {
         AssetKind::Audio.extensions()
     }
-}
-
-fn undecodable(error: FromFileError) -> io::Error {
-    io::Error::other(error)
 }

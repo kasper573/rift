@@ -147,7 +147,7 @@ impl PlacedShape {
             })
             .filter(|point| self.contains(*point))
             .collect();
-        if inside.is_empty() {
+        if inside.is_empty() || count == 0 {
             return vec![self.at; count as usize];
         }
         let mut picks: Vec<usize> = (0..count)
@@ -156,37 +156,19 @@ impl PlacedShape {
                 (stride as usize).min(inside.len() - 1)
             })
             .collect();
-        let nearest = |to: Pos<Meters>, among: &[usize]| {
-            among
-                .iter()
-                .copied()
-                .min_by(|a, b| {
-                    (inside[*a] - to)
-                        .length()
-                        .total_cmp(&(inside[*b] - to).length())
-                })
-                .unwrap_or(0)
-        };
-        let all: Vec<usize> = (0..inside.len()).collect();
         for _ in 0..SPREAD_ROUNDS {
             let mut sums = vec![(Vec2::ZERO, 0usize); picks.len()];
             for point in &inside {
-                let owner = picks
-                    .iter()
-                    .enumerate()
-                    .min_by(|a, b| {
-                        (inside[*a.1] - *point)
-                            .length()
-                            .total_cmp(&(inside[*b.1] - *point).length())
-                    })
-                    .map_or(0, |(owner, _)| owner);
+                let owner = nearest_index(picks.iter().map(|pick| inside[*pick]), *point)
+                    .expect("count is not zero, so there are picks");
                 sums[owner].0 += Vec2::new(point.x, point.y);
                 sums[owner].1 += 1;
             }
             for (pick, (sum, members)) in picks.iter_mut().zip(sums) {
                 if members > 0 {
                     let mean = sum / members as f32;
-                    *pick = nearest(Pos::new(mean.x, mean.y), &all);
+                    *pick = nearest_index(inside.iter().copied(), Pos::new(mean.x, mean.y))
+                        .expect("inside is not empty");
                 }
             }
         }
@@ -346,3 +328,10 @@ impl From<WirePlacedShape> for PlacedShape {
 /// How many candidate points a spread picks among, and how many rounds its picks relax over.
 const SPREAD_CANDIDATES: usize = 4096;
 const SPREAD_ROUNDS: usize = 12;
+
+fn nearest_index(points: impl Iterator<Item = Pos<Meters>>, to: Pos<Meters>) -> Option<usize> {
+    points
+        .enumerate()
+        .min_by(|a, b| (a.1 - to).length().total_cmp(&(b.1 - to).length()))
+        .map(|(index, _)| index)
+}

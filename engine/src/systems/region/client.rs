@@ -10,9 +10,9 @@ use super::held_reach;
 use crate::core::content::Content;
 use crate::core::ground::TileAt;
 use crate::core::units::Meters;
-use crate::systems::area;
 use crate::systems::movement::Position;
 use crate::systems::player::session::my_character;
+use crate::systems::{area, sleep};
 
 /// A hold fetches and lays ground, so it runs on a task of its own, one at a time, and the frames
 /// go on meanwhile.
@@ -48,7 +48,7 @@ fn follow(world: &mut World) {
     };
     if !world.contains_resource::<Holding>() {
         world.insert_resource(Holding {
-            reach: held_reach(&content),
+            reach: held_reach(sleep::awake_reach(&content)),
             task: None,
         });
     }

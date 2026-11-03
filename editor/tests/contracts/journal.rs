@@ -3,7 +3,9 @@ use std::path::Path;
 use editor::app::Editor;
 use editor::app::content_version;
 use editor::project::FileBytes;
-use editor::project::journal::{RecoveryJournal, RecoveryJournalData, RecoveryJournalFile};
+use editor::project::journal::{
+    JournalRevision, RecoveryJournal, RecoveryJournalData, RecoveryJournalFile,
+};
 use editor::user::{EditorSettings, UserFolder};
 use engine::core::content::fields_file;
 use serde_json::json;
@@ -123,7 +125,8 @@ fn write_journal(editor: &Editor, folder: &Path, files: Vec<RecoveryJournalFile>
         written: std::time::SystemTime::now().into(),
         files,
     };
-    RecoveryJournal::for_folder(&editor.user, folder).write((0, 0), move || data);
+    RecoveryJournal::for_folder(&editor.user, folder)
+        .write(JournalRevision { files: 0, disk: 0 }, move || data);
 }
 
 fn said(editor: &Editor) -> Vec<String> {

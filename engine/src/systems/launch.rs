@@ -148,8 +148,8 @@ pub struct TestCharacterRequest {
 pub struct ServerConfig {
     pub bind: IpAddr,
     pub port: u16,
-    /// The first of the ports players' clients connect to play at, one for every 1024 of
-    /// `max_clients`, each the port after the last; 0 takes any free ones.
+    /// The first of the ports players' clients connect to play at, as many in a row as
+    /// `max_clients` needs; 0 takes any free ones.
     pub udp_port: u16,
     /// The address players reach this machine at, which the connect tokens it hands out name, so
     /// a client that came by another address can't connect.

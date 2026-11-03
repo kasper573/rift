@@ -70,8 +70,7 @@ pub(super) fn holds(area: &Area, tiles: impl IntoIterator<Item = TileAt>) -> boo
 }
 
 /// Holds `tiles` of `area` besides those held, so its meshes cover them: loads their ground,
-/// triangulates each new one on a core of its own and joins the meshes anew. Whether any tile was
-/// new.
+/// triangulates each new one on a core of its own and joins the meshes anew.
 pub(super) fn hold(area: &Area, tiles: impl IntoIterator<Item = TileAt>) {
     let wanted: BTreeSet<TileAt> = tiles.into_iter().collect();
     let missing: Vec<TileAt> = {
@@ -188,8 +187,6 @@ fn triangulate(area: &Area, at: TileAt) -> [TileLayer; KINDS] {
     ]
 }
 
-/// Where the ground of the tile at `at` blocks: the cells painted mostly with a terrain that
-/// blocks or steeper than the area walks, as rectangles.
 /// The patches of ground blocked on tile `at`, computed once: terrain that doesn't walk, and
 /// ground steeper than the area allows. A cell's steepness reads the samples on its far edges,
 /// which on the tile's last row and column lie on the next tiles, so those are loaded first: a
@@ -222,14 +219,14 @@ fn blocked(area: &Area, at: TileAt) -> Arc<[Rect<Meters>]> {
         side.min(grid.width.saturating_sub(at.column * side)),
         side.min(grid.height.saturating_sub(at.row * side)),
     );
-    let blocked: Vec<bool> = area
+    let cells: Vec<bool> = area
         .paint
         .dominant_in(origin, dims)
         .into_iter()
         .zip(area.heights.steepest_in(origin, dims))
         .map(|(terrain, slope)| !area.underfoot_of(terrain).walkable || slope > area.max_slope)
         .collect();
-    let patches: Arc<[Rect<Meters>]> = patches(origin, dims, &blocked).into();
+    let patches: Arc<[Rect<Meters>]> = patches(origin, dims, &cells).into();
     area.meshes
         .patches
         .write()

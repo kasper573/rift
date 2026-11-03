@@ -134,7 +134,7 @@ impl Profile {
         let saved = std::fs::create_dir_all(&self.0)
             .and_then(|()| std::fs::write(self.0.join(SETTINGS), text));
         if let Err(error) = saved {
-            eprintln!("settings not saved: {error}");
+            warn!("settings not saved: {error}");
         }
     }
 

@@ -9,6 +9,12 @@ use pprof::protos::Message;
 
 use crate::CpuProfileQuery;
 
+pub fn allocated_bytes() -> Option<u64> {
+    tikv_jemalloc_ctl::epoch::advance().expect("jemalloc's statistics refresh");
+    let allocated = tikv_jemalloc_ctl::stats::allocated::read().expect("jemalloc's statistics");
+    Some(allocated as u64)
+}
+
 pub async fn heap_profile() -> Response {
     let Some(controller) = jemalloc_pprof::PROF_CTL.as_ref() else {
         return (StatusCode::NOT_FOUND, "heap profiling is not enabled").into_response();

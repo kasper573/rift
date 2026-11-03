@@ -25,6 +25,57 @@ use crate::folder;
 use biomes::{Biomes, Climate};
 use relief::Relief;
 
+/// How many grounds, and how many props, a biome lays out at most, so that every one has a noise
+/// of its own.
+const LAYERS_PER_BIOME: usize = 64;
+
+/// A noise of its own among the land's, so no two of them are alike.
+#[derive(Clone, Copy)]
+enum Stream {
+    Hills,
+    Ranges,
+    WhereRanges,
+    BendX,
+    BendY,
+    Bumps,
+    Warmth,
+    Wetness,
+    BorderTemperature,
+    BorderMoisture,
+    Patches { biome: usize, ground: usize },
+    Clumps { biome: usize, prop: usize },
+}
+
+impl Stream {
+    const NAMED: u32 = 10;
+
+    fn offset(self) -> u32 {
+        match self {
+            Stream::Hills => 0,
+            Stream::Ranges => 1,
+            Stream::WhereRanges => 2,
+            Stream::BendX => 3,
+            Stream::BendY => 4,
+            Stream::Bumps => 5,
+            Stream::Warmth => 6,
+            Stream::Wetness => 7,
+            Stream::BorderTemperature => 8,
+            Stream::BorderMoisture => 9,
+            Stream::Patches { biome, ground } => Self::layered(biome, ground, 0),
+            Stream::Clumps { biome, prop } => Self::layered(biome, prop, 1),
+        }
+    }
+
+    fn layered(biome: usize, layer: usize, family: u32) -> u32 {
+        Self::NAMED + (layer_of(biome, layer) as u32) * 2 + family
+    }
+}
+
+/// Which of the land's layers `layer` of `biome` is, from 0 and without a gap.
+fn layer_of(biome: usize, layer: usize) -> usize {
+    biome * LAYERS_PER_BIOME + layer
+}
+
 /// How an area is laid out, read from a JSON file.
 #[derive(Deserialize, Debug)]
 #[serde(deny_unknown_fields)]
@@ -167,9 +218,7 @@ pub fn read_land(path: &Path) -> Result<Land, String> {
 pub fn run(game: &Path, area_path: &str, land: &Land) -> Result<(), String> {
     let reader = folder::reader_of(game);
     let mut area = if game.join(area_path).exists() {
-        reader
-            .read::<AreaDef>(area_path)
-            .map_err(|errors| format!("{area_path} doesn't read: {} problem(s)", errors.len()))?
+        folder::read::<AreaDef>(&reader, area_path)?
     } else {
         AreaDef::fresh(&Nearby::new(&reader, area_path))?
     };
@@ -205,6 +254,11 @@ fn everywhere() -> f32 {
 }
 
 impl Land {
+    /// The seed of `stream`'s noise.
+    fn seed_of(&self, stream: Stream) -> u32 {
+        (self.seed as u32).wrapping_add(stream.offset())
+    }
+
     fn check(&self) -> Result<(), String> {
         let share = |value: f32, what: &str| {
             (0.0..=1.0)
@@ -232,6 +286,12 @@ impl Land {
             share(biome.moisture, &format!("{}'s moisture", biome.name))?;
             if biome.ground.is_empty() {
                 return Err(format!("{} paints its ground with no terrain", biome.name));
+            }
+            if biome.ground.len() > LAYERS_PER_BIOME || biome.props.len() > LAYERS_PER_BIOME {
+                return Err(format!(
+                    "{} lays out more than {LAYERS_PER_BIOME} grounds or props",
+                    biome.name
+                ));
             }
             for ground in &biome.ground {
                 share(

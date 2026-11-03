@@ -150,8 +150,7 @@ impl Painter<'_> {
     }
 }
 
-/// `paint` baked from its images as the game's assets hold them; what keeps it from baking when
-/// something does.
+/// `paint` baked from its images as the game's assets hold them, or why it can't be.
 async fn bake_read(
     assets: &AssetServer,
     paint: &Paint,
@@ -205,23 +204,75 @@ pub struct Baked {
     pub surface: Option<Image>,
 }
 
+/// `layers` baked over `base` for surfaces of `finish`, every row across the threads: none when a
+/// mask is not the size of the base.
 pub fn bake(
     base: &Image,
     layers: &[(&Image, &PaintLayer)],
     finish: SurfaceFinish,
 ) -> Option<Baked> {
-    Some(Bake::start(base, layers, finish)?.finish())
-}
-
-/// A paint's pixels read from its images, ready to bake apart from them.
-struct Bake {
-    width: u32,
-    height: u32,
-    colour: Vec<u8>,
-    surface: Option<Vec<u8>>,
-    masks: Vec<Vec<u8>>,
-    layers: Vec<Laid>,
-    finish: SurfaceFinish,
+    let pixels = |image: &Image| Some(image.clone().try_into_dynamic().ok()?.to_rgba8());
+    let base = pixels(base)?;
+    let (width, height) = base.dimensions();
+    let mut seen: Vec<&Image> = Vec::new();
+    let mut masks = Vec::new();
+    let mut laid = Vec::with_capacity(layers.len());
+    for (mask, layer) in layers {
+        let index = match seen
+            .iter()
+            .position(|earlier| std::ptr::eq(*earlier, *mask))
+        {
+            Some(index) => index,
+            None => {
+                let pixels = pixels(mask).filter(|mask| mask.dimensions() == (width, height))?;
+                seen.push(mask);
+                masks.push(pixels.into_raw());
+                masks.len() - 1
+            }
+        };
+        laid.push(Laid {
+            mask: index,
+            channel: layer.channel.min(3),
+            inverted: layer.inverted,
+            colour: layer.colour.0.map(|byte| LINEAR[byte as usize]),
+            metal: layer.metal,
+        });
+    }
+    let mut colour = base.into_raw();
+    let mut surface = laid
+        .iter()
+        .any(|layer| layer.metal)
+        .then(|| vec![0u8; (width * height * 4) as usize]);
+    let row_bytes = width as usize * 4;
+    let rows = colour.par_chunks_mut(row_bytes).enumerate();
+    match surface.as_mut() {
+        Some(surface) => {
+            rows.zip(surface.par_chunks_mut(row_bytes))
+                .for_each(|((row, colour), surface)| {
+                    paint_row(&masks, &laid, finish, width, row, colour, Some(surface));
+                })
+        }
+        None => rows.for_each(|(row, colour)| {
+            paint_row(&masks, &laid, finish, width, row, colour, None);
+        }),
+    }
+    let image = |data: Vec<u8>, format: TextureFormat| {
+        Image::new(
+            Extent3d {
+                width,
+                height,
+                depth_or_array_layers: 1,
+            },
+            TextureDimension::D2,
+            data,
+            format,
+            RenderAssetUsages::RENDER_WORLD,
+        )
+    };
+    Some(Baked {
+        colour: image(colour, TextureFormat::Rgba8UnormSrgb),
+        surface: surface.map(|surface| image(surface, TextureFormat::Rgba8Unorm)),
+    })
 }
 
 /// A layer as a bake reads it: its mask among the decoded ones, and its colour in linear light.
@@ -233,125 +284,51 @@ struct Laid {
     metal: bool,
 }
 
-impl Bake {
-    /// Begins baking `layers` over `base` for surfaces of `finish`: none when a mask is not the
-    /// size of the base.
-    fn start(
-        base: &Image,
-        layers: &[(&Image, &PaintLayer)],
-        finish: SurfaceFinish,
-    ) -> Option<Bake> {
-        let pixels = |image: &Image| Some(image.clone().try_into_dynamic().ok()?.to_rgba8());
-        let base = pixels(base)?;
-        let (width, height) = base.dimensions();
-        let mut seen: Vec<&Image> = Vec::new();
-        let mut masks = Vec::new();
-        let mut laid = Vec::with_capacity(layers.len());
-        for (mask, layer) in layers {
-            let index = match seen
-                .iter()
-                .position(|earlier| std::ptr::eq(*earlier, *mask))
-            {
-                Some(index) => index,
-                None => {
-                    let pixels =
-                        pixels(mask).filter(|mask| mask.dimensions() == (width, height))?;
-                    seen.push(mask);
-                    masks.push(pixels.into_raw());
-                    masks.len() - 1
-                }
-            };
-            laid.push(Laid {
-                mask: index,
-                channel: layer.channel.min(3),
-                inverted: layer.inverted,
-                colour: layer.colour.0.map(|byte| LINEAR[byte as usize]),
-                metal: layer.metal,
-            });
-        }
-        let surface = laid
-            .iter()
-            .any(|layer| layer.metal)
-            .then(|| vec![0u8; (width * height * 4) as usize]);
-        Some(Bake {
-            width,
-            height,
-            colour: base.into_raw(),
-            surface,
-            masks,
-            layers: laid,
-            finish,
-        })
-    }
-
-    /// Bakes every row, across the threads.
-    fn finish(mut self) -> Baked {
-        let width = self.width as usize;
-        let srgb = &*SRGB;
-        let (masks, layers) = (&self.masks, &self.layers);
-        let SurfaceFinish {
-            roughness,
-            metal_roughness,
-            metallic,
-            ..
-        } = self.finish;
-        let paint_row = |row: usize, colour: &mut [u8], surface: Option<&mut [u8]>| {
-            let mut surface = surface
-                .map(|surface| surface.as_chunks_mut::<4>().0.iter_mut())
-                .into_iter()
-                .flatten();
-            for (offset, pixel) in colour.as_chunks_mut::<4>().0.iter_mut().enumerate() {
-                let index = row * width + offset;
-                let mut mixed = [pixel[0], pixel[1], pixel[2]].map(|byte| LINEAR[byte as usize]);
-                let mut metal = 0.0f32;
-                for layer in layers {
-                    let bright = masks[layer.mask][index * 4 + layer.channel] as f32 / 255.0;
-                    let amount = if layer.inverted { 1.0 - bright } else { bright };
-                    for (mixed, colour) in mixed.iter_mut().zip(layer.colour) {
-                        *mixed += (colour - *mixed) * amount;
-                    }
-                    let target = if layer.metal { 1.0 } else { 0.0 };
-                    metal += (target - metal) * amount;
-                }
-                for (byte, mixed) in pixel.iter_mut().zip(mixed) {
-                    *byte = srgb[(mixed.clamp(0.0, 1.0) * SRGB_STEPS as f32).round() as usize];
-                }
-                if let Some(pixel) = surface.next() {
-                    let rough = roughness + (metal_roughness - roughness) * metal;
-                    *pixel = [
-                        0,
-                        (rough * 255.0).round() as u8,
-                        (metallic * metal * 255.0).round() as u8,
-                        255,
-                    ];
-                }
+/// Bakes row `row` of a paint `width` pixels wide into its `colour` and `surface` pixels.
+fn paint_row(
+    masks: &[Vec<u8>],
+    layers: &[Laid],
+    finish: SurfaceFinish,
+    width: u32,
+    row: usize,
+    colour: &mut [u8],
+    surface: Option<&mut [u8]>,
+) {
+    let srgb = &*SRGB;
+    let SurfaceFinish {
+        roughness,
+        metal_roughness,
+        metallic,
+        ..
+    } = finish;
+    let mut surface = surface
+        .map(|surface| surface.as_chunks_mut::<4>().0.iter_mut())
+        .into_iter()
+        .flatten();
+    for (offset, pixel) in colour.as_chunks_mut::<4>().0.iter_mut().enumerate() {
+        let index = row * width as usize + offset;
+        let mut mixed = [pixel[0], pixel[1], pixel[2]].map(|byte| LINEAR[byte as usize]);
+        let mut metal = 0.0f32;
+        for layer in layers {
+            let bright = masks[layer.mask][index * 4 + layer.channel] as f32 / 255.0;
+            let amount = if layer.inverted { 1.0 - bright } else { bright };
+            for (mixed, colour) in mixed.iter_mut().zip(layer.colour) {
+                *mixed += (colour - *mixed) * amount;
             }
-        };
-        let rows = self.colour.par_chunks_mut(width * 4).enumerate();
-        match self.surface.as_mut() {
-            Some(surface) => rows
-                .zip(surface.par_chunks_mut(width * 4))
-                .for_each(|((row, colour), surface)| paint_row(row, colour, Some(surface))),
-            None => rows.for_each(|(row, colour)| paint_row(row, colour, None)),
+            let target = if layer.metal { 1.0 } else { 0.0 };
+            metal += (target - metal) * amount;
         }
-        let image = |data: Vec<u8>, format: TextureFormat| {
-            Image::new(
-                Extent3d {
-                    width: self.width,
-                    height: self.height,
-                    depth_or_array_layers: 1,
-                },
-                TextureDimension::D2,
-                data,
-                format,
-                RenderAssetUsages::RENDER_WORLD,
-            )
-        };
-        Baked {
-            colour: image(self.colour, TextureFormat::Rgba8UnormSrgb),
-            surface: self
-                .surface
-                .map(|surface| image(surface, TextureFormat::Rgba8Unorm)),
+        for (byte, mixed) in pixel.iter_mut().zip(mixed) {
+            *byte = srgb[(mixed.clamp(0.0, 1.0) * SRGB_STEPS as f32).round() as usize];
+        }
+        if let Some(pixel) = surface.next() {
+            let rough = roughness + (metal_roughness - roughness) * metal;
+            *pixel = [
+                0,
+                (rough * 255.0).round() as u8,
+                (metallic * metal * 255.0).round() as u8,
+                255,
+            ];
         }
     }
 }

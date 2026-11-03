@@ -110,7 +110,12 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        Command::Loadtest { http, count } => loadtest::run(&http, count),
+        Command::Loadtest { http, count } => {
+            if let Err(failure) = loadtest::run(&http, count) {
+                eprintln!("{failure}");
+                std::process::exit(1);
+            }
+        }
         Command::Profile { game, out } => profile::run(game.as_deref(), &out),
         Command::Schema(Schema::Probe) => println!("{}", engine::systems::probe::schema()),
         Command::Schema(Schema::Server) => println!("{}", engine::systems::launch::server_schema()),

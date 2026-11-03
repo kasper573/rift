@@ -327,6 +327,65 @@ impl<V: Vocabulary> Instances<V> {
             instance.state.insert(procedure, state);
         }
     }
+
+    fn start_flow(
+        &mut self,
+        owner: Owner<V>,
+        procedure: usize,
+        entry: StepIndex,
+        subject: Option<Entity>,
+        event: Vec<Value>,
+        dice: Rng,
+    ) -> bool {
+        let Some(instance) = self.instances.get_mut(&owner) else {
+            return false;
+        };
+        let id = self.next_flow;
+        self.next_flow = FlowId(id.0 + 1);
+        let root = instance.procedures[procedure].clone();
+        let locals = root.locals.iter().map(|(_, ty)| ty.zero()).collect();
+        let event = padded(event, &root, entry);
+        let flow = Flow {
+            owner,
+            id,
+            procedure,
+            entry,
+            subject,
+            event,
+            frames: smallvec![Frame {
+                procedure: root,
+                node: Some(entry),
+                locals,
+                loops: Vec::new(),
+                into: None,
+                return_to: None,
+            }],
+            pause: None,
+            box_open: false,
+            running: true,
+            dice,
+        };
+        let slot = self.flows.insert(Some(Box::new(flow)));
+        self.by_id.insert(id, slot);
+        instance.flows.push(slot);
+        true
+    }
+
+    fn is_full(&self, owner: Owner<V>) -> bool {
+        self.instances
+            .get(&owner)
+            .is_some_and(|instance| instance.flows.len() >= MAX_LIVE_FLOWS)
+    }
+
+    fn drop_flow(&mut self, key: FlowKey<V>) {
+        let Some(slot) = self.by_id.remove(&key.flow) else {
+            return;
+        };
+        self.flows.remove(slot);
+        if let Some(instance) = self.instances.get_mut(&key.owner) {
+            instance.flows.retain(|kept| *kept != slot);
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -432,10 +491,17 @@ impl<V: Vocabulary> Planner for FlowRunner<V> {
             run_batch::<V>(world, clock);
             rounds += 1;
             if rounds > MAX_ROUNDS_PER_TICK {
+                bevy::log::warn!("flows kept waking one another; stopped for this tick");
                 break;
             }
         }
     }
+}
+
+#[derive(Clone, Copy)]
+struct TickClock {
+    tick: u64,
+    now: Duration,
 }
 
 /// Readies every flow whose wait is over: at the step after its wait, or back at the step it
@@ -1189,73 +1255,6 @@ fn state_of<V: Vocabulary>(procedure: &Procedure<V>, state: Option<&OwnerState>)
         .filter(|held| held.len() == procedure.state.len())
         .cloned()
         .unwrap_or_else(|| procedure.state.iter().map(|(_, ty)| ty.zero()).collect())
-}
-
-#[derive(Clone, Copy)]
-struct TickClock {
-    tick: u64,
-    now: Duration,
-}
-
-impl<V: Vocabulary> Instances<V> {
-    fn start_flow(
-        &mut self,
-        owner: Owner<V>,
-        procedure: usize,
-        entry: StepIndex,
-        subject: Option<Entity>,
-        event: Vec<Value>,
-        dice: Rng,
-    ) -> bool {
-        let Some(instance) = self.instances.get_mut(&owner) else {
-            return false;
-        };
-        let id = self.next_flow;
-        self.next_flow = FlowId(id.0 + 1);
-        let root = instance.procedures[procedure].clone();
-        let locals = root.locals.iter().map(|(_, ty)| ty.zero()).collect();
-        let event = padded(event, &root, entry);
-        let flow = Flow {
-            owner,
-            id,
-            procedure,
-            entry,
-            subject,
-            event,
-            frames: smallvec![Frame {
-                procedure: root,
-                node: Some(entry),
-                locals,
-                loops: Vec::new(),
-                into: None,
-                return_to: None,
-            }],
-            pause: None,
-            box_open: false,
-            running: true,
-            dice,
-        };
-        let slot = self.flows.insert(Some(Box::new(flow)));
-        self.by_id.insert(id, slot);
-        instance.flows.push(slot);
-        true
-    }
-
-    fn is_full(&self, owner: Owner<V>) -> bool {
-        self.instances
-            .get(&owner)
-            .is_some_and(|instance| instance.flows.len() >= MAX_LIVE_FLOWS)
-    }
-
-    fn drop_flow(&mut self, key: FlowKey<V>) {
-        let Some(slot) = self.by_id.remove(&key.flow) else {
-            return;
-        };
-        self.flows.remove(slot);
-        if let Some(instance) = self.instances.get_mut(&key.owner) {
-            instance.flows.retain(|kept| *kept != slot);
-        }
-    }
 }
 
 fn apply_ops<V: Vocabulary>(world: &mut World) {

@@ -13,7 +13,7 @@ pub const HOVER: Color32 = Color32::from_rgb(48, 48, 54);
 pub const TEXT: Color32 = Color32::from_rgb(228, 228, 232);
 pub const DANGER: Color32 = Prose::Danger.on(Ground::Dusk);
 /// A player's name floating over the world.
-pub const PLAYER: Color32 = Color32::from_rgb(104, 168, 235);
+pub const PLAYER: Color32 = Prose::Place.on(Ground::Dusk);
 
 pub const RADIUS: CornerRadius = CornerRadius::same(6);
 pub const SHADOW: Shadow = Shadow {

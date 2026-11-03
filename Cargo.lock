@@ -2651,7 +2651,6 @@ dependencies = [
  "sysinfo",
  "tempfile",
  "testkit",
- "tikv-jemalloc-ctl",
  "ureq",
  "walkdir",
 ]
@@ -8548,6 +8547,7 @@ dependencies = [
  "metrics-process",
  "pprof",
  "serde",
+ "tikv-jemalloc-ctl",
  "tikv-jemallocator",
  "tokio",
  "tower-http 0.7.1",

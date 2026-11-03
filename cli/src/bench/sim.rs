@@ -226,6 +226,6 @@ fn build_world(
         from_client(world, conn, JoinRequest);
         roster.push(conn);
     }
-    app.update(); // the real `player::join` system spawns each player's character.
+    app.update();
     (app, roster)
 }

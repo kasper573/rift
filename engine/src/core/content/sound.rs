@@ -12,7 +12,7 @@ pub fn decode(encoded: &[u8]) -> Result<StaticSoundData, FromFileError> {
 }
 
 /// How long the sound of `encoded` plays, read from its header alone.
-pub fn length(encoded: &[u8]) -> Result<Seconds, FromFileError> {
-    let sound = StreamingSoundData::from_cursor(Cursor::new(encoded.to_vec()))?;
+pub fn length(encoded: impl AsRef<[u8]> + Send + Sync + 'static) -> Result<Seconds, FromFileError> {
+    let sound = StreamingSoundData::from_cursor(Cursor::new(encoded))?;
     Ok(Seconds(sound.duration().as_secs_f32()))
 }

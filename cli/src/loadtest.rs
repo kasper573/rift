@@ -26,16 +26,14 @@ const STABILIZE: Duration = Duration::from_secs(2);
 /// Sample the server tick over this window.
 const WINDOW: Duration = Duration::from_secs(3);
 
-pub fn run(http_url: &str, count: Option<usize>) {
+pub fn run(http_url: &str, count: Option<usize>) -> Result<(), String> {
     match count {
-        None => {
-            run_dyn(http_url);
-        }
+        None => run_dyn(http_url).map(drop),
         Some(count) => run_fixed(http_url, count),
     }
 }
 
-fn run_fixed(http_url: &str, count: usize) {
+fn run_fixed(http_url: &str, count: usize) -> ! {
     println!("[loadtest] connecting {count} clients to {http_url} (fake tokens)");
     let started = Instant::now();
     let mut clients: Vec<App> = Vec::new();
@@ -63,7 +61,7 @@ fn run_fixed(http_url: &str, count: usize) {
 /// Root-find the highest player count the server sustains within the tick budget, using the same
 /// projection the area benchmark uses. Each probe adjusts the live client pool to the target count
 /// (connect or disconnect) rather than restarting, so the search converges in a handful of probes.
-pub fn run_dyn(http_url: &str) -> Pool {
+pub fn run_dyn(http_url: &str) -> Result<Pool, String> {
     println!(
         "[loadtest] root-finding the {:.1}ms/tick player equilibrium ({http_url})",
         budget_ms()
@@ -75,7 +73,7 @@ pub fn run_dyn(http_url: &str) -> Pool {
     while let Some(target) = next {
         set_player_count(&mut clients, http_url, &mut next_id, target);
         let live = connected_count(&clients);
-        let ms = measure_tick_ms(http_url, &mut clients, WINDOW);
+        let ms = measure_tick_ms(http_url, &mut clients, WINDOW)?;
         println!(
             "[loadtest]   {live:>6} players  →  server {ms:6.2}ms/tick  {}",
             verdict(ms)
@@ -101,7 +99,7 @@ pub fn run_dyn(http_url: &str) -> Pool {
         }
         None => println!("[loadtest] the first probe already exceeded the budget"),
     }
-    Pool(clients)
+    Ok(Pool(clients))
 }
 
 /// Simulated players, connected for as long as it's kept and pumped.
@@ -155,15 +153,17 @@ fn pump(clients: &mut [App], duration: Duration) {
     }
 }
 
-fn measure_tick_ms(http_url: &str, clients: &mut [App], window: Duration) -> f64 {
+fn measure_tick_ms(http_url: &str, clients: &mut [App], window: Duration) -> Result<f64, String> {
     let before = scrape_tick(http_url);
     pump(clients, window);
     let after = scrape_tick(http_url);
     match (before, after) {
         (Some((sum0, count0)), Some((sum1, count1))) if count1 > count0 => {
-            (sum1 - sum0) / (count1 - count0) * 1000.0
+            Ok((sum1 - sum0) / (count1 - count0) * 1000.0)
         }
-        _ => 0.0,
+        _ => Err(format!(
+            "{http_url}/metrics did not report the server ticking over the window"
+        )),
     }
 }
 

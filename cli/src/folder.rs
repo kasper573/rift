@@ -6,12 +6,19 @@ use std::path::Path;
 use std::sync::Arc;
 
 use engine::core::content::{
-    Content, FilesystemFolder, FolderReader, LoadPurpose, LoadReport, WrittenFiles,
+    Content, ContentFile, FilesystemFolder, FolderReader, LoadPurpose, LoadReport, WrittenFiles,
 };
 use engine::systems::{load_content, registry};
 
 pub fn reader_of(folder: &Path) -> FolderReader {
     FolderReader::new(registry(), Arc::new(FilesystemFolder(folder.to_path_buf())))
+}
+
+/// The file at `path` as it reads, or the count of problems that keep it from reading.
+pub fn read<Row: ContentFile>(reader: &FolderReader, path: &str) -> Result<Row, String> {
+    reader
+        .read(path)
+        .map_err(|errors| format!("{path} doesn't read: {} problem(s)", errors.len()))
 }
 
 /// The game in `folder` loaded for `purpose`, `outcome` naming what the load is for.

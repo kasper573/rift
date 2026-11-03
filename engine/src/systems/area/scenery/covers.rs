@@ -20,7 +20,8 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 
 use super::regions::{Cut, Merge, Region, Unstood};
 use super::{
-    Budget, KEEP_SHARE, Making, PLACEMENT_CELL, Seen, Streaming, distance_to, mesh_bytes, take_away,
+    Budget, KEEP_SHARE, Making, Merged, PLACEMENT_CELL, Seen, Streaming, distance_to, mesh_bytes,
+    take_away,
 };
 use crate::core::assets;
 use crate::core::content::Content;
@@ -45,8 +46,10 @@ use crate::systems::area::terrain::{CoverPiece, PieceShape};
 /// what stands of them chunk by chunk, and what stands of them merged.
 pub(super) struct Covers {
     layers: Vec<CoverLayer>,
-    chunks: HashMap<ChunkKey, Vec<Entity>>,
-    merged: HashMap<Merge, Merged>,
+    chunks: HashMap<CoverChunk, Vec<Entity>>,
+    /// What stands of each merged region, waiting first on the models of the props its covers
+    /// strew.
+    merged: HashMap<Merge, Merged<(), FarMesh>>,
     /// What stood for ground since sculpted or painted anew, standing until what stands for the
     /// ground as it is now does.
     stale: Vec<Entity>,
@@ -58,8 +61,42 @@ pub(super) struct Covers {
 /// meshes of all their triangles again.
 const STREWN_PIXELS: f32 = 16.0;
 
-/// A chunk of a cover's piece: the layer, the piece and the chunk among the paint's.
-type ChunkKey = (usize, usize, (u32, u32));
+/// A cover's piece: its layer among the area's covers and its place among the layer's pieces.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct PieceAt {
+    layer: usize,
+    piece: usize,
+}
+
+/// A chunk of the paint, by its place among the chunks across and down.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct PaintChunk {
+    column: u32,
+    row: u32,
+}
+
+impl PaintChunk {
+    /// The cell of paint the chunk begins at.
+    fn first_cell(self) -> (u32, u32) {
+        (
+            self.column * cover::CHUNK_CELLS,
+            self.row * cover::CHUNK_CELLS,
+        )
+    }
+
+    fn bounds(self) -> Rect<Meters> {
+        let side = cover::CHUNK_CELLS as f32 / SAMPLES_PER_METER as f32;
+        let (column, row) = self.first_cell();
+        Rect::new(PaintMap::pixel_pos(column, row), Size::new(side, side))
+    }
+}
+
+/// A chunk of a cover's piece.
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+struct CoverChunk {
+    piece: PieceAt,
+    chunk: PaintChunk,
+}
 
 /// A cover a terrain grows, ready to stand: its slot among the area's terrains, its pieces, the
 /// material its sheets and blades are drawn with, and the cover's seed.
@@ -106,31 +143,10 @@ enum CopyState {
     Ready(Arc<CopyModel>),
 }
 
-/// What stands of a merged region: waiting on the models of the props its covers strew, its
-/// meshes being made, or standing, those made rising a few a frame.
-enum Merged {
-    Waiting,
-    Merging(Making<Vec<FarMesh>>),
-    Standing {
-        stood: Vec<Entity>,
-        rising: Vec<FarMesh>,
-    },
-}
-
-impl Merged {
-    fn into_made(self) -> Option<Vec<FarMesh>> {
-        match self {
-            Merged::Merging(making) => making.into_made(),
-            _ => None,
-        }
-    }
-}
-
 /// A merged mesh of a cover's piece over a region, and for a strewn prop the material of its
 /// model it is drawn in.
 struct FarMesh {
-    layer: usize,
-    piece: usize,
+    piece: PieceAt,
     material: Option<Handle<GltfMaterial>>,
     mesh: Mesh,
     bounds: Aabb,
@@ -151,9 +167,7 @@ impl Covers {
         self.stale
             .extend(self.chunks.drain().flat_map(|(_, chunk)| chunk));
         for (_, merged) in self.merged.drain() {
-            if let Merged::Standing { stood, .. } = merged {
-                self.stale.extend(stood);
-            }
+            self.stale.extend(merged.stood());
         }
     }
 }
@@ -175,32 +189,32 @@ pub(super) fn stand(
     let shown = shown_pieces(streaming, seen, cut);
     prepare_models(world, streaming, &shown);
     let chunked = chunked_pieces(streaming, seen, &shown);
-    let mut unstood_chunks: HashSet<(u32, u32)> = HashSet::default();
+    let mut unstood_chunks: HashSet<PaintChunk> = HashSet::default();
     let mut missing = Vec::new();
     for key in near_chunks(streaming, seen, cut, &chunked, 1.0) {
         match streaming.covers.chunks.get(&key) {
             None => missing.push(key),
             Some(parts) if parts.iter().any(|&part| cover::strewing(world, part)) => {
-                unstood.add(chunk_bounds(key.2));
+                unstood.add(key.chunk.bounds());
             }
             Some(_) => {}
         }
     }
     for key in missing {
         if !unstood_chunks.is_empty() || !budget.take(|budget| &mut budget.covers) {
-            unstood_chunks.insert(key.2);
+            unstood_chunks.insert(key.chunk);
             continue;
         }
-        let parts = spawn_cover_chunk(world, streaming, key.0, key.1, key.2, root);
+        let parts = spawn_cover_chunk(world, streaming, key, root);
         if parts.iter().any(|&part| cover::strewing(world, part)) {
-            unstood.add(chunk_bounds(key.2));
+            unstood.add(key.chunk.bounds());
         }
         streaming.covers.chunks.insert(key, parts);
     }
     for chunk in unstood_chunks {
-        unstood.add(chunk_bounds(chunk));
+        unstood.add(chunk.bounds());
     }
-    let merging: Vec<(Merge, Vec<(usize, usize)>)> = shown
+    let merging: Vec<(Merge, Vec<PieceAt>)> = shown
         .into_iter()
         .filter(|(merge, _)| in_view(streaming, seen, merge.region))
         .map(|(merge, pieces)| {
@@ -234,7 +248,8 @@ pub(super) fn clear(
     unstood: &Unstood,
 ) {
     let chunked = chunked_pieces(streaming, seen, &shown_pieces(streaming, seen, cut));
-    let kept: HashSet<ChunkKey> = near_chunks(streaming, seen, cut, &chunked, KEEP_SHARE).collect();
+    let kept: HashSet<CoverChunk> =
+        near_chunks(streaming, seen, cut, &chunked, KEEP_SHARE).collect();
     let wanted: HashSet<Merge> = cut
         .merges
         .iter()
@@ -248,7 +263,7 @@ pub(super) fn clear(
         }
     }
     covers.chunks.retain(|key, chunk| {
-        let keep = kept.contains(key) || !unstood.stands_over(chunk_bounds(key.2));
+        let keep = kept.contains(key) || !unstood.stands_over(key.chunk.bounds());
         if !keep {
             for &part in chunk.iter() {
                 take_away(world, part);
@@ -259,8 +274,8 @@ pub(super) fn clear(
     let regions = &streaming.regions;
     covers.merged.retain(|merge, merged| {
         let keep = wanted.contains(merge) || !unstood.stands_over(regions.bounds(merge.region));
-        if !keep && let Merged::Standing { stood, .. } = merged {
-            for &mesh in stood.iter() {
+        if !keep {
+            for &mesh in merged.stood() {
                 take_away(world, mesh);
             }
         }
@@ -275,18 +290,18 @@ fn near_chunks<'a>(
     streaming: &'a Streaming,
     seen: Seen,
     cut: &'a Cut,
-    chunked: &'a HashMap<Merge, Vec<(usize, usize)>>,
+    chunked: &'a HashMap<Merge, Vec<PieceAt>>,
     share: f32,
-) -> impl Iterator<Item = ChunkKey> + 'a {
+) -> impl Iterator<Item = CoverChunk> + 'a {
     let eye = seen.view.eye();
     let covers = &streaming.covers;
     let in_reach =
-        move |chunk: (u32, u32)| distance_to(chunk_bounds(chunk), seen.at) <= seen.reach.0 * share;
+        move |chunk: PaintChunk| distance_to(chunk.bounds(), seen.at) <= seen.reach.0 * share;
     let leaves = cut.leaves.iter().flat_map(move |&leaf| {
         region_chunks(streaming, leaf)
             .filter(move |&chunk| in_reach(chunk))
             .flat_map(move |chunk| {
-                let bounds = chunk_bounds(chunk);
+                let bounds = chunk.bounds();
                 let across = distance_to(bounds, ground_pos(eye));
                 let below = eye.y - streaming.heights.height_at(bounds.center()).0;
                 let shown_at = seen.detail(across.hypot(below)).distance();
@@ -304,24 +319,23 @@ fn near_chunks<'a>(
                                     shown_at.0 <= seen.view.shown_within(extent).0 * share
                                 })
                             })
-                            .map(move |(piece, _)| (layer, piece, chunk))
+                            .map(move |(piece, _)| CoverChunk {
+                                piece: PieceAt { layer, piece },
+                                chunk,
+                            })
                     })
             })
     });
     let merged = chunked.iter().flat_map(move |(merge, pieces)| {
         region_chunks(streaming, merge.region)
             .filter(move |&chunk| in_reach(chunk))
-            .flat_map(move |chunk| {
-                pieces
-                    .iter()
-                    .map(move |&(layer, piece)| (layer, piece, chunk))
-            })
+            .flat_map(move |chunk| pieces.iter().map(move |&piece| CoverChunk { piece, chunk }))
     });
     leaves.chain(merged)
 }
 
 /// The chunks of paint within `region`.
-fn region_chunks(streaming: &Streaming, region: Region) -> impl Iterator<Item = (u32, u32)> {
+fn region_chunks(streaming: &Streaming, region: Region) -> impl Iterator<Item = PaintChunk> {
     let (columns, rows) = streaming.paint.pixels();
     let side = (((PLACEMENT_CELL.0 * SAMPLES_PER_METER as f32) as u32) << region.level)
         / cover::CHUNK_CELLS;
@@ -331,7 +345,7 @@ fn region_chunks(streaming: &Streaming, region: Region) -> impl Iterator<Item = 
     );
     (region.row * side..((region.row + 1) * side).min(chunk_rows)).flat_map(move |row| {
         (region.column * side..((region.column + 1) * side).min(chunk_columns))
-            .map(move |column| (column, row))
+            .map(move |column| PaintChunk { column, row })
     })
 }
 
@@ -352,21 +366,9 @@ fn in_view(streaming: &Streaming, seen: Seen, region: Region) -> bool {
     )
 }
 
-fn chunk_bounds(chunk: (u32, u32)) -> Rect<Meters> {
-    let side = cover::CHUNK_CELLS as f32 / SAMPLES_PER_METER as f32;
-    Rect::new(
-        PaintMap::pixel_pos(chunk.0 * cover::CHUNK_CELLS, chunk.1 * cover::CHUNK_CELLS),
-        Size::new(side, side),
-    )
-}
-
 /// The pieces of every layer each merged region of `cut` shows: those that span a pixel at the
 /// detail the view shows it at.
-fn shown_pieces(
-    streaming: &Streaming,
-    seen: Seen,
-    cut: &Cut,
-) -> HashMap<Merge, Vec<(usize, usize)>> {
+fn shown_pieces(streaming: &Streaming, seen: Seen, cut: &Cut) -> HashMap<Merge, Vec<PieceAt>> {
     cut.merges
         .iter()
         .map(|&merge| {
@@ -386,7 +388,7 @@ fn shown_pieces(
                                 .extent
                                 .is_none_or(|extent| nearest.0 <= seen.view.shown_within(extent).0)
                         })
-                        .map(move |(piece, _)| (layer, piece))
+                        .map(move |(piece, _)| PieceAt { layer, piece })
                 })
                 .collect();
             (merge, pieces)
@@ -399,10 +401,10 @@ fn shown_pieces(
 fn prepare_models(
     world: &mut World,
     streaming: &mut Streaming,
-    shown: &HashMap<Merge, Vec<(usize, usize)>>,
+    shown: &HashMap<Merge, Vec<PieceAt>>,
 ) {
-    let wanted: HashSet<(usize, usize)> = shown.values().flatten().copied().collect();
-    for (layer, piece) in wanted {
+    let wanted: HashSet<PieceAt> = shown.values().flatten().copied().collect();
+    for PieceAt { layer, piece } in wanted {
         let Some(strewn) = streaming.covers.layers[layer].pieces[piece].strewn.as_mut() else {
             continue;
         };
@@ -429,8 +431,8 @@ fn prepare_models(
 fn chunked_pieces(
     streaming: &Streaming,
     seen: Seen,
-    shown: &HashMap<Merge, Vec<(usize, usize)>>,
-) -> HashMap<Merge, Vec<(usize, usize)>> {
+    shown: &HashMap<Merge, Vec<PieceAt>>,
+) -> HashMap<Merge, Vec<PieceAt>> {
     shown
         .iter()
         .filter(|(merge, _)| in_view(streaming, seen, merge.region))
@@ -438,7 +440,7 @@ fn chunked_pieces(
             let pixels_per_meter = seen.view.pixels_per_meter(merge.detail.distance());
             let chunked = pieces
                 .iter()
-                .filter(|&&(layer, piece)| {
+                .filter(|&&PieceAt { layer, piece }| {
                     let piece = &streaming.covers.layers[layer].pieces[piece];
                     piece.strewn.is_some()
                         && piece
@@ -460,56 +462,21 @@ fn stand_merge(
     root: Entity,
     seen: Seen,
     merge: Merge,
-    pieces: &[(usize, usize)],
+    pieces: &[PieceAt],
     budget: &mut Budget,
 ) -> bool {
-    let merged = streaming
-        .covers
-        .merged
-        .entry(merge)
-        .or_insert(Merged::Waiting);
-    match merged {
-        Merged::Standing { rising, .. } if rising.is_empty() => return true,
-        Merged::Standing { .. } => {
-            let covers = &mut streaming.covers;
-            let Some(Merged::Standing { stood, rising }) = covers.merged.get_mut(&merge) else {
-                return false;
-            };
-            while rising
-                .last()
-                .is_some_and(|next| budget.send(mesh_bytes(&next.mesh)))
-            {
-                if let Some(next) = rising.pop()
-                    && let Some(standing) = spawn_merged(world, &covers.layers, next, root)
-                {
-                    stood.push(standing);
-                }
-            }
-            return rising.is_empty();
-        }
-        Merged::Merging(making) => {
-            if making.made().is_none() {
-                return false;
-            }
-            let rising = streaming
-                .covers
-                .merged
-                .remove(&merge)
-                .and_then(Merged::into_made)
-                .unwrap_or_default();
-            streaming.covers.merged.insert(
-                merge,
-                Merged::Standing {
-                    stood: Vec::new(),
-                    rising,
-                },
-            );
-            return stand_merge(world, streaming, root, seen, merge, pieces, budget);
-        }
-        Merged::Waiting => {}
+    let covers = &mut streaming.covers;
+    let merged = covers.merged.entry(merge).or_insert(Merged::Waiting(()));
+    if let Some(stands) = merged.rise(
+        budget,
+        |next| mesh_bytes(&next.mesh),
+        |next| spawn_merged(world, &covers.layers, next, root),
+    ) {
+        return stands;
     }
     let mut far_pieces = Vec::with_capacity(pieces.len());
-    for &(layer, piece) in pieces {
+    for &at in pieces {
+        let PieceAt { layer, piece } = at;
         let cover = &streaming.covers.layers[layer];
         let model = match cover.pieces[piece]
             .strewn
@@ -521,8 +488,7 @@ fn stand_merge(
             Some(CopyState::Loading | CopyState::Preparing(_)) => return false,
         };
         far_pieces.push(FarPiece {
-            layer,
-            piece,
+            piece: at,
             slot: cover.slot,
             seed: cover.seed,
             sheet_level: cover.sheet_level,
@@ -560,10 +526,11 @@ fn spawn_merged(
     far: FarMesh,
     root: Entity,
 ) -> Option<Entity> {
-    let piece = &layers[far.layer].pieces[far.piece];
+    let PieceAt { layer, piece } = far.piece;
+    let piece = &layers[layer].pieces[piece];
     let material = match &piece.strewn {
         Some(strewn) => cover::merged_material(world, &strewn.material, far.material.as_ref())?,
-        None => layers[far.layer].blended.clone(),
+        None => layers[layer].blended.clone(),
     };
     let mesh = world.resource_mut::<Assets<Mesh>>().add(far.mesh);
     Some(
@@ -592,8 +559,7 @@ struct FarRegion {
 
 /// A cover's piece as a region merges it.
 struct FarPiece {
-    layer: usize,
-    piece: usize,
+    piece: PieceAt,
     slot: usize,
     seed: u64,
     sheet_level: Option<f32>,
@@ -624,7 +590,7 @@ impl FarRegion {
         pieces
             .iter()
             .flat_map(|far| {
-                let share = self.painted_by(far.slot);
+                let share = painted_by(&self.paint, far.slot);
                 let patch = |first: (u32, u32), side: u32| cover::Patch {
                     heights: &self.heights,
                     first,
@@ -654,12 +620,11 @@ impl FarRegion {
                                 [
                                     far.slot as u64,
                                     u64::from(far.spread.piece),
-                                    u64::from(chunk.1),
-                                    u64::from(chunk.0),
+                                    u64::from(chunk.row),
+                                    u64::from(chunk.column),
                                 ],
                             );
-                            let first =
-                                (chunk.0 * cover::CHUNK_CELLS, chunk.1 * cover::CHUNK_CELLS);
+                            let first = chunk.first_cell();
                             let places = cover::strew_places(
                                 &patch(first, cover::CHUNK_CELLS),
                                 &far.spread,
@@ -699,7 +664,6 @@ impl FarRegion {
                     };
                 meshes.into_iter().filter_map(|(material, mesh)| {
                     Some(FarMesh {
-                        layer: far.layer,
                         piece: far.piece,
                         material,
                         bounds: mesh.get_aabb()?,
@@ -708,17 +672,6 @@ impl FarRegion {
                 })
             })
             .collect()
-    }
-
-    /// How much of each cell the terrain in `slot` is painted over.
-    fn painted_by(&self, slot: usize) -> impl Fn(u32, u32) -> f32 + '_ {
-        move |column, row| {
-            if usize::from(self.paint.index(column, row)) == slot {
-                1.0
-            } else {
-                0.0
-            }
-        }
     }
 
     /// How many cells of paint a quad of a sheet spans: as many as the view tells apart no better
@@ -734,10 +687,10 @@ impl FarRegion {
 }
 
 /// The chunks of paint from the cell at `first` to the one before `end`.
-fn chunks_within(first: (u32, u32), end: (u32, u32)) -> impl Iterator<Item = (u32, u32)> {
+fn chunks_within(first: (u32, u32), end: (u32, u32)) -> impl Iterator<Item = PaintChunk> {
     let side = cover::CHUNK_CELLS;
     (first.1 / side..end.1.div_ceil(side)).flat_map(move |row| {
-        (first.0 / side..end.0.div_ceil(side)).map(move |column| (column, row))
+        (first.0 / side..end.0.div_ceil(side)).map(move |column| PaintChunk { column, row })
     })
 }
 
@@ -865,21 +818,14 @@ fn cover_layers(world: &mut World, content: &Content, area: &Area) -> Vec<CoverL
 fn spawn_cover_chunk(
     world: &mut World,
     streaming: &Streaming,
-    layer: usize,
-    piece: usize,
-    chunk: (u32, u32),
+    CoverChunk { piece, chunk }: CoverChunk,
     root: Entity,
 ) -> Vec<Entity> {
+    let PieceAt { layer, piece } = piece;
     let layer = &streaming.covers.layers[layer];
     let (columns, rows) = streaming.paint.pixels();
-    let share = |column: u32, row: u32| {
-        if usize::from(streaming.paint.index(column, row)) == layer.slot {
-            1.0
-        } else {
-            0.0
-        }
-    };
-    let first = (chunk.0 * cover::CHUNK_CELLS, chunk.1 * cover::CHUNK_CELLS);
+    let share = painted_by(&streaming.paint, layer.slot);
+    let first = chunk.first_cell();
     let patch = cover::Patch {
         heights: &streaming.heights,
         first,
@@ -898,8 +844,8 @@ fn spawn_cover_chunk(
         [
             layer.slot as u64,
             u64::from(spread.piece),
-            u64::from(chunk.1),
-            u64::from(chunk.0),
+            u64::from(chunk.row),
+            u64::from(chunk.column),
         ],
     );
     let meshes = match shape.as_ref().map(|piece| &piece.shape) {
@@ -968,4 +914,15 @@ fn chunk_seed(seed: u64, parts: [u64; 4]) -> u64 {
         mixed ^= mixed >> 31;
     }
     mixed
+}
+
+/// The share of each cell of paint that `slot` paints: all of it or none.
+fn painted_by(paint: &PaintMap, slot: usize) -> impl Fn(u32, u32) -> f32 + '_ {
+    move |column, row| {
+        if usize::from(paint.index(column, row)) == slot {
+            1.0
+        } else {
+            0.0
+        }
+    }
 }

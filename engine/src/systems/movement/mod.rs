@@ -9,7 +9,7 @@ pub use berth::{
 };
 pub use navmesh::{Island, NavMesh, TileLayer, kept_clear};
 pub use predict::request_walk;
-pub use spots::{Bodies, Spot, Spots, crowding, spot_of};
+pub use spots::{Bodies, Spot, Spots, crowding};
 
 use bevy_app::{App, Plugin, Update};
 use bevy_ecs::prelude::*;
@@ -203,7 +203,7 @@ impl Path {
                 } else {
                     passed
                 };
-                return Some(reached.min(self.corners.len()));
+                return Some(reached);
             }
             from = corner;
         }

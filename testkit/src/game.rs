@@ -203,12 +203,9 @@ impl Game {
     }
 
     /// A playable character (its class, the model it starts as, and the player file) and settings that start every new
-    /// character at `x`, `y` in `area`. Its body, which every walker's is, is 0.35 m round.
+    /// character at `x`, `y` in `area`.
     pub fn hero(self, area: &str, x: f32, y: f32) -> Game {
-        self.model("hero", 2.0, json!([]))
-            .edit("model", "hero", |model| {
-                model["hitbox"]["radius"] = json!(0.35)
-            })
+        self.model_of_radius("hero", 0.35, 2.0, json!([]))
             .row(
                 "class",
                 "hero",
@@ -556,23 +553,38 @@ impl Game {
     /// A model nobody would notice on the plain skeleton [`BODY`], declared with it unless the test
     /// declared it before, half a metre around and `height` tall.
     pub fn model(self, name: &str, height: f32, modules: Value) -> Game {
+        self.model_of_radius(name, 0.5, height, modules)
+    }
+
+    fn model_of_radius(self, name: &str, radius: f32, height: f32, modules: Value) -> Game {
         let game = if self.files.contains_key(&fields_path("skeleton", BODY)) {
             self
         } else {
             self.skeleton(BODY)
         };
-        game.model_on(name, BODY, height, modules)
+        game.model_shaped(name, BODY, radius, height, modules)
     }
 
     /// A model nobody would notice on the skeleton declared as `skeleton`, half a metre around and
     /// `height` tall, of one part of its own name.
     pub fn model_on(self, name: &str, skeleton: &str, height: f32, modules: Value) -> Game {
+        self.model_shaped(name, skeleton, 0.5, height, modules)
+    }
+
+    fn model_shaped(
+        self,
+        name: &str,
+        skeleton: &str,
+        radius: f32,
+        height: f32,
+        modules: Value,
+    ) -> Game {
         self.model_part(name, skeleton).row(
             "model",
             name,
             json!({
                 "skeleton": path("skeleton", skeleton),
-                "hitbox": { "radius": 0.5, "height": height },
+                "hitbox": { "radius": radius, "height": height },
                 "parts": [path("model_part", name)],
                 "modules": modules,
             }),
@@ -862,7 +874,7 @@ pub fn typing() -> Typing {
 }
 
 /// How every test game sets its styled text.
-pub fn lettering() -> Lettering {
+fn lettering() -> Lettering {
     let swing = |rate: f32, step: f32, reach: f32| Swing {
         rate: RadiansPerSec(rate),
         step: Radians(step),
@@ -910,7 +922,7 @@ pub fn speech() -> Speech {
 }
 
 /// How every test game is heard.
-pub fn hearing() -> Hearing {
+fn hearing() -> Hearing {
     Hearing {
         wide: Meters(12.0),
         deep: Meters(9.0),

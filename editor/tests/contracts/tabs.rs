@@ -1,16 +1,11 @@
-use std::sync::Arc;
-
 use editor::app::Editor;
-use editor::busy::Progress;
-use editor::project::Project;
-use editor::schema::SchemaShapes;
 use editor::tabs::{DockRequest, EditorTab};
 use editor::user::{EditorSettings, UserFolder};
 use engine::core::content::ContentFile;
 use engine::systems::area::AreaDef;
 use ui::egui_dock::NodeIndex;
 
-use crate::support::{area, game_folder};
+use crate::support::{area, game_folder, open_project};
 
 #[test]
 fn each_preview_takes_the_place_of_the_one_before_but_never_a_kept_tab() {
@@ -77,14 +72,7 @@ fn editing_what_a_preview_shows_keeps_it() {
     let scratch = tempfile::tempdir().expect("a scratch folder");
     let mut editor = editor(&scratch);
     let folder = game_folder(scratch.path().join("game"));
-    editor.project = Some(
-        Project::open(
-            &folder,
-            Arc::new(SchemaShapes::load()),
-            &Progress::default(),
-        )
-        .expect("opens"),
-    );
+    editor.project = Some(open_project(&folder));
 
     editor.preview_row(AreaDef::TABLE, &area());
     editor.place_tabs();

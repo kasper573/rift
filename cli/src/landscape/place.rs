@@ -14,7 +14,7 @@ use rayon::prelude::*;
 
 use super::biomes::{Biomes, Climate};
 use super::relief::Relief;
-use super::{LAID_OUT, Land};
+use super::{LAID_OUT, Land, Stream, layer_of};
 
 pub fn lay_out(
     size: GroundSize,
@@ -32,9 +32,10 @@ pub fn lay_out(
         .enumerate()
         .map(|(index, biome)| {
             let props = biome.props.iter().enumerate().map(|(kind, prop)| {
-                let clumps = Fbm::<Perlin>::new(
-                    (land.seed as u32).wrapping_add(200 + (index * 64 + kind) as u32),
-                )
+                let clumps = Fbm::<Perlin>::new(land.seed_of(Stream::Clumps {
+                    biome: index,
+                    prop: kind,
+                }))
                 .set_octaves(2)
                 .set_frequency(1.0 / f64::from(PROP_BLOCK * BLOCKS_PER_CLUMP));
                 let modules = prop_blocks
@@ -52,7 +53,7 @@ pub fn lay_out(
                                 props: prop.props.clone(),
                                 region: *block,
                                 per_square_meter,
-                                seed: block_seed(land.seed, block, (index * 64 + kind) as u64),
+                                seed: block_seed(land.seed, block, layer_of(index, kind) as u64),
                                 scale: prop.scale,
                             }))
                         })

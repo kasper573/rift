@@ -14,7 +14,7 @@ use noise::{Fbm, MultiFractal, NoiseFn, Perlin};
 use rayon::prelude::*;
 
 use super::relief::Relief;
-use super::{Land, LandGround};
+use super::{Land, LandGround, Stream};
 
 /// How warm and how wet each node of the relief's lattice is, as a share of the land.
 pub struct Climate {
@@ -24,9 +24,8 @@ pub struct Climate {
 
 impl Climate {
     pub fn over(relief: &Relief, land: &Land) -> Climate {
-        let seed = land.seed as u32;
-        let warmth = Fbm::<Perlin>::new(seed.wrapping_add(6)).set_octaves(4);
-        let wetness = Fbm::<Perlin>::new(seed.wrapping_add(7)).set_octaves(4);
+        let warmth = Fbm::<Perlin>::new(land.seed_of(Stream::Warmth)).set_octaves(4);
+        let wetness = Fbm::<Perlin>::new(land.seed_of(Stream::Wetness)).set_octaves(4);
         let wavelength = f64::from(land.climate.wavelength.0);
         let (temperature, moisture): (Vec<f32>, Vec<f32>) = relief
             .nodes()
@@ -94,7 +93,15 @@ impl Biomes {
                             paths.len() - 1
                         }
                     };
-                    Ground::new(ground, terrain, land, index * 64 + layer)
+                    Ground::new(
+                        ground,
+                        terrain,
+                        land,
+                        Stream::Patches {
+                            biome: index,
+                            ground: layer,
+                        },
+                    )
                 })
                 .collect();
             let props = biome
@@ -220,7 +227,7 @@ struct Ground {
 }
 
 impl Ground {
-    fn new(ground: &LandGround, terrain: usize, land: &Land, salt: usize) -> Ground {
+    fn new(ground: &LandGround, terrain: usize, land: &Land, patches: Stream) -> Ground {
         Ground {
             terrain: terrain as u8,
             share: ground.share,
@@ -229,7 +236,7 @@ impl Ground {
                 .elevation
                 .map(|elevation| (elevation.min, elevation.max)),
             patches: (ground.share < 1.0).then(|| {
-                Fbm::<Perlin>::new((land.seed as u32).wrapping_add(100 + salt as u32))
+                Fbm::<Perlin>::new(land.seed_of(patches))
                     .set_octaves(3)
                     .set_frequency(PATCHES_PER_WAVELENGTH / f64::from(land.climate.wavelength.0))
             }),
@@ -257,13 +264,12 @@ struct Border {
 
 impl Border {
     fn new(land: &Land) -> Border {
-        let seed = land.seed as u32;
         let wavelength = f64::from(land.climate.wavelength.0) / PATCHES_PER_WAVELENGTH;
         Border {
-            temperature: Fbm::<Perlin>::new(seed.wrapping_add(8))
+            temperature: Fbm::<Perlin>::new(land.seed_of(Stream::BorderTemperature))
                 .set_octaves(3)
                 .set_frequency(1.0 / wavelength),
-            moisture: Fbm::<Perlin>::new(seed.wrapping_add(9))
+            moisture: Fbm::<Perlin>::new(land.seed_of(Stream::BorderMoisture))
                 .set_octaves(3)
                 .set_frequency(1.0 / wavelength),
             blend: land.climate.blend,

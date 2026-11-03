@@ -80,9 +80,7 @@ impl ParamsUniform {
         }
         ParamsUniform { words }
     }
-}
 
-impl ParamsUniform {
     /// The parameters bit for bit, so materials filled alike can be told apart from others.
     pub fn bits(&self) -> [u32; PARAMS_BYTES / 4] {
         let mut bits = [0; PARAMS_BYTES / 4];
@@ -110,7 +108,7 @@ impl VfxShaderKey {
     pub fn of(shader: &Handle<Shader>) -> VfxShaderKey {
         VfxShaderKey(match shader.id() {
             AssetId::Uuid { uuid } => uuid,
-            AssetId::Index { .. } => Uuid::nil(),
+            AssetId::Index { .. } => unreachable!("every compiled shader is held under a uuid"),
         })
     }
 

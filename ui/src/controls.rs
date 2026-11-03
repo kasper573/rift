@@ -149,12 +149,11 @@ pub fn variant_picker<T: strum::VariantArray + AsRef<str> + Copy + PartialEq>(
 pub fn form(ui: &mut Ui, id_salt: impl egui::AsIdSalt, add: impl FnOnce(&mut Ui)) {
     egui::Grid::new(id_salt)
         .num_columns(2)
-        .min_col_width(FORM_LABEL_WIDTH)
+        .min_col_width(crate::form::KEY_WIDTH)
         .spacing(FORM_SPACING)
         .show(ui, add);
 }
 
-const FORM_LABEL_WIDTH: f32 = 100.0;
 const FORM_SPACING: Vec2 = Vec2::new(16.0, 8.0);
 
 pub fn combo(id_salt: impl egui::AsIdSalt) -> egui::ComboBox {

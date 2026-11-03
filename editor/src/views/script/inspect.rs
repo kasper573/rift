@@ -70,7 +70,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, selection: &RowSe
                 }
             }
             many => {
-                breadcrumb(ui, &format!("{} › {} nodes", doc.at.title(), many.len()));
+                path_label(ui, &format!("{} › {} nodes", doc.at.title(), many.len()));
                 panel::tile_across(ui, true, |ui| {
                     panel::title(ui, &format!("{} nodes", many.len()));
                     for name in many {
@@ -93,7 +93,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, selection: &RowSe
         });
 }
 
-fn breadcrumb(ui: &mut Ui, text: &str) {
+fn path_label(ui: &mut Ui, text: &str) {
     ui.label(theme::muted(text).monospace().size(13.0));
     ui.add_space(4.0);
 }
@@ -500,7 +500,7 @@ fn node_inspector(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, name: &str)
     let Some(node) = doc.nodes().get(name).cloned() else {
         return;
     };
-    breadcrumb(ui, &format!("{} › {name}", doc.at.title()));
+    path_label(ui, &format!("{} › {name}", doc.at.title()));
     let shapes = editor.shapes.clone();
     let root = shapes.shape_of(ScriptDef::TABLE);
     let path = format!("/nodes/{name}");
@@ -1345,7 +1345,7 @@ fn choice_inspector(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, name: &st
         return;
     };
     let label_text = spans::plain(&choice.label);
-    breadcrumb(
+    path_label(
         ui,
         &format!(
             "{} › {name} › {}",

@@ -4,7 +4,7 @@ use bevy_ecs::prelude::*;
 use bevy_platform::collections::HashMap;
 
 use crate::protocol::Protocol;
-use crate::wire::{ClientFrame, EntityChanges, Part, ServerFrame, WireEntity, apply_patch};
+use crate::wire::{ClientFrame, EntityChanges, Part, ServerFrame, apply_patch};
 
 /// Shows a client what its server replicates to it, and sends the server its messages.
 pub struct ClientReplicationPlugin;
@@ -166,7 +166,7 @@ fn apply(
         }
     }
     for left in frame.left {
-        if let Some(entity) = entities.forget(server_entity(left))
+        if let Some(entity) = entities.forget(left.entity()?)
             && let Ok(entity) = world.get_entity_mut(entity)
         {
             despawn(entity);
@@ -188,7 +188,7 @@ fn apply_changes(
     entities: &mut ServerEntities,
     changes: EntityChanges,
 ) -> Option<()> {
-    let server = server_entity(changes.entity);
+    let server = changes.entity.entity()?;
     let entity = entity_for(world, entities, server);
     for change in changes.changes {
         let kind = change.kind();
@@ -278,9 +278,4 @@ fn let_go_of_all(world: &mut World) {
             entity.despawn();
         }
     }
-}
-
-fn server_entity(wire: WireEntity) -> Entity {
-    wire.entity()
-        .expect("the server names its entities by their index and generation")
 }

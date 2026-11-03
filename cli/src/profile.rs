@@ -36,7 +36,10 @@ pub fn run(game: Option<&Path>, out: &Path) {
             ..bench_config(&game)
         },
     );
-    let mut load = loadtest::run_dyn(&server.http_url());
+    let mut load = loadtest::run_dyn(&server.http_url()).unwrap_or_else(|failure| {
+        eprintln!("{failure}");
+        std::process::exit(1);
+    });
 
     let samples = out.join("perf.data");
     println!("[profile] sampling the server for {SAMPLED:?}");

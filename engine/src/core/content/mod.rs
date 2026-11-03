@@ -44,9 +44,3 @@ pub use table::{
     NamedContent, ReadRow, Table,
 };
 pub use version::ContentVersion;
-
-/// Whether `file` is media by its extension, fetched and cached on its own rather than read with the
-/// content files.
-pub fn is_media_file(file: &str) -> bool {
-    crate::core::content::AssetKind::of(file).is_some()
-}

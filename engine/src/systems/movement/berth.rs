@@ -237,14 +237,10 @@ impl Berths {
         reach: Meters,
     ) -> Berths {
         let aimed_at = sight.actor;
-        let Some(mesh) = mesh_in(world, entity) else {
-            return Berths {
-                aimed_at,
-                candidates: Vec::new(),
-                bodies: sight.bodies,
-            };
-        };
-        let Some(from) = mesh.island(at) else {
+        let Some((mesh, from)) = mesh_in(world, entity).and_then(|mesh| {
+            let island = mesh.island(at)?;
+            Some((mesh, island))
+        }) else {
             return Berths {
                 aimed_at,
                 candidates: Vec::new(),

@@ -28,7 +28,9 @@ use crate::forms::{FormCx, FormState};
 use crate::modal::ModalDialog;
 use crate::output_log::OutputLog;
 use crate::play::{self, PlayTest};
-use crate::project::journal::{RecoveryJournal, RecoveryJournalData, RecoveryJournalFile};
+use crate::project::journal::{
+    JournalRevision, RecoveryJournal, RecoveryJournalData, RecoveryJournalFile,
+};
 use crate::project::lock::ProjectLock;
 use crate::project::watch::FolderWatcher;
 use crate::project::{
@@ -991,7 +993,10 @@ impl Editor {
             return;
         };
         let files = project.files.clone();
-        let revision = (files.revision(), files.disk_revision());
+        let revision = JournalRevision {
+            files: files.revision(),
+            disk: files.disk_revision(),
+        };
         if !journal.due(revision) {
             return;
         }

@@ -25,10 +25,9 @@ serde_json.workspace = true
 strum = { workspace = true, features = ["derive"] }
 tempfile.workspace = true
 ureq = { workspace = true, features = ["rustls", "platform-verifier"] }
-sysinfo = { version = "0.40.0", default-features = false, features = ["system"] }
+sysinfo.workspace = true
 walkdir.workspace = true
-tikv-jemalloc-ctl = { version = "0.7", features = ["stats"] }
-noise = "0.9"
+noise.workspace = true
 
 [lints]
 workspace = true

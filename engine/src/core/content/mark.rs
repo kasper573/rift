@@ -2,14 +2,23 @@
 //! the schema what a value means where its type alone doesn't say: a unit, a count, a reference to
 //! a file, a step a flow goes on to.
 
+use std::sync::LazyLock;
+
 use schemars::Schema;
 use serde_json::Value;
-use strum::VariantArray;
+use strum::{IntoStaticStr, VariantArray};
 
-/// What the key of every mark starts with, as JSON Schema leaves such keys to its users.
-const MARK_PREFIX: &str = "x-";
+/// Each mark's key, in the order of the variants: the `x-` JSON Schema leaves to its users, then the
+/// mark's word.
+static KEYS: LazyLock<Vec<String>> = LazyLock::new(|| {
+    SchemaMark::VARIANTS
+        .iter()
+        .map(|mark| format!("x-{}", mark.word()))
+        .collect()
+});
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, VariantArray)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, VariantArray, IntoStaticStr)]
+#[strum(serialize_all = "kebab-case")]
 pub enum SchemaMark {
     /// The step of a flow a field goes on to.
     Arrow,
@@ -75,44 +84,13 @@ pub enum SchemaMark {
 
 impl SchemaMark {
     /// The key the mark has in a schema.
-    pub const fn key(self) -> &'static str {
-        match self {
-            SchemaMark::Arrow => "x-arrow",
-            SchemaMark::Asset => "x-asset",
-            SchemaMark::Assignment => "x-assignment",
-            SchemaMark::Blank => "x-blank",
-            SchemaMark::Build => "x-build",
-            SchemaMark::Color => "x-color",
-            SchemaMark::Condition => "x-condition",
-            SchemaMark::Count => "x-count",
-            SchemaMark::Face => "x-face",
-            SchemaMark::Fails => "x-fails",
-            SchemaMark::FixedRows => "x-fixed-rows",
-            SchemaMark::Gesture => "x-gesture",
-            SchemaMark::Group => "x-group",
-            SchemaMark::Joint => "x-joint",
-            SchemaMark::Move => "x-move",
-            SchemaMark::Name => "x-name",
-            SchemaMark::ParamFill => "x-param-fill",
-            SchemaMark::ParamsOf => "x-params-of",
-            SchemaMark::Place => "x-place",
-            SchemaMark::Pos => "x-pos",
-            SchemaMark::Rect => "x-rect",
-            SchemaMark::Region => "x-region",
-            SchemaMark::Slot => "x-slot",
-            SchemaMark::Span => "x-span",
-            SchemaMark::System => "x-system",
-            SchemaMark::Table => "x-table",
-            SchemaMark::Tint => "x-tint",
-            SchemaMark::Unit => "x-unit",
-            SchemaMark::Usage => "x-usage",
-            SchemaMark::Value => "x-value",
-        }
+    pub fn key(self) -> &'static str {
+        &KEYS[self as usize]
     }
 
-    /// The mark's key without the prefix every mark's key has, as a word for it.
+    /// The mark's name, as a word for it.
     pub fn word(self) -> &'static str {
-        &self.key()[MARK_PREFIX.len()..]
+        self.into()
     }
 
     /// The mark whose key is `key`.

@@ -16,7 +16,7 @@ use crate::core::ground::TileAt;
 use crate::core::math::Pos;
 use crate::core::units::Meters;
 use crate::systems::sleep::Sleep;
-use crate::systems::{GameSettings, WorldArea, area, npc, script, sleep};
+use crate::systems::{WorldArea, area, npc, script, sleep};
 
 mod client;
 
@@ -34,7 +34,7 @@ pub struct Region {
 impl Region {
     pub fn of(content: &Content) -> Region {
         Region {
-            reach: held_reach(content),
+            reach: held_reach(sleep::awake_reach(content)),
             reached: HashSet::new(),
             holding: None,
             stood: Vec::new(),
@@ -135,7 +135,6 @@ fn come_to_life(world: &mut World, held: BTreeSet<TileAt>) {
 /// How far around a player ground is held: as far as anything awake stands, the chunks awake
 /// reaching past a player by as far as a client sees and anything there reaches, rounded up to
 /// whole chunks.
-fn held_reach(content: &Content) -> Meters {
-    let sight = content.built::<GameSettings>().sight;
-    Meters(sight.0 + sleep::acting_reach(content).0 + CHUNK_SIDE.0 * 2.0)
+fn held_reach(awake: Meters) -> Meters {
+    Meters(awake.0 + CHUNK_SIDE.0 * 2.0)
 }

@@ -13,6 +13,7 @@ use futures_util::{StreamExt, stream};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 
+use super::asset::AssetKind;
 use super::load::{ContentFolder, ContentRegistry, FileHash, FileHashes, FolderEntry, entries_in};
 use super::store::ContentStore;
 use super::table::Content;
@@ -79,7 +80,7 @@ impl ServedContent {
         let mut rows: Vec<(String, Vec<u8>)> = Vec::new();
         for (path, stamp) in &hashes.0 {
             let bytes = folder.read(path)?;
-            if super::is_media_file(path) {
+            if AssetKind::of(path).is_some() {
                 index.files.push(IndexedFile {
                     path: path.clone(),
                     held: stamp.clone(),

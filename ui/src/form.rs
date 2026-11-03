@@ -8,7 +8,7 @@ use crate::face;
 use crate::face::{Face, TextRole};
 use crate::{ink, sheet, theme};
 
-const KEY_WIDTH: f32 = 96.0;
+pub(crate) const KEY_WIDTH: f32 = 96.0;
 
 /// A row of `value` after its `key`, the keys of a form lined up in one column.
 pub fn kv(ui: &mut Ui, key: &str, value: impl FnOnce(&mut Ui)) {

@@ -291,6 +291,18 @@ impl AreaDef {
         self.terrains.push(terrain);
         u8::try_from(self.terrains.len() - 1).ok()
     }
+
+    fn ground(&self) -> Ground {
+        Ground {
+            size: self.size,
+            max_slope: self.max_slope,
+            terrains: self.terrains.clone(),
+            heights: self.heights.clone(),
+            paint: self.paint.clone(),
+            lighting: self.lighting.clone(),
+            weather: self.weather,
+        }
+    }
 }
 
 /// The parts one grid of the ground is kept in: its tiles and their overview.
@@ -856,12 +868,7 @@ pub fn loaded(content: &Content, area: AreaId) -> Option<&Arc<Area>> {
 
 /// The area as `load` gives it, to keep beside the content it came from.
 pub fn shared(content: &Content, area: AreaId) -> &Arc<Area> {
-    content
-        .built::<Areas>()
-        .0
-        .get(area.index())
-        .and_then(Option::as_ref)
-        .unwrap_or_else(|| panic!("area {} failed to load", area.path(content)))
+    loaded(content, area).unwrap_or_else(|| panic!("area {} failed to load", area.path(content)))
 }
 
 /// A bundle the editor pictures: an area, a blueprint on its own canvas, a prop standing in the
@@ -917,15 +924,7 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
     let (ground, flattening) = match pictured {
         Pictured::Area(id) => {
             let def = content.table::<AreaDef>().get(id)?;
-            let ground = Ground {
-                size: def.size,
-                max_slope: def.max_slope,
-                terrains: def.terrains.clone(),
-                heights: def.heights.clone(),
-                paint: def.paint.clone(),
-                lighting: def.lighting.clone(),
-                weather: def.weather,
-            };
+            let ground = def.ground();
             (
                 ground,
                 blueprint::flatten_kept(content, &def.scene, keep, &mut errors),
@@ -993,16 +992,11 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
 /// canvas looks like the game's own ground; any terrain when the spawn's area did not load.
 pub fn home_terrain(content: &Content) -> Option<TerrainId> {
     let spawn = content.built::<GameSettings>().initial_spawn;
-    let home = content
-        .built::<Areas>()
-        .0
-        .get(spawn.area.index())
-        .and_then(Option::as_ref)
-        .and_then(|area| {
-            area.terrains
-                .get(usize::from(area.paint.at(spawn.at)))
-                .copied()
-        });
+    let home = loaded(content, spawn.area).and_then(|area| {
+        area.terrains
+            .get(usize::from(area.paint.at(spawn.at)))
+            .copied()
+    });
     home.or_else(|| content.ids::<TerrainDef>().next())
 }
 
@@ -1093,15 +1087,7 @@ fn build_all(loading: &mut Loading) {
         let Some(bodies) = bodies else {
             continue;
         };
-        let ground = Ground {
-            size: def.size,
-            max_slope: def.max_slope,
-            terrains: def.terrains.clone(),
-            heights: def.heights.clone(),
-            paint: def.paint.clone(),
-            lighting: def.lighting.clone(),
-            weather: def.weather,
-        };
+        let ground = def.ground();
         let mut check = RowCheck::default();
         check_bounds(&content, ground.size, modules, &mut check);
         let (area, budget) =
@@ -1316,6 +1302,14 @@ fn check_bounds(content: &Content, size: GroundSize, modules: &[Flattened], chec
     }
 }
 
+/// The area's warps, each with its display name.
+fn named_warps(content: &Content, area: AreaId) -> Vec<(u32, &ObjectDef, String)> {
+    warp_objects(content, area)
+        .into_iter()
+        .map(|(index, object)| (index, object, object.display_name(index)))
+        .collect()
+}
+
 fn check_placed(content: &Content, id: AreaId, modules: &[Flattened], check: &mut RowCheck) {
     let mut names: Vec<(String, String)> = Vec::new();
     let mut seen_residents: Vec<NpcId> = Vec::new();
@@ -1350,10 +1344,7 @@ fn check_placed(content: &Content, id: AreaId, modules: &[Flattened], check: &mu
             _ => {}
         }
     }
-    let warps: Vec<(u32, &ObjectDef, String)> = warp_objects(content, id)
-        .into_iter()
-        .map(|(index, object)| (index, object, object.display_name(index)))
-        .collect();
+    let warps = named_warps(content, id);
     for (index, (object_index, object, name)) in warps.iter().enumerate() {
         for (_, other, other_name) in &warps[index + 1..] {
             if object.shape.overlaps(&other.shape) {
@@ -1376,10 +1367,7 @@ fn check_footing(
     modules: &[Flattened],
     check: &mut RowCheck,
 ) {
-    let warps: Vec<(u32, &ObjectDef, String)> = warp_objects(content, id)
-        .into_iter()
-        .map(|(index, object)| (index, object, object.display_name(index)))
-        .collect();
+    let warps = named_warps(content, id);
     let in_warp = |at: Pos<Meters>| {
         warps
             .iter()
@@ -1483,12 +1471,7 @@ pub fn check_islands(
 ) -> Vec<(IslandSite, ContentProblem)> {
     let mut problems = Vec::new();
     for id in content.ids::<AreaDef>().filter(|id| rechecks(*id)) {
-        let Some(area) = content
-            .built::<Areas>()
-            .0
-            .get(id.index())
-            .and_then(Option::as_ref)
-        else {
+        let Some(area) = loaded(content, id) else {
             continue;
         };
         let warps = warp_objects(content, id);
@@ -1585,12 +1568,7 @@ pub fn check_islands(
 }
 
 pub fn check_place(content: &Content, place: script::Place) -> Result<(), ContentProblem> {
-    let Some(area) = content
-        .built::<Areas>()
-        .0
-        .get(place.area.index())
-        .and_then(Option::as_ref)
-    else {
+    let Some(area) = loaded(content, place.area) else {
         return Ok(());
     };
     let mesh = area.mesh_near(place.at);

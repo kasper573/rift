@@ -29,6 +29,7 @@ clap = { version = "4.6.7", features = ["derive"] }
 axum-prometheus = "0.10"
 ctrlc = { version = "3", features = ["termination"] }
 tikv-jemallocator = { version = "0.7", features = ["profiling", "unprefixed_malloc_on_supported_platforms"] }
+tikv-jemalloc-ctl = { version = "0.7", features = ["stats"] }
 jemalloc_pprof = { version = "0.9", features = ["symbolize"] }
 bevy_app = { version = "0.20.0", default-features = false }
 bevy_ecs = { version = "0.20.0", default-features = false, features = ["std", "serialize"] }
@@ -46,6 +47,8 @@ proc-macro2 = "1"
 renet2 = { version = "1", default-features = false }
 renet2_netcode = { version = "1", default-features = false, features = ["native_transport"] }
 rayon = "1"
+sysinfo = { version = "0.40.0", default-features = false, features = ["system"] }
+noise = "0.9"
 thread-priority = "3"
 arc-swap = "1"
 bevy_replication = { path = "bevy/replication" }

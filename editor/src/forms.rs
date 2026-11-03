@@ -13,6 +13,7 @@ use ui::theme;
 use engine::core::content::AssetKind;
 use engine::core::content::SchemaMark;
 use engine::core::content::fixture::FixtureLock;
+use engine::core::content::serial::json_of;
 use engine::core::content::{
     Content, ContentFile, LoadReport, fields_file, parent_of, with_content,
 };
@@ -36,7 +37,7 @@ use crate::usages::ContentUsages;
 use crate::views::bust::faces;
 use crate::views::script::nodes::NodeCatalogue;
 use crate::views::vfx;
-use crate::{audio, condition, picker, spans, thumbs, value};
+use crate::{audio, condition, picker, spans, thumbs};
 use ui::draft::{self, Typed, drafted, typed};
 use ui::input::{self, InputField};
 
@@ -310,7 +311,7 @@ pub(crate) fn of_type_without<T: JsonSchema + Serialize + DeserializeOwned + 'st
 ) -> FormChange {
     let reader = cx.project.reader();
     let in_scope = || reader.scope().clone();
-    let Ok(mut json) = with_content(in_scope(), || value::json(typed)).0 else {
+    let Ok(mut json) = with_content(in_scope(), || json_of(typed)).0 else {
         form::hint(ui, "does not write as the game reads it");
         return FormChange::default();
     };
@@ -1867,7 +1868,7 @@ pub(crate) fn quantity(
     if let Some(unit) = unit {
         SchemaMark::Unit.put(&mut schema, unit);
     }
-    let Ok(mut json) = value::json(amount) else {
+    let Ok(mut json) = json_of(amount) else {
         return FormChange::default();
     };
     let changed = number(ui, cx, &schema, &mut json, path, false);

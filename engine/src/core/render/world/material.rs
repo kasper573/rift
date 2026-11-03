@@ -1,7 +1,7 @@
 //! The material every mesh of the world is drawn with: bevy's standard lighting over the model's
-//! own colours, a rough dielectric with a faint sheen, a face marked as glowing shining unlit, and dithered away where the
-//! mesh stands between the camera and its subject, in every pass alike, so what fades keeps its
-//! depth, its shadow and its lighting and never shows its inside. A scene may have the game's own
+//! own colours, a rough dielectric with a faint sheen, a face marked as glowing shining unlit,
+//! and dithered away where the mesh stands between the camera and its subject, in every pass
+//! alike, so what fades keeps its depth, its shadow and its lighting and never shows its inside. A scene may have the game's own
 //! shaders draw some of its materials in place of that look, each named by its material.
 
 use bevy::asset::{AssetPath, embedded_path};
@@ -42,8 +42,9 @@ pub fn textures(material: &StandardMaterial) -> impl Iterator<Item = &Handle<Ima
     .flatten()
 }
 
-/// How the world draws a mesh beyond its standard material: its fade, and the game's shader when one draws the mesh, with its parameters, the weather it
-/// reads and the site its prelude reads, which a material has none of.
+/// How the world draws a mesh beyond its standard material, which has none of these: its fade,
+/// and the game's shader where one draws the mesh, with its parameters, the weather it reads and
+/// the site its prelude reads.
 #[derive(Asset, AsBindGroup, Clone, Debug, TypePath)]
 #[bind_group_data(WorldLookKey)]
 pub struct WorldLook {

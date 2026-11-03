@@ -4,8 +4,6 @@
 
 use std::sync::OnceLock;
 
-const JOBS_PER_THREAD: usize = 2;
-
 /// Starts the pool every parallel pass runs on, with a worker per physical core: hyperthreads
 /// share a core's execution units, and waking twice the workers costs a pass more than they
 /// bring. `RAYON_NUM_THREADS` chooses otherwise. A pool started already stays.
@@ -26,10 +24,11 @@ pub fn few(len: usize) -> bool {
     len < FEW
 }
 
-const FEW: usize = 32;
-
 /// The fewest items a job of a pass over `len` items takes.
 pub fn grain(len: usize) -> usize {
     let jobs = JOBS_PER_THREAD * rayon::current_num_threads();
     len.div_ceil(jobs).max(1)
 }
+
+const JOBS_PER_THREAD: usize = 2;
+const FEW: usize = 32;

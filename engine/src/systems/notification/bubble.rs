@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::time::Duration;
 use ui::egui;
 
@@ -401,13 +402,19 @@ fn place(world: &mut World) {
                 .body
                 .is_some_and(|body| Some(body) == talking_to || fighting(world, body, viewer));
             let distance = match (speaking.body.and_then(|body| body_at(world, body)), viewer) {
-                (Some(at), Some(viewer)) => at.distance(viewer).0,
-                _ => f32::MAX,
+                (Some(at), Some(viewer)) => Some(at.distance(viewer).0),
+                _ => None,
             };
             (!engaged, distance, speaking.arrived)
         };
         let (a, b) = (rank(a), rank(b));
-        a.0.cmp(&b.0).then(a.1.total_cmp(&b.1)).then(a.2.cmp(&b.2))
+        let by_distance = match (a.1, b.1) {
+            (Some(a), Some(b)) => a.total_cmp(&b),
+            (Some(_), None) => Ordering::Less,
+            (None, Some(_)) => Ordering::Greater,
+            (None, None) => Ordering::Equal,
+        };
+        a.0.cmp(&b.0).then(by_distance).then(a.2.cmp(&b.2))
     });
     let full = if window.x <= SMALL_WINDOW {
         FULL_IN_SMALL_WINDOW

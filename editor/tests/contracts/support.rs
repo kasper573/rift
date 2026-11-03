@@ -63,12 +63,7 @@ pub fn open(game: Game, scratch: &tempfile::TempDir) -> Editor {
 pub fn open_as_is(game: Game, scratch: &tempfile::TempDir) -> Editor {
     let folder = scratch.path().join("game");
     game.write_to(&folder);
-    let mut project = Project::open(
-        &folder,
-        Arc::new(SchemaShapes::load()),
-        &Progress::default(),
-    )
-    .expect("opens");
+    let mut project = open_project(&folder);
     project.settle();
     let mut editor = Editor::new(
         UserFolder::at(scratch.path().join("user")),
@@ -76,6 +71,11 @@ pub fn open_as_is(game: Game, scratch: &tempfile::TempDir) -> Editor {
     );
     editor.project = Some(project);
     editor
+}
+
+/// The project in `folder`, opened without settling.
+pub fn open_project(folder: &Path) -> Project {
+    Project::open(folder, Arc::new(SchemaShapes::load()), &Progress::default()).expect("opens")
 }
 
 /// Deletes what `dialog` picked as it decided, waiting for the editor; the reason the dialog came

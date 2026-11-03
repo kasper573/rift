@@ -204,6 +204,5 @@ fn loaded(game: &Path) -> Option<Content> {
 
 /// What the process's allocator holds for live allocations.
 fn heap() -> Bytes {
-    tikv_jemalloc_ctl::epoch::advance().expect("jemalloc's statistics refresh");
-    Bytes(tikv_jemalloc_ctl::stats::allocated::read().expect("jemalloc's statistics") as u64)
+    Bytes(service::allocated_bytes().expect("the bench's allocator reports what it holds"))
 }

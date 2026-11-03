@@ -34,6 +34,5 @@ pub mod tree;
 pub mod unused;
 mod usages;
 pub mod user;
-mod value;
 pub mod views;
 pub mod widgets;

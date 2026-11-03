@@ -173,10 +173,9 @@ pub(crate) fn new_file_into(
     let path = new_path(&project.files, &folder, table, table);
     let mut edit = ContentEdit::new(format!("New {}", shown_path(&path)));
     make::content_file(&mut edit, project, table, &path)?;
-    edit.update_json(&project.files, file, |target| {
-        *target.pointer_mut(pointer)? = Value::String(path.clone());
-        Some(())
-    });
+    edit.update_at::<Option<String>>(project, file, pointer, |target| {
+        *target = Some(path.clone())
+    })?;
     editor.try_apply(edit)?;
     editor.open_row(table, &path);
     Ok(path)

@@ -1,5 +1,3 @@
-use std::ops::Range;
-
 use crate::core::geometry::corners;
 use crate::core::math::{Offset, Pos, Rect, Rng};
 use crate::core::spatial::SpatialIndex;
@@ -33,22 +31,19 @@ pub struct TileLayer {
 /// The polygons, each with the ground of every one up to it, so a draw by area halves its way to
 /// a polygon rather than weighing them all.
 struct ByArea {
-    polygons: Vec<u32>,
     reach: Vec<f64>,
 }
 
 impl ByArea {
     fn of<'a>(count: usize, outline: impl Fn(usize) -> &'a [Pos<Meters>]) -> ByArea {
-        let polygons: Vec<u32> = (0..count as u32).collect();
         let mut total = 0.0;
-        let reach: Vec<f64> = polygons
-            .iter()
-            .map(|&polygon| {
-                total += f64::from(area(outline(polygon as usize)));
+        let reach: Vec<f64> = (0..count)
+            .map(|polygon| {
+                total += f64::from(area(outline(polygon)));
                 total
             })
             .collect();
-        ByArea { polygons, reach }
+        ByArea { reach }
     }
 }
 
@@ -291,7 +286,7 @@ impl NavMesh {
         rng: &mut Rng,
         fits: impl Fn(Pos<Meters>) -> bool,
     ) -> Option<Pos<Meters>> {
-        self.draw_by_area(rng, 0..self.by_area.polygons.len(), fits)
+        self.draw_by_area(rng, fits)
     }
 
     /// A point within `bounds` that `fits`, each spot as likely as any other of the same size:
@@ -312,7 +307,7 @@ impl NavMesh {
                     )
             })
             .find(|&at| self.walkable(at) && fits(at))
-            .or_else(|| draw(rng, self.clipped(&corners(bounds), |_| true), fits))
+            .or_else(|| Self::draw_on(rng, self.clipped(&corners(bounds), |_| true), fits))
     }
 
     /// The ground within `radius` of `center` an actor at `from` can reach, as triangles to draw
@@ -343,13 +338,37 @@ impl NavMesh {
         self.clipped(&corners(bounds), |polygon| self.islands[polygon] == island)
     }
 
-    /// A spot that `fits` on `ground`, each as likely as any other of the same size.
+    /// A spot that `fits` on `ground`, each as likely as any other of the same size; none when the
+    /// draws keep missing or there is no ground to draw from.
     pub fn draw_on(
         rng: &mut Rng,
         ground: impl IntoIterator<Item = [Pos<Meters>; 3]>,
         fits: impl Fn(Pos<Meters>) -> bool,
     ) -> Option<Pos<Meters>> {
-        draw(rng, ground, fits)
+        let mut total = 0.0;
+        let weighted: Vec<([Pos<Meters>; 3], f32)> = ground
+            .into_iter()
+            .map(|corners| (corners, area(&corners)))
+            .filter(|(_, area)| *area > AREA_EPSILON)
+            .map(|(corners, area)| {
+                total += area;
+                (corners, total)
+            })
+            .collect();
+        if weighted.is_empty() {
+            return None;
+        }
+        for _ in 0..DRAWS {
+            let target = rng.rand_float() * total;
+            let index = weighted
+                .partition_point(|(_, cumulative)| *cumulative < target)
+                .min(weighted.len() - 1);
+            let point = point_in(rng, weighted[index].0);
+            if fits(point) {
+                return Some(point);
+            }
+        }
+        None
     }
 
     /// The polygon holding `at`, or the nearest within the fuzz: a point on a polygon's edge, as a
@@ -394,34 +413,22 @@ impl NavMesh {
         &self.corners[self.starts[polygon] as usize..self.starts[polygon + 1] as usize]
     }
 
-    /// A point that `fits` on the polygons at `range` of those by area, each spot as likely as any
-    /// other of the same size.
+    /// A point that `fits` on the mesh, each spot as likely as any other of the same size.
     fn draw_by_area(
         &self,
         rng: &mut Rng,
-        range: Range<usize>,
         fits: impl Fn(Pos<Meters>) -> bool,
     ) -> Option<Pos<Meters>> {
-        let by_area = &self.by_area;
-        let (start, end) = (range.start, range.end);
-        if start >= end {
-            return None;
-        }
-        let floor = if start == 0 {
-            0.0
-        } else {
-            by_area.reach[start - 1]
-        };
-        let ceiling = by_area.reach[end - 1];
-        if ceiling - floor <= f64::from(AREA_EPSILON) {
+        let reach = &self.by_area.reach;
+        let ground = *reach.last()?;
+        if ground <= f64::from(AREA_EPSILON) {
             return None;
         }
         for _ in 0..DRAWS {
-            let target = floor + f64::from(rng.rand_float()) * (ceiling - floor);
-            let index = (start
-                + by_area.reach[start..end].partition_point(|&reach| reach < target))
-            .min(end - 1);
-            let polygon = by_area.polygons[index] as usize;
+            let target = f64::from(rng.rand_float()) * ground;
+            let polygon = reach
+                .partition_point(|&reach| reach < target)
+                .min(reach.len() - 1);
             if let Some(point) = point_in_outline(rng, self.outline(polygon))
                 && fits(point)
             {
@@ -432,8 +439,6 @@ impl NavMesh {
     }
 }
 
-/// How far off a point may lie and still be found on the mesh, so a walk ending on a polygon's edge
-/// stands on it.
 /// How far off the mesh a point may lie and still count as on it, and be routed from or to, searched
 /// along rings out to there.
 const LOCATE_FUZZ: f32 = 0.05;
@@ -693,39 +698,6 @@ fn intersection(p: Pos<Meters>, q: Pos<Meters>, a: Pos<Meters>, b: Pos<Meters>) 
     }
     let t = ((a.x - p.x) * d2.y - (a.y - p.y) * d2.x) / cross;
     p + d1 * t
-}
-
-/// A point that `fits` in one of the triangles, each spot as likely as any other of the same size;
-/// none when the draws keep missing or there is no ground to draw from.
-fn draw(
-    rng: &mut Rng,
-    triangles: impl IntoIterator<Item = [Pos<Meters>; 3]>,
-    fits: impl Fn(Pos<Meters>) -> bool,
-) -> Option<Pos<Meters>> {
-    let mut total = 0.0;
-    let weighted: Vec<([Pos<Meters>; 3], f32)> = triangles
-        .into_iter()
-        .map(|corners| (corners, area(&corners)))
-        .filter(|(_, area)| *area > AREA_EPSILON)
-        .map(|(corners, area)| {
-            total += area;
-            (corners, total)
-        })
-        .collect();
-    if weighted.is_empty() {
-        return None;
-    }
-    for _ in 0..DRAWS {
-        let target = rng.rand_float() * total;
-        let index = weighted
-            .partition_point(|(_, cumulative)| *cumulative < target)
-            .min(weighted.len() - 1);
-        let point = point_in(rng, weighted[index].0);
-        if fits(point) {
-            return Some(point);
-        }
-    }
-    None
 }
 
 /// A point in the convex outline, each spot as likely as any other of the same size.

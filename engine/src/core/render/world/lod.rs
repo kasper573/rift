@@ -1,8 +1,6 @@
 //! Coarser stand-ins for the meshes of the world, each with how far its shape strays from the
 //! mesh's own, so a mesh far off the eye draws with no more triangles than its pixels show.
 
-use std::sync::Arc;
-
 use bevy::asset::RenderAssetUsages;
 use bevy::ecs::system::SystemParam;
 use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
@@ -21,20 +19,6 @@ pub struct Simplifier<'w> {
     levels: ResMut<'w, MeshLevels>,
     meshes: Res<'w, Assets<Mesh>>,
 }
-
-/// The levels of every mesh simplified so far, or being simplified, by the mesh they stand in
-/// for. It changes as each mesh's levels are made.
-#[derive(Resource, Default)]
-pub struct MeshLevels(HashMap<AssetId<Mesh>, Simplifying>);
-
-enum Simplifying {
-    Making(Task<Vec<(Mesh, f32)>>),
-    Made(Arc<Levels>),
-}
-
-/// The stand-ins for a mesh, finest first, each with about half the triangles of the one before
-/// and how far its shape strays from the mesh's, in the mesh's own units.
-pub struct Levels(Vec<(Handle<Mesh>, f32)>);
 
 impl Simplifier<'_> {
     /// Starts simplifying `mesh` the first time it is asked for, once it has loaded.
@@ -58,6 +42,11 @@ impl Simplifier<'_> {
     }
 }
 
+/// The levels of every mesh simplified so far, or being simplified, by the mesh they stand in
+/// for. It changes as each mesh's levels are made.
+#[derive(Resource, Default)]
+pub struct MeshLevels(HashMap<AssetId<Mesh>, Simplifying>);
+
 impl MeshLevels {
     /// The levels of `mesh`, once they are made.
     pub fn of(&self, mesh: &Handle<Mesh>) -> Option<&Levels> {
@@ -67,6 +56,10 @@ impl MeshLevels {
         }
     }
 }
+
+/// The stand-ins for a mesh, finest first, each with about half the triangles of the one before
+/// and how far its shape strays from the mesh's, in the mesh's own units.
+pub struct Levels(Vec<(Handle<Mesh>, f32)>);
 
 impl Levels {
     /// The coarsest stand-in that strays from the mesh by less than [`STRAY_PIXELS`] of `view`,
@@ -81,6 +74,11 @@ impl Levels {
     }
 }
 
+/// How many pixels across a thing among many alike must span for the view to tell it apart from
+/// its neighbours: smaller, some of them may be dropped and the rest grown to this size, and the
+/// crowd looks the same.
+pub const GRAIN_PIXELS: f32 = 2.0;
+
 /// Takes in the levels simplified since the last frame.
 pub(super) fn finish_simplifying(mut levels: ResMut<MeshLevels>, mut meshes: ResMut<Assets<Mesh>>) {
     let mut finished = false;
@@ -88,11 +86,11 @@ pub(super) fn finish_simplifying(mut levels: ResMut<MeshLevels>, mut meshes: Res
         if let Simplifying::Making(task) = simplifying
             && let Some(made) = check_ready(task)
         {
-            *simplifying = Simplifying::Made(Arc::new(Levels(
+            *simplifying = Simplifying::Made(Levels(
                 made.into_iter()
                     .map(|(level, strays)| (meshes.add(level), strays))
                     .collect(),
-            )));
+            ));
             finished = true;
         }
     }
@@ -114,40 +112,6 @@ pub(super) fn forget_dropped(
 
 /// How far a stand-in's shape may stray from its mesh's, in pixels of the view it is seen in.
 pub(super) const STRAY_PIXELS: f32 = 0.5;
-/// How many pixels across a thing among many alike must span for the view to tell it apart from
-/// its neighbours: smaller, some of them may be dropped and the rest grown to this size, and the
-/// crowd looks the same.
-pub const GRAIN_PIXELS: f32 = 2.0;
-
-/// The stand-ins for `mesh`, as [`simplify`] makes them; none for a mesh that isn't a list of
-/// triangles over positions, that morphs, or whose data only the GPU holds.
-fn simplified(mesh: &Mesh) -> Vec<(Mesh, f32)> {
-    let (Ok(Some(VertexAttributeValues::Float32x3(positions))), Ok(Some(indices)), Ok(false)) = (
-        mesh.try_attribute_option(Mesh::ATTRIBUTE_POSITION),
-        mesh.try_indices_option(),
-        mesh.try_has_morph_targets(),
-    ) else {
-        return Vec::new();
-    };
-    if mesh.primitive_topology() != PrimitiveTopology::TriangleList {
-        return Vec::new();
-    }
-    let indices: Vec<u32> = indices.iter().map(|index| index as u32).collect();
-    let surface = Surface {
-        uvs: match mesh.try_attribute_option(Mesh::ATTRIBUTE_UV_0) {
-            Ok(Some(VertexAttributeValues::Float32x2(uvs))) => Some(uvs.as_slice()),
-            _ => None,
-        },
-        normals: match mesh.try_attribute_option(Mesh::ATTRIBUTE_NORMAL) {
-            Ok(Some(VertexAttributeValues::Float32x3(normals))) => Some(normals.as_slice()),
-            _ => None,
-        },
-    };
-    simplify(&indices, positions, surface)
-        .into_iter()
-        .map(|(kept, strays)| (level(mesh, kept), strays))
-        .collect()
-}
 
 /// The triangles of the mesh `indices` draw over `positions`, coarser and coarser: halved each
 /// time while the simplifier still can, collapsing across the seams of its texture coordinates and
@@ -210,9 +174,45 @@ pub(super) struct Surface<'a> {
     pub normals: Option<&'a [[f32; 3]]>,
 }
 
+enum Simplifying {
+    Making(Task<Vec<(Mesh, f32)>>),
+    Made(Levels),
+}
+
+/// The stand-ins for `mesh`, as [`simplify`] makes them; none for a mesh that isn't a list of
+/// triangles over positions, that morphs, or whose data only the GPU holds.
+fn simplified(mesh: &Mesh) -> Vec<(Mesh, f32)> {
+    let (Ok(Some(VertexAttributeValues::Float32x3(positions))), Ok(Some(indices)), Ok(false)) = (
+        mesh.try_attribute_option(Mesh::ATTRIBUTE_POSITION),
+        mesh.try_indices_option(),
+        mesh.try_has_morph_targets(),
+    ) else {
+        return Vec::new();
+    };
+    if mesh.primitive_topology() != PrimitiveTopology::TriangleList {
+        return Vec::new();
+    }
+    let indices: Vec<u32> = indices.iter().map(|index| index as u32).collect();
+    let surface = Surface {
+        uvs: match mesh.try_attribute_option(Mesh::ATTRIBUTE_UV_0) {
+            Ok(Some(VertexAttributeValues::Float32x2(uvs))) => Some(uvs.as_slice()),
+            _ => None,
+        },
+        normals: match mesh.try_attribute_option(Mesh::ATTRIBUTE_NORMAL) {
+            Ok(Some(VertexAttributeValues::Float32x3(normals))) => Some(normals.as_slice()),
+            _ => None,
+        },
+    };
+    simplify(&indices, positions, surface)
+        .into_iter()
+        .map(|(kept, strays)| (level(mesh, kept), strays))
+        .collect()
+}
+
 /// How much a slide of the texture coordinates and a turn of the normals weigh against the
 /// shape's own moves, within the range meshoptimizer recommends for attributes spanning 0 to 1.
 const UV_WEIGHT: f32 = 0.1;
+
 const NORMAL_WEIGHT: f32 = 0.05;
 
 /// `mesh` drawn by `indices` alone, holding only the vertices they use.

@@ -8,10 +8,8 @@ use bevy_ecs::lifecycle::HookContext;
 use bevy_ecs::message::{MessageCursor, Messages};
 use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryState;
-
-use crate::core::content::SchemaMark;
-use crate::core::tick::Planner;
 use bevy_ecs::world::DeferredWorld;
+use bevy_platform::collections::HashMap;
 use bevy_replication::Replicated;
 use rayon::prelude::*;
 use schemars::JsonSchema;
@@ -20,10 +18,11 @@ use serde::{Deserialize, Serialize};
 use crate::core::babble::{BabbleId, Babbler};
 use crate::core::content::{
     Content, ContentFile, ContentId, ContentProblem, Loading, ModuleRule, ModuleSet, NamedContent,
-    Nearby, RowCheck, serial,
+    Nearby, RowCheck, SchemaMark, serial,
 };
 use crate::core::ground::TileAt;
 use crate::core::math::{Pos, Rect, Rng};
+use crate::core::tick::Planner;
 use crate::core::time;
 use crate::core::units::{MeterPos, Meters, MetersPerSec, Percent, PlaybackRate, Radians, Seconds};
 use crate::systems::GameSettings;
@@ -49,7 +48,6 @@ use crate::systems::stat::Stats;
 use crate::systems::status::Statuses;
 use crate::systems::visibility::{self, Presence};
 use crate::systems::{WorldArea, dialogue, stat};
-use bevy_platform::collections::HashMap;
 
 pub type NpcId = ContentId<NpcDef>;
 
@@ -430,7 +428,7 @@ pub fn spawn_in(world: &mut World, tile: TileAt) {
             }
             AreaModule::Resident(resident) => {
                 let pack = next_pack(world);
-                let mesh = area::load(&content, area_id).mesh();
+                let mesh = area.mesh();
                 let at = movement::place_beside(world, area_id, &mesh, resident.at);
                 let entity = spawn(world, resident.npc, at, area_id, Some(pack));
                 world.entity_mut(entity).insert(Home(resident.at));
@@ -641,8 +639,7 @@ impl Planner for ApproachWatchers {
             for &other in now.iter().filter(|other| !before.contains(other)) {
                 let is_npc = world.get::<Npc>(other).is_some();
                 let def = world.get::<Npc>(other).map(|npc| npc.def);
-                let distance =
-                    position(world, other).map_or(Meters(f32::MAX), |there| there.distance(at));
+                let distance = position(world, other).map(|there| there.distance(at));
                 world.resource_mut::<RiftInstances>().raise(
                     Owner::Entity(RunnerKind::Npc, npc),
                     EventKind::CameNear,
@@ -650,7 +647,7 @@ impl Planner for ApproachWatchers {
                     Vec::new(),
                     move |event| match event {
                         RiftEvent::CameNear { within, by, npc } => {
-                            distance <= *within
+                            distance.is_some_and(|distance| distance <= *within)
                                 && by.admits(is_npc)
                                 && npc.is_none_or(|npc| Some(npc) == def)
                         }

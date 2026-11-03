@@ -1,10 +1,12 @@
 use super::graph::ScriptGraph;
 use super::{doc::ScriptRow, graph};
 use crate::app::Editor;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use ui::egui;
 use ui::egui::{Pos2, Rect, Stroke, Ui, vec2};
 use ui::theme;
+
+const SHOWN_FOR: Duration = Duration::from_secs(12);
 
 pub struct ScriptCallout {
     pub at: ScriptRow,
@@ -17,7 +19,7 @@ pub struct ScriptCallout {
 
 impl ScriptCallout {
     pub fn live(&self, at: &ScriptRow) -> bool {
-        self.at == *at && self.since.elapsed().as_secs_f32() < 12.0
+        self.at == *at && self.since.elapsed() < SHOWN_FOR
     }
 }
 
@@ -57,7 +59,7 @@ pub(crate) fn show(editor: &mut Editor, ui: &mut Ui, at: &ScriptRow) {
     callout_card(ui, &painter, anchor, callout);
 }
 
-pub(crate) fn callout_arrow(painter: &egui::Painter, from: Pos2, to: Pos2) {
+fn callout_arrow(painter: &egui::Painter, from: Pos2, to: Pos2) {
     let lift = vec2(0.0, -(24.0 + (from.x - to.x).abs() * 0.06).min(80.0));
     let curve = egui::epaint::CubicBezierShape::from_points_stroke(
         [
@@ -79,12 +81,7 @@ pub(crate) fn callout_arrow(painter: &egui::Painter, from: Pos2, to: Pos2) {
     ));
 }
 
-pub(crate) fn callout_card(
-    ui: &Ui,
-    painter: &egui::Painter,
-    anchor: Rect,
-    callout: &ScriptCallout,
-) {
+fn callout_card(ui: &Ui, painter: &egui::Painter, anchor: Rect, callout: &ScriptCallout) {
     let width = 300.0;
     let title = ui.fonts_mut(|fonts| {
         fonts.layout(

@@ -144,7 +144,7 @@ impl Badge {
             AreaModuleKind::Soundscape => ('A', ink::GOLD),
             AreaModuleKind::Prop | AreaModuleKind::Scatter => ('T', ink::INK2),
             AreaModuleKind::Light => ('L', ink::INK2),
-            AreaModuleKind::Blueprint => ('L', ink::INK2),
+            AreaModuleKind::Blueprint => ('B', ink::AZURE),
             AreaModuleKind::Population | AreaModuleKind::Resident => ('N', ink::OCHRE),
             AreaModuleKind::Script => ('S', ink::TYRIAN),
         };

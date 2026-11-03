@@ -212,7 +212,7 @@ fn measure(path: &str, bytes: &[u8]) -> MediaCheck {
         Some(AssetKind::Image) => png_size(bytes)
             .map(Decoded::Image)
             .map_err(unreadable_image),
-        Some(AssetKind::Audio) => super::sound::length(bytes)
+        Some(AssetKind::Audio) => super::sound::length(bytes.to_vec())
             .map(Decoded::Sound)
             .map_err(unreadable_sound),
         Some(AssetKind::Model) => decode(path, bytes),

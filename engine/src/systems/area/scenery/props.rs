@@ -16,7 +16,9 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
 
 use super::regions::{self, Cut, Merge, Region, Unstood};
-use super::{Budget, KEEP_SHARE, Making, PLACEMENT_CELL, Seen, Streaming, mesh_bytes, take_away};
+use super::{
+    Budget, KEEP_SHARE, Making, Merged, PLACEMENT_CELL, Seen, Streaming, mesh_bytes, take_away,
+};
 use crate::core::assets;
 use crate::core::content::Content;
 use crate::core::content::media::GltfInfos;
@@ -53,7 +55,9 @@ pub(super) struct Props {
     filed: Making<Arc<Filed>>,
     models: HashMap<PropId, Model>,
     scenes: HashMap<usize, Entity>,
-    merged: HashMap<Merge, Merged>,
+    /// What stands of each merged region, waiting first on the props it shows to be gathered,
+    /// then on their models to be ready to merge.
+    merged: HashMap<Merge, Merged<Making<Shown>, MergedMesh>>,
 }
 
 impl Props {
@@ -129,7 +133,7 @@ pub(super) fn stand(
     let near: HashSet<usize> = in_leaves(streaming, &filed, cut)
         .filter(|&index| !out_of_sight(streaming, &filed, seen, index, 1.0))
         .collect();
-    stand_scenes(world, streaming, root, &near, budget);
+    stand_scenes(world, streaming, root, seen.at, &near, budget);
     for &leaf in &cut.leaves {
         if props_within(streaming, &filed, leaf).any(|index| {
             near.contains(&index)
@@ -197,34 +201,13 @@ pub(super) fn clear(
     let regions = &streaming.regions;
     props.merged.retain(|merge, merged| {
         let keep = wanted.contains(merge) || !unstood.stands_over(regions.bounds(merge.region));
-        if !keep && let Merged::Standing { stood, .. } = merged {
-            for &mesh in stood.iter() {
+        if !keep {
+            for &mesh in merged.stood() {
                 take_away(world, mesh);
             }
         }
         keep
     });
-}
-
-/// What stands of a merged region: the props it shows being gathered, then waiting on their
-/// models to be ready to merge; its meshes being made; or standing, those made rising a few a
-/// frame.
-enum Merged {
-    Waiting(Making<Shown>),
-    Merging(Making<Vec<MergedMesh>>),
-    Standing {
-        stood: Vec<Entity>,
-        rising: Vec<MergedMesh>,
-    },
-}
-
-impl Merged {
-    fn into_made(self) -> Option<Vec<MergedMesh>> {
-        match self {
-            Merged::Merging(making) => making.into_made(),
-            _ => None,
-        }
-    }
 }
 
 /// The props a merged region shows, and the models they are drawn with.
@@ -280,16 +263,16 @@ fn out_of_sight(
         })
 }
 
-/// Stands a scene for every prop of `near` that has none, nearest first, as far as the budget
-/// goes.
+/// Stands a scene for every prop of `near` that has none, nearest to `at` first, as far as the
+/// budget goes.
 fn stand_scenes(
     world: &mut World,
     streaming: &mut Streaming,
     root: Entity,
+    at: Pos<Meters>,
     near: &HashSet<usize>,
     budget: &mut Budget,
 ) {
-    let at = streaming.view.map_or(Pos::new(0.0, 0.0), |seen| seen.at);
     let area = streaming.area.clone();
     let mut missing: Vec<usize> = near
         .iter()
@@ -319,7 +302,12 @@ fn stand_scenes(
 
 /// A region's props as it shows them, gathered off the frame to wait to merge: every one in it
 /// that spans a pixel at the detail the view shows it at.
-fn gather(streaming: &Streaming, filed: &Arc<Filed>, merge: Merge, view: View) -> Merged {
+fn gather(
+    streaming: &Streaming,
+    filed: &Arc<Filed>,
+    merge: Merge,
+    view: View,
+) -> Merged<Making<Shown>, MergedMesh> {
     let nearest = merge.detail.distance();
     let bounds = streaming.regions.bounds(merge.region);
     let (filed, area) = (filed.clone(), streaming.area.clone());
@@ -356,76 +344,53 @@ fn stand_merge(
     let Some(merged) = props.merged.get_mut(&merge) else {
         return false;
     };
-    match merged {
-        Merged::Standing { stood, rising } => {
-            while rising
-                .last()
-                .is_some_and(|next| budget.send(mesh_bytes(&next.mesh)))
-            {
-                if let Some(next) = rising.pop() {
-                    stood.push(spawn_merged(world, next, root));
-                }
-            }
-            rising.is_empty()
-        }
-        Merged::Merging(making) => {
-            if making.made().is_none() {
-                return false;
-            }
-            let rising = props
-                .merged
-                .remove(&merge)
-                .and_then(Merged::into_made)
-                .unwrap_or_default();
-            props.merged.insert(
-                merge,
-                Merged::Standing {
-                    stood: Vec::new(),
-                    rising,
-                },
-            );
-            stand_merge(world, streaming, root, merge, view, budget)
-        }
-        Merged::Waiting(gathering) => {
-            let Some(shown) = gathering.made() else {
-                return false;
-            };
-            let ready: Option<HashMap<PropId, (Arc<MergedModel>, bool)>> = shown
-                .models
-                .iter()
-                .map(|&prop| match props.models.get(&prop) {
-                    Some(Model::Ready(model)) => {
-                        Some((prop, (model.clone(), prop.get(&streaming.content).shadow)))
-                    }
-                    _ => None,
-                })
-                .collect();
-            let Some(ready) = ready.filter(|_| budget.take(|budget| &mut budget.merges)) else {
-                return false;
-            };
-            let shown = std::mem::take(&mut shown.props);
-            let (area, heights) = (streaming.area.clone(), streaming.heights.clone());
-            let task = AsyncComputeTaskPool::get().spawn(async move {
-                let places: Vec<MergedPlace> = shown
-                    .iter()
-                    .filter_map(|&index| {
-                        let placed = &area.props[index];
-                        let (model, shadow) = ready.get(&placed.prop)?;
-                        Some(MergedPlace {
-                            model: model.clone(),
-                            transform: prop_transform(&heights, placed),
-                            shadow: *shadow,
-                        })
-                    })
-                    .collect();
-                merged::merge(&places, pixels_per_meter)
-            });
-            props
-                .merged
-                .insert(merge, Merged::Merging(Making::Task(task)));
-            false
-        }
+    if let Some(stands) = merged.rise(
+        budget,
+        |next| mesh_bytes(&next.mesh),
+        |next| Some(spawn_merged(world, next, root)),
+    ) {
+        return stands;
     }
+    let Merged::Waiting(gathering) = merged else {
+        return false;
+    };
+    let Some(shown) = gathering.made() else {
+        return false;
+    };
+    let ready: Option<HashMap<PropId, (Arc<MergedModel>, bool)>> = shown
+        .models
+        .iter()
+        .map(|&prop| match props.models.get(&prop) {
+            Some(Model::Ready(model)) => {
+                Some((prop, (model.clone(), prop.get(&streaming.content).shadow)))
+            }
+            _ => None,
+        })
+        .collect();
+    let Some(ready) = ready.filter(|_| budget.take(|budget| &mut budget.merges)) else {
+        return false;
+    };
+    let shown = std::mem::take(&mut shown.props);
+    let (area, heights) = (streaming.area.clone(), streaming.heights.clone());
+    let task = AsyncComputeTaskPool::get().spawn(async move {
+        let places: Vec<MergedPlace> = shown
+            .iter()
+            .filter_map(|&index| {
+                let placed = &area.props[index];
+                let (model, shadow) = ready.get(&placed.prop)?;
+                Some(MergedPlace {
+                    model: model.clone(),
+                    transform: prop_transform(&heights, placed),
+                    shadow: *shadow,
+                })
+            })
+            .collect();
+        merged::merge(&places, pixels_per_meter)
+    });
+    props
+        .merged
+        .insert(merge, Merged::Merging(Making::Task(task)));
+    false
 }
 
 /// Sets every model of `wanted` on its way to being ready to merge: loading it, then making it

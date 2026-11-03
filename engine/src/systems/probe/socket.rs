@@ -6,8 +6,8 @@ use std::sync::{Arc, Condvar, Mutex};
 use super::ProbeFrameQuestion;
 use crate::core::content::Content;
 
-// The driver asks with a line and waits for its answer: a snapshot of a frame after it, or what the
-// game says, answered on the socket's own thread once the game is loaded.
+/// The driver asks with a line and waits for its answer: a snapshot of a frame after it, or what
+/// the game says, answered on the socket's own thread once the game is loaded.
 pub(super) struct ProbeSocket {
     asked: Receiver<ProbeFrameQuestion>,
     answers: Answers,
@@ -45,8 +45,13 @@ impl ProbeSocket {
                     continue;
                 }
                 let content = loaded(&thread_game);
-                let question = super::read_question(&content, &line)
-                    .unwrap_or_else(|error| panic!("the probe's driver asked {line}: {error}"));
+                let question = match super::read_question(&content, &line) {
+                    Ok(question) => question,
+                    Err(error) => {
+                        bevy::log::error!("the probe's driver asked {line}: {error}");
+                        std::process::exit(1);
+                    }
+                };
                 let answer = super::answer(&content, &question);
                 thread_answers.give(&answer);
             }
