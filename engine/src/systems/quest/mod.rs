@@ -33,7 +33,7 @@ use crate::systems::class;
 use crate::systems::dialogue::{self, ChoiceReveal, Revealable};
 use crate::systems::history::{HistoryTopic, RecordTally};
 use crate::systems::interface::InterfaceSound;
-use crate::systems::item::{Inventory, ItemDef, ItemId, ItemModuleKind, ItemStack, scatter_at};
+use crate::systems::item::{Inventory, ItemId, ItemModuleKind, ItemStack, scatter_at};
 use crate::systems::notification::{self, Notification, NotificationKind};
 use crate::systems::npc::NpcId;
 use crate::systems::player::{PlayedBy, player_requests};
@@ -1092,13 +1092,6 @@ pub fn check_all(loading: &mut Loading) {
     for (id, quest) in loading.rows::<QuestDef>(&content) {
         let key = id.path(&content);
         let mut check = RowCheck::default();
-        let item_rows = |stacks: &[ItemStack]| -> Vec<ItemId> {
-            stacks
-                .iter()
-                .filter(|stack| content.table::<ItemDef>().get(stack.item).is_some())
-                .map(|stack| stack.item)
-                .collect()
-        };
         for (index, module) in quest.modules.iter().enumerate() {
             match module {
                 QuestModule::Shown { condition } | QuestModule::Requires { condition } => {
@@ -1112,7 +1105,7 @@ pub fn check_all(loading: &mut Loading) {
                     }
                 }
                 QuestModule::Grants { items } => {
-                    for (at, item) in item_rows(items).into_iter().enumerate() {
+                    for (at, ItemStack { item, .. }) in items.iter().enumerate() {
                         if !item.get(&content).has(ItemModuleKind::QuestItem) {
                             check.error(
                                 format!("/modules/{index}/items/{at}/item"),
@@ -1124,8 +1117,7 @@ pub fn check_all(loading: &mut Loading) {
                     }
                 }
                 QuestModule::Drop(drop)
-                    if content.table::<ItemDef>().get(drop.item).is_some()
-                        && !drop.item.get(&content).has(ItemModuleKind::QuestItem) =>
+                    if !drop.item.get(&content).has(ItemModuleKind::QuestItem) =>
                 {
                     check.error(
                         format!("/modules/{index}/item"),

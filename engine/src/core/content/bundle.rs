@@ -7,7 +7,8 @@ use super::files::{CONFIG_FILE, valid_name};
 use super::gltf::GltfInfo;
 use super::id::{ContentScope, with_content};
 use super::load::{
-    ContentFolder, FileWriter, named_media, parse_json, reference_errors, shape_error,
+    ContentFolder, FileKey, FileWriter, named_files, named_media, names_missing_files, parse_json,
+    reference_errors, shape_error,
 };
 use super::locate::JsonIndex;
 use super::report::{ContentProblem, ErrorPlace, LoadError};
@@ -119,6 +120,8 @@ pub struct Parts<'a> {
     errors: Vec<LoadError>,
     indexes: Vec<(String, Arc<JsonIndex>)>,
     media: Vec<String>,
+    names: Vec<FileKey>,
+    whole: bool,
 }
 
 impl<'a> Parts<'a> {
@@ -138,6 +141,8 @@ impl<'a> Parts<'a> {
             errors: Vec::new(),
             indexes: Vec::new(),
             media: Vec::new(),
+            names: Vec::new(),
+            whole: true,
         }
     }
 
@@ -320,10 +325,13 @@ impl<'a> Parts<'a> {
                     },
                 ));
                 self.media.extend(named_media(scope.leaves()));
+                self.names.extend(named_files(scope.leaves()));
+                self.whole &= !names_missing_files(scope.leaves());
                 Some(value)
             }
             Err(error) => {
                 self.errors.push(shape_error(&file, &error, &index, &[]));
+                self.whole = false;
                 None
             }
         }
@@ -370,14 +378,18 @@ impl<'a> Parts<'a> {
             errors: self.errors,
             indexes: self.indexes,
             media: self.media,
+            names: self.names,
+            whole: self.whole,
         }
     }
 }
 
-/// What reading a bundle's parts found: its problems, the index of each JSON part, and the media
-/// the parts name.
+/// What reading a bundle's parts found: its problems, the index of each JSON part, the media and
+/// content files the parts name, and whether every JSON part parsed naming only files there are.
 pub(super) struct PartsRead {
     pub errors: Vec<LoadError>,
     pub indexes: Vec<(String, Arc<JsonIndex>)>,
     pub media: Vec<String>,
+    pub names: Vec<FileKey>,
+    pub whole: bool,
 }

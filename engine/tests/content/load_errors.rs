@@ -612,8 +612,16 @@ fn a_file_of_its_own_of_a_type_of_fixtures_alone_is_refused() {
 }
 
 #[test]
-fn a_row_naming_a_file_that_did_not_load_reports_only_that_file() {
-    let cases: [(&str, Game, &str); 2] = [
+fn a_file_that_did_not_load_is_reported_alone() {
+    let dressing = json!({
+        "started": { "type": "on", "event": "started", "next": "dress" },
+        "dress": { "type": "set_appearance", "appearance": { "model": path("model", "giant") } },
+    });
+    let keeping = json!({
+        "interacted": { "type": "on", "event": "interacted", "verb": "talk", "reach": 2.0, "next": "shop" },
+        "shop": { "type": "open_shop", "shop": path("shop", "wares") },
+    });
+    let cases: [(&str, Game, &str); 6] = [
         (
             "a class tree naming a skill",
             game()
@@ -623,7 +631,7 @@ fn a_row_naming_a_file_that_did_not_load_reports_only_that_file() {
                         "broken": { "skill": path("skill", "broken"), "at": { "x": 0.0, "y": 0.0 } },
                     });
                 }),
-            "hero.class.json",
+            "broken.skill.json",
         ),
         (
             "an npc naming a script",
@@ -638,10 +646,66 @@ fn a_row_naming_a_file_that_did_not_load_reports_only_that_file() {
                     10.0,
                     json!([{ "type": "script", "script": path("script", "broken") }]),
                 ),
-            "guard.npc.json",
+            "broken.script.json",
+        ),
+        (
+            "an npc dressed by its script in a body on a skeleton",
+            game()
+                .skeleton("broken")
+                .edit("skeleton", "broken", |skeleton| {
+                    skeleton["base"]["clips"]["sprint"] = json!(testkit::clip("run"));
+                })
+                .model_on("giant", "broken", 4.0, json!([]))
+                .npc(
+                    "guard",
+                    10.0,
+                    json!([{ "type": "script", "script": path("script", "dress") }]),
+                )
+                .script("dress", "npc", dressing),
+            "broken.skeleton",
+        ),
+        (
+            "a character starting where the settings name an area",
+            game()
+                .edit_settings(|settings| settings["initial_spawn"]["area"] = json!("nowhere.area"))
+                .row(
+                    "test_character",
+                    "lost",
+                    json!({
+                        "name": "Lost",
+                        "class": path("class", "hero"),
+                        "appearance": { "model": path("model", "hero") },
+                        "known_areas": [path("area", "start")],
+                        "start": "initial_spawn",
+                    }),
+                ),
+            SETTINGS_FILE,
+        ),
+        (
+            "the engine reading a fixture",
+            game()
+                .engine_rows()
+                .whole()
+                .file(&InputFixture::Game.path(), "{ \"actions\": 3 }"),
+            "fixtures/game.input.json",
+        ),
+        (
+            "a shop only its keeper opens",
+            game()
+                .engine_rows()
+                .whole()
+                .mark("merchant")
+                .row(
+                    "shop",
+                    "wares",
+                    json!({ "title": "Wares", "mark": path("attention", "merchant") }),
+                )
+                .script("keeping", "npc", keeping)
+                .file("broken.npc.json", "{ \"name\": 3 }"),
+            "broken.npc.json",
         ),
     ];
-    for (case, game, naming) in cases {
+    for (case, game, broken) in cases {
         let report = game.try_load().err().expect("refused");
 
         let files: Vec<&str> = report
@@ -650,10 +714,9 @@ fn a_row_naming_a_file_that_did_not_load_reports_only_that_file() {
             .map(|error| error.file.as_str())
             .collect();
         assert!(
-            files.iter().any(|file| file.starts_with("broken.")),
-            "{case}: {report}"
+            !files.is_empty() && files.iter().all(|file| file.starts_with(broken)),
+            "{case}: only {broken} is reported\n{report}"
         );
-        assert!(!files.contains(&naming), "{case}: {report}");
     }
 }
 

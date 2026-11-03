@@ -34,7 +34,7 @@ use crate::core::vfx::{VfxParams, VfxShaderId};
 use crate::systems::history::{self, HistoryEntry, HistoryMark, HistoryTopic, RecordTally};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::movement::position;
-use crate::systems::npc::{Npc, NpcDef, NpcId};
+use crate::systems::npc::{Npc, NpcId};
 use crate::systems::screen::ClientScreen;
 use crate::systems::script::effect::{self as effects, Audience};
 use crate::systems::script::{Condition, EffectCall, EffectReach, RiftScripting, condition};
@@ -499,7 +499,6 @@ pub fn check_all(loading: &mut Loading) {
             );
         }
         if let Some(speaker) = def.speaker()
-            && content.table::<NpcDef>().get(speaker).is_some()
             && speaker.get(&content).voice().is_none()
         {
             check.error(

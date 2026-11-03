@@ -16,7 +16,7 @@ use crate::systems::class::{Class, ClassId, NodeKey};
 use crate::systems::dialogue::Heard;
 use crate::systems::equipment::{self, Equipment};
 use crate::systems::history::{History, HistoryEntry};
-use crate::systems::item::{Inventory, ItemDef, ItemId, ItemStack};
+use crate::systems::item::{Inventory, ItemId, ItemStack};
 use crate::systems::memory::{Memory, MemoryId};
 use crate::systems::player::{CharacterState, PlayerDef, SpawnPoint, Xp, def};
 use crate::systems::quest::{ActiveQuest, FinishedQuest, Parties, QuestId, QuestLog, QuestResult};
@@ -324,16 +324,18 @@ pub fn materialize(
     }
 }
 
+/// The checks that rest on the game's settings are left until the settings load whole.
 pub fn check_all(loading: &mut Loading) {
     let content = loading.content();
     let thorough = loading.thorough();
+    let settings = content.try_built::<GameSettings>();
     for (id, snapshot) in loading.rows::<CharacterSnapshot>(&content) {
         let mut check = RowCheck::default();
-        check_start(&content, snapshot, thorough, &mut check);
-        check_bag(&content, snapshot, &mut check);
+        check_start(&content, settings, snapshot, thorough, &mut check);
+        check_bag(&content, settings, snapshot, &mut check);
         check_equipment(&content, snapshot, &mut check);
         check_skills(&content, snapshot, &mut check);
-        check_hotbar(&content, snapshot, &mut check);
+        check_hotbar(&content, settings, snapshot, &mut check);
         check_quests(&content, snapshot, &mut check);
         check_memories(&content, snapshot, &mut check);
         check_shops(&content, snapshot, &mut check);
@@ -419,18 +421,25 @@ fn quest_log(content: &Content, snapshot: &CharacterSnapshot, clock: WallClock) 
 /// when `thorough`.
 fn check_start(
     content: &Content,
+    settings: Option<&GameSettings>,
     snapshot: &CharacterSnapshot,
     thorough: bool,
     check: &mut RowCheck,
 ) {
-    let start = start_of(content, snapshot);
+    let start = match snapshot.start {
+        CharacterStart::InitialSpawn(_) => settings.map(|settings| settings.initial_spawn),
+        CharacterStart::At(place) => Some(place),
+    };
     if let CharacterStart::At(place) = snapshot.start
         && thorough
         && let Err(problem) = area::check_place(content, place)
     {
         check.problem("/start", problem);
     }
-    if !snapshot.known_areas.is_empty() && !snapshot.known_areas.contains(&start.area) {
+    if let Some(start) = start
+        && !snapshot.known_areas.is_empty()
+        && !snapshot.known_areas.contains(&start.area)
+    {
         check.error(
             "/known_areas",
             "start not known",
@@ -440,9 +449,15 @@ fn check_start(
     }
 }
 
-fn check_bag(content: &Content, snapshot: &CharacterSnapshot, check: &mut RowCheck) {
-    let slots = content.built::<GameSettings>().slots.bag;
-    if snapshot.bag.len() > slots as usize {
+fn check_bag(
+    content: &Content,
+    settings: Option<&GameSettings>,
+    snapshot: &CharacterSnapshot,
+    check: &mut RowCheck,
+) {
+    if let Some(slots) = settings.map(|settings| settings.slots.bag)
+        && snapshot.bag.len() > slots as usize
+    {
         check.error(
             "/bag",
             "bag too full",
@@ -451,9 +466,7 @@ fn check_bag(content: &Content, snapshot: &CharacterSnapshot, check: &mut RowChe
         );
     }
     for (index, stack) in snapshot.bag.iter().enumerate() {
-        let Some(item) = content.table::<ItemDef>().get(stack.item) else {
-            continue;
-        };
+        let item = stack.item.get(content);
         let max = item.stack_max();
         if stack.count == 0 {
             check.error(
@@ -555,7 +568,12 @@ fn check_skills(content: &Content, snapshot: &CharacterSnapshot, check: &mut Row
     }
 }
 
-fn check_hotbar(content: &Content, snapshot: &CharacterSnapshot, check: &mut RowCheck) {
+fn check_hotbar(
+    content: &Content,
+    settings: Option<&GameSettings>,
+    snapshot: &CharacterSnapshot,
+    check: &mut RowCheck,
+) {
     let class = snapshot.class.get(content);
     let known = skill::known_from(
         content,
@@ -567,9 +585,11 @@ fn check_hotbar(content: &Content, snapshot: &CharacterSnapshot, check: &mut Row
     let held = |item: ItemId| {
         snapshot.bag.iter().any(|stack| stack.item == item) || snapshot.equipped.contains(&item)
     };
-    let slots = content.built::<GameSettings>().slots.hotbar;
+    let slots = settings.map(|settings| settings.slots.hotbar);
     for (index, slot) in snapshot.hotbar.iter().enumerate() {
-        if slot.slot.0 >= slots {
+        if let Some(slots) = slots
+            && slot.slot.0 >= slots
+        {
             check.error(
                 format!("/hotbar/{index}/slot"),
                 "out of range",

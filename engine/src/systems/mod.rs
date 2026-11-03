@@ -603,7 +603,7 @@ pub fn registry() -> &'static ContentRegistry {
         let mut registry = settled_tables();
         registry
             .require_fixtures()
-            .hook(LoadStep::Across, script::check_reached);
+            .hook(LoadStep::Whole, script::check_reached);
         registry
     });
     &REGISTRY

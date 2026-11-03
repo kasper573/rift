@@ -1,4 +1,5 @@
 use std::any::{Any, TypeId};
+use std::collections::HashSet;
 use std::sync::{Arc, OnceLock};
 
 use bevy_ecs::prelude::Resource;
@@ -156,6 +157,8 @@ pub trait AnyTable: Any + Send + Sync {
     fn as_any(&self) -> &dyn Any;
     /// Every row the table holds, by its path and with its type, shared with the table.
     fn read_rows(&self) -> Vec<ReadRow>;
+    /// The table holding no row at any of `paths`, every path kept so references still resolve.
+    fn without(&self, paths: &HashSet<&str>) -> Arc<dyn AnyTable>;
 }
 
 /// A content file read whole, as `FolderReader::read` reads it: its path, its type and its row.
@@ -194,6 +197,18 @@ impl<Row: ContentFile> AnyTable for Table<Row> {
                 })
             })
             .collect()
+    }
+
+    fn without(&self, paths: &HashSet<&str>) -> Arc<dyn AnyTable> {
+        Arc::new(Table::<Row> {
+            paths: self.paths.clone(),
+            rows: self
+                .paths
+                .iter()
+                .zip(&self.rows)
+                .map(|(path, row)| row.clone().filter(|_| !paths.contains(path.as_str())))
+                .collect(),
+        })
     }
 }
 
@@ -317,6 +332,25 @@ impl ContentBuilder {
 
     pub fn built<T: Any + Send + Sync>(&mut self, value: T) {
         self.built.insert(TypeId::of::<T>(), Arc::new(value));
+    }
+
+    /// Leaves out the row of every file of `files`, each by its type's name and its path.
+    pub fn set_aside(&mut self, files: &HashSet<(&'static str, String)>) {
+        for table in self.tables.values_mut() {
+            let paths: HashSet<&str> = files
+                .iter()
+                .filter(|(name, _)| *name == table.name())
+                .map(|(_, path)| path.as_str())
+                .collect();
+            if !paths.is_empty() {
+                *table = table.without(&paths);
+            }
+        }
+    }
+
+    /// Leaves out what was built as `T`.
+    pub fn set_aside_built<T: Any + Send + Sync>(&mut self) {
+        self.built.remove(&TypeId::of::<T>());
     }
 
     /// Every row of every table, as `AnyTable::read_rows` gives them.

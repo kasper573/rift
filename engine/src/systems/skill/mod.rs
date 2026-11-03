@@ -585,10 +585,7 @@ pub fn check_rank(
     skill: SkillId,
     rank: Rank,
 ) {
-    // A skill whose row failed to load has its own errors reported, and no ranks to check against.
-    let Some(def) = content.table::<SkillDef>().get(skill) else {
-        return;
-    };
+    let def = skill.get(content);
     if !def.ranks().contains(&rank) {
         check.error(
             pointer,

@@ -17,7 +17,7 @@ use crate::core::time::{UnixMillis, WallClock};
 use crate::core::units::Seconds;
 use crate::systems::attention::AttentionId;
 use crate::systems::item::{
-    ExchangeRefusal, Inventory, ItemCategory, ItemDef, ItemId, ItemModuleKind, ItemStack,
+    ExchangeRefusal, Inventory, ItemCategory, ItemId, ItemModuleKind, ItemStack,
 };
 use crate::systems::player::conn_player;
 use crate::systems::script::{
@@ -446,9 +446,6 @@ pub fn check_all(loading: &mut Loading) {
             let ShopModule::Sells(offer) = module else {
                 continue;
             };
-            if content.table::<ItemDef>().get(offer.item).is_none() {
-                continue;
-            }
             for &(buyer, def) in &shops {
                 if let Ok(pays) = def.pays_for(&content, offer.item, &[])
                     && profits(offer, pays)

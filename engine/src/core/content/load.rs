@@ -33,10 +33,14 @@ use super::table::{
 };
 use super::version::ContentVersion;
 
-// The steps a load runs its hooks at, in order.
+// The steps a load runs its hooks at, in order. From `Files` on, a step sees only the files that
+// loaded whole along with every file they name, down to the last: a file that didn't, and every
+// file naming it directly or through others, is set aside, its own problems reported already and
+// what rests on it not judged until it loads. So a reference read from any row a step sees leads
+// to a whole row.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LoadStep {
-    // Every row parsed and checked on its own.
+    // Every row parsed and checked on its own, reading no other file.
     Rows,
     // Every file read and hashed.
     Files,
@@ -48,6 +52,9 @@ pub enum LoadStep {
     Across,
     // Checks of the game's settings, once they parsed.
     Settings,
+    // Checks of the game as a whole, such as whether anything reaches a file, only once no file
+    // failed or was set aside: any of those might have been what reaches it.
+    Whole,
     // Only once everything else loaded without an error.
     Compile,
 }
@@ -757,12 +764,18 @@ pub fn load(
         warnings: Vec::new(),
         indexes: HashMap::new(),
         failed: HashSet::new(),
+        broken: HashSet::new(),
+        names: HashMap::new(),
+        settings_names: Vec::new(),
+        settings_broken: false,
         media: Vec::new(),
         purpose,
     };
     loading.parse(registry, None);
     loading.check_rows(registry);
+    loading.check_version(registry, &version);
     loading.run_hooks(registry, LoadStep::Rows);
+    loading.set_aside(registry);
     loading.hash_files();
     loading.run_hooks(registry, LoadStep::Files);
     loading.run_hooks(registry, LoadStep::Expand);
@@ -772,7 +785,9 @@ pub fn load(
     if loading.has_settings(registry) {
         loading.run_hooks(registry, LoadStep::Settings);
     }
-    loading.check_version(registry, &version);
+    if loading.failed.is_empty() {
+        loading.run_hooks(registry, LoadStep::Whole);
+    }
     loading.built(version.clone());
     if loading.errors.is_empty() {
         loading.run_hooks(registry, LoadStep::Compile);
@@ -835,6 +850,10 @@ pub(super) fn check_files(
         warnings: Vec::new(),
         indexes: HashMap::new(),
         failed: HashSet::new(),
+        broken: HashSet::new(),
+        names: HashMap::new(),
+        settings_names: Vec::new(),
+        settings_broken: false,
         media: Vec::new(),
         purpose: LoadPurpose::Check,
     };
@@ -900,11 +919,22 @@ pub struct Loading {
     errors: Vec<LoadError>,
     warnings: Vec<LoadError>,
     indexes: HashMap<String, Arc<JsonIndex>>,
-    failed: HashSet<(&'static str, String)>,
+    failed: HashSet<FileKey>,
+    /// Every content file that didn't load whole: it, or a JSON part of it, didn't parse, or names a
+    /// content file that isn't there. A media file's problems leave the row whole.
+    broken: HashSet<FileKey>,
+    /// The content files each content file names, as far as there are such files.
+    names: HashMap<FileKey, Vec<FileKey>>,
+    /// The content files the game's settings name, and whether the settings loaded whole.
+    settings_names: Vec<FileKey>,
+    settings_broken: bool,
     /// Every media file outside the bundles that content names, sorted.
     media: Vec<String>,
     purpose: LoadPurpose,
 }
+
+/// A content file, by the name of its type and its path.
+pub(super) type FileKey = (&'static str, String);
 
 impl Loading {
     /// Whether the load runs the checks that build what play builds only once it needs it, such
@@ -1131,10 +1161,14 @@ impl Loading {
                 self.indexes.insert(fields_file(&path), index);
             }
             self.indexes.extend(parsed.parts);
+            let file = (registry.row_loaders()[loader].name(), path.clone());
             if !parsed.errors.is_empty() {
-                let table = registry.row_loaders()[loader].name();
-                self.failed.insert((table, path.clone()));
+                self.failed.insert(file.clone());
             }
+            if !parsed.whole {
+                self.broken.insert(file.clone());
+            }
+            self.names.insert(file, parsed.names);
             self.errors.extend(parsed.errors);
             if let Some(row) = parsed.row {
                 rows[loader].push((path, row));
@@ -1156,6 +1190,8 @@ impl Loading {
         let settings = parse_settings(registry, root.as_ref(), &scope);
         media.extend(settings.media);
         self.media = media.into_iter().collect();
+        self.settings_broken = !settings.whole;
+        self.settings_names = settings.names;
         self.errors.extend(settings.errors);
         if let Some(index) = settings.index {
             self.indexes.insert(SETTINGS_FILE.to_owned(), index);
@@ -1193,6 +1229,39 @@ impl Loading {
                 self.json_error(file.clone(), &error.pointer, error.problem);
             }
         }
+    }
+
+    /// Sets aside every file that didn't load whole and every file naming one, directly or through
+    /// others, and the game's settings when they didn't load whole or name such a file: the steps
+    /// after see none of them, as `LoadStep` says.
+    fn set_aside(&mut self, registry: &ContentRegistry) {
+        let mut named_by: HashMap<&FileKey, Vec<&FileKey>> = HashMap::new();
+        for (file, names) in &self.names {
+            for named in names {
+                named_by.entry(named).or_default().push(file);
+            }
+        }
+        let mut aside: HashSet<FileKey> = self.broken.clone();
+        let mut next: Vec<FileKey> = aside.iter().cloned().collect();
+        while let Some(file) = next.pop() {
+            for naming in named_by.get(&file).into_iter().flatten() {
+                if aside.insert((*naming).clone()) {
+                    next.push((*naming).clone());
+                }
+            }
+        }
+        if (self.settings_broken
+            || self
+                .settings_names
+                .iter()
+                .any(|named| aside.contains(named)))
+            && let Some(loader) = registry.settings_loader()
+        {
+            loader.set_aside(&mut self.builder);
+        }
+        self.builder.set_aside(&aside);
+        self.failed.extend(aside);
+        self.snapshot = None;
     }
 
     fn hash_files(&mut self) {
@@ -1329,6 +1398,10 @@ pub(super) struct ParsedFile {
     pub(super) errors: Vec<LoadError>,
     /// Every media file the file names, as far as it names files there are.
     media: Vec<String>,
+    /// Every content file the file names, as far as it names files there are.
+    names: Vec<FileKey>,
+    /// Whether the file loaded whole, as `Loading::broken` says.
+    whole: bool,
 }
 
 pub struct ParseError {
@@ -1398,6 +1471,8 @@ pub(super) fn parse_file(
         parsed.errors.extend(read.errors);
         parsed.parts.extend(read.indexes);
         parsed.media.extend(read.media);
+        parsed.names.extend(read.names);
+        parsed.whole &= read.whole;
     }
     parsed
 }
@@ -1473,6 +1548,8 @@ fn parse_read(
         parts: Vec::new(),
         errors: read.errors,
         media: Vec::new(),
+        names: Vec::new(),
+        whole: false,
     };
     let (Some(value), Some(index)) = (read.value, parsed.index.clone()) else {
         return parsed;
@@ -1482,6 +1559,8 @@ fn parse_read(
         Ok(row) => {
             parsed.row = Some(row);
             parsed.media = named_media(read_scope.leaves());
+            parsed.names = named_files(read_scope.leaves());
+            parsed.whole = !names_missing_files(read_scope.leaves());
             let probe = |pointers: &[&str]| reads_references(scope, &value, pointers, parse);
             parsed.errors.extend(reference_errors(
                 &read.file,
@@ -1495,6 +1574,24 @@ fn parse_read(
             .push(shape_error(&read.file, &error, &index, list_kinds)),
     }
     parsed
+}
+
+/// Whether `leaves` name a content file that isn't there.
+pub(super) fn names_missing_files(leaves: &[Leaf]) -> bool {
+    leaves
+        .iter()
+        .any(|leaf| matches!(leaf.kind, LeafKind::Row(_)) && leaf.problem.is_some())
+}
+
+/// Every content file `leaves` name that is there.
+pub(super) fn named_files(leaves: &[Leaf]) -> Vec<FileKey> {
+    leaves
+        .iter()
+        .filter_map(|leaf| match leaf.kind {
+            LeafKind::Row(table) if leaf.problem.is_none() => Some((table, leaf.value.clone())),
+            _ => None,
+        })
+        .collect()
 }
 
 /// Every media file `leaves` name that is there.
@@ -1985,6 +2082,7 @@ pub(super) trait SettingsLoader: Send + Sync {
     fn parse_value(&self, value: &serde_json::Value) -> ParseResult;
     fn shape(&self, settings: &SchemaSettings) -> serde_json::Value;
     fn store(&self, settings: Box<dyn Any + Send + Sync>, builder: &mut ContentBuilder);
+    fn set_aside(&self, builder: &mut ContentBuilder);
     fn built(&self, content: &Content) -> bool;
     fn version<'a>(&self, content: &'a Content) -> Option<&'a ContentVersion>;
     fn write(&self, content: &Content, writer: &mut FileWriter) -> io::Result<()>;
@@ -2007,6 +2105,10 @@ impl<G: SettingsFile> SettingsLoader for SettingsOf<G> {
             .downcast::<G>()
             .expect("settings parsed by their own loader");
         builder.built(settings);
+    }
+
+    fn set_aside(&self, builder: &mut ContentBuilder) {
+        builder.set_aside_built::<G>();
     }
 
     fn built(&self, content: &Content) -> bool {
@@ -2196,7 +2298,7 @@ fn check_fixture<F: Fixture>(loading: &mut Loading, required: bool) {
         if !required {
             continue;
         }
-        let Ok(row) = serde_json::to_value(id.get(&content)) else {
+        let Some(Ok(row)) = content.table::<F::Row>().get(id).map(serde_json::to_value) else {
             continue;
         };
         let mut check = RowCheck::default();

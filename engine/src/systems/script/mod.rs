@@ -654,9 +654,6 @@ pub fn check_all(loading: &mut Loading) {
                     }
                 }
                 EffectReach::Speaks(npc) => {
-                    if content.table::<NpcDef>().get(*npc).is_none() {
-                        continue;
-                    }
                     let def = npc.get(&content);
                     if def.voice().is_none() {
                         loading.json_error(

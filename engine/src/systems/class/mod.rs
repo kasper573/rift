@@ -26,7 +26,7 @@ use crate::systems::script::{
     Condition, EffectCall, EffectReach, EventKind, RiftInstances, RiftScripting, area_owner,
     effect as effects,
 };
-use crate::systems::skill::{self, Learned, SkillDef};
+use crate::systems::skill::{self, Learned};
 use crate::systems::stat::{Stat, Stats};
 use crate::systems::vfx::{self, VfxFixture, VfxShaderFixture};
 
@@ -261,11 +261,7 @@ pub fn check_all(loading: &mut Loading) {
                     );
                 }
             }
-            if content
-                .table::<SkillDef>()
-                .get(node.skill)
-                .is_some_and(|skill| skill.rank_count() == 0)
-            {
+            if node.skill.get(&content).rank_count() == 0 {
                 check.error(
                     format!("/tree/{key}/skill"),
                     "no ranks",

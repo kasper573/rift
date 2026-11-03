@@ -59,7 +59,9 @@ pub fn check_sites(loading: &mut Loading) {
         }
     }
     for fixture in VfxFixture::VARIANTS {
-        if let Some(vfx) = content.by_path::<VfxDef>(&fixture.path()) {
+        if let Some(vfx) = content.by_path::<VfxDef>(&fixture.path())
+            && content.table::<VfxDef>().get(vfx).is_some()
+        {
             let by = format!("the engine, as the {} fixture", fixture.name());
             played.push((vfx, VfxFixture::SITES, by));
         }
