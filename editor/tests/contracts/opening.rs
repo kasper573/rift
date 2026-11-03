@@ -15,6 +15,7 @@ fn a_folder_opened_by_a_relative_path_is_known_by_its_absolute_one() {
     );
 
     editor.open_folder(&relative_from_here(&folder));
+    editor.finish_busy();
 
     let root = &editor.project.as_ref().expect("the game opens").root;
     assert!(root.is_absolute(), "{} is relative", root.display());

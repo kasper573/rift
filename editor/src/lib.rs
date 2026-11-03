@@ -2,6 +2,7 @@ pub mod app;
 pub mod audio;
 pub mod body_names;
 pub mod browser;
+pub mod busy;
 mod clipboard;
 mod condition;
 pub mod content_tree;

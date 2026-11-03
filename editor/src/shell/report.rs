@@ -117,6 +117,7 @@ pub(crate) fn not_loaded(editor: &mut Editor, ctx: &Context) {
         && let Some(project) = &mut editor.project
     {
         project.reload();
+        editor.when_settled("Loading the folder", |_| {});
     }
 }
 

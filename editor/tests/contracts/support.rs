@@ -3,6 +3,8 @@ use std::sync::Arc;
 use ui::egui;
 
 use editor::app::Editor;
+use editor::busy::Progress;
+use editor::modal::{DeleteDialog, ModalDialog};
 use editor::project::{Project, ProjectFiles};
 use editor::schema::SchemaShapes;
 use editor::user::{EditorSettings, UserFolder};
@@ -61,7 +63,12 @@ pub fn open(game: Game, scratch: &tempfile::TempDir) -> Editor {
 pub fn open_as_is(game: Game, scratch: &tempfile::TempDir) -> Editor {
     let folder = scratch.path().join("game");
     game.write_to(&folder);
-    let mut project = Project::open(&folder, Arc::new(SchemaShapes::load())).expect("opens");
+    let mut project = Project::open(
+        &folder,
+        Arc::new(SchemaShapes::load()),
+        &Progress::default(),
+    )
+    .expect("opens");
     project.settle();
     let mut editor = Editor::new(
         UserFolder::at(scratch.path().join("user")),
@@ -71,8 +78,25 @@ pub fn open_as_is(game: Game, scratch: &tempfile::TempDir) -> Editor {
     editor
 }
 
-/// The project open in `editor` once what it is loading settles, its folder loading whole.
+/// Deletes what `dialog` picked as it decided, waiting for the editor; the reason the dialog came
+/// back with when it was refused.
+pub fn delete(editor: &mut Editor, dialog: DeleteDialog) -> Result<(), String> {
+    editor::rows::delete(editor, dialog);
+    editor.finish_busy();
+    match editor.dialogs.pop() {
+        Some(ModalDialog::Delete(dialog)) => Err(dialog.error.unwrap_or_default()),
+        Some(other) => {
+            editor.dialogs.push(other);
+            Ok(())
+        }
+        None => Ok(()),
+    }
+}
+
+/// The project open in `editor` once what it is loading settles and the editor waits on nothing,
+/// its folder loading whole.
 pub fn settled(editor: &mut Editor) -> &Project {
+    editor.finish_busy();
     let project = editor.project.as_mut().expect("a project");
     project.settle();
     if let Some(report) = project.report.as_ref().filter(|_| !project.loads()) {
@@ -124,8 +148,10 @@ pub fn content(editor: &mut Editor) -> &Content {
     settled(editor).content.as_ref().expect("the folder loads")
 }
 
-/// The files of the project open in `editor` once what it is loading settles, however they load.
+/// The files of the project open in `editor` once what it is loading settles and the editor
+/// waits on nothing, however they load.
 pub fn files(editor: &mut Editor) -> &ProjectFiles {
+    editor.finish_busy();
     let project = editor.project.as_mut().expect("a project");
     project.settle();
     &project.files

@@ -7,8 +7,6 @@ mod fbx;
 mod gather;
 
 use std::path::PathBuf;
-use std::sync::{Arc, Mutex};
-use std::thread::JoinHandle;
 
 use engine::core::content::files::{GameFile, classify};
 use engine::systems::registry;
@@ -26,7 +24,6 @@ use crate::project::{ContentEdit, FileBytes, ProjectFiles, files};
 
 pub struct ImportDialog {
     pub folder: String,
-    reading: Option<Reading>,
     pub files: Vec<Incoming>,
     pub failed: Vec<GatherFailure>,
     search: String,
@@ -43,35 +40,33 @@ pub struct Incoming {
     pub refused: Option<String>,
 }
 
-struct Reading {
-    now: Arc<Mutex<(usize, String)>>,
-    done: JoinHandle<Gathered>,
-}
-
-/// Reads `sources` in the background and opens the list of what they hold to import into `folder`.
+/// Reads `sources`, the editor waiting for it, then opens the list of what they hold to import into
+/// `folder`.
 pub fn begin(editor: &mut Editor, folder: String, sources: Vec<PathBuf>) {
     if editor.project.is_none() {
         editor.toast("Open a game folder to import files into it");
         return;
     }
-    let now = Arc::new(Mutex::new((0, String::new())));
-    let told = now.clone();
-    let done = std::thread::spawn(move || {
-        gather(&sources, &|path| {
-            if let Ok(mut now) = told.lock() {
-                now.0 += 1;
-                now.1 = path.to_owned();
-            }
-        })
-    });
-    editor.dialogs.push(ModalDialog::Import(ImportDialog {
-        folder,
-        reading: Some(Reading { now, done }),
-        files: Vec::new(),
-        failed: Vec::new(),
-        search: String::new(),
-        error: None,
-    }));
+    editor.run_busy(
+        "Reading the files to import",
+        move |progress| {
+            progress.doing("Reading files", None);
+            gather(&sources, &|_| progress.one_more())
+        },
+        move |editor, gathered| {
+            let Some(project) = &editor.project else {
+                return;
+            };
+            let (files, failed) = review(&project.files, &folder, gathered);
+            editor.dialogs.push(ModalDialog::Import(ImportDialog {
+                folder,
+                files,
+                failed,
+                search: String::new(),
+                error: None,
+            }));
+        },
+    );
 }
 
 /// What `gathered` would bring into `folder` of `files`: every file picked but those already there,
@@ -129,20 +124,6 @@ pub fn import(editor: &mut Editor, incoming: Vec<Incoming>) -> Result<Vec<String
 }
 
 pub fn dialog(editor: &mut Editor, ctx: &Context, mut dialog: ImportDialog) -> Option<ModalDialog> {
-    match dialog.reading.take() {
-        Some(reading) if reading.done.is_finished() => match reading.done.join() {
-            Ok(gathered) => {
-                let project = editor.project.as_ref()?;
-                (dialog.files, dialog.failed) = review(&project.files, &dialog.folder, gathered);
-            }
-            Err(_) => dialog.error = Some("reading the files stopped short".to_owned()),
-        },
-        Some(reading) => {
-            dialog.reading = Some(reading);
-            ctx.request_repaint();
-        }
-        None => {}
-    }
     let mut outcome = None;
     let mut pressed = dialog::Keys::default();
     dialog::card(ctx, "import", 760.0, |ui| {
@@ -152,27 +133,14 @@ pub fn dialog(editor: &mut Editor, ctx: &Context, mut dialog: ImportDialog) -> O
             &format!("Import into {}", content_tree::folder_title(&dialog.folder)),
         );
         ui.add_space(4.0);
-        match &dialog.reading {
-            Some(reading) => {
-                let (count, now) = reading
-                    .now
-                    .lock()
-                    .map(|now| now.clone())
-                    .unwrap_or_default();
-                ui.horizontal(|ui| {
-                    ui.spinner();
-                    ui.label(format!("Reading {} · {now}", words::counted(count, "file")));
-                });
-            }
-            None => listing(ui, &mut dialog),
-        }
+        listing(ui, &mut dialog);
         if let Some(error) = &dialog.error {
             ui.colored_label(theme::DANGER, error);
         }
         ui.add_space(8.0);
         let picked = dialog.files.iter().filter(|file| file.take).count();
         ui.horizontal(|ui| {
-            ui.add_enabled_ui(dialog.reading.is_none() && picked > 0, |ui| {
+            ui.add_enabled_ui(picked > 0, |ui| {
                 if controls::primary(ui, format!("Import {}", words::counted(picked, "file")))
                     .clicked()
                 {

@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::sync::Arc;
 use ui::egui;
 use ui::paint;
 use ui::theme;
@@ -26,6 +27,7 @@ use super::{AreaAction, AreaFrame, AreaTool, AreaViewState, nodes, pick, pins, p
 use crate::app::Editor;
 use crate::keymap::EditorKey;
 use crate::play;
+use crate::project::{ContentEdit, EditChecker};
 use crate::tabs::file_title;
 use crate::widgets;
 
@@ -511,80 +513,158 @@ pub(crate) enum PlaceOutcome {
 }
 
 /// Places `new` in the insertion folder of `bundle` as one step: all of them, or as many as the
-/// folder's game takes, in order, when some are refused. Selects what it placed.
+/// folder's game takes, in order, when some are refused, the editor waiting while the game is
+/// checked with them, after whatever else it waits on. Selects what it placed, then runs `then`
+/// with how it went.
 pub(crate) fn place_modules(
+    editor: &mut Editor,
+    bundle: &str,
+    new: Vec<SceneNode>,
+    label: &str,
+    then: impl FnOnce(&mut Editor, PlaceOutcome) + Send + 'static,
+) {
+    let (bundle, label) = (bundle.to_owned(), label.to_owned());
+    editor.when_idle(label.clone(), move |editor| {
+        place_now(editor, &bundle, new, &label, then);
+    });
+}
+
+fn place_now(
     editor: &mut Editor,
     bundle: &str,
     mut new: Vec<SceneNode>,
     label: &str,
-) -> PlaceOutcome {
+    then: impl FnOnce(&mut Editor, PlaceOutcome) + Send + 'static,
+) {
     let count = new.len();
     let folder = nodes::insertion_folder(editor, bundle);
-    let Some(reader) = editor.reader() else {
-        return PlaceOutcome::Partly {
-            skipped: count,
-            reason: "no folder is open".to_owned(),
-        };
+    let (Some(project), Some(reader)) = (editor.project.as_ref(), editor.reader()) else {
+        let reason = "no folder is open".to_owned();
+        return then(
+            editor,
+            PlaceOutcome::Partly {
+                skipped: count,
+                reason,
+            },
+        );
     };
-    let scene = nodes::scene_of(editor, bundle);
-    nodes::label_placements(&scene, &folder, &mut new, &reader);
-    let with = |editor: &Editor, placed: &[SceneNode], label: String| {
-        let mut added = Vec::new();
-        let edit = nodes::scene_edit(editor, bundle, |nodes| {
-            added = nodes::SceneTree::new(nodes).append(&folder, placed.to_vec());
-            Some(label)
-        });
-        edit.map(|edit| (edit, added))
+    let Some(read) = nodes::bundle_of(editor, bundle) else {
+        let reason = format!("{} doesn't read", file_title(bundle));
+        return then(
+            editor,
+            PlaceOutcome::Partly {
+                skipped: count,
+                reason,
+            },
+        );
     };
-    let check = |editor: &Editor, placed: &[SceneNode]| -> Result<(), String> {
-        let (edit, _) = with(editor, placed, String::new())
-            .ok_or_else(|| format!("{} doesn't read", file_title(bundle)))?;
-        let project = editor.project.as_ref().ok_or("no folder is open")?;
-        project.check(&edit).map_err(|refusal| refusal.sentence())
+    nodes::label_placements(read.nodes(), &folder, &mut new, &reader);
+    let placing = Placing {
+        checker: project.checker(),
+        read,
+        reader,
+        bundle: bundle.to_owned(),
+        folder,
     };
-    let mut reason = match check(editor, &new) {
-        Ok(()) => {
-            let Some((edit, added)) = with(editor, &new, label.to_owned()) else {
-                return PlaceOutcome::Partly {
-                    skipped: count,
-                    reason: format!("{} doesn't read", file_title(bundle)),
-                };
-            };
-            return match editor.try_apply(edit) {
-                Ok(()) => {
-                    nodes::select(editor, bundle, added);
-                    PlaceOutcome::Whole
-                }
-                Err(reason) => PlaceOutcome::Partly {
-                    skipped: count,
-                    reason,
+    let (bundle, label) = (bundle.to_owned(), label.to_owned());
+    editor.run_busy(
+        label.clone(),
+        move |_| placing.place(new, &label),
+        move |editor, placed| {
+            let outcome = match placed.edit {
+                Some((edit, added)) => match editor.try_apply(edit) {
+                    Ok(()) => {
+                        nodes::select(editor, &bundle, added);
+                        placed.outcome
+                    }
+                    Err(reason) if placed.skipped == 0 => PlaceOutcome::Partly {
+                        skipped: count,
+                        reason,
+                    },
+                    Err(_) => placed.outcome,
                 },
+                None => placed.outcome,
             };
-        }
-        Err(reason) => reason,
-    };
-    let mut kept: Vec<SceneNode> = Vec::new();
-    let mut skipped = 0;
-    for node in new {
-        let mut candidate = kept.clone();
-        candidate.push(node);
-        match check(editor, &candidate) {
-            Ok(()) => kept = candidate,
-            Err(refused) => {
-                skipped += 1;
-                if kept.is_empty() {
-                    reason = refused;
+            then(editor, outcome);
+        },
+    );
+}
+
+/// What places modules in the insertion folder of a scene, and checks the game with them.
+struct Placing {
+    checker: EditChecker,
+    read: nodes::SceneBundle,
+    reader: Arc<FolderReader>,
+    bundle: String,
+    folder: String,
+}
+
+/// The step placing what the game takes, with the pointers of what it adds, and how it went.
+struct Placed {
+    edit: Option<(ContentEdit, Vec<String>)>,
+    skipped: usize,
+    outcome: PlaceOutcome,
+}
+
+impl Placing {
+    /// Places all of `new` as one step labelled `label`, or as many as the game takes, in order.
+    fn place(&self, new: Vec<SceneNode>, label: &str) -> Placed {
+        let mut reason = match self.check(&new) {
+            Ok(()) => {
+                return Placed {
+                    edit: self.edit(&new, label.to_owned()),
+                    skipped: 0,
+                    outcome: PlaceOutcome::Whole,
+                };
+            }
+            Err(reason) => reason,
+        };
+        let mut kept: Vec<SceneNode> = Vec::new();
+        let mut skipped = 0;
+        for node in new {
+            let mut candidate = kept.clone();
+            candidate.push(node);
+            match self.check(&candidate) {
+                Ok(()) => kept = candidate,
+                Err(refused) => {
+                    skipped += 1;
+                    if kept.is_empty() {
+                        reason = refused;
+                    }
                 }
             }
         }
+        Placed {
+            edit: (!kept.is_empty())
+                .then(|| self.edit(&kept, format!("{label} ({skipped} skipped)")))
+                .flatten(),
+            skipped,
+            outcome: PlaceOutcome::Partly { skipped, reason },
+        }
     }
-    if !kept.is_empty()
-        && let Some((edit, added)) = with(editor, &kept, format!("{label} ({skipped} skipped)"))
-        && editor.try_apply(edit).is_ok()
-    {
-        nodes::select(editor, bundle, added);
+
+    fn check(&self, placed: &[SceneNode]) -> Result<(), String> {
+        let (edit, _) = self
+            .edit(placed, String::new())
+            .ok_or_else(|| format!("{} doesn't read", file_title(&self.bundle)))?;
+        self.checker
+            .check(&edit)
+            .map_err(|refusal| refusal.sentence())
     }
-    PlaceOutcome::Partly { skipped, reason }
+
+    /// The step labelled `label` adding `placed` to the insertion folder, and the pointers of
+    /// what it adds.
+    fn edit(&self, placed: &[SceneNode], label: String) -> Option<(ContentEdit, Vec<String>)> {
+        let mut edit = ContentEdit::new(label);
+        let mut added = Vec::new();
+        self.read
+            .write_in(&mut edit, &self.reader, &self.bundle, |draft| {
+                added =
+                    nodes::SceneTree::new(&mut draft.nodes).append(&self.folder, placed.to_vec());
+            })
+            .ok()?;
+        Some((edit, added))
+    }
 }
 
 fn spot_rect(at: Pos<Meters>) -> Rect<Meters> {

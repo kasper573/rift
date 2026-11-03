@@ -64,15 +64,17 @@ pub fn place_prop(
         file_title(&frame.bundle)
     );
     let bundle = frame.bundle.clone();
-    let outcome = modules::place_modules(
+    modules::place_modules(
         editor,
         &bundle,
         vec![SceneNode::Module(ModuleNode::new(module))],
         &label,
+        |editor, outcome| {
+            if let modules::PlaceOutcome::Partly { reason, .. } = outcome {
+                editor.toast(reason);
+            }
+        },
     );
-    if let modules::PlaceOutcome::Partly { reason, .. } = outcome {
-        editor.toast(reason);
-    }
 }
 
 /// Turns what the Place tool puts down next, or the selected props, by a step.

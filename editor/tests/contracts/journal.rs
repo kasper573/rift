@@ -55,6 +55,7 @@ fn a_journal_the_folder_refuses_is_kept_aside_and_said_where() {
 
         let data = RecoveryJournal::recover(&editor.user, &folder).expect("a journal");
         editor.open_now(&folder, data.files);
+        editor.finish_busy();
 
         assert!(editor.project.as_ref().expect("a project").loads());
         let said = said(&editor);
@@ -86,6 +87,7 @@ fn recovering_a_file_changed_on_disk_since_says_saving_replaces_it() {
 
     let data = RecoveryJournal::recover(&editor.user, &folder).expect("a journal");
     editor.open_now(&folder, data.files);
+    editor.finish_busy();
 
     let said = said(&editor);
     assert!(
@@ -114,13 +116,14 @@ fn journaled(file: &str, base: Option<&str>, fields: serde_json::Value) -> Recov
 }
 
 fn write_journal(editor: &Editor, folder: &Path, files: Vec<RecoveryJournalFile>) {
-    RecoveryJournal::for_folder(&editor.user, folder).write(&RecoveryJournalData {
+    let data = RecoveryJournalData {
         build: String::new(),
         content_version: content_version().to_owned(),
         folder: folder.to_path_buf(),
         written: std::time::SystemTime::now().into(),
         files,
-    });
+    };
+    RecoveryJournal::for_folder(&editor.user, folder).write((0, 0), move || data);
 }
 
 fn said(editor: &Editor) -> Vec<String> {

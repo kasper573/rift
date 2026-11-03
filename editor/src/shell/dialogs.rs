@@ -203,30 +203,42 @@ fn new_game(editor: &mut Editor, ctx: &Context, mut dialog: NewGameDialog) -> Op
     }
     match outcome {
         Some(true) => {
-            let folder = PathBuf::from(dialog.folder.trim());
-            let result = match &dialog.source {
-                NewGameSource::Template(template) => {
-                    templates::new_game(template, dialog.name.trim(), &folder)
-                }
-                NewGameSource::Copy { folder: source, .. } => {
-                    templates::new_game_from(source, dialog.name.trim(), &folder)
-                }
-            };
-            match result {
-                Ok(()) => {
-                    editor.say(format!("Created {}", folder.display()));
-                    shell::request_close(editor, CloseThen::Open(folder));
-                    None
-                }
-                Err(error) => {
-                    dialog.error = Some(error);
-                    Some(ModalDialog::NewGame(dialog))
-                }
-            }
+            create_game(editor, dialog);
+            None
         }
         Some(false) => None,
         None => Some(ModalDialog::NewGame(dialog)),
     }
+}
+
+/// Makes the game `dialog` asks for, the editor waiting for it, then opens it; the dialog comes
+/// back saying why when it can't be made.
+fn create_game(editor: &mut Editor, mut dialog: NewGameDialog) {
+    let folder = PathBuf::from(dialog.folder.trim());
+    let name = dialog.name.trim().to_owned();
+    let (source, made) = (dialog.source.clone(), folder.clone());
+    editor.run_busy(
+        format!("Making {name}"),
+        move |progress| match source {
+            NewGameSource::Template(template) => {
+                templates::new_game(&template, &name, &made, progress)
+            }
+            NewGameSource::Copy {
+                folder: source,
+                files,
+            } => templates::new_game_from(&source, &name, &made, files.get().copied(), progress),
+        },
+        move |editor, result| match result {
+            Ok(()) => {
+                editor.say(format!("Created {}", folder.display()));
+                shell::request_close(editor, CloseThen::Open(folder));
+            }
+            Err(error) => {
+                dialog.error = Some(error);
+                editor.dialogs.push(ModalDialog::NewGame(dialog));
+            }
+        },
+    );
 }
 
 fn template_cards(ui: &mut Ui, picked: &mut String, templates: &[GameTemplate]) {
@@ -392,9 +404,12 @@ fn one(editor: &mut Editor, ctx: &Context, dialog: ModalDialog) -> Option<ModalD
             });
             match outcome {
                 Some(Some(true)) => {
-                    if editor.save() {
-                        shell::finish_close(editor, close.then);
-                    }
+                    let then = close.then;
+                    editor.save_then(move |editor, saved| {
+                        if saved {
+                            shell::finish_close(editor, then);
+                        }
+                    });
                     None
                 }
                 Some(Some(false)) => {
@@ -517,8 +532,8 @@ fn one(editor: &mut Editor, ctx: &Context, dialog: ModalDialog) -> Option<ModalD
             };
             ctx.data_mut(|d| d.remove_temp::<bool>(compare_id));
             conflicts.remove(0);
-            if take && let Some(project) = &mut editor.project {
-                project.take_disk(&conflict);
+            if take {
+                editor.take_disk(conflict);
             }
             (!conflicts.is_empty()).then_some(ModalDialog::Conflicts(conflicts))
         }
@@ -574,13 +589,10 @@ fn one(editor: &mut Editor, ctx: &Context, dialog: ModalDialog) -> Option<ModalD
                 outcome = Some(false);
             }
             match outcome {
-                Some(true) => match rows::delete(editor, &dialog) {
-                    Ok(()) => None,
-                    Err(error) => {
-                        dialog.error = Some(error);
-                        Some(ModalDialog::Delete(dialog))
-                    }
-                },
+                Some(true) => {
+                    rows::delete(editor, dialog);
+                    None
+                }
                 Some(false) => None,
                 None => Some(ModalDialog::Delete(dialog)),
             }

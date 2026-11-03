@@ -31,7 +31,9 @@ use crate::play::{self, PlayTest};
 use crate::project::journal::{RecoveryJournal, RecoveryJournalData, RecoveryJournalFile};
 use crate::project::lock::ProjectLock;
 use crate::project::watch::FolderWatcher;
-use crate::project::{AppliedStep, ContentEdit, EditRefusal, EditViewpoint, Project, RowSelection};
+use crate::project::{
+    self, AppliedStep, ContentEdit, EditRefusal, EditViewpoint, Project, RowSelection,
+};
 use crate::row_form;
 use crate::scenes::{self, SceneStep};
 use crate::schema::SchemaShapes;
@@ -184,6 +186,7 @@ pub struct Editor {
     pub views: EditorViews,
     pub play: play::PlayTest,
     pub pick: Option<PlacePick>,
+    pub busy: crate::busy::Busy,
     pub quit: bool,
 }
 
@@ -265,6 +268,7 @@ impl Editor {
             views: EditorViews::default(),
             play: PlayTest::default(),
             pick: None,
+            busy: Default::default(),
             quit: false,
         }
     }
@@ -311,9 +315,26 @@ impl Editor {
         self.open_now(&folder, Vec::new());
     }
 
+    /// Opens the game folder at `folder`, taking in the unsaved files `recovered` from its
+    /// journal, the editor waiting for it.
     pub fn open_now(&mut self, folder: &Path, recovered: Vec<RecoveryJournalFile>) {
         self.close_project();
-        match Project::open(folder, self.shapes.clone()) {
+        let (root, shapes) = (folder.to_path_buf(), self.shapes.clone());
+        let folder = folder.to_path_buf();
+        self.run_busy(
+            format!("Opening {}", shell::start::game_name(&folder)),
+            move |progress| Project::open(&root, shapes, progress),
+            move |editor, opened| editor.opened(&folder, opened, recovered),
+        );
+    }
+
+    fn opened(
+        &mut self,
+        folder: &Path,
+        opened: Result<Project, String>,
+        recovered: Vec<RecoveryJournalFile>,
+    ) {
+        match opened {
             Ok(project) if project.report.is_some() && recovered.is_empty() => {
                 self.say_opened(folder, &project);
                 self.settings.remember(folder);
@@ -342,9 +363,6 @@ impl Editor {
                 None
             }
         };
-        if !recovered.is_empty() {
-            self.recover(&mut project, folder, &recovered);
-        }
         self.say_opened(folder, &project);
         self.settings.remember(folder);
         self.save_settings();
@@ -361,12 +379,24 @@ impl Editor {
         self.start.report = None;
         self.start.watch = None;
         play::check_binaries(self);
+        if !recovered.is_empty() {
+            let folder = folder.to_path_buf();
+            self.when_settled("Recovering unsaved rows", move |editor| {
+                editor.recover(&folder, &recovered);
+            });
+        }
         if let Some(scene) = self.scene.take() {
             scenes::open(self, &scene);
         }
     }
 
-    fn recover(&mut self, project: &mut Project, folder: &Path, recovered: &[RecoveryJournalFile]) {
+    /// Applies the unsaved files `recovered` from the journal of `folder` as an edit, once the
+    /// folder's loads are in, then once the folder loads after it says how that went: a journal
+    /// the folder doesn't load with is set aside.
+    fn recover(&mut self, folder: &Path, recovered: &[RecoveryJournalFile]) {
+        let Some(project) = &mut self.project else {
+            return;
+        };
         let mut edit = ContentEdit::new("Recover unsaved rows from the journal");
         for file in recovered {
             let change = file.change();
@@ -375,40 +405,41 @@ impl Editor {
                 None => edit.remove(change.file),
             };
         }
-        let changed: Vec<&str> = recovered
+        let changed: Vec<String> = recovered
             .iter()
             .filter(|file| file.changed_on_disk(project.disk_hash(&file.path).as_deref()))
-            .map(|file| file.path.as_str())
+            .map(|file| file.path.clone())
             .collect();
-        let applied = project
-            .apply(edit, EditViewpoint::default())
-            .and_then(|()| {
-                project.settle();
-                match project.take_refused() {
-                    Some(refused) => Err(Box::new(refused.refusal)),
-                    None => Ok(()),
-                }
-            });
-        match applied {
-            Err(refusal) => {
-                let kept = RecoveryJournal::set_aside(&self.user, folder)
-                    .map_or(String::new(), |aside| {
-                        format!("; it is kept at {}", aside.display())
-                    });
-                self.toast(format!(
-                    "The journal did not apply: {}{kept}",
-                    refusal.sentence()
-                ));
-            }
-            Ok(()) if !changed.is_empty() => self.toast(format!(
-                "Recovered {} unsaved rows; {} changed on disk since, and saving \
-                 replaces what is there: {}",
-                recovered.len(),
-                changed.len(),
-                changed.join(", ")
-            )),
-            Ok(()) => self.say(format!("Recovered {} unsaved rows", recovered.len())),
+        let count = recovered.len();
+        let folder = folder.to_path_buf();
+        if let Err(refusal) = project.apply(edit, EditViewpoint::default()) {
+            self.journal_refused(&folder, &refusal);
+            return;
         }
+        self.when_settled("Recovering unsaved rows", move |editor| {
+            let refused = editor.project.as_mut().and_then(Project::take_refused);
+            match refused {
+                Some(refused) => editor.journal_refused(&folder, &refused.refusal),
+                None if !changed.is_empty() => editor.toast(format!(
+                    "Recovered {count} unsaved rows; {} changed on disk since, and saving \
+                     replaces what is there: {}",
+                    changed.len(),
+                    changed.join(", ")
+                )),
+                None => editor.say(format!("Recovered {count} unsaved rows")),
+            }
+        });
+    }
+
+    /// Sets aside the journal of `folder`, which the folder doesn't load with, saying why.
+    fn journal_refused(&mut self, folder: &Path, refusal: &EditRefusal) {
+        let kept = RecoveryJournal::set_aside(&self.user, folder).map_or(String::new(), |aside| {
+            format!("; it is kept at {}", aside.display())
+        });
+        self.toast(format!(
+            "The journal did not apply: {}{kept}",
+            refusal.sentence()
+        ));
     }
 
     fn say_opened(&mut self, folder: &Path, project: &Project) {
@@ -442,7 +473,9 @@ impl Editor {
         self.journal = None;
         self.watcher = None;
         self.lock = None;
-        self.project = None;
+        if let Some(project) = self.project.take() {
+            project::drop_in_background(project);
+        }
         self.dock = DockState::new(Vec::new());
         self.bottom_tab = BottomTab::default();
     }
@@ -451,7 +484,19 @@ impl Editor {
         self.try_apply(edit).is_ok()
     }
 
+    /// Applies `edit`, or says why it was refused. An edit that must wait for the folder's loads
+    /// to be in is applied once they are, the editor waiting for it, and refused by a toast.
     pub fn try_apply(&mut self, edit: ContentEdit) -> Result<(), String> {
+        if self
+            .project
+            .as_ref()
+            .is_some_and(|project| project.waits_on_load(&edit))
+        {
+            self.when_settled(edit.label.clone(), move |editor| {
+                let _ = editor.try_apply(edit);
+            });
+            return Ok(());
+        }
         let viewpoint = EditViewpoint {
             selection: self.selection.clone(),
             camera: self.views.camera_state(),
@@ -517,17 +562,29 @@ impl Editor {
         }
     }
 
-    pub fn save(&mut self) -> bool {
-        let Some(project) = &mut self.project else {
-            return false;
+    pub fn save(&mut self) {
+        self.save_then(|_, _| {});
+    }
+
+    /// Saves every unsaved file once the folder's loads are in, the editor waiting for it, then
+    /// runs `then`, saying whether everything was saved.
+    pub fn save_then(&mut self, then: impl FnOnce(&mut Editor, bool) + Send + 'static) {
+        let Some(project) = &self.project else {
+            then(self, false);
+            return;
         };
         if project.read_only.is_some() {
             self.toast("Read-only: nothing saved");
-            return false;
+            then(self, false);
+            return;
         }
-        project.settle();
-        let Some(project) = &mut self.project else {
-            return false;
+        self.when_settled("Saving", move |editor| editor.save_settled(then));
+    }
+
+    fn save_settled(&mut self, then: impl FnOnce(&mut Editor, bool) + Send + 'static) {
+        let Some(project) = &self.project else {
+            then(self, false);
+            return;
         };
         if let Some(report) = &project.report {
             let first = EditRefusal::of(report);
@@ -537,28 +594,39 @@ impl Editor {
                 format!("{} at {}", first.file, first.pointer)
             };
             self.toast(format!("Not saved · {at}: {}", first.sentence()));
-            return false;
+            then(self, false);
+            return;
         }
-        match project.save() {
-            Ok(outcome) => {
-                let count = outcome.written.len() + outcome.removed.len();
-                if let Some(journal) = &mut self.journal {
-                    journal.clear();
-                }
-                self.toast(format!("Saved {count} file{}", ui::words::plural(count)));
-                true
-            }
-            Err(error) => {
-                let text = format!(
-                    "Save stopped at {}: {} ({} written before it)",
-                    error.file,
-                    error.reason,
-                    error.done.written.len()
-                );
-                self.toast(text);
-                false
-            }
-        }
+        let saving = project.saving();
+        self.run_busy(
+            "Saving",
+            move |progress| saving.write(progress),
+            move |editor, saved| {
+                let Some(project) = &mut editor.project else {
+                    return then(editor, false);
+                };
+                let saved = match project.take_saved(saved) {
+                    Ok(outcome) => {
+                        let count = outcome.written.len() + outcome.removed.len();
+                        if let Some(journal) = &mut editor.journal {
+                            journal.clear();
+                        }
+                        editor.toast(format!("Saved {count} file{}", ui::words::plural(count)));
+                        true
+                    }
+                    Err(error) => {
+                        editor.toast(format!(
+                            "Save stopped at {}: {} ({} written before it)",
+                            error.file,
+                            error.reason,
+                            error.done.written.len()
+                        ));
+                        false
+                    }
+                };
+                then(editor, saved);
+            },
+        );
     }
 
     pub fn open_tab(&mut self, tab: EditorTab) {
@@ -747,12 +815,16 @@ impl Editor {
         Some(shown)
     }
 
+    /// Takes in a load that finished, and says why it took back an edit, unless a step the editor
+    /// waits on is to say that.
     fn poll_project(&mut self) {
         let Some(project) = &mut self.project else {
             return;
         };
         project.poll();
-        self.take_refused();
+        if !self.busy.is_busy() {
+            self.take_refused();
+        }
     }
 
     /// Says why the last load took back an edit, when it did.
@@ -778,47 +850,86 @@ impl Editor {
         let Some(changed) = watcher.poll() else {
             return;
         };
+        self.when_settled("Reading changes on disk", move |editor| {
+            let Some(project) = &editor.project else {
+                return;
+            };
+            let reading = project.reading_disk(changed);
+            editor.run_busy(
+                "Reading changes on disk",
+                move |progress| reading.read(progress),
+                |editor, read| editor.take_outside(read),
+            );
+        });
+    }
+
+    /// Takes in what changed on disk, then once the folder loads again says how that went.
+    fn take_outside(&mut self, read: project::DiskRead) {
         let Some(project) = &mut self.project else {
             return;
         };
-        let outcome = project.outside_changes(changed);
-        if !outcome.taken.is_empty() {
-            let moved = project.moved_outside.clone();
-            let text = if project.loads() {
-                format!(
-                    "{} files changed on disk and were reloaded",
-                    outcome.taken.len()
-                )
-            } else if !moved.is_empty() && !project.broken_on_disk() {
-                for step in &moved {
-                    self.output.say(
-                        "editor",
-                        format!(
-                            "{} reference{} name{} {}, which isn't there; a file of that name is at {}",
-                            step.references,
-                            words::plural(step.references),
-                            if step.references == 1 { "s" } else { "" },
-                            step.from,
-                            step.to
-                        ),
-                    );
-                }
-                self.bottom_tab = BottomTab::Output;
-                crate::moves::moved_outside_summary(&moved, &project.files.index())
-            } else {
-                format!(
-                    "{} files changed on disk and the folder no longer loads",
-                    outcome.taken.len()
-                )
-            };
-            let text = crate::views::area::drop_gone(self).unwrap_or(text);
-            self.toast(text);
-        }
+        let outcome = project.take_outside(read);
         if !outcome.conflicts.is_empty() {
             self.dialogs.push(ModalDialog::Conflicts(outcome.conflicts));
         }
+        let taken = outcome.taken.len();
+        if taken == 0 {
+            return;
+        }
+        self.when_settled("Loading the changed files", move |editor| {
+            editor.reloaded_outside(taken);
+        });
     }
 
+    /// Says how the folder loaded after `taken` files were taken in from disk.
+    fn reloaded_outside(&mut self, taken: usize) {
+        let Some(project) = &mut self.project else {
+            return;
+        };
+        project.reloaded_outside(taken);
+        let moved = project.moved_outside.clone();
+        let text = if project.loads() {
+            format!("{taken} files changed on disk and were reloaded")
+        } else if !moved.is_empty() && !project.broken_on_disk() {
+            for step in &moved {
+                self.output.say(
+                    "editor",
+                    format!(
+                        "{} reference{} name{} {}, which isn't there; a file of that name is at {}",
+                        step.references,
+                        words::plural(step.references),
+                        if step.references == 1 { "s" } else { "" },
+                        step.from,
+                        step.to
+                    ),
+                );
+            }
+            self.bottom_tab = BottomTab::Output;
+            crate::moves::moved_outside_summary(&moved, &project.files.index())
+        } else {
+            format!("{taken} files changed on disk and the folder no longer loads")
+        };
+        let text = crate::views::area::drop_gone(self).unwrap_or(text);
+        self.toast(text);
+    }
+
+    /// Takes the disk's side of `conflict`, once the folder's loads are in, the editor waiting for
+    /// it and for the folder to load again.
+    pub(crate) fn take_disk(&mut self, conflict: project::FileConflict) {
+        self.when_settled("Taking the file from disk", move |editor| {
+            if let Some(project) = &mut editor.project {
+                project.take_disk(&conflict);
+            }
+            editor.when_settled("Loading the changed file", |editor| {
+                if let Some(project) = &mut editor.project {
+                    project.reloaded_outside(1);
+                }
+            });
+        });
+    }
+
+    /// Has the journal keep the unsaved files when they changed since it last did, made and
+    /// written on its own thread.
     fn tick_journal(&mut self) {
         let Some(project) = &self.project else {
             return;
@@ -826,7 +937,9 @@ impl Editor {
         let Some(journal) = &mut self.journal else {
             return;
         };
-        if !journal.due() {
+        let files = project.files.clone();
+        let revision = (files.revision(), files.disk_revision());
+        if !journal.due(revision) {
             return;
         }
         let unsaved = project.unsaved();
@@ -834,23 +947,23 @@ impl Editor {
             journal.clear();
             return;
         }
-        let data = RecoveryJournalData {
+        let folder = project.root.clone();
+        journal.write(revision, move || RecoveryJournalData {
             build: version::build().to_owned(),
             content_version: content_version().to_owned(),
-            folder: project.root.clone(),
+            folder,
             written: SystemTime::now().into(),
             files: unsaved
                 .iter()
                 .map(|path| {
                     RecoveryJournalFile::of(
                         path,
-                        project.disk_hash(path).as_deref(),
-                        project.files.get(path).as_ref(),
+                        files.disk_hash(path).as_deref(),
+                        files.get(path).as_ref(),
                     )
                 })
                 .collect(),
-        };
-        journal.write(&data);
+        });
     }
 }
 
@@ -919,8 +1032,13 @@ fn show_video(editor: Res<Editor>, mut video: ResMut<VideoPreferences>) {
 fn background(world: &mut World) {
     world.resource_scope(|world, mut editor: Mut<Editor>| {
         editor.poll_project();
-        editor.poll_outside();
-        editor.tick_journal();
+        editor.poll_busy();
+        // What the editor waits on may still change the files, such as a journal being recovered
+        // or a save being written, so neither the disk nor the journal is looked at meanwhile.
+        if !editor.busy.is_busy() {
+            editor.poll_outside();
+            editor.tick_journal();
+        }
         play::poll(&mut editor);
         views::sync(&mut editor, world);
     });

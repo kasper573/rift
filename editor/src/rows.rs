@@ -28,7 +28,7 @@ use crate::make;
 use crate::modal::{DeleteDialog, ModalDialog};
 use crate::moves::{self, PathMove, fixed_place, free_path, free_path_among};
 use crate::project::files::{FolderIndex, content_holding, folder_entry};
-use crate::project::{ContentEdit, FileBytes, Project, ProjectFiles};
+use crate::project::{ContentEdit, EditChecker, FileBytes, Project, ProjectFiles};
 use crate::scene_graph;
 use crate::schema::{self, SchemaShapes};
 use crate::tabs::shown_path;
@@ -472,6 +472,15 @@ pub fn rename(editor: &mut Editor, path: &str, name: &str) -> Result<String, Str
     ) {
         return Err(problem);
     }
+    let (from, renamed, name) = (path.to_owned(), to.clone(), name.to_owned());
+    editor.act_when_settled(format!("Renaming {}", shown_path(path)), move |editor| {
+        rename_settled(editor, &from, &renamed, &name)
+    })?;
+    Ok(to)
+}
+
+fn rename_settled(editor: &mut Editor, path: &str, to: &str, name: &str) -> Result<(), String> {
+    let project = editor.project.as_ref().ok_or("no folder is open")?;
     let made = format!("New {}", shown_path(path));
     let history = &project.history;
     let just_made = project.files.index().is_content(path)
@@ -480,19 +489,18 @@ pub fn rename(editor: &mut Editor, path: &str, name: &str) -> Result<String, Str
             .steps()
             .last()
             .is_some_and(|step| step.label == made);
-    let step = PathMove::new(path, &to);
+    let step = PathMove::new(path, to);
     match table_of(path).filter(|_| just_made) {
         Some(table) => {
             let table = table.to_owned();
-            make_as_named(editor, step, &table, &made)?
+            make_as_named(editor, step, &table, &made)
         }
         None => moves::apply(
             editor,
             &[step],
             format!("Rename {} to {name}", shown_path(path)),
-        )?,
+        ),
     }
-    Ok(to)
 }
 
 fn make_as_named(
@@ -522,8 +530,16 @@ fn make_as_named(
     Ok(())
 }
 
-/// Moves what is at each path into `folder`, numbering a name taken there.
+/// Moves what is at each path into `folder`, numbering a name taken there, once the folder's
+/// loads are in.
 pub fn move_into(editor: &mut Editor, paths: &[String], folder: &str) -> Result<(), String> {
+    let (paths, folder) = (paths.to_vec(), folder.to_owned());
+    editor.act_when_settled("Moving files", move |editor| {
+        move_into_settled(editor, &paths, &folder)
+    })
+}
+
+fn move_into_settled(editor: &mut Editor, paths: &[String], folder: &str) -> Result<(), String> {
     let project = editor.project.as_ref().ok_or("no folder is open")?;
     let mut steps: Vec<PathMove> = Vec::new();
     for path in paths {
@@ -589,6 +605,12 @@ pub fn delete_dialog(editor: &mut Editor, paths: Vec<String>) {
         editor.toast("Fixtures stay where the engine finds them");
         return;
     }
+    editor.when_settled("Finding what uses it", move |editor| {
+        delete_dialog_settled(editor, paths);
+    });
+}
+
+fn delete_dialog_settled(editor: &mut Editor, paths: Vec<String>) {
     let Ok(project) = moves::settled(editor) else {
         return;
     };
@@ -1132,7 +1154,56 @@ fn usage_phrase(shapes: &SchemaShapes, table: &str, field: &str) -> String {
         .to_owned()
 }
 
-pub fn delete(editor: &mut Editor, dialog: &DeleteDialog) -> Result<(), String> {
+/// Deletes what `dialog` picked as it decided, once the game is found to load after it, the editor
+/// waiting meanwhile after whatever else it waits on; the dialog comes back saying why when it
+/// can't.
+pub fn delete(editor: &mut Editor, dialog: DeleteDialog) {
+    editor.when_idle("Deleting", move |editor| delete_now(editor, dialog));
+}
+
+fn delete_now(editor: &mut Editor, mut dialog: DeleteDialog) {
+    let (label, edit, checker) = match plan_deletion(editor, &dialog) {
+        Ok(planned) => planned,
+        Err(error) => {
+            dialog.error = Some(error);
+            editor.dialogs.push(ModalDialog::Delete(dialog));
+            return;
+        }
+    };
+    editor.run_busy(
+        format!("Checking the game after: {label}"),
+        move |_| checker.check(&edit).map(|()| edit),
+        move |editor, checked| {
+            let applied = checked
+                .map_err(|refusal| format!("{}: {}", refusal.place(), refusal.sentence()))
+                .and_then(|edit| editor.try_apply(edit));
+            if let Err(error) = applied {
+                dialog.error = Some(error);
+                editor.dialogs.push(ModalDialog::Delete(dialog));
+                return;
+            }
+            for path in &dialog.gone {
+                close_tabs(editor, path);
+            }
+            let deleted = |key: &String| {
+                dialog.gone.contains(key)
+                    || dialog
+                        .paths
+                        .iter()
+                        .any(|path| key.starts_with(&format!("{path}/")))
+            };
+            editor.selection.keys.retain(|key| !deleted(key));
+            editor.toast(label.replacen("Delete", "Deleted", 1));
+        },
+    );
+}
+
+/// The step that deletes what `dialog` picked as it decided, its label, and what checks the game
+/// loads after it.
+fn plan_deletion(
+    editor: &Editor,
+    dialog: &DeleteDialog,
+) -> Result<(String, ContentEdit, EditChecker), String> {
     let project = editor.project.as_ref().ok_or("no folder is open")?;
     if let Some(group) = dialog
         .groups
@@ -1224,23 +1295,7 @@ pub fn delete(editor: &mut Editor, dialog: &DeleteDialog) -> Result<(), String> 
         }
         moves::keep_folder(&project.files, &mut edit, parent_of(path));
     }
-    project
-        .check(&edit)
-        .map_err(|refusal| format!("{}: {}", refusal.place(), refusal.sentence()))?;
-    editor.try_apply(edit)?;
-    for path in &dialog.gone {
-        close_tabs(editor, path);
-    }
-    let gone = |key: &String| {
-        dialog.gone.contains(key)
-            || dialog
-                .paths
-                .iter()
-                .any(|path| key.starts_with(&format!("{path}/")))
-    };
-    editor.selection.keys.retain(|key| !gone(key));
-    editor.toast(label.replacen("Delete", "Deleted", 1));
-    Ok(())
+    Ok((label, edit, project.checker()))
 }
 
 /// Puts in place of the placement at entry `index` of the list at `parent` of the scene file

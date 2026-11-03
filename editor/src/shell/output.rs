@@ -4,7 +4,6 @@ use ui::egui::{Align, Layout, RichText, Ui};
 use ui::face;
 use ui::panel;
 use ui::theme;
-use ui::words;
 
 use crate::app::Editor;
 use crate::play;
@@ -92,14 +91,8 @@ fn moved_outside(editor: &mut Editor, ui: &mut Ui) {
         point = controls::primary(ui, label).clicked();
     });
     ui.add_space(4.0);
-    if point {
-        match crate::moves::repoint(editor, &moved) {
-            Ok(count) => editor.toast(format!(
-                "{count} reference{} now name where their files are; Ctrl Z takes it back",
-                words::plural(count)
-            )),
-            Err(error) => editor.toast(error),
-        }
+    if point && let Err(error) = crate::moves::repoint(editor, &moved) {
+        editor.toast(error);
     }
 }
 

@@ -86,6 +86,7 @@ fn saving_reaches_the_editor_while_a_field_is_typed_into_and_undo_stays_with_the
     frame(&mut editor, crate::support::key(Key::Z, Modifiers::COMMAND));
     assert!(crate::support::files(&mut editor).contains(&made));
     frame(&mut editor, crate::support::key(Key::S, Modifiers::COMMAND));
+    editor.finish_busy();
     assert!(!editor.has_unsaved());
     assert!(scratch.path().join("game").join(&made).is_file());
 }

@@ -212,7 +212,9 @@ fn a_scene_the_editor_saves_reads_as_the_engine_writes_it() {
         tree.set_flag(&[made], NodeFlag::Locked, true);
         Some("Lock the guards".to_owned())
     });
-    assert!(editor.save());
+    editor.save();
+    editor.finish_busy();
+    assert!(!editor.has_unsaved());
 
     let content = support::content(&mut editor).clone();
     let written = scratch.path().join("written");

@@ -9,6 +9,7 @@ use engine::systems::{GameSettings, registry};
 use include_dir::{Dir, include_dir};
 use walkdir::WalkDir;
 
+use crate::busy::Progress;
 use crate::project::files::{content_holding, hidden};
 
 static TEMPLATES: Dir = include_dir!("$CARGO_MANIFEST_DIR/templates");
@@ -36,12 +37,22 @@ pub fn list() -> &'static [GameTemplate] {
     &LISTED
 }
 
-pub fn new_game(template: &str, name: &str, folder: &Path) -> Result<(), String> {
+/// A new game named `name` at `folder`, made from the built-in template `template`, each file
+/// written counted to `progress`.
+pub fn new_game(
+    template: &str,
+    name: &str,
+    folder: &Path,
+    progress: &Progress,
+) -> Result<(), String> {
     let dir = TEMPLATES
         .get_dir(template)
         .ok_or_else(|| format!("no built-in template {template}"))?;
     stage(folder, name, |staging| {
-        for file in all_files(dir) {
+        let files = all_files(dir);
+        progress.doing("Writing files", Some(files.len()));
+        for file in files {
+            progress.one_more();
             let relative = file
                 .path()
                 .strip_prefix(dir.path())
@@ -56,11 +67,20 @@ pub fn new_game(template: &str, name: &str, folder: &Path) -> Result<(), String>
     })
 }
 
-pub fn new_game_from(source: &Path, name: &str, folder: &Path) -> Result<(), String> {
+/// A new game named `name` at `folder`, a copy of the game at `source`, which holds `files` files
+/// when they are counted, each file copied counted to `progress`.
+pub fn new_game_from(
+    source: &Path,
+    name: &str,
+    folder: &Path,
+    files: Option<usize>,
+    progress: &Progress,
+) -> Result<(), String> {
     if !source.join(SETTINGS_FILE).is_file() {
         return Err(format!("No {SETTINGS_FILE} in {}", source.display()));
     }
-    stage(folder, name, |staging| copy_dir(source, staging))
+    progress.doing("Copying files", files);
+    stage(folder, name, |staging| copy_dir(source, staging, progress))
 }
 
 fn stage(
@@ -131,7 +151,7 @@ fn write_name(folder: &Path, name: &str) -> Result<(), String> {
     Ok(())
 }
 
-fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
+fn copy_dir(from: &Path, to: &Path, progress: &Progress) -> Result<(), String> {
     let entries = WalkDir::new(from)
         .into_iter()
         .filter_entry(|entry| entry.file_name().to_str().is_none_or(|name| !hidden(name)));
@@ -147,6 +167,7 @@ fn copy_dir(from: &Path, to: &Path) -> Result<(), String> {
             std::fs::create_dir_all(target).map_err(|error| error.to_string())?;
         } else {
             std::fs::copy(entry.path(), target).map_err(|error| error.to_string())?;
+            progress.one_more();
         }
     }
     Ok(())

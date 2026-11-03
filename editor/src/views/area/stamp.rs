@@ -409,18 +409,26 @@ pub(super) fn place_stamps(
         format!("Place {count} × {stamp} in {}", frame.bundle)
     };
     let area_key = frame.bundle.clone();
-    let text = match modules::place_modules(editor, &area_key, modules, &label) {
-        modules::PlaceOutcome::Whole => None,
-        modules::PlaceOutcome::Partly { skipped, reason } => {
-            Some(format!("{skipped} of {count} skipped: {reason}"))
-        }
-    };
-    if let Some(text) = &text {
-        editor.toast(text.clone());
-    }
-    if let Some(view) = editor.views.area.views.get_mut(&super::view_key(&area_key)) {
-        view.skipped = text;
-    }
+    modules::place_modules(
+        editor,
+        &area_key.clone(),
+        modules,
+        &label,
+        move |editor, outcome| {
+            let text = match outcome {
+                modules::PlaceOutcome::Whole => None,
+                modules::PlaceOutcome::Partly { skipped, reason } => {
+                    Some(format!("{skipped} of {count} skipped: {reason}"))
+                }
+            };
+            if let Some(text) = &text {
+                editor.toast(text.clone());
+            }
+            if let Some(view) = editor.views.area.views.get_mut(&super::view_key(&area_key)) {
+                view.skipped = text;
+            }
+        },
+    );
 }
 
 pub(crate) fn object_names(placed: &[area::blueprint::Flattened]) -> HashSet<String> {

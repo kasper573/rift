@@ -1,5 +1,6 @@
 use std::path::Path;
 
+use editor::busy::Progress;
 use editor::templates;
 use engine::core::content::SETTINGS_FILE;
 use walkdir::WalkDir;
@@ -17,7 +18,8 @@ fn new_game_from_a_game_copies_its_whole_folder_but_what_is_hidden() {
     std::fs::write(source.join(".git/HEAD"), "ref").expect("written");
     let copy = scratch.path().join("copy");
 
-    templates::new_game_from(&source, "Coral Bay", &copy).expect("copies");
+    templates::new_game_from(&source, "Coral Bay", &copy, None, &Progress::default())
+        .expect("copies");
 
     assert_eq!(game_name(&copy), "Coral Bay");
     assert_eq!(game_name(&source), "Test", "the source keeps its name");
@@ -61,7 +63,9 @@ fn a_folder_that_is_not_empty_is_refused_and_left_alone() {
     std::fs::create_dir_all(&folder).expect("written");
     std::fs::write(folder.join("notes.txt"), "mine").expect("written");
 
-    let refused = templates::new_game_from(&source, "Saltmarsh", &folder).expect_err("refused");
+    let refused =
+        templates::new_game_from(&source, "Saltmarsh", &folder, None, &Progress::default())
+            .expect_err("refused");
 
     assert!(refused.contains("not empty"), "{refused}");
     assert_eq!(std::fs::read_dir(&folder).expect("the folder").count(), 1);
@@ -75,12 +79,15 @@ fn a_source_or_template_that_is_not_there_is_refused() {
         &scratch.path().join("missing-source"),
         "Nowhere",
         &scratch.path().join("nowhere"),
+        None,
+        &Progress::default(),
     )
     .expect_err("refused");
     let unknown = templates::new_game(
         "no_such_template",
         "Saltmarsh",
         &scratch.path().join("unknown"),
+        &Progress::default(),
     )
     .expect_err("refused");
 

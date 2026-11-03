@@ -13,7 +13,9 @@ use ui::sheet;
 use ui::theme;
 use ui::words;
 
-use engine::core::content::{Content, ContentFile, ContentScope, version, with_content};
+use engine::core::content::{
+    Content, ContentFile, ContentScope, LoadReport, version, with_content,
+};
 use engine::systems::GameSettings;
 use engine::systems::class::ClassDef;
 use engine::systems::launch::{
@@ -34,7 +36,7 @@ use crate::inbox::ChannelInbox;
 use crate::keymap::EditorKey;
 use crate::modal::ModalDialog;
 use crate::output_log::OutputLine;
-use crate::project::{EditRefusal, Project, problem_place};
+use crate::project::{EditRefusal, problem_place};
 use crate::shell;
 use crate::widgets;
 use ui::input;
@@ -309,11 +311,46 @@ pub fn start(editor: &mut Editor, start: Option<Place>) {
         return;
     };
     editor.play.failure = None;
-    if editor.has_unsaved() && !editor.save() {
-        fail(editor, PlayFailure::SaveFailed);
+    if !editor.has_unsaved() {
+        check_playable(editor, start, character, binaries);
         return;
     }
-    if let Some(report) = editor.project.as_ref().and_then(Project::unplayable) {
+    editor.save_then(move |editor, saved| {
+        if saved {
+            check_playable(editor, start, character, binaries);
+        } else {
+            fail(editor, PlayFailure::SaveFailed);
+        }
+    });
+}
+
+/// Starts playing as `character` from `start` on `binaries` once the game is found whole enough
+/// to play, the editor waiting for it.
+fn check_playable(
+    editor: &mut Editor,
+    start: Option<Place>,
+    character: String,
+    binaries: GameBinaries,
+) {
+    let Some(project) = &editor.project else {
+        return;
+    };
+    let check = project.playable();
+    editor.run_busy(
+        "Checking the game can be played",
+        move |_| check.run(),
+        move |editor, unplayable| launch(editor, start, character, binaries, unplayable),
+    );
+}
+
+fn launch(
+    editor: &mut Editor,
+    start: Option<Place>,
+    character: String,
+    binaries: GameBinaries,
+    unplayable: Option<LoadReport>,
+) {
+    if let Some(report) = unplayable {
         for error in &report.errors {
             editor.output.say(
                 "editor",

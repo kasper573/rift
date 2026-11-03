@@ -1,6 +1,7 @@
 use std::sync::Arc;
 
 use editor::app::Editor;
+use editor::busy::Progress;
 use editor::project::Project;
 use editor::schema::SchemaShapes;
 use editor::tabs::{DockRequest, EditorTab};
@@ -76,7 +77,14 @@ fn editing_what_a_preview_shows_keeps_it() {
     let scratch = tempfile::tempdir().expect("a scratch folder");
     let mut editor = editor(&scratch);
     let folder = game_folder(scratch.path().join("game"));
-    editor.project = Some(Project::open(&folder, Arc::new(SchemaShapes::load())).expect("opens"));
+    editor.project = Some(
+        Project::open(
+            &folder,
+            Arc::new(SchemaShapes::load()),
+            &Progress::default(),
+        )
+        .expect("opens"),
+    );
 
     editor.preview_row(AreaDef::TABLE, &area());
     editor.place_tabs();

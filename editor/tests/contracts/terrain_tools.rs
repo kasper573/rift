@@ -111,6 +111,7 @@ fn placing_and_scattering_a_prop_land_as_modules() {
     );
     let region = Rect::new(Pos::new(4.0, 4.0), Size::new(3.0, 2.0));
     scatter::scatter(&mut editor, &snapshot, &stone, region);
+    editor.finish_busy();
     let modules = nodes::modules(&nodes::scene_of(&editor, &area()));
     let placed: Vec<&AreaModule> = modules.iter().map(|node| node.module()).collect();
     assert!(placed.iter().any(|module| matches!(

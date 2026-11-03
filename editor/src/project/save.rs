@@ -8,6 +8,28 @@ use walkdir::WalkDir;
 use engine::core::content::parent_of;
 
 use super::files::{FileBytes, OnDisk, ProjectFiles, folder_entry, is_folder};
+use crate::busy::Progress;
+
+/// The files of the game folder at `root`, to be written where they differ from disk.
+pub struct Saving {
+    pub(super) root: std::path::PathBuf,
+    pub(super) files: ProjectFiles,
+}
+
+/// The files as saving left them, and what it wrote.
+pub struct Saved {
+    pub(super) files: ProjectFiles,
+    pub(super) outcome: Result<SaveOutcome, SaveError>,
+}
+
+impl Saving {
+    /// Writes every file that differs from disk, each counted to `progress`.
+    pub fn write(self, progress: &Progress) -> Saved {
+        let Saving { root, mut files } = self;
+        let outcome = save(&root, &mut files, progress);
+        Saved { files, outcome }
+    }
+}
 
 pub struct SaveOutcome {
     pub written: Vec<String>,
@@ -20,7 +42,11 @@ pub struct SaveError {
     pub done: SaveOutcome,
 }
 
-pub fn save(root: &Path, files: &mut ProjectFiles) -> Result<SaveOutcome, SaveError> {
+fn save(
+    root: &Path,
+    files: &mut ProjectFiles,
+    progress: &Progress,
+) -> Result<SaveOutcome, SaveError> {
     let mut done = SaveOutcome {
         written: Vec::new(),
         removed: Vec::new(),
@@ -29,7 +55,9 @@ pub fn save(root: &Path, files: &mut ProjectFiles) -> Result<SaveOutcome, SaveEr
         .changed()
         .cloned()
         .partition(|path| files.contains(path));
+    progress.doing("Writing files", Some(writes.len() + removals.len()));
     for path in writes {
+        progress.one_more();
         if !files.differs_from_disk(&path) {
             files.saved(&path, files.on_disk(&path));
             continue;
@@ -51,6 +79,7 @@ pub fn save(root: &Path, files: &mut ProjectFiles) -> Result<SaveOutcome, SaveEr
         done.written.push(path);
     }
     for path in removals {
+        progress.one_more();
         if files.on_disk(&path).is_none() {
             files.saved(&path, None);
             continue;

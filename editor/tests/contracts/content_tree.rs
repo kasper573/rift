@@ -69,6 +69,7 @@ fn a_folder_lists_its_folders_first_then_its_files_each_by_name() {
     let mut editor = support::open(camp(), &scratch);
     rows::new_folder(&mut editor, "").expect("a folder");
     rows::rename(&mut editor, "folder", "zeta").expect("renamed");
+    editor.finish_busy();
 
     let listed = content_tree::listed(&editor, "");
 
@@ -258,6 +259,7 @@ fn a_file_may_share_its_name_with_a_file_of_another_kind_beside_it_but_not_of_it
     let mut editor = support::open(camp(), &scratch);
     content_tree::new_file(&mut editor, "icons", "npc");
     rows::rename(&mut editor, "icons/npc.npc.json", "cap").expect("an npc beside cap.png");
+    editor.finish_busy();
     content_tree::new_file(&mut editor, "icons", "npc");
     let mut frames = Frames::new(egui::vec2(300.0, 900.0));
     let mut tree = |editor: &mut Editor, events: Vec<egui::Event>| {
@@ -360,7 +362,7 @@ fn deleting_a_file_can_point_what_named_it_at_another_in_one_step() {
     for group in &mut dialog.groups {
         group.decision = UsageDecision::Repoint(goblin.clone());
     }
-    rows::delete(&mut editor, &dialog).expect("deleted");
+    support::delete(&mut editor, dialog).expect("deleted");
 
     assert!(!support::files(&mut editor).contains(&orc));
     assert_eq!(support::residents(&mut editor), [goblin]);
@@ -390,7 +392,7 @@ fn deleting_files_removes_exactly_the_entries_that_named_them_wherever_they_sit(
     for group in &mut dialog.groups {
         group.decision = UsageDecision::Remove;
     }
-    rows::delete(&mut editor, &dialog).expect("deleted");
+    support::delete(&mut editor, dialog).expect("deleted");
 
     let kept: Vec<String> = before
         .into_iter()
@@ -431,7 +433,7 @@ fn deleting_refuses_to_take_entries_from_a_file_changed_on_disk_since_it_was_rea
     for group in &mut dialog.groups {
         group.decision = UsageDecision::Remove;
     }
-    let refused = rows::delete(&mut editor, &dialog);
+    let refused = support::delete(&mut editor, dialog);
 
     assert!(
         refused
@@ -471,7 +473,7 @@ fn deleting_a_file_refuses_to_point_what_named_it_where_the_game_would_refuse_it
     for group in &mut dialog.groups {
         group.decision = UsageDecision::Repoint(path("npc", "orc"));
     }
-    let refused = rows::delete(&mut editor, &dialog);
+    let refused = support::delete(&mut editor, dialog);
 
     assert!(
         refused
@@ -574,7 +576,7 @@ fn a_file_moved_on_disk_breaks_what_names_it_until_it_is_pointed_there_in_one_st
         .expect("a project")
         .moved_outside
         .clone();
-    assert_eq!(moves::repoint(&mut editor, &found), Ok(1));
+    assert_eq!(moves::repoint(&mut editor, &found), Ok(()));
     assert_eq!(support::residents(&mut editor), [moved]);
     assert!(support::settled(&mut editor).moved_outside.is_empty());
     editor.undo();
@@ -741,6 +743,7 @@ fn a_row_named_in_its_edit_box_shows_the_box_then_scrolls_to_wherever_its_new_na
     let made = rows::new_folder(&mut editor, "icons").expect("a new folder");
     content_tree::begin_rename(&mut editor, &made);
     let settle = |editor: &mut Editor, frames: &mut Frames| {
+        editor.finish_busy();
         (0..20)
             .map(|_| frames.run(Vec::new(), |ui| content_tree::show(editor, ui)))
             .last()

@@ -264,7 +264,12 @@ pub enum WorldLayer {
 }
 
 pub fn open(editor: &mut Editor, steps: &[SceneStep]) {
-    for step in steps {
+    for (at, step) in steps.iter().enumerate() {
+        if editor.busy.is_busy() {
+            let rest = steps[at..].to_vec();
+            editor.when_idle("Setting the scene", move |editor| open(editor, &rest));
+            return;
+        }
         open_one(editor, step);
     }
 }
@@ -367,13 +372,16 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
         SceneStep::Unfold { table, modules } => fold(editor, table, modules, false),
         SceneStep::Delete { key, repoint, .. } => {
             rows::delete_dialog(editor, vec![key.clone()]);
-            if let (Some(target), Some(ModalDialog::Delete(dialog))) =
-                (repoint, editor.dialogs.last_mut())
-            {
-                for group in &mut dialog.groups {
-                    group.decision = rows::UsageDecision::Repoint(target.clone());
+            let repoint = repoint.clone();
+            editor.when_idle("Setting the scene", move |editor| {
+                if let (Some(target), Some(ModalDialog::Delete(dialog))) =
+                    (repoint, editor.dialogs.last_mut())
+                {
+                    for group in &mut dialog.groups {
+                        group.decision = rows::UsageDecision::Repoint(target.clone());
+                    }
                 }
-            }
+            });
         }
         SceneStep::Duplicate { key, .. } => {
             if let Err(error) = rows::duplicate(editor, key) {

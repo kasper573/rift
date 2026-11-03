@@ -44,6 +44,7 @@ use crate::widgets::VIEW_PADDING;
 use crate::{content_tree, row_form, widgets};
 
 pub fn show(editor: &mut Editor, ctx: &Context) {
+    crate::busy::show(editor, ctx);
     editor.status.right.clear();
     shortcuts(editor, ctx);
     play::status(editor);
@@ -60,7 +61,9 @@ pub fn show(editor: &mut Editor, ctx: &Context) {
     if editor.project.is_some() {
         workspace(editor, &mut root);
         report::not_loaded(editor, ctx);
-        dropped_files(editor, ctx);
+        if !editor.busy.is_busy() {
+            dropped_files(editor, ctx);
+        }
     } else {
         start::show(editor, &mut root);
     }
@@ -70,6 +73,10 @@ pub fn show(editor: &mut Editor, ctx: &Context) {
     }
     toast(editor, ctx);
     if ctx.input(|i| i.viewport().close_requested()) && !editor.quit {
+        if editor.busy.is_busy() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            return;
+        }
         if editor.has_unsaved() {
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
         }

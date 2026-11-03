@@ -85,6 +85,7 @@ pub struct NewGameDialog {
     pub error: Option<String>,
 }
 
+#[derive(Clone)]
 pub enum NewGameSource {
     Template(String),
     Copy {

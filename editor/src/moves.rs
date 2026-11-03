@@ -157,9 +157,21 @@ pub fn plan(project: &Project, moves: &[PathMove], label: String) -> Result<Plan
     })
 }
 
-/// Points every reference to a path that moved on disk at where its file is now, as one step.
-/// Says how many references were rewritten.
-pub fn repoint(editor: &mut Editor, moved: &[MovedOutside]) -> Result<usize, String> {
+/// Points every reference to a path that moved on disk at where its file is now, as one step,
+/// once the folder's loads are in, saying how many references were rewritten.
+pub fn repoint(editor: &mut Editor, moved: &[MovedOutside]) -> Result<(), String> {
+    let moved = moved.to_vec();
+    editor.act_when_settled("Pointing references where their files are", move |editor| {
+        let count = repoint_settled(editor, &moved)?;
+        editor.toast(format!(
+            "{count} reference{} now name where their files are; Ctrl Z takes it back",
+            words::plural(count)
+        ));
+        Ok(())
+    })
+}
+
+fn repoint_settled(editor: &mut Editor, moved: &[MovedOutside]) -> Result<usize, String> {
     let project = settled(editor)?;
     let named: Vec<(&ContentUsage, String, String)> = moved
         .iter()

@@ -291,7 +291,9 @@ fn removing_what_another_file_names_is_refused_even_while_that_file_is_still_loa
         {
             edit.remove(file);
         }
-        editor.try_apply(edit).expect_err("refused")
+        let _ = editor.try_apply(edit);
+        editor.finish_busy();
+        editor.last_refusal.take().expect("refused").sentence()
     };
 
     let orc = path("model", "orc");

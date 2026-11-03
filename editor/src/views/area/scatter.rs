@@ -77,14 +77,17 @@ pub fn scatter(
         file_title(&frame.bundle)
     );
     let bundle = frame.bundle.clone();
-    if let modules::PlaceOutcome::Partly { reason, .. } = modules::place_modules(
+    modules::place_modules(
         editor,
         &bundle,
         vec![SceneNode::Module(ModuleNode::new(module))],
         &label,
-    ) {
-        editor.toast(reason);
-    }
+        |editor, outcome| {
+            if let modules::PlaceOutcome::Partly { reason, .. } = outcome {
+                editor.toast(reason);
+            }
+        },
+    );
 }
 
 pub fn overlay(editor: &Editor, painter: &egui::Painter, view_key: &str, frame: &AreaFrame) {

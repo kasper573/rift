@@ -29,6 +29,7 @@ use engine::systems::{self, GameSettings};
 
 use self::files::content_holding;
 use self::watch::FolderChange;
+use crate::busy::Progress;
 use crate::inbox::ChannelInbox;
 use crate::schema::SchemaShapes;
 use crate::unused::UnusedContent;
@@ -350,12 +351,21 @@ pub(crate) fn errors_in(report: &LoadReport, file: &str) -> Vec<(String, String)
 }
 
 impl Project {
-    pub fn open(root: &Path, shapes: Arc<SchemaShapes>) -> Result<Project, String> {
+    /// The game folder at `root` open to work on, its files listed and loaded, each step told to
+    /// `progress`.
+    pub fn open(
+        root: &Path,
+        shapes: Arc<SchemaShapes>,
+        progress: &Progress,
+    ) -> Result<Project, String> {
         if !root.join(SETTINGS_FILE).is_file() {
             return Err(format!("No {SETTINGS_FILE} in this folder"));
         }
         save::clean_leftovers(root);
-        let files = ProjectFiles::open(root, &|_| {}).map_err(|error| error.to_string())?;
+        progress.doing("Listing the folder's files", None);
+        let files = ProjectFiles::open(root, &|listed| progress.done(listed))
+            .map_err(|error| error.to_string())?;
+        progress.doing("Loading the game", None);
         let catalogue = NodeCatalogue::build();
         let mut project = Project {
             root: root.to_path_buf(),
@@ -442,11 +452,10 @@ impl Project {
         }
     }
 
-    /// What keeps the game from being played as it is now, though it loads to be worked on:
-    /// quests and shops out of a player's reach.
-    pub(crate) fn unplayable(&self) -> Option<LoadReport> {
-        let folder = Arc::new(self.files.clone());
-        systems::load_content(folder, "it can't be played yet", LoadPurpose::Check).err()
+    /// What finds, on any thread, what keeps the game from being played as it is now, though it
+    /// loads to be worked on: quests and shops out of a player's reach.
+    pub(crate) fn playable(&self) -> PlayableCheck {
+        PlayableCheck(self.files.clone())
     }
 
     pub fn loads(&self) -> bool {
@@ -499,20 +508,14 @@ impl Project {
         }
     }
 
-    /// Loads the files as they stand, held to every rule, waiting for it: for taking in what
-    /// changed on disk, when there is nothing to show yet anyway.
+    /// Loads the files as they stand afresh, held to every rule, in place of any load under way:
+    /// for taking in what changed on disk. What it finds comes in as from any load.
     pub fn reload(&mut self) {
         self.verifying = None;
         self.loading = None;
         self.stale = false;
         self.unverified = None;
-        match Loaded::of(&self.files, LoadPurpose::Check) {
-            Ok(loaded) => {
-                self.report = None;
-                self.install(loaded);
-            }
-            Err(report) => self.report = Some(report),
-        }
+        self.begin_load();
     }
 
     /// Whether an adopted edit's content is still loading.
@@ -586,6 +589,14 @@ impl Project {
         if std::mem::take(&mut self.stale) {
             self.begin_load();
         }
+    }
+
+    /// Whether applying `edit` must wait for the load under way: an edit that removes a file must
+    /// know what names it, which only a settled load's usages tell.
+    pub fn waits_on_load(&self, edit: &ContentEdit) -> bool {
+        self.loading()
+            && (edit.changes.iter().any(|change| change.bytes.is_none())
+                || !self.filled_folders(&edit.changes).is_empty())
     }
 
     /// The edit the last load took back, once: what the folder didn't load for after it.
@@ -730,30 +741,14 @@ impl Project {
         self.adopt(next);
     }
 
-    /// Refuses `edit` when loading the whole folder after it finds problems the folder doesn't
-    /// have now: the rules across files that `apply` leaves to the next load, checked up front
-    /// for an edit that reaches many files at once.
-    pub fn check(&self, edit: &ContentEdit) -> Result<(), Box<EditRefusal>> {
-        let Err(report) = load(&self.files.with(&edit.changes)) else {
-            return Ok(());
-        };
-        let known: HashSet<(String, &str, String)> = if self.loads() && !self.loading() {
-            HashSet::new()
-        } else {
-            load(&self.files)
-                .err()
-                .map(|report| report.errors.iter().map(error_key).collect())
-                .unwrap_or_default()
-        };
-        let introduced: Vec<LoadError> = report
-            .errors
-            .into_iter()
-            .filter(|error| !known.contains(&error_key(error)))
-            .collect();
-        if introduced.is_empty() {
-            Ok(())
-        } else {
-            Err(Box::new(EditRefusal::of_errors(&introduced)))
+    /// What refuses an edit, on any thread, when loading the whole folder after it finds
+    /// problems the folder doesn't have now: the rules across files that `apply` leaves to the
+    /// next load, checked up front for an edit that reaches many files at once.
+    pub fn checker(&self) -> EditChecker {
+        EditChecker {
+            clean: self.loads() && !self.loading(),
+            files: self.files.clone(),
+            known: OnceLock::new(),
         }
     }
 
@@ -884,59 +879,78 @@ impl Project {
         self.files.disk_hash(path)
     }
 
+    /// Writes every unsaved file to disk, waiting for the edits made since the last load to be
+    /// vouched for first.
     pub fn save(&mut self) -> Result<save::SaveOutcome, save::SaveError> {
         self.settle_unverified();
-        let outcome = save::save(&self.root, &mut self.files);
-        if outcome.is_ok() {
-            self.history.mark_saved();
-        }
-        outcome
+        let saved = self.saving().write(&Progress::default());
+        self.take_saved(saved)
     }
 
+    /// What writes the unsaved files to disk, on any thread, once the edits made since the last
+    /// load are vouched for; [`Project::take_saved`] takes in what it wrote.
+    pub fn saving(&self) -> save::Saving {
+        save::Saving {
+            root: self.root.clone(),
+            files: self.files.clone(),
+        }
+    }
+
+    pub fn take_saved(&mut self, saved: save::Saved) -> Result<save::SaveOutcome, save::SaveError> {
+        self.files = saved.files;
+        if saved.outcome.is_ok() {
+            self.history.mark_saved();
+        }
+        saved.outcome
+    }
+
+    /// Takes in what changed on disk as [`Project::take_outside`] does, waiting for every step:
+    /// the edits made since the last load to be vouched for, the disk to be read, and the folder
+    /// to load again.
     pub fn outside_changes(&mut self, change: FolderChange) -> OutsideChanges {
         self.settle_unverified();
+        let read = self.reading_disk(change).read(&Progress::default());
+        let changes = self.take_outside(read);
+        if !changes.taken.is_empty() {
+            self.settle();
+            self.reloaded_outside(changes.taken.len());
+        }
+        changes
+    }
+
+    /// What reads how the files `change` may touch stand on disk now, on any thread, once the
+    /// edits made since the last load are vouched for; [`Project::take_outside`] takes it in.
+    pub fn reading_disk(&self, change: FolderChange) -> DiskReading {
+        DiskReading {
+            root: self.root.clone(),
+            files: self.files.clone(),
+            change,
+        }
+    }
+
+    /// Takes in what changed on disk: a file unedited here is taken as the disk has it, an edited
+    /// one is a conflict. Files taken start the history over and the folder loading again; once
+    /// that load is in, [`Project::reloaded_outside`] says how it went.
+    pub fn take_outside(&mut self, read: DiskRead) -> OutsideChanges {
         let mut taken = Vec::new();
         let mut conflicts = Vec::new();
-        let candidates: Vec<(String, Option<OnDisk>)> = match change {
-            FolderChange::Files(paths) => self
-                .held_by(paths)
-                .into_iter()
-                .map(|path| {
-                    let now = OnDisk::at(&self.root.join(&path));
-                    (path, now)
-                })
-                .collect(),
-            FolderChange::Unknown => {
-                let listed: BTreeMap<String, OnDisk> = files::list(&self.root, &|_| {})
-                    .map(|listed| listed.into_iter().collect())
-                    .unwrap_or_default();
-                let mut all: BTreeSet<String> = listed.keys().cloned().collect();
-                all.extend(self.files.on_disk_under("").cloned());
-                all.into_iter()
-                    .map(|path| {
-                        let now = listed.get(&path).copied();
-                        (path, now)
-                    })
-                    .collect()
-            }
-        };
-        for (path, now) in candidates {
-            if now == self.files.on_disk(&path) {
-                continue;
-            }
-            if self.files.differs_from_disk(&path) {
-                self.files.disk_moved_on(&path, now);
-                conflicts.push(FileConflict {
-                    disk: read_entry(&self.root, &path),
-                    file: path,
-                });
-            } else {
-                self.files.take_from_disk(&path, now);
-                taken.push(path);
+        for change in read.changes {
+            match change.conflict {
+                Some(disk) => {
+                    self.files.disk_moved_on(&change.path, change.now);
+                    conflicts.push(FileConflict {
+                        file: change.path,
+                        disk,
+                    });
+                }
+                None => {
+                    self.files.take_from_disk(&change.path, change.now);
+                    taken.push(change.path);
+                }
             }
         }
         if !taken.is_empty() {
-            self.reload_after_outside(taken.len());
+            self.reload_after_outside();
         }
         OutsideChanges { taken, conflicts }
     }
@@ -959,44 +973,23 @@ impl Project {
         filled
     }
 
-    /// Every file and kept folder a change to `paths` may touch: each path itself and, for a
-    /// folder or a bundle, everything it holds on disk and held before.
-    fn held_by(&self, paths: Vec<String>) -> Vec<String> {
-        let mut held: BTreeSet<String> = BTreeSet::new();
-        for path in paths {
-            let inside = files::folder_entry(&path);
-            held.extend(self.files.paths_under(&inside).cloned());
-            held.extend(self.files.on_disk_under(&inside).cloned());
-            let on_disk = self.root.join(&path);
-            if on_disk.is_dir() {
-                let walked = files::list(&on_disk, &|_| {}).unwrap_or_default();
-                held.extend(
-                    walked
-                        .into_iter()
-                        .map(|(file, _)| format!("{inside}{file}")),
-                );
-                if files::empty_folder(&on_disk).unwrap_or(false) {
-                    held.insert(inside);
-                }
-            } else {
-                held.insert(path);
-            }
-        }
-        held.into_iter().collect()
-    }
-
+    /// Takes the disk's side of `conflict`, once the edits made since the last load are vouched
+    /// for, starting the folder loading again as [`Project::take_outside`] does.
     pub(crate) fn take_disk(&mut self, conflict: &FileConflict) {
-        self.settle_unverified();
         let now = self.files.on_disk(&conflict.file);
         self.files.take_from_disk(&conflict.file, now);
-        self.reload_after_outside(1);
+        self.reload_after_outside();
     }
 
-    /// Files rewritten from outside start the history over and are loaded again; if that load
-    /// fails, the count says how many files the failure came in with.
-    fn reload_after_outside(&mut self, rewrote: usize) {
+    /// Files rewritten from outside start the history over and are loaded again.
+    fn reload_after_outside(&mut self) {
         self.history.reset();
         self.reload();
+    }
+
+    /// Notes how the load after files were rewritten from outside went, once it is in: if it
+    /// failed, `rewrote` says how many files the failure came in with.
+    pub fn reloaded_outside(&mut self, rewrote: usize) {
         self.outside_rewrote = if self.report.is_some() { rewrote } else { 0 };
         self.moved_outside = match self.report {
             Some(_) => moved_outside(&self.usages, &self.files),
@@ -1102,9 +1095,149 @@ fn moved_outside(usages: &ContentUsages, files: &ProjectFiles) -> Vec<MovedOutsi
     moved
 }
 
+/// The files as they stand, to load whole as an edit would leave them.
+pub struct EditChecker {
+    files: ProjectFiles,
+    /// Whether the files load whole as they stand, so an edit may keep no problem of theirs.
+    clean: bool,
+    /// The problems the files have as they stand, once worked out.
+    known: OnceLock<HashSet<(String, &'static str, String)>>,
+}
+
+impl EditChecker {
+    /// Refuses `edit` when the folder loaded after it has problems it doesn't have now.
+    pub fn check(&self, edit: &ContentEdit) -> Result<(), Box<EditRefusal>> {
+        let Err(report) = load(&self.files.with(&edit.changes)) else {
+            return Ok(());
+        };
+        let known = self.known.get_or_init(|| {
+            if self.clean {
+                return HashSet::new();
+            }
+            load(&self.files)
+                .err()
+                .map(|report| report.errors.iter().map(error_key).collect())
+                .unwrap_or_default()
+        });
+        let introduced: Vec<LoadError> = report
+            .errors
+            .into_iter()
+            .filter(|error| !known.contains(&error_key(error)))
+            .collect();
+        if introduced.is_empty() {
+            Ok(())
+        } else {
+            Err(Box::new(EditRefusal::of_errors(&introduced)))
+        }
+    }
+}
+
+/// The files as they stand, to be loaded as a play-test would.
+pub(crate) struct PlayableCheck(ProjectFiles);
+
+impl PlayableCheck {
+    /// What keeps the files from being played, when anything does.
+    pub(crate) fn run(self) -> Option<LoadReport> {
+        let folder = Arc::new(self.0);
+        systems::load_content(folder, "it can't be played yet", LoadPurpose::Check).err()
+    }
+}
+
 pub struct OutsideChanges {
     pub taken: Vec<String>,
     pub conflicts: Vec<FileConflict>,
+}
+
+/// The files a change on disk may touch, to be read as they stand there now.
+pub struct DiskReading {
+    root: PathBuf,
+    files: ProjectFiles,
+    change: FolderChange,
+}
+
+/// How the files a change on disk touched stand there, against the files as the editor holds them.
+pub struct DiskRead {
+    changes: Vec<DiskChange>,
+}
+
+/// A file that stands on disk otherwise than the editor knew it to: `now` as it stands, and the
+/// disk's side of a conflict when the file is edited here too.
+struct DiskChange {
+    path: String,
+    now: Option<OnDisk>,
+    conflict: Option<Option<FileBytes>>,
+}
+
+impl DiskReading {
+    pub fn read(self, progress: &Progress) -> DiskRead {
+        let DiskReading {
+            root,
+            files,
+            change,
+        } = self;
+        let candidates: Vec<(String, Option<OnDisk>)> = match change {
+            FolderChange::Files(paths) => held_by(&root, &files, paths)
+                .into_iter()
+                .map(|path| {
+                    let now = OnDisk::at(&root.join(&path));
+                    (path, now)
+                })
+                .collect(),
+            FolderChange::Unknown => {
+                progress.doing("Listing the folder's files", None);
+                let listed: BTreeMap<String, OnDisk> =
+                    files::list(&root, &|listed| progress.done(listed))
+                        .map(|listed| listed.into_iter().collect())
+                        .unwrap_or_default();
+                let mut all: BTreeSet<String> = listed.keys().cloned().collect();
+                all.extend(files.on_disk_under("").cloned());
+                all.into_iter()
+                    .map(|path| {
+                        let now = listed.get(&path).copied();
+                        (path, now)
+                    })
+                    .collect()
+            }
+        };
+        let changes = candidates
+            .into_iter()
+            .filter(|(path, now)| *now != files.on_disk(path))
+            .map(|(path, now)| DiskChange {
+                conflict: files
+                    .differs_from_disk(&path)
+                    .then(|| read_entry(&root, &path)),
+                path,
+                now,
+            })
+            .collect();
+        DiskRead { changes }
+    }
+}
+
+/// Every file and kept folder a change to `paths` may touch: each path itself and, for a folder or
+/// a bundle, everything it holds on disk and held before.
+fn held_by(root: &Path, files: &ProjectFiles, paths: Vec<String>) -> Vec<String> {
+    let mut held: BTreeSet<String> = BTreeSet::new();
+    for path in paths {
+        let inside = files::folder_entry(&path);
+        held.extend(files.paths_under(&inside).cloned());
+        held.extend(files.on_disk_under(&inside).cloned());
+        let on_disk = root.join(&path);
+        if on_disk.is_dir() {
+            let walked = files::list(&on_disk, &|_| {}).unwrap_or_default();
+            held.extend(
+                walked
+                    .into_iter()
+                    .map(|(file, _)| format!("{inside}{file}")),
+            );
+            if files::empty_folder(&on_disk).unwrap_or(false) {
+                held.insert(inside);
+            }
+        } else {
+            held.insert(path);
+        }
+    }
+    held.into_iter().collect()
 }
 
 #[derive(Clone)]
@@ -1141,7 +1274,7 @@ pub(crate) fn background() -> &'static rayon::ThreadPool {
 
 /// Lets go of `value` on the background pool: content let go of holds so much that freeing it
 /// would hold up a frame.
-fn drop_in_background<T: Send + 'static>(value: T) {
+pub(crate) fn drop_in_background<T: Send + 'static>(value: T) {
     background().spawn(move || drop(value));
 }
 
