@@ -13,8 +13,8 @@ use engine::core::content::{
 use engine::systems::registry;
 use imbl::ordmap::DiffItem;
 use imbl::{OrdMap, OrdSet};
-use quick_cache::Weighter;
 use quick_cache::sync::Cache;
+use quick_cache::{Options, OptionsBuilder, Weighter};
 use rayon::prelude::*;
 
 pub use super::index::FolderIndex;
@@ -493,8 +493,18 @@ struct DiskCache {
 impl DiskCache {
     fn new() -> DiskCache {
         DiskCache {
-            bytes: Cache::with_weighter(ENTRIES_CACHED, BYTES_CACHED, ByteWeight),
-            json: Cache::with_weighter(ENTRIES_CACHED, BYTES_CACHED, ByteWeight),
+            bytes: Cache::with_options(
+                weighed(),
+                ByteWeight,
+                Default::default(),
+                Default::default(),
+            ),
+            json: Cache::with_options(
+                weighed(),
+                ByteWeight,
+                Default::default(),
+                Default::default(),
+            ),
             hashes: Cache::new(ENTRIES_CACHED),
         }
     }
@@ -504,6 +514,20 @@ impl DiskCache {
 /// text, the files keep at most.
 const BYTES_CACHED: u64 = 512 << 20;
 const ENTRIES_CACHED: usize = 1 << 16;
+
+/// How a cache weighed by bytes holds up to [`BYTES_CACHED`] of them. A cache admits nothing
+/// heavier than one shard's share of its weight, so it keeps to few shards, each big enough for a
+/// whole scene of a big area.
+fn weighed() -> Options {
+    OptionsBuilder::new()
+        .estimated_items_capacity(ENTRIES_CACHED)
+        .weight_capacity(BYTES_CACHED)
+        .shards(WEIGHED_SHARDS)
+        .build()
+        .expect("the options set every capacity")
+}
+
+const WEIGHED_SHARDS: usize = 4;
 
 /// A file's JSON, with the size of the text it was parsed from.
 #[derive(Clone)]
