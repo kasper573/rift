@@ -65,10 +65,9 @@ pub const CLIP: Millis = Millis(300.0);
 /// When a declared model's attack lands.
 pub const APEX: Millis = Millis(100.0);
 
-/// The ground a declared skeleton's walk, run and sprint cover, at scale 1.
+/// The ground a declared skeleton's walk and run cover, at scale 1.
 pub const WALK_PACE: MetersPerSec = MetersPerSec(Meters(1.0));
 pub const RUN_PACE: MetersPerSec = MetersPerSec(Meters(3.0));
-pub const SPRINT_PACE: MetersPerSec = MetersPerSec(Meters(6.0));
 
 /// The heights every declared area's ground spans.
 pub const HEIGHTS: HeightRange = HeightRange {
@@ -324,8 +323,8 @@ impl Game {
 
     /// A skeleton of the test rig carrying `clips`, each a file of its own at [`clip_on`], of
     /// `fields` over the plain skeleton's: a right and a left hand, a base set playing each
-    /// action's clip of its name, the attack landing at [`APEX`], its walk, run and sprint covering
-    /// [`WALK_PACE`], [`RUN_PACE`] and [`SPRINT_PACE`].
+    /// action's clip of its name, the attack landing at [`APEX`], its walk and run covering
+    /// [`WALK_PACE`] and [`RUN_PACE`].
     pub fn skeleton_of(self, name: &str, clips: &[(&str, Seconds)], fields: Value) -> Game {
         let base: serde_json::Map<String, Value> = Action::VARIANTS
             .iter()
@@ -349,7 +348,6 @@ impl Game {
             "paces": [
                 paced("walk", WALK_PACE),
                 paced("run", RUN_PACE),
-                paced("sprint", SPRINT_PACE),
             ],
             "easing": { "turn": 0.12, "crossfade": 0.1, "clasp": 0.15 },
         });
@@ -946,6 +944,7 @@ pub fn look() -> Look {
                 middle: Meters(28.0),
                 wide: Meters(40.0),
             },
+            turn_ease: Seconds(0.1),
             zoom_ease: Seconds(0.2),
         },
         picture: PictureGrade {

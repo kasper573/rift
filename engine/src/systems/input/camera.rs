@@ -1,5 +1,6 @@
 //! Steering the camera: keys turn it a step, tilt it a step and bring it home, the wheel zooms
-//! it, and dragging with the middle button turns it freely.
+//! it, and moving the pointer while turning or tilting it is held turns or tilts it freely, the
+//! camera trailing the pointer as it eases.
 
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
@@ -11,7 +12,7 @@ use crate::core::render::{CameraFraming, CameraRig};
 use crate::core::units::Degrees;
 use crate::systems::screen::ClientScreen;
 
-/// How far the camera turns for a pixel of middle-button drag.
+/// How far the camera turns or tilts for a pixel the pointer moves while it is held to.
 const DRAG_TURN: Degrees = Degrees(0.4);
 /// How many scrolled lines take the zoom one step.
 const LINES_PER_STEP: f32 = 1.0;
@@ -72,10 +73,9 @@ fn steer_by_pointer(world: &mut World) {
         MouseScrollUnit::Line => scroll.delta.y / LINES_PER_STEP,
         MouseScrollUnit::Pixel => scroll.delta.y / PIXELS_PER_STEP,
     };
-    let dragged = world
-        .resource::<ButtonInput<MouseButton>>()
-        .pressed(MouseButton::Middle)
-        .then(|| world.resource::<AccumulatedMouseMotion>().delta.x);
+    let moved = world.resource::<AccumulatedMouseMotion>().delta;
+    let turned = map::pressed(world, InputAction::TurnCamera).then_some(moved.x);
+    let tilted = map::pressed(world, InputAction::TiltCamera).then_some(moved.y);
     let mut gathered = world.resource_mut::<Scrolled>();
     gathered.0 += steps;
     let zoom = gathered.0.trunc();
@@ -90,9 +90,14 @@ fn steer_by_pointer(world: &mut World) {
             rig.zoom_out();
         }
     }
-    if let Some(pixels) = dragged
+    if let Some(pixels) = turned
         && pixels != 0.0
     {
-        rig.turn_now(Degrees(-pixels * DRAG_TURN.0));
+        rig.turn(Degrees(-pixels * DRAG_TURN.0));
+    }
+    if let Some(pixels) = tilted
+        && pixels != 0.0
+    {
+        rig.tilt(Degrees(pixels * DRAG_TURN.0));
     }
 }

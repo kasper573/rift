@@ -902,6 +902,7 @@ fn check_look(check: &mut RowCheck, look: &Look) {
         "meters",
     );
     check.at_least("/look/camera/zooms/close", zooms.close.0, 0.1, "meters");
+    check.at_least("/look/camera/turn_ease", camera.turn_ease.0, 0.0, "seconds");
     check.at_least("/look/camera/zoom_ease", camera.zoom_ease.0, 0.0, "seconds");
     check.at_least(
         "/look/clearing/fades",

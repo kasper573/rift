@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "909931ef",
+  "content_version": "ac05f392",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -126,6 +126,7 @@
         "middle": 28.0,
         "wide": 40.0
       },
+      "turn_ease": 0.1,
       "zoom_ease": 0.2
     },
     "picture": {

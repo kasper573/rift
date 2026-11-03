@@ -12,11 +12,11 @@ use ui::{controls, sheet};
 use crate::core::audio::mix::{AudioCategory, AudioFader, AudioMix, AudioVolume};
 use crate::core::math::{Pos, Size};
 use crate::core::os::Profile;
-use crate::core::render::CameraPreferences;
 use crate::core::render::transition::{ScreenTransition, ScreenTransitionPreference};
 use crate::core::render::video::{self, VideoPreferences};
+use crate::core::render::{CameraPreferences, CameraRig};
 use crate::core::text::{LettersPerSecond, Typing};
-use crate::core::units::{Degrees, WindowPx};
+use crate::core::units::{Seconds, WindowPx};
 use crate::systems::hud::HudWindow;
 use crate::systems::input::map::{InputAction, KeyGesture};
 use crate::systems::interface::InterfaceIcon;
@@ -114,13 +114,26 @@ impl HudWindow for SettingsWindow {
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
         let typing = world.get_resource::<Typing>().copied();
+        let turn_ease = world
+            .get_resource::<CameraRig>()
+            .map(|rig| rig.framing().turn_ease);
         sheet::scroll(ui, egui::ScrollArea::vertical().auto_shrink(false), |ui| {
-            show_settings(ui, &mut world.resource_mut::<UserSettings>(), typing)
+            show_settings(
+                ui,
+                &mut world.resource_mut::<UserSettings>(),
+                typing,
+                turn_ease,
+            )
         });
     }
 }
 
-fn show_settings(ui: &mut Ui, settings: &mut Mut<UserSettings>, typing: Option<Typing>) {
+fn show_settings(
+    ui: &mut Ui,
+    settings: &mut Mut<UserSettings>,
+    typing: Option<Typing>,
+    turn_ease: Option<Seconds>,
+) {
     ui.spacing_mut().slider_width = SLIDER_WIDTH;
     sheet::section(ui, "Interface");
     let mut snapping = settings.snapping_enabled();
@@ -157,20 +170,11 @@ fn show_settings(ui: &mut Ui, settings: &mut Mut<UserSettings>, typing: Option<T
     ui.add_space(8.0);
     sheet::section(ui, "Camera");
     controls::form(ui, ("settings", "camera"), |ui| {
-        let label = ui.label("Turn speed");
-        let mut turn_speed = settings.camera.turn_speed.0;
-        if ui
-            .add(
-                egui::Slider::new(&mut turn_speed, TURN_SPEEDS.0..=TURN_SPEEDS.1)
-                    .suffix("°/s")
-                    .integer(),
-            )
-            .labelled_by(label.id)
-            .changed()
-        {
-            settings.camera.turn_speed = Degrees(turn_speed);
+        if let Some(turn_ease) = turn_ease {
+            let label = ui.label("Camera smoothing");
+            smoothing_slider(ui, settings, turn_ease, label.id);
+            ui.end_row();
         }
-        ui.end_row();
     });
     ui.add_space(8.0);
     sheet::section(ui, "Video");
@@ -215,6 +219,24 @@ fn text_speed_slider(
             settings.text.letters_per_second = Some(LettersPerSecond(speed.round()));
         }
         ui.label(theme::faint(format!("{:.0} letters/s", speed.round())));
+    });
+}
+
+fn smoothing_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, game: Seconds, label: egui::Id) {
+    let mut ease = smoothing(settings.camera.turn_ease, game).0;
+    ui.horizontal(|ui| {
+        if controls::slider(ui, &mut ease, SMOOTHINGS.0.0..=SMOOTHINGS.1.0)
+            .labelled_by(label)
+            .changed()
+        {
+            settings.camera.turn_ease = Some(Seconds((ease * 100.0).round() / 100.0));
+        }
+        let shown = if ease > 0.0 {
+            format!("{ease:.2} s")
+        } else {
+            "off".to_owned()
+        };
+        ui.label(theme::faint(shown));
     });
 }
 
@@ -394,25 +416,24 @@ struct SkillSettings {
     quick_cast: bool,
 }
 
-/// How slow or fast the camera may turn, in degrees a second.
-const TURN_SPEEDS: (f32, f32) = (45.0, 720.0);
+/// The least and most a player may smooth the camera's turns and tilts by: none at all, up to
+/// the ease of a slow cinematic camera.
+const SMOOTHINGS: (Seconds, Seconds) = (Seconds(0.0), Seconds(0.5));
 
-#[derive(Serialize, Deserialize)]
+#[derive(Serialize, Deserialize, Default)]
 struct CameraSettings {
-    #[serde(default = "default_turn_speed")]
-    turn_speed: Degrees,
+    /// None keeps the game's own smoothing.
+    #[serde(default)]
+    turn_ease: Option<Seconds>,
 }
 
-impl Default for CameraSettings {
-    fn default() -> CameraSettings {
-        CameraSettings {
-            turn_speed: default_turn_speed(),
-        }
-    }
+/// The ease the camera turns with for a player who `chose` one, or chose none.
+fn smoothing(chose: Option<Seconds>, game: Seconds) -> Seconds {
+    chose.map_or(game, within_smoothings)
 }
 
-fn default_turn_speed() -> Degrees {
-    CameraPreferences::default().turn_speed
+fn within_smoothings(chose: Seconds) -> Seconds {
+    Seconds(chose.0.clamp(SMOOTHINGS.0.0, SMOOTHINGS.1.0))
 }
 
 #[derive(Serialize, Deserialize, Default)]
@@ -442,13 +463,7 @@ fn apply(
     }
     *audio_mix = settings.sound;
     transition.0 = settings.screen.transition;
-    camera.turn_speed = Degrees(
-        settings
-            .camera
-            .turn_speed
-            .0
-            .clamp(TURN_SPEEDS.0, TURN_SPEEDS.1),
-    );
+    camera.turn_ease = settings.camera.turn_ease.map(within_smoothings);
 }
 
 /// Lines type at the game's pace, or the one its player chose within the game's bounds.

@@ -1,5 +1,3 @@
-use std::collections::BTreeMap;
-
 use bevy_ecs::entity::Entity;
 use engine::core::math::{Offset, Pos};
 use engine::core::units::{MeterPos, Meters};
@@ -7,8 +5,7 @@ use engine::systems::actor::{Action, Actor};
 use engine::systems::movement::{self, Bodies, HeardMove, MoveRequest, MoveSeq, position};
 use engine::systems::player::CommandLock;
 use serde_json::{Value, json};
-use strum::VariantArray;
-use testkit::{BODY, Game, Map, RUN_PACE, SPRINT_PACE, Sim, WALK_PACE, path, rig_clips};
+use testkit::{BODY, Game, Map, RUN_PACE, Sim, WALK_PACE, path, rig_clips};
 
 const TICKS: usize = 240;
 
@@ -330,33 +327,15 @@ fn the_server_owns_up_to_the_latest_move_asked_of_it_heeded_or_not() {
 
 #[test]
 fn a_walker_covers_ground_in_the_gait_whose_clip_covers_nearest_its_speed() {
-    let gaits = [Action::Walk, Action::Run, Action::Sprint];
-    let no_sprint = json!({
-        "base": { "clips": Action::VARIANTS
-            .iter()
-            .filter(|&&action| action != Action::Sprint)
-            .map(|action| (action.as_ref(), testkit::clip(action.as_ref())))
-            .collect::<BTreeMap<_, _>>() },
-        "paces": [
-            { "clip": testkit::clip("walk"), "pace": WALK_PACE.0.0 },
-            { "clip": testkit::clip("run"), "pace": RUN_PACE.0.0 },
-        ],
-    });
-    for (speed, sprints, gait) in [
-        (WALK_PACE.0.0 * 0.8, true, Action::Walk),
-        (RUN_PACE.0.0 * 0.85, true, Action::Run),
-        (SPRINT_PACE.0.0 * 0.85, true, Action::Sprint),
-        (SPRINT_PACE.0.0 * 0.85, false, Action::Run),
+    for (speed, gait) in [
+        (WALK_PACE.0.0 * 0.8, Action::Walk),
+        (RUN_PACE.0.0 * 0.85, Action::Run),
+        (RUN_PACE.0.0 * 2.0, Action::Run),
     ] {
-        let fields = if sprints {
-            json!({})
-        } else {
-            no_sprint.clone()
-        };
         let mut walk = Walk::on(
             Game::new()
                 .area("field", &Map::open(19, 19), json!([]))
-                .skeleton_of(BODY, &rig_clips(), fields)
+                .skeleton_of(BODY, &rig_clips(), json!({}))
                 .hero("field", 2.0, 9.0)
                 .edit("player", "hero", |hero| {
                     hero["stats"]["movement_speed"] = json!(speed)
@@ -372,15 +351,14 @@ fn a_walker_covers_ground_in_the_gait_whose_clip_covers_nearest_its_speed() {
                 .get::<Actor>(walk.player)
                 .expect("the walker")
                 .action;
-            if gaits.contains(&action) && !seen.contains(&action) {
+            if Action::GAITS.contains(&action) && !seen.contains(&action) {
                 seen.push(action);
             }
         }
         assert_eq!(
             seen,
             vec![gait],
-            "at {speed} m/s, with{} a sprint, the walker covers ground in one gait",
-            if sprints { "" } else { "out" }
+            "at {speed} m/s, the walker covers ground in one gait"
         );
     }
 }

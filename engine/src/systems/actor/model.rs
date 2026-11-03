@@ -499,7 +499,7 @@ pub struct Resolved<'a> {
     pub played: usize,
     pub length: Seconds,
     pub cues: &'a [Cue],
-    /// The ground the clip covers at scale 1, when it is played to walk, run or sprint.
+    /// The ground the clip covers at scale 1, when it is played to walk or run.
     pub pace: Option<MetersPerSec>,
 }
 

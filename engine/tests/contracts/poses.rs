@@ -98,11 +98,10 @@ fn game(placed: &str, pose: &str) -> Game {
             ("stand_up", SHIFT.seconds()),
         ])
         .collect();
-    let mut base: serde_json::Map<String, Value> = actor::Action::VARIANTS
+    let base: serde_json::Map<String, Value> = actor::Action::VARIANTS
         .iter()
         .map(|action| (action.as_ref().to_owned(), json!(clip(action.as_ref()))))
         .collect();
-    base.remove("sprint");
     Game::new()
         .area(
             "room",

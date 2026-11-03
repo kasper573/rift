@@ -203,6 +203,25 @@
         }
       ]
     },
+    "turn_camera": {
+      "label": "Turn the camera while held, as the pointer moves",
+      "bindings": [
+        {
+          "type": "mouse",
+          "button": "Right"
+        }
+      ]
+    },
+    "tilt_camera": {
+      "label": "Tilt the camera while held, as the pointer moves",
+      "bindings": [
+        {
+          "type": "mouse",
+          "button": "Right",
+          "ctrl": true
+        }
+      ]
+    },
     "choose_previous": {
       "label": "Move to the previous choice",
       "bindings": [

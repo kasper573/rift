@@ -52,6 +52,8 @@ pub enum InputAction {
     TiltUp,
     TiltDown,
     CameraHome,
+    TurnCamera,
+    TiltCamera,
     ChoosePrevious,
     ChooseNext,
     PickChoice,

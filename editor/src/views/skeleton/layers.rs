@@ -23,13 +23,7 @@ use crate::project::ContentEdit;
 use crate::tabs::shown_path;
 
 /// The actions a layer may run during: never a hit or a death, which play their clip alone.
-const CALM: [Action; 5] = [
-    Action::Idle,
-    Action::Walk,
-    Action::Run,
-    Action::Sprint,
-    Action::Talk,
-];
+const CALM: [Action; 4] = [Action::Idle, Action::Walk, Action::Run, Action::Talk];
 
 /// What the layers page keeps: the chosen layer, and the joint new entries start from.
 #[derive(Default)]

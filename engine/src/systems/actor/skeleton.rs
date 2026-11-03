@@ -244,7 +244,7 @@ pub struct SkeletonDef {
     pub build_sets: BTreeMap<BuildName, BuildSets>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub cues: Vec<ClipCues>,
-    /// How fast each clip a set plays to walk, run or sprint carries a body over the ground at scale
+    /// How fast each clip a set plays to walk or run carries a body over the ground at scale
     /// 1: the speed its planted feet slide back under it, or for a clip whose feet a layer plants, or
     /// that has none, the speed it looks right at. A body plays the gait whose clip covers nearest its
     /// speed, as fast as covers it exactly.
@@ -359,7 +359,7 @@ pub struct ClipCues {
     pub cues: Vec<Cue>,
 }
 
-/// The ground one clip covers at scale 1, wherever it plays to walk, run or sprint.
+/// The ground one clip covers at scale 1, wherever it plays to walk or run.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClipPace {
@@ -709,13 +709,7 @@ impl Layer {
 /// The actions a layer runs during when its entry names none: all but a hit and a death, which a
 /// keyed clip always plays alone.
 fn calm() -> Vec<Action> {
-    vec![
-        Action::Idle,
-        Action::Walk,
-        Action::Run,
-        Action::Sprint,
-        Action::Talk,
-    ]
+    vec![Action::Idle, Action::Walk, Action::Run, Action::Talk]
 }
 
 fn is_zero(value: &f32) -> bool {
@@ -1291,9 +1285,9 @@ impl SkeletonDef {
 
     /// The cell the sets name for `motion` in `stance` on a body of `build`, holding `pose` while
     /// idle, and where it was named: the first set of the ladder that names it; a move none names
-    /// plays the attack, a sprint none names the run, a pose's beginning or end none names its
-    /// idle. Every other action the base column names, as the loader holds it to; until it does,
-    /// none is named.
+    /// plays the attack, and a flinch, a gesture or a pose's beginning or end none names plays the
+    /// idle. Every required action the base column names, as the loader holds it to; until it
+    /// does, none is named.
     pub fn named(
         &self,
         build: Option<&BuildName>,
@@ -1308,19 +1302,16 @@ impl SkeletonDef {
                 .find_map(|(set, naming)| Some((cell(set)?, *naming)))
         };
 
-        let action = |action: Action| {
-            let action = if action.required() || self.names(build, stance, action) {
-                action
-            } else {
-                Action::Run
-            };
-            first(&|set| set.clips.get(&action))
-        };
+        let action = |action: Action| first(&|set| set.clips.get(&action));
         match motion {
             Motion::Action(Action::Idle) => {
                 first(&|set| set.poses.get(&pose)).or_else(|| action(Action::Idle))
             }
-            Motion::Action(acted) => action(*acted),
+            Motion::Action(acted) => action(*acted).or_else(|| {
+                action(Action::Idle)
+                    .filter(|_| !acted.required())
+                    .map(fallen_back)
+            }),
             Motion::Begin(posed) => first(&|set| set.begins.get(posed))
                 .or_else(|| self.named(build, stance, &Motion::Action(Action::Idle), *posed)),
             Motion::End(posed) => {

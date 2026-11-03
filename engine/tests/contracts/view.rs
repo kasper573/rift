@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::iter;
 use std::time::{Duration, Instant};
 
 use bevy::animation::AnimationPlugin;
@@ -25,9 +26,13 @@ use engine::core::render::world::fade::Fades;
 use engine::core::render::world::layers::JointLayersPlugin;
 use engine::core::render::world::lod::{MeshLevels, Simplifier};
 use engine::core::render::world::material::{FadeStyle, WorldMaterial, world_material};
-use engine::core::render::{Animator, CameraRig, capsule_hit, facing_rotation, world_point};
+use engine::core::render::{
+    Animator, CameraPreferences, CameraRig, capsule_hit, facing_rotation, world_point,
+};
 use engine::core::text::Typewriter;
-use engine::core::units::{Degrees, MeterPos, Meters, MetersPerSec, PlaybackRate, Radians};
+use engine::core::units::{
+    Degrees, MeterPos, Meters, MetersPerSec, PlaybackRate, Radians, Seconds,
+};
 use engine::core::vfx::render::VfxMaterialsPlugin;
 use engine::systems::actor::held::Held;
 use engine::systems::actor::render::{self, HeldProp, RenderActor};
@@ -57,6 +62,66 @@ fn hill() -> Heightfield {
 }
 
 #[test]
+fn the_camera_eases_toward_a_turn_and_comes_to_rest_on_it_at_any_frame_rate() {
+    let framing = testkit::look().camera;
+    let turned = |frames: &[f32], preferences: &CameraPreferences| {
+        let mut rig = CameraRig::new(framing);
+        rig.turn(Degrees(90.0));
+        rig.tilt(Degrees(-10.0));
+        let mut yaws = Vec::new();
+        for &frame in frames {
+            rig.ease(Seconds(frame), preferences);
+            yaws.push(rig.yaw().0);
+        }
+        (rig, yaws)
+    };
+    let smooth = CameraPreferences::default();
+    let wanted = Degrees(90.0).radians().0;
+
+    let (_, yaws) = turned(&[1.0 / 60.0; 30], &smooth);
+    let steps: Vec<f32> = iter::once(yaws[0])
+        .chain(yaws.windows(2).map(|pair| pair[1] - pair[0]))
+        .collect();
+    assert!(
+        yaws[0] > 0.0 && yaws[0] < wanted / 2.0,
+        "the camera sets off toward the turn rather than jumping onto it: {yaws:?}"
+    );
+    assert!(
+        steps
+            .windows(2)
+            .all(|pair| pair[1] > 0.0 && pair[1] < pair[0]),
+        "it keeps turning, slower as it nears: {steps:?}"
+    );
+
+    let (slow, _) = turned(&[1.0 / 30.0; 6], &smooth);
+    let (fast, _) = turned(&[1.0 / 120.0; 24], &smooth);
+    assert!(
+        (slow.yaw().0 - fast.yaw().0).abs() < 1e-3
+            && (slow.pitch().0 - fast.pitch().0).abs() < 1e-3,
+        "a fifth of a second turns it alike at 30 and 120 frames a second: {:?} {:?}",
+        (slow.yaw(), slow.pitch()),
+        (fast.yaw(), fast.pitch())
+    );
+
+    let (rested, _) = turned(&[1.0 / 60.0; 600], &smooth);
+    assert!(
+        rested.settled() && rested.yaw().0 == wanted,
+        "given time, it comes to rest on the turn: {:?}",
+        rested.yaw()
+    );
+
+    let unsmoothed = CameraPreferences {
+        turn_ease: Some(Seconds(0.0)),
+    };
+    let (at_once, _) = turned(&[1.0 / 60.0], &unsmoothed);
+    assert!(
+        at_once.yaw().0 == wanted,
+        "a player who turns smoothing off has the turn at once: {:?}",
+        at_once.yaw()
+    );
+}
+
+#[test]
 fn the_pointer_ray_lands_where_the_ground_shows() {
     let heights = hill();
     let bounds = SIZE.bounds();
@@ -68,8 +133,9 @@ fn the_pointer_ray_lands_where_the_ground_shows() {
     for (turned, tilted) in [(0.0, -25.0), (45.0, 0.0), (135.0, 15.0), (270.0, -10.0)] {
         let mut rig = CameraRig::new(testkit::look().camera);
         rig.look_at(Pos::new(14.0, 14.0), Meters(1.0));
-        rig.turn_now(Degrees(turned));
-        rig.tilt_now(Degrees(tilted));
+        rig.turn(Degrees(turned));
+        rig.tilt(Degrees(tilted));
+        rig.ease(Seconds(60.0), &CameraPreferences::default());
         let view = rig.view(WINDOW);
         for (at, name) in spots {
             let shown = view
@@ -640,6 +706,15 @@ fn a_standing_body_flinches_once_at_each_new_blow() {
             })
             .collect();
     base.insert("hurt".to_owned(), json!(testkit::clip("flinch")));
+    let stoic_base: serde_json::Map<String, serde_json::Value> =
+        <Action as strum::VariantArray>::VARIANTS
+            .iter()
+            .filter(|action| **action != Action::Hurt)
+            .map(|action| {
+                let clip = testkit::clip_on("stoic", action.as_ref());
+                (action.as_ref().to_owned(), json!(clip))
+            })
+            .collect();
     let game = Game::new()
         .area("field", &Map::open(5, 5), json!([]))
         .sfx("ow")
@@ -657,6 +732,12 @@ fn a_standing_body_flinches_once_at_each_new_blow() {
                 ],
             }),
         )
+        .skeleton_of(
+            "stoic",
+            &testkit::rig_clips(),
+            json!({ "base": { "clips": stoic_base } }),
+        )
+        .model_on("stoic", "stoic", 1.8, json!([]))
         .hero("field", 2.0, 2.0);
     let content = game.load();
     let mut app = App::new();
@@ -668,8 +749,9 @@ fn a_standing_body_flinches_once_at_each_new_blow() {
         .add_message::<PlaySfx>()
         .insert_resource(content.clone());
     let hero = testkit::Declared::declared::<ModelDef>(&content, "hero").expect("a hero");
+    let stoic = testkit::Declared::declared::<ModelDef>(&content, "stoic").expect("a stoic");
     let field = testkit::Declared::declared::<AreaDef>(&content, "field").expect("a field");
-    let mut body = |at: Pos<Meters>, blows: u32| {
+    let mut body = |model, at: Pos<Meters>, blows: u32| {
         app.world_mut()
             .spawn((
                 Actor {
@@ -679,7 +761,7 @@ fn a_standing_body_flinches_once_at_each_new_blow() {
                     attack_rate: PlaybackRate(1.0),
                     speed: MetersPerSec::default(),
                 },
-                Appearance::of(hero),
+                Appearance::of(model),
                 RenderActor {
                     facing: Radians(0.0),
                     action: Action::Idle,
@@ -690,8 +772,9 @@ fn a_standing_body_flinches_once_at_each_new_blow() {
             ))
             .id()
     };
-    let struck = body(Pos::new(1.5, 1.5), 0);
-    let arrived = body(Pos::new(3.5, 3.5), 3);
+    let struck = body(hero, Pos::new(1.5, 1.5), 0);
+    let arrived = body(hero, Pos::new(3.5, 3.5), 3);
+    let unflinching = body(stoic, Pos::new(2.5, 2.5), 0);
     let heard = |app: &mut App, frames: usize| {
         let mut heard = Vec::new();
         for _ in 0..frames {
@@ -715,12 +798,17 @@ fn a_standing_body_flinches_once_at_each_new_blow() {
         "no blow, no flinch: not even at blows landed before it was seen"
     );
     app.world_mut().entity_mut(struck).insert(Hurt(1));
+    app.world_mut().entity_mut(unflinching).insert(Hurt(1));
     let after_one = heard(&mut app, 12);
     app.world_mut().entity_mut(struck).insert(Hurt(2));
     app.world_mut().entity_mut(arrived).insert(Hurt(3));
     let after_two = heard(&mut app, 12);
     let at_struck = SfxPlace::World(Pos::new(1.5, 1.5));
-    assert_eq!(after_one, vec![at_struck], "a blow, a flinch, played once");
+    assert_eq!(
+        after_one,
+        vec![at_struck],
+        "a blow, a flinch, played once, by a body that has one"
+    );
     assert_eq!(after_two, vec![at_struck], "the next blow, the next flinch");
 }
 

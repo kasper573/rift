@@ -31,6 +31,10 @@ const FEWEST_PIXELS: f32 = 1.0;
 const REACH: f32 = 200.0;
 const MARCH_STEP: f32 = 0.25;
 const BISECTIONS: u32 = 12;
+/// How near the angle it eases to the camera comes to rest on it, too near to see.
+const REST_ANGLE: Radians = Radians(0.001);
+/// How near the distance it eases to the camera comes to rest on it, too near to see.
+const REST_DISTANCE: Meters = Meters(0.01);
 
 /// How the camera frames the world.
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -49,7 +53,10 @@ pub struct CameraFraming {
     pub tilt_step: Degrees,
     /// How far it stands back from what it looks at, at each zoom.
     pub zooms: Zooms,
-    /// How long a zoom step takes to ease over.
+    /// How long it takes to catch up with a turn or a tilt: in this long it closes nearly two
+    /// thirds of the way, and slows as it nears, so it trails a drag smoothly and eases out after.
+    pub turn_ease: Seconds,
+    /// How long it takes to catch up with a zoom step, in the same way.
     pub zoom_ease: Seconds,
 }
 
@@ -285,18 +292,11 @@ pub struct CameraRig {
 }
 
 /// How the player likes the camera to move.
-#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct CameraPreferences {
-    /// Degrees a second the camera turns at.
-    pub turn_speed: Degrees,
-}
-
-impl Default for CameraPreferences {
-    fn default() -> CameraPreferences {
-        CameraPreferences {
-            turn_speed: Degrees(180.0),
-        }
-    }
+    /// How long the camera takes to catch up with a turn or a tilt, when the player chose rather
+    /// than keep the game's own [`CameraFraming::turn_ease`].
+    pub turn_ease: Option<Seconds>,
 }
 
 impl CameraRig {
@@ -337,12 +337,6 @@ impl CameraRig {
         self.wanted_yaw = Radians(self.wanted_yaw.0 + by.radians().0);
     }
 
-    /// Turns the camera straight away, as a drag does.
-    pub fn turn_now(&mut self, by: Degrees) {
-        self.turn(by);
-        self.yaw = self.wanted_yaw;
-    }
-
     /// Tilts the camera `by` degrees further down, or up toward the horizon when negative, within
     /// its limits.
     pub fn tilt(&mut self, by: Degrees) {
@@ -350,12 +344,6 @@ impl CameraRig {
             self.framing.lowest_pitch.radians().0,
             self.framing.highest_pitch.radians().0,
         ));
-    }
-
-    /// Tilts the camera straight away.
-    pub fn tilt_now(&mut self, by: Degrees) {
-        self.tilt(by);
-        self.pitch = self.wanted_pitch;
     }
 
     pub fn home(&mut self) {
@@ -413,27 +401,41 @@ impl CameraRig {
         View::new(self.transform(), viewport, self.framing.fov)
     }
 
-    fn ease(&mut self, dt: Seconds, preferences: &CameraPreferences) {
+    /// Moves the camera `dt` further toward where it was last asked to go, alike at any frame rate.
+    pub fn ease(&mut self, dt: Seconds, preferences: &CameraPreferences) {
+        let turned = caught(dt, preferences.turn_ease.unwrap_or(self.framing.turn_ease));
+        self.yaw = Radians(approach(
+            self.yaw.0,
+            self.wanted_yaw.0,
+            turned,
+            REST_ANGLE.0,
+        ));
+        self.pitch = Radians(approach(
+            self.pitch.0,
+            self.wanted_pitch.0,
+            turned,
+            REST_ANGLE.0,
+        ));
+        let zoomed = caught(dt, self.framing.zoom_ease);
         let wanted = self.zoom.distance(&self.framing.zooms);
-        let turn = preferences.turn_speed.radians().0 * dt.0;
-        let toward = |from: Radians, to: Radians| {
-            let apart = to.0 - from.0;
-            if apart.abs() <= turn {
-                to
-            } else {
-                Radians(from.0 + turn.copysign(apart))
-            }
-        };
-        self.yaw = toward(self.yaw, self.wanted_yaw);
-        self.pitch = toward(self.pitch, self.wanted_pitch);
-        let caught = (dt.0 / self.framing.zoom_ease.0.max(f32::EPSILON)).min(1.0);
-        let left = wanted.0 - self.distance.0;
-        self.distance = if left.abs() < 0.01 {
-            wanted
-        } else {
-            Meters(self.distance.0 + left * caught)
-        };
+        self.distance = Meters(approach(self.distance.0, wanted.0, zoomed, REST_DISTANCE.0));
     }
+}
+
+/// How much of what is left an ease of `ease` closes over `dt`: the same over one long frame as
+/// over many short ones.
+fn caught(dt: Seconds, ease: Seconds) -> f32 {
+    if ease.0 > 0.0 {
+        1.0 - (-dt.0 / ease.0).exp()
+    } else {
+        1.0
+    }
+}
+
+/// `from` moved `caught` of the way to `to`, or onto it once within `rest`.
+fn approach(from: f32, to: f32, caught: f32, rest: f32) -> f32 {
+    let moved = from + (to - from) * caught;
+    if (to - moved).abs() < rest { to } else { moved }
 }
 
 /// A camera's projection of the world onto a viewport, as the renderer and everything that places

@@ -97,7 +97,6 @@ pub enum Action {
     Idle,
     Walk,
     Run,
-    Sprint,
     Attack,
     #[serde(rename = "death")]
     #[strum(serialize = "death")]
@@ -109,7 +108,7 @@ pub enum Action {
 
 impl Action {
     /// The gaits a body may cover ground in, slowest first.
-    pub const GAITS: [Action; 3] = [Action::Walk, Action::Run, Action::Sprint];
+    pub const GAITS: [Action; 2] = [Action::Walk, Action::Run];
 
     /// Whether the action's clip marks the moment its hit lands.
     pub fn takes_apex(self) -> bool {
@@ -121,11 +120,10 @@ impl Action {
         Action::GAITS.contains(&self)
     }
 
-    /// Whether every skeleton's base set must name a clip for the action: all but the sprint, which
-    /// a skeleton without one never breaks into, and the flinch, which a body without one never
-    /// shows.
+    /// Whether every skeleton's base set must name a clip for the action: all but the flinch, which
+    /// a body without one never shows.
     pub fn required(self) -> bool {
-        !matches!(self, Action::Sprint | Action::Hurt)
+        self != Action::Hurt
     }
 }
 
