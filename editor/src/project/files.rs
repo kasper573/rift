@@ -1,9 +1,10 @@
+use std::collections::HashSet;
 use std::fmt;
 use std::io;
 use std::ops::Bound;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
-use std::sync::{Arc, LazyLock, OnceLock};
+use std::sync::{Arc, LazyLock, Mutex, OnceLock, PoisonError};
 use std::time::SystemTime;
 
 use engine::core::content::files;
@@ -278,6 +279,35 @@ impl ProjectFiles {
         }
     }
 
+    /// Whether the JSON of the file at `path` is at hand, so asking for it parses nothing: the
+    /// first ask for a file not yet parsed parses it in the background, so a large file never
+    /// holds up a frame.
+    pub fn json_at_hand(&self, path: &str) -> bool {
+        let stamp = match self.entries.get(path) {
+            Some(Entry::Edited(edited)) if edited.json.get().is_none() => edited.stamp,
+            Some(Entry::OnDisk { stamp, .. }) if !self.cache.json.contains_key(stamp) => *stamp,
+            _ => return true,
+        };
+        let parsing = &self.cache.parsing;
+        if parsing
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(stamp)
+        {
+            let (files, path) = (self.clone(), path.to_owned());
+            super::background().spawn(move || {
+                files.json(&path);
+                files
+                    .cache
+                    .parsing
+                    .lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .remove(&stamp);
+            });
+        }
+        false
+    }
+
     pub fn json_owned(&self, path: &str) -> Option<serde_json::Value> {
         self.json(path).map(|value| (*value).clone())
     }
@@ -488,6 +518,8 @@ struct DiskCache {
     json: Cache<FileStamp, ParsedJson, ByteWeight>,
     /// The hash of each file read from disk, by its path and how it stood there.
     hashes: Cache<(String, DiskFile), String>,
+    /// The files whose JSON is being parsed in the background.
+    parsing: Mutex<HashSet<FileStamp>>,
 }
 
 impl DiskCache {
@@ -506,6 +538,7 @@ impl DiskCache {
                 Default::default(),
             ),
             hashes: Cache::new(ENTRIES_CACHED),
+            parsing: Mutex::default(),
         }
     }
 }

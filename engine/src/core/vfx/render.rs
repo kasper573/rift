@@ -648,14 +648,20 @@ impl From<&SurfaceVfx> for VfxShaderKey {
     }
 }
 
-/// Holds a compiled shader under the uuid of its name, which no other load's shader shares.
+/// Holds a compiled shader under the uuid of its name.
 fn compiled(assets: &mut Assets<Shader>, shader: Shader, name: &str) -> Handle<Shader> {
+    let handle = named(name);
+    assets
+        .insert(handle.id(), shader)
+        .expect("a uuid asset id never goes stale");
+    handle
+}
+
+/// The handle of the shader asset named `name`.
+fn named(name: &str) -> Handle<Shader> {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     name.hash(&mut hasher);
     let uuid = Uuid::from_u128(u128::from(hasher.finish()) << 64 | u128::from(name.len() as u64));
-    assets
-        .insert(AssetId::Uuid { uuid }, shader)
-        .expect("a uuid asset id never goes stale");
     Handle::Uuid(uuid, PhantomData)
 }
 
@@ -759,13 +765,12 @@ struct VfxAssets {
     blank: Handle<Image>,
 }
 
-// A shader asset is keyed by its path, so each load of the content gets paths of its own and the
-// pipelines compiled for the last load are not reused for new text.
+// A shader asset is keyed by its path and its text, so a load of the content keeps the pipelines
+// compiled for every shader whose text it didn't change, and compiles anew the ones it did.
 #[derive(Resource)]
 struct VfxShaders {
     by_id: HashMap<VfxShaderId, Handle<Shader>>,
     sprite: Handle<Shader>,
-    generation: u32,
 }
 
 /// The client's side of an instance or an overlay: one render piece per layer, children of the
@@ -825,7 +830,6 @@ impl FromWorld for VfxShaders {
                 Shader::from_wgsl(composed, name),
                 name,
             ),
-            generation: 0,
         }
     }
 }
@@ -835,23 +839,45 @@ fn load_shaders(
     mut shaders: ResMut<VfxShaders>,
     mut assets: ResMut<Assets<Shader>>,
 ) {
-    shaders.generation += 1;
-    let generation = shaders.generation;
     let sources = content.built::<CompiledVfxShaders>();
-    shaders.by_id = sources
+    let by_id: HashMap<VfxShaderId, Handle<Shader>> = sources
         .0
         .iter()
         .map(|(id, source)| {
-            let (shader, name) = if id.get(&content).composes_wesl() {
-                let name = format!("vfx_shader/{}-{generation}.wesl", id.path(&content));
-                (Shader::from_wesl(source.clone(), name.clone()), name)
+            let wesl = id.get(&content).composes_wesl();
+            let mut text = std::collections::hash_map::DefaultHasher::new();
+            source.hash(&mut text);
+            let name = format!(
+                "vfx_shader/{}-{:016x}.{}",
+                id.path(&content),
+                text.finish(),
+                if wesl { "wesl" } else { "wgsl" }
+            );
+            let kept = named(&name);
+            let shader = if assets.contains(kept.id()) {
+                kept
+            } else if wesl {
+                compiled(
+                    &mut assets,
+                    Shader::from_wesl(source.clone(), name.clone()),
+                    &name,
+                )
             } else {
-                let name = format!("vfx_shader/{}-{generation}.wgsl", id.path(&content));
-                (Shader::from_wgsl(source.clone(), name.clone()), name)
+                compiled(
+                    &mut assets,
+                    Shader::from_wgsl(source.clone(), name.clone()),
+                    &name,
+                )
             };
-            (*id, compiled(&mut assets, shader, &name))
+            (*id, shader)
         })
         .collect();
+    for gone in shaders.by_id.values() {
+        if !by_id.values().any(|kept| kept == gone) {
+            assets.remove(gone.id());
+        }
+    }
+    shaders.by_id = by_id;
 }
 
 fn sync(world: &mut World) {

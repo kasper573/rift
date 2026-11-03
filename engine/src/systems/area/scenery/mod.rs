@@ -377,12 +377,11 @@ fn stream(world: &mut World) {
         let mut budget = Budget::new();
         stream_ground(world, &mut streaming, at, &mut budget);
         let cut = streaming.regions.cut(&streaming.heights, seen);
-        let props_stand = props::stand(world, &mut streaming, root, seen, &cut, &mut budget);
-        let covers_stand = covers::stand(world, &mut streaming, root, seen, &cut, &mut budget);
-        if props_stand && covers_stand {
-            props::clear(world, &mut streaming, seen, &cut);
-            covers::clear(world, &mut streaming, seen, &cut);
-        } else {
+        let props_unstood = props::stand(world, &mut streaming, root, seen, &cut, &mut budget);
+        let covers_unstood = covers::stand(world, &mut streaming, root, seen, &cut, &mut budget);
+        props::clear(world, &mut streaming, seen, &cut, &props_unstood);
+        covers::clear(world, &mut streaming, seen, &cut, &covers_unstood);
+        if !props_unstood.is_empty() || !covers_unstood.is_empty() {
             budget.defer();
         }
         props::level_props(world, &streaming, &seen.view);

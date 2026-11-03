@@ -323,8 +323,11 @@ impl Editor {
         let folder = folder.to_path_buf();
         self.run_busy(
             format!("Opening {}", shell::start::game_name(&folder)),
-            move |progress| Project::open(&root, shapes, progress),
-            move |editor, opened| editor.opened(&folder, opened, recovered),
+            move |progress| {
+                let watcher = FolderWatcher::on(&root);
+                (Project::open(&root, shapes, progress), watcher)
+            },
+            move |editor, (opened, watcher)| editor.opened(&folder, opened, watcher, recovered),
         );
     }
 
@@ -332,6 +335,7 @@ impl Editor {
         &mut self,
         folder: &Path,
         opened: Result<Project, String>,
+        watcher: FolderWatcher,
         recovered: Vec<RecoveryJournalFile>,
     ) {
         match opened {
@@ -344,9 +348,9 @@ impl Editor {
                     .report
                     .as_ref()
                     .map(|report| (folder.to_path_buf(), report.to_string()));
-                self.start.watch = Some(FolderWatcher::on(folder));
+                self.start.watch = Some(watcher);
             }
-            Ok(project) => self.enter(project, folder, recovered),
+            Ok(project) => self.enter(project, folder, watcher, recovered),
             Err(reason) => {
                 self.start.failed = Some((folder.to_path_buf(), reason.clone()));
                 self.say(reason);
@@ -354,7 +358,13 @@ impl Editor {
         }
     }
 
-    fn enter(&mut self, mut project: Project, folder: &Path, recovered: Vec<RecoveryJournalFile>) {
+    fn enter(
+        &mut self,
+        mut project: Project,
+        folder: &Path,
+        watcher: FolderWatcher,
+        recovered: Vec<RecoveryJournalFile>,
+    ) {
         let lock = match ProjectLock::take(&self.user, folder) {
             Ok(lock) => Some(lock),
             Err(reason) => {
@@ -367,7 +377,7 @@ impl Editor {
         self.settings.remember(folder);
         self.save_settings();
         self.lock = lock;
-        self.watcher = Some(FolderWatcher::on(folder));
+        self.watcher = Some(watcher);
         self.journal = Some(RecoveryJournal::for_folder(&self.user, folder));
         self.project = Some(project);
         self.dock = DockState::new(Vec::new());

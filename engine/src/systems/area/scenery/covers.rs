@@ -15,7 +15,7 @@ use bevy::prelude::*;
 use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 
-use super::regions::{Cut, Merge, Region};
+use super::regions::{Cut, Merge, Region, Unstood};
 use super::{
     Budget, KEEP_SHARE, Making, PLACEMENT_CELL, Seen, Streaming, distance_to, mesh_bytes, take_away,
 };
@@ -143,7 +143,7 @@ impl Covers {
 }
 
 /// Stands what `cut` takes in of the covers: the chunks of the leaves, and the merged meshes of
-/// every coarser region; whether all of it stands.
+/// every coarser region; where it doesn't stand yet.
 pub(super) fn stand(
     world: &mut World,
     streaming: &mut Streaming,
@@ -151,47 +151,64 @@ pub(super) fn stand(
     seen: Seen,
     cut: &Cut,
     budget: &mut Budget,
-) -> bool {
+) -> Unstood {
+    let mut unstood = Unstood::default();
     if streaming.covers.layers.is_empty() {
-        return true;
+        return unstood;
     }
-    let mut whole = true;
     let missing: Vec<ChunkKey> = near_chunks(streaming, seen, cut, 1.0)
         .filter(|key| !streaming.covers.chunks.contains_key(key))
         .collect();
+    let mut unstood_chunks: HashSet<(u32, u32)> = HashSet::default();
     for key in missing {
-        if !budget.take(|budget| &mut budget.covers) {
-            whole = false;
-            break;
+        if !unstood_chunks.is_empty() || !budget.take(|budget| &mut budget.covers) {
+            unstood_chunks.insert(key.2);
+            continue;
         }
         let entity = spawn_cover_chunk(world, streaming, key.0, key.1, key.2, root);
         streaming.covers.chunks.insert(key, entity);
     }
+    for chunk in unstood_chunks {
+        unstood.add(chunk_bounds(chunk));
+    }
     let shown = shown_pieces(streaming, seen, cut);
     prepare_models(world, streaming, &shown);
     for (&merge, pieces) in &shown {
-        whole &= stand_merge(world, streaming, root, seen, merge, pieces, budget);
+        if !stand_merge(world, streaming, root, seen, merge, pieces, budget) {
+            unstood.add(streaming.regions.bounds(merge.region));
+        }
     }
-    whole
+    unstood
 }
 
-/// Takes down what stood of the covers for an earlier view and stands for none in `cut`.
-pub(super) fn clear(world: &mut World, streaming: &mut Streaming, seen: Seen, cut: &Cut) {
+/// Takes down what stood of the covers for an earlier view and stands for none in `cut`, wherever
+/// what stands for `cut` does, and what stood for ground sculpted or painted anew once all of it
+/// does.
+pub(super) fn clear(
+    world: &mut World,
+    streaming: &mut Streaming,
+    seen: Seen,
+    cut: &Cut,
+    unstood: &Unstood,
+) {
     let kept: HashSet<ChunkKey> = near_chunks(streaming, seen, cut, KEEP_SHARE).collect();
     let covers = &mut streaming.covers;
-    for stale in covers.stale.drain(..) {
-        take_away(world, stale);
+    if unstood.is_empty() {
+        for stale in covers.stale.drain(..) {
+            take_away(world, stale);
+        }
     }
     covers.chunks.retain(|key, chunk| {
-        let keep = kept.contains(key);
+        let keep = kept.contains(key) || !unstood.stands_over(chunk_bounds(key.2));
         if !keep && let Some(chunk) = chunk {
             take_away(world, *chunk);
         }
         keep
     });
     let wanted: HashSet<Merge> = cut.merges.iter().copied().collect();
+    let regions = &streaming.regions;
     covers.merged.retain(|merge, merged| {
-        let keep = wanted.contains(merge);
+        let keep = wanted.contains(merge) || !unstood.stands_over(regions.bounds(merge.region));
         if !keep && let Merged::Standing { stood, .. } = merged {
             for &mesh in stood.iter() {
                 take_away(world, mesh);

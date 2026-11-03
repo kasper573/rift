@@ -17,8 +17,8 @@ use super::{AreaFrame, nodes};
 use crate::app::{Editor, PlacePick};
 use crate::forms;
 use crate::keymap::EditorKey;
-use crate::project::ContentEdit;
 use crate::project::files::content_of;
+use crate::project::{ContentEdit, Project};
 use crate::scene_graph;
 use crate::tabs::shown_path;
 use crate::views::navigation::{self, PX_PER_METER};
@@ -39,7 +39,24 @@ pub(crate) enum PinHit {
     Place { file: String, pointer: String },
 }
 
+/// Every arrival into `area_key`: each place in the files that leads there.
 pub fn arrivals(editor: &Editor, area_key: &str) -> Vec<ArrivalPin> {
+    arrivals_where(editor, area_key, |_, _| true)
+}
+
+/// The arrivals into `area_key` whose files are at hand, so a frame drawing them parses nothing:
+/// one in a file not yet parsed shows once the background has parsed it.
+fn arrivals_at_hand(editor: &Editor, area_key: &str) -> Vec<ArrivalPin> {
+    arrivals_where(editor, area_key, |project, file| {
+        project.files.json_at_hand(file)
+    })
+}
+
+fn arrivals_where(
+    editor: &Editor,
+    area_key: &str,
+    at_hand: impl Fn(&Project, &str) -> bool,
+) -> Vec<ArrivalPin> {
     let Some(project) = &editor.project else {
         return Vec::new();
     };
@@ -48,6 +65,9 @@ pub fn arrivals(editor: &Editor, area_key: &str) -> Vec<ArrivalPin> {
         let Some(parent) = usage.pointer.strip_suffix(field!(Place, area)) else {
             continue;
         };
+        if !at_hand(project, &usage.file) {
+            continue;
+        }
         let Some(place) = project.value_at::<Place>(&usage.file, parent) else {
             continue;
         };
@@ -143,7 +163,7 @@ fn commit_pick(editor: &mut Editor, area_key: &str, at: Pos<Meters>) {
 
 pub(crate) fn draw_arrivals(editor: &Editor, painter: &egui::Painter, frame: &AreaFrame) {
     let canvas = &frame.canvas;
-    for arrival in arrivals(editor, &frame.bundle) {
+    for arrival in arrivals_at_hand(editor, &frame.bundle) {
         let at = canvas.to_screen(arrival.at);
         let color = if arrival.initial_spawn {
             Color32::from_rgb(120, 255, 160)
@@ -178,7 +198,7 @@ fn pin(painter: &egui::Painter, at: Pos2, color: Color32) {
 }
 
 pub(crate) fn pin_at(editor: &Editor, frame: &AreaFrame, pointer: Pos2) -> Option<PinHit> {
-    for arrival in arrivals(editor, &frame.bundle) {
+    for arrival in arrivals_at_hand(editor, &frame.bundle) {
         let at = frame.canvas.to_screen(arrival.at);
         let hit = egui::Rect::from_min_max(at + Vec2::new(-8.0, -20.0), at + Vec2::new(8.0, 2.0));
         if hit.contains(pointer) {
@@ -324,7 +344,7 @@ pub(crate) fn place_pick_panel(editor: &mut Editor, ui: &mut Ui) {
         center,
         zoom,
     };
-    for arrival in arrivals(editor, &area_key) {
+    for arrival in arrivals_at_hand(editor, &area_key) {
         let at = canvas.to_screen(arrival.at);
         painter.circle_filled(at, 3.0, egui::Color32::from_rgb(255, 190, 90));
         painter.circle_stroke(at, 3.0, egui::Stroke::new(1.0, egui::Color32::BLACK));

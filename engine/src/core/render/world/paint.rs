@@ -1,11 +1,13 @@
 //! Textures painted for a body: a base texture with colours laid over it wherever masks mark them,
 //! and where a layer is metal, the surface it lays, baked once for each way of painting it, off the
-//! main thread, and shared by every mesh painted alike.
+//! main thread, and shared by every mesh painted alike. Only a bake reads its images, so it reads
+//! them itself rather than as assets, which would copy them on the main thread and upload them.
 
-use std::sync::{Arc, LazyLock};
+use std::sync::LazyLock;
 
-use bevy::asset::RenderAssetUsages;
+use bevy::asset::{AssetPath, RenderAssetUsages};
 use bevy::ecs::system::SystemParam;
+use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
@@ -43,21 +45,15 @@ pub struct Painted {
     pub surface: Option<Handle<Image>>,
 }
 
-/// Every paint asked for, baked once its images load, and the materials drawn with each; and the
-/// images bakes in flight read, each copied once for all of them.
+/// Every paint asked for, baked from its images, and the materials drawn with each.
 #[derive(Resource, Default)]
 pub struct Paints {
     baked: HashMap<Paint, PaintState>,
     materials: HashMap<(AssetId<WorldMaterial>, AssetId<Image>), Handle<WorldMaterial>>,
-    sources: HashMap<AssetId<Image>, Arc<Image>>,
 }
 
 enum PaintState {
-    Loading {
-        base: Handle<Image>,
-        masks: Vec<Handle<Image>>,
-    },
-    Baking(Task<Option<Baked>>),
+    Baking(Task<Result<Baked, String>>),
     Done(Painted),
     Failed,
 }
@@ -70,23 +66,16 @@ pub(super) fn advance_bakes(mut paints: ResMut<Paints>, mut images: ResMut<Asset
             && let Some(baked) = check_ready(task)
         {
             *baking = match baked {
-                Some(baked) => PaintState::Done(Painted {
+                Ok(baked) => PaintState::Done(Painted {
                     colour: images.add(baked.colour),
                     surface: baked.surface.map(|surface| images.add(surface)),
                 }),
-                None => {
-                    warn!("could not paint {}: its masks do not fit it", paint.base);
+                Err(problem) => {
+                    warn!("could not paint {}: {problem}", paint.base);
                     PaintState::Failed
                 }
             };
         }
-    }
-    let waiting = paints
-        .baked
-        .values()
-        .any(|baking| matches!(baking, PaintState::Loading { .. } | PaintState::Baking(_)));
-    if !waiting {
-        paints.sources.clear();
     }
 }
 
@@ -103,68 +92,31 @@ pub(super) fn forget_dropped(
     }
 }
 
-/// What paints a mesh: the paints baked so far, and the images and materials they are made of.
+/// What paints a mesh: the paints baked so far, the assets their images are read from, and the
+/// materials they are drawn with.
 #[derive(SystemParam)]
 pub struct Painter<'w> {
     paints: ResMut<'w, Paints>,
     assets: Res<'w, AssetServer>,
-    images: ResMut<'w, Assets<Image>>,
     materials: ResMut<'w, Assets<WorldMaterial>>,
     look: Option<Res<'w, Look>>,
 }
 
 impl Painter<'_> {
-    /// The textures `paint` makes, once its base and masks have loaded and it is baked.
+    /// The textures `paint` makes, once it is baked.
     pub fn texture(&mut self, paint: &Paint) -> Option<Painted> {
         let finish = self.look.as_ref()?.materials;
-        let Painter {
-            paints,
-            assets,
-            images,
-            ..
-        } = self;
-        let Paints { baked, sources, .. } = &mut **paints;
-        let baking = baked
-            .entry(paint.clone())
-            .or_insert_with(|| PaintState::Loading {
-                base: assets.load(paint.base.clone()),
-                masks: paint
-                    .layers
-                    .iter()
-                    .map(|layer| assets.load(layer.mask.clone()))
-                    .collect(),
-            });
-        if let PaintState::Loading { base, masks } = baking {
-            let loaded = |handle: &Handle<Image>| images.get(handle).is_some();
-            let failed = |handle: &Handle<Image>| assets.load_state(handle).is_failed();
-            if failed(base) || masks.iter().any(failed) {
-                warn!("could not paint {}: an image did not load", paint.base);
-                *baking = PaintState::Failed;
-            } else if images.contains(&*base) && masks.iter().all(loaded) {
-                let mut source = |image: &Handle<Image>| {
-                    sources
-                        .entry(image.id())
-                        .or_insert_with(|| Arc::new(images.get(image).cloned().unwrap_or_default()))
-                        .clone()
-                };
-                let base = source(base);
-                let layers: Vec<(Arc<Image>, PaintLayer)> = masks
-                    .iter()
-                    .zip(&paint.layers)
-                    .map(|(mask, layer)| (source(mask), layer.clone()))
-                    .collect();
-                *baking = PaintState::Baking(AsyncComputeTaskPool::get().spawn(async move {
-                    let layers: Vec<(&Image, &PaintLayer)> = layers
-                        .iter()
-                        .map(|(mask, layer)| (&**mask, layer))
-                        .collect();
-                    bake(&base, &layers, finish)
-                }));
-            }
-        }
+        let assets = &self.assets;
+        let baking = self.paints.baked.entry(paint.clone()).or_insert_with(|| {
+            let (assets, paint) = ((*assets).clone(), paint.clone());
+            PaintState::Baking(
+                AsyncComputeTaskPool::get()
+                    .spawn(async move { bake_read(&assets, &paint, finish).await }),
+            )
+        });
         match baking {
             PaintState::Done(texture) => Some(texture.clone()),
-            PaintState::Loading { .. } | PaintState::Baking(_) | PaintState::Failed => None,
+            PaintState::Baking(_) | PaintState::Failed => None,
         }
     }
 
@@ -196,6 +148,59 @@ impl Painter<'_> {
         self.paints.materials.insert(key, painted.clone());
         Some(painted)
     }
+}
+
+/// `paint` baked from its images as the game's assets hold them; what keeps it from baking when
+/// something does.
+async fn bake_read(
+    assets: &AssetServer,
+    paint: &Paint,
+    finish: SurfaceFinish,
+) -> Result<Baked, String> {
+    let base = read_image(assets, &paint.base).await?;
+    let mut masks: Vec<(&str, Image)> = Vec::new();
+    for layer in &paint.layers {
+        if !masks.iter().any(|(path, _)| *path == layer.mask) {
+            masks.push((&layer.mask, read_image(assets, &layer.mask).await?));
+        }
+    }
+    let layers: Vec<(&Image, &PaintLayer)> = paint
+        .layers
+        .iter()
+        .filter_map(|layer| {
+            let (_, mask) = masks.iter().find(|(path, _)| *path == layer.mask)?;
+            Some((mask, layer))
+        })
+        .collect();
+    bake(&base, &layers, finish).ok_or_else(|| "its masks do not fit it".to_owned())
+}
+
+/// The image at `path` among the game's assets, read and decoded here.
+async fn read_image(assets: &AssetServer, path: &str) -> Result<Image, String> {
+    let path = AssetPath::parse(path);
+    let unread = |problem: &dyn std::fmt::Display| format!("{path} did not read: {problem}");
+    let source = assets
+        .get_source(path.source())
+        .map_err(|problem| unread(&problem))?;
+    let mut reader = source
+        .reader()
+        .read(path.path())
+        .await
+        .map_err(|problem| unread(&problem))?;
+    let mut bytes = Vec::new();
+    reader
+        .read_to_end(&mut bytes)
+        .await
+        .map_err(|problem| unread(&problem))?;
+    Image::from_buffer(
+        &bytes,
+        ImageType::Extension(path.get_full_extension().unwrap_or_default()),
+        CompressedImageFormats::NONE,
+        true,
+        ImageSampler::Default,
+        RenderAssetUsages::MAIN_WORLD,
+    )
+    .map_err(|problem| unread(&problem))
 }
 
 /// A paint as baked, before its textures are added: `base` with each layer laid over it in order,

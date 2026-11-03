@@ -111,6 +111,32 @@ impl Regions {
     }
 }
 
+/// Where the scenery doesn't yet stand all a view takes in. What stood there for an earlier view
+/// stands on until it does, so the view never shows a hole, while what the view left elsewhere goes
+/// at once rather than standing until the whole view does.
+#[derive(Default)]
+pub(super) struct Unstood(Vec<Rect<Meters>>);
+
+impl Unstood {
+    pub(super) fn add(&mut self, bounds: Rect<Meters>) {
+        self.0.push(bounds);
+    }
+
+    pub(super) fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    /// Whether the scenery stands all the view takes in over `bounds`.
+    pub(super) fn stands_over(&self, bounds: Rect<Meters>) -> bool {
+        !self.0.iter().any(|unstood| unstood.intersects(&bounds))
+    }
+
+    /// Whether the scenery stands all the view takes in at `at`.
+    pub(super) fn stands_at(&self, at: Pos<Meters>) -> bool {
+        !self.0.iter().any(|&unstood| holds(unstood, at))
+    }
+}
+
 /// Whether `at` lies within `bounds`, its far edges left to the regions beyond, so a point lies in
 /// one region of a level alone.
 pub(super) fn holds(bounds: Rect<Meters>, at: Pos<Meters>) -> bool {

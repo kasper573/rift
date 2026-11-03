@@ -15,7 +15,7 @@ use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
 
-use super::regions::{self, Cut, Merge, Region};
+use super::regions::{self, Cut, Merge, Region, Unstood};
 use super::{Budget, KEEP_SHARE, Making, PLACEMENT_CELL, Seen, Streaming, mesh_bytes, take_away};
 use crate::core::assets;
 use crate::core::content::Content;
@@ -31,7 +31,7 @@ use crate::core::render::world::merged::{
 };
 use crate::core::render::world_point;
 use crate::core::spatial::SpatialIndex;
-use crate::core::units::Meters;
+use crate::core::units::{MeterSize, Meters};
 use crate::core::vfx::render as vfx_render;
 use crate::core::vfx::uniform::ParamsUniform;
 use crate::systems::area::prop::{PropDef, PropId};
@@ -111,7 +111,7 @@ impl Filed {
 }
 
 /// Stands what `cut` takes in of the area's props: a scene for each in a leaf, and the merged
-/// meshes of every coarser region; whether all of it stands.
+/// meshes of every coarser region; where it doesn't stand yet.
 pub(super) fn stand(
     world: &mut World,
     streaming: &mut Streaming,
@@ -119,15 +119,24 @@ pub(super) fn stand(
     seen: Seen,
     cut: &Cut,
     budget: &mut Budget,
-) -> bool {
+) -> Unstood {
+    let mut unstood = Unstood::default();
     let Some(filed) = streaming.props.filed.made().cloned() else {
-        budget.defer();
-        return false;
+        unstood.add(streaming.area.size.bounds());
+        return unstood;
     };
     let near: HashSet<usize> = in_leaves(streaming, &filed, cut)
         .filter(|&index| !out_of_sight(streaming, &filed, seen, index, 1.0))
         .collect();
-    let mut whole = stand_scenes(world, streaming, root, &near, budget);
+    if !stand_scenes(world, streaming, root, &near, budget) {
+        for &leaf in &cut.leaves {
+            if props_within(streaming, &filed, leaf)
+                .any(|index| near.contains(&index) && !streaming.props.scenes.contains_key(&index))
+            {
+                unstood.add(streaming.regions.bounds(leaf));
+            }
+        }
+    }
     for &merge in &cut.merges {
         if !streaming.props.merged.contains_key(&merge) {
             let gathering = gather(streaming, &filed, merge, seen.view);
@@ -144,13 +153,22 @@ pub(super) fn stand(
     }
     prepare_models(world, streaming, wanted_models);
     for &merge in &cut.merges {
-        whole &= stand_merge(world, streaming, root, merge, seen.view, budget);
+        if !stand_merge(world, streaming, root, merge, seen.view, budget) {
+            unstood.add(streaming.regions.bounds(merge.region));
+        }
     }
-    whole
+    unstood
 }
 
-/// Takes down what stood of the props for an earlier view and stands for none in `cut`.
-pub(super) fn clear(world: &mut World, streaming: &mut Streaming, seen: Seen, cut: &Cut) {
+/// Takes down what stood of the props for an earlier view and stands for none in `cut`, wherever
+/// what stands for `cut` does.
+pub(super) fn clear(
+    world: &mut World,
+    streaming: &mut Streaming,
+    seen: Seen,
+    cut: &Cut,
+    unstood: &Unstood,
+) {
     let Some(filed) = streaming.props.filed.made().cloned() else {
         return;
     };
@@ -158,10 +176,11 @@ pub(super) fn clear(world: &mut World, streaming: &mut Streaming, seen: Seen, cu
         .filter(|&index| !out_of_sight(streaming, &filed, seen, index, KEEP_SHARE))
         .collect();
     let props = &mut streaming.props;
+    let area = &streaming.area;
     let gone: Vec<usize> = props
         .scenes
         .keys()
-        .filter(|index| !kept.contains(*index))
+        .filter(|&index| !kept.contains(index) && unstood.stands_at(area.props[*index].at))
         .copied()
         .collect();
     for index in gone {
@@ -170,8 +189,9 @@ pub(super) fn clear(world: &mut World, streaming: &mut Streaming, seen: Seen, cu
         }
     }
     let wanted: HashSet<Merge> = cut.merges.iter().copied().collect();
+    let regions = &streaming.regions;
     props.merged.retain(|merge, merged| {
-        let keep = wanted.contains(merge);
+        let keep = wanted.contains(merge) || !unstood.stands_over(regions.bounds(merge.region));
         if !keep && let Merged::Standing { stood, .. } = merged {
             for &mesh in stood.iter() {
                 take_away(world, mesh);

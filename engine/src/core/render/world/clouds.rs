@@ -9,6 +9,7 @@ use bevy::light::DirectionalLightTexture;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 
+use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -75,6 +76,7 @@ pub struct CloudSheet {
 impl CloudSheet {
     pub fn new(world: &mut World, look: CloudLook) -> CloudSheet {
         let noise: Vec<f32> = (0..SHEET * SHEET)
+            .into_par_iter()
             .map(|texel| {
                 noise(Vec2::new((texel % SHEET) as f32, (texel / SHEET) as f32) / SHEET as f32)
             })
@@ -167,7 +169,8 @@ impl CloudSheet {
         let shade = shade(self.weather.1, &self.look);
         let toward = light.back().as_vec3();
         let data = (0..SHADOWS * SHADOWS)
-            .flat_map(|texel| {
+            .into_par_iter()
+            .flat_map_iter(|texel| {
                 let uv = (Vec2::new((texel % SHADOWS) as f32, (texel / SHADOWS) as f32) + 0.5)
                     / SHADOWS as f32;
                 let near =
