@@ -114,6 +114,10 @@ pub(super) fn forget_dropped(
 
 /// How far a stand-in's shape may stray from its mesh's, in pixels of the view it is seen in.
 pub(super) const STRAY_PIXELS: f32 = 0.5;
+/// How many pixels across a thing among many alike must span for the view to tell it apart from
+/// its neighbours: smaller, some of them may be dropped and the rest grown to this size, and the
+/// crowd looks the same.
+pub const GRAIN_PIXELS: f32 = 2.0;
 
 /// The stand-ins for `mesh`, as [`simplify`] makes them; none for a mesh that isn't a list of
 /// triangles over positions, that morphs, or whose data only the GPU holds.
@@ -129,17 +133,46 @@ fn simplified(mesh: &Mesh) -> Vec<(Mesh, f32)> {
         return Vec::new();
     }
     let indices: Vec<u32> = indices.iter().map(|index| index as u32).collect();
-    simplify(&indices, positions)
+    let surface = Surface {
+        uvs: match mesh.try_attribute_option(Mesh::ATTRIBUTE_UV_0) {
+            Ok(Some(VertexAttributeValues::Float32x2(uvs))) => Some(uvs.as_slice()),
+            _ => None,
+        },
+        normals: match mesh.try_attribute_option(Mesh::ATTRIBUTE_NORMAL) {
+            Ok(Some(VertexAttributeValues::Float32x3(normals))) => Some(normals.as_slice()),
+            _ => None,
+        },
+    };
+    simplify(&indices, positions, surface)
         .into_iter()
         .map(|(kept, strays)| (level(mesh, kept), strays))
         .collect()
 }
 
 /// The triangles of the mesh `indices` draw over `positions`, coarser and coarser: halved each
-/// time while the simplifier still can, collapsing across the seams of the mesh's texture
-/// coordinates and normals as well, which a shape seen at under a pixel's stray doesn't show,
-/// each with how far its shape strays from the mesh's, in the mesh's own units.
-pub(super) fn simplify(indices: &[u32], positions: &[[f32; 3]]) -> Vec<(Vec<u32>, f32)> {
+/// time while the simplifier still can, collapsing across the seams of its texture coordinates and
+/// normals where how far they slide (`surface`) adds little to how far its shape moves, each with
+/// how far its shape strays from the mesh's, in the mesh's own units.
+pub(super) fn simplify(
+    indices: &[u32],
+    positions: &[[f32; 3]],
+    surface: Surface,
+) -> Vec<(Vec<u32>, f32)> {
+    let attributes: Vec<f32> = (0..positions.len())
+        .flat_map(|vertex| {
+            let [u, v] = surface.uvs.map_or([0.0; 2], |uvs| uvs[vertex]);
+            let [x, y, z] = surface.normals.map_or([0.0; 3], |normals| normals[vertex]);
+            [u, v, x, y, z]
+        })
+        .collect();
+    let weights = [
+        UV_WEIGHT,
+        UV_WEIGHT,
+        NORMAL_WEIGHT,
+        NORMAL_WEIGHT,
+        NORMAL_WEIGHT,
+    ];
+    let unlocked = vec![false; positions.len()];
     let mut levels = Vec::new();
     let mut triangles = indices.len() / 3;
     loop {
@@ -148,9 +181,13 @@ pub(super) fn simplify(indices: &[u32], positions: &[[f32; 3]]) -> Vec<(Vec<u32>
             return levels;
         }
         let mut strays = 0.0;
-        let kept = meshopt::simplify_decoder(
+        let kept = meshopt::simplify_with_attributes_and_locks_decoder(
             indices,
             positions,
+            &attributes,
+            &weights,
+            weights.len() * std::mem::size_of::<f32>(),
+            &unlocked,
             target * 3,
             f32::MAX,
             SimplifyOptions::Permissive | SimplifyOptions::ErrorAbsolute,
@@ -164,6 +201,19 @@ pub(super) fn simplify(indices: &[u32], positions: &[[f32; 3]]) -> Vec<(Vec<u32>
         triangles = kept_triangles;
     }
 }
+
+/// What a mesh's surface carries besides its shape, for [`simplify`] to keep: its texture
+/// coordinates and normals, where it has them.
+#[derive(Clone, Copy, Default)]
+pub(super) struct Surface<'a> {
+    pub uvs: Option<&'a [[f32; 2]]>,
+    pub normals: Option<&'a [[f32; 3]]>,
+}
+
+/// How much a slide of the texture coordinates and a turn of the normals weigh against the
+/// shape's own moves, within the range meshoptimizer recommends for attributes spanning 0 to 1.
+const UV_WEIGHT: f32 = 0.1;
+const NORMAL_WEIGHT: f32 = 0.05;
 
 /// `mesh` drawn by `indices` alone, holding only the vertices they use.
 fn level(mesh: &Mesh, indices: Vec<u32>) -> Mesh {

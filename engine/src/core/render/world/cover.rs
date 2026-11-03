@@ -23,6 +23,7 @@ use bevy::render::render_resource::{
 };
 use bevy::shader::Shader;
 
+use super::lod::GRAIN_PIXELS;
 use super::merged::{self, MOST_MERGED_VERTICES, Shape};
 use crate::core::ground::{Heightfield, SAMPLES_PER_METER};
 use crate::core::math::{Pos, Rng};
@@ -147,11 +148,14 @@ pub struct Spread {
 }
 
 impl Spread {
-    /// The spread with `share` of its copies, each grown to cover as much as those dropped did.
-    pub fn thinned(&self, share: f32) -> Spread {
-        let grown = 1.0 / share.sqrt();
+    /// The spread as a view shows it at `pixels_per_meter` where every copy, `extent` across at
+    /// its size, is smaller than [`GRAIN_PIXELS`]: as many copies as cover as much once each is
+    /// grown to about that size.
+    pub fn grained(&self, extent: f32, pixels_per_meter: f32) -> Spread {
+        let across = extent * (self.size.0 + self.size.1) / 2.0 * pixels_per_meter;
+        let grown = GRAIN_PIXELS / across.max(f32::EPSILON);
         Spread {
-            per_square_meter: self.per_square_meter * share,
+            per_square_meter: self.per_square_meter / (grown * grown),
             size: (self.size.0 * grown, self.size.1 * grown),
             ..*self
         }
@@ -340,39 +344,37 @@ pub fn sheet(patch: &Patch, level: Option<f32>, color: LinearRgba, stride: u32) 
     assemble(positions, normals, uvs, tips, Some(colors), indices)
 }
 
-/// The patch's blades: each cell grows its share of the spread, a triangle per blade of the
-/// `shape` at its own size and colour, its uv running across and up, scattered the same way for
-/// the same `seed`. As meshes of a bounded size, none when nothing grows.
-pub fn blades(patch: &Patch, shape: &BladeShape, spread: &Spread, seed: u64) -> Vec<Mesh> {
-    let mut positions: Vec<[f32; 3]> = Vec::new();
-    let mut normals = Vec::new();
-    let mut uvs = Vec::new();
-    let mut tips = Vec::new();
-    let mut colors = Vec::new();
-    let mut rng = Rng::new(seed);
-    for (at, weight) in places(patch, spread.per_square_meter, &mut rng) {
-        let ground = patch.heights.height_at(at).0;
-        let yaw = rng.rand_float() * std::f32::consts::TAU;
-        let (size, tint) = draw(spread, &mut rng);
-        let color = spread.color.0.mix(&spread.color.1, tint);
-        let height = shape.height * size;
-        let half = shape.width / 2.0 * size;
-        let (sin, cos) = yaw.sin_cos();
-        let across = Vec3::new(cos * half, 0.0, sin * half);
-        let root = Vec3::new(at.x, ground, at.y);
+/// A blade of the `shape` standing at each of `places` on the ground of `heights`, a triangle at
+/// its place's size, turn and tint, its uv running across and up. As meshes of a bounded size, none
+/// when nothing grows.
+pub fn blades(
+    heights: &Heightfield,
+    places: &[Place],
+    shape: &BladeShape,
+    spread: &Spread,
+) -> Vec<Mesh> {
+    let mut positions: Vec<[f32; 3]> = Vec::with_capacity(places.len() * 3);
+    let mut normals = Vec::with_capacity(positions.capacity());
+    let mut uvs = Vec::with_capacity(positions.capacity());
+    let mut tips = Vec::with_capacity(positions.capacity());
+    let mut colors = Vec::with_capacity(positions.capacity());
+    for place in places {
+        let root = place.transform.translation;
+        let size = place.transform.scale.x;
+        let across = place.transform.rotation * Vec3::X * (shape.width / 2.0 * size);
         positions.push((root - across).to_array());
         positions.push((root + across).to_array());
-        positions.push((root + Vec3::Y * height).to_array());
-        normals.extend([ground_normal(patch.heights, at); 3]);
+        positions.push((root + Vec3::Y * shape.height * size).to_array());
+        normals.extend([ground_normal(heights, Pos::new(root.x, root.z)); 3]);
         uvs.extend([[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]]);
+        let color = spread.color.0.mix(&spread.color.1, place.tint);
         colors.extend([color.to_f32_array(); 3]);
-        let seed = rng.rand_float();
         let mark = |measure| {
             Mark {
                 measure,
-                weight,
+                weight: place.weight,
                 piece: spread.piece,
-                seed,
+                seed: place.seed,
             }
             .pack()
         };
@@ -410,6 +412,28 @@ pub fn strew_places(patch: &Patch, spread: &Spread, seed: u64) -> Vec<Place> {
         .collect()
 }
 
+/// The copies at `places`, each `extent` across at its size, as `pixels_per_meter` shows them: a
+/// copy the view can tell apart stays as it is; of those smaller than [`GRAIN_PIXELS`], as many
+/// stay as cover as much once each is grown to that size, picked by their own seeds, so a crowd
+/// seen from farther keeps fewer of the same copies.
+pub fn seen_at(places: &[Place], extent: f32, pixels_per_meter: f32) -> Vec<Place> {
+    places
+        .iter()
+        .filter_map(|place| {
+            let across = extent * place.transform.scale.x * pixels_per_meter;
+            if across >= GRAIN_PIXELS {
+                return Some(*place);
+            }
+            let grown = GRAIN_PIXELS / across.max(f32::EPSILON);
+            (place.seed < 1.0 / (grown * grown)).then(|| {
+                let mut kept = *place;
+                kept.transform.scale *= grown;
+                kept
+            })
+        })
+        .collect()
+}
+
 /// The meshes a strewn copy of a prop is drawn with, one for each material the model draws its
 /// `pieces` with: positions and normals carried through the piece's transform, the piece's uv and
 /// colours kept (white where it has none, so a copy's tint has colours to fall on), and every
@@ -439,7 +463,7 @@ struct CopyShape {
 
 impl CopyModel {
     /// The model of `pieces` ready to merge, worked out off the main thread. A strewn copy is cut
-    /// out of its texture, so its shapes thin rather than simplify.
+    /// out of its texture, so its shapes thin their islands once simplifying is done.
     pub fn of(pieces: &[Piece]) -> CopyModel {
         let (drawn, height) = by_material(pieces);
         let shapes: Vec<CopyShape> = drawn
@@ -462,20 +486,6 @@ impl CopyModel {
             triangles: shapes.iter().map(|copy| copy.shape.triangles()).sum(),
             shapes,
         }
-    }
-
-    /// How many triangles a copy grown `size` times takes, seen at `pixels_per_meter`.
-    pub fn triangles_at(&self, size: f32, pixels_per_meter: f32) -> usize {
-        let covered = merged::covered_pixels(self.extent * size * pixels_per_meter);
-        self.shapes
-            .iter()
-            .map(|copy| {
-                let share = copy.shape.triangles() as f32 / self.triangles.max(1) as f32;
-                copy.shape
-                    .level(pixels_per_meter * size, covered * share)
-                    .triangles()
-            })
-            .sum()
     }
 
     pub fn extent(&self) -> f32 {
@@ -765,40 +775,53 @@ pub(super) fn strew_loaded(
         let Some(meshes) = assets.copy_meshes(&strewing.gltf) else {
             continue;
         };
-        commands.entity(entity).remove::<Strewing>();
-        for CopyMesh {
-            material,
-            mesh,
-            bounds,
-        } in meshes
-        {
-            let texture = material.and_then(|material| {
-                assets
-                    .gltf_materials
-                    .get(&material)?
-                    .base_color_texture
-                    .clone()
-            });
-            let drawn = match texture {
-                Some(texture) => assets.textured_cover(&strewing.material, texture),
-                None => strewing.material.clone(),
-            };
-            commands.spawn((
-                StrewnChunk {
-                    bounds: enclosing(&strewing.places, &bounds),
-                    copies: strewing.places.len(),
-                    unstrewn: Some(Unstrewn {
-                        places: strewing.places.clone(),
-                        mesh,
-                        material: drawn,
-                        bounds,
-                    }),
+        let parts: Vec<_> = meshes
+            .into_iter()
+            .map(
+                |CopyMesh {
+                     material,
+                     mesh,
+                     bounds,
+                 }| {
+                    let texture = material.and_then(|material| {
+                        assets
+                            .gltf_materials
+                            .get(&material)?
+                            .base_color_texture
+                            .clone()
+                    });
+                    let drawn = match texture {
+                        Some(texture) => assets.textured_cover(&strewing.material, texture),
+                        None => strewing.material.clone(),
+                    };
+                    (
+                        StrewnChunk {
+                            bounds: enclosing(&strewing.places, &bounds),
+                            copies: strewing.places.len(),
+                            unstrewn: Some(Unstrewn {
+                                places: strewing.places.clone(),
+                                mesh,
+                                material: drawn,
+                                bounds,
+                            }),
+                        },
+                        Transform::default(),
+                        Visibility::default(),
+                    )
                 },
-                Transform::default(),
-                Visibility::default(),
-                ChildOf(entity),
-            ));
-        }
+            )
+            .collect();
+        // The scenery may take the chunk down within the frame it is strewn in, which leaves
+        // nothing to strew.
+        commands
+            .entity(entity)
+            .queue_silenced(move |mut chunk: EntityWorldMut| {
+                chunk.remove::<Strewing>().with_children(|strewn| {
+                    for part in parts {
+                        strewn.spawn(part);
+                    }
+                });
+            });
     }
 }
 
@@ -876,6 +899,25 @@ pub(super) fn cull_strewn_chunks(
             commands.spawn_batch(copies);
         }
     }
+}
+
+/// Whether `chunk`, spawned with a [`Strewing`], still has copies to strew where a camera sees
+/// them: its prop yet to load, or a chunk of its copies in sight but not yet strewn.
+pub fn strewing(world: &World, chunk: Entity) -> bool {
+    let Ok(chunk) = world.get_entity(chunk) else {
+        return false;
+    };
+    chunk.contains::<Strewing>()
+        || chunk.get::<Children>().is_some_and(|parts| {
+            parts.iter().any(|part| {
+                world.get_entity(part).is_ok_and(|part| {
+                    !part.contains::<Disabled>()
+                        && part
+                            .get::<StrewnChunk>()
+                            .is_some_and(|strewn| strewn.unstrewn.is_some())
+                })
+            })
+        })
 }
 
 const COPIES_STREWN_PER_FRAME: usize = 2000;

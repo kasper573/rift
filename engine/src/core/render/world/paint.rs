@@ -7,7 +7,6 @@ use std::sync::LazyLock;
 
 use bevy::asset::{AssetPath, RenderAssetUsages};
 use bevy::ecs::system::SystemParam;
-use bevy::image::{CompressedImageFormats, ImageSampler, ImageType};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
@@ -16,6 +15,7 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 use rayon::prelude::*;
 
 use super::material::{SurfaceFinish, WorldMaterial};
+use crate::core::assets::loader::decode_png;
 use crate::core::math::Rgb;
 use crate::core::render::Look;
 
@@ -192,15 +192,7 @@ async fn read_image(assets: &AssetServer, path: &str) -> Result<Image, String> {
         .read_to_end(&mut bytes)
         .await
         .map_err(|problem| unread(&problem))?;
-    Image::from_buffer(
-        &bytes,
-        ImageType::Extension(path.get_full_extension().unwrap_or_default()),
-        CompressedImageFormats::NONE,
-        true,
-        ImageSampler::Default,
-        RenderAssetUsages::MAIN_WORLD,
-    )
-    .map_err(|problem| unread(&problem))
+    decode_png(&bytes, true, RenderAssetUsages::MAIN_WORLD).map_err(|problem| unread(&problem))
 }
 
 /// A paint as baked, before its textures are added: `base` with each layer laid over it in order,

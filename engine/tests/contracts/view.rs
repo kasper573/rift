@@ -38,7 +38,7 @@ use engine::systems::area::{self, AreaDef, AreaTag};
 use engine::systems::item::ItemDef;
 use engine::systems::movement::RenderPosition;
 use serde_json::json;
-use testkit::{APEX, BODY, CLIP, Game, HEIGHTS, Map, WALK_PACE, path};
+use testkit::{APEX, BODY, CLIP, Game, HEIGHTS, Map, WALK_PACE, path, png};
 
 const SIZE: GroundSize = GroundSize {
     width: 32,
@@ -137,6 +137,60 @@ fn a_model_fronts_the_way_its_actor_faces() {
             "facing {toward} turns the front to {turned}, not {wanted}"
         );
     }
+}
+
+#[test]
+fn a_body_wears_the_paint_its_material_bakes_from_the_games_images() {
+    const CLOTH: [u8; 3] = [200, 30, 40];
+    let game = Game::new()
+        .area("field", &Map::open(5, 5), json!([]))
+        .hero("field", 2.0, 2.0)
+        .edit("skeleton", BODY, |body| {
+            body["tints"] = json!([{ "name": "cloth", "colour": CLOTH }])
+        })
+        .row(
+            "material",
+            "cloth",
+            json!({
+                "skeleton": path("skeleton", BODY),
+                "base": "materials/base.png",
+                "masks": [{ "image": "materials/mask.png", "inverted": true, "r": "cloth" }],
+            }),
+        )
+        .asset("materials/base.png", png(4, 4))
+        .asset("materials/mask.png", png(4, 4))
+        .edit("model_part", "hero", |part| {
+            part["material"] = json!(path("material", "cloth"))
+        });
+    let folder = tempfile::tempdir().expect("a scratch folder");
+    let (mut app, content) = viewer(game, folder.path());
+    app.insert_resource(testkit::look());
+    spawn_hero(&mut app, &content, Action::Idle);
+    app.world_mut()
+        .run_system_cached(render::dress)
+        .expect("dressed");
+
+    let worn = |app: &App| {
+        app.world()
+            .resource::<Assets<Image>>()
+            .iter()
+            .any(|(_, image)| {
+                image.data.as_ref().is_some_and(|pixels| {
+                    pixels.len() == 4 * 4 * 4
+                        && pixels
+                            .as_chunks::<4>()
+                            .0
+                            .iter()
+                            .all(|pixel| pixel[..3] == CLOTH)
+                })
+            })
+    };
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while !worn(&app) && Instant::now() < deadline {
+        app.update();
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(worn(&app), "the body's texture is painted in its cloth");
 }
 
 #[test]

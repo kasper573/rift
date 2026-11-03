@@ -161,7 +161,14 @@ pub fn spawn(
 /// What stands follows over the frames.
 pub fn view_from(world: &mut World, scenery: Scenery, at: Pos<Meters>, reach: Meters, view: View) {
     if let Some(mut streaming) = world.get_mut::<Streaming>(scenery.root) {
-        streaming.view = Some(Seen { at, reach, view });
+        let eye = view.eye();
+        let above_ground = Meters(eye.y - streaming.heights.height_at(camera::ground_pos(eye)).0);
+        streaming.view = Some(Seen {
+            at,
+            reach,
+            view,
+            above_ground,
+        });
     }
 }
 
@@ -300,12 +307,39 @@ struct Streaming {
     stood_for: Option<Seen>,
 }
 
-/// Where the view looks at, how far around it the scenery stands, and the view.
+/// Where the view looks at, how far around it the scenery stands, the view, and how high its eye
+/// stands over the ground below it.
 #[derive(Clone, Copy, PartialEq)]
 struct Seen {
     at: Pos<Meters>,
     reach: Meters,
     view: View,
+    above_ground: Meters,
+}
+
+impl Seen {
+    /// How finely the view shows what lies `from_eye` off it.
+    fn detail(&self, from_eye: f32) -> Detail {
+        let nearest = self.above_ground.0.max(NEAREST_GROUND.0);
+        let anchor = (nearest.log2() * 2.0).floor() as i32;
+        let octaves = (from_eye / nearest).max(1.0).log2().floor() as i32;
+        Detail(anchor + 2 * octaves)
+    }
+}
+
+/// How finely the scenery shows what lies somewhere off the eye: as finely as what lies 2^(n/2)
+/// metres off it. Everything within twice as far as the ground below the eye shows as finely as
+/// that ground, taken to the half octave nearer, and every doubling beyond an octave coarser. So
+/// all a camera looking down on the ground sees shows alike and changes at once as it zooms, while
+/// a camera looking along the ground sees detail fall away with distance.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct Detail(i32);
+
+impl Detail {
+    /// How far off the eye what shows at this detail is taken to be.
+    fn distance(self) -> Meters {
+        Meters((self.0 as f32 / 2.0).exp2())
+    }
 }
 
 #[derive(Default)]
@@ -339,6 +373,9 @@ const PLACEMENT_CELL: Meters = Meters(32.0);
 /// How far past its reach the view keeps what stands, so pacing back and forth over the edge
 /// stands nothing twice.
 const KEEP_SHARE: f32 = 1.25;
+/// The nearest the ground is taken to come to the eye, so an eye on or below it still shows a
+/// detail.
+const NEAREST_GROUND: Meters = Meters(0.5);
 /// How many bytes of new meshes a frame sends to the GPU: what stands past them waits for the
 /// next frame, so a view taking in much at once costs many frames a little rather than one frame a
 /// lot. A piece larger than this stands in a frame of its own.
@@ -367,7 +404,7 @@ fn stream(world: &mut World) {
         };
         if streaming.stood_for == Some(seen) && streaming.loading.is_empty() {
             if simplified {
-                props::level_props(world, &streaming, &seen.view);
+                props::level_props(world, &streaming, &seen);
             }
             world.entity_mut(root).insert(streaming);
             continue;
@@ -384,7 +421,7 @@ fn stream(world: &mut World) {
         if !props_unstood.is_empty() || !covers_unstood.is_empty() {
             budget.defer();
         }
-        props::level_props(world, &streaming, &seen.view);
+        props::level_props(world, &streaming, &seen);
         stream_lights(world, &mut streaming, root, at, reach, keep);
         streaming.settled = !budget.spent;
         streaming.stood_for = streaming.settled.then_some(seen);

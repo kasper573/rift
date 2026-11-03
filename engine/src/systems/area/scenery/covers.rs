@@ -1,9 +1,12 @@
 //! The covers an area's terrains grow, over the regions the scenery is cut into for the view. In
 //! a leaf a cover stands chunk by chunk: its sheet, its blades and the copies of the props it
 //! strews, each copy an instance of its prop. In every coarser region it stands merged, a mesh for
-//! each of its pieces, as thin as the region is far: its sheet coarser, its blades and copies
-//! fewer and grown to cover as much, and no more triangles than the pixels the region covers can
-//! show, so a view over a whole area stands a few meshes, however thickly it is grown.
+//! each of its pieces, of the same copies where the chunks would strew them, each no finer than
+//! the view shows it: a sheet no finer than its pixels, and copies too small to tell apart thinned
+//! and the rest grown to cover as much, so a view over a whole area stands a few meshes, and what
+//! stands merged looks as what would stand chunk by chunk. A prop whose copies the view shows large
+//! there stands chunk by chunk too, and a coarser region stands its covers only once the view may
+//! see it, so ground out of sight costs nothing however far the scenery reaches.
 
 use std::sync::Arc;
 
@@ -27,6 +30,8 @@ use crate::core::ground::{Heightfield, PaintMap, SAMPLES_PER_METER};
 use crate::core::math::{Pos, Rect, Size};
 use crate::core::render::camera::ground_pos;
 use crate::core::render::world::cover::{self, CopyModel, CoverMaterial};
+use crate::core::render::world::lod::GRAIN_PIXELS;
+use crate::core::render::world_point;
 use crate::core::units::{MeterSize, Meters, Radians, Seconds};
 use crate::core::vfx::ParamFill;
 use crate::core::vfx::render::{self as vfx_render, Run, SiteFrame};
@@ -35,10 +40,6 @@ use crate::core::vfx::uniform::{ParamsUniform, WeatherImage};
 use crate::systems::area::Area;
 use crate::systems::area::prop::PropId;
 use crate::systems::area::terrain::{CoverPiece, PieceShape};
-
-/// How many pixels of a far region a merged cover spends a triangle on: the region is seen whole,
-/// and its cover reads as the ground's texture more than as things standing on it.
-const PIXELS_PER_TRIANGLE: f32 = 16.0;
 
 /// The covers of an area's terrains as its scenery stands them: each terrain's that has one,
 /// what stands of them chunk by chunk, and what stands of them merged.
@@ -50,6 +51,12 @@ pub(super) struct Covers {
     /// ground as it is now does.
     stale: Vec<Entity>,
 }
+
+/// How many pixels across a prop's copies span at the least, in a region the view shows them, to
+/// stand there chunk by chunk rather than merged: few enough of them fill a view to stand one by
+/// one, each an instance of the prop's own mesh, where merging would make and send the GPU
+/// meshes of all their triangles again.
+const STREWN_PIXELS: f32 = 16.0;
 
 /// A chunk of a cover's piece: the layer, the piece and the chunk among the paint's.
 type ChunkKey = (usize, usize, (u32, u32));
@@ -73,6 +80,15 @@ struct LayerPiece {
     extent: Option<Meters>,
     spread: cover::Spread,
     strewn: Option<Strewn>,
+}
+
+impl LayerPiece {
+    /// How far across the piece's smallest copies or blades measure.
+    fn smallest(&self) -> Option<Meters> {
+        let (smallest, largest) = self.spread.size;
+        self.extent
+            .map(|extent| Meters(extent.0 * smallest / largest))
+    }
 }
 
 /// A prop a piece strews: its model, the material its copies are drawn with, and its model as
@@ -156,25 +172,51 @@ pub(super) fn stand(
     if streaming.covers.layers.is_empty() {
         return unstood;
     }
-    let missing: Vec<ChunkKey> = near_chunks(streaming, seen, cut, 1.0)
-        .filter(|key| !streaming.covers.chunks.contains_key(key))
-        .collect();
+    let shown = shown_pieces(streaming, seen, cut);
+    prepare_models(world, streaming, &shown);
+    let chunked = chunked_pieces(streaming, seen, &shown);
     let mut unstood_chunks: HashSet<(u32, u32)> = HashSet::default();
+    let mut missing = Vec::new();
+    for key in near_chunks(streaming, seen, cut, &chunked, 1.0) {
+        match streaming.covers.chunks.get(&key) {
+            None => missing.push(key),
+            Some(parts) if parts.iter().any(|&part| cover::strewing(world, part)) => {
+                unstood.add(chunk_bounds(key.2));
+            }
+            Some(_) => {}
+        }
+    }
     for key in missing {
         if !unstood_chunks.is_empty() || !budget.take(|budget| &mut budget.covers) {
             unstood_chunks.insert(key.2);
             continue;
         }
-        let entity = spawn_cover_chunk(world, streaming, key.0, key.1, key.2, root);
-        streaming.covers.chunks.insert(key, entity);
+        let parts = spawn_cover_chunk(world, streaming, key.0, key.1, key.2, root);
+        if parts.iter().any(|&part| cover::strewing(world, part)) {
+            unstood.add(chunk_bounds(key.2));
+        }
+        streaming.covers.chunks.insert(key, parts);
     }
     for chunk in unstood_chunks {
         unstood.add(chunk_bounds(chunk));
     }
-    let shown = shown_pieces(streaming, seen, cut);
-    prepare_models(world, streaming, &shown);
-    for (&merge, pieces) in &shown {
-        if !stand_merge(world, streaming, root, seen, merge, pieces, budget) {
+    let merging: Vec<(Merge, Vec<(usize, usize)>)> = shown
+        .into_iter()
+        .filter(|(merge, _)| in_view(streaming, seen, merge.region))
+        .map(|(merge, pieces)| {
+            let merged = pieces
+                .into_iter()
+                .filter(|piece| {
+                    !chunked
+                        .get(&merge)
+                        .is_some_and(|chunked| chunked.contains(piece))
+                })
+                .collect();
+            (merge, merged)
+        })
+        .collect();
+    for (merge, merged) in merging {
+        if !stand_merge(world, streaming, root, seen, merge, &merged, budget) {
             unstood.add(streaming.regions.bounds(merge.region));
         }
     }
@@ -191,7 +233,14 @@ pub(super) fn clear(
     cut: &Cut,
     unstood: &Unstood,
 ) {
-    let kept: HashSet<ChunkKey> = near_chunks(streaming, seen, cut, KEEP_SHARE).collect();
+    let chunked = chunked_pieces(streaming, seen, &shown_pieces(streaming, seen, cut));
+    let kept: HashSet<ChunkKey> = near_chunks(streaming, seen, cut, &chunked, KEEP_SHARE).collect();
+    let wanted: HashSet<Merge> = cut
+        .merges
+        .iter()
+        .filter(|merge| in_view(streaming, seen, merge.region))
+        .copied()
+        .collect();
     let covers = &mut streaming.covers;
     if unstood.is_empty() {
         for stale in covers.stale.drain(..) {
@@ -207,7 +256,6 @@ pub(super) fn clear(
         }
         keep
     });
-    let wanted: HashSet<Merge> = cut.merges.iter().copied().collect();
     let regions = &streaming.regions;
     covers.merged.retain(|merge, merged| {
         let keep = wanted.contains(merge) || !unstood.stands_over(regions.bounds(merge.region));
@@ -221,53 +269,87 @@ pub(super) fn clear(
 }
 
 /// Every chunk of every piece in the leaves of `cut` the view takes in, or would within `share`
-/// times its reach and its pixels' distance.
+/// times its reach and its pixels' distance, and every chunk of the merged regions' pieces that
+/// are `chunked` there.
 fn near_chunks<'a>(
     streaming: &'a Streaming,
     seen: Seen,
     cut: &'a Cut,
+    chunked: &'a HashMap<Merge, Vec<(usize, usize)>>,
     share: f32,
 ) -> impl Iterator<Item = ChunkKey> + 'a {
+    let eye = seen.view.eye();
+    let covers = &streaming.covers;
+    let in_reach =
+        move |chunk: (u32, u32)| distance_to(chunk_bounds(chunk), seen.at) <= seen.reach.0 * share;
+    let leaves = cut.leaves.iter().flat_map(move |&leaf| {
+        region_chunks(streaming, leaf)
+            .filter(move |&chunk| in_reach(chunk))
+            .flat_map(move |chunk| {
+                let bounds = chunk_bounds(chunk);
+                let across = distance_to(bounds, ground_pos(eye));
+                let below = eye.y - streaming.heights.height_at(bounds.center()).0;
+                let shown_at = seen.detail(across.hypot(below)).distance();
+                covers
+                    .layers
+                    .iter()
+                    .enumerate()
+                    .flat_map(move |(layer, cover)| {
+                        cover
+                            .pieces
+                            .iter()
+                            .enumerate()
+                            .filter(move |(_, piece)| {
+                                piece.extent.is_none_or(|extent| {
+                                    shown_at.0 <= seen.view.shown_within(extent).0 * share
+                                })
+                            })
+                            .map(move |(piece, _)| (layer, piece, chunk))
+                    })
+            })
+    });
+    let merged = chunked.iter().flat_map(move |(merge, pieces)| {
+        region_chunks(streaming, merge.region)
+            .filter(move |&chunk| in_reach(chunk))
+            .flat_map(move |chunk| {
+                pieces
+                    .iter()
+                    .map(move |&(layer, piece)| (layer, piece, chunk))
+            })
+    });
+    leaves.chain(merged)
+}
+
+/// The chunks of paint within `region`.
+fn region_chunks(streaming: &Streaming, region: Region) -> impl Iterator<Item = (u32, u32)> {
     let (columns, rows) = streaming.paint.pixels();
-    let per_leaf = (PLACEMENT_CELL.0 * SAMPLES_PER_METER as f32) as u32 / cover::CHUNK_CELLS;
+    let side = (((PLACEMENT_CELL.0 * SAMPLES_PER_METER as f32) as u32) << region.level)
+        / cover::CHUNK_CELLS;
     let (chunk_columns, chunk_rows) = (
         columns.div_ceil(cover::CHUNK_CELLS),
         rows.div_ceil(cover::CHUNK_CELLS),
     );
-    let eye = seen.view.eye();
-    let covers = &streaming.covers;
-    cut.leaves.iter().flat_map(move |leaf| {
-        let chunks = (leaf.row * per_leaf..((leaf.row + 1) * per_leaf).min(chunk_rows)).flat_map(
-            move |row| {
-                (leaf.column * per_leaf..((leaf.column + 1) * per_leaf).min(chunk_columns))
-                    .map(move |column| (column, row))
-            },
-        );
-        chunks.flat_map(move |chunk| {
-            let bounds = chunk_bounds(chunk);
-            let in_reach = distance_to(bounds, seen.at) <= seen.reach.0 * share;
-            let across = distance_to(bounds, ground_pos(eye));
-            let below = eye.y - streaming.heights.height_at(bounds.center()).0;
-            let from_eye = across.hypot(below);
-            covers
-                .layers
-                .iter()
-                .enumerate()
-                .flat_map(move |(layer, cover)| {
-                    cover
-                        .pieces
-                        .iter()
-                        .enumerate()
-                        .filter(move |(_, piece)| {
-                            in_reach
-                                && piece.extent.is_none_or(|extent| {
-                                    from_eye <= seen.view.shown_within(extent).0 * share
-                                })
-                        })
-                        .map(move |(piece, _)| (layer, piece, chunk))
-                })
-        })
+    (region.row * side..((region.row + 1) * side).min(chunk_rows)).flat_map(move |row| {
+        (region.column * side..((region.column + 1) * side).min(chunk_columns))
+            .map(move |column| (column, row))
     })
+}
+
+/// Whether the view may see any of the covers over `region`.
+fn in_view(streaming: &Streaming, seen: Seen, region: Region) -> bool {
+    let bounds = streaming.regions.bounds(region);
+    let heights = streaming.heights.range();
+    let tallest = streaming
+        .covers
+        .layers
+        .iter()
+        .flat_map(|layer| &layer.pieces)
+        .filter_map(|piece| piece.extent)
+        .fold(0.0, |tallest: f32, extent| tallest.max(extent.0));
+    seen.view.may_see(
+        world_point(bounds.min(), heights.lowest),
+        world_point(bounds.max(), Meters(heights.highest.0 + tallest)),
+    )
 }
 
 fn chunk_bounds(chunk: (u32, u32)) -> Rect<Meters> {
@@ -279,7 +361,7 @@ fn chunk_bounds(chunk: (u32, u32)) -> Rect<Meters> {
 }
 
 /// The pieces of every layer each merged region of `cut` shows: those that span a pixel at the
-/// nearest its band comes to the eye.
+/// detail the view shows it at.
 fn shown_pieces(
     streaming: &Streaming,
     seen: Seen,
@@ -288,7 +370,7 @@ fn shown_pieces(
     cut.merges
         .iter()
         .map(|&merge| {
-            let nearest = streaming.regions.nearest(merge);
+            let nearest = merge.detail.distance();
             let pieces = streaming
                 .covers
                 .layers
@@ -340,6 +422,34 @@ fn prepare_models(
             CopyState::Ready(_) => {}
         }
     }
+}
+
+/// The pieces of `shown` that each merged region the view may see strews chunk by chunk, as a leaf
+/// does: those strewing a prop whose smallest copies span `STREWN_PIXELS` there.
+fn chunked_pieces(
+    streaming: &Streaming,
+    seen: Seen,
+    shown: &HashMap<Merge, Vec<(usize, usize)>>,
+) -> HashMap<Merge, Vec<(usize, usize)>> {
+    shown
+        .iter()
+        .filter(|(merge, _)| in_view(streaming, seen, merge.region))
+        .map(|(&merge, pieces)| {
+            let pixels_per_meter = seen.view.pixels_per_meter(merge.detail.distance());
+            let chunked = pieces
+                .iter()
+                .filter(|&&(layer, piece)| {
+                    let piece = &streaming.covers.layers[layer].pieces[piece];
+                    piece.strewn.is_some()
+                        && piece
+                            .smallest()
+                            .is_some_and(|smallest| smallest.0 * pixels_per_meter >= STREWN_PIXELS)
+                })
+                .copied()
+                .collect();
+            (merge, chunked)
+        })
+        .collect()
 }
 
 /// Stands the merged meshes of a region's covers, once the models of the props it strews are
@@ -434,7 +544,7 @@ fn stand_merge(
         region: merge.region,
         cells: (streaming.regions.bounds(merge.region).size.width * SAMPLES_PER_METER as f32)
             as u32,
-        pixels_per_meter: seen.view.pixels_per_meter(streaming.regions.nearest(merge)),
+        pixels_per_meter: seen.view.pixels_per_meter(merge.detail.distance()),
     };
     let task = AsyncComputeTaskPool::get().spawn(async move { region.covers(&far_pieces) });
     streaming
@@ -494,8 +604,10 @@ struct FarPiece {
 }
 
 impl FarRegion {
-    /// The merged meshes of `pieces` over the region, together no more triangles than the region's
-    /// share of the view's pixels, every piece thinned alike to keep within them.
+    /// The merged meshes of `pieces` over the region as the view shows them there: every copy
+    /// where a chunk near the eye strews it, at its own size, and only those too small for the
+    /// view to tell apart thinned; a piece none of whose copies the view tells apart strewn
+    /// thinned from the start, as where such copies stand doesn't show.
     fn covers(&self, pieces: &[FarPiece]) -> Vec<FarMesh> {
         let (columns, rows) = self.paint.pixels();
         let first = (
@@ -505,52 +617,95 @@ impl FarRegion {
         if first.0 >= columns || first.1 >= rows {
             return Vec::new();
         }
-        let shares: Vec<_> = pieces.iter().map(|far| self.painted_by(far.slot)).collect();
-        let patch = |share| cover::Patch {
-            heights: &self.heights,
-            first,
-            columns: self.cells.min(columns - first.0),
-            rows: self.cells.min(rows - first.1),
-            share,
-        };
-        let painted: Vec<f32> = shares
-            .iter()
-            .map(|share| painted_area(&patch(share)))
-            .collect();
-        let wanted: Vec<f32> = pieces
-            .iter()
-            .zip(&painted)
-            .map(|(far, &painted)| self.wanted(far, painted))
-            .collect();
-        let side_pixels = self.cells as f32 / SAMPLES_PER_METER as f32 * self.pixels_per_meter;
-        let budget = side_pixels * side_pixels / PIXELS_PER_TRIANGLE;
-        let kept = (budget / wanted.iter().sum::<f32>().max(1.0)).min(1.0);
+        let end = (
+            (first.0 + self.cells).min(columns),
+            (first.1 + self.cells).min(rows),
+        );
         pieces
             .iter()
-            .zip(&shares)
-            .zip(painted.into_iter().zip(wanted))
-            .flat_map(|((far, share), (painted, wanted))| {
-                let seed = chunk_seed(
-                    far.seed,
-                    [
-                        far.slot as u64,
-                        u64::from(far.spread.piece),
-                        u64::from(self.region.row) | u64::from(self.region.level + 1) << 32,
-                        u64::from(self.region.column),
-                    ],
-                );
-                self.piece(far, &patch(share), painted, seed, wanted * kept)
-                    .into_iter()
-                    .filter_map(|(material, mesh)| {
-                        Some(FarMesh {
-                            layer: far.layer,
-                            piece: far.piece,
-                            material,
-                            bounds: mesh.get_aabb()?,
-                            mesh,
+            .flat_map(|far| {
+                let share = self.painted_by(far.slot);
+                let patch = |first: (u32, u32), side: u32| cover::Patch {
+                    heights: &self.heights,
+                    first,
+                    columns: side.min(end.0 - first.0),
+                    rows: side.min(end.1 - first.1),
+                    share: &share,
+                };
+                let strewn = |extent: f32| {
+                    let largest = extent * far.spread.size.1 * self.pixels_per_meter;
+                    if largest < GRAIN_PIXELS {
+                        let seed = chunk_seed(
+                            far.seed,
+                            [
+                                far.slot as u64,
+                                u64::from(far.spread.piece),
+                                u64::from(self.region.row) | u64::from(self.region.level + 1) << 32,
+                                u64::from(self.region.column),
+                            ],
+                        );
+                        let spread = far.spread.grained(extent, self.pixels_per_meter);
+                        return cover::strew_places(&patch(first, self.cells), &spread, seed);
+                    }
+                    chunks_within(first, end)
+                        .flat_map(|chunk| {
+                            let seed = chunk_seed(
+                                far.seed,
+                                [
+                                    far.slot as u64,
+                                    u64::from(far.spread.piece),
+                                    u64::from(chunk.1),
+                                    u64::from(chunk.0),
+                                ],
+                            );
+                            let first =
+                                (chunk.0 * cover::CHUNK_CELLS, chunk.1 * cover::CHUNK_CELLS);
+                            let places = cover::strew_places(
+                                &patch(first, cover::CHUNK_CELLS),
+                                &far.spread,
+                                seed,
+                            );
+                            cover::seen_at(&places, extent, self.pixels_per_meter)
                         })
+                        .collect::<Vec<_>>()
+                };
+                let meshes: Vec<(Option<Handle<GltfMaterial>>, Mesh)> =
+                    match (&far.shape, &far.model) {
+                        (None, _) => cover::sheet(
+                            &patch(first, self.cells),
+                            far.sheet_level,
+                            far.ground_color,
+                            self.sheet_stride(),
+                        )
+                        .into_iter()
+                        .map(|mesh| (None, mesh))
+                        .collect(),
+                        (Some(PieceShape::Blade { width, height }), _) => {
+                            let places = strewn(width.0.max(height.0));
+                            let shape = cover::BladeShape {
+                                width: width.0,
+                                height: height.0,
+                            };
+                            cover::blades(&self.heights, &places, &shape, &far.spread)
+                                .into_iter()
+                                .map(|mesh| (None, mesh))
+                                .collect()
+                        }
+                        (Some(PieceShape::Prop { .. }), Some(model)) => {
+                            let places = strewn(model.extent());
+                            cover::merged_copies(&places, model, &far.spread, self.pixels_per_meter)
+                        }
+                        (Some(PieceShape::Prop { .. }), None) => Vec::new(),
+                    };
+                meshes.into_iter().filter_map(|(material, mesh)| {
+                    Some(FarMesh {
+                        layer: far.layer,
+                        piece: far.piece,
+                        material,
+                        bounds: mesh.get_aabb()?,
+                        mesh,
                     })
-                    .collect::<Vec<_>>()
+                })
             })
             .collect()
     }
@@ -566,85 +721,24 @@ impl FarRegion {
         }
     }
 
-    /// How many triangles a piece takes over `painted` square metres at its full spread.
-    fn wanted(&self, far: &FarPiece, painted: f32) -> f32 {
-        let copies = far.spread.per_square_meter * painted;
-        match (&far.shape, &far.model) {
-            (None, _) => 2.0 * (self.cells * self.cells) as f32,
-            (Some(PieceShape::Blade { .. }), _) => copies,
-            (Some(PieceShape::Prop { .. }), Some(model)) => {
-                let size = (far.spread.size.0 + far.spread.size.1) / 2.0;
-                copies * model.triangles_at(size, self.pixels_per_meter) as f32
-            }
-            (Some(PieceShape::Prop { .. }), None) => 0.0,
+    /// How many cells of paint a quad of a sheet spans: as many as the view tells apart no better
+    /// than one.
+    fn sheet_stride(&self) -> u32 {
+        let cell = self.pixels_per_meter / SAMPLES_PER_METER as f32;
+        let mut stride = 1;
+        while (stride * 2) as f32 * cell <= GRAIN_PIXELS && stride * 2 <= self.cells {
+            stride *= 2;
         }
-    }
-
-    /// A piece's merged meshes over `patch`, painted over `painted` square metres, spending no
-    /// more than `budget` triangles.
-    fn piece(
-        &self,
-        far: &FarPiece,
-        patch: &cover::Patch,
-        painted: f32,
-        seed: u64,
-        budget: f32,
-    ) -> Vec<(Option<Handle<GltfMaterial>>, Mesh)> {
-        match (&far.shape, &far.model) {
-            (None, _) => {
-                let quads = budget / 2.0;
-                let mut stride = 1;
-                while (self.cells / stride).pow(2) as f32 > quads && stride < self.cells {
-                    stride *= 2;
-                }
-                cover::sheet(patch, far.sheet_level, far.ground_color, stride)
-                    .into_iter()
-                    .map(|mesh| (None, mesh))
-                    .collect()
-            }
-            (Some(PieceShape::Blade { width, height }), _) => {
-                let blades = far.spread.per_square_meter * painted;
-                let spread = far.spread.thinned((budget / blades.max(1.0)).min(1.0));
-                let shape = cover::BladeShape {
-                    width: width.0,
-                    height: height.0,
-                };
-                cover::blades(patch, &shape, &spread, seed)
-                    .into_iter()
-                    .map(|mesh| (None, mesh))
-                    .collect()
-            }
-            (Some(PieceShape::Prop { .. }), Some(model)) => {
-                let mut spread = far.spread;
-                for _ in 0..3 {
-                    let copies = spread.per_square_meter * painted;
-                    let size = (spread.size.0 + spread.size.1) / 2.0;
-                    let triangles = model.triangles_at(size, self.pixels_per_meter).max(1);
-                    let share = budget / (copies.max(1.0) * triangles as f32);
-                    if share >= 1.0 {
-                        break;
-                    }
-                    spread = spread.thinned(share);
-                }
-                let places = cover::strew_places(patch, &spread, seed);
-                cover::merged_copies(&places, model, &spread, self.pixels_per_meter)
-            }
-            (Some(PieceShape::Prop { .. }), None) => Vec::new(),
-        }
+        stride
     }
 }
 
-/// How many square metres of `patch` its cover is painted over, from every fourth cell each way.
-fn painted_area(patch: &cover::Patch) -> f32 {
-    const STEP: u32 = 4;
-    let cell = 1.0 / SAMPLES_PER_METER as f32;
-    let mut painted = 0.0;
-    for row in (patch.first.1..patch.first.1 + patch.rows).step_by(STEP as usize) {
-        for column in (patch.first.0..patch.first.0 + patch.columns).step_by(STEP as usize) {
-            painted += (patch.share)(column, row).clamp(0.0, 1.0);
-        }
-    }
-    painted * (STEP as f32 * cell).powi(2)
+/// The chunks of paint from the cell at `first` to the one before `end`.
+fn chunks_within(first: (u32, u32), end: (u32, u32)) -> impl Iterator<Item = (u32, u32)> {
+    let side = cover::CHUNK_CELLS;
+    (first.1 / side..end.1.div_ceil(side)).flat_map(move |row| {
+        (first.0 / side..end.0.div_ceil(side)).map(move |column| (column, row))
+    })
 }
 
 /// Each terrain with a cover, readied to lay it chunk by chunk as the view comes: the material
@@ -811,13 +905,13 @@ fn spawn_cover_chunk(
     let meshes = match shape.as_ref().map(|piece| &piece.shape) {
         None => cover::sheet(&patch, layer.sheet_level, layer.ground_color, 1),
         Some(PieceShape::Blade { width, height }) => cover::blades(
-            &patch,
+            &streaming.heights,
+            &cover::strew_places(&patch, spread, seed),
             &cover::BladeShape {
                 width: width.0,
                 height: height.0,
             },
             spread,
-            seed,
         ),
         Some(PieceShape::Prop { .. }) => {
             let Some(Strewn { gltf, material, .. }) = strewn.as_ref() else {

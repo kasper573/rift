@@ -15,7 +15,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 
 use super::cover::{self, Piece, PieceVertices};
-use super::lod::{self, STRAY_PIXELS};
+use super::lod::{self, GRAIN_PIXELS, STRAY_PIXELS};
 use super::material::{MaterialLooks, Wardrobe, WorldMaterial};
 
 /// Where the piece a merged vertex belongs to stands in the world, and in `w` how much it is grown.
@@ -39,23 +39,24 @@ pub struct MergedModel {
 pub struct Shape {
     pub(super) vertices: PieceVertices,
     pub(super) levels: Vec<PieceLevel>,
+    /// How many of the levels the simplifier made, the shape's own first; any after them thin its
+    /// islands.
+    simplified: usize,
 }
 
 /// A shape's triangles at a level: the vertices of the shape they use, where each lies, and the
-/// triangles over them, with how far their shape strays from the shape's own, in its units. A
-/// level of a shape cut out of its texture strays infinitely far, as its outline is its texture's,
-/// which no measure of its triangles tells, so it is drawn only where too few pixels show it for
-/// its outline to matter.
+/// triangles over them, with the most pixels a unit of the shape may span for the level to look
+/// as the shape does.
 pub(super) struct PieceLevel {
-    strays: f32,
+    shown_up_to: f32,
     pub(super) vertices: Vec<u32>,
     pub(super) positions: Vec<Vec3>,
     pub(super) indices: Vec<u32>,
 }
 
 /// What a model is merged from, once it and its materials have loaded: its pieces, each with the
-/// world material it is drawn in and whether that cuts it out of its texture, which keeps it from
-/// being simplified, as its outline is its texture's rather than its triangles'.
+/// world material it is drawn in and whether that cuts it out of its texture, whose islands may
+/// then thin once too small to tell apart.
 pub struct ModelParts(Vec<(Piece, Handle<WorldMaterial>, bool)>);
 
 /// A prop standing among those merged: its model, where it stands, and whether it casts a shadow.
@@ -163,7 +164,8 @@ impl ModelParts {
 
 /// The props at `places` merged, meshes for each material they are drawn in and each way they
 /// cast a shadow, seen at `pixels_per_meter`, every piece at the level [`Shape::level`] picks for
-/// its share of what its prop covers. A mesh holds at most [`MOST_MERGED_VERTICES`].
+/// its share of what its prop covers.
+/// A mesh holds at most [`MOST_MERGED_VERTICES`].
 pub fn merge(places: &[MergedPlace], pixels_per_meter: f32) -> Vec<MergedMesh> {
     let mut merging: HashMap<(AssetId<WorldMaterial>, bool), Vec<Merging>> = HashMap::default();
     for place in places {
@@ -200,51 +202,68 @@ pub const MOST_MERGED_VERTICES: usize = u16::MAX as usize;
 
 impl Shape {
     /// The shape of `vertices` at its own triangles, then coarser and coarser: what the simplifier
-    /// brings them to, and where it is `cut_out` of its texture, as foliage is, its islands thinned
-    /// on from there.
+    /// brings them to, each with how far its shape strays;
+    /// and where it is `cut_out` of its texture, as foliage is, its islands thinned on from there
+    /// once they are too small to tell apart.
     pub(super) fn new(vertices: PieceVertices, cut_out: bool) -> Shape {
         let positions: Vec<[f32; 3]> = vertices
             .positions
             .iter()
             .map(|position| position.to_array())
             .collect();
-        let strays = |strays: f32| if cut_out { f32::INFINITY } else { strays };
+        let normals: Vec<[f32; 3]> = vertices
+            .normals
+            .iter()
+            .map(|normal| normal.to_array())
+            .collect();
         let mut levels: Vec<PieceLevel> =
-            std::iter::once(PieceLevel::of(&vertices, &vertices.indices, 0.0))
+            std::iter::once(PieceLevel::of(&vertices, &vertices.indices, f32::INFINITY))
                 .chain(
-                    lod::simplify(&vertices.indices, &positions)
-                        .iter()
-                        .map(|(kept, stray)| PieceLevel::of(&vertices, kept, strays(*stray))),
+                    lod::simplify(
+                        &vertices.indices,
+                        &positions,
+                        lod::Surface {
+                            uvs: Some(&vertices.uvs),
+                            normals: Some(&normals),
+                        },
+                    )
+                    .iter()
+                    .map(|(kept, strays)| PieceLevel::of(&vertices, kept, STRAY_PIXELS / strays)),
                 )
                 .collect();
+        let simplified = levels.len();
         if cut_out && let Some(coarsest) = levels.last() {
             let thinned = thinned(coarsest);
             levels.extend(thinned);
         }
-        Shape { vertices, levels }
+        Shape {
+            vertices,
+            levels,
+            simplified,
+        }
     }
 
     pub(super) fn triangles(&self) -> usize {
         self.levels[0].triangles()
     }
 
-    /// The level to draw the shape at, seen at `pixels_per_unit` with `budget` triangles to spend:
-    /// the coarsest that strays from its shape by less than the view shows, coarser still while it
-    /// takes more triangles than the budget, as no picture shows more of a shape than a triangle
-    /// for each pixel it covers.
-    pub(super) fn level(&self, pixels_per_unit: f32, budget: f32) -> &PieceLevel {
-        let allowed = STRAY_PIXELS / pixels_per_unit;
-        let by_stray = self
+    /// The level to draw the shape at, seen at `pixels_per_unit` over `covered` pixels: the
+    /// coarsest that looks as the shape does there, and of those the simplifier made, coarser
+    /// still while it takes more triangles than the pixels it covers, as no picture shows more of
+    /// a shape than a triangle a pixel. Thinned islands stand in only where they look as the
+    /// shape does.
+    pub(super) fn level(&self, pixels_per_unit: f32, covered: f32) -> &PieceLevel {
+        let by_look = self
             .levels
             .iter()
-            .rposition(|level| level.strays <= allowed)
+            .rposition(|level| pixels_per_unit <= level.shown_up_to)
             .unwrap_or(0);
-        let by_budget = self
-            .levels
+        let simplified = &self.levels[..self.simplified];
+        let by_pixels = simplified
             .iter()
-            .position(|level| level.triangles() as f32 <= budget)
-            .unwrap_or(self.levels.len() - 1);
-        &self.levels[by_stray.max(by_budget)]
+            .position(|level| level.triangles() as f32 <= covered)
+            .unwrap_or(simplified.len() - 1);
+        &self.levels[by_look.max(by_pixels)]
     }
 }
 
@@ -270,14 +289,15 @@ struct MergedPiece {
 }
 
 impl PieceLevel {
-    pub(super) fn triangles(&self) -> usize {
+    fn triangles(&self) -> usize {
         self.indices.len() / 3
     }
 
-    /// The level drawing the triangles `kept` index over the vertices.
-    fn of(vertices: &PieceVertices, kept: &[u32], strays: f32) -> PieceLevel {
+    /// The level drawing the triangles `kept` index over the vertices, looking as the shape does
+    /// up to `shown_up_to` pixels a unit.
+    fn of(vertices: &PieceVertices, kept: &[u32], shown_up_to: f32) -> PieceLevel {
         let mut level = PieceLevel {
-            strays,
+            shown_up_to,
             vertices: Vec::new(),
             positions: Vec::new(),
             indices: Vec::new(),
@@ -297,7 +317,9 @@ impl PieceLevel {
 
 /// A level's islands, triangles joined by the vertices they share, thinned to every second one,
 /// then every fourth, while more than one is left: each island kept grown about its middle to make
-/// up the area of those dropped, so what the islands cover stays as thick.
+/// up the area of those dropped, so what the islands cover stays as thick. A thinner level looks
+/// as the shape does only while its grown islands span no more than [`GRAIN_PIXELS`], too few for
+/// the view to tell them apart from the islands they stand in for.
 fn thinned(level: &PieceLevel) -> Vec<PieceLevel> {
     let triangles = level.indices.as_chunks::<3>().0;
     let mut joined: Vec<u32> = (0..level.vertices.len() as u32).collect();
@@ -324,10 +346,17 @@ fn thinned(level: &PieceLevel) -> Vec<PieceLevel> {
         })
         .collect();
     let mut middles = vec![(Vec3::ZERO, 0.0f32); islands.len()];
+    let mut bounds = vec![(Vec3::INFINITY, Vec3::NEG_INFINITY); islands.len()];
     for (vertex, &island) in island_of_vertex.iter().enumerate() {
-        middles[island].0 += level.positions[vertex];
+        let at = level.positions[vertex];
+        middles[island].0 += at;
         middles[island].1 += 1.0;
+        bounds[island] = (bounds[island].0.min(at), bounds[island].1.max(at));
     }
+    let widest = bounds
+        .iter()
+        .map(|(low, high)| (*high - *low).max_element())
+        .fold(0.0f32, f32::max);
     let mut levels = Vec::new();
     let mut every = 2;
     while islands.len() / every >= 1 {
@@ -338,7 +367,9 @@ fn thinned(level: &PieceLevel) -> Vec<PieceLevel> {
             .flat_map(|triangle| triangle.iter().copied())
             .collect();
         let mut thinner = PieceLevel {
-            strays: f32::INFINITY,
+            shown_up_to: level
+                .shown_up_to
+                .min(GRAIN_PIXELS / (widest * grown).max(f32::EPSILON)),
             vertices: Vec::new(),
             positions: Vec::new(),
             indices: Vec::new(),

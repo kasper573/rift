@@ -1054,10 +1054,11 @@ fn view(world: &mut World) -> Option<ProbeView> {
     })
 }
 
-/// The ground the probe last sent: the window it covered, so it goes out again only once the
-/// player has moved on to ground beyond it.
-#[derive(Resource, Default)]
-struct TerrainSent(Option<(AreaId, Rect<Meters>)>);
+/// The ground the probe last sent: the window it covered and how many of the ground's tiles
+/// under it were loaded, so it goes out again only once the player has moved on to ground beyond
+/// it or more of it answers exactly rather than from the ground's overview.
+#[derive(Resource, Default, PartialEq)]
+struct TerrainSent(Option<(AreaId, Rect<Meters>, usize)>);
 
 fn terrain(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Option<ProbeTerrain> {
     let standing = me.and_then(|me| {
@@ -1070,16 +1071,21 @@ fn terrain(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Optio
         world.resource_mut::<TerrainSent>().0 = None;
         return None;
     };
-    let bounds = area::load(world.resource::<Content>(), area_id)
-        .size
-        .bounds();
-    let rig = world.get_resource::<CameraRig>()?;
-    let window = ground_window(at, bounds, area::render::view_reach(rig.framing()));
+    let reach = area::render::view_reach(world.get_resource::<CameraRig>()?.framing());
+    let area = area::load(world.resource::<Content>(), area_id);
+    let window = ground_window(at, area.size.bounds(), reach);
+    let loaded = area
+        .heights
+        .size()
+        .tiles_within(window)
+        .filter(|&tile| area.heights.is_loaded(tile))
+        .count();
+    let sending = TerrainSent(Some((area_id, window, loaded)));
     let mut sent = world.resource_mut::<TerrainSent>();
-    if sent.0 == Some((area_id, window)) {
+    if *sent == sending {
         return None;
     }
-    sent.0 = Some((area_id, window));
+    *sent = sending;
     let area = area::load(world.resource::<Content>(), area_id);
     let size = Size::new(window.size.width.floor(), window.size.height.floor());
     let (columns, rows) = (size.width as usize + 1, size.height as usize + 1);

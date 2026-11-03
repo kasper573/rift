@@ -7,6 +7,7 @@ use bevy::image::{ImageAddressMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::mesh::MeshTag;
 use bevy::mesh::{Indices, PrimitiveTopology};
 use bevy::pbr::{ExtendedMaterial, MaterialExtension};
+use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::MainWorld;
 use bevy::render::render_asset::RenderAssets;
@@ -218,6 +219,7 @@ impl ChunkPaints {
             return;
         };
         let layer = LaidLayer {
+            ground: self.material.id(),
             paints: material.extension.paints.id(),
             grids: material.extension.grids.id(),
             layer,
@@ -236,8 +238,10 @@ impl ChunkPaints {
 #[derive(Resource, Default)]
 pub struct LaidPaints(Vec<LaidLayer>);
 
-/// One chunk's paint and grid, to write into the layer it lies on.
+/// One chunk's paint and grid, to write into the layer it lies on, of the textures the ground
+/// painted with `ground` held as it was laid.
 struct LaidLayer {
+    ground: AssetId<GroundMaterial>,
     paints: AssetId<Image>,
     grids: AssetId<Image>,
     layer: u32,
@@ -246,24 +250,37 @@ struct LaidLayer {
     grid: Vec<u8>,
 }
 
-/// Takes the layers laid in the main world into the render world.
+/// Takes the layers laid in the main world into the render world, and forgets those waiting on
+/// the textures of a ground that is gone.
 pub(super) fn extract_laid(mut main: ResMut<MainWorld>, mut laid: ResMut<LaidPaints>) {
     if let Some(mut taken) = main.get_resource_mut::<LaidPaints>() {
         laid.0.append(&mut taken.0);
     }
+    if let Some(grounds) = main.get_resource::<Assets<GroundMaterial>>() {
+        laid.0.retain(|layer| grounds.contains(layer.ground));
+    }
 }
 
-/// Writes each layer laid into its textures, once they are on the GPU. A texture made since holds
-/// the layers laid before it already, so a layer whose texture isn't there is dropped.
+/// Writes each layer laid into its textures once they are on the GPU, keeping it until they
+/// are. A layer laid for textures a ground has since outgrown is dropped: their larger successors
+/// were made holding it.
 pub(super) fn write_laid(
     mut laid: ResMut<LaidPaints>,
     images: Res<RenderAssets<GpuImage>>,
     queue: Res<RenderQueue>,
 ) {
-    for layer in laid.0.drain(..) {
+    let latest: HashMap<AssetId<GroundMaterial>, AssetId<Image>> = laid
+        .0
+        .iter()
+        .map(|layer| (layer.ground, layer.paints))
+        .collect();
+    laid.0.retain(|layer| {
+        if latest.get(&layer.ground) != Some(&layer.paints) {
+            return false;
+        }
         let (Some(paints), Some(grids)) = (images.get(layer.paints), images.get(layer.grids))
         else {
-            continue;
+            return true;
         };
         queue.write_texture(
             TexelCopyTextureInfo {
@@ -311,7 +328,8 @@ pub(super) fn write_laid(
                 depth_or_array_layers: 1,
             },
         );
-    }
+        false
+    });
 }
 
 /// How many chunks' paint a ground holds room for at first; it doubles whenever more stand.

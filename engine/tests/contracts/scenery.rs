@@ -277,14 +277,15 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
         "from high above, neither the tufts nor the pebbles stand"
     );
 
-    // From high over the middle, taking in the whole field, everything stands merged: no tuft or
-    // pebble in the east stands on its own, while meshes over it hold them.
+    // From high over the east, reaching over the whole field, everything stands merged: no tuft or
+    // pebble in the east stands on its own, while meshes over it hold them. The pebbles merge only
+    // where the view may see them, so the west, out of its sight, holds none.
     scenery::view_from(
         app.world_mut(),
         stood,
-        Pos::new(256.0, 8.0),
+        Pos::new(476.0, 8.0),
         Meters(512.0),
-        overhead(Pos::new(256.0, 8.0), 300.0),
+        overhead(Pos::new(476.0, 8.0), 300.0),
     );
     assert!(settle(&mut app, |app| {
         !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
@@ -295,12 +296,16 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
             pebbles_between(&mut app, 256.0, 512.0)
         ),
         (0, 0),
-        "taking in the whole field, nothing east stands on its own"
+        "from high over the east, nothing east stands on its own"
     );
     assert!(
         merged_over::<WorldMaterial>(&mut app, Vec3::new(492.0, 0.0, 8.0))
             && merged_over::<CoverMaterial>(&mut app, Vec3::new(460.0, 0.0, 8.0)),
         "the tufts and the pebbles stand merged"
+    );
+    assert!(
+        !merged_over::<CoverMaterial>(&mut app, Vec3::new(40.0, 0.0, 8.0)),
+        "the pebbles out of the view's sight stand no merged meshes"
     );
 
     scenery::view_from(
@@ -311,6 +316,11 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
         overhead(Pos::new(496.0, 8.0), 10.0),
     );
     assert!(settle(&mut app, |app| {
+        assert!(
+            merged_over::<CoverMaterial>(app, Vec3::new(460.0, 0.0, 8.0))
+                || pebbles_between(app, 448.0, 480.0) > 0,
+            "coming near, the merged pebbles stand on until their own copies do"
+        );
         !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
     }));
     assert_eq!(

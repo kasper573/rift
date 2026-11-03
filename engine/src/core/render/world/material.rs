@@ -151,36 +151,6 @@ impl MaterialExtension for WorldLook {
     }
 }
 
-/// What the meshes of the world are drawn with, as loaded or as dressed for the world.
-#[derive(SystemParam)]
-pub struct Surfaces<'w, 's> {
-    loaded: Query<'w, 's, &'static MeshMaterial3d<StandardMaterial>>,
-    dressed: Query<'w, 's, &'static MeshMaterial3d<WorldMaterial>>,
-    standard: Res<'w, Assets<StandardMaterial>>,
-    world: Res<'w, Assets<WorldMaterial>>,
-}
-
-impl Surfaces<'_, '_> {
-    /// Whether `mesh` is cut out by its texture's alpha, as foliage is: its outline is drawn by
-    /// its texture rather than by its triangles.
-    pub fn cut_out(&self, mesh: Entity) -> bool {
-        let dressed = self
-            .dressed
-            .get(mesh)
-            .ok()
-            .and_then(|material| self.world.get(&material.0))
-            .map(|material| material.base.alpha_mode);
-        let loaded = || {
-            self.loaded
-                .get(mesh)
-                .ok()
-                .and_then(|material| self.standard.get(&material.0))
-                .map(|material| world_alpha(material.alpha_mode))
-        };
-        dressed.or_else(loaded).is_some_and(cuts_out)
-    }
-}
-
 /// Whether a material of `alpha` cuts its shape out of its texture, as foliage does.
 fn cuts_out(alpha: AlphaMode) -> bool {
     matches!(alpha, AlphaMode::Mask(cutoff) if cutoff > 0.0)

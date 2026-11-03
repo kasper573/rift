@@ -145,10 +145,9 @@ pub fn readying(world: &mut World) -> bool {
         .iter(world)
         .next()
         .is_some();
-    let models: Vec<_> = world
-        .query::<(&WorldAssetRoot, Option<&WorldInstance>)>()
+    let models: Vec<Entity> = world
+        .query_filtered::<Entity, With<WorldAssetRoot>>()
         .iter(world)
-        .map(|(root, instance)| (root.0.id(), instance.map(|instance| **instance)))
         .collect();
     let mut dressed = world.query::<&MeshMaterial3d<material::WorldMaterial>>();
     let textures: Vec<Handle<Image>> = match world.get_resource::<Assets<material::WorldMaterial>>()
@@ -160,20 +159,30 @@ pub fn readying(world: &mut World) -> bool {
             .collect(),
         None => Vec::new(),
     };
-    let (Some(assets), Some(spawner)) = (
-        world.get_resource::<AssetServer>(),
-        world.get_resource::<WorldInstanceSpawner>(),
-    ) else {
+    let Some(assets) = world.get_resource::<AssetServer>() else {
         return waiting;
     };
     waiting
-        || models.into_iter().any(|(model, instance)| {
-            !assets.load_state(model).is_failed()
-                && instance.is_none_or(|instance| !spawner.instance_is_ready(instance))
-        })
+        || models.into_iter().any(|model| !model_stands(world, model))
         || textures
             .iter()
             .any(|texture| assets.load_state(texture).is_loading())
+}
+
+/// Whether the model `entity` was spawned with stands: instanced, or failed to load, so nothing
+/// more of it is coming.
+pub fn model_stands(world: &World, entity: Entity) -> bool {
+    let (Some(root), Some(assets), Some(spawner)) = (
+        world.get::<WorldAssetRoot>(entity),
+        world.get_resource::<AssetServer>(),
+        world.get_resource::<WorldInstanceSpawner>(),
+    ) else {
+        return true;
+    };
+    assets.load_state(root.0.id()).is_failed()
+        || world
+            .get::<WorldInstance>(entity)
+            .is_some_and(|instance| spawner.instance_is_ready(**instance))
 }
 
 /// The assets of a kind dropped since last asked, so what a cache made from them can go too.

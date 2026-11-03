@@ -6,7 +6,7 @@
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 
-use super::{PLACEMENT_CELL, SPLIT_WITHIN, Seen, distance_to};
+use super::{Detail, PLACEMENT_CELL, SPLIT_WITHIN, Seen, distance_to};
 use crate::core::ground::Heightfield;
 use crate::core::math::{Pos, Rect, Size};
 use crate::core::render::camera::{View, ground_pos};
@@ -30,13 +30,12 @@ pub(super) struct Region {
     pub row: u32,
 }
 
-/// A region whose scenery stands merged, and its band: how many times twice as far off the eye as
-/// a region of its size can be, so what stands for it is made again only as the view comes to
-/// see it twice as fine or twice as coarse.
+/// A region whose scenery stands merged, and the detail the view shows its nearest edge at, so
+/// what stands for it is made again only as that detail changes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) struct Merge {
     pub region: Region,
-    pub band: u32,
+    pub detail: Detail,
 }
 
 /// The quadtree cut for a view: the leaves whose scenery stands piece by piece, and the coarser
@@ -76,8 +75,10 @@ impl Regions {
             let side = bounds.size.width;
             let from_eye = eye_distance(heights, seen.view, bounds);
             if from_eye >= side * SPLIT_WITHIN {
-                let band = (from_eye / (side * SPLIT_WITHIN)).log2().floor().max(0.0) as u32;
-                cut.merges.push(Merge { region, band });
+                cut.merges.push(Merge {
+                    region,
+                    detail: seen.detail(from_eye),
+                });
             } else if region.level == 0 {
                 cut.leaves.insert(region);
             } else {
@@ -102,12 +103,6 @@ impl Regions {
             ),
             Size::new(side, side),
         )
-    }
-
-    /// The nearest a merged region's band comes to the eye.
-    pub(super) fn nearest(&self, merge: Merge) -> Meters {
-        let side = self.bounds(merge.region).size.width;
-        Meters(side * SPLIT_WITHIN * (1u32 << merge.band) as f32)
     }
 }
 

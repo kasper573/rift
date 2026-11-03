@@ -3,8 +3,10 @@ use bevy::prelude::*;
 use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER};
 use engine::core::math::Pos;
 use engine::core::render::world::cover::{
-    BladeShape, Mark, Patch, Piece, Spread, blades, copy_meshes, sheet, strew_places,
+    BladeShape, CopyModel, Mark, Patch, Piece, Spread, blades, copy_meshes, merged_copies, seen_at,
+    sheet, strew_places,
 };
+use engine::core::render::world::lod::GRAIN_PIXELS;
 use engine::core::units::Meters;
 use testkit::HEIGHTS;
 
@@ -89,8 +91,12 @@ fn blades_grow_as_thick_as_their_ground_is_painted_rooted_on_the_terrain_each_it
     let full = |_: u32, _: u32| 1.0;
     let half = |_: u32, _: u32| 0.5;
     let none = |_: u32, _: u32| 0.0;
+    let grow = |share: &dyn Fn(u32, u32) -> f32, spread: &Spread, seed: u64| {
+        let places = strew_places(&patch(&heights, share), spread, seed);
+        blades(&heights, &places, &BLADE, spread)
+    };
     let count_of = |share: &dyn Fn(u32, u32) -> f32, spread: &Spread, seed: u64| {
-        blades(&patch(&heights, share), &BLADE, spread, seed)
+        grow(share, spread, seed)
             .iter()
             .map(|mesh| mesh.count_vertices() / 3)
             .sum::<usize>()
@@ -113,7 +119,7 @@ fn blades_grow_as_thick_as_their_ground_is_painted_rooted_on_the_terrain_each_it
         per_square_meter: 400.0,
         ..SPREAD
     };
-    let meshes = blades(&patch(&heights, &full), &BLADE, &dense, 7);
+    let meshes = grow(&full, &dense, 7);
     assert!(
         meshes.len() > 1
             && meshes
@@ -126,7 +132,7 @@ fn blades_grow_as_thick_as_their_ground_is_painted_rooted_on_the_terrain_each_it
         (count_of(&full, &dense, 7) as f32 - dense_whole).abs() <= dense_whole * 0.05,
         "a dense cover grows every blade over its meshes"
     );
-    let grown = |seed| one(blades(&patch(&heights, &full), &BLADE, &SPREAD, seed));
+    let grown = |seed| one(grow(&full, &SPREAD, seed));
     assert_eq!(
         positions(&grown(7)),
         positions(&grown(7)),
@@ -298,4 +304,102 @@ fn strewn_copies_of_a_prop_stand_where_the_paint_puts_them_marked_how_far_up_the
         seeds.len() > places.len() / 2,
         "each copy has a seed of its own"
     );
+}
+
+#[test]
+fn a_crowd_seen_from_afar_keeps_all_it_tells_apart_as_it_is_and_grows_none_past_the_grain() {
+    let heights = slope();
+    let full = |_: u32, _: u32| 1.0;
+    let spread = Spread {
+        piece: 1,
+        per_square_meter: 16.0,
+        size: (1.0, 1.0),
+        color: (DARK, LIGHT),
+    };
+    let places = strew_places(&patch(&heights, &full), &spread, 3);
+    let extent = 0.5;
+    let near = GRAIN_PIXELS / extent;
+    assert_eq!(
+        seen_at(&places, extent, near),
+        places,
+        "copies the view tells apart stay, each as it is"
+    );
+    let far = near / 4.0;
+    let kept = seen_at(&places, extent, far);
+    let share = kept.len() as f32 / places.len() as f32;
+    assert!(
+        (share - 1.0 / 16.0).abs() < 0.03,
+        "a quarter the size, a sixteenth stay to cover as much: {share}"
+    );
+    for copy in &kept {
+        let across = extent * copy.transform.scale.x * far;
+        assert!(
+            (across - GRAIN_PIXELS).abs() < 1e-3,
+            "a kept copy grows to the grain and no further: {across} px"
+        );
+    }
+    let farther = seen_at(&places, extent, far / 2.0);
+    assert!(
+        farther.iter().all(|copy| kept
+            .iter()
+            .any(|nearer| nearer.transform.translation == copy.transform.translation)),
+        "a farther view keeps fewer of the same copies"
+    );
+
+    let tuft: Vec<[f32; 3]> = (0..16)
+        .flat_map(|blade| {
+            let x = blade as f32 * 0.1;
+            [[x, 0.0, 0.0], [x + 0.02, 0.0, 0.0], [x + 0.01, 0.05, 0.0]]
+        })
+        .collect();
+    let count = tuft.len();
+    let tuft = Piece {
+        mesh: Mesh::new(
+            bevy::mesh::PrimitiveTopology::TriangleList,
+            bevy::asset::RenderAssetUsages::default(),
+        )
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, tuft)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.5, 0.5]; count]),
+        transform: Transform::IDENTITY,
+        material: None,
+    };
+    let model = CopyModel::of(&[tuft]);
+    let one = [places[0]];
+    let blades_at = |pixels_per_meter: f32| -> Vec<f32> {
+        merged_copies(&one, &model, &spread, pixels_per_meter)
+            .iter()
+            .flat_map(|(_, mesh)| {
+                positions(mesh)
+                    .chunks(3)
+                    .map(|blade| {
+                        let low = blade[0][0].min(blade[1][0]).min(blade[2][0]);
+                        let high = blade[0][0].max(blade[1][0]).max(blade[2][0]);
+                        let top = blade.iter().map(|at| at[1]).fold(f32::MIN, f32::max);
+                        let root = blade.iter().map(|at| at[1]).fold(f32::MAX, f32::min);
+                        (high - low).max(top - root)
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .collect()
+    };
+    let seen = GRAIN_PIXELS / 0.05;
+    let close = blades_at(seen);
+    assert!(
+        close.len() == 16 && close.iter().all(|across| (across - 0.05).abs() < 1e-4),
+        "every blade the view tells apart stands at its own size: {close:?}"
+    );
+    for pixels_per_meter in [seen / 2.0, seen / 8.0, seen / 32.0] {
+        let blades = blades_at(pixels_per_meter);
+        assert!(
+            !blades.is_empty() && blades.len() < 16,
+            "blades too small to tell apart thin: {} at {pixels_per_meter}",
+            blades.len()
+        );
+        assert!(
+            blades
+                .iter()
+                .all(|across| across * pixels_per_meter <= GRAIN_PIXELS + 1e-3),
+            "no blade grows past the grain: {blades:?} at {pixels_per_meter}"
+        );
+    }
 }

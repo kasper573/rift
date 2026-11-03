@@ -25,10 +25,11 @@ use crate::core::math::{Pos, Rect};
 use crate::core::render::camera::{View, ground_pos};
 use crate::core::render::world::fade::Fades;
 use crate::core::render::world::lod::{MeshLevels, Simplifier};
-use crate::core::render::world::material::{MaterialLook, MaterialLooks, Surfaces};
+use crate::core::render::world::material::{MaterialLook, MaterialLooks};
 use crate::core::render::world::merged::{
     self, MergedMesh, MergedModel, MergedPlace, ModelSources,
 };
+use crate::core::render::world::model_stands;
 use crate::core::render::world_point;
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::{MeterSize, Meters};
@@ -128,13 +129,17 @@ pub(super) fn stand(
     let near: HashSet<usize> = in_leaves(streaming, &filed, cut)
         .filter(|&index| !out_of_sight(streaming, &filed, seen, index, 1.0))
         .collect();
-    if !stand_scenes(world, streaming, root, &near, budget) {
-        for &leaf in &cut.leaves {
-            if props_within(streaming, &filed, leaf)
-                .any(|index| near.contains(&index) && !streaming.props.scenes.contains_key(&index))
-            {
-                unstood.add(streaming.regions.bounds(leaf));
-            }
+    stand_scenes(world, streaming, root, &near, budget);
+    for &leaf in &cut.leaves {
+        if props_within(streaming, &filed, leaf).any(|index| {
+            near.contains(&index)
+                && streaming
+                    .props
+                    .scenes
+                    .get(&index)
+                    .is_none_or(|&scene| !model_stands(world, scene))
+        }) {
+            unstood.add(streaming.regions.bounds(leaf));
         }
     }
     for &merge in &cut.merges {
@@ -271,19 +276,19 @@ fn out_of_sight(
         || filed.extents[index].is_some_and(|extent| {
             let ground = streaming.heights.height_at(placed.at).0;
             let from_eye = (placed.at - ground_pos(eye)).length().hypot(eye.y - ground);
-            from_eye > seen.view.shown_within(extent).0 * share
+            seen.detail(from_eye).distance().0 > seen.view.shown_within(extent).0 * share
         })
 }
 
 /// Stands a scene for every prop of `near` that has none, nearest first, as far as the budget
-/// goes; whether all of them stand.
+/// goes.
 fn stand_scenes(
     world: &mut World,
     streaming: &mut Streaming,
     root: Entity,
     near: &HashSet<usize>,
     budget: &mut Budget,
-) -> bool {
+) {
     let at = streaming.view.map_or(Pos::new(0.0, 0.0), |seen| seen.at);
     let area = streaming.area.clone();
     let mut missing: Vec<usize> = near
@@ -297,7 +302,7 @@ fn stand_scenes(
     });
     for index in missing {
         if !budget.take(|budget| &mut budget.props) {
-            return false;
+            return;
         }
         let placed = &area.props[index];
         let model = placed.prop.get(&streaming.content).model.path();
@@ -305,18 +310,17 @@ fn stand_scenes(
         if world.resource::<AssetServer>().get_path_id(scene).is_none()
             && !budget.take(|budget| &mut budget.fresh)
         {
-            return false;
+            return;
         }
         let scene = spawn_prop(world, &streaming.content, &streaming.heights, placed, root);
         streaming.props.scenes.insert(index, scene);
     }
-    true
 }
 
 /// A region's props as it shows them, gathered off the frame to wait to merge: every one in it
-/// that spans a pixel at the nearest its band comes to the eye.
+/// that spans a pixel at the detail the view shows it at.
 fn gather(streaming: &Streaming, filed: &Arc<Filed>, merge: Merge, view: View) -> Merged {
-    let nearest = streaming.regions.nearest(merge);
+    let nearest = merge.detail.distance();
     let bounds = streaming.regions.bounds(merge.region);
     let (filed, area) = (filed.clone(), streaming.area.clone());
     Merged::Waiting(Making::Task(AsyncComputeTaskPool::get().spawn(
@@ -347,7 +351,7 @@ fn stand_merge(
     view: View,
     budget: &mut Budget,
 ) -> bool {
-    let pixels_per_meter = view.pixels_per_meter(streaming.regions.nearest(merge));
+    let pixels_per_meter = view.pixels_per_meter(merge.detail.distance());
     let props = &mut streaming.props;
     let Some(merged) = props.merged.get_mut(&merge) else {
         return false;
@@ -499,7 +503,6 @@ pub(super) fn level_ready_scene(
     tree: SceneTree,
     standing: Standing,
     mut drawn: Query<&mut Mesh3d>,
-    surfaces: Surfaces,
     mut simplifier: Simplifier,
     mut commands: Commands,
 ) {
@@ -530,7 +533,6 @@ pub(super) fn level_ready_scene(
     let leveled = Leveled(
         children
             .iter_descendants(scene)
-            .filter(|&mesh| !surfaces.cut_out(mesh))
             .filter_map(|mesh| {
                 let full = before
                     .and_then(|before| before.0.iter().find(|leveled| leveled.mesh == mesh))
@@ -548,7 +550,7 @@ pub(super) fn level_ready_scene(
             .collect(),
     );
     if let (Some(seen), Ok(at)) = (streaming.view, transforms.get(scene)) {
-        for (mesh, level) in levels_for(simplifier.levels(), seen.view, at.translation, &leveled) {
+        for (mesh, level) in levels_for(simplifier.levels(), seen, at.translation, &leveled) {
             if let Ok(mut drawn) = drawn.get_mut(mesh) {
                 drawn.set_if_neq(Mesh3d(level.clone()));
             }
@@ -557,15 +559,15 @@ pub(super) fn level_ready_scene(
     commands.entity(scene).insert(leveled);
 }
 
-/// Draws every standing prop's meshes at the level `view` takes them in at.
-pub(super) fn level_props(world: &mut World, streaming: &Streaming, view: &View) {
+/// Draws every standing prop's meshes at the level `seen` takes them in at.
+pub(super) fn level_props(world: &mut World, streaming: &Streaming, seen: &Seen) {
     let levels = world.resource::<MeshLevels>();
     let changes: Vec<(Entity, Handle<Mesh>)> = streaming
         .props
         .scenes
         .values()
         .filter_map(|&prop| Some((world.get::<Leveled>(prop)?, world.get::<Transform>(prop)?)))
-        .flat_map(|(leveled, at)| levels_for(levels, *view, at.translation, leveled))
+        .flat_map(|(leveled, at)| levels_for(levels, *seen, at.translation, leveled))
         .filter(|(mesh, level)| {
             world
                 .get::<Mesh3d>(*mesh)
@@ -580,18 +582,18 @@ pub(super) fn level_props(world: &mut World, streaming: &Streaming, view: &View)
     }
 }
 
-/// The level each of a scene's meshes is drawn at, seen in `view` with the scene at `at`.
+/// The level each of a scene's meshes is drawn at, `seen` with the scene at `at`.
 fn levels_for<'a>(
     levels: &'a MeshLevels,
-    view: View,
+    seen: Seen,
     at: Vec3,
     leveled: &'a Leveled,
 ) -> impl Iterator<Item = (Entity, &'a Handle<Mesh>)> {
-    let distance = Meters(view.eye().distance(at));
+    let distance = seen.detail(seen.view.eye().distance(at)).distance();
     leveled.0.iter().map(move |mesh| {
         let level = levels
             .of(&mesh.full)
-            .and_then(|levels| levels.for_view(&view, distance, mesh.scale));
+            .and_then(|levels| levels.for_view(&seen.view, distance, mesh.scale));
         (mesh.mesh, level.unwrap_or(&mesh.full))
     })
 }
