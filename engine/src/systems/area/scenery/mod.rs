@@ -607,7 +607,7 @@ enum Making<T> {
 
 impl<T> Making<T> {
     /// What the task made, once it has.
-    fn made(&mut self) -> Option<&T> {
+    fn made(&mut self) -> Option<&mut T> {
         if let Making::Task(task) = self
             && let Some(made) = check_ready(task)
         {
@@ -748,14 +748,23 @@ fn stream_lights(
 /// Takes `scenery` out of the view at once, and out of the world a few parts a frame, so a
 /// whole area going doesn't hold up a frame.
 pub fn despawn(world: &mut World, scenery: Scenery) {
-    let Ok(mut root) = world.get_entity_mut(scenery.root) else {
-        return;
-    };
-    root.remove::<Streaming>().insert(Visibility::Hidden);
-    world.resource_mut::<TakenDown>().0.push(scenery.root);
+    if let Ok(mut root) = world.get_entity_mut(scenery.root) {
+        root.remove::<Streaming>();
+    }
+    take_away(world, scenery.root);
 }
 
-/// Sceneries out of the view, still being taken out of the world.
+/// Takes `entity` out of the view at once, and out of the world with everything under it a few
+/// parts a frame, so much going at once doesn't hold up a frame.
+fn take_away(world: &mut World, entity: Entity) {
+    let Ok(mut gone) = world.get_entity_mut(entity) else {
+        return;
+    };
+    gone.insert(Visibility::Hidden);
+    world.resource_mut::<TakenDown>().0.push(entity);
+}
+
+/// What is out of the view, still being taken out of the world.
 #[derive(Resource, Default)]
 struct TakenDown(Vec<Entity>);
 

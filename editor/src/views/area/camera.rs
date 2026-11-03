@@ -35,6 +35,9 @@ const LINE_STEP_PIXELS: f32 = 12.0;
 /// How long a ground line must show before it bends: a shorter one runs straight between its ends,
 /// as the terrain under it bends it by less than shows.
 const BEND_PIXELS: f32 = 32.0;
+/// How long a stretch of a ground line the camera is asked whether it sees, so a line mostly out
+/// of view bends only where it shows.
+const SEEN_STRETCH: f32 = 32.0;
 
 /// A camera looking at a point of the ground from a yaw, a pitch and a distance.
 #[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -292,30 +295,50 @@ impl AreaCanvas {
         self.polyline(&round)
     }
 
-    /// A line through `points` on the ground, bent over the terrain.
+    /// A line through `points` on the ground, bent over the terrain where the camera sees it.
     pub(crate) fn polyline(&self, points: &[Pos<Meters>]) -> Vec<Pos2> {
         let mut out = Vec::new();
         let Some(&first) = points.first() else {
             return out;
         };
-        let mut start = self.to_screen(first);
-        out.push(start);
+        out.push(self.to_screen(first));
         for pair in points.windows(2) {
             let (from, to) = (pair[0], pair[1]);
-            let end = self.to_screen(to);
-            let across = start.distance(end);
-            if across >= BEND_PIXELS {
-                let on_ground = from.distance(to).0 / LINE_STEP;
-                let steps = on_ground.min(across / LINE_STEP_PIXELS).ceil().max(1.0) as usize;
-                for step in 1..steps {
-                    let t = step as f32 / steps as f32;
-                    out.push(self.to_screen(from.lerp(to, t)));
-                }
+            let stretches = (from.distance(to).0 / SEEN_STRETCH).ceil().max(1.0) as usize;
+            for stretch in 0..stretches {
+                let along = |end: usize| from.lerp(to, end as f32 / stretches as f32);
+                self.bend(along(stretch), along(stretch + 1), &mut out);
             }
-            out.push(end);
-            start = end;
         }
         out
+    }
+
+    /// The line from `from`, whose point `out` ends with, on to `to`: bent over the terrain where
+    /// the camera sees it and it shows long enough to bend, straight elsewhere.
+    fn bend(&self, from: Pos<Meters>, to: Pos<Meters>, out: &mut Vec<Pos2>) {
+        let start = *out.last().expect("a line starts at its first point");
+        let end = self.to_screen(to);
+        let across = start.distance(end);
+        if across >= BEND_PIXELS && self.sees_stretch(from, to) {
+            let on_ground = from.distance(to).0 / LINE_STEP;
+            let steps = on_ground.min(across / LINE_STEP_PIXELS).ceil().max(1.0) as usize;
+            for step in 1..steps {
+                let t = step as f32 / steps as f32;
+                out.push(self.to_screen(from.lerp(to, t)));
+            }
+        }
+        out.push(end);
+    }
+
+    /// Whether the camera may see any of the ground between `from` and `to`, at any height the
+    /// area's ground spans.
+    fn sees_stretch(&self, from: Pos<Meters>, to: Pos<Meters>) -> bool {
+        let range = self.area.heights.range();
+        let (low, high) = (
+            world_point(from, range.lowest),
+            world_point(to, range.highest),
+        );
+        self.view.may_see(low.min(high), low.max(high))
     }
 
     /// A circle of `radius` round `center` on the ground, bent over the terrain.

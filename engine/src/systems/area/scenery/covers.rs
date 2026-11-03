@@ -16,7 +16,9 @@ use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 
 use super::regions::{Cut, Merge, Region};
-use super::{Budget, KEEP_SHARE, Making, PLACEMENT_CELL, Seen, Streaming, distance_to, mesh_bytes};
+use super::{
+    Budget, KEEP_SHARE, Making, PLACEMENT_CELL, Seen, Streaming, distance_to, mesh_bytes, take_away,
+};
 use crate::core::assets;
 use crate::core::content::Content;
 use crate::core::content::media::GltfInfos;
@@ -178,12 +180,12 @@ pub(super) fn clear(world: &mut World, streaming: &mut Streaming, seen: Seen, cu
     let kept: HashSet<ChunkKey> = near_chunks(streaming, seen, cut, KEEP_SHARE).collect();
     let covers = &mut streaming.covers;
     for stale in covers.stale.drain(..) {
-        world.despawn(stale);
+        take_away(world, stale);
     }
     covers.chunks.retain(|key, chunk| {
         let keep = kept.contains(key);
         if !keep && let Some(chunk) = chunk {
-            world.despawn(*chunk);
+            take_away(world, *chunk);
         }
         keep
     });
@@ -192,7 +194,7 @@ pub(super) fn clear(world: &mut World, streaming: &mut Streaming, seen: Seen, cu
         let keep = wanted.contains(merge);
         if !keep && let Merged::Standing { stood, .. } = merged {
             for &mesh in stood.iter() {
-                world.despawn(mesh);
+                take_away(world, mesh);
             }
         }
         keep

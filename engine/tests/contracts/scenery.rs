@@ -176,7 +176,7 @@ fn settle(app: &mut App, done: impl Fn(&mut App) -> bool) -> bool {
         std::thread::sleep(Duration::from_millis(5));
         app.update();
     }
-    for _ in 0..3 {
+    for _ in 0..4 {
         app.update();
     }
     true

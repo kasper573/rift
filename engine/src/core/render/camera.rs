@@ -7,12 +7,14 @@
 use bevy::anti_alias::smaa::Smaa;
 use bevy::anti_alias::taa::TemporalAntiAliasing;
 use bevy::camera::Hdr;
+use bevy::camera::primitives::{Aabb, Frustum};
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::light::{ShadowFilteringMethod, VolumetricFog};
 use bevy::pbr::ScreenSpaceAmbientOcclusion;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
+use bevy::shape::ViewFrustum;
 use bevy::window::PrimaryWindow;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -450,12 +452,23 @@ impl View {
         let aspect = viewport.x / viewport.y.max(1.0);
         let clip_from_view =
             bevy::math::proj::perspective_infinite_reverse(fov.radians().0, aspect, NEAR);
+        let clip_from_world = clip_from_view * camera.to_matrix().inverse();
         View {
             world_from_view: GlobalTransform::from(camera),
             clip_from_view,
-            clip_from_world: clip_from_view * camera.to_matrix().inverse(),
+            clip_from_world,
             viewport,
         }
+    }
+
+    /// Whether any of the box of the world from `min` to `max` may show in the view.
+    pub fn may_see(&self, min: Vec3, max: Vec3) -> bool {
+        Frustum(ViewFrustum::from_clip_from_world(&self.clip_from_world)).intersects_obb(
+            &Aabb::from_min_max(min, max),
+            &bevy::math::Affine3A::IDENTITY,
+            true,
+            false,
+        )
     }
 
     pub fn viewport(&self) -> Vec2 {
