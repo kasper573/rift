@@ -292,7 +292,7 @@ fn new_game_dialog(editor: &mut Editor, copy: Option<PathBuf>) {
     let (source, name) = match copy {
         Some(folder) => {
             let name = format!("{} copy", game_name(&folder));
-            (NewGameSource::Copy(folder), name)
+            (NewGameSource::copy(folder), name)
         }
         None => {
             let key = templates::list()

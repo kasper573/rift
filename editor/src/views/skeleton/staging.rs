@@ -308,7 +308,7 @@ pub(crate) fn made_keys(
     clip: &StageClip,
 ) -> Option<ClipKeys> {
     let info = gltfs.info(files, &clip.file)?;
-    let keys = gltf::clip_keys(files.get(&clip.file)?, clip.animation).ok()?;
+    let keys = gltf::clip_keys(&files.get(&clip.file)?, clip.animation).ok()?;
     let make = rig_clip::maker(rig.clone(), clip.pairs.clone());
     Some(make(&info.tree, &keys))
 }

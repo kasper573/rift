@@ -31,6 +31,9 @@ ureq = { workspace = true }
 rayon.workspace = true
 base64 = "0.23"
 walkdir.workspace = true
+imbl = "7"
+quick_cache = "0.7"
+jwalk = "0.9"
 clap.workspace = true
 jiff = "0.2"
 ufbx = "0.11.5"

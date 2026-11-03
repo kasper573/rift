@@ -89,7 +89,7 @@ fn importing_brings_folders_whole_unpacks_archives_and_converts_fbx() {
         files.get("art/Pack/readme.txt").map(|bytes| bytes.to_vec()),
         Some(b"the game's own".to_vec())
     );
-    let hero = gltf::inspect(files.get("art/Pack/Hero.glb").expect("the converted model"))
+    let hero = gltf::inspect(&files.get("art/Pack/Hero.glb").expect("the converted model"))
         .expect("a glTF binary");
     let hip = hero.tree.named("hip").expect("the hip joint");
     let standing = hero.tree.worlds()[hip].w_axis;

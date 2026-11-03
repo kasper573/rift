@@ -43,14 +43,16 @@ pub struct ContentUsages {
 impl ContentUsages {
     pub fn build(reader: &FolderReader, files: &ProjectFiles) -> ContentUsages {
         let registry = registry();
-        let texts: Vec<(&String, String)> = files
-            .iter()
-            .filter(|(path, _)| registry.names_content(path))
-            .filter_map(|(path, bytes)| Some((path, String::from_utf8(bytes.to_vec()).ok()?)))
+        let naming: Vec<&String> = files
+            .paths()
+            .filter(|path| registry.names_content(path))
             .collect();
-        let parsed: Vec<(String, Vec<Reference>)> = texts
+        let parsed: Vec<(String, Vec<Reference>)> = naming
             .par_iter()
-            .map(|(path, text)| ((*path).clone(), registry.references(reader, path, text)))
+            .filter_map(|path| {
+                let text = files.text(path)?;
+                Some(((*path).clone(), registry.references(reader, path, &text)))
+            })
             .collect();
         let mut usages = ContentUsages::default();
         for (file, references) in parsed {

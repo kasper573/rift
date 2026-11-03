@@ -14,18 +14,17 @@ pub struct GltfCache(HashMap<String, (String, Option<Arc<GltfInfo>>)>);
 impl GltfCache {
     /// The file at `path` as the loader reads it, when it reads.
     pub fn info(&mut self, files: &ProjectFiles, path: &str) -> Option<Arc<GltfInfo>> {
-        let hash = files.hash_of(path)?;
+        let hash = files.stamp_of(path)?.to_string();
         if let Some((held, read)) = self.0.get(path)
-            && held == hash
+            && *held == hash
         {
             return read.clone();
         }
         let read = files
             .get(path)
-            .and_then(|bytes| gltf::inspect(bytes).ok())
+            .and_then(|bytes| gltf::inspect(&bytes).ok())
             .map(Arc::new);
-        self.0
-            .insert(path.to_owned(), (hash.to_owned(), read.clone()));
+        self.0.insert(path.to_owned(), (hash, read.clone()));
         read
     }
 

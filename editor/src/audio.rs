@@ -64,7 +64,10 @@ impl WaveformCache {
     }
 
     pub fn state(&mut self, ctx: &egui::Context, files: &ProjectFiles, path: &str) -> WaveState {
-        let (Some(hash), Some(bytes)) = (files.hash_of(path), files.get(path)) else {
+        let (Some(hash), Some(bytes)) = (
+            files.stamp_of(path).map(|stamp| stamp.to_string()),
+            files.get(path),
+        ) else {
             return WaveState::Unreadable;
         };
         let measured = match self.waves.get_mut(path) {

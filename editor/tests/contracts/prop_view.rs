@@ -16,11 +16,7 @@ fn model_hash(editor: &mut editor::app::Editor, key: &str) -> String {
         .expect("the prop reads")
         .model
         .path();
-    project
-        .files
-        .hash_of(&model)
-        .expect("the model is hashed")
-        .to_owned()
+    project.files.hash_of(&model).expect("the model is hashed")
 }
 
 fn prop_of(editor: &editor::app::Editor, key: &str) -> PropDef {

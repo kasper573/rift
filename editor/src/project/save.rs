@@ -7,7 +7,7 @@ use walkdir::WalkDir;
 
 use engine::core::content::parent_of;
 
-use super::files::{DiskHashes, FileBytes, ProjectFiles, folder_entry, is_folder};
+use super::files::{FileBytes, OnDisk, ProjectFiles, folder_entry, is_folder};
 
 pub struct SaveOutcome {
     pub written: Vec<String>,
@@ -20,49 +20,41 @@ pub struct SaveError {
     pub done: SaveOutcome,
 }
 
-pub fn save(
-    root: &Path,
-    files: &ProjectFiles,
-    disk: &mut DiskHashes,
-) -> Result<SaveOutcome, SaveError> {
+pub fn save(root: &Path, files: &mut ProjectFiles) -> Result<SaveOutcome, SaveError> {
     let mut done = SaveOutcome {
         written: Vec::new(),
         removed: Vec::new(),
     };
-    let mut new_files = Vec::new();
-    let mut changed = Vec::new();
-    for path in files.entries() {
-        let bytes = files.get(path).expect("an entry of the files");
-        match disk.get(path) {
-            None => new_files.push((path, bytes)),
-            Some(known) if Some(known) != files.hash_of(path) => changed.push((path, bytes)),
-            _ => {}
-        }
-    }
-    let removals: Vec<String> = disk
-        .paths()
-        .filter(|path| !files.contains(path))
+    let (writes, removals): (Vec<String>, Vec<String>) = files
+        .changed()
         .cloned()
-        .collect();
-    for (path, bytes) in new_files.into_iter().chain(changed) {
-        let written = if is_folder(path) {
-            std::fs::create_dir_all(root.join(path)).map_err(|error| error.to_string())
+        .partition(|path| files.contains(path));
+    for path in writes {
+        if !files.differs_from_disk(&path) {
+            files.saved(&path, files.on_disk(&path));
+            continue;
+        }
+        let bytes = files.get(&path).expect("an entry of the files");
+        let written = if is_folder(&path) {
+            std::fs::create_dir_all(root.join(&path)).map_err(|error| error.to_string())
         } else {
-            write_atomic(root, path, bytes)
+            write_atomic(root, &path, &bytes)
         };
         if let Err(reason) = written {
             return Err(SaveError {
-                file: path.clone(),
+                file: path,
                 reason,
                 done,
             });
         }
-        if let Some(known) = files.hash_of(path) {
-            disk.insert(path.clone(), known.to_owned());
-        }
-        done.written.push(path.clone());
+        files.saved(&path, OnDisk::at(&root.join(&path)));
+        done.written.push(path);
     }
     for path in removals {
+        if files.on_disk(&path).is_none() {
+            files.saved(&path, None);
+            continue;
+        }
         let removed = if is_folder(&path) {
             Ok(())
         } else {
@@ -81,7 +73,7 @@ pub fn save(
                 });
             }
         }
-        disk.remove(&path);
+        files.saved(&path, None);
         done.removed.push(path);
     }
     Ok(done)

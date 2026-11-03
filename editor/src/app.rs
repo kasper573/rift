@@ -377,7 +377,7 @@ impl Editor {
         }
         let changed: Vec<&str> = recovered
             .iter()
-            .filter(|file| file.changed_on_disk(project.disk_hash(&file.path)))
+            .filter(|file| file.changed_on_disk(project.disk_hash(&file.path).as_deref()))
             .map(|file| file.path.as_str())
             .collect();
         let applied = project
@@ -842,7 +842,11 @@ impl Editor {
             files: unsaved
                 .iter()
                 .map(|path| {
-                    RecoveryJournalFile::of(path, project.disk_hash(path), project.files.get(path))
+                    RecoveryJournalFile::of(
+                        path,
+                        project.disk_hash(path).as_deref(),
+                        project.files.get(path).as_ref(),
+                    )
                 })
                 .collect(),
         };

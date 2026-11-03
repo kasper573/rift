@@ -114,7 +114,7 @@ pub fn rename(editor: &mut Editor, key: &str, face: &BustFace, new_name: &str) -
     let Some(bytes) = editor
         .project
         .as_ref()
-        .and_then(|project| project.files.get(&face.file).cloned())
+        .and_then(|project| project.files.get(&face.file))
     else {
         return false;
     };

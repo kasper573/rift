@@ -7,7 +7,7 @@ use engine::core::content::{
 };
 use engine::systems::{self, GameSettings};
 
-use super::files::ProjectFiles;
+use super::files::{FileStamp, ProjectFiles};
 
 /// The project's files read as the types the game reads them as, each read only when asked for and
 /// again only once its files change or the folder's paths do: everything the editor knows of a
@@ -29,32 +29,31 @@ struct Typed {
 
 type Read = Result<Arc<dyn Any + Send + Sync>, Arc<Unreadable>>;
 
-/// A read, and the hash of every file it was read from.
+/// A read, and the version of every file it was read from.
 struct Kept {
     read: Read,
-    from: Vec<(String, String)>,
+    from: Vec<(String, FileStamp)>,
 }
 
 impl Kept {
     fn holds(&self, files: &ProjectFiles) -> bool {
         self.from
             .iter()
-            .all(|(file, hash)| files.hash_of(file) == Some(hash.as_str()))
+            .all(|(file, stamp)| files.stamp_of(file) == Some(*stamp))
     }
 }
 
 impl TypedFiles {
-    pub(super) fn reader(&self, files: &ProjectFiles, name: &str) -> Arc<FolderReader> {
-        self.with(files, name, |typed| typed.reader.clone())
+    pub(super) fn reader(&self, files: &ProjectFiles) -> Arc<FolderReader> {
+        self.with(files, |typed| typed.reader.clone())
     }
 
     pub(super) fn read<Row: ContentFile>(
         &self,
         files: &ProjectFiles,
-        name: &str,
         path: &str,
     ) -> Result<Arc<Row>, Arc<Unreadable>> {
-        self.read_as(files, name, path, |reader| reader.read::<Row>(path))
+        self.read_as(files, path, |reader| reader.read::<Row>(path))
     }
 
     /// The file at `path` as the game reads it once it has been read: the first ask reads it in
@@ -62,10 +61,9 @@ impl TypedFiles {
     pub(super) fn read_soon<Row: ContentFile>(
         &self,
         files: &ProjectFiles,
-        name: &str,
         path: &str,
     ) -> Option<Result<Arc<Row>, Arc<Unreadable>>> {
-        let read = self.with(files, name, |typed| {
+        let read = self.with(files, |typed| {
             let key = (TypeId::of::<Row>(), path.to_owned());
             if let Some(kept) = typed.read.get(&key) {
                 return Some(kept.read.clone());
@@ -85,7 +83,7 @@ impl TypedFiles {
                 key,
                 Kept {
                     read: read.clone(),
-                    from: hashes_of(files, path),
+                    from: stamps_of(files, path),
                 },
             );
             Some(read)
@@ -96,24 +94,17 @@ impl TypedFiles {
     pub(super) fn settings(
         &self,
         files: &ProjectFiles,
-        name: &str,
     ) -> Result<Arc<GameSettings>, Arc<Unreadable>> {
-        self.read_as(
-            files,
-            name,
-            SETTINGS_FILE,
-            FolderReader::settings::<GameSettings>,
-        )
+        self.read_as(files, SETTINGS_FILE, FolderReader::settings::<GameSettings>)
     }
 
     fn read_as<T: Any + Send + Sync>(
         &self,
         files: &ProjectFiles,
-        name: &str,
         path: &str,
         read: impl FnOnce(&FolderReader) -> Result<T, Unreadable>,
     ) -> Result<Arc<T>, Arc<Unreadable>> {
-        self.with(files, name, |typed| {
+        self.with(files, |typed| {
             let key = (TypeId::of::<T>(), path.to_owned());
             let reader = typed.reader.clone();
             typed
@@ -121,7 +112,7 @@ impl TypedFiles {
                 .entry(key)
                 .or_insert_with(|| Kept {
                     read: kept_read(read(&reader)),
-                    from: hashes_of(files, path),
+                    from: stamps_of(files, path),
                 })
                 .read
                 .clone()
@@ -130,10 +121,10 @@ impl TypedFiles {
     }
 
     /// Keeps `rows`, read whole from `files` by a check, as the reads of their files.
-    pub(super) fn keep(&self, files: &ProjectFiles, name: &str, rows: Vec<ReadRow>) {
-        self.with(files, name, |typed| {
+    pub(super) fn keep(&self, files: &ProjectFiles, rows: Vec<ReadRow>) {
+        self.with(files, |typed| {
             for row in rows {
-                let from = hashes_of(files, &row.path);
+                let from = stamps_of(files, &row.path);
                 typed.read.entry((row.row_type, row.path)).or_insert(Kept {
                     read: Ok(row.row),
                     from,
@@ -142,7 +133,7 @@ impl TypedFiles {
         })
     }
 
-    fn with<R>(&self, files: &ProjectFiles, name: &str, f: impl FnOnce(&mut Typed) -> R) -> R {
+    fn with<R>(&self, files: &ProjectFiles, f: impl FnOnce(&mut Typed) -> R) -> R {
         let mut at = self
             .at
             .lock()
@@ -150,7 +141,7 @@ impl TypedFiles {
         let typed = match at.take() {
             Some(typed) if typed.revision == files.revision() => at.insert(typed),
             last => {
-                let folder = Arc::new(files.folder(name));
+                let folder = Arc::new(files.clone());
                 let (reader, mut read) = match last {
                     Some(last) if last.paths_revision == files.paths_revision() => {
                         (last.reader.rereading(folder), last.read)
@@ -203,11 +194,11 @@ fn kept_read<T: Any + Send + Sync>(read: Result<T, Unreadable>) -> Read {
     }
 }
 
-/// The hash of every file the content at `path` is read from.
-fn hashes_of(files: &ProjectFiles, path: &str) -> Vec<(String, String)> {
+/// The version of every file the content at `path` is read from.
+fn stamps_of(files: &ProjectFiles, path: &str) -> Vec<(String, FileStamp)> {
     files
         .files_of(path)
         .into_iter()
-        .filter_map(|file| Some((file.clone(), files.hash_of(&file)?.to_owned())))
+        .filter_map(|file| Some((file.clone(), files.stamp_of(&file)?)))
         .collect()
 }

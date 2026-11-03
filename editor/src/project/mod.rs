@@ -1,18 +1,19 @@
 pub mod files;
 mod gltfs;
 pub mod history;
+mod index;
 pub mod journal;
 pub mod lock;
 pub mod save;
 mod typed;
 pub mod watch;
 
-pub use files::{DiskHashes, FileBytes, FileChange, ProjectFiles, hash, json_bytes};
+pub use files::{FileBytes, FileChange, FileStamp, OnDisk, ProjectFiles, hash, json_bytes};
 pub use gltfs::GltfCache;
 pub use history::{EditHistory, EditStep, RowSelection};
 pub use typed::IdPaths;
 
-use std::collections::{BTreeSet, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, TryRecvError};
 use std::sync::{Arc, Mutex, OnceLock, PoisonError};
@@ -133,7 +134,7 @@ impl ContentEdit {
     pub(crate) fn pending_bytes(&self, files: &ProjectFiles, file: &str) -> Option<FileBytes> {
         match self.changes.iter().find(|change| change.file == file) {
             Some(change) => change.bytes.clone(),
-            None => files.get(file).cloned(),
+            None => files.get(file),
         }
     }
 
@@ -271,8 +272,6 @@ impl AppliedStep {
 pub struct Project {
     pub root: PathBuf,
     pub files: ProjectFiles,
-    /// The hash of every file as it stands on disk.
-    disk: DiskHashes,
     unsaved: Mutex<Option<UnsavedFiles>>,
     pub content: Option<Content>,
     pub report: Option<LoadReport>,
@@ -356,15 +355,13 @@ impl Project {
             return Err(format!("No {SETTINGS_FILE} in this folder"));
         }
         save::clean_leftovers(root);
-        let files = ProjectFiles::read_dir(root).map_err(|error| error.to_string())?;
-        let disk = files.hashes();
+        let files = ProjectFiles::open(root, &|_| {}).map_err(|error| error.to_string())?;
         let catalogue = NodeCatalogue::build();
         let mut project = Project {
             root: root.to_path_buf(),
             loading: None,
             stale: false,
             files,
-            disk,
             unsaved: Mutex::new(None),
             content: None,
             report: None,
@@ -392,7 +389,7 @@ impl Project {
     /// The content file at `path` as the game reads it, as the files stand now, or the errors that
     /// keep it from reading.
     pub fn read<Row: ContentFile>(&self, path: &str) -> Result<Arc<Row>, Arc<Unreadable>> {
-        self.typed.read(&self.files, &self.name(), path)
+        self.typed.read(&self.files, path)
     }
 
     /// The content file at `path` as [`Project::read`] reads it, once a read in the background has
@@ -401,7 +398,7 @@ impl Project {
         &self,
         path: &str,
     ) -> Option<Result<Arc<Row>, Arc<Unreadable>>> {
-        self.typed.read_soon(&self.files, &self.name(), path)
+        self.typed.read_soon(&self.files, path)
     }
 
     /// The content file `id` names among the files as they stand now, when it reads.
@@ -411,7 +408,7 @@ impl Project {
 
     /// The game's settings as the game reads them, as the files stand now.
     pub fn settings(&self) -> Result<Arc<GameSettings>, Arc<Unreadable>> {
-        self.typed.settings(&self.files, &self.name())
+        self.typed.settings(&self.files)
     }
 
     /// The value at `pointer` in the file `file` as a `T`, its ids among the files' paths as they
@@ -427,7 +424,7 @@ impl Project {
 
     /// What reads the files as they stand now: the paths their references are ids among.
     pub fn reader(&self) -> Arc<FolderReader> {
-        self.typed.reader(&self.files, &self.name())
+        self.typed.reader(&self.files)
     }
 
     /// What reads the files as they would stand after `edit`: how an edit names a file it makes.
@@ -437,7 +434,7 @@ impl Project {
 
     /// What reads `files`, the project's files as an edit would leave them.
     fn reader_of(&self, files: &ProjectFiles) -> FolderReader {
-        let folder = Arc::new(files.folder(&self.name()));
+        let folder = Arc::new(files.clone());
         if files.paths_revision() == self.files.paths_revision() {
             self.reader().rereading(folder)
         } else {
@@ -445,14 +442,10 @@ impl Project {
         }
     }
 
-    fn name(&self) -> String {
-        self.root.display().to_string()
-    }
-
     /// What keeps the game from being played as it is now, though it loads to be worked on:
     /// quests and shops out of a player's reach.
     pub(crate) fn unplayable(&self) -> Option<LoadReport> {
-        let folder = Arc::new(self.files.folder(&self.name()));
+        let folder = Arc::new(self.files.clone());
         systems::load_content(folder, "it can't be played yet", LoadPurpose::Check).err()
     }
 
@@ -495,7 +488,7 @@ impl Project {
         self.loading = None;
         self.stale = false;
         self.unverified = None;
-        match Loaded::of(&self.files, &self.name(), LoadPurpose::Play) {
+        match Loaded::of(&self.files, LoadPurpose::Play) {
             Ok(loaded) => {
                 self.report = None;
                 self.install(loaded);
@@ -513,7 +506,7 @@ impl Project {
         self.loading = None;
         self.stale = false;
         self.unverified = None;
-        match Loaded::of(&self.files, &self.name(), LoadPurpose::Check) {
+        match Loaded::of(&self.files, LoadPurpose::Check) {
             Ok(loaded) => {
                 self.report = None;
                 self.install(loaded);
@@ -658,7 +651,7 @@ impl Project {
             .iter()
             .map(|change| FileChange {
                 file: change.file.clone(),
-                bytes: self.files.get(&change.file).cloned(),
+                bytes: self.files.get(&change.file),
             })
             .collect();
         let loads = self.loads();
@@ -676,7 +669,7 @@ impl Project {
             None => {}
         }
         self.adopt(next);
-        self.typed.keep(&self.files, &self.name(), read);
+        self.typed.keep(&self.files, read);
         let amended = edit.amends.as_deref().is_some_and(|step| {
             self.history
                 .amend_last(step, &edit.label, changes.clone(), &before)
@@ -741,14 +734,13 @@ impl Project {
     /// have now: the rules across files that `apply` leaves to the next load, checked up front
     /// for an edit that reaches many files at once.
     pub fn check(&self, edit: &ContentEdit) -> Result<(), Box<EditRefusal>> {
-        let name = self.root.display().to_string();
-        let Err(report) = load(&self.files.with(&edit.changes), &name) else {
+        let Err(report) = load(&self.files.with(&edit.changes)) else {
             return Ok(());
         };
         let known: HashSet<(String, &str, String)> = if self.loads() && !self.loading() {
             HashSet::new()
         } else {
-            load(&self.files, &name)
+            load(&self.files)
                 .err()
                 .map(|report| report.errors.iter().map(error_key).collect())
                 .unwrap_or_default()
@@ -829,11 +821,10 @@ impl Project {
             return;
         }
         let files = self.files.clone();
-        let name = self.root.display().to_string();
         let (sender, receiver) = mpsc::channel();
         self.loading = Some(ChannelInbox::new(receiver));
         std::thread::spawn(move || {
-            let outcome = background().install(|| Loaded::of(&files, &name, LoadPurpose::Check));
+            let outcome = background().install(|| Loaded::of(&files, LoadPurpose::Check));
             let _ = sender.send(outcome);
         });
     }
@@ -854,28 +845,20 @@ impl Project {
     fn keep_rows(&self, loaded: &Loaded) {
         if loaded.revision == self.files.revision() {
             let rows = loaded.content.read_rows();
-            self.typed.keep(&self.files, &self.name(), rows);
+            self.typed.keep(&self.files, rows);
         }
     }
 
     /// Every file and kept folder that differs from disk, by path.
     pub fn unsaved(&self) -> Arc<[String]> {
         let mut known = self.unsaved.lock().unwrap_or_else(PoisonError::into_inner);
-        let revision = (self.files.revision(), self.disk.revision());
+        let revision = (self.files.revision(), self.files.disk_revision());
         if let Some(known) = &*known
             && known.revision == revision
         {
             return known.paths.clone();
         }
-        let unsaved: Arc<[String]> = self
-            .files
-            .entries()
-            .chain(self.disk.paths())
-            .filter(|path| self.is_unsaved(path))
-            .cloned()
-            .collect::<BTreeSet<String>>()
-            .into_iter()
-            .collect();
+        let unsaved: Arc<[String]> = self.files.unsaved().into();
         *known = Some(UnsavedFiles {
             revision,
             paths: unsaved.clone(),
@@ -896,18 +879,14 @@ impl Project {
                 .is_some_and(|file| file.starts_with(&parts))
     }
 
-    fn is_unsaved(&self, path: &str) -> bool {
-        self.files.hash_of(path) != self.disk_hash(path)
-    }
-
     /// The hash of the file at `path` as it stands on disk.
-    pub(crate) fn disk_hash(&self, path: &str) -> Option<&str> {
-        self.disk.get(path)
+    pub(crate) fn disk_hash(&self, path: &str) -> Option<String> {
+        self.files.disk_hash(path)
     }
 
     pub fn save(&mut self) -> Result<save::SaveOutcome, save::SaveError> {
         self.settle_unverified();
-        let outcome = save::save(&self.root, &self.files, &mut self.disk);
+        let outcome = save::save(&self.root, &mut self.files);
         if outcome.is_ok() {
             self.history.mark_saved();
         }
@@ -918,39 +897,41 @@ impl Project {
         self.settle_unverified();
         let mut taken = Vec::new();
         let mut conflicts = Vec::new();
-        let candidates: Vec<String> = match change {
-            FolderChange::Files(paths) => self.held_by(paths),
-            FolderChange::Unknown => ProjectFiles::read_dir(&self.root)
-                .map(|files| {
-                    let mut all: Vec<String> = files.paths().cloned().collect();
-                    all.extend(self.disk.paths().cloned());
-                    all.sort();
-                    all.dedup();
-                    all
+        let candidates: Vec<(String, Option<OnDisk>)> = match change {
+            FolderChange::Files(paths) => self
+                .held_by(paths)
+                .into_iter()
+                .map(|path| {
+                    let now = OnDisk::at(&self.root.join(&path));
+                    (path, now)
                 })
-                .unwrap_or_default(),
+                .collect(),
+            FolderChange::Unknown => {
+                let listed: BTreeMap<String, OnDisk> = files::list(&self.root, &|_| {})
+                    .map(|listed| listed.into_iter().collect())
+                    .unwrap_or_default();
+                let mut all: BTreeSet<String> = listed.keys().cloned().collect();
+                all.extend(self.files.on_disk_under("").cloned());
+                all.into_iter()
+                    .map(|path| {
+                        let now = listed.get(&path).copied();
+                        (path, now)
+                    })
+                    .collect()
+            }
         };
-        for path in candidates {
-            let on_disk = read_entry(&self.root, &path);
-            let disk_hash = on_disk.as_ref().map(|bytes| hash(bytes));
-            if disk_hash.as_deref() == self.disk.get(&path) {
+        for (path, now) in candidates {
+            if now == self.files.on_disk(&path) {
                 continue;
             }
-            let edited_here = self.is_unsaved(&path);
-            match disk_hash {
-                Some(hash) => self.disk.insert(path.clone(), hash),
-                None => self.disk.remove(&path),
-            }
-            if edited_here {
+            if self.files.differs_from_disk(&path) {
+                self.files.disk_moved_on(&path, now);
                 conflicts.push(FileConflict {
+                    disk: read_entry(&self.root, &path),
                     file: path,
-                    disk: on_disk,
                 });
             } else {
-                match on_disk {
-                    Some(bytes) => self.files.insert(path.clone(), bytes),
-                    None => self.files.remove(&path),
-                }
+                self.files.take_from_disk(&path, now);
                 taken.push(path);
             }
         }
@@ -985,11 +966,15 @@ impl Project {
         for path in paths {
             let inside = files::folder_entry(&path);
             held.extend(self.files.paths_under(&inside).cloned());
-            held.extend(self.disk.under(&inside).cloned());
+            held.extend(self.files.on_disk_under(&inside).cloned());
             let on_disk = self.root.join(&path);
             if on_disk.is_dir() {
-                let walked = files::content_files(&on_disk).unwrap_or_default();
-                held.extend(walked.into_iter().map(|file| format!("{inside}{file}")));
+                let walked = files::list(&on_disk, &|_| {}).unwrap_or_default();
+                held.extend(
+                    walked
+                        .into_iter()
+                        .map(|(file, _)| format!("{inside}{file}")),
+                );
                 if files::empty_folder(&on_disk).unwrap_or(false) {
                     held.insert(inside);
                 }
@@ -1002,10 +987,8 @@ impl Project {
 
     pub(crate) fn take_disk(&mut self, conflict: &FileConflict) {
         self.settle_unverified();
-        match &conflict.disk {
-            Some(bytes) => self.files.insert(conflict.file.clone(), bytes.clone()),
-            None => self.files.remove(&conflict.file),
-        }
+        let now = self.files.on_disk(&conflict.file);
+        self.files.take_from_disk(&conflict.file, now);
         self.reload_after_outside(1);
     }
 
@@ -1038,10 +1021,10 @@ impl ContentNames for Project {
 
 impl Loaded {
     /// The files loaded for `purpose`, and the usages they hold, worked out side by side.
-    fn of(files: &ProjectFiles, name: &str, purpose: LoadPurpose) -> Result<Loaded, LoadReport> {
-        let reader = FolderReader::new(systems::making_registry(), Arc::new(files.folder(name)));
+    fn of(files: &ProjectFiles, purpose: LoadPurpose) -> Result<Loaded, LoadReport> {
+        let reader = FolderReader::new(systems::making_registry(), Arc::new(files.clone()));
         let (loaded, (usages, usages_took)) = rayon::join(
-            || load_for(files, name, purpose),
+            || load_for(files, purpose),
             || {
                 let started = Instant::now();
                 (ContentUsages::build(&reader, files), started.elapsed())
@@ -1165,18 +1148,14 @@ fn drop_in_background<T: Send + 'static>(value: T) {
 /// How many of the machine's threads go to each of the background pool's.
 const BACKGROUND_SHARE: usize = 8;
 
-pub fn load(files: &ProjectFiles, name: &str) -> Result<(Content, Duration), LoadReport> {
-    load_for(files, name, LoadPurpose::Check)
+pub fn load(files: &ProjectFiles) -> Result<(Content, Duration), LoadReport> {
+    load_for(files, LoadPurpose::Check)
 }
 
 /// The files loaded for `purpose`, and how long it took.
-fn load_for(
-    files: &ProjectFiles,
-    name: &str,
-    purpose: LoadPurpose,
-) -> Result<(Content, Duration), LoadReport> {
+fn load_for(files: &ProjectFiles, purpose: LoadPurpose) -> Result<(Content, Duration), LoadReport> {
     let started = Instant::now();
-    let folder = Arc::new(files.folder(name));
+    let folder = Arc::new(files.clone());
     systems::load_making(folder, "the folder did not load", purpose)
         .map(|content| (content, started.elapsed()))
 }

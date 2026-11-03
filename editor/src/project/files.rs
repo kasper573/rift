@@ -1,185 +1,220 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::fmt;
 use std::io;
 use std::ops::Bound;
-use std::path::Path;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, LazyLock, OnceLock};
+use std::time::SystemTime;
 
-use engine::core::content::files::{self, GameFile};
-use engine::core::content::{FileHash, MemoryFolder, SETTINGS_FILE, table_of};
+use engine::core::content::files;
+use engine::core::content::{
+    ContentFolder, FileHash, FolderEntry, SETTINGS_FILE, entries_in, table_of,
+};
 use engine::systems::registry;
+use imbl::ordmap::DiffItem;
+use imbl::{OrdMap, OrdSet};
+use quick_cache::Weighter;
+use quick_cache::sync::Cache;
 use rayon::prelude::*;
-use walkdir::WalkDir;
+
+pub use super::index::FolderIndex;
 
 pub type FileBytes = Arc<[u8]>;
 
-#[derive(Clone, Default)]
+/// The game folder's files as the editor works on them: the folder on disk, read only as each file
+/// is asked for, under the edits not yet saved. A copy costs nothing and a change costs what it
+/// touches, however many files the game holds.
+#[derive(Clone)]
 pub struct ProjectFiles {
-    map: BTreeMap<String, Stored>,
-    index: OnceLock<Arc<FolderIndex>>,
+    root: Arc<PathBuf>,
+    entries: OrdMap<String, Entry>,
+    disk: OrdMap<String, OnDisk>,
+    /// Every path whose entry may differ from what is on disk.
+    changed: OrdSet<String>,
+    index: Arc<FolderIndex>,
+    cache: Arc<DiskCache>,
     revision: u64,
     paths_revision: u64,
+    disk_revision: u64,
 }
 
-/// The hash of every file and kept folder as it stands on disk, as the editor last read or wrote
-/// it.
-#[derive(Clone, Default)]
-pub struct DiskHashes {
-    map: BTreeMap<String, String>,
-    revision: u64,
-}
+/// Which version of a file an entry holds: two entries with the same stamp hold the same bytes, so
+/// what is worked out from a file keeps while its stamp stays.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct FileStamp(u64);
 
-impl DiskHashes {
-    pub fn get(&self, path: &str) -> Option<&str> {
-        self.map.get(path).map(String::as_str)
-    }
-
-    pub fn paths(&self) -> impl Iterator<Item = &String> {
-        self.map.keys()
-    }
-
-    /// Every path that starts with `prefix`.
-    pub fn under<'a>(&'a self, prefix: &'a str) -> impl Iterator<Item = &'a String> {
-        self.map
-            .range::<str, _>((Bound::Included(prefix), Bound::Unbounded))
-            .map(|(path, _)| path)
-            .take_while(move |path| path.starts_with(prefix))
-    }
-
-    pub fn insert(&mut self, path: String, hash: String) {
-        self.revision = next_revision();
-        self.map.insert(path, hash);
-    }
-
-    pub fn remove(&mut self, path: &str) {
-        self.revision = next_revision();
-        self.map.remove(path);
-    }
-
-    /// Which change the hashes are at, as [`ProjectFiles::revision`] is for the files.
-    pub fn revision(&self) -> u64 {
-        self.revision
+impl fmt::Display for FileStamp {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        write!(f, "{:x}", self.0)
     }
 }
 
-/// A revision no files or hashes have had before, so no two different states share one.
-fn next_revision() -> u64 {
-    static NEXT: AtomicU64 = AtomicU64::new(1);
-    NEXT.fetch_add(1, Ordering::Relaxed)
+/// What stands on disk at a path, as the editor last listed, read or wrote it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum OnDisk {
+    File(DiskFile),
+    /// A folder kept while nothing is in it.
+    Folder,
 }
 
-/// What the files of the game folder are, as the loader sorts them by name and place.
-#[derive(Default)]
-pub struct FolderIndex {
-    /// Every content file's path, by its type.
-    pub content: BTreeMap<String, BTreeSet<String>>,
-    /// Every folder that isn't a bundle, at any depth, empty or not.
-    pub folders: BTreeSet<String>,
-    pub media: BTreeSet<String>,
-    pub notes: BTreeSet<String>,
-    /// Files the game never reads, such as a seller's readme or the archive a pack came in.
-    pub other: BTreeSet<String>,
-    /// Files and folders whose names say something the game can't hold.
-    pub unknown: BTreeSet<String>,
-    /// What each folder holds directly, its folders, files and bundles, by path; the game folder
-    /// is "".
-    pub children: BTreeMap<String, BTreeSet<String>>,
-    /// How many files each folder holds at any depth, a bundle counting as one.
-    pub counts: BTreeMap<String, usize>,
+/// A file on disk, by what tells a change to it apart without reading it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct DiskFile {
+    len: u64,
+    modified: Option<SystemTime>,
 }
 
-impl FolderIndex {
-    pub fn paths_of(&self, table: &str) -> impl Iterator<Item = &str> {
-        self.content
-            .get(table)
-            .into_iter()
-            .flatten()
-            .map(String::as_str)
+impl DiskFile {
+    fn of(metadata: &std::fs::Metadata) -> DiskFile {
+        DiskFile {
+            len: metadata.len(),
+            modified: metadata.modified().ok(),
+        }
     }
+}
 
-    pub fn children_of(&self, folder: &str) -> impl Iterator<Item = &str> {
-        self.children
-            .get(folder)
-            .into_iter()
-            .flatten()
-            .map(String::as_str)
-    }
-
-    pub(crate) fn count_of(&self, folder: &str) -> usize {
-        self.counts.get(folder).copied().unwrap_or(0)
-    }
-
-    pub fn is_content(&self, path: &str) -> bool {
-        table_of(path).is_some_and(|table| {
-            self.content
-                .get(table)
-                .is_some_and(|paths| paths.contains(path))
-        })
+impl OnDisk {
+    /// What stands at `path` on disk now, none when nothing does or it can't be told.
+    pub fn at(path: &Path) -> Option<OnDisk> {
+        let metadata = std::fs::metadata(path).ok()?;
+        if metadata.is_dir() {
+            empty_folder(path)
+                .unwrap_or(false)
+                .then_some(OnDisk::Folder)
+        } else {
+            Some(OnDisk::File(DiskFile::of(&metadata)))
+        }
     }
 }
 
 #[derive(Clone)]
-struct Stored {
+enum Entry {
+    /// The file as it stands on disk, read only when asked for.
+    OnDisk {
+        stamp: FileStamp,
+        file: DiskFile,
+    },
+    Edited(Arc<Edited>),
+    /// A folder kept while nothing is in it.
+    Folder,
+}
+
+/// Bytes an edit put at a path.
+struct Edited {
+    stamp: FileStamp,
     bytes: FileBytes,
-    hash: String,
+    hash: OnceLock<String>,
     json: OnceLock<Option<Arc<serde_json::Value>>>,
 }
 
-impl Stored {
-    fn of(bytes: FileBytes) -> Stored {
-        Stored {
-            hash: hash(&bytes),
-            bytes,
-            json: OnceLock::new(),
-        }
+impl Edited {
+    fn hash(&self) -> &str {
+        self.hash.get_or_init(|| hash(&self.bytes))
+    }
+}
+
+/// No files, of no folder: what a value made for no game reads.
+impl Default for ProjectFiles {
+    fn default() -> ProjectFiles {
+        ProjectFiles::empty(Path::new(""))
     }
 }
 
 impl ProjectFiles {
-    pub fn read_dir(root: &Path) -> io::Result<ProjectFiles> {
-        let map = content_files(root)?
-            .into_par_iter()
-            .map(|file| {
-                let bytes = if is_folder(&file) {
-                    FileBytes::from([])
-                } else {
-                    FileBytes::from(std::fs::read(root.join(&file))?)
-                };
-                Ok((file, Stored::of(bytes)))
-            })
-            .collect::<io::Result<_>>()?;
-        let mut files = ProjectFiles {
-            map,
-            ..ProjectFiles::default()
-        };
-        files.revision = next_revision();
-        files.paths_changed();
+    /// The files of the game folder at `root` as they stand on disk, listed but not read; each
+    /// file listed so far is counted to `progress`.
+    pub fn open(root: &Path, progress: &(dyn Fn(usize) + Sync)) -> io::Result<ProjectFiles> {
+        let listed = list(root, progress)?;
+        let mut files = ProjectFiles::empty(root);
+        let mut index = FolderIndex::default();
+        for (path, _) in &listed {
+            index.add(path);
+        }
+        files.index = Arc::new(index);
+        files.disk = listed.iter().cloned().collect();
+        files.entries = listed
+            .into_iter()
+            .map(|(path, on_disk)| (path, Entry::from_disk(on_disk)))
+            .collect();
         Ok(files)
     }
 
-    pub fn get(&self, path: &str) -> Option<&FileBytes> {
-        self.map.get(path).map(|stored| &stored.bytes)
-    }
-
-    pub fn hash_of(&self, path: &str) -> Option<&str> {
-        self.map.get(path).map(|stored| stored.hash.as_str())
-    }
-
-    pub fn contains(&self, path: &str) -> bool {
-        self.map.contains_key(path)
-    }
-
-    pub fn insert(&mut self, path: String, bytes: FileBytes) {
-        self.revision = next_revision();
-        if self.map.insert(path, Stored::of(bytes)).is_none() {
-            self.paths_changed();
+    fn empty(root: &Path) -> ProjectFiles {
+        ProjectFiles {
+            root: Arc::new(root.to_path_buf()),
+            entries: OrdMap::new(),
+            disk: OrdMap::new(),
+            changed: OrdSet::new(),
+            index: Arc::default(),
+            cache: Arc::new(DiskCache::new()),
+            revision: next_revision(),
+            paths_revision: next_revision(),
+            disk_revision: next_revision(),
         }
     }
 
+    /// The bytes of the file or kept folder at `path`, as the files stand now.
+    pub fn get(&self, path: &str) -> Option<FileBytes> {
+        match self.entries.get(path)? {
+            Entry::Edited(edited) => Some(edited.bytes.clone()),
+            Entry::Folder => Some(FileBytes::from([])),
+            Entry::OnDisk { stamp, .. } => self.read_disk(path, *stamp),
+        }
+    }
+
+    /// Which version of the file at `path` the files hold.
+    pub fn stamp_of(&self, path: &str) -> Option<FileStamp> {
+        self.entries.get(path).map(Entry::stamp)
+    }
+
+    /// The hash of the bytes of the file at `path`, as the loader hashes them: read and hashed the
+    /// first time it is asked for, then kept.
+    pub fn hash_of(&self, path: &str) -> Option<String> {
+        match self.entries.get(path)? {
+            Entry::Edited(edited) => Some(edited.hash().to_owned()),
+            Entry::Folder => Some(hash(&[])),
+            Entry::OnDisk { file, .. } => self.disk_file_hash(path, *file),
+        }
+    }
+
+    pub fn contains(&self, path: &str) -> bool {
+        self.entries.contains_key(path)
+    }
+
+    pub fn insert(&mut self, path: String, bytes: FileBytes) {
+        let edited = Entry::Edited(Arc::new(Edited {
+            stamp: FileStamp(next_revision()),
+            bytes,
+            hash: OnceLock::new(),
+            json: OnceLock::new(),
+        }));
+        let entry = if is_folder(&path) {
+            Entry::Folder
+        } else {
+            edited
+        };
+        self.put(path, Some(entry));
+    }
+
     pub fn remove(&mut self, path: &str) {
+        self.put(path.to_owned(), None);
+    }
+
+    fn put(&mut self, path: String, entry: Option<Entry>) {
         self.revision = next_revision();
-        if self.map.remove(path).is_some() {
-            self.paths_changed();
+        self.changed.insert(path.clone());
+        let held = match entry {
+            Some(entry) => self.entries.insert(path.clone(), entry).is_some(),
+            None => self.entries.remove(&path).is_none(),
+        };
+        if !held {
+            let index = Arc::make_mut(&mut self.index);
+            if self.entries.contains_key(&path) {
+                index.add(&path);
+            } else {
+                index.remove(&path);
+            }
+            self.paths_revision = next_revision();
         }
     }
 
@@ -195,48 +230,28 @@ impl ProjectFiles {
         self.paths_revision
     }
 
-    fn paths_changed(&mut self) {
-        self.index = OnceLock::new();
-        self.paths_revision = next_revision();
+    /// Which change what the editor knows of the disk is at, as [`ProjectFiles::revision`] is for
+    /// the files.
+    pub(crate) fn disk_revision(&self) -> u64 {
+        self.disk_revision
     }
 
     pub fn index(&self) -> Arc<FolderIndex> {
-        self.index
-            .get_or_init(|| Arc::new(FolderIndex::of(self.map.keys())))
-            .clone()
+        self.index.clone()
     }
 
     pub fn paths_of(&self, table: &str) -> Vec<String> {
-        self.index().paths_of(table).map(str::to_owned).collect()
+        self.index.paths_of(table).map(str::to_owned).collect()
     }
 
     /// Every file's path, leaving out the folders kept as entries.
     pub fn paths(&self) -> impl Iterator<Item = &String> {
-        self.map.keys().filter(|path| !is_folder(path))
+        self.entries.keys().filter(|path| !is_folder(path))
     }
 
     /// Every file and every kept folder, as saving and history see them.
     pub fn entries(&self) -> impl Iterator<Item = &String> {
-        self.map.keys()
-    }
-
-    pub fn iter(&self) -> impl Iterator<Item = (&String, &FileBytes)> {
-        self.map
-            .iter()
-            .filter(|(path, _)| !is_folder(path))
-            .map(|(path, stored)| (path, &stored.bytes))
-    }
-
-    /// The hash of every file, as the files stand now.
-    pub fn hashes(&self) -> DiskHashes {
-        DiskHashes {
-            map: self
-                .map
-                .iter()
-                .map(|(path, stored)| (path.clone(), stored.hash.clone()))
-                .collect(),
-            revision: next_revision(),
-        }
+        self.entries.keys()
     }
 
     pub fn text(&self, path: &str) -> Option<String> {
@@ -244,25 +259,27 @@ impl ProjectFiles {
     }
 
     pub fn json(&self, path: &str) -> Option<Arc<serde_json::Value>> {
-        let stored = self.map.get(path)?;
-        stored
-            .json
-            .get_or_init(|| serde_json::from_slice(&stored.bytes).ok().map(Arc::new))
-            .clone()
+        match self.entries.get(path)? {
+            Entry::Edited(edited) => edited
+                .json
+                .get_or_init(|| parse_json(&edited.bytes))
+                .clone(),
+            Entry::Folder => None,
+            Entry::OnDisk { stamp, .. } => {
+                let bytes = self.read_disk(path, *stamp)?;
+                self.cache
+                    .json
+                    .get_or_insert_with(stamp, || {
+                        Ok::<_, ()>(ParsedJson(bytes.len(), parse_json(&bytes)))
+                    })
+                    .ok()?
+                    .1
+            }
+        }
     }
 
     pub fn json_owned(&self, path: &str) -> Option<serde_json::Value> {
         self.json(path).map(|value| (*value).clone())
-    }
-
-    pub fn folder(&self, name: &str) -> MemoryFolder {
-        MemoryFolder {
-            name: name.to_owned(),
-            files: self
-                .iter()
-                .map(|(path, bytes)| (path.clone(), bytes.clone()))
-                .collect(),
-        }
     }
 
     pub fn with(&self, changes: &[FileChange]) -> ProjectFiles {
@@ -278,7 +295,7 @@ impl ProjectFiles {
 
     /// Every file that makes up what is at `path`: a file itself, or a bundle's every part.
     pub fn files_of(&self, path: &str) -> Vec<String> {
-        if self.map.contains_key(path) {
+        if self.entries.contains_key(path) {
             vec![path.to_owned()]
         } else {
             self.paths_under(&folder_entry(path)).cloned().collect()
@@ -286,11 +303,235 @@ impl ProjectFiles {
     }
 
     pub(crate) fn paths_under(&self, prefix: &str) -> impl Iterator<Item = &String> {
-        self.map
-            .range::<str, _>((Bound::Included(prefix), Bound::Unbounded))
+        self.entries
+            .range::<_, str>((Bound::Included(prefix), Bound::Unbounded))
             .map(|(path, _)| path)
             .take_while(move |path| path.starts_with(prefix))
     }
+
+    /// Every file and kept folder whose bytes may differ from those `before` holds: an edit, or a
+    /// file taken from disk. It costs what changed, however many files are alike.
+    pub fn changed_since(&self, before: &ProjectFiles) -> Vec<String> {
+        before
+            .entries
+            .diff(&self.entries)
+            .map(|change| match change {
+                DiffItem::Add(path, _) | DiffItem::Remove(path, _) => path.clone(),
+                DiffItem::Update { new: (path, _), .. } => path.clone(),
+            })
+            .collect()
+    }
+
+    /// Every file and kept folder that differs from disk, by path.
+    pub fn unsaved(&self) -> Vec<String> {
+        self.changed
+            .iter()
+            .filter(|path| self.differs_from_disk(path))
+            .cloned()
+            .collect()
+    }
+
+    /// Whether the file or kept folder at `path` differs from what is on disk.
+    pub fn differs_from_disk(&self, path: &str) -> bool {
+        match (self.entries.get(path), self.disk.get(path)) {
+            (None, None) | (Some(Entry::Folder), Some(OnDisk::Folder)) => false,
+            (Some(Entry::OnDisk { file, .. }), Some(OnDisk::File(disk))) => file != disk,
+            (Some(Entry::Edited(edited)), Some(OnDisk::File(disk))) => {
+                self.disk_file_hash(path, *disk).as_deref() != Some(edited.hash())
+            }
+            _ => true,
+        }
+    }
+
+    /// The hash of the file at `path` as it stands on disk, as the editor last saw it.
+    pub(crate) fn disk_hash(&self, path: &str) -> Option<String> {
+        match self.disk.get(path)? {
+            OnDisk::File(file) => self.disk_file_hash(path, *file),
+            OnDisk::Folder => Some(hash(&[])),
+        }
+    }
+
+    /// What the editor last saw on disk at `path`.
+    pub(crate) fn on_disk(&self, path: &str) -> Option<OnDisk> {
+        self.disk.get(path).copied()
+    }
+
+    /// Every path the disk held under `prefix`, as the editor last saw it.
+    pub(crate) fn on_disk_under<'a>(&'a self, prefix: &'a str) -> impl Iterator<Item = &'a String> {
+        self.disk
+            .range::<_, str>((Bound::Included(prefix), Bound::Unbounded))
+            .map(|(path, _)| path)
+            .take_while(move |path| path.starts_with(prefix))
+    }
+
+    /// Every path whose entry may differ from disk: what saving goes through.
+    pub(crate) fn changed(&self) -> impl Iterator<Item = &String> {
+        self.changed.iter()
+    }
+
+    /// Takes in that the entry at `path` now stands on disk as `now`, written there by saving: the
+    /// bytes it holds are read from disk again once they are let go of.
+    pub(crate) fn saved(&mut self, path: &str, now: Option<OnDisk>) {
+        self.disk_revision = next_revision();
+        self.changed.remove(path);
+        match now {
+            Some(now) => self.disk.insert(path.to_owned(), now),
+            None => self.disk.remove(path),
+        };
+        if let (Some(Entry::Edited(edited)), Some(OnDisk::File(file))) =
+            (self.entries.get(path), now)
+        {
+            let edited = edited.clone();
+            self.cache.bytes.insert(edited.stamp, edited.bytes.clone());
+            self.cache
+                .hashes
+                .insert((path.to_owned(), file), edited.hash().to_owned());
+            self.entries.insert(
+                path.to_owned(),
+                Entry::OnDisk {
+                    stamp: edited.stamp,
+                    file,
+                },
+            );
+        }
+    }
+
+    /// Takes in what stands on disk at `path` now in place of the entry there.
+    pub(crate) fn take_from_disk(&mut self, path: &str, now: Option<OnDisk>) {
+        let entry = now.map(Entry::from_disk);
+        self.put(path.to_owned(), entry);
+        self.saved(path, now);
+    }
+
+    /// Takes in what stands on disk at `path` now, keeping the entry there as the editor has it.
+    pub(crate) fn disk_moved_on(&mut self, path: &str, now: Option<OnDisk>) {
+        self.disk_revision = next_revision();
+        self.changed.insert(path.to_owned());
+        match now {
+            Some(now) => self.disk.insert(path.to_owned(), now),
+            None => self.disk.remove(path),
+        };
+    }
+
+    fn read_disk(&self, path: &str, stamp: FileStamp) -> Option<FileBytes> {
+        self.cache
+            .bytes
+            .get_or_insert_with(&stamp, || {
+                std::fs::read(self.root.join(path)).map(FileBytes::from)
+            })
+            .ok()
+    }
+
+    fn disk_file_hash(&self, path: &str, file: DiskFile) -> Option<String> {
+        self.cache
+            .hashes
+            .get_or_insert_with(&(path.to_owned(), file), || {
+                std::fs::read(self.root.join(path)).map(|bytes| hash(&bytes))
+            })
+            .ok()
+    }
+}
+
+impl ContentFolder for ProjectFiles {
+    fn name(&self) -> String {
+        self.root.display().to_string()
+    }
+
+    fn entries(&self, dir: &str) -> Vec<FolderEntry> {
+        entries_in(dir, |from| {
+            self.entries
+                .range::<_, str>((Bound::Included(from), Bound::Unbounded))
+                .find(|(path, _)| !is_folder(path))
+                .map(|(path, _)| path.clone())
+        })
+    }
+
+    fn read(&self, file: &str) -> io::Result<Vec<u8>> {
+        self.get(file)
+            .filter(|_| !is_folder(file))
+            .map(|bytes| bytes.to_vec())
+            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, format!("missing {file}")))
+    }
+}
+
+/// Entries alike hold the same bytes; entries unalike may still hold the same.
+impl PartialEq for Entry {
+    fn eq(&self, other: &Entry) -> bool {
+        self.stamp() == other.stamp()
+    }
+}
+
+impl Entry {
+    fn stamp(&self) -> FileStamp {
+        match self {
+            Entry::OnDisk { stamp, .. } => *stamp,
+            Entry::Edited(edited) => edited.stamp,
+            Entry::Folder => FileStamp(0),
+        }
+    }
+
+    fn from_disk(on_disk: OnDisk) -> Entry {
+        match on_disk {
+            OnDisk::File(file) => Entry::OnDisk {
+                stamp: FileStamp(next_revision()),
+                file,
+            },
+            OnDisk::Folder => Entry::Folder,
+        }
+    }
+}
+
+/// What the files read from disk and work out from it, kept within a budget and shared by every
+/// copy of the files: a stamp names the same bytes in all of them.
+struct DiskCache {
+    bytes: Cache<FileStamp, FileBytes, ByteWeight>,
+    json: Cache<FileStamp, ParsedJson, ByteWeight>,
+    /// The hash of each file read from disk, by its path and how it stood there.
+    hashes: Cache<(String, DiskFile), String>,
+}
+
+impl DiskCache {
+    fn new() -> DiskCache {
+        DiskCache {
+            bytes: Cache::with_weighter(ENTRIES_CACHED, BYTES_CACHED, ByteWeight),
+            json: Cache::with_weighter(ENTRIES_CACHED, BYTES_CACHED, ByteWeight),
+            hashes: Cache::new(ENTRIES_CACHED),
+        }
+    }
+}
+
+/// How many bytes of files read from disk, and of the JSON parsed from them by the size of its
+/// text, the files keep at most.
+const BYTES_CACHED: u64 = 512 << 20;
+const ENTRIES_CACHED: usize = 1 << 16;
+
+/// A file's JSON, with the size of the text it was parsed from.
+#[derive(Clone)]
+struct ParsedJson(usize, Option<Arc<serde_json::Value>>);
+
+#[derive(Clone)]
+struct ByteWeight;
+
+impl Weighter<FileStamp, FileBytes> for ByteWeight {
+    fn weight(&self, _: &FileStamp, bytes: &FileBytes) -> u64 {
+        bytes.len() as u64 + 1
+    }
+}
+
+impl Weighter<FileStamp, ParsedJson> for ByteWeight {
+    fn weight(&self, _: &FileStamp, parsed: &ParsedJson) -> u64 {
+        parsed.0 as u64 + 1
+    }
+}
+
+fn parse_json(bytes: &[u8]) -> Option<Arc<serde_json::Value>> {
+    serde_json::from_slice(bytes).ok().map(Arc::new)
+}
+
+/// A revision no files or hashes have had before, so no two different states share one.
+fn next_revision() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
 }
 
 /// The bundle `file` is a part of, and its path inside the bundle, when it is one.
@@ -329,75 +570,6 @@ pub(crate) fn folder_entry(folder: &str) -> String {
     format!("{folder}/")
 }
 
-impl FolderIndex {
-    fn of<'a>(entries: impl Iterator<Item = &'a String>) -> FolderIndex {
-        let registry = registry();
-        let types = registry.file_types();
-        let mut index = FolderIndex::default();
-        let add_folders = |index: &mut FolderIndex, path: &str| {
-            let mut child = path;
-            loop {
-                let parent = files::parent_of(child);
-                index
-                    .children
-                    .entry(parent.to_owned())
-                    .or_default()
-                    .insert(child.to_owned());
-                if parent.is_empty() || !index.folders.insert(parent.to_owned()) {
-                    break;
-                }
-                child = parent;
-            }
-        };
-        let mut seen: BTreeSet<&str> = BTreeSet::new();
-        for entry in entries {
-            if let Some(folder) = entry.strip_suffix('/') {
-                if bundle_of(entry).is_none() {
-                    index.folders.insert(folder.to_owned());
-                    add_folders(&mut index, folder);
-                }
-                continue;
-            }
-            let (path, dir) = match bundle_of(entry) {
-                Some((bundle, _)) => (bundle, true),
-                None => (entry.as_str(), false),
-            };
-            add_folders(&mut index, path);
-            if seen.insert(path) {
-                let mut parent = path;
-                while !parent.is_empty() {
-                    parent = files::parent_of(parent);
-                    *index.counts.entry(parent.to_owned()).or_default() += 1;
-                }
-            }
-            match files::classify(path, dir, &types) {
-                Ok(Some(GameFile::Content { table, .. })) => {
-                    index
-                        .content
-                        .entry(table.to_owned())
-                        .or_default()
-                        .insert(path.to_owned());
-                }
-                Ok(Some(GameFile::Media(_))) => {
-                    index.media.insert(path.to_owned());
-                }
-                Ok(Some(GameFile::Note)) => {
-                    index.notes.insert(path.to_owned());
-                }
-                Ok(Some(GameFile::Other)) => {
-                    index.other.insert(path.to_owned());
-                }
-                Ok(Some(GameFile::Settings)) => {}
-                Ok(None) => {}
-                Err(_) => {
-                    index.unknown.insert(path.to_owned());
-                }
-            }
-        }
-        index
-    }
-}
-
 pub fn hash(bytes: &[u8]) -> String {
     FileHash::of(bytes).hash
 }
@@ -425,25 +597,52 @@ impl PartialEq for FileChange {
     }
 }
 
-/// The folder-relative names of the files under `root` that make up its content, and of every
-/// folder there that holds nothing, as its entry.
-pub(crate) fn content_files(root: &Path) -> io::Result<Vec<String>> {
-    let mut files = Vec::new();
-    let entries = WalkDir::new(root)
-        .min_depth(1)
+/// Every file under `root` that makes up its content, and every folder there that holds nothing,
+/// as its entry, each with how it stands on disk, sorted: listed across threads without reading
+/// a file, each file counted to `progress` as it is.
+pub(crate) fn list(
+    root: &Path,
+    progress: &(dyn Fn(usize) + Sync),
+) -> io::Result<Vec<(String, OnDisk)>> {
+    let walk = jwalk::WalkDir::new(root)
         .follow_links(true)
-        .into_iter()
-        .filter_entry(|entry| entry.file_name().to_str().is_none_or(|name| !hidden(name)));
-    for entry in entries {
-        let entry = entry?;
-        let file = folder_file(root, entry.path()).expect("a walked file lies under its root");
-        if entry.file_type().is_file() {
-            files.push(file);
-        } else if empty_folder(entry.path())? {
-            files.push(folder_entry(&file));
+        .skip_hidden(false)
+        .process_read_dir(|_, _, _, children| {
+            children.retain(|child| {
+                child.as_ref().map_or(true, |child| {
+                    child.file_name().to_str().is_none_or(|name| !hidden(name))
+                })
+            });
+        });
+    let mut found: Vec<(String, bool)> = Vec::new();
+    for entry in walk {
+        let entry = entry.map_err(io::Error::other)?;
+        if entry.depth() == 0 {
+            continue;
         }
+        let path = entry.path();
+        let file = folder_file(root, &path).expect("a walked file lies under its root");
+        found.push((file, entry.file_type().is_dir()));
     }
-    Ok(files)
+    found.sort_unstable();
+    let listed = AtomicUsize::new(0);
+    let mut out: Vec<(String, OnDisk)> = found
+        .par_iter()
+        .enumerate()
+        .filter_map(|(at, (file, dir))| {
+            if *dir {
+                let holds = found
+                    .get(at + 1)
+                    .is_some_and(|(next, _)| next.starts_with(&folder_entry(file)));
+                return (!holds).then(|| Ok((folder_entry(file), OnDisk::Folder)));
+            }
+            let metadata = std::fs::metadata(root.join(file));
+            progress(listed.fetch_add(1, Ordering::Relaxed) + 1);
+            Some(metadata.map(|metadata| (file.clone(), OnDisk::File(DiskFile::of(&metadata)))))
+        })
+        .collect::<io::Result<_>>()?;
+    out.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    Ok(out)
 }
 
 pub(crate) fn empty_folder(path: &Path) -> io::Result<bool> {

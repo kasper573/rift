@@ -105,7 +105,7 @@ pub fn stamp(files: &ProjectFiles, area: &str) -> String {
     let hashes: String = files
         .files_of(area)
         .iter()
-        .filter_map(|file| files.hash_of(file))
+        .filter_map(|file| files.stamp_of(file).map(|stamp| stamp.to_string()))
         .collect();
     crate::project::files::hash(hashes.as_bytes())
 }

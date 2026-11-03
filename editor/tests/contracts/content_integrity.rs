@@ -372,6 +372,6 @@ fn an_edit_that_breaks_a_file_it_never_touched_is_taken_back_once_the_folder_loa
         "an edit keeping every file loading stays: {:?}",
         refused.map(|refused| refused.refusal.sentence())
     );
-    assert_eq!(project.files.get(&yard_scene()), Some(&near));
+    assert_eq!(project.files.get(&yard_scene()), Some(near));
     assert_eq!(project.history.steps().len(), 1);
 }

@@ -140,7 +140,7 @@ fn undoing_a_merged_step_restores_every_file_it_came_to_touch() {
     let scratch = tempfile::tempdir().expect("a scratch folder");
     let folder = game_folder(scratch.path().join("game"));
     let mut project = Project::open(&folder, Arc::new(SchemaShapes::load())).expect("opens");
-    let settings = project.files.get(SETTINGS_FILE).cloned();
+    let settings = project.files.get(SETTINGS_FILE);
     let note = "notes/plan.md";
 
     let mut first = rename(&project, "Lowtide");
@@ -160,7 +160,7 @@ fn undoing_a_merged_step_restores_every_file_it_came_to_touch() {
     );
 
     project.undo();
-    assert_eq!(project.files.get(SETTINGS_FILE).cloned(), settings);
+    assert_eq!(project.files.get(SETTINGS_FILE), settings);
     assert!(
         project.files.get(note).is_none(),
         "the note the step wrote is gone"

@@ -775,13 +775,11 @@ impl<'a> GameFolder<'a> {
         let unused = &self.project.unused;
         let mut shown = HashSet::new();
         let mut leaves: Vec<&str> = Vec::new();
-        for held in self.index.children.values().chain(self.missing.values()) {
-            leaves.extend(
-                held.iter()
-                    .map(String::as_str)
-                    .filter(|path| !self.is_folder(path)),
-            );
-        }
+        let held = (self.index.children.values().flatten()).chain(self.missing.values().flatten());
+        leaves.extend(
+            held.map(String::as_str)
+                .filter(|path| !self.is_folder(path)),
+        );
         for path in leaves {
             let kind = self.kind_of(path);
             let passes = !view.hidden_kinds.contains(kind)

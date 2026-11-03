@@ -217,7 +217,7 @@ pub struct SyncedContent {
 
 /// The synced assets as they are read: from the store, by the hash the index files each under,
 /// held in memory those the store couldn't keep, and fetched from the server as they are first
-/// read those the server streams.
+/// read those the server streams; or read from a content folder as it stands.
 #[derive(Clone, Default)]
 pub struct SyncedAssets {
     hashes: Arc<HashMap<String, String>>,
@@ -225,13 +225,14 @@ pub struct SyncedAssets {
     reader: Option<ContentStore>,
     streamed: Arc<HashSet<String>>,
     source: Option<Arc<dyn ContentSource>>,
+    folder: Option<Arc<dyn ContentFolder>>,
 }
 
 impl SyncedAssets {
-    /// Assets held in memory, by path.
-    pub fn held(files: HashMap<String, Arc<[u8]>>) -> SyncedAssets {
+    /// Assets read from `folder` as it stands, each as it is asked for.
+    pub fn read_from(folder: Arc<dyn ContentFolder>) -> SyncedAssets {
         SyncedAssets {
-            held: Arc::new(files),
+            folder: Some(folder),
             ..SyncedAssets::default()
         }
     }
@@ -256,6 +257,9 @@ impl SyncedAssets {
     pub fn read(&self, path: &str) -> Option<Arc<[u8]>> {
         if let Some(bytes) = self.held.get(path) {
             return Some(bytes.clone());
+        }
+        if let Some(folder) = &self.folder {
+            return folder.read(path).ok().map(Arc::from);
         }
         let hash = self.hashes.get(path)?;
         let stored = self
@@ -554,6 +558,7 @@ impl Run<'_> {
                 reader: Some(self.store.clone()),
                 streamed: Arc::new(streamed),
                 source: Some(self.source.clone()),
+                folder: None,
             },
             memory_only: self.memory_only(),
         })

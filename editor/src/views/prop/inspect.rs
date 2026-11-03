@@ -115,8 +115,7 @@ fn footprint_card(editor: &mut Editor, ui: &mut Ui, key: &str, row: &PropDef) {
     let current = editor
         .project
         .as_ref()
-        .and_then(|project| project.files.hash_of(&row.model.path()))
-        .map(str::to_owned);
+        .and_then(|project| project.files.hash_of(&row.model.path()));
     let bodies = editor
         .project
         .as_ref()

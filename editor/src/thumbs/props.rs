@@ -107,7 +107,9 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
     let files = &project.files;
     let model_hash = |prop: &str| -> Option<String> {
         let def = content.by_path::<PropDef>(prop)?.get(&content);
-        files.hash_of(&def.model.path()).map(str::to_owned)
+        files
+            .stamp_of(&def.model.path())
+            .map(|stamp| stamp.to_string())
     };
     let freed = editor.form.prop_thumbnails.forget_stale(&model_hash);
     for image in freed {

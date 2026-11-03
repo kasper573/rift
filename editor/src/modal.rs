@@ -1,5 +1,6 @@
 use std::collections::BTreeSet;
 use std::path::PathBuf;
+use std::sync::{Arc, OnceLock};
 
 use engine::core::math::Pos;
 use engine::core::units::Meters;
@@ -86,7 +87,24 @@ pub struct NewGameDialog {
 
 pub enum NewGameSource {
     Template(String),
-    Copy(PathBuf),
+    Copy {
+        folder: PathBuf,
+        /// How many files the folder holds, once they are counted in the background.
+        files: Arc<OnceLock<usize>>,
+    },
+}
+
+impl NewGameSource {
+    /// A copy of the game at `folder`, its files counted in the background meanwhile.
+    pub fn copy(folder: PathBuf) -> NewGameSource {
+        let files = Arc::new(OnceLock::new());
+        let (counted, from) = (files.clone(), folder.clone());
+        std::thread::spawn(move || {
+            let listed = crate::project::files::list(&from, &|_| {});
+            let _ = counted.set(listed.map_or(0, |listed| listed.len()));
+        });
+        NewGameSource::Copy { folder, files }
+    }
 }
 
 pub struct ConfirmDialog {

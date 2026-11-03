@@ -24,8 +24,8 @@ use ui::{chip, controls};
 use super::area::camera::OrbitCamera;
 use super::stage::{self, StageState, StageToggle};
 use crate::app::Editor;
-use crate::project::ContentEdit;
 use crate::project::files::{bundle_of, folder_entry};
+use crate::project::{ContentEdit, FileStamp};
 use crate::row_form;
 use crate::tabs::shown_path;
 use crate::views::ViewMap;
@@ -49,6 +49,9 @@ pub struct PropView {
 
 /// What the editor read of a prop's model, kept until the model changes.
 pub struct Geometry {
+    /// The version of the model's file it was read from.
+    pub stamp: FileStamp,
+    /// The hash of the model's bytes, as a footprint fitted to it records.
     pub hash: String,
     pub triangles: Vec<Triangle>,
     pub flat_shaded: bool,
@@ -240,17 +243,19 @@ pub fn geometry(editor: &mut Editor, key: &str) -> Option<Arc<Geometry>> {
     let project = editor.project.as_ref()?;
     let row = project.read::<PropDef>(key).ok()?;
     let path = row.model.path();
-    let hash = project.files.hash_of(&path)?.to_owned();
+    let stamp = project.files.stamp_of(&path)?;
     ensure_view(editor, key);
     if let Some(known) = &editor.views.prop.views.view(key).geometry
-        && known.hash == hash
+        && known.stamp == stamp
     {
         return Some(known.clone());
     }
-    let bytes = editor.project.as_ref()?.files.get(&path)?.clone();
+    let files = &editor.project.as_ref()?.files;
+    let bytes = files.get(&path)?;
     let triangles = gltf::triangles(&bytes).ok()?;
     let geometry = Arc::new(Geometry {
-        hash,
+        stamp,
+        hash: files.hash_of(&path)?,
         flat_shaded: gltf::is_flat_shaded(&triangles),
         triangles,
     });

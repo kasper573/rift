@@ -75,9 +75,9 @@ impl Thumbnails {
 
     /// The size in pixels of the picture at `path`, read from its header without decoding it.
     pub fn dimensions(&mut self, files: &ProjectFiles, path: &str) -> Option<[u32; 2]> {
-        let hash = files.hash_of(path)?;
+        let hash = files.stamp_of(path)?.to_string();
         if let Some((known, dimensions)) = self.dimensions.get(path)
-            && known == hash
+            && *known == hash
         {
             return *dimensions;
         }
@@ -86,8 +86,7 @@ impl Thumbnails {
             .ok()
             .and_then(|reader| reader.into_dimensions().ok())
             .map(|(width, height)| [width, height]);
-        self.dimensions
-            .insert(path.to_owned(), (hash.to_owned(), dimensions));
+        self.dimensions.insert(path.to_owned(), (hash, dimensions));
         dimensions
     }
 
@@ -116,8 +115,8 @@ impl Thumbnails {
             .collect();
         let hash = paths
             .iter()
-            .map(|path| files.hash_of(path))
-            .collect::<Option<Vec<&str>>>()?
+            .map(|path| files.stamp_of(path).map(|stamp| stamp.to_string()))
+            .collect::<Option<Vec<String>>>()?
             .join(" ");
         match self.entries.get(&key) {
             Some(Entry::Decoded(thumb)) if thumb.hash == hash => return Some(thumb.clone()),
@@ -127,7 +126,7 @@ impl Thumbnails {
         let images: HashMap<&str, Image> = paths
             .iter()
             .filter_map(|path| {
-                let decoded = image::load_from_memory(files.get(path)?).ok()?;
+                let decoded = image::load_from_memory(&files.get(path)?).ok()?;
                 Some((
                     *path,
                     Image::from_dynamic(decoded, true, RenderAssetUsages::default()),
@@ -189,8 +188,7 @@ impl Thumbnails {
         budget: &mut u32,
         prepare: impl FnOnce(RgbaImage) -> Option<RgbaImage>,
     ) -> Option<Thumbnail> {
-        let bytes = files.get(&file)?;
-        let hash = files.hash_of(&file)?.to_owned();
+        let hash = files.stamp_of(&file)?.to_string();
         match self.entries.get(&key) {
             Some(Entry::Decoded(thumb)) if thumb.hash == hash => return Some(thumb.clone()),
             Some(Entry::Undecodable { hash: known }) if *known == hash => return None,
@@ -202,7 +200,8 @@ impl Thumbnails {
         }
         *budget -= 1;
         let max_side = ctx.input(|i| i.max_texture_side) as u32;
-        let thumb = decode(bytes).and_then(prepare).map(|image| {
+        let bytes = files.get(&file)?;
+        let thumb = decode(&bytes).and_then(prepare).map(|image| {
             let size = [image.width() as usize, image.height() as usize];
             let image = to_color_image(shrink(image, max_side));
             Thumbnail {

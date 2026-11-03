@@ -28,7 +28,7 @@ use crate::modal::{
     CloseThen, ConfirmAction, ModalDialog, NewGameDialog, NewGameSource, PickRowThen,
 };
 use crate::play;
-use crate::project::{ContentEdit, files};
+use crate::project::ContentEdit;
 use crate::rows::{self, UsageDecision};
 use crate::shell::{self, start};
 use crate::{content_tree, widgets};
@@ -63,11 +63,11 @@ fn new_game(editor: &mut Editor, ctx: &Context, mut dialog: NewGameDialog) -> Op
     let templates = templates::list();
     let mut pressed = dialog::Keys::default();
     let copy_source = match &dialog.source {
-        NewGameSource::Copy(folder) => Some(folder.clone()),
+        NewGameSource::Copy { folder, files } => Some((folder.clone(), files.clone())),
         NewGameSource::Template(_) => None,
     };
     let title = match &copy_source {
-        Some(folder) => format!("+ New game from {}", start::game_name(folder)),
+        Some((folder, _)) => format!("+ New game from {}", start::game_name(folder)),
         None => "+ New game".to_owned(),
     };
     dialog::card(
@@ -87,8 +87,8 @@ fn new_game(editor: &mut Editor, ctx: &Context, mut dialog: NewGameDialog) -> Op
                         }
                     });
                 }
-                NewGameSource::Copy(source) => {
-                    form::kv_code(ui, "from", shell::pretty_path(source));
+                NewGameSource::Copy { folder, .. } => {
+                    form::kv_code(ui, "from", shell::pretty_path(folder));
                 }
             }
             ui.add_space(10.0);
@@ -124,21 +124,22 @@ fn new_game(editor: &mut Editor, ctx: &Context, mut dialog: NewGameDialog) -> Op
                 }
                 ui.label(theme::muted("new, or empty"));
             });
-            if let Some(source) = &copy_source {
+            if let Some((source, counted)) = &copy_source {
                 ui.add_space(6.0);
                 ui.horizontal_top(|ui| {
                     ui.vertical(|ui| {
                         ui.set_width(300.0);
                         sheet::section(ui, "Copied");
-                        let files = files::content_files(source).unwrap_or_default();
                         ui.label(face::mono(format!(
                             "{SETTINGS_FILE}   name → {}",
                             dialog.name
                         )));
-                        ui.label(face::mono(format!(
-                            "every other file · {}",
-                            files.len() - 1
-                        )));
+                        ui.label(face::mono(match counted.get() {
+                            Some(files) => {
+                                format!("every other file · {}", files.saturating_sub(1))
+                            }
+                            None => "every other file".to_owned(),
+                        }));
                     });
                     ui.vertical(|ui| {
                         sheet::section(ui, "Stays behind");
@@ -207,7 +208,7 @@ fn new_game(editor: &mut Editor, ctx: &Context, mut dialog: NewGameDialog) -> Op
                 NewGameSource::Template(template) => {
                     templates::new_game(template, dialog.name.trim(), &folder)
                 }
-                NewGameSource::Copy(source) => {
+                NewGameSource::Copy { folder: source, .. } => {
                     templates::new_game_from(source, dialog.name.trim(), &folder)
                 }
             };

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use ui::egui;
@@ -11,7 +11,6 @@ use engine::core::assets::SyncedAssetReader;
 use engine::core::audio::playback::{self, PlaySfx, SfxDef, SfxPlace};
 use engine::core::audio::soundscape::{SoundscapeChannel, SoundscapeLayer, SoundscapeZone};
 use engine::core::babble::{BabbleDef, BabbleRank, Babbling};
-use engine::core::content::AssetKind;
 use engine::core::content::Content;
 use engine::core::content::sync::SyncedAssets;
 use engine::core::math::Pos;
@@ -23,6 +22,7 @@ use ui::egui::Ui;
 
 use crate::app::Editor;
 use crate::keymap::EditorKey;
+use crate::project::ProjectFiles;
 
 const BABBLE_SAMPLE: &str = "The quick brown fox jumps over the lazy dog";
 
@@ -90,7 +90,7 @@ pub struct SoundViews {
     babbler: Option<Entity>,
     /// The content generation the engine's asset files and content were last taken from, with
     /// the hash of each asset file then.
-    synced: Option<(u64, HashMap<String, String>)>,
+    synced: Option<(u64, ProjectFiles)>,
 }
 
 impl SoundViews {
@@ -124,29 +124,19 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
     };
     let views = &mut editor.views.sound;
     if views.synced.as_ref().map(|(generation, _)| *generation) != Some(project.generation) {
-        let hashes: HashMap<String, String> = project
-            .files
-            .paths()
-            .filter(|path| AssetKind::of(path).is_some())
-            .filter_map(|path| Some((path.clone(), project.files.hash_of(path)?.to_owned())))
-            .collect();
-        let assets: HashMap<String, Arc<[u8]>> = hashes
-            .keys()
-            .filter_map(|path| Some((path.clone(), project.files.get(path)?.clone())))
-            .collect();
         world
             .resource::<SyncedAssetReader>()
-            .replace(SyncedAssets::held(assets));
+            .replace(SyncedAssets::read_from(Arc::new(project.files.clone())));
         if let Some((_, before)) = &views.synced {
             let server = world.resource::<AssetServer>();
-            for (path, hash) in &hashes {
-                let asset = AssetPath::from(path.clone());
-                if before.get(path) != Some(hash) && server.get_path_id(asset.clone()).is_some() {
+            for path in project.files.changed_since(before) {
+                let asset = AssetPath::from(path);
+                if server.get_path_id(asset.clone()).is_some() {
                     server.reload(asset);
                 }
             }
         }
-        views.synced = Some((project.generation, hashes));
+        views.synced = Some((project.generation, project.files.clone()));
     }
     let Some(content) = &project.content else {
         return;

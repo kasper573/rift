@@ -34,7 +34,7 @@ pub use id::{ContentId, ContentScope, rescoped, with_content};
 pub use load::{
     CheckedFiles, ContentFolder, ContentRegistry, FileHash, FileHashes, FileWriter,
     FilesystemFolder, FolderEntry, JsonPart, LoadPurpose, LoadStep, LoadWarnings, Loading,
-    MemoryFolder, Reference, SettingsFile, load, pointer_of, write,
+    MemoryFolder, Reference, SettingsFile, entries_in, load, pointer_of, write,
 };
 pub use mark::SchemaMark;
 pub use reader::{FolderReader, Unreadable, WrittenFiles};

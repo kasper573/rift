@@ -687,10 +687,7 @@ impl ContentFolder for MemoryFolder {
 /// The entries of `dir` among sorted paths, `next_path` giving the first path at or after one:
 /// it seeks from entry to entry, so a folder costs what it holds directly rather than what the
 /// whole folder holds.
-pub(crate) fn entries_in(
-    dir: &str,
-    next_path: impl Fn(&str) -> Option<String>,
-) -> Vec<FolderEntry> {
+pub fn entries_in(dir: &str, next_path: impl Fn(&str) -> Option<String>) -> Vec<FolderEntry> {
     let prefix = if dir.is_empty() {
         String::new()
     } else {
