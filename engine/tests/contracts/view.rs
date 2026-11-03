@@ -392,14 +392,13 @@ fn viewer(game: Game, folder: &std::path::Path) -> (App, engine::core::content::
         WorldSerializationPlugin,
         AnimationPlugin,
         GltfPlugin::default(),
+        bevy::mesh::MeshPlugin,
         BodyPlugin,
         JointLayersPlugin,
     ))
-    .init_asset::<Mesh>()
     .init_asset::<StandardMaterial>()
     .init_asset::<WorldMaterial>()
     .init_asset::<Image>()
-    .init_asset::<bevy::mesh::skinning::SkinnedMeshInverseBindposes>()
     .init_resource::<Animator>()
     .add_observer(render::adopt_player)
     .insert_resource(content.clone());
@@ -1036,15 +1035,14 @@ fn drawn_world() -> App {
         WorldSerializationPlugin,
         AnimationPlugin,
         GltfPlugin::default(),
+        bevy::mesh::MeshPlugin,
         TransformPlugin,
         VisibilityPlugin,
     ))
     .init_asset::<Shader>()
-    .init_asset::<Mesh>()
     .init_asset::<Image>()
     .init_asset::<StandardMaterial>()
     .init_asset::<ScatteringMedium>()
-    .init_asset::<bevy::mesh::skinning::SkinnedMeshInverseBindposes>()
     .add_plugins((VfxMaterialsPlugin, WorldScenePlugin))
     .insert_resource(testkit::look());
     app.finish();

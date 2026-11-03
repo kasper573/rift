@@ -87,6 +87,24 @@ pub fn freeze(world: &mut World, viewed_at: Pos<Meters>, heading: Radians) {
         from,
         heading: screen_heading(heading),
         arrival: None,
+        unseen: false,
+    });
+}
+
+/// Covers the screen at once, with nothing on view behind the cover: a view that opens where none
+/// stood before, as a session's first area does, is revealed from it like any other.
+pub fn cover_unseen(world: &mut World, viewed_at: Pos<Meters>) {
+    let from = camera::view_of(world)
+        .and_then(|view| target_marks(world, &view, viewed_at))
+        .unwrap_or(TargetMarks { viewed: Vec2::ZERO });
+    let style = world.resource::<ScreenTransitionPreference>().0;
+    world.resource_mut::<ActiveTransition>().0 = Some(Cut {
+        style,
+        played: style.pace().cover,
+        from,
+        heading: Vec2::X,
+        arrival: None,
+        unseen: true,
     });
 }
 
@@ -155,6 +173,7 @@ impl ActiveTransition {
             sweep: -cut.heading,
             from_reach: reach(cut.from, size),
             to_reach: reach(to, size),
+            unseen: u32::from(cut.unseen),
         }
     }
 }
@@ -175,6 +194,7 @@ pub(super) struct CutUniform {
     sweep: Vec2,
     from_reach: f32,
     to_reach: f32,
+    unseen: u32,
 }
 
 impl CutUniform {
@@ -193,6 +213,7 @@ impl CutUniform {
         sweep: Vec2::X,
         from_reach: 1.0,
         to_reach: 1.0,
+        unseen: 0,
     };
 }
 
@@ -207,6 +228,8 @@ struct Cut {
     from: TargetMarks,
     heading: Vec2,
     arrival: Option<Arrival>,
+    /// Whether nothing was on view as the cover fell, so none of the old view shows through it.
+    unseen: bool,
 }
 
 struct Arrival {

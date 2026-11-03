@@ -6,7 +6,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 
 use bevy::animation::{AnimatedBy, AnimationTargetId};
-use bevy::mesh::skinning::SkinnedMesh;
+use bevy::mesh::VertexAttributeValues;
+use bevy::mesh::skinning::{SkinnedMesh, SkinnedMeshInverseBindposes};
 use bevy::prelude::*;
 use bevy::world_serialization::WorldInstanceReady;
 
@@ -29,14 +30,28 @@ pub struct Skin {
     pub paint: Option<Paint>,
 }
 
-/// A body standing under its entity: its rig, the joints its clips play on, and the scenes of its
-/// skins.
+/// A body standing under its entity: its rig, the joints its clips play on, the scenes of its
+/// skins and the limbs they hang on the joints.
 #[derive(Component)]
 pub struct Body {
     figure: Figure,
     rig: Entity,
     skins: Vec<Entity>,
     joints: HashMap<String, Entity>,
+    /// Where each joint's bone ends, in the joint's own space.
+    tails: HashMap<Entity, Vec3>,
+    worn: HashMap<Entity, Vec<Limb>>,
+    limbs: Vec<Limb>,
+}
+
+/// The flesh a body's skins hang on one joint of its rig: the joint's bone, from the joint to
+/// `tail` in the joint's own space, and how far round it the skin lies on average, `girth`, in the
+/// same space.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Limb {
+    pub joint: Entity,
+    pub tail: Vec3,
+    pub girth: f32,
 }
 
 /// Triggered on a body once its rig stands, its joints known and its player ready to play.
@@ -73,6 +88,27 @@ impl Body {
     pub fn player(&self) -> Option<Entity> {
         Some(self.rig)
     }
+
+    /// The limbs of every skin bound to the rig, one for each joint some skin hangs flesh on.
+    pub fn limbs(&self) -> &[Limb] {
+        &self.limbs
+    }
+
+    fn wear(&mut self, skin: Entity, limbs: Vec<Limb>) {
+        self.worn.insert(skin, limbs);
+        self.gather_limbs();
+    }
+
+    fn gather_limbs(&mut self) {
+        let mut thickest: HashMap<Entity, Limb> = HashMap::new();
+        for limb in self.worn.values().flatten() {
+            thickest
+                .entry(limb.joint)
+                .and_modify(|kept| kept.girth = kept.girth.max(limb.girth))
+                .or_insert(*limb);
+        }
+        self.limbs = thickest.into_values().collect();
+    }
 }
 
 /// Stands the body `figure` describes under `entity`, in place of any body it stood before: its
@@ -103,6 +139,7 @@ pub fn dress(world: &mut World, entity: Entity, figure: &Figure) {
     let tree = &figure.rig;
     let mut placed = vec![Entity::PLACEHOLDER; tree.nodes.len()];
     let mut joints = HashMap::new();
+    let mut tails = HashMap::new();
     for node in tree.downward() {
         let joint = &tree.nodes[node];
         let parent = joint.parent.map_or(rig, |parent| placed[parent]);
@@ -121,6 +158,7 @@ pub fn dress(world: &mut World, entity: Entity, figure: &Figure) {
             ))
             .id();
         joints.insert(joint.name.clone(), placed[node]);
+        tails.insert(placed[node], tail(tree, node));
     }
     let skins = figure
         .skins
@@ -132,6 +170,9 @@ pub fn dress(world: &mut World, entity: Entity, figure: &Figure) {
         rig,
         skins,
         joints,
+        tails,
+        worn: HashMap::new(),
+        limbs: Vec::new(),
     });
     world.trigger(RigReady { entity });
 }
@@ -165,6 +206,8 @@ pub fn reskin(world: &mut World, entity: Entity, skins: &[Skin]) {
     }
     if let Some(mut body) = world.get_mut::<Body>(entity) {
         body.figure.skins = skins.to_vec();
+        body.worn.retain(|skin, _| scenes.contains(skin));
+        body.gather_limbs();
         body.skins = scenes;
     }
 }
@@ -216,19 +259,35 @@ fn stand(ready: On<WorldInstanceReady>, mut skins: Query<&mut SkinOf>) {
     }
 }
 
-/// Binds the skinned meshes of every spawned skin to its body's rig once the rig stands, paints
-/// them once their paint is baked, and shows the skin.
+/// The meshes a skin's scene draws, and what binds them to joints.
+#[derive(bevy::ecs::system::SystemParam)]
+struct SkinMeshes<'w, 's> {
+    skinned: Query<
+        'w,
+        's,
+        (
+            &'static mut SkinnedMesh,
+            &'static Mesh3d,
+            Option<&'static mut MeshMaterial3d<WorldMaterial>>,
+        ),
+    >,
+    meshes: Res<'w, Assets<Mesh>>,
+    binds: Res<'w, Assets<SkinnedMeshInverseBindposes>>,
+}
+
+/// Binds the skinned meshes of every spawned skin to its body's rig once the rig stands, learns
+/// the limbs they hang on its joints, paints them once their paint is baked, and shows the skin.
 fn bind(
     mut skins: Query<(Entity, &SkinOf, &mut Visibility)>,
-    bodies: Query<&Body>,
+    mut bodies: Query<&mut Body>,
     children: Query<&Children>,
     names: Query<&Name>,
-    mut meshes: Query<(&mut SkinnedMesh, Option<&mut MeshMaterial3d<WorldMaterial>>)>,
+    mut meshes: SkinMeshes,
     mut painter: Painter,
     mut commands: Commands,
 ) {
     for (scene, skin, mut visibility) in &mut skins {
-        let Ok(body) = bodies.get(skin.body) else {
+        let Ok(mut body) = bodies.get_mut(skin.body) else {
             continue;
         };
         if !skin.spawned || body.joints.is_empty() {
@@ -242,8 +301,9 @@ fn bind(
             },
             None => None,
         };
+        let mut limbs = Vec::new();
         for node in children.iter_descendants(scene) {
-            let Ok((mut mesh, material)) = meshes.get_mut(node) else {
+            let Ok((mut mesh, drawn, material)) = meshes.skinned.get_mut(node) else {
                 continue;
             };
             let bound: Vec<Entity> = mesh
@@ -258,13 +318,90 @@ fn bind(
                 })
                 .collect();
             mesh.joints = bound;
+            if let (Some(drawn), Some(binds)) = (
+                meshes.meshes.get(&drawn.0),
+                meshes.binds.get(&mesh.inverse_bindposes),
+            ) {
+                limbs.extend(limbs_of(drawn, binds, &mesh.joints, &body.tails));
+            }
             if let (Some(texture), Some(mut material)) = (&texture, material)
                 && let Some(painted) = painter.painted(&material.0, texture)
             {
                 material.0 = painted;
             }
         }
+        body.wear(scene, limbs);
         *visibility = Visibility::Inherited;
         commands.entity(scene).remove::<SkinOf>();
     }
+}
+
+/// Where the bone of the rig's `node` ends in its own space: at its one child joint, or, where it
+/// branches or ends, at the joint itself.
+fn tail(tree: &NodeTree, node: usize) -> Vec3 {
+    let mut children = tree
+        .nodes
+        .iter()
+        .filter(|child| child.parent == Some(node) && !child.mesh);
+    match (children.next(), children.next()) {
+        (Some(child), None) => child.rest.translation,
+        _ => Vec3::ZERO,
+    }
+}
+
+/// The limbs a skinned `mesh` hangs on the `joints` it is bound to, by the inverse `binds` of its
+/// skin: for each joint that weighs some vertex most, how far from the joint's bone those vertices
+/// lie on average.
+fn limbs_of(
+    mesh: &Mesh,
+    binds: &[Mat4],
+    joints: &[Entity],
+    tails: &HashMap<Entity, Vec3>,
+) -> Vec<Limb> {
+    let (
+        Some(VertexAttributeValues::Float32x3(positions)),
+        Some(VertexAttributeValues::Uint16x4(indices)),
+        Some(VertexAttributeValues::Float32x4(weights)),
+    ) = (
+        mesh.attribute(Mesh::ATTRIBUTE_POSITION),
+        mesh.attribute(Mesh::ATTRIBUTE_JOINT_INDEX),
+        mesh.attribute(Mesh::ATTRIBUTE_JOINT_WEIGHT),
+    )
+    else {
+        return Vec::new();
+    };
+    let tail_of = |slot: usize| tails.get(&joints[slot]).copied().unwrap_or(Vec3::ZERO);
+    let mut around = vec![(0.0f32, 0u32); joints.len().min(binds.len())];
+    for ((position, index), weight) in positions.iter().zip(indices).zip(weights) {
+        let heaviest = (0..4)
+            .max_by(|&a, &b| weight[a].total_cmp(&weight[b]))
+            .map_or(0, |at| index[at] as usize);
+        let Some((sum, count)) = around.get_mut(heaviest) else {
+            continue;
+        };
+        let at = binds[heaviest].transform_point3(Vec3::from_array(*position));
+        *sum += from_bone(at, tail_of(heaviest));
+        *count += 1;
+    }
+    around
+        .into_iter()
+        .enumerate()
+        .filter(|(_, (_, count))| *count > 0)
+        .map(|(slot, (sum, count))| Limb {
+            joint: joints[slot],
+            tail: tail_of(slot),
+            girth: sum / count as f32,
+        })
+        .collect()
+}
+
+/// How far `at` lies from the bone running from its joint to `tail`, all in the joint's space.
+fn from_bone(at: Vec3, tail: Vec3) -> f32 {
+    let along = tail.length_squared();
+    let share = if along > 0.0 {
+        (at.dot(tail) / along).clamp(0.0, 1.0)
+    } else {
+        0.0
+    };
+    at.distance(tail * share)
 }

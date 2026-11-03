@@ -1,9 +1,11 @@
 //! The geometry a ground's cover is laid out as, from the paint: a sheet over the painted cells,
 //! blades standing up from the terrain, or copies of a prop strewn over it. Every vertex carries,
 //! in its second uv, how far up the geometry it stands (0 at the root, 1 at the top) and how
-//! heavily the material is painted there, for the shader that moves and paints it. A strewn
-//! copy is an instance of its prop's own mesh, which carries only how far up the prop a vertex
-//! stands; the rest of its marks and its tint ride on its tag.
+//! heavily the material is painted there, for the shader that moves and paints it, and a blade's
+//! or a merged copy's vertex where its blade or copy stands, for the shader to bend it about. A
+//! strewn copy is an instance of its prop's own mesh, which carries only how far up the prop a
+//! vertex stands; it stands at its instance's origin, and the rest of its marks and its tint ride
+//! on its tag.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::primitives::{Aabb, Frustum, MeshAabb};
@@ -12,7 +14,9 @@ use bevy::ecs::entity_disabling::Disabled;
 use bevy::gltf::{Gltf, GltfMaterial, GltfMesh, GltfNode};
 use bevy::light::NotShadowCaster;
 use bevy::mesh::MeshVertexBufferLayoutRef;
-use bevy::mesh::{Indices, MeshTag, PrimitiveTopology, VertexAttributeValues};
+use bevy::mesh::{
+    Indices, MeshTag, MeshVertexAttribute, PrimitiveTopology, VertexAttributeValues, VertexFormat,
+};
 use bevy::pbr::{
     ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
 };
@@ -33,6 +37,11 @@ use crate::core::vfx::uniform::{ParamsUniform, SiteUniform, VfxShaderKey};
 
 /// A cover's material: the engine's lit surface under the content shader its ground names.
 pub type CoverMaterial = ExtendedMaterial<StandardMaterial, CoverVfx>;
+
+/// Where the blade or the strewn copy a vertex of a cover belongs to stands, in the mesh's space,
+/// for its shader to bend it about: carried by blades and merged copies, whose meshes hold many.
+pub const ATTRIBUTE_ROOT: MeshVertexAttribute =
+    MeshVertexAttribute::new("CoverRoot", 0x7269_6674_6d03, VertexFormat::Float32x3);
 
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug, Default)]
 #[bind_group_data(VfxShaderKey)]
@@ -55,14 +64,28 @@ impl From<&CoverVfx> for VfxShaderKey {
 }
 
 impl MaterialExtension for CoverVfx {
+    /// A mesh whose vertices carry their roots reads them at a shader location past every one
+    /// bevy's own meshes use.
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
         descriptor: &mut RenderPipelineDescriptor,
-        _layout: &MeshVertexBufferLayoutRef,
+        layout: &MeshVertexBufferLayoutRef,
         key: MaterialExtensionKey<Self>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         let shader = key.bind_group_data.handle();
         descriptor.vertex.shader = shader.clone();
+        if layout.0.contains(ATTRIBUTE_ROOT) {
+            let roots = layout
+                .0
+                .get_layout(&[ATTRIBUTE_ROOT.at_shader_location(14)])?;
+            descriptor.vertex.buffers[0]
+                .attributes
+                .extend(roots.attributes);
+            descriptor.vertex.shader_defs.push("ROOTED".into());
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                fragment.shader_defs.push("ROOTED".into());
+            }
+        }
         if let Some(fragment) = descriptor.fragment.as_mut() {
             fragment.shader = shader;
         }
@@ -150,17 +173,32 @@ pub struct Spread {
 }
 
 impl Spread {
-    /// The spread as a view shows it at `pixels_per_meter` where every copy, `extent` across at
-    /// its size, is smaller than [`GRAIN_PIXELS`]: as many copies as cover as much once each is
-    /// grown to about that size.
+    /// Whether a view at `pixels_per_meter` tells the copies, `extent` across at their size, apart:
+    /// whether the largest span [`GRAIN_PIXELS`] and copies stand at least that far apart.
+    pub fn told_apart(&self, extent: f32, pixels_per_meter: f32) -> bool {
+        extent * self.size.1 * pixels_per_meter >= GRAIN_PIXELS
+            && self.pixels_apiece(pixels_per_meter) >= GRAIN_PIXELS * GRAIN_PIXELS
+    }
+
+    /// The spread as a view at `pixels_per_meter` shows it where it doesn't tell the copies,
+    /// `extent` across at their size, apart: as few copies as stand [`GRAIN_PIXELS`] apart and span
+    /// about as much, each grown to cover as much as those it stands in for.
     pub fn grained(&self, extent: f32, pixels_per_meter: f32) -> Spread {
         let across = extent * (self.size.0 + self.size.1) / 2.0 * pixels_per_meter;
-        let grown = GRAIN_PIXELS / across.max(f32::EPSILON);
+        let apart = self.pixels_apiece(pixels_per_meter).sqrt();
+        let grown = GRAIN_PIXELS / across.min(apart).max(f32::EPSILON);
         Spread {
             per_square_meter: self.per_square_meter / (grown * grown),
             size: (self.size.0 * grown, self.size.1 * grown),
             ..*self
         }
+    }
+
+    /// How many pixels of ground each copy has to itself at full weight, seen at
+    /// `pixels_per_meter`: all a copy may show where copies wider than they stand apart hide
+    /// each other.
+    pub fn pixels_apiece(&self, pixels_per_meter: f32) -> f32 {
+        pixels_per_meter * pixels_per_meter / self.per_square_meter.max(f32::EPSILON)
     }
 }
 
@@ -314,7 +352,17 @@ pub fn sheet(patch: &Patch, level: Option<f32>, color: LinearRgba, stride: u32) 
     }
     let indices: Vec<u32> = grid_indices(across.len() as u32, down.len() as u32).collect();
     let colors = vec![color.to_f32_array(); positions.len()];
-    assemble(positions, normals, uvs, tips, Some(colors), indices)
+    assemble(
+        CoverVertices {
+            positions,
+            normals,
+            uvs,
+            tips,
+            colors: Some(colors),
+            roots: None,
+        },
+        indices,
+    )
 }
 
 /// A blade of the `shape` standing at each of `places` on the ground of `heights`, a triangle at
@@ -331,8 +379,10 @@ pub fn blades(
     let mut uvs = Vec::with_capacity(positions.capacity());
     let mut tips = Vec::with_capacity(positions.capacity());
     let mut colors = Vec::with_capacity(positions.capacity());
+    let mut roots = Vec::with_capacity(positions.capacity());
     for place in places {
         let root = place.transform.translation;
+        roots.extend([root.to_array(); 3]);
         let size = place.transform.scale.x;
         let across = place.transform.rotation * Vec3::X * (shape.width / 2.0 * size);
         positions.push((root - across).to_array());
@@ -357,7 +407,17 @@ pub fn blades(
         return Vec::new();
     }
     let indices = (0..positions.len() as u32).collect();
-    assemble(positions, normals, uvs, tips, Some(colors), indices)
+    assemble(
+        CoverVertices {
+            positions,
+            normals,
+            uvs,
+            tips,
+            colors: Some(colors),
+            roots: Some(roots),
+        },
+        indices,
+    )
 }
 
 /// Where the patch's strewn copies stand, each cell holding its share of the spread, turned any
@@ -462,8 +522,9 @@ impl CopyModel {
 
 /// The copies of `model` at `places`, strewn by `spread` and seen at `pixels_per_meter`, merged
 /// into meshes of a bounded size for each material the model is drawn in: every copy at the level
-/// its pixels need, each vertex marked as a blade's is and coloured by its copy's tint, for a
-/// material whose copies carry their own marks. Empty when there is nothing to strew.
+/// the pixels it shows need, no more than the ground it has to itself, each vertex marked as a
+/// blade's is and coloured by its copy's tint, for a material whose copies carry their own marks.
+/// Empty when there is nothing to strew.
 pub fn merged_copies(
     places: &[Place],
     model: &CopyModel,
@@ -475,15 +536,18 @@ pub fn merged_copies(
         .iter()
         .flat_map(|copy| {
             let share = copy.shape.triangles() as f32 / model.triangles.max(1) as f32;
+            let apiece = spread.pixels_apiece(pixels_per_meter);
             let mut positions = Vec::new();
             let mut normals = Vec::new();
             let mut uvs = Vec::new();
             let mut tips = Vec::new();
             let mut colors = Vec::new();
+            let mut roots = Vec::new();
             let mut indices = Vec::new();
             for place in places {
                 let size = place.transform.scale.x;
-                let covered = merged::covered_pixels(model.extent * size * pixels_per_meter);
+                let covered =
+                    merged::covered_pixels(model.extent * size * pixels_per_meter).min(apiece);
                 let level = copy.shape.level(pixels_per_meter * size, covered * share);
                 let tint = spread.color.0.mix(&spread.color.1, place.tint).to_vec4();
                 let matrix = place.transform.to_matrix();
@@ -492,6 +556,7 @@ pub fn merged_copies(
                     let vertex = vertex as usize;
                     let vertices = &copy.shape.vertices;
                     positions.push(matrix.transform_point3(position).to_array());
+                    roots.push(place.transform.translation.to_array());
                     normals.push((place.transform.rotation * vertices.normals[vertex]).to_array());
                     uvs.push(vertices.uvs[vertex]);
                     let own = vertices
@@ -511,7 +576,15 @@ pub fn merged_copies(
                 }
                 indices.extend(level.indices.iter().map(|index| base + index));
             }
-            assemble(positions, normals, uvs, tips, Some(colors), indices)
+            let vertices = CoverVertices {
+                positions,
+                normals,
+                uvs,
+                tips,
+                colors: Some(colors),
+                roots: Some(roots),
+            };
+            assemble(vertices, indices)
                 .into_iter()
                 .map(|mesh| (copy.material.clone(), mesh))
                 .collect::<Vec<_>>()
@@ -999,22 +1072,23 @@ fn merged(piece: PieceVertices, height: f32) -> Mesh {
             .pack()
         })
         .collect();
-    mesh_of(
-        piece
+    CoverVertices {
+        positions: piece
             .positions
             .iter()
             .map(|position| position.to_array())
             .collect(),
-        piece
+        normals: piece
             .normals
             .iter()
             .map(|normal| normal.to_array())
             .collect(),
-        piece.uvs,
+        uvs: piece.uvs,
         tips,
-        piece.colors,
-        piece.indices,
-    )
+        colors: piece.colors,
+        roots: None,
+    }
+    .mesh(piece.indices)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash)]
@@ -1101,22 +1175,66 @@ fn places(patch: &Patch, per_square_meter: f32, rng: &mut Rng) -> Vec<(Pos<Meter
     placed
 }
 
-/// The meshes of `indices`' triangles over the vertices, each holding at most
-/// [`MOST_MERGED_VERTICES`], so a large cover goes to the GPU as several small meshes, a few a
-/// frame, rather than one large one.
-fn assemble(
+/// A cover's vertices as its mesh carries them: where each stands, the way it faces, its uv, its
+/// [`Mark`], its colour where the cover's vertices carry their own, and where a blade's or a merged
+/// copy's vertex carries the point its blade or copy stands on, [`ATTRIBUTE_ROOT`].
+struct CoverVertices {
     positions: Vec<[f32; 3]>,
     normals: Vec<[f32; 3]>,
     uvs: Vec<[f32; 2]>,
     tips: Vec<[f32; 2]>,
     colors: Option<Vec<[f32; 4]>>,
-    indices: Vec<u32>,
-) -> Vec<Mesh> {
-    if positions.len() <= MOST_MERGED_VERTICES {
-        return vec![mesh_of(positions, normals, uvs, tips, colors, indices)];
+    roots: Option<Vec<[f32; 3]>>,
+}
+
+impl CoverVertices {
+    fn len(&self) -> usize {
+        self.positions.len()
+    }
+
+    /// The vertices at `sources`, in their order.
+    fn picked(&self, sources: &[u32]) -> CoverVertices {
+        CoverVertices {
+            positions: picked(sources, &self.positions),
+            normals: picked(sources, &self.normals),
+            uvs: picked(sources, &self.uvs),
+            tips: picked(sources, &self.tips),
+            colors: self.colors.as_deref().map(|colors| picked(sources, colors)),
+            roots: self.roots.as_deref().map(|roots| picked(sources, roots)),
+        }
+    }
+
+    fn mesh(self, indices: Vec<u32>) -> Mesh {
+        // Only the GPU reads a cover's mesh, which would otherwise be held twice.
+        let mut mesh = Mesh::new(
+            PrimitiveTopology::TriangleList,
+            RenderAssetUsages::RENDER_WORLD,
+        )
+        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, self.positions)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, self.normals)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, self.uvs)
+        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_1, self.tips)
+        .with_inserted_indices(Indices::U32(indices));
+        mesh.compress_indices();
+        if let Some(colors) = self.colors {
+            mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
+        }
+        if let Some(roots) = self.roots {
+            mesh.insert_attribute(ATTRIBUTE_ROOT, roots);
+        }
+        mesh
+    }
+}
+
+/// The meshes of `indices`' triangles over the vertices, each holding at most
+/// [`MOST_MERGED_VERTICES`], so a large cover goes to the GPU as several small meshes, a few a
+/// frame, rather than one large one.
+fn assemble(vertices: CoverVertices, indices: Vec<u32>) -> Vec<Mesh> {
+    if vertices.len() <= MOST_MERGED_VERTICES {
+        return vec![vertices.mesh(indices)];
     }
     let mut meshes = Vec::new();
-    let mut taken = vec![None; positions.len()];
+    let mut taken = vec![None; vertices.len()];
     let mut part = Part::default();
     for triangle in indices.as_chunks::<3>().0 {
         let fresh = triangle
@@ -1127,7 +1245,7 @@ fn assemble(
             for &source in &part.sources {
                 taken[source as usize] = None;
             }
-            meshes.push(std::mem::take(&mut part).mesh(&positions, &normals, &uvs, &tips, &colors));
+            meshes.push(std::mem::take(&mut part).mesh(&vertices));
         }
         for &vertex in triangle {
             let index = *taken[vertex as usize].get_or_insert_with(|| {
@@ -1138,7 +1256,7 @@ fn assemble(
         }
     }
     if !part.indices.is_empty() {
-        meshes.push(part.mesh(&positions, &normals, &uvs, &tips, &colors));
+        meshes.push(part.mesh(&vertices));
     }
     meshes
 }
@@ -1152,24 +1270,8 @@ struct Part {
 }
 
 impl Part {
-    fn mesh(
-        self,
-        positions: &[[f32; 3]],
-        normals: &[[f32; 3]],
-        uvs: &[[f32; 2]],
-        tips: &[[f32; 2]],
-        colors: &Option<Vec<[f32; 4]>>,
-    ) -> Mesh {
-        mesh_of(
-            picked(&self.sources, positions),
-            picked(&self.sources, normals),
-            picked(&self.sources, uvs),
-            picked(&self.sources, tips),
-            colors
-                .as_deref()
-                .map(|colors| picked(&self.sources, colors)),
-            self.indices,
-        )
+    fn mesh(self, vertices: &CoverVertices) -> Mesh {
+        vertices.picked(&self.sources).mesh(self.indices)
     }
 }
 
@@ -1178,31 +1280,6 @@ fn picked<T: Copy>(sources: &[u32], values: &[T]) -> Vec<T> {
         .iter()
         .map(|&source| values[source as usize])
         .collect()
-}
-
-fn mesh_of(
-    positions: Vec<[f32; 3]>,
-    normals: Vec<[f32; 3]>,
-    uvs: Vec<[f32; 2]>,
-    tips: Vec<[f32; 2]>,
-    colors: Option<Vec<[f32; 4]>>,
-    indices: Vec<u32>,
-) -> Mesh {
-    // Only the GPU reads a cover's mesh, which would otherwise be held twice.
-    let mut mesh = Mesh::new(
-        PrimitiveTopology::TriangleList,
-        RenderAssetUsages::RENDER_WORLD,
-    )
-    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, positions)
-    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, normals)
-    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, uvs)
-    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_1, tips)
-    .with_inserted_indices(Indices::U32(indices));
-    mesh.compress_indices();
-    if let Some(colors) = colors {
-        mesh.insert_attribute(Mesh::ATTRIBUTE_COLOR, colors);
-    }
-    mesh
 }
 
 fn ground_normal(heights: &Heightfield, at: Pos<Meters>) -> [f32; 3] {

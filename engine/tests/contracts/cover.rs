@@ -3,8 +3,8 @@ use bevy::prelude::*;
 use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER};
 use engine::core::math::Pos;
 use engine::core::render::world::cover::{
-    BladeShape, CopyModel, Mark, Patch, Piece, Spread, blades, copy_meshes, merged_copies, seen_at,
-    sheet, strew_places,
+    BladeShape, CopyModel, Mark, Patch, Piece, Place, Spread, blades, copy_meshes, merged_copies,
+    seen_at, sheet, strew_places,
 };
 use engine::core::render::world::lod::GRAIN_PIXELS;
 use engine::core::units::Meters;
@@ -344,6 +344,31 @@ fn a_crowd_seen_from_afar_keeps_all_it_tells_apart_as_it_is_and_grows_none_past_
             .iter()
             .any(|nearer| nearer.transform.translation == copy.transform.translation)),
         "a farther view keeps fewer of the same copies"
+    );
+
+    let packed = 1.5 * GRAIN_PIXELS / extent;
+    let apart = packed / spread.per_square_meter.sqrt();
+    assert!(
+        spread.told_apart(extent, packed * 2.0) && !spread.told_apart(extent, packed),
+        "copies wide enough to tell apart but packed closer than the grain aren't told apart"
+    );
+    let thinned = strew_places(&patch(&heights, &full), &spread.grained(extent, packed), 3);
+    let covered = |places: &[Place]| -> f32 {
+        places
+            .iter()
+            .map(|place| place.transform.scale.x.powi(2))
+            .sum()
+    };
+    let cover_share = covered(&thinned) / covered(&places);
+    assert!(
+        (cover_share - 1.0).abs() < 0.05,
+        "the copies a packed crowd thins to cover as much: {cover_share}"
+    );
+    let grains = places.len() as f32 * (apart / GRAIN_PIXELS).powi(2);
+    assert!(
+        thinned.len() as f32 <= grains * 1.05,
+        "a packed crowd thins to a copy a grain: {} copies over {grains} grains",
+        thinned.len()
     );
 
     let tuft: Vec<[f32; 3]> = (0..16)

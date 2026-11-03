@@ -15,6 +15,7 @@ struct Cut {
     sweep: vec2<f32>,
     from_reach: f32,
     to_reach: f32,
+    unseen: u32,
 }
 
 @group(2) @binding(0) var world_texture: texture_2d<f32>;
@@ -69,7 +70,11 @@ fn live(texel: vec2<f32>) -> vec3<f32> {
     return textureSampleLevel(world_texture, world_sampler, texel / size, 0.0).rgb;
 }
 
+// The view the cut covers; nothing where none was on view as the cover fell.
 fn held(texel: vec2<f32>) -> vec3<f32> {
+    if cut.unseen != 0u {
+        return VOID;
+    }
     return textureSampleLevel(snapshot_texture, world_sampler, texel / size, 0.0).rgb;
 }
 

@@ -12,7 +12,6 @@ use bevy::ecs::entity_disabling::Disabled;
 use bevy::ecs::query::Allow;
 use bevy::gltf::{Gltf, GltfPlugin};
 use bevy::light::atmosphere::ScatteringMedium;
-use bevy::mesh::skinning::SkinnedMeshInverseBindposes;
 use bevy::prelude::*;
 use bevy::shader::Shader;
 use bevy::world_serialization::WorldSerializationPlugin;
@@ -106,15 +105,14 @@ fn client(game: Game, folder: &Path) -> (App, Arc<Area>) {
         WorldSerializationPlugin,
         AnimationPlugin,
         GltfPlugin::default(),
+        bevy::mesh::MeshPlugin,
         TransformPlugin,
         VisibilityPlugin,
     ))
     .init_asset::<Shader>()
-    .init_asset::<Mesh>()
     .init_asset::<Image>()
     .init_asset::<StandardMaterial>()
     .init_asset::<ScatteringMedium>()
-    .init_asset::<SkinnedMeshInverseBindposes>()
     .add_plugins((
         bevy::pbr::PbrPlugin::default(),
         VfxMaterialsPlugin,

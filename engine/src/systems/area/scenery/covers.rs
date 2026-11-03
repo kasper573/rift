@@ -16,6 +16,7 @@ use bevy::light::NotShadowCaster;
 use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use bevy::tasks::futures::check_ready;
+use bevy::tasks::futures_lite::future;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 
 use super::regions::{Cut, Merge, Region, Unstood};
@@ -239,7 +240,7 @@ pub(super) fn stand(
 
 /// Takes down what stood of the covers for an earlier view and stands for none in `cut`, wherever
 /// what stands for `cut` does, and what stood for ground sculpted or painted anew once all of it
-/// does.
+/// does. A merge for an earlier view that shows nothing yet is given up at once.
 pub(super) fn clear(
     world: &mut World,
     streaming: &mut Streaming,
@@ -273,7 +274,8 @@ pub(super) fn clear(
     });
     let regions = &streaming.regions;
     covers.merged.retain(|merge, merged| {
-        let keep = wanted.contains(merge) || !unstood.stands_over(regions.bounds(merge.region));
+        let keep = wanted.contains(merge)
+            || !merged.stood().is_empty() && !unstood.stands_over(regions.bounds(merge.region));
         if !keep {
             for &mesh in merged.stood() {
                 take_away(world, mesh);
@@ -512,7 +514,7 @@ fn stand_merge(
             as u32,
         pixels_per_meter: seen.view.pixels_per_meter(merge.detail.distance()),
     };
-    let task = AsyncComputeTaskPool::get().spawn(async move { region.covers(&far_pieces) });
+    let task = AsyncComputeTaskPool::get().spawn(async move { region.covers(&far_pieces).await });
     streaming
         .covers
         .merged
@@ -572,9 +574,12 @@ struct FarPiece {
 impl FarRegion {
     /// The merged meshes of `pieces` over the region as the view shows them there: every copy
     /// where a chunk near the eye strews it, at its own size, and only those too small for the
-    /// view to tell apart thinned; a piece none of whose copies the view tells apart strewn
-    /// thinned from the start, as where such copies stand doesn't show.
-    fn covers(&self, pieces: &[FarPiece]) -> Vec<FarMesh> {
+    /// view to tell apart thinned; a piece whose copies the view doesn't tell apart, too small or
+    /// too close together, strewn thinned from the start, as where such copies stand doesn't show.
+    /// Gives way to the tasks waiting behind it after every piece, as a region takes long to
+    /// merge, so a view's other merges aren't held up behind it, and one no view wants any more
+    /// stops there.
+    async fn covers(&self, pieces: &[FarPiece]) -> Vec<FarMesh> {
         let (columns, rows) = self.paint.pixels();
         let first = (
             self.region.column * self.cells,
@@ -587,88 +592,95 @@ impl FarRegion {
             (first.0 + self.cells).min(columns),
             (first.1 + self.cells).min(rows),
         );
-        pieces
-            .iter()
-            .flat_map(|far| {
-                let share = painted_by(&self.paint, far.slot);
-                let patch = |first: (u32, u32), side: u32| cover::Patch {
-                    heights: &self.heights,
-                    first,
-                    columns: side.min(end.0 - first.0),
-                    rows: side.min(end.1 - first.1),
-                    share: &share,
+        let mut made = Vec::new();
+        for far in pieces {
+            made.extend(self.piece(far, first, end));
+            future::yield_now().await;
+        }
+        made
+    }
+
+    /// The merged meshes of a piece over the region's cells from `first` to the one before `end`.
+    fn piece(&self, far: &FarPiece, first: (u32, u32), end: (u32, u32)) -> Vec<FarMesh> {
+        let share = painted_by(&self.paint, far.slot);
+        let patch = |first: (u32, u32), side: u32| cover::Patch {
+            heights: &self.heights,
+            first,
+            columns: side.min(end.0 - first.0),
+            rows: side.min(end.1 - first.1),
+            share: &share,
+        };
+        let strewn = |extent: f32| {
+            if !far.spread.told_apart(extent, self.pixels_per_meter) {
+                let seed = chunk_seed(
+                    far.seed,
+                    [
+                        far.slot as u64,
+                        u64::from(far.spread.piece),
+                        u64::from(self.region.row) | u64::from(self.region.level + 1) << 32,
+                        u64::from(self.region.column),
+                    ],
+                );
+                let spread = far.spread.grained(extent, self.pixels_per_meter);
+                return (
+                    cover::strew_places(&patch(first, self.cells), &spread, seed),
+                    spread,
+                );
+            }
+            let places = chunks_within(first, end)
+                .flat_map(|chunk| {
+                    let seed = chunk_seed(
+                        far.seed,
+                        [
+                            far.slot as u64,
+                            u64::from(far.spread.piece),
+                            u64::from(chunk.row),
+                            u64::from(chunk.column),
+                        ],
+                    );
+                    let first = chunk.first_cell();
+                    let places =
+                        cover::strew_places(&patch(first, cover::CHUNK_CELLS), &far.spread, seed);
+                    cover::seen_at(&places, extent, self.pixels_per_meter)
+                })
+                .collect::<Vec<_>>();
+            (places, far.spread)
+        };
+        let meshes: Vec<(Option<Handle<GltfMaterial>>, Mesh)> = match (&far.shape, &far.model) {
+            (None, _) => cover::sheet(
+                &patch(first, self.cells),
+                far.sheet_level,
+                far.ground_color,
+                self.sheet_stride(),
+            )
+            .into_iter()
+            .map(|mesh| (None, mesh))
+            .collect(),
+            (Some(PieceShape::Blade { width, height }), _) => {
+                let (places, spread) = strewn(width.0.max(height.0));
+                let shape = cover::BladeShape {
+                    width: width.0,
+                    height: height.0,
                 };
-                let strewn = |extent: f32| {
-                    let largest = extent * far.spread.size.1 * self.pixels_per_meter;
-                    if largest < GRAIN_PIXELS {
-                        let seed = chunk_seed(
-                            far.seed,
-                            [
-                                far.slot as u64,
-                                u64::from(far.spread.piece),
-                                u64::from(self.region.row) | u64::from(self.region.level + 1) << 32,
-                                u64::from(self.region.column),
-                            ],
-                        );
-                        let spread = far.spread.grained(extent, self.pixels_per_meter);
-                        return cover::strew_places(&patch(first, self.cells), &spread, seed);
-                    }
-                    chunks_within(first, end)
-                        .flat_map(|chunk| {
-                            let seed = chunk_seed(
-                                far.seed,
-                                [
-                                    far.slot as u64,
-                                    u64::from(far.spread.piece),
-                                    u64::from(chunk.row),
-                                    u64::from(chunk.column),
-                                ],
-                            );
-                            let first = chunk.first_cell();
-                            let places = cover::strew_places(
-                                &patch(first, cover::CHUNK_CELLS),
-                                &far.spread,
-                                seed,
-                            );
-                            cover::seen_at(&places, extent, self.pixels_per_meter)
-                        })
-                        .collect::<Vec<_>>()
-                };
-                let meshes: Vec<(Option<Handle<GltfMaterial>>, Mesh)> =
-                    match (&far.shape, &far.model) {
-                        (None, _) => cover::sheet(
-                            &patch(first, self.cells),
-                            far.sheet_level,
-                            far.ground_color,
-                            self.sheet_stride(),
-                        )
-                        .into_iter()
-                        .map(|mesh| (None, mesh))
-                        .collect(),
-                        (Some(PieceShape::Blade { width, height }), _) => {
-                            let places = strewn(width.0.max(height.0));
-                            let shape = cover::BladeShape {
-                                width: width.0,
-                                height: height.0,
-                            };
-                            cover::blades(&self.heights, &places, &shape, &far.spread)
-                                .into_iter()
-                                .map(|mesh| (None, mesh))
-                                .collect()
-                        }
-                        (Some(PieceShape::Prop { .. }), Some(model)) => {
-                            let places = strewn(model.extent());
-                            cover::merged_copies(&places, model, &far.spread, self.pixels_per_meter)
-                        }
-                        (Some(PieceShape::Prop { .. }), None) => Vec::new(),
-                    };
-                meshes.into_iter().filter_map(|(material, mesh)| {
-                    Some(FarMesh {
-                        piece: far.piece,
-                        material,
-                        bounds: mesh.get_aabb()?,
-                        mesh,
-                    })
+                cover::blades(&self.heights, &places, &shape, &spread)
+                    .into_iter()
+                    .map(|mesh| (None, mesh))
+                    .collect()
+            }
+            (Some(PieceShape::Prop { .. }), Some(model)) => {
+                let (places, spread) = strewn(model.extent());
+                cover::merged_copies(&places, model, &spread, self.pixels_per_meter)
+            }
+            (Some(PieceShape::Prop { .. }), None) => Vec::new(),
+        };
+        meshes
+            .into_iter()
+            .filter_map(|(material, mesh)| {
+                Some(FarMesh {
+                    piece: far.piece,
+                    material,
+                    bounds: mesh.get_aabb()?,
+                    mesh,
                 })
             })
             .collect()

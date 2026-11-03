@@ -1,11 +1,14 @@
 //! The weather a ground's cover moves by: the shown area's climate and the bodies treading
-//! through, published each frame in the picture every cover's shader reads.
+//! through, published each frame in the picture every cover's shader reads. Every body treads
+//! through the cover on its limbs, as its skeleton moves them: a cover bends round the lowest
+//! limbs of the bodies nearest the camera's subject.
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
 
-use super::uniform::{TREADS, Weather, WeatherImage};
+use super::uniform::{LIMBS_PER_TREAD, TREADS, Tread, TreadingLimb, Weather, WeatherImage};
 use crate::core::render::CameraRig;
+use crate::core::render::world::body::Body;
 use crate::core::render::world::sky::Daylight;
 
 /// The weather over the shown area as the client draws it: the wind as a direction over the
@@ -18,12 +21,6 @@ pub struct Climate {
     pub water: f32,
 }
 
-/// A body that bends the cover it walks through, `radius` metres around its feet.
-#[derive(Component, Clone, Copy, Debug)]
-pub struct Treads {
-    pub radius: f32,
-}
-
 /// What the weather is made of: the moment, the shown area's climate and daylight, where the camera
 /// looks and who treads the ground.
 #[derive(SystemParam)]
@@ -32,7 +29,8 @@ pub(super) struct WeatherSources<'w, 's> {
     climate: Option<Res<'w, Climate>>,
     daylight: Option<Res<'w, Daylight>>,
     rig: Option<Res<'w, CameraRig>>,
-    treading: Query<'w, 's, (&'static GlobalTransform, &'static Treads)>,
+    bodies: Query<'w, 's, (&'static GlobalTransform, &'static Body)>,
+    joints: Query<'w, 's, &'static GlobalTransform>,
 }
 
 /// Every frame the covers learn the wind, the moment and who treads through them.
@@ -47,26 +45,24 @@ pub(super) fn blow(
         climate,
         daylight,
         rig,
-        treading,
+        bodies,
+        joints,
     } = sources;
     let subject = rig.map_or(Vec3::ZERO, |rig| rig.target());
-    let mut treads: Vec<(f32, Vec4)> = treading
+    let mut nearest: Vec<(f32, &GlobalTransform, &Body)> = bodies
         .iter()
-        .map(|(transform, treads)| {
-            let at = transform.translation();
-            (
-                at.distance_squared(subject),
-                Vec4::new(at.x, at.z, treads.radius, 0.0),
-            )
-        })
+        .filter(|(_, body)| !body.limbs().is_empty())
+        .map(|(placed, body)| (placed.translation().distance_squared(subject), placed, body))
         .collect();
-    treads.sort_by(|a, b| a.0.total_cmp(&b.0));
-    treads.truncate(TREADS);
-    let mut weather = Weather::default();
-    for (slot, (_, tread)) in treads.iter().enumerate() {
-        weather.tread[slot] = *tread;
-    }
-    weather.treads = treads.len() as u32;
+    nearest.sort_by(|a, b| a.0.total_cmp(&b.0));
+    let mut weather = Weather {
+        treads: nearest
+            .into_iter()
+            .take(TREADS)
+            .map(|(_, placed, body)| tread(placed, body, &joints))
+            .collect(),
+        ..Weather::default()
+    };
     if let Some(daylight) = daylight {
         weather.daylight = daylight.share();
     }
@@ -79,8 +75,46 @@ pub(super) fn blow(
     if *last == weather {
         return;
     }
-    *last = weather;
+    *last = weather.clone();
     if let Some(mut image) = images.get_mut(&picture.0) {
         image.data = Some(weather.texels());
     }
+}
+
+/// The body as it treads: its lowest limbs where its joints stand now, and how far from where it
+/// stands they reach.
+fn tread(placed: &GlobalTransform, body: &Body, joints: &Query<&GlobalTransform>) -> Tread {
+    let mut limbs: Vec<TreadingLimb> = body
+        .limbs()
+        .iter()
+        .filter_map(|limb| {
+            let joint = joints.get(limb.joint).ok()?;
+            Some(TreadingLimb {
+                from: joint.translation(),
+                to: joint.transform_point(limb.tail),
+                girth: limb.girth * joint.scale().abs().max_element(),
+            })
+        })
+        .collect();
+    limbs.sort_by(|a, b| lowest(a).total_cmp(&lowest(b)));
+    limbs.truncate(LIMBS_PER_TREAD);
+    let ground = placed.translation().xz();
+    let reach = limbs
+        .iter()
+        .map(|limb| {
+            ground
+                .distance(limb.from.xz())
+                .max(ground.distance(limb.to.xz()))
+                + limb.girth
+        })
+        .fold(0.0, f32::max);
+    Tread {
+        ground,
+        reach,
+        limbs,
+    }
+}
+
+fn lowest(limb: &TreadingLimb) -> f32 {
+    limb.from.y.min(limb.to.y) - limb.girth
 }

@@ -96,7 +96,13 @@ pub fn carry_view_across(world: &mut World) {
             (Some(pose), None, Some(seen)) if seen.character == pose.character => {
                 (Some(pose), None)
             }
-            (Some(pose), None, _) => (Some(pose), Some(Held::new(now, pose))),
+            (Some(pose), None, seen) => {
+                match seen {
+                    Some(seen) => transition::freeze(world, seen.at, seen.heading),
+                    None => transition::cover_unseen(world, pose.at),
+                }
+                (Some(pose), Some(Held::new(now, pose)))
+            }
             (Some(pose), Some(held), _) => {
                 let drawable = area::render::shown(world) == Some(pose.area)
                     && !scenery::standing(world)

@@ -18,6 +18,9 @@ pub const MAX_PATH_POINTS: usize = 16;
 /// How many treading bodies a cover bends round at once: those nearest the camera's subject.
 pub const TREADS: usize = 24;
 
+/// How many limbs of a treading body a cover bends round: its lowest, which reach into it first.
+pub const LIMBS_PER_TREAD: usize = 32;
+
 /// The site as the prelude's `site` reads it, built by `SiteFrame::uniform`.
 #[derive(ShaderType, Clone, Copy, Debug, Default, PartialEq)]
 pub struct SiteUniform {
@@ -135,16 +138,34 @@ impl FromWorld for WeatherImage {
 
 /// The weather as the cover header's `weather` reads it: the wind as a direction scaled by its
 /// strength, the moment, how far through its day the game is and how clouded the sky, and the
-/// bodies treading through, each a ground point and the radius it flattens.
-#[derive(Clone, Copy, Debug, PartialEq)]
+/// bodies treading through.
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct Weather {
     pub(super) wind: Vec2,
     pub(super) time: f32,
-    pub(super) treads: u32,
     pub(super) daylight: f32,
     pub(super) clouds: f32,
     pub(super) water: f32,
-    pub(super) tread: [Vec4; TREADS],
+    /// At most [`TREADS`].
+    pub(super) treads: Vec<Tread>,
+}
+
+/// A body treading through the cover: the ground point it stands on (x east, y south), how far
+/// from it its limbs reach over the ground, and its limbs, at most [`LIMBS_PER_TREAD`].
+#[derive(Clone, Debug, PartialEq)]
+pub(super) struct Tread {
+    pub(super) ground: Vec2,
+    pub(super) reach: f32,
+    pub(super) limbs: Vec<TreadingLimb>,
+}
+
+/// A limb as it stands in the world: its bone from `from` to `to`, and how far round it its flesh
+/// lies, in metres.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct TreadingLimb {
+    pub(super) from: Vec3,
+    pub(super) to: Vec3,
+    pub(super) girth: f32,
 }
 
 impl Default for Weather {
@@ -152,20 +173,22 @@ impl Default for Weather {
         Weather {
             wind: Vec2::ZERO,
             time: 0.0,
-            treads: 0,
             daylight: 0.5,
             clouds: 0.0,
             water: 0.0,
-            tread: [Vec4::ZERO; TREADS],
+            treads: Vec::new(),
         }
     }
 }
+
+/// Texels the weather's picture holds: the climate's two, a texel a tread, and two a limb.
+const WEATHER_TEXELS: usize = 2 + TREADS + TREADS * LIMBS_PER_TREAD * 2;
 
 impl Weather {
     pub(super) fn image(&self) -> Image {
         Image::new(
             Extent3d {
-                width: (2 + TREADS) as u32,
+                width: WEATHER_TEXELS as u32,
                 height: 1,
                 depth_or_array_layers: 1,
             },
@@ -176,15 +199,29 @@ impl Weather {
         )
     }
 
-    /// The weather laid out as the header's `read_weather` reads it: the wind, the moment and
-    /// the count of treads in the first texel, the daylight, the cloud and its water in the
-    /// second, then a texel a tread.
+    /// The weather laid out as the cover header reads it: the wind, the moment and the count of
+    /// treads in the first texel, the daylight, the cloud and its water in the second, then a
+    /// texel a tread, its ground point, its reach and its count of limbs, and after every tread's,
+    /// [`LIMBS_PER_TREAD`] places of two texels for each tread's limbs, a bone's start and girth,
+    /// then its end.
     pub(super) fn texels(&self) -> Vec<u8> {
-        let mut texels = vec![
-            Vec4::new(self.wind.x, self.wind.y, self.time, self.treads as f32),
-            Vec4::new(self.daylight, self.clouds, self.water, 0.0),
-        ];
-        texels.extend(self.tread);
+        let mut texels = vec![Vec4::ZERO; WEATHER_TEXELS];
+        texels[0] = Vec4::new(
+            self.wind.x,
+            self.wind.y,
+            self.time,
+            self.treads.len() as f32,
+        );
+        texels[1] = Vec4::new(self.daylight, self.clouds, self.water, 0.0);
+        for (index, tread) in self.treads.iter().take(TREADS).enumerate() {
+            let limbs = &tread.limbs[..tread.limbs.len().min(LIMBS_PER_TREAD)];
+            texels[2 + index] = tread.ground.extend(tread.reach).extend(limbs.len() as f32);
+            let first = 2 + TREADS + index * LIMBS_PER_TREAD * 2;
+            for (slot, limb) in limbs.iter().enumerate() {
+                texels[first + slot * 2] = limb.from.extend(limb.girth);
+                texels[first + slot * 2 + 1] = limb.to.extend(0.0);
+            }
+        }
         texels
             .iter()
             .flat_map(Vec4::to_array)

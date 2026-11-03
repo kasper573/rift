@@ -34,7 +34,6 @@ use crate::core::render::{Animator, Previous, Turns, facing_rotation, ground_hei
 use crate::core::text::Typewriter;
 use crate::core::time::{self, UnixMillis};
 use crate::core::units::{Meters, Radians, Seconds};
-use crate::core::vfx::cover::Treads;
 use crate::core::vfx::render::SiteExtent;
 use crate::systems::area::{self, Area};
 use crate::systems::equipment::{self, Equipment};
@@ -309,13 +308,6 @@ pub fn dress(world: &mut World) {
             SiteExtent {
                 footprint: Vec2::splat(hitbox.radius.0 * 2.0),
                 height: hitbox.height.0,
-            },
-            Treads {
-                radius: if actor_model.airborne() {
-                    0.0
-                } else {
-                    hitbox.radius.0 * 2.0
-                },
             },
             Puppet {
                 dressed,

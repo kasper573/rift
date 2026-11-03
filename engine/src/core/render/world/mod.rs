@@ -19,12 +19,16 @@ pub mod rig_clip;
 pub mod sky;
 pub mod terrain;
 
+use std::sync::Arc;
+use std::sync::atomic::{AtomicUsize, Ordering};
+
 use bevy::app::HierarchyPropagatePlugin;
 use bevy::camera::visibility::RenderLayers;
 use bevy::light::DirectionalLightShadowMap;
 use bevy::pbr::MaterialPlugin;
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
+use bevy::render::render_resource::PipelineCache;
 use bevy::render::{ExtractSchedule, Render, RenderApp, RenderSystems};
 use bevy::world_serialization::{WorldAssetRoot, WorldInstance, WorldInstanceSpawner};
 
@@ -47,13 +51,19 @@ impl Plugin for WorldScenePlugin {
         bevy::asset::embedded_asset!(app, "decal.wesl");
         bevy::asset::embedded_asset!(app, "ground.wesl");
         app.register_asset_loader(crate::core::assets::loader::PngLoader);
+        let compiling = CompilingPipelines::default();
+        app.insert_resource(compiling.clone());
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
+                .insert_resource(compiling)
                 .init_resource::<terrain::LaidPaints>()
                 .add_systems(ExtractSchedule, terrain::extract_laid)
                 .add_systems(
                     Render,
-                    terrain::write_laid.in_set(RenderSystems::PrepareResources),
+                    (
+                        terrain::write_laid.in_set(RenderSystems::PrepareResources),
+                        count_compiling.in_set(RenderSystems::Cleanup),
+                    ),
                 );
         }
         if app.get_sub_app(RenderApp).is_some() {
@@ -130,10 +140,21 @@ fn cloud_look(world: &mut World) {
     }
 }
 
+/// How many pipelines the GPU is still compiling, as the render world last counted. What draws
+/// with one is left out of every frame until it is compiled, the first time any of it is seen.
+#[derive(Resource, Clone, Default)]
+struct CompilingPipelines(Arc<AtomicUsize>);
+
+fn count_compiling(cache: Res<PipelineCache>, compiling: Res<CompilingPipelines>) {
+    compiling
+        .0
+        .store(cache.waiting_pipelines().count(), Ordering::Relaxed);
+}
+
 /// Whether anything the world draws is still on its way to standing: a model loading or not yet
-/// spawned, a texture a model draws with still decoding, a ground's pictures, a strewn prop, or a
-/// body's skin waiting on its rig or its paint. A view is shown only once nothing is, so it is
-/// first seen whole.
+/// spawned, a texture a model draws with still decoding, a ground's pictures, a strewn prop, a
+/// body's skin waiting on its rig or its paint, or a pipeline something draws with compiling. A
+/// view is shown only once nothing is, so it is first seen whole.
 pub fn readying(world: &mut World) -> bool {
     let waiting = world
         .query_filtered::<(), Or<(
@@ -158,10 +179,14 @@ pub fn readying(world: &mut World) -> bool {
             .collect(),
         None => Vec::new(),
     };
+    let compiling = world
+        .get_resource::<CompilingPipelines>()
+        .is_some_and(|compiling| compiling.0.load(Ordering::Relaxed) > 0);
     let Some(assets) = world.get_resource::<AssetServer>() else {
-        return waiting;
+        return waiting || compiling;
     };
     waiting
+        || compiling
         || models.into_iter().any(|model| !model_stands(world, model))
         || textures
             .iter()

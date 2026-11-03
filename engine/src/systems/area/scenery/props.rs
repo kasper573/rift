@@ -170,7 +170,8 @@ pub(super) fn stand(
 }
 
 /// Takes down what stood of the props for an earlier view and stands for none in `cut`, wherever
-/// what stands for `cut` does.
+/// what stands for `cut` does. A merge for an earlier view that shows nothing yet is given up at
+/// once.
 pub(super) fn clear(
     world: &mut World,
     streaming: &mut Streaming,
@@ -200,7 +201,8 @@ pub(super) fn clear(
     let wanted: HashSet<Merge> = cut.merges.iter().copied().collect();
     let regions = &streaming.regions;
     props.merged.retain(|merge, merged| {
-        let keep = wanted.contains(merge) || !unstood.stands_over(regions.bounds(merge.region));
+        let keep = wanted.contains(merge)
+            || !merged.stood().is_empty() && !unstood.stands_over(regions.bounds(merge.region));
         if !keep {
             for &mesh in merged.stood() {
                 take_away(world, mesh);

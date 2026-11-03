@@ -2,7 +2,10 @@
 //! settings, with the whole scene tree hovered so that every module is outlined and named: how
 //! long the game and the area take to open, then the area seen whole as the editor first frames
 //! it, zoomed in on its middle with the mouse wheel notch by notch, and seen from as near as the
-//! editor's camera starts. Every frame counts, the slowest most.
+//! editor's camera starts, then flicked out to the whole and back in with as many notches at once,
+//! halfway first and then the rest of the way. Every frame counts, the slowest most, and so does
+//! how long the area takes to stand close up once the steady zoom stops, and halfway and close up
+//! from the moment each flick in begins.
 
 use std::fs::File;
 use std::path::{Path, PathBuf};
@@ -33,10 +36,14 @@ pub fn run(game: &Path, content: &Content) {
 }
 
 /// What the editor did with one area: how long until it first stood whole and the frames until
-/// then, and the frames seen whole, zooming in and close up.
+/// then, the frames seen whole, zooming in and close up, and how long it took to stand close up
+/// once the steady zoom stopped, and halfway and close up once flicked in.
 struct AreaRun {
     area: String,
     opened: Duration,
+    closed_in: Duration,
+    halfway_in: Duration,
+    flicked_in: Duration,
     open: Frames,
     whole: Frames,
     zoom: Frames,
@@ -119,8 +126,10 @@ fn watch(game: &Path, area: &str, video: Video) -> AreaRun {
     let deadline = Instant::now() + ZOOM_WITHIN;
     let mut nearest = f32::INFINITY;
     let mut still_since = Instant::now();
+    let mut notches = 0;
     while Instant::now() < deadline {
         desktop.scroll(pid, 1);
+        notches += 1;
         std::thread::sleep(NOTCH);
         let Some(Meters(distance)) = log.records().last().and_then(|record| record.camera) else {
             continue;
@@ -136,15 +145,63 @@ fn watch(game: &Path, area: &str, video: Video) -> AreaRun {
         }
     }
     let zoom = log.frames(first);
+    let zoomed = Instant::now();
     stood("close");
+    let closed_in = zoomed.elapsed();
     let close = log.watch(MEASURE);
+    let camera = || log.records().last().and_then(|record| record.camera);
+    let near = camera();
+    desktop.flick(pid, -notches);
+    come_to_rest(&log, near);
+    stood("flicked out");
+    let far = camera();
+    let half = (notches + 1) / 2;
+    let flicked = Instant::now();
+    desktop.flick(pid, half);
+    come_to_rest(&log, far);
+    stood("flicked halfway in");
+    let halfway_in = flicked.elapsed();
+    let flicked_in = match notches - half {
+        0 => halfway_in,
+        rest => {
+            let halfway = camera();
+            let flicked = Instant::now();
+            desktop.flick(pid, rest);
+            come_to_rest(&log, halfway);
+            stood("flicked in");
+            flicked.elapsed()
+        }
+    };
     AreaRun {
         area: area.to_owned(),
         opened,
+        closed_in,
+        halfway_in,
+        flicked_in,
         open,
         whole,
         zoom,
         close,
+    }
+}
+
+/// Waits for the camera to leave `from` and come to rest, as it does after the wheel turns.
+fn come_to_rest(log: &Log, from: Option<Meters>) {
+    let camera = || log.records().last().and_then(|record| record.camera);
+    let deadline = Instant::now() + STAND_WITHIN;
+    while camera() == from {
+        assert!(Instant::now() < deadline, "the camera never moved");
+        std::thread::sleep(POLL);
+    }
+    let mut last = camera();
+    loop {
+        std::thread::sleep(POLL);
+        let now = camera();
+        if now == last {
+            return;
+        }
+        assert!(Instant::now() < deadline, "the camera never came to rest");
+        last = now;
     }
 }
 
@@ -182,10 +239,13 @@ impl Log {
 fn report(video: Video, runs: &[AreaRun]) {
     for run in runs {
         println!(
-            "[editor-bench] {:<8} {:<40} opened in {:.1} s",
+            "[editor-bench] {:<8} {:<40} opened in {:.1} s, stood close in {:.1} s, flicked halfway in {:.1} s, flicked in {:.1} s",
             video.name(),
             run.area,
-            run.opened.as_secs_f64()
+            run.opened.as_secs_f64(),
+            run.closed_in.as_secs_f64(),
+            run.halfway_in.as_secs_f64(),
+            run.flicked_in.as_secs_f64()
         );
         for (view, frames) in run.views() {
             println!(
@@ -214,15 +274,33 @@ fn report(video: Video, runs: &[AreaRun]) {
         .iter()
         .max_by_key(|run| run.opened)
         .expect("an area was opened");
+    let longest_close = runs
+        .iter()
+        .max_by_key(|run| run.closed_in)
+        .expect("an area was opened");
+    let longest_halfway = runs
+        .iter()
+        .max_by_key(|run| run.halfway_in)
+        .expect("an area was opened");
+    let longest_flick = runs
+        .iter()
+        .max_by_key(|run| run.flicked_in)
+        .expect("an area was opened");
     println!(
-        "[editor-bench] RESULT video={} slowest={:.0} ({} {view}) floor={:.0} longest_open={:.1}s ({}) open_slowest={:.0}",
+        "[editor-bench] RESULT video={} slowest={:.0} ({} {view}) floor={:.0} longest_open={:.1}s ({}) open_slowest={:.0} longest_close={:.1}s ({}) longest_halfway={:.1}s ({}) longest_flick={:.1}s ({})",
         video.name(),
         frames.slowest(),
         run.area,
         video.floor(),
         longest_open.opened.as_secs_f64(),
         longest_open.area,
-        longest_open.open.slowest()
+        longest_open.open.slowest(),
+        longest_close.closed_in.as_secs_f64(),
+        longest_close.area,
+        longest_halfway.halfway_in.as_secs_f64(),
+        longest_halfway.area,
+        longest_flick.flicked_in.as_secs_f64(),
+        longest_flick.area
     );
 }
 

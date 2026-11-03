@@ -115,9 +115,9 @@ fn client() -> App {
         WorldSerializationPlugin,
         AnimationPlugin,
         GltfPlugin::default(),
+        bevy::mesh::MeshPlugin,
     ))
     .init_asset::<Shader>()
-    .init_asset::<Mesh>()
     .init_asset::<Image>()
     .init_asset::<StandardMaterial>()
     .init_asset::<ScatteringMedium>()

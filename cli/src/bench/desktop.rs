@@ -108,6 +108,15 @@ impl BenchDesktop {
     /// Turns the mouse wheel `clicks` notches over the middle of the window of the client `pid`,
     /// toward the player when positive and away when negative, as a player would.
     pub fn scroll(&self, pid: u32, clicks: i32) {
+        self.wheel(pid, clicks, STEADY_NOTCH_MS);
+    }
+
+    /// Turns the mouse wheel `clicks` notches as [`BenchDesktop::scroll`] does, in one quick flick.
+    pub fn flick(&self, pid: u32, clicks: i32) {
+        self.wheel(pid, clicks, FLICKED_NOTCH_MS);
+    }
+
+    fn wheel(&self, pid: u32, clicks: i32, apart_ms: u32) {
         let button = if clicks > 0 { "4" } else { "5" };
         let (pid, x, y) = (
             pid.to_string(),
@@ -124,9 +133,9 @@ impl BenchDesktop {
                 "--name",
                 ".",
             ])
-            .args(["mousemove", "--sync", "--window", "%1", &x, &y])
+            .args(["mousemove", "--window", "%1", &x, &y])
             .args(["click", "--repeat", &clicks.unsigned_abs().to_string()])
-            .args(["--delay", "100", button])
+            .args(["--delay", &apart_ms.to_string(), button])
             .env("DISPLAY", &self.display)
             .status()
             .expect("xdotool runs: the bench turns the mouse wheel over the client");
@@ -236,3 +245,7 @@ fn wayland_socket(name: &str) -> PathBuf {
         .expect("XDG_RUNTIME_DIR, where weston opens its socket");
     Path::new(&runtime).join(name)
 }
+
+/// How long apart the notches of a steady turn of the wheel come, and of a flick.
+const STEADY_NOTCH_MS: u32 = 100;
+const FLICKED_NOTCH_MS: u32 = 10;

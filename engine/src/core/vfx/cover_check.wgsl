@@ -27,6 +27,7 @@ var<private> up: f32;
 var<private> salt: f32;
 var<private> part: u32;
 var<private> spot: vec3<f32>;
+var<private> stem: vec3<f32>;
 
 fn sample(at: vec2<f32>) -> vec4<f32> {
     return lit;
@@ -64,6 +65,10 @@ fn position() -> vec3<f32> {
     return spot;
 }
 
+fn root() -> vec3<f32> {
+    return stem;
+}
+
 fn mark(uv_b: vec2<f32>) {
     up = uv_b.x;
     painted = fract(uv_b.y);
@@ -81,6 +86,7 @@ fn vertex(
     var out: VertexOutput;
     mark(uv_b);
     spot = position;
+    stem = position;
     read_weather();
     out.world_position = vec4<f32>(sway(position, up), 1.0);
     out.position = out.world_position;

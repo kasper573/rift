@@ -7,9 +7,11 @@
 // its vertices' colours, `weight` how heavily the material is painted there, `tip` how far up a
 // blade or a strewn prop the point stands, 0 at its root and 1 at its top, `position` where it
 // stands in the world, `depth` how many metres of ground lie under a sheet laid at a level,
-// `piece` which of the cover's pieces the point belongs to (0 on a sheet) and `seed` a number of
-// the blade's or the copy's own, 0 on a sheet. The cover's colours come
-// from its vertices: a blade's own, a copy's tint over its prop's, a sheet's ground colour.
+// `piece` which of the cover's pieces the point belongs to (0 on a sheet), `seed` a number of
+// the blade's or the copy's own, 0 on a sheet, and, as a vertex moves, `root`, where its blade
+// or copy stands on the ground (a sheet's vertex is its own root). The cover's colours come from
+// its vertices: a blade's own, a copy's tint over its prop's, a sheet's ground colour. A blade's
+// or a merged copy's vertex carries its root; an instanced copy stands at its instance's origin.
 @if(PREPASS_PIPELINE)
 import bevy_pbr::prepass::io::{Vertex, VertexOutput, FragmentOutput, decompress_vertex};
 @else
@@ -41,6 +43,7 @@ var<private> up: f32;
 var<private> salt: f32;
 var<private> part: u32;
 var<private> spot: vec3<f32>;
+var<private> stem: vec3<f32>;
 
 fn sample(at: vec2<f32>) -> vec4<f32> {
     return lit;
@@ -78,6 +81,10 @@ fn position() -> vec3<f32> {
     return spot;
 }
 
+fn root() -> vec3<f32> {
+    return stem;
+}
+
 fn mark(uv_b: vec2<f32>) {
     up = uv_b.x;
     painted = fract(uv_b.y);
@@ -94,12 +101,29 @@ fn copy_marks(measure: f32, tag: u32) -> vec2<f32> {
     return vec2<f32>(measure, weight + seed + f32(strewn.piece) * 256.0);
 }
 
+@if(ROOTED)
+@vertex
+fn vertex(vertex_in: Vertex, @location(14) rooted: vec3<f32>) -> VertexOutput {
+    return stand(vertex_in, vec4<f32>(rooted, 1.0));
+}
+
+@if(!ROOTED)
 @vertex
 fn vertex(vertex_in: Vertex) -> VertexOutput {
+    return stand(vertex_in, select(vec4<f32>(0.0), vec4<f32>(0.0, 0.0, 0.0, 1.0), strewn.on != 0u));
+}
+
+// The vertex standing in the world, swayed about its root: `rooted`, in the mesh's own space, or
+// the vertex itself where `rooted.w` is 0.
+fn stand(vertex_in: Vertex, rooted: vec4<f32>) -> VertexOutput {
     var out: VertexOutput;
     let vertex = decompress_vertex(vertex_in, vertex_in.instance_index);
     let world_from_local = mesh_functions::get_world_from_local(vertex_in.instance_index);
     let placed = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
+    stem = placed.xyz;
+    if rooted.w > 0.5 {
+        stem = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(rooted.xyz, 1.0)).xyz;
+    }
     painted = 1.0;
     up = 0.0;
     salt = 0.0;

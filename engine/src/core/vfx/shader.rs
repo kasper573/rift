@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use strum::{IntoStaticStr, VariantArray};
 
 use super::ParamValue;
-use super::uniform::{MAX_PATH_POINTS, TREADS};
+use super::uniform::{LIMBS_PER_TREAD, MAX_PATH_POINTS, TREADS};
 use crate::core::content::{
     Bundle, ContentFile, ContentId, ContentProblem, ErrorPlace, FileShape, FileWriter, Loading,
     NamedContent, Nearby, PartSpec, Parts, RowCheck,
@@ -404,6 +404,7 @@ pub fn prelude_names() -> Vec<String> {
         "wind_lean".to_owned(),
         "tread_push".to_owned(),
         "lean".to_owned(),
+        "root".to_owned(),
         "position".to_owned(),
         "local".to_owned(),
         "origin".to_owned(),
@@ -643,13 +644,18 @@ const PROP_CHECK_HEADER: &str = include_str!("prop_check.wgsl");
 const SKY_HEADER: &str = include_str!("sky.wesl");
 const SKY_CHECK_HEADER: &str = include_str!("sky_check.wgsl");
 const WEATHER_HELPERS: &str = include_str!("weather.wgsl");
+/// What a cover's blades bend by, on top of the weather.
+const TREAD_HELPERS: &str = include_str!("tread.wgsl");
 
 fn prelude() -> String {
     PRELUDE.replace("PATH_POINTS", &format!("{MAX_PATH_POINTS}u"))
 }
 
-fn weather_helpers() -> String {
-    WEATHER_HELPERS.replace("TREADS", &format!("{TREADS}u"))
+fn cover_helpers() -> String {
+    let treads = TREAD_HELPERS
+        .replace("LIMBS_PER_TREAD", &format!("{LIMBS_PER_TREAD}u"))
+        .replace("TREADS", &format!("{TREADS}u"));
+    format!("{WEATHER_HELPERS}\n{treads}")
 }
 
 fn quad_header(group: u32) -> String {
@@ -660,9 +666,9 @@ impl Stage {
     fn header(self) -> String {
         match self {
             Stage::Surface => SURFACE_HEADER.to_owned(),
-            Stage::Cover => format!("{COVER_HEADER}\n{}", weather_helpers()),
-            Stage::Prop => format!("{PROP_HEADER}\n{}", weather_helpers()),
-            Stage::Sky => format!("{SKY_HEADER}\n{}", weather_helpers()),
+            Stage::Cover => format!("{COVER_HEADER}\n{}", cover_helpers()),
+            Stage::Prop => format!("{PROP_HEADER}\n{WEATHER_HELPERS}"),
+            Stage::Sky => format!("{SKY_HEADER}\n{WEATHER_HELPERS}"),
             Stage::Ground | Stage::Billboard => quad_header(WORLD_GROUP),
             Stage::Screen | Stage::Text => quad_header(PRESENT_GROUP),
         }
@@ -672,9 +678,9 @@ impl Stage {
     /// what the runtime header declares and calls what the shader must define.
     fn check_header(self) -> String {
         match self {
-            Stage::Cover => format!("{COVER_CHECK_HEADER}\n{}", weather_helpers()),
-            Stage::Prop => format!("{PROP_CHECK_HEADER}\n{}", weather_helpers()),
-            Stage::Sky => format!("{SKY_CHECK_HEADER}\n{}", weather_helpers()),
+            Stage::Cover => format!("{COVER_CHECK_HEADER}\n{}", cover_helpers()),
+            Stage::Prop => format!("{PROP_CHECK_HEADER}\n{WEATHER_HELPERS}"),
+            Stage::Sky => format!("{SKY_CHECK_HEADER}\n{WEATHER_HELPERS}"),
             _ => quad_header(WORLD_GROUP),
         }
     }
