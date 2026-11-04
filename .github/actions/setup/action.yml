@@ -27,14 +27,15 @@ runs:
       # The one system C library a `-sys` crate links that cargo can't supply: alsa, for kira's cpal
       # backend, found through pkg-config; the windowing and graphics libraries load at runtime. A dist
       # job also smoke-tests the desktop client, which draws on a virtual display with the software
-      # Vulkan rasterizer. Drop the runner's microsoft/azure apt sources first — unused, and they 403
-      # intermittently.
+      # Vulkan rasterizer and reads its keyboard through xkbcommon's X11 library, which the runner
+      # image doesn't promise. Drop the runner's microsoft/azure apt sources first — unused, and they
+      # 403 intermittently.
       run: |
         sudo rm -f /etc/apt/sources.list.d/microsoft* /etc/apt/sources.list.d/azure*
         sudo apt-get update
         sudo apt-get install -y pkg-config libasound2-dev
         if [ "${{ inputs.deps }}" = dist ]; then
-          sudo apt-get install -y xvfb mesa-vulkan-drivers
+          sudo apt-get install -y xvfb mesa-vulkan-drivers libxkbcommon-x11-0
         fi
     - name: Key the build cache by the recipes
       id: recipes

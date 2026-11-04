@@ -66,7 +66,7 @@ impl Playtest {
         };
         let desktop = BenchDesktop::open(folder.path());
         let log = File::create(folder.path().join(CLIENT_LOG)).expect("a client log");
-        let client = Command::new(binaries::beside(DESKTOP_CLIENT))
+        let mut client = Command::new(binaries::beside(DESKTOP_CLIENT))
             .envs(launch::env_of(CLIENT_ENV_PREFIX, &config))
             .envs(desktop.env())
             .stdin(Stdio::piped())
@@ -74,7 +74,12 @@ impl Playtest {
             .stderr(log)
             .spawn()
             .expect("the desktop client runs");
-        let probe = ProbeDriver::accept(&listener).expect("the client's probe connects");
+        let probe = ProbeDriver::accept(&listener, &mut client, WAIT).unwrap_or_else(|problem| {
+            panic!(
+                "{problem}; its log is {}",
+                folder.path().join(CLIENT_LOG).display()
+            )
+        });
         desktop.seat(client.id());
         Playtest {
             content: content.clone(),

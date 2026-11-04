@@ -102,13 +102,13 @@ async fn main() {
 
     let display = Display::start();
     let driver = TcpListener::bind((LOCALHOST, 0)).expect("a port for the probe");
-    let _client = desktop_client(
+    let mut client = desktop_client(
         &folder,
         &token,
         &display,
         driver.local_addr().expect("a bound port"),
     );
-    let mut probe = Probe::accept(&driver);
+    let mut probe = Probe::accept(&driver, &mut client);
     let content = game_content();
     probe.arrive(&content);
 
@@ -168,8 +168,11 @@ const RASTERIZER: &str = "llvmpipe";
 struct Probe(ProbeDriver);
 
 impl Probe {
-    fn accept(driver: &TcpListener) -> Probe {
-        Probe(ProbeDriver::accept(driver).expect("the desktop client's probe connects"))
+    fn accept(driver: &TcpListener, client: &mut Running) -> Probe {
+        Probe(
+            ProbeDriver::accept(driver, &mut client.0, READY_WITHIN)
+                .unwrap_or_else(|problem| panic!("{problem}")),
+        )
     }
 
     fn ask(&mut self, question: &ProbeFrameQuestion) -> String {

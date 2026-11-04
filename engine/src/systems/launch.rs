@@ -270,16 +270,47 @@ pub fn start_game_server(
 }
 
 /// The driver of a desktop client's probe: asks it its frame questions and reads its answers.
+/// How often a driver looks again for a client's probe to connect.
+const PROBE_POLL: Duration = Duration::from_millis(100);
+
 pub struct ProbeDriver {
     questions: TcpStream,
     answers: BufReader<TcpStream>,
 }
 
 impl ProbeDriver {
-    /// Waits for the client's probe to connect to `listener`.
-    pub fn accept(listener: &TcpListener) -> std::io::Result<ProbeDriver> {
-        let (stream, _) = listener.accept()?;
-        let answers = BufReader::new(stream.try_clone()?);
+    /// Waits for the probe of the desktop client running as `client` to connect to `listener`:
+    /// refused once the client exits before it does, or `within` passes.
+    pub fn accept(
+        listener: &TcpListener,
+        client: &mut Child,
+        within: Duration,
+    ) -> Result<ProbeDriver, String> {
+        listener
+            .set_nonblocking(true)
+            .map_err(|error| format!("the probe's port doesn't wait: {error}"))?;
+        let deadline = std::time::Instant::now() + within;
+        let stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+                Err(error) => return Err(format!("the probe's port fails: {error}")),
+            }
+            if let Ok(Some(status)) = client.try_wait() {
+                return Err(format!(
+                    "the desktop client exited ({status}) before its probe connected"
+                ));
+            }
+            if std::time::Instant::now() >= deadline {
+                return Err(format!(
+                    "the desktop client's probe didn't connect within {within:?}"
+                ));
+            }
+            std::thread::sleep(PROBE_POLL);
+        };
+        let answer = |error: std::io::Error| format!("the probe's connection fails: {error}");
+        stream.set_nonblocking(false).map_err(answer)?;
+        let answers = BufReader::new(stream.try_clone().map_err(answer)?);
         Ok(ProbeDriver {
             questions: stream,
             answers,
