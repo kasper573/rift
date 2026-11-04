@@ -15,7 +15,7 @@ use crate::core::vfx::rain::NEAREST_SHELL;
 use crate::core::vfx::{ParamValue, VfxShaderId};
 use crate::systems::GameSettings;
 use crate::systems::area::AreaId;
-use crate::systems::launch::ServerDaylight;
+use crate::systems::launch::{ServerDay, ServerDaylight};
 
 /// How many shells rain is drawn on round the eye at most, each over the whole picture.
 pub const MAX_RAIN_SHELLS: usize = 6;
@@ -156,23 +156,26 @@ pub struct DayCycle {
 }
 
 impl DayCycle {
-    /// How the day runs for a world starting `now` on a server whose daylight is `daylight`.
-    pub fn course(&self, daylight: ServerDaylight, now: UnixMillis) -> TimeCourse {
-        match daylight {
+    /// How the day runs for a world starting `now` on a server running it as `day` says.
+    pub fn course(&self, day: ServerDay, now: UnixMillis) -> TimeCourse<f32> {
+        match day.daylight {
             ServerDaylight::Turning => {
                 TimeCourse::Since(now.before(Seconds(self.start / 24.0 * self.day_length.0)))
             }
-            ServerDaylight::Still => TimeCourse::Still,
+            ServerDaylight::Still => TimeCourse::Held(self.start),
+            ServerDaylight::Fixed => {
+                TimeCourse::Held(day.hour.expect("a fixed daylight names its hour"))
+            }
         }
     }
 
     /// The hour of the day, 0 to 24, at `now` on a day running its `course`.
-    pub fn hour(&self, course: TimeCourse, now: UnixMillis) -> f32 {
+    pub fn hour(&self, course: TimeCourse<f32>, now: UnixMillis) -> f32 {
         match course {
             TimeCourse::Since(origin) => {
                 now.since(origin).0.rem_euclid(self.day_length.0) / self.day_length.0 * 24.0
             }
-            TimeCourse::Still => self.start,
+            TimeCourse::Held(hour) => hour,
         }
     }
 
@@ -203,18 +206,26 @@ pub fn tell_time(world: &mut World) {
     world.resource_mut::<Daylight>().set_if_neq(now);
 }
 
-/// Where the shown area's climate stands on its course once it is known, so each frame walks on
-/// from the last: none along it where the server holds the weather at the first spell.
+/// Where the shown area's climate stands once it is known: the spell under way, and where along
+/// the course it stands, so each frame walks on from the last; nowhere along it where the server
+/// holds the weather at a spell.
 #[derive(Resource, Default)]
-pub struct ShownCourse(Option<(AreaId, Option<SpellCourse>)>);
+pub struct ShownCourse(Option<Shown>);
+
+#[derive(Clone, Copy)]
+struct Shown {
+    area: AreaId,
+    spell: usize,
+    along: Option<SpellCourse>,
+}
 
 impl ShownCourse {
     /// The spell under way over `area`, by its place among its climate's spells, once the course
     /// there is known.
     pub fn spell(&self, area: AreaId) -> Option<usize> {
         self.0
-            .filter(|(shown, _)| *shown == area)
-            .map(|(_, course)| course.map_or(0, |course| course.spell()))
+            .filter(|shown| shown.area == area)
+            .map(|shown| shown.spell)
     }
 }
 
@@ -227,11 +238,18 @@ pub fn weather_now(world: &mut World, area: AreaId, climate: &Climate) -> Weathe
     let from = world
         .get_resource::<ShownCourse>()
         .and_then(|shown| shown.0)
-        .filter(|(shown, _)| *shown == area)
-        .and_then(|(_, at)| at);
-    let at = climate.course_at(course, now, from);
-    world.insert_resource(ShownCourse(Some((area, at))));
-    climate.weather_at(at, now)
+        .filter(|shown| shown.area == area)
+        .and_then(|shown| shown.along);
+    let along = climate.course_at(course, now, from);
+    let spell = match course {
+        TimeCourse::Held(spell) => spell,
+        TimeCourse::Since(_) => along.map_or(0, |along| along.spell()),
+    };
+    world.insert_resource(ShownCourse(Some(Shown { area, spell, along })));
+    match course {
+        TimeCourse::Held(spell) => climate.held(spell),
+        TimeCourse::Since(_) => climate.weather_at(along, now),
+    }
 }
 
 /// Wind blowing toward `direction` (degrees from north, clockwise) at `strength`, from calm at 0
@@ -359,16 +377,28 @@ impl Climate {
 
     /// The spell the course starts at.
     pub fn first(&self) -> Weather {
+        self.held(0)
+    }
+
+    /// The weather of the spell at `spell` among the climate's spells, held there for good; the
+    /// last spell's past the end.
+    pub fn held(&self, spell: usize) -> Weather {
         self.spells
-            .first()
+            .get(spell)
+            .or(self.spells.last())
             .map_or_else(Weather::default, |spell| spell.weather)
+    }
+
+    /// The place among the climate's spells of the one named `name`.
+    pub fn spell_named(&self, name: &str) -> Option<usize> {
+        self.spells.iter().position(|spell| spell.name == name)
     }
 
     /// Where the course running `course` stands at `now`, from `from` when it last stood there,
     /// so a caller asking again and again walks on from where it last stood.
     pub fn course_at(
         &self,
-        course: TimeCourse,
+        course: TimeCourse<usize>,
         now: UnixMillis,
         from: Option<SpellCourse>,
     ) -> Option<SpellCourse> {

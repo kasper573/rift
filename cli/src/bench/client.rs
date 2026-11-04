@@ -51,7 +51,7 @@ pub fn arrived(snapshot: &ProbeSnapshot, place: Place) -> bool {
 }
 
 pub fn staged(me: &Playtest, staging: Staging) {
-    me.stage(staging)
+    me.stage(&staging)
         .unwrap_or_else(|problem| panic!("the server didn't stage {staging:?}: {problem}"));
 }
 
@@ -66,12 +66,12 @@ fn play(game: &Path, content: &Content, video: Video) -> Vec<Scene> {
         }
         None => skipped("walk", "no open ground a few metres off"),
     }
-    match me.stage(Staging::Fight) {
+    match me.stage(&Staging::Fight) {
         Ok(()) => scenes.push(watch(&mut me, "combat".to_owned(), Duration::from_secs(4))),
         Err(problem) => skipped("combat", &problem),
     }
     staged(&me, Staging::Place { place: home });
-    match me.stage(Staging::Talk) {
+    match me.stage(&Staging::Talk) {
         Ok(()) => scenes.push(watch(
             &mut me,
             "conversation".to_owned(),

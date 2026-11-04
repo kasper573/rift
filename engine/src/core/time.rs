@@ -152,25 +152,25 @@ impl ServerClock {
     }
 }
 
-/// How the game's day runs, as the server keeps it, or nothing for a game without a day cycle.
-/// The server sets it as it starts and tells every client on joining, so all of them read the
-/// same hour off their reckoning of the server's clock.
+/// How the game's day runs, as the server keeps it, or nothing for a game without a day cycle:
+/// turning, or held at an hour of the day. The server sets it as it starts and tells every client
+/// on joining, so all of them read the same hour off their reckoning of the server's clock.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
-pub struct DayClock(pub Option<TimeCourse>);
+pub struct DayClock(pub Option<TimeCourse<f32>>);
 
 /// How the weather's course runs on the server the client plays on: since the server started, or
-/// held at each area's first spell; none before the server has told it.
+/// held at one of each area's spells, by its place among them; none before the server has told it.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
-pub struct WeatherClock(pub Option<TimeCourse>);
+pub struct WeatherClock(pub Option<TimeCourse<usize>>);
 
-/// How a game's own time runs on its server: turning since a moment, or held where it starts, as
-/// tests and films that compare how the world looks need it to.
+/// How a game's own time runs on its server: turning since a moment, or held at a point along
+/// it, as tests and films that compare how the world looks need it to.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
-pub enum TimeCourse {
+pub enum TimeCourse<Held> {
     /// Turning since the moment it began.
     Since(UnixMillis),
-    /// Held where it starts.
-    Still,
+    /// Held at a point along it.
+    Held(Held),
 }
 
 /// The server's wall clock as this client reckons it, once the server has told it the time.

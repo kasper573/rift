@@ -96,8 +96,9 @@ required unless it says otherwise, and a binary refuses to start without one.
 - **`game-server`** reads `RIFT_GAME_SERVER_*`: where it listens (`BIND`, `PORT` for HTTP, `UDP_PORT`
   for play), the address players reach the machine at (`PUBLIC_IP`), the game
   folder (`CONTENT_DIR`), `MAX_CLIENTS`, `PLAYER_SPAWN_POLICY` (`map` or `dist`), `PLAYER_IMMORTAL`,
-  `DAYLIGHT` (`turning`, or `still`, which holds the game's day at its start hour for tests that
-  compare how the world looks), `DAILY_RESET_UTC_HOUR`, `AUTH` (`oidc`, or `fake`, which takes a token's claims without checking
+  `DAYLIGHT` (`turning`; `still`, which holds the game's day at its start hour for tests that
+  compare how the world looks; or `fixed`, which holds it at `HOUR`, 0 to 24), `WEATHER` (`turning`,
+  or `still`, which holds every area's weather at its first spell), `DAILY_RESET_UTC_HOUR`, `AUTH` (`oidc`, or `fake`, which takes a token's claims without checking
   its signature, so an unsigned JWT signs in any account), `TEST_CHARACTERS`, `EXIT_ON_STDIN_EOF`
   and, optionally, `RNG_SEED`. Started on port 0 it picks free ports, and prints them on stdout
   once players can connect.

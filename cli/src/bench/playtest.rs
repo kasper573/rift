@@ -111,8 +111,8 @@ impl Playtest {
     }
 
     /// Asks the server to stage `staging` for the character, and tells why it couldn't.
-    pub fn stage(&self, staging: Staging) -> Result<(), String> {
-        post(&self.server, &self.content, STAGING_ROUTE, &staging)
+    pub fn stage(&self, staging: &Staging) -> Result<(), String> {
+        post(&self.server, &self.content, STAGING_ROUTE, staging)
     }
 
     pub fn wait_until(

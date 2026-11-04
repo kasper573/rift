@@ -29,8 +29,8 @@ use engine::systems::account::{AccountId, AccountIdentity};
 use engine::systems::area::{self, transition};
 use engine::systems::launch::{
     AuthMode, BUILD_INFO_FLAG, BuildInfo, LaunchSettings, ReadyLine, SERVER_ENV_PREFIX,
-    ServerConfig, ServerReady, TEST_CHARACTER_ROUTE, TICK_METRIC, TestCharacterRequest,
-    build_info_line,
+    ServerConfig, ServerDaylight, ServerReady, TEST_CHARACTER_ROUTE, TICK_METRIC,
+    TestCharacterRequest, build_info_line,
 };
 use engine::systems::player::snapshot::{self, CharacterSnapshot, JoinAs};
 use engine::systems::player::{ClientId, SpawnPolicy, SpawnRules};
@@ -126,7 +126,11 @@ fn main() {
     };
     let reset = config.daily_reset_utc_hour;
     let rng_seed = seeded(config.rng_seed);
-    let daylight = config.daylight;
+    let day = config.day();
+    assert!(
+        day.daylight != ServerDaylight::Fixed || day.hour.is_some(),
+        "{SERVER_ENV_PREFIX}HOUR: a fixed daylight names the hour it holds at"
+    );
     let weather = config.weather.course(wall_clock(reset).now);
     let running: Vec<_> = areas.iter().collect();
     let mut worlds = AreaWorlds {
@@ -137,7 +141,7 @@ fn main() {
                 ordinal as u64,
                 rng_seed,
                 wall_clock(reset),
-                daylight,
+                day,
                 weather,
                 &content,
             );
@@ -387,7 +391,7 @@ fn stage(
     staging::stage(
         worlds.app(conn.world).world_mut(),
         conn.entity,
-        asked.staging,
+        asked.staging.clone(),
     )
 }
 

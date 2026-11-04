@@ -159,6 +159,8 @@ pub struct ServerConfig {
     pub player_spawn_policy: SpawnPolicy,
     pub player_immortal: bool,
     pub daylight: ServerDaylight,
+    /// The hour of the day a fixed daylight holds at, 0 to 24.
+    pub hour: Option<f32>,
     pub weather: ServerWeather,
     pub rng_seed: Option<u64>,
     pub daily_reset_utc_hour: UtcHour,
@@ -168,6 +170,14 @@ pub struct ServerConfig {
 }
 
 impl ServerConfig {
+    /// How the server runs the game's day.
+    pub fn day(&self) -> ServerDay {
+        ServerDay {
+            daylight: self.daylight,
+            hour: self.hour,
+        }
+    }
+
     /// A server for a tool on this machine to play `content_dir` on alone: on any free ports of
     /// the loopback, signing players in without asking, handing out test characters and stopping
     /// with the tool that started it.
@@ -183,6 +193,7 @@ impl ServerConfig {
             player_spawn_policy: SpawnPolicy::Map,
             player_immortal: false,
             daylight: ServerDaylight::Turning,
+            hour: None,
             weather: ServerWeather::Turning,
             rng_seed: None,
             daily_reset_utc_hour: UtcHour::MIDNIGHT,
@@ -193,13 +204,28 @@ impl ServerConfig {
     }
 }
 
-/// Whether a game's day turns on the server, or holds at its start hour, as tests that compare how
-/// the world looks need it to.
+/// How a server runs the game's day: as its daylight says, held at `hour` where that is fixed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ServerDay {
+    pub daylight: ServerDaylight,
+    pub hour: Option<f32>,
+}
+
+impl ServerDay {
+    pub const TURNING: ServerDay = ServerDay {
+        daylight: ServerDaylight::Turning,
+        hour: None,
+    };
+}
+
+/// Whether a game's day turns on the server, holds at its start hour, or holds at the hour the
+/// server is given, as tests that compare how the world looks need it to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ServerDaylight {
     Turning,
     Still,
+    Fixed,
 }
 
 /// Whether every area's weather turns from spell to spell on the server, or holds at its first, as
@@ -213,10 +239,10 @@ pub enum ServerWeather {
 
 impl ServerWeather {
     /// The course the weather runs on a server that started `at`.
-    pub fn course(self, at: UnixMillis) -> TimeCourse {
+    pub fn course(self, at: UnixMillis) -> TimeCourse<usize> {
         match self {
             ServerWeather::Turning => TimeCourse::Since(at),
-            ServerWeather::Still => TimeCourse::Still,
+            ServerWeather::Still => TimeCourse::Held(0),
         }
     }
 }

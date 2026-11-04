@@ -307,8 +307,8 @@ pub fn server_app(
     ordinal: u64,
     rng_seed: u64,
     clock: WallClock,
-    daylight: launch::ServerDaylight,
-    weather: TimeCourse,
+    day: launch::ServerDay,
+    weather: TimeCourse<usize>,
     content: &Content,
 ) -> App {
     use bevy_app::{First, PostUpdate, Startup, Update};
@@ -320,9 +320,7 @@ pub fn server_app(
     app.insert_resource(WorldArea(area));
     app.insert_resource(clock);
     app.insert_resource(DayClock(
-        settings
-            .daylight
-            .map(|cycle| cycle.course(daylight, clock.now)),
+        settings.daylight.map(|cycle| cycle.course(day, clock.now)),
     ));
     app.insert_resource(WeatherClock(Some(weather)));
     app.insert_resource(input::map::InputMap::new(content));

@@ -3,7 +3,7 @@ use engine::core::render::world::sky::{Daylight, ambient_at, night, shining, sun
 use engine::core::time::UnixMillis;
 use engine::core::units::{Degrees, Seconds};
 use engine::systems::area::DayCycle;
-use engine::systems::launch::ServerDaylight;
+use engine::systems::launch::{ServerDay, ServerDaylight};
 
 const NOON: (Degrees, Degrees) = (Degrees(52.0), Degrees(215.0));
 
@@ -101,7 +101,7 @@ fn a_day_turns_from_the_games_start_hour_or_holds_there_on_a_still_server() {
     let started = UnixMillis(1_800_000_000_000);
     let later = |seconds: f32| started.after(Seconds(seconds));
 
-    let turning = cycle.course(ServerDaylight::Turning, started);
+    let turning = cycle.course(ServerDay::TURNING, started);
     let hours = [0.0, 300.0, 1200.0 * 3.0 + 600.0].map(|at| cycle.hour(turning, later(at)));
     for (hour, expected) in hours.into_iter().zip([10.0, 16.0, 22.0]) {
         assert!(
@@ -110,10 +110,29 @@ fn a_day_turns_from_the_games_start_hour_or_holds_there_on_a_still_server() {
         );
     }
 
-    let still = cycle.course(ServerDaylight::Still, started);
+    let still = cycle.course(
+        ServerDay {
+            daylight: ServerDaylight::Still,
+            hour: None,
+        },
+        started,
+    );
     assert_eq!(
         [0.0, 300.0, 1200.0 * 3.0 + 600.0].map(|at| cycle.hour(still, later(at))),
         [10.0; 3],
         "a still day holds at the game's start hour however long the world runs"
+    );
+
+    let fixed = cycle.course(
+        ServerDay {
+            daylight: ServerDaylight::Fixed,
+            hour: Some(18.5),
+        },
+        started,
+    );
+    assert_eq!(
+        [0.0, 300.0, 1200.0 * 3.0 + 600.0].map(|at| cycle.hour(fixed, later(at))),
+        [18.5; 3],
+        "a fixed day holds at the hour the server is given however long the world runs"
     );
 }

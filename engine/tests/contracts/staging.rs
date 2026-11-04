@@ -1,4 +1,5 @@
 use engine::core::math::Pos;
+use engine::core::time::{TimeCourse, WeatherClock};
 use engine::core::units::{MeterPos, Meters};
 use engine::systems::area::AreaDef;
 use engine::systems::combat::{self, AttackRequest};
@@ -70,6 +71,68 @@ fn a_bench_is_told_when_there_is_nothing_to_stage() {
 
     assert!(stage(&mut sim.world, conn, Staging::Fight).is_err());
     assert!(stage(&mut sim.world, conn, Staging::Talk).is_err());
+}
+
+#[test]
+fn a_bench_holds_an_areas_weather_at_a_named_spell_until_staged_again() {
+    let mut sim = Sim::new(
+        Game::new()
+            .area("yard", &Map::open(20, 9), json!([]))
+            .edit("area", "yard", |area| {
+                area["climate"] = json!({
+                    "turns": 10.0,
+                    "spells": [
+                        {
+                            "name": "fair",
+                            "weather": { "clouds": 0.1 },
+                            "lasts": { "shortest": 60.0, "longest": 60.0 },
+                            "next": [{ "spell": "storm", "weight": 1.0 }],
+                        },
+                        {
+                            "name": "storm",
+                            "weather": { "clouds": 1.0, "water": 1.0, "rain": 1.0 },
+                            "lasts": { "shortest": 60.0, "longest": 60.0 },
+                            "next": [{ "spell": "fair", "weight": 1.0 }],
+                        },
+                    ],
+                });
+            })
+            .hero("yard", SPAWN.x, SPAWN.y)
+            .load(),
+    );
+    sim.serve("yard");
+    sim.join(1);
+    let conn = sim.conn(1);
+
+    stage(
+        &mut sim.world,
+        conn,
+        Staging::Weather {
+            spell: "storm".to_owned(),
+        },
+    )
+    .expect("a spell of the climate");
+    assert_eq!(
+        sim.world.resource::<WeatherClock>().0,
+        Some(TimeCourse::Held(1))
+    );
+    sim.run_until(120.0, |_| false);
+    assert_eq!(
+        sim.world.resource::<WeatherClock>().0,
+        Some(TimeCourse::Held(1)),
+        "the spell holds however long the world runs"
+    );
+    assert!(
+        stage(
+            &mut sim.world,
+            conn,
+            Staging::Weather {
+                spell: "monsoon".to_owned(),
+            },
+        )
+        .is_err(),
+        "a spell the climate lacks is refused"
+    );
 }
 
 fn sim() -> Sim {

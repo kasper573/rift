@@ -19,6 +19,7 @@ fn server_config(rng_seed: Option<u64>) -> ServerConfig {
         player_spawn_policy: SpawnPolicy::Dist,
         player_immortal: true,
         daylight: ServerDaylight::Still,
+        hour: None,
         weather: ServerWeather::Still,
         rng_seed,
         daily_reset_utc_hour: UtcHour::try_from(5).expect("an hour of the day"),

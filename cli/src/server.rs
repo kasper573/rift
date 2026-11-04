@@ -4,18 +4,24 @@ use std::process::Child;
 use std::time::Duration;
 
 use engine::core::units::Bytes;
-use engine::systems::launch::{self, SERVER_ENV_PREFIX, ServerConfig, ServerReady, ServerWeather};
+use engine::systems::launch::{
+    self, SERVER_ENV_PREFIX, ServerConfig, ServerDaylight, ServerReady, ServerWeather,
+};
 
 pub const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
 // Runs play out alike, so they compare.
 pub const SEED: u64 = 1931;
+const NOON: f32 = 12.0;
 
 /// A server playing `game` on any free ports, as the benches run it: seeded, its players
-/// immortal and signed in without asking, its day turning. A bench says what else it needs.
+/// immortal and signed in without asking, its day held at noon and its weather at each area's
+/// first spell, so runs compare. A bench says what else it needs.
 pub fn bench_config(game: &Path) -> ServerConfig {
     ServerConfig {
         player_immortal: true,
+        daylight: ServerDaylight::Fixed,
+        hour: Some(NOON),
         weather: ServerWeather::Still,
         rng_seed: Some(SEED),
         ..ServerConfig::local(absolute(game))

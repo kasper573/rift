@@ -94,11 +94,16 @@ fn a_climate_turns_through_its_spells_alike_for_everyone_and_only_as_each_may_fo
     }
 
     let later = origin.after(Seconds(5_000.0));
-    let held = climate.course_at(TimeCourse::Still, later, None);
+    let held = climate.course_at(TimeCourse::Held(0), later, None);
     assert_eq!(
         climate.weather_at(held, later),
         climate.spells[0].weather,
         "a server holding the weather still keeps the first spell"
+    );
+    assert_eq!(
+        climate.held(climate.spell_named("storm").expect("the storm")),
+        climate.spells[2].weather,
+        "a server holding the weather at a named spell keeps that spell"
     );
 }
 

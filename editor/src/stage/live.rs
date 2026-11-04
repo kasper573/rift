@@ -19,7 +19,7 @@ use engine::systems::area::{self, AreaId, AreaModule};
 use engine::systems::class::ClassDef;
 use engine::systems::combat::Attitude;
 use engine::systems::item::{ItemDef, ItemId, ItemKind, ItemStack};
-use engine::systems::launch::{ServerDaylight, ServerWeather};
+use engine::systems::launch::{ServerDay, ServerWeather};
 use engine::systems::movement::Position;
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, SnapshotSkill};
@@ -251,7 +251,7 @@ pub(crate) fn sandbox(content: &Content, area: AreaId, seed: u64, clock: WallClo
         0,
         seed,
         clock,
-        ServerDaylight::Turning,
+        ServerDay::TURNING,
         ServerWeather::Turning.course(clock.now),
         content,
     );
