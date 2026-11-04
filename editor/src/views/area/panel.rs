@@ -30,7 +30,7 @@ use crate::keymap::EditorKey;
 use crate::modal::{ModalDialog, PickRowDialog, PickRowThen};
 use crate::project::files::content_of;
 use crate::row_form;
-use crate::tabs::{EditorTab, file_title};
+use crate::tabs::file_title;
 use crate::tree::{self, DropAt, TreeSource, TreeState};
 use crate::views;
 use crate::widgets::{self, KindMark};
@@ -127,10 +127,6 @@ fn boxes(editor: &mut Editor, ui: &mut Ui, snapshot: &AreaSnapshot) {
                         menu = Some(BoxMenu::Play);
                         ui.close();
                     }
-                    if ui.button("Open as file").clicked() {
-                        menu = Some(BoxMenu::OpenRow);
-                        ui.close();
-                    }
                 });
             });
         });
@@ -145,32 +141,12 @@ fn boxes(editor: &mut Editor, ui: &mut Ui, snapshot: &AreaSnapshot) {
                     InputField::new(draft).show(ui)
                 });
             });
-            ui.add_space(2.0);
-            ui.label(theme::faint("BLUEPRINT").size(10.5));
         }
         form::kv(ui, "size", |ui| {
             input::boxed(ui, Some("m"), |ui| {
                 ui.label(format!("{} × {}", size.width, size.height))
             });
         });
-        if let SceneBundle::Area(held) = &def {
-            form::kv_text(
-                ui,
-                "terrains",
-                held.terrains
-                    .iter()
-                    .map(|terrain| {
-                        snapshot
-                            .reader
-                            .path_of(*terrain)
-                            .map(name_of)
-                            .unwrap_or("?")
-                    })
-                    .collect::<Vec<_>>()
-                    .join(" · "),
-            );
-            form::kv_text(ui, "slope", format!("walks up to {}°", held.max_slope.0));
-        }
         if let SceneBundle::Blueprint(blueprint) = &def {
             variables_changed = variables(editor, ui, &bundle, blueprint, &mut actions);
         }
@@ -212,12 +188,6 @@ fn boxes(editor: &mut Editor, ui: &mut Ui, snapshot: &AreaSnapshot) {
                 )))
         }
         Some(BoxMenu::Play) => views::play_here(editor),
-        Some(BoxMenu::OpenRow) => editor.open_tab(EditorTab::Row {
-            table: engine::core::content::table_of(&bundle)
-                .unwrap_or_default()
-                .to_owned(),
-            key: bundle.clone(),
-        }),
         None => {}
     }
 }
@@ -225,7 +195,6 @@ fn boxes(editor: &mut Editor, ui: &mut Ui, snapshot: &AreaSnapshot) {
 enum BoxMenu {
     Resize,
     Play,
-    OpenRow,
 }
 
 /// A blueprint's variables, edited in its box, each with how many placements set it; the

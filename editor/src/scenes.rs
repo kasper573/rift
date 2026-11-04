@@ -56,6 +56,12 @@ pub enum SceneStep {
         terrain: Option<String>,
     },
     Overlay(area_view::AreaOverlay),
+    /// Shows a page of the open area's view.
+    Page(area_view::AreaPage),
+    /// Picks the spell at `index` on the open area's climate page, showing the area under it.
+    Spell {
+        index: usize,
+    },
     /// Looks at the middle of the open area or blueprint from `distance` off.
     Camera {
         distance: Meters,
@@ -328,6 +334,18 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
         SceneStep::Overlay(overlay) => {
             if let Some(bundle) = last_opened_bundle(editor) {
                 editor.views.area.ensure_view(&bundle).toggle(*overlay);
+            }
+        }
+        SceneStep::Page(page) => {
+            if let Some(bundle) = last_opened_bundle(editor) {
+                editor.views.area.ensure_view(&bundle).page = *page;
+            }
+        }
+        SceneStep::Spell { index } => {
+            if let Some(bundle) = last_opened_bundle(editor) {
+                let view = editor.views.area.ensure_view(&bundle);
+                view.page = area_view::AreaPage::Climate;
+                view.climate.pick_spell(*index);
             }
         }
         SceneStep::Camera { distance } => {

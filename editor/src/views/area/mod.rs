@@ -1,10 +1,12 @@
 pub mod blueprint;
 pub mod brush;
 pub mod camera;
+pub mod climate;
 pub mod clipboard;
 pub mod contours;
 pub mod flags;
 pub mod inspect;
+pub mod lighting;
 pub mod modules;
 pub mod nodes;
 pub mod overlays;
@@ -24,6 +26,7 @@ pub mod shapes;
 pub mod soundscape;
 pub mod stamp;
 pub mod status;
+pub mod terrain;
 pub mod tools;
 pub mod view_ground;
 pub mod viewport;
@@ -135,6 +138,22 @@ pub enum AreaTool {
     Module,
 }
 
+/// The pages of an area's view, one for each part of the area it sets: its scene, the ground its
+/// terrains lie on, the light it stands in, and the weather it turns through. A blueprint has
+/// only a scene.
+#[derive(
+    Clone, Copy, Debug, Default, PartialEq, Eq, VariantArray, AsRefStr, Deserialize, Serialize,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum AreaPage {
+    #[default]
+    Scene,
+    Terrain,
+    Lighting,
+    Climate,
+}
+
 /// What the view can draw over its picture.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -178,6 +197,8 @@ pub enum Placeable {
 pub struct AreaViewState {
     /// The area or blueprint bundle the view edits.
     pub bundle: String,
+    pub page: AreaPage,
+    pub climate: climate::ClimatePage,
     pub in_place: Vec<String>,
     pub camera: OrbitCamera,
     pub tool: AreaTool,
@@ -380,16 +401,69 @@ impl AreaViews {
     }
 }
 
-/// The tab of an area or a blueprint: its scene graph on the left, its map, and the inspector.
+/// The tab of an area or a blueprint: a bar of the area's pages over the page shown. The scene
+/// page holds the scene graph on the left, the map with its tools, and the inspector; each other
+/// page its part of the area on the left, and the area seen as that part leaves it.
 pub fn show(editor: &mut Editor, ui: &mut Ui, bundle: &str) {
     let view_key = view_key(bundle);
     editor.views.area.ensure_view(bundle);
-    ui::panel::left_framed(ui, "area", |ui| panel::show(editor, ui, &view_key));
-    ui::panel::inspector(ui, editor, "area", |editor, ui| {
-        inspect::sidebar(editor, ui, &view_key)
-    });
-    show_canvas(editor, ui, &view_key);
+    let page = shown_page(editor, &view_key);
+    match page {
+        AreaPage::Scene => {
+            ui::panel::left_framed(ui, "area", |ui| panel::show(editor, ui, &view_key));
+            ui::panel::inspector(ui, editor, "area", |editor, ui| {
+                inspect::sidebar(editor, ui, &view_key)
+            });
+        }
+        AreaPage::Terrain => {
+            ui::panel::left_scrolled(ui, "area terrain", |ui| {
+                terrain::show(editor, ui, &view_key)
+            });
+        }
+        AreaPage::Lighting => {
+            ui::panel::left_scrolled(ui, "area lighting", |ui| {
+                lighting::show(editor, ui, &view_key)
+            });
+        }
+        AreaPage::Climate => {
+            ui::panel::left_scrolled(ui, "area climate", |ui| {
+                climate::show(editor, ui, &view_key)
+            });
+            ui::panel::inspector(ui, editor, "area climate", |editor, ui| {
+                climate::inspector(editor, ui, &view_key)
+            });
+        }
+    }
+    show_canvas(editor, ui, &view_key, page);
     play::banner(editor, ui);
+}
+
+/// The page the view shows: the one picked, on an area; a blueprint has only its scene.
+fn shown_page(editor: &Editor, view_key: &str) -> AreaPage {
+    let view = editor.views.area.view(view_key);
+    if table_of(&view.bundle) == Some(AreaDef::TABLE) {
+        view.page
+    } else {
+        AreaPage::Scene
+    }
+}
+
+/// The bar of an area's pages, one chip each.
+fn page_bar(editor: &mut Editor, ui: &mut Ui, view_key: &str, page: AreaPage) {
+    let picked = ui
+        .horizontal(|ui| {
+            AreaPage::VARIANTS
+                .iter()
+                .copied()
+                .filter(|other| ui::chip::mode(ui, other.as_ref(), page == *other).clicked())
+                .last()
+        })
+        .inner;
+    if let Some(picked) = picked {
+        let view = editor.views.area.view_mut(view_key);
+        view.cancel_gesture();
+        view.page = picked;
+    }
 }
 
 pub fn bottom(editor: &mut Editor, ui: &mut Ui, view_key: &str, tab: BottomTab) {
@@ -415,7 +489,12 @@ pub fn bottom(editor: &mut Editor, ui: &mut Ui, view_key: &str, tab: BottomTab) 
     }
 }
 
-fn show_canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
+fn show_canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str, page: AreaPage) {
+    if table_of(&editor.views.area.view(view_key).bundle) == Some(AreaDef::TABLE) {
+        egui::Frame::new()
+            .inner_margin(egui::Margin::symmetric(8, 6))
+            .show(ui, |ui| page_bar(editor, ui, view_key, page));
+    }
     let Some(snapshot) = AreaSnapshot::for_view(editor, view_key) else {
         let bundle = editor.views.area.view(view_key).bundle.clone();
         if editor
@@ -442,13 +521,18 @@ fn show_canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
         ui.label(egui::RichText::new(said).weak());
         return;
     };
-    let rail_width = 44.0;
+    fit_once(editor, view_key, &snapshot);
     let full = ui.available_rect_before_wrap();
+    if page != AreaPage::Scene {
+        let mut canvas_ui = ui.new_child(egui::UiBuilder::new().max_rect(full));
+        canvas(editor, &mut canvas_ui, view_key, snapshot, page);
+        return;
+    }
+    let rail_width = 44.0;
     let rail = ERect::from_min_size(full.min, Vec2::new(rail_width, full.height()));
     let canvas_rect = ERect::from_min_max(Pos2::new(rail.max.x, full.min.y), full.max);
-    fit_once(editor, view_key, &snapshot);
     let mut canvas_ui = ui.new_child(egui::UiBuilder::new().max_rect(canvas_rect));
-    canvas(editor, &mut canvas_ui, view_key, snapshot);
+    canvas(editor, &mut canvas_ui, view_key, snapshot, page);
     banners(editor, ui, view_key, canvas_rect);
     let mut rail_ui = ui.new_child(
         egui::UiBuilder::new()
@@ -572,7 +656,15 @@ fn banners(editor: &mut Editor, ui: &mut Ui, view_key: &str, canvas_rect: ERect)
     }
 }
 
-fn canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: AreaSnapshot) {
+/// The map of the bundle under the view's camera: on the scene page worked on with the view's
+/// tools; on another page only looked around.
+fn canvas(
+    editor: &mut Editor,
+    ui: &mut Ui,
+    view_key: &str,
+    snapshot: AreaSnapshot,
+    page: AreaPage,
+) {
     let (rect, response) = ui.allocate_exact_size(ui.available_size(), Sense::click_and_drag());
     let painter = ui.painter_at(rect);
     painter.rect_filled(rect, 0.0, theme::CANVAS);
@@ -622,6 +714,13 @@ fn canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: AreaSnapsh
         labels: AreaLabels::default(),
     };
     overlay_bounds(&painter, &frame);
+    if page != AreaPage::Scene {
+        tools::navigate(editor, ui, view_key, &frame);
+        status_bar(editor, &painter, view_key, &frame);
+        request_viewport(editor, ui, view_key, &frame, rect);
+        remember_camera(editor, view_key);
+        return;
+    }
     tools::input(editor, ui, &painter, view_key, &frame);
     locked_tip(editor, view_key, &frame);
     if is_area {
@@ -683,6 +782,10 @@ fn request_viewport(editor: &mut Editor, ui: &Ui, view_key: &str, frame: &AreaFr
         paint: stroke.paint.clone(),
     });
     let camera = view.camera;
+    let weather = match view.page {
+        AreaPage::Climate => view.climate.weather(&frame.area().climate),
+        _ => frame.area().climate.first(),
+    };
     let lines = view.outlines.lines();
     let repaint = view.stroke.is_some() || ghost_moves(view);
     editor.views.area.viewports.request(Request {
@@ -690,6 +793,7 @@ fn request_viewport(editor: &mut Editor, ui: &Ui, view_key: &str, frame: &AreaFr
         size,
         camera,
         picture: frame.picture.clone(),
+        weather,
         content: frame.content.clone(),
         stroke,
         ghost,

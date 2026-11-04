@@ -33,7 +33,7 @@ use engine::systems::actor::rigging::BuiltSkeleton;
 use engine::systems::actor::skeleton::Cue;
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::area::scenery::{self, Scenery};
-use engine::systems::area::{Area, Picture};
+use engine::systems::area::{Area, Picture, Weather};
 use ui::egui;
 
 use super::camera::OrbitCamera;
@@ -53,6 +53,8 @@ pub struct Request {
     pub camera: OrbitCamera,
     /// What the view shows: a new picture stands the scenery again.
     pub picture: Arc<Picture>,
+    /// The weather the area is shown under.
+    pub weather: Weather,
     pub content: Content,
     /// The terrain as a brush stroke is shaping it, shown in place of the picture's.
     pub stroke: Option<StrokeTerrain>,
@@ -196,6 +198,8 @@ const HORIZON_REACH_PER_DISTANCE: f32 = 4.0;
 struct Stood {
     scenery: Scenery,
     area: Arc<Area>,
+    /// The weather the scenery was last lit under.
+    lit: Weather,
 }
 
 impl Viewports {
@@ -329,15 +333,35 @@ impl RenderedView {
                 scenery::despawn(world, old.scenery);
             }
             world.entity_mut(stood.root).insert(ChildOf(self.root));
-            let weather = area.climate.first();
-            scenery::light(world, &area, &weather, Daylight::Fixed, stood, self.camera);
+            scenery::light(
+                world,
+                &area,
+                &request.weather,
+                Daylight::Fixed,
+                stood,
+                self.camera,
+            );
             self.stood = Some(Stood {
                 scenery: stood,
                 area: area.clone(),
+                lit: request.weather,
             });
             self.stroke = None;
         }
-        world.insert_resource(scenery::shown_weather(&area.climate.first(), 0.0));
+        if let Some(stood) = self.stood.as_mut()
+            && stood.lit != request.weather
+        {
+            scenery::light(
+                world,
+                &area,
+                &request.weather,
+                Daylight::Fixed,
+                stood.scenery,
+                self.camera,
+            );
+            stood.lit = request.weather;
+        }
+        world.insert_resource(scenery::shown_weather(&request.weather, 0.0));
         let ground = area.heights.height_at(request.camera.target);
         if let Some(stood) = &self.stood {
             let viewport = Vec2::new(request.size[0] as f32, request.size[1] as f32);

@@ -793,7 +793,7 @@ impl Editor {
 
     /// Writes the content file at `path` as `change` leaves it, as part of `edit`. Writes nothing
     /// when `change` refuses, which is told to the designer, or leaves the file as it was.
-    pub(crate) fn change<Row: ContentFile + Clone>(
+    pub fn change<Row: ContentFile + Clone>(
         &mut self,
         edit: ContentEdit,
         path: &str,

@@ -369,6 +369,7 @@ pub fn request(
         key: view_key.to_owned(),
         size,
         camera,
+        weather: picture.area.climate.first(),
         picture,
         content,
         stroke: None,

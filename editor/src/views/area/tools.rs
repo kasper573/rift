@@ -197,7 +197,12 @@ pub fn input(
     show_add_menu(ui, editor, view_key, frame);
 }
 
-fn navigate(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame) -> bool {
+pub(crate) fn navigate(
+    editor: &mut Editor,
+    ui: &mut Ui,
+    view_key: &str,
+    frame: &AreaFrame,
+) -> bool {
     let farthest = OrbitCamera::framing_distance(frame.canvas.area().size.bounds());
     let view = editor.views.area.view_mut(view_key);
     camera::navigate(
