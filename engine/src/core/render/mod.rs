@@ -2,6 +2,7 @@ pub mod camera;
 mod icons;
 pub mod pick;
 pub mod present;
+pub mod sample;
 pub mod transition;
 pub mod video;
 pub mod world;

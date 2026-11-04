@@ -121,6 +121,10 @@ impl Unstood {
         self.0.is_empty()
     }
 
+    pub(super) fn len(&self) -> usize {
+        self.0.len()
+    }
+
     /// Whether the scenery stands all the view takes in over `bounds`.
     pub(super) fn stands_over(&self, bounds: Rect<Meters>) -> bool {
         !self.0.iter().any(|unstood| unstood.intersects(&bounds))

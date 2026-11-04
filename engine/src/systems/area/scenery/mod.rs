@@ -165,6 +165,7 @@ pub fn spawn(
         loading: HashMap::default(),
         making: HashMap::default(),
         stood_for: None,
+        missing: 0,
     });
     Scenery {
         root,
@@ -299,6 +300,24 @@ pub fn standing(world: &mut World) -> bool {
         .any(|streaming| streaming.stood_for.is_none())
 }
 
+/// How many chunks of ground and regions of scenery the views take in that have yet to stand.
+pub fn missing(world: &mut World) -> u32 {
+    world
+        .query::<&Streaming>()
+        .iter(world)
+        .map(|streaming| streaming.missing)
+        .sum()
+}
+
+/// How many chunks of ground stand for the views.
+pub fn stood_chunks(world: &mut World) -> u32 {
+    world
+        .query::<&Streaming>()
+        .iter(world)
+        .map(|streaming| streaming.stood.ground.len() as u32)
+        .sum()
+}
+
 /// Whether `scenery` stands all its view takes in.
 pub fn stood(world: &World, scenery: Scenery) -> bool {
     world
@@ -335,6 +354,8 @@ struct Streaming {
     /// The view all that it takes in stands for, once it does, so a view that stays put costs
     /// nothing to stream.
     stood_for: Option<Seen>,
+    /// How many chunks of ground and regions of scenery the view takes in have yet to stand.
+    missing: u32,
 }
 
 /// Where the view looks at, how far around it the scenery stands, the view, and how high its eye
@@ -443,10 +464,11 @@ fn stream(world: &mut World) {
         let Seen { at, reach, .. } = seen;
         let keep = Meters(reach.0 * KEEP_SHARE);
         let mut budget = Budget::new();
-        stream_ground(world, &mut streaming, at, &mut budget);
+        let ground_missing = stream_ground(world, &mut streaming, at, &mut budget);
         let cut = streaming.regions.cut(&streaming.heights, seen);
         let props_unstood = props::stand(world, &mut streaming, root, seen, &cut, &mut budget);
         let covers_unstood = covers::stand(world, &mut streaming, root, seen, &cut, &mut budget);
+        streaming.missing = ground_missing + (props_unstood.len() + covers_unstood.len()) as u32;
         props::clear(world, &mut streaming, seen, &cut, &props_unstood);
         covers::clear(world, &mut streaming, seen, &cut, &covers_unstood);
         if !props_unstood.is_empty() || !covers_unstood.is_empty() {
@@ -509,12 +531,14 @@ impl Budget {
     }
 }
 
+/// Stands the ground the view at `at` wants, as the budget allows; how many of its chunks have
+/// yet to stand.
 fn stream_ground(
     world: &mut World,
     streaming: &mut Streaming,
     at: Pos<Meters>,
     budget: &mut Budget,
-) {
+) -> u32 {
     streaming
         .loading
         .retain(|_, task| check_ready(task).is_none());
@@ -554,16 +578,18 @@ fn stream_ground(
         let entity = spawn_chunk(world, streaming, mesh, &paint);
         streaming.stood.ground.insert(node, entity);
     }
-    if wanted
+    let unstood = wanted
         .iter()
-        .all(|node| streaming.stood.ground.contains_key(node))
-    {
+        .filter(|&node| !streaming.stood.ground.contains_key(node))
+        .count() as u32;
+    if unstood == 0 {
         for node in gone {
             if let Some(entity) = streaming.stood.ground.remove(&node) {
                 take_down_chunk(world, &mut streaming.paints, entity);
             }
         }
     }
+    unstood
 }
 
 /// Whether the ground under `node` is there to stand it on: the overview, for a chunk as coarse as

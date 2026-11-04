@@ -1,8 +1,11 @@
 use engine::core::content::{Content, ContentScope, with_content};
 use engine::core::math::Pos;
-use engine::core::units::Meters;
+use engine::core::render::sample::{GpuReport, RenderReport};
+use engine::core::units::{Bytes, Meters, Millis};
 use engine::systems::area::AreaDef;
-use engine::systems::probe::{ProbeGame, ProbeGameQuestion, answer};
+use engine::systems::probe::{
+    FrameSample, FrameSamples, ProbeFrames, ProbeGame, ProbeGameQuestion, WORST_KEPT, answer,
+};
 use serde::de::DeserializeOwned;
 use serde_json::json;
 use testkit::{Game, Map, path};
@@ -88,4 +91,87 @@ fn ask<Answer: DeserializeOwned>(content: &Content, question: &ProbeGameQuestion
     with_content(ContentScope::of(content), || serde_json::from_str(&line))
         .0
         .unwrap_or_else(|error| panic!("an unreadable answer {line}: {error}"))
+}
+
+#[test]
+fn a_driver_reads_the_frames_on_from_the_last_it_saw_and_is_told_what_the_ring_let_go() {
+    let mut frames = FrameSamples::new(4, 0);
+    for frame in 1..=6 {
+        frames.push(sample(frame, Millis(10.0)));
+    }
+    let read = frames.since(0);
+    assert_eq!(seen(&read), [3, 4, 5, 6]);
+    assert_eq!(read.dropped, 2);
+    let read = frames.since(4);
+    assert_eq!(seen(&read), [5, 6]);
+    assert_eq!(read.dropped, 0);
+    assert!(frames.since(6).samples.is_empty());
+
+    frames.drawn(&RenderReport {
+        frame: 5,
+        cpu_render_ms: Millis(3.0),
+        draws: 7,
+        instances: 70,
+        upload_bytes: Bytes(1024),
+    });
+    frames.timed(&GpuReport {
+        frame: 5,
+        gpu_ms: Millis(4.0),
+        passes: vec![("main_opaque_pass_3d".to_owned(), Millis(4.0))],
+    });
+    let read = frames.since(4);
+    assert_eq!(read.samples[0].cpu_render_ms, Some(Millis(3.0)));
+    assert_eq!(read.samples[0].draws, 7);
+    assert_eq!(read.samples[0].upload_bytes, Bytes(1024));
+    assert_eq!(read.samples[0].gpu_ms, Some(Millis(4.0)));
+    assert_eq!(read.samples[1].cpu_render_ms, None);
+    assert_eq!(read.samples[1].gpu_ms, None);
+}
+
+#[test]
+fn a_frame_is_read_once_what_trails_it_has_had_time_to_land() {
+    let mut frames = FrameSamples::new(8, 2);
+    for frame in 1..=5 {
+        frames.push(sample(frame, Millis(10.0)));
+    }
+    assert_eq!(seen(&frames.since(0)), [1, 2, 3]);
+}
+
+#[test]
+fn the_slowest_frames_keep_the_gpus_time_by_pass() {
+    let mut frames = FrameSamples::new(64, 0);
+    for frame in 1..=40 {
+        let dt = if frame == 17 { 60.0 } else { 10.0 };
+        frames.push(sample(frame, Millis(dt)));
+    }
+    frames.timed(&GpuReport {
+        frame: 17,
+        gpu_ms: Millis(50.0),
+        passes: vec![("shadows".to_owned(), Millis(50.0))],
+    });
+    let read = frames.since(0);
+    assert_eq!(read.worst.len(), WORST_KEPT);
+    assert_eq!(read.worst[0].frame, 17);
+    assert_eq!(read.worst[0].passes[0].name, "shadows");
+    assert_eq!(read.worst[0].passes[0].gpu_ms, Millis(50.0));
+}
+
+fn sample(frame: u32, dt_ms: Millis) -> FrameSample {
+    FrameSample {
+        frame,
+        dt_ms,
+        cpu_main_ms: Millis(1.0),
+        cpu_render_ms: None,
+        gpu_ms: None,
+        missing: 0,
+        draws: 0,
+        instances: 0,
+        entities: 0,
+        visible_chunks: 0,
+        upload_bytes: Bytes(0),
+    }
+}
+
+fn seen(frames: &ProbeFrames) -> Vec<u32> {
+    frames.samples.iter().map(|sample| sample.frame).collect()
 }

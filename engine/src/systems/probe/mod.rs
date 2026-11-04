@@ -1,6 +1,11 @@
+mod frames;
 mod game;
 mod socket;
 
+pub use frames::{
+    FRAMES_KEPT, FrameSample, FrameSamples, ProbeFrames, ProbePass, ProbeWorstFrame, SETTLE_FRAMES,
+    WORST_KEPT,
+};
 pub use game::{
     ProbeArea, ProbeBinding, ProbeBindings, ProbeButton, ProbeFrameQuestion, ProbeGame,
     ProbeGameQuestion, ProbeGesture, ProbeInterfaceIcon, ProbeItem, ProbeNamedObject, ProbeNpc,
@@ -16,7 +21,7 @@ use bevy::input::ButtonState;
 use bevy::input::keyboard::KeyboardInput;
 use bevy::input::mouse::{MouseButtonInput, MouseWheel};
 use bevy::prelude::*;
-use bevy::render::renderer::RenderDevice;
+use bevy::render::renderer::{RenderAdapterInfo, RenderDevice};
 use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 use bevy::tasks::AsyncComputeTaskPool;
 use bevy::window::{CursorOptions, PrimaryWindow};
@@ -35,6 +40,7 @@ use crate::core::gui::{self, GuiContext, WorldLayers};
 use crate::core::math::{
     MatrixSchema, Offset, OffsetSchema, Pos, PosSchema, Rect, RectSchema, Size, SizeSchema,
 };
+use crate::core::render::sample::{self, FrameSamplingPlugin, GpuReportsRead, RenderReports};
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::render::world::layers::Layered;
 use crate::core::render::world::sky::Daylight;
@@ -120,24 +126,34 @@ pub struct ProbeProtocol {
     pub points: Vec<Pos<Meters>>,
     pub water: ProbeWater,
     pub batch: Vec<serde_json::Value>,
+    pub frames: ProbeFrames,
 }
 
 /// Answers the driver at `driver`: the frame after it asks for a snapshot answers it, and every
 /// other question is about the game, answered on its own once the game is loaded.
 pub fn install(app: &mut App, driver: std::net::SocketAddr) {
     app.insert_non_send(Probe(socket::ProbeSocket::connect(driver)))
+        .add_plugins(FrameSamplingPlugin)
         .init_resource::<ProbeInputSeen>()
         .init_resource::<TerrainSent>()
         .init_resource::<DrawnUi>()
         .init_resource::<VfxSeen>()
         .init_resource::<FrameTimes>()
+        .init_resource::<FrameSamples>()
+        .init_resource::<FrameMark>()
         .add_observer(remember_vfx)
+        .add_systems(First, mark_frame)
         .add_systems(PreUpdate, (count_input, read_accessibly))
         .add_systems(
             PostUpdate,
             (copy_drawn_ui, count_clicks).after(EguiPostUpdateSet::ProcessOutput),
         )
-        .add_systems(Last, (time_frame, publish).chain());
+        .add_systems(
+            Last,
+            (time_frame, sample_frame, publish)
+                .chain()
+                .after(bevy::diagnostic::update_frame_count),
+        );
 }
 
 /// How long each frame took since the last snapshot.
@@ -149,6 +165,57 @@ fn time_frame(time: Res<Time<Real>>, mut times: ResMut<FrameTimes>) {
         times.0.pop_front();
     }
     times.0.push_back(Millis(time.delta_secs() * 1000.0));
+}
+
+/// When the main world began the frame.
+#[derive(Resource, Default)]
+struct FrameMark(Option<std::time::Instant>);
+
+fn mark_frame(mut mark: ResMut<FrameMark>) {
+    mark.0 = Some(std::time::Instant::now());
+}
+
+/// Keeps the frame's sample, and fills in what the render world and the GPU have reported of
+/// earlier frames since the last.
+fn sample_frame(world: &mut World) {
+    let frame = world.resource::<FrameCount>().0;
+    let dt_ms = Millis(world.resource::<Time<Real>>().delta_secs() * 1000.0);
+    let cpu_main_ms = world
+        .resource::<FrameMark>()
+        .0
+        .map_or(Millis(0.0), |began| {
+            Millis(began.elapsed().as_secs_f32() * 1000.0)
+        });
+    let missing = area::scenery::missing(world);
+    let visible_chunks = area::scenery::stood_chunks(world);
+    let entities = world.entities().len();
+    let drawn = world.resource::<RenderReports>().take();
+    let timed = world.resource_scope(|world, mut read: Mut<GpuReportsRead>| {
+        world
+            .get_resource::<bevy::diagnostic::DiagnosticsStore>()
+            .map(|store| sample::gpu_reports(store, &mut read))
+            .unwrap_or_default()
+    });
+    let mut samples = world.resource_mut::<FrameSamples>();
+    samples.push(FrameSample {
+        frame,
+        dt_ms,
+        cpu_main_ms,
+        cpu_render_ms: None,
+        gpu_ms: None,
+        missing,
+        draws: 0,
+        instances: 0,
+        entities,
+        visible_chunks,
+        upload_bytes: Bytes::default(),
+    });
+    for report in &drawn {
+        samples.drawn(report);
+    }
+    for report in &timed {
+        samples.timed(report);
+    }
 }
 
 /// One frame of the client. Content ids (de)serialize by key, so a driver reads a snapshot within a
@@ -203,10 +270,9 @@ pub struct ProbeSnapshot {
     /// Whether the scenery has yet to stand all the view takes in: until it has, some of what the
     /// view shows is missing.
     pub scenery_standing: bool,
+    /// The graphics adapter the client draws with, by the name its driver gives it.
+    pub adapter: Option<String>,
 }
-
-/// The most frame times a snapshot carries: some half a minute of frames however fast they come.
-pub const FRAMES_KEPT: usize = 8192;
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug)]
 pub struct ProbeInput {
@@ -729,6 +795,10 @@ fn publish(world: &mut World) {
     for question in asked {
         match question {
             ProbeFrameQuestion::Snapshot => snapshots += 1,
+            ProbeFrameQuestion::Frames { since } => {
+                let frames = world.resource::<FrameSamples>().since(since);
+                answers.give(&serde_json::to_string(&frames).expect("serializable frames"));
+            }
             ProbeFrameQuestion::Picture { path } => {
                 let answers = answers.clone();
                 world.spawn(Screenshot::primary_window()).observe(
@@ -919,6 +989,9 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         gpu_memory: gpu_memory(world),
         frame_times: world.resource_mut::<FrameTimes>().0.drain(..).collect(),
         scenery_standing: area::scenery::standing(world) || render::world::readying(world),
+        adapter: world
+            .get_resource::<RenderAdapterInfo>()
+            .map(|adapter| adapter.name.clone()),
         view,
         area,
     }
