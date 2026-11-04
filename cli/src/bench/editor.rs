@@ -17,41 +17,121 @@ use editor::scenes::SceneStep;
 use editor::user::{EditorSettings, UserFolder};
 use editor::views::area::camera::OrbitCamera;
 use engine::core::content::Content;
-use engine::core::units::Meters;
+use engine::core::units::{Bytes, Meters};
 use engine::systems::area::AreaDef;
+use engine::systems::probe::FrameSample;
 
 use super::desktop::BenchDesktop;
-use super::frames::{Frames, Video};
+use super::frames::{Class, Criteria, Video, Window};
+use super::report::{ScenarioResult, Verdict};
+use super::scenario::Target;
 use crate::binaries::{self, EDITOR};
 
-pub fn run(game: &Path, content: &Content) {
+/// Every area of the game at each of `videos`, each view of it a scenario of the report, of those
+/// whose names match `only`.
+pub fn run(
+    game: &Path,
+    content: &Content,
+    videos: &[Video],
+    only: Option<&str>,
+) -> Vec<ScenarioResult> {
     let areas: Vec<String> = content
         .ids::<AreaDef>()
         .map(|area| area.path(content).to_owned())
         .collect();
-    for video in Video::ALL {
-        let runs: Vec<AreaRun> = areas.iter().map(|area| watch(game, area, video)).collect();
-        report(video, &runs);
+    let mut results = Vec::new();
+    for &video in videos {
+        for area in &areas {
+            let stem = Path::new(area)
+                .file_stem()
+                .map_or_else(|| area.clone(), |stem| stem.to_string_lossy().into_owned());
+            let names: Vec<String> = VIEWS.iter().map(|view| format!("{stem} {view}")).collect();
+            if only
+                .is_some_and(|only| !names.iter().any(|name| crate::compare::matches(only, name)))
+            {
+                continue;
+            }
+            let run = watch(game, area, video);
+            println!(
+                "[editor-bench] {:<8} {:<40} opened in {:.1} s, stood close in {:.1} s, flicked halfway in {:.1} s, flicked in {:.1} s",
+                video.name(),
+                area,
+                run.opened.as_secs_f64(),
+                run.closed_in.as_secs_f64(),
+                run.halfway_in.as_secs_f64(),
+                run.flicked_in.as_secs_f64()
+            );
+            for ((view, window), name) in run.views().into_iter().zip(names) {
+                if only.is_some_and(|only| !crate::compare::matches(only, &name)) {
+                    continue;
+                }
+                let class = if view == "open" {
+                    Class::Busy
+                } else {
+                    Class::Typical
+                };
+                let criteria = Criteria::global(video);
+                let stats = window.stats(&criteria);
+                let failures = stats.as_ref().map_or_else(
+                    || vec!["no frames were logged".to_owned()],
+                    |stats| criteria.failures(stats),
+                );
+                let headroom = class.headroom(video);
+                let result = ScenarioResult {
+                    name,
+                    target: Target::Editor,
+                    class,
+                    video,
+                    verdict: if failures.is_empty() {
+                        Verdict::Passed
+                    } else {
+                        Verdict::Criteria
+                    },
+                    failures,
+                    headroom_met: match (&stats, headroom) {
+                        (Some(stats), Some(headroom)) => Some(stats.mean.0 >= headroom.0),
+                        _ => None,
+                    },
+                    headroom,
+                    stats,
+                    time_to_stand_frames: Vec::new(),
+                    runs: 1,
+                    mean_spread: None,
+                };
+                println!(
+                    "[editor-bench] {:<8} {:<40} {view:<6} {}",
+                    video.name(),
+                    area,
+                    result
+                        .stats
+                        .as_ref()
+                        .map_or_else(|| "no frames".to_owned(), |stats| stats.summary())
+                );
+                results.push(result);
+            }
+        }
     }
+    results
 }
+
+const VIEWS: [&str; 4] = ["open", "whole", "zoom", "close"];
 
 /// What the editor did with one area: how long until it first stood whole and the frames until
 /// then, the frames seen whole, zooming in and close up, and how long it took to stand close up
 /// once the steady zoom stopped, and halfway and close up once flicked in.
 struct AreaRun {
-    area: String,
     opened: Duration,
     closed_in: Duration,
     halfway_in: Duration,
     flicked_in: Duration,
-    open: Frames,
-    whole: Frames,
-    zoom: Frames,
-    close: Frames,
+    open: Window,
+    whole: Window,
+    zoom: Window,
+    close: Window,
 }
 
 impl AreaRun {
-    fn views(&self) -> [(&'static str, &Frames); 4] {
+    fn views(&self) -> [(&'static str, &Window); 4] {
         [
             ("open", &self.open),
             ("whole", &self.whole),
@@ -173,7 +253,6 @@ fn watch(game: &Path, area: &str, video: Video) -> AreaRun {
         }
     };
     AreaRun {
-        area: area.to_owned(),
         opened,
         closed_in,
         halfway_in,
@@ -218,90 +297,33 @@ impl Log {
             .collect()
     }
 
-    /// The frames logged from the `first` on.
-    fn frames(&self, first: usize) -> Frames {
-        Frames::of(
-            self.records()
-                .into_iter()
-                .skip(first)
-                .map(|record| record.frame),
-        )
+    /// The frames logged from the `first` on, as the editor's whole frame on its main thread.
+    fn frames(&self, first: usize) -> Window {
+        let mut window = Window::default();
+        for (index, record) in self.records().into_iter().enumerate().skip(first) {
+            window.push(FrameSample {
+                frame: index as u32,
+                dt_ms: record.frame,
+                cpu_main_ms: record.frame,
+                cpu_render_ms: None,
+                gpu_ms: None,
+                missing: 0,
+                draws: 0,
+                instances: 0,
+                entities: record.entities as u32,
+                visible_chunks: 0,
+                upload_bytes: Bytes(0),
+            });
+        }
+        window
     }
 
     /// The frames logged while the editor is left to draw for `lasting`.
-    fn watch(&self, lasting: Duration) -> Frames {
+    fn watch(&self, lasting: Duration) -> Window {
         let first = self.records().len();
         std::thread::sleep(lasting);
         self.frames(first)
     }
-}
-
-fn report(video: Video, runs: &[AreaRun]) {
-    for run in runs {
-        println!(
-            "[editor-bench] {:<8} {:<40} opened in {:.1} s, stood close in {:.1} s, flicked halfway in {:.1} s, flicked in {:.1} s",
-            video.name(),
-            run.area,
-            run.opened.as_secs_f64(),
-            run.closed_in.as_secs_f64(),
-            run.halfway_in.as_secs_f64(),
-            run.flicked_in.as_secs_f64()
-        );
-        for (view, frames) in run.views() {
-            println!(
-                "[editor-bench] {:<8} {:<40} {view:<6} {}",
-                video.name(),
-                run.area,
-                frames.summary()
-            );
-        }
-    }
-    let slowest = runs
-        .iter()
-        .flat_map(|run| {
-            run.views()
-                .into_iter()
-                .filter(|(view, _)| *view != "open")
-                .map(move |(view, frames)| (run, view, frames))
-        })
-        .filter(|(_, _, frames)| !frames.is_empty())
-        .min_by(|a, b| a.2.slowest().total_cmp(&b.2.slowest()));
-    let Some((run, view, frames)) = slowest else {
-        println!("[editor-bench] not benched: the game has no area");
-        return;
-    };
-    let longest_open = runs
-        .iter()
-        .max_by_key(|run| run.opened)
-        .expect("an area was opened");
-    let longest_close = runs
-        .iter()
-        .max_by_key(|run| run.closed_in)
-        .expect("an area was opened");
-    let longest_halfway = runs
-        .iter()
-        .max_by_key(|run| run.halfway_in)
-        .expect("an area was opened");
-    let longest_flick = runs
-        .iter()
-        .max_by_key(|run| run.flicked_in)
-        .expect("an area was opened");
-    println!(
-        "[editor-bench] RESULT video={} slowest={:.0} ({} {view}) floor={:.0} longest_open={:.1}s ({}) open_slowest={:.0} longest_close={:.1}s ({}) longest_halfway={:.1}s ({}) longest_flick={:.1}s ({})",
-        video.name(),
-        frames.slowest(),
-        run.area,
-        video.floor(),
-        longest_open.opened.as_secs_f64(),
-        longest_open.area,
-        longest_open.open.slowest(),
-        longest_close.closed_in.as_secs_f64(),
-        longest_close.area,
-        longest_halfway.halfway_in.as_secs_f64(),
-        longest_halfway.area,
-        longest_flick.flicked_in.as_secs_f64(),
-        longest_flick.area
-    );
 }
 
 const EDITOR_LOG: &str = "editor.log";

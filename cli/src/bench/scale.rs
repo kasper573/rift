@@ -14,7 +14,7 @@ use engine::core::render::video::VideoPreferences;
 use engine::core::units::Bytes;
 use engine::systems::GameSettings;
 
-use super::client::settled_in_world;
+use super::places::settled_in_world;
 use super::playtest::Playtest;
 use super::sim::{self, Bench, Layout, PLAYERS_PER_AREA};
 use super::tile::tiled;
@@ -179,7 +179,8 @@ struct Seen {
 
 /// The client's frame rate and memory, standing where the game starts.
 fn client(game: &Path, content: &Content) -> Seen {
-    let mut me = Playtest::start(game, content, VideoPreferences::default());
+    let mut me = Playtest::start(game, content, VideoPreferences::default())
+        .unwrap_or_else(|problem| panic!("{problem}"));
     settled_in_world(&mut me);
     let first = me.snapshot().frame;
     let since = Instant::now();

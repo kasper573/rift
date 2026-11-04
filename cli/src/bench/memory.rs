@@ -14,7 +14,7 @@ use engine::core::units::Bytes;
 use engine::systems::script::Place;
 use engine::systems::staging::Staging;
 
-use super::client::{arrived, away_from, settled_in_world, staged};
+use super::places::{arrived, away_from, settled_in_world, staged};
 use super::playtest::Playtest;
 
 // The caches and pools sized to the busiest moment fill over a varying number of crossings, the
@@ -45,9 +45,9 @@ const GPU_SLACK: Slack = Slack {
 
 /// Fails naming what grew.
 pub fn run(game: &Path, content: &Content) -> Result<(), String> {
-    let mut me = Playtest::start(game, content, VideoPreferences::default());
+    let mut me = Playtest::start(game, content, VideoPreferences::default())?;
     let home = settled_in_world(&mut me);
-    let Some(away) = away_from(&me, home) else {
+    let Some(away) = away_from(content, home) else {
         println!("[memory-bench] not benched: no warp out of the spawn area");
         return Ok(());
     };

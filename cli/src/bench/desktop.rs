@@ -142,6 +142,11 @@ impl BenchDesktop {
         assert!(scrolled.success(), "xdotool could not scroll the client");
     }
 
+    /// The X display the desktop's windows show on.
+    pub fn display(&self) -> &str {
+        &self.display
+    }
+
     /// The environment that puts a client on this desktop.
     pub fn env(&self) -> [(&str, &str); 3] {
         [
@@ -154,7 +159,7 @@ impl BenchDesktop {
     }
 }
 
-const SCREEN: (u32, u32) = (2560, 1440);
+pub const SCREEN: (u32, u32) = (2560, 1440);
 /// How long xdotool may wait for a window, which never shows if its program has died.
 const WINDOW_WITHIN: Duration = Duration::from_secs(60);
 const READY_WITHIN: Duration = Duration::from_secs(20);

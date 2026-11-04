@@ -2647,6 +2647,7 @@ dependencies = [
  "image",
  "image-compare",
  "rayon",
+ "schemars 1.2.3",
  "serde",
  "serde_json",
  "service",

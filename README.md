@@ -58,18 +58,37 @@ rift bench                           # the server's capacity, on a large game ge
 rift bench <game>                    # …on the game, then the client's and the editor's frame rates and memory (Linux)
 rift bench <game> --only memory      # …only the parts named: server, client, editor, memory
 rift bench <game> --only scale       # …the spawn area grown side by side, against as many areas: run only when named
+rift bench <game> --scenario 'orbit*' --video lowest --repeat 3
+                                     # …only the scenarios named, at one preset, each run three times
+rift bench <game> --report out.json --compare before.json
+                                     # …the report written there, and held against an earlier run's
+rift snapshot <game> <shots> <out>   # every shot of a folder drawn into a set of pictures, by adapter and preset
+rift compare <baseline> <candidate>  # two sets held against each other, shot by shot, with a report
+rift noise <game> <shots> <out>      # every shot drawn again and again, and each shot's allowance from the noise
 rift loadtest --http <url> --ws <url> [count]
 rift profile --out <dir> [game]      # game-server-profiling under load, sampled by perf (Linux)
 rift schema probe                    # the JSON Schema of the desktop client's probe
 rift schema server                   # …of what a game server prints once ready, and its test routes
+rift schema bench                    # …of the report `rift bench` writes
 ```
 
 `rift bench <game>` starts `game-server` and `desktop-client` from its binaries folder; it plays the
-game's first test character, staging each scene on the server. The client plays on a desktop of the
-bench's own: a headless `weston` screen it draws on through `Xwayland`, its window seated there by
-`xdotool`, and a silent sink on a PulseAudio-compatible sound server (`pactl`). Its frame rate is then its own, and nothing reaches the
-machine's display or speakers. The editor plays on such a desktop too: it opens each of the game's
-areas, seen whole and close up, and its frame rate is taken once all the view takes in stands.
+game's first test character, or a fresh one where the game has none, through a catalogue of
+scenarios: each staged on the server, then played as a player would through the client's own
+bindings, its input confirmed through the probe. The places, spells and windows the scenarios play
+with come from `bench/scenarios.json` in the game's folder, or from the content when it has none.
+Every scenario's frames are held to the same criteria: a mean at or over the floor of its video
+preset (60 fps at the highest, 90 at the lowest), at most 1% of frames slower than the floor's
+period, no frame past 48 ms, and nothing the view takes in missing. The client plays on a desktop
+of the bench's own: a headless `weston` screen it draws on through `Xwayland`, its window seated
+there by `xdotool`, and a silent sink on a PulseAudio-compatible sound server (`pactl`). Its frame
+rate is then its own, and nothing reaches the machine's display or speakers. The editor plays on
+such a desktop too: it opens each of the game's areas, seen whole and close up, and its frame rate
+is taken once all the view takes in stands. The run's report, `bench-report.json` unless `--report`
+says where, is described by `rift schema bench`; `--compare` holds it against an earlier run's and
+fails when a scenario that passed now fails, a mean fell by more than a tenth or a p99 rose by more
+than a fifth. The exit code says how the run went: 0 passed, 1 a scenario fell short of its
+criteria or the comparison got worse, 2 a scenario could not be played through, 3 a process died.
 
 ## A game is a folder
 

@@ -49,6 +49,27 @@ enum Command {
         /// Runs only these parts of the bench, each named once.
         #[arg(long, value_enum)]
         only: Vec<bench::BenchPart>,
+        /// Runs only the scenarios whose names match, `*` standing for anything.
+        #[arg(long)]
+        scenario: Option<String>,
+        /// The video preset to run the scenarios at; both unless given.
+        #[arg(long, value_enum)]
+        video: Option<bench::VideoPreset>,
+        /// How many times each scenario runs; the report keeps the median run and the spread.
+        #[arg(long, default_value_t = 1)]
+        repeat: u32,
+        /// Where the report is written.
+        #[arg(long, default_value = "bench-report.json")]
+        report: PathBuf,
+        /// A report of an earlier run to compare against: fails when a scenario got worse.
+        #[arg(long)]
+        compare: Option<PathBuf>,
+        /// The adapter the client must draw on; the bench refuses to run on another.
+        #[arg(long)]
+        adapter: Option<String>,
+        /// One short scenario per target without criteria, proving the harness alone.
+        #[arg(long)]
+        smoke: bool,
     },
     /// Simulated players against a running game server that takes any account's sign-in:
     /// COUNT of them, or as many as it holds within its tick budget.
@@ -128,6 +149,8 @@ enum Schema {
     Probe,
     /// What a game server prints once ready, and what its test routes take.
     Server,
+    /// What `rift bench` writes as its report.
+    Bench,
 }
 
 fn exit_on(result: Result<(), String>) {
@@ -158,10 +181,36 @@ fn main() {
                 render::area(&game, &shot, &out);
             }
         }
-        Command::Bench { game, spread, only } => {
-            if let Err(failure) = bench::run(game.as_deref(), spread, &only) {
-                eprintln!("{failure}");
-                std::process::exit(1);
+        Command::Bench {
+            game,
+            spread,
+            only,
+            scenario,
+            video,
+            repeat,
+            report,
+            compare,
+            adapter,
+            smoke,
+        } => {
+            let args = bench::BenchArgs {
+                game,
+                spread,
+                only,
+                scenario,
+                video,
+                repeat,
+                report,
+                compare,
+                adapter,
+                smoke,
+            };
+            match bench::run(&args) {
+                Ok(code) => std::process::exit(code),
+                Err(failure) => {
+                    eprintln!("{failure}");
+                    std::process::exit(2);
+                }
             }
         }
         Command::Loadtest { http, count } => {
@@ -205,5 +254,6 @@ fn main() {
         Command::Profile { game, out } => profile::run(game.as_deref(), &out),
         Command::Schema(Schema::Probe) => println!("{}", engine::systems::probe::schema()),
         Command::Schema(Schema::Server) => println!("{}", engine::systems::launch::server_schema()),
+        Command::Schema(Schema::Bench) => println!("{}", bench::schema()),
     }
 }
