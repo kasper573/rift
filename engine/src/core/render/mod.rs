@@ -114,11 +114,11 @@ pub struct Animator {
     rng: Rng,
 }
 
-impl Default for Animator {
-    fn default() -> Animator {
+impl FromWorld for Animator {
+    fn from_world(world: &mut World) -> Animator {
         Animator {
             anchors: HashMap::new(),
-            rng: Rng::from_entropy(),
+            rng: Rng::fork_of(world),
         }
     }
 }

@@ -27,6 +27,7 @@ tempfile.workspace = true
 ureq = { workspace = true, features = ["rustls", "platform-verifier"] }
 sysinfo.workspace = true
 walkdir.workspace = true
+image.workspace = true
 
 [lints]
 workspace = true

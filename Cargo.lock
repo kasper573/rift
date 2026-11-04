@@ -2642,6 +2642,7 @@ dependencies = [
  "clap",
  "editor",
  "engine",
+ "image",
  "rayon",
  "serde",
  "serde_json",

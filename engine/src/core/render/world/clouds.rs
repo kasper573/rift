@@ -231,6 +231,14 @@ pub struct CloudDrift {
 }
 
 impl CloudDrift {
+    /// Clouds that have already drifted for `seconds` on whatever wind first blows them.
+    pub fn carried_for(seconds: f32) -> CloudDrift {
+        CloudDrift {
+            drift: Vec2::ZERO,
+            at: Some(-seconds),
+        }
+    }
+
     /// The drift at `seconds` into the client's run, the clouds carried on `wind` since it was
     /// last asked.
     pub fn blown(&mut self, wind: Vec2, seconds: f32, look: &CloudLook) -> Vec2 {

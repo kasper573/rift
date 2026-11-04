@@ -76,6 +76,10 @@ enum Render {
         game: PathBuf,
         shot: PathBuf,
         out: PathBuf,
+        /// Draws the shot a second time in a process of its own and prints how far the two
+        /// pictures differ, failing when they differ by more than the eye can tell.
+        #[arg(long)]
+        check_determinism: bool,
     },
 }
 
@@ -93,7 +97,21 @@ fn main() {
         Command::Check { game } => check::run(&game),
         Command::Format { game } => check::format(&game),
         Command::Ask { game } => ask::run(&game),
-        Command::Render(Render::Area { game, shot, out }) => render::area(&game, &shot, &out),
+        Command::Render(Render::Area {
+            game,
+            shot,
+            out,
+            check_determinism,
+        }) => {
+            if check_determinism {
+                if let Err(failure) = render::check_determinism(&game, &shot, &out) {
+                    eprintln!("{failure}");
+                    std::process::exit(1);
+                }
+            } else {
+                render::area(&game, &shot, &out);
+            }
+        }
         Command::Bench { game, spread, only } => {
             if let Err(failure) = bench::run(game.as_deref(), spread, &only) {
                 eprintln!("{failure}");

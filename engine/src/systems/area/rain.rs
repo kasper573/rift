@@ -231,7 +231,7 @@ struct Thunder {
 }
 
 impl FallingRain {
-    fn new(world: &World, area_id: AreaId, area: &Area) -> FallingRain {
+    fn new(world: &mut World, area_id: AreaId, area: &Area) -> FallingRain {
         let content = world.resource::<Content>();
         let models = content.built::<GltfInfos>();
         let shelters: Vec<Sheltering> = area
@@ -265,7 +265,7 @@ impl FallingRain {
             shelter_index,
             strokes: Vec::new(),
             thunder: Vec::new(),
-            rng: Rng::from_entropy(),
+            rng: Rng::fork_of(world),
         }
     }
 

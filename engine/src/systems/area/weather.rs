@@ -394,6 +394,30 @@ impl Climate {
         self.spells.iter().position(|spell| spell.name == name)
     }
 
+    /// The weather `phase` of the way through the spell at `spell`, 0 to 1: the spell's own,
+    /// turning toward the one that most likely follows it over the last `turns` of its longest
+    /// run, as it does on a turning course.
+    pub fn held_at(&self, spell: usize, phase: f32) -> Weather {
+        let Some(of) = self.spells.get(spell) else {
+            return self.held(spell);
+        };
+        let next = of
+            .next
+            .iter()
+            .max_by(|a, b| a.weight.total_cmp(&b.weight))
+            .and_then(|next| self.spell_named(&next.spell));
+        let Some(next) = next else {
+            return of.weather;
+        };
+        let left = of.lasts.longest.0 * (1.0 - phase.clamp(0.0, 1.0));
+        let turning = self.turns.0.min(of.lasts.longest.0).max(f32::EPSILON);
+        let share = (1.0 - left / turning).clamp(0.0, 1.0);
+        of.weather.toward(
+            &self.spells[next].weather,
+            share * share * (3.0 - 2.0 * share),
+        )
+    }
+
     /// Where the course running `course` stands at `now`, from `from` when it last stood there,
     /// so a caller asking again and again walks on from where it last stood.
     pub fn course_at(

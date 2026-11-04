@@ -5,10 +5,17 @@
 //! ground beneath them, and each body standing on the ground in it: its model, where it stands, the
 //! spot it faces, the items in its hands, and the moment it holds of its stance's idle or of another
 //! clip its skeleton plays. A shot may stand at an hour of the day, and film the day turning from
-//! it: a picture a frame into the folder `out` names, `0000.png` on.
+//! it: a picture a frame into the folder `out` names, `0000.png` on. It may hold the area's weather
+//! at a spell of its climate, part way through it, with its clouds drifted for a while and lightning
+//! striking at a frame; be drawn at any video settings; and arrive: stand the area for one lens,
+//! jump to its own, and film every frame as the area stands anew.
+//!
+//! Every draw of chance on the client's side is seeded by the shot and time steps a frame at a time,
+//! so the same shot draws the same picture twice.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -18,19 +25,24 @@ use bevy::image::ImageSampler;
 use bevy::prelude::*;
 use bevy::render::gpu_readback::{ReadbackComplete, ReadbackOnce};
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
+use bevy::time::TimeUpdateStrategy;
 use bevy::window::ExitCondition;
+use engine::core::audio::playback::Listener;
 use engine::core::content::Content;
 use engine::core::ground::Heightfield;
-use engine::core::math::Pos;
-use engine::core::render::Look;
+use engine::core::math::{Pos, Rng};
 use engine::core::render::camera::{self, View, world_point};
+use engine::core::render::video::VideoPreferences;
 use engine::core::render::world::WorldScenePlugin;
 use engine::core::render::world::body;
+use engine::core::render::world::clouds::CloudDrift;
 use engine::core::render::world::layers::Layered;
 use engine::core::render::world::mannequin::mannequin;
 use engine::core::render::world::rig_clip;
 use engine::core::render::world::sky::Daylight;
+use engine::core::render::{CameraRig, Look};
 use engine::core::units::{Degrees, Meters, Radians, Seconds};
+use engine::core::vfx::rain::{RainField, Shelter};
 use engine::core::vfx::render::VfxMaterialsPlugin;
 use engine::systems::GameSettings;
 use engine::systems::actor::layering::{self, Layering};
@@ -39,9 +51,9 @@ use engine::systems::actor::skeleton::Clip;
 use engine::systems::actor::stance::{self, HandIndex};
 use engine::systems::actor::{Action, Appearance, ModelDef, Motion, Pose, appearance, render};
 use engine::systems::area::scenery::{self, SceneryPlugin};
-use engine::systems::area::{self, Area, AreaDef, Kept, Pictured};
+use engine::systems::area::{self, Area, AreaDef, AreaId, Kept, Pictured, Weather, rain};
 use engine::systems::item::{ItemDef, Wear};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 /// How far around the target the scenery stands, in times the eye's distance from it: as far as a
 /// lens looking down at the target takes in, and the haze beyond.
@@ -49,7 +61,22 @@ const SCENERY_REACH: f32 = 4.0;
 
 /// Frames the picture settles for once every body stands dressed, while what it shows loads and
 /// the frames it is smoothed over fill.
-const SETTLE: u32 = 180;
+pub const SETTLE: u32 = 180;
+
+/// How long each frame steps time on, so a shot plays out alike from run to run.
+const FRAME_STEP: f64 = 1.0 / 60.0;
+
+/// How far two pictures of one shot may differ, in levels of 255, for the shot to count as drawn
+/// alike: less than the eye can tell.
+const ALIKE_WITHIN: f64 = 0.5;
+
+/// What a render says once it has drawn: where the picture is, and for a shot that arrives, how
+/// many frames after the jump the area stood whole.
+#[derive(Serialize, Deserialize, Debug)]
+pub struct RenderOutcome {
+    pub out: PathBuf,
+    pub stood_after_frames: Option<usize>,
+}
 
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -64,7 +91,28 @@ struct Shot {
     hour: Option<f32>,
     #[serde(default)]
     film: Option<Film>,
+    #[serde(default)]
     bodies: Vec<Standing>,
+    /// The video settings the picture is drawn at: the highest unless given.
+    #[serde(default)]
+    video: Option<VideoChoice>,
+    /// The spell of the area's climate the weather holds at, by its name; the first unless given.
+    #[serde(default)]
+    spell: Option<String>,
+    /// How far through the spell the weather stands, 0 to 1: it turns toward the next spell over
+    /// the last of it.
+    #[serde(default)]
+    spell_phase: f32,
+    #[serde(default)]
+    lightning: Option<LightningAt>,
+    /// How long the clouds have drifted on the spell's wind when the picture is taken, in seconds.
+    #[serde(default)]
+    clouds_time: f32,
+    #[serde(default)]
+    arrive: Option<Arrive>,
+    /// What every draw of chance on the client's side is seeded by.
+    #[serde(default)]
+    seed: u64,
 }
 
 /// The day turning `hours` on from the shot's hour over `frames` pictures.
@@ -72,6 +120,48 @@ struct Shot {
 #[serde(deny_unknown_fields)]
 struct Film {
     hours: f32,
+    frames: u32,
+}
+
+/// Video settings by a preset's name, or each setting given.
+#[derive(Deserialize, Clone, Copy)]
+#[serde(untagged)]
+enum VideoChoice {
+    Preset(VideoPreset),
+    Each(VideoPreferences),
+}
+
+#[derive(Deserialize, Clone, Copy)]
+#[serde(rename_all = "lowercase")]
+enum VideoPreset {
+    Highest,
+    Lowest,
+}
+
+impl VideoChoice {
+    fn preferences(self) -> VideoPreferences {
+        match self {
+            VideoChoice::Preset(VideoPreset::Highest) => VideoPreferences::default(),
+            VideoChoice::Preset(VideoPreset::Lowest) => VideoPreferences::lowest(),
+            VideoChoice::Each(preferences) => preferences,
+        }
+    }
+}
+
+/// Lightning striking close by at the `at_frame`th frame of the settling, lighting that frame as
+/// the climate's lightning does; the picture is taken at frame [`SETTLE`].
+#[derive(Deserialize, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+struct LightningAt {
+    at_frame: u32,
+}
+
+/// Arriving: the area stood for the lens `from`, then the camera jumped to the shot's lens, and
+/// every frame from the jump to the `frames`th taken as the area stands anew.
+#[derive(Deserialize, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+struct Arrive {
+    from: Lens,
     frames: u32,
 }
 
@@ -139,11 +229,13 @@ struct Taking {
     frame: u32,
 }
 
-/// The area as it stands for the picture, for the day to turn over it.
+/// The area as it stands for the picture, for the day to turn over it and its weather to go on.
 struct Stood {
+    id: AreaId,
     area: Arc<Area>,
     scenery: scenery::Scenery,
     camera: Entity,
+    weather: Weather,
 }
 
 enum Stage {
@@ -151,6 +243,18 @@ enum Stage {
     Standing(Vec<Body>),
     Settling(u32),
     Reading(Entity),
+    /// Every frame since the jump taken, each read back once drawn, and after how many the area
+    /// stood whole.
+    Arriving {
+        frames: u32,
+        readbacks: Vec<Entity>,
+        stood_after: Option<u32>,
+    },
+    /// Every frame taken, waiting for the last to be read back.
+    Draining {
+        readbacks: Vec<Entity>,
+        stood_after: Option<u32>,
+    },
 }
 
 /// Frames a picture settles for once the hour turns, for the light to reach every pass.
@@ -188,9 +292,13 @@ pub fn area(folder: &Path, shot: &Path, out: &Path) {
     )
     .unwrap_or_else(|report| panic!("{report}"));
     let out = out.to_path_buf();
-    if shot.film.is_some() {
+    if shot.film.is_some() || shot.arrive.is_some() {
         std::fs::create_dir_all(&out).expect("a folder to film into");
     }
+    let video = shot
+        .video
+        .map_or_else(VideoPreferences::default, VideoChoice::preferences);
+    let seed = shot.seed;
     let mut shot = Some(shot);
     App::new()
         .add_plugins(
@@ -207,12 +315,20 @@ pub fn area(folder: &Path, shot: &Path, out: &Path) {
                 .disable::<bevy::winit::WinitPlugin>(),
         )
         .add_plugins(ScheduleRunnerPlugin::run_loop(Duration::from_secs_f64(
-            1.0 / 60.0,
+            FRAME_STEP,
         )))
+        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_secs_f64(
+            FRAME_STEP,
+        )))
+        .insert_resource(Rng::new(seed))
         .add_plugins((WorldScenePlugin, VfxMaterialsPlugin, SceneryPlugin))
         .insert_resource(content.built::<GameSettings>().look.clone())
         .insert_resource(content)
+        .insert_resource(video)
         .init_resource::<Read>()
+        .init_resource::<RainField>()
+        .init_resource::<Shelter>()
+        .init_resource::<Listener>()
         .add_observer(|read: On<ReadbackComplete>, mut taken: ResMut<Read>| {
             taken.0.push((read.entity, read.data.clone()));
         })
@@ -240,6 +356,103 @@ pub fn area(folder: &Path, shot: &Path, out: &Path) {
         .run();
 }
 
+/// Draws `shot` twice, each in a process of its own, and tells how far the two pictures differ:
+/// refused when they differ by more than the eye can tell. Of an arrival, the frames before the
+/// area stood whole in both runs, and the frames the picture settles over after that, come as
+/// the loading happens to go and are left out.
+pub fn check_determinism(folder: &Path, shot: &Path, out: &Path) -> Result<(), String> {
+    let again = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let twin = again.path().join(out.file_name().ok_or("an output name")?);
+    let mut stood = Vec::new();
+    for out in [out, twin.as_path()] {
+        let rift = std::env::current_exe().map_err(|error| error.to_string())?;
+        let drawn = Command::new(rift)
+            .args(["render", "area"])
+            .args([folder, shot, out])
+            .output()
+            .map_err(|error| format!("rift doesn't run again: {error}"))?;
+        println!("{}", String::from_utf8_lossy(&drawn.stdout).trim_end());
+        if !drawn.status.success() {
+            return Err(format!(
+                "the render of {} failed: {}",
+                shot.display(),
+                drawn.status
+            ));
+        }
+        let outcome: RenderOutcome = String::from_utf8_lossy(&drawn.stdout)
+            .lines()
+            .rev()
+            .find_map(|line| serde_json::from_str(line).ok())
+            .ok_or("the render told no outcome")?;
+        stood.extend(outcome.stood_after_frames);
+    }
+    let from = stood
+        .iter()
+        .max()
+        .map_or(0, |stood| stood + TAA_SETTLE as usize);
+    let (rms, pictures) = rms_between(out, &twin, from)?;
+    println!("determinism rms={rms:.4}/255 over {pictures} pictures");
+    if rms < ALIKE_WITHIN {
+        Ok(())
+    } else {
+        Err(format!(
+            "two renders of {} differ by {rms:.4}/255 RMS, more than {ALIKE_WITHIN}",
+            shot.display()
+        ))
+    }
+}
+
+/// Frames after which what the picture's history held before a change, blended in a little less
+/// each frame, has faded below what the eye can tell.
+const TAA_SETTLE: u32 = 24;
+
+/// The root mean square difference, in levels of 255, between the picture or folder of pictures
+/// at `a` and the same at `b`, the first `from` of a folder's left out, and how many pictures were
+/// compared.
+fn rms_between(a: &Path, b: &Path, from: usize) -> Result<(f64, usize), String> {
+    let pictures: Vec<(PathBuf, PathBuf)> = if a.is_dir() {
+        let mut names: Vec<PathBuf> = std::fs::read_dir(a)
+            .map_err(|error| error.to_string())?
+            .filter_map(Result::ok)
+            .map(|entry| entry.path())
+            .filter(|path| path.extension().is_some_and(|ext| ext == "png"))
+            .collect();
+        names.sort();
+        names
+            .into_iter()
+            .skip(from)
+            .map(|path| {
+                let name = path.file_name().expect("a picture's name").to_owned();
+                (path, b.join(name))
+            })
+            .collect()
+    } else {
+        vec![(a.to_path_buf(), b.to_path_buf())]
+    };
+    let mut sum = 0.0f64;
+    let mut count = 0usize;
+    for (a, b) in &pictures {
+        let open = |path: &Path| {
+            image::open(path)
+                .map(|picture| picture.to_rgb8())
+                .map_err(|error| format!("{}: {error}", path.display()))
+        };
+        let (a, b) = (open(a)?, open(b)?);
+        if a.dimensions() != b.dimensions() {
+            return Err("the two pictures differ in size".to_owned());
+        }
+        for (a, b) in a.as_raw().iter().zip(b.as_raw()) {
+            let difference = f64::from(*a) - f64::from(*b);
+            sum += difference * difference;
+        }
+        count += a.as_raw().len();
+    }
+    if count == 0 {
+        return Err("no pictures to compare".to_owned());
+    }
+    Ok(((sum / count as f64).sqrt(), pictures.len()))
+}
+
 fn step(world: &mut World) {
     let content = world.resource::<Content>().clone();
     world.resource_scope(|world, mut taking: Mut<Taking>| {
@@ -262,12 +475,82 @@ fn step(world: &mut World) {
                     all &= standing.hung;
                 }
                 drive(world, bodies);
+                shine(world, taking.stood.as_ref().expect("the area stood"), false);
                 if all && !scenery::standing(world) {
-                    taking.stage = Stage::Settling(0);
+                    taking.stage = match taking.shot.arrive {
+                        Some(_) => {
+                            jump(world, &taking.shot, taking.stood.as_ref().expect("stood"));
+                            Stage::Arriving {
+                                frames: 0,
+                                readbacks: Vec::new(),
+                                stood_after: None,
+                            }
+                        }
+                        None => Stage::Settling(0),
+                    };
                 }
+            }
+            Stage::Arriving {
+                frames,
+                readbacks,
+                stood_after,
+            } => {
+                shine(world, taking.stood.as_ref().expect("the area stood"), false);
+                if stood_after.is_none()
+                    && !scenery::standing(world)
+                    && !engine::core::render::world::readying(world)
+                {
+                    *stood_after = Some(*frames);
+                }
+                readbacks.push(
+                    world
+                        .spawn(ReadbackOnce::texture(taking.image.clone()))
+                        .id(),
+                );
+                *frames += 1;
+                let wanted = taking.shot.arrive.expect("an arriving shot").frames;
+                if *frames >= wanted {
+                    taking.stage = Stage::Draining {
+                        readbacks: std::mem::take(readbacks),
+                        stood_after: *stood_after,
+                    };
+                }
+            }
+            Stage::Draining {
+                readbacks,
+                stood_after,
+            } => {
+                let read = world.resource::<Read>();
+                if !readbacks
+                    .iter()
+                    .all(|readback| read.0.iter().any(|(entity, _)| entity == readback))
+                {
+                    return;
+                }
+                let mut read = world.resource_mut::<Read>();
+                for (frame, readback) in readbacks.iter().enumerate() {
+                    let index = read
+                        .0
+                        .iter()
+                        .position(|(entity, _)| entity == readback)
+                        .expect("every frame read back");
+                    let pixels = read.0.remove(index).1;
+                    let path = taking.out.join(format!("{frame:04}.png"));
+                    save(pixels, taking.shot.width, taking.shot.height, &path);
+                }
+                done(world, &taking.out, *stood_after);
             }
             Stage::Settling(frames) => {
                 *frames += 1;
+                let flashing = taking
+                    .shot
+                    .lightning
+                    .is_some_and(|lightning| lightning.at_frame == *frames);
+                shine(
+                    world,
+                    taking.stood.as_ref().expect("the area stood"),
+                    flashing,
+                );
                 if *frames >= SETTLE {
                     let readback = world
                         .spawn(ReadbackOnce::texture(taking.image.clone()))
@@ -283,36 +566,35 @@ fn step(world: &mut World) {
                 let pixels = read.0.remove(index).1;
                 let Some(film) = taking.shot.film else {
                     save(pixels, taking.shot.width, taking.shot.height, &taking.out);
-                    println!("{}", taking.out.display());
-                    world.write_message(AppExit::Success);
+                    done(world, &taking.out, None);
                     return;
                 };
                 let path = taking.out.join(format!("{:04}.png", taking.frame));
                 save(pixels, taking.shot.width, taking.shot.height, &path);
                 taking.frame += 1;
                 if taking.frame >= film.frames {
-                    println!("{}", taking.out.display());
-                    world.write_message(AppExit::Success);
+                    done(world, &taking.out, None);
                     return;
                 }
                 let start = taking.shot.hour.expect("a filmed shot stands at an hour");
                 let hour = start + film.hours * taking.frame as f32 / film.frames as f32;
-                let stood = taking.stood.as_ref().expect("a filmed shot stood");
-                let daylight = Daylight::Hour(hour.rem_euclid(24.0));
-                world.insert_resource(daylight);
-                let weather = stood.area.climate.first();
-                scenery::light(
-                    world,
-                    &stood.area,
-                    &weather,
-                    daylight,
-                    stood.scenery,
-                    stood.camera,
-                );
+                world.insert_resource(Daylight::Hour(hour.rem_euclid(24.0)));
                 taking.stage = Stage::Settling(SETTLE - TURNING);
             }
         }
     });
+}
+
+fn done(world: &mut World, out: &Path, stood_after_frames: Option<u32>) {
+    let outcome = RenderOutcome {
+        out: out.to_path_buf(),
+        stood_after_frames: stood_after_frames.map(|frames| frames as usize),
+    };
+    println!(
+        "{}",
+        serde_json::to_string(&outcome).expect("a serializable outcome")
+    );
+    world.write_message(AppExit::Success);
 }
 
 /// Stands the shot's area and its bodies and points the camera, once the area's cover shaders are
@@ -332,9 +614,12 @@ fn set_up(
         return None;
     }
     let grade = world.resource::<Look>().picture;
-    let eye = shot.lens.eye.point(&picture.area.heights);
-    let target = shot.lens.target.point(&picture.area.heights);
-    let lens = Transform::from_translation(eye).looking_at(target, Vec3::Y);
+    let lens = shot.arrive.map_or(shot.lens, |arrive| arrive.from);
+    let (eye, target) = (
+        lens.eye.point(&picture.area.heights),
+        lens.target.point(&picture.area.heights),
+    );
+    let placed = Transform::from_translation(eye).looking_at(target, Vec3::Y);
     let camera = world
         .spawn((
             Camera3d::default(),
@@ -343,39 +628,116 @@ fn set_up(
                 ..default()
             },
             RenderTarget::Image(image.clone().into()),
-            camera::lens(shot.lens.fov, shot.width, shot.height),
+            camera::lens(lens.fov, shot.width, shot.height),
             camera::picture(grade),
-            lens,
+            placed,
         ))
         .id();
+    let mut rig = CameraRig::new(world.resource::<Look>().camera);
+    rig.look_at(lens.target.ground(), lens.target.height);
+    world.insert_resource(rig);
+    world.insert_resource(CloudDrift::carried_for(shot.clouds_time));
     let stood = scenery::spawn(world, content, &picture.area, default());
-    scenery::view_from(
-        world,
-        stood,
-        shot.lens.target.ground(),
-        Meters(eye.distance(target) * SCENERY_REACH),
-        View::new(
-            lens,
-            Vec2::new(shot.width as f32, shot.height as f32),
-            shot.lens.fov,
-        ),
-    );
-    let daylight = shot.hour.map_or(Daylight::Fixed, Daylight::Hour);
-    world.insert_resource(daylight);
-    let weather = picture.area.climate.first();
-    scenery::light(world, &picture.area, &weather, daylight, stood, camera);
-    world.insert_resource(scenery::shown_weather(&weather, 0.0));
+    view(world, stood, lens, shot);
+    world.insert_resource(shot.hour.map_or(Daylight::Fixed, Daylight::Hour));
+    let climate = &picture.area.climate;
+    let spell = match &shot.spell {
+        Some(name) => climate
+            .spell_named(name)
+            .unwrap_or_else(|| panic!("{} has no spell named {name}", shot.area)),
+        None => 0,
+    };
+    // Lightning strikes only where the shot says, never by chance.
+    let weather = Weather {
+        lightning: 0.0,
+        ..climate.held_at(spell, shot.spell_phase)
+    };
+    let stood = Stood {
+        id: area_id,
+        area: picture.area.clone(),
+        scenery: stood,
+        camera,
+        weather,
+    };
+    shine(world, &stood, false);
     let bodies = shot
         .bodies
         .iter()
         .map(|standing| stand(world, content, &picture.area.heights, standing))
         .collect();
-    let stood = Stood {
-        area: picture.area,
-        scenery: stood,
-        camera,
-    };
     Some((bodies, stood))
+}
+
+/// Tells the scenery where the view stands and how far around it to stand.
+fn view(world: &mut World, stood: scenery::Scenery, lens: Lens, shot: &Shot) {
+    let area = world.resource::<Content>().clone();
+    let area = area::load(
+        &area,
+        area.by_path::<AreaDef>(&shot.area)
+            .expect("the shot's area"),
+    );
+    let (eye, target) = (
+        lens.eye.point(&area.heights),
+        lens.target.point(&area.heights),
+    );
+    scenery::view_from(
+        world,
+        stood,
+        lens.target.ground(),
+        Meters(eye.distance(target) * SCENERY_REACH),
+        View::new(
+            Transform::from_translation(eye).looking_at(target, Vec3::Y),
+            Vec2::new(shot.width as f32, shot.height as f32),
+            lens.fov,
+        ),
+    );
+}
+
+/// Jumps the camera from the lens the area stood for to the shot's own.
+fn jump(world: &mut World, shot: &Shot, stood: &Stood) {
+    let lens = shot.lens;
+    let (eye, target) = (
+        lens.eye.point(&stood.area.heights),
+        lens.target.point(&stood.area.heights),
+    );
+    world.entity_mut(stood.camera).insert((
+        camera::lens(lens.fov, shot.width, shot.height),
+        Transform::from_translation(eye).looking_at(target, Vec3::Y),
+    ));
+    world
+        .resource_mut::<CameraRig>()
+        .look_at(lens.target.ground(), lens.target.height);
+    view(world, stood.scenery, lens, shot);
+}
+
+/// Lights the stood area under its weather at the moment and lets its rain fall, as the client
+/// does every frame; lightning striking close by this frame when `flashing`.
+fn shine(world: &mut World, stood: &Stood, flashing: bool) {
+    let daylight = *world.resource::<Daylight>();
+    scenery::light(
+        world,
+        &stood.area,
+        &stood.weather,
+        daylight,
+        stood.scenery,
+        stood.camera,
+    );
+    rain::fall(
+        world,
+        stood.id,
+        &stood.area,
+        &stood.weather,
+        stood.scenery.rain,
+        stood.camera,
+    );
+    let flash = if flashing { 1.0 } else { 0.0 };
+    if flashing && let Some(lightning) = stood.area.climate.lightning {
+        let day = world.resource::<Look>().light.ambient_nits;
+        if let Some(mut ambient) = world.get_mut::<AmbientLight>(stood.camera) {
+            ambient.brightness += lightning.flash * day;
+        }
+    }
+    world.insert_resource(scenery::shown_weather(&stood.weather, flash));
 }
 
 fn loaded(content: &Content, model: ModelId) -> &ActorModel {

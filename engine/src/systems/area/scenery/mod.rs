@@ -859,7 +859,7 @@ fn stream_lights(
             !streaming.stood.lights.contains_key(&index) && !far(area.lights[index].at, at, reach)
         })
         .collect();
-    let mut rng = Rng::from_entropy();
+    let mut rng = Rng::fork_of(world);
     for index in near {
         let entity = spawn_light(
             world,
