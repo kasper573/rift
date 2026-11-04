@@ -10,8 +10,8 @@
 //! striking at a frame; be drawn at any video settings; and arrive: stand the area for one lens,
 //! jump to its own, and film every frame as the area stands anew.
 //!
-//! Every draw of chance on the client's side is seeded by the shot and time steps a frame at a time,
-//! so the same shot draws the same picture twice.
+//! Every draw of chance on the client's side is seeded by the shot, and time stands still while the
+//! area loads and then steps a frame at a time, so the same shot draws the same picture twice.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -19,19 +19,22 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
+use bevy::anti_alias::taa::TemporalAntiAliasing;
 use bevy::app::ScheduleRunnerPlugin;
 use bevy::camera::RenderTarget;
+use bevy::diagnostic::FrameCount;
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
 use bevy::render::gpu_readback::{ReadbackComplete, ReadbackOnce};
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat, TextureUsages};
+use bevy::render::renderer::RenderAdapterInfo;
 use bevy::time::TimeUpdateStrategy;
 use bevy::window::ExitCondition;
 use engine::core::audio::playback::Listener;
 use engine::core::content::Content;
 use engine::core::ground::Heightfield;
 use engine::core::math::{Pos, Rng};
-use engine::core::render::camera::{self, View, world_point};
+use engine::core::render::camera::{self, View, Zoom, world_point};
 use engine::core::render::video::VideoPreferences;
 use engine::core::render::world::WorldScenePlugin;
 use engine::core::render::world::body;
@@ -75,67 +78,101 @@ const ALIKE_WITHIN: f64 = 0.5;
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RenderOutcome {
     pub out: PathBuf,
+    pub adapter: String,
     pub stood_after_frames: Option<usize>,
 }
 
-#[derive(Deserialize)]
+/// A shot of an area, as its file holds it.
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
-struct Shot {
-    area: String,
+pub struct Shot {
+    pub area: String,
     /// A multiple of 64, so each row read back fills whole blocks of 256 bytes and comes unpadded.
-    width: u32,
-    height: u32,
-    lens: Lens,
+    pub width: u32,
+    pub height: u32,
+    pub view: ViewSpec,
     /// The hour the area stands at, its light as authored when unset.
-    #[serde(default)]
-    hour: Option<f32>,
-    #[serde(default)]
-    film: Option<Film>,
-    #[serde(default)]
-    bodies: Vec<Standing>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hour: Option<f32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub film: Option<Film>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub bodies: Vec<Standing>,
     /// The video settings the picture is drawn at: the highest unless given.
-    #[serde(default)]
-    video: Option<VideoChoice>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub video: Option<VideoChoice>,
     /// The spell of the area's climate the weather holds at, by its name; the first unless given.
-    #[serde(default)]
-    spell: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub spell: Option<String>,
     /// How far through the spell the weather stands, 0 to 1: it turns toward the next spell over
     /// the last of it.
     #[serde(default)]
-    spell_phase: f32,
-    #[serde(default)]
-    lightning: Option<LightningAt>,
+    pub spell_phase: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lightning: Option<LightningAt>,
     /// How long the clouds have drifted on the spell's wind when the picture is taken, in seconds.
     #[serde(default)]
-    clouds_time: f32,
-    #[serde(default)]
-    arrive: Option<Arrive>,
+    pub clouds_time: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub arrive: Option<Arrive>,
     /// What every draw of chance on the client's side is seeded by.
     #[serde(default)]
-    seed: u64,
+    pub seed: u64,
+}
+
+/// Where the picture is taken from: a lens of its own, with its eye and target and field of view,
+/// or the world's own camera placed as a player would have it.
+#[derive(Serialize, Deserialize, Clone, Copy)]
+pub enum ViewSpec {
+    #[serde(rename = "lens")]
+    Lens(Lens),
+    #[serde(rename = "camera")]
+    Camera(CameraShot),
+}
+
+/// The world's camera looking at `at` from `yaw`, tilted down by `pitch`, at `zoom`, framed as the
+/// game frames it.
+#[derive(Serialize, Deserialize, Clone, Copy)]
+#[serde(deny_unknown_fields)]
+pub struct CameraShot {
+    pub at: Spot,
+    pub yaw: Degrees,
+    pub pitch: Degrees,
+    pub zoom: Zoom,
 }
 
 /// The day turning `hours` on from the shot's hour over `frames` pictures.
-#[derive(Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy)]
 #[serde(deny_unknown_fields)]
-struct Film {
-    hours: f32,
-    frames: u32,
+pub struct Film {
+    pub hours: f32,
+    pub frames: u32,
 }
 
 /// Video settings by a preset's name, or each setting given.
-#[derive(Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy)]
 #[serde(untagged)]
-enum VideoChoice {
+pub enum VideoChoice {
     Preset(VideoPreset),
     Each(VideoPreferences),
 }
 
-#[derive(Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[serde(rename_all = "lowercase")]
-enum VideoPreset {
+pub enum VideoPreset {
     Highest,
     Lowest,
+}
+
+impl VideoPreset {
+    pub const BOTH: [VideoPreset; 2] = [VideoPreset::Highest, VideoPreset::Lowest];
+
+    pub fn name(self) -> &'static str {
+        match self {
+            VideoPreset::Highest => "highest",
+            VideoPreset::Lowest => "lowest",
+        }
+    }
 }
 
 impl VideoChoice {
@@ -150,49 +187,88 @@ impl VideoChoice {
 
 /// Lightning striking close by at the `at_frame`th frame of the settling, lighting that frame as
 /// the climate's lightning does; the picture is taken at frame [`SETTLE`].
-#[derive(Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy)]
 #[serde(deny_unknown_fields)]
-struct LightningAt {
-    at_frame: u32,
+pub struct LightningAt {
+    pub at_frame: u32,
 }
 
-/// Arriving: the area stood for the lens `from`, then the camera jumped to the shot's lens, and
+/// Arriving: the area stood for the view `from`, then the camera jumped to the shot's own, and
 /// every frame from the jump to the `frames`th taken as the area stands anew.
-#[derive(Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy)]
 #[serde(deny_unknown_fields)]
-struct Arrive {
-    from: Lens,
-    frames: u32,
+pub struct Arrive {
+    pub from: ViewSpec,
+    pub frames: u32,
 }
 
-#[derive(Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy)]
 #[serde(deny_unknown_fields)]
-struct Lens {
-    eye: Spot,
-    target: Spot,
-    fov: Degrees,
+pub struct Lens {
+    pub eye: Spot,
+    pub target: Spot,
+    pub fov: Degrees,
 }
 
-#[derive(Deserialize)]
+#[derive(Serialize, Deserialize, Clone)]
 #[serde(deny_unknown_fields)]
-struct Standing {
-    model: String,
-    at: Place,
-    faces: Place,
-    #[serde(default)]
-    held: Vec<Option<String>>,
-    #[serde(default)]
-    clip: Option<Clip>,
-    moment: Seconds,
+pub struct Standing {
+    pub model: String,
+    pub at: Place,
+    pub faces: Place,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub held: Vec<Option<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clip: Option<Clip>,
+    pub moment: Seconds,
 }
 
 /// A point `height` above the ground at `x`, `y`, so a lens frames alike on any area's terrain.
-#[derive(Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy)]
 #[serde(deny_unknown_fields)]
-struct Spot {
-    x: Meters,
-    y: Meters,
-    height: Meters,
+pub struct Spot {
+    pub x: Meters,
+    pub y: Meters,
+    pub height: Meters,
+}
+
+/// A view as the renderer places it: where the eye and the target are, and the field of view.
+#[derive(Clone, Copy)]
+struct Framed {
+    eye: Vec3,
+    target: Vec3,
+    target_ground: Pos<Meters>,
+    target_height: Meters,
+    fov: Degrees,
+}
+
+impl ViewSpec {
+    fn framed(self, ground: &Heightfield, look: &Look) -> Framed {
+        match self {
+            ViewSpec::Lens(lens) => Framed {
+                eye: lens.eye.point(ground),
+                target: lens.target.point(ground),
+                target_ground: lens.target.ground(),
+                target_height: lens.target.height,
+                fov: lens.fov,
+            },
+            ViewSpec::Camera(camera) => {
+                let mut rig = CameraRig::new(look.camera);
+                rig.look_at(
+                    camera.at.ground(),
+                    Meters(ground.height_at(camera.at.ground()).0 + camera.at.height.0),
+                );
+                rig.put(camera.yaw, camera.pitch, camera.zoom);
+                Framed {
+                    eye: rig.eye(),
+                    target: rig.target(),
+                    target_ground: camera.at.ground(),
+                    target_height: Meters(rig.target().y),
+                    fov: look.camera.fov,
+                }
+            }
+        }
+    }
 }
 
 impl Spot {
@@ -206,11 +282,11 @@ impl Spot {
     }
 }
 
-#[derive(Deserialize, Clone, Copy)]
+#[derive(Serialize, Deserialize, Clone, Copy)]
 #[serde(deny_unknown_fields)]
-struct Place {
-    x: Meters,
-    y: Meters,
+pub struct Place {
+    pub x: Meters,
+    pub y: Meters,
 }
 
 impl Place {
@@ -333,6 +409,7 @@ pub fn area(folder: &Path, shot: &Path, out: &Path) {
             taken.0.push((read.entity, read.data.clone()));
         })
         .add_systems(Startup, move |world: &mut World| {
+            world.resource_mut::<Time<Virtual>>().pause();
             let shot = shot.take().expect("startup runs once");
             let mut image = Image::new_target_texture(
                 shot.width,
@@ -404,7 +481,7 @@ pub fn check_determinism(folder: &Path, shot: &Path, out: &Path) -> Result<(), S
 
 /// Frames after which what the picture's history held before a change, blended in a little less
 /// each frame, has faded below what the eye can tell.
-const TAA_SETTLE: u32 = 24;
+pub const TAA_SETTLE: u32 = 24;
 
 /// The root mean square difference, in levels of 255, between the picture or folder of pictures
 /// at `a` and the same at `b`, the first `from` of a folder's left out, and how many pictures were
@@ -476,7 +553,11 @@ fn step(world: &mut World) {
                 }
                 drive(world, bodies);
                 shine(world, taking.stood.as_ref().expect("the area stood"), false);
-                if all && !scenery::standing(world) {
+                if all && !scenery::standing(world) && !engine::core::render::world::readying(world)
+                {
+                    world.resource_mut::<Time<Virtual>>().unpause();
+                    world.resource_mut::<FrameCount>().0 = 0;
+                    forget_history(world);
                     taking.stage = match taking.shot.arrive {
                         Some(_) => {
                             jump(world, &taking.shot, taking.stood.as_ref().expect("stood"));
@@ -501,6 +582,7 @@ fn step(world: &mut World) {
                     && !engine::core::render::world::readying(world)
                 {
                     *stood_after = Some(*frames);
+                    forget_history(world);
                 }
                 readbacks.push(
                     world
@@ -585,9 +667,21 @@ fn step(world: &mut World) {
     });
 }
 
+/// Starts the picture's temporal smoothing over from the frame being drawn, so that what the
+/// frames before it showed, however many the area took to load, leaves no trace in the picture.
+fn forget_history(world: &mut World) {
+    for mut smoothing in world.query::<&mut TemporalAntiAliasing>().iter_mut(world) {
+        smoothing.reset = true;
+    }
+}
+
 fn done(world: &mut World, out: &Path, stood_after_frames: Option<u32>) {
     let outcome = RenderOutcome {
         out: out.to_path_buf(),
+        adapter: world
+            .get_resource::<RenderAdapterInfo>()
+            .map(|adapter| adapter.name.clone())
+            .unwrap_or_default(),
         stood_after_frames: stood_after_frames.map(|frames| frames as usize),
     };
     println!(
@@ -613,13 +707,10 @@ fn set_up(
     if !scenery::shaders_ready(world, content, &picture.area) {
         return None;
     }
-    let grade = world.resource::<Look>().picture;
-    let lens = shot.arrive.map_or(shot.lens, |arrive| arrive.from);
-    let (eye, target) = (
-        lens.eye.point(&picture.area.heights),
-        lens.target.point(&picture.area.heights),
-    );
-    let placed = Transform::from_translation(eye).looking_at(target, Vec3::Y);
+    let look = world.resource::<Look>().clone();
+    let view = shot.arrive.map_or(shot.view, |arrive| arrive.from);
+    let framed = view.framed(&picture.area.heights, &look);
+    let placed = Transform::from_translation(framed.eye).looking_at(framed.target, Vec3::Y);
     let camera = world
         .spawn((
             Camera3d::default(),
@@ -628,17 +719,17 @@ fn set_up(
                 ..default()
             },
             RenderTarget::Image(image.clone().into()),
-            camera::lens(lens.fov, shot.width, shot.height),
-            camera::picture(grade),
+            camera::lens(framed.fov, shot.width, shot.height),
+            camera::picture(look.picture),
             placed,
         ))
         .id();
-    let mut rig = CameraRig::new(world.resource::<Look>().camera);
-    rig.look_at(lens.target.ground(), lens.target.height);
+    let mut rig = CameraRig::new(look.camera);
+    rig.look_at(framed.target_ground, framed.target_height);
     world.insert_resource(rig);
     world.insert_resource(CloudDrift::carried_for(shot.clouds_time));
     let stood = scenery::spawn(world, content, &picture.area, default());
-    view(world, stood, lens, shot);
+    see(world, stood, framed, shot);
     world.insert_resource(shot.hour.map_or(Daylight::Fixed, Daylight::Hour));
     let climate = &picture.area.climate;
     let spell = match &shot.spell {
@@ -669,45 +760,32 @@ fn set_up(
 }
 
 /// Tells the scenery where the view stands and how far around it to stand.
-fn view(world: &mut World, stood: scenery::Scenery, lens: Lens, shot: &Shot) {
-    let area = world.resource::<Content>().clone();
-    let area = area::load(
-        &area,
-        area.by_path::<AreaDef>(&shot.area)
-            .expect("the shot's area"),
-    );
-    let (eye, target) = (
-        lens.eye.point(&area.heights),
-        lens.target.point(&area.heights),
-    );
+fn see(world: &mut World, stood: scenery::Scenery, framed: Framed, shot: &Shot) {
     scenery::view_from(
         world,
         stood,
-        lens.target.ground(),
-        Meters(eye.distance(target) * SCENERY_REACH),
+        framed.target_ground,
+        Meters(framed.eye.distance(framed.target) * SCENERY_REACH),
         View::new(
-            Transform::from_translation(eye).looking_at(target, Vec3::Y),
+            Transform::from_translation(framed.eye).looking_at(framed.target, Vec3::Y),
             Vec2::new(shot.width as f32, shot.height as f32),
-            lens.fov,
+            framed.fov,
         ),
     );
 }
 
-/// Jumps the camera from the lens the area stood for to the shot's own.
+/// Jumps the camera from the view the area stood for to the shot's own.
 fn jump(world: &mut World, shot: &Shot, stood: &Stood) {
-    let lens = shot.lens;
-    let (eye, target) = (
-        lens.eye.point(&stood.area.heights),
-        lens.target.point(&stood.area.heights),
-    );
+    let look = world.resource::<Look>().clone();
+    let framed = shot.view.framed(&stood.area.heights, &look);
     world.entity_mut(stood.camera).insert((
-        camera::lens(lens.fov, shot.width, shot.height),
-        Transform::from_translation(eye).looking_at(target, Vec3::Y),
+        camera::lens(framed.fov, shot.width, shot.height),
+        Transform::from_translation(framed.eye).looking_at(framed.target, Vec3::Y),
     ));
     world
         .resource_mut::<CameraRig>()
-        .look_at(lens.target.ground(), lens.target.height);
-    view(world, stood.scenery, lens, shot);
+        .look_at(framed.target_ground, framed.target_height);
+    see(world, stood.scenery, framed, shot);
 }
 
 /// Lights the stood area under its weather at the moment and lets its rain fall, as the client

@@ -334,6 +334,16 @@ impl CameraRig {
         self.target
     }
 
+    /// Puts the camera at `yaw`, `pitch` and `zoom` at once, at rest there, as a shot frames it.
+    pub fn put(&mut self, yaw: Degrees, pitch: Degrees, zoom: Zoom) {
+        self.yaw = yaw.radians();
+        self.wanted_yaw = self.yaw;
+        self.pitch = pitch.radians();
+        self.wanted_pitch = self.pitch;
+        self.zoom = zoom;
+        self.distance = zoom.distance(&self.framing.zooms);
+    }
+
     pub fn turn(&mut self, by: Degrees) {
         self.wanted_yaw = Radians(self.wanted_yaw.0 + by.radians().0);
     }
