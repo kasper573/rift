@@ -831,6 +831,7 @@ fn module_fields(ui: &mut Ui, cx: &mut FormCx, module: &mut AreaModule, path: &s
             forms::of_type_without(ui, cx, object, path, &[field!(ObjectDef, scripts)])
         }
         AreaModule::SafeZone(zone) => forms::of_type(ui, cx, zone, path),
+        AreaModule::Fog(bank) => forms::of_type(ui, cx, bank, path),
         AreaModule::Soundscape(soundscape) => {
             forms::of_type_without(ui, cx, soundscape, path, &[field!(SoundscapeDef, channels)])
         }

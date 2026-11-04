@@ -54,6 +54,9 @@ pub struct PropDef {
     pub fade: bool,
     #[serde(default = "serial::yes", skip_serializing_if = "serial::is_true")]
     pub shadow: bool,
+    /// Whether it keeps the rain off the ground under it, as a roof or a dense canopy does.
+    #[serde(default, skip_serializing_if = "serial::is_false")]
+    pub shelter: bool,
     /// Keyed by the name of a material of the model.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub materials: BTreeMap<String, PropMaterialId>,
@@ -129,6 +132,7 @@ impl ContentFile for PropDef {
             footprint: Footprint::None,
             fade: false,
             shadow: true,
+            shelter: false,
             materials: BTreeMap::new(),
         })
     }

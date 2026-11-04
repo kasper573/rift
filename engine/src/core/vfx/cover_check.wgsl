@@ -28,6 +28,8 @@ var<private> salt: f32;
 var<private> part: u32;
 var<private> spot: vec3<f32>;
 var<private> stem: vec3<f32>;
+var<private> ashore: f32;
+var<private> falling: vec2<f32>;
 
 fn sample(at: vec2<f32>) -> vec4<f32> {
     return lit;
@@ -67,6 +69,26 @@ fn position() -> vec3<f32> {
 
 fn root() -> vec3<f32> {
     return stem;
+}
+
+fn shore() -> f32 {
+    return ashore;
+}
+
+fn fall() -> vec2<f32> {
+    return falling;
+}
+
+fn light_facing(normal: vec3<f32>) -> vec3<f32> {
+    return shine * max(normal.y, 0.0);
+}
+
+fn sun_way() -> vec3<f32> {
+    return vec3<f32>(0.0, 1.0, 0.0);
+}
+
+fn eye() -> vec3<f32> {
+    return vec3<f32>(0.0, 10.0, 0.0);
 }
 
 fn mark(uv_b: vec2<f32>) {

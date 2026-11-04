@@ -141,6 +141,7 @@ impl Badge {
         let (letter, color) = match kind {
             AreaModuleKind::Object => ('P', ink::VERDIGRIS),
             AreaModuleKind::SafeZone => ('Z', ink::VERDIGRIS),
+            AreaModuleKind::Fog => ('F', ink::INK2),
             AreaModuleKind::Soundscape => ('A', ink::GOLD),
             AreaModuleKind::Prop | AreaModuleKind::Scatter => ('T', ink::INK2),
             AreaModuleKind::Light => ('L', ink::INK2),

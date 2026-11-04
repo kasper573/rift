@@ -8,7 +8,7 @@ use engine::core::content::Content;
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::core::units::{MeterPos, Seconds};
 use engine::systems::area;
-use engine::systems::launch::ServerDaylight;
+use engine::systems::launch::{ServerDaylight, ServerWeather};
 use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::player::{ClientId, JoinRequest, SpawnPolicy, SpawnRules};
 use engine::systems::region;
@@ -208,6 +208,7 @@ fn build_world(
         SEED,
         CLOCK,
         ServerDaylight::Turning,
+        ServerWeather::Still.course(CLOCK.now),
         content,
     );
     app.insert_resource(SpawnRules {

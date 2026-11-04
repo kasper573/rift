@@ -24,7 +24,8 @@ use crate::core::math::{Pos, Rect, Rgb};
 use crate::core::render::video::VideoPreferences;
 use crate::core::units::{Degrees, Meters, Radians, Seconds, Stops};
 
-const NEAR: f32 = 0.5;
+/// How near the eye the camera draws anything.
+pub const NEAR_PLANE: Meters = Meters(0.5);
 /// How many pixels a thing must span to be drawn: smaller, a view shows only what lies behind it.
 const FEWEST_PIXELS: f32 = 1.0;
 /// How far a ray is followed through the world before it is given up as hitting nothing.
@@ -225,7 +226,7 @@ fn finish(picture: &mut EntityCommands, video: VideoPreferences, grade: PictureG
 pub fn lens(fov: Degrees, width: u32, height: u32) -> Projection {
     Projection::Perspective(PerspectiveProjection {
         fov: fov.radians().0,
-        near: NEAR,
+        near: NEAR_PLANE.0,
         aspect_ratio: width as f32 / height.max(1) as f32,
         ..default()
     })
@@ -452,7 +453,7 @@ impl View {
     pub fn new(camera: Transform, viewport: Vec2, fov: Degrees) -> View {
         let aspect = viewport.x / viewport.y.max(1.0);
         let clip_from_view =
-            bevy::math::proj::perspective_infinite_reverse(fov.radians().0, aspect, NEAR);
+            bevy::math::proj::perspective_infinite_reverse(fov.radians().0, aspect, NEAR_PLANE.0);
         let clip_from_world = clip_from_view * camera.to_matrix().inverse();
         View {
             world_from_view: GlobalTransform::from(camera),
@@ -504,7 +505,7 @@ impl View {
 
     /// How many pixels of the viewport a metre spans `distance` off the eye, across the view.
     pub fn pixels_per_meter(&self, distance: Meters) -> f32 {
-        self.viewport.y / 2.0 * self.clip_from_view.y_axis.y / distance.0.max(NEAR)
+        self.viewport.y / 2.0 * self.clip_from_view.y_axis.y / distance.0.max(NEAR_PLANE.0)
     }
 
     /// How far off the eye a thing `extent` across still spans enough pixels to be drawn.

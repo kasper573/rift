@@ -1,10 +1,10 @@
 use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
-use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER};
+use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER, WaterSurface};
 use engine::core::math::Pos;
 use engine::core::render::world::cover::{
-    BladeShape, CopyModel, Mark, Patch, Piece, Place, Spread, blades, copy_meshes, merged_copies,
-    seen_at, sheet, strew_places,
+    ATTRIBUTE_WATER, BladeShape, CopyModel, Mark, Patch, Piece, Place, SHORE_REACH, SheetOn,
+    Spread, blades, copy_meshes, merged_copies, seen_at, sheet, strew_places,
 };
 use engine::core::render::world::lod::GRAIN_PIXELS;
 use engine::core::units::Meters;
@@ -191,16 +191,20 @@ fn blades_grow_as_thick_as_their_ground_is_painted_rooted_on_the_terrain_each_it
 }
 
 #[test]
-fn a_sheet_lies_on_the_terrain_or_flat_at_a_level_weighted_as_the_cells_around_each_point_are_painted()
- {
+fn a_sheet_lies_on_the_terrain_or_on_the_water_weighted_as_the_cells_around_each_point_are_painted()
+{
     let heights = slope();
     let west = |column: u32, _: u32| if column < 8 { 1.0 } else { 0.0 };
-    let mesh = one(sheet(&patch(&heights, &west), None, DARK, 1));
+    let mesh = one(sheet(&patch(&heights, &west), SheetOn::Ground, DARK, 1));
     assert!(
         colors(&mesh)
             .iter()
             .all(|color| *color == DARK.to_f32_array()),
         "a sheet is the ground's colour"
+    );
+    assert!(
+        mesh.attribute(ATTRIBUTE_WATER).is_none(),
+        "a sheet on the ground tells of no water"
     );
     for (position, mark) in positions(&mesh).iter().zip(marks(&mesh)) {
         let at = Pos::new(position[0], position[2]);
@@ -221,22 +225,76 @@ fn a_sheet_lies_on_the_terrain_or_flat_at_a_level_weighted_as_the_cells_around_e
             "the mark at column {column}: {mark:?}, not a weight of {wanted}"
         );
     }
+    let full = |_: u32, _: u32| 1.0;
     let level = 1.0;
-    let pool = one(sheet(&patch(&heights, &west), Some(level), DARK, 1));
-    for (position, mark) in positions(&pool).iter().zip(marks(&pool)) {
-        assert_eq!(position[1], level, "a pool lies flat at its level");
+    let pond = WaterSurface::from_fn(SIZE, HEIGHTS, |_, _| Meters(level));
+    let pool = one(sheet(
+        &patch(&heights, &full),
+        SheetOn::Water(&pond),
+        DARK,
+        1,
+    ));
+    let shore_line = 4.0 - 0.5;
+    for ((position, mark), [shore, east, south]) in
+        positions(&pool).iter().zip(marks(&pool)).zip(waters(&pool))
+    {
         let ground = heights.height_at(Pos::new(position[0], position[2])).0;
         assert!(
-            (mark.measure - (level - ground).max(0.0)).abs() < 1e-4,
+            (position[1] - level).abs() < 1e-3 || position[1] < ground - 0.5,
+            "a pond lies flat at its level, and sinks under the dry ground past its shore: {position:?} over ground at {ground}"
+        );
+        assert!(
+            (mark.measure - (level - ground).max(0.0)).abs() < 1e-3,
             "{position:?} over ground at {ground} is marked {} m deep",
             mark.measure
         );
+        let ashore = (shore_line - position[0]).max(0.0);
+        assert!(
+            (shore - ashore).abs() <= 0.5 + ashore * 0.08,
+            "{position:?} lies {ashore} m from the shore, not {shore}"
+        );
+        assert!(
+            east.abs() < 1e-3 && south.abs() < 1e-3,
+            "a pond's water stands still"
+        );
+    }
+    let stream = WaterSurface::from_fn(SIZE, HEIGHTS, |column, row| {
+        Meters(heights.sample(column, row).0 + 0.5)
+    });
+    let river = one(sheet(
+        &patch(&heights, &full),
+        SheetOn::Water(&stream),
+        DARK,
+        1,
+    ));
+    for ((position, mark), [shore, east, south]) in positions(&river)
+        .iter()
+        .zip(marks(&river))
+        .zip(waters(&river))
+    {
+        let ground = heights.height_at(Pos::new(position[0], position[2])).0;
+        assert!(
+            (position[1] - ground - 0.5).abs() < 1e-3 && (mark.measure - 0.5).abs() < 1e-3,
+            "a river's sheet lies on its water, half a metre over the ground"
+        );
+        assert!(
+            (east + 0.25).abs() < 1e-2 && south.abs() < 1e-3,
+            "a river falls a metre every four westward, not {east} east and {south} south"
+        );
+        assert_eq!(shore, SHORE_REACH.0, "no dry ground in reach");
     }
     let none = |_: u32, _: u32| 0.0;
     assert!(
-        sheet(&patch(&heights, &none), None, DARK, 1).is_empty(),
+        sheet(&patch(&heights, &none), SheetOn::Ground, DARK, 1).is_empty(),
         "nothing painted, no sheet"
     );
+}
+
+fn waters(mesh: &Mesh) -> Vec<[f32; 3]> {
+    mesh.attribute(ATTRIBUTE_WATER)
+        .and_then(|waters| waters.as_float3())
+        .expect("a sheet on water tells of its water")
+        .to_vec()
 }
 
 #[test]

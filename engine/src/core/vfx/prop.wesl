@@ -6,8 +6,8 @@
 // (`tint`); a vertex also reads the ways the screen's right and up run in the world
 // (`screen_right`, `screen_up`), to turn a card to face the camera. A pixel also reads the
 // material lit (`sample`), the light falling there on a white face (`light`), the material's own
-// colour unlit (`albedo`), the way its face turns (`normal`) and the way to the eye
-// (`toward_eye`). What `vfx` paints is fogged and finished like every pixel of the world, and the
+// colour unlit (`albedo`), the way its face turns (`normal`), the way to the eye (`toward_eye`)
+// and where it lies in the world (`position`), where the weather's helpers tell how wet it lies. What `vfx` paints is fogged and finished like every pixel of the world, and the
 // prop fades where it hides the camera's subject like everything else.
 // A mesh merged of many props carries in every vertex where its piece of the model stands, how
 // much it is grown and how it is turned, and passes them on to the pixel, so the shader reads
@@ -40,6 +40,7 @@ var<private> shine: vec3<f32>;
 var<private> own: vec4<f32>;
 var<private> facing: vec3<f32>;
 var<private> eye_way: vec3<f32>;
+var<private> spot: vec3<f32>;
 
 fn local() -> vec3<f32> {
     return at_local;
@@ -83,6 +84,10 @@ fn normal() -> vec3<f32> {
 
 fn toward_eye() -> vec3<f32> {
     return eye_way;
+}
+
+fn position() -> vec3<f32> {
+    return spot;
 }
 
 fn stand(world_from_local: mat4x4<f32>, position: vec3<f32>) {
@@ -287,6 +292,7 @@ fn shade(in: VertexOutput, is_front: bool) -> FragmentOutput {
     own = vec4<f32>(base.rgb / max(tinted.rgb, vec3<f32>(0.001)), base.a);
     facing = pbr_input.N;
     eye_way = pbr_input.V;
+    spot = in.world_position.xyz;
     pbr_input.material.base_color = vec4<f32>(1.0, 1.0, 1.0, base.a);
     shine = lighting(pbr_input).rgb;
     lit = vec4<f32>(shine * base.rgb, base.a);

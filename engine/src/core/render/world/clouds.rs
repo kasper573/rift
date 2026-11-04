@@ -1,7 +1,9 @@
 //! The clouds over an area: one field of cloud lying over the world at the clouds' height,
 //! carried along by the wind and as thick as the weather's cover, which the sky paints the clouds
 //! from, and laid over the sun along its rays, so the ground lies darker under every cloud
-//! overhead, where the light's rays carry its shadow.
+//! overhead, where the light's rays carry its shadow. Some clouds hold water: which, a second noise
+//! of the field says, read where the cloud lies, and the more water the weather's clouds hold, the
+//! more of them do; the darker their shadows, and the rain falls from them.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
@@ -60,14 +62,16 @@ pub struct CloudLook {
 }
 
 /// The one field of cloud every sky paints and every sun casts: `field`, the noise the clouds are
-/// drawn from in red, read twice and blended where it is read (`read`), so it never shows where it
-/// repeats, and thresholded at the cover's `edge`; and `shadows`, how much of the light reaches
-/// the ground through it, laid along the light's rays as the light and the drift last stood.
+/// drawn from in red and the noise saying which hold water in green, each read twice and blended
+/// where it is read (`read`), so it never shows where it repeats, and thresholded at the cover's
+/// `edge` and the water's `water_edge`; and `shadows`, how much of the light reaches the ground
+/// through it, laid along the light's rays as the light and the drift last stood.
 #[derive(Resource)]
 pub struct CloudSheet {
     field: Handle<Image>,
     shadows: Handle<Image>,
     noise: Vec<f32>,
+    wet: Vec<f32>,
     weather: (f32, f32),
     laid: Option<Laid>,
     look: CloudLook,
@@ -75,18 +79,25 @@ pub struct CloudSheet {
 
 impl CloudSheet {
     pub fn new(world: &mut World, look: CloudLook) -> CloudSheet {
+        let texel_at =
+            |texel: u32| Vec2::new((texel % SHEET) as f32, (texel / SHEET) as f32) / SHEET as f32;
         let noise: Vec<f32> = (0..SHEET * SHEET)
             .into_par_iter()
-            .map(|texel| {
-                noise(Vec2::new((texel % SHEET) as f32, (texel / SHEET) as f32) / SHEET as f32)
-            })
+            .map(|texel| noise(texel_at(texel)))
+            .collect();
+        let wet: Vec<f32> = (0..SHEET * SHEET)
+            .into_par_iter()
+            .map(|texel| wet_noise(texel_at(texel)))
             .collect();
         let mut images = world.resource_mut::<Assets<Image>>();
         let field = images.add(picture(
             SHEET,
             noise
                 .iter()
-                .flat_map(|&noise| [noise, 0.0, 0.0, 1.0].map(|value| (value * 255.0) as u8))
+                .zip(&wet)
+                .flat_map(|(&noise, &wet)| {
+                    [noise, wet, 0.0, 1.0].map(|value| (value * 255.0) as u8)
+                })
                 .collect(),
         ));
         let shadows = images.add(picture(
@@ -97,6 +108,7 @@ impl CloudSheet {
             field,
             shadows,
             noise,
+            wet,
             weather: (0.0, 0.0),
             laid: None,
             look,
@@ -127,6 +139,11 @@ impl CloudSheet {
         self.field.clone()
     }
 
+    /// The height the field lies at.
+    pub fn height(&self) -> Meters {
+        self.look.height
+    }
+
     /// How cloudy the sky is at `at`, in tiles, under the cover last set, 0 clear to 1 thick, as
     /// the sky reads the field.
     pub fn cloudiness(&self, at: Vec2) -> f32 {
@@ -134,8 +151,16 @@ impl CloudSheet {
         smoothstep(edge, edge + self.look.softness, read(&self.noise, at))
     }
 
+    /// How much water the cloud at `at`, in tiles, holds under the weather last set, 0 none to 1 as
+    /// much as a storm cloud: none where there is no cloud.
+    pub fn water(&self, at: Vec2) -> f32 {
+        let edge = water_edge(self.weather.1);
+        let held = smoothstep(edge, edge + self.look.softness, read(&self.wet, at));
+        self.cloudiness(at) * held
+    }
+
     /// Thickens or thins the field's shadows to cover `clouds` of the sky, 0 none and 1 all of
-    /// it, as dark as cloud holding `water` casts.
+    /// it, with as much of it holding water as `water`, 0 none to 1 most of it.
     pub fn cover(&mut self, clouds: f32, water: f32) {
         if self.weather != (clouds, water) {
             self.weather = (clouds, water);
@@ -166,7 +191,6 @@ impl CloudSheet {
     }
 
     fn paint_shadows(&self, light: Transform, drift: Vec2, images: &mut Assets<Image>) {
-        let shade = shade(self.weather.1, &self.look);
         let toward = light.back().as_vec3();
         let data = (0..SHADOWS * SHADOWS)
             .into_par_iter()
@@ -177,7 +201,13 @@ impl CloudSheet {
                     light.transform_point(Vec3::new(1.0 - 2.0 * uv.x, 2.0 * uv.y - 1.0, 0.0));
                 let over = near + toward * (self.look.height.0 - near.y) / toward.y;
                 let at = (Vec2::new(over.x, over.z) - drift) / CLOUD_TILE.0;
-                let lit = 1.0 - shade * self.cloudiness(at);
+                let cloudy = self.cloudiness(at);
+                let held = if cloudy > 0.0 {
+                    self.water(at) / cloudy
+                } else {
+                    0.0
+                };
+                let lit = 1.0 - shade(held, &self.look) * cloudy;
                 [lit, lit, lit, 1.0].map(|value| (value * 255.0) as u8)
             })
             .collect();
@@ -187,14 +217,33 @@ impl CloudSheet {
     }
 }
 
-/// How much of the sun a cloud holding `water` takes.
+/// How much of the sun a cloud holding `water`, 0 none to 1 as much as a storm cloud, takes.
 pub fn shade(water: f32, look: &CloudLook) -> f32 {
     look.fair_shade + (look.storm_shade - look.fair_shade) * water.clamp(0.0, 1.0)
 }
 
-/// How far the clouds have drifted on `wind` after `seconds`.
-pub fn drift(wind: Vec2, seconds: f32, look: &CloudLook) -> Vec2 {
-    wind * look.speed.0.0 * seconds
+/// How far the clouds have drifted along the ground, on whatever wind has blown, since the client
+/// started.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct CloudDrift {
+    drift: Vec2,
+    at: Option<f32>,
+}
+
+impl CloudDrift {
+    /// The drift at `seconds` into the client's run, the clouds carried on `wind` since it was
+    /// last asked.
+    pub fn blown(&mut self, wind: Vec2, seconds: f32, look: &CloudLook) -> Vec2 {
+        let since = self.at.map_or(0.0, |at| (seconds - at).max(0.0));
+        self.drift += wind * look.speed.0.0 * since;
+        self.at = Some(seconds);
+        self.drift
+    }
+
+    /// The drift as it was last blown.
+    pub fn drift(&self) -> Vec2 {
+        self.drift
+    }
 }
 
 /// Where the shadows were last laid: along the rays of `light`, the field carried `drift`.
@@ -223,6 +272,12 @@ fn lean(light: Transform) -> Vec2 {
 /// Where, in the noise's range, cloud begins under `clouds`.
 pub fn edge(clouds: f32, look: &CloudLook) -> f32 {
     look.clear_sky + (look.full_cover - look.clear_sky) * clouds.clamp(0.0, 1.0)
+}
+
+/// Where, in the field's second noise, cloud begins holding water when the weather's clouds hold
+/// `water`: past its top for none, so no cloud does, and low in it for a storm, so most do.
+pub fn water_edge(water: f32) -> f32 {
+    1.0 - 0.75 * water.clamp(0.0, 1.0)
 }
 
 /// How the second read of the noise is turned and scaled from the first, in tiles; it is then
@@ -282,6 +337,13 @@ fn picture(size: u32, data: Vec<u8>) -> Image {
 fn noise(at: Vec2) -> f32 {
     let push = Vec2::new(octaves(at, 1), octaves(at, 2)) - 0.5;
     octaves((at + push * WARP).rem_euclid(Vec2::ONE), 0)
+}
+
+/// The noise saying which clouds hold water over the unit square, wrapping at its edges, in 0..1:
+/// broad and slow beside the clouds' own, so a cloud holds water through and through, and drawn
+/// apart from it, so it is the weather that says which clouds do, not how thick they are.
+fn wet_noise(at: Vec2) -> f32 {
+    octaves(at, 3)
 }
 
 /// Octaves of value noise over the unit square, each wrapping at its edges, in 0..1; each `salt`

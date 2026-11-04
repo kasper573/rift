@@ -65,6 +65,10 @@ fn toward_eye() -> vec3<f32> {
     return eye_way;
 }
 
+fn position() -> vec3<f32> {
+    return vec3<f32>(0.0);
+}
+
 @vertex
 fn vertex(@location(0) position: vec3<f32>, @location(2) uv: vec2<f32>) -> VertexOutput {
     var out: VertexOutput;

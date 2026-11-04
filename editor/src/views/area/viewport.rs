@@ -329,14 +329,15 @@ impl RenderedView {
                 scenery::despawn(world, old.scenery);
             }
             world.entity_mut(stood.root).insert(ChildOf(self.root));
-            scenery::light(world, &area, Daylight::Fixed, stood, self.camera);
+            let weather = area.climate.first();
+            scenery::light(world, &area, &weather, Daylight::Fixed, stood, self.camera);
             self.stood = Some(Stood {
                 scenery: stood,
                 area: area.clone(),
             });
             self.stroke = None;
         }
-        world.insert_resource(scenery::climate(&area));
+        world.insert_resource(scenery::shown_weather(&area.climate.first(), 0.0));
         let ground = area.heights.height_at(request.camera.target);
         if let Some(stood) = &self.stood {
             let viewport = Vec2::new(request.size[0] as f32, request.size[1] as f32);

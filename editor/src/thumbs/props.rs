@@ -31,6 +31,8 @@ const YAW: Degrees = Degrees(30.0);
 const PITCH: Degrees = Degrees(35.0);
 const SUN_ELEVATION: Degrees = Degrees(50.0);
 const SUN_AZIMUTH: Degrees = Degrees(300.0);
+/// How much a prop's thumbnail's air scatters the light, of dry air's dust: as dry air does.
+const DRY_AIR: f32 = 1.0;
 /// How many frames a model gets to load and settle before it is read back.
 const SETTLE_FRAMES: u32 = 3;
 /// How many frames a model that never loads, or never draws, is waited on.
@@ -218,7 +220,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
         let atmosphere = sky::atmosphere(
             &mut world.resource_mut::<Assets<ScatteringMedium>>(),
             Sky::Air,
-            0.0,
+            DRY_AIR,
             &look.sky,
         );
         world.spawn((atmosphere, layers.clone(), ChildOf(root)));

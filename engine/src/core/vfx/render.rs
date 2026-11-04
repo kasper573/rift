@@ -61,9 +61,12 @@ impl Plugin for VfxMaterialsPlugin {
             .add_plugins(MaterialPlugin::<SurfaceMaterial>::default())
             .add_plugins(MaterialPlugin::<CoverMaterial>::default())
             .add_plugins(MaterialPlugin::<super::sky::SkyMaterial>::default())
+            .add_plugins(MaterialPlugin::<super::rain::RainMaterial>::default())
             .init_resource::<VfxShaders>()
             .init_resource::<VfxAssets>()
             .init_resource::<WeatherImage>()
+            .init_resource::<super::rain::RainField>()
+            .init_resource::<super::rain::Shelter>()
             .add_systems(
                 Update,
                 (
@@ -559,7 +562,8 @@ impl SiteFrame {
             | Stage::Surface
             | Stage::Cover
             | Stage::Prop
-            | Stage::Sky => Vec2::ONE,
+            | Stage::Sky
+            | Stage::Rain => Vec2::ONE,
             Stage::Ground | Stage::Billboard => quad_overscan(self.metres(stage)),
         }
     }
@@ -1005,7 +1009,7 @@ fn piece_for(world: &mut World, stage: Stage, sheet: Option<Handle<Image>>) -> E
         .spawn((VfxPiece { stage }, Transform::default(), Visibility::Hidden))
         .id();
     match stage {
-        Stage::Cover | Stage::Prop | Stage::Sky => {}
+        Stage::Cover | Stage::Prop | Stage::Sky | Stage::Rain => {}
         Stage::Screen | Stage::Text => {
             let material = world
                 .resource_mut::<Assets<VfxMaterial>>()

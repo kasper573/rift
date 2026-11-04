@@ -28,7 +28,7 @@ use crate::core::assets;
 use crate::core::content::Content;
 use crate::core::content::media::GltfInfos;
 use crate::core::geometry::{PlacedShape, Shape};
-use crate::core::ground::{Heightfield, PaintMap, SAMPLES_PER_METER};
+use crate::core::ground::{Heightfield, PaintMap, SAMPLES_PER_METER, WaterSurface};
 use crate::core::math::{Pos, Rect, Size};
 use crate::core::render::camera::ground_pos;
 use crate::core::render::world::cover::{self, CopyModel, CoverMaterial};
@@ -41,7 +41,7 @@ use crate::core::vfx::shader::Stage;
 use crate::core::vfx::uniform::{ParamsUniform, WeatherImage};
 use crate::systems::area::Area;
 use crate::systems::area::prop::PropId;
-use crate::systems::area::terrain::{CoverPiece, PieceShape};
+use crate::systems::area::terrain::{CoverPiece, CoverSheet, PieceShape};
 
 /// The covers of an area's terrains as its scenery stands them: each terrain's that has one,
 /// what stands of them chunk by chunk, and what stands of them merged.
@@ -104,7 +104,7 @@ struct CoverChunk {
 struct CoverLayer {
     slot: usize,
     seed: u64,
-    sheet_level: Option<f32>,
+    sheet: Option<CoverSheet>,
     ground_color: LinearRgba,
     pieces: Vec<LayerPiece>,
     blended: Handle<CoverMaterial>,
@@ -493,7 +493,7 @@ fn stand_merge(
             piece: at,
             slot: cover.slot,
             seed: cover.seed,
-            sheet_level: cover.sheet_level,
+            sheet: cover.sheet,
             ground_color: cover.ground_color,
             shape: cover.pieces[piece]
                 .shape
@@ -509,6 +509,7 @@ fn stand_merge(
     let region = FarRegion {
         heights: streaming.heights.clone(),
         paint: streaming.paint.clone(),
+        water: streaming.water.clone(),
         region: merge.region,
         cells: (streaming.regions.bounds(merge.region).size.width * SAMPLES_PER_METER as f32)
             as u32,
@@ -554,6 +555,7 @@ fn spawn_merged(
 struct FarRegion {
     heights: Heightfield,
     paint: PaintMap,
+    water: WaterSurface,
     region: Region,
     cells: u32,
     pixels_per_meter: f32,
@@ -564,7 +566,7 @@ struct FarPiece {
     piece: PieceAt,
     slot: usize,
     seed: u64,
-    sheet_level: Option<f32>,
+    sheet: Option<CoverSheet>,
     ground_color: LinearRgba,
     shape: Option<PieceShape>,
     spread: cover::Spread,
@@ -649,7 +651,7 @@ impl FarRegion {
         let meshes: Vec<(Option<Handle<GltfMaterial>>, Mesh)> = match (&far.shape, &far.model) {
             (None, _) => cover::sheet(
                 &patch(first, self.cells),
-                far.sheet_level,
+                sheet_on(far.sheet, &self.water),
                 far.ground_color,
                 self.sheet_stride(),
             )
@@ -813,10 +815,7 @@ fn cover_layers(world: &mut World, content: &Content, area: &Area) -> Vec<CoverL
         layers.push(CoverLayer {
             slot,
             seed: cover_def.seed,
-            sheet_level: cover_def
-                .sheet
-                .and_then(|sheet| sheet.level)
-                .map(|level| level.0),
+            sheet: cover_def.sheet,
             ground_color,
             pieces,
             blended,
@@ -861,7 +860,12 @@ fn spawn_cover_chunk(
         ],
     );
     let meshes = match shape.as_ref().map(|piece| &piece.shape) {
-        None => cover::sheet(&patch, layer.sheet_level, layer.ground_color, 1),
+        None => cover::sheet(
+            &patch,
+            sheet_on(layer.sheet, &streaming.water),
+            layer.ground_color,
+            1,
+        ),
         Some(PieceShape::Blade { width, height }) => cover::blades(
             &streaming.heights,
             &cover::strew_places(&patch, spread, seed),
@@ -936,5 +940,13 @@ fn painted_by(paint: &PaintMap, slot: usize) -> impl Fn(u32, u32) -> f32 + '_ {
         } else {
             0.0
         }
+    }
+}
+
+/// What the sheet of a cover lying `sheet` lies on, over the area's `water`.
+fn sheet_on(sheet: Option<CoverSheet>, water: &WaterSurface) -> cover::SheetOn<'_> {
+    match sheet {
+        Some(CoverSheet::Water) => cover::SheetOn::Water(water),
+        Some(CoverSheet::Ground) | None => cover::SheetOn::Ground,
     }
 }

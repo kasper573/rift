@@ -127,6 +127,7 @@ fn main() {
     let reset = config.daily_reset_utc_hour;
     let rng_seed = seeded(config.rng_seed);
     let daylight = config.daylight;
+    let weather = config.weather.course(wall_clock(reset).now);
     let running: Vec<_> = areas.iter().collect();
     let mut worlds = AreaWorlds {
         apps: running.iter().map(|_| None).collect(),
@@ -137,6 +138,7 @@ fn main() {
                 rng_seed,
                 wall_clock(reset),
                 daylight,
+                weather,
                 &content,
             );
             app.insert_resource(rules);

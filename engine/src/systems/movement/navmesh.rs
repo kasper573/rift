@@ -51,6 +51,20 @@ impl ByArea {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct Island(usize);
 
+impl Island {
+    /// The island's number among its mesh's, counted from 0.
+    pub fn index(self) -> usize {
+        self.0
+    }
+}
+
+impl TileLayer {
+    /// The ground the layer covers: its tile, within the area's walkable bounds.
+    pub fn rect(&self) -> Rect<Meters> {
+        self.rect
+    }
+}
+
 impl NavMesh {
     /// The ground of `tile`, within `bounds` shrunk by `radius`, less every obstacle reaching into
     /// it grown by `radius`, triangulated on its own: a point on the layer is a place a body of
@@ -405,6 +419,24 @@ impl NavMesh {
             .collect()
     }
 
+    /// How many islands the mesh holds.
+    pub fn island_count(&self) -> usize {
+        self.islands
+            .iter()
+            .map(|island| island.0 + 1)
+            .max()
+            .unwrap_or(0)
+    }
+
+    /// Every corner of every polygon, with the island the polygon lies on.
+    pub fn corners_by_island(&self) -> impl Iterator<Item = (Pos<Meters>, Island)> + '_ {
+        (0..self.polygon_count()).flat_map(move |polygon| {
+            self.outline(polygon)
+                .iter()
+                .map(move |corner| (*corner, self.islands[polygon]))
+        })
+    }
+
     fn polygon_count(&self) -> usize {
         self.starts.len().saturating_sub(1)
     }
@@ -451,7 +483,7 @@ const CIRCLE_SIDES: usize = 24;
 /// How far off a seam a vertex may land through the arithmetic and still be the seam's: both tiles
 /// cut the same outline at the same seam, so their vertices there differ by the rounding alone,
 /// far under a millimetre.
-const SEAM_SNAP: f32 = 1e-3;
+pub const SEAM_SNAP: f32 = 1e-3;
 /// How far past the walker's radius a grown obstacle may reach, as a share of the radius.
 const OVERREACH: f32 = 0.1;
 

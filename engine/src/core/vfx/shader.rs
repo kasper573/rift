@@ -6,12 +6,14 @@ use serde::{Deserialize, Serialize};
 use strum::{IntoStaticStr, VariantArray};
 
 use super::ParamValue;
-use super::uniform::{LIMBS_PER_TREAD, MAX_PATH_POINTS, TREADS};
+use super::rain::SHELTER_DEPTH;
+use super::uniform::{LIMBS_PER_TREAD, MAX_PATH_POINTS, TRAIL_EVERY, TRAIL_POINTS, TREADS};
 use crate::core::content::{
     Bundle, ContentFile, ContentId, ContentProblem, ErrorPlace, FileShape, FileWriter, Loading,
     NamedContent, Nearby, PartSpec, Parts, RowCheck,
 };
 use crate::core::math::Rgba;
+use crate::core::render::world::cover::SHORE_REACH;
 
 pub type VfxShaderId = ContentId<VfxShaderDef>;
 
@@ -34,7 +36,8 @@ pub struct VfxShaderDef {
 
 /// Where a shader runs: in the material of the thing it plays on, as a decal on the ground under
 /// it, on a quad facing the camera at it, over the whole screen, in the text of a plate, as the
-/// cover a terrain grows or lies under, in a material of a prop, or over an area's whole sky.
+/// cover a terrain grows or lies under, in a material of a prop, over an area's whole sky, or as
+/// the rain falling round the eye.
 #[derive(
     JsonSchema,
     Clone,
@@ -58,6 +61,7 @@ pub enum Stage {
     Cover,
     Prop,
     Sky,
+    Rain,
 }
 
 impl Stage {
@@ -72,7 +76,7 @@ impl Stage {
             ),
             Stage::Screen => site == SiteKind::Screen,
             Stage::Text => site == SiteKind::Text,
-            Stage::Cover | Stage::Prop | Stage::Sky => false,
+            Stage::Cover | Stage::Prop | Stage::Sky | Stage::Rain => false,
         }
     }
 
@@ -321,7 +325,7 @@ impl VfxShaderDef {
     pub fn composes_wesl(&self) -> bool {
         matches!(
             self.stage,
-            Stage::Surface | Stage::Cover | Stage::Prop | Stage::Sky
+            Stage::Surface | Stage::Cover | Stage::Prop | Stage::Sky | Stage::Rain
         )
     }
 
@@ -643,9 +647,23 @@ const PROP_HEADER: &str = include_str!("prop.wesl");
 const PROP_CHECK_HEADER: &str = include_str!("prop_check.wgsl");
 const SKY_HEADER: &str = include_str!("sky.wesl");
 const SKY_CHECK_HEADER: &str = include_str!("sky_check.wgsl");
+const RAIN_HEADER: &str = include_str!("rain.wesl");
+const RAIN_CHECK_HEADER: &str = include_str!("rain_check.wgsl");
+/// What a shader under the open sky reads of it, the sky's and the rain's alike: the light, the
+/// moon and the clouds; and the light the sky sheds, at run time.
+const HEAVENS: &str = include_str!("heavens.wgsl");
+const SKY_LIGHT: &str = include_str!("sky_light.wesl");
 const WEATHER_HELPERS: &str = include_str!("weather.wgsl");
 /// What a cover's blades bend by, on top of the weather.
 const TREAD_HELPERS: &str = include_str!("tread.wgsl");
+
+/// The weather's helpers, as every shader that reads the weather is composed with them.
+pub(crate) fn weather_helpers() -> String {
+    format!(
+        "{WEATHER_HELPERS}\n// How far under a roof's or a canopy's top a point lies sheltered, in metres.\nconst SHELTER_DEPTH: f32 = {:?};",
+        SHELTER_DEPTH
+    )
+}
 
 fn prelude() -> String {
     PRELUDE.replace("PATH_POINTS", &format!("{MAX_PATH_POINTS}u"))
@@ -654,8 +672,14 @@ fn prelude() -> String {
 fn cover_helpers() -> String {
     let treads = TREAD_HELPERS
         .replace("LIMBS_PER_TREAD", &format!("{LIMBS_PER_TREAD}u"))
+        .replace("TRAIL_POINTS", &format!("{TRAIL_POINTS}u"))
+        .replace("TRAIL_EVERY", &format!("{TRAIL_EVERY:?}"))
         .replace("TREADS", &format!("{TREADS}u"));
-    format!("{WEATHER_HELPERS}\n{treads}")
+    let shore = format!(
+        "// How far from the shore `shore` tells a point lies at most, in metres.\nconst SHORE_REACH: f32 = {:?};",
+        SHORE_REACH.0
+    );
+    format!("{}\n{treads}\n{shore}", weather_helpers())
 }
 
 fn quad_header(group: u32) -> String {
@@ -667,8 +691,15 @@ impl Stage {
         match self {
             Stage::Surface => SURFACE_HEADER.to_owned(),
             Stage::Cover => format!("{COVER_HEADER}\n{}", cover_helpers()),
-            Stage::Prop => format!("{PROP_HEADER}\n{WEATHER_HELPERS}"),
-            Stage::Sky => format!("{SKY_HEADER}\n{WEATHER_HELPERS}"),
+            Stage::Prop => format!("{PROP_HEADER}\n{}", weather_helpers()),
+            Stage::Sky => format!(
+                "{SKY_HEADER}\n{SKY_LIGHT}\n{HEAVENS}\n{}",
+                weather_helpers()
+            ),
+            Stage::Rain => format!(
+                "{RAIN_HEADER}\n{SKY_LIGHT}\n{HEAVENS}\n{}",
+                weather_helpers()
+            ),
             Stage::Ground | Stage::Billboard => quad_header(WORLD_GROUP),
             Stage::Screen | Stage::Text => quad_header(PRESENT_GROUP),
         }
@@ -679,8 +710,9 @@ impl Stage {
     fn check_header(self) -> String {
         match self {
             Stage::Cover => format!("{COVER_CHECK_HEADER}\n{}", cover_helpers()),
-            Stage::Prop => format!("{PROP_CHECK_HEADER}\n{WEATHER_HELPERS}"),
-            Stage::Sky => format!("{SKY_CHECK_HEADER}\n{WEATHER_HELPERS}"),
+            Stage::Prop => format!("{PROP_CHECK_HEADER}\n{}", weather_helpers()),
+            Stage::Sky => format!("{SKY_CHECK_HEADER}\n{HEAVENS}\n{}", weather_helpers()),
+            Stage::Rain => format!("{RAIN_CHECK_HEADER}\n{HEAVENS}\n{}", weather_helpers()),
             _ => quad_header(WORLD_GROUP),
         }
     }

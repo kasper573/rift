@@ -24,6 +24,7 @@ pub(crate) fn named_table(kind: AreaModuleKind) -> Option<&'static str> {
         AreaModuleKind::Prop | AreaModuleKind::Scatter => Some(PropDef::TABLE),
         AreaModuleKind::Object
         | AreaModuleKind::SafeZone
+        | AreaModuleKind::Fog
         | AreaModuleKind::Soundscape
         | AreaModuleKind::Light => None,
     }

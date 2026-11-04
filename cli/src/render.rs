@@ -300,7 +300,15 @@ fn step(world: &mut World) {
                 let stood = taking.stood.as_ref().expect("a filmed shot stood");
                 let daylight = Daylight::Hour(hour.rem_euclid(24.0));
                 world.insert_resource(daylight);
-                scenery::light(world, &stood.area, daylight, stood.scenery, stood.camera);
+                let weather = stood.area.climate.first();
+                scenery::light(
+                    world,
+                    &stood.area,
+                    &weather,
+                    daylight,
+                    stood.scenery,
+                    stood.camera,
+                );
                 taking.stage = Stage::Settling(SETTLE - TURNING);
             }
         }
@@ -354,8 +362,9 @@ fn set_up(
     );
     let daylight = shot.hour.map_or(Daylight::Fixed, Daylight::Hour);
     world.insert_resource(daylight);
-    scenery::light(world, &picture.area, daylight, stood, camera);
-    world.insert_resource(scenery::climate(&picture.area));
+    let weather = picture.area.climate.first();
+    scenery::light(world, &picture.area, &weather, daylight, stood, camera);
+    world.insert_resource(scenery::shown_weather(&weather, 0.0));
     let bodies = shot
         .bodies
         .iter()

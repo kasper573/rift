@@ -3,6 +3,7 @@ use std::fs;
 use std::path::Path;
 
 use engine::core::content::{Content, LoadPurpose, LoadWarnings, write};
+use engine::core::vfx;
 use engine::systems::actor::model::{ActorModel, ModelDef};
 use engine::systems::actor::skeleton::{SkeletonDef, SkeletonId};
 use engine::systems::actor::stance;
@@ -57,6 +58,7 @@ fn problems(game: &Path) -> Vec<String> {
         }
     };
     check_bodies(&content, &mut out);
+    check_shaders(&content, &mut out);
     let rewritten = as_the_editor_writes(game, content);
     for file in &rewritten.unwritten {
         out.push(format!("{file}: a file the editor never writes"));
@@ -72,6 +74,18 @@ fn problems(game: &Path) -> Vec<String> {
         ));
     }
     out
+}
+
+/// Every shader that doesn't compile as the client compiles it, in a pass it draws in.
+fn check_shaders(content: &Content, out: &mut Vec<String>) {
+    for failed in vfx::compile::uncompiled(content, content.built::<GameSettings>().look.clone()) {
+        out.push(format!(
+            "{}: does not compile in its {} pass: {}",
+            vfx::shader::shader_file(failed.shader.path(content)),
+            failed.pass,
+            failed.message
+        ));
+    }
 }
 
 /// The game as the editor writes it, beside the game as it is.

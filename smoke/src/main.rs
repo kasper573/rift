@@ -13,7 +13,7 @@ use std::time::{Duration, Instant};
 use engine::core::content::{Content, ContentScope, FilesystemFolder, with_content};
 use engine::systems::launch::{
     self, AuthMode, CLIENT_ENV_PREFIX, ProbeDriver, SERVER_ENV_PREFIX, ServerConfig,
-    ServerDaylight, ServerReady,
+    ServerDaylight, ServerReady, ServerWeather,
 };
 use engine::systems::probe::{ProbeFrameQuestion, ProbeSnapshot};
 use engine::systems::{GameSettings, load_content};
@@ -390,6 +390,7 @@ fn game_server(binary: &Path, sign_in: &oidc::TokenCheckSettings) -> (Running, S
     let config = ServerConfig {
         player_immortal: true,
         daylight: ServerDaylight::Still,
+        weather: ServerWeather::Still,
         rng_seed: Some(SEED),
         auth: AuthMode::Oidc,
         test_characters: false,

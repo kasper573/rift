@@ -15,7 +15,7 @@ use snapshot::{CharacterSnapshot, JoinAs};
 
 use crate::core::content::{Content, ContentFile, ContentId, ModuleRule, ModuleSet, Nearby};
 use crate::core::math::{Pos, Rect, Rng};
-use crate::core::time::{self, DayClock, DayCourse, UnixMillis, WallClock};
+use crate::core::time::{self, DayClock, TimeCourse, UnixMillis, WallClock, WeatherClock};
 use crate::core::units::{Meters, MetersPerSec, PlaybackRate, Radians, Seconds};
 use crate::systems::account::AccountIdentity;
 use crate::systems::actor::{Action, Actor, ActorModel, Appearance, Hitbox, Name, Pose};
@@ -143,7 +143,8 @@ pub struct RespawnRequest;
 pub struct Welcome {
     pub id: ClientId,
     pub now: UnixMillis,
-    pub day: Option<DayCourse>,
+    pub day: Option<TimeCourse>,
+    pub weather: Option<TimeCourse>,
 }
 
 pub type PlayerDefId = ContentId<PlayerDef>;
@@ -280,7 +281,19 @@ pub fn greet(add: On<Add<ClientId>>, clients: Query<&ClientId>, mut commands: Co
     commands.queue(move |world: &mut World| {
         let now = world.resource::<WallClock>().now;
         let day = world.get_resource::<DayClock>().and_then(|clock| clock.0);
-        visibility::send_to(world, conn, Welcome { id, now, day });
+        let weather = world
+            .get_resource::<WeatherClock>()
+            .and_then(|clock| clock.0);
+        visibility::send_to(
+            world,
+            conn,
+            Welcome {
+                id,
+                now,
+                day,
+                weather,
+            },
+        );
     });
 }
 

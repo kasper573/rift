@@ -1,8 +1,10 @@
 pub mod blueprint;
+pub mod fog;
 pub mod lighting;
 pub mod object;
 pub mod prop;
 pub mod prop_material;
+pub mod rain;
 pub mod render;
 pub mod scene;
 pub mod scenery;
@@ -14,14 +16,18 @@ pub mod weather;
 pub mod world_map;
 
 pub use blueprint::{BlueprintDef, Flattened, PlacedBlueprint, Placement};
+pub use fog::FogBank;
 
 pub use lighting::{Lighting, PointLightDef};
 pub use object::{AreaObject, ObjectDef, ObjectShape};
 pub use prop::{Footprint, PropDef, PropId, PropPlacement, Scatter};
 pub use scene::SceneNode;
 pub use terrain::{SurfaceDef, SurfaceId, TerrainDef, TerrainId, Walk};
-pub use walk::HeldMesh;
-pub use weather::{DayCycle, Weather, Wind};
+pub use walk::{GroundHold, HeldMesh, Survey, SurveyAnswer, SurveyIsland, SurveyQuestion};
+pub use weather::{
+    Climate, DayCycle, Lightning, MAX_RAIN_SHELLS, NextSpell, RainSound, Rainfall, Spell,
+    SpellCourse, SpellLength, Weather, Wind,
+};
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::io;
@@ -50,14 +56,14 @@ use crate::core::content::{
 };
 use crate::core::ground::{
     GroundGrid, GroundSize, GroundValue, HeightRange, Heightfield, MAX_TERRAINS, MIN_SIDE,
-    PaintMap, TILE_SIDE, TileAt,
+    PaintMap, ShareMap, TILE_SIDE, TileAt, WaterSurface,
 };
 use crate::core::math::{Offset, Pos, Rect, Size};
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::{Degrees, GridDims, MeterSize, Meters};
 use crate::systems::GameSettings;
 use crate::systems::actor::Pose;
-use crate::systems::movement::Bodies;
+use crate::systems::movement::{Bodies, NavMesh};
 use crate::systems::npc::NpcId;
 use crate::systems::script::{self, Condition, EffectReach, OwnerRow, RiftScripts, ScriptModule};
 use blueprint::{FlattenAt, FlattenError};
@@ -91,7 +97,7 @@ pub fn content(registry: &mut ContentRegistry) {
         .hook(LoadStep::Across, terrain::check_all)
         .hook(LoadStep::Across, terrain::check_pictures)
         .hook(LoadStep::Across, prop_material::check_all)
-        .hook(LoadStep::Across, lighting::check_dome)
+        .hook(LoadStep::Across, lighting::check_area_shaders)
         .hook(LoadStep::Expand, flatten_all)
         .hook(LoadStep::Assemble, build_all)
         .hook(LoadStep::Across, world_map::check_all);
@@ -117,8 +123,8 @@ pub fn same_area(world: &World, a: Entity, b: Entity) -> bool {
 /// Ground can lean no further than upright.
 const UPRIGHT: Degrees = Degrees(90.0);
 
-/// The ground's heights and paint, a tile of each to a file named by the tile's place, and an
-/// overview of each over the whole ground, which answers for the tiles not loaded.
+/// The ground's heights, paint and water, a tile of each to a file named by the tile's place, and
+/// an overview of each over the whole ground, which answers for the tiles not loaded.
 pub const HEIGHT: PartSpec = PartSpec::Keyed {
     folder: "height",
     exts: AssetKind::Image.extensions(),
@@ -135,10 +141,24 @@ pub const PAINT_OVERVIEW: PartSpec = PartSpec::File {
     name: "paint_overview",
     exts: AssetKind::Image.extensions(),
 };
+pub const WATER: PartSpec = PartSpec::Keyed {
+    folder: "water",
+    exts: AssetKind::Image.extensions(),
+};
+pub const WATER_OVERVIEW: PartSpec = PartSpec::File {
+    name: "water_overview",
+    exts: AssetKind::Image.extensions(),
+};
+/// The share of the downpour each stretch of the area gets, as coarse as its maker likes: where
+/// the bundle has none, rain falls alike everywhere.
+pub const RAIN: PartSpec = PartSpec::File {
+    name: "rain",
+    exts: AssetKind::Image.extensions(),
+};
 
-/// A place in the world: a stretch of ground painted with terrains, the light it stands in, and a
-/// scene of modules on it. Its scene and the tiles of its heights and paint are parts of its
-/// bundle.
+/// A place in the world: a stretch of ground painted with terrains, with water lying on it, the
+/// light it stands in, its climate and how its rain falls over it, and a scene of modules on it.
+/// Its scene, the tiles of its heights, paint and water, and its rain map are parts of its bundle.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct AreaDef {
@@ -152,14 +172,18 @@ pub struct AreaDef {
     /// painted. The editor adds a terrain as it is first painted.
     pub terrains: Vec<TerrainId>,
     pub lighting: Lighting,
-    #[serde(default, skip_serializing_if = "Weather::is_still")]
-    pub weather: Weather,
+    #[serde(default, skip_serializing_if = "Climate::is_still")]
+    pub climate: Climate,
     #[serde(skip)]
     pub scene: Vec<SceneNode>,
     #[serde(skip)]
     pub heights: Heightfield,
     #[serde(skip)]
     pub paint: PaintMap,
+    #[serde(skip)]
+    pub water: WaterSurface,
+    #[serde(skip)]
+    pub rain: Option<ShareMap>,
 }
 
 impl ContentFile for AreaDef {
@@ -182,10 +206,14 @@ impl ContentFile for AreaDef {
             max_slope: Degrees(38.0),
             terrains: vec![near.file()?],
             lighting: Lighting::day(),
-            weather: Weather::breezy(),
-            scene: Vec::new(),
+            climate: Climate::always(Weather::breezy()),
+            scene: vec![SceneNode::Module(scene::ModuleNode::new(AreaModule::Fog(
+                FogBank::light_over(size.bounds()),
+            )))],
             heights: Heightfield::flat(size, height_range),
             paint: PaintMap::plain(size),
+            water: WaterSurface::dry(size, height_range),
+            rain: None,
         })
     }
 
@@ -208,7 +236,7 @@ impl ContentFile for AreaDef {
             "terrains",
         );
         self.lighting.check("/lighting", cx);
-        self.weather.check("/weather", cx);
+        self.climate.check("/climate", cx);
     }
 }
 
@@ -219,14 +247,24 @@ impl NamedContent for AreaDef {
 }
 
 impl Bundle for AreaDef {
-    const PARTS: &'static [PartSpec] = &[SCENE, HEIGHT, PAINT, HEIGHT_OVERVIEW, PAINT_OVERVIEW];
-    const WRITTEN: &'static [PartSpec] = &[SCENE, HEIGHT, PAINT, HEIGHT_OVERVIEW, PAINT_OVERVIEW];
-    const STREAMED: &'static [PartSpec] = &[HEIGHT, PAINT];
+    const PARTS: &'static [PartSpec] = &[
+        SCENE,
+        HEIGHT,
+        PAINT,
+        WATER,
+        HEIGHT_OVERVIEW,
+        PAINT_OVERVIEW,
+        WATER_OVERVIEW,
+        RAIN,
+    ];
+    const WRITTEN: &'static [PartSpec] = Self::PARTS;
+    const STREAMED: &'static [PartSpec] = &[HEIGHT, PAINT, WATER];
 
     fn read_parts(&mut self, parts: &mut Parts) {
         scene::read(&mut self.scene, &BTreeMap::new(), parts);
         self.heights = Heightfield::flat(self.size, self.height_range);
         self.paint = PaintMap::plain(self.size);
+        self.water = WaterSurface::dry(self.size, self.height_range);
         read_ground(
             parts,
             GroundParts {
@@ -243,6 +281,15 @@ impl Bundle for AreaDef {
             },
             &mut self.paint,
         );
+        read_ground(
+            parts,
+            GroundParts {
+                tiles: WATER,
+                overview: WATER_OVERVIEW,
+            },
+            &mut self.water,
+        );
+        self.rain = read_share_map(parts, RAIN);
     }
 
     fn write_parts(&self, bundle: &str, writer: &mut FileWriter) -> io::Result<()> {
@@ -255,6 +302,9 @@ impl Bundle for AreaDef {
             if let Some(bytes) = self.paint.encode_tile(at) {
                 writer.file(&part(PAINT, &at.key()), &bytes)?;
             }
+            if let Some(bytes) = self.water.encode_tile(at) {
+                writer.file(&part(WATER, &at.key()), &bytes)?;
+            }
         }
         if let Some(bytes) = self.heights.encode_overview() {
             writer.file(&part(HEIGHT_OVERVIEW, ""), &bytes)?;
@@ -262,17 +312,28 @@ impl Bundle for AreaDef {
         if let Some(bytes) = self.paint.encode_overview() {
             writer.file(&part(PAINT_OVERVIEW, ""), &bytes)?;
         }
+        if let Some(bytes) = self.water.encode_overview() {
+            writer.file(&part(WATER_OVERVIEW, ""), &bytes)?;
+        }
+        if let Some(rain) = &self.rain {
+            writer.file(&part(RAIN, ""), &rain.encode())?;
+        }
         Ok(())
     }
 }
 
 impl AreaDef {
-    /// The area over ground of `size`, its heights and paint kept from the top-left corner.
+    /// The area over ground of `size`, its heights, paint and water kept from the top-left corner.
     pub fn resized(&self, size: GroundSize) -> AreaDef {
         let mut area = self.clone();
         area.size = size;
         area.heights = self.heights.resized(size);
         area.paint = self.paint.resized(size);
+        area.water = self.water.resized(size);
+        area.rain = self
+            .rain
+            .as_ref()
+            .map(|rain| rain.resized(self.size.meters(), size.meters()));
         area
     }
 
@@ -299,8 +360,24 @@ impl AreaDef {
             terrains: self.terrains.clone(),
             heights: self.heights.clone(),
             paint: self.paint.clone(),
+            water: self.water.clone(),
+            rain: self.rain.clone(),
             lighting: self.lighting.clone(),
-            weather: self.weather,
+            climate: self.climate.clone(),
+        }
+    }
+}
+
+/// Reads a map of shares over the ground from the bundle's file for `spec`, refusing at the file
+/// one that doesn't decode; none where the bundle has no such file.
+fn read_share_map(parts: &mut Parts, spec: PartSpec) -> Option<ShareMap> {
+    let file = parts.file(spec)?;
+    let bytes = parts.bytes(file)?;
+    match ShareMap::decode(&bytes) {
+        Ok(map) => Some(map),
+        Err(problem) => {
+            parts.error(file, ErrorPlace::WholeFile, problem);
+            None
         }
     }
 }
@@ -392,6 +469,7 @@ pub enum AreaModule {
     Prop(PropPlacement),
     Scatter(Scatter),
     Light(PointLightDef),
+    Fog(FogBank),
     Blueprint(Placement),
     Population(Population),
     Resident(Resident),
@@ -421,6 +499,7 @@ pub enum AreaModuleKind {
     Prop,
     Scatter,
     Light,
+    Fog,
     Blueprint,
     Population,
     Resident,
@@ -442,6 +521,7 @@ impl AreaModule {
             AreaModule::Prop(_) => AreaModuleKind::Prop,
             AreaModule::Scatter(_) => AreaModuleKind::Scatter,
             AreaModule::Light(_) => AreaModuleKind::Light,
+            AreaModule::Fog(_) => AreaModuleKind::Fog,
             AreaModule::Blueprint(_) => AreaModuleKind::Blueprint,
             AreaModule::Population(_) => AreaModuleKind::Population,
             AreaModule::Resident(_) => AreaModuleKind::Resident,
@@ -467,6 +547,7 @@ impl AreaModule {
                 };
             }
             AreaModule::SafeZone(zone) => zone.rect = moved_rect(zone.rect),
+            AreaModule::Fog(bank) => bank.rect = moved_rect(bank.rect),
             AreaModule::Prop(prop) => prop.at = moved(prop.at),
             AreaModule::Scatter(scatter) => scatter.region = moved_rect(scatter.region),
             AreaModule::Light(light) => light.at = moved(light.at),
@@ -488,6 +569,7 @@ impl AreaModule {
             AreaModule::Prop(prop) => prop.check(pointer, cx),
             AreaModule::Scatter(scatter) => scatter.check(pointer, cx),
             AreaModule::Light(light) => light.check(pointer, cx),
+            AreaModule::Fog(bank) => bank.check(pointer, cx),
             AreaModule::Resident(resident) => cx.range(
                 format!("{pointer}/facing"),
                 resident.facing.0,
@@ -739,9 +821,13 @@ pub struct Area {
     pub terrains: Vec<TerrainId>,
     pub heights: Heightfield,
     pub paint: PaintMap,
+    pub water: WaterSurface,
+    /// The share of the downpour each stretch of the area gets; alike everywhere without one.
+    pub rain: Option<ShareMap>,
     pub lighting: Lighting,
-    pub weather: Weather,
+    pub climate: Climate,
     pub safe_zones: Vec<Rect<Meters>>,
+    pub fogs: Vec<FogBank>,
     pub soundscape: Vec<SoundscapeZone>,
     /// Every prop standing in the area, scattered ones expanded.
     pub props: Vec<PropPlacement>,
@@ -750,7 +836,7 @@ pub struct Area {
     footprints: Vec<Vec<Pos<Meters>>>,
     /// The footprints by the ground they cover, so a tile's mesh takes in only those reaching it.
     footprint_index: SpatialIndex,
-    meshes: walk::Meshes,
+    meshes: Arc<walk::Meshes>,
     modules_by_tile: HashMap<TileAt, Vec<u32>>,
     placements_by_tile: HashMap<TileAt, Vec<u32>>,
 }
@@ -758,6 +844,13 @@ pub struct Area {
 impl Area {
     pub fn safe(&self, at: Pos<Meters>) -> bool {
         self.safe_zones.iter().any(|zone| zone.contains(at))
+    }
+
+    /// The share of the downpour that falls at `at`, 0 none to 1 all of it.
+    pub fn rain_share(&self, at: Pos<Meters>) -> f32 {
+        self.rain
+            .as_ref()
+            .map_or(1.0, |rain| rain.share_at(Rect::from_size(self.size), at))
     }
 
     /// The ground everyone walks, as far as the tiles held.
@@ -771,11 +864,10 @@ impl Area {
         walk::mesh(self, wild && !self.safe_zones.is_empty(), flies)
     }
 
-    /// The ground everyone walks, with the ground within a tile of `at` held first: for a look at
-    /// one place of an area whose ground may not be held there yet.
-    pub fn mesh_near(&self, at: Pos<Meters>) -> HeldMesh {
-        self.hold(self.tiles_around(at, TILE_SIDE));
-        self.mesh()
+    /// The ground everyone walks within a tile of `at`, laid for a look at one place of the area
+    /// whether or not its ground is held there, and leaving what is held as it is.
+    pub fn mesh_near(&self, at: Pos<Meters>) -> NavMesh {
+        self.survey().around(at)
     }
 
     /// Whether everyone walks at `at`, once the ground there is held.
@@ -788,9 +880,20 @@ impl Area {
         walk::held(self)
     }
 
-    /// Holds `tiles` besides those held: loads their ground and lays the meshes over them.
-    pub fn hold(&self, tiles: impl IntoIterator<Item = TileAt>) {
-        walk::hold(self, tiles)
+    /// Holds `tiles` for as long as the hold lives: loads their ground and lays the meshes over
+    /// them.
+    pub fn hold(&self, tiles: impl IntoIterator<Item = TileAt>) -> GroundHold {
+        walk::hold(self, None, tiles)
+    }
+
+    /// Holds `tiles` in place of what `previous` held, letting go of the ground no hold wants any
+    /// longer: what a holder that moves over the area, such as a player or a view, holds by.
+    pub fn hold_instead(
+        &self,
+        previous: Option<GroundHold>,
+        tiles: impl IntoIterator<Item = TileAt>,
+    ) -> GroundHold {
+        walk::hold(self, previous, tiles)
     }
 
     /// Whether every tile holding ground of `rect` is held, so the meshes cover it.
@@ -798,9 +901,9 @@ impl Area {
         walk::holds(self, self.ground_size().tiles_within(rect))
     }
 
-    /// Holds every tile of the area, as a check of the whole area or a tool editing it needs.
-    pub fn hold_all(&self) {
-        self.hold(self.ground_size().each_tile())
+    /// The area's ground looked over a tile at a time, for a check of all of it.
+    pub fn survey(&self) -> Survey<'_> {
+        Survey::of(self)
     }
 
     /// The tiles holding any ground within `reach` of `at`.
@@ -938,8 +1041,10 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
                 terrains: vec![home_terrain(content)?],
                 heights: Heightfield::flat(def.size, home_range(content)?),
                 paint: PaintMap::plain(def.size),
+                water: WaterSurface::dry(def.size, home_range(content)?),
+                rain: None,
                 lighting: Lighting::day(),
-                weather: Weather::breezy(),
+                climate: Climate::always(Weather::breezy()),
             };
             (
                 ground,
@@ -953,8 +1058,10 @@ pub fn picture(content: &Content, pictured: Pictured, kept: Kept) -> Option<Pict
                 terrains: vec![home_terrain(content)?],
                 heights: Heightfield::flat(PROP_STAGE, home_range(content)?),
                 paint: PaintMap::plain(PROP_STAGE),
+                water: WaterSurface::dry(PROP_STAGE, home_range(content)?),
+                rain: None,
                 lighting: Lighting::day(),
-                weather: Weather::breezy(),
+                climate: Climate::always(Weather::breezy()),
             };
             let standing: Vec<scene::SceneNode> = match pictured {
                 Pictured::Prop(id) => vec![scene::SceneNode::Module(scene::ModuleNode::new(
@@ -1096,7 +1203,6 @@ fn build_all(loading: &mut Loading) {
         check_placed(&content, id, modules, &mut check);
         if loading.rechecks(AreaDef::TABLE, id.path(&content)) {
             check_terrains(&content, id, def, loading);
-            area.hold_all();
             check_footing(&content, id, &area, modules, &mut check);
         }
         let scene = scene_file(id.path(&content));
@@ -1131,8 +1237,10 @@ pub(super) struct Ground {
     terrains: Vec<TerrainId>,
     heights: Heightfield,
     paint: PaintMap,
+    water: WaterSurface,
+    rain: Option<ShareMap>,
     lighting: Lighting,
-    weather: Weather,
+    climate: Climate,
 }
 
 /// The area a ground and its flattened modules make: where it walks, flies, is safe and sounds,
@@ -1176,6 +1284,13 @@ fn build_area(
         .iter()
         .filter_map(|placed| match &placed.module {
             AreaModule::SafeZone(zone) => Some(zone.rect),
+            _ => None,
+        })
+        .collect();
+    let fogs: Vec<FogBank> = modules
+        .iter()
+        .filter_map(|placed| match &placed.module {
+            AreaModule::Fog(bank) => Some(*bank),
             _ => None,
         })
         .collect();
@@ -1231,9 +1346,12 @@ fn build_area(
         terrains: ground.terrains.clone(),
         heights: ground.heights.clone(),
         paint: ground.paint.clone(),
+        water: ground.water.clone(),
+        rain: ground.rain.clone(),
         lighting: ground.lighting.clone(),
-        weather: ground.weather,
+        climate: ground.climate.clone(),
         safe_zones,
+        fogs,
         soundscape: modules
             .iter()
             .filter_map(|placed| match &placed.module {
@@ -1292,6 +1410,7 @@ fn check_bounds(content: &Content, size: GroundSize, modules: &[Flattened], chec
             AreaModule::Scatter(scatter) if rect_outside(scatter.region) => {
                 out(check, scatter.region.origin)
             }
+            AreaModule::Fog(bank) if rect_outside(bank.rect) => out(check, bank.rect.origin),
             AreaModule::Light(light) if outside(light.at) => out(check, light.at),
             AreaModule::Resident(resident) if outside(resident.at) => out(check, resident.at),
             AreaModule::Population(Population {
@@ -1374,14 +1493,44 @@ fn check_footing(
             .find(|(_, object, _)| object.shape.covers(at))
             .map(|(_, _, name)| name.clone())
     };
-    let mesh = area.mesh();
-    let nearest_ground = |at: Pos<Meters>| mesh.nearest(at).map(describe_point);
+    let survey = area.survey();
+    let nearest_ground = |at: Pos<Meters>| survey.nearest(at).map(describe_point);
+    let footing = |placed: &Flattened| match &placed.module {
+        AreaModule::Object(object) => match object.shape {
+            ObjectShape::Point(at) => Some(SurveyQuestion::Walkable(at)),
+            ObjectShape::Rect(_) => None,
+        },
+        AreaModule::Resident(resident) => Some(SurveyQuestion::Walkable(resident.at)),
+        AreaModule::Population(population) => Some(SurveyQuestion::Covers {
+            bounds: population.roams.unwrap_or(area.size.bounds()),
+            wild: true,
+        }),
+        _ => None,
+    };
+    let ground_of = |object: &ObjectDef| match object.shape {
+        ObjectShape::Point(at) => SurveyQuestion::Walkable(at),
+        ObjectShape::Rect(rect) => SurveyQuestion::Covers {
+            bounds: rect,
+            wild: false,
+        },
+    };
+    let questions: Vec<SurveyQuestion> = modules
+        .iter()
+        .filter_map(footing)
+        .chain(warps.iter().map(|(_, object, _)| ground_of(object)))
+        .collect();
+    let answers = survey.answer(&questions);
+    let mut answered = answers.iter().map(SurveyAnswer::yes);
     for placed in modules {
+        if footing(placed).is_none() {
+            continue;
+        }
+        let stands = answered.next().unwrap_or(true);
         let site = |field: &str| module_pointer(placed, field);
         match &placed.module {
             AreaModule::Object(object) => {
                 if let ObjectShape::Point(at) = object.shape
-                    && !mesh.walkable(at)
+                    && !stands
                 {
                     check.problem(
                         site("/shape"),
@@ -1396,7 +1545,7 @@ fn check_footing(
             }
             AreaModule::Resident(resident) => {
                 let key = resident.npc.path(content);
-                if !mesh.walkable(resident.at) {
+                if !stands {
                     check.problem(
                         site("/at"),
                         ContentProblem::new(
@@ -1418,29 +1567,18 @@ fn check_footing(
                     );
                 }
             }
-            AreaModule::Population(population) => {
-                let wild = area.mesh_for(true, false);
-                let has_ground = match population.roams {
-                    Some(bounds) => wild.covers(bounds),
-                    None => !wild.is_empty(),
-                };
-                if !has_ground {
-                    check.error(
-                        site(""),
-                        "no wild ground",
-                        format!("{} in {}", population.npc.path(content), id.path(content)),
-                        "walkable ground outside every safe zone to spawn on",
-                    );
-                }
+            AreaModule::Population(population) if !stands => {
+                check.error(
+                    site(""),
+                    "no wild ground",
+                    format!("{} in {}", population.npc.path(content), id.path(content)),
+                    "walkable ground outside every safe zone to spawn on",
+                );
             }
             _ => {}
         }
     }
-    for (object_index, object, name) in &warps {
-        let covered = match object.shape {
-            ObjectShape::Point(at) => mesh.walkable(at),
-            ObjectShape::Rect(rect) => mesh.covers(rect),
-        };
+    for ((object_index, _, name), covered) in warps.iter().zip(answered) {
         if !covered {
             check.error(
                 module_pointer(&modules[*object_index as usize], ""),
@@ -1474,18 +1612,41 @@ pub fn check_islands(
         let Some(area) = loaded(content, id) else {
             continue;
         };
+        let survey = area.survey();
         let warps = warp_objects(content, id);
-        let mut entrances: Vec<(Option<u32>, Pos<Meters>)> = warps
+        let modules = placed(content, id);
+        let asked = |placed: &Flattened| match &placed.module {
+            AreaModule::Resident(resident) => Some(SurveyQuestion::IslandAt(resident.at)),
+            AreaModule::Population(population) => Some(SurveyQuestion::Islands(
+                population.roams.unwrap_or(area.size.bounds()),
+            )),
+            AreaModule::Object(object) => Some(SurveyQuestion::Islands(object.shape.bounds())),
+            _ => None,
+        };
+        let mut questions: Vec<SurveyQuestion> = modules.iter().filter_map(asked).collect();
+        questions.push(SurveyQuestion::IslandAt(spawn.at));
+        let answers: Vec<BTreeSet<SurveyIsland>> = survey
+            .answer(&questions)
             .iter()
-            .flat_map(|(index, object)| {
-                area.mesh()
-                    .ground_within(object.shape.bounds())
-                    .into_iter()
-                    .map(move |at| (Some(*index), at))
+            .map(SurveyAnswer::islands)
+            .collect();
+        let spawn_islands = answers.last().cloned().unwrap_or_default();
+        let mut by_module: Vec<Option<BTreeSet<SurveyIsland>>> = Vec::with_capacity(modules.len());
+        let mut answered = answers.into_iter();
+        for placed in modules.iter() {
+            by_module.push(asked(placed).and_then(|_| answered.next()));
+        }
+        let mut entrances: Vec<(Option<u32>, SurveyIsland)> = warps
+            .iter()
+            .flat_map(|(index, _)| {
+                by_module[*index as usize]
+                    .iter()
+                    .flatten()
+                    .map(move |island| (Some(*index), *island))
             })
             .collect();
         if spawn.area == id {
-            entrances.push((None, spawn.at));
+            entrances.extend(spawn_islands.iter().map(|island| (None, *island)));
         }
         if entrances.is_empty() {
             continue;
@@ -1496,17 +1657,19 @@ pub fn check_islands(
             .collect::<BTreeSet<_>>()
             .len()
             > 1;
-        let reaches = |at: Pos<Meters>, except: Option<u32>| {
+        let reached = |island: SurveyIsland, except: Option<u32>| {
             entrances.iter().any(|(index, entrance)| {
-                except.is_none_or(|except| *index != Some(except))
-                    && area.mesh().connects(*entrance, at)
+                except.is_none_or(|except| *index != Some(except)) && *entrance == island
             })
+        };
+        let reaches = |at: Pos<Meters>| {
+            survey
+                .island(at)
+                .is_some_and(|island| reached(island, None))
         };
         let scene = scene_file(id.path(content));
         let mut report = |site: IslandSite, what: String, at: Pos<Meters>| {
-            let nearest = area
-                .mesh()
-                .nearest_where(at, area.bodies.spacing(), |point| reaches(point, None));
+            let nearest = survey.nearest_where(at, area.bodies.spacing(), reaches);
             problems.push((
                 site,
                 ContentProblem::new(
@@ -1518,13 +1681,19 @@ pub fn check_islands(
                 .at_spot(nearest),
             ));
         };
-        let modules = placed(content, id);
+        let unreached = |islands: &BTreeSet<SurveyIsland>, except: Option<u32>| {
+            !islands.is_empty() && !islands.iter().any(|island| reached(*island, except))
+        };
+        let first_ground = |bounds: Rect<Meters>| survey.ground_within(bounds).first().copied();
         for (index, placed) in modules.iter().enumerate() {
             let site =
                 |field: &str| IslandSite::Scene(scene.clone(), module_pointer(placed, field));
+            let Some(islands) = &by_module[index] else {
+                continue;
+            };
             match &placed.module {
                 AreaModule::Resident(resident) => {
-                    if area.mesh().walkable(resident.at) && !reaches(resident.at, None) {
+                    if unreached(islands, None) {
                         report(
                             site("/at"),
                             resident.npc.path(content).to_owned(),
@@ -1534,21 +1703,19 @@ pub fn check_islands(
                 }
                 AreaModule::Population(population) => {
                     let region = population.roams.unwrap_or(area.size.bounds());
-                    let ground = area.mesh().ground_within(region);
-                    if let Some(first) = ground.first()
-                        && !ground.iter().any(|at| reaches(*at, None))
+                    if unreached(islands, None)
+                        && let Some(first) = first_ground(region)
                     {
-                        report(site(""), population.npc.path(content).to_owned(), *first);
+                        report(site(""), population.npc.path(content).to_owned(), first);
                     }
                 }
                 AreaModule::Object(object) if several => {
                     let index = index as u32;
-                    let ground = area.mesh().ground_within(object.shape.bounds());
                     if warps.iter().any(|(warp, _)| *warp == index)
-                        && let Some(first) = ground.first()
-                        && !ground.iter().any(|at| reaches(*at, Some(index)))
+                        && unreached(islands, Some(index))
+                        && let Some(first) = first_ground(object.shape.bounds())
                     {
-                        report(site(""), object.display_name(index), *first);
+                        report(site(""), object.display_name(index), first);
                     }
                 }
                 _ => {}
@@ -1556,10 +1723,10 @@ pub fn check_islands(
         }
         if spawn.area == id
             && several
-            && area.mesh().walkable(spawn.at)
-            && !entrances.iter().any(|(index, entrance)| {
-                index.is_some() && area.mesh().connects(*entrance, spawn.at)
-            })
+            && !spawn_islands.is_empty()
+            && !entrances
+                .iter()
+                .any(|(index, entrance)| index.is_some() && spawn_islands.contains(entrance))
         {
             report(IslandSite::Spawn, "the initial spawn".to_owned(), spawn.at);
         }
@@ -1571,11 +1738,11 @@ pub fn check_place(content: &Content, place: script::Place) -> Result<(), Conten
     let Some(area) = loaded(content, place.area) else {
         return Ok(());
     };
-    let mesh = area.mesh_near(place.at);
+    let survey = area.survey();
     let key = place.area.path(content);
     let warps = warp_objects(content, place.area);
     let problem = |rule: &'static str, found: String| {
-        let nearest = mesh
+        let nearest = survey
             .nearest_where(place.at, area.bodies.spacing(), |at| {
                 !warps.iter().any(|(_, object)| object.shape.covers(at))
             })
@@ -1587,7 +1754,7 @@ pub fn check_place(content: &Content, place: script::Place) -> Result<(), Conten
         )
         .near(nearest)
     };
-    if !mesh.walkable(place.at) {
+    if !survey.walkable(place.at) {
         return Err(problem(
             "not walkable",
             format!("{key} {}", describe_point(place.at)),

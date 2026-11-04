@@ -102,6 +102,23 @@ pub enum ProbeGameQuestion {
         #[schemars(with = "PosSchema")]
         at: Pos<Meters>,
     },
+    /// The water at `at`. Answered with [`ProbeWater`].
+    Water {
+        area: AreaId,
+        #[schemars(with = "PosSchema")]
+        at: Pos<Meters>,
+    },
+}
+
+/// The water at a point of an area: the height of the ground, the height of the water's surface
+/// over it, or null where the ground lies dry, how deep the water lies there, and the share of
+/// their pace someone wading through keeps in it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ProbeWater {
+    pub ground: Meters,
+    pub surface: Option<Meters>,
+    pub depth: Meters,
+    pub pace: f32,
 }
 
 /// The game's things: where each is, area by area, and what a player comes to know of them.
@@ -339,6 +356,7 @@ fn answer_in_scope(content: &Content, question: &ProbeGameQuestion) -> Value {
         }
         &ProbeGameQuestion::Safe { area, at } => json(&area::load(content, area).safe(at)),
         &ProbeGameQuestion::Pictured { area, at } => json(&pictured(content, area, at)),
+        &ProbeGameQuestion::Water { area, at } => json(&water(content, area, at)),
     }
 }
 
@@ -486,8 +504,25 @@ fn area_of(content: &Content, id: AreaId) -> ProbeArea {
 fn mesh(content: &Content, area: AreaId, points: &[Pos<Meters>]) -> area::HeldMesh {
     let area = area::load(content, area);
     let around = Rect::from_points(points.iter().copied()).inflate(TILE_SIDE.0, TILE_SIDE.0);
-    area.hold(area.ground_size().tiles_within(around));
+    let _held = area.hold(area.ground_size().tiles_within(around));
     area.mesh()
+}
+
+fn water(content: &Content, id: AreaId, at: Pos<Meters>) -> ProbeWater {
+    let area = area::load(content, id);
+    let tile = area.ground_size().tile_at(at);
+    area.heights
+        .load(tile)
+        .and(area.water.load(tile))
+        .expect("a game that loaded reads its ground");
+    let depth = area.water.depth_at(&area.heights, at);
+    let wading = content.built::<GameSettings>().wading;
+    ProbeWater {
+        ground: area.heights.height_at(at),
+        surface: (depth.0 > 0.0).then(|| area.water.height_at(at)),
+        depth,
+        pace: wading.map_or(1.0, |wading| wading.share_at(depth)),
+    }
 }
 
 fn pictured(content: &Content, id: AreaId, at: Pos<Meters>) -> bool {

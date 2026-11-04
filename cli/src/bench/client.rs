@@ -293,7 +293,7 @@ fn report(video: Video, scenes: &[Scene]) {
 fn open_middle(content: &Content, area: area::AreaId) -> Option<Pos<Meters>> {
     let loaded = area::load(content, area);
     let middle = loaded.size.bounds().center();
-    loaded.hold(loaded.tiles_around(middle, Meters(MIDDLE_REACH)));
+    let _held = loaded.hold(loaded.tiles_around(middle, Meters(MIDDLE_REACH)));
     loaded.mesh().nearest(middle)
 }
 
@@ -308,7 +308,7 @@ fn walkable_toward(content: &Content, from: Place, distances: &[Meters]) -> Opti
         .iter()
         .map(|distance| distance.0)
         .fold(0.0, f32::max);
-    area.hold(area.tiles_around(from.at, Meters(farthest)));
+    let _held = area.hold(area.tiles_around(from.at, Meters(farthest)));
     let mesh = area.mesh();
     let start = mesh.nearest(from.at)?;
     distances.iter().find_map(|distance| {

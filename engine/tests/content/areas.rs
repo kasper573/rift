@@ -5,7 +5,9 @@ use engine::core::content::{
     Content, ContentFolder, FileHash, FolderEntry, LoadPurpose, LoadReport, MemoryFolder,
     SETTINGS_FILE, load, version, write,
 };
-use engine::core::ground::{self as ground, GroundSize, Heightfield, MIN_SIDE, PaintMap, TileAt};
+use engine::core::ground::{
+    self as ground, GroundSize, Heightfield, MIN_SIDE, PaintMap, ShareMap, TileAt, WaterSurface,
+};
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::units::{GROUND_ORIGIN, Meters};
 use engine::core::vfx::shader::Stage;
@@ -56,6 +58,7 @@ fn the_ground_walks_where_it_is_flat_enough_and_painted_walkable() {
         .part("area", "hill", "height_overview.png", overview(&hill()))
         .load();
     let hill = area::load(&content, area_id(&content, "hill"));
+    let _held = hill.hold(hill.ground_size().each_tile());
     let walks = |x: f32, y: f32| hill.mesh().walkable(Pos::new(x, y));
 
     assert!(walks(2.0, 2.0), "flat ground");
@@ -87,6 +90,7 @@ fn a_props_footprint_blocks_the_ground_under_it_and_a_scatter_strews_the_same_pr
     };
     let content = field().load();
     let field_area = area::load(&content, area_id(&content, "field"));
+    let _held = field_area.hold(field_area.ground_size().each_tile());
 
     assert!(!field_area.mesh().walkable(Pos::new(4.0, 4.0)));
     assert!(field_area.mesh().walkable(Pos::new(5.0, 4.0)));
@@ -145,7 +149,9 @@ fn a_walk_leads_to_every_point_the_ground_holds() {
         .prop("boulder", json!({ "type": "circle", "radius": 0.4 }))
         .area("field", &Map::open(9, 9), json!(rocks))
         .load();
-    let mesh = area::load(&content, area_id(&content, "field")).mesh();
+    let field = area::load(&content, area_id(&content, "field"));
+    let _held = field.hold(field.ground_size().each_tile());
+    let mesh = field.mesh();
     let from = Pos::new(0.5, 0.5);
     assert!(mesh.walkable(from));
     let step = 0.02;
@@ -198,6 +204,50 @@ fn an_area_is_held_to_its_budgets_of_lights_and_props() {
 }
 
 #[test]
+fn fog_lies_over_the_ground_where_it_is_placed_and_no_further_than_the_ground_reaches() {
+    let bank = |x: f32, w: f32, thickest: f32| {
+        json!({
+            "type": "fog",
+            "rect": { "x": x, "y": 2.0, "w": w, "h": 4.0 },
+            "height": 12.0,
+            "haze": {
+                "clear": 5.0, "thick": 30.0, "thickest": thickest, "moist_closer": 0.2,
+                "rain_closer": 0.1, "dry_air": 0.001, "moist_air": 0.004,
+            },
+        })
+    };
+    let content = game()
+        .area("meadow", &Map::open(16, 16), json!([bank(1.0, 6.0, 0.5)]))
+        .load();
+    let meadow = area::load(&content, area_id(&content, "meadow"));
+    let lying: Vec<(Rect<Meters>, Meters, f32)> = meadow
+        .fogs
+        .iter()
+        .map(|fog| (fog.rect, fog.height, fog.haze.thickest))
+        .collect();
+    assert_eq!(
+        lying,
+        [(
+            Rect::new(Pos::new(1.0, 2.0), Size::new(6.0, 4.0)),
+            Meters(12.0),
+            0.5
+        )]
+    );
+
+    for (rule, refused) in [
+        ("outside the terrain", bank(12.0, 8.0, 0.5)),
+        ("out of range", bank(1.0, 6.0, 1.5)),
+    ] {
+        let report = game()
+            .area("meadow", &Map::open(16, 16), json!([refused.clone()]))
+            .try_load()
+            .err()
+            .expect("refused");
+        assert!(rules(&report).contains(&rule), "{refused}: {report}");
+    }
+}
+
+#[test]
 fn a_footprint_is_refused_when_it_crosses_itself_or_was_fitted_to_a_model_since_changed() {
     let polygon = |points: Value, fitted_to: Option<&str>| {
         let mut footprint = json!({ "type": "polygon", "points": points });
@@ -229,23 +279,52 @@ fn a_footprint_is_refused_when_it_crosses_itself_or_was_fitted_to_a_model_since_
 }
 
 #[test]
-fn an_areas_heights_and_paint_write_back_as_they_were_read() {
+fn an_areas_heights_paint_water_and_rain_write_back_as_they_were_read() {
     let size = GroundSize {
         width: 8,
         height: 8,
     };
     let paint = PaintMap::from_fn(size, |column, row| u8::from(column < 4 && row < 4));
+    let pond = WaterSurface::from_fn(size, HEIGHTS, |column, _| {
+        Meters(if column < 6 { 1.5 } else { 0.0 })
+    });
+    let pond_tile = pond
+        .encode_tile(TileAt { column: 0, row: 0 })
+        .expect("water lies on the tile")
+        .to_vec();
+    let pond_overview = pond.encode_overview().expect("water lies somewhere");
+    let rain = ShareMap::from_fn(3, 2, |across, down| across * (1.0 - down));
     let game = game()
         .area("hill", &Map::open(8, 8), json!([]))
         .part("area", "hill", "height/0_0.png", tile(&hill()))
         .part("area", "hill", "paint/0_0.png", tile_paint(&paint))
+        .part("area", "hill", "water/0_0.png", pond_tile.clone())
         .part("area", "hill", "height_overview.png", overview(&hill()))
-        .part("area", "hill", "paint_overview.png", overview_paint(&paint));
+        .part("area", "hill", "paint_overview.png", overview_paint(&paint))
+        .part("area", "hill", "water_overview.png", pond_overview.clone())
+        .part("area", "hill", "rain.png", rain.encode());
     let out = tempfile::tempdir().expect("a folder");
+    let registry = game.registry();
+    let content = game.load();
+    let read = area::load(&content, area_id(&content, "hill"));
+    assert_eq!(read.water, pond);
+    assert_eq!(read.rain.as_ref(), Some(&rain));
 
-    write(game.registry(), game.load(), out.path()).expect("written");
+    write(registry, content, out.path()).expect("written");
 
     let hill_area = out.path().join(path("area", "hill"));
+    assert_eq!(
+        std::fs::read(hill_area.join("water/0_0.png")).expect("the water"),
+        pond_tile
+    );
+    assert_eq!(
+        std::fs::read(hill_area.join("water_overview.png")).expect("the water overview"),
+        pond_overview
+    );
+    assert_eq!(
+        std::fs::read(hill_area.join("rain.png")).expect("the rain map"),
+        rain.encode()
+    );
     assert_eq!(
         std::fs::read(hill_area.join("height/0_0.png")).expect("the heights"),
         tile(&hill())
@@ -266,6 +345,10 @@ fn an_areas_heights_and_paint_write_back_as_they_were_read() {
     assert!(
         !start.join("height").exists() && !start.join("height_overview.png").exists(),
         "a flat area keeps no height tiles and no overview"
+    );
+    assert!(
+        !start.join("water").exists() && !start.join("rain.png").exists(),
+        "a dry area keeps no water tiles, and one where rain falls alike no rain map"
     );
     let played = crate::support::game()
         .area(
@@ -507,8 +590,8 @@ fn a_grounds_cover_names_a_cover_stage_shader_fills_only_what_it_declares_and_gr
         assert!(rules(&report).contains(&rule), "{grown}: {report}");
     }
     for body in [
-        json!({ "sheet": {} }),
-        json!({ "sheet": { "level": 0.0 } }),
+        json!({ "sheet": "ground" }),
+        json!({ "sheet": "water" }),
         json!({ "seed": 42, "pieces": [blade(0.1, 0.8), pebble(0.001)] }),
     ] {
         game()

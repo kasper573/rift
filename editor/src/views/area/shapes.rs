@@ -24,6 +24,7 @@ pub fn bounds(module: &AreaModule, placement_bounds: Option<Rect<Meters>>) -> Op
     match module {
         AreaModule::Object(object) => Some(object.shape.bounds()),
         AreaModule::SafeZone(zone) => Some(zone.rect),
+        AreaModule::Fog(bank) => Some(bank.rect),
         AreaModule::Soundscape(soundscape) => Some(soundscape.shape.bounds()),
         AreaModule::Prop(prop) => Some(cell_rect(prop.at)),
         AreaModule::Scatter(scatter) => Some(scatter.region),
@@ -67,7 +68,10 @@ pub fn resize(module: &mut AreaModule, w: f32, h: f32) {
 pub(crate) fn has_size(module: &AreaModule) -> bool {
     match module {
         AreaModule::Object(object) => matches!(object.shape, ObjectShape::Rect(_)),
-        AreaModule::Soundscape(_) | AreaModule::SafeZone(_) | AreaModule::Scatter(_) => true,
+        AreaModule::Soundscape(_)
+        | AreaModule::SafeZone(_)
+        | AreaModule::Fog(_)
+        | AreaModule::Scatter(_) => true,
         AreaModule::Population(population) => population.roams.is_some(),
         _ => false,
     }
@@ -194,6 +198,7 @@ fn sized_rect(module: &mut AreaModule) -> Option<&mut Rect<Meters>> {
             SoundscapeShape::Rect(rect) | SoundscapeShape::Ellipse(rect) => Some(rect),
         },
         AreaModule::SafeZone(zone) => Some(&mut zone.rect),
+        AreaModule::Fog(bank) => Some(&mut bank.rect),
         AreaModule::Scatter(scatter) => Some(&mut scatter.region),
         AreaModule::Population(population) => population.roams.as_mut(),
         _ => None,

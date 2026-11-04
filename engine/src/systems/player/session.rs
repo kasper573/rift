@@ -6,7 +6,7 @@ use bevy_time::Time;
 
 use super::{ClientId, PlayedBy, Welcome};
 use crate::core::render::transition::WorldViewSystems;
-use crate::core::time::{DayClock, ServerClock};
+use crate::core::time::{DayClock, ServerClock, WeatherClock};
 use crate::core::units::Seconds;
 use crate::systems::{identity, stat};
 
@@ -20,6 +20,7 @@ impl Plugin for ClientSessionPlugin {
         app.init_resource::<MyClient>()
             .init_resource::<ServerClock>()
             .init_resource::<DayClock>()
+            .init_resource::<WeatherClock>()
             .init_resource::<MyCharacter>();
         app.add_systems(Update, record_welcome);
         app.add_systems(
@@ -71,11 +72,13 @@ fn record_welcome(
     mut me: ResMut<MyClient>,
     mut clock: ResMut<ServerClock>,
     mut day: ResMut<DayClock>,
+    mut weather: ResMut<WeatherClock>,
 ) {
     for welcome in welcomes.read() {
         me.0 = Some(welcome.id);
         clock.record(welcome.now, Seconds(time.elapsed_secs()));
         day.0 = welcome.day;
+        weather.0 = welcome.weather;
     }
 }
 

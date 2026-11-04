@@ -19,7 +19,7 @@ use engine::systems::area::{self, AreaId, AreaModule};
 use engine::systems::class::ClassDef;
 use engine::systems::combat::Attitude;
 use engine::systems::item::{ItemDef, ItemId, ItemKind, ItemStack};
-use engine::systems::launch::ServerDaylight;
+use engine::systems::launch::{ServerDaylight, ServerWeather};
 use engine::systems::movement::Position;
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs, SnapshotSkill};
@@ -246,7 +246,15 @@ impl LiveWorld {
 
 /// A server world over `content` opened on `area`, where nobody dies and nobody has joined yet.
 pub(crate) fn sandbox(content: &Content, area: AreaId, seed: u64, clock: WallClock) -> World {
-    let mut app = server_app(area, 0, seed, clock, ServerDaylight::Turning, content);
+    let mut app = server_app(
+        area,
+        0,
+        seed,
+        clock,
+        ServerDaylight::Turning,
+        ServerWeather::Turning.course(clock.now),
+        content,
+    );
     app.insert_resource(SpawnRules {
         policy: SpawnPolicy::Map,
         immortal: true,

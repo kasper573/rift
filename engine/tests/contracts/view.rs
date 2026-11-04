@@ -561,7 +561,9 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
                 .drain()
                 .map(|sound| match sound.place {
                     SfxPlace::World(at) => (at, sound.id),
-                    SfxPlace::Interface => panic!("a body sounds where it stands"),
+                    SfxPlace::Afar { .. } | SfxPlace::Interface => {
+                        panic!("a body sounds where it stands")
+                    }
                 }),
         );
     }

@@ -1,5 +1,6 @@
 mod babble;
 mod backoff;
+mod climate;
 mod clock;
 mod clouds;
 mod combat;

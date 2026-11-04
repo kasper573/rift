@@ -23,9 +23,17 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 use image::RgbaImage;
 use image::imageops::{self, FilterType};
 
-use super::material::{SurfaceFinish, dielectric, embedded};
+use std::marker::PhantomData;
+
+use bevy::asset::uuid::Uuid;
+use bevy::shader::Shader;
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
+
+use super::material::{SurfaceFinish, dielectric};
 use crate::core::ground::{Heightfield, PaintMap, SAMPLES_PER_METER};
 use crate::core::units::{GROUND_ORIGIN, Meters};
+use crate::core::vfx::shader::weather_helpers;
 
 pub type GroundMaterial = ExtendedMaterial<StandardMaterial, GroundLook>;
 
@@ -36,36 +44,65 @@ pub const GROUND_PICTURE: u32 = 512;
 /// ground.
 const SHARPNESS: u16 = 16;
 
-/// How one terrain paints the ground: its colour, and the picture laid over it, if any, repeating
-/// every `tile` metres, its shades multiplied into the colour.
+/// How one terrain paints the ground: its colour, the picture laid over it, if any, repeating
+/// every `tile` metres, its shades multiplied into the colour, and how it looks soaked, if rain
+/// wets it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GroundLayer {
     pub color: LinearRgba,
     pub picture: Option<(String, Meters)>,
+    pub wet: Option<WetLook>,
+}
+
+/// How a surface looks soaked through: `darkening` of its colour left, 0 to 1, as wet earth
+/// darkens, and as rough as `roughness`, 0 a mirror to 1 matte, as water films it; between its
+/// own look and this as it lies wet.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WetLook {
+    pub darkening: f32,
+    pub roughness: f32,
 }
 
 /// What the ground is painted from: the terrains' pictures as one stack, white at the bottom for
-/// a terrain that has none; for each terrain its colour and tile in the first row and its
-/// picture's place in the stack in the second; and the paint of every chunk that stands, a
-/// terrain's place in the area's list for each pixel, each chunk's on the layer of `paints` its
-/// [`MeshTag`] names, with where its pixels lie in the pixel of `grids` it names.
+/// a terrain that has none; for each terrain its colour and tile in the first row, its picture's
+/// place in the stack in the second and how it looks soaked in the third; the paint of every
+/// chunk that stands, a terrain's place in the area's list for each pixel, each chunk's on the
+/// layer of `paints` its [`MeshTag`] names, with where its pixels lie in the pixel of `grids` it
+/// names; and the weather, which wets it.
 #[derive(Asset, AsBindGroup, Clone, Debug, TypePath)]
 pub struct GroundLook {
     #[texture(100, dimension = "2d_array")]
     #[sampler(101)]
     pub pictures: Handle<Image>,
-    #[texture(102, dimension = "2d_array", sample_type = "u_int")]
+    #[texture(102, sample_type = "float", filterable = false)]
+    pub weather: Handle<Image>,
+    #[texture(103, dimension = "2d_array", sample_type = "u_int")]
     pub paints: Handle<Image>,
-    #[texture(103, sample_type = "float", filterable = false)]
-    pub layers: Handle<Image>,
     #[texture(104, sample_type = "float", filterable = false)]
+    pub layers: Handle<Image>,
+    #[texture(105, sample_type = "float", filterable = false)]
     pub grids: Handle<Image>,
 }
 
+/// The ground's shader, composed as the world starts with the weather it reads.
+pub const GROUND_SHADER: Handle<Shader> = Handle::Uuid(
+    Uuid::from_u128(0x7269_6674_6772_6f75_6e64_0000_0000_0001),
+    PhantomData,
+);
+
 impl MaterialExtension for GroundLook {
     fn fragment_shader() -> ShaderRef {
-        embedded("ground.wesl")
+        ShaderRef::Handle(GROUND_SHADER)
     }
+}
+
+/// The ground's shader: its own text, then the weather's helpers it reads the rain by.
+pub fn ground_shader() -> Shader {
+    Shader::from_wesl(
+        format!("{}\n{}", include_str!("ground.wesl"), weather_helpers()),
+        "engine/core/render/world/ground.wesl",
+    )
 }
 
 /// Where a chunk's paint pixels lie on the ground: `pixels_per_metre` to the metre from the edge
@@ -91,6 +128,7 @@ pub struct GroundPictures {
 pub fn ground_material(
     layers: &[GroundLayer],
     finish: &SurfaceFinish,
+    weather: Handle<Image>,
     assets: &AssetServer,
     images: &mut Assets<Image>,
     paint_side: u32,
@@ -103,6 +141,7 @@ pub fn ground_material(
         base: dielectric(StandardMaterial::default(), finish),
         extension: GroundLook {
             pictures: images.add(stack(1, &[])),
+            weather,
             paints: images.add(paints_image(paint_side, FIRST_LAYERS, Vec::new())),
             layers: images.add(layers_image(layers, &vec![0; layers.len()])),
             grids: images.add(grids_image(FIRST_LAYERS, Vec::new())),
@@ -494,15 +533,20 @@ fn layers_image(layers: &[GroundLayer], places: &[u32]) -> Image {
         [layer.color.red, layer.color.green, layer.color.blue, tile]
     });
     let places = places.iter().map(|&place| [place as f32, 0.0, 0.0, 0.0]);
+    let soaked = layers.iter().map(|layer| match layer.wet {
+        Some(wet) => [wet.darkening, wet.roughness, 1.0, 0.0],
+        None => [1.0, 1.0, 0.0, 0.0],
+    });
     let data = looks
         .chain(places)
+        .chain(soaked)
         .flatten()
         .flat_map(f32::to_le_bytes)
         .collect();
     Image::new(
         Extent3d {
             width: layers.len().max(1) as u32,
-            height: 2,
+            height: 3,
             depth_or_array_layers: 1,
         },
         TextureDimension::D2,

@@ -1,11 +1,14 @@
 use bevy_ecs::entity::Entity;
+use engine::core::ground::{GroundSize, WaterSurface};
 use engine::core::math::{Offset, Pos};
 use engine::core::units::{MeterPos, Meters};
 use engine::systems::actor::{Action, Actor};
+use engine::systems::area;
 use engine::systems::movement::{self, Bodies, HeardMove, MoveRequest, MoveSeq, position};
 use engine::systems::player::CommandLock;
+use engine::systems::region;
 use serde_json::{Value, json};
-use testkit::{BODY, Game, Map, RUN_PACE, Sim, WALK_PACE, path, rig_clips};
+use testkit::{BODY, Game, HEIGHTS, Map, RUN_PACE, Sim, WALK_PACE, path, rig_clips};
 
 const TICKS: usize = 240;
 
@@ -363,6 +366,77 @@ fn a_walker_covers_ground_in_the_gait_whose_clip_covers_nearest_its_speed() {
     }
 }
 
+#[test]
+fn a_wader_slows_as_the_water_deepens_and_keeps_pace_where_water_slows_no_one() {
+    let deep = 0.5;
+    for (wading, kept) in [
+        (Some(json!({ "deepest": 1.0, "slowest": 0.5 })), 0.75),
+        (Some(json!({ "deepest": 0.25, "slowest": 0.4 })), 0.4),
+        (None, 1.0),
+    ] {
+        let water = WaterSurface::from_fn(
+            GroundSize {
+                width: 19,
+                height: 19,
+            },
+            HEIGHTS,
+            |column, _| Meters(if column >= 20 { deep } else { 0.0 }),
+        );
+        let game = water_parts(
+            Game::new()
+                .area("field", &Map::open(19, 19), json!([]))
+                .hero("field", 2.0, 9.0),
+            "field",
+            &water,
+        );
+        let game = match &wading {
+            Some(wading) => game.edit_settings(|settings| settings["wading"] = wading.clone()),
+            None => game,
+        };
+        let mut walk = Walk::on(game).toward(Offset::new(15.0, 0.0));
+        let trail = walk.trail();
+        let steps: Vec<f32> = trail
+            .windows(2)
+            .map(|pair| (pair[1] - pair[0]).length())
+            .collect();
+        let dry = steps.first().copied().expect("a step on dry ground");
+        let wet = trail
+            .windows(2)
+            .zip(&steps)
+            .find(|(pair, _)| pair[0].x > 9.0 && pair[1].x < 14.0)
+            .map(|(_, step)| *step)
+            .expect("a step through the water");
+        assert!(
+            (wet / dry - kept).abs() < 0.02,
+            "{wading:?}: a wader in {deep} m of water keeps {} of their pace, not {kept}",
+            wet / dry
+        );
+    }
+}
+
+/// `game` with `water` lying on its area `area`.
+fn water_parts(game: Game, area: &str, water: &WaterSurface) -> Game {
+    let game = water
+        .size()
+        .each_tile()
+        .filter_map(|at| Some((at, water.encode_tile(at)?)))
+        .fold(game, |game, (at, bytes)| {
+            game.part(
+                "area",
+                area,
+                &area::WATER.named(&at.key(), "png"),
+                bytes.to_vec(),
+            )
+        });
+    let overview = water.encode_overview().expect("water to lie somewhere");
+    game.part(
+        "area",
+        area,
+        &area::WATER_OVERVIEW.named("", "png"),
+        overview,
+    )
+}
+
 struct Walk {
     sim: Sim,
     conn: Entity,
@@ -400,6 +474,7 @@ impl Walk {
         sim.serve("field")
             .add(movement::move_request)
             .plan(movement::AdvanceWalks::default());
+        region::hold_whole(&mut sim.world);
         let player = sim.join(1);
         let conn = sim.conn(1);
         let start = position(&sim.world, player).expect("the player");

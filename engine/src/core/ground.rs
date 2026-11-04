@@ -245,19 +245,39 @@ impl HeightRange {
 /// pixel, the index of the terrain in the area's list.
 pub type PaintMap = GroundGrid<u8>;
 
+/// The height of the water's surface at every half metre of an area, as its `water/` tiles hold
+/// it, sampled and spanning the area's [`HeightRange`] as its heights do: water lies wherever its
+/// surface stands above the ground, as deep as it stands above it, and the ground is dry wherever
+/// it doesn't. With no tile, the whole area is dry.
+pub type WaterSurface = GroundGrid<WaterLevel>;
+
 impl GroundGrid<u16> {
     pub fn flat(size: GroundSize, range: HeightRange) -> Heightfield {
         GroundGrid::blank(TileGrid::samples(size), range)
     }
+}
 
-    /// A heightfield of `size` over `range` whose sample `(column, row)` is `height(column, row)`.
+impl GroundGrid<WaterLevel> {
+    /// No water anywhere over ground of `size`.
+    pub fn dry(size: GroundSize, range: HeightRange) -> WaterSurface {
+        GroundGrid::blank(TileGrid::samples(size), range)
+    }
+
+    /// How deep the water stands over `ground` at `at`: nothing where the ground is dry.
+    pub fn depth_at(&self, ground: &Heightfield, at: Pos<Meters>) -> Meters {
+        Meters((self.height_at(at).0 - ground.height_at(at).0).max(0.0))
+    }
+}
+
+impl<T: Level> GroundGrid<T> {
+    /// A grid of `size` over `range` whose sample `(column, row)` is `height(column, row)`.
     pub fn from_fn(
         size: GroundSize,
         range: HeightRange,
         height: impl Fn(u32, u32) -> Meters + Sync,
-    ) -> Heightfield {
+    ) -> GroundGrid<T> {
         GroundGrid::filled(TileGrid::samples(size), range, |column, row| {
-            range.level_of(height(column, row))
+            T::from_level(range.level_of(height(column, row)))
         })
     }
 
@@ -271,17 +291,17 @@ impl GroundGrid<u16> {
         (self.grid.columns, self.grid.rows)
     }
 
-    /// This heightfield over a terrain of `size`, kept from the top-left corner: what reaches past
-    /// the new edge is cut, and new ground is flat at the old edge's height.
-    pub fn resized(&self, size: GroundSize) -> Heightfield {
+    /// This grid over a terrain of `size`, kept from the top-left corner: what reaches past the
+    /// new edge is cut, and new ground carries on at the old edge's height.
+    pub fn resized(&self, size: GroundSize) -> GroundGrid<T> {
         self.load_all();
-        Heightfield::from_fn(size, self.scale, |column, row| self.sample(column, row))
+        GroundGrid::<T>::from_fn(size, self.scale, |column, row| self.sample(column, row))
     }
 
     /// Sets sample `(column, row)` to `height`, kept within the range the file holds.
     pub fn set_sample(&mut self, column: u32, row: u32, height: Meters) {
         let level = self.scale.level_of(height);
-        self.put(column, row, level);
+        self.put(column, row, T::from_level(level));
     }
 
     /// Where sample `(column, row)` lies on the ground.
@@ -296,7 +316,7 @@ impl GroundGrid<u16> {
     /// Sample `(column, row)`, the nearest past the edge; the overview's nearest where its tile
     /// isn't loaded.
     pub fn sample(&self, column: u32, row: u32) -> Meters {
-        self.scale.height_of(self.index(column, row))
+        self.scale.height_of(self.index(column, row).level())
     }
 
     /// The ground's height at `at`, between the samples around it.
@@ -308,7 +328,7 @@ impl GroundGrid<u16> {
         let lerp = |a: Meters, b: Meters, t: f32| Meters(a.0 + (b.0 - a.0) * t);
         let [top_left, top_right, bottom_left, bottom_right] = self
             .square(column, row)
-            .map(|level| self.scale.height_of(level));
+            .map(|value| self.scale.height_of(value.level()));
         lerp(
             lerp(top_left, top_right, u),
             lerp(bottom_left, bottom_right, u),
@@ -327,7 +347,7 @@ impl GroundGrid<u16> {
         );
         let step = 1.0 / SAMPLES_PER_METER as f32;
         let range = self.scale;
-        let height = |column: u32, row: u32| range.height_of(samples.at(column, row)).0;
+        let height = |column: u32, row: u32| range.height_of(samples.at(column, row).level()).0;
         size.cells()
             .map(|cell| {
                 let (column, row) = (
@@ -471,10 +491,61 @@ fn dominant_of(cell: CellPos, pixel: impl Fn(u32, u32) -> u8) -> u8 {
         .map_or(0, |(index, _)| index as u8)
 }
 
-/// The values a grid over the ground can hold, kept out of reach so the ground's two grids are the
+/// The values a grid over the ground can hold, kept out of reach so the ground's grids are the
 /// only ones.
 mod values {
     use super::HeightRange;
+
+    /// A value that is a height over its grid's [`HeightRange`], one of the 16-bit steps across it.
+    pub trait Level: Value<Scale = HeightRange> {
+        fn level(self) -> u16;
+        fn from_level(level: u16) -> Self;
+    }
+
+    impl Level for u16 {
+        fn level(self) -> u16 {
+            self
+        }
+
+        fn from_level(level: u16) -> u16 {
+            level
+        }
+    }
+
+    /// The height of the water's surface over the ground's [`HeightRange`], as a ground height is,
+    /// at the bottom of the range where nothing says otherwise, so ground without water is dry.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct WaterLevel(pub(super) u16);
+
+    impl Level for WaterLevel {
+        fn level(self) -> u16 {
+            self.0
+        }
+
+        fn from_level(level: u16) -> WaterLevel {
+            WaterLevel(level)
+        }
+    }
+
+    impl Value for WaterLevel {
+        type Scale = HeightRange;
+        const CHANNELS: Channels = Channels::Grey16;
+
+        fn blank(_: HeightRange) -> WaterLevel {
+            WaterLevel(0)
+        }
+
+        fn decode(bytes: Vec<u8>) -> Vec<WaterLevel> {
+            u16::decode(bytes).into_iter().map(WaterLevel).collect()
+        }
+
+        fn encode(values: &[WaterLevel]) -> Vec<u8> {
+            values
+                .iter()
+                .flat_map(|level| level.0.to_be_bytes())
+                .collect()
+        }
+    }
 
     /// A value of the ground as its files hold it.
     pub trait Value: Copy + PartialEq + Send + Sync + std::fmt::Debug + 'static {
@@ -536,7 +607,111 @@ mod values {
     }
 }
 
-pub use values::Value as GroundValue;
+pub use values::{Level, Value as GroundValue, WaterLevel};
+
+/// A share, 0 to 1, of something over the whole of a ground, as coarse as its maker likes: a byte
+/// a pixel, the pixels spread evenly over the ground whatever its size, read between them. An
+/// area's rain map is one, the share of the downpour that falls on each stretch of it.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ShareMap {
+    columns: u32,
+    rows: u32,
+    shares: Vec<u8>,
+}
+
+impl ShareMap {
+    /// The map `columns` × `rows` pixels, each the share `share` says of the pixel's centre in
+    /// the ground's own measure, 0 to 1 each way.
+    pub fn from_fn(columns: u32, rows: u32, share: impl Fn(f32, f32) -> f32) -> ShareMap {
+        let columns = columns.max(1);
+        let rows = rows.max(1);
+        let shares = (0..rows)
+            .flat_map(|row| (0..columns).map(move |column| (column, row)))
+            .map(|(column, row)| {
+                let across = (column as f32 + 0.5) / columns as f32;
+                let down = (row as f32 + 0.5) / rows as f32;
+                (share(across, down).clamp(0.0, 1.0) * 255.0).round() as u8
+            })
+            .collect();
+        ShareMap {
+            columns,
+            rows,
+            shares,
+        }
+    }
+
+    pub fn columns(&self) -> u32 {
+        self.columns
+    }
+
+    pub fn rows(&self) -> u32 {
+        self.rows
+    }
+
+    /// The share at `at` on a ground spanning `bounds`, read between the pixels round it and held
+    /// at the edge's past the ground.
+    pub fn share_at(&self, bounds: Rect<Meters>, at: Pos<Meters>) -> f32 {
+        let x = (at.x - bounds.origin.x) / bounds.size.width.max(f32::EPSILON)
+            * self.columns as f32
+            - 0.5;
+        let y = (at.y - bounds.origin.y) / bounds.size.height.max(f32::EPSILON) * self.rows as f32
+            - 0.5;
+        let (left, top) = (x.floor(), y.floor());
+        let (tx, ty) = (x - left, y - top);
+        let pixel = |column: f32, row: f32| {
+            let column = (column as i64).clamp(0, i64::from(self.columns) - 1) as usize;
+            let row = (row as i64).clamp(0, i64::from(self.rows) - 1) as usize;
+            f32::from(self.shares[row * self.columns as usize + column]) / 255.0
+        };
+        let upper = pixel(left, top) * (1.0 - tx) + pixel(left + 1.0, top) * tx;
+        let lower = pixel(left, top + 1.0) * (1.0 - tx) + pixel(left + 1.0, top + 1.0) * tx;
+        upper * (1.0 - ty) + lower * ty
+    }
+
+    /// The map of a ground of `from` metres as it lies over a ground of `to`, kept from the
+    /// top-left corner at its own pixels to the metre, the ground it gains taking the share at
+    /// its edge.
+    pub fn resized(&self, from: Size<Meters>, to: Size<Meters>) -> ShareMap {
+        let per_metre_x = self.columns as f32 / from.width.max(f32::EPSILON);
+        let per_metre_y = self.rows as f32 / from.height.max(f32::EPSILON);
+        let columns = (to.width * per_metre_x).round().max(1.0) as u32;
+        let rows = (to.height * per_metre_y).round().max(1.0) as u32;
+        let shares = (0..rows)
+            .flat_map(|row| (0..columns).map(move |column| (column, row)))
+            .map(|(column, row)| {
+                let column = column.min(self.columns - 1) as usize;
+                let row = row.min(self.rows - 1) as usize;
+                self.shares[row * self.columns as usize + column]
+            })
+            .collect();
+        ShareMap {
+            columns,
+            rows,
+            shares,
+        }
+    }
+
+    /// The map an 8-bit greyscale PNG of any size holds.
+    pub fn decode(bytes: &[u8]) -> Result<ShareMap, ContentProblem> {
+        let ((columns, rows), shares) = read_png(bytes, Channels::Grey8, None)?;
+        if columns == 0 || rows == 0 {
+            return Err(ContentProblem::new(
+                "empty image",
+                "0 px",
+                "a pixel or more each way",
+            ));
+        }
+        Ok(ShareMap {
+            columns,
+            rows,
+            shares,
+        })
+    }
+
+    pub fn encode(&self) -> Vec<u8> {
+        encode_png(&self.shares, self.columns, self.rows, Channels::Grey8)
+    }
+}
 use values::{Channels, Value};
 
 /// A grid of values over the ground, held tile by tile with an overview of the whole. Copies
@@ -591,10 +766,10 @@ impl<T: Value> GroundReader<'_, T> {
     }
 }
 
-impl GroundReader<'_, u16> {
-    /// Sample `(column, row)`, as [`Heightfield::sample`] reads it.
+impl<T: Level> GroundReader<'_, T> {
+    /// Sample `(column, row)`, as [`GroundGrid::sample`] reads it.
     pub fn sample(&mut self, column: u32, row: u32) -> Meters {
-        let level = self.index(column, row);
+        let level = self.index(column, row).level();
         self.ground.scale.height_of(level)
     }
 }
@@ -1196,15 +1371,26 @@ fn decode_png(
     rows: u32,
     channels: Channels,
 ) -> Result<Vec<u8>, ContentProblem> {
+    read_png(bytes, channels, Some((columns, rows))).map(|(_, pixels)| pixels)
+}
+
+/// The greyscale PNG `bytes` hold, as its columns and rows and its raw pixel bytes: refused unless
+/// it is of `channels`, and of `size` where one is asked for.
+fn read_png(
+    bytes: &[u8],
+    channels: Channels,
+    size: Option<(u32, u32)>,
+) -> Result<((u32, u32), Vec<u8>), ContentProblem> {
     let unreadable = |found: String| ContentProblem::new("unreadable image", found, "a PNG");
     let mut reader = png::Decoder::new(Cursor::new(bytes))
         .read_info()
         .map_err(|error| unreadable(error.to_string()))?;
     let info = reader.info();
-    if (info.width, info.height) != (columns, rows) {
+    let found = (info.width, info.height);
+    if let Some((columns, rows)) = size.filter(|&size| size != found) {
         return Err(ContentProblem::new(
             "wrong size",
-            format!("{} × {} px", info.width, info.height),
+            format!("{} × {} px", found.0, found.1),
             format!("{columns} × {rows} px over this ground"),
         ));
     }
@@ -1216,16 +1402,16 @@ fn decode_png(
             expected,
         ));
     }
-    let size = reader
+    let buffer = reader
         .output_buffer_size()
         .ok_or_else(|| unreadable("an image too large to decode".to_owned()))?;
-    let mut pixels = vec![0; size];
+    let mut pixels = vec![0; buffer];
     let frame = reader
         .next_frame(&mut pixels)
         .map_err(|error| unreadable(error.to_string()))?;
     pixels.truncate(frame.buffer_size());
     pixels.shrink_to_fit();
-    Ok(pixels)
+    Ok((found, pixels))
 }
 
 /// Raw pixel `bytes` of `channels` as a `columns` × `rows` greyscale PNG.

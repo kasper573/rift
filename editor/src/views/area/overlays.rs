@@ -162,6 +162,7 @@ pub(crate) fn module_color(kind: AreaModuleKind) -> Color32 {
     match kind {
         AreaModuleKind::Object => Color32::from_rgb(255, 200, 80),
         AreaModuleKind::SafeZone => Color32::from_rgb(90, 160, 255),
+        AreaModuleKind::Fog => Color32::from_rgb(200, 210, 225),
         AreaModuleKind::Soundscape => Color32::from_rgb(170, 110, 255),
         AreaModuleKind::Prop => Color32::from_rgb(140, 220, 140),
         AreaModuleKind::Scatter => Color32::from_rgb(110, 190, 110),
@@ -494,7 +495,10 @@ fn outlined_on_ground(frame: &AreaFrame, module: &AreaModule) -> bool {
         AreaModule::Soundscape(_) => !shapes::is_ellipse(module),
         AreaModule::Object(_) => !shapes::is_point(module),
         AreaModule::Blueprint(_) => loads(frame, module),
-        AreaModule::SafeZone(_) | AreaModule::Scatter(_) | AreaModule::Population(_) => true,
+        AreaModule::SafeZone(_)
+        | AreaModule::Fog(_)
+        | AreaModule::Scatter(_)
+        | AreaModule::Population(_) => true,
         AreaModule::Prop(_)
         | AreaModule::Light(_)
         | AreaModule::Resident(_)

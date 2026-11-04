@@ -1,19 +1,30 @@
+use std::collections::BTreeMap;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use bevy::prelude::*;
 
-use crate::core::content::{Content, RowCheck, serial};
+use crate::core::audio::playback::SfxId;
+use crate::core::content::{AudioRef, Content, RowCheck, SchemaMark, serial};
+use crate::core::math::Rng;
 use crate::core::render::world::sky::Daylight;
-use crate::core::time::{DayClock, DayCourse, UnixMillis, server_now};
-use crate::core::units::{Degrees, Seconds};
+use crate::core::time::{DayClock, TimeCourse, UnixMillis, WeatherClock, server_now};
+use crate::core::units::{Degrees, Meters, Seconds};
+use crate::core::vfx::rain::NEAREST_SHELL;
+use crate::core::vfx::{ParamValue, VfxShaderId};
 use crate::systems::GameSettings;
+use crate::systems::area::AreaId;
 use crate::systems::launch::ServerDaylight;
 
-/// The weather an area stands in, fixed for the area: its wind, how much cloud covers its sky
-/// and how much water the cloud holds. What grows and hangs in the area sways with the wind, the
-/// clouds drift with it and cast their shadows, the sky and the light dim under them, the more so
-/// the wetter they are, and shaders read all of it through the engine.
+/// How many shells rain is drawn on round the eye at most, each over the whole picture.
+pub const MAX_RAIN_SHELLS: usize = 6;
+
+/// The weather of a spell: its wind, how much cloud covers the sky, how much water the cloud
+/// holds, how hard it rains under the cloud that holds water and how often lightning strikes. What
+/// grows and hangs in the area sways with the wind, the clouds drift with it and cast their
+/// shadows, the sky and the light dim under them, the more so the wetter they are, rain falls
+/// where cloud holding water drifts over, and shaders read all of it through the engine.
 #[derive(JsonSchema, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Weather {
@@ -25,6 +36,114 @@ pub struct Weather {
     /// 0 soft white fair-weather cloud, 1 dark storm cloud.
     #[serde(default, skip_serializing_if = "serial::is_zero_f32")]
     pub water: f32,
+    /// 0 no rain, 1 a cloudburst, under the cloud that holds the most water.
+    #[serde(default, skip_serializing_if = "serial::is_zero_f32")]
+    pub rain: f32,
+    /// How many times a minute lightning strikes somewhere in sight, thunder rolling after.
+    #[serde(default, skip_serializing_if = "serial::is_zero_f32")]
+    pub lightning: f32,
+}
+
+/// The weather an area turns through: spells of weather, each lasting a while and giving way, over
+/// `turns`, to one of the spells that may follow it, by their weights. Its course starts at the
+/// first spell as the server starts and runs alike on every client, the course `seed` sets; a
+/// server that holds the weather still keeps the first spell. Its rain falls as `rain` says, and
+/// lightning strikes as `lightning` does; without them, no rain is seen and no lightning.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Climate {
+    pub spells: Vec<Spell>,
+    pub turns: Seconds,
+    #[serde(default, skip_serializing_if = "serial::is_zero_u64")]
+    pub seed: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rain: Option<Rainfall>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lightning: Option<Lightning>,
+}
+
+/// How an area's rain falls: from the clouds that hold water, carried `slant` metres downwind for
+/// every metre it falls in a full wind, so it lands downwind of the cloud it falls from; drawn
+/// round the eye by a shader of the rain stage, filled with `params`, on a shell at each distance
+/// of `shells`; the ground soaking through over `wets` of a cloudburst and drying over `dries` once
+/// the rain stops; and sounding as `sounds` say.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Rainfall {
+    pub shader: VfxShaderId,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    #[schemars(transform = SchemaMark::ParamsOf.with("shader"))]
+    pub params: BTreeMap<String, ParamValue>,
+    pub shells: Vec<Meters>,
+    pub slant: f32,
+    pub wets: Seconds,
+    pub dries: Seconds,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sounds: Vec<RainSound>,
+}
+
+/// How lightning strikes: lighting the world, for a moment, `flash` times as brightly as the open
+/// sky lights it by day where it strikes nearest, and `thunder` rolling after at the speed of
+/// sound, quieter the further off it struck.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Lightning {
+    pub flash: f32,
+    pub thunder: SfxId,
+}
+
+/// A spell of weather: what it is called, its weather, how long it lasts at the shortest and the
+/// longest, and the spells that may follow it, each by its name with its weight; with none, it
+/// holds for good.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Spell {
+    pub name: String,
+    pub weather: Weather,
+    pub lasts: SpellLength,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub next: Vec<NextSpell>,
+}
+
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SpellLength {
+    pub shortest: Seconds,
+    pub longest: Seconds,
+}
+
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NextSpell {
+    pub spell: String,
+    pub weight: f32,
+}
+
+/// A sound of rain, on its soundscape `channel`: loudest where it rains `rain` hard, 0 to 1,
+/// fading out toward the next sound's rain either way, at `volume`, and silent where no rain falls.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct RainSound {
+    pub channel: u32,
+    pub file: AudioRef,
+    pub rain: f32,
+    #[schemars(extend("default" = serial::one_f32()))]
+    #[serde(
+        default = "serial::one_f32",
+        skip_serializing_if = "serial::is_one_f32"
+    )]
+    pub volume: f32,
+}
+
+/// Where a climate's course stands: the spell under way, which one follows it, when it began and
+/// when it gives way.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SpellCourse {
+    step: u64,
+    spell: usize,
+    next: usize,
+    began: UnixMillis,
+    ends: UnixMillis,
 }
 
 /// A game's day and night: a world starts at `start` o'clock and the whole cycle turns once every
@@ -38,22 +157,22 @@ pub struct DayCycle {
 
 impl DayCycle {
     /// How the day runs for a world starting `now` on a server whose daylight is `daylight`.
-    pub fn course(&self, daylight: ServerDaylight, now: UnixMillis) -> DayCourse {
+    pub fn course(&self, daylight: ServerDaylight, now: UnixMillis) -> TimeCourse {
         match daylight {
             ServerDaylight::Turning => {
-                DayCourse::Since(now.before(Seconds(self.start / 24.0 * self.day_length.0)))
+                TimeCourse::Since(now.before(Seconds(self.start / 24.0 * self.day_length.0)))
             }
-            ServerDaylight::Still => DayCourse::Still,
+            ServerDaylight::Still => TimeCourse::Still,
         }
     }
 
     /// The hour of the day, 0 to 24, at `now` on a day running its `course`.
-    pub fn hour(&self, course: DayCourse, now: UnixMillis) -> f32 {
+    pub fn hour(&self, course: TimeCourse, now: UnixMillis) -> f32 {
         match course {
-            DayCourse::Since(origin) => {
+            TimeCourse::Since(origin) => {
                 now.since(origin).0.rem_euclid(self.day_length.0) / self.day_length.0 * 24.0
             }
-            DayCourse::Still => self.start,
+            TimeCourse::Still => self.start,
         }
     }
 
@@ -84,6 +203,37 @@ pub fn tell_time(world: &mut World) {
     world.resource_mut::<Daylight>().set_if_neq(now);
 }
 
+/// Where the shown area's climate stands on its course once it is known, so each frame walks on
+/// from the last: none along it where the server holds the weather at the first spell.
+#[derive(Resource, Default)]
+pub struct ShownCourse(Option<(AreaId, Option<SpellCourse>)>);
+
+impl ShownCourse {
+    /// The spell under way over `area`, by its place among its climate's spells, once the course
+    /// there is known.
+    pub fn spell(&self, area: AreaId) -> Option<usize> {
+        self.0
+            .filter(|(shown, _)| *shown == area)
+            .map(|(_, course)| course.map_or(0, |course| course.spell()))
+    }
+}
+
+/// The weather over the area `area`, of `climate`, at the server's moment on the course the server
+/// runs its weather on; the first spell's before the server has told the time.
+pub fn weather_now(world: &mut World, area: AreaId, climate: &Climate) -> Weather {
+    let (Some(now), Some(course)) = (server_now(world), world.resource::<WeatherClock>().0) else {
+        return climate.first();
+    };
+    let from = world
+        .get_resource::<ShownCourse>()
+        .and_then(|shown| shown.0)
+        .filter(|(shown, _)| *shown == area)
+        .and_then(|(_, at)| at);
+    let at = climate.course_at(course, now, from);
+    world.insert_resource(ShownCourse(Some((area, at))));
+    climate.weather_at(at, now)
+}
+
 /// Wind blowing toward `direction` (degrees from north, clockwise) at `strength`, from calm at 0
 /// to a gale at 1.
 #[derive(JsonSchema, Clone, Copy, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -101,13 +251,33 @@ impl Weather {
                 direction: Degrees(240.0),
                 strength: 0.35,
             },
-            clouds: 0.0,
-            water: 0.0,
+            ..Weather::default()
         }
     }
 
-    pub fn is_still(&self) -> bool {
-        self.wind.is_calm() && self.clouds == 0.0 && self.water == 0.0
+    /// The weather `share` of the way from this to `other`, the wind turning the shorter way.
+    pub fn toward(&self, other: &Weather, share: f32) -> Weather {
+        let lerp = |a: f32, b: f32| a + (b - a) * share;
+        let blown = |wind: &Wind| {
+            let (sin, cos) = wind.direction.radians().0.sin_cos();
+            (sin * wind.strength, cos * wind.strength)
+        };
+        let ((ax, ay), (bx, by)) = (blown(&self.wind), blown(&other.wind));
+        let (x, y) = (lerp(ax, bx), lerp(ay, by));
+        let direction = match (x, y) {
+            (0.0, 0.0) => lerp(self.wind.direction.0, other.wind.direction.0),
+            _ => x.atan2(y).to_degrees().rem_euclid(360.0),
+        };
+        Weather {
+            wind: Wind {
+                direction: Degrees(direction),
+                strength: lerp(self.wind.strength, other.wind.strength),
+            },
+            clouds: lerp(self.clouds, other.clouds),
+            water: lerp(self.water, other.water),
+            rain: lerp(self.rain, other.rain),
+            lightning: lerp(self.lightning, other.lightning),
+        }
     }
 
     pub fn check(&self, pointer: &str, cx: &mut RowCheck) {
@@ -139,6 +309,247 @@ impl Weather {
             1.0,
             "of the way from fair-weather cloud to storm cloud",
         );
+        cx.range(
+            format!("{pointer}/rain"),
+            self.rain,
+            0.0,
+            1.0,
+            "of a cloudburst",
+        );
+        cx.range(
+            format!("{pointer}/lightning"),
+            self.lightning,
+            0.0,
+            60.0,
+            "strikes a minute",
+        );
+    }
+}
+
+impl Default for Climate {
+    fn default() -> Climate {
+        Climate::always(Weather::default())
+    }
+}
+
+impl Climate {
+    /// A climate of one spell that never changes: `weather`, for good.
+    pub fn always(weather: Weather) -> Climate {
+        Climate {
+            spells: vec![Spell {
+                name: "Always".to_owned(),
+                weather,
+                lasts: SpellLength {
+                    shortest: Seconds(3600.0),
+                    longest: Seconds(3600.0),
+                },
+                next: Vec::new(),
+            }],
+            turns: Seconds(60.0),
+            seed: 0,
+            rain: None,
+            lightning: None,
+        }
+    }
+
+    /// Whether the climate is still air under a clear sky for good, as indoors.
+    pub fn is_still(&self) -> bool {
+        *self == Climate::always(Weather::default())
+    }
+
+    /// The spell the course starts at.
+    pub fn first(&self) -> Weather {
+        self.spells
+            .first()
+            .map_or_else(Weather::default, |spell| spell.weather)
+    }
+
+    /// Where the course running `course` stands at `now`, from `from` when it last stood there,
+    /// so a caller asking again and again walks on from where it last stood.
+    pub fn course_at(
+        &self,
+        course: TimeCourse,
+        now: UnixMillis,
+        from: Option<SpellCourse>,
+    ) -> Option<SpellCourse> {
+        let TimeCourse::Since(origin) = course else {
+            return None;
+        };
+        let mut at = from
+            .filter(|at| at.began <= now && at.began >= origin)
+            .unwrap_or_else(|| self.step(0, 0, origin));
+        while at.ends <= now && !self.spells[at.spell].next.is_empty() {
+            at = self.step(at.step + 1, at.next, at.ends);
+        }
+        Some(at)
+    }
+
+    /// The weather where the course stands at `now`: its spell's, turning toward the next over the
+    /// last `turns` of the spell; on a held course, the first spell's.
+    pub fn weather_at(&self, at: Option<SpellCourse>, now: UnixMillis) -> Weather {
+        let Some(at) = at else {
+            return self.first();
+        };
+        let weather = self.spells[at.spell].weather;
+        if self.spells[at.spell].next.is_empty() {
+            return weather;
+        }
+        let left = at.ends.since(now).0.max(0.0);
+        let turning = self
+            .turns
+            .0
+            .min(at.ends.since(at.began).0)
+            .max(f32::EPSILON);
+        let share = (1.0 - left / turning).clamp(0.0, 1.0);
+        weather.toward(
+            &self.spells[at.next].weather,
+            share * share * (3.0 - 2.0 * share),
+        )
+    }
+
+    pub fn check(&self, pointer: &str, cx: &mut RowCheck) {
+        cx.range(
+            format!("{pointer}/spells"),
+            self.spells.len(),
+            1,
+            64,
+            "spells",
+        );
+        cx.at_least(format!("{pointer}/turns"), self.turns.0, 0.0, "seconds");
+        for (index, spell) in self.spells.iter().enumerate() {
+            let at = format!("{pointer}/spells/{index}");
+            cx.text(format!("{at}/name"), &spell.name, 1, 60);
+            spell.weather.check(&format!("{at}/weather"), cx);
+            cx.range(
+                format!("{at}/lasts/shortest"),
+                spell.lasts.shortest.0,
+                1.0,
+                spell.lasts.longest.0,
+                "seconds, at most the longest",
+            );
+            for (follows, next) in spell.next.iter().enumerate() {
+                if !self.spells.iter().any(|other| other.name == next.spell) {
+                    cx.error(
+                        format!("{at}/next/{follows}/spell"),
+                        "unknown spell",
+                        &next.spell,
+                        "the name of one of the climate's spells",
+                    );
+                }
+                cx.at_least(
+                    format!("{at}/next/{follows}/weight"),
+                    next.weight,
+                    0.0,
+                    "weight",
+                );
+            }
+            if !spell.next.is_empty() && spell.next.iter().all(|next| next.weight <= 0.0) {
+                cx.error(
+                    format!("{at}/next"),
+                    "no spell follows",
+                    "every weight 0",
+                    "a weight over 0 for some spell to follow",
+                );
+            }
+        }
+        if let Some(rain) = &self.rain {
+            rain.check(&format!("{pointer}/rain"), cx);
+        }
+        if let Some(lightning) = &self.lightning {
+            cx.range(
+                format!("{pointer}/lightning/flash"),
+                lightning.flash,
+                0.0,
+                16.0,
+                "times the open sky's light by day",
+            );
+        }
+    }
+
+    /// The `step`th spell of the course, `spell`, beginning at `began`: how long it lasts and
+    /// which spell follows it, drawn from the course's seed and the step alone.
+    fn step(&self, step: u64, spell: usize, began: UnixMillis) -> SpellCourse {
+        let mut rng = Rng::new(self.seed ^ step.wrapping_mul(0x9E37_79B9_7F4A_7C15));
+        let of = &self.spells[spell.min(self.spells.len() - 1)];
+        let lasts =
+            of.lasts.shortest.0 + (of.lasts.longest.0 - of.lasts.shortest.0) * rng.rand_float();
+        let total: f32 = of.next.iter().map(|next| next.weight.max(0.0)).sum();
+        let mut drawn = rng.rand_float() * total;
+        let next = of
+            .next
+            .iter()
+            .find(|next| {
+                drawn -= next.weight.max(0.0);
+                drawn < 0.0 && next.weight > 0.0
+            })
+            .or_else(|| of.next.iter().rev().find(|next| next.weight > 0.0))
+            .and_then(|next| {
+                self.spells
+                    .iter()
+                    .position(|other| other.name == next.spell)
+            })
+            .unwrap_or(spell);
+        SpellCourse {
+            step,
+            spell,
+            next,
+            began,
+            ends: began.after(Seconds(lasts)),
+        }
+    }
+}
+
+impl Rainfall {
+    /// How far the rain is carried sideways for every metre it falls in `wind`, a direction
+    /// scaled by the wind's strength (x east, y south).
+    pub fn lean(&self, wind: Vec2) -> Vec2 {
+        wind * self.slant
+    }
+
+    fn check(&self, pointer: &str, cx: &mut RowCheck) {
+        cx.range(
+            format!("{pointer}/slant"),
+            self.slant,
+            0.0,
+            4.0,
+            "metres downwind for every metre fallen",
+        );
+        cx.range(
+            format!("{pointer}/shells"),
+            self.shells.len(),
+            1,
+            MAX_RAIN_SHELLS,
+            "shells",
+        );
+        for (index, shell) in self.shells.iter().enumerate() {
+            cx.range(
+                format!("{pointer}/shells/{index}"),
+                shell.0,
+                NEAREST_SHELL.0,
+                200.0,
+                "metres from the eye",
+            );
+        }
+        cx.at_least(format!("{pointer}/wets"), self.wets.0, 0.0, "seconds");
+        cx.at_least(format!("{pointer}/dries"), self.dries.0, 0.0, "seconds");
+        for (index, sound) in self.sounds.iter().enumerate() {
+            let at = format!("{pointer}/sounds/{index}");
+            cx.range(
+                format!("{at}/rain"),
+                sound.rain,
+                0.0,
+                1.0,
+                "of a cloudburst",
+            );
+            cx.range(format!("{at}/volume"), sound.volume, 0.0, 4.0, "times");
+        }
+    }
+}
+
+impl SpellCourse {
+    /// Which of the climate's spells is under way, by its place among them.
+    pub fn spell(&self) -> usize {
+        self.spell
     }
 }
 

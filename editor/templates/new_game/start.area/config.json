@@ -34,12 +34,25 @@
         255
       ],
       "strength": 0.0
-    }
+    },
+    "moist_scatter": 12.0
   },
-  "weather": {
-    "wind": {
-      "direction": 240.0,
-      "strength": 0.35
-    }
+  "climate": {
+    "spells": [
+      {
+        "name": "Always",
+        "weather": {
+          "wind": {
+            "direction": 240.0,
+            "strength": 0.35
+          }
+        },
+        "lasts": {
+          "shortest": 3600.0,
+          "longest": 3600.0
+        }
+      }
+    ],
+    "turns": 60.0
   }
 }

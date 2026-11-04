@@ -11,15 +11,15 @@ use bevy::light::atmosphere::{PhaseFunction, ScatteringMedium};
 use bevy::light::{
     Atmosphere, AtmosphereEnvironmentMapLight, FogVolume, GeneratedEnvironmentMapLight,
 };
-use bevy::pbr::{AtmosphereSettings, DistanceFog, FogFalloff};
+use bevy::pbr::AtmosphereSettings;
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::clouds;
+use super::haze::HazeBox;
 use super::lights;
-use crate::core::ground::Heightfield;
-use crate::core::math::{Pos, Rect, Rgb, smoothstep};
+use crate::core::math::{Rect, Rgb, smoothstep};
 use crate::core::render::Look;
 use crate::core::units::{Degrees, Meters, Stops};
 
@@ -37,11 +37,6 @@ pub struct SkyLook {
     /// shows its haze band from the heights the camera stands at, and no more, so what stands
     /// near keeps its own colour.
     pub air_per_metre: f32,
-    /// How far from the camera the air stays clear, how far until the haze lies as thick as it
-    /// gets, and how thick that is: never so thick that what stands in it loses its shape.
-    pub haze_clear: Meters,
-    pub haze_thick: Meters,
-    pub thickest_haze: f32,
     /// The haze's colours under the noon light: by day, glowing toward dusk, and by night, which
     /// the dark of the night dims as it dims everything else.
     pub day_haze: Rgb,
@@ -49,24 +44,16 @@ pub struct SkyLook {
     pub night_haze: Rgb,
     /// The haze of an air no sun ever lights.
     pub sunless_haze: Rgb,
-    /// The haze of saturated air by day, and how much nearer it closes in.
+    /// The haze of saturated air by day, and the haze of falling rain, which the air turns toward
+    /// as it rains round the eye.
     pub moist_haze: Rgb,
-    pub moist_closer: f32,
-    /// How many times more the water in saturated air scatters than dry air's dust.
-    pub moist_scatter: f32,
+    pub rain_haze: Rgb,
     /// How moist cloud of no water at all leaves the air, of saturated.
     pub moisture_of_cloud: f32,
     /// How much of the light a face under a clear sky gets comes from the sky rather than the sun.
     pub sky_share: f32,
     /// How much the sky lights everything from above, of the atmosphere's own brightness.
     pub sky_light: f32,
-    /// How high the low air reaches over the ground: the air the haze lies in, which a camera
-    /// above it sees the ground through only the depth of, and the sun's shafts show in. And how
-    /// thick it is dry and saturated: dry air thin, so the shafts show only where the light breaks
-    /// through, and moist air thick enough that the light stands in it in shafts.
-    pub air_height: Meters,
-    pub dry_air: f32,
-    pub moist_air: f32,
     /// The colour a sun reddens toward as it nears the horizon, the elevation below which it
     /// begins to, and how far toward it a sun on the horizon has gone, from 0 to 1.
     pub setting_sun: Rgb,
@@ -167,15 +154,16 @@ pub struct SunLight {
     pub illuminance: f32,
 }
 
-/// The air over the world under `sky`: an Earth's atmosphere as moist as `humidity`, the water in
-/// the air scattering the light white and hazing the horizon the more it holds, scaled down so the
+/// The air over the world under `sky`: an Earth's atmosphere whose haze scatters the light
+/// `scattering` times as much as dry air's dust, the water in moist air scattering it white and
+/// hazing the horizon the more it holds, scaled down so the
 /// world's few hundred metres stretch over enough air to haze, over a ground the colour of the
 /// haze, so that past the world's edge the eye meets the same haze the far distance sinks into;
 /// or over the dark, an air that scatters nothing over a black ground.
 pub fn atmosphere(
     media: &mut Assets<ScatteringMedium>,
     sky: Sky,
-    humidity: f32,
+    scattering: f32,
     look: &SkyLook,
 ) -> impl Bundle {
     let mut medium = ScatteringMedium::default();
@@ -183,7 +171,7 @@ pub fn atmosphere(
         Sky::Air => {
             for term in &mut medium.terms {
                 if matches!(term.phase, PhaseFunction::Mie { .. }) {
-                    term.scattering *= 1.0 + look.moist_scatter * humidity;
+                    term.scattering *= scattering;
                 }
             }
         }
@@ -205,91 +193,101 @@ pub fn atmosphere(
     )
 }
 
-/// The air standing over `ground` as moist as `humidity`, which the sun's light shafts show in.
-pub fn air(ground: Rect<Meters>, humidity: f32, look: &SkyLook) -> impl Bundle {
-    let center = ground.center();
-    let height = look.air_height.0;
+/// The low air the sun's light shafts show in, as thick as `density`, standing `height` deep over
+/// the ground `ground` high, over `within`. The shafts' air lets the sun's light in but no light of
+/// the sky's, so a long way through it would only darken what lies behind: it stands only round
+/// the eye, where the haze is still clear.
+pub fn air(
+    within: Rect<Meters>,
+    ground: Meters,
+    height: Meters,
+    density: f32,
+) -> (FogVolume, Transform) {
+    let center = within.center();
     (
         FogVolume {
-            density_factor: look.dry_air
-                + (look.moist_air - look.dry_air) * humidity.clamp(0.0, 1.0),
+            density_factor: density,
             absorption: 0.1,
             scattering: 0.3,
             scattering_asymmetry: 0.7,
             ..default()
         },
-        Transform::from_xyz(center.x, height / 2.0, center.y).with_scale(Vec3::new(
-            ground.size.width,
-            height,
-            ground.size.height,
+        Transform::from_xyz(center.x, ground.0 + height.0 / 2.0, center.y).with_scale(Vec3::new(
+            within.size.width.max(f32::EPSILON),
+            height.0.max(f32::EPSILON),
+            within.size.height.max(f32::EPSILON),
         )),
     )
 }
 
-/// The haze a camera sees the world over `heights` through, as it lies in the low air: from within
-/// that air, as authored; from above it, thinner by as many times as the camera stands higher than
-/// the air reaches, since the camera's line of sight to the ground crosses only the air's depth of
-/// it.
-#[derive(Component, Clone)]
-pub struct Haze {
-    pub fog: DistanceFog,
-    pub air_height: Meters,
-    pub heights: Heightfield,
+/// How thick fog hazes what is seen through it, dry and moist: through how much of it what is
+/// seen stays clear, through how much the haze lies as thick as it gets, and how thick that is,
+/// never so thick that what stands in it loses its shape; how much nearer saturated air and a
+/// cloudburst round the eye close it in, each a share of the way; and how thick the low air the
+/// sun's shafts show in stands in it round the eye, dry and saturated, dry air thin so the shafts
+/// show only where the light breaks through.
+#[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(deny_unknown_fields)]
+pub struct Fog {
+    pub clear: Meters,
+    pub thick: Meters,
+    pub thickest: f32,
+    pub moist_closer: f32,
+    pub rain_closer: f32,
+    pub dry_air: f32,
+    pub moist_air: f32,
 }
 
-/// Every camera's haze, thinned by how high above the low air the camera stands.
-pub(super) fn thin_haze(
-    mut cameras: Query<(&Haze, &GlobalTransform, Option<&mut DistanceFog>, Entity)>,
-    mut commands: Commands,
-) {
-    for (haze, placed, fog, camera) in &mut cameras {
-        let eye = placed.translation();
-        let above = eye.y - haze.heights.height_at(Pos::new(eye.x, eye.z)).0;
-        let thinned = (above / haze.air_height.0.max(f32::EPSILON)).max(1.0);
-        let mut seen = haze.fog.clone();
-        if let FogFalloff::Linear { start, end } = &mut seen.falloff {
-            *start *= thinned;
-            *end *= thinned;
+impl Fog {
+    /// This fog lying from `low` to `high` over the ground, `height` deep, as it hazes what is
+    /// seen through it in air as moist as `humidity` while it `rains` round the eye (0 none to 1
+    /// a cloudburst): the moister and the harder it rains, the nearer it closes in.
+    pub fn lying(
+        &self,
+        low: Vec2,
+        high: Vec2,
+        height: Meters,
+        humidity: f32,
+        rains: f32,
+    ) -> HazeBox {
+        let closer =
+            (1.0 - self.moist_closer * humidity) * (1.0 - self.rain_closer * rains.clamp(0.0, 1.0));
+        HazeBox {
+            low,
+            high,
+            height: height.0,
+            clear: self.clear.0 * closer,
+            thick: self.thick.0 * closer,
+            thickest: self.thickest,
         }
-        match fog {
-            Some(mut fog) => {
-                if linear(&fog.falloff) != linear(&seen.falloff) || fog.color != seen.color {
-                    *fog = seen;
-                }
-            }
-            None => {
-                commands.entity(camera).insert(seen);
-            }
-        }
+    }
+
+    /// How thick the low air the sun's shafts show in stands in this fog, as moist as `humidity`.
+    pub fn air(&self, humidity: f32) -> f32 {
+        self.dry_air + (self.moist_air - self.dry_air) * humidity.clamp(0.0, 1.0)
     }
 }
 
-/// Where a linear haze begins and ends, none for another falloff.
-fn linear(falloff: &FogFalloff) -> Option<(f32, f32)> {
-    match *falloff {
-        FogFalloff::Linear { start, end } => Some((start, end)),
-        _ => None,
-    }
-}
-
-/// The haze the camera sees the world through under a `sun` and a `sky`: clear up close,
-/// thickening with the distance into the colour of the sky at the horizon, pale blue by day,
-/// glowing at dusk and blue by night, as bright as the world is `lit` of its noon light, or black
-/// under a dark sky, so what stands far off sinks toward the sky.
+/// The colour of the haze under a `sun` and a `sky`: the colour of the sky at the horizon, pale
+/// blue by day, glowing at dusk and blue by night, greying as the air moistens to `humidity` and
+/// as it `rains` round the eye (0 none to 1 a cloudburst), as bright as the world is `lit` of its
+/// noon light, or black under a dark sky, so what stands far off in it sinks toward the sky.
 pub fn haze(
     sun: Option<SunLight>,
     lit: f32,
     sky: Sky,
     humidity: f32,
+    rains: f32,
     look: &SkyLook,
-) -> DistanceFog {
-    let color = match (sky, sun) {
+) -> Color {
+    match (sky, sun) {
         (Sky::Dark, _) => Color::BLACK,
         (Sky::Air, None) => look.sunless_haze.color(),
         (Sky::Air, Some(sun)) => {
             let day = smoothstep(look.sun_gone.0, look.sun_full.0, sun.elevation.0);
             let glow = (1.0 - sun.elevation.0.abs() / 15.0).clamp(0.0, 1.0);
-            let clear = mix(look.day_haze.color(), look.moist_haze.color(), humidity);
+            let moist = mix(look.day_haze.color(), look.moist_haze.color(), humidity);
+            let clear = mix(moist, look.rain_haze.color(), rains.clamp(0.0, 1.0));
             let hue = mix(
                 mix(look.night_haze.color(), clear, day),
                 look.dusk_haze.color(),
@@ -298,16 +296,6 @@ pub fn haze(
             .to_linear();
             Color::LinearRgba(hue * lit)
         }
-    };
-    let closer = 1.0 - look.moist_closer * humidity;
-    DistanceFog {
-        color: color.with_alpha(look.thickest_haze),
-        directional_light_color: Color::NONE,
-        directional_light_exponent: 8.0,
-        falloff: FogFalloff::Linear {
-            start: look.haze_clear.0 * closer,
-            end: look.haze_thick.0 * closer,
-        },
     }
 }
 

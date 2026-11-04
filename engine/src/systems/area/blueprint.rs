@@ -185,6 +185,7 @@ pub(super) fn write_module(
         AreaModule::Prop(fields) => serde_json::to_string(fields),
         AreaModule::Scatter(fields) => serde_json::to_string(fields),
         AreaModule::Light(fields) => serde_json::to_string(fields),
+        AreaModule::Fog(fields) => serde_json::to_string(fields),
         AreaModule::Blueprint(fields) => serde_json::to_string(fields),
         AreaModule::Population(fields) => serde_json::to_string(fields),
         AreaModule::Resident(fields) => serde_json::to_string(fields),
@@ -888,6 +889,7 @@ pub fn place(module: &mut AreaModule, at: Pos<Meters>, yaw: Degrees) {
             };
         }
         AreaModule::SafeZone(zone) => zone.rect = rect(zone.rect),
+        AreaModule::Fog(bank) => bank.rect = rect(bank.rect),
         AreaModule::Soundscape(soundscape) => {
             soundscape.shape = match soundscape.shape {
                 SoundscapeShape::Rect(r) => SoundscapeShape::Rect(rect(r)),

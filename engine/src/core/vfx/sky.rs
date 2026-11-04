@@ -41,7 +41,9 @@ pub struct SkyMaterial {
 /// colour, the unit way toward the moon, how far into the night the sky is, 0 day to 1 full night,
 /// and the field of cloud: the height it lies at, the ground a tile of it covers, how far the
 /// wind has carried it, where in its noise cloud begins and how far past that it is thick, and how
-/// its second read is carried, turned and scaled from its first.
+/// its second read is carried, turned and scaled from its first; where in the noise cloud holds
+/// water, how hard it rains under the wettest cloud and how far the wind carries the rain
+/// sideways for every metre it falls.
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
 pub struct Heavens {
     pub toward: Vec3,
@@ -56,6 +58,9 @@ pub struct Heavens {
     pub cloud_softness: f32,
     pub cloud_shift: Vec2,
     pub cloud_second: Mat2,
+    pub water_edge: f32,
+    pub rain: f32,
+    pub rain_lean: Vec2,
 }
 
 impl Heavens {
@@ -81,11 +86,15 @@ impl Heavens {
         }
     }
 
-    /// These heavens with the clouds covering `clouds` of the sky, carried `drift` along.
-    pub fn covered(self, clouds: f32, drift: Vec2, look: &CloudLook) -> Heavens {
+    /// These heavens under `weather`'s clouds, carried `drift` along: covering as much of the
+    /// sky as they do, as much of them holding water, raining as hard.
+    pub fn covered(self, weather: SkyWeather, drift: Vec2, look: &CloudLook) -> Heavens {
         Heavens {
             drift,
-            cloud_edge: clouds::edge(clouds, look),
+            cloud_edge: clouds::edge(weather.clouds, look),
+            water_edge: clouds::water_edge(weather.water),
+            rain: weather.rain,
+            rain_lean: weather.rain_lean,
             ..self
         }
     }
@@ -105,8 +114,22 @@ impl Heavens {
             cloud_softness: look.softness,
             cloud_shift: SECOND_SHIFT,
             cloud_second: clouds::second_read(),
+            water_edge: clouds::water_edge(0.0),
+            rain: 0.0,
+            rain_lean: Vec2::ZERO,
         }
     }
+}
+
+/// The weather a sky paints: how much of it cloud covers, how much of the cloud holds water and
+/// how hard it rains under the cloud that holds the most, each 0 to 1, and how far the wind
+/// carries the rain sideways for every metre it falls.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SkyWeather {
+    pub clouds: f32,
+    pub water: f32,
+    pub rain: f32,
+    pub rain_lean: Vec2,
 }
 
 impl From<&SkyMaterial> for VfxShaderKey {

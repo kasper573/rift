@@ -1,1 +1,22 @@
-[]
+[
+  {
+    "type": "fog",
+    "label": "Fog",
+    "rect": {
+      "x": -0.5,
+      "y": -0.5,
+      "w": 16.0,
+      "h": 12.0
+    },
+    "height": 40.0,
+    "haze": {
+      "clear": 50.0,
+      "thick": 170.0,
+      "thickest": 0.85,
+      "moist_closer": 0.5,
+      "rain_closer": 0.2,
+      "dry_air": 0.006,
+      "moist_air": 0.04
+    }
+  }
+]

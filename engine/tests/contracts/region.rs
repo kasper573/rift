@@ -8,7 +8,8 @@ use serde_json::json;
 use testkit::{Game, Map, Sim, path};
 
 #[test]
-fn an_areas_ground_and_what_stands_on_it_come_to_life_as_a_player_comes_near() {
+fn an_areas_ground_and_what_stands_on_it_come_to_life_as_a_player_comes_near_and_the_ground_is_let_go_as_they_leave()
+ {
     let content = Game::new()
         .npc("crow", 5.0, json!([]))
         .npc("hawk", 5.0, json!([]))
@@ -63,7 +64,14 @@ fn an_areas_ground_and_what_stands_on_it_come_to_life_as_a_player_comes_near() {
     sim.world
         .entity_mut(hero)
         .insert(Position::at(Pos::new(4.0, 6.0)));
-    sim.run(1.0);
+    assert!(
+        sim.run_until(5.0, |_| {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+            !field.mesh().walkable(Pos::new(540.0, 6.0))
+        }),
+        "the ground left behind is let go"
+    );
+    assert!(field.mesh().walkable(Pos::new(20.0, 6.0)));
     assert_eq!(
         crows(&mut sim.world),
         [10.0, 550.0],

@@ -23,6 +23,7 @@ use std::sync::Arc;
 
 use bevy::app::Propagate;
 use bevy::camera::visibility::RenderLayers;
+use bevy::light::FogVolume;
 use bevy::light::atmosphere::ScatteringMedium;
 use bevy::mesh::MeshTag;
 use bevy::platform::collections::{HashMap, HashSet};
@@ -34,36 +35,43 @@ use rayon::prelude::*;
 use super::lighting::DomeLook;
 use super::prop::PropId;
 use super::terrain::PieceShape;
-use super::{Area, Lighting, PointLightDef};
+use super::{Area, FogBank, Lighting, PointLightDef, Rainfall, Weather};
 use crate::core::content::{Content, FileHash, FileHashes};
-use crate::core::ground::{Heightfield, OVERVIEW_STRIDE, PaintMap, SAMPLES_PER_METER, TileAt};
+use crate::core::ground::{
+    Heightfield, OVERVIEW_STRIDE, PaintMap, SAMPLES_PER_METER, TileAt, WaterSurface,
+};
 use crate::core::math::{Pos, Rect, Rng, Size};
 use crate::core::render::camera::{View, WorldPicture};
 use crate::core::render::present::AreaGrade;
-use crate::core::render::world::clouds::{self, CloudSheet};
+use crate::core::render::world::clouds::{CloudDrift, CloudSheet};
+use crate::core::render::world::haze::Haze;
 use crate::core::render::world::lights::{self, Flicker};
 use crate::core::render::world::lod::MeshLevels;
 use crate::core::render::world::sky::{self, Daylight, SunLight};
 use crate::core::render::world::terrain::{
     self, ChunkPaint, ChunkPaints, GroundLayer, GroundMaterial,
 };
-use crate::core::render::{Look, camera, world_point};
+use crate::core::render::{CameraRig, Look, camera, world_point};
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::{MeterSize, Meters};
-use crate::core::vfx::cover::Climate;
+use crate::core::vfx::cover::ShownWeather;
+use crate::core::vfx::rain::{self as rain_vfx, RainField, RainMaterial};
 use crate::core::vfx::render as vfx_render;
-use crate::core::vfx::sky::{self as sky_vfx, Heavens, SkyMaterial};
+use crate::core::vfx::sky::{self as sky_vfx, Heavens, SkyMaterial, SkyWeather};
 use crate::core::vfx::uniform::{ParamsUniform, SiteUniform, WeatherImage};
 
 /// An area's scenery as it stands in a world: everything hangs under `root`, the terrain mesh is
 /// `terrain`, `sun` is the directional light when the area has one, the sun by day and the full
-/// moon by night, and `sky` the dome its sky is painted on when the area paints one.
+/// moon by night, `sky` the dome its sky is painted on when the area paints one, and `rain` the
+/// shells its rain falls on when its climate draws rain under an open sky.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Scenery {
     pub root: Entity,
     pub terrain: Entity,
     pub sun: Option<Entity>,
     pub sky: Option<Entity>,
+    pub air: Option<Entity>,
+    pub rain: Option<Entity>,
 }
 
 /// Stands scenery as the view moves, a few pieces a frame, so the frames keep coming however much
@@ -104,25 +112,36 @@ pub fn spawn(
             .id()
     });
     let look = world.resource::<Look>().clone();
-    let humidity = humidity(area, &look);
+    let humidity = humidity(&area.climate.first(), &look);
     let atmosphere = sky::atmosphere(
         &mut world.resource_mut::<Assets<ScatteringMedium>>(),
         area.lighting.sky,
-        humidity,
+        area.lighting.scattering(humidity),
         &look.sky,
     );
     world.spawn((atmosphere, ChildOf(root)));
     let mut dome = None;
+    let mut air = None;
+    let mut rain = None;
     if area.lighting.sky.is_air() {
-        world.spawn((
-            sky::air(area.size.bounds(), humidity, &look.sky),
-            ChildOf(root),
-        ));
+        air = Some(
+            world
+                .spawn((
+                    sky::air(Rect::zero(), Meters(0.0), Meters(0.0), 0.0),
+                    ChildOf(root),
+                ))
+                .id(),
+        );
         dome = area
             .lighting
             .dome
             .as_ref()
             .and_then(|look| spawn_dome(world, content, look, root));
+        rain = area
+            .climate
+            .rain
+            .as_ref()
+            .and_then(|rainfall| spawn_rain(world, content, rainfall, root));
     }
     let (terrain, paints) = spawn_terrain(world, content, area, &look, root);
     let props = Props::new(content, area);
@@ -134,6 +153,7 @@ pub fn spawn(
         area: area.clone(),
         heights: area.heights.clone(),
         paint: area.paint.clone(),
+        water: area.water.clone(),
         terrain,
         paints,
         regions: Regions::of(area),
@@ -151,6 +171,8 @@ pub fn spawn(
         terrain,
         sun,
         sky: dome,
+        air,
+        rain,
     }
 }
 
@@ -194,6 +216,9 @@ impl Sources {
         }
         if let Some(dome) = &area.lighting.dome {
             files.insert(dome.shader.path(content));
+        }
+        if let Some(rain) = &area.climate.rain {
+            files.insert(rain.shader.path(content));
         }
         for prop in props {
             let def = prop.get(content);
@@ -251,8 +276,14 @@ pub fn shaders_ready(world: &World, content: &Content, area: &Area) -> bool {
         .dome
         .as_ref()
         .is_none_or(|dome| vfx_render::compiled_shader(world, dome.shader).is_some());
+    let rain = area
+        .climate
+        .rain
+        .as_ref()
+        .is_none_or(|rain| vfx_render::compiled_shader(world, rain.shader).is_some());
     covers
         && sky
+        && rain
         && props_of(area).iter().all(|prop| {
             prop.get(content).materials.values().all(|material| {
                 vfx_render::compiled_shader(world, material.get(content).shader).is_some()
@@ -288,6 +319,7 @@ struct Streaming {
     area: Arc<Area>,
     heights: Heightfield,
     paint: PaintMap,
+    water: WaterSurface,
     terrain: Entity,
     paints: ChunkPaints,
     regions: Regions,
@@ -540,22 +572,26 @@ fn ground_under(streaming: &mut Streaming, node: Node) -> bool {
     if node.level >= OVERVIEW_LEVEL {
         return true;
     }
-    let (heights, paint) = (&streaming.heights, &streaming.paint);
+    let (heights, paint, water) = (&streaming.heights, &streaming.paint, &streaming.water);
     let bounds = node_rect(node).bounds();
     let mut ready = true;
     for tile in heights.size().tiles_within(bounds) {
-        if heights.is_loaded(tile) && paint.is_loaded(tile) {
+        if heights.is_loaded(tile) && paint.is_loaded(tile) && water.is_loaded(tile) {
             continue;
         }
         ready = false;
         if streaming.loading.contains_key(&tile) {
             continue;
         }
-        let (heights, paint) = (heights.clone(), paint.clone());
+        let (heights, paint, water) = (heights.clone(), paint.clone(), water.clone());
         let task = IoTaskPool::get().spawn(async move {
-            for problem in [heights.load(tile).err(), paint.load(tile).err()]
-                .into_iter()
-                .flatten()
+            for problem in [
+                heights.load(tile).err(),
+                paint.load(tile).err(),
+                water.load(tile).err(),
+            ]
+            .into_iter()
+            .flatten()
             {
                 warn!("ground tile {} doesn't load: {problem}", tile.key());
             }
@@ -869,10 +905,17 @@ fn parts_of(world: &World, entity: Entity) -> usize {
 /// moon in its place, the eye opened to how strongly it shines, its clouds carried
 /// on by the wind, and the ambient light, the haze of the sun as it shines and the area's sky put
 /// on `camera`; cheap enough to do every frame.
-pub fn light(world: &mut World, area: &Area, daylight: Daylight, scenery: Scenery, camera: Entity) {
+pub fn light(
+    world: &mut World,
+    area: &Area,
+    weather: &Weather,
+    daylight: Daylight,
+    scenery: Scenery,
+    camera: Entity,
+) {
     let look = world.resource::<Look>().clone();
-    let (clouds, water) = (area.weather.clouds, area.weather.water);
-    let sun = sun_at(area, daylight, &look);
+    let (clouds, water) = (weather.clouds, weather.water);
+    let sun = sun_at(area, weather, daylight, &look);
     let elevation = sun.map(|sun| sun.elevation);
     let ambient = AmbientLight {
         color: area.lighting.ambient.color(),
@@ -887,9 +930,10 @@ pub fn light(world: &mut World, area: &Area, daylight: Daylight, scenery: Scener
             light.color = shining.color;
             light.illuminance = shining.illuminance;
         }
-        let drifted = clouds::drift(
-            climate(area).wind,
-            world.resource::<Time>().elapsed_secs(),
+        let now = world.resource::<Time>().elapsed_secs();
+        let drifted = world.resource_mut::<CloudDrift>().blown(
+            shown_weather(weather, 0.0).wind,
+            now,
             &look.clouds,
         );
         let center = area.size.bounds().center();
@@ -904,7 +948,7 @@ pub fn light(world: &mut World, area: &Area, daylight: Daylight, scenery: Scener
         if let Some(mut transform) = world.get_mut::<Transform>(entity) {
             *transform = cast;
         }
-        if let Some(dome) = scenery.sky {
+        if scenery.sky.is_some() || scenery.rain.is_some() {
             let heavens = Heavens::new(
                 placed.back().as_vec3(),
                 shining.color,
@@ -913,36 +957,65 @@ pub fn light(world: &mut World, area: &Area, daylight: Daylight, scenery: Scener
                 sky::night(daylight, sun, &look.sky),
                 &look.clouds,
             )
-            .covered(clouds, drifted, &look.clouds);
-            light_dome(world, dome, heavens);
+            .covered(
+                SkyWeather {
+                    clouds,
+                    water,
+                    rain: weather.rain,
+                    rain_lean: area.climate.rain.as_ref().map_or(Vec2::ZERO, |rainfall| {
+                        rainfall.lean(shown_weather(weather, 0.0).wind)
+                    }),
+                },
+                drifted,
+                &look.clouds,
+            );
+            if let Some(dome) = scenery.sky {
+                light_dome(world, dome, heavens);
+            }
+            if let Some(rain) = scenery.rain {
+                light_rain(world, rain, heavens);
+            }
         }
     }
     let mut tone = area.lighting.grade.tone();
     let mut lit = 1.0;
-    if let (Some(shining), Some(noon)) = (shining, sun_at(area, Daylight::Fixed, &look)) {
+    if let (Some(shining), Some(noon)) = (shining, sun_at(area, weather, Daylight::Fixed, &look)) {
         let opened = sky::adaptation(daylight, shining, &look);
         tone.exposure.0 += opened.0;
         let sky_light = sky::ambient_at(daylight, elevation, clouds, water, &look)
             / sky::ambient_at(Daylight::Fixed, None, clouds, water, &look);
         lit = sky::lit(shining, sky_light, opened, noon, &look);
     }
+    let rains = world.get_resource::<CameraRig>().map_or(0.0, |rig| {
+        world.resource::<RainField>().rain_at(rig.target().xz())
+    });
+    let moist = humidity(weather, &look);
+    let eye = world
+        .get::<GlobalTransform>(camera)
+        .map(GlobalTransform::translation);
+    if let Some(eye) = eye {
+        let ground = area.heights.height_at(Pos::new(eye.x, eye.z));
+        if let Some(air) = scenery.air {
+            let low_air = air_round(area, eye.xz(), ground, moist);
+            if let Ok(mut air) = world.get_entity_mut(air) {
+                air.insert(low_air);
+            }
+        }
+        let color = sky::haze(sun, lit, area.lighting.sky, moist, rains, &look.sky);
+        let mut banks: Vec<&FogBank> = area.fogs.iter().collect();
+        banks.sort_by(|a, b| a.distance(eye.xz()).total_cmp(&b.distance(eye.xz())));
+        let haze = Haze::new(
+            color,
+            ground.0,
+            banks.into_iter().map(|bank| bank.seen(moist, rains)),
+        );
+        if let Ok(mut camera) = world.get_entity_mut(camera) {
+            camera.insert(haze);
+        }
+    }
     if let Ok(mut camera) = world.get_entity_mut(camera) {
         let grade = camera.get::<WorldPicture>().map(|picture| picture.0);
-        let haze = sky::haze(
-            sun,
-            lit,
-            area.lighting.sky,
-            humidity(area, &look),
-            &look.sky,
-        );
-        camera.insert((
-            ambient,
-            sky::Haze {
-                fog: haze,
-                air_height: look.sky.air_height,
-                heights: area.heights.clone(),
-            },
-        ));
+        camera.insert(ambient);
         if let Some(grade) = grade {
             camera.insert(camera::grading(tone, grade));
         }
@@ -950,9 +1023,30 @@ pub fn light(world: &mut World, area: &Area, daylight: Daylight, scenery: Scener
     sky::show(world, camera, area.lighting.sky);
 }
 
-/// How moist the area's air is under its weather.
-fn humidity(area: &Area, look: &Look) -> f32 {
-    sky::humidity(area.weather.clouds, area.weather.water, &look.sky)
+/// The low air the sun's shafts show in round `eye` (x east, y south), over ground `ground` high:
+/// in the bank of fog the eye stands in, as far round as its haze stays clear, as moist as
+/// `moist`; none outside every bank.
+fn air_round(area: &Area, eye: Vec2, ground: Meters, moist: f32) -> (FogVolume, Transform) {
+    let at = Pos::new(eye.x, eye.y);
+    area.fogs
+        .iter()
+        .find(|bank| bank.rect.contains(at))
+        .and_then(|bank| {
+            let reach = bank.haze.clear.0.max(1.0);
+            let round = Rect::new(
+                Pos::new(eye.x - reach, eye.y - reach),
+                Size::new(reach * 2.0, reach * 2.0),
+            );
+            bank.rect
+                .intersection(&round)
+                .map(|within| sky::air(within, ground, bank.height, bank.haze.air(moist)))
+        })
+        .unwrap_or_else(|| sky::air(Rect::zero(), ground, Meters(0.0), 0.0))
+}
+
+/// How moist the air is under `weather`.
+fn humidity(weather: &Weather, look: &Look) -> f32 {
+    sky::humidity(weather.clouds, weather.water, &look.sky)
 }
 
 /// The dome the area's sky is painted on, its shader filled with the look's parameters.
@@ -998,27 +1092,82 @@ fn light_dome(world: &mut World, dome: Entity, heavens: Heavens) {
     }
 }
 
-fn sun_at(area: &Area, daylight: Daylight, look: &Look) -> Option<SunLight> {
+/// The shells the area's rain falls on, its shader filled with the rainfall's parameters, hidden
+/// until rain falls round the eye.
+fn spawn_rain(
+    world: &mut World,
+    content: &Content,
+    rainfall: &Rainfall,
+    root: Entity,
+) -> Option<Entity> {
+    let shader = vfx_render::compiled_shader(world, rainfall.shader)?;
+    let params = ParamsUniform::pack(rainfall.shader.get(content), |name| {
+        rainfall.params.get(name).copied()
+    });
+    let material = RainMaterial {
+        site: SiteUniform::default(),
+        params,
+        weather: world.resource::<WeatherImage>().0.clone(),
+        heavens: Heavens::clear(world.resource::<CloudSheet>().look()),
+        clouds: world.resource::<CloudSheet>().field(),
+        shader,
+    };
+    let material = world.resource_mut::<Assets<RainMaterial>>().add(material);
+    let shells = rain_vfx::shells(
+        &mut world.resource_mut::<Assets<Mesh>>(),
+        &rainfall.shells,
+        material,
+    );
+    Some(
+        world
+            .spawn((shells, Visibility::Hidden, ChildOf(root)))
+            .id(),
+    )
+}
+
+/// Tells the rain on `shells` where the lights stand and how the field of cloud lies, as the sky
+/// is told.
+fn light_rain(world: &mut World, shells: Entity, heavens: Heavens) {
+    let Some(handle) = world
+        .get::<MeshMaterial3d<RainMaterial>>(shells)
+        .map(|material| material.0.clone())
+    else {
+        return;
+    };
+    let mut materials = world.resource_mut::<Assets<RainMaterial>>();
+    if materials
+        .get(&handle)
+        .is_some_and(|rain| rain.heavens != heavens)
+        && let Some(mut rain) = materials.get_mut(&handle)
+    {
+        rain.heavens = heavens;
+    }
+}
+
+fn sun_at(area: &Area, weather: &Weather, daylight: Daylight, look: &Look) -> Option<SunLight> {
     area.lighting.sun.map(|sun| {
         sky::sun_at(
             daylight,
             sun.elevation,
             sun.azimuth,
             sun.color.color(),
-            area.weather.clouds,
-            area.weather.water,
+            weather.clouds,
+            weather.water,
             look,
         )
     })
 }
 
-/// The wind and cloud the area's covers move under.
-pub fn climate(area: &Area) -> Climate {
-    let (sin, cos) = area.weather.wind.direction.radians().0.sin_cos();
-    Climate {
-        wind: Vec2::new(sin, -cos) * area.weather.wind.strength,
-        clouds: area.weather.clouds,
-        water: area.weather.water,
+/// The wind, cloud and rain `weather` makes for what the client draws, lightning lighting the
+/// world `flash` of the way to a strike close by.
+pub fn shown_weather(weather: &Weather, flash: f32) -> ShownWeather {
+    let (sin, cos) = weather.wind.direction.radians().0.sin_cos();
+    ShownWeather {
+        wind: Vec2::new(sin, -cos) * weather.wind.strength,
+        clouds: weather.clouds,
+        water: weather.water,
+        rain: weather.rain,
+        flash,
     }
 }
 
@@ -1074,9 +1223,17 @@ fn spawn_terrain(
     root: Entity,
 ) -> (Entity, ChunkPaints) {
     let layers = ground_layers(content, area);
+    let weather = world.resource::<WeatherImage>().0.clone();
     let (material, pictures) = world.resource_scope(|world, mut images: Mut<Assets<Image>>| {
         let assets = world.resource::<AssetServer>();
-        terrain::ground_material(&layers, &look.materials, assets, &mut images, PAINT_SIDE)
+        terrain::ground_material(
+            &layers,
+            &look.materials,
+            weather,
+            assets,
+            &mut images,
+            PAINT_SIDE,
+        )
     });
     let material = world.resource_mut::<Assets<GroundMaterial>>().add(material);
     let terrain = world
@@ -1103,6 +1260,7 @@ fn ground_layers(content: &Content, area: &Area) -> Vec<GroundLayer> {
                     .picture
                     .as_ref()
                     .map(|picture| (picture.image.path(), picture.tile)),
+                wet: def.wet,
             }
         })
         .collect()

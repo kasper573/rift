@@ -8,6 +8,7 @@ pub mod clouds;
 pub mod cover;
 pub mod decal;
 pub mod fade;
+pub mod haze;
 pub mod layers;
 pub mod lights;
 pub mod lod;
@@ -49,7 +50,10 @@ impl Plugin for WorldScenePlugin {
         bevy::asset::embedded_asset!(app, "fade.wesl");
         bevy::asset::embedded_asset!(app, "fade_prepass.wesl");
         bevy::asset::embedded_asset!(app, "decal.wesl");
-        bevy::asset::embedded_asset!(app, "ground.wesl");
+        let _ = app
+            .world_mut()
+            .resource_mut::<Assets<Shader>>()
+            .insert(terrain::GROUND_SHADER.id(), terrain::ground_shader());
         app.register_asset_loader(crate::core::assets::loader::PngLoader);
         let compiling = CompilingPipelines::default();
         app.insert_resource(compiling.clone());
@@ -75,6 +79,7 @@ impl Plugin for WorldScenePlugin {
             MaterialPlugin::<terrain::GroundMaterial>::default(),
             HierarchyPropagatePlugin::<RenderLayers>::new(PostUpdate),
             body::BodyPlugin,
+            haze::HazePlugin,
             layers::JointLayersPlugin,
         ))
         .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP })
@@ -95,7 +100,6 @@ impl Plugin for WorldScenePlugin {
             (
                 camera::refinish_pictures,
                 super::video::show_window.run_if(resource_changed::<VideoPreferences>),
-                sky::thin_haze,
                 lights::cast_shadows,
                 lights::flicker,
                 mannequin::hold,
@@ -136,6 +140,7 @@ fn cloud_look(world: &mut World) {
         None => {
             let sheet = clouds::CloudSheet::new(world, look);
             world.insert_resource(sheet);
+            world.init_resource::<clouds::CloudDrift>();
         }
     }
 }

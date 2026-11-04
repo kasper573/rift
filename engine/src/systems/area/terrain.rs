@@ -11,7 +11,7 @@ use crate::core::content::{
     ContentFile, ContentId, Loading, NamedContent, Nearby, RowCheck, serial,
 };
 use crate::core::math::Rgba;
-use crate::core::render::world::terrain::GROUND_PICTURE;
+use crate::core::render::world::terrain::{GROUND_PICTURE, WetLook};
 use crate::core::units::Meters;
 use crate::core::vfx::shader::Stage;
 use crate::core::vfx::{ParamFill, VfxShaderId};
@@ -33,6 +33,9 @@ pub struct TerrainDef {
     pub walk: Walk,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cover: Option<Cover>,
+    /// How the ground looks soaked through where rain wets it; rain leaves it as it is without.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wet: Option<WetLook>,
 }
 
 /// A picture laid over a terrain's ground, repeating every `tile` metres, its shades multiplied
@@ -68,13 +71,14 @@ pub struct Cover {
     pub pieces: Vec<CoverPiece>,
 }
 
-/// A sheet over the painted cells, lying on the ground (a sheen of gravel, moss) or flat at a
-/// `level` the ground dips under (water, with the depth beneath each point told to the shader).
-#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct CoverSheet {
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub level: Option<Meters>,
+/// What a sheet over the painted cells lies on: the ground, as a sheen of gravel or moss does, or
+/// the area's water, wherever it stands over the ground, telling the shader how deep the water is
+/// at each point, how far it lies from the shore and how its surface falls.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CoverSheet {
+    Ground,
+    Water,
 }
 
 /// One kind of thing a cover is populated with: its `shape`, the `ratio` of the ground it covers
@@ -174,11 +178,22 @@ impl ContentFile for TerrainDef {
             surface: near.file()?,
             walk: Walk::Walkable,
             cover: None,
+            wet: None,
         })
     }
 
     fn check(&self, cx: &mut RowCheck) {
         cx.text("/name", &self.name, 1, 60);
+        if let Some(wet) = &self.wet {
+            cx.range(
+                "/wet/darkening",
+                wet.darkening,
+                0.0,
+                1.0,
+                "of its colour left soaked",
+            );
+            cx.range("/wet/roughness", wet.roughness, 0.0, 1.0, "rough");
+        }
         if let Some(picture) = &self.picture {
             cx.range(
                 "/picture/tile",

@@ -4,7 +4,7 @@ mod socket;
 pub use game::{
     ProbeArea, ProbeBinding, ProbeBindings, ProbeButton, ProbeFrameQuestion, ProbeGame,
     ProbeGameQuestion, ProbeGesture, ProbeInterfaceIcon, ProbeItem, ProbeNamedObject, ProbeNpc,
-    ProbeProp, ProbeResident, ProbeRoaming, ProbeSkill, answer,
+    ProbeProp, ProbeResident, ProbeRoaming, ProbeSkill, ProbeWater, answer,
 };
 
 use std::collections::HashMap;
@@ -43,12 +43,15 @@ use crate::core::time;
 use crate::core::units::{
     Bytes, MeterSize, Meters, Millis, PlaybackRate, Radians, Seconds, WindowPx,
 };
+use crate::core::vfx::cover::ShownWeather;
+use crate::core::vfx::rain::{RainField, Shelter};
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
 use crate::systems::actor::held::{self, Held};
 use crate::systems::actor::render::Puppet;
 use crate::systems::actor::skeleton::{Clip, Naming, SkeletonId};
 use crate::systems::actor::stance::{HandIndex, StanceId};
 use crate::systems::actor::{self, Action, Actor, ActorModel, Appearance, Hitbox, Motion, Playing};
+use crate::systems::area::weather::ShownCourse;
 use crate::systems::area::{self, AreaId, AreaObject, AreaTag};
 use crate::systems::attention::{Attention, AttentionId, StatusBadges};
 use crate::systems::combat::Attitude;
@@ -115,6 +118,7 @@ pub struct ProbeProtocol {
     pub route: Option<Vec<Pos<Meters>>>,
     #[schemars(with = "Vec<PosSchema>")]
     pub points: Vec<Pos<Meters>>,
+    pub water: ProbeWater,
     pub batch: Vec<serde_json::Value>,
 }
 
@@ -189,6 +193,7 @@ pub struct ProbeSnapshot {
     pub basic_attack: Option<SkillId>,
     pub skills: Option<ProbeSkills>,
     pub soundscape: ProbeSoundscape,
+    pub weather: Option<ProbeWeather>,
     pub transition: ScreenTransitionPhase,
     pub daylight: Daylight,
     /// What the GPU holds in buffers and textures for the client.
@@ -576,6 +581,23 @@ pub struct ProbeFinishedQuest {
     pub result: QuestResult,
 }
 
+/// The weather over the shown area as the client draws it: the spell under way by its name, or
+/// null before the course is known; how much cloud covers the sky, how much water it holds and how
+/// hard it rains under the wettest of it, each 0 to 1; and where the player stands, how hard it
+/// rains, how wet the ground lies, whether they stand sheltered from the rain, and how brightly
+/// lightning lights the world this moment.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProbeWeather {
+    pub spell: Option<String>,
+    pub clouds: f32,
+    pub water: f32,
+    pub rain: f32,
+    pub raining: f32,
+    pub wetness: f32,
+    pub sheltered: bool,
+    pub flash: f32,
+}
+
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeSoundscape {
     pub zones: Vec<ProbeSoundZone>,
@@ -888,6 +910,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         ui: ui(world),
         covered: covered(world),
         soundscape: soundscape(world),
+        weather: area.and_then(|area| weather(world, area, me)),
         transition: world.resource::<ActiveTransition>().phase(),
         daylight: world
             .get_resource::<Daylight>()
@@ -920,6 +943,32 @@ fn record_line(record: &HistoryRecord, inputs: &InputMap) -> ProbeRecord {
             .map_or_else(|| text.clone(), |tally| tally.line(&text)),
         mark: record.entry.mark,
     }
+}
+
+fn weather(world: &World, area: AreaId, me: Option<Entity>) -> Option<ProbeWeather> {
+    let shown = world.get_resource::<ShownWeather>()?;
+    let content = world.resource::<Content>();
+    let spell = world
+        .get_resource::<ShownCourse>()
+        .and_then(|course| course.spell(area))
+        .and_then(|spell| area::load(content, area).climate.spells.get(spell))
+        .map(|spell| spell.name.clone());
+    let at = me
+        .and_then(|me| world.get::<GlobalTransform>(me))
+        .map(GlobalTransform::translation);
+    let cell = at.and_then(|at| world.resource::<RainField>().cell_at(at.xz()));
+    let sheltered = at.is_some_and(|at| world.resource::<Shelter>().covers(at));
+    let open = if sheltered { 0.0 } else { 1.0 };
+    Some(ProbeWeather {
+        spell,
+        clouds: shown.clouds,
+        water: shown.water,
+        rain: shown.rain,
+        raining: cell.map_or(0.0, |cell| cell.rain) * open,
+        wetness: cell.map_or(0.0, |cell| cell.wetness) * open,
+        sheltered,
+        flash: shown.flash,
+    })
 }
 
 fn soundscape(world: &World) -> ProbeSoundscape {

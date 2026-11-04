@@ -1,5 +1,5 @@
 use bevy::prelude::*;
-use engine::core::render::world::clouds::{self, CLOUD_TILE, CloudSheet};
+use engine::core::render::world::clouds::{self, CLOUD_TILE, CloudDrift, CloudSheet};
 use engine::core::render::world::lights::sun_transform;
 use engine::core::units::Degrees;
 
@@ -16,6 +16,7 @@ fn the_ground_lies_in_the_shadow_of_the_cloud_up_the_suns_rays_as_the_clouds_dri
     let mut images = world.resource_mut::<Assets<Image>>();
     sheet.cover(CLOUDS, WATER);
     let over = Vec2::new(64.0, 64.0);
+    let mut drifting = CloudDrift::default();
     let suns = [
         ("at noon", 52.0, 215.0, 0.0),
         ("a moment of drift later", 52.0, 215.0, 1.5),
@@ -26,7 +27,7 @@ fn the_ground_lies_in_the_shadow_of_the_cloud_up_the_suns_rays_as_the_clouds_dri
     ];
     for (when, elevation, azimuth, seconds) in suns {
         let light = sun_transform(Degrees(elevation), Degrees(azimuth), over);
-        let drift = clouds::drift(WIND, seconds, sheet.look());
+        let drift = drifting.blown(WIND, seconds, sheet.look());
         let cast = sheet.lay(light, drift, &mut images);
         let shadows = images.get(&sheet.over_sun().image).expect("the shadows");
         let toward = cast.back().as_vec3();

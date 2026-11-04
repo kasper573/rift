@@ -17,7 +17,8 @@ use engine::systems::area::object::{ObjectDef, ObjectShape};
 use engine::systems::area::prop::{PropPlacement, ScaleRange, Scatter};
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{
-    AreaModule, AreaModuleKind, Population, Resident, SafeZone, SoundChannel, SoundscapeDef,
+    AreaModule, AreaModuleKind, FogBank, Population, Resident, SafeZone, SoundChannel,
+    SoundscapeDef,
 };
 use engine::systems::script::{Place, ScriptModule};
 use ui::egui::{Pos2, RichText, Ui, Vec2};
@@ -335,6 +336,7 @@ pub(crate) const ADD_MENU: &[(&str, &[(AreaModuleKind, &str)])] = &[
         &[
             (AreaModuleKind::Object, "a point or rect with scripts"),
             (AreaModuleKind::SafeZone, "a rect where no one fights"),
+            (AreaModuleKind::Fog, "a bank of fog over a rect"),
             (AreaModuleKind::Soundscape, "a sound zone"),
         ],
     ),
@@ -367,6 +369,7 @@ pub(crate) const ADD_MENU: &[(&str, &[(AreaModuleKind, &str)])] = &[
 pub(crate) fn template_bounds(kind: AreaModuleKind, at: Pos<Meters>) -> Rect<Meters> {
     match kind {
         AreaModuleKind::SafeZone
+        | AreaModuleKind::Fog
         | AreaModuleKind::Soundscape
         | AreaModuleKind::Population
         | AreaModuleKind::Scatter => spot_rect(at),
@@ -396,6 +399,9 @@ pub fn module_template(
         AreaModuleKind::SafeZone => AreaModule::SafeZone(SafeZone {
             rect: spot_rect(at.ok_or_else(placed)?),
         }),
+        AreaModuleKind::Fog => {
+            AreaModule::Fog(FogBank::light_over(spot_rect(at.ok_or_else(placed)?)))
+        }
         AreaModuleKind::Soundscape => AreaModule::Soundscape(SoundscapeDef {
             shape: SoundscapeShape::Rect(spot_rect(at.ok_or_else(placed)?)),
             reach: Meters(8.0),

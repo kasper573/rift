@@ -9,6 +9,7 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, ShaderType, TextureDimension, TextureFormat};
 use bevy::shader::Shader;
 
+use super::rain::{RAIN_CELL, RAIN_SIDE, RainField, SHELTER_CELL, SHELTER_SIDE, Shelter};
 use super::shader::PARAMS_BYTES;
 use super::{ParamKind, ParamValue, VfxShaderDef};
 
@@ -20,6 +21,11 @@ pub const TREADS: usize = 24;
 
 /// How many limbs of a treading body a cover bends round: its lowest, which reach into it first.
 pub const LIMBS_PER_TREAD: usize = 32;
+
+/// How many of the places a treading body last stood a cover reads, the newest first, and how
+/// long apart they are laid: the trail a body leaves through water for its wake.
+pub const TRAIL_POINTS: usize = 12;
+pub const TRAIL_EVERY: f32 = 0.25;
 
 /// The site as the prelude's `site` reads it, built by `SiteFrame::uniform`.
 #[derive(ShaderType, Clone, Copy, Debug, Default, PartialEq)]
@@ -136,9 +142,10 @@ impl FromWorld for WeatherImage {
     }
 }
 
-/// The weather as the cover header's `weather` reads it: the wind as a direction scaled by its
-/// strength, the moment, how far through its day the game is and how clouded the sky, and the
-/// bodies treading through.
+/// The weather as the headers' `weather` reads it: the wind as a direction scaled by its
+/// strength, the moment, how far through its day the game is, how clouded the sky, how much water
+/// the cloud holds, how hard it rains under the wettest and how brightly lightning lights the
+/// world, and the bodies treading through.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Weather {
     pub(super) wind: Vec2,
@@ -146,6 +153,8 @@ pub(super) struct Weather {
     pub(super) daylight: f32,
     pub(super) clouds: f32,
     pub(super) water: f32,
+    pub(super) rain: f32,
+    pub(super) flash: f32,
     /// At most [`TREADS`].
     pub(super) treads: Vec<Tread>,
 }
@@ -157,6 +166,8 @@ pub(super) struct Tread {
     pub(super) ground: Vec2,
     pub(super) reach: f32,
     pub(super) limbs: Vec<TreadingLimb>,
+    /// Where it stood lately and when, the newest first, at most [`TRAIL_POINTS`].
+    pub(super) trail: Vec<(Vec2, f32)>,
 }
 
 /// A limb as it stands in the world: its bone from `from` to `to`, and how far round it its flesh
@@ -176,35 +187,56 @@ impl Default for Weather {
             daylight: 0.5,
             clouds: 0.0,
             water: 0.0,
+            rain: 0.0,
+            flash: 0.0,
             treads: Vec::new(),
         }
     }
 }
 
-/// Texels the weather's picture holds: the climate's two, a texel a tread, and two a limb.
-const WEATHER_TEXELS: usize = 2 + TREADS + TREADS * LIMBS_PER_TREAD * 2;
+/// How many texels a row of the weather's picture holds: it is read in order, row by row.
+const PICTURE_WIDTH: usize = 256;
+/// Where the first tread's texel lies: after the climate's, the storm's, where the rain field and
+/// the shelter lie, and the most the field holds.
+const FIRST_TREAD: usize = 6;
+const FIRST_LIMB: usize = FIRST_TREAD + TREADS;
+const FIRST_TRAIL: usize = FIRST_LIMB + TREADS * LIMBS_PER_TREAD * 2;
+const FIRST_RAIN: usize = FIRST_TRAIL + TREADS * TRAIL_POINTS;
+const FIRST_SHELTER: usize = FIRST_RAIN + RAIN_SIDE * RAIN_SIDE;
+/// Texels the weather's picture holds: the climate's two, the storm's, where the rain field and
+/// the shelter lie, a texel a tread, two a limb, one a point of a tread's trail, one a cell of the
+/// rain field and one every four of the shelter's, filling out its last row.
+const WEATHER_TEXELS: usize =
+    (FIRST_SHELTER + SHELTER_SIDE * SHELTER_SIDE / 4).div_ceil(PICTURE_WIDTH) * PICTURE_WIDTH;
 
 impl Weather {
     pub(super) fn image(&self) -> Image {
         Image::new(
             Extent3d {
-                width: WEATHER_TEXELS as u32,
-                height: 1,
+                width: PICTURE_WIDTH as u32,
+                height: (WEATHER_TEXELS / PICTURE_WIDTH) as u32,
                 depth_or_array_layers: 1,
             },
             TextureDimension::D2,
-            self.texels(),
+            self.texels(&RainField::default(), &Shelter::default()),
             TextureFormat::Rgba32Float,
             RenderAssetUsages::default(),
         )
     }
 
-    /// The weather laid out as the cover header reads it: the wind, the moment and the count of
-    /// treads in the first texel, the daylight, the cloud and its water in the second, then a
-    /// texel a tread, its ground point, its reach and its count of limbs, and after every tread's,
-    /// [`LIMBS_PER_TREAD`] places of two texels for each tread's limbs, a bone's start and girth,
-    /// then its end.
-    pub(super) fn texels(&self) -> Vec<u8> {
+    /// The weather laid out as the headers read it, texel by texel, row by row: the wind, the
+    /// moment and the count of treads in the first texel, the daylight, the cloud, its water and
+    /// the rain in the second; the flash and where the rain field's, the shelter's and the
+    /// treads' first texels lie in the third; where the rain field and the shelter lie on the
+    /// ground in the fourth and fifth, their north-west corner, a cell's side and the cells each
+    /// way, or nothing for one not held; the wettest ground and the hardest rain over the field in
+    /// the sixth, so a shader skips reading the field where it lies dry; then a texel a tread, its ground point, its reach and its
+    /// count of limbs, and after every tread's, [`LIMBS_PER_TREAD`] places of two texels for each
+    /// tread's limbs, a bone's start and girth, then its end, and after those [`TRAIL_POINTS`]
+    /// texels for each tread's trail, a point's place, when it was laid and 1, or nothing past the
+    /// trail's end; then a texel a cell of the rain field, its share of the downpour, its
+    /// wetness and its rain, and the tops of the shelter's cells, four to a texel.
+    pub(super) fn texels(&self, rain: &RainField, shelter: &Shelter) -> Vec<u8> {
         let mut texels = vec![Vec4::ZERO; WEATHER_TEXELS];
         texels[0] = Vec4::new(
             self.wind.x,
@@ -212,14 +244,44 @@ impl Weather {
             self.time,
             self.treads.len() as f32,
         );
-        texels[1] = Vec4::new(self.daylight, self.clouds, self.water, 0.0);
+        texels[1] = Vec4::new(self.daylight, self.clouds, self.water, self.rain);
+        texels[2] = Vec4::new(
+            self.flash,
+            FIRST_RAIN as f32,
+            FIRST_SHELTER as f32,
+            FIRST_TREAD as f32,
+        );
+        if rain.cells.len() == RAIN_SIDE * RAIN_SIDE {
+            texels[3] = rain.corner.extend(RAIN_CELL.0).extend(RAIN_SIDE as f32);
+            texels[5] = rain.cells.iter().fold(Vec4::ZERO, |most, cell| {
+                most.max(Vec4::new(cell.wetness, cell.rain, 0.0, 0.0))
+            });
+            for (texel, cell) in texels[FIRST_RAIN..].iter_mut().zip(&rain.cells) {
+                *texel = Vec4::new(cell.share, cell.wetness, cell.rain, 0.0);
+            }
+        }
+        if shelter.tops.len() == SHELTER_SIDE * SHELTER_SIDE {
+            texels[4] = shelter
+                .corner
+                .extend(SHELTER_CELL.0)
+                .extend(SHELTER_SIDE as f32);
+            let (fours, _) = shelter.tops.as_chunks::<4>();
+            for (texel, four) in texels[FIRST_SHELTER..].iter_mut().zip(fours) {
+                *texel = Vec4::from_array(*four);
+            }
+        }
         for (index, tread) in self.treads.iter().take(TREADS).enumerate() {
             let limbs = &tread.limbs[..tread.limbs.len().min(LIMBS_PER_TREAD)];
-            texels[2 + index] = tread.ground.extend(tread.reach).extend(limbs.len() as f32);
-            let first = 2 + TREADS + index * LIMBS_PER_TREAD * 2;
+            texels[FIRST_TREAD + index] =
+                tread.ground.extend(tread.reach).extend(limbs.len() as f32);
+            let first = FIRST_LIMB + index * LIMBS_PER_TREAD * 2;
             for (slot, limb) in limbs.iter().enumerate() {
                 texels[first + slot * 2] = limb.from.extend(limb.girth);
                 texels[first + slot * 2 + 1] = limb.to.extend(0.0);
+            }
+            let trail = FIRST_TRAIL + index * TRAIL_POINTS;
+            for (slot, (at, laid)) in tread.trail.iter().take(TRAIL_POINTS).enumerate() {
+                texels[trail + slot] = at.extend(*laid).extend(1.0);
             }
         }
         texels

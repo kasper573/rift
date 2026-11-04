@@ -25,6 +25,7 @@ pub mod soundscape;
 pub mod stamp;
 pub mod status;
 pub mod tools;
+pub mod view_ground;
 pub mod viewport;
 pub mod warps;
 
@@ -210,6 +211,7 @@ pub struct AreaViewState {
     /// A row held hovered as if the pointer were over it, "" the whole scene.
     pub held_hover: Option<String>,
     outlines: overlays::Outlines,
+    ground: view_ground::ViewGround,
     cache: Option<SnapshotCache>,
     preview_places: HashMap<String, PreviewPlaces>,
     fitted: bool,
@@ -979,6 +981,9 @@ impl AreaSnapshot {
                 parts
             }
         };
+        let view = editor.views.area.view_mut(view_key);
+        let camera = view.camera;
+        view.ground.follow(&parts.picture.area, &camera);
         Some(Self::from_parts(content, bundle, parts))
     }
 
@@ -1231,8 +1236,6 @@ fn snapshot_parts(
                 area::Kept::All
             };
             let picture = Arc::new(area::picture(content, pictured, kept)?);
-            let held = picture.area.clone();
-            crate::project::background().spawn(move || held.hold_all());
             let placement_bounds = Arc::new(placement::placement_bounds(&picture.placed));
             (picture, placement_bounds)
         }

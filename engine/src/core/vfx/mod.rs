@@ -1,5 +1,7 @@
+pub mod compile;
 pub mod cover;
 pub mod play;
+pub mod rain;
 pub mod render;
 pub mod shader;
 pub mod sky;

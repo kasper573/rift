@@ -165,7 +165,15 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
                         Meters(bounds.size.width.hypot(bounds.size.height)),
                         drawing.view,
                     );
-                    scenery::light(world, &area, Daylight::Fixed, stood, drawing.camera);
+                    let weather = area.climate.first();
+                    scenery::light(
+                        world,
+                        &area,
+                        &weather,
+                        Daylight::Fixed,
+                        stood,
+                        drawing.camera,
+                    );
                     drawing.scenery = Some(stood);
                     drawing.frames = 0;
                 }

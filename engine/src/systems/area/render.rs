@@ -81,14 +81,15 @@ fn show_area(world: &mut World) {
         bounds: area.size.bounds(),
     });
     world.insert_resource(scenery::grade(&area.lighting));
-    world.insert_resource(scenery::climate(&area));
+    let weather = super::weather::weather_now(world, area_id, &area.climate);
+    world.insert_resource(scenery::shown_weather(&weather, 0.0));
     let stood = scenery::spawn(world, &content, &area, RenderLayers::default());
     world.resource_mut::<ShownArea>().0 = Some(Standing {
         area: area_id,
         scenery: stood,
         shone: None,
     });
-    light_area(world, &area);
+    light_area(world, area_id, &area, &weather);
 }
 
 /// Tells the shown scenery where the player's character stands, so what stands around them
@@ -126,17 +127,27 @@ pub fn view_reach(framing: &CameraFraming) -> Meters {
     Meters(framing.zooms.wide.0 * 4.0)
 }
 
-/// Turns the shown area's sun with the hour as it moves, and its clouds with the wind.
+/// Turns the shown area's sun with the hour as it moves, its clouds with the wind, and lets its
+/// rain fall.
 fn follow_daylight(world: &mut World) {
     let Some(area_id) = shown(world) else {
         return;
     };
     let content = world.resource::<Content>().clone();
     let area = super::shared(&content, area_id).clone();
-    light_area(world, &area);
+    let weather = super::weather::weather_now(world, area_id, &area.climate);
+    let flash = light_area(world, area_id, &area, &weather);
+    world.insert_resource(scenery::shown_weather(&weather, flash));
 }
 
-fn light_area(world: &mut World, area: &super::Area) {
+/// Lights the shown scenery of `area` under `weather` and lets its rain fall, returning how
+/// brightly lightning lights it this moment.
+fn light_area(
+    world: &mut World,
+    area_id: AreaId,
+    area: &super::Area,
+    weather: &super::Weather,
+) -> f32 {
     let daylight = *world.resource::<Daylight>();
     let Some(stood) = world
         .resource::<ShownArea>()
@@ -144,18 +155,19 @@ fn light_area(world: &mut World, area: &super::Area) {
         .as_ref()
         .map(|standing| standing.scenery)
     else {
-        return;
+        return 0.0;
     };
     let Ok(camera) = world
         .query_filtered::<Entity, With<WorldCamera>>()
         .single(world)
     else {
-        return;
+        return 0.0;
     };
-    scenery::light(world, area, daylight, stood, camera);
+    scenery::light(world, area, weather, daylight, stood, camera);
     if let Some(standing) = world.resource_mut::<ShownArea>().0.as_mut() {
         standing.shone = Some(daylight);
     }
+    super::rain::fall(world, area_id, area, weather, stood.rain, camera)
 }
 
 /// Gives every object of the shown world a place on the ground and the extent of its shape, so

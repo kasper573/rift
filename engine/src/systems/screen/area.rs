@@ -21,6 +21,7 @@ use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::core::time;
 use crate::core::units::{Meters, Radians, Seconds};
 use crate::systems::actor::Actor;
+use crate::systems::area::rain::{self, RainHeard};
 use crate::systems::area::{self, AreaId, AreaTag, scenery};
 use crate::systems::identity::GlobalId;
 use crate::systems::input::map::{self, InputAction};
@@ -191,10 +192,13 @@ fn leave_area(world: &mut World) {
     };
 }
 
+/// Sounds the area the player's character stands in: its soundscape's zones, and its rain as hard
+/// as the listener hears it fall.
 fn play_area_soundscape(
     viewpoint: Res<MyCharacter>,
     areas: Query<&AreaTag>,
     content: Res<Content>,
+    heard: Option<Res<RainHeard>>,
     mut soundscape: ResMut<Soundscape>,
 ) {
     let Some(area_id) = viewpoint
@@ -204,9 +208,14 @@ fn play_area_soundscape(
     else {
         return;
     };
-    let zones = &area::load(&content, area_id).soundscape;
-    if soundscape.0 != *zones {
-        soundscape.0.clone_from(zones);
+    let area = area::load(&content, area_id);
+    let mut zones = area.soundscape.clone();
+    zones.extend(rain::rain_zone(
+        area,
+        heard.map_or(RainHeard::default(), |heard| *heard),
+    ));
+    if soundscape.0 != zones {
+        soundscape.0 = zones;
     }
 }
 

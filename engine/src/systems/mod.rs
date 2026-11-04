@@ -69,7 +69,7 @@ use crate::core::render::Look;
 use crate::core::render::WorldRenderPlugin;
 use crate::core::text::{Lettering, StyledTextPlugin, Typing};
 use crate::core::tick::{self, Tick};
-use crate::core::time::{DayClock, WallClock};
+use crate::core::time::{DayClock, TimeCourse, WallClock, WeatherClock};
 use crate::core::units::{Hertz, Meters, Seconds};
 use crate::core::vfx::render::VfxRenderPlugin;
 use crate::systems::area::AreaId;
@@ -186,6 +186,9 @@ pub struct GameSettings {
     pub sight: Meters,
     /// How many times their pace an actor runs while reaching for a cast.
     pub chase_pace: f32,
+    /// Without it, water slows no one who wades through it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub wading: Option<movement::Wading>,
     /// How long a fallen npc that never comes back lies before it is gone.
     pub corpses_linger: Seconds,
     /// How long a player's claim on a foe holds after their last hit: whoever holds it when the
@@ -305,6 +308,7 @@ pub fn server_app(
     rng_seed: u64,
     clock: WallClock,
     daylight: launch::ServerDaylight,
+    weather: TimeCourse,
     content: &Content,
 ) -> App {
     use bevy_app::{First, PostUpdate, Startup, Update};
@@ -320,6 +324,7 @@ pub fn server_app(
             .daylight
             .map(|cycle| cycle.course(daylight, clock.now)),
     ));
+    app.insert_resource(WeatherClock(Some(weather)));
     app.insert_resource(input::map::InputMap::new(content));
     app.add_plugins(bevy_time::TimePlugin);
     // Every tick steps the same span of game time however long it took, so a seeded world plays out
@@ -717,6 +722,9 @@ fn check_settings(loading: &mut Loading) {
     }
     check.at_least("/sight", settings.sight.0, 0.0, "meters");
     check.at_least("/chase_pace", settings.chase_pace, 1.0, "times");
+    if let Some(wading) = &settings.wading {
+        wading.check("/wading", &mut check);
+    }
     check.at_least("/corpses_linger", settings.corpses_linger.0, 0.0, "seconds");
     check.at_least("/claims_last", settings.claims_last.0, 0.0, "seconds");
     for (field, slots) in [

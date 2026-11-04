@@ -20,8 +20,9 @@ pub const MAX_LIGHTS: usize = 8;
 
 /// The light an area stands in: a sun, if it is outside, standing where it stands at noon, which
 /// also lights the sky above it unless the sky is dark, the full moon opposite it lighting the
-/// world by night; how the dome of that sky is painted, the ambient light everywhere, and the
-/// grade its picture is tinted by.
+/// world by night; how the dome of that sky is painted, the ambient light everywhere, the grade
+/// its picture is tinted by, and how many times more the water in saturated air scatters the
+/// sky's light than dry air's dust.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Lighting {
@@ -33,6 +34,7 @@ pub struct Lighting {
     pub dome: Option<DomeLook>,
     pub ambient: Rgb,
     pub grade: Grade,
+    pub moist_scatter: f32,
 }
 
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -114,7 +116,14 @@ impl Lighting {
             dome: None,
             ambient: Rgb([80, 95, 125]),
             grade: Grade::PLAIN,
+            moist_scatter: 12.0,
         }
+    }
+
+    /// How many times more than dry air's dust the air scatters the sky's light as moist as
+    /// `humidity`.
+    pub fn scattering(&self, humidity: f32) -> f32 {
+        1.0 + self.moist_scatter * humidity
     }
 
     pub fn check(&self, pointer: &str, cx: &mut RowCheck) {
@@ -169,34 +178,50 @@ impl Lighting {
             1.0,
             "toward amber",
         );
+        cx.at_least(
+            format!("{pointer}/moist_scatter"),
+            self.moist_scatter,
+            0.0,
+            "times as much",
+        );
     }
 }
 
-/// Every area's sky dome is painted by a shader of the sky stage, filled only with the parameters
-/// it declares, each with a value of its kind and within its range.
-pub fn check_dome(loading: &mut Loading) {
+/// Every area's sky dome is painted by a shader of the sky stage and its rain drawn by one of the
+/// rain stage, each filled only with the parameters it declares, each with a value of its kind
+/// and within its range.
+pub fn check_area_shaders(loading: &mut Loading) {
     let content = loading.content();
     for (id, area) in loading.rows::<AreaDef>(&content) {
-        let Some(dome) = &area.lighting.dome else {
-            continue;
-        };
         let mut check = RowCheck::default();
-        let shader = dome.shader.get(&content);
-        if shader.stage != Stage::Sky {
-            check.error(
-                "/lighting/dome/shader",
-                "a shader of another stage",
-                shader.stage.label(),
-                "a shader of the sky stage",
-            );
-        }
-        for (name, value) in &dome.params {
-            shader.check_fill(
-                &mut check,
-                &format!("/lighting/dome/params/{name}"),
-                name,
-                Some(value),
-            );
+        let drawn = [
+            area.lighting
+                .dome
+                .as_ref()
+                .map(|dome| ("/lighting/dome", Stage::Sky, dome.shader, &dome.params)),
+            area.climate
+                .rain
+                .as_ref()
+                .map(|rain| ("/climate/rain", Stage::Rain, rain.shader, &rain.params)),
+        ];
+        for (pointer, stage, shader, params) in drawn.into_iter().flatten() {
+            let def = shader.get(&content);
+            if def.stage != stage {
+                check.error(
+                    format!("{pointer}/shader"),
+                    "a shader of another stage",
+                    def.stage.label(),
+                    format!("a shader of the {} stage", stage.label()),
+                );
+            }
+            for (name, value) in params {
+                def.check_fill(
+                    &mut check,
+                    &format!("{pointer}/params/{name}"),
+                    name,
+                    Some(value),
+                );
+            }
         }
         loading.row_errors(id, check);
     }

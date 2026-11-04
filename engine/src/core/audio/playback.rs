@@ -136,9 +136,13 @@ pub struct SfxTune {
     pub volume: f32,
 }
 
+/// Where a sound is heard from: a point of the world, fading out past the hearing's reach; far
+/// off `toward` a point, as loud as `loudness` says, 0 silent to 1 as loud as the clip plays,
+/// as thunder rolls in from miles away; or the interface, from nowhere.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum SfxPlace {
     World(Pos<Meters>),
+    Afar { toward: Pos<Meters>, loudness: f32 },
     Interface,
 }
 
@@ -456,6 +460,15 @@ fn heard_at(
             Size::new(hearing.wide.0, hearing.deep.0),
             hearing.wide,
         ),
+        (SfxPlace::Afar { toward, loudness }, listener) => {
+            let offset = listener.map_or(Vec2::ZERO, |listener| {
+                Vec2::new(toward.x - listener.x, toward.y - listener.y)
+            });
+            PositionalAudio {
+                proximity: loudness.clamp(0.0, 1.0),
+                pan: offset.normalize_or_zero().x,
+            }
+        }
         (SfxPlace::World(_), None) => return None,
     };
     heard.audible().then_some(heard)

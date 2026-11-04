@@ -13,7 +13,7 @@ use serde_json::Value;
 
 use crate::core::content::version;
 use crate::core::net::auth::TokenClaims;
-use crate::core::time::UtcHour;
+use crate::core::time::{TimeCourse, UnixMillis, UtcHour};
 use crate::systems::player::SpawnPolicy;
 use crate::systems::probe::ProbeFrameQuestion;
 use crate::systems::script::Place;
@@ -159,6 +159,7 @@ pub struct ServerConfig {
     pub player_spawn_policy: SpawnPolicy,
     pub player_immortal: bool,
     pub daylight: ServerDaylight,
+    pub weather: ServerWeather,
     pub rng_seed: Option<u64>,
     pub daily_reset_utc_hour: UtcHour,
     pub auth: AuthMode,
@@ -182,6 +183,7 @@ impl ServerConfig {
             player_spawn_policy: SpawnPolicy::Map,
             player_immortal: false,
             daylight: ServerDaylight::Turning,
+            weather: ServerWeather::Turning,
             rng_seed: None,
             daily_reset_utc_hour: UtcHour::MIDNIGHT,
             auth: AuthMode::Fake,
@@ -198,6 +200,25 @@ impl ServerConfig {
 pub enum ServerDaylight {
     Turning,
     Still,
+}
+
+/// Whether every area's weather turns from spell to spell on the server, or holds at its first, as
+/// tests that compare how the world looks need it to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum ServerWeather {
+    Turning,
+    Still,
+}
+
+impl ServerWeather {
+    /// The course the weather runs on a server that started `at`.
+    pub fn course(self, at: UnixMillis) -> TimeCourse {
+        match self {
+            ServerWeather::Turning => TimeCourse::Since(at),
+            ServerWeather::Still => TimeCourse::Still,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

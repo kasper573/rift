@@ -1,6 +1,8 @@
 //! On a client, the ground around the player's own character is held: what the client predicts
 //! walks on, and what it checks a click against.
 
+use std::collections::BTreeSet;
+
 use bevy::tasks::futures::check_ready;
 use bevy::tasks::{IoTaskPool, Task};
 use bevy_app::{App, Plugin, PreUpdate};
@@ -10,6 +12,7 @@ use super::held_reach;
 use crate::core::content::Content;
 use crate::core::ground::TileAt;
 use crate::core::units::Meters;
+use crate::systems::area::GroundHold;
 use crate::systems::movement::Position;
 use crate::systems::player::session::my_character;
 use crate::systems::{area, sleep};
@@ -27,7 +30,8 @@ impl Plugin for ClientRegionPlugin {
 #[derive(Resource)]
 struct Holding {
     reach: Meters,
-    task: Option<Task<()>>,
+    held: Option<GroundHold>,
+    task: Option<Task<GroundHold>>,
 }
 
 fn follow(world: &mut World) {
@@ -49,25 +53,27 @@ fn follow(world: &mut World) {
     if !world.contains_resource::<Holding>() {
         world.insert_resource(Holding {
             reach: held_reach(sleep::awake_reach(&content)),
+            held: None,
             task: None,
         });
     }
     let mut holding = world.resource_mut::<Holding>();
     if let Some(task) = holding.task.as_mut() {
-        if check_ready(task).is_none() {
+        let Some(held) = check_ready(task) else {
             return;
-        }
+        };
         holding.task = None;
+        holding.held = Some(held);
     }
-    let held = area.held();
-    let wanted: Vec<TileAt> = area
-        .tiles_around(at, holding.reach)
-        .filter(|tile| !held.contains(tile))
-        .collect();
-    if wanted.is_empty() {
+    let wanted: BTreeSet<TileAt> = area.tiles_around(at, holding.reach).collect();
+    let around = holding
+        .held
+        .as_ref()
+        .is_some_and(|held| held.holds_on(&area) && *held.tiles() == wanted);
+    if around {
         return;
     }
-    holding.task = Some(IoTaskPool::get().spawn(async move {
-        area.hold(wanted);
-    }));
+    let previous = holding.held.take();
+    holding.task =
+        Some(IoTaskPool::get().spawn(async move { area.hold_instead(previous, wanted) }));
 }

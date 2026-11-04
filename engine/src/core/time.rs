@@ -156,13 +156,20 @@ impl ServerClock {
 /// The server sets it as it starts and tells every client on joining, so all of them read the
 /// same hour off their reckoning of the server's clock.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
-pub struct DayClock(pub Option<DayCourse>);
+pub struct DayClock(pub Option<TimeCourse>);
 
+/// How the weather's course runs on the server the client plays on: since the server started, or
+/// held at each area's first spell; none before the server has told it.
+#[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
+pub struct WeatherClock(pub Option<TimeCourse>);
+
+/// How a game's own time runs on its server: turning since a moment, or held where it starts, as
+/// tests and films that compare how the world looks need it to.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
-pub enum DayCourse {
-    /// Turning since the day began.
+pub enum TimeCourse {
+    /// Turning since the moment it began.
     Since(UnixMillis),
-    /// Held at the game's start hour.
+    /// Held where it starts.
     Still,
 }
 

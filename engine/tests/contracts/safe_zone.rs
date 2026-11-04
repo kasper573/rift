@@ -17,7 +17,6 @@ const REFUGE: Pos<Meters> = Pos::new(9.5, 4.0);
 #[test]
 fn wild_monsters_never_set_foot_in_a_safe_zone() {
     let mut sim = border(json!([{ "type": "population", "npc": "wanderer.npc.json", "count": 6 }]));
-    region::hold_whole(&mut sim.world);
     let monsters: Vec<Entity> = sim
         .world
         .query_filtered::<Entity, With<Wild>>()
@@ -196,6 +195,7 @@ fn border(modules: Value) -> Sim {
         .plan(stat::SettleHealth::default())
         .add((combat::defeats, skill::hotbar::settle_basic_attack))
         .plan(actor::SettleActions::default());
+    region::hold_whole(&mut sim.world);
     script::spawn_stateless(&mut sim.world);
     sim
 }

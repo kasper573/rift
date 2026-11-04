@@ -4,7 +4,7 @@ use std::process::Child;
 use std::time::Duration;
 
 use engine::core::units::Bytes;
-use engine::systems::launch::{self, SERVER_ENV_PREFIX, ServerConfig, ServerReady};
+use engine::systems::launch::{self, SERVER_ENV_PREFIX, ServerConfig, ServerReady, ServerWeather};
 
 pub const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
@@ -16,6 +16,7 @@ pub const SEED: u64 = 1931;
 pub fn bench_config(game: &Path) -> ServerConfig {
     ServerConfig {
         player_immortal: true,
+        weather: ServerWeather::Still,
         rng_seed: Some(SEED),
         ..ServerConfig::local(absolute(game))
     }

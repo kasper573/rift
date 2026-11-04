@@ -2,7 +2,9 @@
 // bodies treading through push a blade's tip aside, and `lean` bends a vertex of the blade so its
 // tip shifts that far, the blade curving over in an arc and keeping its length. A body treads on
 // its limbs, each a bone with the flesh round it, and a blade bends only as far as it must to
-// clear the limbs that reach it, so a body raised over the cover leaves it standing.
+// clear the limbs that reach it, so a body raised over the cover leaves it standing. Water reads the
+// same limbs where they break its surface (`limb_crossing`), and where each body lately stood
+// (`trail`), for the rings and the wake it leaves.
 
 // How far over a blade bends at most, in radians from upright: it never lies quite flat.
 const MOST_BEND: f32 = 1.4;
@@ -18,14 +20,14 @@ fn tread_push(world: vec3<f32>, tip: f32, brush: f32) -> vec2<f32> {
         return push;
     }
     for (var tread = 0u; tread < weather.treads; tread++) {
-        let body = textureLoad(weather_picture, vec2<i32>(i32(2u + tread), 0), 0);
+        let body = weather_texel(weather_parts.z + tread);
         if distance(base.xz, body.xy) > body.z + brush {
             continue;
         }
-        let first = 2u + TREADS + tread * LIMBS_PER_TREAD * 2u;
+        let first = weather_parts.z + TREADS + tread * LIMBS_PER_TREAD * 2u;
         for (var limb = 0u; limb < u32(body.w); limb++) {
-            let head = textureLoad(weather_picture, vec2<i32>(i32(first + limb * 2u), 0), 0);
-            let end = textureLoad(weather_picture, vec2<i32>(i32(first + limb * 2u + 1u), 0), 0);
+            let head = weather_texel(first + limb * 2u);
+            let end = weather_texel(first + limb * 2u + 1u);
             push += clearing(base, height, head.xyz, end.xyz, head.w + brush);
         }
     }
@@ -91,4 +93,44 @@ fn clearing(base: vec3<f32>, height: f32, head: vec3<f32>, end: vec3<f32>, girth
     }
     bend = clamp(bend, 0.0, MOST_BEND);
     return way * bend * height / 2.0;
+}
+
+// Where the `tread`th body treading nearby stood the `point`th place back along its trail, the
+// newest first, a place every `TRAIL_EVERY` seconds: its ground point in xy and the moment it
+// stood there in z, with w 1, or nothing past the trail's end.
+fn trail(tread: u32, point: u32) -> vec4<f32> {
+    if tread >= weather.treads || point >= TRAIL_POINTS {
+        return vec4<f32>(0.0);
+    }
+    let first = weather_parts.z + TREADS + TREADS * LIMBS_PER_TREAD * 2u + tread * TRAIL_POINTS;
+    return weather_texel(first + point);
+}
+
+// How far `at`, a ground point, lies from the flesh of the nearest limb of a body treading nearby
+// that breaks through a surface at `level`, as water's: where the limb's bone crosses the level, or
+// its lowest end lies under it, less its flesh; `far` where no limb breaks through within `far`.
+fn limb_crossing(at: vec2<f32>, level: f32, far: f32) -> f32 {
+    var nearest = far;
+    for (var tread = 0u; tread < weather.treads; tread++) {
+        let body = weather_texel(weather_parts.z + tread);
+        if distance(at, body.xy) > body.z + far {
+            continue;
+        }
+        let first = weather_parts.z + TREADS + tread * LIMBS_PER_TREAD * 2u;
+        for (var limb = 0u; limb < u32(body.w); limb++) {
+            let head = weather_texel(first + limb * 2u);
+            let end = weather_texel(first + limb * 2u + 1u);
+            let low = select(end.xyz, head.xyz, head.y < end.y);
+            let high = select(head.xyz, end.xyz, head.y < end.y);
+            if low.y - head.w > level || high.y + head.w < level {
+                continue;
+            }
+            var crossing = low.xz;
+            if high.y > level && high.y - low.y > 1e-4 {
+                crossing = mix(low.xz, high.xz, clamp((level - low.y) / (high.y - low.y), 0.0, 1.0));
+            }
+            nearest = min(nearest, max(distance(at, crossing) - head.w, 0.0));
+        }
+    }
+    return nearest;
 }

@@ -7,7 +7,7 @@ pub use berth::{
     Aim, Approach, ApproachPlan, Berths, approach, place_beside, reachable, relocate_beside,
     settle, vacant_near,
 };
-pub use navmesh::{Island, NavMesh, TileLayer, kept_clear};
+pub use navmesh::{Island, NavMesh, SEAM_SNAP, TileLayer, kept_clear};
 pub use predict::request_walk;
 pub use spots::{Bodies, Spot, Spots, crowding};
 
@@ -16,10 +16,11 @@ use bevy_ecs::prelude::*;
 use bevy_ecs::query::QueryState;
 use bevy_time::Time;
 use rayon::prelude::*;
+use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use crate::core::chunk::{Chunk, InChunk};
-use crate::core::content::Content;
+use crate::core::content::{Content, RowCheck};
 use crate::core::interpolate::{Interpolate, InterpolatePlugin, Jumps, RenderValueSystems};
 use crate::core::math::{Offset, Pos};
 use crate::core::par;
@@ -29,7 +30,7 @@ use crate::systems::actor::{Action, Actor, ActorModel, appearance, held, set_fac
 use crate::systems::area::HeldMesh;
 use crate::systems::player::{conn_player, may_command};
 use crate::systems::stat::{self, StatKind};
-use crate::systems::{area, drain_requests, reach};
+use crate::systems::{GameSettings, area, drain_requests, reach};
 
 pub fn register(app: &mut App) {
     use bevy_replication::{AppMessageExt, AppReplicationExt};
@@ -421,12 +422,60 @@ fn stride(world: &World, id: Entity, dt: Seconds) -> MoverStep {
     }
 }
 
+/// How fast the actor moves: its pace, slowed by the water it wades through.
 pub fn speed_of(world: &World, entity: Entity) -> MetersPerSec {
-    MetersPerSec(Meters(stat::effective(
-        world,
-        entity,
-        StatKind::MovementSpeed,
-    )))
+    let pace = stat::effective(world, entity, StatKind::MovementSpeed);
+    MetersPerSec(Meters(pace * wading_share(world, entity)))
+}
+
+/// How water slows whoever wades through it: not at all at its edge, easing to `slowest` of their
+/// pace where it stands `deepest`, and no slower past it.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Wading {
+    pub deepest: Meters,
+    pub slowest: f32,
+}
+
+impl Wading {
+    /// The share of their pace a wader keeps in water `depth` deep.
+    pub fn share_at(&self, depth: Meters) -> f32 {
+        let deep = (depth.0 / self.deepest.0).clamp(0.0, 1.0);
+        1.0 - (1.0 - self.slowest) * deep
+    }
+
+    pub fn check(&self, pointer: &str, cx: &mut RowCheck) {
+        cx.range(
+            format!("{pointer}/deepest"),
+            self.deepest.0,
+            0.01,
+            100.0,
+            "meters",
+        );
+        cx.range(
+            format!("{pointer}/slowest"),
+            self.slowest,
+            0.01,
+            1.0,
+            "of a wader's pace",
+        );
+    }
+}
+
+/// The share of its pace the actor keeps in the water it stands in: all of it on dry ground, in
+/// the air, or in a game where water slows no one.
+fn wading_share(world: &World, entity: Entity) -> f32 {
+    let content = world.resource::<Content>();
+    let Some(wading) = content.built::<GameSettings>().wading else {
+        return 1.0;
+    };
+    if airborne(world, entity) {
+        return 1.0;
+    }
+    match (area::of_in(content, world, entity), position(world, entity)) {
+        (Some(area), Some(at)) => wading.share_at(area.water.depth_at(&area.heights, at)),
+        _ => 1.0,
+    }
 }
 
 /// The mesh the actor moves on: its area's ground, or its air for a flyer, the wild one when it is
