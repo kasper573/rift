@@ -8,6 +8,7 @@ pub mod clouds;
 pub mod cover;
 pub mod decal;
 pub mod fade;
+pub mod gpu;
 pub mod haze;
 pub mod layers;
 pub mod lights;
@@ -79,6 +80,7 @@ impl Plugin for WorldScenePlugin {
             MaterialPlugin::<terrain::GroundMaterial>::default(),
             HierarchyPropagatePlugin::<RenderLayers>::new(PostUpdate),
             body::BodyPlugin,
+            gpu::draw::GpuDrawPlugin,
             haze::HazePlugin,
             layers::JointLayersPlugin,
         ))

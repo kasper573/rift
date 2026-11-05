@@ -39,6 +39,7 @@ use engine::core::render::video::VideoPreferences;
 use engine::core::render::world::WorldScenePlugin;
 use engine::core::render::world::body;
 use engine::core::render::world::clouds::CloudDrift;
+use engine::core::render::world::gpu::draw::TerrainPatch;
 use engine::core::render::world::layers::Layered;
 use engine::core::render::world::mannequin::mannequin;
 use engine::core::render::world::rig_clip;
@@ -61,6 +62,13 @@ use serde::{Deserialize, Serialize};
 /// How far around the target the scenery stands, in times the eye's distance from it: as far as a
 /// lens looking down at the target takes in, and the haze beyond.
 const SCENERY_REACH: f32 = 4.0;
+
+/// How far across the square of ground `--patch` lays is, and how far apart the ground beneath it
+/// is sampled for its height.
+const PATCH_SIDE: Meters = Meters(24.0);
+const PATCH_PROBE: Meters = Meters(1.0);
+/// How far over the highest ground beneath it the square lies, so the two never fight for a pixel.
+const PATCH_CLEARANCE: Meters = Meters(0.5);
 
 /// Frames the picture settles for once every body stands dressed, while what it shows loads and
 /// the frames it is smoothed over fill.
@@ -348,6 +356,7 @@ struct Taking {
     stage: Stage,
     stood: Option<Stood>,
     frame: u32,
+    patch: bool,
 }
 
 /// The area as it stands for the picture, for the day to turn over it and its weather to go on.
@@ -398,7 +407,7 @@ struct Prop {
 #[derive(Resource, Default)]
 struct Read(Vec<(Entity, Vec<u8>)>);
 
-pub fn area(folder: &Path, shot: &Path, out: &Path) {
+pub fn area(folder: &Path, shot: &Path, out: &Path, patch: bool) {
     let folder = std::fs::canonicalize(folder).expect("a game folder");
     let shot: Shot =
         serde_json::from_slice(&std::fs::read(shot).expect("a shot file")).expect("a shot");
@@ -472,6 +481,7 @@ pub fn area(folder: &Path, shot: &Path, out: &Path) {
                 stage: Stage::Empty,
                 stood: None,
                 frame: 0,
+                patch,
             });
         })
         .add_systems(Update, step)
@@ -581,7 +591,8 @@ fn step(world: &mut World) {
         let taking = &mut *taking;
         match &mut taking.stage {
             Stage::Empty => {
-                if let Some((bodies, stood)) = set_up(world, &content, &taking.shot, &taking.image)
+                if let Some((bodies, stood)) =
+                    set_up(world, &content, &taking.shot, &taking.image, taking.patch)
                 {
                     taking.stage = Stage::Standing(bodies);
                     taking.stood = Some(stood);
@@ -743,6 +754,7 @@ fn set_up(
     content: &Content,
     shot: &Shot,
     image: &Handle<Image>,
+    patch: bool,
 ) -> Option<(Vec<Body>, Stood)> {
     let area_id = content
         .by_path::<AreaDef>(&shot.area)
@@ -775,6 +787,10 @@ fn set_up(
     world.insert_resource(CloudDrift::carried_for(shot.clouds_time));
     let stood = scenery::spawn(world, content, &picture.area, default());
     see(world, stood, framed, shot);
+    if patch {
+        let target = shot.view.framed(&picture.area.heights, &look).target_ground;
+        world.spawn(patch_at(&picture.area.heights, target));
+    }
     world.insert_resource(shot.hour.map_or(Daylight::Fixed, Daylight::Hour));
     let climate = &picture.area.climate;
     let spell = match &shot.spell {
@@ -802,6 +818,24 @@ fn set_up(
         .map(|standing| stand(world, content, &picture.area.heights, standing))
         .collect();
     Some((bodies, stood))
+}
+
+/// A square of ground drawn by the GPU draw path, centred on `at` and lying a little over the
+/// highest ground beneath it, clear of the world's own.
+fn patch_at(ground: &Heightfield, at: Pos<Meters>) -> TerrainPatch {
+    let corner = Pos::new(at.x - PATCH_SIDE.0 / 2.0, at.y - PATCH_SIDE.0 / 2.0);
+    let steps = (PATCH_SIDE.0 / PATCH_PROBE.0).ceil() as u32;
+    let highest = (0..=steps)
+        .flat_map(|row| (0..=steps).map(move |column| (row, column)))
+        .map(|(row, column)| {
+            let across = PATCH_SIDE.0 * column as f32 / steps as f32;
+            let down = PATCH_SIDE.0 * row as f32 / steps as f32;
+            ground
+                .height_at(Pos::new(corner.x + across, corner.y + down))
+                .0
+        })
+        .fold(f32::MIN, f32::max);
+    TerrainPatch::new(corner, PATCH_SIDE, Meters(highest + PATCH_CLEARANCE.0))
 }
 
 /// Tells the scenery where the view stands and how far around it to stand.
