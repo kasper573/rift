@@ -94,12 +94,11 @@ pub(crate) fn make_blueprint_from_selection(editor: &mut Editor, frame: &AreaSna
     }
     let after = project.reader_after(&edit);
     let Some(written) = after.id_of::<BlueprintDef>(&path).and_then(|made| {
-        let mut changed = own.draft();
-        changed.variables = rescoped(&changed.variables, reader.scope(), after.scope()).ok()?;
-        changed.nodes = nodes::CopiedNodes::of(&reader, &changed.nodes)?
-            .read(&after, &changed.variables)
+        let variables = rescoped(own.variables(), reader.scope(), after.scope()).ok()?;
+        let mut changed = nodes::CopiedNodes::of(&reader, own.nodes())?
+            .read(&after, &variables)
             .ok()?;
-        *nodes::node_mut(&mut changed.nodes, &first)? = SceneNode::Module(ModuleNode {
+        *nodes::node_mut(&mut changed, &first)? = SceneNode::Module(ModuleNode {
             label: Some(label.clone()),
             holes: Holes(
                 named
@@ -114,16 +113,18 @@ pub(crate) fn make_blueprint_from_selection(editor: &mut Editor, frame: &AreaSna
                 values: BTreeMap::new(),
             }))
         });
-        nodes::SceneTree::new(&mut changed.nodes).remove(&selected[1..]);
-        changed.nodes = nodes::CopiedNodes::of(&after, &changed.nodes)?
-            .read(&after, &changed.variables)
+        nodes::SceneTree::new(&mut changed).remove(&selected[1..]);
+        let changed = nodes::CopiedNodes::of(&after, &changed)?
+            .read(&after, &variables)
             .ok()?;
-        Some(changed)
+        Some((changed, variables))
     }) else {
         editor.toast("The new blueprint doesn't read where it was made");
         return;
     };
-    let wrote = own.write_in(&mut edit, &after, &bundle, |draft| *draft = written);
+    let wrote = own.write_in(&mut edit, &after, &bundle, |nodes, variables| {
+        (*nodes, *variables) = written;
+    });
     if let Err(error) = wrote.and_then(|()| editor.try_apply(edit)) {
         editor.toast(error);
         return;

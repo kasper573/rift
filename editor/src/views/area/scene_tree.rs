@@ -26,6 +26,7 @@ use crate::tabs::file_title;
 pub use crate::tree::RowToggle;
 use crate::tree::{self, DropAt, RowToggles, ToggleState, TreeDrop, TreeRow, TreeSource};
 use crate::widgets;
+use engine::core::content::LoadReport;
 
 /// What the scene graph's menus and keys ask for.
 #[derive(Clone, Debug)]
@@ -86,7 +87,7 @@ pub struct SceneSource<'a> {
     narrowed: Option<Arc<Narrowed>>,
     needle: String,
     holding: HashSet<String>,
-    problems: HashMap<String, String>,
+    problems: Arc<HashMap<String, String>>,
     pub lit: Option<String>,
     /// The folder row a module waiting for its spot on the map lands in, and its kind: shown as a
     /// faded row at the end of the folder.
@@ -122,14 +123,38 @@ pub struct SceneNarrowing<'b> {
     pub kept: &'b mut Option<Arc<Narrowed>>,
 }
 
+/// The problems a scene's rows show, kept while the load report and the scene stay the same:
+/// finding them reads every error of the report.
+pub struct KeptProblems {
+    report: Option<Arc<LoadReport>>,
+    made: u64,
+    problems: Arc<HashMap<String, String>>,
+}
+
 impl<'a> SceneSource<'a> {
     pub fn new(
         project: &Project,
         snapshot: &'a AreaSnapshot,
         selection: &RowSelection,
         narrowing: SceneNarrowing,
+        kept_problems: &mut Option<KeptProblems>,
         can_paste: bool,
     ) -> SceneSource<'a> {
+        let kept = kept_problems.take().filter(|kept| {
+            kept.made == snapshot.made
+                && match (&kept.report, &project.report) {
+                    (Some(kept), Some(now)) => Arc::ptr_eq(kept, now),
+                    (None, None) => true,
+                    _ => false,
+                }
+        });
+        let kept = kept.unwrap_or_else(|| KeptProblems {
+            report: project.report.clone(),
+            made: snapshot.made,
+            problems: Arc::new(problems(project, snapshot)),
+        });
+        let problems = kept.problems.clone();
+        *kept_problems = Some(kept);
         let SceneNarrowing { filter, view, kept } = narrowing;
         let in_place: Vec<String> = (1..=snapshot.in_place.len())
             .map(|depth| super::place_id(&snapshot.in_place[..depth]))
@@ -140,7 +165,7 @@ impl<'a> SceneSource<'a> {
             narrowed: None,
             needle: filter.trim().to_lowercase(),
             holding: HashSet::new(),
-            problems: problems(project, snapshot),
+            problems,
             lit: None,
             placing: None,
             read_only: project.read_only.clone(),
@@ -1424,10 +1449,11 @@ pub fn copy_rows(editor: &mut Editor, snapshot: &AreaSnapshot, ids: &[String]) {
         return;
     };
     let bundle = bundle_of_row(snapshot, first);
-    let scene = nodes::scene_of(editor, &bundle);
+    let read = nodes::bundle_of(editor, &bundle);
+    let scene = read.as_ref().map_or(&[][..], nodes::SceneBundle::nodes);
     let copied: Vec<SceneNode> = topmost(ids)
         .iter()
-        .filter_map(|pointer| nodes::node(&scene, pointer).cloned())
+        .filter_map(|pointer| nodes::node(scene, pointer).cloned())
         .collect();
     if copied.is_empty() {
         return;
@@ -1543,8 +1569,11 @@ pub(crate) fn duplicate_rows(editor: &mut Editor, snapshot: &AreaSnapshot, ids: 
             .unwrap_or_default();
         let into = match folder.as_str() {
             "" => "the top level".to_owned(),
-            folder => nodes::node(&nodes::scene_of(editor, &bundle), folder)
-                .map(|node| shapes::node_label(node, reader.as_ref()))
+            folder => nodes::bundle_of(editor, &bundle)
+                .and_then(|read| {
+                    nodes::node(read.nodes(), folder)
+                        .map(|node| shapes::node_label(node, reader.as_ref()))
+                })
                 .unwrap_or_default(),
         };
         nodes::select(editor, &bundle, made);

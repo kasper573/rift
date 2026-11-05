@@ -89,7 +89,8 @@ pub(crate) fn go_to(editor: &mut Editor, problem: &Problem) {
             .node
             .as_ref()
             .and_then(|node| {
-                nodes::module_node(&nodes::scene_of(editor, bundle), node)
+                let read = nodes::bundle_of(editor, bundle)?;
+                nodes::module_node(read.nodes(), node)
                     .and_then(|module| super::shapes::bounds(&module.module, None))
             })
             .map(|bounds| {

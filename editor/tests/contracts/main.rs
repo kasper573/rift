@@ -15,6 +15,7 @@ mod model_view;
 mod new_game;
 mod opening;
 mod palette;
+mod perf_scene;
 mod project_edits;
 mod project_history;
 mod prop_view;

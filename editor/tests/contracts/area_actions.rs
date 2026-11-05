@@ -41,7 +41,7 @@ const DOOR: &str = "/0";
 
 /// The name and shape of each object of the start area, in the order its scene lists them.
 fn doors(editor: &Editor) -> Vec<(Option<String>, ObjectShape)> {
-    nodes::modules(&nodes::scene_of(editor, &area()))
+    nodes::modules(&support::scene(editor, &area()))
         .iter()
         .filter_map(|module| match module.module() {
             AreaModule::Object(object) => Some((object.name.clone(), object.shape)),
@@ -104,7 +104,7 @@ fn copied_rows_paste_in_the_order_the_scene_lists_them() {
     let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
     scene_tree::paste_rows(&mut editor, &snapshot, "");
 
-    let names = support::names(&nodes::scene_of(&editor, &area()));
+    let names = support::names(&support::scene(&editor, &area()));
     assert_eq!(names[names.len() - 2..], ["door-2", "door-10"]);
 }
 
@@ -131,7 +131,7 @@ fn ctrl_g_over_the_scene_graph_groups_the_selection_into_a_new_folder() {
         editor::views::area::show(&mut editor, ui, &area())
     });
 
-    let scene = nodes::scene_of(&editor, &area());
+    let scene = support::scene(&editor, &area());
     assert_eq!(scene.len(), 1);
     assert!(nodes::is_folder(&scene[0]));
     assert_eq!(nodes::children_of(&scene[0]).len(), 1);
@@ -231,7 +231,7 @@ fn an_object_given_a_script_runs_the_nearest_object_script_or_one_made_for_it() 
             refused.map(|taken| taken.refusal.sentence())
         );
         let reader = editor.reader().expect("a reader");
-        let scripts: Vec<String> = nodes::modules(&nodes::scene_of(&editor, &area()))
+        let scripts: Vec<String> = nodes::modules(&support::scene(&editor, &area()))
             .iter()
             .filter_map(|module| match module.module() {
                 AreaModule::Object(object) => Some(object.scripts.clone()),
@@ -273,7 +273,7 @@ fn a_population_given_a_roam_rect_first_roams_the_whole_area_it_roamed_without_o
     }
     support::files(&mut editor);
 
-    let roams: Vec<_> = nodes::modules(&nodes::scene_of(&editor, &area()))
+    let roams: Vec<_> = nodes::modules(&support::scene(&editor, &area()))
         .iter()
         .filter_map(|module| match module.module() {
             AreaModule::Population(population) => Some(population.roams),
@@ -331,7 +331,7 @@ fn a_door_back_from_a_warps_destination_stands_beside_where_the_warp_lands() {
         "{:?}",
         refused.map(|taken| taken.refusal.sentence())
     );
-    let doors: Vec<ObjectShape> = nodes::modules(&nodes::scene_of(&editor, &hall))
+    let doors: Vec<ObjectShape> = nodes::modules(&support::scene(&editor, &hall))
         .iter()
         .filter_map(|module| match module.module() {
             AreaModule::Object(object) => Some(object.shape),
@@ -376,7 +376,7 @@ fn a_module_on_ground_nothing_reaches_moves_where_its_problem_suggests() {
     }
 
     support::settled(&mut editor);
-    let at = nodes::modules(&nodes::scene_of(&editor, &area()))
+    let at = nodes::modules(&support::scene(&editor, &area()))
         .iter()
         .find_map(|module| match module.module() {
             AreaModule::Resident(resident) => Some(resident.at),

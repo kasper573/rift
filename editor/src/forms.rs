@@ -109,7 +109,7 @@ impl<'a> FormCx<'a> {
             kept: None,
             autofocus: false,
             locks: Vec::new(),
-            report: project.report.as_ref(),
+            report: project.report.as_deref(),
             load_errors: HashMap::new(),
         }
     }

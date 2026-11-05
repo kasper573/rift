@@ -6,6 +6,7 @@ pub mod busy;
 mod clipboard;
 mod condition;
 pub mod content_tree;
+pub mod doc;
 mod forms;
 pub mod icons;
 pub mod import;

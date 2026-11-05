@@ -17,6 +17,7 @@ use super::{
 };
 use crate::app::Editor;
 use crate::clipboard::{Clipboard, SceneClip};
+use crate::doc::DocModule;
 use crate::keymap::EditorKey;
 use crate::project::RowSelection;
 
@@ -163,18 +164,23 @@ impl SelectScope<'_> {
     fn contained(&self, frame: &AreaFrame, rect: Rect<Meters>) -> (Vec<String>, Skipped) {
         let mut skipped = Skipped::default();
         let taken = match self {
-            SelectScope::Area => frame
-                .modules
-                .iter()
-                .filter(|module| {
-                    super::is_selectable(module.module())
-                        && frame
-                            .bounds_of(module)
-                            .is_some_and(|bounds| rect.contains_rect(&bounds))
-                })
-                .filter(|module| skipped.passes(&frame.flags.row(&module.pointer)))
-                .map(|module| module.pointer.clone())
-                .collect(),
+            SelectScope::Area => {
+                let mut taken: Vec<DocModule> = frame
+                    .placed_within(rect)
+                    .filter(|module| {
+                        super::is_selectable(module.module())
+                            && frame
+                                .bounds_of(*module)
+                                .is_some_and(|bounds| rect.contains_rect(&bounds))
+                    })
+                    .collect();
+                taken.sort_by_key(|module| module.id);
+                taken
+                    .into_iter()
+                    .filter(|module| skipped.passes(&frame.flags.row(module.pointer)))
+                    .map(|module| module.pointer.to_owned())
+                    .collect()
+            }
             SelectScope::Blueprint { parts, .. } => parts
                 .iter()
                 .filter(|part| part.bounds.is_some_and(|b| rect.contains_rect(&b)))
@@ -682,11 +688,11 @@ pub(crate) fn select_all(editor: &mut Editor, frame: &AreaFrame) {
         None => (
             frame.bundle.clone(),
             frame
-                .modules
-                .iter()
+                .doc
+                .modules()
                 .filter(|module| super::is_selectable(module.module()))
-                .filter(|module| skipped.passes(&frame.flags.row(&module.pointer)))
-                .map(|module| module.pointer.clone())
+                .filter(|module| skipped.passes(&frame.flags.row(module.pointer)))
+                .map(|module| module.pointer.to_owned())
                 .collect(),
         ),
     };

@@ -144,6 +144,12 @@ pub fn names(nodes: &[SceneNode]) -> Vec<String> {
 }
 
 /// What the project open in `editor` loads once what it is loading settles.
+/// The scene of the area or blueprint at `bundle` as its files read now: empty when it doesn't.
+pub fn scene(editor: &Editor, bundle: &str) -> Vec<SceneNode> {
+    editor::views::area::nodes::bundle_of(editor, bundle)
+        .map_or_else(Vec::new, |read| read.nodes().to_vec())
+}
+
 pub fn content(editor: &mut Editor) -> &Content {
     settled(editor).content.as_ref().expect("the folder loads")
 }
@@ -161,7 +167,7 @@ pub fn files(editor: &mut Editor) -> &ProjectFiles {
 pub fn residents(editor: &mut Editor) -> Vec<String> {
     files(editor);
     let reader = editor.reader().expect("a reader");
-    editor::views::area::nodes::modules(&editor::views::area::nodes::scene_of(editor, &area()))
+    editor::views::area::nodes::modules(&scene(editor, &area()))
         .iter()
         .filter_map(|module| match module.module() {
             AreaModule::Resident(resident) => reader.path_of(resident.npc).map(str::to_owned),

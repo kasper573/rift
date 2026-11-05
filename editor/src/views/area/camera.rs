@@ -393,6 +393,11 @@ impl StandingBox {
         }
     }
 
+    /// The height its top stands at.
+    pub fn top(&self) -> f32 {
+        self.max.y
+    }
+
     /// How far along `ray` it enters the box, if it does.
     pub fn entered_by(&self, ray: Ray3d) -> Option<f32> {
         ray_box(ray, self.min, self.max)

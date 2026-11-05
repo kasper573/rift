@@ -45,7 +45,7 @@ pub(super) fn status_bar(
         );
     }
     if let Some(said) = frame.flags.said() {
-        let name = match &frame.def {
+        let name = match frame.doc.bundle() {
             super::nodes::SceneBundle::Area(area) => area.name.clone(),
             super::nodes::SceneBundle::Blueprint(_) => file_title(&frame.bundle).to_owned(),
         };

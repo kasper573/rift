@@ -128,7 +128,7 @@ fn new_nodes_land_in_the_selected_folder_or_beside_the_selected_node() {
     nodes::select(&mut editor, &area(), vec!["/0/children/1".to_owned()]);
     assert!(nodes::add(&mut editor, &area(), vec![door], "Add a door"));
 
-    let scene = nodes::scene_of(&editor, &area());
+    let scene = support::scene(&editor, &area());
     let added = nodes::node(&scene, "/0/children/2").expect("the door");
     assert_eq!(names(std::slice::from_ref(added)), ["door"]);
     assert_eq!(editor.selection.parts, ["/0/children/2"]);
@@ -167,7 +167,7 @@ fn a_new_placement_takes_its_blueprints_name_numbered_past_its_siblings() {
     nodes::select(&mut editor, &area(), vec!["/0".to_owned()]);
     nodes::add(&mut editor, &area(), vec![pew.clone(), pew], "Add pews");
 
-    let scene = nodes::scene_of(&editor, &area());
+    let scene = support::scene(&editor, &area());
     let label = |pointer: &str| nodes::node(&scene, pointer).and_then(SceneNode::label);
     assert_eq!(label("/0/children/2"), Some("pew (2)"));
     assert_eq!(label("/0/children/3"), Some("pew (3)"));
@@ -184,7 +184,7 @@ fn making_a_blueprint_of_a_folder_leaves_one_placement_and_the_area_as_it_was() 
     run_action(&mut editor, &snapshot, AreaAction::MakeBlueprint);
 
     let made = path("blueprint", "pews");
-    let scene = nodes::scene_of(&editor, &area());
+    let scene = support::scene(&editor, &area());
     let reader = editor.reader().expect("a reader");
     let placed = nodes::placement_of(&scene[0]).expect("a placement");
     assert_eq!(scene[0].label(), Some("Pews"));
@@ -204,7 +204,7 @@ fn making_a_blueprint_of_a_folder_leaves_one_placement_and_the_area_as_it_was() 
     editor.undo();
     let content = support::content(&mut editor);
     assert!(content.by_path::<BlueprintDef>(&made).is_none());
-    assert!(nodes::is_folder(&nodes::scene_of(&editor, &area())[0]));
+    assert!(nodes::is_folder(&support::scene(&editor, &area())[0]));
 }
 
 #[test]
@@ -220,7 +220,7 @@ fn unpacking_a_placement_leaves_a_folder_of_what_it_placed_and_the_area_as_it_wa
         AreaAction::Unpack("/0/children/1".to_owned()),
     );
 
-    let scene = nodes::scene_of(&editor, &area());
+    let scene = support::scene(&editor, &area());
     let unpacked = nodes::node(&scene, "/0/children/1").expect("the folder");
     assert!(nodes::is_folder(unpacked));
     assert_eq!(unpacked.label(), Some("pew (1)"));
@@ -286,7 +286,7 @@ fn a_blueprint_made_of_modules_with_holes_takes_their_variables_and_its_placemen
         .by_path::<BlueprintDef>(&path("blueprint", "door"))
         .expect("the new blueprint loads");
     assert!(made.get(content).variables.contains_key("spot"));
-    let scene = nodes::scene_of(&editor, &signpost);
+    let scene = support::scene(&editor, &signpost);
     let Some(SceneNode::Module(placed)) = nodes::node(&scene, &door) else {
         panic!("a placement where the door was");
     };

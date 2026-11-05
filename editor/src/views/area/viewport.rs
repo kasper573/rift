@@ -59,7 +59,7 @@ pub struct Request {
     /// The terrain as a brush stroke is shaping it, shown in place of the picture's.
     pub stroke: Option<StrokeTerrain>,
     pub ghost: Option<Ghost>,
-    pub cast: Vec<StandingActor>,
+    pub cast: Arc<[StandingActor]>,
     /// The sets of outlines drawn over the ground, each laid apart from the others.
     pub lines: [GroundLines; 2],
 }
@@ -186,7 +186,7 @@ struct RenderedView {
     stood: Option<Stood>,
     stroke: Option<u64>,
     ghost: Option<(String, Entity)>,
-    cast: Option<(Vec<StandingActor>, Vec<Entity>)>,
+    cast: Option<(Arc<[StandingActor]>, Vec<Entity>)>,
     /// For each set of outlines, the revision laid, and the thin and the bold lines' gizmos.
     lines: [Option<(u64, [Entity; 2])>; 2],
 }
@@ -493,18 +493,21 @@ impl RenderedView {
 
     /// Stands the cast: a rig already standing in its clip is moved and held where it is asked
     /// to, the rest are spawned anew.
-    fn people(&mut self, world: &mut World, cast: Vec<StandingActor>) {
+    fn people(&mut self, world: &mut World, cast: Arc<[StandingActor]>) {
         if self
             .cast
             .as_ref()
-            .is_some_and(|(standing, _)| *standing == cast)
+            .is_some_and(|(standing, _)| Arc::ptr_eq(standing, &cast) || **standing == *cast)
         {
             return;
         }
-        let (stood, entities) = self.cast.take().unwrap_or_default();
-        let mut spare: Vec<(StandingActor, Entity)> = stood.into_iter().zip(entities).collect();
+        let (stood, entities) = self
+            .cast
+            .take()
+            .unwrap_or_else(|| (Arc::new([]), Vec::new()));
+        let mut spare: Vec<(StandingActor, Entity)> = stood.iter().cloned().zip(entities).collect();
         let mut kept: Vec<Entity> = Vec::with_capacity(cast.len());
-        for standing in &cast {
+        for standing in cast.iter() {
             let reused = spare
                 .iter()
                 .position(|(old, _)| old.same_rig(standing))

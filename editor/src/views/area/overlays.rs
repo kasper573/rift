@@ -28,6 +28,7 @@ use ui::egui::{Color32, Pos2, Rect as ERect, Stroke as EStroke, Vec2};
 use super::camera::AreaCanvas;
 use super::{AreaFrame, AreaTool, selected_parts, shapes};
 use crate::app::Editor;
+use crate::doc::DocModule;
 use crate::forms;
 
 const LABEL_GAP: f32 = 2.0;
@@ -367,7 +368,12 @@ pub(super) fn overlay_modules(
         .as_ref()
         .is_none_or(|(kept, _)| *kept != scene_key)
     {
-        let lines = ground_lines(frame, &|pointer| Some(held_still(pointer)), &wash);
+        let lines = ground_lines(
+            frame,
+            frame.doc.modules(),
+            &|pointer| Some(held_still(pointer)),
+            &wash,
+        );
         view.outlines.scene = Some((scene_key, lines));
     }
     if view
@@ -380,22 +386,20 @@ pub(super) fn overlay_modules(
             let held = held(pointer);
             (held.hovered && !held_still(pointer).asked()).then_some(held)
         };
-        let lines = ground_lines(frame, &only_hovered, &wash);
+        let hovered = hovered_modules(frame, pointed.as_deref(), row.as_deref());
+        let lines = ground_lines(frame, hovered.into_iter(), &only_hovered, &wash);
         view.outlines.hovered = Some((hovered_key, lines));
     }
     let mut dots = shapes::Dots::default();
     let mut footprints: HashMap<PropId, Option<&Footprint>> = HashMap::new();
-    let placed = frame
-        .modules
-        .iter()
-        .zip(frame.shown_modules.iter())
-        .zip(frame.footings.iter());
-    for ((node, &shown), footing) in placed {
-        let Some(footing) = footing.as_ref().filter(|_| shown) else {
+    let mut seen: Vec<DocModule> = frame.placed_within(frame.seen_ground()).collect();
+    seen.sort_by_key(|module| module.id);
+    for node in seen {
+        let Some(footing) = frame.footing(node).filter(|_| frame.shown(node)) else {
             continue;
         };
         let module = node.module();
-        let held = held(&node.pointer);
+        let held = held(node.pointer);
         let on_ground = outlined_on_ground(frame, module);
         if on_ground && !held.hovered && !held.part {
             continue;
@@ -410,7 +414,7 @@ pub(super) fn overlay_modules(
             continue;
         }
         let bounds = footing.bounds;
-        let color = wash(module.kind(), &node.pointer, held.selected);
+        let color = wash(module.kind(), node.pointer, held.selected);
         let width = if held.selected { 2.0 } else { 1.0 };
         if !loads(frame, module) {
             painter.add(egui::Shape::dashed_line(
@@ -456,7 +460,7 @@ pub(super) fn overlay_modules(
         if held.hovered {
             let anchor = footing.screen_box(canvas).min + Vec2::new(0.0, -4.0);
             let label = || shapes::label(module, frame.reader.as_ref());
-            if pointed.as_deref() == Some(node.pointer.as_str()) {
+            if pointed.as_deref() == Some(node.pointer) {
                 frame.labels.chip(anchor, label(), color);
             } else {
                 frame.labels.aside(anchor, label, color);
@@ -518,30 +522,49 @@ fn loads(frame: &AreaFrame, module: &AreaModule) -> bool {
     }
 }
 
-/// The outlines on the ground of every module that shows as one and that `held` says how the view
-/// holds.
-fn ground_lines(
-    frame: &AreaFrame,
+/// The modules hovered on the map, at `pointed`, or under the scene tree's row `row`, "" the
+/// whole scene.
+fn hovered_modules<'a>(
+    frame: &'a AreaFrame,
+    pointed: Option<&str>,
+    row: Option<&str>,
+) -> Vec<DocModule<'a>> {
+    let doc = &frame.doc;
+    let mut hovered: Vec<DocModule> = pointed
+        .and_then(|pointer| doc.module_at(pointer))
+        .into_iter()
+        .collect();
+    match row {
+        Some("") => hovered.extend(doc.modules()),
+        Some(row) => hovered.extend(doc.id(row).into_iter().flat_map(|id| doc.modules_under(id))),
+        None => {}
+    }
+    hovered.sort_by_key(|module| module.id);
+    hovered.dedup_by_key(|module| module.id);
+    hovered
+}
+
+/// The outlines on the ground of every module among `modules` that shows as one and that `held`
+/// says how the view holds.
+fn ground_lines<'a>(
+    frame: &'a AreaFrame,
+    modules: impl Iterator<Item = DocModule<'a>>,
     held: &dyn Fn(&str) -> Option<Held>,
     wash: &dyn Fn(AreaModuleKind, &str, bool) -> Color32,
 ) -> GroundLines {
     static REVISION: AtomicU64 = AtomicU64::new(0);
     let area = frame.area();
-    let outlined: Vec<(&Footing, Color32, bool)> = frame
-        .modules
-        .iter()
-        .zip(frame.shown_modules.iter())
-        .zip(frame.footings.iter())
-        .filter_map(|((node, &shown), footing)| {
-            let footing = footing.as_ref().filter(|_| shown)?;
+    let outlined: Vec<(&Footing, Color32, bool)> = modules
+        .filter_map(|node| {
+            let footing = frame.footing(node).filter(|_| frame.shown(node))?;
             let module = node.module();
-            let held = held(&node.pointer)?;
+            let held = held(node.pointer)?;
             if !outlined_on_ground(frame, module) || !(held.asked() || shown_unasked(module)) {
                 return None;
             }
             Some((
                 footing,
-                wash(module.kind(), &node.pointer, held.selected),
+                wash(module.kind(), node.pointer, held.selected),
                 held.selected,
             ))
         })

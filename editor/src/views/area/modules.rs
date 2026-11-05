@@ -670,9 +670,8 @@ impl Placing {
         let mut edit = ContentEdit::new(label);
         let mut added = Vec::new();
         self.read
-            .write_in(&mut edit, &self.reader, &self.bundle, |draft| {
-                added =
-                    nodes::SceneTree::new(&mut draft.nodes).append(&self.folder, placed.to_vec());
+            .write_in(&mut edit, &self.reader, &self.bundle, |nodes, _| {
+                added = nodes::SceneTree::new(nodes).append(&self.folder, placed.to_vec());
             })
             .ok()?;
         Some((edit, added))

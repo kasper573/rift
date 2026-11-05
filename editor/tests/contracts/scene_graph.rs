@@ -163,7 +163,7 @@ fn hiding_a_row_shows_in_the_open_view_before_the_folder_loads_again() {
     support::settled(&mut editor);
     editor.views.area.ensure_view(&area());
     let shown = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
-    let rug = nodes::modules(shown.def.nodes())
+    let rug = nodes::modules(shown.nodes())
         .into_iter()
         .find(|module| module.node.label.as_deref() == Some("rug"))
         .expect("the rug's placement")
@@ -195,11 +195,11 @@ fn grouping_and_naming_the_folder_is_one_undo_step() {
     let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
     scene_tree::rename_grouped(&mut editor, &snapshot, &id, "Storage", &step);
 
-    let scene = nodes::scene_of(&editor, &area());
+    let scene = support::scene(&editor, &area());
     assert_eq!(scene[0].label(), Some("Storage"));
     assert_eq!(names(nodes::children_of(&scene[0])), ["a", "b"]);
     editor.undo();
-    assert_eq!(names(&nodes::scene_of(&editor, &area())), ["a", "b", "c"]);
+    assert_eq!(names(&support::scene(&editor, &area())), ["a", "b", "c"]);
 }
 
 #[test]
@@ -240,7 +240,7 @@ fn a_new_folder_lands_in_the_insertion_folder_and_never_shares_a_label() {
         inside.starts_with(&format!("{first}/children/")),
         "{inside}"
     );
-    let scene = nodes::scene_of(&editor, &area());
+    let scene = support::scene(&editor, &area());
     let label = |id: &str| nodes::node(&scene, id).and_then(SceneNode::label);
     assert_ne!(label(&first), label(&beside));
 }
@@ -256,10 +256,10 @@ fn deleting_a_folder_takes_all_it_holds_in_one_step() {
 
     scene_tree::delete_rows(&mut editor, &snapshot, &[id]);
 
-    assert_eq!(names(&nodes::scene_of(&editor, &area())), ["c"]);
+    assert_eq!(names(&support::scene(&editor, &area())), ["c"]);
     editor.undo();
     assert_eq!(
-        names(&nodes::scene_of(&editor, &area())),
+        names(&support::scene(&editor, &area())),
         ["New folder", "a", "b", "c"]
     );
 }
@@ -315,6 +315,7 @@ fn rows_never_drop_onto_a_placement_or_into_themselves() {
             view: &TreeView::default(),
             kept: &mut None,
         },
+        &mut None,
         false,
     );
     let into = |folder: &str| TreeDrop {

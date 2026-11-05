@@ -22,14 +22,15 @@ use strum::VariantArray;
 
 use super::brush::{Brush, LARGEST_RADIUS, SMALLEST_RADIUS, SculptMode};
 use engine::field;
+use engine::systems::area::blueprint;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::object::ObjectDef;
-use engine::systems::area::scene::{self, SceneNode, scene_file};
+use engine::systems::area::scene::{self, ModuleNode, SceneNode, scene_file};
 use engine::systems::area::{AreaDef, AreaModule, SoundscapeDef};
 use engine::systems::script::{RunnerKind, ScriptModule, VarValue, Variable};
 
 use super::clipboard::clipboard_panel;
-use super::nodes::SceneDraft;
+use super::nodes::SceneBundle;
 use super::pins::place_pick_panel;
 use super::placement::{self, placement_extras};
 use super::population::from_npc;
@@ -535,17 +536,17 @@ fn show_parts(editor: &mut Editor, ui: &mut Ui, view_key: &str, selection: &RowS
     let Some(read) = nodes::bundle_of(editor, &bundle) else {
         return;
     };
-    let mut draft = read.draft();
     let size = read.size();
     let selected: Vec<String> = selection
         .parts
         .iter()
-        .filter(|part| nodes::module_node(&draft.nodes, part).is_some())
+        .filter(|part| nodes::module_node(read.nodes(), part).is_some())
         .cloned()
         .collect();
     if selected.is_empty() {
         return;
     }
+    let mut inspected = Inspected::of(&read, &selected);
     let shapes = editor.shapes.clone();
     let table = table_of(&bundle).unwrap_or(AreaDef::TABLE).to_owned();
     let mut changed = false;
@@ -574,7 +575,8 @@ fn show_parts(editor: &mut Editor, ui: &mut Ui, view_key: &str, selection: &RowS
         .errors_of(&scene_file(&bundle));
         if let [node] = selected.as_slice() {
             let view = views.area.views.get_mut(&super::view_key(&bundle));
-            label = nodes::module_node(&draft.nodes, node)
+            label = inspected
+                .module(node)
                 .map(|module| super::shapes::label(&module.module, reader.as_ref()))
                 .unwrap_or_default();
             changed = module_inspector(
@@ -586,7 +588,7 @@ fn show_parts(editor: &mut Editor, ui: &mut Ui, view_key: &str, selection: &RowS
                     size,
                     node,
                 },
-                &mut draft,
+                &mut inspected,
                 &mut out,
             );
         } else {
@@ -600,7 +602,7 @@ fn show_parts(editor: &mut Editor, ui: &mut Ui, view_key: &str, selection: &RowS
                 .monospace()
                 .size(13.0),
             );
-            ui.label(theme::muted(spans(&draft.nodes, &selected, reader.as_ref())).size(12.5));
+            ui.label(theme::muted(spans(read.nodes(), &selected, reader.as_ref())).size(12.5));
             ui.add_space(4.0);
             panel::tile_across(ui, true, |ui| {
                 panel::header(ui, &format!("{} modules", selected.len()), "", |ui| {
@@ -621,7 +623,7 @@ fn show_parts(editor: &mut Editor, ui: &mut Ui, view_key: &str, selection: &RowS
                     }
                 });
                 ui.add_space(4.0);
-                changed |= placement::shared_values(ui, &mut cx, &mut draft.nodes, &selected);
+                changed |= placement::shared_values(ui, &mut cx, &mut inspected.modules);
             });
             ui.add_space(6.0);
             ui.horizontal(|ui| {
@@ -647,7 +649,7 @@ fn show_parts(editor: &mut Editor, ui: &mut Ui, view_key: &str, selection: &RowS
     }
     if changed && let Some(project) = editor.project.as_ref() {
         let mut edit = ContentEdit::new(format!("Edit {label}"));
-        match read.write(&mut edit, project, &bundle, |own| *own = draft) {
+        match inspected.write(&read, &mut edit, project, &bundle) {
             Ok(()) => {
                 editor.apply(edit);
             }
@@ -675,8 +677,6 @@ fn show_parts(editor: &mut Editor, ui: &mut Ui, view_key: &str, selection: &RowS
     }
 }
 
-/// The card of the module at `node` of the scene `draft` of the area or blueprint at `bundle`: its
-/// fields as the game reads them, a blueprint's holes among them, and what its kind adds.
 /// Where a module an inspector shows is: the bundle, the size of its ground and its node.
 #[derive(Clone, Copy)]
 struct ModuleSpot<'a> {
@@ -685,24 +685,26 @@ struct ModuleSpot<'a> {
     node: &'a str,
 }
 
+/// The card of the module at `node` of what is inspected of the area or blueprint at `bundle`:
+/// its fields as the game reads them, a blueprint's holes among them, and what its kind adds.
 fn module_inspector(
     ui: &mut Ui,
     cx: &mut FormCx,
     view: Option<&mut AreaViewState>,
     spot: ModuleSpot,
-    draft: &mut SceneDraft,
+    inspected: &mut Inspected,
     out: &mut Followups,
 ) -> bool {
     let ModuleSpot { bundle, size, node } = spot;
     let path = node.to_owned();
     let reader = cx.project.reader();
-    let Some(module) = nodes::module_node(&draft.nodes, node) else {
+    let Some(module) = inspected.module(node) else {
         return false;
     };
     let kind = module.module.kind();
     let shown_kind = kind.tag().replace('_', " ");
     let crumbs: Vec<String> = std::iter::once(file_title(bundle).to_owned())
-        .chain(folders_above(&draft.nodes, node, reader.as_ref()))
+        .chain(folders_above(inspected.scene, node, reader.as_ref()))
         .chain(std::iter::once(shown_kind.clone()))
         .collect();
     ui.label(theme::muted(crumbs.join(" › ")).monospace().size(13.0));
@@ -711,13 +713,13 @@ fn module_inspector(
     if holes_here {
         cx.holes = Some(form_holes(
             &reader,
-            &draft.variables,
+            &inspected.variables,
             &module.module,
             &module.holes,
             &path,
         ));
     }
-    let Some(module) = nodes::module_node_mut(&mut draft.nodes, node) else {
+    let Some(module) = inspected.module_mut(node) else {
         return false;
     };
     let mut changed = false;
@@ -817,7 +819,7 @@ fn module_inspector(
     }
     if let Some(holes) = cx.holes.take() {
         for request in holes.requests {
-            changed |= apply_hole(&reader, draft, node, &path, request);
+            changed |= apply_hole(&reader, inspected, node, &path, request);
         }
     }
     changed
@@ -898,9 +900,9 @@ pub(crate) fn new_object_script(
         answering,
     )?;
     edit.label = format!("New {} run by {name}", file_title(&path));
-    read.write_in(&mut edit, &reader, bundle, |draft| {
+    read.write_in(&mut edit, &reader, bundle, |nodes, _| {
         if let Some(AreaModule::Object(object)) =
-            nodes::module_node_mut(&mut draft.nodes, node).map(|module| &mut module.module)
+            nodes::module_node_mut(nodes, node).map(|module| &mut module.module)
         {
             object.scripts.push(ScriptModule {
                 script,
@@ -942,17 +944,22 @@ fn form_holes(
     }
 }
 
-/// Makes a field of the module at `node` of `draft` a hole, fills it from another variable, or
-/// fixes it to a value again, as `request` asks.
+/// Makes a field of the module at `node` of what is inspected a hole, fills it from another
+/// variable, or fixes it to a value again, as `request` asks.
 fn apply_hole(
     reader: &FolderReader,
-    draft: &mut SceneDraft,
+    inspected: &mut Inspected,
     node: &str,
     path: &str,
     request: HoleRequest,
 ) -> bool {
     let relative = |field: &str| field.strip_prefix(path).unwrap_or(field).to_owned();
-    let Some(module) = nodes::module_node_mut(&mut draft.nodes, node) else {
+    let Inspected {
+        scene,
+        modules,
+        variables,
+    } = inspected;
+    let Some((_, module)) = modules.iter_mut().find(|(pointer, _)| pointer == node) else {
         return false;
     };
     match request {
@@ -974,9 +981,9 @@ fn apply_hole(
                     }
                     (_, value) => value,
                 });
-            let name = rows::hole_name(&pointer, &draft.variables.keys().cloned().collect());
+            let name = rows::hole_name(&pointer, &variables.keys().cloned().collect());
             module.holes.0.insert(pointer, name.clone());
-            draft.variables.insert(
+            variables.insert(
                 name,
                 Variable {
                     ty: kind,
@@ -993,8 +1000,7 @@ fn apply_hole(
         HoleRequest::Fix { field, name } => {
             let pointer = relative(&field);
             module.holes.0.remove(&pointer);
-            if let Some(default) = draft
-                .variables
+            if let Some(default) = variables
                 .get(&name)
                 .and_then(|variable| variable.default.as_ref())
                 .and_then(|default| reader.to_json(default).ok())
@@ -1006,12 +1012,91 @@ fn apply_hole(
                     module.module = fixed;
                 }
             }
-            if !scene::holes(&draft.nodes).contains(&name) {
-                draft.variables.remove(&name);
+            if !names_hole(scene, modules, &name) {
+                variables.remove(&name);
             }
             true
         }
     }
+}
+
+/// The selected modules of a scene as the inspector edits them, apart from the scene they lie in,
+/// with the variables their holes may name: what a frame copies is what it shows.
+struct Inspected<'a> {
+    /// The scene as the bundle holds it.
+    scene: &'a [SceneNode],
+    modules: Vec<(String, ModuleNode)>,
+    variables: BTreeMap<String, Variable>,
+}
+
+impl<'a> Inspected<'a> {
+    fn of(read: &'a SceneBundle, pointers: &[String]) -> Inspected<'a> {
+        Inspected {
+            scene: read.nodes(),
+            modules: pointers
+                .iter()
+                .filter_map(|pointer| {
+                    Some((
+                        pointer.clone(),
+                        nodes::module_node(read.nodes(), pointer)?.clone(),
+                    ))
+                })
+                .collect(),
+            variables: read.variables().clone(),
+        }
+    }
+
+    fn module(&self, pointer: &str) -> Option<&ModuleNode> {
+        self.modules
+            .iter()
+            .find(|(at, _)| at == pointer)
+            .map(|(_, module)| module)
+    }
+
+    fn module_mut(&mut self, pointer: &str) -> Option<&mut ModuleNode> {
+        self.modules
+            .iter_mut()
+            .find(|(at, _)| at == pointer)
+            .map(|(_, module)| module)
+    }
+
+    /// Writes `read`, the bundle at `bundle`, with the modules and variables as inspected, as
+    /// part of `edit`.
+    fn write(
+        self,
+        read: &SceneBundle,
+        edit: &mut ContentEdit,
+        project: &crate::project::Project,
+        bundle: &str,
+    ) -> Result<(), String> {
+        read.write(edit, project, bundle, |nodes, variables| {
+            for (pointer, module) in self.modules {
+                if let Some(at) = nodes::module_node_mut(nodes, &pointer) {
+                    *at = module;
+                }
+            }
+            *variables = self.variables;
+        })
+    }
+}
+
+/// Whether a hole of the scene takes its value from the variable `name`, the modules at `edited`
+/// as edited and the rest as `scene` holds them.
+fn names_hole(scene: &[SceneNode], edited: &[(String, ModuleNode)], name: &str) -> bool {
+    let names =
+        |module: &ModuleNode| blueprint::variables_of(&module.holes).any(|held| held == name);
+    if edited.iter().any(|(_, module)| names(module)) {
+        return true;
+    }
+    let mut found = false;
+    nodes::walk(scene, &mut |pointer, node| {
+        if let SceneNode::Module(module) = node
+            && !edited.iter().any(|(at, _)| at == pointer)
+        {
+            found |= names(module);
+        }
+    });
+    found
 }
 
 #[derive(Default)]

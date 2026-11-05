@@ -275,7 +275,7 @@ pub struct Project {
     pub files: ProjectFiles,
     unsaved: Mutex<Option<UnsavedFiles>>,
     pub content: Option<Content>,
-    pub report: Option<LoadReport>,
+    pub report: Option<Arc<LoadReport>>,
     pub history: EditHistory,
     pub usages: ContentUsages,
     pub unused: UnusedContent,
@@ -506,7 +506,7 @@ impl Project {
                 self.verifying = Some(self.files.revision());
                 self.begin_load();
             }
-            Err(report) => self.report = Some(report),
+            Err(report) => self.report = Some(Arc::new(report)),
         }
     }
 
@@ -592,7 +592,7 @@ impl Project {
                     });
                     self.begin_load();
                 }
-                None => self.report = Some(report),
+                None => self.report = Some(Arc::new(report)),
             },
         }
         if std::mem::take(&mut self.stale) {

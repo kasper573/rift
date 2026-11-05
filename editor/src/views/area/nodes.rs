@@ -22,14 +22,6 @@ pub enum SceneBundle {
     Blueprint(Arc<BlueprintDef>),
 }
 
-/// A bundle's scene as an edit changes it: its nodes, and the variables a blueprint's holes name.
-/// An area has no variables; an edit that gives it some is refused.
-#[derive(Clone, Default)]
-pub struct SceneDraft {
-    pub nodes: Vec<SceneNode>,
-    pub variables: BTreeMap<String, Variable>,
-}
-
 impl SceneBundle {
     pub fn nodes(&self) -> &[SceneNode] {
         match self {
@@ -54,20 +46,24 @@ impl SceneBundle {
         }
     }
 
-    pub fn draft(&self) -> SceneDraft {
-        SceneDraft {
-            nodes: self.nodes().to_vec(),
-            variables: self.variables().clone(),
+    /// Whether this is `other` as the same read of its files made it.
+    pub fn same(&self, other: &SceneBundle) -> bool {
+        match (self, other) {
+            (SceneBundle::Area(a), SceneBundle::Area(b)) => Arc::ptr_eq(a, b),
+            (SceneBundle::Blueprint(a), SceneBundle::Blueprint(b)) => Arc::ptr_eq(a, b),
+            _ => false,
         }
     }
 
-    /// Writes this bundle at `path` with its scene changed by `change`, as part of `edit`.
+    /// Writes this bundle at `path` with its scene's nodes and the variables a blueprint's holes
+    /// name changed by `change`, as part of `edit`. An area has no variables; an edit that gives
+    /// it some is refused.
     pub fn write(
         &self,
         edit: &mut ContentEdit,
         project: &Project,
         path: &str,
-        change: impl FnOnce(&mut SceneDraft),
+        change: impl FnOnce(&mut Vec<SceneNode>, &mut BTreeMap<String, Variable>),
     ) -> Result<(), String> {
         self.write_in(edit, &project.reader(), path, change)
     }
@@ -79,23 +75,23 @@ impl SceneBundle {
         edit: &mut ContentEdit,
         reader: &FolderReader,
         path: &str,
-        change: impl FnOnce(&mut SceneDraft),
+        change: impl FnOnce(&mut Vec<SceneNode>, &mut BTreeMap<String, Variable>),
     ) -> Result<(), String> {
-        let mut draft = self.draft();
-        change(&mut draft);
+        let (mut nodes, mut variables) = (self.nodes().to_vec(), self.variables().clone());
+        change(&mut nodes, &mut variables);
         match self {
             SceneBundle::Area(area) => {
-                if !draft.variables.is_empty() {
+                if !variables.is_empty() {
                     return Err("an area has no variables to fill holes with".to_owned());
                 }
                 let mut area = (**area).clone();
-                area.scene = draft.nodes;
+                area.scene = nodes;
                 edit.write_content_in(reader, path, &area)?;
             }
             SceneBundle::Blueprint(blueprint) => {
                 let mut blueprint = (**blueprint).clone();
-                blueprint.scene = draft.nodes;
-                blueprint.variables = draft.variables;
+                blueprint.scene = nodes;
+                blueprint.variables = variables;
                 edit.write_content_in(reader, path, &blueprint)?;
             }
         }
@@ -142,12 +138,6 @@ pub fn bundle_of(editor: &Editor, bundle: &str) -> Option<SceneBundle> {
 /// The area or blueprint at `bundle` of `project`, when it reads.
 pub(crate) fn bundle_in(project: &Project, bundle: &str) -> Option<SceneBundle> {
     read_bundle_in(project, bundle)?.ok()
-}
-
-/// The scene graph of the area or blueprint at `bundle` as the files hold it now: empty when it
-/// doesn't read.
-pub fn scene_of(editor: &Editor, bundle: &str) -> Vec<SceneNode> {
-    bundle_of(editor, bundle).map_or_else(Vec::new, |bundle| bundle.nodes().to_vec())
 }
 
 /// Nodes copied apart from their scene, kept as a scene file holds them, so they read again among
@@ -415,8 +405,10 @@ pub fn insertion_folder(editor: &Editor, bundle: &str) -> String {
         return String::new();
     }
     let pointer = &selection.parts[0];
-    let nodes = scene_of(editor, bundle);
-    match node(&nodes, pointer) {
+    let Some(read) = bundle_of(editor, bundle) else {
+        return String::new();
+    };
+    match node(read.nodes(), pointer) {
         Some(node) if is_folder(node) => pointer.clone(),
         Some(_) => place_of(pointer).map_or_else(String::new, |(folder, _)| folder.to_owned()),
         None => String::new(),
@@ -430,22 +422,12 @@ pub(crate) fn scene_edit(
     bundle: &str,
     change: impl FnOnce(&mut Vec<SceneNode>) -> Option<String>,
 ) -> Option<ContentEdit> {
-    draft_edit(editor, bundle, |draft| change(&mut draft.nodes))
-}
-
-/// An edit of the scene of `bundle` and the variables its holes name: `change` changes them and
-/// names the step, or answers `None` to make no step.
-fn draft_edit(
-    editor: &Editor,
-    bundle: &str,
-    change: impl FnOnce(&mut SceneDraft) -> Option<String>,
-) -> Option<ContentEdit> {
     let project = editor.project.as_ref()?;
     let read = bundle_of(editor, bundle)?;
     let mut label = None;
     let mut edit = ContentEdit::new(String::new());
-    read.write(&mut edit, project, bundle, |draft| {
-        label = change(draft);
+    read.write(&mut edit, project, bundle, |nodes, _| {
+        label = change(nodes);
     })
     .ok()?;
     edit.label = label?;

@@ -50,6 +50,7 @@ pub struct ScenePanel {
     shown: Vec<String>,
     /// What the filter and Show last left of the scene.
     narrowed: Option<Arc<scene_tree::Narrowed>>,
+    problems: Option<scene_tree::KeptProblems>,
     /// What another part of the view asked of the scene graph, done on its next frame.
     pub queued: Option<SceneAction>,
     /// A folder just made by grouping, with its step, so naming it joins that step.
@@ -85,7 +86,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
 
 fn boxes(editor: &mut Editor, ui: &mut Ui, snapshot: &AreaSnapshot) {
     let bundle = snapshot.bundle.clone();
-    let def = snapshot.def.clone();
+    let def = snapshot.doc.bundle().clone();
     let folded = editor.settings.boxes_folded;
     let size = snapshot.size();
     let facts = format!("{} × {} m", size.width, size.height);
@@ -277,7 +278,7 @@ fn set_by(editor: &Editor, bundle: &str) -> HashMap<String, (usize, usize)> {
 }
 
 fn header(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &AreaSnapshot) {
-    let count = snapshot.modules.iter().len();
+    let count = snapshot.doc.module_count();
     let selected = scene_tree::selected_ids(snapshot, &editor.selection).len();
     let flagged = snapshot.flags.said();
     let (hidden, locked) = (snapshot.flags.hidden, snapshot.flags.locked);
@@ -475,6 +476,7 @@ fn scene_graph(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &Area
             view: shown_kinds,
             kept: &mut panel.narrowed,
         },
+        &mut panel.problems,
         clipboard.is_some() || !panel.cut.is_empty(),
     );
     source.lit = lit;
@@ -838,9 +840,10 @@ fn show_on_map(editor: &mut Editor, view_key: &str, snapshot: &AreaSnapshot, id:
     } else if nodes::is_folder(node) {
         let pointer = scene_tree::local(id);
         snapshot
-            .modules
-            .iter()
-            .filter(|module| module.pointer.starts_with(&format!("{pointer}/")))
+            .doc
+            .id(pointer)
+            .into_iter()
+            .flat_map(|folder| snapshot.doc.modules_under(folder))
             .filter_map(|module| snapshot.bounds_of(module))
             .reduce(|a, b| a.union(&b))
     } else {

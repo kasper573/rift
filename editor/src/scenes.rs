@@ -470,7 +470,8 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
         SceneStep::Clipboard { key, node } => {
             let (Some(reader), Some(mut copied)) = (
                 editor.reader(),
-                area_view::nodes::node(&area_view::nodes::scene_of(editor, key), node).cloned(),
+                area_view::nodes::bundle_of(editor, key)
+                    .and_then(|read| area_view::nodes::node(read.nodes(), node).cloned()),
             ) else {
                 return;
             };

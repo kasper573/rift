@@ -36,8 +36,8 @@ pub use resize::ResizeDialog;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Deref;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Instant;
 use ui::controls;
 use ui::egui;
@@ -46,7 +46,8 @@ use ui::face;
 use ui::theme;
 use ui::words;
 
-use bevy::prelude::Transform;
+use bevy::math::Vec3Swizzles;
+use bevy::prelude::{Ray3d, Transform, Vec3};
 use engine::core::content::media::GltfInfos;
 use engine::core::content::{Content, ContentFile, FolderReader, table_of};
 use engine::core::math::{Pos, Rect, Size};
@@ -77,6 +78,7 @@ use self::overlays::{
 use self::status::status_bar;
 use self::viewport::{Request, StageClip, StandingActor, StrokeTerrain, Viewports};
 use crate::app::{BottomTab, Editor};
+use crate::doc::{Derived, DocModule, NodeGrid, NodeId, SceneDoc};
 use crate::keymap::EditorKey;
 use crate::play;
 use crate::project::{AreaCameraState, Project, RowSelection};
@@ -240,6 +242,7 @@ pub struct AreaViewState {
     ground: view_ground::ViewGround,
     cache: Option<SnapshotCache>,
     preview_places: HashMap<String, PreviewPlaces>,
+    cast: Option<Cast>,
     fitted: bool,
     /// How the camera looks at the middle once it is fitted, when asked for.
     looks_from: Option<CameraLook>,
@@ -306,7 +309,7 @@ impl AreaViewState {
     }
 }
 
-#[derive(Clone, Copy, Debug, Default)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct PopulationPreview {
     pub hidden: bool,
     pub seed: u64,
@@ -797,12 +800,20 @@ fn canvas(
 fn shown_stage(frame: &AreaFrame, rect: ERect) -> shown::ShownStage {
     let middle = rect.center();
     let mut marks: Vec<(String, egui::Pos2)> = frame
-        .targets
-        .iter()
-        .filter(|target| target.shown)
-        .filter_map(|target| {
-            let (at, _) = frame.canvas.glance(target.bounds)?;
-            rect.contains(at).then(|| (target.pointer.clone(), at))
+        .placed()
+        .grid
+        .within(frame.seen_ground())
+        .filter(|(_, _, target)| target.selectable && target.shown)
+        .filter_map(|(id, bounds, _)| {
+            let (at, _) = frame.canvas.glance(*bounds)?;
+            rect.contains(at)
+                .then(|| {
+                    frame
+                        .doc
+                        .pointer(*id)
+                        .map(|pointer| (pointer.to_owned(), at))
+                })
+                .flatten()
         })
         .collect();
     marks.sort_by(|a, b| a.1.distance_sq(middle).total_cmp(&b.1.distance_sq(middle)));
@@ -869,17 +880,73 @@ fn ghost_moves(view: &AreaViewState) -> bool {
 }
 
 /// The rigs standing in the view: each resident at its spot in its pose, and the previewed places
-/// of each population, every one in its model's idle.
-fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<StandingActor> {
-    let content = &frame.content;
-    let area = frame.area();
+/// of each population, every one in its model's idle, those in sight. The rigs are made once for
+/// what the view holds and the content, and the list handed on stays the same while the same rigs
+/// are in sight.
+fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Arc<[StandingActor]> {
     let generation = editor
         .project
         .as_ref()
         .map_or(0, |project| project.generation);
     let seen = *frame.canvas.view();
     let view = editor.views.area.view_mut(view_key);
-    let previews = view.population_previews.clone();
+    let made_for = (frame.made, generation, view.population_previews.clone());
+    if view
+        .cast
+        .as_ref()
+        .is_none_or(|cast| cast.made_for != made_for)
+    {
+        let everyone = everyone_standing(view, frame, generation);
+        view.cast = Some(Cast {
+            made_for,
+            everyone,
+            in_sight: Vec::new(),
+            shown: Arc::new([]),
+        });
+    }
+    let cast = view.cast.as_mut().expect("the cast was just made");
+    let in_sight: Vec<usize> = cast
+        .everyone
+        .iter()
+        .enumerate()
+        .filter(|(_, standing)| in_sight(&seen, standing.middle, standing.extent))
+        .map(|(index, _)| index)
+        .collect();
+    if in_sight != cast.in_sight {
+        cast.shown = in_sight
+            .iter()
+            .map(|&index| cast.everyone[index].actor.clone())
+            .collect();
+        cast.in_sight = in_sight;
+    }
+    cast.shown.clone()
+}
+
+/// The rigs of a view's cast, made for what the view holds, the content and its previews, and
+/// those in sight last.
+struct Cast {
+    made_for: (u64, u64, HashMap<String, PopulationPreview>),
+    everyone: Vec<Standing>,
+    in_sight: Vec<usize>,
+    shown: Arc<[StandingActor]>,
+}
+
+/// A rig of the cast, with the middle of its body and how far across it is.
+struct Standing {
+    actor: StandingActor,
+    middle: Vec3,
+    extent: Meters,
+}
+
+/// Every rig of the view's cast: each resident at its spot in its pose, and the previewed places of
+/// each population.
+fn everyone_standing(
+    view: &mut AreaViewState,
+    frame: &AreaFrame,
+    generation: u64,
+) -> Vec<Standing> {
+    let content = &frame.content;
+    let area = frame.area();
     let resolve = |npc: engine::systems::npc::NpcId| {
         frame
             .reader
@@ -891,51 +958,54 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<StandingA
         let model = ActorModel::get(content, def.appearance.model);
         let ground = area.heights.height_at(at);
         let body = model.hitbox();
-        let middle = world_point(at, ground + Meters(body.height.0 / 2.0));
-        let extent = Meters(body.height.0.max(body.radius.0 * 2.0));
-        if !in_sight(&seen, middle, extent) {
-            return None;
-        }
         let hands = held::listed(content, model.hands().len(), &def.held).hands;
         let stance = stance::of_hands(content, &hands);
         let clip = StageClip::played(
             model.skeleton(),
             model.standing_clip(stance, &Motion::Action(Action::Idle), pose),
         );
-        Some(StandingActor {
-            body: model.dressed(content, &look(content, &def.appearance, &BTreeMap::new())),
-            clip: Some(clip),
-            transform: Transform {
-                translation: world_point(at, ground),
-                rotation: facing_rotation(facing.radians()),
-                ..Transform::default()
+        Standing {
+            middle: world_point(at, ground + Meters(body.height.0 / 2.0)),
+            extent: Meters(body.height.0.max(body.radius.0 * 2.0)),
+            actor: StandingActor {
+                body: model.dressed(content, &look(content, &def.appearance, &BTreeMap::new())),
+                clip: Some(clip),
+                transform: Transform {
+                    translation: world_point(at, ground),
+                    rotation: facing_rotation(facing.radians()),
+                    ..Transform::default()
+                },
+                held: None,
+                crossed: Vec::new(),
+                props: super::stage::props(content, model, model.hands(), &hands),
+                layers: None,
             },
-            held: None,
-            crossed: Vec::new(),
-            props: super::stage::props(content, model, model.hands(), &hands),
-            layers: None,
-        })
+        }
     };
-    let mut cast = Vec::new();
+    let mut everyone = Vec::new();
     for placed in &frame.picture.placed {
         if let AreaModule::Resident(resident) = &placed.module
             && let Some(npc) = resolve(resident.npc)
         {
-            cast.extend(stand(npc, resident.at, resident.facing, resident.pose));
+            everyone.push(stand(npc, resident.at, resident.facing, resident.pose));
         }
     }
-    for node in frame.modules.iter() {
+    for node in frame.doc.of_kind(AreaModuleKind::Population) {
         let AreaModule::Population(population) = node.module() else {
             continue;
         };
-        if frame.flags.hidden(&node.pointer) {
+        if frame.flags.hidden(node.pointer) {
             continue;
         }
-        let preview = previews.get(&node.pointer).copied().unwrap_or_default();
+        let preview = view
+            .population_previews
+            .get(node.pointer)
+            .copied()
+            .unwrap_or_default();
         let Some(npc) = resolve(population.npc).filter(|_| !preview.hidden) else {
             continue;
         };
-        let kept = view.preview_places.get(&node.pointer).filter(|kept| {
+        let kept = view.preview_places.get(node.pointer).filter(|kept| {
             (kept.generation, kept.count, kept.roams, kept.seed)
                 == (generation, population.count, population.roams, preview.seed)
         });
@@ -946,7 +1016,7 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<StandingA
             None => {
                 let places = population::population_places(area, population, preview.seed);
                 view.preview_places.insert(
-                    node.pointer.clone(),
+                    node.pointer.to_owned(),
                     PreviewPlaces {
                         generation,
                         count: population.count,
@@ -959,7 +1029,7 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<StandingA
             }
         };
         for at in places {
-            cast.extend(stand(
+            everyone.push(stand(
                 npc,
                 at,
                 Degrees(((at.x * 37.0 + at.y * 91.0) % 360.0).abs()),
@@ -967,7 +1037,7 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Vec<StandingA
             ));
         }
     }
-    cast
+    everyone
 }
 
 /// Whether a body `extent` across with its middle at `middle` shows in `view` tall enough to make
@@ -1032,17 +1102,6 @@ impl Deref for AreaSnapshot {
     }
 }
 
-/// A module of the bundle, where the pointer finds it on the map: hovering asks of every one on
-/// every frame.
-struct MapTarget {
-    pointer: String,
-    bounds: Rect<Meters>,
-    /// What the module stands over its bounds, for a pick to catch it above the ground.
-    body: Option<StandingBox>,
-    shown: bool,
-    locked: bool,
-}
-
 #[derive(Clone)]
 struct SnapshotCache {
     generation: u64,
@@ -1059,20 +1118,39 @@ pub struct SnapshotParts {
     pub made: u64,
     pub pictured: Pictured,
     pub picture: Arc<Picture>,
-    /// The bundle as its files read now, its ids those of `reader`.
-    pub def: nodes::SceneBundle,
+    /// The bundle's scene as its files read now, its ids those of `reader`.
+    pub doc: Arc<SceneDoc>,
     pub reader: Arc<FolderReader>,
     pub flags: Arc<SceneFlags>,
-    pub modules: Arc<nodes::SceneModules>,
-    /// Whether the map draws each of `modules`, by its place among them.
-    pub shown_modules: Arc<[bool]>,
-    /// Where each of `modules` lies on the ground, by its place among them, when it takes room.
-    pub footings: Arc<[Option<Footing>]>,
-    /// How many modules each folder counted so far holds, by its tree row.
-    inside: Arc<std::sync::Mutex<HashMap<String, usize>>>,
-    pub in_place: Vec<placement::AreaPlacement>,
+    pub in_place: Arc<[placement::AreaPlacement]>,
     pub placement_bounds: Arc<HashMap<String, Rect<Meters>>>,
-    targets: Arc<[MapTarget]>,
+    mapped: Arc<Mapped>,
+}
+
+/// What the map works out of the bundle's modules as it first asks: where each lies on the
+/// ground, and every module that takes room filed by where it does, with how the pointer finds it.
+struct Mapped {
+    content: Content,
+    footings: Derived<Option<Footing>>,
+    placed: OnceLock<Placed>,
+}
+
+/// The modules that take room on the map, filed by the room they take, and the heights between
+/// which their bodies stand.
+struct Placed {
+    grid: NodeGrid<MapTarget>,
+    floor: f32,
+    ceiling: f32,
+}
+
+/// How the pointer finds a module on the map.
+struct MapTarget {
+    /// Whether the pointer may pick it at all.
+    selectable: bool,
+    /// What it stands over its bounds, for a pick to catch it above the ground.
+    body: Option<StandingBox>,
+    shown: bool,
+    locked: bool,
 }
 
 pub struct AreaFrame<'a> {
@@ -1094,8 +1172,9 @@ impl Deref for AreaFrame<'_> {
 
 impl AreaSnapshot {
     /// The snapshot of an open view, made again when the files, the content or the view's flags
-    /// change. Its picture is drawn again only when the content or what's hidden changes, so a
-    /// change to the scene shows without waiting for the folder to load again.
+    /// change. Its picture is drawn again only when the content or what's hidden changes, and its
+    /// scene read again only when its own file changes, so a change to the scene shows without
+    /// waiting for the folder to load again.
     pub(crate) fn for_view(editor: &mut Editor, view_key: &str) -> Option<Self> {
         let project = editor.project.as_ref()?;
         let content = project.content.clone()?;
@@ -1117,7 +1196,7 @@ impl AreaSnapshot {
                 let drawn = current.map(|cache| cache.snapshot.clone());
                 let show_only = view.show_only.clone();
                 let path = view.in_place.clone();
-                let made = snapshot_parts(
+                let made = SnapshotParts::read(
                     editor,
                     &content,
                     &bundle,
@@ -1157,7 +1236,7 @@ impl AreaSnapshot {
             return Self::for_view(editor, &key);
         }
         let content = editor.project.as_ref()?.content.clone()?;
-        let parts = snapshot_parts(editor, &content, bundle, &[], None, None)?;
+        let parts = SnapshotParts::read(editor, &content, bundle, &[], None, None)?;
         Some(Self::from_parts(content, bundle.to_owned(), parts))
     }
 
@@ -1191,14 +1270,14 @@ impl AreaSnapshot {
 
     /// The bundle's own scene, as its files read now.
     pub fn nodes(&self) -> &[SceneNode] {
-        self.def.nodes()
+        self.doc.nodes()
     }
 
     /// The node of the scene a tree row stands for, through the placements edited in place.
     pub(crate) fn scene_node(&self, id: &str) -> Option<&SceneNode> {
         let mut levels = id.split("/in/");
         let top = levels.next()?;
-        let mut node = nodes::node(self.nodes(), top)?;
+        let mut node = self.doc.at(top)?;
         for (pointer, place) in levels.zip(self.in_place.iter()) {
             node = nodes::node(&place.def.scene, &format!("/{pointer}"))?;
         }
@@ -1207,12 +1286,8 @@ impl AreaSnapshot {
 
     /// How many modules the folder of the tree row `id` holds, however deep.
     pub(crate) fn count_inside(&self, id: &str) -> usize {
-        let mut counted = self
-            .inside
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(&count) = counted.get(id) {
-            return count;
+        if !id.contains("/in/") {
+            return self.doc.id(id).map_or(0, |id| self.doc.inside(id));
         }
         let mut count = 0;
         if let Some(node) = self.scene_node(id) {
@@ -1220,12 +1295,11 @@ impl AreaSnapshot {
                 count += usize::from(!nodes::is_folder(child));
             });
         }
-        counted.insert(id.to_owned(), count);
         count
     }
 
     pub(crate) fn module_node(&self, pointer: &str) -> Option<&ModuleNode> {
-        self.modules.get(pointer).map(|module| &module.node)
+        self.doc.module_at(pointer).map(|module| module.node)
     }
 
     pub fn module(&self, pointer: &str) -> Option<&AreaModule> {
@@ -1233,16 +1307,47 @@ impl AreaSnapshot {
     }
 
     pub fn module_bounds(&self, pointer: &str) -> Option<Rect<Meters>> {
-        self.bounds_of(self.modules.get(pointer)?)
+        self.bounds_of(self.doc.module_at(pointer)?)
     }
 
     /// Where `module`, one of the bundle's own, takes room on the map.
-    pub(crate) fn bounds_of(&self, module: &nodes::SceneModule) -> Option<Rect<Meters>> {
+    pub(crate) fn bounds_of(&self, module: DocModule) -> Option<Rect<Meters>> {
         let placed = match module.module() {
-            AreaModule::Blueprint(_) => self.placement_bounds.get(&module.pointer).copied(),
+            AreaModule::Blueprint(_) => self.placement_bounds.get(module.pointer).copied(),
             _ => None,
         };
         shapes::bounds(module.module(), placed)
+    }
+
+    /// Where `module`, one of the bundle's own, lies on the ground, when it takes room.
+    pub(crate) fn footing(&self, module: DocModule) -> Option<&Footing> {
+        let mapped = &self.mapped;
+        mapped
+            .footings
+            .get(module.id, || {
+                let bounds = self.bounds_of(module)?;
+                Some(Footing::of(
+                    &mapped.content,
+                    &self.reader,
+                    &self.picture.area,
+                    module.module(),
+                    bounds,
+                ))
+            })
+            .and_then(Option::as_ref)
+    }
+
+    /// Whether the map draws `module`.
+    pub(crate) fn shown(&self, module: DocModule) -> bool {
+        !self.flags.hidden(module.pointer)
+    }
+
+    /// Every module of the bundle that takes room on the map within `reach`, in no order.
+    pub(crate) fn placed_within(&self, reach: Rect<Meters>) -> impl Iterator<Item = DocModule<'_>> {
+        self.placed()
+            .grid
+            .within(reach)
+            .filter_map(|(id, _, _)| self.doc.doc_module(*id))
     }
 
     /// Whether the map lets the pointer at the module: not hidden, not locked, and not outside the
@@ -1256,11 +1361,7 @@ impl AreaSnapshot {
         if !self.in_place.is_empty() {
             return None;
         }
-        self.targets
-            .iter()
-            .filter(|target| target.shown && !target.locked && target.bounds.contains(ground))
-            .min_by(|a, b| a.bounds.area().total_cmp(&b.bounds.area()))
-            .map(|target| target.pointer.clone())
+        self.smallest_at(ground, false)
     }
 
     /// The module the pointer at `screen` picks: the nearest one whose standing body the pointer's
@@ -1274,63 +1375,110 @@ impl AreaSnapshot {
         if !self.in_place.is_empty() {
             return None;
         }
-        let ray = canvas.ray(screen);
-        let standing = self
-            .targets
-            .iter()
-            .filter(|target| target.shown && !target.locked)
-            .filter_map(|target| Some((target.body?.entered_by(ray)?, target)))
-            .min_by(|a, b| a.0.total_cmp(&b.0))
-            .map(|(_, target)| target.pointer.clone());
+        let standing = self.entered(canvas.ray(screen));
         standing.or_else(|| self.hit(ground?))
     }
 
-    /// The modules the selection `parts` takes on the map: those selected, and every visible,
-    /// unlocked module inside a selected folder.
-    pub fn selected_modules(&self, parts: &HashSet<String>) -> Vec<String> {
-        if parts.is_empty() {
-            return Vec::new();
+    /// The nearest module the map shows and lets the pointer at whose standing body `ray` enters:
+    /// looked for along where the ray passes over the ground between the highest any body stands
+    /// and the lowest ground, a step at a time, nearest first.
+    fn entered(&self, ray: Ray3d) -> Option<String> {
+        let placed = self.placed();
+        let bounds = self.size().bounds();
+        let (from, to) = slab_span(
+            ray,
+            Vec3::new(bounds.min().x, placed.floor, bounds.min().y),
+            Vec3::new(bounds.max().x, placed.ceiling, bounds.max().y),
+        )?;
+        let along = ray.direction.xz().length();
+        let step = if along < 1e-3 {
+            to - from
+        } else {
+            PICK_STEP.0 / along
+        };
+        let ground_at = |t: f32| {
+            let at = ray.get_point(t);
+            Pos::new(at.x, at.z)
+        };
+        let mut best: Option<(f32, NodeId)> = None;
+        let mut start = from;
+        while start <= to {
+            let end = (start + step).min(to);
+            let (a, b) = (ground_at(start), ground_at(end));
+            let reach = Rect::from_points([a, b]);
+            for (id, _, target) in placed.grid.within(reach) {
+                if !target.selectable || !target.shown || target.locked {
+                    continue;
+                }
+                let Some(entered) = target.body.and_then(|body| body.entered_by(ray)) else {
+                    continue;
+                };
+                if best.is_none_or(|(nearest, _)| entered < nearest) {
+                    best = Some((entered, *id));
+                }
+            }
+            if best.is_some_and(|(nearest, _)| nearest <= end) || end >= to {
+                break;
+            }
+            start = end;
         }
-        let folders: Vec<String> = parts
-            .iter()
-            .filter(|part| self.scene_node(part).is_some_and(nodes::is_folder))
-            .map(|folder| format!("{folder}/"))
-            .collect();
-        self.modules
-            .iter()
-            .filter(|module| {
-                parts.contains(&module.pointer)
-                    || (folders
-                        .iter()
-                        .any(|folder| module.pointer.starts_with(folder))
-                        && self.pickable(&module.pointer))
-            })
-            .map(|module| module.pointer.clone())
+        best.and_then(|(_, id)| self.doc.pointer(id))
+            .map(str::to_owned)
+    }
+
+    /// The smallest module the map shows under `ground`, among the locked ones or the others.
+    fn smallest_at(&self, ground: Pos<Meters>, locked: bool) -> Option<String> {
+        self.placed()
+            .grid
+            .at(ground)
+            .filter(|(_, _, target)| target.selectable && target.shown && target.locked == locked)
+            .min_by(|a, b| a.1.area().total_cmp(&b.1.area()))
+            .and_then(|(id, _, _)| self.doc.pointer(*id))
+            .map(str::to_owned)
+    }
+
+    /// The modules the selection `parts` takes on the map: those selected, and every visible,
+    /// unlocked module inside a selected folder, in tree order.
+    pub fn selected_modules(&self, parts: &HashSet<String>) -> Vec<String> {
+        let mut taken: Vec<DocModule> = Vec::new();
+        for part in parts {
+            let Some(id) = self.doc.id(part) else {
+                continue;
+            };
+            match self.doc.doc_module(id) {
+                Some(module) => taken.push(module),
+                None => taken.extend(
+                    self.doc
+                        .modules_under(id)
+                        .filter(|module| self.pickable(module.pointer)),
+                ),
+            }
+        }
+        taken.sort_by_key(|module| module.id);
+        taken.dedup_by_key(|module| module.id);
+        taken
+            .into_iter()
+            .map(|module| module.pointer.to_owned())
             .collect()
     }
 
     /// The box around what the selected folders of `parts` hold on the map, with the label of the
     /// first, when a folder is selected.
     pub fn folder_box(&self, parts: &HashSet<String>) -> Option<(Rect<Meters>, String)> {
-        let folders: Vec<&String> = parts
+        let folders: Vec<NodeId> = parts
             .iter()
-            .filter(|part| self.scene_node(part).is_some_and(nodes::is_folder))
+            .filter_map(|part| self.doc.id(part))
+            .filter(|&id| self.doc.node(id).is_some_and(nodes::is_folder))
             .collect();
-        let label = folders
+        let first = folders
             .iter()
-            .min()
-            .and_then(|folder| self.scene_node(folder))
-            .map(|node| shapes::node_label(node, self.reader.as_ref()))?;
-        let bounds = self
-            .modules
+            .min_by_key(|&&id| self.doc.pointer(id))
+            .and_then(|&id| self.doc.node(id))?;
+        let label = shapes::node_label(first, self.reader.as_ref());
+        let bounds = folders
             .iter()
-            .filter(|module| {
-                self.pickable(&module.pointer)
-                    && is_selectable(module.module())
-                    && folders
-                        .iter()
-                        .any(|folder| module.pointer.starts_with(&format!("{folder}/")))
-            })
+            .flat_map(|&folder| self.doc.modules_under(folder))
+            .filter(|module| self.pickable(module.pointer) && is_selectable(module.module()))
             .filter_map(|module| self.bounds_of(module))
             .reduce(|a, b| a.union(&b))?;
         Some((bounds, label))
@@ -1340,8 +1488,8 @@ impl AreaSnapshot {
     /// placements bring.
     pub(crate) fn object_names(&self) -> HashSet<String> {
         let own = self
-            .modules
-            .iter()
+            .doc
+            .of_kind(AreaModuleKind::Object)
             .filter_map(|module| match module.module() {
                 AreaModule::Object(object) => object.name.clone(),
                 _ => None,
@@ -1352,112 +1500,139 @@ impl AreaSnapshot {
 
     /// The locked module under `ground` a click passes through, for the tip that says what locks it.
     pub(crate) fn locked_hit_at(&self, ground: Pos<Meters>) -> Option<String> {
-        self.targets
-            .iter()
-            .filter(|target| target.shown && target.locked && target.bounds.contains(ground))
-            .min_by(|a, b| a.bounds.area().total_cmp(&b.bounds.area()))
-            .map(|target| target.pointer.clone())
+        self.smallest_at(ground, true)
+    }
+
+    fn placed(&self) -> &Placed {
+        self.mapped.placed.get_or_init(|| {
+            let area = &self.picture.area;
+            let grid = NodeGrid::new(self.doc.modules().filter_map(|module| {
+                let bounds = self.bounds_of(module)?;
+                let height = standing_height(&self.mapped.content, &self.reader, module.module());
+                Some((
+                    module.id,
+                    bounds,
+                    MapTarget {
+                        selectable: is_selectable(module.module()),
+                        body: (height > 0.0).then(|| StandingBox::on(area, bounds, height)),
+                        shown: !self.flags.hidden(module.pointer),
+                        locked: self.flags.locked(module.pointer),
+                    },
+                ))
+            }));
+            let range = area.heights.range();
+            let ceiling = grid
+                .iter()
+                .filter_map(|(_, _, target)| target.body.map(|body| body.top()))
+                .fold(range.highest.0, f32::max);
+            Placed {
+                grid,
+                floor: range.lowest.0,
+                ceiling,
+            }
+        })
     }
 }
 
-/// The snapshot of `bundle` as its files read now, its picture `drawn`'s when that one was drawn
-/// from the same content with the same rows hidden.
-fn snapshot_parts(
-    editor: &Editor,
-    content: &Content,
-    bundle: &str,
-    in_place: &[String],
-    show_only: Option<&str>,
-    drawn: Option<&SnapshotParts>,
-) -> Option<SnapshotParts> {
-    let pictured = match table_of(bundle)? {
-        AreaDef::TABLE => Pictured::Area(content.by_path::<AreaDef>(bundle)?),
-        BlueprintDef::TABLE => Pictured::Blueprint(content.by_path::<BlueprintDef>(bundle)?),
-        _ => return None,
-    };
-    let def = nodes::bundle_of(editor, bundle)?;
-    let reader = editor.reader()?;
-    let in_place = placement::resolve_in_place(editor, def.nodes(), in_place).unwrap_or_default();
-    let mut levels = vec![SceneLevel {
-        under: String::new(),
-        scene: def.nodes(),
-    }];
-    for (depth, place) in in_place.iter().enumerate() {
-        levels.push(SceneLevel {
-            under: place_id(&in_place[..=depth]),
-            scene: &place.def.scene,
-        });
-    }
-    let flags = SceneFlags::of(&levels, show_only);
-    let (picture, placement_bounds) = match drawn.filter(|drawn| drawn.flags.hides_alike(&flags)) {
-        Some(drawn) => (drawn.picture.clone(), drawn.placement_bounds.clone()),
-        None => {
-            let keep = |path: &[&str]| flags.keep(path);
-            let kept = if flags.any_hidden() {
-                area::Kept::Only(&keep)
-            } else {
-                area::Kept::All
-            };
-            let picture = Arc::new(area::picture(content, pictured, kept)?);
-            let placement_bounds = Arc::new(placement::placement_bounds(&picture.placed));
-            (picture, placement_bounds)
+/// How far along the ground a pick looks at a time.
+const PICK_STEP: Meters = Meters(32.0);
+
+/// Where along `ray` it is within the box from `min` to `max`: from where it enters, or its start
+/// when it starts inside, to where it leaves.
+fn slab_span(ray: Ray3d, min: Vec3, max: Vec3) -> Option<(f32, f32)> {
+    let (mut enter, mut exit) = (0.0f32, f32::INFINITY);
+    for axis in 0..3 {
+        let (origin, direction) = (ray.origin[axis], ray.direction[axis]);
+        if direction.abs() < 1e-6 {
+            if origin < min[axis] || origin > max[axis] {
+                return None;
+            }
+            continue;
         }
-    };
-    let modules = nodes::SceneModules::of(def.nodes());
-    let targets = modules
-        .iter()
-        .filter(|module| is_selectable(module.module()))
-        .filter_map(|module| {
-            let bounds = shapes::bounds(
-                module.module(),
-                placement_bounds.get(&module.pointer).copied(),
-            )?;
-            let height = standing_height(content, &reader, module.module());
-            Some(MapTarget {
-                bounds,
-                body: (height > 0.0).then(|| StandingBox::on(&picture.area, bounds, height)),
-                shown: !flags.hidden(&module.pointer),
-                locked: flags.locked(&module.pointer),
-                pointer: module.pointer.clone(),
-            })
+        let t1 = (min[axis] - origin) / direction;
+        let t2 = (max[axis] - origin) / direction;
+        enter = enter.max(t1.min(t2));
+        exit = exit.min(t1.max(t2));
+    }
+    (enter <= exit).then_some((enter, exit))
+}
+
+impl SnapshotParts {
+    /// The snapshot of `bundle` as its files read now. Of `drawn`, made from the same content with
+    /// the same rows asked to show alone, it keeps the scene when its file reads alike, the
+    /// picture when the same rows are hidden, and what the map worked out when it keeps both.
+    fn read(
+        editor: &Editor,
+        content: &Content,
+        bundle: &str,
+        in_place: &[String],
+        show_only: Option<&str>,
+        drawn: Option<&SnapshotParts>,
+    ) -> Option<SnapshotParts> {
+        let pictured = match table_of(bundle)? {
+            AreaDef::TABLE => Pictured::Area(content.by_path::<AreaDef>(bundle)?),
+            BlueprintDef::TABLE => Pictured::Blueprint(content.by_path::<BlueprintDef>(bundle)?),
+            _ => return None,
+        };
+        let def = nodes::bundle_of(editor, bundle)?;
+        let reader = editor.reader()?;
+        let doc = match drawn.filter(|drawn| drawn.doc.bundle().same(&def)) {
+            Some(drawn) => drawn.doc.clone(),
+            None => Arc::new(SceneDoc::of(def)),
+        };
+        let in_place: Arc<[placement::AreaPlacement]> =
+            placement::resolve_in_place(editor, doc.nodes(), in_place)
+                .unwrap_or_default()
+                .into();
+        let mut levels = vec![SceneLevel {
+            under: String::new(),
+            scene: doc.nodes(),
+        }];
+        for (depth, place) in in_place.iter().enumerate() {
+            levels.push(SceneLevel {
+                under: place_id(&in_place[..=depth]),
+                scene: &place.def.scene,
+            });
+        }
+        let flags = SceneFlags::of(&levels, show_only);
+        let drawn_alike = drawn.filter(|drawn| drawn.flags.hides_alike(&flags));
+        let (picture, placement_bounds) = match drawn_alike {
+            Some(drawn) => (drawn.picture.clone(), drawn.placement_bounds.clone()),
+            None => {
+                let keep = |path: &[&str]| flags.keep(path);
+                let kept = if flags.any_hidden() {
+                    area::Kept::Only(&keep)
+                } else {
+                    area::Kept::All
+                };
+                let picture = Arc::new(area::picture(content, pictured, kept)?);
+                let placement_bounds = Arc::new(placement::placement_bounds(&picture.placed));
+                (picture, placement_bounds)
+            }
+        };
+        let mapped = match drawn_alike
+            .filter(|drawn| Arc::ptr_eq(&drawn.doc, &doc) && Arc::ptr_eq(&drawn.picture, &picture))
+        {
+            Some(drawn) => drawn.mapped.clone(),
+            None => Arc::new(Mapped {
+                content: content.clone(),
+                footings: Derived::of(&doc),
+                placed: OnceLock::new(),
+            }),
+        };
+        static MADE: AtomicU64 = AtomicU64::new(0);
+        Some(SnapshotParts {
+            made: MADE.fetch_add(1, Ordering::Relaxed),
+            pictured,
+            picture,
+            doc,
+            reader,
+            flags: Arc::new(flags),
+            in_place,
+            placement_bounds,
+            mapped,
         })
-        .collect();
-    let shown_modules = modules
-        .iter()
-        .map(|module| !flags.hidden(&module.pointer))
-        .collect();
-    let footings = modules
-        .iter()
-        .map(|module| {
-            let bounds = shapes::bounds(
-                module.module(),
-                placement_bounds.get(&module.pointer).copied(),
-            )?;
-            Some(Footing::of(
-                content,
-                &reader,
-                &picture.area,
-                module.module(),
-                bounds,
-            ))
-        })
-        .collect();
-    static MADE: AtomicU64 = AtomicU64::new(0);
-    Some(SnapshotParts {
-        made: MADE.fetch_add(1, Ordering::Relaxed),
-        pictured,
-        picture,
-        modules: Arc::new(modules),
-        shown_modules,
-        footings,
-        inside: Arc::default(),
-        def,
-        reader,
-        flags: Arc::new(flags),
-        in_place,
-        placement_bounds,
-        targets,
-    })
+    }
 }
 
 /// The tree row of the placement edited in place at the end of `chain`.
@@ -1505,6 +1680,34 @@ fn standing_height(content: &Content, reader: &FolderReader, module: &AreaModule
 }
 
 impl AreaFrame<'_> {
+    /// The ground the canvas may show, as far as the map goes: what lies between the eye and where
+    /// the rays through the canvas's corners come down to the lowest ground, or the whole map when
+    /// one of them never does.
+    pub(crate) fn seen_ground(&self) -> Rect<Meters> {
+        let map = self.size().bounds();
+        let floor = self.area().heights.range().lowest.0;
+        let screen = self.canvas.screen;
+        let eye = self.canvas.view().eye();
+        let mut seen = vec![Pos::new(eye.x, eye.z)];
+        for corner in [
+            screen.left_top(),
+            screen.right_top(),
+            screen.left_bottom(),
+            screen.right_bottom(),
+        ] {
+            let ray = self.canvas.ray(corner);
+            let along = (floor - ray.origin.y) / ray.direction.y;
+            if ray.direction.y > -1e-4 || along < 0.0 {
+                return map;
+            }
+            let down = ray.get_point(along);
+            seen.push(Pos::new(down.x, down.z));
+        }
+        Rect::from_points(seen)
+            .intersection(&map)
+            .unwrap_or_else(|| Rect::new(map.min(), Size::new(0.0, 0.0)))
+    }
+
     /// Where the scene being edited stands on the map, and how it is turned: the placement edited
     /// in place, or the bundle's own origin.
     pub fn origin(&self) -> (Pos<Meters>, Degrees) {
@@ -1597,12 +1800,12 @@ pub fn drop_gone(editor: &mut Editor) -> Option<String> {
     ) {
         return None;
     }
-    let scene = nodes::scene_of(editor, &bundle);
+    let read = nodes::bundle_of(editor, &bundle);
     let before = editor.selection.parts.len();
-    editor
-        .selection
-        .parts
-        .retain(|part| nodes::node(&scene, part).is_some());
+    editor.selection.parts.retain(|part| {
+        read.as_ref()
+            .is_some_and(|read| nodes::node(read.nodes(), part).is_some())
+    });
     let gone = before - editor.selection.parts.len();
     let what = match (gone, editor.selection.parts.is_empty()) {
         (0, _) => return None,

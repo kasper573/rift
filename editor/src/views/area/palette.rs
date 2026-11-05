@@ -3,8 +3,8 @@
 use std::collections::BTreeMap;
 
 use engine::core::content::parent_of;
-use engine::systems::area::AreaModule;
 use engine::systems::area::prop::PropDef;
+use engine::systems::area::{AreaModule, AreaModuleKind};
 use ui::egui;
 use ui::egui::{Rect as ERect, Stroke as EStroke, Ui, Vec2};
 use ui::input;
@@ -21,7 +21,7 @@ const GAP: f32 = 8.0;
 pub fn show(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &AreaSnapshot) {
     let content = &snapshot.content;
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
-    for module in snapshot.modules.iter() {
+    for module in snapshot.doc.of_kind(AreaModuleKind::Prop) {
         if let AreaModule::Prop(prop) = module.module()
             && let Some(path) = snapshot.reader.path_of(prop.prop)
         {
