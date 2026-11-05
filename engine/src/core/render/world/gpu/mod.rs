@@ -2,5 +2,8 @@
 //! queued straight into bevy's opaque, prepass and shadow phases with pipelines built on the mesh
 //! pipeline's view layouts, so it is lit, shadowed, occluded and smoothed like every mesh.
 
+pub mod atlas;
 pub mod draw;
+pub mod residency;
+pub mod slab;
 pub mod upload;

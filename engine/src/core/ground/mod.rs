@@ -7,6 +7,7 @@
 //! and blocking paint from them.
 
 use std::io::Cursor;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use bevy::log::warn;
@@ -37,7 +38,8 @@ pub const TILE_SIDE: Meters = Meters(CHUNK_SIDE.0 * TILE_CHUNKS as f32);
 /// not loaded.
 pub const OVERVIEW_STRIDE: u32 = 8;
 
-const TILE_PIXELS: u32 = TILE_SIDE.0 as u32 * SAMPLES_PER_METER;
+/// The pixels along a tile's side, and the samples but the one it shares with the next tile.
+pub const TILE_PIXELS: u32 = TILE_SIDE.0 as u32 * SAMPLES_PER_METER;
 
 /// A stretch of ground in whole metres, as an area's and a blueprint's canvas are measured.
 #[derive(JsonSchema, Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -614,6 +616,15 @@ mod values {
 
 pub use values::{Level, Value as GroundValue, WaterLevel};
 
+/// Which values a tile of the ground holds, as [`GroundGrid::version`] tells it.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
+pub struct TileVersion(u64);
+
+fn next_revision() -> u64 {
+    static NEXT: AtomicU64 = AtomicU64::new(1);
+    NEXT.fetch_add(1, Ordering::Relaxed)
+}
+
 /// A share, 0 to 1, of something over the whole of a ground, as coarse as its maker likes: a byte
 /// a pixel, the pixels spread evenly over the ground whatever its size, read between them. An
 /// area's rain map is one, the share of the downpour that falls on each stretch of it.
@@ -799,6 +810,8 @@ struct Tile<T> {
     values: Vec<T>,
     peaks: OnceLock<Peaks<T>>,
     encoded: Option<Arc<[u8]>>,
+    /// Which values these are: no other tile, nor this one once a value changes, has the same.
+    revision: u64,
 }
 
 impl<T> Tile<T> {
@@ -868,6 +881,7 @@ impl<T: Value> GroundGrid<T> {
                     rows,
                     values,
                     peaks: OnceLock::new(),
+                    revision: next_revision(),
                     encoded: None,
                 };
                 Arc::new(Slot::new(Some(Arc::new(tile)), None))
@@ -903,6 +917,7 @@ impl<T: Value> GroundGrid<T> {
             rows,
             values: T::decode(pixels),
             peaks: OnceLock::new(),
+            revision: next_revision(),
             encoded: Some(Arc::from(bytes)),
         }));
         Ok(())
@@ -912,6 +927,79 @@ impl<T: Value> GroundGrid<T> {
     /// overview.
     pub fn is_loaded(&self, at: TileAt) -> bool {
         self.tiles[self.grid.index(at)].is_loaded()
+    }
+
+    /// Which values the tile at `at` holds now: the same version only while they are the same
+    /// values, none for a tile not loaded, blank or past the ground.
+    pub fn version(&self, at: TileAt) -> TileVersion {
+        let inside = at.column < self.grid.across && at.row < self.grid.down;
+        TileVersion(
+            inside
+                .then(|| self.tiles[self.grid.index(at)].tile())
+                .flatten()
+                .map_or(0, |tile| tile.revision),
+        )
+    }
+
+    /// The `columns` × `rows` values from `first`, row by row, which may begin before the grid
+    /// does: each as [`GroundGrid::index`] gives it, the nearest past every edge.
+    pub fn block(&self, first: (i64, i64), columns: u32, rows: u32) -> Vec<T> {
+        let start = (first.0.max(0) as u32, first.1.max(0) as u32);
+        let lead = (
+            (i64::from(start.0) - first.0) as u32,
+            (i64::from(start.1) - first.1) as u32,
+        );
+        let inner_columns = columns.saturating_sub(lead.0).max(1);
+        let inner_rows = rows.saturating_sub(lead.1).max(1);
+        let inner = self.window(start.0, start.1, inner_columns, inner_rows);
+        let mut values = Vec::with_capacity((columns * rows) as usize);
+        for row in 0..rows {
+            let row = row.saturating_sub(lead.1).min(inner_rows - 1);
+            for column in 0..columns {
+                values.push(inner.at(column.saturating_sub(lead.0).min(inner_columns - 1), row));
+            }
+        }
+        values
+    }
+
+    /// Overview values across and down.
+    pub fn overview_dims(&self) -> (u32, u32) {
+        self.grid.overview_dims()
+    }
+
+    /// The overview values at each of `columns` in each of `rows`, row by row, as the tiles hold
+    /// them now: each read from its tile where that is loaded, so they follow its edits.
+    pub fn overview_at(&self, columns: &[u32], rows: &[u32]) -> Vec<T> {
+        let mut reader = self.reader();
+        let mut values = Vec::with_capacity(columns.len() * rows.len());
+        for &row in rows {
+            for &column in columns {
+                let (column, row) = self.grid.overview_source(column, row);
+                values.push(reader.index(column, row));
+            }
+        }
+        values
+    }
+
+    /// The overview values the tile at `at` holds, as their first and how many across and down.
+    pub fn overview_span(&self, at: TileAt) -> ((u32, u32), u32, u32) {
+        let (first_column, first_row) = self.grid.first(at);
+        let (columns, rows) = self.grid.tile_dims(at);
+        let (across, down) = self.grid.overview_dims();
+        let (low_column, high_column) = self.grid.overview_within(
+            first_column,
+            first_column + columns,
+            self.grid.columns,
+            across,
+        );
+        let (low_row, high_row) =
+            self.grid
+                .overview_within(first_row, first_row + rows, self.grid.rows, down);
+        (
+            (low_column, low_row),
+            high_column.saturating_sub(low_column),
+            high_row.saturating_sub(low_row),
+        )
     }
 
     /// Loads the tile at `at` from its file, unless it is loaded or has none; refuses a file that
@@ -1017,6 +1105,7 @@ impl<T: Value> GroundGrid<T> {
             rows,
             values,
             peaks: OnceLock::new(),
+            revision: next_revision(),
             encoded: None,
         })
     }
@@ -1170,11 +1259,13 @@ impl<T: Value> GroundGrid<T> {
                     rows,
                     values: vec![blank; (columns * rows) as usize],
                     peaks: OnceLock::new(),
+                    revision: next_revision(),
                     encoded: None,
                 })
             });
             let tile = Arc::make_mut(tile);
             tile.encoded = None;
+            tile.revision = next_revision();
             tile.values[local] = value;
             if let Some(peaks) = tile.peaks.get_mut() {
                 let local = local as u32;
@@ -1306,6 +1397,7 @@ impl TileGrid {
             rows,
             values: T::decode(pixels),
             peaks: OnceLock::new(),
+            revision: next_revision(),
             encoded: Some(Arc::from(bytes)),
         })
     }
@@ -1335,6 +1427,26 @@ impl TileGrid {
             (column * OVERVIEW_STRIDE + middle).min(self.columns - 1),
             (row * OVERVIEW_STRIDE + middle).min(self.rows - 1),
         )
+    }
+
+    /// The overview values along one way whose values lie from `start` up to `end`, of `values`
+    /// along it and `count` overview values: the first of them and the one past the last.
+    fn overview_within(&self, start: u32, end: u32, values: u32, count: u32) -> (u32, u32) {
+        let middle = if self.seam > 0 {
+            0
+        } else {
+            OVERVIEW_STRIDE / 2
+        };
+        let low = start
+            .saturating_sub(middle)
+            .div_ceil(OVERVIEW_STRIDE)
+            .min(count);
+        let high = if end >= values {
+            count
+        } else {
+            (end.saturating_sub(1 + middle) / OVERVIEW_STRIDE + 1).min(count)
+        };
+        (low, high.max(low))
     }
 
     /// The overview value nearest the grid's `(column, row)`.

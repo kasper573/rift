@@ -279,6 +279,60 @@ fn a_footprint_is_refused_when_it_crosses_itself_or_was_fitted_to_a_model_since_
 }
 
 #[test]
+fn ground_reads_in_blocks_and_overviews_that_follow_its_edits_each_tile_versioned_by_its_values() {
+    let size = GroundSize {
+        width: 512,
+        height: 256,
+    };
+    let pixel = |column: u32, row: u32| ((column / 7 + row / 5) % 4) as u8;
+    let paint = PaintMap::from_fn(size, pixel);
+    let (west, east) = (TileAt { column: 0, row: 0 }, TileAt { column: 1, row: 0 });
+    let read = [paint.version(west), paint.version(east)];
+    let mut edited = paint.clone();
+    edited.set(596, 4, 9);
+    assert_eq!(
+        [paint.version(west), paint.version(east)],
+        read,
+        "the copy set apart"
+    );
+    assert_eq!(edited.version(west), read[0], "a tile nothing was set in");
+    assert_ne!(edited.version(east), read[1], "the tile set");
+
+    assert_eq!(
+        edited.block((-1, -1), 3, 3),
+        [
+            [pixel(0, 0), pixel(0, 0), pixel(1, 0)],
+            [pixel(0, 0), pixel(0, 0), pixel(1, 0)],
+            [pixel(0, 1), pixel(0, 1), pixel(1, 1)],
+        ]
+        .concat(),
+        "from before the start, the nearest past the edge"
+    );
+    assert_eq!(
+        edited.block((1023, 10), 3, 1),
+        [pixel(1023, 10); 3],
+        "past the far edge"
+    );
+    assert_eq!(
+        edited.block((595, 4), 3, 1),
+        [pixel(595, 4), 9, pixel(597, 4)]
+    );
+
+    assert_eq!(
+        edited.overview_at(&[74], &[0]),
+        [9],
+        "the overview follows the edit"
+    );
+    assert_eq!(paint.overview_at(&[74], &[0]), [pixel(596, 4)]);
+    assert_eq!(edited.overview_span(east), ((64, 0), 64, 64));
+    assert_eq!(
+        Heightfield::flat(size, HEIGHTS).overview_span(west),
+        ((0, 0), 65, 65),
+        "heights' tiles share the samples on their seam"
+    );
+}
+
+#[test]
 fn an_areas_heights_paint_water_and_rain_write_back_as_they_were_read() {
     let size = GroundSize {
         width: 8,

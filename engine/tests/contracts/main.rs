@@ -24,6 +24,7 @@ mod probe;
 mod quest;
 mod reach;
 mod region;
+mod residency;
 mod safe_zone;
 mod scenery;
 mod shop;

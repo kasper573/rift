@@ -3,12 +3,15 @@
 //! so much arriving at once costs many frames a little rather than one frame a lot; behind a
 //! cover, where a long frame shows nothing, far more. What makes meshes asks whether there is room
 //! to stage more, so what waits stays a few frames' worth rather than all that is wanted at once.
+//! Whatever else writes the world's data to the GPU spends the same budget, so a frame's uploads
+//! stay within it whoever makes them.
 //! What waits for its meshes can ask whether they are on the GPU yet, so it never stands in for
 //! what it replaces too soon.
 
 use std::collections::VecDeque;
 use std::sync::{Arc, Mutex};
 
+use bevy::ecs::system::SystemParam;
 use bevy::mesh::Mesh3d;
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
@@ -23,6 +26,8 @@ pub struct UploadPlugin;
 impl Plugin for UploadPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<StagedMeshes>()
+            .init_resource::<FrameUploads>()
+            .add_systems(First, begin_frame)
             .add_systems(Last, send_meshes);
         let arrivals = Arrivals::default();
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
@@ -55,6 +60,22 @@ pub fn has_room(world: &World) -> bool {
         .is_none_or(|staged| staged.bytes < per_frame(covered) * FRAMES_AHEAD)
 }
 
+/// What is left of the frame's budget for writing the world's data to the GPU.
+#[derive(SystemParam)]
+pub struct UploadBudget<'w> {
+    uploads: ResMut<'w, FrameUploads>,
+    transition: Option<Res<'w, ActiveTransition>>,
+}
+
+impl UploadBudget<'_> {
+    /// Spends `bytes`, if what is left holds them: what is larger than the whole budget goes
+    /// alone in a frame, the first thing spent.
+    pub fn spend(&mut self, bytes: usize) -> bool {
+        let covered = self.transition.as_deref().is_some_and(hides_world);
+        self.uploads.spend(bytes, per_frame(covered))
+    }
+}
+
 /// Whether every mesh `entity` and everything under it draws is on the GPU, so it shows whole.
 pub fn sent(world: &World, entity: Entity) -> bool {
     let Some(arrivals) = world.get_resource::<Arrivals>() else {
@@ -80,7 +101,7 @@ pub fn mesh_sent(world: &World, mesh: &Handle<Mesh>) -> bool {
     })
 }
 
-/// The most bytes of staged meshes handed to bevy in a frame: a mesh larger than what is left goes
+/// The most bytes written to the GPU for the world in a frame: what is larger than what is left goes
 /// in a frame of its own.
 const PER_FRAME: usize = 4 << 20;
 /// The same while a cover hides the world, so what stands behind it stands in a few frames.
@@ -97,24 +118,43 @@ struct StagedMeshes {
     bytes: usize,
 }
 
-/// Hands the staged meshes to bevy, oldest first, as many as the frame's budget allows. A mesh
-/// whose every holder went before it was sent is dropped unsent.
+/// The bytes spent this frame on writing the world's data to the GPU.
+#[derive(Resource, Default)]
+pub struct FrameUploads {
+    spent: usize,
+}
+
+impl FrameUploads {
+    fn spend(&mut self, bytes: usize, budget: usize) -> bool {
+        if self.spent > 0 && self.spent + bytes > budget {
+            return false;
+        }
+        self.spent += bytes;
+        true
+    }
+}
+
+fn begin_frame(mut uploads: ResMut<FrameUploads>) {
+    uploads.spent = 0;
+}
+
+/// Hands the staged meshes to bevy, oldest first, as many as what is left of the frame's budget
+/// allows. A mesh whose every holder went before it was sent is dropped unsent.
 fn send_meshes(
     mut staged: ResMut<StagedMeshes>,
     mut meshes: ResMut<Assets<Mesh>>,
+    mut uploads: ResMut<FrameUploads>,
     transition: Option<Res<ActiveTransition>>,
 ) {
     if staged.queue.is_empty() {
         return;
     }
     let budget = per_frame(transition.is_some_and(|transition| hides_world(&transition)));
-    let mut left = budget;
     while let Some((_, next)) = staged.queue.front() {
         let bytes = bytes_of(next);
-        if bytes > left && left < budget {
+        if !uploads.spend(bytes, budget) {
             break;
         }
-        left = left.saturating_sub(bytes);
         staged.bytes = staged.bytes.saturating_sub(bytes);
         let Some((handle, mesh)) = staged.queue.pop_front() else {
             break;
