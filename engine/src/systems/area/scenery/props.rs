@@ -17,7 +17,7 @@ use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
 
 use super::plan::{KEEP_SHARE, Plan, Planner, Seen};
 use super::regions::{self, Cut, Merge, Region, Unstood};
-use super::{Budget, Making, Merged, PLACEMENT_CELL, Streaming, Streams, mesh_bytes, take_away};
+use super::{Budget, Making, Merged, PLACEMENT_CELL, Streaming, Streams, take_away};
 use crate::core::assets;
 use crate::core::content::Content;
 use crate::core::content::media::GltfInfos;
@@ -25,6 +25,7 @@ use crate::core::ground::Heightfield;
 use crate::core::math::Rect;
 use crate::core::render::camera::Lens;
 use crate::core::render::world::fade::Fades;
+use crate::core::render::world::gpu::upload;
 use crate::core::render::world::lod::{MeshLevels, Simplifier};
 use crate::core::render::world::material::{MaterialLook, MaterialLooks};
 use crate::core::render::world::merged::{
@@ -158,7 +159,7 @@ pub(super) fn stand(
                 .props
                 .scenes
                 .get(index)
-                .is_none_or(|&scene| !model_stands(world, scene))
+                .is_none_or(|&scene| !model_stands(world, scene) || !upload::sent(world, scene))
         }) {
             unstood.add(planner.regions.bounds(*leaf));
         }
@@ -329,11 +330,7 @@ fn stand_merge(
     let Some(merged) = props.merged.get_mut(&merge) else {
         return false;
     };
-    if let Some(stands) = merged.rise(
-        budget,
-        |next| mesh_bytes(&next.mesh),
-        |next| Some(spawn_merged(world, next, root)),
-    ) {
+    if let Some(stands) = merged.rise(world, |world, next| Some(spawn_merged(world, next, root))) {
         return stands;
     }
     let Merged::Waiting(gathering) = merged else {
@@ -352,7 +349,8 @@ fn stand_merge(
             _ => None,
         })
         .collect();
-    let Some(ready) = ready.filter(|_| budget.take(|budget| &mut budget.merges)) else {
+    let Some(ready) = ready.filter(|_| budget.stage() && budget.take(|budget| &mut budget.merges))
+    else {
         return false;
     };
     let shown = std::mem::take(&mut shown.props);
@@ -558,7 +556,7 @@ fn spawn_merged(world: &mut World, merged: MergedMesh, root: Entity) -> Entity {
         mesh,
         bounds,
     } = merged;
-    let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
+    let mesh = upload::stage(world, mesh);
     let mut merged = world.spawn((
         Mesh3d(mesh),
         MeshMaterial3d(material),

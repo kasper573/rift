@@ -81,6 +81,7 @@ impl Plugin for WorldScenePlugin {
             HierarchyPropagatePlugin::<RenderLayers>::new(PostUpdate),
             body::BodyPlugin,
             gpu::draw::GpuDrawPlugin,
+            gpu::upload::UploadPlugin,
             haze::HazePlugin,
             layers::JointLayersPlugin,
         ))

@@ -21,9 +21,7 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 
 use super::plan::{KEEP_SHARE, Plan, Planner, Seen};
 use super::regions::{Cut, Merge, Region, Unstood};
-use super::{
-    Budget, Making, Merged, PLACEMENT_CELL, Streaming, distance_to, mesh_bytes, take_away,
-};
+use super::{Budget, Making, Merged, PLACEMENT_CELL, Streaming, distance_to, take_away};
 use crate::core::assets;
 use crate::core::content::Content;
 use crate::core::content::media::GltfInfos;
@@ -32,6 +30,7 @@ use crate::core::ground::{Heightfield, PaintMap, SAMPLES_PER_METER, WaterSurface
 use crate::core::math::{Pos, Rect, Size};
 use crate::core::render::camera::Lens;
 use crate::core::render::world::cover::{self, CopyModel, CoverMaterial};
+use crate::core::render::world::gpu::upload;
 use crate::core::render::world::lod::GRAIN_PIXELS;
 use crate::core::units::{MeterSize, Meters, Radians, Seconds};
 use crate::core::vfx::ParamFill;
@@ -277,19 +276,22 @@ pub(super) fn stand(
     for &key in &plan.covers.near {
         match streaming.covers.chunks.get(&key) {
             None => missing.push(key),
-            Some(parts) if parts.iter().any(|&part| cover::strewing(world, part)) => {
+            Some(parts) if parts.iter().any(|&part| unshown(world, part)) => {
                 unstood.add(key.chunk.bounds());
             }
             Some(_) => {}
         }
     }
     for key in missing {
-        if !unstood_chunks.is_empty() || !budget.take(|budget| &mut budget.covers) {
+        if !unstood_chunks.is_empty()
+            || !budget.stage()
+            || !budget.take(|budget| &mut budget.covers)
+        {
             unstood_chunks.insert(key.chunk);
             continue;
         }
         let parts = spawn_cover_chunk(world, streaming, key, root);
-        if parts.iter().any(|&part| cover::strewing(world, part)) {
+        if parts.iter().any(|&part| unshown(world, part)) {
             unstood.add(key.chunk.bounds());
         }
         streaming.covers.chunks.insert(key, parts);
@@ -356,6 +358,12 @@ pub(super) fn clear(
         }
         keep
     });
+}
+
+/// Whether a part of a cover's chunk is yet to show whole: its copies still being strewn, or its
+/// meshes not yet on the GPU.
+fn unshown(world: &World, part: Entity) -> bool {
+    cover::strewing(world, part) || !upload::sent(world, part)
 }
 
 /// Every chunk of every piece in the leaves of `cut` the view takes in, or would within `share`
@@ -518,11 +526,9 @@ fn stand_merge(
 ) -> bool {
     let covers = &mut streaming.covers;
     let merged = covers.merged.entry(merge).or_insert(Merged::Waiting(()));
-    if let Some(stands) = merged.rise(
-        budget,
-        |next| mesh_bytes(&next.mesh),
-        |next| spawn_merged(world, &covers.layers, next, root),
-    ) {
+    if let Some(stands) = merged.rise(world, |world, next| {
+        spawn_merged(world, &covers.layers, next, root)
+    }) {
         return stands;
     }
     let mut far_pieces = Vec::with_capacity(pieces.len());
@@ -552,7 +558,7 @@ fn stand_merge(
             model,
         });
     }
-    if !budget.take(|budget| &mut budget.merges) {
+    if !budget.stage() || !budget.take(|budget| &mut budget.merges) {
         return false;
     }
     let region = FarRegion {
@@ -583,7 +589,7 @@ fn spawn_merged(
         Some(strewn) => cover::merged_material(world, &strewn.material, far.material.as_ref())?,
         None => layers[layer].blended.clone(),
     };
-    let mesh = world.resource_mut::<Assets<Mesh>>().add(far.mesh);
+    let mesh = upload::stage(world, far.mesh);
     Some(
         world
             .spawn((
@@ -951,7 +957,7 @@ fn spawn_cover_chunk(
         .into_iter()
         .filter_map(|mesh| {
             let bounds = mesh.get_aabb()?;
-            let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
+            let mesh = upload::stage(world, mesh);
             Some(
                 world
                     .spawn((

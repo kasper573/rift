@@ -3,3 +3,4 @@
 //! pipeline's view layouts, so it is lit, shadowed, occluded and smoothed like every mesh.
 
 pub mod draw;
+pub mod upload;

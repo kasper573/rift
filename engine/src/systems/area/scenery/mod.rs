@@ -50,6 +50,7 @@ use crate::core::render::camera::WorldPicture;
 use crate::core::render::present::AreaGrade;
 use crate::core::render::sample::FrameWork;
 use crate::core::render::world::clouds::{CloudDrift, CloudSheet};
+use crate::core::render::world::gpu::upload;
 use crate::core::render::world::haze::Haze;
 use crate::core::render::world::lights::{self, Flicker};
 use crate::core::render::world::lod::MeshLevels;
@@ -185,6 +186,7 @@ pub fn spawn(
         stood: Stood::default(),
         loading: HashMap::default(),
         making: HashMap::default(),
+        reshaped: HashMap::default(),
         missing: 0,
     };
     world.resource_mut::<Streams>().0.insert(root, streaming);
@@ -383,6 +385,9 @@ struct Streaming {
     loading: HashMap<TileAt, Task<()>>,
     /// The chunks of ground being made, each its mesh and the paint under it.
     making: HashMap<Node, Making<(Mesh, ChunkPaint)>>,
+    /// The chunks of ground laid anew, each with its new mesh and paint, showing as they were until
+    /// the new mesh is on the GPU.
+    reshaped: HashMap<Entity, (Handle<Mesh>, ChunkPaint)>,
     /// How many chunks of ground and regions of scenery the plan takes in have yet to stand.
     missing: u32,
 }
@@ -397,7 +402,7 @@ impl Streaming {
 
     /// Whether streaming has nothing to do until the sight moves.
     fn idle(&self) -> bool {
-        self.sight.is_none() || self.stands() && self.loading.is_empty()
+        self.sight.is_none() || self.stands() && self.loading.is_empty() && self.reshaped.is_empty()
     }
 }
 
@@ -430,10 +435,6 @@ const OVERVIEW_LEVEL: u32 = OVERVIEW_STRIDE.trailing_zeros();
 /// How placements are filed to be found near the view, and the side of the leaves of the
 /// quadtree the props stand over.
 const PLACEMENT_CELL: Meters = Meters(32.0);
-/// How many bytes of new meshes a frame sends to the GPU: what stands past them waits for the
-/// next frame, so a view taking in much at once costs many frames a little rather than one frame a
-/// lot. A piece larger than this stands in a frame of its own.
-const MESH_BYTES_PER_FRAME: usize = 2 << 20;
 /// How much stands in one frame, and among the props how many whose model no earlier prop asked
 /// for: a model's load falls on the frames after the prop that starts it.
 const COVERS_PER_FRAME: usize = 16;
@@ -498,13 +499,14 @@ fn stream_plan(world: &mut World, root: Entity, streaming: &mut Streaming, simpl
     else {
         return;
     };
+    reshape(world, streaming);
     if streaming.whole && streaming.loading.is_empty() {
         if simplified {
             props::level_props(world, streaming, &plan.seen);
         }
         return;
     }
-    let mut budget = Budget::new();
+    let mut budget = Budget::new(world);
     let ground_missing = stream_ground(world, streaming, &plan, &mut budget);
     let props_unstood = props::stand(world, streaming, &planner, &plan, root, &mut budget);
     let covers_unstood = covers::stand(world, streaming, &planner, &plan, root, &mut budget);
@@ -519,25 +521,28 @@ fn stream_plan(world: &mut World, root: Entity, streaming: &mut Streaming, simpl
     streaming.whole = !budget.spent;
 }
 
-/// What a frame may still stand.
+/// What a frame may still stand: the meshes it stands go to the GPU as the upload stage sends
+/// them, so new ones are made only while it has room, while the entities and scenes it spawns
+/// cost the frame itself.
 struct Budget {
-    mesh_bytes: usize,
     covers: usize,
     props: usize,
     fresh: usize,
     merges: usize,
+    /// Whether the upload stage takes more meshes this frame.
+    staging: bool,
     /// Whether the frame left something to stand.
     spent: bool,
 }
 
 impl Budget {
-    fn new() -> Budget {
+    fn new(world: &World) -> Budget {
         Budget {
-            mesh_bytes: MESH_BYTES_PER_FRAME,
             covers: COVERS_PER_FRAME,
             props: PROPS_PER_FRAME,
             fresh: FRESH_MODELS_PER_FRAME,
             merges: MERGES_PER_FRAME,
+            staging: upload::has_room(world),
             spent: false,
         }
     }
@@ -547,15 +552,13 @@ impl Budget {
         self.spent = true;
     }
 
-    /// Whether the frame sends meshes of `bytes` to the GPU: when it has room for them, or has sent
-    /// none yet.
-    fn send(&mut self, bytes: usize) -> bool {
-        if bytes > self.mesh_bytes && self.mesh_bytes < MESH_BYTES_PER_FRAME {
+    /// Whether the frame makes or stands meshes for the GPU: once the upload stage has room for
+    /// them.
+    fn stage(&mut self) -> bool {
+        if !self.staging {
             self.spent = true;
-            return false;
         }
-        self.mesh_bytes = self.mesh_bytes.saturating_sub(bytes);
-        true
+        self.staging
     }
 
     fn take(&mut self, left: fn(&mut Budget) -> &mut usize) -> bool {
@@ -602,11 +605,11 @@ fn stream_ground(
         let making = streaming.making.entry(node).or_insert_with(|| {
             Making::Task(make_chunk(&streaming.heights, &streaming.paint, node))
         });
-        let Some((mesh, _)) = making.made() else {
+        if making.made().is_none() {
             budget.defer();
             continue;
-        };
-        if !budget.send(mesh_bytes(mesh)) {
+        }
+        if !budget.stage() {
             break;
         }
         let Some((mesh, paint)) = streaming.making.remove(&node).and_then(Making::into_made) else {
@@ -617,11 +620,18 @@ fn stream_ground(
     }
     let unstood = wanted
         .iter()
-        .filter(|&node| !streaming.stood.ground.contains_key(node))
+        .filter(|&node| {
+            streaming
+                .stood
+                .ground
+                .get(node)
+                .is_none_or(|&chunk| !upload::sent(world, chunk))
+        })
         .count() as u32;
     if unstood == 0 {
         for node in gone {
             if let Some(entity) = streaming.stood.ground.remove(&node) {
+                streaming.reshaped.remove(&entity);
                 take_down_chunk(world, &mut streaming.paints, entity);
             }
         }
@@ -728,49 +738,42 @@ impl NodeRect {
 }
 
 /// What stands of a merged region: waiting on what it merges, its meshes `M` being made, or
-/// standing, those made rising as many a frame as the budget sends.
+/// standing.
 enum Merged<W, M> {
     Waiting(W),
     Merging(Making<Vec<M>>),
-    Standing { stood: Vec<Entity>, rising: Vec<M> },
+    Standing(Vec<Entity>),
 }
 
 impl<W, M> Merged<W, M> {
-    /// Stands what is made, as many a frame as `budget` sends of the `bytes` each takes, each by
-    /// `spawn`: whether all of it stands, none while waiting.
+    /// Stands what is made, each by `spawn`, once it is: whether all of it stands with its meshes
+    /// on the GPU, none while waiting.
     fn rise(
         &mut self,
-        budget: &mut Budget,
-        bytes: impl Fn(&M) -> usize,
-        mut spawn: impl FnMut(M) -> Option<Entity>,
+        world: &mut World,
+        mut spawn: impl FnMut(&mut World, M) -> Option<Entity>,
     ) -> Option<bool> {
         if let Merged::Merging(making) = self {
             let Some(made) = making.made() else {
                 return Some(false);
             };
-            let rising = std::mem::take(made);
-            *self = Merged::Standing {
-                stood: Vec::new(),
-                rising,
-            };
+            let made = std::mem::take(made);
+            *self = Merged::Standing(
+                made.into_iter()
+                    .filter_map(|next| spawn(world, next))
+                    .collect(),
+            );
         }
-        let Merged::Standing { stood, rising } = self else {
+        let Merged::Standing(stood) = self else {
             return None;
         };
-        while rising.last().is_some_and(|next| budget.send(bytes(next))) {
-            if let Some(next) = rising.pop()
-                && let Some(standing) = spawn(next)
-            {
-                stood.push(standing);
-            }
-        }
-        Some(rising.is_empty())
+        Some(stood.iter().all(|&mesh| upload::sent(world, mesh)))
     }
 
     /// What stands of the region.
     fn stood(&self) -> &[Entity] {
         match self {
-            Merged::Standing { stood, .. } => stood,
+            Merged::Standing(stood) => stood,
             Merged::Waiting(_) | Merged::Merging(_) => &[],
         }
     }
@@ -804,11 +807,6 @@ impl<T> Making<T> {
     }
 }
 
-/// The bytes `mesh` takes on the GPU.
-fn mesh_bytes(mesh: &Mesh) -> usize {
-    mesh.get_vertex_buffer_size() + mesh.get_index_buffer_bytes().map_or(0, <[u8]>::len)
-}
-
 /// Makes the chunk of ground `node` on a task: its mesh and the paint under it.
 fn make_chunk(heights: &Heightfield, paint: &PaintMap, node: Node) -> Task<(Mesh, ChunkPaint)> {
     let (heights, paint) = (heights.clone(), paint.clone());
@@ -829,7 +827,7 @@ fn spawn_chunk(
     mesh: Mesh,
     paint: &ChunkPaint,
 ) -> Entity {
-    let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
+    let mesh = upload::stage(world, mesh);
     let tag = streaming.paints.lay(world, paint);
     world
         .spawn((
@@ -1328,17 +1326,32 @@ fn lay_streamed_ground(
         })
         .collect();
     for (entity, mesh, paint) in made {
-        let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
-        if let Ok(mut chunk) = world.get_entity_mut(entity) {
-            chunk.insert(Mesh3d(mesh));
-        }
-        let Some(tag) = world.get::<MeshTag>(entity).cloned() else {
-            continue;
-        };
-        streaming.paints.relay(world, &paint, &tag);
+        let mesh = upload::stage(world, mesh);
+        streaming.reshaped.insert(entity, (mesh, paint));
     }
     streaming.covers.ground_changed();
     streaming.whole = false;
+}
+
+/// Shows every chunk of ground laid anew whose new mesh is on the GPU, with its new paint.
+fn reshape(world: &mut World, streaming: &mut Streaming) {
+    let sent: Vec<Entity> = streaming
+        .reshaped
+        .iter()
+        .filter(|(_, (mesh, _))| upload::mesh_sent(world, mesh))
+        .map(|(&chunk, _)| chunk)
+        .collect();
+    for chunk in sent {
+        let Some((mesh, paint)) = streaming.reshaped.remove(&chunk) else {
+            continue;
+        };
+        if let Ok(mut shown) = world.get_entity_mut(chunk) {
+            shown.insert(Mesh3d(mesh));
+        }
+        if let Some(tag) = world.get::<MeshTag>(chunk).cloned() {
+            streaming.paints.relay(world, &paint, &tag);
+        }
+    }
 }
 
 /// The ground's root, holding the material its chunks are painted with, and their paint.
