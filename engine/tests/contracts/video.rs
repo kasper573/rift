@@ -10,12 +10,13 @@ use bevy::shader::Shader;
 use bevy::world_serialization::WorldSerializationPlugin;
 use engine::core::render::camera;
 use engine::core::render::video::{
-    AmbientOcclusionQuality, AntiAliasingQuality, ShadowQuality, VideoPreferences,
+    AmbientOcclusionQuality, AntiAliasingQuality, ShadowQuality, VideoPreferences, ViewDistance,
 };
 use engine::core::render::world::WorldScenePlugin;
 use engine::core::render::world::lights;
-use engine::core::units::Degrees;
+use engine::core::units::{Degrees, Meters};
 use engine::core::vfx::render::VfxMaterialsPlugin;
+use engine::systems::area;
 use strum::VariantArray;
 
 /// How a picture and the sun over it are drawn, in the parts a player's video preferences choose.
@@ -28,6 +29,8 @@ struct Drawn {
     /// The quality whose smoothing the picture is drawn with.
     smoothing: Option<AntiAliasingQuality>,
     bloom: bool,
+    /// How far around the player the props, covers and lights stand.
+    reach: Meters,
 }
 
 #[test]
@@ -42,6 +45,7 @@ fn a_players_video_preferences_draw_the_world_as_picked_from_the_moment_they_are
                 shafts: false,
                 smoothing: None,
                 bloom: false,
+                reach: Meters(widest() * 0.5),
             },
         ),
         (
@@ -54,6 +58,7 @@ fn a_players_video_preferences_draw_the_world_as_picked_from_the_moment_they_are
                 light_shafts: true,
                 anti_aliasing: AntiAliasingQuality::Low,
                 bloom: true,
+                view_distance: ViewDistance::Middle,
             },
             Drawn {
                 shadows: Some((1, false)),
@@ -61,6 +66,7 @@ fn a_players_video_preferences_draw_the_world_as_picked_from_the_moment_they_are
                 shafts: true,
                 smoothing: Some(AntiAliasingQuality::Low),
                 bloom: true,
+                reach: Meters(widest() * 0.75),
             },
         ),
         (
@@ -103,7 +109,14 @@ fn best() -> Drawn {
         shafts: true,
         smoothing: Some(AntiAliasingQuality::Ultra),
         bloom: true,
+        reach: Meters(widest()),
     }
+}
+
+/// How far around the player the props, covers and lights stand at most: the ground the camera
+/// takes in from its widest, and as far again for what the frame's edge fades.
+fn widest() -> f32 {
+    testkit::look().camera.zooms.wide.0 * 4.0
 }
 
 /// A client's world drawing nothing but its picture and its sun.
@@ -169,5 +182,9 @@ fn drawn(app: &mut App, (picture, sun): (Entity, Entity)) -> Drawn {
                 .expect("a quality of the picture's smoothing")
         }),
         bloom: picture.contains::<Bloom>(),
+        reach: area::render::view_reach(
+            &testkit::look().camera,
+            world.resource::<VideoPreferences>(),
+        ),
     }
 }

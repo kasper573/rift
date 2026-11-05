@@ -53,6 +53,7 @@ use crate::core::render::sample::{
     self, FrameSamplingPlugin, FrameWork, GpuReportsRead, RenderReports,
 };
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
+use crate::core::render::video::VideoPreferences;
 use crate::core::render::world::layers::Layered;
 use crate::core::render::world::sky::Daylight;
 use crate::core::render::{self, CameraRig, GroundHeights, Pointed, ground_height, world_point};
@@ -1293,7 +1294,10 @@ fn terrain(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Optio
         world.resource_mut::<TerrainSent>().0 = None;
         return None;
     };
-    let reach = area::render::view_reach(world.get_resource::<CameraRig>()?.framing());
+    let reach = area::render::view_reach(
+        world.get_resource::<CameraRig>()?.framing(),
+        world.get_resource::<VideoPreferences>()?,
+    );
     let area = area::load(world.resource::<Content>(), area_id);
     let window = ground_window(at, area.size.bounds(), reach);
     let loaded = area

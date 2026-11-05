@@ -11,6 +11,7 @@ use super::{AreaId, AreaObject, AreaTag};
 use crate::core::content::Content;
 use crate::core::math::{Pos, Rect};
 use crate::core::render::transition::WorldViewSystems;
+use crate::core::render::video::VideoPreferences;
 use crate::core::render::world::sky::Daylight;
 use crate::core::render::{CameraFraming, CameraRig, camera};
 use crate::core::render::{GroundHeights, WorldCamera, ground_height, world_point};
@@ -125,7 +126,7 @@ fn follow_view(world: &mut World) {
     let lift = Meters(target.y - ground_height(world, at).0);
     let sight = Sight {
         at,
-        reach: view_reach(rig.framing()),
+        reach: view_reach(rig.framing(), world.resource::<VideoPreferences>()),
         lens,
         eyes: Eyes::orbiting(rig.framing(), lift),
     };
@@ -133,9 +134,10 @@ fn follow_view(world: &mut World) {
 }
 
 /// How far around the character the covers, props and lights stand: the ground the camera takes
-/// in from its widest, and as far again for what the frame's edge fades.
-pub fn view_reach(framing: &CameraFraming) -> Meters {
-    Meters(framing.zooms.wide.0 * 4.0)
+/// in from its widest, and as far again for what the frame's edge fades, as much of it as the
+/// player's view distance takes in.
+pub fn view_reach(framing: &CameraFraming, video: &VideoPreferences) -> Meters {
+    Meters(framing.zooms.wide.0 * 4.0 * video.view_distance.share())
 }
 
 /// Turns the shown area's sun with the hour as it moves, its clouds with the wind, and lets its

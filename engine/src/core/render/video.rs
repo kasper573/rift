@@ -30,6 +30,8 @@ pub struct VideoPreferences {
     pub anti_aliasing: AntiAliasingQuality,
     /// What the light catches glowing over its rim.
     pub bloom: bool,
+    /// How far around the player the world's props, covers and lights stand.
+    pub view_distance: ViewDistance,
 }
 
 impl Default for VideoPreferences {
@@ -42,6 +44,7 @@ impl Default for VideoPreferences {
             light_shafts: true,
             anti_aliasing: AntiAliasingQuality::default(),
             bloom: true,
+            view_distance: ViewDistance::default(),
         }
     }
 }
@@ -57,6 +60,7 @@ impl VideoPreferences {
             light_shafts: false,
             anti_aliasing: AntiAliasingQuality::Off,
             bloom: false,
+            view_distance: ViewDistance::Near,
         }
     }
 }
@@ -98,6 +102,12 @@ pub fn controls(ui: &mut Ui, video: &mut VideoPreferences) {
             controls::variant_picker(ui, "anti-aliasing", current, label.id)
         {
             video.anti_aliasing = anti_aliasing;
+        }
+        ui.end_row();
+        let label = ui.label("View distance");
+        let current = video.view_distance;
+        if let Some(distance) = controls::variant_picker(ui, "view distance", current, label.id) {
+            video.view_distance = distance;
         }
         ui.end_row();
     });
@@ -161,6 +171,28 @@ impl AmbientOcclusionQuality {
                 Some(ScreenSpaceAmbientOcclusionQualityLevel::Medium)
             }
             AmbientOcclusionQuality::High => Some(ScreenSpaceAmbientOcclusionQualityLevel::High),
+        }
+    }
+}
+
+/// How far around the player the world's props, covers and lights stand, as a share of as far as
+/// the game frames its camera to see.
+#[derive(
+    Serialize, Deserialize, VariantArray, AsRefStr, Clone, Copy, Debug, Default, PartialEq, Eq,
+)]
+pub enum ViewDistance {
+    Near,
+    Middle,
+    #[default]
+    Far,
+}
+
+impl ViewDistance {
+    pub fn share(self) -> f32 {
+        match self {
+            ViewDistance::Near => 0.5,
+            ViewDistance::Middle => 0.75,
+            ViewDistance::Far => 1.0,
         }
     }
 }
