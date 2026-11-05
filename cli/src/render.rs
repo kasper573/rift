@@ -33,6 +33,7 @@ use bevy::window::ExitCondition;
 use engine::core::audio::playback::Listener;
 use engine::core::content::Content;
 use engine::core::ground::Heightfield;
+use engine::core::jobs::Handoff;
 use engine::core::math::{Pos, Rng};
 use engine::core::render::camera::{self, View, Zoom, world_point};
 use engine::core::render::video::VideoPreferences;
@@ -451,6 +452,7 @@ pub fn area(folder: &Path, shot: &Path, out: &Path, patch: bool) {
             FRAME_STEP,
         )))
         .insert_resource(Rng::new(seed))
+        .insert_resource(Handoff::NextFrame)
         .add_plugins((WorldScenePlugin, VfxMaterialsPlugin, SceneryPlugin))
         .insert_resource(content.built::<GameSettings>().look)
         .insert_resource(content)

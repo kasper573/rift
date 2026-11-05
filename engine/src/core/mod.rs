@@ -7,6 +7,7 @@ pub mod geometry;
 pub mod ground;
 pub mod gui;
 pub mod interpolate;
+pub mod jobs;
 pub mod math;
 pub mod net;
 pub mod os;

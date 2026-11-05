@@ -147,14 +147,14 @@ fn rain_falls_only_from_cloud_that_holds_water_carried_downwind_as_hard_as_the_s
                 let fallen = sheet.height().0 - vale.heights.height_at(wet).0;
                 let upwind = Vec2::new(wet.x, wet.y) - lean * fallen;
                 let under = (upwind - drift) / CLOUD_TILE.0;
-                let rain = rain_at(vale, &weather, &sheet, drift, lean, wet);
+                let rain = rain_at(vale, &weather, &sheet.reading(), drift, lean, wet);
                 let water = sheet.water(under);
                 assert!(
                     (rain - pour * water).abs() < 1e-4,
                     "where the rain map lets all of it fall, it rains as hard as the spell pours under the water of the cloud it falls from, upwind by as far as the wind carries it down from the clouds: {rain} under {water} of a {pour} downpour leaning {lean}"
                 );
                 assert_eq!(
-                    rain_at(vale, &weather, &sheet, drift, lean, dry),
+                    rain_at(vale, &weather, &sheet.reading(), drift, lean, dry),
                     0.0,
                     "where the rain map lets none fall, it never rains"
                 );

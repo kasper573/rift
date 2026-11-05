@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use engine::core::jobs::Handoff;
 use engine::core::render::world::clouds::{self, CLOUD_TILE, CloudDrift, CloudSheet};
 use engine::core::render::world::lights::sun_transform;
 use engine::core::units::Degrees;
@@ -28,7 +29,9 @@ fn the_ground_lies_in_the_shadow_of_the_cloud_up_the_suns_rays_as_the_clouds_dri
     for (when, elevation, azimuth, seconds) in suns {
         let light = sun_transform(Degrees(elevation), Degrees(azimuth), over);
         let drift = drifting.blown(WIND, seconds, sheet.look());
-        let cast = sheet.lay(light, drift, &mut images);
+        sheet.lay(light, drift, &mut images, Handoff::NextFrame);
+        // The shadows are painted off the main thread and shown from the next frame's lay on.
+        let cast = sheet.lay(light, drift, &mut images, Handoff::NextFrame);
         let shadows = images.get(&sheet.over_sun().image).expect("the shadows");
         let toward = cast.back().as_vec3();
         let from_light = cast.compute_affine().inverse();

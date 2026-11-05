@@ -5,16 +5,19 @@
 //! of the field says, read where the cloud lies, and the more water the weather's clouds hold, the
 //! more of them do; the darker their shadows, and the rain falls from them.
 
+use std::sync::Arc;
+
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
 use bevy::light::DirectionalLightTexture;
 use bevy::prelude::*;
 use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
-
+use bevy::tasks::{AsyncComputeTaskPool, Task, TaskPool};
 use rayon::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::core::jobs::Handoff;
 use crate::core::math::smoothstep;
 use crate::core::units::{Meters, MetersPerSec};
 
@@ -65,15 +68,25 @@ pub struct CloudLook {
 /// drawn from in red and the noise saying which hold water in green, each read twice and blended
 /// where it is read (`read`), so it never shows where it repeats, and thresholded at the cover's
 /// `edge` and the water's `water_edge`; and `shadows`, how much of the light reaches the ground
-/// through it, laid along the light's rays as the light and the drift last stood.
+/// through it, laid along the light's rays as the light and the drift last stood. The shadows are
+/// painted off the main thread, and shown the frame after they were asked for.
 #[derive(Resource)]
 pub struct CloudSheet {
     field: Handle<Image>,
     shadows: Handle<Image>,
-    noise: Vec<f32>,
-    wet: Vec<f32>,
-    weather: (f32, f32),
+    reading: CloudReading,
     laid: Option<Laid>,
+    stale: bool,
+    painting: Option<(Task<Vec<u8>>, Laid)>,
+}
+
+/// The field of cloud as it is read: its two noises, the weather it is thickened to and how it
+/// looks. Cheap to copy, so a job off the main thread reads it as the sheet does.
+#[derive(Clone)]
+pub struct CloudReading {
+    noise: Arc<[f32]>,
+    wet: Arc<[f32]>,
+    weather: (f32, f32),
     look: CloudLook,
 }
 
@@ -107,24 +120,33 @@ impl CloudSheet {
         CloudSheet {
             field,
             shadows,
-            noise,
-            wet,
-            weather: (0.0, 0.0),
+            reading: CloudReading {
+                noise: noise.into(),
+                wet: wet.into(),
+                weather: (0.0, 0.0),
+                look,
+            },
             laid: None,
-            look,
+            stale: true,
+            painting: None,
         }
     }
 
     /// The clouds looking as `look` says from now on.
     pub fn restyle(&mut self, look: CloudLook) {
-        if self.look != look {
-            self.look = look;
-            self.laid = None;
+        if self.reading.look != look {
+            self.reading.look = look;
+            self.stale = true;
         }
     }
 
     pub fn look(&self) -> &CloudLook {
-        &self.look
+        &self.reading.look
+    }
+
+    /// The field as it reads now, for a job to read away from the sheet.
+    pub fn reading(&self) -> CloudReading {
+        self.reading.clone()
     }
     /// The field's shadows laid over a sun.
     pub fn over_sun(&self) -> DirectionalLightTexture {
@@ -141,58 +163,103 @@ impl CloudSheet {
 
     /// The height the field lies at.
     pub fn height(&self) -> Meters {
-        self.look.height
+        self.reading.look.height
     }
 
     /// How cloudy the sky is at `at`, in tiles, under the cover last set, 0 clear to 1 thick, as
     /// the sky reads the field.
     pub fn cloudiness(&self, at: Vec2) -> f32 {
-        let edge = edge(self.weather.0, &self.look);
-        smoothstep(edge, edge + self.look.softness, read(&self.noise, at))
+        self.reading.cloudiness(at)
     }
 
     /// How much water the cloud at `at`, in tiles, holds under the weather last set, 0 none to 1 as
     /// much as a storm cloud: none where there is no cloud.
     pub fn water(&self, at: Vec2) -> f32 {
-        let edge = water_edge(self.weather.1);
-        let held = smoothstep(edge, edge + self.look.softness, read(&self.wet, at));
-        self.cloudiness(at) * held
+        self.reading.water(at)
     }
 
     /// Thickens or thins the field's shadows to cover `clouds` of the sky, 0 none and 1 all of
     /// it, with as much of it holding water as `water`, 0 none to 1 most of it.
     pub fn cover(&mut self, clouds: f32, water: f32) {
-        if self.weather != (clouds, water) {
-            self.weather = (clouds, water);
-            self.laid = None;
+        if self.reading.weather != (clouds, water) {
+            self.reading.weather = (clouds, water);
+            self.stale = true;
         }
     }
 
     /// Lays the field's shadows along the rays of a light standing as `light` does, the field
-    /// carried `drift` along the ground, and returns where the light stands to cast them. The
-    /// shadows are laid anew only once the light has turned far enough to slip them a texel, or
-    /// it and the clouds have travelled `RELAID_AFTER` since; until then the light is carried
-    /// along with the clouds, so the shadows last laid fall where the clouds have drifted since.
-    pub fn lay(&mut self, light: Transform, drift: Vec2, images: &mut Assets<Image>) -> Transform {
-        let height = self.look.height;
-        let laid = match self.laid.filter(|laid| laid.holds(light, drift, height)) {
-            Some(laid) => laid,
-            None => {
-                self.paint_shadows(light, drift, images);
-                Laid { light, drift }
+    /// carried `drift` along the ground, and returns where the light stands to cast the shadows
+    /// shown. The shadows are laid anew only once the light has turned far enough to slip them a
+    /// texel, or it and the clouds have travelled `RELAID_AFTER` since, or the clouds changed;
+    /// they are painted off the main thread and shown from the next lay on. Until then the light
+    /// is carried along with the clouds, so the shadows last laid fall where the clouds have
+    /// drifted since.
+    pub fn lay(
+        &mut self,
+        light: Transform,
+        drift: Vec2,
+        images: &mut Assets<Image>,
+        handoff: Handoff,
+    ) -> Transform {
+        if let Some((painting, laid)) = self.painting.take() {
+            match handoff.take(painting) {
+                Ok(data) => {
+                    if let Some(mut image) = images.get_mut(&self.shadows) {
+                        *image = picture(SHADOWS, data);
+                    }
+                    self.laid = Some(laid);
+                }
+                Err(painting) => self.painting = Some((painting, laid)),
             }
+        }
+        let height = self.reading.look.height;
+        if self.painting.is_none()
+            && (self.stale
+                || !self
+                    .laid
+                    .is_some_and(|laid| laid.holds(light, drift, height)))
+        {
+            self.stale = false;
+            let reading = self.reading.clone();
+            let painting = AsyncComputeTaskPool::get_or_init(TaskPool::default)
+                .spawn(async move { reading.shadows(light, drift) });
+            self.painting = Some((painting, Laid { light, drift }));
+        }
+        let Some(laid) = self.laid else {
+            return light;
         };
-        self.laid = Some(laid);
         let carried = drift - laid.drift;
         Transform {
             translation: laid.light.translation + Vec3::new(carried.x, 0.0, carried.y),
             ..light
         }
     }
+}
 
-    fn paint_shadows(&self, light: Transform, drift: Vec2, images: &mut Assets<Image>) {
+impl CloudReading {
+    /// How cloudy the sky is at `at`, in tiles, 0 clear to 1 thick, as the sky reads the field.
+    pub fn cloudiness(&self, at: Vec2) -> f32 {
+        let edge = edge(self.weather.0, &self.look);
+        smoothstep(edge, edge + self.look.softness, read(&self.noise, at))
+    }
+
+    /// How much water the cloud at `at`, in tiles, holds, 0 none to 1 as much as a storm cloud:
+    /// none where there is no cloud.
+    pub fn water(&self, at: Vec2) -> f32 {
+        let edge = water_edge(self.weather.1);
+        let held = smoothstep(edge, edge + self.look.softness, read(&self.wet, at));
+        self.cloudiness(at) * held
+    }
+
+    /// The height the field lies at.
+    pub fn height(&self) -> Meters {
+        self.look.height
+    }
+
+    /// The shadows' texels, laid along the rays of `light` with the field carried `drift`.
+    fn shadows(&self, light: Transform, drift: Vec2) -> Vec<u8> {
         let toward = light.back().as_vec3();
-        let data = (0..SHADOWS * SHADOWS)
+        (0..SHADOWS * SHADOWS)
             .into_par_iter()
             .flat_map_iter(|texel| {
                 let uv = (Vec2::new((texel % SHADOWS) as f32, (texel / SHADOWS) as f32) + 0.5)
@@ -210,10 +277,7 @@ impl CloudSheet {
                 let lit = 1.0 - shade(held, &self.look) * cloudy;
                 [lit, lit, lit, 1.0].map(|value| (value * 255.0) as u8)
             })
-            .collect();
-        if let Some(mut image) = images.get_mut(&self.shadows) {
-            *image = picture(SHADOWS, data);
-        }
+            .collect()
     }
 }
 

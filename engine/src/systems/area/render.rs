@@ -1,6 +1,8 @@
 //! The area on view, drawn: its scenery stood when the player's character arrives, lit again as
 //! the day moves on, and torn down when the view leaves it.
 
+use std::sync::Arc;
+
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 
@@ -152,7 +154,7 @@ fn follow_daylight(world: &mut World) {
 fn light_area(
     world: &mut World,
     area_id: AreaId,
-    area: &super::Area,
+    area: &Arc<super::Area>,
     weather: &super::Weather,
 ) -> f32 {
     let daylight = *world.resource::<Daylight>();

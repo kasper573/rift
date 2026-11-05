@@ -41,6 +41,7 @@ use crate::core::content::{Content, FileHash, FileHashes};
 use crate::core::ground::{
     Heightfield, OVERVIEW_STRIDE, PaintMap, SAMPLES_PER_METER, TileAt, WaterSurface,
 };
+use crate::core::jobs::Handoff;
 use crate::core::math::{Pos, Rect, Rng, Size};
 use crate::core::render::camera::{View, WorldPicture};
 use crate::core::render::present::AreaGrade;
@@ -975,8 +976,14 @@ pub fn light(
             shining.azimuth,
             Vec2::new(center.x, center.y),
         );
+        let handoff = Handoff::of(world);
         let cast = world.resource_scope(|world, mut sheet: Mut<CloudSheet>| {
-            sheet.lay(placed, drifted, &mut world.resource_mut::<Assets<Image>>())
+            sheet.lay(
+                placed,
+                drifted,
+                &mut world.resource_mut::<Assets<Image>>(),
+                handoff,
+            )
         });
         if let Some(mut transform) = world.get_mut::<Transform>(entity) {
             transform.set_if_neq(cast);
