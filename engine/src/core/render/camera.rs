@@ -30,8 +30,6 @@ pub const NEAR_PLANE: Meters = Meters(0.5);
 const FEWEST_PIXELS: f32 = 1.0;
 /// How far a ray is followed through the world before it is given up as hitting nothing.
 const REACH: f32 = 200.0;
-const MARCH_STEP: f32 = 0.25;
-const BISECTIONS: u32 = 12;
 /// How near the angle it eases to the camera comes to rest on it, too near to see.
 const REST_ANGLE: Radians = Radians(0.001);
 /// How near the distance it eases to the camera comes to rest on it, too near to see.
@@ -571,47 +569,32 @@ impl GroundHeights {
     }
 }
 
-/// The ground point a ray lands on: the ray is marched a quarter metre at a time from where it
-/// enters the heights' range until it dips under the ground, then the crossing is bisected.
+/// The ground point a ray lands on: where it first comes down to the ground within `bounds`, no
+/// further than [`REACH`] past where it could first meet it.
 pub fn ground_hit(heights: &Heightfield, bounds: Rect<Meters>, ray: Ray3d) -> Option<Pos<Meters>> {
-    let origin = ray.origin;
-    let direction = *ray.direction;
-    let under = |t: f32| {
-        let point = origin + direction * t;
-        let at = ground_pos(point);
-        bounds.contains(at) && point.y <= heights.height_at(at).0
-    };
+    let (origin, direction) = (ray.origin, *ray.direction);
     let range = heights.range();
-    let mut t = if origin.y > range.highest.0 && direction.y < 0.0 {
-        (range.highest.0 - origin.y) / direction.y
-    } else {
-        0.0
-    };
-    if under(t) {
-        return Some(ground_pos(origin + direction * t));
-    }
-    let end = t + REACH;
-    while t < end {
-        let next = t + MARCH_STEP;
-        let point = origin + direction * next;
-        if point.y < range.lowest.0 && direction.y < 0.0 {
-            return None;
-        }
-        if under(next) {
-            let (mut above, mut below) = (t, next);
-            for _ in 0..BISECTIONS {
-                let mid = (above + below) / 2.0;
-                if under(mid) {
-                    below = mid;
-                } else {
-                    above = mid;
-                }
+    let (mut from, mut to) = (0.0f32, f32::INFINITY);
+    let mut within = |low: f32, high: f32, start: f32, heading: f32| {
+        if heading == 0.0 {
+            if !(low..=high).contains(&start) {
+                to = f32::NEG_INFINITY;
             }
-            return Some(ground_pos(origin + direction * below));
+            return;
         }
-        t = next;
+        let (a, b) = ((low - start) / heading, (high - start) / heading);
+        from = from.max(a.min(b));
+        to = to.min(a.max(b));
+    };
+    within(bounds.min_x(), bounds.max_x(), origin.x, direction.x);
+    within(bounds.min_y(), bounds.max_y(), origin.z, direction.z);
+    within(f32::NEG_INFINITY, range.highest.0, origin.y, direction.y);
+    if direction.y < 0.0 {
+        to = to.min((range.lowest.0 - origin.y) / direction.y);
     }
-    None
+    let to = to.min(from + REACH);
+    let t = heights.first_under(origin, direction, from, to)?;
+    Some(ground_pos(origin + direction * t))
 }
 
 /// A point of the ground `height` above it, in the world the camera sees: x east, y up, z south.
@@ -665,8 +648,7 @@ pub fn cursor_ray(world: &mut World) -> Option<Ray3d> {
 
 /// The ground under the pointer.
 pub fn cursor_ground(world: &mut World) -> Option<Pos<Meters>> {
-    let ray = cursor_ray(world)?;
-    world.get_resource::<GroundHeights>()?.hit(ray)
+    super::pointed(world)?.ground
 }
 
 /// Where a point `height` above the ground at `at` shows in the window.

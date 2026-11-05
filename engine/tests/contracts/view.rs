@@ -16,8 +16,8 @@ use bevy::window::PrimaryWindow;
 use bevy::world_serialization::WorldSerializationPlugin;
 use engine::core::audio::playback::{PlaySfx, SfxDef, SfxId, SfxPlace};
 use engine::core::content::gltf::PLACEHOLDER_LIFT;
-use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER};
-use engine::core::math::Pos;
+use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER, TileAt};
+use engine::core::math::{Pos, Rect};
 use engine::core::render::View;
 use engine::core::render::camera::ground_hit;
 use engine::core::render::world::WorldScenePlugin;
@@ -152,6 +152,149 @@ fn the_pointer_ray_lands_where_the_ground_shows() {
             );
         }
     }
+}
+
+#[test]
+fn pointing_at_the_ground_meets_it_where_a_fine_march_does() {
+    // Three tiles by two of rolling ground, held as play holds it: one tile read, the others
+    // answered by the overview until they are.
+    let size = GroundSize {
+        width: 600,
+        height: 300,
+    };
+    let rolling = Heightfield::from_fn(size, HEIGHTS, |column, row| {
+        let x = column as f32 / SAMPLES_PER_METER as f32;
+        let y = row as f32 / SAMPLES_PER_METER as f32;
+        Meters(4.0 * (x / 23.0).sin() * (y / 17.0).cos() + 2.5 * ((x + y) / 9.0).sin() + 3.0)
+    });
+    let game = size.each_tile().fold(
+        Game::new()
+            .area("rolling", &Map::open(600, 300), json!([]))
+            .part(
+                "area",
+                "rolling",
+                "height_overview.png",
+                rolling.encode_overview().expect("heights that aren't flat"),
+            ),
+        |game, at| {
+            let tile = rolling.encode_tile(at).expect("heights that aren't flat");
+            game.part(
+                "area",
+                "rolling",
+                &format!("height/{}.png", at.key()),
+                tile.to_vec(),
+            )
+        },
+    );
+    let content = game.hero("rolling", 1.0, 1.0).load_to_play();
+    let rolling = content
+        .by_path::<area::AreaDef>(&path("area", "rolling"))
+        .expect("the area loads");
+    let mut heights = area::load(&content, rolling).heights.clone();
+    heights
+        .load(TileAt { column: 1, row: 0 })
+        .expect("the tile reads");
+    let bounds = size.bounds().inflate(2.0, 2.0);
+    let mound = Pos::new(300.0, 100.0);
+    let pit = Pos::new(380.0, 60.0);
+
+    let mut rays = Vec::new();
+    for x in [-10.0, 120.0, 255.5, 400.0, 511.5, 610.0] {
+        for z in [-10.0, 150.0, 255.5, 310.0] {
+            let eye = Vec3::new(x, 40.0, z);
+            for yaw in (0..8).map(|step| step as f32 * 45.0 + 10.0) {
+                for pitch in [-15.0f32, -35.0, -70.0] {
+                    let (yaw, pitch) = (yaw.to_radians(), pitch.to_radians());
+                    let heading = Vec3::new(
+                        yaw.cos() * pitch.cos(),
+                        pitch.sin(),
+                        yaw.sin() * pitch.cos(),
+                    );
+                    rays.push(Ray3d::new(eye, Dir3::new(heading).expect("a heading")));
+                }
+            }
+        }
+    }
+    for (at, height) in [(mound, 13.0), (pit, -5.0)] {
+        for side in 0..6 {
+            let side = side as f32 * 1.05;
+            let eye = Vec3::new(at.x + 30.0 * side.cos(), 30.0, at.y + 30.0 * side.sin());
+            let aim = Vec3::new(at.x, height, at.y) - eye;
+            rays.push(Ray3d::new(eye, Dir3::new(aim).expect("a heading")));
+        }
+    }
+
+    let agree = |heights: &Heightfield, held: &str| {
+        for ray in &rays {
+            let found = ground_hit(heights, bounds, *ray);
+            let marched = marched(heights, bounds, *ray);
+            match (found, marched) {
+                (Some(found), Some(marched)) => assert!(
+                    found.distance(marched) < Meters(0.01),
+                    "{held}: the ray from {:?} heading {:?} meets the ground at {found:?}, a \
+                     fine march at {marched:?}",
+                    ray.origin,
+                    ray.direction
+                ),
+                (found, marched) => assert_eq!(
+                    found, marched,
+                    "{held}: the ray from {:?} heading {:?}",
+                    ray.origin, ray.direction
+                ),
+            }
+        }
+    };
+    agree(&heights, "a tile read, the rest from the overview");
+    heights
+        .load(TileAt { column: 2, row: 0 })
+        .expect("the tile reads");
+    agree(&heights, "another tile read since");
+
+    let samples = |at: Pos<Meters>| {
+        let column = ((at.x + 0.5) * SAMPLES_PER_METER as f32) as u32;
+        let row = ((at.y + 0.5) * SAMPLES_PER_METER as f32) as u32;
+        (column - 12..column + 12)
+            .flat_map(move |column| (row - 12..row + 12).map(move |row| (column, row)))
+    };
+    for (column, row) in samples(mound) {
+        heights.set_sample(column, row, Meters(13.0));
+    }
+    for (column, row) in samples(pit) {
+        heights.set_sample(column, row, Meters(-5.0));
+    }
+    agree(&heights, "a mound raised and a pit dug");
+}
+
+/// Where a ray first comes down to the ground, marched a couple of centimetres at a time and the
+/// crossing then halved down to nothing; none once it has passed under the lowest ground there is.
+fn marched(heights: &Heightfield, bounds: Rect<Meters>, ray: Ray3d) -> Option<Pos<Meters>> {
+    const STEP: f32 = 0.02;
+    let under = |t: f32| {
+        let point = ray.get_point(t);
+        let at = Pos::new(point.x, point.z);
+        bounds.contains(at) && point.y <= heights.height_at(at).0
+    };
+    let mut t = 0.0;
+    while t < 400.0 {
+        if ray.get_point(t + STEP).y < heights.range().lowest.0 {
+            return None;
+        }
+        if under(t + STEP) {
+            let (mut above, mut below) = (t, t + STEP);
+            for _ in 0..24 {
+                let middle = (above + below) / 2.0;
+                if under(middle) {
+                    below = middle;
+                } else {
+                    above = middle;
+                }
+            }
+            let point = ray.get_point(below);
+            return Some(Pos::new(point.x, point.z));
+        }
+        t += STEP;
+    }
+    None
 }
 
 #[test]

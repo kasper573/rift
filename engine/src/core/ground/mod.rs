@@ -7,7 +7,7 @@
 //! and blocking paint from them.
 
 use std::io::Cursor;
-use std::sync::{Arc, Mutex, RwLock};
+use std::sync::{Arc, Mutex, OnceLock, RwLock};
 
 use bevy::log::warn;
 use rayon::prelude::*;
@@ -18,6 +18,11 @@ use crate::core::chunk::CHUNK_SIDE;
 use crate::core::content::{ContentProblem, RowCheck, StoredPart};
 use crate::core::math::{Pos, Rect, Size};
 use crate::core::units::{CellPos, Degrees, GROUND_ORIGIN, GridDims, GridSize, MeterSize, Meters};
+
+use peaks::Peaks;
+
+mod peaks;
+mod ray;
 
 /// Positions on the ground are `f32` metres snapped to sixteenths, which stay exact up to here.
 pub const MAX_SIDE: u32 = 1 << 20;
@@ -514,7 +519,7 @@ mod values {
 
     /// The height of the water's surface over the ground's [`HeightRange`], as a ground height is,
     /// at the bottom of the range where nothing says otherwise, so ground without water is dry.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
     pub struct WaterLevel(pub(super) u16);
 
     impl Level for WaterLevel {
@@ -548,7 +553,7 @@ mod values {
     }
 
     /// A value of the ground as its files hold it.
-    pub trait Value: Copy + PartialEq + Send + Sync + std::fmt::Debug + 'static {
+    pub trait Value: Copy + Ord + Send + Sync + std::fmt::Debug + 'static {
         /// What a grid's values stand for, beside the values.
         type Scale: Copy + Default + PartialEq + Send + Sync + std::fmt::Debug + 'static;
         const CHANNELS: Channels;
@@ -792,6 +797,7 @@ struct Tile<T> {
     columns: u32,
     rows: u32,
     values: Vec<T>,
+    peaks: OnceLock<Peaks<T>>,
     encoded: Option<Arc<[u8]>>,
 }
 
@@ -861,6 +867,7 @@ impl<T: Value> GroundGrid<T> {
                     columns,
                     rows,
                     values,
+                    peaks: OnceLock::new(),
                     encoded: None,
                 };
                 Arc::new(Slot::new(Some(Arc::new(tile)), None))
@@ -895,6 +902,7 @@ impl<T: Value> GroundGrid<T> {
             columns,
             rows,
             values: T::decode(pixels),
+            peaks: OnceLock::new(),
             encoded: Some(Arc::from(bytes)),
         }));
         Ok(())
@@ -1008,6 +1016,7 @@ impl<T: Value> GroundGrid<T> {
             columns,
             rows,
             values,
+            peaks: OnceLock::new(),
             encoded: None,
         })
     }
@@ -1160,12 +1169,17 @@ impl<T: Value> GroundGrid<T> {
                     columns,
                     rows,
                     values: vec![blank; (columns * rows) as usize],
+                    peaks: OnceLock::new(),
                     encoded: None,
                 })
             });
             let tile = Arc::make_mut(tile);
             tile.encoded = None;
             tile.values[local] = value;
+            if let Some(peaks) = tile.peaks.get_mut() {
+                let local = local as u32;
+                peaks.raise(local % tile.columns, local / tile.columns, value);
+            }
         }
     }
 }
@@ -1189,6 +1203,13 @@ impl<T: Value> PartialEq for GroundGrid<T> {
 }
 
 impl<T: Value> Tile<T> {
+    /// At least the highest of the tile's values from `low` to `high`, both included.
+    fn highest(&self, low: (u32, u32), high: (u32, u32)) -> T {
+        self.peaks
+            .get_or_init(|| Peaks::of(self.columns, self.rows, &self.values))
+            .highest(&self.values, low, high)
+    }
+
     fn is_blank(&self, blank: T) -> bool {
         self.values.iter().all(|value| *value == blank)
     }
@@ -1284,6 +1305,7 @@ impl TileGrid {
             columns,
             rows,
             values: T::decode(pixels),
+            peaks: OnceLock::new(),
             encoded: Some(Arc::from(bytes)),
         })
     }
