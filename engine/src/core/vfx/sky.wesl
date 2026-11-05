@@ -12,7 +12,7 @@
 // (`rain_under`, 0 none to 1 a cloudburst), the height they lie at (`cloud_base`) and how far the
 // wind has carried them along the ground (`cloud_drift`); where the camera looks from (`eye`) and
 // the weather the engine tells it of. A colour of 1 shines as a white face square to the sun does.
-import bevy_pbr::render::mesh_view_bindings::view;
+import bevy_pbr::render::mesh_view_bindings::{globals, view};
 import bevy_pbr::render::view_transformations::position_world_to_clip;
 
 @group(3) @binding(100) var<uniform> site: Site;

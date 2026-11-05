@@ -35,6 +35,15 @@ import bevy_pbr::render::mesh_view_bindings::view;
 @if(!PREPASS_PIPELINE)
 import bevy_pbr::render::mesh_view_bindings::lights;
 
+@if(PREPASS_PIPELINE)
+import bevy_render::globals::Globals;
+@else
+import bevy_pbr::render::mesh_view_bindings::globals;
+// The prepass binds the frame's globals right after the view, where the main pass binds them
+// among the lights.
+@if(PREPASS_PIPELINE)
+@group(0) @binding(1) var<uniform> globals: Globals;
+
 @group(3) @binding(100) var<uniform> site: Site;
 @group(3) @binding(101) var<uniform> params: Params;
 @group(3) @binding(103) var<uniform> strewn: Strewn;

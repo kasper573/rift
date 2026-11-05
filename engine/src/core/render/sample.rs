@@ -44,6 +44,7 @@ impl Plugin for FrameSamplingPlugin {
         render_app
             .insert_resource(reports)
             .init_resource::<RenderFrame>()
+            .init_resource::<UploadedBytes>()
             .add_systems(RenderStartup, make_stamp)
             .add_systems(
                 Render,
@@ -62,6 +63,11 @@ impl Plugin for FrameSamplingPlugin {
             .add_systems(RenderGraph, stamp_frame.in_set(RenderGraphSystems::Begin));
     }
 }
+
+/// Bytes the render world wrote to the GPU this frame on its own, beside the assets it prepared:
+/// each writer adds what it wrote, and the frame's report takes it in.
+#[derive(Resource, Default)]
+pub struct UploadedBytes(pub u64);
 
 /// What the render world measured of a frame, once it has drawn it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -267,9 +273,11 @@ fn stamp_frame(
 
 fn end_render(
     mut frame: ResMut<RenderFrame>,
+    mut written: ResMut<UploadedBytes>,
     frame_count: Option<Res<FrameCount>>,
     reports: Res<RenderReports>,
 ) {
+    frame.uploads += std::mem::take(&mut written.0);
     let (Some(started), Some(frame_count)) = (frame.started.take(), frame_count) else {
         return;
     };

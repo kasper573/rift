@@ -5,15 +5,24 @@
 //! limbs of the bodies nearest the camera's subject.
 
 use bevy::ecs::system::SystemParam;
-use bevy::prelude::*;
-
 use bevy::platform::collections::HashMap;
+use bevy::prelude::*;
+use bevy::render::RenderApp;
+use bevy::render::extract_resource::ExtractResource;
+use bevy::render::render_asset::RenderAssets;
+use bevy::render::render_resource::{
+    Extent3d, Origin3d, TexelCopyBufferLayout, TexelCopyTextureInfo, TextureAspect, TextureId,
+};
+use bevy::render::renderer::RenderQueue;
+use bevy::render::texture::GpuImage;
 
 use super::rain::{RainField, Shelter};
 use super::uniform::{
-    LIMBS_PER_TREAD, TRAIL_EVERY, TRAIL_POINTS, TREADS, Tread, TreadingLimb, Weather, WeatherImage,
+    LIMBS_PER_TREAD, PICTURE_WIDTH, TRAIL_EVERY, TRAIL_POINTS, TREADS, Tread, TreadingLimb,
+    Weather, WeatherImage, texel_bytes,
 };
 use crate::core::render::CameraRig;
+use crate::core::render::sample::UploadedBytes;
 use crate::core::render::world::body::Body;
 use crate::core::render::world::sky::Daylight;
 
@@ -45,13 +54,18 @@ pub(super) struct WeatherSources<'w, 's> {
     joints: Query<'w, 's, &'static GlobalTransform>,
 }
 
-/// Every frame the covers learn the wind, the moment and who treads through them, and where each
-/// treading body stood lately.
+/// The texels of the weather's picture that changed since it was last written, run by run: where
+/// each run starts and what it holds now.
+#[derive(Resource, Clone, Default, ExtractResource)]
+#[extract_app(RenderApp)]
+pub(super) struct WeatherWrites(Vec<(usize, Vec<Vec4>)>);
+
+/// Every frame the covers learn the wind and who treads through them, and where each treading
+/// body stood lately: only what changed of it is written.
 pub(super) fn blow(
     sources: WeatherSources,
-    picture: Res<WeatherImage>,
-    mut images: ResMut<Assets<Image>>,
-    mut last: Local<Weather>,
+    mut writes: ResMut<WeatherWrites>,
+    mut last: Local<Option<Vec<Vec4>>>,
     mut trails: Local<HashMap<Entity, Vec<(Vec2, f32)>>>,
 ) {
     let WeatherSources {
@@ -65,7 +79,9 @@ pub(super) fn blow(
         joints,
     } = sources;
     let subject = rig.map_or(Vec3::ZERO, |rig| rig.target());
-    let now = time.elapsed_secs();
+    // On the clock the shaders read the time by, so a trail's age is the frame's time less when
+    // it was laid.
+    let now = time.elapsed_secs_wrapped();
     let mut nearest: Vec<(f32, Entity, &GlobalTransform, &Body)> = bodies
         .iter()
         .filter(|(_, _, body)| !body.limbs().is_empty())
@@ -105,15 +121,105 @@ pub(super) fn blow(
         weather.rain = climate.rain;
         weather.flash = climate.flash;
     }
-    weather.time = now;
-    if *last == weather && !rain.is_changed() && !shelter.is_changed() {
-        return;
-    }
-    *last = weather.clone();
-    if let Some(mut image) = images.get_mut(&picture.0) {
-        image.data = Some(weather.texels(&rain, &shelter));
+    let texels = weather.texels(&rain, &shelter);
+    let was = last.get_or_insert_with(Weather::still);
+    let runs = changed_runs(was, &texels);
+    *was = texels;
+    if !runs.is_empty() {
+        writes.0 = runs;
     }
 }
+
+/// Writes what changed of the weather into its picture on the GPU, or all of it into a picture
+/// the GPU holds anew.
+pub(super) fn write_weather(
+    writes: Res<WeatherWrites>,
+    picture: Option<Res<WeatherImage>>,
+    images: Res<RenderAssets<GpuImage>>,
+    queue: Res<RenderQueue>,
+    mut uploaded: ResMut<UploadedBytes>,
+    mut held: Local<Option<Vec<Vec4>>>,
+    mut written: Local<Option<TextureId>>,
+) {
+    let held = held.get_or_insert_with(Weather::still);
+    if writes.is_changed() {
+        for (start, run) in &writes.0 {
+            held[*start..*start + run.len()].copy_from_slice(run);
+        }
+    }
+    let Some(gpu) = picture.and_then(|picture| images.get(&picture.0)) else {
+        return;
+    };
+    if *written != Some(gpu.texture.id()) {
+        *written = Some(gpu.texture.id());
+        uploaded.0 += write_texels(&queue, gpu, 0, held);
+    } else if writes.is_changed() {
+        for (start, run) in &writes.0 {
+            uploaded.0 += write_texels(&queue, gpu, *start, run);
+        }
+    }
+}
+
+/// Writes `texels` into the picture from the texel `start` on, a row at a time, returning the
+/// bytes written.
+fn write_texels(queue: &RenderQueue, gpu: &GpuImage, start: usize, texels: &[Vec4]) -> u64 {
+    let mut at = start;
+    let mut rest = texels;
+    let mut bytes = 0;
+    while !rest.is_empty() {
+        let (row, column) = (at / PICTURE_WIDTH, at % PICTURE_WIDTH);
+        let (line, after) = rest.split_at(rest.len().min(PICTURE_WIDTH - column));
+        let data = texel_bytes(line);
+        queue.write_texture(
+            TexelCopyTextureInfo {
+                texture: &gpu.texture,
+                mip_level: 0,
+                origin: Origin3d {
+                    x: column as u32,
+                    y: row as u32,
+                    z: 0,
+                },
+                aspect: TextureAspect::All,
+            },
+            &data,
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(data.len() as u32),
+                rows_per_image: None,
+            },
+            Extent3d {
+                width: line.len() as u32,
+                height: 1,
+                depth_or_array_layers: 1,
+            },
+        );
+        bytes += data.len() as u64;
+        at += line.len();
+        rest = after;
+    }
+    bytes
+}
+
+/// The runs of texels `now` holds that differ from `was`, joined across short stretches alike.
+fn changed_runs(was: &[Vec4], now: &[Vec4]) -> Vec<(usize, Vec<Vec4>)> {
+    let mut runs: Vec<(usize, usize)> = Vec::new();
+    for (index, (before, after)) in was.iter().zip(now).enumerate() {
+        if before == after {
+            continue;
+        }
+        match runs.last_mut() {
+            Some((_, end)) if index - *end <= JOINED_ACROSS => *end = index + 1,
+            _ => runs.push((index, index + 1)),
+        }
+    }
+    runs.into_iter()
+        .map(|(start, end)| (start, now[start..end].to_vec()))
+        .collect()
+}
+
+/// How many unchanged texels a run of changed ones is carried across rather than broken at: a
+/// write costs more than the few texels it would leave out.
+const JOINED_ACROSS: usize = 4;
 
 /// The body as it treads: its lowest limbs where its joints stand now, and how far from where it
 /// stands they reach.

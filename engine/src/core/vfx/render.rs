@@ -5,6 +5,7 @@
 
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
+use std::time::Duration;
 use ui::egui;
 
 use bevy::asset::uuid::Uuid;
@@ -17,9 +18,11 @@ use bevy::pbr::{
 };
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
+use bevy::render::extract_resource::ExtractResourcePlugin;
 use bevy::render::render_resource::{
     AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError,
 };
+use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::shader::{Shader, ShaderRef};
 use bevy::sprite_render::{
     AlphaMode2d, Material2d, Material2dKey, Material2dPipeline, Material2dPlugin,
@@ -39,6 +42,7 @@ use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::gui::{self, Band, WidgetRects};
 use crate::core::math::{Pos, Rgba, Size};
 use crate::core::render::present::{self, PRESENT_LAYER};
+use crate::core::render::sample::UploadedBytes;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::billboard::Billboard;
 use crate::core::render::world::cover::CoverMaterial;
@@ -65,8 +69,13 @@ impl Plugin for VfxMaterialsPlugin {
             .init_resource::<VfxShaders>()
             .init_resource::<VfxAssets>()
             .init_resource::<WeatherImage>()
+            .init_resource::<super::cover::WeatherWrites>()
             .init_resource::<super::rain::RainField>()
             .init_resource::<super::rain::Shelter>()
+            .add_plugins((
+                ExtractResourcePlugin::<WeatherImage>::default(),
+                ExtractResourcePlugin::<super::cover::WeatherWrites>::default(),
+            ))
             .add_systems(
                 Update,
                 (
@@ -74,6 +83,17 @@ impl Plugin for VfxMaterialsPlugin {
                     super::cover::blow,
                 ),
             );
+        // The world's shaders sway on the frame's time from bevy's globals: wrapping it, as
+        // bevy does every hour by default, would jump every swaying thing at once.
+        if let Some(mut time) = app.world_mut().get_resource_mut::<Time<Virtual>>() {
+            time.set_wrap_period(Duration::MAX);
+        }
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app.init_resource::<UploadedBytes>().add_systems(
+                Render,
+                super::cover::write_weather.in_set(RenderSystems::PrepareResources),
+            );
+        }
     }
 }
 

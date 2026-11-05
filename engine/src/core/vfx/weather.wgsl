@@ -8,7 +8,8 @@
 // tells of the rain over each stretch of ground (`rain_field`), how hard it rains at a point and
 // how wet the ground lies there (`raining`, `wetness`), and where roofs and canopies shelter it
 // (`sheltered`). The engine paints the weather into a picture a texel per value, read in order
-// row by row (`weather_texel`), and `read_weather` reads it out as each entry of the header starts.
+// row by row (`weather_texel`), and `read_weather` reads it out as each entry of the header starts;
+// the time is the frame's own, from the globals every view binds.
 
 struct Weather {
     wind: vec2<f32>,
@@ -44,7 +45,7 @@ fn read_weather() {
     let sky = weather_texel(1u);
     let storm = weather_texel(2u);
     weather.wind = blowing.xy;
-    weather.time = blowing.z;
+    weather.time = globals.time;
     weather.treads = u32(blowing.w);
     weather.daylight = sky.x;
     weather.clouds = sky.y;
