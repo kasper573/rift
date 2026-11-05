@@ -15,7 +15,6 @@ use crate::core::content::version;
 use crate::core::net::auth::TokenClaims;
 use crate::core::time::{TimeCourse, UnixMillis, UtcHour};
 use crate::systems::player::SpawnPolicy;
-use crate::systems::probe::ProbeFrameQuestion;
 use crate::systems::script::Place;
 use crate::systems::staging::Staging;
 
@@ -326,11 +325,11 @@ pub struct ProbeDriver {
 }
 
 impl ProbeDriver {
-    /// Waits for the probe of the desktop client running as `client` to connect to `listener`:
-    /// refused once the client exits before it does, or `within` passes.
+    /// Waits for the probe of the app running as `app`, a desktop client or an editor, to connect
+    /// to `listener`: refused once the app exits before it does, or `within` passes.
     pub fn accept(
         listener: &TcpListener,
-        client: &mut Child,
+        app: &mut Child,
         within: Duration,
     ) -> Result<ProbeDriver, String> {
         listener
@@ -343,15 +342,13 @@ impl ProbeDriver {
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(error) => return Err(format!("the probe's port fails: {error}")),
             }
-            if let Ok(Some(status)) = client.try_wait() {
+            if let Ok(Some(status)) = app.try_wait() {
                 return Err(format!(
-                    "the desktop client exited ({status}) before its probe connected"
+                    "the app exited ({status}) before its probe connected"
                 ));
             }
             if std::time::Instant::now() >= deadline {
-                return Err(format!(
-                    "the desktop client's probe didn't connect within {within:?}"
-                ));
+                return Err(format!("the app's probe didn't connect within {within:?}"));
             }
             std::thread::sleep(PROBE_POLL);
         };
@@ -365,15 +362,15 @@ impl ProbeDriver {
     }
 
     /// The probe's answer, one line of JSON, to `question`.
-    pub fn ask(&mut self, question: &ProbeFrameQuestion) -> Result<String, String> {
+    pub fn ask(&mut self, question: &impl Serialize) -> Result<String, String> {
         let question = serde_json::to_string(question).expect("a question serializes");
         writeln!(self.questions, "{question}")
-            .map_err(|error| format!("the client takes no question: {error}"))?;
+            .map_err(|error| format!("the app takes no question: {error}"))?;
         let mut answer = String::new();
         match self.answers.read_line(&mut answer) {
-            Ok(0) => Err("the client hung up".to_owned()),
+            Ok(0) => Err("the app hung up".to_owned()),
             Ok(_) => Ok(answer),
-            Err(error) => Err(format!("the client stopped answering: {error}")),
+            Err(error) => Err(format!("the app stopped answering: {error}")),
         }
     }
 }

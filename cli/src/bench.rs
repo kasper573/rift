@@ -2,6 +2,7 @@ mod desktop;
 mod driver;
 mod editor;
 mod frames;
+mod hands;
 mod memory;
 mod places;
 mod play;
@@ -20,14 +21,17 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 
 use engine::core::content::Content;
+use engine::core::math::Size;
+use engine::core::units::WindowPx;
 use engine::systems::GameSettings;
 use engine::systems::area::{self, AreaModule};
 
 use crate::loadtest::Pool;
 use crate::render::{VideoFilter, VideoPreset};
 use crate::search::{Search, budget_ms, verdict};
-use driver::{Driver, Failure};
-use frames::{Criteria, Fps};
+use driver::Driver;
+use frames::{Class, Criteria, Fps, Window};
+use hands::Failure;
 use report::{BenchReport, Resolution, ScenarioResult, Verdict};
 use scenario::{Scenario, Target};
 use scenarios::ScenarioSlots;
@@ -108,20 +112,8 @@ pub fn run(args: &BenchArgs) -> Result<i32, String> {
         client(game, &content, args, &videos, &mut report)?;
     }
     if runs(BenchPart::Editor) {
-        let results = editor::run(game, &content, &videos, args.scenario.as_deref());
-        let report = report.get_or_insert_with(|| {
-            BenchReport::new(
-                args.adapter.clone().unwrap_or_default(),
-                Resolution {
-                    width: desktop::SCREEN.0,
-                    height: desktop::SCREEN.1,
-                },
-                game,
-            )
-        });
-        for result in results {
-            report.add(result);
-        }
+        let steps = args.report.with_extension(STEPS_LOG);
+        editor::run(game, &content, args, &videos, &steps, &mut report)?;
     }
     if runs(BenchPart::Scale) {
         scale::run(game, &content);
@@ -199,7 +191,7 @@ fn client(
     for &video in videos {
         let mut driver = Driver::start(game, content, slots.character, video, &steps)
             .map_err(|failure| failure_text(&failure))?;
-        let report = report_of(report, &mut driver, game, args)?;
+        let report = client_report(report, &mut driver, game, args)?;
         for scenario in &scenarios {
             let result = measure(
                 &mut driver,
@@ -254,7 +246,7 @@ fn desktop_check(
     let video = VideoPreset::Lowest;
     let mut driver = Driver::start(&checked, &content, slots.character, video, steps)
         .map_err(|failure| failure_text(&failure))?;
-    let report = report_of(report, &mut driver, game, args)?;
+    let report = client_report(report, &mut driver, game, args)?;
     let restart = Restart {
         game: &checked,
         content: &content,
@@ -284,26 +276,22 @@ const DESKTOP_TEMPLATE: &str = "new_game";
 /// as letting the client draw as fast as it can.
 const DESKTOP_FLOOR: Fps = Fps(300.0);
 
-/// The report, opened on the adapter and window `driver`'s client draws on when it isn't yet;
-/// refused when the client draws on another adapter than the bench was asked for.
+/// The report, opened on the adapter and screen the first app the bench drives draws on when it
+/// isn't yet; refused when an app draws on another adapter than the bench was asked for.
 fn report_of<'a>(
     report: &'a mut Option<BenchReport>,
-    driver: &mut Driver,
+    adapter: String,
+    screen: Size<WindowPx>,
     game: &Path,
     args: &BenchArgs,
 ) -> Result<&'a mut BenchReport, String> {
-    let adapter = driver
-        .adapter()
-        .map_err(|failure| failure_text(&failure))?
-        .unwrap_or_default();
     if let Some(wanted) = &args.adapter
         && wanted != &adapter
     {
         return Err(format!(
-            "the client draws on {adapter}, not the {wanted} the bench was asked for"
+            "the bench draws on {adapter}, not the {wanted} it was asked for"
         ));
     }
-    let screen = driver.screen().map_err(|failure| failure_text(&failure))?;
     Ok(report.get_or_insert_with(|| {
         BenchReport::new(
             adapter,
@@ -314,6 +302,21 @@ fn report_of<'a>(
             game,
         )
     }))
+}
+
+/// The report, opened on the adapter and screen `driver`'s client draws on.
+fn client_report<'a>(
+    report: &'a mut Option<BenchReport>,
+    driver: &mut Driver,
+    game: &Path,
+    args: &BenchArgs,
+) -> Result<&'a mut BenchReport, String> {
+    let adapter = driver
+        .adapter()
+        .map_err(|failure| failure_text(&failure))?
+        .unwrap_or_default();
+    let screen = driver.screen().map_err(|failure| failure_text(&failure))?;
+    report_of(report, adapter, screen, game, args)
 }
 
 fn driver_dead(driver: &mut Driver) -> bool {
@@ -427,56 +430,15 @@ fn measure(
                 measured
             }),
         };
-        let result = match outcome {
-            Ok(measured) => {
-                let stats = measured.window.stats(&criteria);
-                let failures = match (&stats, args.smoke) {
-                    (Some(stats), false) => criteria.failures(stats),
-                    (None, _) => vec!["no frames were measured".to_owned()],
-                    (Some(_), true) => Vec::new(),
-                };
-                let verdict = if failures.is_empty() {
-                    Verdict::Passed
-                } else {
-                    Verdict::Criteria
-                };
-                let headroom = scenario.class.headroom(video);
-                ScenarioResult {
-                    name: scenario.name.clone(),
-                    target: scenario.target,
-                    class: scenario.class,
-                    video,
-                    verdict,
-                    failures,
-                    headroom_met: match (&stats, headroom) {
-                        (Some(stats), Some(headroom)) => Some(stats.mean.0 >= headroom.0),
-                        _ => None,
-                    },
-                    headroom,
-                    stats,
-                    time_to_stand_frames: measured.stood_after_frames,
-                    runs: 1,
-                    mean_spread: None,
-                }
-            }
-            Err(failure) => ScenarioResult {
-                name: scenario.name.clone(),
-                target: scenario.target,
-                class: scenario.class,
-                video,
-                verdict: match failure {
-                    Failure::Harness(_) => Verdict::Harness,
-                    Failure::Crashed(_) => Verdict::Crashed,
-                },
-                failures: vec![failure_text(&failure)],
-                stats: None,
-                headroom: scenario.class.headroom(video),
-                headroom_met: None,
-                time_to_stand_frames: Vec::new(),
-                runs: 1,
-                mean_spread: None,
-            },
-        };
+        let result = result_of(
+            &scenario.name,
+            scenario.target,
+            scenario.class,
+            video,
+            &criteria,
+            outcome.map(|measured| (measured.window, measured.stood_after_frames)),
+            args.smoke,
+        );
         println!(
             "[client-bench] {:<8} {:<24} run {} of {} in {:.0} s",
             video.name(),
@@ -517,6 +479,68 @@ fn measure(
         }
     }
     median_run(results)
+}
+
+/// What a run of a scenario came to: its frames measured against `criteria` with how long its
+/// area took to stand after each move, or why it could not be played through.
+fn result_of(
+    name: &str,
+    target: Target,
+    class: Class,
+    video: VideoPreset,
+    criteria: &Criteria,
+    outcome: Result<(Window, Vec<u32>), Failure>,
+    smoke: bool,
+) -> ScenarioResult {
+    let headroom = class.headroom(video);
+    match outcome {
+        Ok((window, stood_after_frames)) => {
+            let stats = window.stats(criteria);
+            let failures = match (&stats, smoke) {
+                (Some(stats), false) => criteria.failures(stats),
+                (None, _) => vec!["no frames were measured".to_owned()],
+                (Some(_), true) => Vec::new(),
+            };
+            ScenarioResult {
+                name: name.to_owned(),
+                target,
+                class,
+                video,
+                verdict: if failures.is_empty() {
+                    Verdict::Passed
+                } else {
+                    Verdict::Criteria
+                },
+                failures,
+                headroom_met: match (&stats, headroom) {
+                    (Some(stats), Some(headroom)) => Some(stats.mean.0 >= headroom.0),
+                    _ => None,
+                },
+                headroom,
+                stats,
+                time_to_stand_frames: stood_after_frames,
+                runs: 1,
+                mean_spread: None,
+            }
+        }
+        Err(failure) => ScenarioResult {
+            name: name.to_owned(),
+            target,
+            class,
+            video,
+            verdict: match failure {
+                Failure::Harness(_) => Verdict::Harness,
+                Failure::Crashed(_) => Verdict::Crashed,
+            },
+            failures: vec![failure_text(&failure)],
+            stats: None,
+            headroom,
+            headroom_met: None,
+            time_to_stand_frames: Vec::new(),
+            runs: 1,
+            mean_spread: None,
+        },
+    }
 }
 
 /// Of several runs, the one whose mean is the median, noting how far the others strayed; a run

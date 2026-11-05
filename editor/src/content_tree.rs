@@ -219,6 +219,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui) {
         .show(ui, |ui| {
             tree::show(
                 ui,
+                "files",
                 egui::Id::new("content tree"),
                 &mut content_tree.tree,
                 &source,

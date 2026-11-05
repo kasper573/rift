@@ -1,6 +1,12 @@
+mod editor;
 mod frames;
 mod game;
-mod socket;
+pub mod socket;
+
+pub use editor::{
+    EditorFrameQuestion, EditorPanel, EditorScenery, EditorSnapshot, EditorStage, EditorStageMark,
+    EditorTree, EditorTreeRow, EditorTrees,
+};
 
 pub use frames::{
     FRAMES_KEPT, FrameSample, FrameSamples, ProbeFrames, ProbePass, ProbeWorstFrame, SETTLE_FRAMES,
@@ -13,6 +19,7 @@ pub use game::{
 };
 
 use std::collections::HashMap;
+use std::sync::{Arc, Condvar, Mutex};
 use ui::egui;
 use ui::float;
 
@@ -80,12 +87,6 @@ use crate::systems::skill::{self, Rank, SkillId, bar::SlotReport};
 use crate::systems::stat::{StatKind, Stats};
 use crate::systems::status::{self, StatusCategory, StatusEffectId};
 
-/// The probe's question `line`, where it is one only a frame answers: a question that names no
-/// place of the game, so it reads before the game is loaded.
-fn frame_question(line: &str) -> Option<ProbeFrameQuestion> {
-    serde_json::from_str(line).ok()
-}
-
 /// The probe's question about the game `line`, read against the game it names places of.
 pub fn read_question(content: &Content, line: &str) -> Result<ProbeGameQuestion, String> {
     let (question, scope) = with_content(ContentScope::of(content), || {
@@ -109,7 +110,7 @@ pub fn schema() -> String {
 }
 
 /// Everything the probe speaks, for its schema: the questions of each kind, and the answers of
-/// each kind.
+/// each kind, the client's and the editor's.
 #[derive(JsonSchema)]
 pub struct ProbeProtocol {
     pub frame_question: ProbeFrameQuestion,
@@ -127,33 +128,73 @@ pub struct ProbeProtocol {
     pub water: ProbeWater,
     pub batch: Vec<serde_json::Value>,
     pub frames: ProbeFrames,
+    pub editor_question: EditorFrameQuestion,
+    pub editor_snapshot: EditorSnapshot,
+    pub editor_trees: EditorTrees,
 }
 
 /// Answers the driver at `driver`: the frame after it asks for a snapshot answers it, and every
 /// other question is about the game, answered on its own once the game is loaded.
 pub fn install(app: &mut App, driver: std::net::SocketAddr) {
-    app.insert_non_send(Probe(socket::ProbeSocket::connect(driver)))
-        .add_plugins(FrameSamplingPlugin)
-        .init_resource::<ProbeInputSeen>()
+    let game: Arc<(Mutex<Option<Content>>, Condvar)> = Arc::default();
+    let socket = socket::ProbeSocket::connect(driver, {
+        let game = game.clone();
+        move |line| {
+            let content = loaded(&game);
+            match read_question(&content, line) {
+                Ok(question) => answer(&content, &question),
+                Err(error) => {
+                    bevy::log::error!("the probe's driver asked {line}: {error}");
+                    std::process::exit(1);
+                }
+            }
+        }
+    });
+    app.insert_non_send(Probe { socket, game })
+        .add_plugins((ProbeFramesPlugin, ProbeInterfacePlugin))
         .init_resource::<TerrainSent>()
-        .init_resource::<DrawnUi>()
         .init_resource::<VfxSeen>()
         .init_resource::<FrameTimes>()
-        .init_resource::<FrameSamples>()
-        .init_resource::<FrameMark>()
         .add_observer(remember_vfx)
-        .add_systems(First, mark_frame)
-        .add_systems(PreUpdate, (count_input, read_accessibly))
+        .add_systems(PreUpdate, read_accessibly)
         .add_systems(
             PostUpdate,
-            (copy_drawn_ui, count_clicks).after(EguiPostUpdateSet::ProcessOutput),
+            count_clicks.after(EguiPostUpdateSet::ProcessOutput),
         )
-        .add_systems(
-            Last,
-            (time_frame, sample_frame, publish)
-                .chain()
-                .after(bevy::diagnostic::update_frame_count),
-        );
+        .add_systems(Last, (time_frame, publish).chain().after(sample_frame));
+}
+
+/// Samples every frame into [`FrameSamples`]: how long the main world, the render world and the
+/// GPU took over it, and what it drew.
+pub struct ProbeFramesPlugin;
+
+impl Plugin for ProbeFramesPlugin {
+    fn build(&self, app: &mut App) {
+        app.add_plugins(FrameSamplingPlugin)
+            .init_resource::<FrameSamples>()
+            .init_resource::<FrameMark>()
+            .add_systems(First, mark_frame)
+            .add_systems(
+                Last,
+                sample_frame.after(bevy::diagnostic::update_frame_count),
+            );
+    }
+}
+
+/// Counts the input the app received into [`ProbeInputSeen`], and keeps the accessibility tree
+/// the primary interface last drew in [`DrawnUi`]; the app turns the tree on.
+pub struct ProbeInterfacePlugin;
+
+impl Plugin for ProbeInterfacePlugin {
+    fn build(&self, app: &mut App) {
+        app.init_resource::<ProbeInputSeen>()
+            .init_resource::<DrawnUi>()
+            .add_systems(PreUpdate, count_input)
+            .add_systems(
+                PostUpdate,
+                copy_drawn_ui.after(EguiPostUpdateSet::ProcessOutput),
+            );
+    }
 }
 
 /// How long each frame took since the last snapshot.
@@ -177,7 +218,7 @@ fn mark_frame(mut mark: ResMut<FrameMark>) {
 
 /// Keeps the frame's sample, and fills in what the render world and the GPU have reported of
 /// earlier frames since the last.
-fn sample_frame(world: &mut World) {
+pub fn sample_frame(world: &mut World) {
     let frame = world.resource::<FrameCount>().0;
     let dt_ms = Millis(world.resource::<Time<Real>>().delta_secs() * 1000.0);
     let cpu_main_ms = world
@@ -694,10 +735,40 @@ pub struct ProbeVoice {
     pub heard: f32,
 }
 
-struct Probe(socket::ProbeSocket);
+/// The socket the driver asks on, and the game its questions about the game are read against,
+/// once loaded.
+struct Probe {
+    socket: socket::ProbeSocket<ProbeFrameQuestion>,
+    game: Arc<(Mutex<Option<Content>>, Condvar)>,
+}
 
+impl Probe {
+    fn know(&self, content: &Content) {
+        let (game, known) = &*self.game;
+        *game.lock().expect("the probe's game") = Some(content.clone());
+        known.notify_all();
+    }
+}
+
+fn loaded(game: &(Mutex<Option<Content>>, Condvar)) -> Content {
+    let (content, known) = game;
+    let content = known
+        .wait_while(content.lock().expect("the probe's game"), |content| {
+            content.is_none()
+        })
+        .expect("the probe's game");
+    content.clone().expect("a loaded game")
+}
+
+/// The accessibility tree the primary interface last drew, once it is turned on.
 #[derive(Resource, Default)]
-struct DrawnUi(Option<accesskit::TreeUpdate>);
+pub struct DrawnUi(Option<accesskit::TreeUpdate>);
+
+impl DrawnUi {
+    pub fn tree(&self) -> Option<&accesskit::TreeUpdate> {
+        self.0.as_ref()
+    }
+}
 
 fn count_input(
     mut seen: ResMut<ProbeInputSeen>,
@@ -741,10 +812,15 @@ fn copy_drawn_ui(
 }
 
 fn count_clicks(gui: Option<Res<GuiContext>>, mut seen: ResMut<ProbeInputSeen>) {
-    let Some(gui) = gui else {
-        return;
-    };
-    let (run, released) = gui.0.input(|input| {
+    if let Some(gui) = gui {
+        count_click_run(&gui.0, &mut seen);
+    }
+}
+
+/// Counts the click the interface drawn by `gui` saw released this frame as the run it ends, as
+/// egui counts double and triple clicks.
+pub fn count_click_run(gui: &egui::Context, seen: &mut ProbeInputSeen) {
+    let (run, released) = gui.input(|input| {
         let pointer = &input.pointer;
         let primary = egui::PointerButton::Primary;
         let run = if pointer.button_triple_clicked(primary) {
@@ -768,16 +844,19 @@ fn count_clicks(gui: Option<Res<GuiContext>>, mut seen: ResMut<ProbeInputSeen>) 
     }
 }
 
+fn click_run_open(world: &World) -> bool {
+    world
+        .get_resource::<GuiContext>()
+        .is_some_and(|gui| click_run_still_open(&gui.0))
+}
+
 // egui counts a click as the third of a run while the click two before it came within twice the
 // double click delay, wherever that click landed.
-fn click_run_open(world: &World) -> bool {
-    world.get_resource::<GuiContext>().is_some_and(|gui| {
-        let delay = gui
-            .0
-            .options(|options| options.input_options.max_double_click_delay);
-        let since = gui.0.input(|input| input.pointer.time_since_last_click());
-        f64::from(since) < 2.0 * delay
-    })
+/// Whether a click now would still count on from the latest one the interface drawn by `gui` saw.
+pub fn click_run_still_open(gui: &egui::Context) -> bool {
+    let delay = gui.options(|options| options.input_options.max_double_click_delay);
+    let since = gui.input(|input| input.pointer.time_since_last_click());
+    f64::from(since) < 2.0 * delay
 }
 
 // A snapshot scans the whole world, so only a frame the driver is waiting for pays for one.
@@ -787,10 +866,10 @@ fn publish(world: &mut World) {
     }
     if world.is_resource_changed::<Content>() {
         let content = world.resource::<Content>().clone();
-        world.non_send::<Probe>().0.know(&content);
+        world.non_send::<Probe>().know(&content);
     }
-    let asked = world.non_send::<Probe>().0.asked();
-    let answers = world.non_send::<Probe>().0.answers();
+    let asked = world.non_send::<Probe>().socket.asked();
+    let answers = world.non_send::<Probe>().socket.answers();
     let mut snapshots = 0;
     for question in asked {
         match question {
@@ -1523,6 +1602,18 @@ fn ui(world: &mut World) -> Vec<ProbeUiElement> {
     let Some(tree) = world.resource::<DrawnUi>().0.as_ref() else {
         return Vec::new();
     };
+    let world_layers = world.resource::<WorldLayers>();
+    interface_elements(&gui, tree, |layer| world_layers.contains(layer))
+}
+
+/// What the interface drawn by `gui` shows, read from the accessibility `tree` it last drew: text,
+/// icons, fields and sliders, less what is scrolled or clipped out of sight. `in_world` tells the
+/// layers drawn over the world, such as labels over heads.
+pub fn interface_elements(
+    gui: &egui::Context,
+    tree: &accesskit::TreeUpdate,
+    in_world: impl Fn(egui::LayerId) -> bool,
+) -> Vec<ProbeUiElement> {
     let drawn: HashMap<u64, egui::WidgetRect> = gui.viewport(|viewport| {
         viewport
             .prev_pass
@@ -1537,7 +1628,6 @@ fn ui(world: &mut World) -> Vec<ProbeUiElement> {
         .iter()
         .filter_map(|(id, node)| Some((*id, node.label().or(node.value())?)))
         .collect();
-    let world_layers = world.resource::<WorldLayers>();
     tree.nodes
         .iter()
         .filter(|(_, node)| shown_role(node.role()))
@@ -1593,8 +1683,8 @@ fn ui(world: &mut World) -> Vec<ProbeUiElement> {
                 editable,
                 button: role == accesskit::Role::Button,
                 focused: tree.focus == *id,
-                click_through: float::layer_at(&gui, rect.center()) != Some(widget.layer_id),
-                in_world: world_layers.contains(widget.layer_id),
+                click_through: float::layer_at(gui, rect.center()) != Some(widget.layer_id),
+                in_world: in_world(widget.layer_id),
                 slider,
                 checked,
                 labelled_by,
@@ -1635,9 +1725,12 @@ fn notifications(world: &mut World) -> ProbeNotifications {
 }
 
 fn covered(world: &mut World) -> Vec<Rect<WindowPx>> {
-    let Some(gui) = gui::context(world) else {
-        return Vec::new();
-    };
+    gui::context(world).map_or_else(Vec::new, |gui| interface_covers(&gui))
+}
+
+/// Where the interface drawn by `gui` takes the pointer: each rect edges included, as egui
+/// hit-tests.
+pub fn interface_covers(gui: &egui::Context) -> Vec<Rect<WindowPx>> {
     let layers: Vec<egui::LayerId> =
         gui.memory(|memory| memory.areas().visible_layer_ids().into_iter().collect());
     // egui hands a click to a widget this close to it as well as one under it.
@@ -1645,7 +1738,7 @@ fn covered(world: &mut World) -> Vec<Rect<WindowPx>> {
     layers
         .into_iter()
         .filter(|&layer| layer != egui::LayerId::background())
-        .filter_map(|layer| egui::AreaState::load(&gui, layer.id))
+        .filter_map(|layer| egui::AreaState::load(gui, layer.id))
         .filter(|area| area.interactable)
         .map(|area| area.rect().expand(reach))
         .filter(|rect| rect.width() > 0.0 && rect.height() > 0.0)

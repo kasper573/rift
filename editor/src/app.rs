@@ -1,6 +1,8 @@
+use std::collections::VecDeque;
 use std::fs::File;
 use std::io::{BufWriter, Write};
 use std::mem;
+use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
 use std::time::{Instant, SystemTime};
@@ -8,7 +10,9 @@ use ui::egui;
 use ui::words;
 
 use bevy::app::MainScheduleOrder;
+use bevy::diagnostic::FrameCount;
 use bevy::prelude::*;
+use bevy::render::view::screenshot::{Screenshot, ScreenshotCaptured};
 use bevy_egui::{
     EguiContext, EguiPlugin, EguiPreUpdateSet, EguiPrimaryContextPass, PrimaryEguiContext,
 };
@@ -18,6 +22,9 @@ use engine::core::units::{Meters, Millis};
 use engine::systems;
 use engine::systems::area::scenery;
 use engine::systems::frame_rate::{self, FrameCountPlugin, FrameRates};
+use engine::systems::probe::{
+    self, EditorScenery, FRAMES_KEPT, FrameSample, FrameSamples, ProbeFramesPlugin,
+};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use strum::IntoStaticStr;
@@ -40,6 +47,7 @@ use crate::row_form;
 use crate::scenes::{self, SceneStep};
 use crate::schema::SchemaShapes;
 use crate::shell;
+use crate::shown;
 use crate::tabs::{self, DockRequest, EditorTab, TabOpening};
 use crate::thumbs::Thumbnail;
 use crate::user::{EditorSettings, UserFolder};
@@ -51,6 +59,8 @@ pub struct EditorLaunch {
     pub scene: Option<Vec<SceneStep>>,
     pub user: Option<PathBuf>,
     pub frame_log: Option<PathBuf>,
+    /// Where a driver waits for the editor's probe to answer it.
+    pub probe: Option<SocketAddr>,
 }
 
 pub struct EditorPlugin {
@@ -75,7 +85,19 @@ impl Plugin for EditorPlugin {
             .as_ref()
             .and_then(|path| File::create(path).ok())
         {
-            app.insert_resource(FrameLog(BufWriter::new(log)));
+            app.insert_resource(FrameLog {
+                writer: BufWriter::new(log),
+                logged: 0,
+            })
+            .add_systems(Last, log_frames.after(probe::sample_frame));
+        }
+        if self.launch.frame_log.is_some() || self.launch.probe.is_some() {
+            app.add_plugins(ProbeFramesPlugin)
+                .init_resource::<DrawnPasses>()
+                .add_systems(Last, keep_pass.after(probe::sample_frame));
+        }
+        if let Some(driver) = self.launch.probe {
+            crate::probe::install(app, driver);
         }
         app.init_schedule(Background);
         app.world_mut()
@@ -91,7 +113,7 @@ impl Plugin for EditorPlugin {
                 theme_context.after(EguiPreUpdateSet::InitContexts),
             )
             .add_systems(EguiPrimaryContextPass, editor_ui)
-            .add_systems(Update, show_video)
+            .add_systems(Update, (show_video, take_shot))
             .add_systems(Background, background);
     }
 }
@@ -100,46 +122,171 @@ const FRAME_RATE_MARGIN: f32 = 8.0;
 /// The most bytes of content an edit's check reads on the frame: one reading more checks off it.
 const CHECKED_ON_THE_FRAME: usize = 256 << 10;
 
-/// A line per frame, each a [`FrameRecord`] in JSON.
+/// A line per frame, each a [`FrameRecord`] in JSON, written once the frame's sample has settled.
 #[derive(Resource)]
-struct FrameLog(BufWriter<File>);
+struct FrameLog {
+    writer: BufWriter<File>,
+    /// The latest frame written.
+    logged: u32,
+}
 
-/// What the frame log tells of a frame: how long it took and its interface of that, the active
-/// tab and its camera, how many entities, images and meshes the world holds, and how its scenery stands.
+/// What the frame log tells of a frame: its sample, how long its interface took to draw and its
+/// trees and the stage's overlays of that, the tab in front and its camera, how many images and
+/// meshes the world holds, and how its scenery stands.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct FrameRecord {
-    pub frame: Millis,
-    pub ui: Millis,
+    #[serde(flatten)]
+    pub sample: FrameSample,
+    #[serde(flatten)]
+    pub pass: DrawnPass,
+}
+
+/// What a frame of the editor drew besides what every frame's sample tells.
+#[derive(Serialize, Deserialize, Clone, Debug)]
+pub struct DrawnPass {
+    pub ui_ms: Millis,
+    pub tree_ms: Millis,
+    pub overlay_ms: Millis,
     pub tab: Option<String>,
     /// How far the open area or blueprint view's camera stands from what it looks at.
     pub camera: Option<Meters>,
-    pub entities: usize,
     pub images: usize,
     pub meshes: usize,
-    pub scenery: SceneryState,
+    pub scenery: EditorScenery,
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-#[serde(rename_all = "snake_case")]
-pub enum SceneryState {
-    /// No view draws an area.
-    None,
-    /// What a view takes in is still being stood or readied.
-    Standing,
-    /// Every view's scenery stands whole.
-    Stood,
-}
+/// The passes of the frames whose samples haven't settled yet, by frame.
+#[derive(Resource, Default)]
+pub(crate) struct DrawnPasses(VecDeque<(u32, DrawnPass)>);
 
-impl SceneryState {
-    fn of(world: &mut World) -> SceneryState {
-        if scenery::sceneries(world) == 0 {
-            SceneryState::None
-        } else if scenery::standing(world) || engine::core::render::world::readying(world) {
-            SceneryState::Standing
-        } else {
-            SceneryState::Stood
-        }
+impl DrawnPasses {
+    pub(crate) fn latest(&self) -> Option<&DrawnPass> {
+        self.0.back().map(|(_, pass)| pass)
     }
+
+    pub(crate) fn of(&self, frame: u32) -> Option<&DrawnPass> {
+        self.0
+            .iter()
+            .find(|(drawn, _)| *drawn == frame)
+            .map(|(_, pass)| pass)
+    }
+}
+
+/// What the latest pass of the interface took, kept for the frame it ends.
+#[derive(Resource, Default)]
+struct PassTimes {
+    ui_ms: Millis,
+    tab: Option<String>,
+    camera: Option<Meters>,
+}
+
+/// Takes the picture the scene waits on once the editor is idle and every view's scenery has stood
+/// for a few frames, then goes on with the scene.
+fn take_shot(world: &mut World, mut stood: Local<u32>) {
+    let editor = world.resource::<Editor>();
+    if editor.shot.is_none() || editor.busy.is_busy() {
+        *stood = 0;
+        return;
+    }
+    if scenery_of(world) == EditorScenery::Standing {
+        *stood = 0;
+        return;
+    }
+    *stood += 1;
+    if *stood < SHOT_SETTLE {
+        return;
+    }
+    *stood = 0;
+    let Some(shot) = world.resource_mut::<Editor>().shot.take() else {
+        return;
+    };
+    world.spawn(Screenshot::primary_window()).observe(
+        move |captured: On<ScreenshotCaptured>, mut editor: ResMut<Editor>| {
+            let written = captured
+                .image
+                .clone()
+                .try_into_dynamic()
+                .map_err(|error| error.to_string())
+                .and_then(|picture| {
+                    picture
+                        .to_rgb8()
+                        .save(&shot.path)
+                        .map_err(|error| error.to_string())
+                });
+            if let Err(error) = written {
+                editor.toast(format!(
+                    "The scene's picture {}: {error}",
+                    shot.path.display()
+                ));
+            }
+            scenes::open(&mut editor, &shot.rest);
+        },
+    );
+}
+
+/// How many frames the scenery stands before the scene's picture is taken, so what it waits on
+/// to draw has drawn.
+const SHOT_SETTLE: u32 = 30;
+
+/// How the scenery of the views stands.
+pub fn scenery_of(world: &mut World) -> EditorScenery {
+    if scenery::sceneries(world) == 0 {
+        EditorScenery::None
+    } else if scenery::standing(world) || engine::core::render::world::readying(world) {
+        EditorScenery::Standing
+    } else {
+        EditorScenery::Stood
+    }
+}
+
+pub(crate) fn keep_pass(world: &mut World) {
+    let Some(ctx) = primary_context(world) else {
+        return;
+    };
+    let frame = world.resource::<FrameCount>().0;
+    let shown = shown::pass(&ctx);
+    let times = world.remove_resource::<PassTimes>().unwrap_or_default();
+    let pass = DrawnPass {
+        ui_ms: times.ui_ms,
+        tree_ms: Millis(shown.tree_time.as_secs_f32() * 1000.0),
+        overlay_ms: Millis(shown.overlay_time.as_secs_f32() * 1000.0),
+        tab: times.tab,
+        camera: times.camera,
+        images: world.resource::<Assets<Image>>().len(),
+        meshes: world.resource::<Assets<Mesh>>().len(),
+        scenery: scenery_of(world),
+    };
+    let mut passes = world.resource_mut::<DrawnPasses>();
+    if passes.0.len() == FRAMES_KEPT {
+        passes.0.pop_front();
+    }
+    passes.0.push_back((frame, pass));
+}
+
+fn log_frames(world: &mut World) {
+    let logged = world.resource::<FrameLog>().logged;
+    let settled = world.resource::<FrameSamples>().since(logged).samples;
+    let records: Vec<FrameRecord> = settled
+        .into_iter()
+        .filter_map(|sample| {
+            let pass = world.resource::<DrawnPasses>().of(sample.frame)?.clone();
+            Some(FrameRecord { sample, pass })
+        })
+        .collect();
+    let mut log = world.resource_mut::<FrameLog>();
+    for record in &records {
+        log.logged = record.sample.frame;
+        let _ = serde_json::to_writer(&mut log.writer, record)
+            .map_err(std::io::Error::from)
+            .and_then(|()| writeln!(log.writer));
+    }
+    let _ = log.writer.flush();
+}
+
+pub(crate) fn primary_context(world: &mut World) -> Option<egui::Context> {
+    let mut contexts = world.query_filtered::<&mut EguiContext, With<PrimaryEguiContext>>();
+    let mut context = contexts.single_mut(world).ok()?;
+    Some(context.get_mut().clone())
 }
 
 /// Where the editor edits the world its views draw: a schedule of its own after `Update`, since
@@ -186,6 +333,8 @@ pub struct Editor {
     pub preview: Option<EditorTab>,
     pub dock_requests: Vec<DockRequest>,
     pub scene: Option<Vec<SceneStep>>,
+    /// The picture of the window the scene waits to take.
+    pub shot: Option<scenes::PendingShot>,
     pub clipboard: Option<Clipboard>,
     pub views: EditorViews,
     pub play: play::PlayTest,
@@ -268,6 +417,7 @@ impl Editor {
             preview: None,
             dock_requests: Vec::new(),
             scene: None,
+            shot: None,
             clipboard: None,
             views: EditorViews::default(),
             play: PlayTest::default(),
@@ -1026,14 +1176,10 @@ impl Editor {
 }
 
 fn editor_ui(world: &mut World) {
-    let ctx = {
-        let mut contexts = world.query_filtered::<&mut EguiContext, With<PrimaryEguiContext>>();
-        let Ok(mut context) = contexts.single_mut(world) else {
-            return;
-        };
-        context.get_mut().clone()
+    let Some(ctx) = primary_context(world) else {
+        return;
     };
-    let frame_ms = world.resource::<Time<Real>>().delta_secs() * 1000.0;
+    shown::begin(&ctx, world.contains_resource::<crate::probe::Probed>());
     let (ui_ms, tab, camera) = world.resource_scope(|world, mut editor: Mut<Editor>| {
         let started = Instant::now();
         shell::show(&mut editor, &ctx);
@@ -1060,23 +1206,11 @@ fn editor_ui(world: &mut World) {
                 .map(|state| state.camera.distance),
         )
     });
-    if world.contains_resource::<FrameLog>() {
-        let record = FrameRecord {
-            frame: Millis(frame_ms),
-            ui: Millis(ui_ms),
-            tab,
-            camera,
-            entities: world.query::<Entity>().iter(world).count(),
-            images: world.resource::<Assets<Image>>().len(),
-            meshes: world.resource::<Assets<Mesh>>().len(),
-            scenery: SceneryState::of(world),
-        };
-        let mut log = world.resource_mut::<FrameLog>();
-        let _ = serde_json::to_writer(&mut log.0, &record)
-            .map_err(std::io::Error::from)
-            .and_then(|()| writeln!(log.0))
-            .and_then(|()| log.0.flush());
-    }
+    world.insert_resource(PassTimes {
+        ui_ms: Millis(ui_ms),
+        tab,
+        camera,
+    });
     if world.resource::<Editor>().quit {
         world.write_message(bevy::app::AppExit::Success);
     }

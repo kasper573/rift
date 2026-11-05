@@ -38,6 +38,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Deref;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 use ui::controls;
 use ui::egui;
 use ui::face;
@@ -79,6 +80,7 @@ use crate::app::{BottomTab, Editor};
 use crate::keymap::EditorKey;
 use crate::play;
 use crate::project::{AreaCameraState, Project, RowSelection};
+use crate::shown;
 use crate::tabs::{EditorTab, file_title};
 use crate::views::ViewMap;
 use crate::widgets;
@@ -231,6 +233,9 @@ pub struct AreaViewState {
     pub tree_hover: Option<String>,
     /// A row held hovered as if the pointer were over it, "" the whole scene.
     pub held_hover: Option<String>,
+    /// A point of the ground the stage is held hovered over while the pointer is off it, as if
+    /// the pointer rested there.
+    pub held_ground: Option<Pos<Meters>>,
     outlines: overlays::Outlines,
     ground: view_ground::ViewGround,
     cache: Option<SnapshotCache>,
@@ -696,7 +701,11 @@ fn canvas(
         ui.ctx().request_repaint();
     }
     let canvas = AreaCanvas::new(rect, camera, snapshot.picture.area.clone());
-    let hovered = response.hover_pos().filter(|_| response.hovered());
+    let held = editor.views.area.view(view_key).held_ground;
+    let hovered = response
+        .hover_pos()
+        .filter(|_| response.hovered())
+        .or_else(|| held.map(|ground| canvas.to_screen(ground)));
     let pointer_ground = hovered.and_then(|p| canvas.to_ground(p));
     if let Some(ground) = pointer_ground {
         editor.views.area.hover = Some(AreaHover {
@@ -713,16 +722,23 @@ fn canvas(
         response: &response,
         labels: AreaLabels::default(),
     };
+    if shown::probed(ui.ctx()) {
+        shown::stage(ui.ctx(), shown_stage(&frame, rect));
+    }
+    let overlays_began = Instant::now();
     overlay_bounds(&painter, &frame);
     if page != AreaPage::Scene {
+        shown::overlays(ui.ctx(), overlays_began.elapsed());
         tools::navigate(editor, ui, view_key, &frame);
         status_bar(editor, &painter, view_key, &frame);
         request_viewport(editor, ui, view_key, &frame, rect);
         remember_camera(editor, view_key);
         return;
     }
+    shown::overlays(ui.ctx(), overlays_began.elapsed());
     tools::input(editor, ui, &painter, view_key, &frame);
     locked_tip(editor, view_key, &frame);
+    let overlays_began = Instant::now();
     if is_area {
         editor.views.area.active = Some(bundle.clone());
     }
@@ -757,6 +773,7 @@ fn canvas(
     }
     tools::overlay(editor, &painter, view_key, &frame);
     frame.labels.draw(&painter);
+    shown::overlays(ui.ctx(), overlays_began.elapsed());
     status_bar(editor, &painter, view_key, &frame);
     if response.hovered() && !ui.ctx().text_edit_focused() {
         tools::keys(editor, ui, view_key, &frame);
@@ -764,6 +781,37 @@ fn canvas(
     request_viewport(editor, ui, view_key, &frame, rect);
     remember_camera(editor, view_key);
 }
+
+/// The stage as `frame` shows it in `rect`, with what it holds nearest the middle where each shows.
+fn shown_stage(frame: &AreaFrame, rect: ERect) -> shown::ShownStage {
+    let middle = rect.center();
+    let mut marks: Vec<(String, egui::Pos2)> = frame
+        .targets
+        .iter()
+        .filter(|target| target.shown)
+        .filter_map(|target| {
+            let (at, _) = frame.canvas.glance(target.bounds)?;
+            rect.contains(at).then(|| (target.pointer.clone(), at))
+        })
+        .collect();
+    marks.sort_by(|a, b| a.1.distance_sq(middle).total_cmp(&b.1.distance_sq(middle)));
+    marks.truncate(STAGE_MARKS);
+    shown::ShownStage {
+        rect,
+        view_proj: frame.canvas.view().view_proj(),
+        camera: frame.canvas.camera,
+        farthest: OrbitCamera::framing_distance(frame.canvas.area().size.bounds()).0,
+        marks,
+        picked: frame
+            .response
+            .hovered()
+            .then(|| frame.hit_pointer())
+            .flatten(),
+    }
+}
+
+/// How many of what the stage holds the probe is told of, nearest the middle first.
+const STAGE_MARKS: usize = 64;
 
 /// Asks the viewport for the picture of the next frame: the scene as it stands, the terrain as a
 /// stroke shapes it, the ghost under the pointer and the cast standing where they live.

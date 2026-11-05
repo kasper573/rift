@@ -132,7 +132,6 @@ pub enum UiTarget {
 
 #[derive(Clone, Debug)]
 pub enum Cond {
-    Frames(u32),
     Seconds(Seconds),
     /// The player stands in the area at the place, and the screen is done fading.
     Arrived(Place),

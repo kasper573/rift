@@ -58,7 +58,7 @@ impl Class {
 }
 
 /// What a scenario's frames must meet: a scenario's own may only be stricter than the global
-/// ones of its video settings.
+/// ones of its video settings, but for an opening's, drawn while its view still fills.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq)]
 pub struct Criteria {
     /// The frame rate the mean over the measured window must reach.
@@ -78,6 +78,15 @@ impl Criteria {
             slow_share: 0.01,
             stall: Millis(48.0),
             missing_frames: 0,
+        }
+    }
+
+    /// The global criteria, but for what the view takes in, which an opening draws while it still
+    /// arrives.
+    pub fn opening(video: VideoPreset) -> Criteria {
+        Criteria {
+            missing_frames: u32::MAX,
+            ..Criteria::global(video)
         }
     }
 
@@ -132,10 +141,6 @@ pub struct Window {
 }
 
 impl Window {
-    pub fn push(&mut self, sample: FrameSample) {
-        self.samples.push(sample);
-    }
-
     pub fn extend(&mut self, samples: impl IntoIterator<Item = FrameSample>) {
         self.samples.extend(samples);
     }

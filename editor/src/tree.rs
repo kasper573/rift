@@ -2,6 +2,7 @@ use std::cell::{OnceCell, RefCell};
 use std::collections::BTreeSet;
 use std::ops::Range;
 use std::rc::Rc;
+use std::time::Instant;
 use ui::chip;
 use ui::drag;
 use ui::egui;
@@ -23,6 +24,7 @@ use super::widgets::{self, KindMark};
 use crate::icons::{self, IconTone, KindIcon, PictureTexture};
 use crate::keymap::EditorKey;
 use crate::picker::Dragged;
+use crate::shown::{self, ShownRow, ShownTree};
 use crate::widgets::Badge;
 
 /// What a tree lists and what may be done to its rows. The game folder and a scene each implement
@@ -218,11 +220,13 @@ pub struct TreeResponse<A> {
 /// by the caller; it answers whether that changed.
 pub fn show<S: TreeSource>(
     ui: &mut Ui,
+    name: &'static str,
     id: Id,
     state: &mut TreeState,
     source: &S,
     open: &mut BTreeSet<String>,
 ) -> (TreeResponse<S::Action>, bool) {
+    let started = Instant::now();
     let narrowed = source.narrowed();
     if let Some(target) = &state.reveal {
         let mut parent = source.parent(target);
@@ -452,6 +456,25 @@ pub fn show<S: TreeSource>(
             };
         }
     }
+    let rows = drawn
+        .iter()
+        .map(|row| ShownRow {
+            id: row.id.clone(),
+            rect: row.rect(&response.rect),
+            folder: row.folder,
+            open: row.open,
+        })
+        .collect();
+    shown::tree(
+        ui.ctx(),
+        ShownTree {
+            name,
+            rect: response.rect,
+            rows,
+            selected: view.selected().to_vec(),
+        },
+        started.elapsed(),
+    );
     (out, changed)
 }
 

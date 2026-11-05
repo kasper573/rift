@@ -8,7 +8,6 @@
 use std::fs::File;
 use std::io::Write;
 use std::path::Path;
-use std::process::Command;
 use std::time::{Duration, Instant};
 
 use engine::core::content::{Content, ContentId};
@@ -19,12 +18,13 @@ use engine::systems::input::camera::DRAG_TURN;
 use engine::systems::input::map::{InputAction, InputBinding, InputMap, KeyModifiers};
 use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::probe::{
-    ProbeFrameQuestion, ProbeFrames, ProbeInputSeen, ProbeSnapshot, ProbeTerrain, ProbeUiElement,
-    ProbeView,
+    ProbeFrameQuestion, ProbeFrames, ProbeInput, ProbeInputSeen, ProbeSnapshot, ProbeTerrain,
+    ProbeUiElement, ProbeView,
 };
 use engine::systems::staging::Staging;
 
 use super::frames::Window;
+use super::hands::{self, BUDGET, Driven, Failure};
 use super::playtest::Playtest;
 use super::scenario::{Button, CameraOp, Cond, Ground, Point, Scenario, Step, UiTarget};
 use crate::render::VideoPreset;
@@ -40,16 +40,6 @@ pub struct Driver {
     terrain: Option<(String, ProbeTerrain)>,
     measuring: Option<Measuring>,
     steps: File,
-}
-
-/// Why a scenario could not be played through.
-#[derive(Clone, Debug)]
-pub enum Failure {
-    /// An input never confirmed, a target never found, a wait run out, or the probe's ring of
-    /// frames wrapped before it was read.
-    Harness(String),
-    /// The client or the server died.
-    Crashed(String),
 }
 
 /// What a scenario measured: its frames, and how long the area took to stand after each move.
@@ -86,7 +76,7 @@ impl Driver {
             measuring: None,
             steps,
         };
-        driver.wait_for("the player in the world", LONG, |snapshot| {
+        hands::wait_for(&mut driver, "the player in the world", LONG, |snapshot| {
             (snapshot.me.is_some() && snapshot.transition == ScreenTransitionPhase::Idle)
                 .then_some(())
         })?;
@@ -222,31 +212,31 @@ impl Driver {
         match step {
             Step::Move(point) => {
                 let to = self.locate(point)?;
-                self.move_pointer(to)?;
+                hands::move_pointer(self, to)?;
             }
             Step::Sweep(points) => {
                 let mut through = Vec::with_capacity(points.len());
                 for point in points {
                     through.push(self.locate(point)?);
                 }
-                self.sweep(&through)?;
+                hands::sweep(self, &through)?;
             }
             Step::Click { button, times } => {
-                self.click(*button, *times)?;
+                hands::click(self, *button, *times)?;
             }
             Step::Down(button) => {
-                self.button_down(*button)?;
+                hands::button_down(self, *button)?;
             }
             Step::Up(button) => {
-                self.button_up(*button)?;
+                hands::button_up(self, *button)?;
             }
             Step::Wheel(lines) => {
-                self.wheel(*lines)?;
+                hands::wheel(self, *lines)?;
             }
             Step::Key(action) => {
                 self.act(*action)?;
             }
-            Step::Type(text) => self.type_text(text)?,
+            Step::Type(text) => hands::type_text(self, text)?,
             Step::Wait(cond) => self.wait(cond)?,
             Step::Repeat { times, steps } => {
                 for _ in 0..*times {
@@ -264,30 +254,30 @@ impl Driver {
                     .map(|element| element.rect.center())
                     .collect();
                 if !through.is_empty() {
-                    self.sweep(&through)?;
+                    hands::sweep(self, &through)?;
                 }
             }
             Step::ClickUi(target) => {
                 let element = self.find_ui(target)?;
-                self.move_pointer(element.rect.center())?;
-                self.click(Button::Left, 1)?;
+                hands::move_pointer(self, element.rect.center())?;
+                hands::click(self, Button::Left, 1)?;
             }
             Step::HoverUi(target) => {
                 let element = self.find_ui(target)?;
-                self.move_pointer(element.rect.center())?;
+                hands::move_pointer(self, element.rect.center())?;
             }
             Step::DragUi { from, to } => {
                 let from = self.find_ui(from)?.rect.center();
                 let to = self.find_ui(to)?.rect.center();
                 let (button, held) = self.mouse_binding(InputAction::CarryItem)?;
-                self.drag(button, &held, from, to)?;
+                hands::drag(self, button, &held, from, to)?;
             }
             Step::DragWindows => self.drag_windows()?,
             Step::DragItems => {
                 let slots = self.slots()?;
                 if let [first, second, ..] = slots[..] {
                     let (button, held) = self.mouse_binding(InputAction::CarryItem)?;
-                    self.drag(button, &held, first, second)?;
+                    hands::drag(self, button, &held, first, second)?;
                 } else {
                     self.note("no two item slots to drag between");
                 }
@@ -296,15 +286,17 @@ impl Driver {
                 let slots = self.slots()?;
                 if let Some(&slot) = slots.first() {
                     let (button, held) = self.mouse_binding(InputAction::SlotOptions)?;
-                    self.move_pointer(slot)?;
-                    self.hold(&held, |driver| driver.click(button, 1).map(drop))?;
+                    hands::move_pointer(self, slot)?;
+                    hands::hold(self, &held, |driver| {
+                        hands::click(driver, button, 1).map(drop)
+                    })?;
                     self.wait(&Cond::Settled)?;
                 } else {
                     self.note("no item slot to open the options of");
                 }
             }
             Step::CloseWindows => self.close_windows()?,
-            Step::Resize { width, height } => self.resize(*width, *height)?,
+            Step::Resize { width, height } => hands::resize(self, *width, *height)?,
             Step::Camera(op) => self.camera(*op)?,
             Step::Stage(staging) => match staging {
                 Staging::Walk { to } => self.walk(*to)?,
@@ -333,7 +325,7 @@ impl Driver {
                 if let Some(measuring) = &mut self.measuring {
                     measuring.arrival_since = Some(self.frame);
                 }
-                self.wait_for("the warp to lead on", LONG, move |snapshot| {
+                hands::wait_for(self, "the warp to lead on", LONG, move |snapshot| {
                     (snapshot.area == Some(warp.to)
                         && snapshot.me.is_some()
                         && snapshot.transition == ScreenTransitionPhase::Idle)
@@ -372,8 +364,8 @@ impl Driver {
                 return Ok(element);
             }
             for cover in snapshot.covered {
-                self.move_pointer(cover.center())?;
-                self.wheel(SCROLL_LINES)?;
+                hands::move_pointer(self, cover.center())?;
+                hands::wheel(self, SCROLL_LINES)?;
             }
             self.wait(&Cond::Settled)?;
         }
@@ -423,102 +415,21 @@ impl Driver {
                 (from.x + WINDOW_DRAG).min(screen.width - 2.0),
                 (from.y + WINDOW_DRAG).min(screen.height - 2.0),
             );
-            self.drag(Button::Left, &KeyModifiers::NONE, from, to)?;
-            self.drag(Button::Left, &KeyModifiers::NONE, to, from)?;
+            hands::drag(self, Button::Left, &KeyModifiers::NONE, from, to)?;
+            hands::drag(self, Button::Left, &KeyModifiers::NONE, to, from)?;
         }
-        Ok(())
-    }
-
-    /// Holds `button` with `held` from `from` and moves the pointer to `to` a step at a time.
-    fn drag(
-        &mut self,
-        button: Button,
-        held: &KeyModifiers,
-        from: Pos<WindowPx>,
-        to: Pos<WindowPx>,
-    ) -> Result<(), Failure> {
-        self.move_pointer(from)?;
-        self.hold(held, |driver| {
-            driver.button_down(button)?;
-            for step in 1..=DRAG_STEPS {
-                driver.move_pointer(from.lerp(to, step as f32 / DRAG_STEPS as f32))?;
-            }
-            driver.button_up(button).map(drop)
-        })
-    }
-
-    /// Does `with` while the modifier keys of `held` are down.
-    fn hold(
-        &mut self,
-        held: &KeyModifiers,
-        with: impl FnOnce(&mut Driver) -> Result<(), Failure>,
-    ) -> Result<(), Failure> {
-        let modifiers = modifier_keys(held);
-        for key in &modifiers {
-            self.key_down(key)?;
-        }
-        let outcome = with(self);
-        for key in modifiers.iter().rev() {
-            self.key_up(key)?;
-        }
-        outcome
-    }
-
-    fn type_text(&mut self, text: &str) -> Result<(), Failure> {
-        let before = self.seen;
-        let typed = text.chars().count() as u32;
-        self.xdotool(&[
-            "type".to_owned(),
-            "--delay".to_owned(),
-            TYPE_APART_MS.to_owned(),
-            "--".to_owned(),
-            text.to_owned(),
-        ])?;
-        self.wait_for("the typing to land", BUDGET, move |snapshot| {
-            (snapshot.input.seen.key_presses >= before.key_presses + typed).then_some(())
-        })?;
-        self.note(&format!("typed {text:?}"));
-        Ok(())
-    }
-
-    /// Resizes the client's window as a window manager does, and waits for the client to draw at
-    /// the new size.
-    fn resize(&mut self, width: u32, height: u32) -> Result<(), Failure> {
-        let pid = self.play.client_pid().to_string();
-        self.xdotool(&[
-            "search".to_owned(),
-            "--sync".to_owned(),
-            "--onlyvisible".to_owned(),
-            "--pid".to_owned(),
-            pid,
-            "--name".to_owned(),
-            ".".to_owned(),
-            "windowsize".to_owned(),
-            "--sync".to_owned(),
-            width.to_string(),
-            height.to_string(),
-        ])?;
-        self.wait_for("the window to take its size", BUDGET, move |snapshot| {
-            let screen = snapshot.screen?;
-            (screen.width as u32 == width && screen.height as u32 == height).then_some(())
-        })?;
-        self.note(&format!("resized to {width}×{height}"));
         Ok(())
     }
 
     fn wait(&mut self, cond: &Cond) -> Result<(), Failure> {
         match cond {
-            Cond::Frames(frames) => {
-                let until = self.frame + frames;
-                self.idle_until(|driver| driver.frame >= until, LONG)
-            }
             Cond::Seconds(seconds) => {
                 let until = Instant::now() + Duration::from_secs_f32(seconds.0);
                 self.idle_until(|_| Instant::now() >= until, LONG)
             }
             Cond::Arrived(place) => {
                 let place = *place;
-                self.wait_for("the arrival", LONG, move |snapshot| {
+                hands::wait_for(self, "the arrival", LONG, move |snapshot| {
                     (snapshot.area == Some(place.area)
                         && snapshot.me.is_some()
                         && snapshot.transition == ScreenTransitionPhase::Idle)
@@ -527,7 +438,7 @@ impl Driver {
                 Ok(())
             }
             Cond::Stood => {
-                let seen = self.wait_for("the scenery to stand", LONG, |snapshot| {
+                let seen = hands::wait_for(self, "the scenery to stand", LONG, |snapshot| {
                     (!snapshot.scenery_standing).then_some(snapshot.frame)
                 })?;
                 if let Some(measuring) = &mut self.measuring
@@ -542,7 +453,7 @@ impl Driver {
             Cond::AtRest => {
                 let mut last: Option<(Pos<Meters>, Instant)> = None;
                 let mut rested_at: Option<u32> = None;
-                self.wait_for("the player to come to rest", LONG, move |snapshot| {
+                hands::wait_for(self, "the player to come to rest", LONG, move |snapshot| {
                     let me = snapshot.me.as_ref()?;
                     if me.resting {
                         let since = *rested_at.get_or_insert(snapshot.frame);
@@ -569,7 +480,7 @@ impl Driver {
             }
             Cond::Settled => {
                 let mut last: Vec<ProbeUiElement> = Vec::new();
-                self.wait_for("the interface to settle", BUDGET, move |snapshot| {
+                hands::wait_for(self, "the interface to settle", BUDGET, move |snapshot| {
                     let interface: Vec<ProbeUiElement> = snapshot
                         .ui
                         .iter()
@@ -689,25 +600,6 @@ impl Driver {
         }
     }
 
-    pub fn wait_for<T>(
-        &mut self,
-        what: &str,
-        budget: Duration,
-        mut found: impl FnMut(&ProbeSnapshot) -> Option<T>,
-    ) -> Result<T, Failure> {
-        let since = Instant::now();
-        let first = self.frame;
-        loop {
-            let snapshot = self.snapshot()?;
-            if let Some(done) = found(&snapshot) {
-                return Ok(done);
-            }
-            if since.elapsed() >= budget && self.frame.saturating_sub(first) >= FAST_FRAMES {
-                return Err(Failure::Harness(format!("gave up waiting for {what}")));
-            }
-        }
-    }
-
     fn locate(&mut self, point: &Point) -> Result<Pos<WindowPx>, Failure> {
         match point {
             Point::Screen { across, down } => {
@@ -763,11 +655,11 @@ impl Driver {
             }
             CameraOp::Zoom(steps) => {
                 let here = self.open_ground()?;
-                self.move_pointer(here)?;
+                hands::move_pointer(self, here)?;
                 let mut zoom = self.snapshot()?.view.map(|view| view.zoom);
                 let mut moved = 0;
                 while moved < steps.unsigned_abs() {
-                    self.wheel(-steps.signum())?;
+                    hands::wheel(self, -steps.signum())?;
                     let now = self.snapshot()?.view.map(|view| view.zoom);
                     match (zoom, now) {
                         (Some(was), Some(is)) if was != is => moved += u32::from(was.abs_diff(is)),
@@ -810,7 +702,7 @@ impl Driver {
             }
             CameraOp::Home => {
                 self.act(InputAction::CameraHome)?;
-                self.wait_for("the camera home", BUDGET, |snapshot| {
+                hands::wait_for(self, "the camera home", BUDGET, |snapshot| {
                     snapshot
                         .view
                         .as_ref()
@@ -834,7 +726,7 @@ impl Driver {
         nudge: Nudge,
     ) -> Result<(), Failure> {
         let here = self.open_ground()?;
-        let seen = self.move_pointer(here)?;
+        let seen = hands::move_pointer(self, here)?;
         let before = seen
             .view
             .as_ref()
@@ -848,7 +740,7 @@ impl Driver {
             return Ok(());
         }
         let under = under_point(&pressed, here);
-        self.move_pointer(here)?;
+        hands::move_pointer(self, here)?;
         self.drag_by(button, held, here, pixels, nudge)?;
         let again = self.camera_settled()?;
         let second = if read(&again) == before {
@@ -874,11 +766,11 @@ impl Driver {
         pixels: f32,
         nudge: Nudge,
     ) -> Result<ProbeSnapshot, Failure> {
-        let modifiers = modifier_keys(held);
+        let modifiers = hands::modifier_keys(held);
         for key in &modifiers {
-            self.key_down(key)?;
+            hands::key_down(self, key)?;
         }
-        let pressed = self.button_down(button)?;
+        let pressed = hands::button_down(self, button)?;
         let mut at = here;
         let mut moved = 0.0;
         let mut outcome = Ok(());
@@ -889,20 +781,20 @@ impl Driver {
             if at.x < 1.0 || at.y < 1.0 || at.x >= screen.width - 1.0 || at.y >= screen.height - 1.0
             {
                 at = here;
-                self.button_up(button)?;
-                self.move_pointer(at)?;
-                self.button_down(button)?;
+                hands::button_up(self, button)?;
+                hands::move_pointer(self, at)?;
+                hands::button_down(self, button)?;
                 continue;
             }
-            if let Err(failure) = self.move_pointer(at) {
+            if let Err(failure) = hands::move_pointer(self, at) {
                 outcome = Err(failure);
                 break;
             }
             moved += step;
         }
-        self.button_up(button)?;
+        hands::button_up(self, button)?;
         for key in modifiers.iter().rev() {
-            self.key_up(key)?;
+            hands::key_up(self, key)?;
         }
         outcome.map(|()| pressed)
     }
@@ -910,7 +802,7 @@ impl Driver {
     /// The view once the camera has come to rest: unchanged over a couple of frames.
     fn camera_settled(&mut self) -> Result<ProbeView, Failure> {
         let mut last: Option<(Radians, Radians)> = None;
-        self.wait_for("the camera to settle", BUDGET, move |snapshot| {
+        hands::wait_for(self, "the camera to settle", BUDGET, move |snapshot| {
             let view = snapshot.view.as_ref()?;
             let now = (view.yaw, view.pitch);
             let settled = last == Some(now);
@@ -984,164 +876,54 @@ impl Driver {
             })
             .ok_or_else(|| Failure::Harness(format!("no key is bound to {action:?}")))?;
         let mut landed = None;
-        self.hold(&gesture.modifiers, |driver| {
-            landed = Some(driver.key(&keysym(&format!("{:?}", gesture.key)))?);
+        hands::hold(self, &gesture.modifiers, |driver| {
+            landed = Some(hands::key(
+                driver,
+                &hands::keysym(&format!("{:?}", gesture.key)),
+            )?);
             Ok(())
         })?;
         landed.ok_or_else(|| Failure::Harness("the key never landed".to_owned()))
     }
+}
 
-    pub fn move_pointer(&mut self, to: Pos<WindowPx>) -> Result<ProbeSnapshot, Failure> {
-        let to = Pos::new(to.x.round(), to.y.round());
-        let moves = self.mouse_moves(&[to], None);
-        self.xdotool(&moves)?;
-        let seen = self.wait_for("the pointer to arrive", BUDGET, move |snapshot| {
-            let cursor = snapshot.input.cursor?;
-            (cursor.distance_to(to) <= 1.0).then(|| snapshot.clone())
-        })?;
-        self.note(&format!("pointer at {:?}", (to.x, to.y)));
-        Ok(seen)
+impl Driven for Driver {
+    type Snapshot = ProbeSnapshot;
+
+    fn snapshot(&mut self) -> Result<ProbeSnapshot, Failure> {
+        Driver::snapshot(self)
     }
 
-    fn sweep(&mut self, through: &[Pos<WindowPx>]) -> Result<ProbeSnapshot, Failure> {
-        let Some(last) = through.last() else {
-            return self.snapshot();
-        };
-        let to = Pos::new(last.x.round(), last.y.round());
-        let through: Vec<Pos<WindowPx>> = through
-            .iter()
-            .map(|at| Pos::new(at.x.round(), at.y.round()))
-            .collect();
-        let moves = self.mouse_moves(&through, Some(SWEEP_STEP));
-        self.xdotool(&moves)?;
-        let seen = self.wait_for("the pointer to come to rest", BUDGET, move |snapshot| {
-            let cursor = snapshot.input.cursor?;
-            (cursor.distance_to(to) <= 1.0).then(|| snapshot.clone())
-        })?;
-        self.note(&format!("pointer swept to {:?}", (to.x, to.y)));
-        Ok(seen)
+    fn input(snapshot: &ProbeSnapshot) -> &ProbeInput {
+        &snapshot.input
     }
 
-    fn click(&mut self, button: Button, times: u8) -> Result<ProbeSnapshot, Failure> {
-        let before = self.seen;
-        let number = button.x_number().to_string();
-        let times_arg = times.to_string();
-        self.xdotool(&[
-            "click".to_owned(),
-            "--repeat".to_owned(),
-            times_arg,
-            "--delay".to_owned(),
-            CLICK_APART_MS.to_owned(),
-            number,
-        ])?;
-        let landed = self.wait_for("the click to land", BUDGET, move |snapshot| {
-            let seen = &snapshot.input.seen;
-            (seen.mouse_presses >= before.mouse_presses + u32::from(times)
-                && seen.mouse_releases >= before.mouse_releases + u32::from(times))
-            .then(|| snapshot.clone())
-        })?;
-        self.note(&format!("click {times}× button {}", button.x_number()));
-        Ok(landed)
+    fn screen(snapshot: &ProbeSnapshot) -> Option<Size<WindowPx>> {
+        snapshot.screen
     }
 
-    fn button_down(&mut self, button: Button) -> Result<ProbeSnapshot, Failure> {
-        let before = self.seen;
-        self.xdotool(&["mousedown".to_owned(), button.x_number().to_string()])?;
-        self.wait_for("the button to go down", BUDGET, move |snapshot| {
-            (snapshot.input.seen.mouse_presses > before.mouse_presses).then(|| snapshot.clone())
-        })
+    fn frame_of(snapshot: &ProbeSnapshot) -> u32 {
+        snapshot.frame
     }
 
-    fn button_up(&mut self, button: Button) -> Result<ProbeSnapshot, Failure> {
-        let before = self.seen;
-        self.xdotool(&["mouseup".to_owned(), button.x_number().to_string()])?;
-        self.wait_for("the button to come up", BUDGET, move |snapshot| {
-            (snapshot.input.seen.mouse_releases > before.mouse_releases).then(|| snapshot.clone())
-        })
+    fn seen(&self) -> ProbeInputSeen {
+        self.seen
     }
 
-    /// X turns the wheel by clicking buttons 4 (up) and 5 (down), a line per click.
-    fn wheel(&mut self, lines: i32) -> Result<ProbeSnapshot, Failure> {
-        let before = self.seen;
-        let button = if lines < 0 { "4" } else { "5" };
-        let turns = lines.unsigned_abs();
-        self.xdotool(&[
-            "click".to_owned(),
-            "--repeat".to_owned(),
-            turns.to_string(),
-            "--delay".to_owned(),
-            WHEEL_APART_MS.to_owned(),
-            button.to_owned(),
-        ])?;
-        self.wait_for("the wheel to turn", BUDGET, move |snapshot| {
-            (snapshot.input.seen.wheel_turns >= before.wheel_turns + turns).then_some(())
-        })?;
-        // winit reports a synthetic wheel button's release as a line as it does its press, so a
-        // click scrolls twice, the second time a frame or two after the first is seen.
-        self.wait(&Cond::Frames(2))?;
-        self.note(&format!("wheel {lines} lines"));
-        self.snapshot()
+    fn cursor(&self) -> Option<Pos<WindowPx>> {
+        self.cursor
     }
 
-    fn key(&mut self, keysym: &str) -> Result<ProbeSnapshot, Failure> {
-        let before = self.seen;
-        self.xdotool(&["key".to_owned(), keysym.to_owned()])?;
-        let landed = self.wait_for("the key press to land", BUDGET, move |snapshot| {
-            (snapshot.input.seen.key_presses > before.key_presses).then(|| snapshot.clone())
-        })?;
-        self.note(&format!("key {keysym}"));
-        Ok(landed)
+    fn frame(&self) -> u32 {
+        self.frame
     }
 
-    fn key_down(&mut self, keysym: &str) -> Result<ProbeSnapshot, Failure> {
-        let before = self.seen;
-        self.xdotool(&["keydown".to_owned(), keysym.to_owned()])?;
-        self.wait_for("the key to go down", BUDGET, move |snapshot| {
-            (snapshot.input.seen.key_presses > before.key_presses).then(|| snapshot.clone())
-        })
+    fn display(&self) -> &str {
+        self.play.display()
     }
 
-    /// Releases count nowhere, but X delivers them before anything sent after.
-    fn key_up(&mut self, keysym: &str) -> Result<(), Failure> {
-        self.xdotool(&["keyup".to_owned(), keysym.to_owned()])
-    }
-
-    /// The xdotool commands that move the pointer through each of `points` as a mouse does, with
-    /// a `pause` after each when given. X reports the mouse moving only for a move by an offset,
-    /// and lands that move where its pointer acceleration takes it, so each goes by its offset and
-    /// is then set on its point.
-    fn mouse_moves(&self, points: &[Pos<WindowPx>], pause: Option<&str>) -> Vec<String> {
-        let mut last = self.cursor;
-        let mut moves = Vec::new();
-        for at in points {
-            if let Some(from) = last {
-                let (dx, dy) = (at.x - from.x, at.y - from.y);
-                moves.extend(["mousemove_relative".to_owned(), "--".to_owned()]);
-                moves.extend([dx.round().to_string(), dy.round().to_string()]);
-            }
-            moves.extend(["mousemove".to_owned(), at.x.to_string(), at.y.to_string()]);
-            if let Some(pause) = pause {
-                moves.extend(["sleep".to_owned(), pause.to_owned()]);
-            }
-            last = Some(*at);
-        }
-        moves
-    }
-
-    fn xdotool(&mut self, args: &[String]) -> Result<(), Failure> {
-        let run = Command::new("xdotool")
-            .env("DISPLAY", self.play.display())
-            .args(args)
-            .output()
-            .map_err(|error| Failure::Harness(format!("xdotool doesn't run: {error}")))?;
-        if run.status.success() {
-            Ok(())
-        } else {
-            Err(Failure::Harness(format!(
-                "xdotool {args:?}: {}",
-                String::from_utf8_lossy(&run.stderr)
-            )))
-        }
+    fn pid(&self) -> u32 {
+        self.play.client_pid()
     }
 
     fn note(&mut self, step: &str) {
@@ -1159,27 +941,18 @@ struct Measuring {
     arrival_since: Option<u32>,
 }
 
-/// How long a wait lasts, in time; a fast machine must also have drawn the frames it would in
-/// that time, so a slow machine gets as many frames as a fast one.
-const BUDGET: Duration = Duration::from_secs(20);
 const LONG: Duration = Duration::from_secs(180);
-const FAST_FRAMES: u32 = 20 * 60;
 /// How often the probe's ring of frames is read while measuring: well within what it holds at
 /// any frame rate.
 const READ_EVERY: Duration = Duration::from_secs(2);
 const IDLE_SLICE: Duration = Duration::from_millis(50);
 /// Window pixels the pointer moves per step of a steer.
 const STEER_STEP: f32 = 24.0;
-const CLICK_APART_MS: &str = "40";
-const WHEEL_APART_MS: &str = "10";
-const TYPE_APART_MS: &str = "30";
 /// How many times the windows are scrolled down looking for an element, and by how much.
 const SCROLL_TRIES: u32 = 8;
 const SCROLL_LINES: i32 = 3;
 /// How many dismissals may be needed to close everything open over the world.
 const CLOSE_TRIES: u32 = 12;
-/// Steps of the pointer a drag goes in.
-const DRAG_STEPS: u32 = 8;
 /// Window pixels a window is dragged by, across and down.
 const WINDOW_DRAG: f32 = 120.0;
 /// Turns the camera may take to come to face a point, and how far off it may rest, in degrees.
@@ -1210,8 +983,6 @@ const OPEN_GROUND_OFFSETS: [(f32, f32); 13] = [
     (4.0, -4.0),
     (-4.0, -4.0),
 ];
-/// Seconds between the moves of a sweep: a mouse reports a few hundred times a second.
-const SWEEP_STEP: &str = "0.004";
 
 /// How far the pointer moves across and down the window.
 #[derive(Clone, Copy, Debug)]
@@ -1368,32 +1139,5 @@ fn button_of(button: bevy::input::mouse::MouseButton) -> Button {
         MouseButton::Back => Button::Back,
         MouseButton::Forward => Button::Forward,
         MouseButton::Other(number) => Button::Other(number),
-    }
-}
-
-fn modifier_keys(held: &KeyModifiers) -> Vec<&'static str> {
-    [
-        (held.ctrl, "Control_L"),
-        (held.shift, "Shift_L"),
-        (held.alt, "Alt_L"),
-        (held.super_key, "Super_L"),
-    ]
-    .into_iter()
-    .filter_map(|(down, key)| down.then_some(key))
-    .collect()
-}
-
-/// xdotool names keys by their X keysyms; bevy by its `KeyCode` names.
-fn keysym(key: &str) -> String {
-    match key {
-        "Space" => "space".to_owned(),
-        "Enter" => "Return".to_owned(),
-        "Backspace" => "BackSpace".to_owned(),
-        "PageUp" => "Prior".to_owned(),
-        "PageDown" => "Next".to_owned(),
-        _ if key.starts_with("Key") => key["Key".len()..].to_lowercase(),
-        _ if key.starts_with("Digit") => key["Digit".len()..].to_owned(),
-        _ if key.starts_with("Arrow") => key["Arrow".len()..].to_owned(),
-        _ => key.to_owned(),
     }
 }

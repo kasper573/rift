@@ -1,347 +1,559 @@
-//! The editor's frame rate on every area of the game, at the lowest and the highest video
-//! settings, with the whole scene tree hovered so that every module is outlined and named: how
-//! long the game and the area take to open, then the area seen whole as the editor first frames
-//! it, zoomed in on its middle with the mouse wheel notch by notch, and seen from as near as the
-//! editor's camera starts, then flicked out to the whole and back in with as many notches at once,
-//! halfway first and then the rest of the way. Every frame counts, the slowest most, and so does
-//! how long the area takes to stand close up once the steady zoom stops, and halfway and close up
-//! from the moment each flick in begins.
+//! Plays the editor's scenarios on the editor as a designer works it: opened on the game with the
+//! area the game starts in on view, every input sent through the X server and confirmed through
+//! the editor's probe before the next, its targets found in what the probe reports of the trees,
+//! the stage and the interface. The frames come from the editor's own clock, read from the probe's
+//! ring every few seconds, so the pace of the input only paces the script.
 
 use std::fs::File;
-use std::path::{Path, PathBuf};
-use std::process::{Child, Command};
+use std::io::Write;
+use std::net::TcpListener;
+use std::path::Path;
+use std::process::{Child, Command, ExitStatus};
 use std::time::{Duration, Instant};
 
-use editor::app::{FrameRecord, SceneryState};
 use editor::scenes::SceneStep;
 use editor::user::{EditorSettings, UserFolder};
-use editor::views::area::camera::OrbitCamera;
 use engine::core::content::Content;
-use engine::core::units::{Bytes, Meters};
-use engine::systems::area::AreaDef;
-use engine::systems::probe::FrameSample;
+use engine::core::math::{Pos, Size};
+use engine::core::units::WindowPx;
+use engine::systems::GameSettings;
+use engine::systems::input::map::KeyModifiers;
+use engine::systems::launch::ProbeDriver;
+use engine::systems::probe::{
+    EditorFrameQuestion, EditorScenery, EditorSnapshot, EditorStage, EditorTree, EditorTrees,
+    ProbeFrames, ProbeInput, ProbeInputSeen,
+};
+use serde::de::DeserializeOwned;
+use tempfile::TempDir;
 
 use super::desktop::BenchDesktop;
 use super::frames::{Class, Criteria, Window};
-use super::report::{ScenarioResult, Verdict};
-use super::scenario::Target;
+use super::hands::{self, BUDGET, Driven, Failure};
+use super::report::BenchReport;
+use super::scenario::{Scenario, Target};
+use super::scenarios::editor::{EditorScenario, OPENING};
+use super::{BenchArgs, failure_text, median_run, print_result, report_of, result_of};
 use crate::binaries::{self, EDITOR};
 use crate::render::VideoPreset;
+use crate::server::LOCALHOST;
 
-/// Every area of the game at each of `videos`, each view of it a scenario of the report, of those
-/// whose names match `only`.
+/// Every editor scenario whose name `args` asks for, at each of `videos`, on an editor of its own
+/// per preset, started over when one dies. The opening is measured on every editor started for
+/// it, as it is what starting one does.
 pub fn run(
     game: &Path,
     content: &Content,
+    args: &BenchArgs,
     videos: &[VideoPreset],
-    only: Option<&str>,
-) -> Vec<ScenarioResult> {
-    let areas: Vec<String> = content
-        .ids::<AreaDef>()
-        .map(|area| area.path(content).to_owned())
+    steps: &Path,
+    report: &mut Option<BenchReport>,
+) -> Result<(), String> {
+    let wanted = |name: &str| {
+        args.scenario
+            .as_deref()
+            .is_none_or(|only| crate::compare::matches(only, name))
+    };
+    let scenarios: Vec<EditorScenario> = super::scenarios::editor::catalogue()
+        .into_iter()
+        .filter(|scenario| wanted(scenario.name))
         .collect();
-    let mut results = Vec::new();
+    let opening = wanted(OPENING);
+    if scenarios.is_empty() && !opening {
+        println!("[editor-bench] no scenario to run");
+        return Ok(());
+    }
+    let area = content
+        .built::<GameSettings>()
+        .initial_spawn
+        .area
+        .path(content)
+        .to_owned();
+    let start = |video| EditorDriver::start(game, &area, video, steps);
     for &video in videos {
-        for area in &areas {
-            let stem = Path::new(area)
-                .file_stem()
-                .map_or_else(|| area.clone(), |stem| stem.to_string_lossy().into_owned());
-            let names: Vec<String> = VIEWS.iter().map(|view| format!("{stem} {view}")).collect();
-            if only
-                .is_some_and(|only| !names.iter().any(|name| crate::compare::matches(only, name)))
-            {
-                continue;
-            }
-            let run = watch(game, area, video);
-            println!(
-                "[editor-bench] {:<8} {:<40} opened in {:.1} s, stood close in {:.1} s, flicked halfway in {:.1} s, flicked in {:.1} s",
-                video.name(),
-                area,
-                run.opened.as_secs_f64(),
-                run.closed_in.as_secs_f64(),
-                run.halfway_in.as_secs_f64(),
-                run.flicked_in.as_secs_f64()
-            );
-            for ((view, window), name) in run.views().into_iter().zip(names) {
-                if only.is_some_and(|only| !crate::compare::matches(only, &name)) {
-                    continue;
-                }
-                let class = if view == "open" {
-                    Class::Busy
-                } else {
-                    Class::Typical
-                };
-                let criteria = Criteria::global(video);
-                let stats = window.stats(&criteria);
-                let failures = stats.as_ref().map_or_else(
-                    || vec!["no frames were logged".to_owned()],
-                    |stats| criteria.failures(stats),
-                );
-                let headroom = class.headroom(video);
-                let result = ScenarioResult {
-                    name,
-                    target: Target::Editor,
-                    class,
+        let criteria = Criteria::global(video);
+        let mut openings = Vec::new();
+        let mut driver = None;
+        for _ in 0..if opening { args.repeat.max(1) } else { 1 } {
+            let mut started = start(video).map_err(|failure| failure_text(&failure))?;
+            let opened = started.opened();
+            openings.push(result_of(
+                OPENING,
+                Target::Editor,
+                Class::Busy,
+                video,
+                &Criteria::opening(video),
+                opened.map(|(window, stood)| (window, vec![stood])),
+                args.smoke,
+            ));
+            driver = Some(started);
+        }
+        let mut driver = driver.expect("an editor started");
+        let report = report_of(
+            report,
+            driver.adapter().map_err(|failure| failure_text(&failure))?,
+            driver.screen().map_err(|failure| failure_text(&failure))?,
+            game,
+            args,
+        )?;
+        if opening {
+            let result = median_run(openings);
+            print_result(&result);
+            report.add(result);
+        }
+        for scenario in &scenarios {
+            let mut runs = Vec::new();
+            for run in 0..args.repeat.max(1) {
+                let began = Instant::now();
+                let measured = driver.measure(scenario);
+                let crashed = matches!(measured, Err(Failure::Crashed(_)));
+                runs.push(result_of(
+                    scenario.name,
+                    Target::Editor,
+                    scenario.class,
                     video,
-                    verdict: if failures.is_empty() {
-                        Verdict::Passed
-                    } else {
-                        Verdict::Criteria
-                    },
-                    failures,
-                    headroom_met: match (&stats, headroom) {
-                        (Some(stats), Some(headroom)) => Some(stats.mean.0 >= headroom.0),
-                        _ => None,
-                    },
-                    headroom,
-                    stats,
-                    time_to_stand_frames: Vec::new(),
-                    runs: 1,
-                    mean_spread: None,
-                };
+                    &criteria,
+                    measured.map(|window| (window, Vec::new())),
+                    args.smoke,
+                ));
                 println!(
-                    "[editor-bench] {:<8} {:<40} {view:<6} {}",
+                    "[editor-bench] {:<8} {:<24} run {} of {} in {:.0} s",
                     video.name(),
-                    area,
-                    result
-                        .stats
-                        .as_ref()
-                        .map_or_else(|| "no frames".to_owned(), |stats| stats.summary())
+                    scenario.name,
+                    run + 1,
+                    args.repeat.max(1),
+                    began.elapsed().as_secs_f64()
                 );
-                results.push(result);
+                if crashed || driver.exited().is_some() {
+                    driver = start(video).map_err(|failure| failure_text(&failure))?;
+                    driver.opened().map_err(|failure| failure_text(&failure))?;
+                }
             }
+            let result = median_run(runs);
+            print_result(&result);
+            report.add(result);
         }
     }
-    results
+    Ok(())
 }
 
-const VIEWS: [&str; 4] = ["open", "whole", "zoom", "close"];
-
-/// What the editor did with one area: how long until it first stood whole and the frames until
-/// then, the frames seen whole, zooming in and close up, and how long it took to stand close up
-/// once the steady zoom stopped, and halfway and close up once flicked in.
-struct AreaRun {
-    opened: Duration,
-    closed_in: Duration,
-    halfway_in: Duration,
-    flicked_in: Duration,
-    open: Window,
-    whole: Window,
-    zoom: Window,
-    close: Window,
+/// An editor on the game, played through its window.
+pub struct EditorDriver {
+    editor: Child,
+    probe: ProbeDriver,
+    desktop: BenchDesktop,
+    folder: TempDir,
+    seen: ProbeInputSeen,
+    cursor: Option<Pos<WindowPx>>,
+    frame: u32,
+    measuring: Option<Measuring>,
+    steps: File,
 }
 
-impl AreaRun {
-    fn views(&self) -> [(&'static str, &Window); 4] {
-        [
-            ("open", &self.open),
-            ("whole", &self.whole),
-            ("zoom", &self.zoom),
-            ("close", &self.close),
-        ]
-    }
-}
-
-/// The editor opened on `game` with `area` in view, shown as `video` asks.
-fn watch(game: &Path, area: &str, video: VideoPreset) -> AreaRun {
-    let folder = tempfile::tempdir().expect("a folder for the editor's settings and log");
-    let desktop = BenchDesktop::open(folder.path());
-    let user = folder.path().join("user");
-    UserFolder::at(user.clone()).save_settings(&EditorSettings {
-        video: video.preferences(),
-        ..EditorSettings::default()
-    });
-    let log = Log(folder.path().join("frames.jsonl"));
-    let output = File::create(folder.path().join(EDITOR_LOG)).expect("an editor log");
-    let since = Instant::now();
-    let mut editor = Running(
-        Command::new(binaries::beside(EDITOR))
+impl EditorDriver {
+    /// The editor opened on `game` with `area` in view, shown as `video` asks, on a desktop of its
+    /// own, every step it is put through noted in the log at `steps`. Its frames count from its
+    /// first, for [`EditorDriver::opened`].
+    pub fn start(
+        game: &Path,
+        area: &str,
+        video: VideoPreset,
+        steps: &Path,
+    ) -> Result<EditorDriver, Failure> {
+        let folder = tempfile::tempdir().expect("a folder for the editor's settings and log");
+        let user = folder.path().join("user");
+        UserFolder::at(user.clone()).save_settings(&EditorSettings {
+            video: video.preferences(),
+            ..EditorSettings::default()
+        });
+        let desktop = BenchDesktop::open(folder.path());
+        let listener = TcpListener::bind((LOCALHOST, 0)).expect("a probe port");
+        let log = File::create(folder.path().join(EDITOR_LOG)).expect("an editor log");
+        let mut editor = Command::new(binaries::beside(EDITOR))
             .arg(game)
             .arg("--scene")
             .arg(
-                serde_json::to_string(&[
-                    SceneStep::Area(area.to_owned()),
-                    SceneStep::Hover { row: String::new() },
-                ])
-                .expect("a serializable scene"),
+                serde_json::to_string(&[SceneStep::Area(area.to_owned())])
+                    .expect("a serializable scene"),
             )
             .arg("--user-folder")
             .arg(&user)
-            .arg("--frame-log")
-            .arg(&log.0)
-            .envs(desktop.env())
-            .stdout(
-                output
-                    .try_clone()
-                    .expect("a second handle on the editor log"),
+            .arg("--probe")
+            .arg(
+                listener
+                    .local_addr()
+                    .expect("a bound probe port")
+                    .to_string(),
             )
-            .stderr(output)
+            .envs(desktop.env())
+            .stdout(log.try_clone().expect("a second handle on the editor log"))
+            .stderr(log)
             .spawn()
-            .expect("the editor runs"),
-    );
-    let pid = editor.0.id();
-    desktop.seat(pid);
-    let output = folder.path().join(EDITOR_LOG);
-    let mut stood = |what: &str| {
-        let deadline = Instant::now() + STAND_WITHIN;
-        while !log
-            .records()
-            .last()
-            .is_some_and(|record| record.scenery == SceneryState::Stood)
-        {
-            let exited = editor.0.try_wait().ok().flatten();
-            assert!(
-                exited.is_none() && Instant::now() < deadline,
-                "the editor never stood {area} {what}: see {}",
-                output.display()
-            );
-            std::thread::sleep(POLL);
-        }
-    };
-    stood("whole");
-    let opened = since.elapsed();
-    let open = log.frames(0);
-    let whole = log.watch(MEASURE);
-    let first = log.records().len();
-    let close = OrbitCamera::default().distance;
-    let deadline = Instant::now() + ZOOM_WITHIN;
-    let mut nearest = f32::INFINITY;
-    let mut still_since = Instant::now();
-    let mut notches = 0;
-    while Instant::now() < deadline {
-        desktop.scroll(pid, 1);
-        notches += 1;
-        std::thread::sleep(NOTCH);
-        let Some(Meters(distance)) = log.records().last().and_then(|record| record.camera) else {
-            continue;
+            .map_err(|error| Failure::Crashed(format!("the editor doesn't run: {error}")))?;
+        let probe = match ProbeDriver::accept(&listener, &mut editor, LONG) {
+            Ok(probe) => probe,
+            Err(problem) => {
+                let _ = editor.kill();
+                let _ = editor.wait();
+                return Err(Failure::Crashed(format!(
+                    "{problem}; its log is {}",
+                    folder.path().join(EDITOR_LOG).display()
+                )));
+            }
         };
-        if distance <= close.0 {
-            break;
-        }
-        if distance < nearest {
-            nearest = distance;
-            still_since = Instant::now();
-        } else if still_since.elapsed() > STILL {
-            break;
-        }
-    }
-    let zoom = log.frames(first);
-    let zoomed = Instant::now();
-    stood("close");
-    let closed_in = zoomed.elapsed();
-    let close = log.watch(MEASURE);
-    let camera = || log.records().last().and_then(|record| record.camera);
-    let near = camera();
-    desktop.flick(pid, -notches);
-    come_to_rest(&log, near);
-    stood("flicked out");
-    let far = camera();
-    let half = (notches + 1) / 2;
-    let flicked = Instant::now();
-    desktop.flick(pid, half);
-    come_to_rest(&log, far);
-    stood("flicked halfway in");
-    let halfway_in = flicked.elapsed();
-    let flicked_in = match notches - half {
-        0 => halfway_in,
-        rest => {
-            let halfway = camera();
-            let flicked = Instant::now();
-            desktop.flick(pid, rest);
-            come_to_rest(&log, halfway);
-            stood("flicked in");
-            flicked.elapsed()
-        }
-    };
-    AreaRun {
-        opened,
-        closed_in,
-        halfway_in,
-        flicked_in,
-        open,
-        whole,
-        zoom,
-        close,
-    }
-}
-
-/// Waits for the camera to leave `from` and come to rest, as it does after the wheel turns.
-fn come_to_rest(log: &Log, from: Option<Meters>) {
-    let camera = || log.records().last().and_then(|record| record.camera);
-    let deadline = Instant::now() + STAND_WITHIN;
-    while camera() == from {
-        assert!(Instant::now() < deadline, "the camera never moved");
-        std::thread::sleep(POLL);
-    }
-    let mut last = camera();
-    loop {
-        std::thread::sleep(POLL);
-        let now = camera();
-        if now == last {
-            return;
-        }
-        assert!(Instant::now() < deadline, "the camera never came to rest");
-        last = now;
-    }
-}
-
-/// The editor's frame log.
-struct Log(PathBuf);
-
-impl Log {
-    /// The frames logged so far, but for a line still being written.
-    fn records(&self) -> Vec<FrameRecord> {
-        std::fs::read_to_string(&self.0)
-            .unwrap_or_default()
-            .lines()
-            .map_while(|line| serde_json::from_str(line).ok())
-            .collect()
+        desktop.seat(editor.id());
+        let steps = File::options()
+            .append(true)
+            .create(true)
+            .open(steps)
+            .map_err(|error| Failure::Harness(format!("{}: {error}", steps.display())))?;
+        Ok(EditorDriver {
+            editor,
+            probe,
+            desktop,
+            folder,
+            seen: ProbeInputSeen::default(),
+            cursor: None,
+            frame: 0,
+            measuring: Some(Measuring::since(0)),
+            steps,
+        })
     }
 
-    /// The frames logged from the `first` on, as the editor's whole frame on its main thread.
-    fn frames(&self, first: usize) -> Window {
-        let mut window = Window::default();
-        for (index, record) in self.records().into_iter().enumerate().skip(first) {
-            window.push(FrameSample {
-                frame: index as u32,
-                dt_ms: record.frame,
-                cpu_main_ms: record.frame,
-                cpu_render_ms: None,
-                gpu_ms: None,
-                missing: 0,
-                draws: 0,
-                instances: 0,
-                entities: record.entities as u32,
-                visible_chunks: 0,
-                upload_bytes: Bytes(0),
+    /// The frames from the editor's first until the area it opened on stands whole in view, and
+    /// the frame it stood at.
+    pub fn opened(&mut self) -> Result<(Window, u32), Failure> {
+        self.note(&format!("=== {OPENING}"));
+        let outcome = hands::wait_for(self, "the area to stand in view", LONG, |snapshot| {
+            (snapshot.stage.is_some() && snapshot.scenery == EditorScenery::Stood && !snapshot.busy)
+                .then_some(snapshot.frame)
+        });
+        let measured = self.read_frames(true);
+        let measuring = self.measuring.take().expect("measuring the opening");
+        let stood = outcome?;
+        measured?;
+        Ok((measuring.window, stood))
+    }
+
+    /// Sets `scenario` up and plays its script, measuring the script's frames, then leaves the
+    /// editor as the scenario found it: its teardown played, whatever was left open dismissed and
+    /// every edit it made undone.
+    pub fn measure(&mut self, scenario: &EditorScenario) -> Result<Window, Failure> {
+        self.note(&format!("=== {}", scenario.name));
+        let before = self.snapshot()?;
+        let played = (scenario.setup)(self).and_then(|()| {
+            let start = self.snapshot()?.frame;
+            self.measuring = Some(Measuring::since(start));
+            let began = Instant::now();
+            let outcome = loop {
+                if let Err(failure) = (scenario.script)(self) {
+                    break Err(failure);
+                }
+                if let Err(failure) = self.read_frames(true) {
+                    break Err(failure);
+                }
+                if began.elapsed().as_secs_f32() >= Scenario::LEAST.0 {
+                    break Ok(());
+                }
+            };
+            let measuring = self.measuring.take().expect("measuring");
+            outcome.map(|()| measuring.window.after_warm_up(Scenario::WARM_UP))
+        });
+        let restored = self.restore(scenario, &before);
+        let window = played?;
+        restored?;
+        Ok(window)
+    }
+
+    pub fn adapter(&mut self) -> Result<String, Failure> {
+        Ok(self.snapshot()?.adapter.unwrap_or_default())
+    }
+
+    pub fn screen(&mut self) -> Result<Size<WindowPx>, Failure> {
+        self.snapshot()?
+            .screen
+            .ok_or_else(|| Failure::Harness("the editor reports no screen".to_owned()))
+    }
+
+    /// What the editor shows in a frame after asking, with the frames read when they are due.
+    pub fn snapshot(&mut self) -> Result<EditorSnapshot, Failure> {
+        self.read_frames(false)?;
+        let snapshot: EditorSnapshot = self.ask(&EditorFrameQuestion::Snapshot)?;
+        self.seen = snapshot.input.seen;
+        self.cursor = snapshot.input.cursor;
+        self.frame = snapshot.frame;
+        Ok(snapshot)
+    }
+
+    /// The tree called `name` as a frame after asking drew it.
+    pub fn tree(&mut self, name: &str) -> Result<EditorTree, Failure> {
+        self.read_frames(false)?;
+        let trees: EditorTrees = self.ask(&EditorFrameQuestion::TreeRows)?;
+        trees
+            .trees
+            .into_iter()
+            .find(|tree| tree.name == name)
+            .ok_or_else(|| Failure::Harness(format!("the editor draws no {name} tree")))
+    }
+
+    /// Asks for the tree called `name` until `found` finds what it waits for in it.
+    pub fn wait_for_tree<T>(
+        &mut self,
+        name: &str,
+        what: &str,
+        mut found: impl FnMut(&EditorTree) -> Option<T>,
+    ) -> Result<T, Failure> {
+        let since = Instant::now();
+        loop {
+            if let Some(done) = found(&self.tree(name)?) {
+                return Ok(done);
+            }
+            if since.elapsed() >= BUDGET {
+                return Err(Failure::Harness(format!("gave up waiting for {what}")));
+            }
+        }
+    }
+
+    /// The stage in view.
+    pub fn stage(&mut self) -> Result<EditorStage, Failure> {
+        self.snapshot()?
+            .stage
+            .ok_or_else(|| Failure::Harness("the editor shows no stage".to_owned()))
+    }
+
+    /// The stage once its camera has come to rest, as it does a little after the input moving it.
+    pub fn stage_at_rest(&mut self) -> Result<EditorStage, Failure> {
+        let mut last: Option<EditorStage> = None;
+        let mut still = 0;
+        hands::wait_for(self, "the camera to come to rest", BUDGET, |snapshot| {
+            let stage = snapshot.stage.clone()?;
+            let same = last.as_ref().is_some_and(|last| {
+                last.yaw == stage.yaw
+                    && last.pitch == stage.pitch
+                    && last.distance == stage.distance
+                    && last.target == stage.target
             });
-        }
-        window
+            still = if same { still + 1 } else { 0 };
+            last = Some(stage.clone());
+            (still >= REST_SNAPSHOTS).then_some(stage)
+        })
     }
 
-    /// The frames logged while the editor is left to draw for `lasting`.
-    fn watch(&self, lasting: Duration) -> Window {
-        let first = self.records().len();
-        std::thread::sleep(lasting);
-        self.frames(first)
+    /// Presses `key` with `held` down, as a shortcut is pressed.
+    pub fn shortcut(&mut self, held: KeyModifiers, key: &str) -> Result<EditorSnapshot, Failure> {
+        let mut landed = None;
+        hands::hold(self, &held, |driver| {
+            landed = Some(hands::key(driver, key)?);
+            Ok(())
+        })?;
+        landed.ok_or_else(|| Failure::Harness(format!("the shortcut {key} never landed")))
+    }
+
+    /// Undoes the latest edit, as Ctrl Z does.
+    pub fn undo(&mut self) -> Result<(), Failure> {
+        let before = self.snapshot()?.undoable;
+        if before == 0 {
+            return Err(Failure::Harness("there was no edit to undo".to_owned()));
+        }
+        self.shortcut(CTRL, "z")?;
+        hands::wait_for(self, "the edit to be undone", BUDGET, |snapshot| {
+            (snapshot.undoable < before).then_some(())
+        })
+    }
+
+    /// Redoes the latest edit undone, as Ctrl Shift Z does.
+    pub fn redo(&mut self) -> Result<(), Failure> {
+        let before = self.snapshot()?.redoable;
+        if before == 0 {
+            return Err(Failure::Harness("there was no edit to redo".to_owned()));
+        }
+        self.shortcut(CTRL_SHIFT, "z")?;
+        hands::wait_for(self, "the edit to be redone", BUDGET, |snapshot| {
+            (snapshot.redoable < before).then_some(())
+        })
+    }
+
+    /// Whether an edit came of the input just sent, once the editor has drawn a few frames after
+    /// it: `before` edits stood undoable before the input.
+    pub fn edited_since(&mut self, before: usize) -> Result<bool, Failure> {
+        Ok(hands::frames(self, EDIT_SETTLE)?.undoable > before)
+    }
+
+    /// How the editor exited, once it has.
+    pub fn exited(&mut self) -> Option<ExitStatus> {
+        self.editor.try_wait().ok().flatten()
+    }
+
+    fn restore(
+        &mut self,
+        scenario: &EditorScenario,
+        before: &EditorSnapshot,
+    ) -> Result<(), Failure> {
+        (scenario.teardown)(self)?;
+        let mut dismissed = 0;
+        while self.snapshot()?.menu_open {
+            if dismissed == DISMISS_TRIES {
+                return Err(Failure::Harness(
+                    "Escape never closed the menu the scenario left open".to_owned(),
+                ));
+            }
+            hands::key(self, "Escape")?;
+            hands::frames(self, EDIT_SETTLE)?;
+            dismissed += 1;
+        }
+        while self.snapshot()?.undoable > before.undoable {
+            self.undo()?;
+        }
+        Ok(())
+    }
+
+    fn ask<Answer: DeserializeOwned>(
+        &mut self,
+        question: &EditorFrameQuestion,
+    ) -> Result<Answer, Failure> {
+        let answer = match self.probe.ask(question) {
+            Ok(answer) => answer,
+            Err(problem) => return Err(self.died_or(problem)),
+        };
+        serde_json::from_str(&answer).map_err(|error| {
+            Failure::Harness(format!("an unreadable answer to {question:?}: {error}"))
+        })
+    }
+
+    /// Reads the frames drawn since the last read into the measured window, when one is open and
+    /// a read is due, or `now`.
+    fn read_frames(&mut self, now: bool) -> Result<(), Failure> {
+        let Some(measuring) = &self.measuring else {
+            return Ok(());
+        };
+        if !now && measuring.last_read.elapsed() < READ_EVERY {
+            return Ok(());
+        }
+        let since = measuring.since;
+        let frames: ProbeFrames = self.ask(&EditorFrameQuestion::Frames { since })?;
+        let measuring = self.measuring.as_mut().expect("measuring");
+        measuring.last_read = Instant::now();
+        if frames.dropped > 0 {
+            return Err(Failure::Harness(format!(
+                "the probe's ring of frames wrapped: {} frames dropped before they were read",
+                frames.dropped
+            )));
+        }
+        if let Some(last) = frames.samples.last() {
+            measuring.since = last.frame;
+            self.frame = self.frame.max(last.frame);
+        }
+        measuring.window.note_worst(&frames.worst);
+        measuring.window.extend(frames.samples);
+        Ok(())
+    }
+
+    fn died_or(&mut self, problem: String) -> Failure {
+        match self.exited() {
+            Some(status) => Failure::Crashed(format!(
+                "the editor exited with {status}; its log ends:\n{}",
+                self.log_tail()
+            )),
+            None => Failure::Harness(format!("{problem}; its log ends:\n{}", self.log_tail())),
+        }
+    }
+
+    fn log_tail(&self) -> String {
+        let log = std::fs::read_to_string(self.folder.path().join(EDITOR_LOG)).unwrap_or_default();
+        let lines: Vec<&str> = log.lines().collect();
+        lines[lines.len().saturating_sub(LOG_TAIL)..].join("\n")
+    }
+}
+
+impl Driven for EditorDriver {
+    type Snapshot = EditorSnapshot;
+
+    fn snapshot(&mut self) -> Result<EditorSnapshot, Failure> {
+        EditorDriver::snapshot(self)
+    }
+
+    fn input(snapshot: &EditorSnapshot) -> &ProbeInput {
+        &snapshot.input
+    }
+
+    fn screen(snapshot: &EditorSnapshot) -> Option<Size<WindowPx>> {
+        snapshot.screen
+    }
+
+    fn frame_of(snapshot: &EditorSnapshot) -> u32 {
+        snapshot.frame
+    }
+
+    fn seen(&self) -> ProbeInputSeen {
+        self.seen
+    }
+
+    fn cursor(&self) -> Option<Pos<WindowPx>> {
+        self.cursor
+    }
+
+    fn frame(&self) -> u32 {
+        self.frame
+    }
+
+    fn display(&self) -> &str {
+        self.desktop.display()
+    }
+
+    fn pid(&self) -> u32 {
+        self.editor.id()
+    }
+
+    fn note(&mut self, step: &str) {
+        let _ = writeln!(self.steps, "editor frame {}: {step}", self.frame);
+    }
+}
+
+impl Drop for EditorDriver {
+    fn drop(&mut self) {
+        let _ = self.editor.kill();
+        let _ = self.editor.wait();
+    }
+}
+
+pub const CTRL: KeyModifiers = KeyModifiers {
+    ctrl: true,
+    shift: false,
+    alt: false,
+    super_key: false,
+};
+pub const CTRL_SHIFT: KeyModifiers = KeyModifiers {
+    ctrl: true,
+    shift: true,
+    alt: false,
+    super_key: false,
+};
+
+/// The measured window being filled: the frames read so far and where the next read starts.
+struct Measuring {
+    window: Window,
+    since: u32,
+    last_read: Instant,
+}
+
+impl Measuring {
+    fn since(frame: u32) -> Measuring {
+        Measuring {
+            window: Window::default(),
+            since: frame,
+            last_read: Instant::now(),
+        }
     }
 }
 
 const EDITOR_LOG: &str = "editor.log";
-const STAND_WITHIN: Duration = Duration::from_secs(180);
-const MEASURE: Duration = Duration::from_secs(4);
-const POLL: Duration = Duration::from_millis(100);
-/// How long the wheel rests between notches, as a hand turning it steadily would.
-const NOTCH: Duration = Duration::from_millis(120);
-const ZOOM_WITHIN: Duration = Duration::from_secs(60);
-/// How long the camera may stand still under the turning wheel before the zoom counts as done.
-const STILL: Duration = Duration::from_secs(2);
-
-struct Running(Child);
-
-impl Drop for Running {
-    fn drop(&mut self) {
-        let _ = self.0.kill();
-        let _ = self.0.wait();
-    }
-}
+const LOG_TAIL: usize = 40;
+/// How long the editor has to come up, and to open the game and stand its area.
+const LONG: Duration = Duration::from_secs(300);
+/// How often the probe's ring of frames is read while measuring: well within what it holds at
+/// any frame rate the editor reaches.
+const READ_EVERY: Duration = Duration::from_secs(2);
+/// Snapshots in a row the camera must hold still in to count as at rest.
+const REST_SNAPSHOTS: u32 = 4;
+/// Frames an input has to have its edit show in the history.
+const EDIT_SETTLE: u32 = 6;
+const DISMISS_TRIES: u32 = 4;

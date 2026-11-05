@@ -491,6 +491,7 @@ fn scene_graph(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &Area
         .show(ui, |ui| {
             tree::show(
                 ui,
+                "scene",
                 egui::Id::new(("scene graph", view_key)),
                 &mut panel.tree,
                 &source,

@@ -3,6 +3,7 @@
 //! content where the file leaves a slot empty.
 
 pub mod client;
+pub mod editor;
 
 use std::path::Path;
 

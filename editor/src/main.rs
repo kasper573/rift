@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use std::path::PathBuf;
 
 use bevy::asset::AssetApp;
@@ -33,6 +34,9 @@ struct Options {
     /// how its scenery stands.
     #[arg(long, value_name = "PATH")]
     frame_log: Option<PathBuf>,
+    /// Answers the probe's driver listening at this address, as a client's probe does.
+    #[arg(long, value_name = "ADDRESS")]
+    probe: Option<SocketAddr>,
     /// Prints the build and exits.
     #[arg(long)]
     build_info: bool,
@@ -56,6 +60,7 @@ fn main() {
         scene,
         user: options.user_folder,
         frame_log: options.frame_log,
+        probe: options.probe,
     };
     let files = SyncedAssetReader::default();
     let mut app = App::new();

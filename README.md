@@ -95,8 +95,13 @@ bench's own: a headless `weston` screen it draws on through `Xwayland`, its wind
 `xdotool`, and a silent sink on a PulseAudio-compatible sound server (`pactl`). Its frame rate is
 then its own, and nothing reaches the machine's display or speakers; a load average over half the
 cores is warned about and kept in the report. The editor plays on
-such a desktop too: it opens each of the game's areas, seen whole and close up, and its frame rate
-is taken once all the view takes in stands. The run's report, `bench-report.json` unless `--report`
+such a desktop too, opened on the area the game starts in and worked as a designer works it, its
+input confirmed through its own probe: its opening until the area stands, then the scene tree
+hovered, opened, selected, given its menus, dragged in and scrolled; the stage turned, panned and
+flicked out and in, what it holds hovered, clicked, dragged and boxed, its menus opened and its
+terrain sculpted; the pages and tabs switched, edits undone and redone fifty times, a field typed
+into, folders hidden and shown, the panels resized, and the tree hovered between turns of the
+stage. Its frames are held to the client's criteria. The run's report, `bench-report.json` unless `--report`
 says where, is described by `rift schema bench`; `--compare` holds it against an earlier run's and
 fails when a scenario that passed now fails, a mean fell by more than a tenth or a p99 rose by more
 than a fifth. The exit code says how the run went: 0 passed, 1 a scenario fell short of its
@@ -165,7 +170,9 @@ The runtimes know no infrastructure, only protocols:
 - **The probe.** A desktop client started with `RIFT_CLIENT_PROBE=<host:port>` connects there and
   answers questions about what it shows, one JSON line each: a frame's snapshot, a picture of its
   window, or where the game's things are and how its ground walks. `rift ask <game>` answers the questions about the game
-  itself the same way, without a client, and `rift schema probe` prints the protocol's schema.
+  itself the same way, without a client. The editor started with `--probe <host:port>` answers its
+  own: a frame's snapshot (its input, interface, panels, stage and selection), the rows its trees
+  drew, and its frames. `rift schema probe` prints the protocol's schema.
 - **Test routes.** A game server with `TEST_CHARACTERS` set hands the game's test characters out
   over HTTP, to whoever drives it: `/test/character` makes the asking account's next sign-in play
   one, and `/test/stage` has the character that account plays walk, fight, talk or move.
