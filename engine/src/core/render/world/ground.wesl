@@ -1,6 +1,7 @@
 import bevy_pbr::render::{
     forward_io::{VertexOutput, FragmentOutput},
     mesh_functions::get_tag,
+    mesh_view_bindings::globals,
     pbr_fragment::pbr_input_from_standard_material,
     pbr_functions::main_pass_post_lighting_processing,
 };
