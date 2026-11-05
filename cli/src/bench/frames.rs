@@ -3,6 +3,7 @@
 //! scenario's mean may fall below, a share of frames that may come slower than that, a stall no
 //! frame may reach, and nothing the view takes in left missing.
 
+use editor::app::DrawnPass;
 use engine::core::units::{Bytes, Millis};
 use engine::systems::probe::{FrameSample, ProbeSlowFrame};
 use schemars::JsonSchema;
@@ -149,6 +150,8 @@ impl Criteria {
 pub struct Window {
     samples: Vec<FrameSample>,
     slow: Vec<ProbeSlowFrame>,
+    /// What the editor drew over each frame, by frame, where the editor logged it.
+    passes: Vec<(u32, DrawnPass)>,
 }
 
 impl Window {
@@ -163,6 +166,11 @@ impl Window {
                 self.slow.push(frame.clone());
             }
         }
+    }
+
+    /// The editor's passes over its frames, as its frame log tells them.
+    pub fn note_passes(&mut self, passes: impl IntoIterator<Item = (u32, DrawnPass)>) {
+        self.passes.extend(passes);
     }
 
     pub fn first_frame(&self) -> Option<u32> {
@@ -183,7 +191,27 @@ impl Window {
         Window {
             samples: kept,
             slow: self.slow.clone(),
+            passes: self.passes.clone(),
         }
+    }
+
+    fn interface(&self, first: u32, last: u32) -> Option<InterfaceTimes> {
+        let passes: Vec<&DrawnPass> = self
+            .passes
+            .iter()
+            .filter(|(frame, _)| (first..=last).contains(frame))
+            .map(|(_, pass)| pass)
+            .collect();
+        let overlay_worst = passes
+            .iter()
+            .map(|pass| pass.overlay_ms.0)
+            .reduce(f32::max)?;
+        Some(InterfaceTimes {
+            ui: median(passes.iter().map(|pass| pass.ui_ms))?,
+            tree: median(passes.iter().map(|pass| pass.tree_ms))?,
+            overlay: median(passes.iter().map(|pass| pass.overlay_ms))?,
+            overlay_worst: Millis(overlay_worst),
+        })
     }
 
     /// The window's frames measured against `criteria`, or nothing of an empty window.
@@ -242,6 +270,7 @@ impl Window {
                 .map(Bytes),
             vfx_writes: median_u32(self.samples.iter().map(|sample| sample.vfx_writes)),
             posed: median_u32(self.samples.iter().map(|sample| sample.posed)),
+            interface: self.interface(first, last),
             worst_frame: worst,
         })
     }
@@ -276,9 +305,21 @@ pub struct FrameStats {
     pub upload_bytes: Option<Bytes>,
     pub vfx_writes: Option<u32>,
     pub posed: Option<u32>,
+    /// How long the editor took over its interface on the window's frames, where it told.
+    pub interface: Option<InterfaceTimes>,
     /// The slowest of the window's slow frames, with the GPU's passes and the systems it waited
     /// on.
     pub worst_frame: Option<ProbeSlowFrame>,
+}
+
+/// How long the editor took over its interface, frame by frame: the median of the whole
+/// interface, of its trees and of the stage's overlays, and the slowest overlays of any frame.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct InterfaceTimes {
+    pub ui: Millis,
+    pub tree: Millis,
+    pub overlay: Millis,
+    pub overlay_worst: Millis,
 }
 
 impl FrameStats {

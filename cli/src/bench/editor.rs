@@ -11,6 +11,7 @@ use std::path::Path;
 use std::process::{Child, Command, ExitStatus};
 use std::time::{Duration, Instant};
 
+use editor::app::{DrawnPass, FrameRecord};
 use editor::scenes::SceneStep;
 use editor::user::{EditorSettings, UserFolder};
 use engine::core::content::Content;
@@ -180,6 +181,8 @@ impl EditorDriver {
             )
             .arg("--user-folder")
             .arg(&user)
+            .arg("--frame-log")
+            .arg(folder.path().join(FRAME_LOG))
             .arg("--probe")
             .arg(
                 listener
@@ -258,13 +261,23 @@ impl EditorDriver {
                     break Ok(());
                 }
             };
-            let measuring = self.measuring.take().expect("measuring");
+            let mut measuring = self.measuring.take().expect("measuring");
+            measuring.window.note_passes(self.logged_passes());
             outcome.map(|()| measuring.window.after_warm_up(Scenario::WARM_UP))
         });
         let restored = self.restore(scenario, &before);
         let window = played?;
         restored?;
         Ok(window)
+    }
+
+    /// What the editor drew over each frame it has logged so far.
+    fn logged_passes(&self) -> Vec<(u32, DrawnPass)> {
+        let log = std::fs::read_to_string(self.folder.path().join(FRAME_LOG)).unwrap_or_default();
+        log.lines()
+            .filter_map(|line| serde_json::from_str::<FrameRecord>(line).ok())
+            .map(|record| (record.sample.frame, record.pass))
+            .collect()
     }
 
     pub fn adapter(&mut self) -> Result<String, Failure> {
@@ -549,6 +562,7 @@ impl Measuring {
 }
 
 const EDITOR_LOG: &str = "editor.log";
+const FRAME_LOG: &str = "frames.jsonl";
 const LOG_TAIL: usize = 40;
 /// How long the editor has to come up, and to open the game and stand its area.
 const LONG: Duration = Duration::from_secs(300);

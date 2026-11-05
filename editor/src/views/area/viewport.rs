@@ -208,6 +208,11 @@ impl Viewports {
         self.requests.push(request);
     }
 
+    /// Whether any view shows the world this frame.
+    pub fn showing(&self) -> bool {
+        !self.shown.is_empty()
+    }
+
     /// The picture last drawn for the view `key`.
     pub fn shown(&self, key: &str) -> Option<DrawnViewport> {
         let viewport = self.shown.get(key)?;

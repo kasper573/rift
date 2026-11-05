@@ -258,18 +258,18 @@ pub struct GroundLines {
 }
 
 /// The outlines the view draws over the ground, each kept with what it was laid for: the scene's as
-/// the view holds it, and the module the pointer is over where the scene's leave it out, kept apart
-/// so the pointer moving over the map lays only its own.
+/// the view holds it, and the modules hovered on the map or in the scene tree where the scene's
+/// leave them out, kept apart so hovering lays only its own.
 #[derive(Default)]
 pub struct Outlines {
     pub scene: Option<(u64, GroundLines)>,
-    pub pointed: Option<(u64, GroundLines)>,
+    pub hovered: Option<(u64, GroundLines)>,
 }
 
 impl Outlines {
     /// Both sets of lines, the scene's first.
     pub fn lines(&self) -> [GroundLines; 2] {
-        [&self.scene, &self.pointed].map(|kept| {
+        [&self.scene, &self.hovered].map(|kept| {
             kept.as_ref()
                 .map(|(_, lines)| lines.clone())
                 .unwrap_or_default()
@@ -338,8 +338,8 @@ pub(super) fn overlay_modules(
             || row.as_deref().is_some_and(|row| holds(row, pointer)),
         part: !parts.is_empty() && parts.contains(pointer),
     };
-    let held_unpointed = |pointer: &str| Held {
-        hovered: row.as_deref().is_some_and(|row| holds(row, pointer)),
+    let held_still = |pointer: &str| Held {
+        hovered: false,
         ..held(pointer)
     };
     let wash = |kind: AreaModuleKind, pointer: &str, selected: bool| {
@@ -352,14 +352,14 @@ pub(super) fn overlay_modules(
         };
         ink::wash(module_color(kind), alpha)
     };
-    let key = |pointed: Option<&String>| {
+    let key = |hovered: Option<(&Option<String>, &Option<String>)>| {
         let mut hasher = std::hash::DefaultHasher::new();
         let mut asked: Vec<&String> = selected.iter().chain(&parts).collect();
         asked.sort_unstable();
-        (frame.made, pointed, &row, &editing, asked).hash(&mut hasher);
+        (frame.made, hovered, &editing, asked).hash(&mut hasher);
         hasher.finish()
     };
-    let (scene_key, pointed_key) = (key(None), key(pointed.as_ref()));
+    let (scene_key, hovered_key) = (key(None), key(Some((&pointed, &row))));
     let view = editor.views.area.view_mut(view_key);
     if view
         .outlines
@@ -367,21 +367,21 @@ pub(super) fn overlay_modules(
         .as_ref()
         .is_none_or(|(kept, _)| *kept != scene_key)
     {
-        let lines = ground_lines(frame, &|pointer| Some(held_unpointed(pointer)), &wash);
+        let lines = ground_lines(frame, &|pointer| Some(held_still(pointer)), &wash);
         view.outlines.scene = Some((scene_key, lines));
     }
     if view
         .outlines
-        .pointed
+        .hovered
         .as_ref()
-        .is_none_or(|(kept, _)| *kept != pointed_key)
+        .is_none_or(|(kept, _)| *kept != hovered_key)
     {
-        let only_pointed = |pointer: &str| {
-            (pointed.as_deref() == Some(pointer) && !held_unpointed(pointer).asked())
-                .then(|| held(pointer))
+        let only_hovered = |pointer: &str| {
+            let held = held(pointer);
+            (held.hovered && !held_still(pointer).asked()).then_some(held)
         };
-        let lines = ground_lines(frame, &only_pointed, &wash);
-        view.outlines.pointed = Some((pointed_key, lines));
+        let lines = ground_lines(frame, &only_hovered, &wash);
+        view.outlines.hovered = Some((hovered_key, lines));
     }
     let mut dots = shapes::Dots::default();
     let mut footprints: HashMap<PropId, Option<&Footprint>> = HashMap::new();
