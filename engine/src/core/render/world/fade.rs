@@ -5,6 +5,7 @@
 
 use bevy::camera::primitives::Aabb;
 use bevy::ecs::system::SystemParam;
+use bevy::math::Affine3A;
 use bevy::prelude::*;
 use bevy::window::PrimaryWindow;
 
@@ -45,12 +46,29 @@ impl Default for Fades {
     }
 }
 
+/// The boxes a thing that fades is drawn in, kept as tested: each in its own frame with the way
+/// into it from the world's, and all of them round in the world's, so the way from the camera to
+/// its subject is tested against a thing only where it passes near.
+#[derive(Component)]
+pub(super) struct FadeBounds {
+    around: (Vec3, Vec3),
+    boxes: Vec<FrameBox>,
+}
+
+struct FrameBox {
+    world_from_local: Affine3A,
+    local_from_world: Affine3A,
+    min: Vec3,
+    max: Vec3,
+}
+
 /// The things that fade, with the meshes and materials they are drawn from.
 #[derive(SystemParam)]
 pub(super) struct Fading<'w, 's> {
+    commands: Commands<'w, 's>,
     children: Query<'w, 's, &'static Children>,
     bounds: Query<'w, 's, (&'static Aabb, &'static GlobalTransform)>,
-    roots: Query<'w, 's, (Entity, &'static mut Fades)>,
+    roots: Query<'w, 's, (Entity, &'static mut Fades, Option<&'static FadeBounds>)>,
     materials_of: Query<'w, 's, &'static mut MeshMaterial3d<WorldMaterial>>,
     materials: ResMut<'w, Assets<WorldMaterial>>,
 }
@@ -63,6 +81,7 @@ pub(super) fn fade_occluders(
     mut fading: Fading,
 ) {
     let Fading {
+        commands,
         children,
         bounds,
         roots,
@@ -85,15 +104,16 @@ pub(super) fn fade_occluders(
         return;
     };
     let step = time.delta_secs() / look.clearing.fades.0.max(f32::EPSILON);
-    for (root, mut fades) in roots.iter_mut() {
-        let (mut crossed, mut around_eye) = (false, false);
-        for (aabb, transform) in children
-            .iter_descendants(root)
-            .chain(std::iter::once(root))
-            .filter_map(|entity| bounds.get(entity).ok())
-        {
-            crossed |= segment_crosses(eye, target, aabb, transform);
-            around_eye |= contains(eye, aabb, transform);
+    for (root, mut fades, kept) in roots.iter_mut() {
+        let made = kept
+            .is_none_or(|kept| !kept.stands(root, children, bounds))
+            .then(|| bounds_of(root, children, bounds));
+        let Some(laid) = made.as_ref().or(kept) else {
+            continue;
+        };
+        let (crossed, around_eye) = laid.seen(eye, target);
+        if let Some(made) = made {
+            commands.entity(root).insert(made);
         }
         let wanted = if crossed { 0.0 } else { 1.0 };
         if fades.shown == 1.0 && wanted == 1.0 {
@@ -144,22 +164,84 @@ pub(super) fn fade_occluders(
     }
 }
 
-/// Whether `point` lies in the box, tested in the box's own frame.
-fn contains(point: Vec3, aabb: &Aabb, transform: &GlobalTransform) -> bool {
-    let local = transform.affine().inverse().transform_point3(point);
-    let (min, max) = (Vec3::from(aabb.min()), Vec3::from(aabb.max()));
-    local.cmpge(min).all() && local.cmple(max).all()
+impl FadeBounds {
+    /// Whether `root` and everything under it stand as they did when these were made.
+    fn stands(
+        &self,
+        root: Entity,
+        children: &Query<&Children>,
+        bounds: &Query<(&Aabb, &GlobalTransform)>,
+    ) -> bool {
+        let mut kept = self.boxes.iter();
+        children
+            .iter_descendants(root)
+            .chain(std::iter::once(root))
+            .filter_map(|entity| bounds.get(entity).ok())
+            .all(|(aabb, transform)| {
+                kept.next().is_some_and(|framed| {
+                    framed.world_from_local == transform.affine()
+                        && (framed.min, framed.max)
+                            == (Vec3::from(aabb.min()), Vec3::from(aabb.max()))
+                })
+            })
+            && kept.next().is_none()
+    }
+
+    /// Whether the way from `eye` to `target` passes through any of the boxes, and whether `eye`
+    /// stands inside one.
+    fn seen(&self, eye: Vec3, target: Vec3) -> (bool, bool) {
+        let (low, high) = self.around;
+        let near = segment_crosses(eye, target, low, high)
+            || (eye.cmpge(low).all() && eye.cmple(high).all());
+        if !near {
+            return (false, false);
+        }
+        self.boxes
+            .iter()
+            .fold((false, false), |(crossed, inside), framed| {
+                let (from, to) = (
+                    framed.local_from_world.transform_point3(eye),
+                    framed.local_from_world.transform_point3(target),
+                );
+                (
+                    crossed || segment_crosses(from, to, framed.min, framed.max),
+                    inside || (from.cmpge(framed.min).all() && from.cmple(framed.max).all()),
+                )
+            })
+    }
 }
 
-/// Whether the segment from `from` to `to` passes through the box, which is tested in the box's
-/// own frame.
-fn segment_crosses(from: Vec3, to: Vec3, aabb: &Aabb, transform: &GlobalTransform) -> bool {
-    let world_from_local = transform.affine();
-    let local_from_world = world_from_local.inverse();
-    let a = local_from_world.transform_point3(from);
-    let b = local_from_world.transform_point3(to);
-    let min = Vec3::from(aabb.min());
-    let max = Vec3::from(aabb.max());
+/// The boxes `root` and everything under it are drawn in, as they stand now.
+fn bounds_of(
+    root: Entity,
+    children: &Query<&Children>,
+    bounds: &Query<(&Aabb, &GlobalTransform)>,
+) -> FadeBounds {
+    let mut around = (Vec3::splat(f32::MAX), Vec3::splat(f32::MIN));
+    let boxes = children
+        .iter_descendants(root)
+        .chain(std::iter::once(root))
+        .filter_map(|entity| bounds.get(entity).ok())
+        .map(|(aabb, transform)| {
+            let world_from_local = transform.affine();
+            let (min, max) = (Vec3::from(aabb.min()), Vec3::from(aabb.max()));
+            let center = world_from_local.transform_point3((min + max) / 2.0);
+            let half = world_from_local.matrix3.abs() * Vec3A::from((max - min) / 2.0);
+            around.0 = around.0.min(center - Vec3::from(half));
+            around.1 = around.1.max(center + Vec3::from(half));
+            FrameBox {
+                world_from_local,
+                local_from_world: world_from_local.inverse(),
+                min,
+                max,
+            }
+        })
+        .collect();
+    FadeBounds { around, boxes }
+}
+
+/// Whether the segment from `a` to `b` passes through the box from `min` to `max`.
+fn segment_crosses(a: Vec3, b: Vec3, min: Vec3, max: Vec3) -> bool {
     let direction = b - a;
     let (mut enter, mut exit) = (0.0f32, 1.0f32);
     for axis in 0..3 {
