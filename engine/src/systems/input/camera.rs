@@ -13,7 +13,7 @@ use crate::core::units::Degrees;
 use crate::systems::screen::ClientScreen;
 
 /// How far the camera turns or tilts for a pixel the pointer moves while it is held to.
-const DRAG_TURN: Degrees = Degrees(0.4);
+pub const DRAG_TURN: Degrees = Degrees(0.4);
 /// How many scrolled lines take the zoom one step.
 const LINES_PER_STEP: f32 = 1.0;
 const PIXELS_PER_STEP: f32 = 60.0;

@@ -22,17 +22,18 @@ use engine::systems::area::AreaDef;
 use engine::systems::probe::FrameSample;
 
 use super::desktop::BenchDesktop;
-use super::frames::{Class, Criteria, Video, Window};
+use super::frames::{Class, Criteria, Window};
 use super::report::{ScenarioResult, Verdict};
 use super::scenario::Target;
 use crate::binaries::{self, EDITOR};
+use crate::render::VideoPreset;
 
 /// Every area of the game at each of `videos`, each view of it a scenario of the report, of those
 /// whose names match `only`.
 pub fn run(
     game: &Path,
     content: &Content,
-    videos: &[Video],
+    videos: &[VideoPreset],
     only: Option<&str>,
 ) -> Vec<ScenarioResult> {
     let areas: Vec<String> = content
@@ -142,7 +143,7 @@ impl AreaRun {
 }
 
 /// The editor opened on `game` with `area` in view, shown as `video` asks.
-fn watch(game: &Path, area: &str, video: Video) -> AreaRun {
+fn watch(game: &Path, area: &str, video: VideoPreset) -> AreaRun {
     let folder = tempfile::tempdir().expect("a folder for the editor's settings and log");
     let desktop = BenchDesktop::open(folder.path());
     let user = folder.path().join("user");

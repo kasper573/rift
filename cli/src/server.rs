@@ -12,6 +12,8 @@ pub const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
 // Runs play out alike, so they compare.
 pub const SEED: u64 = 1931;
+/// Room on a bench's server for its own client and the other players a scenario brings in.
+pub const BENCH_CLIENTS: usize = 64;
 const NOON: f32 = 12.0;
 
 /// A server playing `game` on any free ports, as the benches run it: seeded, its players
@@ -19,6 +21,7 @@ const NOON: f32 = 12.0;
 /// first spell, so runs compare. A bench says what else it needs.
 pub fn bench_config(game: &Path) -> ServerConfig {
     ServerConfig {
+        max_clients: BENCH_CLIENTS,
         player_immortal: true,
         daylight: ServerDaylight::Fixed,
         hour: Some(NOON),

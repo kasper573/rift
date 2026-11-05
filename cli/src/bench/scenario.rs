@@ -4,6 +4,7 @@
 //! slots the game's own scenarios file fills, or that the engine fills from the content when the
 //! game has none.
 
+use engine::core::math::Pos;
 use engine::core::units::{Degrees, Meters, Seconds};
 use engine::systems::input::map::InputAction;
 use engine::systems::script::Place;
@@ -29,6 +30,9 @@ pub struct Scenario {
     pub script: Vec<Step>,
     /// Stricter criteria than every scenario's, where the scenario asks for them.
     pub criteria: Option<Criteria>,
+    /// Other players connected to the server while it plays, each standing where the game's
+    /// characters start.
+    pub players: u32,
 }
 
 impl Scenario {
@@ -56,8 +60,14 @@ pub enum Step {
         button: Button,
         times: u8,
     },
+    Down(Button),
+    Up(Button),
+    /// The wheel turned this many lines, up when positive.
+    Wheel(i32),
     /// The key the action is bound to.
     Key(InputAction),
+    /// Typed a key at a time, as a player types.
+    Type(String),
     Wait(Cond),
     Repeat {
         times: u32,
@@ -65,9 +75,33 @@ pub enum Step {
     },
     /// The pointer swept over every element of the interface in turn.
     SweepInterface,
+    ClickUi(UiTarget),
+    HoverUi(UiTarget),
+    /// One element of the interface dragged onto another with the carry binding.
+    DragUi {
+        from: UiTarget,
+        to: UiTarget,
+    },
+    /// Every window of the interface dragged a little way by its title, and back.
+    DragWindows,
+    /// The first item shown in a slot dragged onto the next, with the carry binding; nothing
+    /// when fewer than two are shown.
+    DragItems,
+    /// The options of the first item shown in a slot opened by their binding, then dismissed;
+    /// nothing when no slot is shown.
+    SlotOptions,
+    /// Everything open over the world dismissed, until nothing covers it.
+    CloseWindows,
+    /// The client's window resized, as a window manager does it.
+    Resize {
+        width: u32,
+        height: u32,
+    },
     Camera(CameraOp),
     /// Staged on the server mid-script.
     Stage(Staging),
+    /// Walked into the nearest warp the client shows, into the area it leads to.
+    CrossWarp,
 }
 
 /// A point of the window.
@@ -87,6 +121,15 @@ pub enum Ground {
     NearMe { dx: Meters, dy: Meters },
 }
 
+/// An element of the interface, found by what the probe reports of it.
+#[derive(Clone, Debug)]
+pub enum UiTarget {
+    /// The element reading exactly this.
+    Text(String),
+    /// The field that takes typing.
+    Field,
+}
+
 #[derive(Clone, Debug)]
 pub enum Cond {
     Frames(u32),
@@ -95,7 +138,7 @@ pub enum Cond {
     Arrived(Place),
     /// Everything the view takes in stands as wanted.
     Stood,
-    /// The player has come to rest.
+    /// The player has come to rest; a player that neither rests nor moves on fails the harness.
     AtRest,
     /// The interface has stopped moving.
     Settled,
@@ -111,6 +154,8 @@ pub enum CameraOp {
     /// Zoomed by the wheel this many steps, in when positive, or as far as the camera zooms;
     /// a click of the wheel may take more than a step, and a zoom already at its limit fails.
     Zoom(i32),
+    /// Turned until the ground point lies straight ahead of the player on screen.
+    Face(Pos<Meters>),
     Home,
 }
 

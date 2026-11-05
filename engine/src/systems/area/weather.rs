@@ -159,14 +159,17 @@ impl DayCycle {
     /// How the day runs for a world starting `now` on a server running it as `day` says.
     pub fn course(&self, day: ServerDay, now: UnixMillis) -> TimeCourse<f32> {
         match day.daylight {
-            ServerDaylight::Turning => {
-                TimeCourse::Since(now.before(Seconds(self.start / 24.0 * self.day_length.0)))
-            }
+            ServerDaylight::Turning => self.turning_from(self.start, now),
             ServerDaylight::Still => TimeCourse::Held(self.start),
             ServerDaylight::Fixed => {
                 TimeCourse::Held(day.hour.expect("a fixed daylight names its hour"))
             }
         }
+    }
+
+    /// The day turning on from `hour` o'clock at `now`.
+    pub fn turning_from(&self, hour: f32, now: UnixMillis) -> TimeCourse<f32> {
+        TimeCourse::Since(now.before(Seconds(hour / 24.0 * self.day_length.0)))
     }
 
     /// The hour of the day, 0 to 24, at `now` on a day running its `course`.

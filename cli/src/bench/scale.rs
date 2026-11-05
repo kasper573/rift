@@ -179,7 +179,7 @@ struct Seen {
 
 /// The client's frame rate and memory, standing where the game starts.
 fn client(game: &Path, content: &Content) -> Seen {
-    let mut me = Playtest::start(game, content, VideoPreferences::default())
+    let mut me = Playtest::start(game, content, None, VideoPreferences::default())
         .unwrap_or_else(|problem| panic!("{problem}"));
     settled_in_world(&mut me);
     let first = me.snapshot().frame;

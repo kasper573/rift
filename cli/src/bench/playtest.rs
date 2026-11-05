@@ -4,7 +4,7 @@ use std::path::Path;
 use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
-use engine::core::content::{Content, ContentScope, with_content};
+use engine::core::content::{Content, ContentId, ContentScope, with_content};
 use engine::core::os::Profile;
 use engine::core::render::video::VideoPreferences;
 use engine::core::units::Bytes;
@@ -38,18 +38,19 @@ pub struct Playtest {
 }
 
 impl Playtest {
-    /// The game's first test character at the game's initial spawn, or a fresh character where the
-    /// game has none, in a client on a desktop of the bench's own, shown as `video` asks. Refused
-    /// when the server or the client doesn't come up.
+    /// The test character `character`, else the game's first, at the game's initial spawn, or a
+    /// fresh character where the game has none, in a client on a desktop of the bench's own,
+    /// shown as `video` asks. Refused when the server or the client doesn't come up.
     pub fn start(
         game: &Path,
         content: &Content,
+        character: Option<ContentId<CharacterSnapshot>>,
         video: VideoPreferences,
     ) -> Result<Playtest, String> {
         let folder = tempfile::tempdir().expect("a folder for the client's profile and log");
         settings::save_video(&Profile(folder.path().join("profile")), video);
         let server = GameServer::start(&binaries::beside(GAME_SERVER), &bench_config(game));
-        if let Some(character) = content.ids::<CharacterSnapshot>().next() {
+        if let Some(character) = character.or_else(|| content.ids::<CharacterSnapshot>().next()) {
             let request = TestCharacterRequest {
                 test_character: character.path(content).to_owned(),
                 start: Some(content.built::<GameSettings>().initial_spawn),
@@ -156,6 +157,15 @@ impl Playtest {
     /// The X display the client's window is on.
     pub fn display(&self) -> &str {
         self.desktop.display()
+    }
+
+    pub fn client_pid(&self) -> u32 {
+        self.client.id()
+    }
+
+    /// Where the server takes requests over HTTP.
+    pub fn server_url(&self) -> String {
+        self.server.http_url()
     }
 
     pub fn client_memory(&self) -> Bytes {

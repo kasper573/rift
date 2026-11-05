@@ -1,5 +1,6 @@
+use engine::core::content::Content;
 use engine::core::math::Pos;
-use engine::core::time::{TimeCourse, WeatherClock};
+use engine::core::time::{DayClock, TimeCourse, WallClock, WeatherClock};
 use engine::core::units::{MeterPos, Meters};
 use engine::systems::area::AreaDef;
 use engine::systems::combat::{self, AttackRequest};
@@ -9,7 +10,7 @@ use engine::systems::npc::NpcDef;
 use engine::systems::region;
 use engine::systems::script::Place;
 use engine::systems::staging::{Staging, stage};
-use engine::systems::{actor, dialogue, npc, reach, script, skill, stat};
+use engine::systems::{GameSettings, actor, dialogue, npc, reach, script, skill, stat};
 use serde_json::json;
 use testkit::{Game, Map, Sim, hunting, path};
 
@@ -132,6 +133,82 @@ fn a_bench_holds_an_areas_weather_at_a_named_spell_until_staged_again() {
         )
         .is_err(),
         "a spell the climate lacks is refused"
+    );
+}
+
+#[test]
+fn a_bench_sets_the_servers_day_to_an_hour_held_or_turning_on_from_it() {
+    let mut sim = Sim::new(
+        Game::new()
+            .area("yard", &Map::open(20, 9), json!([]))
+            .hero("yard", SPAWN.x, SPAWN.y)
+            .edit_settings(|settings| {
+                settings["daylight"] = json!({ "day_length": 1200.0, "start": 10.0 });
+            })
+            .load(),
+    );
+    sim.serve("yard");
+    sim.join(1);
+    let conn = sim.conn(1);
+    let cycle = sim
+        .world
+        .resource::<Content>()
+        .built::<GameSettings>()
+        .daylight
+        .expect("a day cycle");
+    sim.later(cycle.day_length.0);
+    let hour_now = |sim: &Sim| {
+        let course = sim.world.resource::<DayClock>().0.expect("a day course");
+        cycle.hour(course, sim.world.resource::<WallClock>().now)
+    };
+
+    stage(
+        &mut sim.world,
+        conn,
+        Staging::Day {
+            hour: 18.0,
+            turning: false,
+        },
+    )
+    .expect("an hour of the day");
+    sim.run(300.0);
+    assert!(
+        (hour_now(&sim) - 18.0).abs() < 0.01,
+        "a held day stays at its hour however long the world runs"
+    );
+
+    stage(
+        &mut sim.world,
+        conn,
+        Staging::Day {
+            hour: 18.0,
+            turning: true,
+        },
+    )
+    .expect("an hour of the day");
+    assert!(
+        (hour_now(&sim) - 18.0).abs() < 0.01,
+        "a turning day starts at its hour: {}",
+        hour_now(&sim)
+    );
+    sim.run(150.0);
+    assert!(
+        (hour_now(&sim) - 21.0).abs() < 0.1,
+        "a turning day turns on from its hour at the game's pace: {}",
+        hour_now(&sim)
+    );
+
+    assert!(
+        stage(
+            &mut sim.world,
+            conn,
+            Staging::Day {
+                hour: 25.0,
+                turning: false,
+            },
+        )
+        .is_err(),
+        "an hour past the day is refused"
     );
 }
 

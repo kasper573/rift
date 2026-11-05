@@ -14,16 +14,20 @@ mod sim;
 mod tile;
 
 use std::path::{Path, PathBuf};
-use std::time::Instant;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, mpsc};
+use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 
 use engine::core::content::Content;
 use engine::systems::GameSettings;
 use engine::systems::area::{self, AreaModule};
 
+use crate::loadtest::Pool;
+use crate::render::{VideoFilter, VideoPreset};
 use crate::search::{Search, budget_ms, verdict};
 use driver::{Driver, Failure};
-pub use frames::Video as VideoPreset;
-use frames::{Criteria, Video};
+use frames::{Criteria, Fps};
 use report::{BenchReport, Resolution, ScenarioResult, Verdict};
 use scenario::{Scenario, Target};
 use scenarios::ScenarioSlots;
@@ -58,8 +62,10 @@ pub struct BenchArgs {
     pub only: Vec<BenchPart>,
     /// Only the scenarios whose names match, `*` standing for anything.
     pub scenario: Option<String>,
-    /// The video presets to run at, both unless given.
-    pub video: Option<Video>,
+    /// The game's scenarios file, `bench/scenarios.json` in its folder unless given.
+    pub scenarios: Option<PathBuf>,
+    /// The video presets to run at.
+    pub video: VideoFilter,
     /// How many times each scenario runs; the report keeps the median run and the spread.
     pub repeat: u32,
     pub report: PathBuf,
@@ -96,10 +102,7 @@ pub fn run(args: &BenchArgs) -> Result<i32, String> {
     if runs(BenchPart::Server) {
         server(&content, layout);
     }
-    let videos: Vec<Video> = match args.video {
-        Some(video) => vec![video],
-        None => Video::ALL.to_vec(),
-    };
+    let videos = args.video.presets();
     let mut report: Option<BenchReport> = None;
     if runs(BenchPart::Client) {
         client(game, &content, args, &videos, &mut report)?;
@@ -159,11 +162,15 @@ fn client(
     game: &Path,
     content: &Content,
     args: &BenchArgs,
-    videos: &[Video],
+    videos: &[VideoPreset],
     report: &mut Option<BenchReport>,
 ) -> Result<(), String> {
-    let slots = ScenarioSlots::of(game, content)?;
-    let scenarios: Vec<Scenario> = scenarios::client::catalogue(&slots, args.smoke)
+    let slots_file = args
+        .scenarios
+        .clone()
+        .unwrap_or_else(|| game.join(scenarios::SLOTS_FILE));
+    let slots = ScenarioSlots::of(&slots_file, content)?;
+    let scenarios: Vec<Scenario> = scenarios::client::catalogue(&slots, content, args.smoke)
         .into_iter()
         .filter(|scenario| {
             args.scenario
@@ -171,50 +178,45 @@ fn client(
                 .is_none_or(|only| crate::compare::matches(only, &scenario.name))
         })
         .collect();
-    if scenarios.is_empty() {
+    let desktop = !args.smoke
+        && args
+            .scenario
+            .as_deref()
+            .is_none_or(|only| crate::compare::matches(only, DESKTOP));
+    if scenarios.is_empty() && !desktop {
         println!("[client-bench] no scenario to run");
         return Ok(());
     }
-    let folder = tempfile::tempdir().map_err(|error| error.to_string())?;
+    let steps = args.report.with_extension(STEPS_LOG);
+    let _ = std::fs::remove_file(&steps);
+    warn_of_load();
+    if desktop {
+        desktop_check(game, args, &steps, report)?;
+    }
+    if scenarios.is_empty() {
+        return Ok(());
+    }
     for &video in videos {
-        let mut driver = Driver::start(game, content, video, folder.path())
+        let mut driver = Driver::start(game, content, slots.character, video, &steps)
             .map_err(|failure| failure_text(&failure))?;
-        let adapter = driver
-            .adapter()
-            .map_err(|failure| failure_text(&failure))?
-            .unwrap_or_default();
-        if let Some(wanted) = &args.adapter
-            && wanted != &adapter
-        {
-            return Err(format!(
-                "the client draws on {adapter}, not the {wanted} the bench was asked for"
-            ));
-        }
-        let screen = driver.screen().map_err(|failure| failure_text(&failure))?;
-        let report = report.get_or_insert_with(|| {
-            BenchReport::new(
-                adapter.clone(),
-                Resolution {
-                    width: screen.width as u32,
-                    height: screen.height as u32,
-                },
-                game,
-            )
-        });
+        let report = report_of(report, &mut driver, game, args)?;
         for scenario in &scenarios {
             let result = measure(
                 &mut driver,
                 scenario,
                 video,
                 args,
-                game,
-                content,
-                folder.path(),
+                &Restart {
+                    game,
+                    content,
+                    slots: &slots,
+                    steps: &steps,
+                },
             );
             print_result(&result);
             report.add(result);
             if driver_dead(&mut driver) {
-                driver = Driver::start(game, content, video, folder.path())
+                driver = Driver::start(game, content, slots.character, video, &steps)
                     .map_err(|failure| failure_text(&failure))?;
             }
         }
@@ -222,20 +224,194 @@ fn client(
     Ok(())
 }
 
+/// Whether the bench's desktop lets the client draw as fast as it can: the emptiest view of the
+/// engine's own new game, which draws far faster than a desktop refreshes whatever the game
+/// benched costs to draw, played at the lowest settings. A mean under [`DESKTOP_FLOOR`] fails the
+/// harness, as the desktop then holds the frames and every scenario measures it, not the engine.
+fn desktop_check(
+    game: &Path,
+    args: &BenchArgs,
+    steps: &Path,
+    report: &mut Option<BenchReport>,
+) -> Result<(), String> {
+    let folder = tempfile::tempdir().expect("a folder for the desktop check's game");
+    let checked = folder.path().join("game");
+    ::editor::templates::new_game(
+        DESKTOP_TEMPLATE,
+        DESKTOP,
+        &checked,
+        &::editor::busy::Progress::default(),
+    )?;
+    let content = load(&checked);
+    let slots = ScenarioSlots::of(&checked.join(scenarios::SLOTS_FILE), &content)?;
+    let home = slots
+        .home()
+        .ok_or("the engine's new game has nowhere to stand")?;
+    let scenario = Scenario {
+        name: DESKTOP.to_owned(),
+        ..scenarios::client::empty_view(&slots, home)
+    };
+    let video = VideoPreset::Lowest;
+    let mut driver = Driver::start(&checked, &content, slots.character, video, steps)
+        .map_err(|failure| failure_text(&failure))?;
+    let report = report_of(report, &mut driver, game, args)?;
+    let restart = Restart {
+        game: &checked,
+        content: &content,
+        slots: &slots,
+        steps,
+    };
+    let mut result = measure(&mut driver, &scenario, video, args, &restart);
+    if let Some(stats) = &result.stats
+        && stats.mean.0 < DESKTOP_FLOOR.0
+    {
+        result.verdict = Verdict::Harness;
+        result.failures.push(format!(
+            "harness: the desktop lets the client draw the engine's emptiest view at only {:.0} fps ({:.0} expected): its compositor holds the frames",
+            stats.mean.0, DESKTOP_FLOOR.0
+        ));
+    }
+    print_result(&result);
+    report.add(result);
+    Ok(())
+}
+
+/// The name the desktop check is reported by.
+const DESKTOP: &str = "desktop";
+/// The engine's new game the desktop check draws.
+const DESKTOP_TEMPLATE: &str = "new_game";
+/// What the engine's emptiest view must exceed at the lowest settings for the desktop to count
+/// as letting the client draw as fast as it can.
+const DESKTOP_FLOOR: Fps = Fps(300.0);
+
+/// The report, opened on the adapter and window `driver`'s client draws on when it isn't yet;
+/// refused when the client draws on another adapter than the bench was asked for.
+fn report_of<'a>(
+    report: &'a mut Option<BenchReport>,
+    driver: &mut Driver,
+    game: &Path,
+    args: &BenchArgs,
+) -> Result<&'a mut BenchReport, String> {
+    let adapter = driver
+        .adapter()
+        .map_err(|failure| failure_text(&failure))?
+        .unwrap_or_default();
+    if let Some(wanted) = &args.adapter
+        && wanted != &adapter
+    {
+        return Err(format!(
+            "the client draws on {adapter}, not the {wanted} the bench was asked for"
+        ));
+    }
+    let screen = driver.screen().map_err(|failure| failure_text(&failure))?;
+    Ok(report.get_or_insert_with(|| {
+        BenchReport::new(
+            adapter,
+            Resolution {
+                width: screen.width as u32,
+                height: screen.height as u32,
+            },
+            game,
+        )
+    }))
+}
+
 fn driver_dead(driver: &mut Driver) -> bool {
     driver.adapter().is_err()
 }
+
+/// A loaded machine measures the load, not the engine: said once, and kept in the report.
+fn warn_of_load() {
+    let Ok(load) = sysinfo::System::load_average() else {
+        return;
+    };
+    let cores = std::thread::available_parallelism().map_or(1, |cores| cores.get());
+    if load.one > cores as f64 * BUSY_SHARE {
+        println!(
+            "[bench] WARNING the machine's load average is {:.1} over {cores} cores: the frames measure its load too",
+            load.one
+        );
+    }
+}
+
+/// The share of the cores a load average may reach before the machine counts as busy.
+const BUSY_SHARE: f64 = 0.5;
+
+/// Other players held on the server while a scenario plays, each answering it from a thread of
+/// their own, gone when dropped.
+struct Crowd {
+    stop: Arc<AtomicBool>,
+    thread: Option<JoinHandle<()>>,
+}
+
+impl Crowd {
+    /// `count` players joined to the server at `http_url`; refused when fewer got in.
+    fn join(http_url: String, count: u32) -> Result<Crowd, Failure> {
+        let stop = Arc::new(AtomicBool::new(false));
+        let (joined, report) = mpsc::channel();
+        let thread = std::thread::spawn({
+            let stop = Arc::clone(&stop);
+            move || {
+                let mut pool = Pool::open(&http_url, count as usize);
+                while !stop.load(Ordering::Relaxed) {
+                    let _ = joined.send(pool.connected());
+                    pool.hold(CROWD_SLICE);
+                }
+            }
+        });
+        let crowd = Crowd {
+            stop,
+            thread: Some(thread),
+        };
+        let since = Instant::now();
+        let mut connected = 0;
+        while connected < count as usize {
+            connected = report
+                .recv_timeout(JOIN_WITHIN)
+                .map_err(|_| Failure::Harness("the players never joined".to_owned()))?;
+            if since.elapsed() > JOIN_WITHIN {
+                return Err(Failure::Harness(format!(
+                    "only {connected} of {count} players joined the server within {} s",
+                    JOIN_WITHIN.as_secs()
+                )));
+            }
+        }
+        Ok(crowd)
+    }
+}
+
+impl Drop for Crowd {
+    fn drop(&mut self) {
+        self.stop.store(true, Ordering::Relaxed);
+        if let Some(thread) = self.thread.take() {
+            let _ = thread.join();
+        }
+    }
+}
+
+const CROWD_SLICE: Duration = Duration::from_millis(250);
+/// How long the players have to join before the scenario gives up on them.
+const JOIN_WITHIN: Duration = Duration::from_secs(60);
+
+/// What starting a client over takes, when one dies mid-scenario.
+struct Restart<'a> {
+    game: &'a Path,
+    content: &'a Content,
+    slots: &'a ScenarioSlots,
+    steps: &'a Path,
+}
+
+/// The extension the log of every step the client was put through takes, beside the report.
+const STEPS_LOG: &str = "steps.log";
 
 /// The scenario run `repeat` times, the median run by its mean kept, with how far the others
 /// strayed from it.
 fn measure(
     driver: &mut Driver,
     scenario: &Scenario,
-    video: Video,
+    video: VideoPreset,
     args: &BenchArgs,
-    game: &Path,
-    content: &Content,
-    folder: &Path,
+    restart: &Restart,
 ) -> ScenarioResult {
     let criteria = scenario.criteria.map_or(Criteria::global(video), |own| {
         Criteria::global(video).stricter(own)
@@ -243,7 +419,14 @@ fn measure(
     let mut results = Vec::new();
     for run in 0..args.repeat.max(1) {
         let started = Instant::now();
-        let outcome = driver.run(scenario);
+        let outcome = match scenario.players {
+            0 => driver.run(scenario),
+            players => Crowd::join(driver.server_url(), players).and_then(|crowd| {
+                let measured = driver.run(scenario);
+                drop(crowd);
+                measured
+            }),
+        };
         let result = match outcome {
             Ok(measured) => {
                 let stats = measured.window.stats(&criteria);
@@ -252,17 +435,18 @@ fn measure(
                     (None, _) => vec!["no frames were measured".to_owned()],
                     (Some(_), true) => Vec::new(),
                 };
+                let verdict = if failures.is_empty() {
+                    Verdict::Passed
+                } else {
+                    Verdict::Criteria
+                };
                 let headroom = scenario.class.headroom(video);
                 ScenarioResult {
                     name: scenario.name.clone(),
                     target: scenario.target,
                     class: scenario.class,
                     video,
-                    verdict: if failures.is_empty() {
-                        Verdict::Passed
-                    } else {
-                        Verdict::Criteria
-                    },
+                    verdict,
                     failures,
                     headroom_met: match (&stats, headroom) {
                         (Some(stats), Some(headroom)) => Some(stats.mean.0 >= headroom.0),
@@ -304,7 +488,13 @@ fn measure(
         let crashed = result.verdict == Verdict::Crashed;
         results.push(result);
         if crashed && run + 1 < args.repeat.max(1) {
-            match Driver::start(game, content, video, folder) {
+            match Driver::start(
+                restart.game,
+                restart.content,
+                restart.slots.character,
+                video,
+                restart.steps,
+            ) {
                 Ok(fresh) => *driver = fresh,
                 Err(failure) => {
                     results.push(ScenarioResult {

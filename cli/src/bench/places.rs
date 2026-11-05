@@ -5,12 +5,14 @@
 use std::path::Path;
 
 use engine::core::content::Content;
-use engine::core::math::Pos;
+use engine::core::ground::TILE_SIDE;
+use engine::core::math::{Pos, Rect};
 use engine::core::render::transition::ScreenTransitionPhase;
-use engine::core::units::{MeterSize, Meters};
+use engine::core::units::{MeterPos, MeterSize, Meters};
 use engine::systems::area::{self, AreaDef};
 use engine::systems::probe::ProbeSnapshot;
 use engine::systems::script::{EffectReach, OwnerRow, Place, RiftScripts};
+use engine::systems::sleep;
 use engine::systems::staging::Staging;
 
 use super::playtest::Playtest;
@@ -84,6 +86,65 @@ pub fn warps_from(content: &Content, from: area::AreaId) -> impl Iterator<Item =
             _ => None,
         })
 }
+
+/// The legs of a walk from `from` to `to` along the shortest walk there, each no longer than the
+/// ground the server holds past a player, since a walk is routed only over held ground: a long
+/// walk is asked for a leg at a time, as a player clicks ahead. Just `to` where no walk leads
+/// there.
+pub fn legs(content: &Content, from: Place, to: Pos<Meters>) -> Vec<Pos<Meters>> {
+    let leg = sleep::awake_reach(content);
+    let area = area::load(content, from.area);
+    let around = Rect::from_points([from.at, to]).inflate(TILE_SIDE.0, TILE_SIDE.0);
+    let _held = area.hold(area.ground_size().tiles_within(around));
+    let mesh = area.mesh();
+    let Some(corners) = mesh.route(from.at, to) else {
+        return vec![to];
+    };
+    let mut legs = Vec::new();
+    let mut last = from.at;
+    let mut since_leg = 0.0;
+    for corner in corners {
+        let mut at = last;
+        while at != corner {
+            let left = at.distance(corner).0;
+            let room = leg.0 - since_leg;
+            if left <= room {
+                since_leg += left;
+                at = corner;
+            } else {
+                at = at.toward(corner, Meters(room));
+                legs.push(mesh.nearest(at).unwrap_or(at));
+                since_leg = 0.0;
+            }
+        }
+        last = corner;
+    }
+    if legs.last() != Some(&to) {
+        legs.push(to);
+    }
+    legs
+}
+
+/// Open ground a few steps from the first warp out of `area`, where a walk into it starts.
+pub fn beside_warp(content: &Content, area: area::AreaId) -> Option<Place> {
+    let (_, warp) = area::warp_objects(content, area).into_iter().next()?;
+    let middle = warp.shape.center();
+    let loaded = area::load(content, area);
+    let _held = loaded.hold(loaded.tiles_around(middle, Meters(WARP_REACH)));
+    let mesh = loaded.mesh();
+    let at = (0..8).find_map(|step| {
+        let angle = step as f32 * std::f32::consts::FRAC_PI_4;
+        let beside = Pos::new(
+            middle.x + angle.cos() * WARP_REACH,
+            middle.y + angle.sin() * WARP_REACH,
+        );
+        mesh.walkable(beside).then_some(beside)
+    })?;
+    Some(Place { area, at })
+}
+
+/// How far from a warp a walk into it starts.
+const WARP_REACH: f32 = 12.0;
 
 /// The open ground nearest the middle of `area`.
 pub fn open_middle(content: &Content, area: area::AreaId) -> Option<Pos<Meters>> {

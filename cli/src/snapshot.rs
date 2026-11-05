@@ -12,30 +12,14 @@ use engine::core::units::{Degrees, Meters};
 use serde::{Deserialize, Serialize};
 
 use crate::compare::{self, Allowance, Metrics, Thresholds, matches, read_json, write_json};
-use crate::render::{CameraShot, RenderOutcome, Shot, Spot, VideoChoice, VideoPreset, ViewSpec};
+use crate::render::{
+    CameraShot, RenderOutcome, Shot, Spot, VideoChoice, VideoFilter, VideoPreset, ViewSpec,
+};
 
 pub const MANIFEST: &str = "manifest.json";
 pub const THRESHOLDS: &str = "thresholds.json";
 /// How many times the noise between runs a shot's allowance is.
 const NOISE_TIMES: f64 = 3.0;
-
-/// Which of the presets a shot asks for are drawn.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
-pub enum VideoFilter {
-    Both,
-    Highest,
-    Lowest,
-}
-
-impl VideoFilter {
-    fn draws(self, preset: VideoPreset) -> bool {
-        match self {
-            VideoFilter::Both => true,
-            VideoFilter::Highest => preset == VideoPreset::Highest,
-            VideoFilter::Lowest => preset == VideoPreset::Lowest,
-        }
-    }
-}
 
 /// What a set of snapshots holds: the build and adapter that drew it, and each picture.
 #[derive(Serialize, Deserialize, Clone, Debug)]
@@ -150,7 +134,7 @@ pub fn run(
             continue;
         }
         for &preset in presets {
-            if !video.draws(preset) {
+            if !video.takes(preset) {
                 continue;
             }
             taken += 1;

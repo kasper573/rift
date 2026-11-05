@@ -72,17 +72,29 @@ rift schema server                   # …of what a game server prints once read
 rift schema bench                    # …of the report `rift bench` writes
 ```
 
-`rift bench <game>` starts `game-server` and `desktop-client` from its binaries folder; it plays the
-game's first test character, or a fresh one where the game has none, through a catalogue of
+`rift bench <game>` starts `game-server` and `desktop-client` from its binaries folder; it plays a
+test character of the game, or a fresh one where the game has none, through a catalogue of
 scenarios: each staged on the server, then played as a player would through the client's own
-bindings, its input confirmed through the probe. The places, spells and windows the scenarios play
-with come from `bench/scenarios.json` in the game's folder, or from the content when it has none.
-Every scenario's frames are held to the same criteria: a mean at or over the floor of its video
-preset (60 fps at the highest, 90 at the lowest), at most 1% of frames slower than the floor's
-period, no frame past 48 ms, and nothing the view takes in missing. The client plays on a desktop
-of the bench's own: a headless `weston` screen it draws on through `Xwayland`, its window seated
-there by `xdotool`, and a silent sink on a PulseAudio-compatible sound server (`pactl`). Its frame
-rate is then its own, and nothing reaches the machine's display or speakers. The editor plays on
+bindings, its input confirmed through the probe. What the scenarios play with comes from the
+game's scenarios file, `bench/scenarios.json` in the game's folder unless `--scenarios` names
+another, every slot it leaves empty filled from the content:
+`places` (the first the home, each a `name`, `area` and `at`), a `light_place`, a `talk_place`, a
+`crowd_place`, the ground an `empty_view` looks toward, the `spells` of the home area's climate,
+the `windows` to open by their actions, ground to `walk_to` and `far_walk_to`, and the test
+`character` to play. The catalogue spans a still view, orbits, tilts, zooms, walks, teleport
+arrivals, the interface stormed, the pointer swept, clicks to move, combat, dialogue, the weather's
+spells, warp crossings, the worst case, video settings switched live, the window resized, dusk
+turning, fifty other players in view, the emptiest view and a ten-minute soak. Before them, the
+`desktop` check plays the emptiest view of the engine's own new game at the lowest settings, which
+must exceed 300 fps whatever the game benched costs to draw, or the desktop is holding the frames
+and the harness fails. Every scenario's frames are held to the same criteria: a mean at or over
+the floor of its video preset (60 fps at the highest, 90 at the lowest), at most 1% of frames
+slower than the floor's period, no frame past 48 ms, and nothing the view takes in missing. The
+client plays on a desktop of the
+bench's own: a headless `weston` screen it draws on through `Xwayland`, its window seated there by
+`xdotool`, and a silent sink on a PulseAudio-compatible sound server (`pactl`). Its frame rate is
+then its own, and nothing reaches the machine's display or speakers; a load average over half the
+cores is warned about and kept in the report. The editor plays on
 such a desktop too: it opens each of the game's areas, seen whole and close up, and its frame rate
 is taken once all the view takes in stands. The run's report, `bench-report.json` unless `--report`
 says where, is described by `rift schema bench`; `--compare` holds it against an earlier run's and

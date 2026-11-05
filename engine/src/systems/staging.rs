@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::content::Content;
 use crate::core::math::{Pos, PosSchema};
-use crate::core::time::{TimeCourse, WeatherClock};
+use crate::core::time::{DayClock, TimeCourse, WallClock, WeatherClock};
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::area;
 use crate::systems::combat::{self, AttackRequest, Relation};
@@ -16,7 +16,7 @@ use crate::systems::movement::{MoveRequest, MoveSeq, Position};
 use crate::systems::npc::Npc;
 use crate::systems::player::{conn_player, tell_clocks};
 use crate::systems::script::Place;
-use crate::systems::{WorldArea, from_client, stat};
+use crate::systems::{GameSettings, WorldArea, from_client, stat};
 
 /// Where a game server that stages scenes takes them, beside its test characters.
 pub const STAGING_ROUTE: &str = "/test/stage";
@@ -40,6 +40,9 @@ pub enum Staging {
     /// Holds the weather of the character's area at the spell of its climate named `spell`, for
     /// everyone in the area, until staged again.
     Weather { spell: String },
+    /// Sets the day to `hour` o'clock for everyone on the server, turning on from there or held,
+    /// until staged again.
+    Day { hour: f32, turning: bool },
 }
 
 /// Stages `staging` for the character the connection `conn` plays, as its client would ask for it.
@@ -77,6 +80,23 @@ pub fn stage(world: &mut World, conn: Entity, staging: Staging) -> Result<(), St
                 .spell_named(&spell)
                 .ok_or_else(|| format!("the area's climate has no spell named {spell}"))?;
             world.insert_resource(WeatherClock(Some(TimeCourse::Held(held))));
+            tell_clocks(world);
+        }
+        Staging::Day { hour, turning } => {
+            let cycle = world
+                .resource::<Content>()
+                .built::<GameSettings>()
+                .daylight
+                .ok_or("the game has no day cycle")?;
+            if !(0.0..=24.0).contains(&hour) {
+                return Err(format!("{hour} is no hour of the day"));
+            }
+            let course = if turning {
+                cycle.turning_from(hour, world.resource::<WallClock>().now)
+            } else {
+                TimeCourse::Held(hour)
+            };
+            world.insert_resource(DayClock(Some(course)));
             tell_clocks(world);
         }
     }

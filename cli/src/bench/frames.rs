@@ -3,45 +3,19 @@
 //! scenario's mean may fall below, a share of frames that may come slower than that, a stall no
 //! frame may reach, and nothing the view takes in left missing.
 
-use engine::core::render::video::VideoPreferences;
 use engine::core::units::Millis;
 use engine::systems::probe::{FrameSample, ProbeWorstFrame};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-/// The video settings a bench watches at: every costly part of the picture at its best, and every
-/// one off.
-#[derive(
-    Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum,
-)]
-#[serde(rename_all = "lowercase")]
-pub enum Video {
-    Highest,
-    Lowest,
-}
+use crate::render::VideoPreset;
 
-impl Video {
-    pub const ALL: [Video; 2] = [Video::Highest, Video::Lowest];
-
-    pub fn preferences(self) -> VideoPreferences {
-        match self {
-            Video::Highest => VideoPreferences::default(),
-            Video::Lowest => VideoPreferences::lowest(),
-        }
-    }
-
+impl VideoPreset {
     /// The frame rate no scenario's mean may fall below at these settings.
     pub fn floor(self) -> Fps {
         match self {
-            Video::Highest => Fps(60.0),
-            Video::Lowest => Fps(90.0),
-        }
-    }
-
-    pub fn name(self) -> &'static str {
-        match self {
-            Video::Highest => "highest",
-            Video::Lowest => "lowest",
+            VideoPreset::Highest => Fps(60.0),
+            VideoPreset::Lowest => Fps(90.0),
         }
     }
 }
@@ -72,13 +46,13 @@ pub enum Class {
 }
 
 impl Class {
-    pub fn headroom(self, video: Video) -> Option<Fps> {
+    pub fn headroom(self, video: VideoPreset) -> Option<Fps> {
         match (self, video) {
             (Class::Busy, _) => None,
-            (Class::Typical, Video::Highest) => Some(Fps(100.0)),
-            (Class::Typical, Video::Lowest) => Some(Fps(200.0)),
-            (Class::Light, Video::Highest) => Some(Fps(150.0)),
-            (Class::Light, Video::Lowest) => Some(Fps(200.0)),
+            (Class::Typical, VideoPreset::Highest) => Some(Fps(100.0)),
+            (Class::Typical, VideoPreset::Lowest) => Some(Fps(200.0)),
+            (Class::Light, VideoPreset::Highest) => Some(Fps(150.0)),
+            (Class::Light, VideoPreset::Lowest) => Some(Fps(200.0)),
         }
     }
 }
@@ -98,7 +72,7 @@ pub struct Criteria {
 }
 
 impl Criteria {
-    pub fn global(video: Video) -> Criteria {
+    pub fn global(video: VideoPreset) -> Criteria {
         Criteria {
             floor: video.floor(),
             slow_share: 0.01,

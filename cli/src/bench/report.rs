@@ -7,8 +7,9 @@ use std::path::Path;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::frames::{Class, Fps, FrameStats, Video};
+use super::frames::{Class, Fps, FrameStats};
 use super::scenario::Target;
+use crate::render::VideoPreset;
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct BenchReport {
@@ -16,6 +17,9 @@ pub struct BenchReport {
     /// The revision of the game's repository, where it has one.
     pub game_revision: Option<String>,
     pub machine: Machine,
+    /// The machine's load average over the minute before the run, as its kernel reports it:
+    /// a loaded machine measures nothing of the engine.
+    pub load_average: f64,
     pub adapter: String,
     pub resolution: Resolution,
     pub scenarios: Vec<ScenarioResult>,
@@ -28,6 +32,7 @@ impl BenchReport {
             engine_build: engine::core::content::version::build().to_owned(),
             game_revision: revision_of(game),
             machine: Machine::this(),
+            load_average: sysinfo::System::load_average().map_or(0.0, |load| load.one),
             adapter,
             resolution,
             scenarios: Vec::new(),
@@ -168,7 +173,7 @@ pub struct ScenarioResult {
     pub name: String,
     pub target: Target,
     pub class: Class,
-    pub video: Video,
+    pub video: VideoPreset,
     pub verdict: Verdict,
     /// Why it failed, each reason in a line.
     pub failures: Vec<String>,

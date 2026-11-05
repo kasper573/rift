@@ -157,7 +157,21 @@ pub enum VideoChoice {
     Each(VideoPreferences),
 }
 
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+/// The video settings a picture is drawn or a bench watches at: every costly part of the picture
+/// at its best, and every one off.
+#[derive(
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+    Clone,
+    Copy,
+    Debug,
+    PartialEq,
+    Eq,
+    Hash,
+    PartialOrd,
+    Ord,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum VideoPreset {
     Highest,
@@ -173,13 +187,44 @@ impl VideoPreset {
             VideoPreset::Lowest => "lowest",
         }
     }
+
+    pub fn preferences(self) -> VideoPreferences {
+        match self {
+            VideoPreset::Highest => VideoPreferences::default(),
+            VideoPreset::Lowest => VideoPreferences::lowest(),
+        }
+    }
+}
+
+/// Which of the video presets a command runs at.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum VideoFilter {
+    Both,
+    Highest,
+    Lowest,
+}
+
+impl VideoFilter {
+    pub fn takes(self, preset: VideoPreset) -> bool {
+        match self {
+            VideoFilter::Both => true,
+            VideoFilter::Highest => preset == VideoPreset::Highest,
+            VideoFilter::Lowest => preset == VideoPreset::Lowest,
+        }
+    }
+
+    pub fn presets(self) -> Vec<VideoPreset> {
+        VideoPreset::BOTH
+            .into_iter()
+            .filter(|&preset| self.takes(preset))
+            .collect()
+    }
 }
 
 impl VideoChoice {
     fn preferences(self) -> VideoPreferences {
         match self {
-            VideoChoice::Preset(VideoPreset::Highest) => VideoPreferences::default(),
-            VideoChoice::Preset(VideoPreset::Lowest) => VideoPreferences::lowest(),
+            VideoChoice::Preset(preset) => preset.preferences(),
             VideoChoice::Each(preferences) => preferences,
         }
     }

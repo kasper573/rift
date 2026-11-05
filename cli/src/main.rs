@@ -52,9 +52,13 @@ enum Command {
         /// Runs only the scenarios whose names match, `*` standing for anything.
         #[arg(long)]
         scenario: Option<String>,
-        /// The video preset to run the scenarios at; both unless given.
-        #[arg(long, value_enum)]
-        video: Option<bench::VideoPreset>,
+        /// The game's scenarios file, naming what the scenarios play with; `bench/scenarios.json`
+        /// in the game's folder unless given, and the content fills whatever neither names.
+        #[arg(long)]
+        scenarios: Option<PathBuf>,
+        /// The video presets to run the scenarios at.
+        #[arg(long, value_enum, default_value_t = render::VideoFilter::Both)]
+        video: render::VideoFilter,
         /// How many times each scenario runs; the report keeps the median run and the spread.
         #[arg(long, default_value_t = 1)]
         repeat: u32,
@@ -93,8 +97,8 @@ enum Command {
         shots: PathBuf,
         out: PathBuf,
         /// The video presets to draw at, of those each shot asks for.
-        #[arg(long, value_enum, default_value_t = snapshot::VideoFilter::Both)]
-        video: snapshot::VideoFilter,
+        #[arg(long, value_enum, default_value_t = render::VideoFilter::Both)]
+        video: render::VideoFilter,
         /// Draws only the shots whose names match, `*` standing for anything.
         #[arg(long)]
         only: Option<String>,
@@ -186,6 +190,7 @@ fn main() {
             spread,
             only,
             scenario,
+            scenarios,
             video,
             repeat,
             report,
@@ -198,6 +203,7 @@ fn main() {
                 spread,
                 only,
                 scenario,
+                scenarios,
                 video,
                 repeat,
                 report,

@@ -11,20 +11,23 @@ use std::path::Path;
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use engine::core::content::Content;
+use engine::core::content::{Content, ContentId};
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::render::transition::ScreenTransitionPhase;
-use engine::core::units::{Degrees, Meters, Radians, WindowPx};
+use engine::core::units::{Degrees, MeterPos, Meters, Radians, WindowPx};
+use engine::systems::input::camera::DRAG_TURN;
 use engine::systems::input::map::{InputAction, InputBinding, InputMap, KeyModifiers};
+use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::probe::{
     ProbeFrameQuestion, ProbeFrames, ProbeInputSeen, ProbeSnapshot, ProbeTerrain, ProbeUiElement,
     ProbeView,
 };
 use engine::systems::staging::Staging;
 
-use super::frames::{Video, Window};
+use super::frames::Window;
 use super::playtest::Playtest;
-use super::scenario::{Button, CameraOp, Cond, Ground, Point, Scenario, Step};
+use super::scenario::{Button, CameraOp, Cond, Ground, Point, Scenario, Step, UiTarget};
+use crate::render::VideoPreset;
 
 /// A desktop client on a server, played through its window.
 pub struct Driver {
@@ -56,15 +59,22 @@ pub struct Measured {
 }
 
 impl Driver {
+    /// A client on a server of its own, every step it is put through noted in the log at
+    /// `steps`, which a run's drivers share.
     pub fn start(
         game: &Path,
         content: &Content,
-        video: Video,
-        folder: &Path,
+        character: Option<ContentId<CharacterSnapshot>>,
+        video: VideoPreset,
+        steps: &Path,
     ) -> Result<Driver, Failure> {
-        let play = Playtest::start(game, content, video.preferences()).map_err(Failure::Crashed)?;
-        let steps = File::create(folder.join("steps.log"))
-            .map_err(|error| Failure::Harness(format!("a steps log: {error}")))?;
+        let play = Playtest::start(game, content, character, video.preferences())
+            .map_err(Failure::Crashed)?;
+        let steps = File::options()
+            .append(true)
+            .create(true)
+            .open(steps)
+            .map_err(|error| Failure::Harness(format!("{}: {error}", steps.display())))?;
         let mut driver = Driver {
             play,
             inputs: InputMap::new(content),
@@ -94,11 +104,22 @@ impl Driver {
             .ok_or_else(|| Failure::Harness("the client reports no screen".to_owned()))
     }
 
-    /// Stages, sets up, and plays `scenario`, measuring its script.
+    /// Where the server the client plays on takes requests.
+    pub fn server_url(&self) -> String {
+        self.play.server_url()
+    }
+
+    /// Stages, sets up, and plays `scenario`, measuring its script, with nothing left open over
+    /// the world by the scenario before, and the scene staged standing before the setup plays.
     pub fn run(&mut self, scenario: &Scenario) -> Result<Measured, Failure> {
         self.note(&format!("=== {}", scenario.name));
+        self.close_windows()?;
         for staging in &scenario.stage {
             self.stage(staging)?;
+            if let Staging::Place { place } = staging {
+                self.wait(&Cond::Arrived(*place))?;
+                self.wait(&Cond::Stood)?;
+            }
         }
         for step in &scenario.setup {
             self.step(step)?;
@@ -135,11 +156,66 @@ impl Driver {
         }
     }
 
+    /// Stages a walk to `to` and waits for the player to set off, asking again when they don't:
+    /// the server drops a walk it finds no route for, as over ground it hasn't laid yet.
+    fn walk(&mut self, to: Pos<Meters>) -> Result<(), Failure> {
+        let since = Instant::now();
+        loop {
+            self.stage(&Staging::Walk { to })?;
+            let from = self.me_at()?;
+            if from.distance(to) <= STILL_WITHIN {
+                return Ok(());
+            }
+            let asked = Instant::now();
+            while asked.elapsed() < SET_OFF_WITHIN {
+                if self.me_at()?.distance(from) > STILL_WITHIN {
+                    return Ok(());
+                }
+                std::thread::sleep(IDLE_SLICE);
+            }
+            if since.elapsed() > BUDGET {
+                let me = self.snapshot()?.me;
+                return Err(Failure::Harness(format!(
+                    "the player never set off for {:?}, standing at {:?} doing {:?}{}",
+                    (to.x, to.y),
+                    me.as_ref().map(|me| (me.at.x, me.at.y)),
+                    me.as_ref().map(|me| me.action),
+                    me.as_ref()
+                        .and_then(|me| me.engaged)
+                        .map_or(String::new(), |foe| format!(", engaged with {foe:?}"))
+                )));
+            }
+            self.note("the player didn't set off: asking again");
+        }
+    }
+
+    fn me_at(&mut self) -> Result<Pos<Meters>, Failure> {
+        self.snapshot()?
+            .me
+            .map(|me| me.at)
+            .ok_or_else(|| Failure::Harness("the player is not in the world".to_owned()))
+    }
+
+    /// Asks the server to stage `staging`, asking again for a while when it can't yet: what a
+    /// scene needs may still be waking up around a player who just arrived.
     fn stage(&mut self, staging: &Staging) -> Result<(), Failure> {
         self.note(&format!("stage {staging:?}"));
-        self.play.stage(staging).map_err(|problem| {
-            Failure::Harness(format!("the server didn't stage {staging:?}: {problem}"))
-        })
+        let since = Instant::now();
+        loop {
+            match self.play.stage(staging) {
+                Ok(()) => return Ok(()),
+                Err(problem) if since.elapsed() < BUDGET => {
+                    self.check_alive()?;
+                    std::thread::sleep(STAGE_RETRY);
+                    self.note(&format!("the server didn't stage it yet: {problem}"));
+                }
+                Err(problem) => {
+                    return Err(Failure::Harness(format!(
+                        "the server didn't stage {staging:?}: {problem}"
+                    )));
+                }
+            }
+        }
     }
 
     fn step(&mut self, step: &Step) -> Result<(), Failure> {
@@ -158,9 +234,19 @@ impl Driver {
             Step::Click { button, times } => {
                 self.click(*button, *times)?;
             }
+            Step::Down(button) => {
+                self.button_down(*button)?;
+            }
+            Step::Up(button) => {
+                self.button_up(*button)?;
+            }
+            Step::Wheel(lines) => {
+                self.wheel(*lines)?;
+            }
             Step::Key(action) => {
                 self.act(*action)?;
             }
+            Step::Type(text) => self.type_text(text)?,
             Step::Wait(cond) => self.wait(cond)?,
             Step::Repeat { times, steps } => {
                 for _ in 0..*times {
@@ -181,16 +267,242 @@ impl Driver {
                     self.sweep(&through)?;
                 }
             }
-            Step::Camera(op) => self.camera(*op)?,
-            Step::Stage(staging) => {
-                self.stage(staging)?;
-                if let Staging::Place { .. } = staging
-                    && let Some(measuring) = &mut self.measuring
-                {
-                    measuring.arrival_since = Some(self.frame);
+            Step::ClickUi(target) => {
+                let element = self.find_ui(target)?;
+                self.move_pointer(element.rect.center())?;
+                self.click(Button::Left, 1)?;
+            }
+            Step::HoverUi(target) => {
+                let element = self.find_ui(target)?;
+                self.move_pointer(element.rect.center())?;
+            }
+            Step::DragUi { from, to } => {
+                let from = self.find_ui(from)?.rect.center();
+                let to = self.find_ui(to)?.rect.center();
+                let (button, held) = self.mouse_binding(InputAction::CarryItem)?;
+                self.drag(button, &held, from, to)?;
+            }
+            Step::DragWindows => self.drag_windows()?,
+            Step::DragItems => {
+                let slots = self.slots()?;
+                if let [first, second, ..] = slots[..] {
+                    let (button, held) = self.mouse_binding(InputAction::CarryItem)?;
+                    self.drag(button, &held, first, second)?;
+                } else {
+                    self.note("no two item slots to drag between");
                 }
             }
+            Step::SlotOptions => {
+                let slots = self.slots()?;
+                if let Some(&slot) = slots.first() {
+                    let (button, held) = self.mouse_binding(InputAction::SlotOptions)?;
+                    self.move_pointer(slot)?;
+                    self.hold(&held, |driver| driver.click(button, 1).map(drop))?;
+                    self.wait(&Cond::Settled)?;
+                } else {
+                    self.note("no item slot to open the options of");
+                }
+            }
+            Step::CloseWindows => self.close_windows()?,
+            Step::Resize { width, height } => self.resize(*width, *height)?,
+            Step::Camera(op) => self.camera(*op)?,
+            Step::Stage(staging) => match staging {
+                Staging::Walk { to } => self.walk(*to)?,
+                Staging::Place { .. } => {
+                    self.stage(staging)?;
+                    if let Some(measuring) = &mut self.measuring {
+                        measuring.arrival_since = Some(self.frame);
+                    }
+                }
+                _ => self.stage(staging)?,
+            },
+            Step::CrossWarp => {
+                let snapshot = self.snapshot()?;
+                let me = snapshot
+                    .me
+                    .as_ref()
+                    .ok_or_else(|| Failure::Harness("the player is not in the world".to_owned()))?
+                    .at;
+                let warp = snapshot
+                    .warps
+                    .iter()
+                    .min_by(|a, b| a.at.distance(me).0.total_cmp(&b.at.distance(me).0))
+                    .cloned()
+                    .ok_or_else(|| Failure::Harness("the client shows no warp".to_owned()))?;
+                self.stage(&Staging::Walk { to: warp.at })?;
+                if let Some(measuring) = &mut self.measuring {
+                    measuring.arrival_since = Some(self.frame);
+                }
+                self.wait_for("the warp to lead on", LONG, move |snapshot| {
+                    (snapshot.area == Some(warp.to)
+                        && snapshot.me.is_some()
+                        && snapshot.transition == ScreenTransitionPhase::Idle)
+                        .then_some(())
+                })?;
+            }
         }
+        Ok(())
+    }
+
+    /// Dismisses whatever is open over the world, topmost first, until a dismissal closes
+    /// nothing more: what the interface always shows stays.
+    fn close_windows(&mut self) -> Result<(), Failure> {
+        let mut covered = self.snapshot()?.covered.len();
+        for _ in 0..CLOSE_TRIES {
+            self.act(InputAction::Dismiss)?;
+            self.wait(&Cond::Settled)?;
+            let now = self.snapshot()?.covered.len();
+            if now >= covered {
+                return Ok(());
+            }
+            covered = now;
+        }
+        Err(Failure::Harness(format!(
+            "the interface keeps changing under {CLOSE_TRIES} dismissals"
+        )))
+    }
+
+    /// The element the target names, shown and in reach of the pointer: where no window shows
+    /// it, each is scrolled down a little at a time until one does.
+    fn find_ui(&mut self, target: &UiTarget) -> Result<ProbeUiElement, Failure> {
+        self.wait(&Cond::Settled)?;
+        for _ in 0..SCROLL_TRIES {
+            let snapshot = self.snapshot()?;
+            if let Some(element) = shown_element(&snapshot, target) {
+                return Ok(element);
+            }
+            for cover in snapshot.covered {
+                self.move_pointer(cover.center())?;
+                self.wheel(SCROLL_LINES)?;
+            }
+            self.wait(&Cond::Settled)?;
+        }
+        Err(Failure::Harness(format!(
+            "the interface never showed {target:?}"
+        )))
+    }
+
+    /// Every slot of the interface showing an item, as the slot's picture.
+    fn slots(&mut self) -> Result<Vec<Pos<WindowPx>>, Failure> {
+        let snapshot = self.snapshot()?;
+        Ok(snapshot
+            .ui
+            .iter()
+            .filter(|element| {
+                element.image.is_some() && !element.in_world && !element.click_through
+            })
+            .map(|element| element.rect.center())
+            .collect())
+    }
+
+    /// Drags every window of the interface by its title a little way across the screen and back.
+    fn drag_windows(&mut self) -> Result<(), Failure> {
+        let snapshot = self.snapshot()?;
+        let screen = snapshot
+            .screen
+            .ok_or_else(|| Failure::Harness("the client reports no screen".to_owned()))?;
+        let mut titles = Vec::new();
+        for cover in &snapshot.covered {
+            let title = snapshot
+                .ui
+                .iter()
+                .filter(|element| {
+                    !element.in_world
+                        && !element.editable
+                        && !element.button
+                        && element.text.is_some()
+                        && cover.contains(element.rect.center())
+                })
+                .min_by(|a, b| a.rect.min().y.total_cmp(&b.rect.min().y));
+            if let Some(title) = title {
+                titles.push(title.rect.center());
+            }
+        }
+        for from in titles {
+            let to = Pos::new(
+                (from.x + WINDOW_DRAG).min(screen.width - 2.0),
+                (from.y + WINDOW_DRAG).min(screen.height - 2.0),
+            );
+            self.drag(Button::Left, &KeyModifiers::NONE, from, to)?;
+            self.drag(Button::Left, &KeyModifiers::NONE, to, from)?;
+        }
+        Ok(())
+    }
+
+    /// Holds `button` with `held` from `from` and moves the pointer to `to` a step at a time.
+    fn drag(
+        &mut self,
+        button: Button,
+        held: &KeyModifiers,
+        from: Pos<WindowPx>,
+        to: Pos<WindowPx>,
+    ) -> Result<(), Failure> {
+        self.move_pointer(from)?;
+        self.hold(held, |driver| {
+            driver.button_down(button)?;
+            for step in 1..=DRAG_STEPS {
+                driver.move_pointer(from.lerp(to, step as f32 / DRAG_STEPS as f32))?;
+            }
+            driver.button_up(button).map(drop)
+        })
+    }
+
+    /// Does `with` while the modifier keys of `held` are down.
+    fn hold(
+        &mut self,
+        held: &KeyModifiers,
+        with: impl FnOnce(&mut Driver) -> Result<(), Failure>,
+    ) -> Result<(), Failure> {
+        let modifiers = modifier_keys(held);
+        for key in &modifiers {
+            self.key_down(key)?;
+        }
+        let outcome = with(self);
+        for key in modifiers.iter().rev() {
+            self.key_up(key)?;
+        }
+        outcome
+    }
+
+    fn type_text(&mut self, text: &str) -> Result<(), Failure> {
+        let before = self.seen;
+        let typed = text.chars().count() as u32;
+        self.xdotool(&[
+            "type".to_owned(),
+            "--delay".to_owned(),
+            TYPE_APART_MS.to_owned(),
+            "--".to_owned(),
+            text.to_owned(),
+        ])?;
+        self.wait_for("the typing to land", BUDGET, move |snapshot| {
+            (snapshot.input.seen.key_presses >= before.key_presses + typed).then_some(())
+        })?;
+        self.note(&format!("typed {text:?}"));
+        Ok(())
+    }
+
+    /// Resizes the client's window as a window manager does, and waits for the client to draw at
+    /// the new size.
+    fn resize(&mut self, width: u32, height: u32) -> Result<(), Failure> {
+        let pid = self.play.client_pid().to_string();
+        self.xdotool(&[
+            "search".to_owned(),
+            "--sync".to_owned(),
+            "--onlyvisible".to_owned(),
+            "--pid".to_owned(),
+            pid,
+            "--name".to_owned(),
+            ".".to_owned(),
+            "windowsize".to_owned(),
+            "--sync".to_owned(),
+            width.to_string(),
+            height.to_string(),
+        ])?;
+        self.wait_for("the window to take its size", BUDGET, move |snapshot| {
+            let screen = snapshot.screen?;
+            (screen.width as u32 == width && screen.height as u32 == height).then_some(())
+        })?;
+        self.note(&format!("resized to {width}×{height}"));
         Ok(())
     }
 
@@ -228,13 +540,31 @@ impl Driver {
                 Ok(())
             }
             Cond::AtRest => {
-                self.wait_for("the player to come to rest", LONG, |snapshot| {
-                    snapshot
-                        .me
-                        .as_ref()
-                        .is_some_and(|me| me.resting)
-                        .then_some(())
+                let mut last: Option<(Pos<Meters>, Instant)> = None;
+                let mut rested_at: Option<u32> = None;
+                self.wait_for("the player to come to rest", LONG, move |snapshot| {
+                    let me = snapshot.me.as_ref()?;
+                    if me.resting {
+                        let since = *rested_at.get_or_insert(snapshot.frame);
+                        return (snapshot.frame >= since + REST_FRAMES).then_some(());
+                    }
+                    rested_at = None;
+                    match last {
+                        Some((at, since)) if at.distance(me.at) < STILL_WITHIN => {
+                            (since.elapsed() > BUDGET).then_some(())
+                        }
+                        _ => {
+                            last = Some((me.at, Instant::now()));
+                            None
+                        }
+                    }
                 })?;
+                let me = self.snapshot()?.me;
+                if me.is_some_and(|me| !me.resting) {
+                    return Err(Failure::Harness(
+                        "the player stopped moving without coming to rest".to_owned(),
+                    ));
+                }
                 Ok(())
             }
             Cond::Settled => {
@@ -399,7 +729,11 @@ impl Driver {
                     }
                 };
                 clickable_point(&snapshot, at).ok_or_else(|| {
-                    Failure::Harness(format!("the ground at {:?} is out of view", (at.x, at.y)))
+                    Failure::Harness(format!(
+                        "the ground at {:?} is {}",
+                        (at.x, at.y),
+                        hidden_by(&snapshot, at)
+                    ))
                 })
             }
         }
@@ -408,7 +742,7 @@ impl Driver {
     fn camera(&mut self, op: CameraOp) -> Result<(), Failure> {
         match op {
             CameraOp::Turn(by) => {
-                let (button, held) = self.drag_binding(InputAction::TurnCamera)?;
+                let (button, held) = self.mouse_binding(InputAction::TurnCamera)?;
                 self.steer(
                     button,
                     &held,
@@ -418,7 +752,7 @@ impl Driver {
                 )
             }
             CameraOp::Tilt(by) => {
-                let (button, held) = self.drag_binding(InputAction::TiltCamera)?;
+                let (button, held) = self.mouse_binding(InputAction::TiltCamera)?;
                 self.steer(
                     button,
                     &held,
@@ -428,10 +762,7 @@ impl Driver {
                 )
             }
             CameraOp::Zoom(steps) => {
-                let here = self.locate(&Point::Ground(Ground::NearMe {
-                    dx: Meters(0.0),
-                    dy: Meters(0.0),
-                }))?;
+                let here = self.open_ground()?;
                 self.move_pointer(here)?;
                 let mut zoom = self.snapshot()?.view.map(|view| view.zoom);
                 let mut moved = 0;
@@ -451,6 +782,32 @@ impl Driver {
                 }
                 Ok(())
             }
+            CameraOp::Face(to) => {
+                let mut sign = 1.0;
+                let mut last_off: Option<f32> = None;
+                for _ in 0..FACE_TRIES {
+                    self.camera_settled()?;
+                    let off = self.ahead_of(to)?;
+                    self.note(&format!(
+                        "{:?} lies {off:.1}° off straight ahead",
+                        (to.x, to.y)
+                    ));
+                    if off.abs() <= FACE_WITHIN {
+                        return Ok(());
+                    }
+                    if let Some(last) = last_off
+                        && off.abs() >= last.abs()
+                    {
+                        sign = -sign;
+                    }
+                    last_off = Some(off);
+                    self.camera(CameraOp::Turn(Degrees(off * sign)))?;
+                }
+                Err(Failure::Harness(format!(
+                    "the camera never came to face {:?}",
+                    (to.x, to.y)
+                )))
+            }
             CameraOp::Home => {
                 self.act(InputAction::CameraHome)?;
                 self.wait_for("the camera home", BUDGET, |snapshot| {
@@ -465,8 +822,9 @@ impl Driver {
         }
     }
 
-    /// Holds `button` with `held` over the ground the player stands on and moves the pointer a
-    /// nudge at a time until the angle `read` of the view has come round by `by`.
+    /// Holds `button` with `held` over open ground near the player and moves the pointer as far
+    /// as turning the camera `by` takes, a nudge at a time, then waits for the camera to settle;
+    /// the camera stops short at its limits, and only one that never moved fails.
     fn steer(
         &mut self,
         button: Button,
@@ -475,29 +833,58 @@ impl Driver {
         read: impl Fn(&ProbeView) -> Radians,
         nudge: Nudge,
     ) -> Result<(), Failure> {
-        let here = self.locate(&Point::Ground(Ground::NearMe {
-            dx: Meters(0.0),
-            dy: Meters(0.0),
-        }))?;
+        let here = self.open_ground()?;
         let seen = self.move_pointer(here)?;
-        let mut last = seen
+        let before = seen
             .view
             .as_ref()
             .map(&read)
             .ok_or_else(|| Failure::Harness("no view to steer".to_owned()))?;
-        let wanted = by.radians().0.abs();
-        let mut turned = 0.0;
+        let pixels = by.0.abs() / DRAG_TURN.0;
+        let nudge = if by.0 >= 0.0 { nudge } else { nudge.back() };
+        let pressed = self.drag_by(button, held, here, pixels, nudge)?;
+        let after = self.camera_settled()?;
+        if read(&after) != before {
+            return Ok(());
+        }
+        let under = under_point(&pressed, here);
+        self.move_pointer(here)?;
+        self.drag_by(button, held, here, pixels, nudge)?;
+        let again = self.camera_settled()?;
+        let second = if read(&again) == before {
+            "nor did a second"
+        } else {
+            "a second did"
+        };
+        Err(Failure::Harness(format!(
+            "the camera never moved under a drag of {:.0}° pressed at {:?} over {under}; {second}",
+            by.0.abs(),
+            (here.x, here.y)
+        )))
+    }
+
+    /// Holds `button` with `held` on the pointer, which stands at `here`, and moves it `pixels`
+    /// along `nudge`, starting over from `here` where the window's edge stops it, then lets go:
+    /// what the client showed as the button went down.
+    fn drag_by(
+        &mut self,
+        button: Button,
+        held: &KeyModifiers,
+        here: Pos<WindowPx>,
+        pixels: f32,
+        nudge: Nudge,
+    ) -> Result<ProbeSnapshot, Failure> {
         let modifiers = modifier_keys(held);
         for key in &modifiers {
             self.key_down(key)?;
         }
-        self.button_down(button)?;
+        let pressed = self.button_down(button)?;
         let mut at = here;
-        let steps = (wanted / Degrees(1.0).radians().0 * 4.0).ceil() as u32 + 8;
+        let mut moved = 0.0;
         let mut outcome = Ok(());
-        let mut stalled = 0;
-        for _ in 0..steps.max(STEER_LEAST_STEPS) {
-            at = nudged(at, if by.0 >= 0.0 { nudge } else { nudge.back() });
+        while moved < pixels {
+            let step = (pixels - moved).min(STEER_STEP);
+            at = nudged(at, nudge.scaled(step / STEER_STEP));
             let Some(screen) = self.screen else { break };
             if at.x < 1.0 || at.y < 1.0 || at.x >= screen.width - 1.0 || at.y >= screen.height - 1.0
             {
@@ -505,49 +892,84 @@ impl Driver {
                 self.button_up(button)?;
                 self.move_pointer(at)?;
                 self.button_down(button)?;
+                continue;
             }
-            let seen = match self.move_pointer(at) {
-                Ok(seen) => seen,
-                Err(failure) => {
-                    outcome = Err(failure);
-                    break;
-                }
-            };
-            if let Some(view) = &seen.view {
-                let now = read(view);
-                let moved = wrapped(now.0 - last.0).abs();
-                turned += moved;
-                last = now;
-                stalled = if moved > 0.0 { 0 } else { stalled + 1 };
-            }
-            if turned >= wanted || (turned > 0.0 && stalled >= STEER_STALLED) {
+            if let Err(failure) = self.move_pointer(at) {
+                outcome = Err(failure);
                 break;
             }
+            moved += step;
         }
         self.button_up(button)?;
         for key in modifiers.iter().rev() {
             self.key_up(key)?;
         }
-        outcome?;
-        if turned == 0.0 {
-            return Err(Failure::Harness(format!(
-                "the camera never moved under a drag of {:.0}°",
-                by.0.abs()
-            )));
-        }
-        Ok(())
+        outcome.map(|()| pressed)
     }
 
-    fn drag_binding(&self, action: InputAction) -> Result<(Button, KeyModifiers), Failure> {
+    /// The view once the camera has come to rest: unchanged over a couple of frames.
+    fn camera_settled(&mut self) -> Result<ProbeView, Failure> {
+        let mut last: Option<(Radians, Radians)> = None;
+        self.wait_for("the camera to settle", BUDGET, move |snapshot| {
+            let view = snapshot.view.as_ref()?;
+            let now = (view.yaw, view.pitch);
+            let settled = last == Some(now);
+            last = Some(now);
+            settled.then_some(*view)
+        })
+    }
+
+    /// Where the ground nearest the player shows uncovered in the window: under the player, or
+    /// a few metres off where a window covers them.
+    fn open_ground(&mut self) -> Result<Pos<WindowPx>, Failure> {
+        let snapshot = self.snapshot()?;
+        let me = snapshot
+            .me
+            .as_ref()
+            .ok_or_else(|| Failure::Harness("the player is not in the world".to_owned()))?
+            .at;
+        OPEN_GROUND_OFFSETS
+            .iter()
+            .find_map(|&(dx, dy)| clickable_point(&snapshot, Pos::new(me.x + dx, me.y + dy)))
+            .ok_or_else(|| Failure::Harness("no open ground shows near the player".to_owned()))
+    }
+
+    /// How far round, in degrees on screen, the ground at `to` lies from straight ahead of the
+    /// player, to the right when positive.
+    fn ahead_of(&mut self, to: Pos<Meters>) -> Result<f32, Failure> {
+        let snapshot = self.snapshot()?;
+        let me = snapshot
+            .me
+            .as_ref()
+            .ok_or_else(|| Failure::Harness("the player is not in the world".to_owned()))?
+            .at;
+        let view = snapshot
+            .view
+            .as_ref()
+            .ok_or_else(|| Failure::Harness("no view to face with".to_owned()))?;
+        let height = |at| {
+            snapshot
+                .terrain
+                .as_ref()
+                .map_or(Meters(0.0), |terrain| terrain.height_at(at))
+        };
+        let from = view.window_point(me, height(me));
+        let ahead = view.window_point(to, height(to));
+        Ok((ahead.x - from.x).atan2(from.y - ahead.y).to_degrees())
+    }
+
+    /// The button and the modifiers the action is bound to, as a drag, a click or a press.
+    fn mouse_binding(&self, action: InputAction) -> Result<(Button, KeyModifiers), Failure> {
         self.inputs
             .bindings(action)
             .iter()
             .find_map(|binding| match binding {
                 InputBinding::Drag(drag) => Some((button_of(drag.button), drag.modifiers)),
+                InputBinding::Click(click) => Some((button_of(click.button), click.modifiers)),
                 InputBinding::Mouse { button, modifiers } => Some((button_of(*button), *modifiers)),
                 _ => None,
             })
-            .ok_or_else(|| Failure::Harness(format!("no drag is bound to {action:?}")))
+            .ok_or_else(|| Failure::Harness(format!("no mouse button is bound to {action:?}")))
     }
 
     /// Presses the key the action is bound to, with its modifiers held.
@@ -561,15 +983,12 @@ impl Driver {
                 _ => None,
             })
             .ok_or_else(|| Failure::Harness(format!("no key is bound to {action:?}")))?;
-        let modifiers = modifier_keys(&gesture.modifiers);
-        for key in &modifiers {
-            self.key_down(key)?;
-        }
-        let landed = self.key(&keysym(&format!("{:?}", gesture.key)));
-        for key in modifiers.iter().rev() {
-            self.key_up(key)?;
-        }
-        landed
+        let mut landed = None;
+        self.hold(&gesture.modifiers, |driver| {
+            landed = Some(driver.key(&keysym(&format!("{:?}", gesture.key)))?);
+            Ok(())
+        })?;
+        landed.ok_or_else(|| Failure::Harness("the key never landed".to_owned()))
     }
 
     pub fn move_pointer(&mut self, to: Pos<WindowPx>) -> Result<ProbeSnapshot, Failure> {
@@ -751,11 +1170,46 @@ const READ_EVERY: Duration = Duration::from_secs(2);
 const IDLE_SLICE: Duration = Duration::from_millis(50);
 /// Window pixels the pointer moves per step of a steer.
 const STEER_STEP: f32 = 24.0;
-const STEER_LEAST_STEPS: u32 = 16;
-/// Nudges the camera may stand still under before the steer counts as having reached a limit.
-const STEER_STALLED: u32 = 6;
 const CLICK_APART_MS: &str = "40";
 const WHEEL_APART_MS: &str = "10";
+const TYPE_APART_MS: &str = "30";
+/// How many times the windows are scrolled down looking for an element, and by how much.
+const SCROLL_TRIES: u32 = 8;
+const SCROLL_LINES: i32 = 3;
+/// How many dismissals may be needed to close everything open over the world.
+const CLOSE_TRIES: u32 = 12;
+/// Steps of the pointer a drag goes in.
+const DRAG_STEPS: u32 = 8;
+/// Window pixels a window is dragged by, across and down.
+const WINDOW_DRAG: f32 = 120.0;
+/// Turns the camera may take to come to face a point, and how far off it may rest, in degrees.
+const FACE_TRIES: u32 = 12;
+const FACE_WITHIN: f32 = 4.0;
+/// How little a player may move and still count as standing where it was.
+const STILL_WITHIN: Meters = Meters(0.05);
+/// How many frames a player must have rested for, so a step's end isn't taken for rest.
+const REST_FRAMES: u32 = 12;
+/// How long between asking the server again to stage what it couldn't yet.
+const STAGE_RETRY: Duration = Duration::from_millis(500);
+/// How long a player has to set off on a walk before it is asked for again.
+const SET_OFF_WITHIN: Duration = Duration::from_secs(3);
+/// Metres off the player, nearest first, where open ground is looked for when a window covers
+/// them.
+const OPEN_GROUND_OFFSETS: [(f32, f32); 13] = [
+    (0.0, 0.0),
+    (2.0, 0.0),
+    (-2.0, 0.0),
+    (0.0, 2.0),
+    (0.0, -2.0),
+    (4.0, 0.0),
+    (-4.0, 0.0),
+    (0.0, 4.0),
+    (0.0, -4.0),
+    (4.0, 4.0),
+    (-4.0, 4.0),
+    (4.0, -4.0),
+    (-4.0, -4.0),
+];
 /// Seconds between the moves of a sweep: a mouse reports a few hundred times a second.
 const SWEEP_STEP: &str = "0.004";
 
@@ -787,16 +1241,17 @@ impl Nudge {
             dy: WindowPx(-self.dy.0),
         }
     }
+
+    fn scaled(self, by: f32) -> Nudge {
+        Nudge {
+            dx: WindowPx(self.dx.0 * by),
+            dy: WindowPx(self.dy.0 * by),
+        }
+    }
 }
 
 fn nudged(at: Pos<WindowPx>, by: Nudge) -> Pos<WindowPx> {
     Pos::new(at.x + by.dx.0, at.y + by.dy.0)
-}
-
-/// An angle's difference wrapped into a half turn either way.
-fn wrapped(radians: f32) -> f32 {
-    use std::f32::consts::PI;
-    (radians + PI).rem_euclid(2.0 * PI) - PI
 }
 
 /// Where the ground at `at` shows in the window, when it does and nothing of the interface
@@ -811,6 +1266,97 @@ pub fn clickable_point(snapshot: &ProbeSnapshot, at: Pos<Meters>) -> Option<Pos<
     let window = Rect::from_size(snapshot.screen?);
     let covered = snapshot.covered.iter().any(|cover| cover.contains(point));
     (window.contains(point) && !covered).then_some(point)
+}
+
+fn shown_element(snapshot: &ProbeSnapshot, target: &UiTarget) -> Option<ProbeUiElement> {
+    snapshot
+        .ui
+        .iter()
+        .find(|element| !element.in_world && !element.click_through && element_is(element, target))
+        .cloned()
+}
+
+fn element_is(element: &ProbeUiElement, target: &UiTarget) -> bool {
+    match target {
+        UiTarget::Text(text) => element.text.as_deref() == Some(text.as_str()),
+        UiTarget::Field => element.editable,
+    }
+}
+
+/// What the interface showed at `point` in `snapshot`: every element there, by what it reads, and
+/// whether it takes the pointer there.
+fn under_point(snapshot: &ProbeSnapshot, point: Pos<WindowPx>) -> String {
+    let elements: Vec<String> = snapshot
+        .ui
+        .iter()
+        .filter(|element| element.rect.contains(point))
+        .map(|element| {
+            let reads = element
+                .text
+                .as_deref()
+                .or(element.image.as_deref())
+                .unwrap_or("nothing");
+            let kind = if element.in_world {
+                "in the world"
+            } else if element.click_through {
+                "clicked through"
+            } else {
+                "taking clicks"
+            };
+            format!("{reads:?} {kind}")
+        })
+        .collect();
+    let covered = snapshot.covered.iter().any(|cover| cover.contains(point));
+    format!(
+        "{} with the pointer seen at {:?}, {}",
+        if elements.is_empty() {
+            "no element".to_owned()
+        } else {
+            elements.join(", ")
+        },
+        snapshot.input.cursor.map(|cursor| (cursor.x, cursor.y)),
+        if covered {
+            "the interface taking the pointer there"
+        } else {
+            "the world taking the pointer there"
+        }
+    )
+}
+
+/// Why the ground at `at` can't be pointed at: off the window, or under a window of the
+/// interface, named by the first thing it reads.
+fn hidden_by(snapshot: &ProbeSnapshot, at: Pos<Meters>) -> String {
+    let Some(view) = &snapshot.view else {
+        return "unseen: there is no view".to_owned();
+    };
+    let height = snapshot
+        .terrain
+        .as_ref()
+        .map_or(Meters(0.0), |terrain| terrain.height_at(at));
+    let point = view.window_point(at, height).round();
+    let covers: Vec<String> = snapshot
+        .covered
+        .iter()
+        .filter(|cover| cover.contains(point))
+        .map(|cover| {
+            let reads = snapshot
+                .ui
+                .iter()
+                .filter(|element| cover.contains(element.rect.center()))
+                .filter_map(|element| element.text.as_deref())
+                .next()
+                .unwrap_or("nothing");
+            format!(
+                "a window reading {reads:?} at {:?}",
+                (cover.min().x, cover.min().y, cover.width(), cover.height())
+            )
+        })
+        .collect();
+    if covers.is_empty() {
+        format!("out of view at {:?}", (point.x, point.y))
+    } else {
+        format!("under {}", covers.join(", "))
+    }
 }
 
 fn button_of(button: bevy::input::mouse::MouseButton) -> Button {
