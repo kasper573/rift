@@ -71,6 +71,7 @@ fn main() {
             DefaultPlugins
                 .set(bevy::log::LogPlugin {
                     filter: format!("{},symphonia=warn", bevy::log::DEFAULT_FILTER),
+                    custom_layer: engine::systems::probe::timing_layer,
                     ..default()
                 })
                 .set(WindowPlugin {

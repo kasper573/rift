@@ -4,7 +4,7 @@
 //! frame may reach, and nothing the view takes in left missing.
 
 use engine::core::units::{Bytes, Millis};
-use engine::systems::probe::{FrameSample, ProbeWorstFrame};
+use engine::systems::probe::{FrameSample, ProbeSlowFrame};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -118,8 +118,19 @@ impl Criteria {
             ));
         }
         if stats.stalls > 0 {
+            let waited_on = stats
+                .worst_frame
+                .as_ref()
+                .and_then(|frame| frame.systems.first())
+                .map(|system| {
+                    format!(
+                        ", its longest system {} ({:.1} ms)",
+                        system.name, system.ms.0
+                    )
+                })
+                .unwrap_or_default();
             broken.push(format!(
-                "{} frames stalled past {:.0} ms, the worst {:.1} ms",
+                "{} frames stalled past {:.0} ms, the worst {:.1} ms{waited_on}",
                 stats.stalls, self.stall.0, stats.worst.0
             ));
         }
@@ -137,7 +148,7 @@ impl Criteria {
 #[derive(Clone, Debug, Default)]
 pub struct Window {
     samples: Vec<FrameSample>,
-    worst: Vec<ProbeWorstFrame>,
+    slow: Vec<ProbeSlowFrame>,
 }
 
 impl Window {
@@ -145,12 +156,11 @@ impl Window {
         self.samples.extend(samples);
     }
 
-    /// The slowest frames the probe kept with their passes, of which the window keeps those
-    /// among its frames.
-    pub fn note_worst(&mut self, worst: &[ProbeWorstFrame]) {
-        for frame in worst {
-            if !self.worst.iter().any(|kept| kept.frame == frame.frame) {
-                self.worst.push(frame.clone());
+    /// The slow frames the probe kept with their passes and the systems they waited on.
+    pub fn note_slow(&mut self, slow: &[ProbeSlowFrame]) {
+        for frame in slow {
+            if !self.slow.iter().any(|kept| kept.frame == frame.frame) {
+                self.slow.push(frame.clone());
             }
         }
     }
@@ -172,7 +182,7 @@ impl Window {
             .collect();
         Window {
             samples: kept,
-            worst: self.worst.clone(),
+            slow: self.slow.clone(),
         }
     }
 
@@ -197,7 +207,7 @@ impl Window {
         let first = self.samples.first().map_or(0, |sample| sample.frame);
         let last = self.samples.last().map_or(0, |sample| sample.frame);
         let worst = self
-            .worst
+            .slow
             .iter()
             .filter(|frame| frame.frame >= first && frame.frame <= last)
             .max_by(|a, b| a.dt_ms.0.total_cmp(&b.dt_ms.0))
@@ -266,8 +276,9 @@ pub struct FrameStats {
     pub upload_bytes: Option<Bytes>,
     pub vfx_writes: Option<u32>,
     pub posed: Option<u32>,
-    /// The slowest frame of the window the probe kept the GPU's passes of.
-    pub worst_frame: Option<ProbeWorstFrame>,
+    /// The slowest of the window's slow frames, with the GPU's passes and the systems it waited
+    /// on.
+    pub worst_frame: Option<ProbeSlowFrame>,
 }
 
 impl FrameStats {

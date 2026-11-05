@@ -42,15 +42,27 @@ pub struct FrameSample {
 pub struct ProbeFrames {
     pub samples: Vec<FrameSample>,
     pub dropped: u32,
-    /// The slowest frames kept, each with the GPU's time by pass.
-    pub worst: Vec<ProbeWorstFrame>,
+    /// The frames after the one a driver last saw that took longer than [`HITCH`], each with the
+    /// GPU's time by pass and the systems it waited on.
+    pub slow: Vec<ProbeSlowFrame>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
-pub struct ProbeWorstFrame {
+pub struct ProbeSlowFrame {
     pub frame: u32,
     pub dt_ms: Millis,
     pub passes: Vec<ProbePass>,
+    /// The systems of the main and the render world that ran longest while the frame was waited
+    /// on: those of the frames before it, whose work its time measures; none where nothing timed
+    /// them.
+    pub systems: Vec<ProbeSystem>,
+}
+
+/// A system and how long it ran over a frame.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ProbeSystem {
+    pub name: String,
+    pub ms: Millis,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
@@ -59,14 +71,16 @@ pub struct ProbePass {
     pub gpu_ms: Millis,
 }
 
-/// The latest frames, one sample each in the order drawn, and the slowest of all of them.
+/// The latest frames, one sample each in the order drawn, and the latest of them that were slow.
 #[derive(Resource, Debug)]
 pub struct FrameSamples {
     ring: VecDeque<FrameSample>,
     capacity: usize,
     /// How many frames a sample waits in the ring before it is read, for its late fields to land.
     settle: u32,
-    worst: Vec<ProbeWorstFrame>,
+    slow: VecDeque<ProbeSlowFrame>,
+    /// The systems that ran longest over each of the latest [`WAITED_ON`] frames, the latest last.
+    latest_systems: VecDeque<Vec<ProbeSystem>>,
 }
 
 impl Default for FrameSamples {
@@ -80,8 +94,15 @@ pub const FRAMES_KEPT: usize = 8192;
 /// How many frames the render world and the GPU may trail the main world by before a sample is
 /// read without them.
 pub const SETTLE_FRAMES: u32 = 8;
-/// How many of the slowest frames keep their GPU times by pass.
-pub const WORST_KEPT: usize = 16;
+/// How long a frame may take before it is kept as slow, with what it waited on.
+pub const HITCH: Millis = Millis(20.0);
+/// How many slow frames are kept: the latest, however long ago.
+pub const SLOW_KEPT: usize = 512;
+/// How many of the systems that ran longest a slow frame names.
+pub const LONGEST_SYSTEMS: usize = 3;
+/// How many frames before a slow frame it may have waited on: its own time measures the work of
+/// the frame before it, which waited on the render world drawing the one before that.
+const WAITED_ON: usize = 3;
 
 impl FrameSamples {
     pub fn new(capacity: usize, settle: u32) -> FrameSamples {
@@ -89,17 +110,37 @@ impl FrameSamples {
             ring: VecDeque::with_capacity(capacity),
             capacity,
             settle,
-            worst: Vec::new(),
+            slow: VecDeque::new(),
+            latest_systems: VecDeque::new(),
         }
     }
 
-    /// Keeps `sample` as the latest frame, letting the oldest go once the ring is full.
-    pub fn push(&mut self, sample: FrameSample) {
+    /// Keeps `sample` as the latest frame, with the systems that ran longest over it, letting the
+    /// oldest go once the ring is full.
+    pub fn push(&mut self, sample: FrameSample, systems: Vec<ProbeSystem>) {
         if self.ring.len() == self.capacity {
             self.ring.pop_front();
         }
         self.ring.push_back(sample);
-        self.rank(sample.frame, sample.dt_ms);
+        if sample.dt_ms.0 > HITCH.0 {
+            let mut waited_on: Vec<ProbeSystem> =
+                self.latest_systems.iter().flatten().cloned().collect();
+            waited_on.sort_by(|a, b| b.ms.0.total_cmp(&a.ms.0));
+            waited_on.truncate(LONGEST_SYSTEMS);
+            if self.slow.len() == SLOW_KEPT {
+                self.slow.pop_front();
+            }
+            self.slow.push_back(ProbeSlowFrame {
+                frame: sample.frame,
+                dt_ms: sample.dt_ms,
+                passes: Vec::new(),
+                systems: waited_on,
+            });
+        }
+        if self.latest_systems.len() == WAITED_ON {
+            self.latest_systems.pop_front();
+        }
+        self.latest_systems.push_back(systems);
     }
 
     /// Fills in what the render world measured of a frame, if it is still in the ring.
@@ -117,12 +158,13 @@ impl FrameSamples {
         if let Some(sample) = self.sample_mut(report.frame) {
             sample.gpu_ms = Some(report.gpu_ms);
         }
-        if let Some(worst) = self
-            .worst
+        if let Some(slow) = self
+            .slow
             .iter_mut()
-            .find(|worst| worst.frame == report.frame)
+            .rev()
+            .find(|slow| slow.frame == report.frame)
         {
-            worst.passes = report
+            slow.passes = report
                 .passes
                 .iter()
                 .map(|(name, gpu_ms)| ProbePass {
@@ -152,7 +194,12 @@ impl FrameSamples {
         ProbeFrames {
             samples,
             dropped,
-            worst: self.worst.clone(),
+            slow: self
+                .slow
+                .iter()
+                .filter(|slow| slow.frame > since && slow.frame <= readable)
+                .cloned()
+                .collect(),
         }
     }
 
@@ -166,30 +213,5 @@ impl FrameSamples {
         self.ring
             .get_mut(index)
             .filter(|sample| sample.frame == frame)
-    }
-
-    fn rank(&mut self, frame: u32, dt_ms: Millis) {
-        if self.worst.len() == WORST_KEPT
-            && self
-                .worst
-                .last()
-                .is_some_and(|slowest| slowest.dt_ms.0 >= dt_ms.0)
-        {
-            return;
-        }
-        let at = self
-            .worst
-            .iter()
-            .position(|worst| worst.dt_ms.0 < dt_ms.0)
-            .unwrap_or(self.worst.len());
-        self.worst.insert(
-            at,
-            ProbeWorstFrame {
-                frame,
-                dt_ms,
-                passes: Vec::new(),
-            },
-        );
-        self.worst.truncate(WORST_KEPT);
     }
 }

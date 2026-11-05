@@ -154,7 +154,7 @@ pub fn area_state(world: &mut World, content: &Content) {
 /// reads them.
 fn insert_content(world: &mut World, content: &Content) {
     let settings = content.built::<GameSettings>();
-    world.insert_resource(settings.look.clone());
+    world.insert_resource(settings.look);
     world.insert_resource(settings.typing);
     world.insert_resource(settings.lettering);
     world.insert_resource(settings.speech);
@@ -473,6 +473,7 @@ pub fn client_app(
         DefaultPlugins
             .set(bevy::log::LogPlugin {
                 filter: format!("{},symphonia=warn", bevy::log::DEFAULT_FILTER),
+                custom_layer: probe::timing_layer,
                 ..default()
             })
             .set(WindowPlugin {

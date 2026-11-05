@@ -445,7 +445,7 @@ impl EditorDriver {
             measuring.since = last.frame;
             self.frame = self.frame.max(last.frame);
         }
-        measuring.window.note_worst(&frames.worst);
+        measuring.window.note_slow(&frames.slow);
         measuring.window.extend(frames.samples);
         Ok(())
     }

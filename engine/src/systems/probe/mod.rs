@@ -1,6 +1,7 @@
 mod editor;
 mod frames;
 mod game;
+mod hitches;
 pub mod socket;
 
 pub use editor::{
@@ -9,14 +10,15 @@ pub use editor::{
 };
 
 pub use frames::{
-    FRAMES_KEPT, FrameSample, FrameSamples, ProbeFrames, ProbePass, ProbeWorstFrame, SETTLE_FRAMES,
-    WORST_KEPT,
+    FRAMES_KEPT, FrameSample, FrameSamples, HITCH, LONGEST_SYSTEMS, ProbeFrames, ProbePass,
+    ProbeSlowFrame, ProbeSystem, SETTLE_FRAMES, SLOW_KEPT,
 };
 pub use game::{
     ProbeArea, ProbeBinding, ProbeBindings, ProbeButton, ProbeFrameQuestion, ProbeGame,
     ProbeGameQuestion, ProbeGesture, ProbeInterfaceIcon, ProbeItem, ProbeNamedObject, ProbeNpc,
     ProbeProp, ProbeResident, ProbeRoaming, ProbeSkill, ProbeWater, answer,
 };
+pub use hitches::{SystemTimes, timing_layer};
 
 use std::collections::HashMap;
 use std::sync::{Arc, Condvar, Mutex};
@@ -172,6 +174,9 @@ pub struct ProbeFramesPlugin;
 
 impl Plugin for ProbeFramesPlugin {
     fn build(&self, app: &mut App) {
+        if let Some(times) = app.world().get_resource::<SystemTimes>() {
+            times.listen();
+        }
         app.add_plugins(FrameSamplingPlugin)
             .init_resource::<FrameSamples>()
             .init_resource::<FrameMark>()
@@ -236,6 +241,10 @@ pub fn sample_frame(world: &mut World) {
         .get_resource_mut::<FrameWork>()
         .map(|mut work| std::mem::take(&mut *work))
         .unwrap_or_default();
+    let systems = world
+        .get_resource::<SystemTimes>()
+        .map(|times| times.take_longest(frames::LONGEST_SYSTEMS))
+        .unwrap_or_default();
     let drawn = world.resource::<RenderReports>().take();
     let timed = world.resource_scope(|world, mut read: Mut<GpuReportsRead>| {
         world
@@ -244,21 +253,24 @@ pub fn sample_frame(world: &mut World) {
             .unwrap_or_default()
     });
     let mut samples = world.resource_mut::<FrameSamples>();
-    samples.push(FrameSample {
-        frame,
-        dt_ms,
-        cpu_main_ms,
-        cpu_render_ms: None,
-        gpu_ms: None,
-        missing,
-        draws: 0,
-        instances: 0,
-        entities,
-        visible_chunks,
-        upload_bytes: Bytes::default(),
-        vfx_writes: work.vfx_writes,
-        posed: work.posed,
-    });
+    samples.push(
+        FrameSample {
+            frame,
+            dt_ms,
+            cpu_main_ms,
+            cpu_render_ms: None,
+            gpu_ms: None,
+            missing,
+            draws: 0,
+            instances: 0,
+            entities,
+            visible_chunks,
+            upload_bytes: Bytes::default(),
+            vfx_writes: work.vfx_writes,
+            posed: work.posed,
+        },
+        systems,
+    );
     for report in &drawn {
         samples.drawn(report);
     }
