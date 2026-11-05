@@ -11,6 +11,7 @@ mod report;
 mod scale;
 mod scenario;
 mod scenarios;
+mod shots;
 mod sim;
 mod tile;
 
@@ -78,6 +79,9 @@ pub struct BenchArgs {
     pub adapter: Option<String>,
     /// One short scenario per target, proving the harness alone, without criteria.
     pub smoke: bool,
+    /// Where pictures of what the client and the editor show are taken into, instead of their
+    /// frame rates.
+    pub snapshots: Option<PathBuf>,
 }
 
 /// The server bench on the crowd, or on `game` followed by the client, editor and memory benches,
@@ -108,11 +112,26 @@ pub fn run(args: &BenchArgs) -> Result<i32, String> {
     }
     let videos = args.video.presets();
     let mut report: Option<BenchReport> = None;
+    let steps = args.report.with_extension(STEPS_LOG);
+    if let Some(out) = &args.snapshots {
+        let mut refused = Vec::new();
+        if runs(BenchPart::Client) {
+            let slots = ScenarioSlots::of(&slots_file(game, args), &content)?;
+            refused.extend(shots::client(game, &content, &slots, &videos, &steps, out).err());
+        }
+        if runs(BenchPart::Editor) {
+            refused.extend(shots::editor(game, &content, &videos, &steps, out).err());
+        }
+        return if refused.is_empty() {
+            Ok(0)
+        } else {
+            Err(refused.join("\n"))
+        };
+    }
     if runs(BenchPart::Client) {
         client(game, &content, args, &videos, &mut report)?;
     }
     if runs(BenchPart::Editor) {
-        let steps = args.report.with_extension(STEPS_LOG);
         editor::run(game, &content, args, &videos, &steps, &mut report)?;
     }
     if runs(BenchPart::Scale) {
@@ -157,11 +176,7 @@ fn client(
     videos: &[VideoPreset],
     report: &mut Option<BenchReport>,
 ) -> Result<(), String> {
-    let slots_file = args
-        .scenarios
-        .clone()
-        .unwrap_or_else(|| game.join(scenarios::SLOTS_FILE));
-    let slots = ScenarioSlots::of(&slots_file, content)?;
+    let slots = ScenarioSlots::of(&slots_file(game, args), content)?;
     let scenarios: Vec<Scenario> = scenarios::client::catalogue(&slots, content, args.smoke)
         .into_iter()
         .filter(|scenario| {
@@ -214,6 +229,13 @@ fn client(
         }
     }
     Ok(())
+}
+
+/// The game's scenarios file: the one `args` name, else the game's own.
+fn slots_file(game: &Path, args: &BenchArgs) -> PathBuf {
+    args.scenarios
+        .clone()
+        .unwrap_or_else(|| game.join(scenarios::SLOTS_FILE))
 }
 
 /// Whether the bench's desktop lets the client draw as fast as it can: the emptiest view of the

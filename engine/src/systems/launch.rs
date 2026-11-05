@@ -318,6 +318,9 @@ pub fn start_game_server(
 /// The driver of a desktop client's probe: asks it its frame questions and reads its answers.
 /// How often a driver looks again for a client's probe to connect.
 const PROBE_POLL: Duration = Duration::from_millis(100);
+/// How long an app may take to answer its probe before it counts as hung: far longer than any
+/// frame takes, loading included.
+const ANSWER_WITHIN: Duration = Duration::from_secs(120);
 
 pub struct ProbeDriver {
     questions: TcpStream,
@@ -354,6 +357,9 @@ impl ProbeDriver {
         };
         let answer = |error: std::io::Error| format!("the probe's connection fails: {error}");
         stream.set_nonblocking(false).map_err(answer)?;
+        stream
+            .set_read_timeout(Some(ANSWER_WITHIN))
+            .map_err(answer)?;
         let answers = BufReader::new(stream.try_clone().map_err(answer)?);
         Ok(ProbeDriver {
             questions: stream,

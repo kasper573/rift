@@ -102,18 +102,7 @@ impl Driver {
     /// Stages, sets up, and plays `scenario`, measuring its script, with nothing left open over
     /// the world by the scenario before, and the scene staged standing before the setup plays.
     pub fn run(&mut self, scenario: &Scenario) -> Result<Measured, Failure> {
-        self.note(&format!("=== {}", scenario.name));
-        self.close_windows()?;
-        for staging in &scenario.stage {
-            self.stage(staging)?;
-            if let Staging::Place { place } = staging {
-                self.wait(&Cond::Arrived(*place))?;
-                self.wait(&Cond::Stood)?;
-            }
-        }
-        for step in &scenario.setup {
-            self.step(step)?;
-        }
+        self.set_scene(&scenario.name, &scenario.stage, &scenario.setup)?;
         let start = self.snapshot()?.frame;
         self.measuring = Some(Measuring {
             window: Window::default(),
@@ -129,6 +118,48 @@ impl Driver {
             window: measuring.window.after_warm_up(scenario.warm_up),
             stood_after_frames: measuring.stood_after_frames,
         })
+    }
+
+    /// Stages `stage` and plays `setup`, with nothing left open over the world by the scene
+    /// before, and each place staged standing before the setup plays.
+    pub fn set_scene(
+        &mut self,
+        name: &str,
+        stage: &[Staging],
+        setup: &[Step],
+    ) -> Result<(), Failure> {
+        self.note(&format!("=== {name}"));
+        self.close_windows()?;
+        for staging in stage {
+            self.stage(staging)?;
+            if let Staging::Place { place } = staging {
+                self.wait(&Cond::Arrived(*place))?;
+                self.wait(&Cond::Stood)?;
+            }
+        }
+        for step in setup {
+            self.step(step)?;
+        }
+        Ok(())
+    }
+
+    /// Writes a picture of the window as the frame after asking draws it, as a PNG at `path`.
+    pub fn picture(&mut self, path: &Path) -> Result<(), Failure> {
+        let written: bool = match self.play.ask(&ProbeFrameQuestion::Picture {
+            path: path.to_owned(),
+        }) {
+            Ok(written) => written,
+            Err(problem) => return Err(self.died_or(problem)),
+        };
+        if written {
+            self.note(&format!("picture {}", path.display()));
+            Ok(())
+        } else {
+            Err(Failure::Harness(format!(
+                "the client wrote no picture at {}",
+                path.display()
+            )))
+        }
     }
 
     /// Plays the script over and over until the scenario's duration has passed, then through to
@@ -295,6 +326,12 @@ impl Driver {
                     self.note("no item slot to open the options of");
                 }
             }
+            Step::HoverSlot => match self.slots()?.first() {
+                Some(&slot) => {
+                    hands::move_pointer(self, slot)?;
+                }
+                None => self.note("no item slot to rest the pointer on"),
+            },
             Step::CloseWindows => self.close_windows()?,
             Step::Resize { width, height } => hands::resize(self, *width, *height)?,
             Step::Camera(op) => self.camera(*op)?,
@@ -421,7 +458,7 @@ impl Driver {
         Ok(())
     }
 
-    fn wait(&mut self, cond: &Cond) -> Result<(), Failure> {
+    pub fn wait(&mut self, cond: &Cond) -> Result<(), Failure> {
         match cond {
             Cond::Seconds(seconds) => {
                 let until = Instant::now() + Duration::from_secs_f32(seconds.0);

@@ -17,7 +17,7 @@ use image::{GrayImage, RgbImage};
 use image_compare::Algorithm;
 use serde::{Deserialize, Serialize};
 
-use crate::snapshot::{MANIFEST, Manifest, TakenShot};
+use crate::snapshot::{MANIFEST, Manifest, PictureRect, TakenShot};
 
 /// What a run of the comparison ends with, as its exit code says.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -234,10 +234,7 @@ pub fn run(
             shots.push(failed(&key, allowance, taken, "sizes differ"));
             continue;
         }
-        let (a, b) = (
-            settled_picture(baseline, was)?,
-            settled_picture(candidate, taken)?,
-        );
+        let (a, b) = compared_pictures((baseline, was), (candidate, taken))?;
         let metrics = measure(&a, &b);
         let popped_share = match taken.stood_after_frames {
             Some(stood) if taken.frames.is_some() => Some(pop_in(candidate, taken, stood)?),
@@ -391,8 +388,22 @@ fn lab([r, g, b]: [u8; 3]) -> [f64; 3] {
     [116.0 * fy - 16.0, 500.0 * (fx - fy), 200.0 * (fy - fz)]
 }
 
+/// The settled pictures of a shot in two sets, each in its set's folder, with what either masks
+/// painted over in both.
+pub fn compared_pictures(
+    (set_a, a): (&Path, &TakenShot),
+    (set_b, b): (&Path, &TakenShot),
+) -> Result<(RgbImage, RgbImage), String> {
+    let (mut picture_a, mut picture_b) = (settled_picture(set_a, a)?, settled_picture(set_b, b)?);
+    for mask in a.masks.iter().chain(&b.masks) {
+        blank(&mut picture_a, mask);
+        blank(&mut picture_b, mask);
+    }
+    Ok((picture_a, picture_b))
+}
+
 /// The picture of `taken` as it settled: the picture itself, or the last frame of an arrival.
-pub fn settled_picture(set: &Path, taken: &TakenShot) -> Result<RgbImage, String> {
+fn settled_picture(set: &Path, taken: &TakenShot) -> Result<RgbImage, String> {
     let path = set.join(&taken.path);
     let picture = match taken.frames {
         Some(_) => frame_paths(&path)?
@@ -430,6 +441,19 @@ fn pop_in(set: &Path, taken: &TakenShot, stood: usize) -> Result<f64, String> {
     }
     Ok(worst)
 }
+
+/// Paints `mask` of `picture` over in one colour, so whatever moved there compares alike.
+fn blank(picture: &mut RgbImage, mask: &PictureRect) {
+    let (width, height) = picture.dimensions();
+    for y in mask.y.min(height)..(mask.y + mask.height).min(height) {
+        for x in mask.x.min(width)..(mask.x + mask.width).min(width) {
+            picture.put_pixel(x, y, image::Rgb(MASKED));
+        }
+    }
+}
+
+/// The colour masked pixels are painted over in.
+const MASKED: [u8; 3] = [255, 0, 255];
 
 fn load(path: &Path) -> Result<RgbImage, String> {
     image::open(path)

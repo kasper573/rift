@@ -180,11 +180,15 @@ struct PassTimes {
     camera: Option<Meters>,
 }
 
-/// Takes the picture the scene waits on once the editor is idle and every view's scenery has stood
-/// for a few frames, then goes on with the scene.
+/// Takes the picture the scene waits on once the editor is idle, with no edit still being applied,
+/// and every view's scenery has stood for a few frames, then goes on with the scene.
 fn take_shot(world: &mut World, mut stood: Local<u32>) {
     let editor = world.resource::<Editor>();
-    if editor.shot.is_none() || editor.busy.is_busy() {
+    let applying = editor
+        .project
+        .as_ref()
+        .is_some_and(|project| project.loading());
+    if editor.shot.is_none() || editor.busy.is_busy() || applying {
         *stood = 0;
         return;
     }
@@ -208,10 +212,14 @@ fn take_shot(world: &mut World, mut stood: Local<u32>) {
                 .try_into_dynamic()
                 .map_err(|error| error.to_string())
                 .and_then(|picture| {
+                    // Written aside and moved into place, so whoever waits on the picture never
+                    // reads it half written.
+                    let aside = shot.path.with_extension(WRITING);
                     picture
                         .to_rgb8()
-                        .save(&shot.path)
-                        .map_err(|error| error.to_string())
+                        .save_with_format(&aside, image::ImageFormat::Png)
+                        .map_err(|error| error.to_string())?;
+                    std::fs::rename(&aside, &shot.path).map_err(|error| error.to_string())
                 });
             if let Err(error) = written {
                 editor.toast(format!(
@@ -227,6 +235,8 @@ fn take_shot(world: &mut World, mut stood: Local<u32>) {
 /// How many frames the scenery stands before the scene's picture is taken, so what it waits on
 /// to draw has drawn.
 const SHOT_SETTLE: u32 = 30;
+/// The extension a scene's picture is written under before it is moved into place.
+const WRITING: &str = "writing";
 
 /// How the scenery of the views stands.
 pub fn scenery_of(world: &mut World) -> EditorScenery {

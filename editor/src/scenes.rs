@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use engine::core::content::ContentFile;
-use engine::core::units::Meters;
+use engine::core::units::{Degrees, Meters};
 use engine::systems::actor::Action;
 use engine::systems::actor::model::ModelDef;
 use engine::systems::actor::skeleton::{BuildName, Clip, SkeletonDef};
@@ -62,9 +62,14 @@ pub enum SceneStep {
     Spell {
         index: usize,
     },
-    /// Looks at the middle of the open area or blueprint from `distance` off.
+    /// Looks at the middle of the open area or blueprint from `distance` off, turned to `yaw` and
+    /// tilted to `pitch` where given.
     Camera {
         distance: Meters,
+        #[serde(default)]
+        yaw: Option<Degrees>,
+        #[serde(default)]
+        pitch: Option<Degrees>,
     },
     /// Holds the row `row` of the open area's scene tree hovered, "" the whole scene, as the
     /// pointer over it would.
@@ -392,9 +397,21 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
                 view.climate.pick_spell(*index);
             }
         }
-        SceneStep::Camera { distance } => {
+        SceneStep::Camera {
+            distance,
+            yaw,
+            pitch,
+        } => {
             if let Some(bundle) = last_opened_bundle(editor) {
-                editor.views.area.ensure_view(&bundle).look_from(*distance);
+                editor
+                    .views
+                    .area
+                    .ensure_view(&bundle)
+                    .look_from(area_view::CameraLook {
+                        distance: *distance,
+                        yaw: *yaw,
+                        pitch: *pitch,
+                    });
             }
         }
         SceneStep::Hover { row } => {

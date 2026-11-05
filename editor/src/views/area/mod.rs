@@ -241,8 +241,17 @@ pub struct AreaViewState {
     cache: Option<SnapshotCache>,
     preview_places: HashMap<String, PreviewPlaces>,
     fitted: bool,
-    /// How far off the camera looks at the middle once it is fitted, when asked for.
-    looks_from: Option<Meters>,
+    /// How the camera looks at the middle once it is fitted, when asked for.
+    looks_from: Option<CameraLook>,
+}
+
+/// How a camera looks at the middle of what it shows: from `distance` off, turned to `yaw` and
+/// tilted to `pitch` where given, else as it frames the whole.
+#[derive(Clone, Copy, Debug)]
+pub struct CameraLook {
+    pub distance: Meters,
+    pub yaw: Option<Degrees>,
+    pub pitch: Option<Degrees>,
 }
 
 impl AreaViewState {
@@ -259,9 +268,9 @@ impl AreaViewState {
         self.cancel_gesture();
     }
 
-    /// Fits the camera anew, looking at the middle from `distance` off.
-    pub fn look_from(&mut self, distance: Meters) {
-        self.looks_from = Some(distance);
+    /// Fits the camera anew, looking at the middle as `look` says.
+    pub fn look_from(&mut self, look: CameraLook) {
+        self.looks_from = Some(look);
         self.fitted = false;
     }
 
@@ -563,8 +572,10 @@ fn fit_once(editor: &mut Editor, view_key: &str, snapshot: &AreaSnapshot) {
     }
     let framing = OrbitCamera::framing(snapshot.size().bounds());
     view.camera = match view.looks_from.take() {
-        Some(distance) => OrbitCamera {
-            distance,
+        Some(look) => OrbitCamera {
+            distance: look.distance,
+            yaw: look.yaw.map_or(framing.yaw, Degrees::radians),
+            pitch: look.pitch.map_or(framing.pitch, Degrees::radians),
             ..framing
         },
         None => remembered.unwrap_or(framing),

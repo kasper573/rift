@@ -66,7 +66,11 @@ pub fn catalogue() -> Vec<EditorScenario> {
             ..scenario("e17-field-typing", Class::Typical, field_typing)
         },
         scenario("e18-visibility", Class::Typical, visibility_toggles),
-        scenario("e19-panel-resize", Class::Typical, panel_resize),
+        EditorScenario {
+            setup: open_file_tab,
+            teardown: close_file_tab,
+            ..scenario("e19-panels-dock", Class::Typical, panels_and_dock)
+        },
         scenario("e20-hover-orbit", Class::Typical, hover_while_orbiting),
     ]
 }
@@ -496,7 +500,60 @@ fn visibility_toggles(driver: &mut EditorDriver) -> Result<(), Failure> {
 }
 
 /// E19: the content panel widened by its edge and narrowed back, the bottom panel raised and
-/// lowered back.
+/// lowered back, and the file's tab docked beside the area's, closed there and opened again.
+fn panels_and_dock(driver: &mut EditorDriver) -> Result<(), Failure> {
+    panel_resize(driver)?;
+    let area = front_tab(driver)?;
+    let other = tab_beside(driver, &area)?;
+    let whole = driver.stage()?.viewport;
+    let beside = Pos::new(
+        whole.max_x() - whole.width() * DOCK_ACROSS,
+        whole.center().y,
+    );
+    let from = tab_title(&driver.snapshot()?, &other)?.center();
+    hands::drag(driver, Button::Left, &KeyModifiers::default(), from, beside)?;
+    let docked = hands::wait_for(
+        driver,
+        "the tab to dock beside the area's",
+        BUDGET,
+        |snapshot| {
+            snapshot
+                .stage
+                .clone()
+                .filter(|stage| stage.viewport.width() < whole.width() * DOCKED_SHARE)
+        },
+    )?;
+    let snapshot = driver.snapshot()?;
+    let in_docked = snapshot
+        .ui
+        .iter()
+        .find(|element| {
+            element.text.as_deref() == Some(other.as_str())
+                && !docked.viewport.contains(element.rect.center())
+        })
+        .map(|element| element.rect.center())
+        .ok_or_else(|| harness("the docked tab shows nothing reading its title"))?;
+    hands::move_pointer(driver, in_docked)?;
+    hands::click(driver, Button::Left, 1)?;
+    hands::wait_for(
+        driver,
+        "the docked tab to come to the front",
+        BUDGET,
+        |snapshot| (snapshot.tab.as_deref() == Some(other.as_str())).then_some(()),
+    )?;
+    driver.shortcut(CTRL, "w")?;
+    hands::wait_for(driver, "the docked tab to close", BUDGET, |snapshot| {
+        snapshot
+            .stage
+            .as_ref()
+            .is_some_and(|stage| stage.viewport.width() >= whole.width() * DOCKED_SHARE)
+            .then_some(())
+    })?;
+    open_file_tab(driver)
+}
+
+/// The content panel widened by its edge and narrowed back, the bottom panel raised and lowered
+/// back.
 fn panel_resize(driver: &mut EditorDriver) -> Result<(), Failure> {
     for (name, edge, by) in [
         (CONTENT_PANEL, Edge::Right, Offset::new(PANEL_DRAG, 0.0)),
@@ -901,5 +958,9 @@ const EDITS: usize = 5;
 const UNDO_ROUNDS: usize = 10;
 const TYPED: &str = "quiet";
 const PANEL_DRAG: f32 = 140.0;
+/// How far in from the stage's right edge a tab is dropped to dock beside it, and how much of its
+/// width the stage keeps at most once one has.
+const DOCK_ACROSS: f32 = 0.1;
+const DOCKED_SHARE: f32 = 0.8;
 /// How many folders of the files tree are opened, one inside another, to find a file in.
 const FILE_DEPTH: usize = 6;

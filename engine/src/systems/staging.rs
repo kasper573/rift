@@ -13,9 +13,11 @@ use crate::systems::area;
 use crate::systems::combat::{self, AttackRequest, Relation};
 use crate::systems::interact::{self, InteractRequest, Verb};
 use crate::systems::movement::{MoveRequest, MoveSeq, Position};
+use crate::systems::notification::{self, NotificationId};
 use crate::systems::npc::Npc;
 use crate::systems::player::{conn_player, tell_clocks};
 use crate::systems::script::Place;
+use crate::systems::text::LineText;
 use crate::systems::{GameSettings, WorldArea, from_client, stat};
 
 /// Where a game server that stages scenes takes them, beside its test characters.
@@ -43,6 +45,9 @@ pub enum Staging {
     /// Sets the day to `hour` o'clock for everyone on the server, turning on from there or held,
     /// until staged again.
     Day { hour: f32, turning: bool },
+    /// Tells the character's player the notification `notification`, as a script tells it, with
+    /// nothing in the places its text leaves for a script's values.
+    Notify { notification: NotificationId },
 }
 
 /// Stages `staging` for the character the connection `conn` plays, as its client would ask for it.
@@ -98,6 +103,11 @@ pub fn stage(world: &mut World, conn: Entity, staging: Staging) -> Result<(), St
             };
             world.insert_resource(DayClock(Some(course)));
             tell_clocks(world);
+        }
+        Staging::Notify { notification } => {
+            let def = notification.get(world.resource::<Content>()).clone();
+            let told = def.notification(LineText::spoken(&def.text, &[]));
+            notification::notify(world, player, None, told);
         }
     }
     Ok(())

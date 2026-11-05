@@ -90,6 +90,8 @@ pub enum Step {
     /// The options of the first item shown in a slot opened by their binding, then dismissed;
     /// nothing when no slot is shown.
     SlotOptions,
+    /// The pointer rested on the first item shown in a slot; nothing when no slot is shown.
+    HoverSlot,
     /// Everything open over the world dismissed, until nothing covers it.
     CloseWindows,
     /// The client's window resized, as a window manager does it.

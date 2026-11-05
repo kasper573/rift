@@ -62,9 +62,12 @@ rift bench <game> --scenario 'orbit*' --video lowest --repeat 3
                                      # …only the scenarios named, at one preset, each run three times
 rift bench <game> --report out.json --compare before.json
                                      # …the report written there, and held against an earlier run's
+rift bench <game> --only client --only editor --snapshots <out>
+                                     # …pictures of what the client and the editor show, a set each for compare
 rift snapshot <game> <shots> <out>   # every shot of a folder drawn into a set of pictures, by adapter and preset
 rift compare <baseline> <candidate>  # two sets held against each other, shot by shot, with a report
 rift noise <game> <shots> <out>      # every shot drawn again and again, and each shot's allowance from the noise
+rift noise-between <out> <set>...    # …each shot's allowance from sets already taken, as the bench's pictures
 rift loadtest --http <url> --ws <url> [count]
 rift profile --out <dir> [game]      # game-server-profiling under load, sampled by perf (Linux)
 rift schema probe                    # the JSON Schema of the desktop client's probe
@@ -80,8 +83,8 @@ game's scenarios file, `bench/scenarios.json` in the game's folder unless `--sce
 another, every slot it leaves empty filled from the content:
 `places` (the first the home, each a `name`, `area` and `at`), a `light_place`, a `talk_place`, a
 `crowd_place`, the ground an `empty_view` looks toward, the `spells` of the home area's climate,
-the `windows` to open by their actions, ground to `walk_to` and `far_walk_to`, and the test
-`character` to play. The catalogue spans a still view, orbits, tilts, zooms, walks, teleport
+the `windows` to open by their actions, ground to `walk_to` and `far_walk_to`, a `notification`
+to tell, and the test `character` to play. The catalogue spans a still view, orbits, tilts, zooms, walks, teleport
 arrivals, the interface stormed, the pointer swept, clicks to move, combat, dialogue, the weather's
 spells, warp crossings, the worst case, video settings switched live, the window resized, dusk
 turning, fifty other players in view, the emptiest view and a ten-minute soak. Before them, the
@@ -100,8 +103,12 @@ input confirmed through its own probe: its opening until the area stands, then t
 hovered, opened, selected, given its menus, dragged in and scrolled; the stage turned, panned and
 flicked out and in, what it holds hovered, clicked, dragged and boxed, its menus opened and its
 terrain sculpted; the pages and tabs switched, edits undone and redone fifty times, a field typed
-into, folders hidden and shown, the panels resized, and the tree hovered between turns of the
-stage. Its frames are held to the client's criteria. The run's report, `bench-report.json` unless `--report`
+into, folders hidden and shown, the panels resized and a tab docked, and the tree hovered
+between turns of the stage. Its frames are held to the client's criteria. With `--snapshots`, the client and the editor
+are pictured instead, a set each that `rift compare` holds against another: the client's view
+from home, each window, an item's options and card, a dialogue and a notice, with all but the
+interface masked out, as the world beneath it lives on from run to run; the editor's stage whole, near and low, its tree with a
+selection, and the game's settings form. The run's report, `bench-report.json` unless `--report`
 says where, is described by `rift schema bench`; `--compare` holds it against an earlier run's and
 fails when a scenario that passed now fails, a mean fell by more than a tenth or a p99 rose by more
 than a fifth. The exit code says how the run went: 0 passed, 1 a scenario fell short of its

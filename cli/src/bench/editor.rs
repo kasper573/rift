@@ -68,7 +68,7 @@ pub fn run(
         .area
         .path(content)
         .to_owned();
-    let start = |video| EditorDriver::start(game, &area, video, steps);
+    let start = |video| EditorDriver::start(game, &area, &[], video, steps);
     for &video in videos {
         let criteria = Criteria::global(video);
         let mut openings = Vec::new();
@@ -150,12 +150,13 @@ pub struct EditorDriver {
 }
 
 impl EditorDriver {
-    /// The editor opened on `game` with `area` in view, shown as `video` asks, on a desktop of its
-    /// own, every step it is put through noted in the log at `steps`. Its frames count from its
-    /// first, for [`EditorDriver::opened`].
+    /// The editor opened on `game` with `area` in view and `then` played after, shown as `video`
+    /// asks, on a desktop of its own, every step it is put through noted in the log at `steps`.
+    /// Its frames count from its first, for [`EditorDriver::opened`].
     pub fn start(
         game: &Path,
         area: &str,
+        then: &[SceneStep],
         video: VideoPreset,
         steps: &Path,
     ) -> Result<EditorDriver, Failure> {
@@ -172,8 +173,10 @@ impl EditorDriver {
             .arg(game)
             .arg("--scene")
             .arg(
-                serde_json::to_string(&[SceneStep::Area(area.to_owned())])
-                    .expect("a serializable scene"),
+                serde_json::to_string(
+                    &[vec![SceneStep::Area(area.to_owned())], then.to_vec()].concat(),
+                )
+                .expect("a serializable scene"),
             )
             .arg("--user-folder")
             .arg(&user)

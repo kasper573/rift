@@ -12,6 +12,7 @@ use engine::core::math::Pos;
 use engine::core::units::Meters;
 use engine::systems::area::AreaId;
 use engine::systems::input::map::InputAction;
+use engine::systems::notification::{NotificationDef, NotificationId};
 use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::script::Place;
 use engine::systems::{GameSettings, area};
@@ -44,6 +45,8 @@ pub struct ScenarioSlots {
     pub walk_to: Option<Pos<Meters>>,
     /// Ground a long walk across the home area's tiles ends at, from home.
     pub far_walk_to: Option<Pos<Meters>>,
+    /// A notification the player is told, for the shot of a notice on screen.
+    pub notification: Option<NotificationId>,
     /// The test character the scenarios play, else the game's first.
     pub character: Option<ContentId<CharacterSnapshot>>,
 }
@@ -88,7 +91,7 @@ impl ScenarioSlots {
 
     /// Fills every empty slot from the content: the spawn and where the warps lead and the open
     /// middle of each other area for the places, the home area's spells, every window toggle,
-    /// and walks from home across open ground.
+    /// the game's first notification, and walks from home across open ground.
     pub fn fill(&mut self, content: &Content) {
         if self.places.is_empty() {
             let spawn = content.built::<GameSettings>().initial_spawn;
@@ -122,6 +125,9 @@ impl ScenarioSlots {
                 InputAction::ToggleHistory,
                 InputAction::ToggleSettings,
             ];
+        }
+        if self.notification.is_none() {
+            self.notification = content.ids::<NotificationDef>().next();
         }
         if self.walk_to.is_none() {
             self.walk_to = places::walkable_toward(content, home, &WALKS);

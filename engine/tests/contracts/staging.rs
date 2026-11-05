@@ -6,6 +6,7 @@ use engine::systems::area::AreaDef;
 use engine::systems::combat::{self, AttackRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::movement::{self, MoveRequest, position};
+use engine::systems::notification::NotificationDef;
 use engine::systems::npc::NpcDef;
 use engine::systems::region;
 use engine::systems::script::Place;
@@ -56,6 +57,18 @@ fn a_bench_stages_what_a_test_character_does_through_its_own_requests() {
     stage(&mut sim.world, conn, Staging::Fight).expect("a foe");
     assert!(sim.run_until(10.0, |world| reach::attacking(world, player)
         == Some(raider)));
+
+    let notice = sim.id::<NotificationDef>("notice");
+    stage(
+        &mut sim.world,
+        conn,
+        Staging::Notify {
+            notification: notice,
+        },
+    )
+    .expect("a notification");
+    let notice = sim.spoken("notice");
+    assert!(sim.told(1).contains(&notice));
 }
 
 #[test]
@@ -247,6 +260,14 @@ fn sim() -> Sim {
             json!([{ "type": "script", "script": path("script", "raider_hunt") }]),
         )
         .row("script", "raider_hunt", hunting(1.0))
+        .row(
+            "notification",
+            "notice",
+            json!({
+                "kind": { "type": "narration", "label": "A notice" },
+                "text": ["Something happened."],
+            }),
+        )
         .mark("talking")
         .sfx("ui_refuse")
         .sfx("ui_close")

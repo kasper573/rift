@@ -37,7 +37,8 @@ impl Manifest {
 
 /// A picture of the set: the shot's name and preset, where the picture is under the set, how big
 /// it is, the hash of its bytes, how many frames it has if it is an arrival, after how many of
-/// them the area stood whole, and whether its render crashed instead.
+/// them the area stood whole, whether its render crashed instead, and the parts of it that move
+/// on their own from one taking to the next, which no comparison holds against another.
 #[derive(Serialize, Deserialize, Clone, Debug)]
 pub struct TakenShot {
     pub name: String,
@@ -49,6 +50,17 @@ pub struct TakenShot {
     pub frames: Option<usize>,
     pub stood_after_frames: Option<usize>,
     pub crashed: bool,
+    #[serde(default)]
+    pub masks: Vec<PictureRect>,
+}
+
+/// A rect of a picture, in its pixels.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PictureRect {
+    pub x: u32,
+    pub y: u32,
+    pub width: u32,
+    pub height: u32,
 }
 
 impl TakenShot {
@@ -193,21 +205,37 @@ pub fn noise(game: &Path, shots: &Path, out: &Path, runs: usize) -> Result<(), S
         run(game, shots, set, VideoFilter::Both, None)?;
     }
     let adapter = adapter_of(&sets[0])?;
-    let first = Manifest::read(&sets[0].join(&adapter))?;
+    let sets: Vec<PathBuf> = sets.iter().map(|set| set.join(&adapter)).collect();
+    noise_between(&sets, out)
+}
+
+/// Writes each shot's allowance, three times the worst noise between the sets taken of it and at
+/// least the floor, to `out/thresholds.json`. Each set is the folder of one adapter's pictures, as
+/// `rift compare` takes them.
+pub fn noise_between(sets: &[PathBuf], out: &Path) -> Result<(), String> {
+    let [first_set, others @ ..] = sets else {
+        return Err("the noise shows between at least two sets".to_owned());
+    };
+    if others.is_empty() {
+        return Err("the noise shows between at least two sets".to_owned());
+    }
+    let first = Manifest::read(first_set)?;
+    let others: Vec<(&PathBuf, Manifest)> = others
+        .iter()
+        .map(|set| Manifest::read(set).map(|manifest| (set, manifest)))
+        .collect::<Result<_, _>>()?;
     let mut thresholds = Thresholds::default();
     for taken in &first.shots {
         let key = taken.key();
         if taken.crashed {
             return Err(format!("{key} crashed: no noise to measure"));
         }
-        let a = compare::settled_picture(&sets[0].join(&adapter), taken)?;
         let mut worst = Metrics {
             mssim: 1.0,
             worst_tile: 1.0,
             delta_e_share: 0.0,
         };
-        for set in &sets[1..] {
-            let manifest = Manifest::read(&set.join(&adapter))?;
+        for (set, manifest) in &others {
             let again = manifest
                 .shots
                 .iter()
@@ -216,7 +244,7 @@ pub fn noise(game: &Path, shots: &Path, out: &Path, runs: usize) -> Result<(), S
             if again.crashed {
                 return Err(format!("{key} crashed: no noise to measure"));
             }
-            let b = compare::settled_picture(&set.join(&adapter), again)?;
+            let (a, b) = compare::compared_pictures((first_set, taken), (set, again))?;
             worst = worst.worst(compare::measure(&a, &b));
         }
         let allowance = Allowance::of_noise(&worst, NOISE_TIMES);
@@ -231,6 +259,7 @@ pub fn noise(game: &Path, shots: &Path, out: &Path, runs: usize) -> Result<(), S
         );
         thresholds.shots.insert(key, allowance);
     }
+    std::fs::create_dir_all(out).map_err(|error| format!("{}: {error}", out.display()))?;
     write_json(&out.join(THRESHOLDS), &thresholds)?;
     println!("[noise] thresholds in {}", out.join(THRESHOLDS).display());
     Ok(())
@@ -318,6 +347,7 @@ fn draw(
                 frames: arriving.then_some(0),
                 stood_after_frames: None,
                 crashed: true,
+                masks: Vec::new(),
             },
             adapter: adapter.to_owned(),
         });
@@ -345,6 +375,7 @@ fn draw(
             frames: arriving.then_some(frames),
             stood_after_frames: outcome.stood_after_frames,
             crashed: false,
+            masks: Vec::new(),
         },
         adapter,
     })
@@ -370,7 +401,7 @@ fn move_into(from: &Path, to: &Path) -> Result<(), String> {
 }
 
 /// The hash of a picture's bytes, or of every frame's in order, and how many frames there were.
-fn hash_of(path: &Path) -> Result<(String, usize), String> {
+pub fn hash_of(path: &Path) -> Result<(String, usize), String> {
     let mut hasher = blake3::Hasher::new();
     let frames = if path.is_dir() {
         let mut frames: Vec<PathBuf> = std::fs::read_dir(path)

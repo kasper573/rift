@@ -74,6 +74,10 @@ enum Command {
         /// One short scenario per target without criteria, proving the harness alone.
         #[arg(long)]
         smoke: bool,
+        /// Takes pictures of what the client and the editor show instead of their frame rates,
+        /// into DIR by adapter, a set each for `rift compare`.
+        #[arg(long, value_name = "DIR")]
+        snapshots: Option<PathBuf>,
     },
     /// Simulated players against a running game server that takes any account's sign-in:
     /// COUNT of them, or as many as it holds within its tick budget.
@@ -126,6 +130,14 @@ enum Command {
         out: PathBuf,
         #[arg(long, default_value_t = 5)]
         runs: usize,
+    },
+    /// Writes each shot's allowance, three times the noise between SETS already taken of the same
+    /// shots (each the folder of one adapter's pictures, as `compare` takes them), to
+    /// OUT/thresholds.json.
+    NoiseBetween {
+        out: PathBuf,
+        #[arg(num_args = 2..)]
+        sets: Vec<PathBuf>,
     },
     /// Prints the JSON Schema of a protocol the binaries speak.
     #[command(subcommand)]
@@ -197,6 +209,7 @@ fn main() {
             compare,
             adapter,
             smoke,
+            snapshots,
         } => {
             let args = bench::BenchArgs {
                 game,
@@ -210,6 +223,7 @@ fn main() {
                 compare,
                 adapter,
                 smoke,
+                snapshots,
             };
             match bench::run(&args) {
                 Ok(code) => std::process::exit(code),
@@ -257,6 +271,7 @@ fn main() {
             out,
             runs,
         } => exit_on(snapshot::noise(&game, &shots, &out, runs)),
+        Command::NoiseBetween { out, sets } => exit_on(snapshot::noise_between(&sets, &out)),
         Command::Profile { game, out } => profile::run(game.as_deref(), &out),
         Command::Schema(Schema::Probe) => println!("{}", engine::systems::probe::schema()),
         Command::Schema(Schema::Server) => println!("{}", engine::systems::launch::server_schema()),
