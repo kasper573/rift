@@ -28,7 +28,7 @@ use ui::egui::{Color32, Pos2, Rect as ERect, Stroke as EStroke, Vec2};
 use super::camera::AreaCanvas;
 use super::{AreaFrame, AreaTool, selected_parts, shapes};
 use crate::app::Editor;
-use crate::doc::DocModule;
+use crate::doc::{DocModule, NodeId};
 use crate::forms;
 
 const LABEL_GAP: f32 = 2.0;
@@ -255,6 +255,8 @@ const MOST_PIECES: f32 = 32.0;
 #[derive(Clone, Default)]
 pub struct GroundLines {
     pub revision: u64,
+    /// The modules outlined, each by a run.
+    pub ids: Arc<[NodeId]>,
     pub runs: Arc<[GroundLine]>,
 }
 
@@ -554,7 +556,7 @@ fn ground_lines<'a>(
 ) -> GroundLines {
     static REVISION: AtomicU64 = AtomicU64::new(0);
     let area = frame.area();
-    let outlined: Vec<(&Footing, Color32, bool)> = modules
+    let outlined: Vec<(NodeId, &Footing, Color32, bool)> = modules
         .filter_map(|node| {
             let footing = frame.footing(node).filter(|_| frame.shown(node))?;
             let module = node.module();
@@ -563,15 +565,17 @@ fn ground_lines<'a>(
                 return None;
             }
             Some((
+                node.id,
                 footing,
                 wash(module.kind(), node.pointer, held.selected),
                 held.selected,
             ))
         })
         .collect();
+    let ids = outlined.iter().map(|(id, ..)| *id).collect();
     let runs: Vec<GroundLine> = outlined
         .into_par_iter()
-        .map(|(footing, color, bold)| GroundLine {
+        .map(|(_, footing, color, bold)| GroundLine {
             points: footing.bent(area),
             color,
             bold,
@@ -579,6 +583,7 @@ fn ground_lines<'a>(
         .collect();
     GroundLines {
         revision: REVISION.fetch_add(1, Ordering::Relaxed),
+        ids,
         runs: runs.into(),
     }
 }

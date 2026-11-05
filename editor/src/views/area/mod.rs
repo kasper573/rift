@@ -18,6 +18,7 @@ pub mod place;
 pub mod placement;
 pub mod population;
 pub mod problems;
+pub mod render_sync;
 pub mod resize;
 pub mod scatter;
 pub mod scene_tree;

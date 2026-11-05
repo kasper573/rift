@@ -21,10 +21,9 @@ use engine::core::render::world::layers::Layered;
 use engine::core::render::world::mannequin::Mannequin;
 use engine::core::render::world::mannequin::mannequin;
 use engine::core::render::world::rig_clip;
-use engine::core::render::world::sky::Daylight;
 use engine::core::render::{Look, camera};
-use engine::core::units::Meters;
 use engine::core::units::Seconds;
+use engine::core::units::{MeterSize, Meters};
 use engine::systems::actor::Action;
 use engine::systems::actor::layering::{self, Layering};
 use engine::systems::actor::model::{ActorModel, ModelId};
@@ -32,19 +31,17 @@ use engine::systems::actor::render;
 use engine::systems::actor::rigging::BuiltSkeleton;
 use engine::systems::actor::skeleton::Cue;
 use engine::systems::actor::stance::HandIndex;
-use engine::systems::area::scenery::{self, Eyes, Scenery, Sight};
+use engine::systems::area::scenery::{self, Eyes, Sight};
 use engine::systems::area::{Area, Picture, Weather};
 use ui::egui;
 
 use super::camera::OrbitCamera;
 use super::overlays::GroundLines;
+use super::render_sync::{Respawn, WorldSink};
 use crate::app::Editor;
 use crate::views::area::camera::LENS;
 
 const FIRST_LAYER: usize = 400;
-/// How wide the outlines over the ground are drawn, and those of what is selected.
-const LINE_PIXELS: f32 = 1.0;
-const BOLD_LINE_PIXELS: f32 = 2.0;
 
 /// What a view asks its viewport to show this frame.
 pub struct Request {
@@ -183,24 +180,15 @@ struct RenderedView {
     texture: egui::TextureId,
     size: [u32; 2],
     rendered: OrbitCamera,
-    stood: Option<Stood>,
+    scene: Respawn,
     stroke: Option<u64>,
     ghost: Option<(String, Entity)>,
     cast: Option<(Arc<[StandingActor]>, Vec<Entity>)>,
-    /// For each set of outlines, the revision laid, and the thin and the bold lines' gizmos.
-    lines: [Option<(u64, [Entity; 2])>; 2],
 }
 
 /// How far around the camera's target the covers, props and lights stand while it takes in the
 /// horizon, in the camera's distance from it.
 const HORIZON_REACH_PER_DISTANCE: f32 = 4.0;
-
-struct Stood {
-    scenery: Scenery,
-    area: Arc<Area>,
-    /// The weather the scenery was last lit under.
-    lit: Weather,
-}
 
 impl Viewports {
     /// Asks for `request` to be drawn for the next frame.
@@ -298,11 +286,10 @@ impl RenderedView {
             texture,
             size,
             rendered: OrbitCamera::default(),
-            stood: None,
+            scene: Respawn::new(root, layer),
             stroke: None,
             ghost: None,
             cast: None,
-            lines: [None; 2],
         }
     }
 
@@ -323,52 +310,17 @@ impl RenderedView {
             }
         }
         let area = request.picture.area.clone();
-        let stale = self
-            .stood
-            .as_ref()
-            .is_none_or(|stood| !Arc::ptr_eq(&stood.area, &area));
-        if stale && scenery::shaders_ready(world, &request.content, &area) {
-            let stood = scenery::spawn(
-                world,
-                &request.content,
-                &area,
-                RenderLayers::from_layers(&[self.layer]),
-            );
-            if let Some(old) = self.stood.take() {
-                scenery::despawn(world, old.scenery);
-            }
-            world.entity_mut(stood.root).insert(ChildOf(self.root));
-            scenery::light(
-                world,
-                &area,
-                &request.weather,
-                Daylight::Fixed,
-                stood,
-                self.camera,
-            );
-            self.stood = Some(Stood {
-                scenery: stood,
-                area: area.clone(),
-                lit: request.weather,
-            });
+        let anew = self
+            .scene
+            .area()
+            .is_none_or(|stood| !Arc::ptr_eq(stood, &area));
+        if self.scene.stand(world, &area, &request.content) && anew {
             self.stroke = None;
         }
-        if let Some(stood) = self.stood.as_mut()
-            && stood.lit != request.weather
-        {
-            scenery::light(
-                world,
-                &area,
-                &request.weather,
-                Daylight::Fixed,
-                stood.scenery,
-                self.camera,
-            );
-            stood.lit = request.weather;
-        }
+        self.scene.light(world, &request.weather, self.camera);
         world.insert_resource(scenery::shown_weather(&request.weather, 0.0));
         let ground = area.heights.height_at(request.camera.target);
-        if let Some(stood) = &self.stood {
+        {
             let viewport = Vec2::new(request.size[0] as f32, request.size[1] as f32);
             let view = request.camera.view(ground, viewport);
             let reach = view
@@ -377,9 +329,8 @@ impl RenderedView {
                     request.camera.distance.0 * HORIZON_REACH_PER_DISTANCE,
                 ));
             let at = request.camera.target;
-            scenery::view_from(
+            self.scene.see(
                 world,
-                stood.scenery,
                 Sight {
                     at,
                     reach,
@@ -397,65 +348,27 @@ impl RenderedView {
         sound(world, &area, &request.cast);
         self.people(world, request.cast);
         for (set, lines) in request.lines.iter().enumerate() {
-            self.outline(world, set, lines);
+            self.scene.outline_ids(world, set, &lines.ids, lines);
         }
-    }
-
-    /// Lays the outlines over the ground anew when they changed: drawn over the picture, every
-    /// line as many pixels wide however far off.
-    fn outline(&mut self, world: &mut World, set: usize, lines: &GroundLines) {
-        if self.lines[set].is_some_and(|(revision, _)| revision == lines.revision) {
-            return;
-        }
-        let mut drawn = [GizmoAsset::default(), GizmoAsset::default()];
-        for line in lines.runs.iter() {
-            let [r, g, b, a] = line.color.to_srgba_unmultiplied();
-            drawn[usize::from(line.bold)]
-                .linestrip(line.points.iter().copied(), Color::srgba_u8(r, g, b, a));
-        }
-        let handles = drawn.map(|asset| world.resource_mut::<Assets<GizmoAsset>>().add(asset));
-        let entities = match self.lines[set] {
-            Some((_, entities)) => entities,
-            None => [LINE_PIXELS, BOLD_LINE_PIXELS].map(|width| {
-                world
-                    .spawn((
-                        Gizmo {
-                            line_config: GizmoLineConfig { width, ..default() },
-                            depth_bias: -1.0,
-                            ..default()
-                        },
-                        ChildOf(self.root),
-                    ))
-                    .id()
-            }),
-        };
-        for (entity, handle) in entities.into_iter().zip(handles) {
-            if let Some(mut gizmo) = world.get_mut::<Gizmo>(entity) {
-                gizmo.handle = handle;
-            }
-        }
-        self.lines[set] = Some((lines.revision, entities));
     }
 
     /// Lays the terrain as the stroke shapes it, once per step of the stroke.
     fn shape(&mut self, world: &mut World, request: &Request) {
-        let Some(stood) = &self.stood else {
+        let Some(area) = self.scene.area().cloned() else {
             return;
         };
+        let whole = area.size.bounds();
         match &request.stroke {
             Some(stroke) if self.stroke != Some(stroke.revision) => {
-                scenery::lay_ground(world, stood.scenery, &stroke.heights, &stroke.paint);
+                self.scene
+                    .upload_region(world, whole, &stroke.heights, &stroke.paint);
                 self.stroke = Some(stroke.revision);
             }
             Some(_) => {}
             None => {
                 if self.stroke.take().is_some() {
-                    scenery::lay_ground(
-                        world,
-                        stood.scenery,
-                        &stood.area.heights,
-                        &stood.area.paint,
-                    );
+                    self.scene
+                        .upload_region(world, whole, &area.heights, &area.paint);
                 }
             }
         }
@@ -562,10 +475,8 @@ impl RenderedView {
         self.cast = Some((cast, kept));
     }
 
-    fn despawn(self, world: &mut World) {
-        if let Some(stood) = self.stood {
-            scenery::despawn(world, stood.scenery);
-        }
+    fn despawn(mut self, world: &mut World) {
+        self.scene.despawn(world);
         world.despawn(self.root);
         world.despawn(self.camera);
         world
