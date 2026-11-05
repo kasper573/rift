@@ -13,6 +13,7 @@ use crate::core::render::world::sky::Daylight;
 use crate::core::render::{CameraFraming, CameraRig, camera};
 use crate::core::render::{GroundHeights, WorldCamera, ground_height, world_point};
 use crate::core::units::{MeterSize, Meters};
+use crate::core::vfx::cover::ShownWeather;
 use crate::core::vfx::render::SiteExtent;
 use crate::systems::movement::RenderPosition;
 use crate::systems::player::session::MyCharacter;
@@ -137,7 +138,13 @@ fn follow_daylight(world: &mut World) {
     let area = super::shared(&content, area_id).clone();
     let weather = super::weather::weather_now(world, area_id, &area.climate);
     let flash = light_area(world, area_id, &area, &weather);
-    world.insert_resource(scenery::shown_weather(&weather, flash));
+    let shown = scenery::shown_weather(&weather, flash);
+    match world.get_resource_mut::<ShownWeather>() {
+        Some(mut was) => {
+            was.set_if_neq(shown);
+        }
+        None => world.insert_resource(shown),
+    }
 }
 
 /// Lights the shown scenery of `area` under `weather` and lets its rain fall, returning how
@@ -164,7 +171,13 @@ fn light_area(
         return 0.0;
     };
     scenery::light(world, area, weather, daylight, stood, camera);
-    if let Some(standing) = world.resource_mut::<ShownArea>().0.as_mut() {
+    if let Some(mut shown) = world.get_resource_mut::<ShownArea>()
+        && shown
+            .0
+            .as_ref()
+            .is_some_and(|standing| standing.shone != Some(daylight))
+        && let Some(standing) = shown.0.as_mut()
+    {
         standing.shone = Some(daylight);
     }
     super::rain::fall(world, area_id, area, weather, stood.rain, camera)

@@ -78,7 +78,7 @@ fn problems(game: &Path) -> Vec<String> {
 
 /// Every shader that doesn't compile as the client compiles it, in a pass it draws in.
 fn check_shaders(content: &Content, out: &mut Vec<String>) {
-    for failed in vfx::compile::uncompiled(content, content.built::<GameSettings>().look.clone()) {
+    for failed in vfx::compile::uncompiled(content, content.built::<GameSettings>().look) {
         out.push(format!(
             "{}: does not compile in its {} pass: {}",
             vfx::shader::shader_file(failed.shader.path(content)),

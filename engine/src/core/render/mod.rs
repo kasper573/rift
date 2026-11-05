@@ -83,7 +83,7 @@ impl Plugin for WorldRenderPlugin {
 /// How a game looks: how its camera frames the world, how the picture is finished, the air and
 /// clouds over the world and the light they let through, how its surfaces take the light, and
 /// how what hides the player clears away.
-#[derive(Resource, JsonSchema, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Resource, JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Look {
     pub camera: CameraFraming,
@@ -98,7 +98,7 @@ pub struct Look {
 /// Frames the camera and finishes the world's picture as the game's look says, once it is known
 /// and whenever it changes.
 fn take_look(world: &mut World) {
-    let look = world.resource::<Look>().clone();
+    let look = *world.resource::<Look>();
     match world.get_resource_mut::<CameraRig>() {
         Some(mut rig) => rig.reframe(look.camera),
         None => world.insert_resource(CameraRig::new(look.camera)),

@@ -30,7 +30,7 @@ pub const MAX_HAZE_BOXES: usize = 32;
 
 /// The haze a camera sees the world through: `color`, lying in `boxes` (the first `count` of
 /// them), with the ground `ground` high under the eye.
-#[derive(Component, ExtractComponent, ShaderType, Clone, Copy, Debug, Default)]
+#[derive(Component, ExtractComponent, ShaderType, Clone, Copy, Debug, Default, PartialEq)]
 #[extract_app(RenderApp)]
 pub struct Haze {
     pub color: Vec3,

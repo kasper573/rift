@@ -23,6 +23,7 @@ use std::sync::Arc;
 
 use bevy::app::Propagate;
 use bevy::camera::visibility::RenderLayers;
+use bevy::ecs::component::Mutable;
 use bevy::light::FogVolume;
 use bevy::light::atmosphere::ScatteringMedium;
 use bevy::mesh::MeshTag;
@@ -111,7 +112,7 @@ pub fn spawn(
             ))
             .id()
     });
-    let look = world.resource::<Look>().clone();
+    let look = *world.resource::<Look>();
     let humidity = humidity(&area.climate.first(), &look);
     let atmosphere = sky::atmosphere(
         &mut world.resource_mut::<Assets<ScatteringMedium>>(),
@@ -930,7 +931,8 @@ fn parts_of(world: &World, entity: Entity) -> usize {
 /// Lights `area` for the hour under its weather: its sun turned and coloured, or by night the full
 /// moon in its place, the eye opened to how strongly it shines, its clouds carried
 /// on by the wind, and the ambient light, the haze of the sun as it shines and the area's sky put
-/// on `camera`; cheap enough to do every frame.
+/// on `camera`; cheap enough to do every frame. Only what comes out different is written, so
+/// what follows the light sees a change only when there is one.
 pub fn light(
     world: &mut World,
     area: &Area,
@@ -939,20 +941,25 @@ pub fn light(
     scenery: Scenery,
     camera: Entity,
 ) {
-    let look = world.resource::<Look>().clone();
+    // Copied out rather than taken out by `resource_scope`, whose putting back counts as a
+    // change to the look and has everything that follows it remade every frame.
+    let look = *world.resource::<Look>();
+    let look = &look;
     let (clouds, water) = (weather.clouds, weather.water);
-    let sun = sun_at(area, weather, daylight, &look);
+    let sun = sun_at(area, weather, daylight, look);
     let elevation = sun.map(|sun| sun.elevation);
     let ambient = AmbientLight {
         color: area.lighting.ambient.color(),
         brightness: look.light.ambient_nits
-            * sky::ambient_at(daylight, elevation, clouds, water, &look),
+            * sky::ambient_at(daylight, elevation, clouds, water, look),
         ..default()
     };
     world.resource_mut::<CloudSheet>().cover(clouds, water);
-    let shining = sun.map(|sun| sky::shining(sun, clouds, water, &look));
+    let shining = sun.map(|sun| sky::shining(sun, clouds, water, look));
     if let (Some(sun), Some(shining), Some(entity)) = (sun, shining, scenery.sun) {
-        if let Some(mut light) = world.get_mut::<DirectionalLight>(entity) {
+        if let Some(mut light) = world.get_mut::<DirectionalLight>(entity)
+            && (light.color, light.illuminance) != (shining.color, shining.illuminance)
+        {
             light.color = shining.color;
             light.illuminance = shining.illuminance;
         }
@@ -972,13 +979,13 @@ pub fn light(
             sheet.lay(placed, drifted, &mut world.resource_mut::<Assets<Image>>())
         });
         if let Some(mut transform) = world.get_mut::<Transform>(entity) {
-            *transform = cast;
+            transform.set_if_neq(cast);
         }
         if scenery.sky.is_some() || scenery.rain.is_some() {
             let heavens = Heavens::new(
                 placed.back().as_vec3(),
                 shining.color,
-                shining.illuminance / (look.light.sun_lux * sky::clouded(clouds, water, &look)),
+                shining.illuminance / (look.light.sun_lux * sky::clouded(clouds, water, look)),
                 -lights::toward(sun.elevation, sun.azimuth),
                 sky::night(daylight, sun, &look.sky),
                 &look.clouds,
@@ -1005,27 +1012,26 @@ pub fn light(
     }
     let mut tone = area.lighting.grade.tone();
     let mut lit = 1.0;
-    if let (Some(shining), Some(noon)) = (shining, sun_at(area, weather, Daylight::Fixed, &look)) {
-        let opened = sky::adaptation(daylight, shining, &look);
+    if let (Some(shining), Some(noon)) = (shining, sun_at(area, weather, Daylight::Fixed, look)) {
+        let opened = sky::adaptation(daylight, shining, look);
         tone.exposure.0 += opened.0;
-        let sky_light = sky::ambient_at(daylight, elevation, clouds, water, &look)
-            / sky::ambient_at(Daylight::Fixed, None, clouds, water, &look);
-        lit = sky::lit(shining, sky_light, opened, noon, &look);
+        let sky_light = sky::ambient_at(daylight, elevation, clouds, water, look)
+            / sky::ambient_at(Daylight::Fixed, None, clouds, water, look);
+        lit = sky::lit(shining, sky_light, opened, noon, look);
     }
     let rains = world.get_resource::<CameraRig>().map_or(0.0, |rig| {
         world.resource::<RainField>().rain_at(rig.target().xz())
     });
-    let moist = humidity(weather, &look);
+    let moist = humidity(weather, look);
     let eye = world
         .get::<GlobalTransform>(camera)
         .map(GlobalTransform::translation);
     if let Some(eye) = eye {
         let ground = area.heights.height_at(Pos::new(eye.x, eye.z));
         if let Some(air) = scenery.air {
-            let low_air = air_round(area, eye.xz(), ground, moist);
-            if let Ok(mut air) = world.get_entity_mut(air) {
-                air.insert(low_air);
-            }
+            let (volume, placed) = air_round(area, eye.xz(), ground, moist);
+            hold_by(world, air, volume, same_air);
+            hold(world, air, placed);
         }
         let color = sky::haze(sun, lit, area.lighting.sky, moist, rains, &look.sky);
         let mut banks: Vec<&FogBank> = area.fogs.iter().collect();
@@ -1035,18 +1041,73 @@ pub fn light(
             ground.0,
             banks.into_iter().map(|bank| bank.seen(moist, rains)),
         );
-        if let Ok(mut camera) = world.get_entity_mut(camera) {
-            camera.insert(haze);
-        }
+        hold(world, camera, haze);
     }
-    if let Ok(mut camera) = world.get_entity_mut(camera) {
-        let grade = camera.get::<WorldPicture>().map(|picture| picture.0);
-        camera.insert(ambient);
-        if let Some(grade) = grade {
-            camera.insert(camera::grading(tone, grade));
-        }
+    hold_by(world, camera, ambient, same_ambient);
+    if let Some(grade) = world.get::<WorldPicture>(camera).map(|picture| picture.0) {
+        hold(world, camera, camera::grading(tone, grade));
     }
     sky::show(world, camera, area.lighting.sky);
+}
+
+/// Gives `entity` `value`, unless it holds it already.
+fn hold<C: Component<Mutability = Mutable> + PartialEq>(
+    world: &mut World,
+    entity: Entity,
+    value: C,
+) {
+    hold_by(world, entity, value, C::eq);
+}
+
+/// Gives `entity` `value`, unless it holds one `same` takes for it already.
+fn hold_by<C: Component<Mutability = Mutable>>(
+    world: &mut World,
+    entity: Entity,
+    value: C,
+    same: fn(&C, &C) -> bool,
+) {
+    let Ok(mut held) = world.get_entity_mut(entity) else {
+        return;
+    };
+    match held.get_mut::<C>() {
+        Some(mut current) => {
+            if !same(&current, &value) {
+                *current = value;
+            }
+        }
+        None => {
+            held.insert(value);
+        }
+    }
+}
+
+fn same_ambient(a: &AmbientLight, b: &AmbientLight) -> bool {
+    (a.color, a.brightness, a.affects_lightmapped_meshes)
+        == (b.color, b.brightness, b.affects_lightmapped_meshes)
+}
+
+fn same_air(a: &FogVolume, b: &FogVolume) -> bool {
+    (
+        a.fog_color,
+        a.density_factor,
+        &a.density_texture,
+        a.density_texture_offset,
+        a.absorption,
+        a.scattering,
+        a.scattering_asymmetry,
+        a.light_tint,
+        a.light_intensity,
+    ) == (
+        b.fog_color,
+        b.density_factor,
+        &b.density_texture,
+        b.density_texture_offset,
+        b.absorption,
+        b.scattering,
+        b.scattering_asymmetry,
+        b.light_tint,
+        b.light_intensity,
+    )
 }
 
 /// The low air the sun's shafts show in round `eye` (x east, y south), over ground `ground` high:

@@ -118,11 +118,14 @@ pub fn show(world: &mut World, camera: Entity, sky: Sky) {
             },
         ));
     }
-    if let Some(mut light) = camera.get_mut::<GeneratedEnvironmentMapLight>() {
-        light.intensity = match sky {
-            Sky::Air => sky_light,
-            Sky::Dark => 0.0,
-        };
+    let intensity = match sky {
+        Sky::Air => sky_light,
+        Sky::Dark => 0.0,
+    };
+    if let Some(mut light) = camera.get_mut::<GeneratedEnvironmentMapLight>()
+        && light.intensity != intensity
+    {
+        light.intensity = intensity;
     }
 }
 

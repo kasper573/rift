@@ -452,7 +452,7 @@ pub fn area(folder: &Path, shot: &Path, out: &Path, patch: bool) {
         )))
         .insert_resource(Rng::new(seed))
         .add_plugins((WorldScenePlugin, VfxMaterialsPlugin, SceneryPlugin))
-        .insert_resource(content.built::<GameSettings>().look.clone())
+        .insert_resource(content.built::<GameSettings>().look)
         .insert_resource(content)
         .insert_resource(video)
         .init_resource::<Read>()
@@ -764,7 +764,7 @@ fn set_up(
     if !scenery::shaders_ready(world, content, &picture.area) {
         return None;
     }
-    let look = world.resource::<Look>().clone();
+    let look = *world.resource::<Look>();
     let view = shot.arrive.map_or(shot.view, |arrive| arrive.from);
     let framed = view.framed(&picture.area.heights, &look);
     let placed = Transform::from_translation(framed.eye).looking_at(framed.target, Vec3::Y);
@@ -855,7 +855,7 @@ fn see(world: &mut World, stood: scenery::Scenery, framed: Framed, shot: &Shot) 
 
 /// Jumps the camera from the view the area stood for to the shot's own.
 fn jump(world: &mut World, shot: &Shot, stood: &Stood) {
-    let look = world.resource::<Look>().clone();
+    let look = *world.resource::<Look>();
     let framed = shot.view.framed(&stood.area.heights, &look);
     world.entity_mut(stood.camera).insert((
         camera::lens(framed.fov, shot.width, shot.height),

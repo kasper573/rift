@@ -196,7 +196,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
             ),
             None => (Vec3::new(0.0, 0.5, 0.0), 1.0),
         };
-        let look = world.resource::<Look>().clone();
+        let look = *world.resource::<Look>();
         let target = {
             let mut image =
                 Image::new_target_texture(SIZE, SIZE, TextureFormat::Rgba8UnormSrgb, None);
