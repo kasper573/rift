@@ -19,10 +19,10 @@ use bevy::tasks::futures::check_ready;
 use bevy::tasks::futures_lite::future;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 
+use super::plan::{KEEP_SHARE, Plan, Planner, Seen};
 use super::regions::{Cut, Merge, Region, Unstood};
 use super::{
-    Budget, KEEP_SHARE, Making, Merged, PLACEMENT_CELL, Seen, Streaming, distance_to, mesh_bytes,
-    take_away,
+    Budget, Making, Merged, PLACEMENT_CELL, Streaming, distance_to, mesh_bytes, take_away,
 };
 use crate::core::assets;
 use crate::core::content::Content;
@@ -30,10 +30,9 @@ use crate::core::content::media::GltfInfos;
 use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::ground::{Heightfield, PaintMap, SAMPLES_PER_METER, WaterSurface};
 use crate::core::math::{Pos, Rect, Size};
-use crate::core::render::camera::ground_pos;
+use crate::core::render::camera::Lens;
 use crate::core::render::world::cover::{self, CopyModel, CoverMaterial};
 use crate::core::render::world::lod::GRAIN_PIXELS;
-use crate::core::render::world_point;
 use crate::core::units::{MeterSize, Meters, Radians, Seconds};
 use crate::core::vfx::ParamFill;
 use crate::core::vfx::render::{self as vfx_render, Run, SiteFrame};
@@ -173,26 +172,109 @@ impl Covers {
     }
 }
 
-/// Stands what `cut` takes in of the covers: the chunks of the leaves, and the merged meshes of
+/// Every cover's pieces as a plan measures them, and how many pixels the paint they grow on holds
+/// across and down.
+pub(super) struct CoverPieces {
+    layers: Vec<Vec<PieceSize>>,
+    paint: (u32, u32),
+}
+
+/// How a cover's piece measures: the most a copy of it measures across where that is known, how
+/// far across its smallest copies or blades measure, and whether it strews a prop.
+struct PieceSize {
+    extent: Option<Meters>,
+    smallest: Option<Meters>,
+    strewn: bool,
+}
+
+impl Covers {
+    /// The covers' pieces as a plan measures them, growing on `paint`.
+    pub(super) fn pieces(&self, paint: &PaintMap) -> CoverPieces {
+        CoverPieces {
+            layers: self
+                .layers
+                .iter()
+                .map(|layer| {
+                    layer
+                        .pieces
+                        .iter()
+                        .map(|piece| PieceSize {
+                            extent: piece.extent,
+                            smallest: piece.smallest(),
+                            strewn: piece.strewn.is_some(),
+                        })
+                        .collect()
+                })
+                .collect(),
+            paint: paint.pixels(),
+        }
+    }
+}
+
+/// What a plan stands of the covers: the chunks of the pieces near the view, those of them that
+/// stay where they stand already, each merged region with the pieces it stands merged, and every
+/// piece a merged region shows.
+#[derive(Default)]
+pub(super) struct CoversPlan {
+    near: Vec<CoverChunk>,
+    kept: HashSet<CoverChunk>,
+    merging: Vec<(Merge, Vec<PieceAt>)>,
+    shown: HashSet<PieceAt>,
+}
+
+/// What `cut` stands of the covers, seen from `seen`: the chunks of the leaves, and the merged
+/// meshes of every coarser region.
+pub(super) fn plan(planner: &Planner, heights: &Heightfield, seen: &Seen, cut: &Cut) -> CoversPlan {
+    let pieces = &planner.pieces;
+    if pieces.layers.is_empty() {
+        return CoversPlan::default();
+    }
+    let lens = seen.lens();
+    let shown = shown_pieces(pieces, lens, cut);
+    let chunked = chunked_pieces(pieces, lens, &shown);
+    let near = near_chunks(pieces, heights, seen, cut, &chunked, 1.0).collect();
+    let kept = near_chunks(pieces, heights, seen, cut, &chunked, KEEP_SHARE).collect();
+    let merging = shown
+        .iter()
+        .map(|(merge, pieces)| {
+            let merged = pieces
+                .iter()
+                .filter(|piece| {
+                    !chunked
+                        .get(merge)
+                        .is_some_and(|chunked| chunked.contains(piece))
+                })
+                .copied()
+                .collect();
+            (*merge, merged)
+        })
+        .collect();
+    CoversPlan {
+        near,
+        kept,
+        merging,
+        shown: shown.into_values().flatten().collect(),
+    }
+}
+
+/// Stands what `plan` takes in of the covers: the chunks of the leaves, and the merged meshes of
 /// every coarser region; where it doesn't stand yet.
 pub(super) fn stand(
     world: &mut World,
     streaming: &mut Streaming,
+    planner: &Planner,
+    plan: &Plan,
     root: Entity,
-    seen: Seen,
-    cut: &Cut,
     budget: &mut Budget,
 ) -> Unstood {
     let mut unstood = Unstood::default();
     if streaming.covers.layers.is_empty() {
         return unstood;
     }
-    let shown = shown_pieces(streaming, seen, cut);
-    prepare_models(world, streaming, &shown);
-    let chunked = chunked_pieces(streaming, seen, &shown);
+    prepare_models(world, streaming, &plan.covers.shown);
     let mut unstood_chunks: HashSet<PaintChunk> = HashSet::default();
     let mut missing = Vec::new();
-    for key in near_chunks(streaming, seen, cut, &chunked, 1.0) {
+    for &key in &plan.covers.near {
         match streaming.covers.chunks.get(&key) {
             None => missing.push(key),
             Some(parts) if parts.iter().any(|&part| cover::strewing(world, part)) => {
@@ -215,47 +297,38 @@ pub(super) fn stand(
     for chunk in unstood_chunks {
         unstood.add(chunk.bounds());
     }
-    let merging: Vec<(Merge, Vec<PieceAt>)> = shown
-        .into_iter()
-        .filter(|(merge, _)| in_view(streaming, seen, merge.region))
-        .map(|(merge, pieces)| {
-            let merged = pieces
-                .into_iter()
-                .filter(|piece| {
-                    !chunked
-                        .get(&merge)
-                        .is_some_and(|chunked| chunked.contains(piece))
-                })
-                .collect();
-            (merge, merged)
-        })
-        .collect();
-    for (merge, merged) in merging {
-        if !stand_merge(world, streaming, root, seen, merge, &merged, budget) {
-            unstood.add(streaming.regions.bounds(merge.region));
+    let lens = plan.seen.lens();
+    for (merge, merged) in &plan.covers.merging {
+        if !stand_merge(
+            world,
+            streaming,
+            planner,
+            root,
+            lens,
+            (*merge, merged),
+            budget,
+        ) {
+            unstood.add(planner.regions.bounds(merge.region));
         }
     }
     unstood
 }
 
-/// Takes down what stood of the covers for an earlier view and stands for none in `cut`, wherever
-/// what stands for `cut` does, and what stood for ground sculpted or painted anew once all of it
-/// does. A merge for an earlier view that shows nothing yet is given up at once.
+/// Takes down what stood of the covers for an earlier plan and stands for none in `plan`,
+/// wherever what stands for `plan` does, and what stood for ground sculpted or painted anew once
+/// all of it does. A merge for an earlier plan that shows nothing yet is given up at once.
 pub(super) fn clear(
     world: &mut World,
     streaming: &mut Streaming,
-    seen: Seen,
-    cut: &Cut,
+    planner: &Planner,
+    plan: &Plan,
     unstood: &Unstood,
 ) {
-    let chunked = chunked_pieces(streaming, seen, &shown_pieces(streaming, seen, cut));
-    let kept: HashSet<CoverChunk> =
-        near_chunks(streaming, seen, cut, &chunked, KEEP_SHARE).collect();
-    let wanted: HashSet<Merge> = cut
-        .merges
+    let wanted: HashSet<Merge> = plan
+        .covers
+        .merging
         .iter()
-        .filter(|merge| in_view(streaming, seen, merge.region))
-        .copied()
+        .map(|(merge, _)| *merge)
         .collect();
     let covers = &mut streaming.covers;
     if unstood.is_empty() {
@@ -264,7 +337,7 @@ pub(super) fn clear(
         }
     }
     covers.chunks.retain(|key, chunk| {
-        let keep = kept.contains(key) || !unstood.stands_over(key.chunk.bounds());
+        let keep = plan.covers.kept.contains(key) || !unstood.stands_over(key.chunk.bounds());
         if !keep {
             for &part in chunk.iter() {
                 take_away(world, part);
@@ -272,7 +345,7 @@ pub(super) fn clear(
         }
         keep
     });
-    let regions = &streaming.regions;
+    let regions = &planner.regions;
     covers.merged.retain(|merge, merged| {
         let keep = wanted.contains(merge)
             || !merged.stood().is_empty() && !unstood.stands_over(regions.bounds(merge.region));
@@ -289,36 +362,34 @@ pub(super) fn clear(
 /// times its reach and its pixels' distance, and every chunk of the merged regions' pieces that
 /// are `chunked` there.
 fn near_chunks<'a>(
-    streaming: &'a Streaming,
-    seen: Seen,
+    pieces: &'a CoverPieces,
+    heights: &'a Heightfield,
+    seen: &'a Seen,
     cut: &'a Cut,
     chunked: &'a HashMap<Merge, Vec<PieceAt>>,
     share: f32,
 ) -> impl Iterator<Item = CoverChunk> + 'a {
-    let eye = seen.view.eye();
-    let covers = &streaming.covers;
+    let lens = seen.lens();
     let in_reach =
-        move |chunk: PaintChunk| distance_to(chunk.bounds(), seen.at) <= seen.reach.0 * share;
+        move |chunk: PaintChunk| distance_to(chunk.bounds(), seen.at()) <= seen.reach.0 * share;
     let leaves = cut.leaves.iter().flat_map(move |&leaf| {
-        region_chunks(streaming, leaf)
+        region_chunks(pieces.paint, leaf)
             .filter(move |&chunk| in_reach(chunk))
             .flat_map(move |chunk| {
                 let bounds = chunk.bounds();
-                let across = distance_to(bounds, ground_pos(eye));
-                let below = eye.y - streaming.heights.height_at(bounds.center()).0;
-                let shown_at = seen.detail(across.hypot(below)).distance();
-                covers
+                let ground = heights.height_at(bounds.center());
+                let shown_at = seen.detail(seen.over(bounds, ground, ground)).distance();
+                pieces
                     .layers
                     .iter()
                     .enumerate()
-                    .flat_map(move |(layer, cover)| {
-                        cover
-                            .pieces
+                    .flat_map(move |(layer, sizes)| {
+                        sizes
                             .iter()
                             .enumerate()
-                            .filter(move |(_, piece)| {
-                                piece.extent.is_none_or(|extent| {
-                                    shown_at.0 <= seen.view.shown_within(extent).0 * share
+                            .filter(move |(_, size)| {
+                                size.extent.is_none_or(|extent| {
+                                    shown_at.0 <= lens.shown_within(extent).0 * share
                                 })
                             })
                             .map(move |(piece, _)| CoverChunk {
@@ -328,17 +399,21 @@ fn near_chunks<'a>(
                     })
             })
     });
-    let merged = chunked.iter().flat_map(move |(merge, pieces)| {
-        region_chunks(streaming, merge.region)
+    let merged = chunked.iter().flat_map(move |(merge, pieces_at)| {
+        region_chunks(pieces.paint, merge.region)
             .filter(move |&chunk| in_reach(chunk))
-            .flat_map(move |chunk| pieces.iter().map(move |&piece| CoverChunk { piece, chunk }))
+            .flat_map(move |chunk| {
+                pieces_at
+                    .iter()
+                    .map(move |&piece| CoverChunk { piece, chunk })
+            })
     });
     leaves.chain(merged)
 }
 
-/// The chunks of paint within `region`.
-fn region_chunks(streaming: &Streaming, region: Region) -> impl Iterator<Item = PaintChunk> {
-    let (columns, rows) = streaming.paint.pixels();
+/// The chunks of paint `pixels` across and down within `region`.
+fn region_chunks(pixels: (u32, u32), region: Region) -> impl Iterator<Item = PaintChunk> {
+    let (columns, rows) = pixels;
     let side = (((PLACEMENT_CELL.0 * SAMPLES_PER_METER as f32) as u32) << region.level)
         / cover::CHUNK_CELLS;
     let (chunk_columns, chunk_rows) = (
@@ -351,62 +426,37 @@ fn region_chunks(streaming: &Streaming, region: Region) -> impl Iterator<Item = 
     })
 }
 
-/// Whether the view may see any of the covers over `region`.
-fn in_view(streaming: &Streaming, seen: Seen, region: Region) -> bool {
-    let bounds = streaming.regions.bounds(region);
-    let heights = streaming.heights.range();
-    let tallest = streaming
-        .covers
-        .layers
-        .iter()
-        .flat_map(|layer| &layer.pieces)
-        .filter_map(|piece| piece.extent)
-        .fold(0.0, |tallest: f32, extent| tallest.max(extent.0));
-    seen.view.may_see(
-        world_point(bounds.min(), heights.lowest),
-        world_point(bounds.max(), Meters(heights.highest.0 + tallest)),
-    )
-}
-
-/// The pieces of every layer each merged region of `cut` shows: those that span a pixel at the
-/// detail the view shows it at.
-fn shown_pieces(streaming: &Streaming, seen: Seen, cut: &Cut) -> HashMap<Merge, Vec<PieceAt>> {
+/// The pieces of every layer each merged region of `cut` shows: those that span a pixel through
+/// `lens` at the detail the region shows at.
+fn shown_pieces(pieces: &CoverPieces, lens: Lens, cut: &Cut) -> HashMap<Merge, Vec<PieceAt>> {
     cut.merges
         .iter()
         .map(|&merge| {
             let nearest = merge.detail.distance();
-            let pieces = streaming
-                .covers
+            let shown = pieces
                 .layers
                 .iter()
                 .enumerate()
-                .flat_map(|(layer, cover)| {
-                    cover
-                        .pieces
+                .flat_map(|(layer, sizes)| {
+                    sizes
                         .iter()
                         .enumerate()
-                        .filter(|(_, piece)| {
-                            piece
-                                .extent
-                                .is_none_or(|extent| nearest.0 <= seen.view.shown_within(extent).0)
+                        .filter(|(_, size)| {
+                            size.extent
+                                .is_none_or(|extent| nearest.0 <= lens.shown_within(extent).0)
                         })
                         .map(move |(piece, _)| PieceAt { layer, piece })
                 })
                 .collect();
-            (merge, pieces)
+            (merge, shown)
         })
         .collect()
 }
 
 /// Sets the model of every prop strewn by a piece a merged region shows on its way to being ready
 /// to merge: made ready off the main thread once it has loaded.
-fn prepare_models(
-    world: &mut World,
-    streaming: &mut Streaming,
-    shown: &HashMap<Merge, Vec<PieceAt>>,
-) {
-    let wanted: HashSet<PieceAt> = shown.values().flatten().copied().collect();
-    for PieceAt { layer, piece } in wanted {
+fn prepare_models(world: &mut World, streaming: &mut Streaming, shown: &HashSet<PieceAt>) {
+    for &PieceAt { layer, piece } in shown {
         let Some(strewn) = streaming.covers.layers[layer].pieces[piece].strewn.as_mut() else {
             continue;
         };
@@ -428,25 +478,24 @@ fn prepare_models(
     }
 }
 
-/// The pieces of `shown` that each merged region the view may see strews chunk by chunk, as a leaf
-/// does: those strewing a prop whose smallest copies span `STREWN_PIXELS` there.
+/// The pieces of `shown` that each merged region strews chunk by chunk, as a leaf does: those
+/// strewing a prop whose smallest copies span `STREWN_PIXELS` there through `lens`.
 fn chunked_pieces(
-    streaming: &Streaming,
-    seen: Seen,
+    pieces: &CoverPieces,
+    lens: Lens,
     shown: &HashMap<Merge, Vec<PieceAt>>,
 ) -> HashMap<Merge, Vec<PieceAt>> {
     shown
         .iter()
-        .filter(|(merge, _)| in_view(streaming, seen, merge.region))
-        .map(|(&merge, pieces)| {
-            let pixels_per_meter = seen.view.pixels_per_meter(merge.detail.distance());
-            let chunked = pieces
+        .map(|(&merge, shown)| {
+            let pixels_per_meter = lens.pixels_per_meter(merge.detail.distance());
+            let chunked = shown
                 .iter()
                 .filter(|&&PieceAt { layer, piece }| {
-                    let piece = &streaming.covers.layers[layer].pieces[piece];
-                    piece.strewn.is_some()
-                        && piece
-                            .smallest()
+                    let size = &pieces.layers[layer][piece];
+                    size.strewn
+                        && size
+                            .smallest
                             .is_some_and(|smallest| smallest.0 * pixels_per_meter >= STREWN_PIXELS)
                 })
                 .copied()
@@ -461,10 +510,10 @@ fn chunked_pieces(
 fn stand_merge(
     world: &mut World,
     streaming: &mut Streaming,
+    planner: &Planner,
     root: Entity,
-    seen: Seen,
-    merge: Merge,
-    pieces: &[PieceAt],
+    lens: Lens,
+    (merge, pieces): (Merge, &[PieceAt]),
     budget: &mut Budget,
 ) -> bool {
     let covers = &mut streaming.covers;
@@ -511,9 +560,8 @@ fn stand_merge(
         paint: streaming.paint.clone(),
         water: streaming.water.clone(),
         region: merge.region,
-        cells: (streaming.regions.bounds(merge.region).size.width * SAMPLES_PER_METER as f32)
-            as u32,
-        pixels_per_meter: seen.view.pixels_per_meter(merge.detail.distance()),
+        cells: (planner.regions.bounds(merge.region).size.width * SAMPLES_PER_METER as f32) as u32,
+        pixels_per_meter: lens.pixels_per_meter(merge.detail.distance()),
     };
     let task = AsyncComputeTaskPool::get().spawn(async move { region.covers(&far_pieces).await });
     streaming

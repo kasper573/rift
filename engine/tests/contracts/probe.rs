@@ -203,6 +203,7 @@ fn sample(frame: u32, dt_ms: Millis) -> FrameSample {
         upload_bytes: Bytes(0),
         vfx_writes: 0,
         posed: 0,
+        plans: 0,
     }
 }
 

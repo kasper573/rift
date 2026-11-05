@@ -32,7 +32,7 @@ use engine::systems::actor::render;
 use engine::systems::actor::rigging::BuiltSkeleton;
 use engine::systems::actor::skeleton::Cue;
 use engine::systems::actor::stance::HandIndex;
-use engine::systems::area::scenery::{self, Scenery};
+use engine::systems::area::scenery::{self, Eyes, Scenery, Sight};
 use engine::systems::area::{Area, Picture, Weather};
 use ui::egui;
 
@@ -376,7 +376,17 @@ impl RenderedView {
                 .unwrap_or(Meters(
                     request.camera.distance.0 * HORIZON_REACH_PER_DISTANCE,
                 ));
-            scenery::view_from(world, stood.scenery, request.camera.target, reach, view);
+            let at = request.camera.target;
+            scenery::view_from(
+                world,
+                stood.scenery,
+                Sight {
+                    at,
+                    reach,
+                    lens: view.lens(),
+                    eyes: Eyes::standing(view.eye(), at, ground),
+                },
+            );
         }
         if let Some(mut transform) = world.get_mut::<Transform>(self.camera) {
             *transform = request.camera.transform(ground);

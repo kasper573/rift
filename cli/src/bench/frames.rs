@@ -270,6 +270,7 @@ impl Window {
                 .map(Bytes),
             vfx_writes: median_u32(self.samples.iter().map(|sample| sample.vfx_writes)),
             posed: median_u32(self.samples.iter().map(|sample| sample.posed)),
+            plans: Some(self.samples.iter().map(|sample| sample.plans).sum()),
             interface: self.interface(first, last),
             worst_frame: worst,
         })
@@ -305,6 +306,8 @@ pub struct FrameStats {
     pub upload_bytes: Option<Bytes>,
     pub vfx_writes: Option<u32>,
     pub posed: Option<u32>,
+    /// How many times the scenery planned anew over the window, where the report counted it.
+    pub plans: Option<u32>,
     /// How long the editor took over its interface on the window's frames, where it told.
     pub interface: Option<InterfaceTimes>,
     /// The slowest of the window's slow frames, with the GPU's passes and the systems it waited

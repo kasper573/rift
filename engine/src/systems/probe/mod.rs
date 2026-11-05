@@ -268,6 +268,7 @@ pub fn sample_frame(world: &mut World) {
             upload_bytes: Bytes::default(),
             vfx_writes: work.vfx_writes,
             posed: work.posed,
+            plans: work.plans,
         },
         systems,
     );

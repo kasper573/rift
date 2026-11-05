@@ -35,6 +35,8 @@ pub struct FrameSample {
     pub vfx_writes: u32,
     /// Bodies posed anew this frame: set playing, turned or eased between clips.
     pub posed: u32,
+    /// Plans of what the scenery stands begun this frame, as its sight moved out of the last.
+    pub plans: u32,
 }
 
 /// The frames after the one a driver last saw, and how many of those the ring had already let go.

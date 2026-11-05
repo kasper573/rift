@@ -15,16 +15,15 @@ use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use bevy::world_serialization::{WorldAssetRoot, WorldInstanceReady};
 
+use super::plan::{KEEP_SHARE, Plan, Planner, Seen};
 use super::regions::{self, Cut, Merge, Region, Unstood};
-use super::{
-    Budget, KEEP_SHARE, Making, Merged, PLACEMENT_CELL, Seen, Streaming, mesh_bytes, take_away,
-};
+use super::{Budget, Making, Merged, PLACEMENT_CELL, Streaming, Streams, mesh_bytes, take_away};
 use crate::core::assets;
 use crate::core::content::Content;
 use crate::core::content::media::GltfInfos;
 use crate::core::ground::Heightfield;
-use crate::core::math::{Pos, Rect};
-use crate::core::render::camera::{View, ground_pos};
+use crate::core::math::Rect;
+use crate::core::render::camera::Lens;
 use crate::core::render::world::fade::Fades;
 use crate::core::render::world::lod::{MeshLevels, Simplifier};
 use crate::core::render::world::material::{MaterialLook, MaterialLooks};
@@ -34,7 +33,7 @@ use crate::core::render::world::merged::{
 use crate::core::render::world::model_stands;
 use crate::core::render::world_point;
 use crate::core::spatial::SpatialIndex;
-use crate::core::units::{MeterSize, Meters};
+use crate::core::units::Meters;
 use crate::core::vfx::render as vfx_render;
 use crate::core::vfx::uniform::ParamsUniform;
 use crate::systems::area::prop::{PropDef, PropId};
@@ -49,10 +48,9 @@ pub fn prop_transform(heights: &Heightfield, placed: &PropPlacement) -> Transfor
     }
 }
 
-/// An area's props as its scenery stands them: where each is filed and how far across, worked out
-/// off the frame, the models merged so far, and what stands of them.
+/// An area's props as its scenery stands them: the models merged so far, and what stands of them.
+#[derive(Default)]
 pub(super) struct Props {
-    filed: Making<Arc<Filed>>,
     models: HashMap<PropId, Model>,
     scenes: HashMap<usize, Entity>,
     /// What stands of each merged region, waiting first on the props it shows to be gathered,
@@ -60,24 +58,9 @@ pub(super) struct Props {
     merged: HashMap<Merge, Merged<Making<Shown>, MergedMesh>>,
 }
 
-impl Props {
-    pub(super) fn new(content: &Content, area: &Arc<Area>) -> Props {
-        let (content, area) = (content.clone(), area.clone());
-        Props {
-            filed: Making::Task(
-                AsyncComputeTaskPool::get()
-                    .spawn(async move { Arc::new(Filed::of(&content, &area)) }),
-            ),
-            models: HashMap::default(),
-            scenes: HashMap::default(),
-            merged: HashMap::default(),
-        }
-    }
-}
-
 /// Where each of an area's props is filed, and the most each measures across, by its index, where
 /// its model says.
-struct Filed {
+pub(super) struct Filed {
     index: SpatialIndex,
     extents: Vec<Option<Meters>>,
 }
@@ -95,7 +78,7 @@ impl Filed {
             .filter(move |&index| regions::holds(bounds, area.props[index].at))
     }
 
-    fn of(content: &Content, area: &Area) -> Filed {
+    pub(super) fn of(content: &Content, area: &Area) -> Filed {
         let mut index = SpatialIndex::new(PLACEMENT_CELL);
         index.refile_spots(area.props.iter().map(|placed| placed.at));
         let models = content.built::<GltfInfos>();
@@ -115,45 +98,82 @@ impl Filed {
     }
 }
 
-/// Stands what `cut` takes in of the area's props: a scene for each in a leaf, and the merged
+/// What a plan stands of the area's props: the props in its leaves that stand as scenes, nearest
+/// the view first, those of them in each leaf, and the props in its leaves whose scenes stay
+/// where they stand already.
+pub(super) struct PropsPlan {
+    near: Vec<usize>,
+    leaves: Vec<(Region, Vec<usize>)>,
+    kept: HashSet<usize>,
+}
+
+/// What `cut` stands of the area's props, seen from `seen`.
+pub(super) fn plan(planner: &Planner, heights: &Heightfield, seen: &Seen, cut: &Cut) -> PropsPlan {
+    let in_sight = |index: &usize, share: f32| !out_of_sight(planner, heights, seen, *index, share);
+    let leaves: Vec<(Region, Vec<usize>)> = cut
+        .leaves
+        .iter()
+        .map(|&leaf| {
+            let within = planner
+                .filed
+                .within(&planner.area, planner.regions.bounds(leaf));
+            (leaf, within.filter(|index| in_sight(index, 1.0)).collect())
+        })
+        .collect();
+    let mut near: Vec<usize> = leaves
+        .iter()
+        .flat_map(|(_, props)| props)
+        .copied()
+        .collect();
+    let apart = |index: usize| planner.area.props[index].at.distance_to(seen.at());
+    near.sort_by(|&a, &b| apart(a).total_cmp(&apart(b)));
+    let kept = cut
+        .leaves
+        .iter()
+        .flat_map(|&leaf| {
+            planner
+                .filed
+                .within(&planner.area, planner.regions.bounds(leaf))
+        })
+        .filter(|index| in_sight(index, KEEP_SHARE))
+        .collect();
+    PropsPlan { near, leaves, kept }
+}
+
+/// Stands what `plan` takes in of the area's props: a scene for each in a leaf, and the merged
 /// meshes of every coarser region; where it doesn't stand yet.
 pub(super) fn stand(
     world: &mut World,
     streaming: &mut Streaming,
+    planner: &Arc<Planner>,
+    plan: &Plan,
     root: Entity,
-    seen: Seen,
-    cut: &Cut,
     budget: &mut Budget,
 ) -> Unstood {
     let mut unstood = Unstood::default();
-    let Some(filed) = streaming.props.filed.made().cloned() else {
-        unstood.add(streaming.area.size.bounds());
-        return unstood;
-    };
-    let near: HashSet<usize> = in_leaves(streaming, &filed, cut)
-        .filter(|&index| !out_of_sight(streaming, &filed, seen, index, 1.0))
-        .collect();
-    stand_scenes(world, streaming, root, seen.at, &near, budget);
-    for &leaf in &cut.leaves {
-        if props_within(streaming, &filed, leaf).any(|index| {
-            near.contains(&index)
-                && streaming
-                    .props
-                    .scenes
-                    .get(&index)
-                    .is_none_or(|&scene| !model_stands(world, scene))
+    stand_scenes(world, streaming, root, &plan.props.near, budget);
+    for (leaf, props) in &plan.props.leaves {
+        if props.iter().any(|index| {
+            streaming
+                .props
+                .scenes
+                .get(index)
+                .is_none_or(|&scene| !model_stands(world, scene))
         }) {
-            unstood.add(streaming.regions.bounds(leaf));
+            unstood.add(planner.regions.bounds(*leaf));
         }
     }
-    for &merge in &cut.merges {
+    let lens = plan.seen.lens();
+    for &merge in &plan.cut.merges {
         if !streaming.props.merged.contains_key(&merge) {
-            let gathering = gather(streaming, &filed, merge, seen.view);
-            streaming.props.merged.insert(merge, gathering);
+            streaming
+                .props
+                .merged
+                .insert(merge, gather(planner, merge, lens));
         }
     }
     let mut wanted_models: HashSet<PropId> = HashSet::default();
-    for merge in &cut.merges {
+    for merge in &plan.cut.merges {
         if let Some(Merged::Waiting(gathering)) = streaming.props.merged.get_mut(merge)
             && let Some(shown) = gathering.made()
         {
@@ -161,36 +181,32 @@ pub(super) fn stand(
         }
     }
     prepare_models(world, streaming, wanted_models);
-    for &merge in &cut.merges {
-        if !stand_merge(world, streaming, root, merge, seen.view, budget) {
-            unstood.add(streaming.regions.bounds(merge.region));
+    for &merge in &plan.cut.merges {
+        if !stand_merge(world, streaming, root, merge, lens, budget) {
+            unstood.add(planner.regions.bounds(merge.region));
         }
     }
     unstood
 }
 
-/// Takes down what stood of the props for an earlier view and stands for none in `cut`, wherever
-/// what stands for `cut` does. A merge for an earlier view that shows nothing yet is given up at
+/// Takes down what stood of the props for an earlier plan and stands for none in `plan`, wherever
+/// what stands for `plan` does. A merge for an earlier plan that shows nothing yet is given up at
 /// once.
 pub(super) fn clear(
     world: &mut World,
     streaming: &mut Streaming,
-    seen: Seen,
-    cut: &Cut,
+    planner: &Planner,
+    plan: &Plan,
     unstood: &Unstood,
 ) {
-    let Some(filed) = streaming.props.filed.made().cloned() else {
-        return;
-    };
-    let kept: HashSet<usize> = in_leaves(streaming, &filed, cut)
-        .filter(|&index| !out_of_sight(streaming, &filed, seen, index, KEEP_SHARE))
-        .collect();
     let props = &mut streaming.props;
-    let area = &streaming.area;
+    let area = &planner.area;
     let gone: Vec<usize> = props
         .scenes
         .keys()
-        .filter(|&index| !kept.contains(index) && unstood.stands_at(area.props[*index].at))
+        .filter(|&index| {
+            !plan.props.kept.contains(index) && unstood.stands_at(area.props[*index].at)
+        })
         .copied()
         .collect();
     for index in gone {
@@ -198,8 +214,8 @@ pub(super) fn clear(
             take_away(world, scene);
         }
     }
-    let wanted: HashSet<Merge> = cut.merges.iter().copied().collect();
-    let regions = &streaming.regions;
+    let wanted: HashSet<Merge> = plan.cut.merges.iter().copied().collect();
+    let regions = &planner.regions;
     props.merged.retain(|merge, merged| {
         let keep = wanted.contains(merge)
             || !merged.stood().is_empty() && !unstood.stands_over(regions.bounds(merge.region));
@@ -225,66 +241,37 @@ enum Model {
     Ready(Arc<MergedModel>),
 }
 
-/// The props standing in the leaves of `cut`.
-fn in_leaves<'a>(
-    streaming: &'a Streaming,
-    filed: &'a Filed,
-    cut: &'a Cut,
-) -> impl Iterator<Item = usize> + 'a {
-    cut.leaves
-        .iter()
-        .flat_map(move |&leaf| props_within(streaming, filed, leaf))
-}
-
-/// The props standing within a region, each in the one region of a level that holds where it
-/// stands.
-fn props_within<'a>(
-    streaming: &'a Streaming,
-    filed: &'a Filed,
-    region: Region,
-) -> impl Iterator<Item = usize> + 'a {
-    filed.within(&streaming.area, streaming.regions.bounds(region))
-}
-
-/// Whether a prop spans less than a pixel of the view, or `share` times the reach and more lies
-/// between it and where the view looks.
+/// Whether a prop spans less than a pixel from the nearest an eye may come to it, or `share`
+/// times the reach and more lies between it and where the view looks.
 fn out_of_sight(
-    streaming: &Streaming,
-    filed: &Filed,
-    seen: Seen,
+    planner: &Planner,
+    heights: &Heightfield,
+    seen: &Seen,
     index: usize,
     share: f32,
 ) -> bool {
-    let placed = &streaming.area.props[index];
-    let eye = seen.view.eye();
-    (placed.at - seen.at).length() > seen.reach.0 * share
-        || filed.extents[index].is_some_and(|extent| {
-            let ground = streaming.heights.height_at(placed.at).0;
-            let from_eye = (placed.at - ground_pos(eye)).length().hypot(eye.y - ground);
-            seen.detail(from_eye).distance().0 > seen.view.shown_within(extent).0 * share
+    let placed = &planner.area.props[index];
+    placed.at.distance_to(seen.at()) > seen.reach.0 * share
+        || planner.filed.extents[index].is_some_and(|extent| {
+            let shown_at = seen.ground_detail(placed.at, heights.height_at(placed.at));
+            shown_at.distance().0 > seen.lens().shown_within(extent).0 * share
         })
 }
 
-/// Stands a scene for every prop of `near` that has none, nearest to `at` first, as far as the
-/// budget goes.
+/// Stands a scene for every prop of `near` that has none, in its order, as far as the budget goes.
 fn stand_scenes(
     world: &mut World,
     streaming: &mut Streaming,
     root: Entity,
-    at: Pos<Meters>,
-    near: &HashSet<usize>,
+    near: &[usize],
     budget: &mut Budget,
 ) {
     let area = streaming.area.clone();
-    let mut missing: Vec<usize> = near
+    let missing: Vec<usize> = near
         .iter()
         .filter(|index| !streaming.props.scenes.contains_key(*index))
         .copied()
         .collect();
-    missing.sort_by(|&a, &b| {
-        let apart = |index: usize| (area.props[index].at - at).length();
-        apart(a).total_cmp(&apart(b))
-    });
     for index in missing {
         if !budget.take(|budget| &mut budget.props) {
             return;
@@ -303,23 +290,19 @@ fn stand_scenes(
 }
 
 /// A region's props as it shows them, gathered off the frame to wait to merge: every one in it
-/// that spans a pixel at the detail the view shows it at.
-fn gather(
-    streaming: &Streaming,
-    filed: &Arc<Filed>,
-    merge: Merge,
-    view: View,
-) -> Merged<Making<Shown>, MergedMesh> {
+/// that spans a pixel through `lens` at the detail the region shows at.
+fn gather(planner: &Arc<Planner>, merge: Merge, lens: Lens) -> Merged<Making<Shown>, MergedMesh> {
     let nearest = merge.detail.distance();
-    let bounds = streaming.regions.bounds(merge.region);
-    let (filed, area) = (filed.clone(), streaming.area.clone());
+    let bounds = planner.regions.bounds(merge.region);
+    let planner = planner.clone();
     Merged::Waiting(Making::Task(AsyncComputeTaskPool::get().spawn(
         async move {
+            let (filed, area) = (&planner.filed, &planner.area);
             let props: Vec<usize> = filed
-                .within(&area, bounds)
+                .within(area, bounds)
                 .filter(|&index| {
                     filed.extents[index]
-                        .is_none_or(|extent| nearest.0 <= view.shown_within(extent).0)
+                        .is_none_or(|extent| nearest.0 <= lens.shown_within(extent).0)
                 })
                 .collect();
             let mut models: Vec<PropId> =
@@ -338,10 +321,10 @@ fn stand_merge(
     streaming: &mut Streaming,
     root: Entity,
     merge: Merge,
-    view: View,
+    lens: Lens,
     budget: &mut Budget,
 ) -> bool {
-    let pixels_per_meter = view.pixels_per_meter(merge.detail.distance());
+    let pixels_per_meter = lens.pixels_per_meter(merge.detail.distance());
     let props = &mut streaming.props;
     let Some(merged) = props.merged.get_mut(&merge) else {
         return false;
@@ -458,7 +441,7 @@ pub(super) struct SceneTree<'w, 's> {
 /// The sceneries standing, and the scenes they stand that keep stand-ins for their meshes.
 #[derive(SystemParam)]
 pub(super) struct Standing<'w, 's> {
-    streams: Query<'w, 's, &'static Streaming>,
+    streams: Option<Res<'w, Streams>>,
     leveled: Query<'w, 's, &'static Leveled>,
 }
 
@@ -479,11 +462,12 @@ pub(super) fn level_ready_scene(
         transforms,
     } = tree;
     let scene = ready.entity;
-    let Some(streaming) = parents
-        .get(scene)
-        .ok()
-        .and_then(|parent| standing.streams.get(parent.parent()).ok())
-    else {
+    let Some(streaming) = parents.get(scene).ok().and_then(|parent| {
+        standing
+            .streams
+            .as_ref()
+            .and_then(|streams| streams.0.get(&parent.parent()))
+    }) else {
         return;
     };
     let scale_of = |mesh: Entity| {
@@ -516,8 +500,8 @@ pub(super) fn level_ready_scene(
             })
             .collect(),
     );
-    if let (Some(seen), Ok(at)) = (streaming.view, transforms.get(scene)) {
-        for (mesh, level) in levels_for(simplifier.levels(), seen, at.translation, &leveled) {
+    if let (Some(plan), Ok(at)) = (&streaming.plan, transforms.get(scene)) {
+        for (mesh, level) in levels_for(simplifier.levels(), &plan.seen, at.translation, &leveled) {
             if let Ok(mut drawn) = drawn.get_mut(mesh) {
                 drawn.set_if_neq(Mesh3d(level.clone()));
             }
@@ -534,7 +518,7 @@ pub(super) fn level_props(world: &mut World, streaming: &Streaming, seen: &Seen)
         .scenes
         .values()
         .filter_map(|&prop| Some((world.get::<Leveled>(prop)?, world.get::<Transform>(prop)?)))
-        .flat_map(|(leveled, at)| levels_for(levels, *seen, at.translation, leveled))
+        .flat_map(|(leveled, at)| levels_for(levels, seen, at.translation, leveled))
         .filter(|(mesh, level)| {
             world
                 .get::<Mesh3d>(*mesh)
@@ -549,18 +533,20 @@ pub(super) fn level_props(world: &mut World, streaming: &Streaming, seen: &Seen)
     }
 }
 
-/// The level each of a scene's meshes is drawn at, `seen` with the scene at `at`.
+/// The level each of a scene's meshes is drawn at, `seen` with the scene at `at`: as fine as the
+/// nearest an eye may come to it shows it.
 fn levels_for<'a>(
     levels: &'a MeshLevels,
-    seen: Seen,
+    seen: &Seen,
     at: Vec3,
     leveled: &'a Leveled,
 ) -> impl Iterator<Item = (Entity, &'a Handle<Mesh>)> {
-    let distance = seen.detail(seen.view.eye().distance(at)).distance();
+    let distance = seen.detail(seen.eye_distance(at)).distance();
+    let lens = seen.lens();
     leveled.0.iter().map(move |mesh| {
         let level = levels
             .of(&mesh.full)
-            .and_then(|levels| levels.for_view(&seen.view, distance, mesh.scale));
+            .and_then(|levels| levels.through(&lens, distance, mesh.scale));
         (mesh.mesh, level.unwrap_or(&mesh.full))
     })
 }

@@ -8,13 +8,16 @@
 //! takes in, however far it stretches.
 
 mod covers;
+mod plan;
 mod props;
 mod regions;
 
+pub use plan::{Eyes, Sight};
 pub use props::prop_transform;
 
 use covers::Covers;
-use props::Props;
+use plan::{Plan, Planner};
+use props::{Filed, Props};
 use regions::Regions;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -43,8 +46,9 @@ use crate::core::ground::{
 };
 use crate::core::jobs::Handoff;
 use crate::core::math::{Pos, Rect, Rng, Size};
-use crate::core::render::camera::{View, WorldPicture};
+use crate::core::render::camera::WorldPicture;
 use crate::core::render::present::AreaGrade;
+use crate::core::render::sample::FrameWork;
 use crate::core::render::world::clouds::{CloudDrift, CloudSheet};
 use crate::core::render::world::haze::Haze;
 use crate::core::render::world::lights::{self, Flicker};
@@ -83,13 +87,14 @@ pub struct SceneryPlugin;
 impl Plugin for SceneryPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TakenDown>()
+            .init_resource::<Streams>()
             .add_systems(Update, (take_down, stream))
             .add_observer(props::level_ready_scene);
     }
 }
 
 /// Stands `area` in the world on `layers`: its sun, sky and air at once, and its ground, covers,
-/// props and lights as the view comes to them, from where [`view_from`] says it is.
+/// props and lights as the view comes to them, for the sight [`view_from`] gives it.
 pub fn spawn(
     world: &mut World,
     content: &Content,
@@ -146,11 +151,23 @@ pub fn spawn(
             .and_then(|rainfall| spawn_rain(world, content, rainfall, root));
     }
     let (terrain, paints) = spawn_terrain(world, content, area, &look, root);
-    let props = Props::new(content, area);
     let covers = Covers::new(world, content, area);
-    let mut lights = SpatialIndex::new(PLACEMENT_CELL);
-    lights.refile_spots(area.lights.iter().map(|light| light.at));
-    world.entity_mut(root).insert(Streaming {
+    let planner = {
+        let (content, area) = (content.clone(), area.clone());
+        let pieces = covers.pieces(&area.paint);
+        Making::Task(AsyncComputeTaskPool::get().spawn(async move {
+            let mut lights = SpatialIndex::new(PLACEMENT_CELL);
+            lights.refile_spots(area.lights.iter().map(|light| light.at));
+            Arc::new(Planner {
+                regions: Regions::of(&area),
+                filed: Filed::of(&content, &area),
+                pieces,
+                lights,
+                area,
+            })
+        }))
+    };
+    let streaming = Streaming {
         content: content.clone(),
         area: area.clone(),
         heights: area.heights.clone(),
@@ -158,17 +175,19 @@ pub fn spawn(
         water: area.water.clone(),
         terrain,
         paints,
-        regions: Regions::of(area),
         covers,
-        props,
-        lights,
-        view: None,
+        props: Props::default(),
+        planner,
+        sight: None,
+        planning: None,
+        plan: None,
+        whole: false,
         stood: Stood::default(),
         loading: HashMap::default(),
         making: HashMap::default(),
-        stood_for: None,
         missing: 0,
-    });
+    };
+    world.resource_mut::<Streams>().0.insert(root, streaming);
     Scenery {
         root,
         terrain,
@@ -179,20 +198,18 @@ pub fn spawn(
     }
 }
 
-/// Tells the scenery where `view` looks at, and how far around it the covers, props and lights
-/// are to stand: a cover's pieces and a prop only where they span a pixel of the view, a prop's
-/// meshes no finer than the view shows them. The ground stands whole, finer the nearer the view.
-/// What stands follows over the frames.
-pub fn view_from(world: &mut World, scenery: Scenery, at: Pos<Meters>, reach: Meters, view: View) {
-    if let Some(mut streaming) = world.get_mut::<Streaming>(scenery.root) {
-        let eye = view.eye();
-        let above_ground = Meters(eye.y - streaming.heights.height_at(camera::ground_pos(eye)).0);
-        streaming.view = Some(Seen {
-            at,
-            reach,
-            view,
-            above_ground,
-        });
+/// Tells the scenery the sight it stands for: the covers, props and lights within its reach, a
+/// cover's pieces and a prop only where they span a pixel from the nearest its eyes may come, a
+/// prop's meshes no finer than shown from there. The ground stands whole, finer the nearer the
+/// ground the sight looks at. What stands follows over the frames.
+pub fn view_from(world: &mut World, scenery: Scenery, sight: Sight) {
+    if let Some(streaming) = world
+        .resource_mut::<Streams>()
+        .bypass_change_detection()
+        .0
+        .get_mut(&scenery.root)
+    {
+        streaming.sight = Some(sight);
     }
 }
 
@@ -294,47 +311,55 @@ pub fn shaders_ready(world: &World, content: &Content, area: &Area) -> bool {
         })
 }
 
-/// Whether any scenery has yet to stand what its view takes in.
-pub fn standing(world: &mut World) -> bool {
+/// Whether any scenery has yet to stand what its sight takes in.
+pub fn standing(world: &World) -> bool {
     world
-        .query::<&Streaming>()
-        .iter(world)
-        .any(|streaming| streaming.stood_for.is_none())
+        .resource::<Streams>()
+        .0
+        .values()
+        .any(|streaming| !streaming.stands())
 }
 
-/// How many chunks of ground and regions of scenery the views take in that have yet to stand.
-pub fn missing(world: &mut World) -> u32 {
+/// How many chunks of ground and regions of scenery the sights take in that have yet to stand.
+pub fn missing(world: &World) -> u32 {
     world
-        .query::<&Streaming>()
-        .iter(world)
+        .resource::<Streams>()
+        .0
+        .values()
         .map(|streaming| streaming.missing)
         .sum()
 }
 
-/// How many chunks of ground stand for the views.
-pub fn stood_chunks(world: &mut World) -> u32 {
+/// How many chunks of ground stand for the sights.
+pub fn stood_chunks(world: &World) -> u32 {
     world
-        .query::<&Streaming>()
-        .iter(world)
+        .resource::<Streams>()
+        .0
+        .values()
         .map(|streaming| streaming.stood.ground.len() as u32)
         .sum()
 }
 
-/// Whether `scenery` stands all its view takes in.
+/// Whether `scenery` stands all its sight takes in.
 pub fn stood(world: &World, scenery: Scenery) -> bool {
     world
-        .get::<Streaming>(scenery.root)
-        .is_some_and(|streaming| streaming.stood_for.is_some())
+        .resource::<Streams>()
+        .0
+        .get(&scenery.root)
+        .is_some_and(Streaming::stands)
 }
 
 /// How many sceneries stand.
-pub fn sceneries(world: &mut World) -> usize {
-    world.query::<&Streaming>().iter(world).count()
+pub fn sceneries(world: &World) -> usize {
+    world.resource::<Streams>().0.len()
 }
 
-/// What an area's scenery stands as the view moves: the area and what it's drawn from, where the
-/// view is, and what stands now, by what it stands for.
-#[derive(Component)]
+/// What every scenery standing stands as its sight moves, by its root.
+#[derive(Resource, Default)]
+struct Streams(HashMap<Entity, Streaming>);
+
+/// What an area's scenery stands as its sight moves: the area and what it's drawn from, the
+/// sight, the plan for it, and what stands now.
 struct Streaming {
     content: Content,
     area: Arc<Area>,
@@ -343,55 +368,36 @@ struct Streaming {
     water: WaterSurface,
     terrain: Entity,
     paints: ChunkPaints,
-    regions: Regions,
     covers: Covers,
     props: Props,
-    lights: SpatialIndex,
-    view: Option<Seen>,
+    planner: Making<Arc<Planner>>,
+    sight: Option<Sight>,
+    /// The plan being made, for the widened sight it is made for.
+    planning: Option<(Sight, Task<Plan>)>,
+    plan: Option<Arc<Plan>>,
+    /// Whether all the plan takes in stands, so a sight that stays within it costs nothing to
+    /// stream.
+    whole: bool,
     stood: Stood,
     /// The tiles of ground being loaded, for the near chunks waiting on them.
     loading: HashMap<TileAt, Task<()>>,
     /// The chunks of ground being made, each its mesh and the paint under it.
     making: HashMap<Node, Making<(Mesh, ChunkPaint)>>,
-    /// The view all that it takes in stands for, once it does, so a view that stays put costs
-    /// nothing to stream.
-    stood_for: Option<Seen>,
-    /// How many chunks of ground and regions of scenery the view takes in have yet to stand.
+    /// How many chunks of ground and regions of scenery the plan takes in have yet to stand.
     missing: u32,
 }
 
-/// Where the view looks at, how far around it the scenery stands, the view, and how high its eye
-/// stands over the ground below it.
-#[derive(Clone, Copy, PartialEq)]
-struct Seen {
-    at: Pos<Meters>,
-    reach: Meters,
-    view: View,
-    above_ground: Meters,
-}
-
-impl Seen {
-    /// How finely the view shows what lies `from_eye` off it.
-    fn detail(&self, from_eye: f32) -> Detail {
-        let nearest = self.above_ground.0.max(NEAREST_GROUND.0);
-        let anchor = (nearest.log2() * 2.0).floor() as i32;
-        let octaves = (from_eye / nearest).max(1.0).log2().floor() as i32;
-        Detail(anchor + 2 * octaves)
+impl Streaming {
+    /// Whether all the latest sight takes in stands.
+    fn stands(&self) -> bool {
+        self.whole
+            && self.sight.is_some()
+            && self.plan.as_ref().map(|plan| plan.seen.sight) == self.sight.map(Sight::widened)
     }
-}
 
-/// How finely the scenery shows what lies somewhere off the eye: as finely as what lies 2^(n/2)
-/// metres off it. Everything within twice as far as the ground below the eye shows as finely as
-/// that ground, taken to the half octave nearer, and every doubling beyond an octave coarser. So
-/// all a camera looking down on the ground sees shows alike and changes at once as it zooms, while
-/// a camera looking along the ground sees detail fall away with distance.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct Detail(i32);
-
-impl Detail {
-    /// How far off the eye what shows at this detail is taken to be.
-    fn distance(self) -> Meters {
-        Meters((self.0 as f32 / 2.0).exp2())
+    /// Whether streaming has nothing to do until the sight moves.
+    fn idle(&self) -> bool {
+        self.sight.is_none() || self.stands() && self.loading.is_empty()
     }
 }
 
@@ -424,12 +430,6 @@ const OVERVIEW_LEVEL: u32 = OVERVIEW_STRIDE.trailing_zeros();
 /// How placements are filed to be found near the view, and the side of the leaves of the
 /// quadtree the props stand over.
 const PLACEMENT_CELL: Meters = Meters(32.0);
-/// How far past its reach the view keeps what stands, so pacing back and forth over the edge
-/// stands nothing twice.
-const KEEP_SHARE: f32 = 1.25;
-/// The nearest the ground is taken to come to the eye, so an eye on or below it still shows a
-/// detail.
-const NEAREST_GROUND: Meters = Meters(0.5);
 /// How many bytes of new meshes a frame sends to the GPU: what stands past them waits for the
 /// next frame, so a view taking in much at once costs many frames a little rather than one frame a
 /// lot. A piece larger than this stands in a frame of its own.
@@ -443,44 +443,80 @@ const MERGES_PER_FRAME: usize = 4;
 const PARTS_TAKEN_DOWN_PER_FRAME: usize = 2000;
 
 fn stream(world: &mut World) {
-    let roots: Vec<Entity> = world
-        .query_filtered::<Entity, With<Streaming>>()
-        .iter(world)
-        .collect();
     let simplified = world.is_resource_changed::<MeshLevels>();
-    for root in roots {
-        let Some(mut streaming) = world.entity_mut(root).take::<Streaming>() else {
-            continue;
-        };
-        let Some(seen) = streaming.view else {
-            world.entity_mut(root).insert(streaming);
-            continue;
-        };
-        if streaming.stood_for == Some(seen) && streaming.loading.is_empty() {
-            if simplified {
-                props::level_props(world, &streaming, &seen);
-            }
-            world.entity_mut(root).insert(streaming);
-            continue;
-        }
-        let Seen { at, reach, .. } = seen;
-        let keep = Meters(reach.0 * KEEP_SHARE);
-        let mut budget = Budget::new();
-        let ground_missing = stream_ground(world, &mut streaming, at, &mut budget);
-        let cut = streaming.regions.cut(&streaming.heights, seen);
-        let props_unstood = props::stand(world, &mut streaming, root, seen, &cut, &mut budget);
-        let covers_unstood = covers::stand(world, &mut streaming, root, seen, &cut, &mut budget);
-        streaming.missing = ground_missing + (props_unstood.len() + covers_unstood.len()) as u32;
-        props::clear(world, &mut streaming, seen, &cut, &props_unstood);
-        covers::clear(world, &mut streaming, seen, &cut, &covers_unstood);
-        if !props_unstood.is_empty() || !covers_unstood.is_empty() {
-            budget.defer();
-        }
-        props::level_props(world, &streaming, &seen);
-        stream_lights(world, &mut streaming, root, at, reach, keep);
-        streaming.stood_for = (!budget.spent).then_some(seen);
-        world.entity_mut(root).insert(streaming);
+    if !simplified && world.resource::<Streams>().0.values().all(Streaming::idle) {
+        return;
     }
+    world.resource_scope(|world, mut streams: Mut<Streams>| {
+        for (&root, streaming) in streams.bypass_change_detection().0.iter_mut() {
+            replan(world, streaming);
+            stream_plan(world, root, streaming, simplified);
+        }
+    });
+}
+
+/// Plans for the sight anew once it has moved out of the steps the plan was made for, letting go
+/// of a plan being made for a sight it has since left, and takes the plan once it is made.
+fn replan(world: &mut World, streaming: &mut Streaming) {
+    let Some(sight) = streaming.sight.map(Sight::widened) else {
+        return;
+    };
+    let Some(planner) = streaming.planner.made().cloned() else {
+        return;
+    };
+    if let Some((planned, task)) = streaming.planning.take()
+        && planned == sight
+    {
+        match Handoff::of(world).take(task) {
+            Ok(plan) => {
+                streaming.plan = Some(Arc::new(plan));
+                streaming.whole = false;
+            }
+            Err(task) => streaming.planning = Some((planned, task)),
+        }
+        return;
+    }
+    if streaming
+        .plan
+        .as_ref()
+        .is_some_and(|plan| plan.seen.sight == sight)
+    {
+        return;
+    }
+    let heights = streaming.heights.clone();
+    let task = AsyncComputeTaskPool::get().spawn(async move { planner.plan(sight, &heights) });
+    streaming.planning = Some((sight, task));
+    if let Some(mut work) = world.get_resource_mut::<FrameWork>() {
+        work.plans += 1;
+    }
+}
+
+/// Stands what the plan takes in, as much as a frame's budget allows, and takes down what it
+/// left behind once what replaces it stands.
+fn stream_plan(world: &mut World, root: Entity, streaming: &mut Streaming, simplified: bool) {
+    let (Some(planner), Some(plan)) = (streaming.planner.made().cloned(), streaming.plan.clone())
+    else {
+        return;
+    };
+    if streaming.whole && streaming.loading.is_empty() {
+        if simplified {
+            props::level_props(world, streaming, &plan.seen);
+        }
+        return;
+    }
+    let mut budget = Budget::new();
+    let ground_missing = stream_ground(world, streaming, &plan, &mut budget);
+    let props_unstood = props::stand(world, streaming, &planner, &plan, root, &mut budget);
+    let covers_unstood = covers::stand(world, streaming, &planner, &plan, root, &mut budget);
+    streaming.missing = ground_missing + (props_unstood.len() + covers_unstood.len()) as u32;
+    props::clear(world, streaming, &planner, &plan, &props_unstood);
+    covers::clear(world, streaming, &planner, &plan, &covers_unstood);
+    if !props_unstood.is_empty() || !covers_unstood.is_empty() {
+        budget.defer();
+    }
+    props::level_props(world, streaming, &plan.seen);
+    stream_lights(world, streaming, &plan, root);
+    streaming.whole = !budget.spent;
 }
 
 /// What a frame may still stand.
@@ -533,18 +569,17 @@ impl Budget {
     }
 }
 
-/// Stands the ground the view at `at` wants, as the budget allows; how many of its chunks have
-/// yet to stand.
+/// Stands the ground `plan` wants, as the budget allows; how many of its chunks have yet to stand.
 fn stream_ground(
     world: &mut World,
     streaming: &mut Streaming,
-    at: Pos<Meters>,
+    plan: &Plan,
     budget: &mut Budget,
 ) -> u32 {
     streaming
         .loading
         .retain(|_, task| check_ready(task).is_none());
-    let wanted: HashSet<Node> = nodes_for(&streaming.heights, at).into_iter().collect();
+    let wanted: HashSet<Node> = plan.ground.iter().copied().collect();
     streaming.making.retain(|node, _| wanted.contains(node));
     let gone: Vec<Node> = streaming
         .stood
@@ -553,12 +588,12 @@ fn stream_ground(
         .filter(|&node| !wanted.contains(node))
         .copied()
         .collect();
-    let mut missing: Vec<Node> = wanted
+    let missing: Vec<Node> = plan
+        .ground
         .iter()
         .filter(|&node| !streaming.stood.ground.contains_key(node))
         .copied()
         .collect();
-    missing.sort_by_key(|node| node.level);
     for node in missing {
         if !ground_under(streaming, node) {
             budget.defer();
@@ -629,10 +664,11 @@ fn ground_under(streaming: &mut Streaming, node: Node) -> bool {
     ready
 }
 
-/// The nodes of the quadtree over the ground's samples that stand for the view at `at`: every node
-/// is cut in four while it lies within `SPLIT_WITHIN` of its sides from the view and is wider than
-/// a leaf; what remains covers the ground once over, finer the nearer the view.
-fn nodes_for(heights: &Heightfield, at: Pos<Meters>) -> Vec<Node> {
+/// The nodes of the quadtree over the ground's samples that stand for a view looking at ground
+/// within `off` of `at`: every node is cut in four while it may lie within `SPLIT_WITHIN` of its
+/// sides from that ground and is wider than a leaf; what remains covers the ground once over,
+/// finer the nearer the view.
+fn nodes_for(heights: &Heightfield, at: Pos<Meters>, off: f32) -> Vec<Node> {
     let (columns, rows) = heights.samples();
     let cells = (columns.max(rows).saturating_sub(1)).max(1);
     let levels = (cells.div_ceil(LEAF_SAMPLES))
@@ -650,7 +686,7 @@ fn nodes_for(heights: &Heightfield, at: Pos<Meters>) -> Vec<Node> {
             continue;
         }
         let bounds = rect.bounds();
-        let near = distance_to(bounds, at) < bounds.size.width * SPLIT_WITHIN;
+        let near = distance_to(bounds, at) - off < bounds.size.width * SPLIT_WITHIN;
         if node.level > 0 && near {
             for (dc, dr) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
                 open.push(Node {
@@ -823,30 +859,20 @@ fn chunk_samples(node: Node) -> terrain::ChunkSamples {
     }
 }
 
-fn far(from: Pos<Meters>, to: Pos<Meters>, by: Meters) -> bool {
-    (from - to).length() > by.0
-}
-
 fn distance_to(bounds: Rect<Meters>, at: Pos<Meters>) -> f32 {
     let dx = (bounds.min().x - at.x).max(at.x - bounds.max().x).max(0.0);
     let dy = (bounds.min().y - at.y).max(at.y - bounds.max().y).max(0.0);
     (dx * dx + dy * dy).sqrt()
 }
 
-fn stream_lights(
-    world: &mut World,
-    streaming: &mut Streaming,
-    root: Entity,
-    at: Pos<Meters>,
-    reach: Meters,
-    keep: Meters,
-) {
-    let area = streaming.area.clone();
+/// Stands the lights `plan` stands, and takes down those it no longer keeps.
+fn stream_lights(world: &mut World, streaming: &mut Streaming, plan: &Plan, root: Entity) {
+    let lights = &plan.lights;
     let gone: Vec<usize> = streaming
         .stood
         .lights
         .keys()
-        .filter(|&&index| far(area.lights[index].at, at, keep))
+        .filter(|index| !lights.kept.contains(*index))
         .copied()
         .collect();
     for index in gone {
@@ -854,19 +880,18 @@ fn stream_lights(
             world.despawn(entity);
         }
     }
-    let near: Vec<usize> = streaming
-        .lights
-        .near(at, reach)
-        .filter(|&index| {
-            !streaming.stood.lights.contains_key(&index) && !far(area.lights[index].at, at, reach)
-        })
+    let near: Vec<usize> = lights
+        .near
+        .iter()
+        .filter(|index| !streaming.stood.lights.contains_key(*index))
+        .copied()
         .collect();
     let mut rng = Rng::fork_of(world);
     for index in near {
         let entity = spawn_light(
             world,
             &streaming.heights,
-            &area.lights[index],
+            &streaming.area.lights[index],
             &mut rng,
             root,
         );
@@ -878,9 +903,7 @@ fn stream_lights(
 /// whole area going doesn't hold up a frame. What its streaming held, which may be the last of
 /// a whole area, is let go of off the frame.
 pub fn despawn(world: &mut World, scenery: Scenery) {
-    if let Ok(mut root) = world.get_entity_mut(scenery.root)
-        && let Some(streaming) = root.take::<Streaming>()
-    {
+    if let Some(streaming) = world.resource_mut::<Streams>().0.remove(&scenery.root) {
         AsyncComputeTaskPool::get()
             .spawn(async move { drop(streaming) })
             .detach();
@@ -1275,9 +1298,19 @@ pub fn grade(lighting: &Lighting) -> AreaGrade {
 
 /// Lays `scenery`'s ground anew on `heights` painted with `paint`, as a stroke shapes it.
 pub fn lay_ground(world: &mut World, scenery: Scenery, heights: &Heightfield, paint: &PaintMap) {
-    let Some(mut streaming) = world.entity_mut(scenery.root).take::<Streaming>() else {
-        return;
-    };
+    world.resource_scope(|world, mut streams: Mut<Streams>| {
+        if let Some(streaming) = streams.0.get_mut(&scenery.root) {
+            lay_streamed_ground(world, streaming, heights, paint);
+        }
+    });
+}
+
+fn lay_streamed_ground(
+    world: &mut World,
+    streaming: &mut Streaming,
+    heights: &Heightfield,
+    paint: &PaintMap,
+) {
     streaming.heights = heights.clone();
     streaming.paint = paint.clone();
     streaming.making.clear();
@@ -1305,7 +1338,7 @@ pub fn lay_ground(world: &mut World, scenery: Scenery, heights: &Heightfield, pa
         streaming.paints.relay(world, &paint, &tag);
     }
     streaming.covers.ground_changed();
-    world.entity_mut(scenery.root).insert(streaming);
+    streaming.whole = false;
 }
 
 /// The ground's root, holding the material its chunks are painted with, and their paint.

@@ -1156,7 +1156,7 @@ fn a_mesh_far_off_the_eye_draws_with_fewer_triangles_none_straying_a_pixel() {
             WINDOW,
             Degrees(45.0),
         );
-        let level = levels.for_view(&view, Meters(distance), 1.0);
+        let level = levels.through(&view.lens(), Meters(distance), 1.0);
         let count = level.map_or(full, |level| {
             triangles(meshes.get(level).expect("a level is held")).len()
         });
@@ -1174,7 +1174,7 @@ fn a_mesh_far_off_the_eye_draws_with_fewer_triangles_none_straying_a_pixel() {
         Degrees(1.0),
     );
     assert!(
-        levels.for_view(&close, Meters(2.0), 1.0).is_none() && drawn * 10 < full,
+        levels.through(&close.lens(), Meters(2.0), 1.0).is_none() && drawn * 10 < full,
         "through a long lens up close the ball draws its own mesh, far off a tenth of its {full} \
          triangles at most: {drawn}"
     );

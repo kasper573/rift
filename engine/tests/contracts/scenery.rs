@@ -19,7 +19,7 @@ use bevy::shader::Shader;
 use bevy::world_serialization::WorldSerializationPlugin;
 use engine::core::content::Content;
 use engine::core::math::Pos;
-use engine::core::render::View;
+use engine::core::render::camera::Lens;
 use engine::core::render::camera::WorldPicture;
 use engine::core::render::world::cover::CoverMaterial;
 use engine::core::render::world::haze::Haze;
@@ -30,6 +30,7 @@ use engine::core::render::world::{self, WorldScenePlugin};
 use engine::core::units::{Degrees, MeterSize, Meters};
 use engine::core::vfx::render::VfxMaterialsPlugin;
 use engine::core::vfx::shader::Stage;
+use engine::systems::area::scenery::{Eyes, Sight};
 use engine::systems::area::{self, Area, AreaDef, scenery};
 use serde_json::json;
 use testkit::{Game, Map, path};
@@ -145,9 +146,11 @@ fn stand(app: &mut App, area: &Arc<Area>) -> scenery::Scenery {
     scenery::view_from(
         app.world_mut(),
         stood,
-        bounds.center(),
-        Meters(bounds.size.width.hypot(bounds.size.height)),
-        overhead(bounds.center(), 10.0),
+        overhead(
+            bounds.center(),
+            Meters(bounds.size.width.hypot(bounds.size.height)),
+            10.0,
+        ),
     );
     assert!(
         settle(app, |app| {
@@ -204,9 +207,7 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
     scenery::view_from(
         app.world_mut(),
         stood,
-        Pos::new(16.0, 8.0),
-        reach,
-        overhead(Pos::new(16.0, 8.0), 10.0),
+        overhead(Pos::new(16.0, 8.0), reach, 10.0),
     );
     assert!(settle(&mut app, |app| {
         !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
@@ -231,9 +232,7 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
     scenery::view_from(
         app.world_mut(),
         stood,
-        Pos::new(496.0, 8.0),
-        reach,
-        overhead(Pos::new(496.0, 8.0), 10.0),
+        overhead(Pos::new(496.0, 8.0), reach, 10.0),
     );
     assert!(settle(&mut app, |app| {
         !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
@@ -251,9 +250,7 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
     scenery::view_from(
         app.world_mut(),
         stood,
-        Pos::new(16.0, 8.0),
-        reach,
-        overhead(Pos::new(16.0, 8.0), 10.0),
+        overhead(Pos::new(16.0, 8.0), reach, 10.0),
     );
     assert!(settle(&mut app, |app| {
         !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
@@ -264,9 +261,7 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
     scenery::view_from(
         app.world_mut(),
         stood,
-        Pos::new(496.0, 8.0),
-        reach,
-        overhead(Pos::new(496.0, 8.0), 20_000.0),
+        overhead(Pos::new(496.0, 8.0), reach, 20_000.0),
     );
     assert!(settle(&mut app, |app| {
         !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
@@ -281,14 +276,12 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
     );
 
     // From high over the east, reaching over the whole field, everything stands merged: no tuft or
-    // pebble in the east stands on its own, while meshes over it hold them. The pebbles merge only
-    // where the view may see them, so the west, out of its sight, holds none.
+    // pebble in the east stands on its own, while meshes over it hold them. The pebbles merge
+    // wherever the view could turn to see them, so the west, far off the eye, holds them too.
     scenery::view_from(
         app.world_mut(),
         stood,
-        Pos::new(476.0, 8.0),
-        Meters(512.0),
-        overhead(Pos::new(476.0, 8.0), 300.0),
+        overhead(Pos::new(476.0, 8.0), Meters(512.0), 300.0),
     );
     assert!(settle(&mut app, |app| {
         !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
@@ -307,16 +300,33 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
         "the tufts and the pebbles stand merged"
     );
     assert!(
-        !merged_over::<CoverMaterial>(&mut app, Vec3::new(40.0, 0.0, 8.0)),
-        "the pebbles out of the view's sight stand no merged meshes"
+        merged_over::<CoverMaterial>(&mut app, Vec3::new(40.0, 0.0, 8.0)),
+        "the pebbles the view could turn to see stand merged"
     );
+
+    // Looking along the field at its middle from as far off as the tufts lie, they stand on their
+    // own seen from beside them, and not from across the middle, where they are as far off the eye
+    // as the field is long.
+    for (eye, tufts) in [(492.0, 8), (20.0, 0)] {
+        scenery::view_from(
+            app.world_mut(),
+            stood,
+            along(Pos::new(256.0, 8.0), eye, Meters(512.0)),
+        );
+        assert!(settle(&mut app, |app| {
+            !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
+        }));
+        assert_eq!(
+            tufts_standing(&mut app),
+            tufts,
+            "seen from {eye} m along the field"
+        );
+    }
 
     scenery::view_from(
         app.world_mut(),
         stood,
-        Pos::new(496.0, 8.0),
-        reach,
-        overhead(Pos::new(496.0, 8.0), 10.0),
+        overhead(Pos::new(496.0, 8.0), reach, 10.0),
     );
     assert!(settle(&mut app, |app| {
         assert!(
@@ -367,15 +377,25 @@ fn merged_over<M: Material>(app: &mut App, at: Vec3) -> bool {
         })
 }
 
-/// A view of 1280 by 720 pixels looking straight down on `at` from `height` metres up, through a
-/// lens long enough that a pebble a centimetre across spans pixels from hundreds of metres off.
-fn overhead(at: Pos<Meters>, height: f32) -> View {
-    let below = Vec3::new(at.x, 0.0, at.y);
-    View::new(
-        Transform::from_translation(below + Vec3::Y * height).looking_at(below, -Vec3::Z),
-        Vec2::new(1280.0, 720.0),
-        Degrees(0.1),
-    )
+/// A sight of `reach` around `at` from an eye `height` metres straight over it, through a lens 720
+/// pixels tall long enough that a pebble a centimetre across spans pixels from hundreds of metres
+/// off.
+fn overhead(at: Pos<Meters>, reach: Meters, height: f32) -> Sight {
+    Sight {
+        at,
+        reach,
+        lens: Lens::new(720.0, Degrees(0.1)),
+        eyes: Eyes::standing(Vec3::new(at.x, height, at.y), at, Meters(0.0)),
+    }
+}
+
+/// A sight of `reach` around `at` from an eye 10 metres over the middle of the field `eye` metres
+/// along it, through the lens of [`overhead`].
+fn along(at: Pos<Meters>, eye: f32, reach: Meters) -> Sight {
+    Sight {
+        eyes: Eyes::standing(Vec3::new(eye, 10.0, at.y), at, Meters(0.0)),
+        ..overhead(at, reach, 10.0)
+    }
 }
 
 /// How many of the tufts stand, each at its own place along the middle of the field.

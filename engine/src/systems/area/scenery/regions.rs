@@ -6,11 +6,10 @@
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 
-use super::{Detail, PLACEMENT_CELL, SPLIT_WITHIN, Seen, distance_to};
+use super::plan::{Detail, Seen};
+use super::{PLACEMENT_CELL, SPLIT_WITHIN, distance_to};
 use crate::core::ground::Heightfield;
 use crate::core::math::{Pos, Rect, Size};
-use crate::core::render::camera::{View, ground_pos};
-use crate::core::render::world_point;
 use crate::core::units::{MeterSize, Meters};
 use crate::systems::area::Area;
 
@@ -55,9 +54,10 @@ impl Regions {
         }
     }
 
-    /// Every region is cut in four while the eye lies within `SPLIT_WITHIN` of its sides from it
+    /// Every region is cut in four while an eye may lie within `SPLIT_WITHIN` of its sides from it
     /// and it is wider than a leaf.
-    pub(super) fn cut(&self, heights: &Heightfield, seen: Seen) -> Cut {
+    pub(super) fn cut(&self, heights: &Heightfield, seen: &Seen) -> Cut {
+        let ground = heights.range();
         let mut cut = Cut {
             leaves: HashSet::default(),
             merges: Vec::new(),
@@ -69,11 +69,11 @@ impl Regions {
         }];
         while let Some(region) = open.pop() {
             let bounds = self.bounds(region);
-            if !bounds.intersects(&self.ground) || distance_to(bounds, seen.at) > seen.reach.0 {
+            if !bounds.intersects(&self.ground) || distance_to(bounds, seen.at()) > seen.reach.0 {
                 continue;
             }
             let side = bounds.size.width;
-            let from_eye = eye_distance(heights, seen.view, bounds);
+            let from_eye = seen.over(bounds, ground.lowest, ground.highest);
             if from_eye >= side * SPLIT_WITHIN {
                 cut.merges.push(Merge {
                     region,
@@ -143,15 +143,4 @@ pub(super) fn holds(bounds: Rect<Meters>, at: Pos<Meters>) -> bool {
         && at.x < bounds.max().x
         && at.y >= bounds.min().y
         && at.y < bounds.max().y
-}
-
-/// How far the eye is from the nearest of a stretch of ground.
-fn eye_distance(heights: &Heightfield, view: View, bounds: Rect<Meters>) -> f32 {
-    let eye = view.eye();
-    let over = ground_pos(eye);
-    let nearest = Pos::new(
-        over.x.clamp(bounds.min().x, bounds.max().x),
-        over.y.clamp(bounds.min().y, bounds.max().y),
-    );
-    world_point(nearest, heights.height_at(nearest)).distance(eye)
 }

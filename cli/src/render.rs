@@ -35,7 +35,7 @@ use engine::core::content::Content;
 use engine::core::ground::Heightfield;
 use engine::core::jobs::Handoff;
 use engine::core::math::{Pos, Rng};
-use engine::core::render::camera::{self, View, Zoom, world_point};
+use engine::core::render::camera::{self, Zoom, world_point};
 use engine::core::render::video::VideoPreferences;
 use engine::core::render::world::WorldScenePlugin;
 use engine::core::render::world::body;
@@ -55,7 +55,7 @@ use engine::systems::actor::model::{ActorModel, ModelId};
 use engine::systems::actor::skeleton::Clip;
 use engine::systems::actor::stance::{self, HandIndex};
 use engine::systems::actor::{Action, Appearance, ModelDef, Motion, Pose, appearance, render};
-use engine::systems::area::scenery::{self, SceneryPlugin};
+use engine::systems::area::scenery::{self, Eyes, SceneryPlugin, Sight};
 use engine::systems::area::{self, Area, AreaDef, AreaId, Kept, Pictured, Weather, rain};
 use engine::systems::item::{ItemDef, Wear};
 use serde::{Deserialize, Serialize};
@@ -788,7 +788,7 @@ fn set_up(
     world.insert_resource(rig);
     world.insert_resource(CloudDrift::carried_for(shot.clouds_time));
     let stood = scenery::spawn(world, content, &picture.area, default());
-    see(world, stood, framed, shot);
+    see(world, stood, &picture.area.heights, framed, shot);
     if patch {
         let target = shot.view.framed(&picture.area.heights, &look).target_ground;
         world.spawn(patch_at(&picture.area.heights, target));
@@ -841,17 +841,23 @@ fn patch_at(ground: &Heightfield, at: Pos<Meters>) -> TerrainPatch {
 }
 
 /// Tells the scenery where the view stands and how far around it to stand.
-fn see(world: &mut World, stood: scenery::Scenery, framed: Framed, shot: &Shot) {
+fn see(
+    world: &mut World,
+    stood: scenery::Scenery,
+    heights: &Heightfield,
+    framed: Framed,
+    shot: &Shot,
+) {
+    let at = framed.target_ground;
     scenery::view_from(
         world,
         stood,
-        framed.target_ground,
-        Meters(framed.eye.distance(framed.target) * SCENERY_REACH),
-        View::new(
-            Transform::from_translation(framed.eye).looking_at(framed.target, Vec3::Y),
-            Vec2::new(shot.width as f32, shot.height as f32),
-            framed.fov,
-        ),
+        Sight {
+            at,
+            reach: Meters(framed.eye.distance(framed.target) * SCENERY_REACH),
+            lens: camera::Lens::new(shot.height as f32, framed.fov),
+            eyes: Eyes::standing(framed.eye, at, heights.height_at(at)),
+        },
     );
 }
 
@@ -866,7 +872,7 @@ fn jump(world: &mut World, shot: &Shot, stood: &Stood) {
     world
         .resource_mut::<CameraRig>()
         .look_at(framed.target_ground, framed.target_height);
-    see(world, stood.scenery, framed, shot);
+    see(world, stood.scenery, &stood.area.heights, framed, shot);
 }
 
 /// Lights the stood area under its weather at the moment and lets its rain fall, as the client

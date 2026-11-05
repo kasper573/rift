@@ -10,7 +10,7 @@ use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 use meshopt::SimplifyOptions;
 
-use crate::core::render::camera::View;
+use crate::core::render::camera::Lens;
 use crate::core::units::Meters;
 
 /// Simplifies the meshes of the world into their stand-ins, each once, off the frame.
@@ -62,10 +62,11 @@ impl MeshLevels {
 pub struct Levels(Vec<(Handle<Mesh>, f32)>);
 
 impl Levels {
-    /// The coarsest stand-in that strays from the mesh by less than [`STRAY_PIXELS`] of `view`,
-    /// drawn `scale` times its size `distance` off the eye; none where only the mesh itself does.
-    pub fn for_view(&self, view: &View, distance: Meters, scale: f32) -> Option<&Handle<Mesh>> {
-        let allowed = STRAY_PIXELS / (view.pixels_per_meter(distance) * scale);
+    /// The coarsest stand-in that strays from the mesh by less than [`STRAY_PIXELS`] through
+    /// `lens`, drawn `scale` times its size `distance` off the eye; none where only the mesh
+    /// itself does.
+    pub fn through(&self, lens: &Lens, distance: Meters, scale: f32) -> Option<&Handle<Mesh>> {
+        let allowed = STRAY_PIXELS / (lens.pixels_per_meter(distance) * scale);
         self.0
             .iter()
             .rev()

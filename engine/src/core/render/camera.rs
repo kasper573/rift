@@ -447,6 +447,32 @@ fn approach(from: f32, to: f32, caught: f32, rest: f32) -> f32 {
     if (to - moved).abs() < rest { to } else { moved }
 }
 
+/// What a view's lens makes of things by how far off the eye they lie, whichever way it looks:
+/// its viewport's height and its field of view, and nothing of where it stands or turns.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Lens {
+    pixels_at_a_meter: f32,
+}
+
+impl Lens {
+    /// The lens of a viewport `height` pixels tall taking in `fov` of the world top to bottom.
+    pub fn new(height: f32, fov: Degrees) -> Lens {
+        Lens {
+            pixels_at_a_meter: height / 2.0 / (fov.radians().0 / 2.0).tan(),
+        }
+    }
+
+    /// How many pixels a metre spans `distance` off the eye, across the view.
+    pub fn pixels_per_meter(&self, distance: Meters) -> f32 {
+        self.pixels_at_a_meter / distance.0.max(NEAR_PLANE.0)
+    }
+
+    /// How far off the eye a thing `extent` across still spans enough pixels to be drawn.
+    pub fn shown_within(&self, extent: Meters) -> Meters {
+        Meters(extent.0 * self.pixels_at_a_meter / FEWEST_PIXELS)
+    }
+}
+
 /// A camera's projection of the world onto a viewport, as the renderer and everything that places
 /// points in the window share it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -513,12 +539,14 @@ impl View {
 
     /// How many pixels of the viewport a metre spans `distance` off the eye, across the view.
     pub fn pixels_per_meter(&self, distance: Meters) -> f32 {
-        self.viewport.y / 2.0 * self.clip_from_view.y_axis.y / distance.0.max(NEAR_PLANE.0)
+        self.lens().pixels_per_meter(distance)
     }
 
-    /// How far off the eye a thing `extent` across still spans enough pixels to be drawn.
-    pub fn shown_within(&self, extent: Meters) -> Meters {
-        Meters(extent.0 * self.pixels_per_meter(Meters(1.0)) / FEWEST_PIXELS)
+    /// What the view's lens makes of things by how far off the eye they lie.
+    pub fn lens(&self) -> Lens {
+        Lens {
+            pixels_at_a_meter: self.viewport.y / 2.0 * self.clip_from_view.y_axis.y,
+        }
     }
 
     pub fn view_proj(&self) -> Mat4 {

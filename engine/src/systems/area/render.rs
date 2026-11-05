@@ -6,7 +6,7 @@ use std::sync::Arc;
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 
-use super::scenery::{self, Scenery, SceneryPlugin};
+use super::scenery::{self, Eyes, Scenery, SceneryPlugin, Sight};
 use super::{AreaId, AreaObject, AreaTag};
 use crate::core::content::Content;
 use crate::core::math::{Pos, Rect};
@@ -95,8 +95,9 @@ fn show_area(world: &mut World) {
     light_area(world, area_id, &area, &weather);
 }
 
-/// Tells the shown scenery where the player's character stands, so what stands around them
-/// follows them: as far as the camera sees from its widest, and the fades past that.
+/// Tells the shown scenery what the camera looks at, from wherever its framing lets it stand,
+/// once the player's character is there for it to follow: so what stands around them follows
+/// them, as far as the camera sees from its widest, and the fades past that.
 fn follow_view(world: &mut World) {
     let Some(stood) = world
         .resource::<ShownArea>()
@@ -106,22 +107,29 @@ fn follow_view(world: &mut World) {
     else {
         return;
     };
-    let Some(at) = world
+    let followed = world
         .resource::<MyCharacter>()
         .0
-        .and_then(|seen| world.get::<RenderPosition>(seen))
-        .map(|position| position.0)
+        .is_some_and(|seen| world.get::<RenderPosition>(seen).is_some());
+    let Some(lens) = camera::view_of(world)
+        .filter(|_| followed)
+        .map(|view| view.lens())
     else {
         return;
     };
     let Some(rig) = world.get_resource::<CameraRig>() else {
         return;
     };
-    let reach = view_reach(rig.framing());
-    let Some(view) = camera::view_of(world) else {
-        return;
+    let target = rig.target();
+    let at = camera::ground_pos(target);
+    let lift = Meters(target.y - ground_height(world, at).0);
+    let sight = Sight {
+        at,
+        reach: view_reach(rig.framing()),
+        lens,
+        eyes: Eyes::orbiting(rig.framing(), lift),
     };
-    scenery::view_from(world, stood, at, reach, view);
+    scenery::view_from(world, stood, sight);
 }
 
 /// How far around the character the covers, props and lights stand: the ground the camera takes

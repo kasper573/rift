@@ -65,12 +65,13 @@ impl Plugin for FrameSamplingPlugin {
 }
 
 /// What the main world redid this frame for what it shows, counted by whoever does it: the vfx
-/// materials painted anew and the bodies posed. A frame in which nothing on screen changed
-/// counts none.
+/// materials painted anew, the bodies posed and the scenery's plans begun. A frame in which
+/// nothing on screen changed counts none.
 #[derive(Resource, Default, Clone, Copy, Debug)]
 pub struct FrameWork {
     pub vfx_writes: u32,
     pub posed: u32,
+    pub plans: u32,
 }
 
 /// Bytes the render world wrote to the GPU this frame on its own, beside the assets it prepared:
