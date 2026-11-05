@@ -3,7 +3,7 @@
 //! scenario's mean may fall below, a share of frames that may come slower than that, a stall no
 //! frame may reach, and nothing the view takes in left missing.
 
-use engine::core::units::Millis;
+use engine::core::units::{Bytes, Millis};
 use engine::systems::probe::{FrameSample, ProbeWorstFrame};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -228,6 +228,10 @@ impl Window {
             gpu: median(self.samples.iter().filter_map(|sample| sample.gpu_ms)),
             draws: median_u32(self.samples.iter().map(|sample| sample.draws)),
             instances: median_u32(self.samples.iter().map(|sample| sample.instances)),
+            upload_bytes: median_u64(self.samples.iter().map(|sample| sample.upload_bytes.0))
+                .map(Bytes),
+            vfx_writes: median_u32(self.samples.iter().map(|sample| sample.vfx_writes)),
+            posed: median_u32(self.samples.iter().map(|sample| sample.posed)),
             worst_frame: worst,
         })
     }
@@ -257,6 +261,11 @@ pub struct FrameStats {
     pub gpu: Option<Millis>,
     pub draws: Option<u32>,
     pub instances: Option<u32>,
+    /// What a frame commonly sent the GPU, and how many vfx materials it painted anew and bodies it
+    /// posed: the work it did for what changed on screen.
+    pub upload_bytes: Option<Bytes>,
+    pub vfx_writes: Option<u32>,
+    pub posed: Option<u32>,
     /// The slowest frame of the window the probe kept the GPU's passes of.
     pub worst_frame: Option<ProbeWorstFrame>,
 }
@@ -281,7 +290,11 @@ fn median(values: impl Iterator<Item = Millis>) -> Option<Millis> {
 }
 
 fn median_u32(values: impl Iterator<Item = u32>) -> Option<u32> {
-    let mut values: Vec<u32> = values.collect();
+    median_u64(values.map(u64::from)).map(|value| value as u32)
+}
+
+fn median_u64(values: impl Iterator<Item = u64>) -> Option<u64> {
+    let mut values: Vec<u64> = values.collect();
     if values.is_empty() {
         return None;
     }

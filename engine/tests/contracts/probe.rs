@@ -169,6 +169,8 @@ fn sample(frame: u32, dt_ms: Millis) -> FrameSample {
         entities: 0,
         visible_chunks: 0,
         upload_bytes: Bytes(0),
+        vfx_writes: 0,
+        posed: 0,
     }
 }
 

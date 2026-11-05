@@ -47,7 +47,9 @@ use crate::core::gui::{self, GuiContext, WorldLayers};
 use crate::core::math::{
     MatrixSchema, Offset, OffsetSchema, Pos, PosSchema, Rect, RectSchema, Size, SizeSchema,
 };
-use crate::core::render::sample::{self, FrameSamplingPlugin, GpuReportsRead, RenderReports};
+use crate::core::render::sample::{
+    self, FrameSamplingPlugin, FrameWork, GpuReportsRead, RenderReports,
+};
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::render::world::layers::Layered;
 use crate::core::render::world::sky::Daylight;
@@ -230,6 +232,10 @@ pub fn sample_frame(world: &mut World) {
     let missing = area::scenery::missing(world);
     let visible_chunks = area::scenery::stood_chunks(world);
     let entities = world.entities().len();
+    let work = world
+        .get_resource_mut::<FrameWork>()
+        .map(|mut work| std::mem::take(&mut *work))
+        .unwrap_or_default();
     let drawn = world.resource::<RenderReports>().take();
     let timed = world.resource_scope(|world, mut read: Mut<GpuReportsRead>| {
         world
@@ -250,6 +256,8 @@ pub fn sample_frame(world: &mut World) {
         entities,
         visible_chunks,
         upload_bytes: Bytes::default(),
+        vfx_writes: work.vfx_writes,
+        posed: work.posed,
     });
     for report in &drawn {
         samples.drawn(report);

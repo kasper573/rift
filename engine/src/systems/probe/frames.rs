@@ -31,6 +31,10 @@ pub struct FrameSample {
     pub entities: u32,
     pub visible_chunks: u32,
     pub upload_bytes: Bytes,
+    /// Vfx materials painted anew this frame.
+    pub vfx_writes: u32,
+    /// Bodies posed anew this frame: set playing, turned or eased between clips.
+    pub posed: u32,
 }
 
 /// The frames after the one a driver last saw, and how many of those the ring had already let go.

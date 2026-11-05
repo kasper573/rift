@@ -42,7 +42,7 @@ use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::gui::{self, Band, WidgetRects};
 use crate::core::math::{Pos, Rgba, Size};
 use crate::core::render::present::{self, PRESENT_LAYER};
-use crate::core::render::sample::UploadedBytes;
+use crate::core::render::sample::{FrameWork, UploadedBytes};
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::billboard::Billboard;
 use crate::core::render::world::cover::CoverMaterial;
@@ -69,6 +69,7 @@ impl Plugin for VfxMaterialsPlugin {
             .init_resource::<VfxShaders>()
             .init_resource::<VfxAssets>()
             .init_resource::<WeatherImage>()
+            .init_resource::<FrameWork>()
             .init_resource::<super::cover::WeatherWrites>()
             .init_resource::<super::rain::RainField>()
             .init_resource::<super::rain::Shelter>()
@@ -281,13 +282,17 @@ pub fn present_shader(
             if let Some(handle) = world
                 .get::<MeshMaterial2d<VfxMaterial>>(piece)
                 .map(|material| material.0.clone())
-                && let Some(mut material) =
-                    world.resource_mut::<Assets<VfxMaterial>>().get_mut(&handle)
             {
-                material.image = image;
-                material.site = site;
-                material.params = params;
-                material.shader = shader;
+                let painted = VfxMaterial {
+                    image,
+                    site,
+                    params,
+                    shader,
+                };
+                repaint(world, &handle, painted, |was, now| {
+                    (&was.image, &was.site, &was.params, &was.shader)
+                        == (&now.image, &now.site, &now.params, &now.shader)
+                });
             }
             place(
                 world,
@@ -1164,18 +1169,45 @@ fn paint_world(
     params: ParamsUniform,
     shader: Handle<Shader>,
 ) {
-    if let Some(handle) = world
+    let Some(handle) = world
         .get::<MeshMaterial3d<VfxWorldMaterial>>(piece)
         .map(|material| material.0.clone())
-        && let Some(mut material) = world
-            .resource_mut::<Assets<VfxWorldMaterial>>()
-            .get_mut(&handle)
-    {
-        material.image = image;
-        material.site = site;
-        material.params = params;
-        material.shader = shader;
+    else {
+        return;
+    };
+    let Some(depth_bias) = world
+        .resource::<Assets<VfxWorldMaterial>>()
+        .get(&handle)
+        .map(|material| material.depth_bias)
+    else {
+        return;
+    };
+    let painted = VfxWorldMaterial {
+        image,
+        site,
+        params,
+        shader,
+        depth_bias,
+    };
+    repaint(world, &handle, painted, |was, now| {
+        (&was.image, &was.site, &was.params, &was.shader)
+            == (&now.image, &now.site, &now.params, &now.shader)
+    });
+}
+
+/// Paints the material `handle` as `painted`, unless `same` finds it painted so already: a
+/// material written to is prepared anew for the GPU, so one that holds still is left alone.
+fn repaint<M: Asset>(world: &mut World, handle: &Handle<M>, painted: M, same: fn(&M, &M) -> bool) {
+    let mut materials = world.resource_mut::<Assets<M>>();
+    if materials.get(handle).is_some_and(|was| same(was, &painted)) {
+        return;
     }
+    let Some(mut material) = materials.get_mut(handle) else {
+        return;
+    };
+    *material = painted;
+    drop(material);
+    world.resource_mut::<FrameWork>().vfx_writes += 1;
 }
 
 /// Lays a ground piece's patch over the terrain at `at`, `size` metres across, afresh when the
@@ -1200,7 +1232,7 @@ fn lay_patch(world: &mut World, piece: Entity, at: Vec3, size: Vec2) {
 fn place(world: &mut World, piece: Entity, transform: Transform) {
     let mut entity = world.entity_mut(piece);
     if let Some(mut shown) = entity.get_mut::<Transform>() {
-        *shown = transform;
+        shown.set_if_neq(transform);
     }
     if let Some(mut visibility) = entity.get_mut::<Visibility>() {
         visibility.set_if_neq(Visibility::Inherited);

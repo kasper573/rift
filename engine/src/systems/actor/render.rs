@@ -18,7 +18,7 @@ use super::layering::{self, Layering};
 use super::rigging::BuiltSkeleton;
 use super::skeleton::{Cue, GroupName, Hand, LocalOffset, LocalTurn, SkeletonId};
 use super::skeleton::{EquipmentSlot, GestureName};
-use super::stance::{self, HandIndex, PropHand};
+use super::stance::{self, HandIndex, PropHand, StanceId};
 use super::{Action, Actor, ActorModel, Appearance, Hurt, ModelId, Motion, Playing, Pose};
 use crate::core::assets;
 use crate::core::audio::playback::{PlaySfx, SfxPlace};
@@ -26,6 +26,7 @@ use crate::core::content::Content;
 use crate::core::content::gltf::NodeTree;
 use crate::core::interpolate::{Interpolate, InterpolatePlugin};
 use crate::core::math::{Pos, Rng};
+use crate::core::render::sample::FrameWork;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::body::{self, Body, RigReady};
 use crate::core::render::world::layers::Layered;
@@ -33,7 +34,7 @@ use crate::core::render::world::rig_clip;
 use crate::core::render::{Animator, Previous, Turns, facing_rotation, ground_height, world_point};
 use crate::core::text::Typewriter;
 use crate::core::time::{self, UnixMillis};
-use crate::core::units::{Meters, Radians, Seconds};
+use crate::core::units::{Meters, MetersPerSec, PlaybackRate, Radians, Seconds};
 use crate::core::vfx::render::SiteExtent;
 use crate::systems::area::{self, Area};
 use crate::systems::equipment::{self, Equipment};
@@ -449,6 +450,31 @@ pub fn adopt_player(
     };
 }
 
+/// What a body was last posed from, and whether it stood still once posed: nothing about it eased
+/// or played on with time. A body still in a pose whose inputs hold is not posed again.
+#[derive(Component)]
+struct Posed {
+    inputs: PoseInputs,
+    still: bool,
+}
+
+/// Everything a body's pose is made of that can change from one frame to the next.
+#[derive(Clone, PartialEq)]
+struct PoseInputs {
+    shown: RenderActor,
+    at: RenderPosition,
+    model: ModelId,
+    pose: Pose,
+    attack_rate: PlaybackRate,
+    speed: MetersPerSec,
+    playing: Option<Playing>,
+    blows: u32,
+    saying: Option<Saying>,
+    stance: Option<StanceId>,
+    ground: Meters,
+    holding: Vec<HandIndex>,
+}
+
 /// Places every rig where its actor shows, turned the way it faces, playing the clip its stance
 /// resolves for what it does, and sounds the cues its clip crosses.
 pub fn pose(world: &mut World) {
@@ -485,8 +511,8 @@ pub fn pose(world: &mut World) {
         .collect();
     let saying = saying(world);
     let mut sounds = Vec::new();
-    for (entity, shown, at, actor, model, playing) in shown {
-        let model = ActorModel::get(&content, model);
+    for (entity, shown, at, actor, model_id, playing) in shown {
+        let model = ActorModel::get(&content, model_id);
         let easing = model.skeleton().def.easing;
         let stance = held::stance_of(world, entity);
         let ground = ground_height(world, at.0);
@@ -494,6 +520,32 @@ pub fn pose(world: &mut World) {
             .as_ref()
             .filter(|playing| playing.motion.shows_over(shown.action));
         let blows = world.get::<Hurt>(entity).map_or(0, |hurt| hurt.0);
+        let holding: Vec<HandIndex> = world.get::<Puppet>(entity).map_or_else(Vec::new, |puppet| {
+            puppet.held().map(|(hand, ..)| hand).collect()
+        });
+        let inputs = PoseInputs {
+            shown,
+            at,
+            model: model_id,
+            pose: actor.pose,
+            attack_rate: actor.attack_rate,
+            speed: actor.speed,
+            playing: playing.clone(),
+            blows,
+            saying: saying.get(&entity).cloned(),
+            stance,
+            ground,
+            holding: holding.clone(),
+        };
+        if world
+            .get::<Posed>(entity)
+            .is_some_and(|posed| posed.still && posed.inputs == inputs)
+        {
+            continue;
+        }
+        if let Some(mut work) = world.get_resource_mut::<FrameWork>() {
+            work.posed += 1;
+        }
         let flinched = flinched(world, entity, blows, now);
         let flinch = Motion::Action(Action::Hurt);
         let flinch_pick = blows as usize % model.cell(stance, &flinch, actor.pose).clips().len();
@@ -552,7 +604,8 @@ pub fn pose(world: &mut World) {
             resolved.length / model.rate(&motion, &resolved, actor.attack_rate, actor.speed)
         };
         let mut next = |last, rng: &mut Rng| cell.after(last, rng);
-        let turns = (!motion.once() && cell.clips().len() > 1).then_some(Turns {
+        let looping_turns = !motion.once() && cell.clips().len() > 1;
+        let turns = looping_turns.then_some(Turns {
             length: &played_once,
             next: &mut next,
         });
@@ -577,9 +630,6 @@ pub fn pose(world: &mut World) {
             sounds.extend(sfx);
             stepped
         };
-        let holding: Vec<HandIndex> = world.get::<Puppet>(entity).map_or_else(Vec::new, |puppet| {
-            puppet.held().map(|(hand, ..)| hand).collect()
-        });
         if let Ok((mut layered, layering)) = world
             .query::<(&mut Layered, &Layering)>()
             .get_mut(world, entity)
@@ -691,9 +741,20 @@ pub fn pose(world: &mut World) {
             }
             tracks.retain(|track| track.weight > 0.0 || track.target > 0.0);
         }
-        if let Some(mut puppet) = world.get_mut::<Puppet>(entity) {
-            puppet.tracks = tracks;
-        }
+        let settled = tracks.iter().all(|track| track.weight == track.target);
+        let Some(mut puppet) = world.get_mut::<Puppet>(entity) else {
+            continue;
+        };
+        puppet.tracks = tracks;
+        let turned = now - puppet.turn.started >= puppet.turn.lasts;
+        let still = settled
+            && turned
+            && !restart
+            && !flinching
+            && gesture.is_none()
+            && !looping_turns
+            && resolved.cues.is_empty();
+        world.entity_mut(entity).insert(Posed { inputs, still });
     }
     for sound in sounds {
         world.write_message(sound);
@@ -705,6 +766,7 @@ pub fn pose(world: &mut World) {
 
 /// What each body says: whether a line it says still types, and the newest line it said with a
 /// gesture, by the line, and when it began.
+#[derive(Clone, PartialEq)]
 struct Saying {
     talking: bool,
     gesture: Option<(Entity, GestureName, Seconds)>,
