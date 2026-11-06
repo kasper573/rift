@@ -213,6 +213,13 @@ pub struct ExtractedGround {
     sheet_patches: Arc<[Vec<u32>]>,
 }
 
+impl ExtractedGround {
+    /// The render layers the terrain shows on.
+    pub fn layers(&self) -> &RenderLayers {
+        &self.layers
+    }
+}
+
 impl SyncComponent<RenderApp> for GroundDraw {
     type Target = ExtractedGround;
 }

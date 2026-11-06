@@ -57,6 +57,11 @@ fn strewn_field(ratio: f32, map: &Map, scene: serde_json::Value) -> Game {
                     "ratio": ratio,
                     "size": { "min": 0.2, "max": 0.4 },
                     "color": { "from": [60, 120, 50, 255], "to": [90, 160, 70, 255] },
+                }, {
+                    "shape": { "type": "blade", "width": 0.05, "height": 0.3 },
+                    "ratio": ratio,
+                    "size": { "min": 0.8, "max": 1.2 },
+                    "color": { "from": [60, 120, 50, 255], "to": [90, 160, 70, 255] },
                 }],
             })
         })
@@ -190,7 +195,7 @@ fn settle(app: &mut App, done: impl Fn(&mut App) -> bool) -> bool {
 
 /// What stands of an area follows the view: its props stand in the scenery's arena chunk by chunk
 /// as the view reaches them, counted as missing until they do, and the copies its covers strew
-/// stand within the view's reach; both go as the view leaves them behind. Its ground stands finer
+/// and the blades they grow stand within the view's reach; all go as the view leaves them behind. Its ground stands finer
 /// near the view than far from it, and the covers the view takes in from afar stand merged into a
 /// few meshes, so a long field costs what the view takes in, not what the field holds.
 #[test]
@@ -220,6 +225,8 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
 
     let tufts = view(&mut app, overhead(Pos::new(16.0, 8.0), reach, 10.0));
     let west = held(&app);
+    let west_blades = scenery::grass_blades(app.world(), stood);
+    assert!(west_blades > 0, "the turf grows its blades round the view");
     let (near, far) = (
         ground_stride_at(&mut app, 16.0),
         ground_stride_at(&mut app, 480.0),
@@ -243,9 +250,9 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
 
     let tufts = view(&mut app, overhead(Pos::new(16.0, 8.0), reach, 10.0));
     assert_eq!(
-        (tufts, held(&app)),
-        (0, west),
-        "back west, the tufts and the pebbles are gone again"
+        (tufts, held(&app), scenery::grass_blades(app.world(), stood)),
+        (0, west, west_blades),
+        "back west, the tufts, the pebbles and the blades the east grew are gone again"
     );
 
     // From so high over the east that a pebble spans less than a pixel, none stands.

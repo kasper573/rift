@@ -1,9 +1,8 @@
-//! The geometry a ground's cover is laid out as, from the paint: blades standing up from the
-//! terrain, or copies of a prop strewn over it; its sheet is drawn over the ground's own patches.
+//! The geometry a ground's cover is laid out as, from the paint: copies of a prop strewn over it;
+//! its sheet is drawn over the ground's own patches and its blades from those the GPU lays out.
 //! Every vertex carries, in its second uv, how far up the geometry it stands (0 at the root, 1 at
 //! the top) and how heavily the material is painted there, for the shader that moves and paints
-//! it, and a blade's or a merged copy's vertex where its blade or copy stands, for the shader to
-//! bend it about. A strewn copy is an instance of its prop's own mesh, which carries only how far
+//! it, and a merged copy's vertex where its copy stands, for the shader to bend it about. A strewn copy is an instance of its prop's own mesh, which carries only how far
 //! up the prop a vertex stands; it stands at its instance's origin, and the rest of its marks and
 //! its tint ride on its tag.
 
@@ -198,13 +197,6 @@ impl Spread {
     }
 }
 
-/// A blade's shape at size 1: how wide it stands at its root and how tall.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct BladeShape {
-    pub width: f32,
-    pub height: f32,
-}
-
 /// A piece of a prop's model as it is copied: its mesh, placed by its node's transform, and the
 /// material the model draws it with.
 pub struct Piece {
@@ -287,61 +279,6 @@ pub enum SheetOn {
 /// How far from the shore a sheet on water tells its points they lie at most: past it, every
 /// point lies this far out.
 pub const SHORE_REACH: Meters = Meters(16.0);
-
-/// A blade of the `shape` standing at each of `places` on the ground of `heights`, a triangle at
-/// its place's size, turn and tint, its uv running across and up. As meshes of a bounded size, none
-/// when nothing grows.
-pub fn blades(
-    heights: &Heightfield,
-    places: &[Place],
-    shape: &BladeShape,
-    spread: &Spread,
-) -> Vec<Mesh> {
-    let mut positions: Vec<[f32; 3]> = Vec::with_capacity(places.len() * 3);
-    let mut normals = Vec::with_capacity(positions.capacity());
-    let mut uvs = Vec::with_capacity(positions.capacity());
-    let mut tips = Vec::with_capacity(positions.capacity());
-    let mut colors = Vec::with_capacity(positions.capacity());
-    let mut roots = Vec::with_capacity(positions.capacity());
-    for place in places {
-        let root = place.transform.translation;
-        roots.extend([root.to_array(); 3]);
-        let size = place.transform.scale.x;
-        let across = place.transform.rotation * Vec3::X * (shape.width / 2.0 * size);
-        positions.push((root - across).to_array());
-        positions.push((root + across).to_array());
-        positions.push((root + Vec3::Y * shape.height * size).to_array());
-        normals.extend([ground_normal(heights, Pos::new(root.x, root.z)); 3]);
-        uvs.extend([[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]]);
-        let color = spread.color.0.mix(&spread.color.1, place.tint);
-        colors.extend([color.to_f32_array(); 3]);
-        let mark = |measure| {
-            Mark {
-                measure,
-                weight: place.weight,
-                piece: spread.piece,
-                seed: place.seed,
-            }
-            .pack()
-        };
-        tips.extend([mark(0.0), mark(0.0), mark(1.0)]);
-    }
-    if positions.is_empty() {
-        return Vec::new();
-    }
-    let indices = (0..positions.len() as u32).collect();
-    assemble(
-        CoverVertices {
-            positions,
-            normals,
-            uvs,
-            tips,
-            colors: Some(colors),
-            roots: Some(roots),
-        },
-        indices,
-    )
-}
 
 /// Where the patch's strewn copies stand, each cell holding its share of the spread, turned any
 /// way, each at its own size and tint, scattered the same way for the same `seed`, with how
@@ -1196,13 +1133,4 @@ fn picked<T: Copy>(sources: &[u32], values: &[T]) -> Vec<T> {
         .iter()
         .map(|&source| values[source as usize])
         .collect()
-}
-
-fn ground_normal(heights: &Heightfield, at: Pos<Meters>) -> [f32; 3] {
-    let step = 1.0 / SAMPLES_PER_METER as f32;
-    let east = heights.height_at(Pos::new(at.x + step, at.y)).0
-        - heights.height_at(Pos::new(at.x - step, at.y)).0;
-    let south = heights.height_at(Pos::new(at.x, at.y + step)).0
-        - heights.height_at(Pos::new(at.x, at.y - step)).0;
-    Vec3::new(-east, 2.0 * step, -south).normalize().to_array()
 }

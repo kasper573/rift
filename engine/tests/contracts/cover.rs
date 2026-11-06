@@ -3,8 +3,8 @@ use bevy::prelude::*;
 use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER, shore_distances};
 use engine::core::math::Pos;
 use engine::core::render::world::cover::{
-    BladeShape, CopyModel, Mark, Patch, Piece, Place, SHORE_REACH, Spread, blades, copy_meshes,
-    merged_copies, seen_at, strew_places,
+    CopyModel, Mark, Patch, Piece, Place, SHORE_REACH, Spread, copy_meshes, merged_copies, seen_at,
+    strew_places,
 };
 use engine::core::render::world::lod::GRAIN_PIXELS;
 use engine::core::units::Meters;
@@ -14,18 +14,8 @@ const SIZE: GroundSize = GroundSize {
     width: 16,
     height: 16,
 };
-const BLADE: BladeShape = BladeShape {
-    width: 0.06,
-    height: 0.4,
-};
 const DARK: LinearRgba = LinearRgba::rgb(0.1, 0.4, 0.1);
 const LIGHT: LinearRgba = LinearRgba::rgb(0.4, 0.8, 0.3);
-const SPREAD: Spread = Spread {
-    piece: 2,
-    per_square_meter: 16.0,
-    size: (0.7, 1.3),
-    color: (DARK, LIGHT),
-};
 
 /// Ground rising a metre every four metres eastward.
 fn slope() -> Heightfield {
@@ -59,134 +49,10 @@ fn colors(mesh: &Mesh) -> Vec<[f32; 4]> {
     }
 }
 
-/// Whether `color` lies on the way from `from` to `to`, channel by channel.
-fn between(color: [f32; 4], from: LinearRgba, to: LinearRgba) -> bool {
-    let (from, to) = (from.to_f32_array(), to.to_f32_array());
-    (0..3).all(|channel| {
-        let (low, high) = (
-            from[channel].min(to[channel]),
-            from[channel].max(to[channel]),
-        );
-        color[channel] >= low - 1e-4 && color[channel] <= high + 1e-4
-    })
-}
-
-/// The one mesh `meshes` holds, as a patch this small makes.
-fn one(meshes: Vec<Mesh>) -> Mesh {
-    let [mesh] = <[Mesh; 1]>::try_from(meshes).expect("one mesh");
-    mesh
-}
-
 fn marks(mesh: &Mesh) -> Vec<Mark> {
     match mesh.attribute(Mesh::ATTRIBUTE_UV_1).expect("marks") {
         VertexAttributeValues::Float32x2(marks) => marks.iter().map(|uv| Mark::of(*uv)).collect(),
         _ => panic!("marks are pairs"),
-    }
-}
-
-#[test]
-fn blades_grow_as_thick_as_their_ground_is_painted_rooted_on_the_terrain_each_its_own_size_colour_and_seed()
- {
-    let heights = slope();
-    let full = |_: u32, _: u32| 1.0;
-    let half = |_: u32, _: u32| 0.5;
-    let none = |_: u32, _: u32| 0.0;
-    let grow = |share: &dyn Fn(u32, u32) -> f32, spread: &Spread, seed: u64| {
-        let places = strew_places(&patch(&heights, share), spread, seed);
-        blades(&heights, &places, &BLADE, spread)
-    };
-    let count_of = |share: &dyn Fn(u32, u32) -> f32, spread: &Spread, seed: u64| {
-        grow(share, spread, seed)
-            .iter()
-            .map(|mesh| mesh.count_vertices() / 3)
-            .sum::<usize>()
-    };
-    let count = |share: &dyn Fn(u32, u32) -> f32, seed: u64| count_of(share, &SPREAD, seed);
-    let whole = (SIZE.width * SIZE.height) as f32 * SPREAD.per_square_meter;
-    assert!(
-        (count(&full, 7) as f32 - whole).abs() <= whole * 0.05,
-        "full weight grew {} blades, not about {whole}",
-        count(&full, 7)
-    );
-    assert!(
-        (count(&half, 7) as f32 - whole / 2.0).abs() <= whole * 0.05,
-        "half weight grew {} blades, not about {}",
-        count(&half, 7),
-        whole / 2.0
-    );
-    assert_eq!(count(&none, 7), 0, "unpainted ground grows nothing");
-    let dense = Spread {
-        per_square_meter: 400.0,
-        ..SPREAD
-    };
-    let meshes = grow(&full, &dense, 7);
-    assert!(
-        meshes.len() > 1
-            && meshes
-                .iter()
-                .all(|mesh| mesh.count_vertices() <= u16::MAX as usize),
-        "a dense cover comes as several meshes of a bounded size"
-    );
-    let dense_whole = whole * dense.per_square_meter / SPREAD.per_square_meter;
-    assert!(
-        (count_of(&full, &dense, 7) as f32 - dense_whole).abs() <= dense_whole * 0.05,
-        "a dense cover grows every blade over its meshes"
-    );
-    let grown = |seed| one(grow(&full, &SPREAD, seed));
-    assert_eq!(
-        positions(&grown(7)),
-        positions(&grown(7)),
-        "the same seed grows the same"
-    );
-    assert_ne!(
-        positions(&grown(7)),
-        positions(&grown(8)),
-        "another seed scatters anew"
-    );
-
-    let mesh = grown(7);
-    let seeds: std::collections::BTreeSet<u32> = marks(&mesh)
-        .iter()
-        .map(|mark| (mark.seed * 1000.0) as u32)
-        .collect();
-    assert!(
-        seeds.len() > 100,
-        "blades carry seeds of their own, not {seeds:?}"
-    );
-    for blade in marks(&mesh).chunks(3) {
-        assert!(
-            blade
-                .iter()
-                .all(|mark| mark.seed == blade[0].seed && mark.piece == SPREAD.piece),
-            "a blade's vertices share its seed and name their piece: {blade:?}"
-        );
-    }
-    let mut shades = std::collections::BTreeSet::new();
-    for blade in colors(&mesh).chunks(3) {
-        assert!(
-            blade
-                .iter()
-                .all(|color| *color == blade[0] && between(*color, DARK, LIGHT)),
-            "a blade is one colour drawn between the piece's two: {blade:?}"
-        );
-        shades.insert((blade[0][1] * 100.0) as u32);
-    }
-    assert!(shades.len() > 10, "blades differ in colour: {shades:?}");
-    for (position, mark) in positions(&mesh).iter().zip(marks(&mesh)) {
-        let ground = heights.height_at(Pos::new(position[0], position[2])).0;
-        assert!(mark.weight > 0.99, "a blade on full weight carries it");
-        if mark.measure == 0.0 {
-            assert!(
-                (position[1] - ground).abs() < 0.02,
-                "a root at {position:?} stands {ground} above the ground"
-            );
-        } else {
-            let height = position[1] - ground;
-            assert!(
-                (BLADE.height * SPREAD.size.0..=BLADE.height * SPREAD.size.1).contains(&height),
-                "a tip stands {height} m over the ground, outside the piece's sizes"
-            );
-        }
     }
 }
 

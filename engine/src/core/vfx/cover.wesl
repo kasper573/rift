@@ -16,10 +16,11 @@
 // cover's pieces the point belongs to (0 on a sheet), `seed` a number of the blade's or the copy's
 // own, 0 on a sheet, and, as a vertex moves, `root`, where its blade or copy stands on the ground
 // (a sheet's vertex is its own root). Off water, `depth`, `shore` and `fall` are 0. The cover's colours come from
-// its vertices: a blade's own, a copy's tint over its prop's, a sheet's ground colour. A blade's
-// or a merged copy's vertex carries its root; an instanced copy stands at its instance's origin.
-// A sheet is drawn over the ground's patches, its points read from the ground as they are drawn,
-// and lit as a white, rough, blended face of its ground's colour.
+// its vertices: a blade's own, a copy's tint over its prop's, a sheet's ground colour. A merged
+// copy's vertex carries its root; an instanced copy stands at its instance's origin. A sheet is
+// drawn over the ground's patches, its points read from the ground as they are drawn, and blades
+// from the blades the GPU laid out for the ground; both are lit as a white, rough, blended face of
+// their colour.
 @if(PREPASS_PIPELINE)
 import bevy_pbr::prepass::io::{Vertex, VertexOutput, FragmentOutput, decompress_vertex};
 @else
@@ -38,13 +39,15 @@ import bevy_pbr::render::mesh_view_bindings::view;
 import bevy_pbr::render::mesh_view_bindings::lights;
 @if(SHEET_PATCH)
 import engine::core::render::world::gpu::sheet::{drawn_sheet, sheet_point};
-@if(SHEET_PATCH)
+@if(GRASS_BLADE)
+import engine::core::render::world::gpu::grass::blade_point;
+@if(SHEET_PATCH || GRASS_BLADE)
 import bevy_pbr::render::mesh_types::{MESH_FLAGS_SHADOW_RECEIVER_BIT, MESH_FLAGS_SIGN_DETERMINANT_MODEL_3X3_BIT};
-@if(SHEET_PATCH)
+@if(SHEET_PATCH || GRASS_BLADE)
 import bevy_pbr::render::pbr_functions::calculate_view;
-@if(SHEET_PATCH)
+@if(SHEET_PATCH || GRASS_BLADE)
 import bevy_pbr::render::pbr_lighting::perceptualRoughnessToRoughness;
-@if(SHEET_PATCH)
+@if(SHEET_PATCH || GRASS_BLADE)
 import bevy_pbr::render::pbr_types::{pbr_input_new, STANDARD_MATERIAL_FLAGS_ALPHA_MODE_BLEND, STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT};
 @if(SCREEN_SPACE_AMBIENT_OCCLUSION)
 import bevy_pbr::render::mesh_view_bindings::screen_space_ambient_occlusion_texture;
@@ -236,7 +239,34 @@ fn vertex(@builtin(instance_index) instance: u32, @location(0) grid: vec3<f32>) 
     return handed_on(out);
 }
 
-@if(!ROOTED && !SHEET_PATCH)
+@if(GRASS_BLADE)
+@vertex
+fn vertex(@builtin(vertex_index) index: u32) -> Output {
+    let point = blade_point(index);
+    ashore = 0.0;
+    falling = vec2<f32>(0.0);
+    stem = point.root;
+    spot = point.world;
+    let weight = clamp(point.weight, 0.0, 255.0 / 256.0);
+    let steps = floor(clamp(point.seed, 0.0, 1.0) * 255.0) + f32(point.piece) * 256.0;
+    let marks = vec2<f32>(point.measure, weight + steps);
+    mark(marks);
+    read_weather();
+    var out: VertexOutput;
+    out.uv = point.uv;
+    out.uv_b = marks;
+    out.color = point.color;
+    out.world_normal = point.normal;
+    let world = vec4<f32>(sway(point.world, up), 1.0);
+    out.world_position = world;
+    out.position = select(vec4<f32>(0.0), position_world_to_clip(world.xyz), point.shown);
+    @if(VERTEX_OUTPUT_INSTANCE_INDEX) {
+        out.instance_index = 0u;
+    }
+    return handed_on(out);
+}
+
+@if(!ROOTED && !SHEET_PATCH && !GRASS_BLADE)
 @vertex
 fn vertex(vertex_in: Vertex) -> Output {
     return handed_on(stand(vertex_in, select(vec4<f32>(0.0), vec4<f32>(0.0, 0.0, 0.0, 1.0), strewn.on != 0u)));
@@ -275,9 +305,9 @@ fn handed_on(out: VertexOutput) -> VertexOutput {
     return out;
 }
 
-// What the fragment lights: a mesh's material as bevy's standard material reads it, or a sheet
-// lit as a white, rough face of its ground's colour.
-@if(!PREPASS_PIPELINE && SHEET_PATCH)
+// What the fragment lights: a mesh's material as bevy's standard material reads it, or a sheet or
+// a blade lit as a white, rough face of its colour.
+@if(!PREPASS_PIPELINE && (SHEET_PATCH || GRASS_BLADE))
 fn material_input(in: VertexOutput, is_front: bool) -> PbrInput {
     var input = pbr_input_new();
     input.flags = MESH_FLAGS_SHADOW_RECEIVER_BIT | MESH_FLAGS_SIGN_DETERMINANT_MODEL_3X3_BIT;

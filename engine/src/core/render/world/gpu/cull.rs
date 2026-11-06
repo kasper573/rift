@@ -756,7 +756,7 @@ fn starts_bytes(commands: &[DrawCommand]) -> Vec<u8> {
     bytes
 }
 
-fn read_buffer(device: &RenderDevice, queue: &RenderQueue, buffer: &Buffer) -> Vec<u8> {
+pub(super) fn read_buffer(device: &RenderDevice, queue: &RenderQueue, buffer: &Buffer) -> Vec<u8> {
     let staging = device.create_buffer(&BufferDescriptor {
         label: Some("prop cull readback"),
         size: buffer.size(),

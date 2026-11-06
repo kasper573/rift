@@ -1,10 +1,11 @@
 //! The covers an area's terrains grow, over the regions the scenery is cut into for the view. In
-//! a leaf a cover stands chunk by chunk: its blades and the copies of the props it strews, each
-//! copy an instance of its prop. In every coarser region it stands merged, a mesh for each of its
-//! pieces, of the same copies where the chunks would strew them, each no finer than the view shows
-//! it: copies too small to tell apart thinned and the rest grown to cover as much, so a view over a
-//! whole area stands a few meshes, and what stands merged looks as what would stand chunk by chunk.
-//! A cover's sheet stands with the ground, drawn over its patches wherever its terrain paints. A prop whose copies the view shows large
+//! a leaf a cover stands the copies of the props it strews chunk by chunk, each copy an instance of
+//! its prop. In every coarser region it stands them merged, a mesh for each of its pieces, of the
+//! same copies where the chunks would strew them, each no finer than the view shows it: copies too
+//! small to tell apart thinned and the rest grown to cover as much, so a view over a whole area
+//! stands a few meshes, and what stands merged looks as what would stand chunk by chunk. A cover's
+//! sheet stands with the ground, drawn over its patches wherever its terrain paints, and the GPU
+//! grows its blades round the views. A prop whose copies the view shows large
 //! there stands chunk by chunk too, and a coarser region stands its covers only once the view may
 //! see it, so ground out of sight costs nothing however far the scenery reaches.
 
@@ -32,6 +33,7 @@ use crate::core::math::Pos;
 use crate::core::render::camera::Lens;
 use crate::core::render::world::cover::{self, CopyModel, CoverMaterial};
 use crate::core::render::world::gpu::draw::GroundSheet;
+use crate::core::render::world::gpu::grass::{BladeShape, GrassPiece};
 use crate::core::render::world::gpu::upload;
 use crate::core::units::{MeterSize, Meters, Radians, Seconds};
 use crate::core::vfx::ParamFill;
@@ -84,16 +86,18 @@ struct CoverLayer {
     sheet: Option<CoverSheet>,
     ground_color: LinearRgba,
     pieces: Vec<LayerPiece>,
+    grass: Vec<GrassPiece>,
     blended: Handle<CoverMaterial>,
 }
 
-/// A piece of a cover as its layer stands it: its shape and how it is spread, the most a copy of it measures across where that is known, and for a prop the model it
-/// strews and the material its copies are drawn with.
+/// A piece of a cover strewing a prop, as its layer stands it: its shape and how it is spread, the
+/// most a copy of it measures across where that is known, and the model it strews and the
+/// material its copies are drawn with.
 struct LayerPiece {
     shape: CoverPiece,
     extent: Option<Meters>,
     spread: cover::Spread,
-    strewn: Option<Strewn>,
+    strewn: Strewn,
 }
 
 impl LayerPiece {
@@ -139,6 +143,14 @@ impl Covers {
         }
     }
 
+    /// The pieces of the covers that grow blades.
+    pub(super) fn grass(&self) -> Arc<[GrassPiece]> {
+        self.layers
+            .iter()
+            .flat_map(|layer| layer.grass.iter().cloned())
+            .collect()
+    }
+
     /// The sheets the covers lay over the ground.
     pub(super) fn sheets(&self) -> Vec<GroundSheet> {
         self.layers
@@ -174,12 +186,11 @@ pub(super) struct CoverPieces {
     paint: (u32, u32),
 }
 
-/// How a cover's piece measures: the most a copy of it measures across where that is known, how
-/// far across its smallest copies or blades measure, and whether it strews a prop.
+/// How a cover's piece measures: the most a copy of it measures across where that is known, and
+/// how far across its smallest copies measure.
 struct PieceSize {
     extent: Option<Meters>,
     smallest: Option<Meters>,
-    strewn: bool,
 }
 
 impl Covers {
@@ -196,7 +207,6 @@ impl Covers {
                         .map(|piece| PieceSize {
                             extent: piece.extent,
                             smallest: piece.smallest(),
-                            strewn: piece.strewn.is_some(),
                         })
                         .collect()
                 })
@@ -471,9 +481,7 @@ fn shown_pieces(pieces: &CoverPieces, lens: Lens, cut: &Cut) -> HashMap<Merge, V
 /// to merge: made ready off the main thread once it has loaded.
 fn prepare_models(world: &mut World, streaming: &mut Streaming, shown: &HashSet<PieceAt>) {
     for &PieceAt { layer, piece } in shown {
-        let Some(strewn) = streaming.covers.layers[layer].pieces[piece].strewn.as_mut() else {
-            continue;
-        };
+        let strewn = &mut streaming.covers.layers[layer].pieces[piece].strewn;
         match &mut strewn.model {
             CopyState::Loading => {
                 if let Some(pieces) = cover::model_pieces(world, &strewn.gltf) {
@@ -507,10 +515,8 @@ fn chunked_pieces(
                 .iter()
                 .filter(|&&PieceAt { layer, piece }| {
                     let size = &pieces.layers[layer][piece];
-                    size.strewn
-                        && size
-                            .smallest
-                            .is_some_and(|smallest| smallest.0 * pixels_per_meter >= STREWN_PIXELS)
+                    size.smallest
+                        .is_some_and(|smallest| smallest.0 * pixels_per_meter >= STREWN_PIXELS)
                 })
                 .copied()
                 .collect();
@@ -541,14 +547,9 @@ fn stand_merge(
     for &at in pieces {
         let PieceAt { layer, piece } = at;
         let cover = &streaming.covers.layers[layer];
-        let model = match cover.pieces[piece]
-            .strewn
-            .as_ref()
-            .map(|strewn| &strewn.model)
-        {
-            None => None,
-            Some(CopyState::Ready(model)) => Some(model.clone()),
-            Some(CopyState::Loading | CopyState::Preparing(_)) => return false,
+        let model = match &cover.pieces[piece].strewn.model {
+            CopyState::Ready(model) => Some(model.clone()),
+            CopyState::Loading | CopyState::Preparing(_) => return false,
         };
         far_pieces.push(FarPiece {
             piece: at,
@@ -585,10 +586,7 @@ fn spawn_merged(
 ) -> Option<Entity> {
     let PieceAt { layer, piece } = far.piece;
     let piece = &layers[layer].pieces[piece];
-    let material = match &piece.strewn {
-        Some(strewn) => cover::merged_material(world, &strewn.material, far.material.as_ref())?,
-        None => layers[layer].blended.clone(),
-    };
+    let material = cover::merged_material(world, &piece.strewn.material, far.material.as_ref())?;
     let mesh = upload::stage(world, far.mesh);
     Some(
         world
@@ -694,17 +692,7 @@ impl FarRegion {
             (places, far.spread)
         };
         let meshes: Vec<(Option<Handle<GltfMaterial>>, Mesh)> = match (&far.shape, &far.model) {
-            (PieceShape::Blade { width, height }, _) => {
-                let (places, spread) = strewn(width.0.max(height.0));
-                let shape = cover::BladeShape {
-                    width: width.0,
-                    height: height.0,
-                };
-                cover::blades(&self.heights, &places, &shape, &spread)
-                    .into_iter()
-                    .map(|mesh| (None, mesh))
-                    .collect()
-            }
+            (PieceShape::Blade { .. }, _) => Vec::new(),
             (PieceShape::Prop { .. }, Some(model)) => {
                 let (places, spread) = strewn(model.extent());
                 cover::merged_copies(&places, model, &spread, self.pixels_per_meter)
@@ -795,45 +783,58 @@ fn cover_layers(world: &mut World, content: &Content, area: &Area) -> Vec<CoverL
         };
         let blended = material(world, None);
         let ground_color = ground.color.color().to_linear();
-        let pieces: Vec<LayerPiece> = cover_def
-            .pieces
-            .iter()
-            .enumerate()
-            .map(|(index, piece)| {
-                let spread = cover::Spread {
-                    piece: index as u32,
-                    per_square_meter: piece.per_square_meter(piece.shape.base_area(prop_bounds)),
-                    size: (piece.size.min, piece.size.max),
-                    color: (
-                        piece.color.from.color().to_linear(),
-                        piece.color.to.color().to_linear(),
-                    ),
-                };
-                let strewn = match &piece.shape {
-                    PieceShape::Prop { prop } => Some(Strewn {
+        let mut pieces = Vec::new();
+        let mut grass = Vec::new();
+        for (index, piece) in cover_def.pieces.iter().enumerate() {
+            let spread = cover::Spread {
+                piece: index as u32,
+                per_square_meter: piece.per_square_meter(piece.shape.base_area(prop_bounds)),
+                size: (piece.size.min, piece.size.max),
+                color: (
+                    piece.color.from.color().to_linear(),
+                    piece.color.to.color().to_linear(),
+                ),
+            };
+            match &piece.shape {
+                PieceShape::Prop { prop } => pieces.push(LayerPiece {
+                    extent: extent(&piece.shape).map(|extent| Meters(extent * piece.size.max)),
+                    shape: piece.clone(),
+                    strewn: Strewn {
                         gltf: assets::model(
                             world.resource::<AssetServer>(),
                             prop.get(content).model.path(),
                         ),
                         material: material(world, Some(&spread)),
                         model: CopyState::Loading,
-                    }),
-                    PieceShape::Blade { .. } => None,
-                };
-                LayerPiece {
-                    extent: extent(&piece.shape).map(|extent| Meters(extent * piece.size.max)),
-                    shape: piece.clone(),
+                    },
                     spread,
-                    strewn,
+                }),
+                PieceShape::Blade { width, height } => {
+                    if let Ok(terrain) = u8::try_from(slot) {
+                        grass.push(GrassPiece {
+                            terrain,
+                            piece: spread.piece,
+                            seed: cover_def.seed,
+                            per_square_meter: spread.per_square_meter,
+                            size: spread.size,
+                            color: spread.color,
+                            shape: BladeShape {
+                                width: width.0,
+                                height: height.0,
+                            },
+                            material: blended.clone(),
+                        });
+                    }
                 }
-            })
-            .collect();
+            }
+        }
         layers.push(CoverLayer {
             slot,
             seed: cover_def.seed,
             sheet: cover_def.sheet,
             ground_color,
             pieces,
+            grass,
             blended,
         });
     }
@@ -850,68 +851,27 @@ fn spawn_cover_chunk(
 ) -> Vec<Entity> {
     let PieceAt { layer, piece } = piece;
     let layer = &streaming.covers.layers[layer];
-    let LayerPiece {
-        shape,
-        spread,
-        strewn,
-        ..
-    } = &layer.pieces[piece];
+    let LayerPiece { spread, strewn, .. } = &layer.pieces[piece];
     let cover = StrewnCover {
         slot: layer.slot,
         seed: layer.seed,
     };
-    let strewn_places =
-        || expand::strewn_in(&streaming.heights, &streaming.paint, cover, spread, chunk);
-    let meshes = match &shape.shape {
-        PieceShape::Blade { width, height } => cover::blades(
-            &streaming.heights,
-            &strewn_places(),
-            &cover::BladeShape {
-                width: width.0,
-                height: height.0,
-            },
-            spread,
-        ),
-        PieceShape::Prop { .. } => {
-            let Some(Strewn { gltf, material, .. }) = strewn.as_ref() else {
-                return Vec::new();
-            };
-            let places = strewn_places();
-            if places.is_empty() {
-                return Vec::new();
-            }
-            return vec![
-                world
-                    .spawn((
-                        cover::Strewing {
-                            gltf: gltf.clone(),
-                            places,
-                            material: material.clone(),
-                        },
-                        Transform::default(),
-                        Visibility::default(),
-                        ChildOf(root),
-                    ))
-                    .id(),
-            ];
-        }
-    };
-    meshes
-        .into_iter()
-        .filter_map(|mesh| {
-            let bounds = mesh.get_aabb()?;
-            let mesh = upload::stage(world, mesh);
-            Some(
-                world
-                    .spawn((
-                        Mesh3d(mesh),
-                        MeshMaterial3d(layer.blended.clone()),
-                        bounds,
-                        NotShadowCaster,
-                        ChildOf(root),
-                    ))
-                    .id(),
-            )
-        })
-        .collect()
+    let places = expand::strewn_in(&streaming.heights, &streaming.paint, cover, spread, chunk);
+    if places.is_empty() {
+        return Vec::new();
+    }
+    vec![
+        world
+            .spawn((
+                cover::Strewing {
+                    gltf: strewn.gltf.clone(),
+                    places,
+                    material: strewn.material.clone(),
+                },
+                Transform::default(),
+                Visibility::default(),
+                ChildOf(root),
+            ))
+            .id(),
+    ]
 }

@@ -32,6 +32,8 @@ pub struct VideoPreferences {
     pub bloom: bool,
     /// How far around the player the world's props, covers and lights stand.
     pub view_distance: ViewDistance,
+    /// How thickly the blades the ground's covers grow stand, and how far off.
+    pub grass: GrassQuality,
 }
 
 impl Default for VideoPreferences {
@@ -45,6 +47,7 @@ impl Default for VideoPreferences {
             anti_aliasing: AntiAliasingQuality::default(),
             bloom: true,
             view_distance: ViewDistance::default(),
+            grass: GrassQuality::default(),
         }
     }
 }
@@ -61,6 +64,7 @@ impl VideoPreferences {
             anti_aliasing: AntiAliasingQuality::Off,
             bloom: false,
             view_distance: ViewDistance::Near,
+            grass: GrassQuality::Low,
         }
     }
 }
@@ -108,6 +112,11 @@ pub fn controls(ui: &mut Ui, video: &mut VideoPreferences) {
         let current = video.view_distance;
         if let Some(distance) = controls::variant_picker(ui, "view distance", current, label.id) {
             video.view_distance = distance;
+        }
+        ui.end_row();
+        let label = ui.label("Grass");
+        if let Some(grass) = controls::variant_picker(ui, "grass", video.grass, label.id) {
+            video.grass = grass;
         }
         ui.end_row();
     });
@@ -193,6 +202,38 @@ impl ViewDistance {
             ViewDistance::Near => 0.5,
             ViewDistance::Middle => 0.75,
             ViewDistance::Far => 1.0,
+        }
+    }
+}
+
+/// How thickly the blades the ground's covers grow stand, and how far off, as shares of all a
+/// cover grows and of as far as the view still shows its blades.
+#[derive(
+    Serialize, Deserialize, VariantArray, AsRefStr, Clone, Copy, Debug, Default, PartialEq, Eq,
+)]
+pub enum GrassQuality {
+    Low,
+    Medium,
+    #[default]
+    High,
+}
+
+impl GrassQuality {
+    /// The share of a cover's blades that stand.
+    pub fn density(self) -> f32 {
+        self.share()
+    }
+
+    /// The share of as far as the view shows a cover's blades that they stand within.
+    pub fn range(self) -> f32 {
+        self.share()
+    }
+
+    fn share(self) -> f32 {
+        match self {
+            GrassQuality::Low => 0.25,
+            GrassQuality::Medium => 0.5,
+            GrassQuality::High => 1.0,
         }
     }
 }

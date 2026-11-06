@@ -9,6 +9,7 @@
 
 mod covers;
 pub mod expand;
+mod grass;
 mod instances;
 mod plan;
 mod props;
@@ -18,6 +19,7 @@ pub use plan::{Eyes, Sight};
 pub use props::prop_transform;
 
 use covers::Covers;
+use grass::Grass;
 use instances::Instances;
 use plan::{Plan, Planner};
 use regions::Regions;
@@ -49,6 +51,7 @@ use crate::core::math::{Pos, Rect, Rng, Size};
 use crate::core::render::camera::WorldPicture;
 use crate::core::render::present::AreaGrade;
 use crate::core::render::sample::FrameWork;
+use crate::core::render::video::VideoPreferences;
 use crate::core::render::world::clouds::{CloudDrift, CloudSheet};
 use crate::core::render::world::gpu::arena::PropArena;
 use crate::core::render::world::gpu::atlas::TerrainAtlas;
@@ -89,7 +92,15 @@ impl Plugin for SceneryPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TakenDown>()
             .init_resource::<Streams>()
-            .add_systems(Update, (take_down, stream));
+            .add_systems(
+                Update,
+                (
+                    regrow_grass.run_if(resource_changed::<VideoPreferences>),
+                    take_down,
+                    stream,
+                )
+                    .chain(),
+            );
     }
 }
 
@@ -155,6 +166,7 @@ pub fn spawn(
     if let Some(mut draw) = world.get_mut::<GroundDraw>(terrain) {
         draw.sheets = covers.sheets().into();
     }
+    let grass = Grass::new(world, terrain, covers.grass());
     let planner = {
         let area = area.clone();
         let pieces = covers.pieces(&area.paint);
@@ -178,6 +190,7 @@ pub fn spawn(
         water: area.water.clone(),
         terrain,
         covers,
+        grass,
         instances: Instances::default(),
         planner,
         sight: None,
@@ -341,6 +354,15 @@ pub fn arena_props(world: &World, scenery: Scenery) -> u32 {
         .map_or(0, |streaming| streaming.instances.props())
 }
 
+/// How many blades of its covers' grass `scenery` holds on the GPU.
+pub fn grass_blades(world: &World, scenery: Scenery) -> u64 {
+    world
+        .resource::<Streams>()
+        .0
+        .get(&scenery.root)
+        .map_or(0, |streaming| streaming.grass.blades())
+}
+
 /// How many patches of ground are drawn for the sights.
 pub fn stood_chunks(world: &World) -> u32 {
     world
@@ -380,6 +402,7 @@ struct Streaming {
     water: WaterSurface,
     terrain: Entity,
     covers: Covers,
+    grass: Grass,
     instances: Instances,
     planner: Making<Arc<Planner>>,
     sight: Option<Sight>,
@@ -516,6 +539,11 @@ fn stream_plan(world: &mut World, root: Entity, streaming: &mut Streaming) {
     if !covers_unstood.is_empty() {
         budget.defer();
     }
+    let grass_missing = grass::grow(world, streaming, &plan.seen);
+    if grass_missing > 0 {
+        budget.defer();
+    }
+    streaming.missing += grass_missing;
     stream_lights(world, streaming, &plan, root);
     streaming.whole = !budget.spent;
 }
@@ -850,6 +878,7 @@ fn stream_lights(world: &mut World, streaming: &mut Streaming, plan: &Plan, root
 pub fn despawn(world: &mut World, scenery: Scenery) {
     if let Some(streaming) = world.resource_mut::<Streams>().0.remove(&scenery.root) {
         instances::drop_arena(world, scenery.root);
+        grass::drop_grass(world, streaming.terrain);
         AsyncComputeTaskPool::get()
             .spawn(async move { drop(streaming) })
             .detach();
@@ -865,6 +894,13 @@ fn take_away(world: &mut World, entity: Entity) {
     };
     gone.insert(Visibility::Hidden);
     world.resource_mut::<TakenDown>().0.push(entity);
+}
+
+/// Grows every scenery's grass again as the player's settings ask, once they change.
+fn regrow_grass(mut streams: ResMut<Streams>) {
+    for streaming in streams.0.values_mut() {
+        streaming.whole = false;
+    }
 }
 
 /// What is out of the view, still being taken out of the world.
@@ -1263,6 +1299,7 @@ fn lay_streamed_ground(
         atlas.lay(heights, paint, &streaming.water);
     }
     streaming.covers.ground_changed();
+    streaming.grass.ground_changed();
     streaming.whole = false;
 }
 

@@ -105,8 +105,8 @@ const LOADING_AT_MOST: Duration = Duration::from_secs(30);
 
 /// The passes a shader of `stage` draws in, each with the defs its pipeline compiles it under: as
 /// a lit mesh with positions, normals, uvs and colours, in the main pass, and in the prepass where
-/// the stage writes depth and normals ahead of it, a prop also drawn from the arenas; a surface leaves the prepass to the material it
-/// plays over, and a cover's sheet, blended over the ground's patches, draws in the main pass
+/// the stage writes depth and normals ahead of it; a surface leaves the prepass to the material it
+/// plays over, and a cover's sheet and blades, blended over the ground, draw in the main pass
 /// alone.
 fn passes(stage: Stage) -> Vec<(&'static str, Vec<ShaderDefVal>)> {
     let main: Vec<ShaderDefVal> = vec![
@@ -138,8 +138,12 @@ fn passes(stage: Stage) -> Vec<(&'static str, Vec<ShaderDefVal>)> {
         Stage::Cover => vec![
             ("copies", main.clone()),
             ("copies prepass", prepass.clone()),
-            ("blades", with(&main, &["ROOTED"])),
-            ("blades prepass", with(&prepass, &["ROOTED"])),
+            ("merged copies", with(&main, &["ROOTED", "VERTEX_UVS_B"])),
+            (
+                "merged copies prepass",
+                with(&prepass, &["ROOTED", "VERTEX_UVS_B"]),
+            ),
+            ("blades", with(&main, &["GRASS_BLADE", "VERTEX_UVS_B"])),
             ("sheet", with(&main, &["SHEET_PATCH", "VERTEX_UVS_B"])),
         ],
         Stage::Prop => vec![("main", main.clone()), ("prepass", prepass.clone())],

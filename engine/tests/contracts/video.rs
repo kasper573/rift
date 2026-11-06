@@ -10,7 +10,8 @@ use bevy::shader::Shader;
 use bevy::world_serialization::WorldSerializationPlugin;
 use engine::core::render::camera;
 use engine::core::render::video::{
-    AmbientOcclusionQuality, AntiAliasingQuality, ShadowQuality, VideoPreferences, ViewDistance,
+    AmbientOcclusionQuality, AntiAliasingQuality, GrassQuality, ShadowQuality, VideoPreferences,
+    ViewDistance,
 };
 use engine::core::render::world::WorldScenePlugin;
 use engine::core::render::world::lights;
@@ -59,6 +60,7 @@ fn a_players_video_preferences_draw_the_world_as_picked_from_the_moment_they_are
                 anti_aliasing: AntiAliasingQuality::Low,
                 bloom: true,
                 view_distance: ViewDistance::Middle,
+                grass: GrassQuality::Low,
             },
             Drawn {
                 shadows: Some((1, false)),

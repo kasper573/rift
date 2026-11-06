@@ -12,6 +12,7 @@ mod effects;
 mod equipment;
 mod exchange;
 mod gestures;
+mod grass;
 mod interaction;
 mod kill_credit;
 mod launch;
