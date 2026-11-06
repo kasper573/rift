@@ -210,9 +210,9 @@ impl Covers {
     }
 }
 
-/// What a plan stands of the covers: the chunks of the pieces near the view, those of them that
-/// stay where they stand already, each merged region with the pieces it stands merged, and every
-/// piece a merged region shows.
+/// What a plan stands of the covers: the chunks of the pieces near the view, in the order they
+/// stand, those of them that stay where they stand already, each merged region with the pieces
+/// it stands merged, and every piece a merged region shows.
 #[derive(Default)]
 pub(super) struct CoversPlan {
     near: Vec<CoverChunk>,
@@ -231,7 +231,15 @@ pub(super) fn plan(planner: &Planner, heights: &Heightfield, seen: &Seen, cut: &
     let lens = seen.lens();
     let shown = shown_pieces(pieces, lens, cut);
     let chunked = chunked_pieces(pieces, lens, &shown);
-    let near = near_chunks(pieces, heights, seen, cut, &chunked, 1.0).collect();
+    let mut near: Vec<CoverChunk> =
+        near_chunks(pieces, heights, seen, cut, &chunked, 1.0).collect();
+    near.sort_by(|a, b| {
+        let (a, b) = (
+            seen.order(a.chunk.bounds().center()),
+            seen.order(b.chunk.bounds().center()),
+        );
+        a.0.cmp(&b.0).then(a.1.total_cmp(&b.1))
+    });
     let kept = near_chunks(pieces, heights, seen, cut, &chunked, KEEP_SHARE).collect();
     let merging = shown
         .iter()
@@ -283,7 +291,9 @@ pub(super) fn stand(
         }
     }
     for key in missing {
-        if !unstood_chunks.is_empty()
+        let loaded = super::ground_loaded(streaming, key.chunk.bounds());
+        if !loaded
+            || !unstood_chunks.is_empty()
             || !budget.stage()
             || !budget.take(|budget| &mut budget.covers)
         {

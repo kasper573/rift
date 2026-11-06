@@ -27,7 +27,7 @@ use std::sync::atomic::{AtomicUsize, Ordering};
 use bevy::app::HierarchyPropagatePlugin;
 use bevy::camera::visibility::RenderLayers;
 use bevy::light::DirectionalLightShadowMap;
-use bevy::pbr::MaterialPlugin;
+use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin};
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 use bevy::render::render_resource::PipelineCache;
@@ -161,7 +161,7 @@ fn count_compiling(cache: Res<PipelineCache>, compiling: Res<CompilingPipelines>
 }
 
 /// Whether anything the world draws is still on its way to standing: a model loading or not yet
-/// spawned, a texture a model draws with still decoding, a ground's pictures, a strewn prop, a
+/// spawned, a texture a model or a cover draws with still decoding, a ground's pictures, a strewn prop, a
 /// body's skin waiting on its rig or its paint, or a pipeline something draws with compiling. A
 /// view is shown only once nothing is, so it is first seen whole.
 pub fn readying(world: &mut World) -> bool {
@@ -178,16 +178,8 @@ pub fn readying(world: &mut World) -> bool {
         .query_filtered::<Entity, With<WorldAssetRoot>>()
         .iter(world)
         .collect();
-    let mut dressed = world.query::<&MeshMaterial3d<material::WorldMaterial>>();
-    let textures: Vec<Handle<Image>> = match world.get_resource::<Assets<material::WorldMaterial>>()
-    {
-        Some(materials) => dressed
-            .iter(world)
-            .filter_map(|dressed| materials.get(&dressed.0))
-            .flat_map(|material| material::textures(&material.base).cloned())
-            .collect(),
-        None => Vec::new(),
-    };
+    let mut textures = drawn_textures::<material::WorldLook>(world);
+    textures.extend(drawn_textures::<cover::CoverVfx>(world));
     let compiling = world
         .get_resource::<CompilingPipelines>()
         .is_some_and(|compiling| compiling.0.load(Ordering::Relaxed) > 0);
@@ -200,6 +192,20 @@ pub fn readying(world: &mut World) -> bool {
         || textures
             .iter()
             .any(|texture| assets.load_state(texture).is_loading())
+}
+
+/// The textures of the standard part of every material of kind `E` a mesh draws with.
+fn drawn_textures<E: MaterialExtension>(world: &mut World) -> Vec<Handle<Image>> {
+    let mut dressed = world.query::<&MeshMaterial3d<ExtendedMaterial<StandardMaterial, E>>>();
+    let Some(materials) = world.get_resource::<Assets<ExtendedMaterial<StandardMaterial, E>>>()
+    else {
+        return Vec::new();
+    };
+    dressed
+        .iter(world)
+        .filter_map(|dressed| materials.get(&dressed.0))
+        .flat_map(|material| material::textures(&material.base).cloned())
+        .collect()
 }
 
 /// Whether the model `entity` was spawned with stands: instanced, or failed to load, so nothing

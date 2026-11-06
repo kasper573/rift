@@ -21,8 +21,8 @@ use super::{Budget, Making, Merged, PLACEMENT_CELL, Streaming, Streams, take_awa
 use crate::core::assets;
 use crate::core::content::Content;
 use crate::core::content::media::GltfInfos;
-use crate::core::ground::Heightfield;
-use crate::core::math::Rect;
+use crate::core::ground::{Heightfield, SAMPLES_PER_METER};
+use crate::core::math::{Pos, Rect, Size};
 use crate::core::render::camera::Lens;
 use crate::core::render::world::fade::Fades;
 use crate::core::render::world::gpu::upload;
@@ -126,8 +126,11 @@ pub(super) fn plan(planner: &Planner, heights: &Heightfield, seen: &Seen, cut: &
         .flat_map(|(_, props)| props)
         .copied()
         .collect();
-    let apart = |index: usize| planner.area.props[index].at.distance_to(seen.at());
-    near.sort_by(|&a, &b| apart(a).total_cmp(&apart(b)));
+    let order = |index: usize| seen.order(planner.area.props[index].at);
+    near.sort_by(|&a, &b| {
+        let (a, b) = (order(a), order(b));
+        a.0.cmp(&b.0).then(a.1.total_cmp(&b.1))
+    });
     let kept = cut
         .leaves
         .iter()
@@ -274,10 +277,14 @@ fn stand_scenes(
         .copied()
         .collect();
     for index in missing {
+        let placed = &area.props[index];
+        if !super::ground_loaded(streaming, ground_under(placed.at)) {
+            budget.defer();
+            continue;
+        }
         if !budget.take(|budget| &mut budget.props) {
             return;
         }
-        let placed = &area.props[index];
         let model = placed.prop.get(&streaming.content).model.path();
         let scene = GltfAssetLabel::Scene(0).from_asset(model);
         if world.resource::<AssetServer>().get_path_id(scene).is_none()
@@ -612,4 +619,10 @@ fn spawn_prop(
         prop.insert(NotShadowCaster);
     }
     prop.id()
+}
+
+/// The ground a prop placed at `at` stands on: the samples round it its height is read between.
+fn ground_under(at: Pos<Meters>) -> Rect<Meters> {
+    let sample = 1.0 / SAMPLES_PER_METER as f32;
+    Rect::new(at, Size::new(sample, sample))
 }

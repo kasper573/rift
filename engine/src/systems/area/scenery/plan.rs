@@ -92,14 +92,18 @@ impl Eyes {
 }
 
 impl Bearings {
-    /// The bearings taken out to whole steps of a turn, so every bearing within the same steps
-    /// plans alike.
-    fn widened(self) -> Bearings {
+    /// The bearings taken out to whole steps of a turn, each step's arc no longer than a cell
+    /// at `nearest` off the ground looked at, so every bearing within the same steps plans alike.
+    fn widened(self, nearest: Meters) -> Bearings {
         let Bearings::Within { from, to } = self else {
             return Bearings::Any;
         };
-        let from = (from.0 / BEARING_STEP).floor() * BEARING_STEP;
-        let to = ((to.0 / BEARING_STEP).floor() + 1.0) * BEARING_STEP;
+        let steps = (TAU * nearest.0 / PLAN_CELL.0)
+            .ceil()
+            .max(LEAST_BEARING_STEPS) as u32;
+        let step = TAU / steps.next_power_of_two() as f32;
+        let from = (from.0 / step).floor() * step;
+        let to = ((to.0 / step).floor() + 1.0) * step;
         if to - from >= TAU {
             return Bearings::Any;
         }
@@ -118,31 +122,38 @@ impl Bearings {
     }
 }
 
-/// The steps of a turn an eye's bearing is planned for.
-const BEARING_STEP: f32 = TAU / 16.0;
+/// The fewest steps of a turn an eye's bearing is planned for.
+const LEAST_BEARING_STEPS: f32 = 16.0;
 
 impl Sight {
     /// The sight the scenery plans for in place of this one: its ground taken to the middle of
-    /// the cell it lies in, its reach to whole cells, its eyes' distances and heights widened
-    /// to half octaves and their bearings to steps of a turn, so that every view within the same
-    /// steps plans alike. An eye no farther off its ground than that ground may lie off the cell's
-    /// middle may stand any way round it.
+    /// the cell it lies in, its reach and its eyes' distances along the ground to whole cells,
+    /// their bearings to steps of a turn about a cell long, and their heights to half octaves, so
+    /// that every view within the same steps plans alike. An eye no farther off its ground than
+    /// that ground may lie off the cell's middle may stand any way round it.
+    ///
+    /// The plan stands everything as near as the nearest place an eye may stand, so where the
+    /// ground could lie within those places they stay about a cell wide however far off the eye
+    /// is: half an octave of a far eye's distance would stand the finest scenery over a band of
+    /// ground hundreds of metres wide. What lies under the eye never lies within its heights,
+    /// so those may widen with its height.
     pub(super) fn widened(self) -> Sight {
         let cell = PLAN_CELL.0;
         let middle = |at: f32| ((at / cell).floor() + 0.5) * cell;
+        let nearest = Meters((self.eyes.nearest.0 / cell).floor() * cell);
         Sight {
             at: Pos::new(middle(self.at.x), middle(self.at.y)),
             reach: Meters((self.reach.0 / cell).ceil() * cell),
             lens: self.lens,
             eyes: Eyes {
-                nearest: octaves_down(self.eyes.nearest),
-                farthest: octaves_up(self.eyes.farthest),
+                nearest,
+                farthest: Meters((self.eyes.farthest.0 / cell).ceil() * cell),
                 lowest: octaves_down(self.eyes.lowest),
                 highest: octaves_up(self.eyes.highest),
                 bearings: if self.eyes.nearest.0 <= OFF_MIDDLE {
                     Bearings::Any
                 } else {
-                    self.eyes.bearings.widened()
+                    self.eyes.bearings.widened(nearest)
                 },
             },
         }
@@ -205,6 +216,20 @@ impl Seen {
 
     pub(super) fn lens(&self) -> Lens {
         self.sight.lens
+    }
+
+    /// The order what lies at `point` stands in: what lies ahead of the eyes, as they look at the
+    /// ground, before what lies behind them, the nearer the eyes the sooner. Eyes any way round
+    /// have nothing behind them.
+    pub(super) fn order(&self, point: Pos<Meters>) -> (bool, f32) {
+        let at = self.at();
+        let Some((start, turn)) = self.arc else {
+            return (false, point.distance_to(at));
+        };
+        let (sin, cos) = (start + turn / 2.0).sin_cos();
+        let eye = Pos::new(at.x + cos * self.across.0, at.y + sin * self.across.0);
+        let ahead = (eye.x - point.x) * cos + (eye.y - point.y) * sin;
+        (ahead < 0.0, point.distance_to(eye))
     }
 
     /// The nearest any eye may come to `point`.

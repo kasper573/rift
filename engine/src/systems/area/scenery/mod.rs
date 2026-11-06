@@ -598,7 +598,7 @@ fn stream_ground(
         .copied()
         .collect();
     for node in missing {
-        if !ground_under(streaming, node) {
+        if node.level < OVERVIEW_LEVEL && !ground_loaded(streaming, node_rect(node).bounds()) {
             budget.defer();
             continue;
         }
@@ -639,14 +639,11 @@ fn stream_ground(
     unstood
 }
 
-/// Whether the ground under `node` is there to stand it on: the overview, for a chunk as coarse as
-/// it; else every tile under it loaded, each not yet being loaded set loading on a task.
-fn ground_under(streaming: &mut Streaming, node: Node) -> bool {
-    if node.level >= OVERVIEW_LEVEL {
-        return true;
-    }
+/// Whether every tile of ground under `bounds` is loaded, each not yet being loaded set loading on
+/// a task. What stands on the ground waits for it: until a tile loads, its values are read from
+/// the overview, and what stood from those would stay as it stood.
+fn ground_loaded(streaming: &mut Streaming, bounds: Rect<Meters>) -> bool {
     let (heights, paint, water) = (&streaming.heights, &streaming.paint, &streaming.water);
-    let bounds = node_rect(node).bounds();
     let mut ready = true;
     for tile in heights.size().tiles_within(bounds) {
         if heights.is_loaded(tile) && paint.is_loaded(tile) && water.is_loaded(tile) {
