@@ -48,7 +48,7 @@ use ui::theme;
 use ui::words;
 
 use bevy::math::Vec3Swizzles;
-use bevy::prelude::{Ray3d, Transform, Vec3};
+use bevy::prelude::{Ray3d, Transform, UVec2, Vec3};
 use engine::core::content::media::GltfInfos;
 use engine::core::content::{Content, ContentFile, FolderReader, table_of};
 use engine::core::math::{Pos, Rect, Size};
@@ -76,6 +76,7 @@ use self::overlays::{
     AreaLabels, Footing, overlay_bounds, overlay_contours, overlay_footprints, overlay_modules,
     overlay_navmesh, overlay_soundscape_reach,
 };
+use self::render_sync::StagePick;
 use self::status::status_bar;
 use self::viewport::{Request, StageClip, StandingActor, StrokeTerrain, Viewports};
 use crate::app::{BottomTab, Editor};
@@ -722,6 +723,22 @@ fn canvas(
         .filter(|_| response.hovered())
         .or_else(|| held.map(|ground| canvas.to_screen(ground)));
     let pointer_ground = hovered.and_then(|p| canvas.to_ground(p));
+    let pixels_per_point = ui.ctx().pixels_per_point();
+    let pointer_pixel = hovered.filter(|p| rect.contains(*p)).map(|p| {
+        let at = (p - rect.min) * pixels_per_point;
+        UVec2::new(at.x as u32, at.y as u32)
+    });
+    let stage = pointer_pixel.and_then(|pixel| {
+        editor
+            .views
+            .area
+            .viewports
+            .picked(view_key)
+            .filter(|picked| {
+                picked.at.as_ivec2().distance_squared(pixel.as_ivec2()) <= STAGE_SLACK * STAGE_SLACK
+            })
+            .cloned()
+    });
     if let Some(ground) = pointer_ground {
         editor.views.area.hover = Some(AreaHover {
             area: bundle.clone(),
@@ -734,6 +751,8 @@ fn canvas(
         canvas,
         pointer: hovered,
         pointer_ground,
+        pointer_pixel,
+        stage,
         response: &response,
         labels: AreaLabels::default(),
     };
@@ -857,7 +876,7 @@ fn request_viewport(editor: &mut Editor, ui: &Ui, view_key: &str, frame: &AreaFr
         AreaPage::Climate => view.climate.weather(&frame.area().climate),
         _ => frame.area().climate.first(),
     };
-    let lines = view.outlines.lines();
+    let outlines = view.outlines.sets();
     let repaint = view.stroke.is_some() || ghost_moves(view);
     editor.views.area.viewports.request(Request {
         key: view_key.to_owned(),
@@ -869,7 +888,8 @@ fn request_viewport(editor: &mut Editor, ui: &Ui, view_key: &str, frame: &AreaFr
         stroke,
         ghost,
         cast,
-        lines,
+        outlines,
+        pointer: frame.pointer_pixel,
     });
     if repaint {
         ui.ctx().request_repaint();
@@ -1159,6 +1179,11 @@ pub struct AreaFrame<'a> {
     pub canvas: AreaCanvas,
     pub pointer: Option<Pos2>,
     pub pointer_ground: Option<Pos<Meters>>,
+    /// The pixel of the picture the pointer is over, none while it is off the picture.
+    pub pointer_pixel: Option<UVec2>,
+    /// What the world last found in the picture near where the pointer is, none until it has
+    /// looked there.
+    pub stage: Option<StagePick>,
     pub response: &'a egui::Response,
     pub labels: AreaLabels,
 }
@@ -1365,16 +1390,24 @@ impl AreaSnapshot {
         self.smallest_at(ground, false)
     }
 
-    /// The module the pointer at `screen` picks: the nearest one whose standing body the pointer's
-    /// ray passes through, else the smallest one covering the ground under it.
+    /// The module the pointer at `screen` picks: the one standing the prop the picture shows there,
+    /// else the nearest one whose standing body the pointer's ray passes through, else the smallest
+    /// one covering the ground under it.
     fn hit_at(
         &self,
         canvas: &AreaCanvas,
         screen: Pos2,
         ground: Option<Pos<Meters>>,
+        stage: Option<&StagePick>,
     ) -> Option<String> {
         if !self.in_place.is_empty() {
             return None;
+        }
+        let shown = stage
+            .and_then(|stage| stage.origin.as_deref())
+            .filter(|origin| self.doc.module_at(origin).is_some() && self.pickable(origin));
+        if let Some(origin) = shown {
+            return Some(origin.to_owned());
         }
         let standing = self.entered(canvas.ray(screen));
         standing.or_else(|| self.hit(ground?))
@@ -1645,8 +1678,9 @@ pub(super) fn place_id(chain: &[placement::AreaPlacement]) -> String {
         .join("/in")
 }
 
-/// How tall a module stands over the ground, for picking it by its body: a prop by its model, a
-/// resident by its npc's hitbox, an object by the prop it looks like; nothing for the flat ones.
+/// How tall a module stands over the ground, for picking it by its body: a resident by its npc's
+/// hitbox, an object by the prop it looks like; nothing for the flat ones, nor for props, which the
+/// picture itself picks.
 fn standing_height(content: &Content, reader: &FolderReader, module: &AreaModule) -> f32 {
     let model_height = |prop: &str| {
         let prop = content.by_path::<PropDef>(prop)?;
@@ -1658,10 +1692,6 @@ fn standing_height(content: &Content, reader: &FolderReader, module: &AreaModule
         Some(bounds.max.y - bounds.min.y)
     };
     match module {
-        AreaModule::Prop(prop) => reader
-            .path_of(prop.prop)
-            .and_then(model_height)
-            .map_or(0.0, |height| height * prop.scale),
         AreaModule::Object(object) => object
             .look
             .and_then(|look| reader.path_of(look))
@@ -1731,8 +1761,12 @@ impl AreaFrame<'_> {
     /// The module the pointer picks: by its standing body, else by the ground under it.
     pub(crate) fn hit_pointer(&self) -> Option<String> {
         let screen = self.pointer?;
-        self.snapshot
-            .hit_at(&self.canvas, screen, self.pointer_ground)
+        self.snapshot.hit_at(
+            &self.canvas,
+            screen,
+            self.pointer_ground,
+            self.stage.as_ref(),
+        )
     }
 
     /// The locked module a click under the pointer passes through.
@@ -1836,3 +1870,7 @@ pub fn run_action(editor: &mut Editor, frame: &AreaSnapshot, action: AreaAction)
         AreaAction::ReturnDoor(node) => warps::return_door(editor, frame, &node),
     }
 }
+
+/// How many pixels off the pointer what the world found in the picture may lie and still be taken
+/// as what the pointer is over, while the pointer moves faster than the world looks.
+const STAGE_SLACK: i32 = 4;

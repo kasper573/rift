@@ -28,7 +28,7 @@ use ui::egui::{Color32, Pos2, Rect as ERect, Stroke as EStroke, Vec2};
 use super::camera::AreaCanvas;
 use super::{AreaFrame, AreaTool, selected_parts, shapes};
 use crate::app::Editor;
-use crate::doc::{DocModule, NodeId};
+use crate::doc::DocModule;
 use crate::forms;
 
 const LABEL_GAP: f32 = 2.0;
@@ -250,28 +250,29 @@ impl Footing {
 const BENT_STEP: Meters = Meters(4.0);
 const MOST_PIECES: f32 = 32.0;
 
-/// The outlines of the modules the view draws on the ground, as lines the viewport draws in its
-/// picture, numbered so it lays them again only when they change.
+/// A set of outlines the viewport draws in its picture, numbered so it lays them again only when
+/// they change: around what stands of the modules at `standing`, wherever the picture shows it, in
+/// `color`, and along the ground as the lines `runs`.
 #[derive(Clone, Default)]
-pub struct GroundLines {
+pub struct OutlineSet {
     pub revision: u64,
-    /// The modules outlined, each by a run.
-    pub ids: Arc<[NodeId]>,
+    pub standing: Arc<HashSet<String>>,
+    pub color: Color32,
     pub runs: Arc<[GroundLine]>,
 }
 
-/// The outlines the view draws over the ground, each kept with what it was laid for: the scene's as
+/// The outlines the view draws, each set kept with what it was laid for: the scene's as
 /// the view holds it, and the modules hovered on the map or in the scene tree where the scene's
 /// leave them out, kept apart so hovering lays only its own.
 #[derive(Default)]
 pub struct Outlines {
-    pub scene: Option<(u64, GroundLines)>,
-    pub hovered: Option<(u64, GroundLines)>,
+    pub scene: Option<(u64, OutlineSet)>,
+    pub hovered: Option<(u64, OutlineSet)>,
 }
 
 impl Outlines {
-    /// Both sets of lines, the scene's first.
-    pub fn lines(&self) -> [GroundLines; 2] {
+    /// Both sets, the scene's first.
+    pub fn sets(&self) -> [OutlineSet; 2] {
         [&self.scene, &self.hovered].map(|kept| {
             kept.as_ref()
                 .map(|(_, lines)| lines.clone())
@@ -370,13 +371,14 @@ pub(super) fn overlay_modules(
         .as_ref()
         .is_none_or(|(kept, _)| *kept != scene_key)
     {
-        let lines = ground_lines(
+        let set = outline_set(
             frame,
             frame.doc.modules(),
             &|pointer| Some(held_still(pointer)),
             &wash,
+            module_color(AreaModuleKind::Prop),
         );
-        view.outlines.scene = Some((scene_key, lines));
+        view.outlines.scene = Some((scene_key, set));
     }
     if view
         .outlines
@@ -389,8 +391,14 @@ pub(super) fn overlay_modules(
             (held.hovered && !held_still(pointer).asked()).then_some(held)
         };
         let hovered = hovered_modules(frame, pointed.as_deref(), row.as_deref());
-        let lines = ground_lines(frame, hovered.into_iter(), &only_hovered, &wash);
-        view.outlines.hovered = Some((hovered_key, lines));
+        let set = outline_set(
+            frame,
+            hovered.into_iter(),
+            &only_hovered,
+            &wash,
+            HOVERED_OUTLINE,
+        );
+        view.outlines.hovered = Some((hovered_key, set));
     }
     let mut dots = shapes::Dots::default();
     let mut footprints: HashMap<PropId, Option<&Footprint>> = HashMap::new();
@@ -546,46 +554,58 @@ fn hovered_modules<'a>(
     hovered
 }
 
-/// The outlines on the ground of every module among `modules` that shows as one and that `held`
-/// says how the view holds.
-fn ground_lines<'a>(
+/// The outlines, in `color`, of every module among `modules` that `held` says how the view holds:
+/// what stands of those that stand props, and on the ground those that show as a line there.
+fn outline_set<'a>(
     frame: &'a AreaFrame,
     modules: impl Iterator<Item = DocModule<'a>>,
     held: &dyn Fn(&str) -> Option<Held>,
     wash: &dyn Fn(AreaModuleKind, &str, bool) -> Color32,
-) -> GroundLines {
+    color: Color32,
+) -> OutlineSet {
     static REVISION: AtomicU64 = AtomicU64::new(0);
     let area = frame.area();
-    let outlined: Vec<(NodeId, &Footing, Color32, bool)> = modules
+    let mut standing = HashSet::new();
+    let outlined: Vec<(&Footing, Color32, bool)> = modules
         .filter_map(|node| {
             let footing = frame.footing(node).filter(|_| frame.shown(node))?;
             let module = node.module();
             let held = held(node.pointer)?;
+            if held.asked() && stands_props(module) {
+                standing.insert(node.pointer.to_owned());
+            }
             if !outlined_on_ground(frame, module) || !(held.asked() || shown_unasked(module)) {
                 return None;
             }
             Some((
-                node.id,
                 footing,
                 wash(module.kind(), node.pointer, held.selected),
                 held.selected,
             ))
         })
         .collect();
-    let ids = outlined.iter().map(|(id, ..)| *id).collect();
     let runs: Vec<GroundLine> = outlined
         .into_par_iter()
-        .map(|(_, footing, color, bold)| GroundLine {
+        .map(|(footing, color, bold)| GroundLine {
             points: footing.bent(area),
             color,
             bold,
         })
         .collect();
-    GroundLines {
+    OutlineSet {
         revision: REVISION.fetch_add(1, Ordering::Relaxed),
-        ids,
+        standing: Arc::new(standing),
+        color,
         runs: runs.into(),
     }
+}
+
+/// Whether a module stands props the picture shows: a prop, a scatter, or a blueprint placement.
+fn stands_props(module: &AreaModule) -> bool {
+    matches!(
+        module,
+        AreaModule::Prop(_) | AreaModule::Scatter(_) | AreaModule::Blueprint(_)
+    )
 }
 
 /// A module drawn over the picture by its own shape.
@@ -799,3 +819,6 @@ fn cells(rect: ERect) -> impl Iterator<Item = (i32, i32)> {
     (cell(rect.min.y)..=cell(rect.max.y))
         .flat_map(move |row| (cell(rect.min.x)..=cell(rect.max.x)).map(move |column| (column, row)))
 }
+
+/// The colour of the outline around what stands of a hovered module.
+const HOVERED_OUTLINE: Color32 = Color32::from_gray(235);

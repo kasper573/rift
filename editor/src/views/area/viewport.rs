@@ -17,6 +17,7 @@ use engine::core::audio::playback::{self, PlaySfx, SfxPlace};
 use engine::core::content::Content;
 use engine::core::ground::{Heightfield, PaintMap};
 use engine::core::render::world::body::{self, Body, Figure};
+use engine::core::render::world::gpu::pick::Picking;
 use engine::core::render::world::layers::Layered;
 use engine::core::render::world::mannequin::Mannequin;
 use engine::core::render::world::mannequin::mannequin;
@@ -36,8 +37,8 @@ use engine::systems::area::{Area, Picture, Weather};
 use ui::egui;
 
 use super::camera::OrbitCamera;
-use super::overlays::GroundLines;
-use super::render_sync::{Respawn, WorldSink};
+use super::overlays::OutlineSet;
+use super::render_sync::{Respawn, StagePick, WorldSink};
 use crate::app::Editor;
 use crate::views::area::camera::LENS;
 
@@ -57,8 +58,10 @@ pub struct Request {
     pub stroke: Option<StrokeTerrain>,
     pub ghost: Option<Ghost>,
     pub cast: Arc<[StandingActor]>,
-    /// The sets of outlines drawn over the ground, each laid apart from the others.
-    pub lines: [GroundLines; 2],
+    /// The sets of outlines drawn, each laid apart from the other.
+    pub outlines: [OutlineSet; 2],
+    /// The pixel of the picture the pointer is over, none while it is off it.
+    pub pointer: Option<UVec2>,
 }
 
 /// A terrain mid-stroke, numbered so it is laid again only when the stroke moves on.
@@ -184,6 +187,7 @@ struct RenderedView {
     stroke: Option<u64>,
     ghost: Option<(String, Entity)>,
     cast: Option<(Arc<[StandingActor]>, Vec<Entity>)>,
+    picked: Option<StagePick>,
 }
 
 /// How far around the camera's target the covers, props and lights stand while it takes in the
@@ -199,6 +203,11 @@ impl Viewports {
     /// Whether any view shows the world this frame.
     pub fn showing(&self) -> bool {
         !self.shown.is_empty()
+    }
+
+    /// What the world last found under the pointer in the view `key`'s picture.
+    pub fn picked(&self, key: &str) -> Option<&StagePick> {
+        self.shown.get(key)?.picked.as_ref()
     }
 
     /// The picture last drawn for the view `key`.
@@ -276,6 +285,7 @@ impl RenderedView {
                 camera::picture(grade),
                 RenderLayers::from_layers(&[layer]),
                 Transform::default(),
+                Picking::default(),
             ))
             .id();
         RenderedView {
@@ -286,10 +296,11 @@ impl RenderedView {
             texture,
             size,
             rendered: OrbitCamera::default(),
-            scene: Respawn::new(root, layer),
+            scene: Respawn::new(root, layer, camera),
             stroke: None,
             ghost: None,
             cast: None,
+            picked: None,
         }
     }
 
@@ -347,9 +358,10 @@ impl RenderedView {
         self.haunt(world, request.ghost);
         sound(world, &area, &request.cast);
         self.people(world, request.cast);
-        for (set, lines) in request.lines.iter().enumerate() {
-            self.scene.outline_ids(world, set, &lines.ids, lines);
+        for (set, outlines) in request.outlines.iter().enumerate() {
+            self.scene.outline(world, set, outlines);
         }
+        self.picked = self.scene.pick(world, request.pointer);
     }
 
     /// Lays the terrain as the stroke shapes it, once per step of the stroke.

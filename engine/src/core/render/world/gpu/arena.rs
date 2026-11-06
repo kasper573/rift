@@ -468,6 +468,25 @@ impl InstanceArena {
     pub fn chunks(&self) -> impl Iterator<Item = u32> + '_ {
         self.chunks.keys().copied()
     }
+
+    /// Where `chunk`'s first instance lies among the arena's, if it holds any.
+    pub fn first_of(&self, chunk: u32) -> Option<u32> {
+        let (block, _) = self.chunks.get(&chunk)?.as_ref()?;
+        let range = self.space.range(*block)?;
+        Some((range.start / InstanceRecord::BYTES) as u32)
+    }
+
+    /// The chunk the instance at `instance` among the arena's belongs to, and its place among the
+    /// chunk's instances.
+    pub fn chunk_of(&self, instance: u32) -> Option<(u32, u32)> {
+        self.chunks.iter().find_map(|(&chunk, held)| {
+            let (block, count) = held.as_ref()?;
+            let first = (self.space.range(*block)?.start / InstanceRecord::BYTES) as u32;
+            (first..first + count)
+                .contains(&instance)
+                .then(|| (chunk, instance - first))
+        })
+    }
 }
 
 /// The changes the sceneries made to their arenas this frame, each by the scenery it belongs to,

@@ -77,11 +77,30 @@ pub fn props_in<'a>(
     ground: Rect<Meters>,
     chunk: SceneryChunk,
 ) -> Vec<PropPlacement> {
+    sourced_props_in(modules, ground, chunk)
+        .into_iter()
+        .map(|(_, placed)| placed)
+        .collect()
+}
+
+/// [`props_in`], each prop with the place among `modules` of the module standing it.
+pub fn sourced_props_in<'a>(
+    modules: impl IntoIterator<Item = &'a AreaModule>,
+    ground: Rect<Meters>,
+    chunk: SceneryChunk,
+) -> Vec<(u32, PropPlacement)> {
     let mut props = Vec::new();
-    for module in modules {
+    for (source, module) in modules.into_iter().enumerate() {
+        let source = source as u32;
         match module {
-            AreaModule::Prop(prop) if chunk.holds(ground, prop.at) => props.push(prop.clone()),
-            AreaModule::Scatter(scatter) => props.extend(scattered_in(scatter, ground, chunk)),
+            AreaModule::Prop(prop) if chunk.holds(ground, prop.at) => {
+                props.push((source, prop.clone()));
+            }
+            AreaModule::Scatter(scatter) => props.extend(
+                scattered_in(scatter, ground, chunk)
+                    .into_iter()
+                    .map(|placed| (source, placed)),
+            ),
             _ => {}
         }
     }

@@ -835,6 +835,9 @@ pub struct Area {
     /// The modules that stand the area's props, placed and scattered, in the order `props`
     /// expands them: what any chunk's props are worked out from alone.
     pub prop_sources: Vec<AreaModule>,
+    /// Where each of `prop_sources` was written: the path of the node in the area's scene that is
+    /// the module or brings it.
+    pub prop_origins: Vec<String>,
     pub lights: Vec<PointLightDef>,
     underfoot: Vec<walk::Underfoot>,
     footprints: Vec<Vec<Pos<Meters>>>,
@@ -1300,16 +1303,19 @@ fn build_area(
         .collect();
     let mut props: Vec<PropPlacement> = Vec::new();
     let mut prop_sources: Vec<AreaModule> = Vec::new();
+    let mut prop_origins: Vec<String> = Vec::new();
     let mut lights: Vec<PointLightDef> = Vec::new();
     for placed in modules {
         match &placed.module {
             AreaModule::Prop(prop) => {
                 props.push(prop.clone());
                 prop_sources.push(placed.module.clone());
+                prop_origins.push(placed.origin.clone());
             }
             AreaModule::Scatter(scatter) => {
                 props.extend(scatter.expand());
                 prop_sources.push(placed.module.clone());
+                prop_origins.push(placed.origin.clone());
             }
             AreaModule::Light(light) => {
                 if lights.len() == MAX_LIGHTS * tiles {
@@ -1375,6 +1381,7 @@ fn build_area(
         footprint_index,
         props,
         prop_sources,
+        prop_origins,
         lights,
         meshes: walk::Meshes::empty(ground.size.bounds()),
         modules_by_tile,

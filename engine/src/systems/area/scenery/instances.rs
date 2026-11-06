@@ -54,6 +54,8 @@ pub(super) struct Instances {
     dressed: HashSet<Drawn>,
     standing: HashMap<u32, Standing>,
     stale: HashSet<u32>,
+    /// Counts each time the props standing change.
+    props_revision: u64,
 }
 
 impl Instances {
@@ -69,6 +71,7 @@ impl Instances {
             dressed: HashSet::default(),
             standing: HashMap::default(),
             stale: HashSet::default(),
+            props_revision: 0,
         }
     }
 
@@ -80,6 +83,39 @@ impl Instances {
     /// How many copies of its covers' pieces stand in the arena.
     pub(super) fn copies(&self) -> u32 {
         self.counted(|lot| matches!(lot, Lot::Copies(..)))
+    }
+
+    /// The place among the area's prop sources of the module standing the instance at
+    /// `instance` among the arena's, none for a cover's copy.
+    pub(super) fn source_of(&self, instance: u32) -> Option<u32> {
+        let (key, local) = self.arena.chunk_of(instance)?;
+        self.standing
+            .get(&key)?
+            .sources
+            .get(local as usize)
+            .copied()
+    }
+
+    /// Every instance among the arena's that a module among the area's prop sources `stood`
+    /// takes stands.
+    pub(super) fn standing_for(&self, stood: impl Fn(u32) -> bool) -> Vec<u32> {
+        self.standing
+            .iter()
+            .filter_map(|(key, standing)| Some((self.arena.first_of(*key)?, standing)))
+            .flat_map(|(first, standing)| {
+                standing
+                    .sources
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, source)| stood(**source))
+                    .map(move |(at, _)| first + at as u32)
+            })
+            .collect()
+    }
+
+    /// A number that changes each time the props standing in the arena do.
+    pub(super) fn props_revision(&self) -> u64 {
+        self.props_revision
     }
 
     fn counted(&self, of: impl Fn(Lot) -> bool) -> u32 {
@@ -130,11 +166,13 @@ impl Lot {
 const COPIES_KEY: u32 = 1 << 31;
 const REPLACING_KEY: u32 = 1 << 30;
 
-/// A lot standing in the arena, what it draws, and how many instances it holds.
+/// A lot standing in the arena, what it draws, how many instances it holds, and for a lot of
+/// props the place among the area's prop sources of the module standing each.
 struct Standing {
     lot: Lot,
     drawn: HashSet<Drawn>,
     instances: u32,
+    sources: Vec<u32>,
 }
 
 /// What an instance in the arena is drawn as: a prop, or a copy strewn by a piece of the covers,
@@ -156,10 +194,12 @@ impl Drawn {
     }
 }
 
-/// A lot worked out: its instances, and what they are drawn as.
+/// A lot worked out: its instances, what they are drawn as, and for a lot of props the place
+/// among the area's prop sources of the module standing each.
 struct Expanded {
     records: Vec<InstanceRecord>,
     drawn: HashSet<Drawn>,
+    sources: Vec<u32>,
 }
 
 /// Stands in the arena every lot the plan reaches, as far as the frame's budget goes: how many of
@@ -407,16 +447,17 @@ fn props_expanded(
     chunk: SceneryChunk,
     key: u32,
 ) -> Expanded {
-    let placed = expand::props_in(&area.prop_sources, ground, chunk);
+    let placed = expand::sourced_props_in(&area.prop_sources, ground, chunk);
     Expanded {
         drawn: placed
             .iter()
-            .map(|placed| Drawn::Prop(placed.prop))
+            .map(|(_, placed)| Drawn::Prop(placed.prop))
             .collect(),
         records: placed
             .iter()
-            .map(|placed| prop_record(heights, placed, key))
+            .map(|(_, placed)| prop_record(heights, placed, key))
             .collect(),
+        sources: placed.iter().map(|(source, _)| *source).collect(),
     }
 }
 
@@ -470,7 +511,11 @@ fn copies_expanded(
             drawn.insert(Drawn::Copy(index));
         }
     }
-    Expanded { records, drawn }
+    Expanded {
+        records,
+        drawn,
+        sources: Vec::new(),
+    }
 }
 
 /// Whether the GPU draws the copy at `place`, `extent` across at its size, anywhere as far off the
@@ -533,12 +578,16 @@ fn send(world: &mut World, streaming: &mut Streaming, root: Entity) {
             .arena
             .insert(key, &expanded.records, |prop| models_of[&prop]);
         instances.stale.remove(&key);
+        if matches!(lot, Lot::Props(_)) {
+            instances.props_revision += 1;
+        }
         instances.standing.insert(
             key,
             Standing {
                 lot,
                 drawn: expanded.drawn,
                 instances: expanded.records.len() as u32,
+                sources: expanded.sources,
             },
         );
         changed(world, root, placed);
@@ -551,7 +600,10 @@ fn send(world: &mut World, streaming: &mut Streaming, root: Entity) {
 /// Lets go of what stands at `key` in the arena.
 fn take_away(world: &mut World, instances: &mut Instances, root: Entity, key: u32) {
     instances.stale.remove(&key);
-    if instances.standing.remove(&key).is_some() {
+    if let Some(standing) = instances.standing.remove(&key) {
+        if matches!(standing.lot, Lot::Props(_)) {
+            instances.props_revision += 1;
+        }
         changed(world, root, instances.arena.remove(key));
     }
 }

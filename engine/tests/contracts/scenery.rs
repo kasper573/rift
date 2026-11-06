@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::path::Path;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -240,6 +241,25 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
 
     let (tufts, east_pebbles) = view(&mut app, overhead(Pos::new(496.0, 8.0), reach, 10.0));
     assert_eq!(tufts, 8, "the tufts stand once the view reaches them");
+    let standing = scenery::instances_of(app.world(), stood, |_| true);
+    let origins: HashSet<String> = standing
+        .iter()
+        .filter_map(|&instance| scenery::origin_of(app.world(), stood, instance))
+        .collect();
+    assert_eq!(
+        (standing.len(), origins),
+        (8, (0..8).map(|node| format!("/{node}")).collect()),
+        "each standing tuft names the node it was written as"
+    );
+    let third = scenery::instances_of(app.world(), stood, |origin| origin == "/3");
+    assert_eq!(
+        third
+            .iter()
+            .map(|&instance| scenery::origin_of(app.world(), stood, instance))
+            .collect::<Vec<_>>(),
+        [Some("/3".to_owned())],
+        "a node outlined singles out the one tuft it stands"
+    );
     assert!(
         east_pebbles > 0,
         "the pebbles strewn east stand once the view reaches them"

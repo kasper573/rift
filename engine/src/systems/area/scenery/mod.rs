@@ -345,6 +345,34 @@ pub fn arena_props(world: &World, scenery: Scenery) -> u32 {
         .map_or(0, |streaming| streaming.instances.props())
 }
 
+/// Where the module standing the instance at `instance` of `scenery`'s arena was written: the
+/// path of the node in the area's scene that is the module or brings it. None for a cover's copy.
+pub fn origin_of(world: &World, scenery: Scenery, instance: u32) -> Option<String> {
+    let streaming = world.resource::<Streams>().0.get(&scenery.root)?;
+    let source = streaming.instances.source_of(instance)?;
+    streaming.area.prop_origins.get(source as usize).cloned()
+}
+
+/// A number that changes each time the props standing in `scenery`'s arena do, and with it what
+/// [`origin_of`] and [`instances_of`] tell.
+pub fn props_revision(world: &World, scenery: Scenery) -> Option<u64> {
+    let streaming = world.resource::<Streams>().0.get(&scenery.root)?;
+    Some(streaming.instances.props_revision())
+}
+
+/// Every instance of `scenery`'s arena that a module written at an origin `outlined` takes stands.
+pub fn instances_of(world: &World, scenery: Scenery, outlined: impl Fn(&str) -> bool) -> Vec<u32> {
+    let Some(streaming) = world.resource::<Streams>().0.get(&scenery.root) else {
+        return Vec::new();
+    };
+    let origins = &streaming.area.prop_origins;
+    streaming.instances.standing_for(|source| {
+        origins
+            .get(source as usize)
+            .is_some_and(|origin| outlined(origin))
+    })
+}
+
 /// How many copies of its covers' pieces `scenery` holds in its arena on the GPU.
 pub fn arena_copies(world: &World, scenery: Scenery) -> u32 {
     world

@@ -72,6 +72,10 @@ impl Haze {
 
 pub struct HazePlugin;
 
+/// Where the haze is laid over what a camera sees, for what is laid over the haze in turn.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Hazing;
+
 impl Plugin for HazePlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "haze.wesl");
@@ -90,7 +94,8 @@ impl Plugin for HazePlugin {
                 Core3d,
                 draw_haze
                     .after(main_transparent_pass_3d)
-                    .in_set(Core3dSystems::MainPass),
+                    .in_set(Core3dSystems::MainPass)
+                    .in_set(Hazing),
             );
     }
 }

@@ -69,6 +69,7 @@ impl Plugin for WorldScenePlugin {
             gpu::cull::PropCullPlugin,
             gpu::prop_draw::PropDrawPlugin,
             gpu::grass::GrassPlugin,
+            gpu::pick::PickPlugin,
             gpu::atlas::TerrainAtlasPlugin,
             haze::HazePlugin,
             layers::JointLayersPlugin,
