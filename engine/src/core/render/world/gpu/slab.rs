@@ -147,66 +147,35 @@ impl SlabSpace {
 }
 
 /// A GPU buffer holding blocks of bytes where a [`SlabSpace`] places them, grown by copying into
-/// one twice the size, so every block stays at its offset.
+/// a larger one, so every block stays at its offset.
 pub struct Slab {
     label: &'static str,
     usage: BufferUsages,
-    space: SlabSpace,
     buffer: Option<Buffer>,
 }
 
 impl Slab {
-    pub fn new(label: &'static str, usage: BufferUsages, unit: u64) -> Slab {
+    pub fn new(label: &'static str, usage: BufferUsages) -> Slab {
         Slab {
             label,
             usage: usage | BufferUsages::COPY_DST | BufferUsages::COPY_SRC,
-            space: SlabSpace::new(unit),
             buffer: None,
         }
     }
 
-    /// Writes `bytes` into a block of their own, the buffer grown first if they don't fit.
-    pub fn insert(
-        &mut self,
-        device: &RenderDevice,
-        queue: &RenderQueue,
-        bytes: &[u8],
-    ) -> SlabBlock {
-        let block = self.space.alloc(bytes.len() as u64);
-        self.fit(device, queue);
-        if let (Some(buffer), Some(range)) = (&self.buffer, self.space.range(block)) {
-            queue.write_buffer(buffer, range.start, bytes);
-        }
-        block
-    }
-
-    /// Frees `block`'s bytes for others.
-    pub fn remove(&mut self, block: SlabBlock) {
-        self.space.free(block);
-    }
-
-    pub fn range(&self, block: SlabBlock) -> Option<Range<u64>> {
-        self.space.range(block)
-    }
-
-    /// The buffer, none before the first block: a new one each time it grows.
-    pub fn buffer(&self) -> Option<&Buffer> {
-        self.buffer.as_ref()
-    }
-
-    /// Grows the buffer to the space's capacity, copying what it held to the same offsets.
-    fn fit(&mut self, device: &RenderDevice, queue: &RenderQueue) {
-        let size = self.space.capacity();
+    /// Grows the buffer to hold `capacity` bytes, as its space's capacity says, copying what it
+    /// held to the same offsets.
+    pub fn fit(&mut self, device: &RenderDevice, queue: &RenderQueue, capacity: u64) {
         if self
             .buffer
             .as_ref()
-            .is_some_and(|buffer| buffer.size() >= size)
+            .is_some_and(|buffer| buffer.size() >= capacity)
         {
             return;
         }
         let grown = device.create_buffer(&BufferDescriptor {
             label: Some(self.label),
-            size,
+            size: capacity,
             usage: self.usage,
             mapped_at_creation: false,
         });
@@ -216,6 +185,18 @@ impl Slab {
             queue.submit([encoder.finish()]);
         }
         self.buffer = Some(grown);
+    }
+
+    /// Writes `bytes` at `offset`, in the block its space gave out there.
+    pub fn write(&self, queue: &RenderQueue, offset: u64, bytes: &[u8]) {
+        if let Some(buffer) = &self.buffer {
+            queue.write_buffer(buffer, offset, bytes);
+        }
+    }
+
+    /// The buffer, none before the first block: a new one each time it grows.
+    pub fn buffer(&self) -> Option<&Buffer> {
+        self.buffer.as_ref()
     }
 }
 

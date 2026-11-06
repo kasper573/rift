@@ -907,7 +907,7 @@ struct CopyShape {
 
 /// The vertices of `pieces` joined into one piece for each material they are drawn in, and how
 /// high the whole prop stands.
-fn by_material(pieces: &[Piece]) -> (Vec<DrawnIn>, f32) {
+pub(super) fn by_material(pieces: &[Piece]) -> (Vec<DrawnIn>, f32) {
     let placed: Vec<(&Piece, PieceVertices)> = pieces
         .iter()
         .filter_map(|piece| Some((piece, piece_vertices(piece)?)))
@@ -941,9 +941,9 @@ fn by_material(pieces: &[Piece]) -> (Vec<DrawnIn>, f32) {
 }
 
 /// The vertices of a prop's pieces drawn in one of its materials.
-struct DrawnIn {
-    material: Option<Handle<GltfMaterial>>,
-    vertices: PieceVertices,
+pub(super) struct DrawnIn {
+    pub material: Option<Handle<GltfMaterial>>,
+    pub vertices: PieceVertices,
 }
 
 /// The pieces' vertices as one piece's.
