@@ -515,6 +515,11 @@ impl Game {
             ),
             _ => {}
         }
+        self.shader_of(name, stage, &source)
+    }
+
+    /// A visual effect shader of no parameters on `stage`, written as `source`.
+    pub fn shader_of(self, name: &str, stage: Stage, source: &str) -> Game {
         self.row(
             "vfx_shader",
             name,
@@ -524,7 +529,7 @@ impl Game {
             "vfx_shader",
             name,
             &SHADER_SOURCE.named("", "wgsl"),
-            source.into_bytes(),
+            source.as_bytes().to_vec(),
         )
     }
 
@@ -601,8 +606,13 @@ impl Game {
 
     /// A prop of a model nobody would notice, taking up `footprint` of the ground.
     pub fn prop(self, name: &str, footprint: Value) -> Game {
-        self.row("prop", name, json!({ "footprint": footprint }))
-            .part("prop", name, &PROP_GLB.named("", "glb"), glb(&[]))
+        self.prop_of(name, glb(&[]), json!({ "footprint": footprint }))
+    }
+
+    /// A prop of the model `model`, its row `fields`.
+    pub fn prop_of(self, name: &str, model: Vec<u8>, fields: Value) -> Game {
+        self.row("prop", name, fields)
+            .part("prop", name, &PROP_GLB.named("", "glb"), model)
     }
 
     /// A blueprint `width` × `height` metres, of `variables`, whose scene holds `nodes`.

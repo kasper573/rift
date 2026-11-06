@@ -254,21 +254,32 @@ fn vertex(@builtin(vertex_index) index: u32) -> Output {
     return handed_on(out);
 }
 
-// A strewn copy's vertex as the slab of models holds it, of the instance its command draws as its
-// `instance_index`th.
-@if(!SHEET_PATCH && !GRASS_BLADE)
-struct CopyVertex {
-    @builtin(instance_index) instance_index: u32,
-    @location(0) position: vec3<f32>,
-    @location(1) normal: vec3<f32>,
-    @location(2) uv: vec2<f32>,
-    @location(5) color: vec4<f32>,
-}
-
 // A strewn copy, standing where the culling kernel drew its instance and swayed about its origin:
 // how far up its prop the vertex stands, its weight full, and its seed and tint from the
 // instance's seed, the seed in its upper bits as the kernel thins it by and the tint in its lowest
 // byte.
+// A strewn copy's vertex as the slab of models holds it, of the instance its command draws as its
+// `instance_index`th, at the locations bevy's prepass and main pass each lay a mesh out at. Not
+// bevy's own vertex, which under `VERTEX_UVS_B` (the marks the copies hand their pixels) would
+// read a second uv the slab doesn't hold.
+@if(!SHEET_PATCH && !GRASS_BLADE)
+struct CopyVertex {
+    @builtin(instance_index) instance_index: u32,
+    @location(0) position: vec3<f32>,
+    @if(PREPASS_PIPELINE && VERTEX_UVS_A)
+    @location(1) uv: vec2<f32>,
+    @if(!PREPASS_PIPELINE && VERTEX_UVS_A)
+    @location(2) uv: vec2<f32>,
+    @if(PREPASS_PIPELINE && NORMAL_PREPASS_OR_DEFERRED_PREPASS && VERTEX_NORMALS)
+    @location(3) normal: vec3<f32>,
+    @if(!PREPASS_PIPELINE && VERTEX_NORMALS)
+    @location(1) normal: vec3<f32>,
+    @if(PREPASS_PIPELINE && VERTEX_COLORS)
+    @location(7) color: vec4<f32>,
+    @if(!PREPASS_PIPELINE && VERTEX_COLORS)
+    @location(5) color: vec4<f32>,
+}
+
 @if(!SHEET_PATCH && !GRASS_BLADE)
 @vertex
 fn vertex(in: CopyVertex) -> Output {
@@ -298,7 +309,7 @@ fn vertex(in: CopyVertex) -> Output {
     let world = vec4<f32>(sway(at, up), 1.0);
     out.world_position = world;
     out.position = position_world_to_clip(world.xyz);
-    @if(!PREPASS_PIPELINE || NORMAL_PREPASS_OR_DEFERRED_PREPASS) {
+    @if(VERTEX_NORMALS && (!PREPASS_PIPELINE || NORMAL_PREPASS_OR_DEFERRED_PREPASS)) {
         out.world_normal = normalize(turned(placed.turn, in.normal));
     }
     @if(PREPASS_PIPELINE && UNCLIPPED_DEPTH_ORTHO_EMULATION) {

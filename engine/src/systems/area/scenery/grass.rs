@@ -32,9 +32,10 @@ pub(super) struct Grass {
 impl Grass {
     /// The grass of `pieces`, growing on the terrain `terrain`.
     pub(super) fn new(world: &mut World, terrain: Entity, pieces: Arc<[GrassPiece]>) -> Grass {
-        if !pieces.is_empty() {
-            world
-                .resource_mut::<GrassChanges>()
+        if !pieces.is_empty()
+            && let Some(mut changes) = world.get_resource_mut::<GrassChanges>()
+        {
+            changes
                 .0
                 .push((terrain, GrassChange::Pieces(pieces.clone())));
         }
@@ -101,19 +102,18 @@ pub(super) fn grow(world: &mut World, streaming: &mut Streaming, seen: &Seen) ->
         grass.stale.remove(&(piece, cell));
         changes.extend(grass.arena.grow(&grass.pieces, piece, ground));
     }
-    world
-        .resource_mut::<GrassChanges>()
-        .0
-        .extend(changes.into_iter().map(|change| (terrain, change)));
+    if let Some(mut held) = world.get_resource_mut::<GrassChanges>() {
+        held.0
+            .extend(changes.into_iter().map(|change| (terrain, change)));
+    }
     missing
 }
 
 /// Lets the GPU go of all the grass of the terrain `terrain`.
 pub(super) fn drop_grass(world: &mut World, terrain: Entity) {
-    world
-        .resource_mut::<GrassChanges>()
-        .0
-        .push((terrain, GrassChange::Dropped));
+    if let Some(mut changes) = world.get_resource_mut::<GrassChanges>() {
+        changes.0.push((terrain, GrassChange::Dropped));
+    }
 }
 
 /// The cells of every piece a sight takes in, nearest first, and those it keeps standing where they

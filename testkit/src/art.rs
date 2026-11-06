@@ -1,13 +1,14 @@
+use std::collections::BTreeMap;
 use std::io::Cursor;
 
 use bevy_math::{Quat, Vec3};
 use engine::core::content::gltf::{
     NodeTree, Rest, TreeNode, glb as write_glb, placeholder_body, placeholder_mesh,
-    placeholder_rig, posed_body,
+    placeholder_rig, posed_body, push_accessor,
 };
 use engine::core::units::Seconds;
 use gltf::json;
-use gltf::json::validation::USize64;
+use gltf::json::validation::{Checked, USize64};
 
 /// A PNG of `width` × `height` transparent pixels: an image a row can name, the right size and no
 /// more.
@@ -33,6 +34,134 @@ pub fn pose_glb(tree: &NodeTree, name: &str, turns: &[(&str, Quat)]) -> Vec<u8> 
 /// A glTF binary of one triangle animated by `clips`, each named and as long as given.
 pub fn glb(clips: &[(&str, Seconds)]) -> Vec<u8> {
     placeholder_rig(clips)
+}
+
+/// A glTF binary of a box `size` metres across, tall and deep, standing on its origin, in one
+/// material named `material` of the plain colour `color`: a model a picture shows.
+pub fn box_glb(size: Vec3, material: &str, color: [f32; 4]) -> Vec<u8> {
+    let half = Vec3::new(size.x / 2.0, 0.0, size.z / 2.0);
+    let faces: [(Vec3, Vec3, Vec3); 6] = [
+        (Vec3::X, Vec3::Z, Vec3::Y),
+        (Vec3::NEG_X, Vec3::Y, Vec3::Z),
+        (Vec3::Y, Vec3::X, Vec3::Z),
+        (Vec3::NEG_Y, Vec3::Z, Vec3::X),
+        (Vec3::Z, Vec3::Y, Vec3::X),
+        (Vec3::NEG_Z, Vec3::X, Vec3::Y),
+    ];
+    let mut positions = Vec::new();
+    let mut normals = Vec::new();
+    let mut uvs = Vec::new();
+    let mut colors = Vec::new();
+    for (normal, along, up) in faces {
+        let center = Vec3::Y * (size.y / 2.0) + normal * (size / 2.0);
+        let corner = |a: f32, b: f32| {
+            center
+                + along * (a * (size * along).length() / 2.0)
+                + up * (b * (size * up).length() / 2.0)
+        };
+        let quad = [
+            corner(-1.0, -1.0),
+            corner(1.0, -1.0),
+            corner(1.0, 1.0),
+            corner(-1.0, 1.0),
+        ];
+        for index in [0, 1, 2, 0, 2, 3] {
+            positions.extend_from_slice(&quad[index].to_array());
+            normals.extend_from_slice(&normal.to_array());
+            uvs.extend_from_slice(&[[0.0, 0.0], [1.0, 0.0], [1.0, 1.0], [0.0, 1.0]][index]);
+            colors.extend_from_slice(&[1.0, 1.0, 1.0, 1.0]);
+        }
+    }
+    let floats = |values: &[f32]| -> Vec<u8> {
+        values
+            .iter()
+            .flat_map(|value| value.to_le_bytes())
+            .collect()
+    };
+    let mut root = json::Root::default();
+    let mut bin = Vec::new();
+    let corners = positions.len() / 3;
+    let position = push_accessor(
+        &mut root,
+        &mut bin,
+        &floats(&positions),
+        corners,
+        json::accessor::Type::Vec3,
+        Some((&[-half.x, 0.0, -half.z], &[half.x, size.y, half.z])),
+    );
+    let normal = push_accessor(
+        &mut root,
+        &mut bin,
+        &floats(&normals),
+        corners,
+        json::accessor::Type::Vec3,
+        None,
+    );
+    let uv = push_accessor(
+        &mut root,
+        &mut bin,
+        &floats(&uvs),
+        corners,
+        json::accessor::Type::Vec2,
+        None,
+    );
+    let tint = push_accessor(
+        &mut root,
+        &mut bin,
+        &floats(&colors),
+        corners,
+        json::accessor::Type::Vec4,
+        None,
+    );
+    let material = root.push(json::Material {
+        name: Some(material.to_owned()),
+        pbr_metallic_roughness: json::material::PbrMetallicRoughness {
+            base_color_factor: json::material::PbrBaseColorFactor(color),
+            metallic_factor: json::material::StrengthFactor(0.0),
+            roughness_factor: json::material::StrengthFactor(1.0),
+            ..Default::default()
+        },
+        ..Default::default()
+    });
+    let mesh = root.push(json::Mesh {
+        extensions: None,
+        extras: Default::default(),
+        name: None,
+        primitives: vec![json::mesh::Primitive {
+            attributes: BTreeMap::from([
+                (Checked::Valid(json::mesh::Semantic::Positions), position),
+                (Checked::Valid(json::mesh::Semantic::Normals), normal),
+                (Checked::Valid(json::mesh::Semantic::TexCoords(0)), uv),
+                (Checked::Valid(json::mesh::Semantic::Colors(0)), tint),
+            ]),
+            extensions: None,
+            extras: Default::default(),
+            indices: None,
+            material: Some(material),
+            mode: Checked::Valid(json::mesh::Mode::Triangles),
+            targets: None,
+        }],
+        weights: None,
+    });
+    let node = root.push(json::Node {
+        mesh: Some(mesh),
+        ..Default::default()
+    });
+    let scene = root.push(json::Scene {
+        extensions: None,
+        extras: Default::default(),
+        name: None,
+        nodes: vec![node],
+    });
+    root.scene = Some(scene);
+    root.push(json::Buffer {
+        byte_length: USize64::from(bin.len()),
+        extensions: None,
+        extras: Default::default(),
+        name: None,
+        uri: None,
+    });
+    write_glb(&root, bin)
 }
 
 /// A glTF binary of nothing to look at, keeping the PNG `png` inside it as its image `name`.

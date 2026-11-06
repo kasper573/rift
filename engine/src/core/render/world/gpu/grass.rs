@@ -49,7 +49,7 @@ use bevy::render::render_resource::{
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::sync_world::MainEntity;
 use bevy::render::view::{ExtractedView, RetainedViewEntity};
-use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems};
+use bevy::render::{ExtractSchedule, MainWorld, Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::ShaderDefVal;
 
 use super::cull::read_buffer;
@@ -57,6 +57,7 @@ use super::draw::ExtractedGround;
 use super::slab::{Slab, SlabBlock, SlabSpace};
 use crate::core::ground::{Heightfield, PaintMap, SAMPLES_PER_METER};
 use crate::core::math::{Pos, Rect, Size};
+use crate::core::render::world::RenderProgress;
 use crate::core::render::world::cover::CoverMaterial;
 use crate::core::render::world::lod::GRAIN_PIXELS;
 use crate::core::units::{GROUND_ORIGIN, Meters};
@@ -66,12 +67,11 @@ pub struct GrassPlugin;
 impl Plugin for GrassPlugin {
     fn build(&self, app: &mut App) {
         bevy::shader::load_shader_library!(app, "grass.wesl");
-        app.init_resource::<GrassChanges>()
-            .add_systems(First, clear_grass_changes);
-        let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
+        if app.get_sub_app(RenderApp).is_none() {
             return;
-        };
-        render_app
+        }
+        app.init_resource::<GrassChanges>();
+        app.sub_app_mut(RenderApp)
             .init_resource::<GrassArenas>()
             .add_render_command::<Transparent3d, DrawGrassBlades>()
             .add_systems(RenderStartup, start_grass.after(init_prepass_pipeline))
@@ -375,8 +375,8 @@ pub enum GrassChange {
     Dropped,
 }
 
-/// The changes the terrains made to their grass this frame, each by the terrain it belongs to, in
-/// order, for the render world to take in.
+/// The changes the terrains made to their grass since the render world last took them, each by
+/// the terrain it belongs to, in order. Held only where a render world takes them.
 #[derive(Resource, Default)]
 pub struct GrassChanges(pub Vec<(Entity, GrassChange)>);
 
@@ -404,10 +404,6 @@ fn pcg(value: u32) -> u32 {
     let state = value.wrapping_mul(747_796_405).wrapping_add(2_891_336_453);
     let word = ((state >> ((state >> 28) + 4)) ^ state).wrapping_mul(277_803_737);
     (word >> 22) ^ word
-}
-
-fn clear_grass_changes(mut changes: ResMut<GrassChanges>) {
-    changes.0.clear();
 }
 
 /// Each terrain's grass as the GPU holds it, by the terrain.
@@ -452,8 +448,16 @@ struct Growing {
     capacity: u64,
 }
 
-fn extract_grass(changes: Extract<Res<GrassChanges>>, mut arenas: ResMut<GrassArenas>) {
-    for (terrain, change) in changes.0.iter().cloned() {
+/// Takes the changes the terrains made since the last frame was extracted, whenever they were
+/// made.
+fn extract_grass(mut main: ResMut<MainWorld>, mut arenas: ResMut<GrassArenas>) {
+    let changes = std::mem::take(
+        &mut main
+            .resource_mut::<GrassChanges>()
+            .bypass_change_detection()
+            .0,
+    );
+    for (terrain, change) in changes {
         if let GrassChange::Dropped = change {
             arenas.0.remove(&terrain);
             continue;
@@ -896,8 +900,14 @@ fn queue_grass(
     mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
     keys: Res<ViewKeyCache>,
     arenas: Res<GrassArenas>,
+    progress: Res<RenderProgress>,
     views: Query<(&ExtractedView, &Frustum, Option<&RenderLayers>)>,
-    grounds: Query<(Entity, &MainEntity, &ExtractedGround, &GrassBindings)>,
+    grounds: Query<(
+        Entity,
+        &MainEntity,
+        &ExtractedGround,
+        Option<&GrassBindings>,
+    )>,
 ) {
     let Some(mut pipeline) = pipeline else {
         return;
@@ -920,6 +930,12 @@ fn queue_grass(
             let Some(grass) = arenas.0.get(&main.id()) else {
                 continue;
             };
+            let Some(bindings) = bindings else {
+                if grass.cells.values().any(|cell| !cell.blades.is_empty()) {
+                    progress.left_out();
+                }
+                continue;
+            };
             let mut drawn: Vec<(f32, Vec3, BladeDraw)> = grass
                 .cells
                 .iter()
@@ -928,7 +944,11 @@ fn queue_grass(
                         && frustum.intersects_obb(&cell.bounds, &Affine3A::IDENTITY, true, true)
                 })
                 .filter_map(|(&(piece, _), cell)| {
-                    let bound = bindings.0.get(piece as usize)?.as_ref()?;
+                    let Some(bound) = bindings.0.get(piece as usize).and_then(Option::as_ref)
+                    else {
+                        progress.left_out();
+                        return None;
+                    };
                     let pipeline_id = pipeline.specialize(&cache, key, &bound.properties)?;
                     let center = Vec3::from(cell.bounds.center);
                     Some((
@@ -1059,7 +1079,11 @@ type DrawGrassBlades = (
 struct DrawBlades;
 
 impl<P: PhaseItem> RenderCommand<P> for DrawBlades {
-    type Param = (SRes<GrassPipeline>, SRes<PipelineCache>);
+    type Param = (
+        SRes<GrassPipeline>,
+        SRes<PipelineCache>,
+        SRes<RenderProgress>,
+    );
     type ViewQuery = Read<ExtractedView>;
     type ItemQuery = Read<GrassBindings>;
 
@@ -1067,16 +1091,21 @@ impl<P: PhaseItem> RenderCommand<P> for DrawBlades {
         item: &P,
         view: ROQueryItem<'w, '_, Self::ViewQuery>,
         bindings: Option<ROQueryItem<'w, '_, Self::ItemQuery>>,
-        (pipeline, cache): SystemParamItem<'w, '_, Self::Param>,
+        (pipeline, cache, progress): SystemParamItem<'w, '_, Self::Param>,
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
-        let (pipeline, cache) = (pipeline.into_inner(), cache.into_inner());
+        let (pipeline, cache, progress) = (
+            pipeline.into_inner(),
+            cache.into_inner(),
+            progress.into_inner(),
+        );
         let (Some(bindings), Some(drawn)) = (
             bindings,
             pipeline
                 .drawn
                 .get(&(view.retained_view_entity, item.entity())),
         ) else {
+            progress.left_out();
             return RenderCommandResult::Skip;
         };
         let range = item.batch_range();
@@ -1085,10 +1114,12 @@ impl<P: PhaseItem> RenderCommand<P> for DrawBlades {
             .into_iter()
             .flatten()
         {
-            let (Some(bound), Some(drawing)) = (
-                bindings.0.get(draw.piece as usize).and_then(Option::as_ref),
-                cache.get_render_pipeline(draw.pipeline),
-            ) else {
+            let Some(bound) = bindings.0.get(draw.piece as usize).and_then(Option::as_ref) else {
+                progress.left_out();
+                continue;
+            };
+            let Some(drawing) = cache.get_render_pipeline(draw.pipeline) else {
+                progress.awaiting(cache.get_render_pipeline_state(draw.pipeline));
                 continue;
             };
             pass.set_render_pipeline(drawing);

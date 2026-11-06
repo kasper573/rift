@@ -14,8 +14,8 @@ mod sim;
 mod talk;
 
 pub use art::{
-    glb, glb_naming_image, glb_of, glb_with_image_inside, library_glb, png, pose_glb, rig, rig_glb,
-    skin_glb, wav,
+    box_glb, glb, glb_naming_image, glb_of, glb_with_image_inside, library_glb, png, pose_glb, rig,
+    rig_glb, skin_glb, wav,
 };
 pub use crowd::crowd;
 pub use game::{

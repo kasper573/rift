@@ -21,7 +21,7 @@ pub mod sky;
 pub mod terrain;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
 use bevy::app::HierarchyPropagatePlugin;
 use bevy::camera::visibility::RenderLayers;
@@ -29,7 +29,7 @@ use bevy::light::DirectionalLightShadowMap;
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin};
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
-use bevy::render::render_resource::PipelineCache;
+use bevy::render::render_resource::{CachedPipelineState, PipelineCache};
 use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::world_serialization::{WorldAssetRoot, WorldInstance, WorldInstanceSpawner};
 
@@ -51,12 +51,16 @@ impl Plugin for WorldScenePlugin {
         bevy::asset::embedded_asset!(app, "material_prepass.wesl");
         bevy::asset::embedded_asset!(app, "decal.wesl");
         app.register_asset_loader(crate::core::assets::loader::PngLoader);
-        let compiling = CompilingPipelines::default();
-        app.insert_resource(compiling.clone());
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app
-                .insert_resource(compiling)
-                .add_systems(Render, count_compiling.in_set(RenderSystems::Cleanup));
+            let progress = RenderProgress::default();
+            render_app.insert_resource(progress.clone()).add_systems(
+                Render,
+                (
+                    begin_progress.in_set(RenderSystems::ExtractCommands),
+                    count_progress.in_set(RenderSystems::Cleanup),
+                ),
+            );
+            app.insert_resource(progress);
         }
         app.add_plugins((
             MaterialPlugin::<material::WorldMaterial>::default(),
@@ -124,16 +128,63 @@ fn cloud_look(world: &mut World) {
     }
 }
 
-/// How many pipelines the GPU is still compiling, as the render world last counted. What draws
-/// with one is left out of every frame until it is compiled, the first time any of it is seen.
+/// What the render world last counted at the end of a frame: how many pipelines the GPU is still
+/// compiling, how many frames it has drawn, and whether the last of them drew everything it was
+/// given. A draw is left out of a frame while what it needs is on its way: its pipeline
+/// compiling, asked for only as the frame that first draws with it is queued, or its material or
+/// bindings not yet prepared.
 #[derive(Resource, Clone, Default)]
-struct CompilingPipelines(Arc<AtomicUsize>);
+pub(crate) struct RenderProgress(Arc<Progress>);
 
-fn count_compiling(cache: Res<PipelineCache>, compiling: Res<CompilingPipelines>) {
-    compiling
-        .0
-        .store(cache.waiting_pipelines().count(), Ordering::Relaxed);
+#[derive(Default)]
+struct Progress {
+    compiling: AtomicUsize,
+    frames: AtomicU64,
+    left_out: AtomicBool,
+    whole: AtomicBool,
 }
+
+impl RenderProgress {
+    /// Notes that a draw of this frame was left out for want of something still on its way.
+    pub(crate) fn left_out(&self) {
+        self.0.left_out.store(true, Ordering::Relaxed);
+    }
+
+    /// Notes a draw left out for want of a pipeline in `state`, unless it failed for good.
+    pub(crate) fn awaiting(&self, state: &CachedPipelineState) {
+        if !matches!(state, CachedPipelineState::Err(_)) {
+            self.left_out();
+        }
+    }
+}
+
+fn begin_progress(progress: Res<RenderProgress>) {
+    progress.0.left_out.store(false, Ordering::Relaxed);
+}
+
+fn count_progress(cache: Res<PipelineCache>, progress: Res<RenderProgress>) {
+    progress
+        .0
+        .compiling
+        .store(cache.waiting_pipelines().count(), Ordering::Relaxed);
+    progress.0.whole.store(
+        !progress.0.left_out.load(Ordering::Relaxed),
+        Ordering::Relaxed,
+    );
+    progress.0.frames.fetch_add(1, Ordering::Relaxed);
+}
+
+/// How many frames the render world has drawn, none without one. A change to what the world
+/// draws is drawn, and whatever it draws with asked of the GPU, only once the render world has
+/// finished the frame it was extracted into: `DRAWN_FRAMES_AFTER` more than it had drawn when the
+/// change was made, since the frame being drawn then may have been extracted before it.
+pub fn frames_drawn(world: &World) -> Option<u64> {
+    world
+        .get_resource::<RenderProgress>()
+        .map(|progress| progress.0.frames.load(Ordering::Relaxed))
+}
+
+pub const DRAWN_FRAMES_AFTER: u64 = 2;
 
 /// Whether anything the world draws is still on its way to standing: a model loading or not yet
 /// spawned, a texture a model or a cover draws with still decoding, a ground's pictures, a body's
@@ -152,8 +203,11 @@ pub fn readying(world: &mut World) -> bool {
     let mut textures = drawn_textures::<material::WorldLook>(world);
     textures.extend(drawn_textures::<cover::CoverVfx>(world));
     let compiling = world
-        .get_resource::<CompilingPipelines>()
-        .is_some_and(|compiling| compiling.0.load(Ordering::Relaxed) > 0);
+        .get_resource::<RenderProgress>()
+        .is_some_and(|progress| {
+            progress.0.compiling.load(Ordering::Relaxed) > 0
+                || !progress.0.whole.load(Ordering::Relaxed)
+        });
     let Some(assets) = world.get_resource::<AssetServer>() else {
         return waiting || compiling;
     };

@@ -19,9 +19,9 @@ use std::process::Command;
 use std::sync::Arc;
 use std::time::Duration;
 
-use bevy::anti_alias::taa::TemporalAntiAliasing;
 use bevy::app::ScheduleRunnerPlugin;
 use bevy::camera::RenderTarget;
+use bevy::diagnostic::DiagnosticsStore;
 use bevy::diagnostic::FrameCount;
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
@@ -36,6 +36,7 @@ use engine::core::ground::Heightfield;
 use engine::core::jobs::Handoff;
 use engine::core::math::{Pos, Rng};
 use engine::core::render::camera::{self, Zoom, world_point};
+use engine::core::render::sample::{FrameSamplingPlugin, GpuReportsRead, gpu_reports};
 use engine::core::render::video::VideoPreferences;
 use engine::core::render::world::WorldScenePlugin;
 use engine::core::render::world::body;
@@ -81,6 +82,11 @@ pub struct RenderOutcome {
     pub out: PathBuf,
     pub adapter: String,
     pub stood_after_frames: Option<usize>,
+    /// How many props the scenery's arena held, how many of what its sight takes in had yet to
+    /// stand, and how many prop instances the views of the last frames measured drew.
+    pub props_standing: u32,
+    pub props_missing: u32,
+    pub props_drawn: Option<u32>,
 }
 
 /// A shot of an area, as its file holds it.
@@ -444,7 +450,12 @@ pub fn area(folder: &Path, shot: &Path, out: &Path) {
         )))
         .insert_resource(Rng::new(seed))
         .insert_resource(Handoff::NextFrame)
-        .add_plugins((WorldScenePlugin, VfxMaterialsPlugin, SceneryPlugin))
+        .add_plugins((
+            WorldScenePlugin,
+            VfxMaterialsPlugin,
+            SceneryPlugin,
+            FrameSamplingPlugin,
+        ))
         .insert_resource(content.built::<GameSettings>().look)
         .insert_resource(content)
         .insert_resource(video)
@@ -604,7 +615,7 @@ fn step(world: &mut World) {
                 {
                     world.resource_mut::<Time<Virtual>>().unpause();
                     world.resource_mut::<FrameCount>().0 = 0;
-                    forget_history(world);
+                    camera::forget_history(world);
                     taking.stage = match taking.shot.arrive {
                         Some(_) => {
                             jump(world, &taking.shot, taking.stood.as_ref().expect("stood"));
@@ -629,7 +640,7 @@ fn step(world: &mut World) {
                     && !engine::core::render::world::readying(world)
                 {
                     *stood_after = Some(*frames);
-                    forget_history(world);
+                    camera::forget_history(world);
                 }
                 readbacks.push(
                     world
@@ -667,7 +678,7 @@ fn step(world: &mut World) {
                     let path = taking.out.join(format!("{frame:04}.png"));
                     save(pixels, taking.shot.width, taking.shot.height, &path);
                 }
-                done(world, &taking.out, *stood_after);
+                done(world, &taking.out, *stood_after, taking.stood.as_ref());
             }
             Stage::Settling(frames) => {
                 *frames += 1;
@@ -695,14 +706,14 @@ fn step(world: &mut World) {
                 let pixels = read.0.remove(index).1;
                 let Some(film) = taking.shot.film else {
                     save(pixels, taking.shot.width, taking.shot.height, &taking.out);
-                    done(world, &taking.out, None);
+                    done(world, &taking.out, None, taking.stood.as_ref());
                     return;
                 };
                 let path = taking.out.join(format!("{:04}.png", taking.frame));
                 save(pixels, taking.shot.width, taking.shot.height, &path);
                 taking.frame += 1;
                 if taking.frame >= film.frames {
-                    done(world, &taking.out, None);
+                    done(world, &taking.out, None, taking.stood.as_ref());
                     return;
                 }
                 let start = taking.shot.hour.expect("a filmed shot stands at an hour");
@@ -714,15 +725,13 @@ fn step(world: &mut World) {
     });
 }
 
-/// Starts the picture's temporal smoothing over from the frame being drawn, so that what the
-/// frames before it showed, however many the area took to load, leaves no trace in the picture.
-fn forget_history(world: &mut World) {
-    for mut smoothing in world.query::<&mut TemporalAntiAliasing>().iter_mut(world) {
-        smoothing.reset = true;
-    }
-}
-
-fn done(world: &mut World, out: &Path, stood_after_frames: Option<u32>) {
+fn done(world: &mut World, out: &Path, stood_after_frames: Option<u32>, stood: Option<&Stood>) {
+    let props_drawn = world.resource_scope(|world, mut read: Mut<GpuReportsRead>| {
+        gpu_reports(world.resource::<DiagnosticsStore>(), &mut read)
+            .into_iter()
+            .filter_map(|report| report.props_drawn)
+            .max()
+    });
     let outcome = RenderOutcome {
         out: out.to_path_buf(),
         adapter: world
@@ -730,6 +739,9 @@ fn done(world: &mut World, out: &Path, stood_after_frames: Option<u32>) {
             .map(|adapter| adapter.name.clone())
             .unwrap_or_default(),
         stood_after_frames: stood_after_frames.map(|frames| frames as usize),
+        props_standing: stood.map_or(0, |stood| scenery::arena_props(world, stood.scenery)),
+        props_missing: scenery::missing(world),
+        props_drawn,
     };
     println!(
         "{}",

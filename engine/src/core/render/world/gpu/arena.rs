@@ -19,7 +19,7 @@ use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
 use bevy::render::render_resource::BufferUsages;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::sync_component::SyncComponent;
-use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
+use bevy::render::{Extract, ExtractSchedule, MainWorld, Render, RenderApp, RenderSystems};
 use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 
@@ -34,11 +34,10 @@ impl Plugin for ModelArenaPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(ExtractComponentPlugin::<PropArena>::default())
             .init_resource::<PropModels>()
-            .init_resource::<InstanceChanges>()
-            .add_systems(First, clear_instance_changes)
             .add_systems(Last, (forget_models, prepare_models, send_models).chain());
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app
+        if app.get_sub_app(RenderApp).is_some() {
+            app.init_resource::<InstanceChanges>();
+            app.sub_app_mut(RenderApp)
                 .init_resource::<ModelArena>()
                 .init_resource::<InstanceArenas>()
                 .add_systems(ExtractSchedule, (extract_models, extract_instances))
@@ -489,8 +488,8 @@ impl InstanceArena {
     }
 }
 
-/// The changes the sceneries made to their arenas this frame, each by the scenery it belongs to,
-/// in order, for the render world to take in.
+/// The changes the sceneries made to their arenas since the render world last took them, each by
+/// the scenery it belongs to, in order. Held only where a render world takes them.
 #[derive(Resource, Default)]
 pub struct InstanceChanges(pub Vec<(Entity, InstanceChange)>);
 
@@ -720,12 +719,16 @@ fn write_models(mut arena: ResMut<ModelArena>, device: Res<RenderDevice>, queue:
     }
 }
 
-fn clear_instance_changes(mut changes: ResMut<InstanceChanges>) {
-    changes.0.clear();
-}
-
-fn extract_instances(changes: Extract<Res<InstanceChanges>>, mut arenas: ResMut<InstanceArenas>) {
-    for (scenery, change) in changes.0.iter().cloned() {
+/// Takes the changes the sceneries made since the last frame was extracted, whenever they were
+/// made.
+fn extract_instances(mut main: ResMut<MainWorld>, mut arenas: ResMut<InstanceArenas>) {
+    let changes = std::mem::take(
+        &mut main
+            .resource_mut::<InstanceChanges>()
+            .bypass_change_detection()
+            .0,
+    );
+    for (scenery, change) in changes {
         match change {
             InstanceChange::Placed {
                 chunk,

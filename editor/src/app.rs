@@ -17,6 +17,7 @@ use bevy_egui::{
     EguiContext, EguiPlugin, EguiPreUpdateSet, EguiPrimaryContextPass, PrimaryEguiContext,
 };
 use engine::core::content::{Content, ContentFile, FolderReader, Unreadable, fields_file, version};
+use engine::core::render::camera;
 use engine::core::render::video::VideoPreferences;
 use engine::core::units::{Meters, Millis};
 use engine::systems;
@@ -199,6 +200,9 @@ fn take_shot(world: &mut World, mut stood: Local<u32>) {
         return;
     }
     *stood += 1;
+    if *stood == 1 {
+        camera::forget_history(world);
+    }
     if *stood < SHOT_SETTLE {
         return;
     }

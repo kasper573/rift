@@ -59,6 +59,7 @@ use crate::core::render::world::haze::Haze;
 use crate::core::render::world::lights::{self, Flicker};
 use crate::core::render::world::sky::{self, Daylight, SunLight};
 use crate::core::render::world::terrain::{self, GroundLayer};
+use crate::core::render::world::{DRAWN_FRAMES_AFTER, frames_drawn};
 use crate::core::render::{CameraRig, Look, camera, world_point};
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::{MeterSize, Meters};
@@ -181,6 +182,7 @@ pub fn spawn(
         planning: None,
         plan: None,
         whole: false,
+        stood_at: None,
         stood: Stood::default(),
         drawn: None,
         missing: 0,
@@ -421,11 +423,12 @@ pub fn shaders_ready(world: &World, content: &Content, area: &Area) -> bool {
 
 /// Whether any scenery has yet to stand what its sight takes in.
 pub fn standing(world: &World) -> bool {
+    let drawn = frames_drawn(world);
     world
         .resource::<Streams>()
         .0
         .values()
-        .any(|streaming| !streaming.stands())
+        .any(|streaming| !streaming.stands(drawn))
 }
 
 /// How much of the ground, the props, the covers' copies and their blades the sights take in has
@@ -505,13 +508,14 @@ pub fn stood_chunks(world: &World) -> u32 {
         .sum()
 }
 
-/// Whether `scenery` stands all its sight takes in.
+/// Whether `scenery` stands all its sight takes in, drawn.
 pub fn stood(world: &World, scenery: Scenery) -> bool {
+    let drawn = frames_drawn(world);
     world
         .resource::<Streams>()
         .0
         .get(&scenery.root)
-        .is_some_and(Streaming::stands)
+        .is_some_and(|streaming| streaming.stands(drawn))
 }
 
 /// How many sceneries stand.
@@ -542,6 +546,8 @@ struct Streaming {
     /// Whether all the plan takes in stands, so a sight that stays within it costs nothing to
     /// stream.
     whole: bool,
+    /// How many frames the render world had drawn when it last came to stand whole.
+    stood_at: Option<u64>,
     stood: Stood,
     /// The plan whose ground the terrain draws.
     drawn: Option<Arc<Plan>>,
@@ -553,8 +559,17 @@ struct Streaming {
 }
 
 impl Streaming {
+    /// Whether all the latest sight takes in stands, and the render world, `drawn` frames in, has
+    /// drawn it since, so whatever it draws with has been asked of the GPU.
+    fn stands(&self, drawn: Option<u64>) -> bool {
+        self.stood()
+            && drawn
+                .zip(self.stood_at)
+                .is_none_or(|(drawn, stood)| drawn >= stood + DRAWN_FRAMES_AFTER)
+    }
+
     /// Whether all the latest sight takes in stands.
-    fn stands(&self) -> bool {
+    fn stood(&self) -> bool {
         self.whole
             && self.sight.is_some()
             && self.plan.as_ref().map(|plan| plan.seen.sight) == self.sight.map(Sight::widened)
@@ -562,7 +577,7 @@ impl Streaming {
 
     /// Whether streaming has nothing to do until the sight moves.
     fn idle(&self) -> bool {
-        self.sight.is_none() || self.stands()
+        self.sight.is_none() || self.stood()
     }
 }
 
@@ -666,6 +681,9 @@ fn stream_plan(world: &mut World, root: Entity, streaming: &mut Streaming) {
     streaming.missing = ground_missing + props_missing + grass_missing;
     stream_lights(world, streaming, &plan, root);
     streaming.whole = !budget.spent;
+    if streaming.whole {
+        streaming.stood_at = frames_drawn(world);
+    }
 }
 
 /// What a frame left to stand.

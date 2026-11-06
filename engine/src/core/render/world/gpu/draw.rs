@@ -72,6 +72,7 @@ use super::atlas::{AtlasLayout, AtlasTexture, GpuTerrainAtlas, TerrainAtlas};
 use crate::core::ground::{
     OVERVIEW_STRIDE, PaintMap, SAMPLES_PER_METER, TILE_PIXELS, TileAt, TileVersion,
 };
+use crate::core::render::world::RenderProgress;
 use crate::core::render::world::cover::{CoverMaterial, SHORE_REACH, SheetOn};
 use crate::core::units::GROUND_ORIGIN;
 use crate::core::vfx::shader::weather_helpers;
@@ -1439,7 +1440,12 @@ impl SheetPipeline {
 struct DrawSheets;
 
 impl<P: PhaseItem> RenderCommand<P> for DrawSheets {
-    type Param = (SRes<GroundGrid>, SRes<SheetPipeline>, SRes<PipelineCache>);
+    type Param = (
+        SRes<GroundGrid>,
+        SRes<SheetPipeline>,
+        SRes<PipelineCache>,
+        SRes<RenderProgress>,
+    );
     type ViewQuery = Read<ExtractedView>;
     type ItemQuery = (Read<GroundBuffers>, Read<SheetBindings>);
 
@@ -1447,11 +1453,15 @@ impl<P: PhaseItem> RenderCommand<P> for DrawSheets {
         item: &P,
         view: ROQueryItem<'w, '_, Self::ViewQuery>,
         sheets: Option<ROQueryItem<'w, '_, Self::ItemQuery>>,
-        (grid, pipeline, cache): SystemParamItem<'w, '_, Self::Param>,
+        (grid, pipeline, cache, progress): SystemParamItem<'w, '_, Self::Param>,
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
-        let (grid, pipeline, cache) =
-            (grid.into_inner(), pipeline.into_inner(), cache.into_inner());
+        let (grid, pipeline, cache, progress) = (
+            grid.into_inner(),
+            pipeline.into_inner(),
+            cache.into_inner(),
+            progress.into_inner(),
+        );
         let (Some((buffers, bindings)), Some(vertices), Some(indices)) =
             (sheets, grid.vertices.buffer(), grid.indices.buffer())
         else {
@@ -1467,9 +1477,11 @@ impl<P: PhaseItem> RenderCommand<P> for DrawSheets {
         pass.set_vertex_buffer(0, vertices.slice(..));
         pass.set_index_buffer(indices.slice(..), IndexFormat::Uint32);
         for ((bound, range), id) in bindings.0.iter().zip(ranges).zip(ids) {
-            let (Some(bound), Some(drawn)) =
-                (bound, id.and_then(|id| cache.get_render_pipeline(id)))
-            else {
+            let (Some(bound), Some(id)) = (bound, id) else {
+                continue;
+            };
+            let Some(drawn) = cache.get_render_pipeline(*id) else {
+                progress.awaiting(cache.get_render_pipeline_state(*id));
                 continue;
             };
             pass.set_render_pipeline(drawn);

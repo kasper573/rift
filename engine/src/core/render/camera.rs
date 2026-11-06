@@ -118,6 +118,20 @@ pub fn picture(grade: PictureGrade) -> impl Bundle {
     )
 }
 
+/// Starts every world picture's temporal smoothing over from the frame being drawn, so that what
+/// the frames before showed, however many the world took to stand, leaves no trace in it. The
+/// smoothing blends a frame in a little at a time, and what is thin on the screen, a blade of
+/// grass or a pebble's shadow, takes seconds to show whole against a history without it: whoever
+/// lifts a veil onto a world calls this as it does, so the world is first seen whole.
+pub fn forget_history(world: &mut World) {
+    for mut smoothing in world
+        .query_filtered::<&mut TemporalAntiAliasing, With<WorldPicture>>()
+        .iter_mut(world)
+    {
+        smoothing.reset = true;
+    }
+}
+
 /// How a picture is finished beside the engine's own finish: opened `exposure` brighter, its
 /// colours `saturation` times as saturated, its midtones `contrast` times as contrasted and its
 /// light warmed toward amber by `warmth`, or cooled toward blue below 0.

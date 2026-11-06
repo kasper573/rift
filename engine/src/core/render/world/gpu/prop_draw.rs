@@ -56,6 +56,7 @@ use bevy::shader::{Shader, ShaderDefVal};
 use super::arena::{ExtractedPropArena, InstanceArenas, ModelArena};
 use super::clearing::Clearing;
 use super::cull::{self, PropCulls, ViewCull};
+use crate::core::render::world::RenderProgress;
 
 pub struct PropDrawPlugin;
 
@@ -79,7 +80,11 @@ impl Plugin for PropDrawPlugin {
                     bind_props
                         .in_set(RenderSystems::PrepareBindGroups)
                         .after(cull::prepare_culls),
-                    (queue_lit, queue_prepass, queue_shadows).in_set(RenderSystems::Queue),
+                    (
+                        forget_drawn,
+                        (queue_lit, queue_prepass, queue_shadows).after(forget_drawn),
+                    )
+                        .in_set(RenderSystems::Queue),
                 ),
             );
     }
@@ -223,7 +228,6 @@ fn bind_props(
         return;
     };
     bindings.instances.clear();
-    bindings.drawn.clear();
     let (Some(mesh), Some(clearing), layout) = (
         pipeline.mesh.binding(),
         pipeline.clearing.binding(),
@@ -251,6 +255,11 @@ fn bind_props(
             );
         }
     }
+}
+
+/// Forgets what the views drew last frame, for the queues to say what they draw this frame.
+fn forget_drawn(mut bindings: ResMut<PropBindings>) {
+    bindings.drawn.clear();
 }
 
 /// Writes where the props clear round the camera's subject this frame.
@@ -283,6 +292,7 @@ struct PropQueue<'w, 's> {
     materials: Res<'w, ErasedRenderAssets<PreparedMaterial>>,
     allocators: Res<'w, MaterialBindGroupAllocators>,
     bindings: ResMut<'w, PropBindings>,
+    progress: Res<'w, RenderProgress>,
     sceneries: Query<'w, 's, (Entity, &'static MainEntity), With<ExtractedPropArena>>,
 }
 
@@ -304,34 +314,55 @@ impl PropQueue<'_, '_> {
         let mut queued = Vec::new();
         for (entity, &main) in &self.sceneries {
             let scenery = main.id();
-            let (Some(cull), Some(arena)) =
-                (self.culls.0.get(&scenery), self.arenas.0.get(&scenery))
-            else {
+            let Some(arena) = self.arenas.0.get(&scenery) else {
                 continue;
             };
-            let (Some(table), true) = (&cull.table, cull.views.contains_key(&view)) else {
+            let (Some(table), true) = (
+                self.culls
+                    .0
+                    .get(&scenery)
+                    .and_then(|cull| cull.table.as_ref()),
+                self.culls
+                    .0
+                    .get(&scenery)
+                    .is_some_and(|cull| cull.views.contains_key(&view)),
+            ) else {
+                if !arena.chunks.is_empty() {
+                    self.progress.left_out();
+                }
                 continue;
             };
+            let progress = &self.progress;
             let parts: Vec<PartDraw> = table
                 .table()
                 .buckets
                 .iter()
                 .filter_map(|bucket| {
-                    let dressed = arena.dressed.get(&bucket.prop)?;
+                    let Some(dressed) = arena.dressed.get(&bucket.prop) else {
+                        progress.left_out();
+                        return None;
+                    };
                     if light && !dressed.shadow {
                         return None;
                     }
                     let material = dressed.materials.get(bucket.part as usize)?;
-                    let prepared = self.materials.get(material.id())?;
+                    let Some(prepared) = self.materials.get(material.id()) else {
+                        progress.left_out();
+                        return None;
+                    };
                     if light && !prepared.properties.shadows_enabled {
                         return None;
                     }
-                    let bound = self
+                    let Some(bound) = self
                         .allocators
-                        .get(&material.type_id())?
-                        .get(prepared.binding.group)?
-                        .bind_group()?
-                        .clone();
+                        .get(&material.type_id())
+                        .and_then(|allocator| allocator.get(prepared.binding.group))
+                        .and_then(|group| group.bind_group())
+                        .cloned()
+                    else {
+                        progress.left_out();
+                        return None;
+                    };
                     let id = pipeline.specialize(
                         &self.cache,
                         view_key,
@@ -651,6 +682,7 @@ impl<P: PhaseItem, const LIT: bool> RenderCommand<P> for DrawProps<LIT> {
         SRes<PropCulls>,
         SRes<ModelArena>,
         SRes<PipelineCache>,
+        SRes<RenderProgress>,
     );
     type ViewQuery = Read<ExtractedView>;
     type ItemQuery = Read<MainEntity>;
@@ -659,14 +691,15 @@ impl<P: PhaseItem, const LIT: bool> RenderCommand<P> for DrawProps<LIT> {
         _: &P,
         view: ROQueryItem<'w, '_, Self::ViewQuery>,
         scenery: Option<ROQueryItem<'w, '_, Self::ItemQuery>>,
-        (bindings, culls, models, cache): SystemParamItem<'w, '_, Self::Param>,
+        (bindings, culls, models, cache, progress): SystemParamItem<'w, '_, Self::Param>,
         pass: &mut TrackedRenderPass<'w>,
     ) -> RenderCommandResult {
-        let (bindings, culls, models, cache) = (
+        let (bindings, culls, models, cache, progress) = (
             bindings.into_inner(),
             culls.into_inner(),
             models.into_inner(),
             cache.into_inner(),
+            progress.into_inner(),
         );
         let Some(scenery) = scenery.map(MainEntity::id) else {
             return RenderCommandResult::Skip;
@@ -679,6 +712,7 @@ impl<P: PhaseItem, const LIT: bool> RenderCommand<P> for DrawProps<LIT> {
             models.vertices.buffer(),
             models.indices.buffer(),
         ) else {
+            progress.left_out();
             return RenderCommandResult::Skip;
         };
         pass.set_vertex_buffer(0, vertices.slice(..));
@@ -686,6 +720,7 @@ impl<P: PhaseItem, const LIT: bool> RenderCommand<P> for DrawProps<LIT> {
         pass.set_bind_group(INSTANCE_GROUP, instances, &[]);
         for part in parts {
             let Some(drawn) = cache.get_render_pipeline(part.pipeline) else {
+                progress.awaiting(cache.get_render_pipeline_state(part.pipeline));
                 continue;
             };
             pass.set_render_pipeline(drawn);

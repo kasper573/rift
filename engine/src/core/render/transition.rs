@@ -109,6 +109,7 @@ pub fn cover_unseen(world: &mut World, viewed_at: Pos<Meters>) {
 }
 
 pub fn reveal(world: &mut World, viewed_at: Pos<Meters>) {
+    camera::forget_history(world);
     if let Some(cut) = world.resource_mut::<ActiveTransition>().0.as_mut()
         && cut.arrival.is_none()
     {

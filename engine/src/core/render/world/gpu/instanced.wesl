@@ -6,10 +6,10 @@
 
 @if(PREPASS_PIPELINE)
 import bevy_pbr::prepass::io::{Vertex, VertexOutput};
-@if(PREPASS_PIPELINE && PREPASS_FRAGMENT)
-import bevy_pbr::prepass::io::FragmentOutput;
 @else
 import bevy_pbr::render::forward_io::{Vertex, VertexOutput, FragmentOutput};
+@if(PREPASS_PIPELINE && PREPASS_FRAGMENT)
+import bevy_pbr::prepass::io::FragmentOutput;
 @if(PREPASS_PIPELINE)
 import bevy_pbr::render::pbr_prepass_functions;
 @if(PREPASS_PIPELINE && PREPASS_FRAGMENT)
