@@ -19,6 +19,7 @@ use bevy::tasks::futures::check_ready;
 use bevy::tasks::futures_lite::future;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 
+use super::expand::{self, PaintChunk, StrewnCover, painted_by};
 use super::plan::{KEEP_SHARE, Plan, Planner, Seen};
 use super::regions::{Cut, Merge, Region, Unstood};
 use super::{Budget, Making, Merged, PLACEMENT_CELL, Streaming, distance_to, take_away};
@@ -27,7 +28,7 @@ use crate::core::content::Content;
 use crate::core::content::media::GltfInfos;
 use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::ground::{Heightfield, PaintMap, SAMPLES_PER_METER};
-use crate::core::math::{Pos, Rect, Size};
+use crate::core::math::Pos;
 use crate::core::render::camera::Lens;
 use crate::core::render::world::cover::{self, CopyModel, CoverMaterial};
 use crate::core::render::world::gpu::draw::GroundSheet;
@@ -65,29 +66,6 @@ const STREWN_PIXELS: f32 = 16.0;
 struct PieceAt {
     layer: usize,
     piece: usize,
-}
-
-/// A chunk of the paint, by its place among the chunks across and down.
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
-struct PaintChunk {
-    column: u32,
-    row: u32,
-}
-
-impl PaintChunk {
-    /// The cell of paint the chunk begins at.
-    fn first_cell(self) -> (u32, u32) {
-        (
-            self.column * cover::CHUNK_CELLS,
-            self.row * cover::CHUNK_CELLS,
-        )
-    }
-
-    fn bounds(self) -> Rect<Meters> {
-        let side = cover::CHUNK_CELLS as f32 / SAMPLES_PER_METER as f32;
-        let (column, row) = self.first_cell();
-        Rect::new(PaintMap::pixel_pos(column, row), Size::new(side, side))
-    }
 }
 
 /// A chunk of a cover's piece.
@@ -687,7 +665,7 @@ impl FarRegion {
         };
         let strewn = |extent: f32| {
             if !far.spread.told_apart(extent, self.pixels_per_meter) {
-                let seed = chunk_seed(
+                let seed = expand::mixed_seed(
                     far.seed,
                     [
                         far.slot as u64,
@@ -702,20 +680,14 @@ impl FarRegion {
                     spread,
                 );
             }
+            let cover = StrewnCover {
+                slot: far.slot,
+                seed: far.seed,
+            };
             let places = chunks_within(first, end)
                 .flat_map(|chunk| {
-                    let seed = chunk_seed(
-                        far.seed,
-                        [
-                            far.slot as u64,
-                            u64::from(far.spread.piece),
-                            u64::from(chunk.row),
-                            u64::from(chunk.column),
-                        ],
-                    );
-                    let first = chunk.first_cell();
                     let places =
-                        cover::strew_places(&patch(first, cover::CHUNK_CELLS), &far.spread, seed);
+                        expand::strewn_in(&self.heights, &self.paint, cover, &far.spread, chunk);
                     cover::seen_at(&places, extent, self.pixels_per_meter)
                 })
                 .collect::<Vec<_>>();
@@ -878,35 +850,22 @@ fn spawn_cover_chunk(
 ) -> Vec<Entity> {
     let PieceAt { layer, piece } = piece;
     let layer = &streaming.covers.layers[layer];
-    let (columns, rows) = streaming.paint.pixels();
-    let share = painted_by(&streaming.paint, layer.slot);
-    let first = chunk.first_cell();
-    let patch = cover::Patch {
-        heights: &streaming.heights,
-        first,
-        columns: cover::CHUNK_CELLS.min(columns - first.0),
-        rows: cover::CHUNK_CELLS.min(rows - first.1),
-        share: &share,
-    };
     let LayerPiece {
         shape,
         spread,
         strewn,
         ..
     } = &layer.pieces[piece];
-    let seed = chunk_seed(
-        layer.seed,
-        [
-            layer.slot as u64,
-            u64::from(spread.piece),
-            u64::from(chunk.row),
-            u64::from(chunk.column),
-        ],
-    );
+    let cover = StrewnCover {
+        slot: layer.slot,
+        seed: layer.seed,
+    };
+    let strewn_places =
+        || expand::strewn_in(&streaming.heights, &streaming.paint, cover, spread, chunk);
     let meshes = match &shape.shape {
         PieceShape::Blade { width, height } => cover::blades(
             &streaming.heights,
-            &cover::strew_places(&patch, spread, seed),
+            &strewn_places(),
             &cover::BladeShape {
                 width: width.0,
                 height: height.0,
@@ -917,7 +876,7 @@ fn spawn_cover_chunk(
             let Some(Strewn { gltf, material, .. }) = strewn.as_ref() else {
                 return Vec::new();
             };
-            let places = cover::strew_places(&patch, spread, seed);
+            let places = strewn_places();
             if places.is_empty() {
                 return Vec::new();
             }
@@ -955,28 +914,4 @@ fn spawn_cover_chunk(
             )
         })
         .collect()
-}
-
-/// A seed of its own for every chunk of every piece, mixed from the cover's seed and where the
-/// chunk lies, so changing the cover's seed rescatters everything and nothing else repeats.
-fn chunk_seed(seed: u64, parts: [u64; 4]) -> u64 {
-    let mut mixed = seed ^ 0x9E37_79B9_7F4A_7C15;
-    for part in parts {
-        mixed ^= part.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        mixed = (mixed ^ (mixed >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        mixed = (mixed ^ (mixed >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        mixed ^= mixed >> 31;
-    }
-    mixed
-}
-
-/// The share of each cell of paint that `slot` paints: all of it or none.
-fn painted_by(paint: &PaintMap, slot: usize) -> impl Fn(u32, u32) -> f32 + '_ {
-    move |column, row| {
-        if usize::from(paint.index(column, row)) == slot {
-            1.0
-        } else {
-            0.0
-        }
-    }
 }

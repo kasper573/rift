@@ -27,6 +27,7 @@ mod region;
 mod residency;
 mod safe_zone;
 mod scenery;
+mod scenery_chunks;
 mod shop;
 mod sight;
 mod skills;

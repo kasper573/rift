@@ -8,6 +8,7 @@
 //! takes in, however far it stretches.
 
 mod covers;
+pub mod expand;
 mod plan;
 mod props;
 mod regions;
