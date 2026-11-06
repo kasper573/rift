@@ -3,12 +3,12 @@ use std::collections::BTreeMap;
 use std::io;
 use std::sync::{Arc, OnceLock};
 
-use super::files::{Listing, list_files, table_of};
+use super::files::{Listing, fields_file, list_files, table_of};
 use super::fresh::Nearby;
 use super::id::{ContentId, ContentScope, with_content};
 use super::load::{
     CheckedFiles, ContentFolder, ContentRegistry, FileWriter, SettingsFile, TableLoader, Unvouched,
-    check_files, listing_scope, parse_file, parse_settings, parse_value,
+    check_files, listing_scope, parse_file, parse_settings, parse_value, write_fields,
 };
 use super::report::{ContentProblem, ErrorPlace, LoadError, MISSING_FILE};
 use super::table::ContentFile;
@@ -171,6 +171,22 @@ impl FolderReader {
         let files = self.write_with(|writer| loader.write_row(row, path, writer))?;
         let removed = self.parts_left(loader, path, &files);
         Ok(WrittenFiles { files, removed })
+    }
+
+    /// The file `row`'s fields are kept in as the content file at `path`, by its path from the
+    /// game folder, and what it holds: all that changes when a bundle's fields do and its parts
+    /// stay as they stand.
+    pub fn write_fields<Row: ContentFile>(
+        &self,
+        path: &str,
+        row: &Row,
+    ) -> io::Result<(String, Vec<u8>)> {
+        let file = fields_file(path);
+        let mut files = self.write_with(|writer| write_fields(row, path, writer))?;
+        let bytes = files
+            .remove(&file)
+            .ok_or_else(|| io::Error::other(format!("{file} was not written")))?;
+        Ok((file, bytes))
     }
 
     /// The files of the content file at `path` once every path `renames` names as a key is

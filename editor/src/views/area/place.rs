@@ -93,7 +93,7 @@ pub fn turn(editor: &mut Editor, view_key: &str, frame: &AreaFrame, clockwise: b
                 if let Some(ModuleNode {
                     module: AreaModule::Prop(prop),
                     ..
-                }) = super::nodes::module_node_mut(scene, node)
+                }) = scene.module_mut(node)
                 {
                     prop.yaw = Degrees((prop.yaw.0 + step.0).rem_euclid(360.0));
                 }

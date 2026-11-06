@@ -557,9 +557,7 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
             if let Some(bundle) = last_opened_bundle(editor) {
                 area_view::nodes::change_scene(editor, &bundle, |scene| {
                     for row in rows {
-                        area_view::nodes::module_node_mut(scene, row)?
-                            .module
-                            .shift(*dx, *dy);
+                        scene.module_mut(row)?.module.shift(*dx, *dy);
                     }
                     Some(format!("Move {} modules", rows.len()))
                 });

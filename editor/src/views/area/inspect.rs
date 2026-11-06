@@ -902,7 +902,7 @@ pub(crate) fn new_object_script(
     edit.label = format!("New {} run by {name}", file_title(&path));
     read.write_in(&mut edit, &reader, bundle, |nodes, _| {
         if let Some(AreaModule::Object(object)) =
-            nodes::module_node_mut(nodes, node).map(|module| &mut module.module)
+            nodes.module_mut(node).map(|module| &mut module.module)
         {
             object.scripts.push(ScriptModule {
                 script,
@@ -1071,7 +1071,7 @@ impl<'a> Inspected<'a> {
     ) -> Result<(), String> {
         read.write(edit, project, bundle, |nodes, variables| {
             for (pointer, module) in self.modules {
-                if let Some(at) = nodes::module_node_mut(nodes, &pointer) {
+                if let Some(at) = nodes.module_mut(&pointer) {
                     *at = module;
                 }
             }

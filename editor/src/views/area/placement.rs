@@ -551,7 +551,7 @@ pub(crate) fn move_parts_in_place(
     let count = placement_count(&frame.content, &place.blueprint);
     nodes::change_scene(editor, &place.blueprint, |scene| {
         for part in parts {
-            nodes::module_node_mut(scene, part)?.module.shift(bx, by);
+            scene.module_mut(part)?.module.shift(bx, by);
         }
         Some(format!(
             "Move {} parts of {} · {count}",
@@ -647,12 +647,15 @@ pub fn unpack(editor: &mut Editor, frame: &AreaSnapshot, node: &str) {
         return;
     };
     let applied = nodes::change_scene(editor, &bundle, |scene| {
-        *nodes::node_mut(scene, node)? = SceneNode::Folder(SceneFolder {
-            label: label.clone(),
-            hidden: false,
-            locked: false,
-            children,
-        });
+        scene.replace(
+            node,
+            SceneNode::Folder(SceneFolder {
+                label: label.clone(),
+                hidden: false,
+                locked: false,
+                children,
+            }),
+        )?;
         Some(format!("Unpack {label} into a folder"))
     });
     if applied {
@@ -689,8 +692,7 @@ pub(crate) fn replace_with(editor: &mut Editor, bundle: &str, node: &str, replac
     };
     let mut replaced = None;
     let applied = nodes::change_scene(editor, bundle, |scene| {
-        let AreaModule::Blueprint(placement) = &mut nodes::module_node_mut(scene, node)?.module
-        else {
+        let AreaModule::Blueprint(placement) = &mut scene.module_mut(node)?.module else {
             return None;
         };
         let old = reader.path_of(placement.blueprint)?.to_owned();

@@ -22,6 +22,7 @@ mod prop_view;
 mod row_forms;
 mod scene_graph;
 mod scene_nodes;
+mod scene_ops;
 mod scenes;
 mod script_actions;
 mod skeleton_view;

@@ -27,7 +27,9 @@ fn folder_json(label: &str, children: Vec<Value>) -> Value {
 
 fn flagged(node: SceneNode, flag: NodeFlag) -> SceneNode {
     let mut nodes = vec![node];
-    SceneTree::new(&mut nodes).set_flag(&["/0".to_owned()], flag, true);
+    support::restructured(&mut nodes, |tree| {
+        tree.set_flag(&["/0".to_owned()], flag, true);
+    });
     nodes.remove(0)
 }
 
@@ -35,7 +37,9 @@ fn flagged(node: SceneNode, flag: NodeFlag) -> SceneNode {
 fn grouping_puts_the_rows_in_order_into_a_new_folder_where_the_first_was() {
     let mut scene = vec![object("a"), object("b"), object("c"), object("d")];
 
-    let made = SceneTree::new(&mut scene).group(&["/2".to_owned(), "/1".to_owned()], "Storage");
+    let made = support::restructured(&mut scene, |tree| {
+        tree.group(&["/2".to_owned(), "/1".to_owned()], "Storage")
+    });
 
     assert_eq!(made.as_deref(), Some("/1"));
     assert_eq!(names(&scene), ["a", "Storage", "b", "c", "d"]);
@@ -46,10 +50,12 @@ fn grouping_puts_the_rows_in_order_into_a_new_folder_where_the_first_was() {
         folder("Altar", vec![object("c")]),
         object("d"),
     ];
-    let made = SceneTree::new(&mut scene).group(
-        &["/0/children/1".to_owned(), "/1/children/0".to_owned()],
-        "Picked",
-    );
+    let made = support::restructured(&mut scene, |tree| {
+        tree.group(
+            &["/0/children/1".to_owned(), "/1/children/0".to_owned()],
+            "Picked",
+        )
+    });
     assert_eq!(
         made.as_deref(),
         Some("/0"),
@@ -68,7 +74,7 @@ fn ungrouping_puts_what_a_folder_held_in_its_place_in_order() {
         object("d"),
     ];
 
-    SceneTree::new(&mut scene).ungroup(&["/1".to_owned()]);
+    support::restructured(&mut scene, |tree| tree.ungroup(&["/1".to_owned()]));
 
     assert_eq!(names(&scene), ["a", "b", "c", "d"]);
 }
@@ -77,14 +83,15 @@ fn ungrouping_puts_what_a_folder_held_in_its_place_in_order() {
 fn moving_rows_into_a_folder_lands_them_where_asked() {
     let mut scene = vec![object("a"), object("b"), folder("Hall", vec![object("c")])];
 
-    let landed = SceneTree::new(&mut scene)
-        .move_nodes(&["/0".to_owned()], "/2", &Landing::First)
-        .expect("the move");
+    let landed = support::restructured(&mut scene, |tree| {
+        tree.move_nodes(&["/0".to_owned()], "/2", &Landing::First)
+    })
+    .expect("the move");
 
     assert_eq!(landed, ["/1/children/0"]);
     assert_eq!(names(&scene), ["b", "Hall", "a", "c"]);
 
-    SceneTree::new(&mut scene).reorder(&["/1".to_owned()], -1);
+    support::restructured(&mut scene, |tree| tree.reorder(&["/1".to_owned()], -1));
     assert_eq!(names(&scene), ["Hall", "a", "c", "b"]);
 }
 
@@ -93,8 +100,9 @@ fn a_folder_never_moves_into_itself() {
     let mut scene = vec![folder("Hall", vec![folder("Nave", vec![])])];
     let before = scene::write_nodes(&scene).expect("written");
 
-    let moved =
-        SceneTree::new(&mut scene).move_nodes(&["/0".to_owned()], "/0/children/0", &Landing::End);
+    let moved = support::restructured(&mut scene, |tree| {
+        tree.move_nodes(&["/0".to_owned()], "/0/children/0", &Landing::End)
+    });
 
     assert!(moved.is_none());
     assert_eq!(scene::write_nodes(&scene).expect("written"), before);
@@ -130,7 +138,9 @@ fn a_folders_hide_and_lock_reach_what_it_holds_and_each_row_keeps_its_own() {
     assert!(!flags.keep(&["/0/children/1"]));
     assert!(flags.keep(&["/2"]));
 
-    SceneTree::new(&mut scene).set_flag(&["/0".to_owned()], NodeFlag::Hidden, false);
+    support::restructured(&mut scene, |tree| {
+        tree.set_flag(&["/0".to_owned()], NodeFlag::Hidden, false);
+    });
     let flags = flags_of(&scene);
     assert!(
         flags.hidden("/0/children/0"),

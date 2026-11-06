@@ -469,7 +469,7 @@ fn finish_select_drag(
             let h = (new_max.y - new_min.y).max(1.0);
             let reader = frame.reader.clone();
             nodes::change_scene(editor, &frame.bundle, |scene| {
-                let module = &mut nodes::module_node_mut(scene, &part)?.module;
+                let module = &mut scene.module_mut(&part)?.module;
                 module.shift(new_min.x - min.x, new_min.y - min.y);
                 shapes::resize(module, w, h);
                 Some(format!("Resize {}", shapes::label(module, reader.as_ref())))
@@ -511,7 +511,7 @@ pub(crate) fn move_selection(editor: &mut Editor, frame: &AreaFrame, dx: f32, dy
     let reader = frame.reader.clone();
     nodes::change_scene(editor, &frame.bundle, |scene| {
         for node in &moved {
-            nodes::module_node_mut(scene, node)?.module.shift(dx, dy);
+            scene.module_mut(node)?.module.shift(dx, dy);
         }
         Some(match moved.as_slice() {
             [one] => format!(

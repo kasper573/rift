@@ -7,9 +7,11 @@ use engine::systems::area::{AreaDef, TerrainDef, Walk};
 use ui::egui::{self, Color32, Ui};
 use ui::{form, paint, panel, sheet, theme};
 
+use super::nodes::SceneBundle;
 use crate::app::Editor;
 use crate::forms::{self, FormChange, FormCx};
 use crate::{picker, row_form};
+use std::sync::Arc;
 
 pub fn show(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
     let bundle = editor.views.area.view(view_key).bundle.clone();
@@ -71,7 +73,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
         row_form::act(editor, action, AreaDef::TABLE, &bundle);
     }
     if let Some(label) = changed.label(&bundle) {
-        editor.write_content(&label, &bundle, &edited);
+        editor.write_fields(&label, &bundle, SceneBundle::Area(Arc::new(edited)));
     }
 }
 

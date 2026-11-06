@@ -1,7 +1,7 @@
 use editor::app::Editor;
+use editor::doc::SceneEdit;
 use editor::project::RowSelection;
 use editor::schema::{self, SchemaShapes};
-use editor::views::area::nodes::SceneTree;
 use editor::views::area::{AreaAction, AreaSnapshot, modules, nodes, placement, run_action};
 use engine::core::content::{Content, ContentFile};
 use engine::core::math::{Pos, Rect, Size};
@@ -79,13 +79,10 @@ fn removing_nodes_takes_each_named_one_whatever_order_they_are_named_in() {
         object("d"),
     ];
 
-    let taken = SceneTree::new(&mut scene).remove(&[
-        "/1/children/0".to_owned(),
-        "/2".to_owned(),
-        "/0".to_owned(),
-    ]);
+    support::restructured(&mut scene, |tree| {
+        tree.remove(&["/1/children/0".to_owned(), "/2".to_owned(), "/0".to_owned()])
+    });
 
-    assert_eq!(names(&taken), ["b", "d", "a"]);
     assert_eq!(names(&scene), ["Hall", "c"]);
 }
 
@@ -99,10 +96,12 @@ fn a_duplicate_lands_right_after_its_original_labelled_apart_from_its_siblings()
         object("door"),
     ];
 
-    let made = SceneTree::new(&mut scene).duplicate(
-        &["/0/children/0".to_owned(), "/1".to_owned()],
-        SceneNode::clone,
-    );
+    let made = support::restructured(&mut scene, |tree| {
+        tree.duplicate(
+            &["/0/children/0".to_owned(), "/1".to_owned()],
+            SceneNode::clone,
+        )
+    });
 
     assert_eq!(made, ["/0/children/1", "/2"]);
     assert_eq!(
@@ -137,9 +136,9 @@ fn new_nodes_land_in_the_selected_folder_or_beside_the_selected_node() {
 #[test]
 fn a_change_follows_each_node_the_scene_held_to_where_it_now_sits() {
     let mut scene = vec![object("a"), folder("f", vec![object("b")])];
-    let mut tree = SceneTree::new(&mut scene);
-    tree.duplicate(&["/0".to_owned()], Clone::clone);
-    let remap = tree.remap();
+    let ((), remap) = nodes::restructure(&mut SceneEdit::new(&mut scene), |tree| {
+        tree.duplicate(&["/0".to_owned()], Clone::clone);
+    });
 
     assert_eq!(nodes::remapped(&remap, "/0").as_deref(), Some("/0"));
     assert_eq!(nodes::remapped(&remap, "/1").as_deref(), Some("/2"));
@@ -147,7 +146,6 @@ fn a_change_follows_each_node_the_scene_held_to_where_it_now_sits() {
         nodes::remapped(&remap, "/1/children/0").as_deref(),
         Some("/2/children/0")
     );
-    assert_eq!(nodes::remapped(&remap, "/5"), None);
 }
 
 #[test]

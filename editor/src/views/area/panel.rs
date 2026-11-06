@@ -161,13 +161,13 @@ fn boxes(editor: &mut Editor, ui: &mut Ui, snapshot: &AreaSnapshot) {
             let mut area = (**area).clone();
             area.name = name;
             let label = format!("Rename area {}", file_title(&bundle));
-            editor.write_content(&label, &bundle, &area);
+            editor.write_fields(&label, &bundle, SceneBundle::Area(Arc::new(area)));
         }
         (SceneBundle::Blueprint(blueprint), _) if let Some(variables) = variables_changed => {
             let mut blueprint = (**blueprint).clone();
             blueprint.variables = variables;
             let label = format!("Edit the variables of {}", file_title(&bundle));
-            editor.write_content(&label, &bundle, &blueprint);
+            editor.write_fields(&label, &bundle, SceneBundle::Blueprint(Arc::new(blueprint)));
         }
         _ => {}
     }

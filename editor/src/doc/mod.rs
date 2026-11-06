@@ -5,8 +5,11 @@
 //! shows rather than walking the scene, and nothing copies the scene to look at it.
 
 mod derived;
+mod edit;
+pub mod history;
 mod ids;
 mod index;
+pub mod ops;
 
 use std::collections::HashMap;
 
@@ -16,6 +19,7 @@ use engine::systems::area::scene::{ModuleNode, SceneNode};
 use crate::views::area::nodes::SceneBundle;
 
 pub use derived::Derived;
+pub use edit::{SceneChanges, SceneEdit, node_at, path_of, pointer_of};
 pub use ids::NodeId;
 pub use index::NodeGrid;
 

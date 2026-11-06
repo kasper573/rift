@@ -489,18 +489,19 @@ fn dominant_of(cell: CellPos, pixel: impl Fn(u32, u32) -> u8) -> u8 {
         cell.x as u32 * SAMPLES_PER_METER,
         cell.y as u32 * SAMPLES_PER_METER,
     );
-    let mut counts = [0u32; MAX_TERRAINS];
-    for dy in 0..SAMPLES_PER_METER {
-        for dx in 0..SAMPLES_PER_METER {
-            counts[usize::from(pixel(column + dx, row + dy))] += 1;
-        }
+    let mut pixels = [0u8; (SAMPLES_PER_METER * SAMPLES_PER_METER) as usize];
+    for (index, painted) in (0..).zip(pixels.iter_mut()) {
+        *painted = pixel(
+            column + index % SAMPLES_PER_METER,
+            row + index / SAMPLES_PER_METER,
+        );
     }
-    counts
+    let count = |terrain: u8| pixels.iter().filter(|&&painted| painted == terrain).count();
+    pixels
         .iter()
-        .enumerate()
-        .rev()
-        .max_by_key(|(_, count)| **count)
-        .map_or(0, |(index, _)| index as u8)
+        .copied()
+        .max_by(|&a, &b| count(a).cmp(&count(b)).then(b.cmp(&a)))
+        .unwrap_or(0)
 }
 
 /// The values a grid over the ground can hold, kept out of reach so the ground's grids are the

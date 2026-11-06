@@ -168,7 +168,7 @@ pub fn output(editor: &mut Editor, ui: &mut Ui) {
 pub fn move_there(editor: &mut Editor, bundle: &str, node: &str, to: Pos<Meters>) {
     let reader = editor.reader();
     nodes::change_scene(editor, bundle, |scene| {
-        let module = &mut nodes::module_node_mut(scene, node)?.module;
+        let module = &mut scene.module_mut(node)?.module;
         let from = super::shapes::bounds(module, None)?.center();
         module.shift(to.x - from.x, to.y - from.y);
         Some(format!(

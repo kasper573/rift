@@ -560,7 +560,8 @@ impl AreaModule {
         }
     }
 
-    fn check(&self, pointer: &str, cx: &mut RowCheck) {
+    /// Holds the module, at `pointer` of its scene file, to the rules it keeps alone.
+    pub fn check(&self, pointer: &str, cx: &mut RowCheck) {
         match self {
             AreaModule::Population(population) => {
                 cx.at_least(format!("{pointer}/count"), population.count, 1, "npcs")

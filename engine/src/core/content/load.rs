@@ -1939,6 +1939,15 @@ fn shape_of<T: JsonSchema>(settings: &SchemaSettings) -> serde_json::Value {
         .to_value()
 }
 
+/// Writes the fields of `row`, the content file at `path`, into the file that keeps them.
+pub(super) fn write_fields<Row: Serialize>(
+    row: &Row,
+    path: &str,
+    writer: &mut FileWriter,
+) -> io::Result<()> {
+    writer.json(&fields_file(path), row)
+}
+
 struct RowLoader<Row> {
     parts: Option<BundleParts<Row>>,
     marker: PhantomData<fn() -> Row>,
@@ -2038,7 +2047,7 @@ impl<Row: ContentFile> TableLoader for RowLoader<Row> {
         let row = row
             .downcast_ref::<Row>()
             .expect("a file written by its own loader");
-        writer.json(&fields_file(path), row)?;
+        write_fields(row, path, writer)?;
         if let Some(bundle) = &self.parts {
             (bundle.write)(row, path, writer)?;
         }

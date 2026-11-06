@@ -1146,7 +1146,7 @@ pub fn rename_grouped(
     let pointer = local(id).to_owned();
     let Some(mut edit) = nodes::scene_edit(editor, &bundle, |scene| {
         let (folder, index) = nodes::place_of(&pointer)?;
-        let siblings = nodes::children_mut(scene, folder)?;
+        let siblings = nodes::children_in(scene, folder)?;
         let others: Vec<SceneNode> = siblings
             .iter()
             .enumerate()
@@ -1154,9 +1154,8 @@ pub fn rename_grouped(
             .map(|(_, sibling)| sibling.clone())
             .collect();
         let label = nodes::free_label(typed, &others);
-        let node = siblings.get_mut(index)?;
-        let count = nodes::children_of(node).len();
-        nodes::set_label(node, label.clone());
+        let count = nodes::children_of(siblings.get(index)?).len();
+        scene.change_head(&pointer, |head| head.label = Some(label.clone()))?;
         Some(group_step(count, &label))
     }) else {
         return;
@@ -1667,7 +1666,7 @@ pub(crate) fn reorder_rows(
             many => format!("{} rows", many.len()),
         };
         let ((), moved) = nodes::restructure(scene, |tree| tree.reorder(&pointers, step));
-        if moved.iter().all(|(was, now)| was == now) {
+        if moved.is_empty() {
             return None;
         }
         remap = moved;
@@ -1702,11 +1701,7 @@ pub fn new_folder(editor: &mut Editor, snapshot: &AreaSnapshot, folder: &str) ->
     };
     let mut made = Vec::new();
     nodes::change_scene(editor, &bundle, |scene| {
-        let siblings = match into.as_str() {
-            "" => scene.clone(),
-            into => nodes::children_of(nodes::node(scene, into)?).to_vec(),
-        };
-        let label = nodes::free_label(NEW_FOLDER, &siblings);
+        let label = nodes::free_label(NEW_FOLDER, nodes::children_in(scene, &into)?);
         made = nodes::SceneTree::new(scene).append(&into, vec![nodes::folder(label.clone())]);
         Some(format!("New folder {label}"))
     });
@@ -1731,7 +1726,7 @@ pub fn rename(editor: &mut Editor, snapshot: &AreaSnapshot, id: &str, typed: &st
     let mut refused = None;
     nodes::change_scene(editor, &bundle, |scene| {
         let (folder, index) = nodes::place_of(&pointer)?;
-        let siblings = nodes::children_mut(scene, folder)?;
+        let siblings = nodes::children_in(scene, folder)?;
         let taken = siblings.iter().enumerate().any(|(at, sibling)| {
             at != index
                 && sibling
@@ -1744,9 +1739,8 @@ pub fn rename(editor: &mut Editor, snapshot: &AreaSnapshot, id: &str, typed: &st
             ));
             return None;
         }
-        let node = siblings.get_mut(index)?;
-        let was = shapes::node_label(node, reader.as_ref());
-        nodes::set_label(node, typed.to_owned());
+        let was = shapes::node_label(siblings.get(index)?, reader.as_ref());
+        scene.change_head(&pointer, |head| head.label = Some(typed.to_owned()))?;
         Some(format!("Rename {was} to {typed}"))
     });
     if let Some(refused) = refused {

@@ -12,6 +12,8 @@ use engine::systems::area::{AreaDef, AreaModule};
 use engine::systems::script::Variable;
 
 use crate::app::Editor;
+use crate::doc::ops::{Held, NodeHead, NodeMove, NodePath, follow_through};
+use crate::doc::{SceneEdit, node_at, path_of, pointer_of};
 use crate::project::{ContentEdit, Project, RowSelection};
 
 /// An area or a blueprint as the files hold it now, read as the game reads it: a scene graph on a
@@ -46,6 +48,20 @@ impl SceneBundle {
         }
     }
 
+    /// This bundle with `nodes` for its scene.
+    pub fn with_nodes(&self, nodes: Vec<SceneNode>) -> SceneBundle {
+        match self {
+            SceneBundle::Area(area) => SceneBundle::Area(Arc::new(AreaDef {
+                scene: nodes,
+                ..(**area).clone()
+            })),
+            SceneBundle::Blueprint(blueprint) => SceneBundle::Blueprint(Arc::new(BlueprintDef {
+                scene: nodes,
+                ..(**blueprint).clone()
+            })),
+        }
+    }
+
     /// Whether this is `other` as the same read of its files made it.
     pub fn same(&self, other: &SceneBundle) -> bool {
         match (self, other) {
@@ -63,37 +79,47 @@ impl SceneBundle {
         edit: &mut ContentEdit,
         project: &Project,
         path: &str,
-        change: impl FnOnce(&mut Vec<SceneNode>, &mut BTreeMap<String, Variable>),
+        change: impl FnOnce(&mut SceneEdit, &mut BTreeMap<String, Variable>),
     ) -> Result<(), String> {
         self.write_in(edit, &project.reader(), path, change)
     }
 
     /// Writes the bundle changed by `change`, its ids those of `reader`'s paths, so it may name
-    /// files the same edit makes.
+    /// files the same edit makes. The scene goes in as the changes made to it, its file written
+    /// only once something reads it.
     pub fn write_in(
         &self,
         edit: &mut ContentEdit,
         reader: &FolderReader,
         path: &str,
-        change: impl FnOnce(&mut Vec<SceneNode>, &mut BTreeMap<String, Variable>),
+        change: impl FnOnce(&mut SceneEdit, &mut BTreeMap<String, Variable>),
     ) -> Result<(), String> {
-        let (mut nodes, mut variables) = (self.nodes().to_vec(), self.variables().clone());
-        change(&mut nodes, &mut variables);
-        match self {
+        let mut variables = self.variables().clone();
+        let (scene, changes) = match self {
             SceneBundle::Area(area) => {
+                let mut area = (**area).clone();
+                let mut scene = SceneEdit::new(&mut area.scene);
+                change(&mut scene, &mut variables);
+                let changes = scene.finish(reader.scope());
                 if !variables.is_empty() {
                     return Err("an area has no variables to fill holes with".to_owned());
                 }
-                let mut area = (**area).clone();
-                area.scene = nodes;
-                edit.write_content_in(reader, path, &area)?;
+                (SceneBundle::Area(Arc::new(area)), changes)
             }
             SceneBundle::Blueprint(blueprint) => {
                 let mut blueprint = (**blueprint).clone();
-                blueprint.scene = nodes;
+                let mut scene = SceneEdit::new(&mut blueprint.scene);
+                change(&mut scene, &mut variables);
+                let changes = scene.finish(reader.scope());
                 blueprint.variables = variables;
                 edit.write_content_in(reader, path, &blueprint)?;
+                edit.changes
+                    .retain(|change| change.file != crate::project::scene_file(path));
+                (SceneBundle::Blueprint(Arc::new(blueprint)), changes)
             }
+        };
+        if !changes.is_empty() {
+            edit.change_scene(reader, path, scene, changes);
         }
         Ok(())
     }
@@ -281,24 +307,9 @@ pub fn node<'a>(nodes: &'a [SceneNode], pointer: &str) -> Option<&'a SceneNode> 
     siblings.get(*last)
 }
 
-pub(crate) fn node_mut<'a>(nodes: &'a mut [SceneNode], pointer: &str) -> Option<&'a mut SceneNode> {
-    let path = path_of(pointer)?;
-    node_at_mut(nodes, &path)
-}
-
 /// The module node of `nodes` at `pointer`.
 pub(crate) fn module_node<'a>(nodes: &'a [SceneNode], pointer: &str) -> Option<&'a ModuleNode> {
     match node(nodes, pointer)? {
-        SceneNode::Module(node) => Some(node),
-        _ => None,
-    }
-}
-
-pub(crate) fn module_node_mut<'a>(
-    nodes: &'a mut [SceneNode],
-    pointer: &str,
-) -> Option<&'a mut ModuleNode> {
-    match node_mut(nodes, pointer)? {
         SceneNode::Module(node) => Some(node),
         _ => None,
     }
@@ -313,16 +324,13 @@ pub(crate) fn place_of(pointer: &str) -> Option<(&str, usize)> {
 }
 
 /// The nodes of `folder`, `""` for the top level.
-pub(crate) fn children_mut<'a>(
-    nodes: &'a mut Vec<SceneNode>,
-    folder: &str,
-) -> Option<&'a mut Vec<SceneNode>> {
+pub(crate) fn children_in<'a>(nodes: &'a [SceneNode], folder: &str) -> Option<&'a [SceneNode]> {
     if folder.is_empty() {
         return Some(nodes);
     }
-    match node_mut(nodes, folder)? {
-        SceneNode::Folder(folder) => Some(&mut folder.children),
-        _ => None,
+    match node(nodes, folder)? {
+        SceneNode::Folder(folder) => Some(&folder.children),
+        SceneNode::Module(_) => None,
     }
 }
 
@@ -420,7 +428,7 @@ pub fn insertion_folder(editor: &Editor, bundle: &str) -> String {
 pub(crate) fn scene_edit(
     editor: &Editor,
     bundle: &str,
-    change: impl FnOnce(&mut Vec<SceneNode>) -> Option<String>,
+    change: impl FnOnce(&mut SceneEdit) -> Option<String>,
 ) -> Option<ContentEdit> {
     let project = editor.project.as_ref()?;
     let read = bundle_of(editor, bundle)?;
@@ -437,7 +445,7 @@ pub(crate) fn scene_edit(
 pub fn change_scene(
     editor: &mut Editor,
     bundle: &str,
-    change: impl FnOnce(&mut Vec<SceneNode>) -> Option<String>,
+    change: impl FnOnce(&mut SceneEdit) -> Option<String>,
 ) -> bool {
     scene_edit(editor, bundle, change).is_some_and(|edit| editor.apply(edit))
 }
@@ -449,10 +457,10 @@ pub fn add(editor: &mut Editor, bundle: &str, new: Vec<SceneNode>, label: &str) 
     };
     let folder = insertion_folder(editor, bundle);
     let mut added = Vec::new();
-    let applied = change_scene(editor, bundle, |nodes| {
+    let applied = change_scene(editor, bundle, |scene| {
         let mut new = new;
-        label_placements(nodes, &folder, &mut new, &reader);
-        added = SceneTree::new(nodes).append(&folder, new);
+        label_placements(scene.nodes(), &folder, &mut new, &reader);
+        added = SceneTree::new(scene).append(&folder, new);
         Some(label.to_owned())
     });
     if applied {
@@ -475,20 +483,25 @@ pub enum Landing {
     After(String),
 }
 
-/// Where each node of a scene went in a change to it, by its pointer before and after.
-pub(crate) type Remap = HashMap<String, String>;
+/// Where each node of a scene went in a change to it, so whatever names nodes by their pointers
+/// can follow them.
+#[derive(Clone, Default)]
+pub struct Remap(Vec<NodeMove>);
 
-/// Where `pointer` names a node after a change, following the nearest node above it that moved.
+impl Remap {
+    pub fn new() -> Remap {
+        Remap::default()
+    }
+
+    /// Whether the change moved no node.
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+}
+
+/// Where `pointer` names a node after a change, none once the change took it away.
 pub fn remapped(remap: &Remap, pointer: &str) -> Option<String> {
-    if let Some(now) = remap.get(pointer) {
-        return Some(now.clone());
-    }
-    let (folder, index) = place_of(pointer)?;
-    if folder.is_empty() {
-        return None;
-    }
-    let folder = remapped(remap, folder)?;
-    Some(format!("{folder}/children/{index}"))
+    Some(pointer_of(&follow_through(&remap.0, &path_of(pointer)?)?))
 }
 
 /// Which flag of a node a change sets.
@@ -506,74 +519,52 @@ impl NodeFlag {
         }
     }
 
-    fn set(self, node: &mut SceneNode, on: bool) {
-        let flag = match (node, self) {
-            (SceneNode::Folder(folder), NodeFlag::Hidden) => &mut folder.hidden,
-            (SceneNode::Folder(folder), NodeFlag::Locked) => &mut folder.locked,
-            (SceneNode::Module(module), NodeFlag::Hidden) => &mut module.hidden,
-            (SceneNode::Module(module), NodeFlag::Locked) => &mut module.locked,
-        };
-        *flag = on;
+    fn set(self, head: &mut NodeHead, on: bool) {
+        match self {
+            NodeFlag::Hidden => head.hidden = on,
+            NodeFlag::Locked => head.locked = on,
+        }
     }
 }
 
-/// A scene's nodes being changed, following where each node it held, and each node added, goes.
-pub struct SceneTree<'a> {
-    nodes: &'a mut Vec<SceneNode>,
-    followed: Vec<Option<Vec<usize>>>,
-    /// Each followed node's pointer before the change; `None` for one the change added.
-    was: Vec<Option<String>>,
+/// A scene being restructured through its edit, following where each node it is asked about,
+/// and each node it adds, goes.
+pub struct SceneTree<'e, 'n> {
+    edit: &'e mut SceneEdit<'n>,
+    followed: Vec<Option<NodePath>>,
 }
 
 /// A node a `SceneTree` follows.
 #[derive(Clone, Copy)]
 struct Followed(usize);
 
-/// A node taken out to be put back elsewhere, with what follows it and where below it.
+/// A node taken into the edit's hand to be put back elsewhere, with what follows it and where
+/// below it.
 struct Lifted {
-    node: SceneNode,
+    held: Held,
     followers: Vec<(usize, Vec<usize>)>,
 }
 
-impl<'a> SceneTree<'a> {
-    pub fn new(nodes: &'a mut Vec<SceneNode>) -> SceneTree<'a> {
-        let mut was = Vec::new();
-        walk(nodes, &mut |pointer, _| was.push(Some(pointer.to_owned())));
-        let followed = was
-            .iter()
-            .flatten()
-            .map(|pointer| path_of(pointer))
-            .collect();
+impl<'e, 'n> SceneTree<'e, 'n> {
+    pub fn new(edit: &'e mut SceneEdit<'n>) -> SceneTree<'e, 'n> {
         SceneTree {
-            nodes,
-            followed,
-            was,
+            edit,
+            followed: Vec::new(),
         }
     }
 
     pub fn nodes(&self) -> &[SceneNode] {
-        self.nodes
+        self.edit.nodes()
     }
 
-    /// Where every node the scene held before the change is now, by its pointer before.
-    pub fn remap(&self) -> Remap {
-        self.was
-            .iter()
-            .zip(&self.followed)
-            .filter_map(|(was, now)| Some((was.clone()?, pointer_of(now.as_ref()?))))
-            .collect()
-    }
-
-    /// Takes the nodes at `pointers` out, in the order given; those missing are skipped.
-    pub fn remove(&mut self, pointers: &[String]) -> Vec<SceneNode> {
+    /// Takes the nodes at `pointers` away, in the order given; those missing are skipped.
+    pub fn remove(&mut self, pointers: &[String]) {
         let marks: Vec<Option<Followed>> = pointers.iter().map(|p| self.follow(p)).collect();
-        marks
-            .into_iter()
-            .filter_map(|mark| {
-                let path = self.path(mark?)?;
-                self.take(&path)
-            })
-            .collect()
+        for mark in marks.into_iter().flatten() {
+            if let Some(path) = self.path(mark) {
+                self.take(&path);
+            }
+        }
     }
 
     /// Puts a copy of each node at `pointers` right after it, made by `copy` and labelled apart
@@ -592,12 +583,12 @@ impl<'a> SceneTree<'a> {
             let Some((&index, folder)) = path.split_last() else {
                 continue;
             };
-            let Some(original) = node_at(self.nodes, &path) else {
+            let Some(original) = node_at(self.edit.nodes(), &path) else {
                 continue;
             };
             let mut node = copy(original);
             if let Some(label) = original.label() {
-                let siblings = siblings_at(self.nodes, folder).unwrap_or_default();
+                let siblings = siblings_at(self.edit.nodes(), folder).unwrap_or_default();
                 set_label(&mut node, free_label(label, siblings));
             }
             if let Some(copy) = self.insert(folder, index + 1, node) {
@@ -614,7 +605,7 @@ impl<'a> SceneTree<'a> {
         };
         let mut made = Vec::new();
         for node in new {
-            let end = siblings_at(self.nodes, &folder).map_or(0, <[SceneNode]>::len);
+            let end = siblings_at(self.edit.nodes(), &folder).map_or(0, <[SceneNode]>::len);
             made.extend(self.insert(&folder, end, node));
         }
         made.iter().filter_map(|&mark| self.pointer(mark)).collect()
@@ -666,7 +657,7 @@ impl<'a> SceneTree<'a> {
             Some(mark) => self.path(mark)?,
             None => Vec::new(),
         };
-        let siblings = siblings_at(self.nodes, &folder)?.len();
+        let siblings = siblings_at(self.edit.nodes(), &folder)?.len();
         let anchor_at = anchor.and_then(|mark| Some(*self.path(mark)?.last()?));
         let start = match (at, anchor_at) {
             (Landing::First, _) => 0,
@@ -674,12 +665,8 @@ impl<'a> SceneTree<'a> {
             (Landing::After(_), Some(index)) => index + 1,
             _ => siblings,
         };
-        for (index, mut lifted) in (start..).zip(lifted) {
-            if let Some(label) = lifted.node.label() {
-                let label = free_label(label, siblings_at(self.nodes, &folder)?);
-                set_label(&mut lifted.node, label);
-            }
-            self.land(&folder, index, lifted);
+        for (index, lifted) in (start..).zip(lifted) {
+            self.land_labelled(&folder, index, lifted);
         }
         Some(
             marks
@@ -700,7 +687,10 @@ impl<'a> SceneTree<'a> {
         let (_, index) = place_of(&anchor)?;
         let moved: Vec<Followed> = ordered.iter().filter_map(|p| self.follow(p)).collect();
         let holder_path = self.folder_path(&holder)?;
-        let made = folder(free_label(label, siblings_at(self.nodes, &holder_path)?));
+        let made = folder(free_label(
+            label,
+            siblings_at(self.edit.nodes(), &holder_path)?,
+        ));
         let made = self.insert(&holder_path, index, made)?;
         let new_folder = self.pointer(made)?;
         let moved: Vec<String> = moved
@@ -715,7 +705,7 @@ impl<'a> SceneTree<'a> {
     pub fn ungroup(&mut self, pointers: &[String]) {
         let folders: Vec<&String> = pointers
             .iter()
-            .filter(|pointer| node(self.nodes, pointer).is_some_and(is_folder))
+            .filter(|pointer| node(self.edit.nodes(), pointer).is_some_and(is_folder))
             .collect();
         let marks: Vec<Followed> = folders
             .into_iter()
@@ -729,7 +719,7 @@ impl<'a> SceneTree<'a> {
                 continue;
             };
             let holder = holder.to_vec();
-            let held: Vec<Followed> = match node_at(self.nodes, &path) {
+            let held: Vec<Followed> = match node_at(self.edit.nodes(), &path) {
                 Some(SceneNode::Folder(folder)) => (0..folder.children.len())
                     .filter_map(|child| {
                         let mut at = path.clone();
@@ -740,15 +730,10 @@ impl<'a> SceneTree<'a> {
                 _ => continue,
             };
             for (offset, child) in held.into_iter().enumerate() {
-                let Some(mut lifted) = self.path(child).and_then(|at| self.lift(&at)) else {
+                let Some(lifted) = self.path(child).and_then(|at| self.lift(&at)) else {
                     continue;
                 };
-                if let Some(label) = lifted.node.label() {
-                    let siblings = siblings_at(self.nodes, &holder).unwrap_or_default();
-                    let label = free_label(label, siblings);
-                    set_label(&mut lifted.node, label);
-                }
-                self.land(&holder, index + offset, lifted);
+                self.land_labelled(&holder, index + offset, lifted);
             }
             if let Some(path) = self.path(mark) {
                 self.take(&path);
@@ -774,7 +759,7 @@ impl<'a> SceneTree<'a> {
                 continue;
             };
             let holder = holder.to_vec();
-            let count = siblings_at(self.nodes, &holder).map_or(0, <[SceneNode]>::len);
+            let count = siblings_at(self.edit.nodes(), &holder).map_or(0, <[SceneNode]>::len);
             let to = index.checked_add_signed(step as isize);
             let blocked = |to: usize| {
                 taken
@@ -796,16 +781,14 @@ impl<'a> SceneTree<'a> {
     /// Sets `flag` of every node at `pointers`.
     pub fn set_flag(&mut self, pointers: &[String], flag: NodeFlag, on: bool) {
         for pointer in pointers {
-            if let Some(node) = node_mut(self.nodes, pointer) {
-                flag.set(node, on);
-            }
+            self.edit.change_head(pointer, |head| flag.set(head, on));
         }
     }
 
     /// Clears `flag` on every node; answers how many had it.
     pub(crate) fn clear_flag(&mut self, flag: NodeFlag) -> usize {
         let mut set = Vec::new();
-        walk(self.nodes, &mut |pointer, node| {
+        walk(self.edit.nodes(), &mut |pointer, node| {
             if flag.of(node) {
                 set.push(pointer.to_owned());
             }
@@ -816,7 +799,7 @@ impl<'a> SceneTree<'a> {
 
     fn follow(&mut self, pointer: &str) -> Option<Followed> {
         let path = path_of(pointer)?;
-        node_at(self.nodes, &path)?;
+        node_at(self.edit.nodes(), &path)?;
         self.follow_path(path)
     }
 
@@ -829,7 +812,6 @@ impl<'a> SceneTree<'a> {
             return Some(Followed(known));
         }
         self.followed.push(Some(path));
-        self.was.push(None);
         Some(Followed(self.followed.len() - 1))
     }
 
@@ -846,7 +828,7 @@ impl<'a> SceneTree<'a> {
             "" => Some(Vec::new()),
             folder => {
                 let path = path_of(folder)?;
-                matches!(node_at(self.nodes, &path)?, SceneNode::Folder(_)).then_some(path)
+                matches!(node_at(self.edit.nodes(), &path)?, SceneNode::Folder(_)).then_some(path)
             }
         }
     }
@@ -859,35 +841,22 @@ impl<'a> SceneTree<'a> {
 
     /// Puts `node` at `index` of the folder at `holder`, following it.
     fn insert(&mut self, holder: &[usize], index: usize, node: SceneNode) -> Option<Followed> {
-        let siblings = siblings_at_mut(self.nodes, holder)?;
-        let index = index.min(siblings.len());
-        siblings.insert(index, node);
-        self.shifted(holder, index, 1);
+        let index = index.min(siblings_at(self.edit.nodes(), holder)?.len());
         let mut path = holder.to_vec();
         path.push(index);
+        self.edit.insert(&path, node)?;
+        self.shifted(holder, index, 1);
         self.followed.push(Some(path));
-        self.was.push(None);
         Some(Followed(self.followed.len() - 1))
     }
 
-    /// Takes the node at `path` out; what it held is followed no further.
-    fn take(&mut self, path: &[usize]) -> Option<SceneNode> {
+    /// Takes the node at `path` away; what it held is followed no further.
+    fn take(&mut self, path: &[usize]) -> Option<()> {
         let (&index, holder) = path.split_last()?;
-        let siblings = siblings_at_mut(self.nodes, holder)?;
-        if index >= siblings.len() {
-            return None;
-        }
-        let node = siblings.remove(index);
-        for followed in &mut self.followed {
-            if followed
-                .as_ref()
-                .is_some_and(|known| known.starts_with(path))
-            {
-                *followed = None;
-            }
-        }
+        self.edit.remove(path)?;
+        self.unfollow(path);
         self.shifted(holder, index + 1, -1);
-        Some(node)
+        Some(())
     }
 
     /// Takes the node at `path` out to put it back elsewhere, with every node it and what it holds
@@ -902,23 +871,58 @@ impl<'a> SceneTree<'a> {
                 Some((at, known.strip_prefix(path)?.to_vec()))
             })
             .collect();
-        let node = self.take(path)?;
-        Some(Lifted { node, followers })
+        let (&index, holder) = path.split_last()?;
+        let held = self.edit.lift(path)?;
+        self.unfollow(path);
+        self.shifted(holder, index + 1, -1);
+        Some(Lifted { held, followers })
     }
 
-    /// Puts a lifted node at `index` of the folder at `holder`, its followers with it.
-    fn land(&mut self, holder: &[usize], index: usize, lifted: Lifted) {
-        let Some(siblings) = siblings_at_mut(self.nodes, holder) else {
+    /// Puts a lifted node at `index` of the folder at `holder`, its followers with it, labelled
+    /// apart from its siblings there.
+    fn land_labelled(&mut self, holder: &[usize], index: usize, lifted: Lifted) {
+        let label = self
+            .edit
+            .held(lifted.held)
+            .and_then(SceneNode::label)
+            .zip(siblings_at(self.edit.nodes(), holder))
+            .map(|(label, siblings)| free_label(label, siblings));
+        let Some(index) = self.land(holder, index, lifted) else {
             return;
         };
-        let index = index.min(siblings.len());
-        siblings.insert(index, lifted.node);
+        if let Some(label) = label {
+            let mut at = holder.to_vec();
+            at.push(index);
+            self.edit
+                .change_head_at(&at, |head| head.label = Some(label));
+        }
+    }
+
+    /// Puts a lifted node at `index` of the folder at `holder`, its followers with it; answers
+    /// where among its siblings it landed.
+    fn land(&mut self, holder: &[usize], index: usize, lifted: Lifted) -> Option<usize> {
+        let index = index.min(siblings_at(self.edit.nodes(), holder)?.len());
+        let mut at = holder.to_vec();
+        at.push(index);
+        self.edit.land(&at, lifted.held)?;
         self.shifted(holder, index, 1);
-        for (at, below) in lifted.followers {
-            let mut path = holder.to_vec();
-            path.push(index);
+        for (follower, below) in lifted.followers {
+            let mut path = at.clone();
             path.extend(below);
-            self.followed[at] = Some(path);
+            self.followed[follower] = Some(path);
+        }
+        Some(index)
+    }
+
+    /// Follows no further the node at `path` and what it holds.
+    fn unfollow(&mut self, path: &[usize]) {
+        for followed in &mut self.followed {
+            if followed
+                .as_ref()
+                .is_some_and(|known| known.starts_with(path))
+            {
+                *followed = None;
+            }
         }
     }
 
@@ -935,13 +939,13 @@ impl<'a> SceneTree<'a> {
 
 /// Makes `change` to `nodes` through a `SceneTree` and answers where every node went, by pointer,
 /// so whatever names nodes by their pointers can follow them.
-pub(crate) fn restructure<R>(
-    nodes: &mut Vec<SceneNode>,
+pub fn restructure<R>(
+    scene: &mut SceneEdit,
     change: impl FnOnce(&mut SceneTree) -> R,
 ) -> (R, Remap) {
-    let mut tree = SceneTree::new(nodes);
-    let out = change(&mut tree);
-    (out, tree.remap())
+    let from = scene.moves().len();
+    let out = change(&mut SceneTree::new(scene));
+    (out, Remap(scene.moves()[from..].to_vec()))
 }
 
 /// How many folders hold the node at `pointer`.
@@ -998,44 +1002,6 @@ fn indices(pointer: &str) -> Vec<usize> {
         .collect()
 }
 
-/// The indices a pointer to a node of a scene steps through, folder by folder.
-fn path_of(pointer: &str) -> Option<Vec<usize>> {
-    let mut path = Vec::new();
-    let mut segments = pointer.strip_prefix('/')?.split('/');
-    loop {
-        path.push(segments.next()?.parse().ok()?);
-        match segments.next() {
-            None => return Some(path),
-            Some("children") => {}
-            Some(_) => return None,
-        }
-    }
-}
-
-fn pointer_of(path: &[usize]) -> String {
-    path.iter()
-        .map(|index| format!("/{index}"))
-        .collect::<Vec<_>>()
-        .join("/children")
-}
-
-fn node_at<'a>(nodes: &'a [SceneNode], path: &[usize]) -> Option<&'a SceneNode> {
-    let (&last, holder) = path.split_last()?;
-    siblings_at(nodes, holder)?.get(last)
-}
-
-fn node_at_mut<'a>(nodes: &'a mut [SceneNode], path: &[usize]) -> Option<&'a mut SceneNode> {
-    let (&first, rest) = path.split_first()?;
-    let node = nodes.get_mut(first)?;
-    if rest.is_empty() {
-        return Some(node);
-    }
-    match node {
-        SceneNode::Folder(folder) => node_at_mut(&mut folder.children, rest),
-        _ => None,
-    }
-}
-
 fn siblings_at<'a>(nodes: &'a [SceneNode], holder: &[usize]) -> Option<&'a [SceneNode]> {
     let mut siblings = nodes;
     for &index in holder {
@@ -1045,17 +1011,4 @@ fn siblings_at<'a>(nodes: &'a [SceneNode], holder: &[usize]) -> Option<&'a [Scen
         };
     }
     Some(siblings)
-}
-
-fn siblings_at_mut<'a>(
-    nodes: &'a mut Vec<SceneNode>,
-    holder: &[usize],
-) -> Option<&'a mut Vec<SceneNode>> {
-    let Some((&first, rest)) = holder.split_first() else {
-        return Some(nodes);
-    };
-    match nodes.get_mut(first)? {
-        SceneNode::Folder(folder) => siblings_at_mut(&mut folder.children, rest),
-        _ => None,
-    }
 }

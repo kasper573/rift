@@ -51,6 +51,7 @@ use crate::shown;
 use crate::tabs::{self, DockRequest, EditorTab, TabOpening};
 use crate::thumbs::Thumbnail;
 use crate::user::{EditorSettings, UserFolder};
+use crate::views::area::nodes::SceneBundle;
 use crate::views::{self, EditorCamera, EditorViews};
 
 #[derive(Clone, Debug)]
@@ -119,7 +120,8 @@ impl Plugin for EditorPlugin {
 }
 
 const FRAME_RATE_MARGIN: f32 = 8.0;
-/// The most bytes of content an edit's check reads on the frame: one reading more checks off it.
+/// The most bytes of content an edit's check reads on the frame: one reading more is applied at
+/// once, and the load after it vouches for it.
 const CHECKED_ON_THE_FRAME: usize = 256 << 10;
 
 /// A line per frame, each a [`FrameRecord`] in JSON, written once the frame's sample has settled.
@@ -659,8 +661,9 @@ impl Editor {
     }
 
     /// Applies `edit`, or says why it was refused. An edit that must wait for the folder's loads
-    /// to be in is applied once they are, and one whose check reads more than a frame can afford
-    /// is checked off the frame, the editor waiting for either; such an edit is refused by a toast.
+    /// to be in is applied once they are, the editor waiting for them. One whose check reads more
+    /// than a frame can afford is applied unchecked: the load after it takes it back, with a
+    /// toast, when the folder doesn't load with it.
     pub fn try_apply(&mut self, edit: ContentEdit) -> Result<(), String> {
         let waits = self.busy.is_busy()
             || self
@@ -700,17 +703,12 @@ impl Editor {
                 return Err(refusal.sentence());
             }
         };
-        if prepared.weight() > CHECKED_ON_THE_FRAME {
-            self.run_busy(
-                label.clone(),
-                move |_| prepared.check(),
-                move |editor, checked| {
-                    let _ = editor.commit(&label, &files, checked, viewpoint);
-                },
-            );
-            return Ok(());
-        }
-        self.commit(&label, &files, prepared.check(), viewpoint)
+        let checked = if prepared.weight() > CHECKED_ON_THE_FRAME {
+            prepared.unchecked()
+        } else {
+            prepared.check()
+        };
+        self.commit(&label, &files, checked, viewpoint)
     }
 
     /// Takes in the edit labelled `label` of `files` that `checked` checked, or says why it was
@@ -760,7 +758,7 @@ impl Editor {
         self.revisit(Project::undo, "Undid");
     }
 
-    pub(crate) fn redo(&mut self) {
+    pub fn redo(&mut self) {
         self.revisit(Project::redo, "Redid");
     }
 
@@ -931,6 +929,20 @@ impl Editor {
     /// Writes `row` as the content file at `path`, as one History step labelled `label`.
     pub fn write_content<Row: ContentFile>(&mut self, label: &str, path: &str, row: &Row) -> bool {
         self.write_content_as(ContentEdit::new(label), path, row)
+    }
+
+    /// Writes the fields of `scene`, the bundle at `path`, as a step labelled `label`, its parts
+    /// left as they stand.
+    pub(crate) fn write_fields(&mut self, label: &str, path: &str, scene: SceneBundle) -> bool {
+        let Some(reader) = self.reader() else {
+            return false;
+        };
+        let mut edit = ContentEdit::new(label);
+        if let Err(reason) = edit.write_fields_in(&reader, path, scene) {
+            self.toast(format!("{label}: {reason}"));
+            return false;
+        }
+        self.apply(edit)
     }
 
     /// Writes `row` as the content file at `path` as part of `edit`, merging or amending as it
