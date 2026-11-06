@@ -4,6 +4,7 @@
 
 pub mod arena;
 pub mod atlas;
+pub mod clearing;
 pub mod cull;
 pub mod draw;
 pub mod prop_draw;

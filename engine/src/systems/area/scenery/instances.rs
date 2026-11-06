@@ -247,6 +247,7 @@ fn dress(world: &mut World, streaming: &mut Streaming, root: Entity) {
                     dressed: Arc::new(DressedProp {
                         materials,
                         shadow: def.shadow,
+                        fades: def.fade,
                     }),
                 },
             ));

@@ -19,9 +19,15 @@ const RIM: f32 = 0.55;
 // its depth and its lighting and never shows its inside. Every pass of the frame drops the same
 // pixels.
 fn clear_pixel(pixel: vec2<f32>) {
-    let spread = distance(pixel, fade.focus) / max(fade.focus_radius, 1.0);
+    clear_at(pixel, fade.shown, fade.focus, fade.focus_radius);
+}
+
+// Drops the pixel as `clear_pixel` does, for a thing `shown` far that clears a circle of
+// `focus_radius` round `focus`.
+fn clear_at(pixel: vec2<f32>, shown: f32, focus: vec2<f32>, focus_radius: f32) {
+    let spread = distance(pixel, focus) / max(focus_radius, 1.0);
     let rim = smoothstep(RIM, 1.0, spread);
-    let visibility = mix(rim, 1.0, fade.shown);
+    let visibility = mix(rim, 1.0, shown);
     if dither(pixel) >= visibility {
         discard;
     }

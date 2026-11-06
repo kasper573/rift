@@ -13,7 +13,7 @@ use engine::core::render::world::gpu::arena::{
     GpuChunk, InstanceArena, InstanceChange, InstanceRecord, LevelRange, PartRanges, PlacedModel,
 };
 use engine::core::render::world::gpu::cull::{
-    CullKernel, CullView, DrawTable, GpuDrawTable, ViewCull, seen_chunks,
+    CullKernel, CullView, DrawTable, GpuDrawTable, ListedInstance, ViewCull, seen_chunks,
 };
 use engine::core::render::world::gpu::slab::Slab;
 
@@ -26,12 +26,16 @@ const PIXELS_AT_A_METER: f32 = 935.0;
 const GRAIN_PIXELS: f32 = 2.0;
 const STRAY_PIXELS: f32 = 0.5;
 const NEAR: f32 = 0.5;
+/// How far a fade moves in the frame culled.
+const STEP: f32 = 0.25;
 
 /// The GPU draws a scenery's props as a reference culler on the CPU would: every instance whose
 /// model's sphere reaches into the view's frustum, those smaller than the grain thinned by their
 /// seeds and grown to make up for the rest, each part at the coarsest level straying by no more
 /// than half a pixel, listed in that level's command once for each part, and nothing of a prop
-/// whose model isn't on the GPU.
+/// whose model isn't on the GPU. An instance of a prop that fades, whose box the way from the eye
+/// to the camera's subject passes through or the eye stands in, is drawn a step cleared; every
+/// other one whole.
 #[test]
 fn the_gpu_draws_each_prop_the_view_sees_at_the_level_its_size_asks_for() {
     let seed = testkit::drawn_seed();
@@ -83,30 +87,56 @@ fn the_gpu_draws_each_prop_the_view_sees_at_the_level_its_size_asks_for() {
             .props
             .iter()
             .filter(|(prop, _, _)| *prop < MODELLED)
-            .map(|&(prop, _, instances)| (prop, &models[prop as usize], instances))
+            .map(|&(prop, _, instances)| (prop, &models[prop as usize], instances, fades(prop)))
     }));
     let kernel = CullKernel::new(&device);
     let gpu_table = GpuDrawTable::new(&device, &queue, table.clone()).expect("a table to draw");
-    let (frustum, view) = camera(&mut rng);
+    let hider = records
+        .iter()
+        .flatten()
+        .filter(|record| record.prop < MODELLED && fades(record.prop))
+        .map(|record| (record, &models[record.prop as usize]))
+        .filter(|&(record, model)| hides_level_across_the_field(record, model))
+        .map(|(record, model)| middle_of(record, model))
+        .min_by(|a, b| {
+            a.distance(frustum_eye())
+                .total_cmp(&b.distance(frustum_eye()))
+        })
+        .expect("an instance to hide the camera's subject");
+    let subject = frustum_eye() + (hider - frustum_eye()) * 2.0;
+    let (frustum, view) = camera(subject);
     let seen = seen_chunks(&chunks, &table, &frustum, &view);
     let mut culled = ViewCull::new(&device, &gpu_table);
     let instances = slab.buffer().expect("the instances written");
-    culled.update(&device, &queue, &kernel, &gpu_table, instances, seen, view);
+    let mut shown = Slab::new("instances shown", BufferUsages::STORAGE);
+    shown.fit(&device, &queue, records.len() as u64 * 4);
+    shown.write(&queue, 0, &1.0f32.to_le_bytes().repeat(records.len()));
+    culled.update(
+        &device,
+        &queue,
+        &kernel,
+        &gpu_table,
+        instances,
+        shown.buffer().expect("the shares shown written"),
+        seen,
+        view.clearing(subject, STEP),
+    );
     let mut encoder = device.create_command_encoder(&default());
     culled.encode(&kernel, &gpu_table, &mut encoder);
     queue.submit([encoder.finish()]);
     let read = culled.read(&device, &queue);
 
-    let mut drawn: HashMap<u32, Vec<(u32, f32)>> = HashMap::new();
+    let mut drawn: HashMap<u32, Vec<(u32, ListedInstance)>> = HashMap::new();
     for (command, (&count, start)) in read.instances.iter().zip(&table.commands).enumerate() {
         let region = start.first_drawn as usize..(start.first_drawn + count) as usize;
-        for &(record, scale) in &read.listed[region] {
+        for listed in &read.listed[region] {
             drawn
-                .entry(record)
+                .entry(listed.record)
                 .or_default()
-                .push((command as u32, scale));
+                .push((command as u32, *listed));
         }
     }
+    let mut cleared = 0;
     let mut expected_drawn = 0;
     let mut judged = 0;
     for (index, record) in records.iter().enumerate() {
@@ -119,23 +149,37 @@ fn the_gpu_draws_each_prop_the_view_sees_at_the_level_its_size_asks_for() {
         let Some(expected) = reference(record, &models, &table, &frustum) else {
             continue;
         };
+        let Some((expected_shown, around_eye)) = faded(record, &models, frustum_eye(), subject)
+        else {
+            continue;
+        };
         judged += 1;
         expected_drawn += u32::from(!expected.is_empty());
-        let commands = |listed: &[(u32, f32)]| -> Vec<u32> {
+        let commands = |listed: &[(u32, ListedInstance)]| -> Vec<u32> {
+            listed.iter().map(|(command, _)| *command).collect()
+        };
+        let commands_expected = |listed: &[(u32, f32)]| -> Vec<u32> {
             listed.iter().map(|(command, _)| *command).collect()
         };
         assert_eq!(
             commands(&got),
-            commands(&expected),
+            commands_expected(&expected),
             "instance {index} ({record:?}) is drawn by the commands the reference draws it by \
              (test seed {seed})"
         );
         for ((_, got), (_, expected)) in got.iter().zip(&expected) {
             assert!(
-                (got - expected).abs() <= expected * 1e-4,
-                "instance {index} is drawn at scale {expected}, not {got} (test seed {seed})"
+                (got.scale - expected).abs() <= expected * 1e-4,
+                "instance {index} is drawn at scale {expected}, not {} (test seed {seed})",
+                got.scale
+            );
+            assert_eq!(
+                (got.shown, got.around_eye),
+                (expected_shown, around_eye),
+                "instance {index} ({record:?}) shows as far as the reference says (test seed {seed})"
             );
         }
+        cleared += u32::from(!expected.is_empty() && expected_shown < 1.0);
     }
     assert!(
         drawn.is_empty(),
@@ -148,9 +192,11 @@ fn the_gpu_draws_each_prop_the_view_sees_at_the_level_its_size_asks_for() {
         read.drawn
     );
     assert!(
-        expected_drawn > 100 && judged as usize > records.iter().flatten().count() * 99 / 100,
-        "the scene puts the kernel to the test: {expected_drawn} drawn, {judged} judged \
-         (test seed {seed})"
+        expected_drawn > 100
+            && cleared > 0
+            && judged as usize > records.iter().flatten().count() * 99 / 100,
+        "the scene puts the kernel to the test: {expected_drawn} drawn, {cleared} cleared, \
+         {judged} judged (test seed {seed})"
     );
 }
 
@@ -228,6 +274,80 @@ fn reference(
     Some(commands)
 }
 
+/// The middle of the box of `record`'s model, where the instance stands.
+fn middle_of(record: &InstanceRecord, model: &PlacedModel) -> Vec3 {
+    Vec3::from_array(record.position)
+        + Quat::from_rotation_y(record.yaw) * (Vec3::from(model.bounds.center) * record.scale)
+}
+
+/// Whether the instances of `prop` clear away where they hide the camera's subject.
+fn fades(prop: u32) -> bool {
+    prop.is_multiple_of(2)
+}
+
+/// How far the reference shows `record` after one frame of clearing from all of it shown, and
+/// whether the eye stands inside it: none where the way from the eye to `subject` passes too near
+/// the edge of its box for the GPU's rounding to be sure to judge it alike.
+fn faded(
+    record: &InstanceRecord,
+    models: &[PlacedModel],
+    eye: Vec3,
+    subject: Vec3,
+) -> Option<(f32, bool)> {
+    let Some(model) = models
+        .get(record.prop as usize)
+        .filter(|_| fades(record.prop))
+    else {
+        return Some((1.0, false));
+    };
+    let local_from_world = Transform::from_translation(Vec3::from_array(record.position))
+        .with_rotation(Quat::from_rotation_y(record.yaw))
+        .with_scale(Vec3::splat(record.scale))
+        .to_matrix()
+        .inverse();
+    let (from, to) = (
+        local_from_world.transform_point3(eye),
+        local_from_world.transform_point3(subject),
+    );
+    let middle = Vec3::from(model.bounds.center);
+    let half = Vec3::from(model.bounds.half_extents);
+    let judged = |grown: f32| {
+        let (low, high) = (middle - half - grown, middle + half + grown);
+        let inside = from.cmpge(low).all() && from.cmple(high).all();
+        (inside, inside || segment_crosses(from, to, low, high))
+    };
+    let margin = 1e-3 * (1.0 + half.max_element());
+    let (inside, crossed) = judged(0.0);
+    if judged(margin) != judged(-margin) {
+        return None;
+    }
+    Some((if crossed { 1.0 - STEP } else { 1.0 }, inside))
+}
+
+/// Whether the segment from `a` to `b` passes through the box from `low` to `high`.
+fn segment_crosses(a: Vec3, b: Vec3, low: Vec3, high: Vec3) -> bool {
+    let way = b - a;
+    let (mut enter, mut exit) = (0.0f32, 1.0f32);
+    for axis in 0..3 {
+        if way[axis].abs() < 1e-6 {
+            if a[axis] < low[axis] || a[axis] > high[axis] {
+                return false;
+            }
+            continue;
+        }
+        let (t1, t2) = (
+            (low[axis] - a[axis]) / way[axis],
+            (high[axis] - a[axis]) / way[axis],
+        );
+        enter = enter.max(t1.min(t2));
+        exit = exit.min(t1.max(t2));
+        if enter > exit {
+            return false;
+        }
+    }
+    true
+}
+
 /// A model of one to three parts, each of one to four levels straying more and more.
 fn model(rng: &mut Rng) -> PlacedModel {
     let half = Vec3::new(
@@ -287,14 +407,10 @@ fn instance(rng: &mut Rng, chunk: u32) -> InstanceRecord {
     }
 }
 
-/// A camera at [`frustum_eye`] looking out over the field, and how the kernel culls through it.
-fn camera(rng: &mut Rng) -> (Frustum, CullView) {
+/// A camera at [`frustum_eye`] looking at `target` over the field, and how the kernel culls
+/// through it.
+fn camera(target: Vec3) -> (Frustum, CullView) {
     let eye = frustum_eye();
-    let target = Vec3::new(
-        (rng.rand_float() - 0.5) * FIELD / 2.0,
-        0.0,
-        (rng.rand_float() - 0.5) * FIELD / 2.0,
-    );
     let fov = 2.0 * (1.0 / (PIXELS_AT_A_METER / 540.0)).atan();
     let projection = PerspectiveProjection {
         fov,
@@ -316,6 +432,24 @@ fn camera(rng: &mut Rng) -> (Frustum, CullView) {
     ));
     let view = CullView::new(&frustum, eye, PIXELS_AT_A_METER, false, false);
     (frustum, view)
+}
+
+/// Whether `record` stands where a camera at [`frustum_eye`] looking through it looks out level
+/// over most of the field, taking in many of its instances, and is drawn there whole and never
+/// thinned away, so that whatever the seed it is shown and cleared.
+fn hides_level_across_the_field(record: &InstanceRecord, model: &PlacedModel) -> bool {
+    let eye = frustum_eye();
+    let way = middle_of(record, model) - eye;
+    let level = way.with_y(0.0);
+    let across_the_field = (Vec3::ZERO - eye).with_y(0.0).normalize();
+    let pixels_across = 2.0
+        * Vec3::from(model.bounds.half_extents).max_element()
+        * record.scale
+        * PIXELS_AT_A_METER
+        / way.length();
+    level.length() > 200.0
+        && level.normalize().dot(across_the_field) > 0.9
+        && pixels_across > 2.0 * GRAIN_PIXELS
 }
 
 fn frustum_eye() -> Vec3 {

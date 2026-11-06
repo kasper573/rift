@@ -38,11 +38,13 @@ use bevy::render::render_phase::{
     AddRenderCommand, BinnedPhaseItem, BinnedRenderPhaseType, DrawFunctions, InputUniformIndex,
     PhaseItem, RenderCommand, RenderCommandResult, TrackedRenderPass, ViewBinnedRenderPhases,
 };
-use bevy::render::render_resource::binding_types::storage_buffer_read_only_sized;
+use bevy::render::render_resource::binding_types::{
+    storage_buffer_read_only_sized, uniform_buffer,
+};
 use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
     CachedRenderPipelineId, IndexFormat, PipelineCache, RenderPipelineDescriptor, ShaderStages,
-    SpecializedMeshPipeline, StorageBuffer,
+    ShaderType, SpecializedMeshPipeline, StorageBuffer, UniformBuffer,
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::sync_world::MainEntity;
@@ -51,6 +53,7 @@ use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::{Shader, ShaderDefVal};
 
 use super::arena::{ExtractedPropArena, InstanceArenas, ModelArena};
+use super::clearing::Clearing;
 use super::cull::{self, PropCulls, ViewCull};
 use crate::core::render::world::material::WorldMaterial;
 
@@ -72,6 +75,7 @@ impl Plugin for PropDrawPlugin {
             .add_systems(
                 Render,
                 (
+                    write_clearing.in_set(RenderSystems::PrepareResources),
                     bind_props
                         .in_set(RenderSystems::PrepareBindGroups)
                         .after(cull::prepare_culls),
@@ -96,6 +100,14 @@ type DrawPropDepth = (
     SetPrepassViewEmptyBindGroup<1>,
     DrawProps<false>,
 );
+
+/// Where the props clear round the camera's subject on the picture, as the instanced stages read
+/// it.
+#[derive(ShaderType, Clone, Copy, Debug, Default)]
+struct ClearingUniform {
+    focus: Vec2,
+    focus_radius: f32,
+}
 
 /// The bind group of a scenery's instances and the instances a view draws of it, where a mesh's
 /// would be, and of a part's material after it.
@@ -128,7 +140,10 @@ struct PropPipeline {
     prepass: PrepassPipeline,
     instances: BindGroupLayoutDescriptor,
     layout: MeshVertexBufferLayoutRef,
-    vertex: Handle<Shader>,
+    /// The instanced stages of the world's own material.
+    shader: Handle<Shader>,
+    /// Where the props clear round the camera's subject, as the frame's clearing says.
+    clearing: UniformBuffer<ClearingUniform>,
     /// Bevy's mesh data for every instance alike: placed where it stands, receiving shadows.
     mesh: StorageBuffer<Vec<MeshUniform>>,
     built: HashMap<(bool, MeshPipelineKey, ErasedMaterialKey), Option<CachedRenderPipelineId>>,
@@ -159,6 +174,7 @@ fn start(
                 (0, storage_buffer_read_only_sized(false, None)),
                 (100, storage_buffer_read_only_sized(false, None)),
                 (101, storage_buffer_read_only_sized(false, None)),
+                (102, uniform_buffer::<ClearingUniform>(false)),
             ),
         ),
     );
@@ -185,7 +201,8 @@ fn start(
         prepass: prepass.clone(),
         instances,
         layout: model.get_mesh_vertex_buffer_layout(&mut layouts),
-        vertex: bevy::asset::load_embedded_asset!(assets.as_ref(), "instanced.wesl"),
+        shader: bevy::asset::load_embedded_asset!(assets.as_ref(), "instanced.wesl"),
+        clearing: UniformBuffer::default(),
         mesh: every,
         built: HashMap::default(),
     });
@@ -206,8 +223,9 @@ fn bind_props(
     };
     bindings.instances.clear();
     bindings.drawn.clear();
-    let (Some(mesh), layout) = (
+    let (Some(mesh), Some(clearing), layout) = (
         pipeline.mesh.binding(),
+        pipeline.clearing.binding(),
         cache.get_bind_group_layout(&pipeline.instances),
     ) else {
         return;
@@ -226,11 +244,32 @@ fn bind_props(
                         (0, mesh.clone()),
                         (100, records.as_entire_binding()),
                         (101, culled.drawn().as_entire_binding()),
+                        (102, clearing.clone()),
                     )),
                 ),
             );
         }
     }
+}
+
+/// Writes where the props clear round the camera's subject this frame.
+fn write_clearing(
+    device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
+    clearing: Res<Clearing>,
+    pipeline: Option<ResMut<PropPipeline>>,
+) {
+    let Some(mut pipeline) = pipeline else {
+        return;
+    };
+    let aimed = clearing
+        .0
+        .map_or(ClearingUniform::default(), |aim| ClearingUniform {
+            focus: aim.focus,
+            focus_radius: aim.focus_radius,
+        });
+    pipeline.clearing.set(aimed);
+    pipeline.clearing.write_buffer(&device, &queue);
 }
 
 /// What the props draw with that the queues read.
@@ -562,15 +601,18 @@ impl PropPipeline {
 
     /// `descriptor` drawing the instances its commands list: from the arenas' instances where a
     /// mesh's bindings would be, through the shader of the game's that draws the material, in
-    /// its instanced stage, else through the instanced stage of the world's own material in
-    /// place of bevy's `untouched` one.
+    /// its instanced stages, else through the instanced stages of the world's own material in
+    /// place of bevy's `untouched` vertex stage and the material's own fragment stage.
     fn instanced(
         &self,
         mut descriptor: RenderPipelineDescriptor,
         untouched: &Handle<Shader>,
     ) -> RenderPipelineDescriptor {
         if descriptor.vertex.shader == *untouched {
-            descriptor.vertex.shader = self.vertex.clone();
+            descriptor.vertex.shader = self.shader.clone();
+            if let Some(fragment) = descriptor.fragment.as_mut() {
+                fragment.shader = self.shader.clone();
+            }
         } else {
             let defs: [ShaderDefVal; 2] = ["MERGED".into(), "PROP_INSTANCE".into()];
             descriptor.vertex.shader_defs.extend(defs.iter().cloned());

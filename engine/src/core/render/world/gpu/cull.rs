@@ -20,6 +20,7 @@ use bevy::pbr::{
 };
 use bevy::prelude::*;
 use bevy::render::diagnostic::RecordDiagnostics;
+use bevy::render::extract_resource::ExtractResourcePlugin;
 use bevy::render::render_resource::binding_types::{
     storage_buffer_read_only_sized, storage_buffer_sized, uniform_buffer,
 };
@@ -38,6 +39,7 @@ use super::arena::{
     ExtractedPropArena, GpuChunk, GpuInstances, InstanceArenas, InstanceRecord, ModelArena,
     PlacedModel,
 };
+use super::clearing::{self, Clearing};
 use crate::core::render::camera::NEAR_PLANE;
 use crate::core::render::world::lod::{GRAIN_PIXELS, STRAY_PIXELS};
 
@@ -45,6 +47,9 @@ pub struct PropCullPlugin;
 
 impl Plugin for PropCullPlugin {
     fn build(&self, app: &mut App) {
+        app.init_resource::<Clearing>()
+            .add_plugins(ExtractResourcePlugin::<Clearing>::default())
+            .add_systems(PostUpdate, clearing::aim_clearing);
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
@@ -72,7 +77,8 @@ pub const PROPS_DRAWN: &str = "props_drawn";
 /// How a view culls: its frustum's half-spaces (left, right, bottom, top, near and far), where
 /// sizes on screen are measured from and how many pixels a metre spans a metre off it, whether a
 /// metre spans as many however far it lies, whether what lies behind the near half-space is left
-/// out, and the sizes on screen the kernel judges by.
+/// out, the sizes on screen the kernel judges by, and for the view that clears what hides the
+/// camera's subject, whom it follows and how far a fade moves this frame.
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
 pub struct CullView {
     planes: [Vec4; 6],
@@ -83,6 +89,8 @@ pub struct CullView {
     grain_pixels: f32,
     stray_pixels: f32,
     near: f32,
+    target: Vec3,
+    fade_step: f32,
 }
 
 impl CullView {
@@ -105,6 +113,18 @@ impl CullView {
             grain_pixels: GRAIN_PIXELS,
             stray_pixels: STRAY_PIXELS,
             near: NEAR_PLANE.0,
+            target: Vec3::ZERO,
+            fade_step: 0.0,
+        }
+    }
+
+    /// The view clearing what comes between its eye and `target`, each fade moving `step` of the
+    /// way this frame. Every other view draws its props whole.
+    pub fn clearing(self, target: Vec3, step: f32) -> CullView {
+        CullView {
+            target,
+            fade_step: step,
+            ..self
         }
     }
 
@@ -151,6 +171,12 @@ pub struct PropDraw {
     pub extent: f32,
     pub first_part: u32,
     pub parts: u32,
+    /// Whether the prop clears away where it hides the camera's subject, tested by its box, `half`
+    /// each way of the middle.
+    pub fades: u32,
+    pub half_x: f32,
+    pub half_y: f32,
+    pub half_z: f32,
     unused: u32,
 }
 
@@ -201,27 +227,29 @@ pub struct DrawBucket {
 
 impl DrawTable {
     /// The table drawing `props`: each prop by its place among the content's props, with its model
-    /// as the slabs hold it and how many of its instances the arena holds, the counts of a prop
-    /// named more than once, as by each chunk it stands in, added up.
-    pub fn of<'a>(props: impl IntoIterator<Item = (u32, &'a PlacedModel, u32)>) -> DrawTable {
-        let mut held: BTreeMap<u32, (&PlacedModel, u32)> = BTreeMap::new();
-        for (prop, model, instances) in props {
-            held.entry(prop).or_insert((model, 0)).1 += instances;
+    /// as the slabs hold it, how many of its instances the arena holds, the counts of a prop named
+    /// more than once, as by each chunk it stands in, added up, and whether it clears away where it
+    /// hides the camera's subject.
+    pub fn of<'a>(props: impl IntoIterator<Item = (u32, &'a PlacedModel, u32, bool)>) -> DrawTable {
+        let mut held: BTreeMap<u32, (&PlacedModel, u32, bool)> = BTreeMap::new();
+        for (prop, model, instances, fades) in props {
+            held.entry(prop).or_insert((model, 0, fades)).1 += instances;
         }
-        let props: Vec<(u32, &PlacedModel, u32)> = held
+        let props: Vec<(u32, &PlacedModel, u32, bool)> = held
             .into_iter()
-            .filter(|(_, (_, instances))| *instances > 0)
-            .map(|(prop, (model, instances))| (prop, model, instances))
+            .filter(|(_, (_, instances, _))| *instances > 0)
+            .map(|(prop, (model, instances, fades))| (prop, model, instances, fades))
             .collect();
         let mut table = DrawTable {
             props: vec![
                 PropDraw::default();
-                props.last().map_or(0, |(prop, _, _)| *prop as usize + 1)
+                props.last().map_or(0, |(prop, _, _, _)| *prop as usize + 1)
             ],
             ..default()
         };
-        for (prop, model, instances) in props {
+        for (prop, model, instances, fades) in props {
             let middle = model.bounds.center;
+            let half = model.bounds.half_extents;
             table.props[prop as usize] = PropDraw {
                 x: middle.x,
                 y: middle.y,
@@ -230,6 +258,10 @@ impl DrawTable {
                 extent: 2.0 * model.bounds.half_extents.max_element(),
                 first_part: table.parts.len() as u32,
                 parts: model.parts.len() as u32,
+                fades: u32::from(fades),
+                half_x: half.x,
+                half_y: half.y,
+                half_z: half.z,
                 unused: 0,
             };
             for (at, part) in (0..).zip(&model.parts) {
@@ -292,6 +324,7 @@ impl CullKernel {
                     storage_buffer_read_only_sized(false, None),
                     storage_buffer_read_only_sized(false, None),
                     storage_buffer_read_only_sized(false, None),
+                    storage_buffer_sized(false, None),
                     storage_buffer_sized(false, None),
                     storage_buffer_sized(false, None),
                 ),
@@ -402,7 +435,8 @@ impl ViewCull {
         }
     }
 
-    /// Culls the chunks `seen` of the instances `records` holds through `view` this frame.
+    /// Culls the chunks `seen` of the instances `records` holds through `view` this frame, `shown`
+    /// holding how far each shows.
     #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
@@ -411,6 +445,7 @@ impl ViewCull {
         kernel: &CullKernel,
         table: &GpuDrawTable,
         records: &Buffer,
+        shown: &Buffer,
         seen: Vec<UVec2>,
         view: CullView,
     ) {
@@ -436,6 +471,7 @@ impl ViewCull {
                 table.levels.binding().expect("a table written when made"),
                 self.commands.as_entire_binding(),
                 self.drawn.as_entire_binding(),
+                shown.as_entire_binding(),
             )),
         ));
     }
@@ -460,8 +496,8 @@ impl ViewCull {
         &self.commands
     }
 
-    /// The instances the commands draw, each by its place among the arena's and the scale it is
-    /// drawn at.
+    /// The instances the commands draw, each by its place among the arena's, the scale it is drawn
+    /// at, how far it shows, and whether the eye stands inside it.
     pub fn drawn(&self) -> &Buffer {
         &self.drawn
     }
@@ -493,22 +529,37 @@ impl ViewCull {
                 .map(|command| command[1])
                 .collect(),
             listed: words(&drawn)
-                .as_chunks::<2>()
+                .as_chunks::<4>()
                 .0
                 .iter()
-                .map(|&[record, scale]| (record, f32::from_bits(scale)))
+                .map(|&[record, scale, shown, around_eye]| ListedInstance {
+                    record,
+                    scale: f32::from_bits(scale),
+                    shown: f32::from_bits(shown),
+                    around_eye: around_eye != 0,
+                })
                 .collect(),
         }
     }
 }
 
 /// What a view's kernel drew: how many instances in all, each command's count, and the drawn
-/// instances' list, each by its place among the arena's and its scale, as far as it was filled.
+/// instances' list, as far as it was filled.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CullReadback {
     pub drawn: u32,
     pub instances: Vec<u32>,
-    pub listed: Vec<(u32, f32)>,
+    pub listed: Vec<ListedInstance>,
+}
+
+/// An instance a view draws: its place among the arena's, the scale it is drawn at, how far it
+/// shows, and whether the eye stands inside it, so that it clears away whole.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ListedInstance {
+    pub record: u32,
+    pub scale: f32,
+    pub shown: f32,
+    pub around_eye: bool,
 }
 
 /// The chunks of an arena whose box reaches into `view`'s frustum, each by its first instance
@@ -561,8 +612,9 @@ pub struct SceneryCull {
     pub views: HashMap<RetainedViewEntity, ViewCull>,
 }
 
-/// The bytes a drawn instance takes: its place among the arena's, and its scale.
-const DRAWN_BYTES: u64 = 8;
+/// The bytes a drawn instance takes: its place among the arena's, its scale, how far it shows,
+/// and whether the eye stands inside it.
+const DRAWN_BYTES: u64 = 16;
 /// The bytes the count of instances drawn takes, before the commands.
 const COUNT_BYTES: u64 = 4;
 
@@ -579,6 +631,7 @@ pub(super) fn prepare_culls(
     kernel: Option<Res<CullKernel>>,
     arenas: Res<InstanceArenas>,
     models: Res<ModelArena>,
+    clearing: Res<Clearing>,
     mut culls: ResMut<PropCulls>,
     sceneries: Query<(&MainEntity, &ExtractedPropArena)>,
     views: Query<(
@@ -605,7 +658,9 @@ pub(super) fn prepare_culls(
             cull.made_after = Some(changes);
             cull.views.clear();
         }
-        let (Some(table), Some(records)) = (&cull.table, arena.slab.buffer()) else {
+        let (Some(table), Some(records), Some(shares)) =
+            (&cull.table, arena.slab.buffer(), arena.shown.buffer())
+        else {
             continue;
         };
         let mut shown = HashSet::new();
@@ -613,12 +668,20 @@ pub(super) fn prepare_culls(
             if !layers.unwrap_or_default().intersects(&drawn.layers) {
                 continue;
             }
-            let culled = CullView::of(view, frustum, light);
+            let mut culled = CullView::of(view, frustum, light);
+            if let Some(clearing) = clearing.0
+                && !light
+                && view.retained_view_entity.main_entity.id() == clearing.camera
+            {
+                culled = culled.clearing(clearing.target, clearing.step);
+            }
             let seen = seen_chunks(&arena.chunks, &table.table, frustum, &culled);
             cull.views
                 .entry(view.retained_view_entity)
                 .or_insert_with(|| ViewCull::new(&device, table))
-                .update(&device, &queue, &kernel, table, records, seen, culled);
+                .update(
+                    &device, &queue, &kernel, table, records, shares, seen, culled,
+                );
             shown.insert(view.retained_view_entity);
         }
         cull.views.retain(|view, _| shown.contains(view));
@@ -673,9 +736,9 @@ fn draw_table(arena: &GpuInstances, models: &ModelArena) -> DrawTable {
             .contents
             .props
             .iter()
-            .filter(|(prop, _, _)| arena.dressed.contains_key(prop))
             .filter_map(|&(prop, model, instances)| {
-                Some((prop, models.slabs.get(&model)?, instances))
+                let dressed = arena.dressed.get(&prop)?;
+                Some((prop, models.slabs.get(&model)?, instances, dressed.fades))
             })
     }))
 }

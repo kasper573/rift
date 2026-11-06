@@ -1,7 +1,10 @@
 // Which of a scenery's prop instances a view draws, and at which level of each part: one
 // workgroup for each chunk the view may see, its threads striding through the chunk's instances.
 // An instance the view sees is listed in the region of the command that draws its part at the
-// level its size on screen asks for, as many times as its model has parts.
+// level its size on screen asks for, as many times as its model has parts. The view that clears
+// what hides the camera's subject moves each fading instance it sees a step toward cleared while
+// the way from its eye to the subject passes through the instance's box, and back toward whole
+// once it doesn't, and lists it with how far it shows and whether the eye stands inside it.
 
 struct CullView {
     // The frustum's half-spaces, each facing in: left, right, bottom, top, near and far.
@@ -19,6 +22,10 @@ struct CullView {
     grain_pixels: f32,
     stray_pixels: f32,
     near: f32,
+    // Whom the view's camera follows, and how far a fade moves this frame: none for a view that
+    // draws every prop whole.
+    target: vec3<f32>,
+    fade_step: f32,
 }
 
 struct Instance {
@@ -42,6 +49,12 @@ struct Prop {
     extent: f32,
     first_part: u32,
     parts: u32,
+    // Whether it clears away where it hides the camera's subject, tested by the box `half` each
+    // way of the middle.
+    fades: u32,
+    half_x: f32,
+    half_y: f32,
+    half_z: f32,
     _unused: u32,
 }
 
@@ -78,8 +91,11 @@ struct Commands {
 @group(0) @binding(4) var<storage, read> parts: array<Part>;
 @group(0) @binding(5) var<storage, read> levels: array<Level>;
 @group(0) @binding(6) var<storage, read_write> commands: Commands;
-// Each drawn instance by its place among `instances`, and the scale it is drawn at.
-@group(0) @binding(7) var<storage, read_write> drawn: array<vec2<u32>>;
+// Each drawn instance by its place among `instances`, the scale it is drawn at, how far it shows
+// and whether the eye stands inside it.
+@group(0) @binding(7) var<storage, read_write> drawn: array<vec4<u32>>;
+// How far each instance shows, by its place among `instances`: 1 whole, 0 cleared away.
+@group(0) @binding(8) var<storage, read_write> shown: array<f32>;
 
 const THREADS: u32 = 64u;
 
@@ -118,13 +134,64 @@ fn cull_instance(index: u32) {
         scale *= grown;
     }
     atomicAdd(&commands.drawn, 1u);
+    let fade = faded(index, instance, prop, turn);
     let allowed = view.stray_pixels / (pixels_per_meter * scale);
     for (var part = prop.first_part; part < prop.first_part + prop.parts; part++) {
         let level = levels[coarsest_within(parts[part], allowed)];
         let slot = atomicAdd(&commands.commands[level.command].instance_count, 1u);
         let first = commands.commands[level.command].first_instance;
-        drawn[first + slot] = vec2<u32>(index, bitcast<u32>(scale));
+        drawn[first + slot] = vec4<u32>(index, bitcast<u32>(scale), bitcast<u32>(fade.x), u32(fade.y));
     }
+}
+
+// How far the instance at `index` shows this frame, moved a step toward cleared while the way
+// from the eye to the subject passes through its box and toward whole once it doesn't, and
+// whether the eye stands inside the box: whole, outside, for a view that clears nothing.
+fn faded(index: u32, instance: Instance, prop: Prop, turn: vec2<f32>) -> vec2<f32> {
+    if view.fade_step <= 0.0 || prop.fades == 0u {
+        return vec2<f32>(1.0, 0.0);
+    }
+    let low = vec3<f32>(prop.x - prop.half_x, prop.y - prop.half_y, prop.z - prop.half_z);
+    let high = vec3<f32>(prop.x + prop.half_x, prop.y + prop.half_y, prop.z + prop.half_z);
+    let at = vec3<f32>(instance.x, instance.y, instance.z);
+    let eye = local_of(view.eye, at, turn, instance.scale);
+    let target = local_of(view.target, at, turn, instance.scale);
+    let inside = all(eye >= low) && all(eye <= high);
+    let wanted = select(1.0, 0.0, inside || crosses(eye, target, low, high));
+    let was = shown[index];
+    let now = was + clamp(wanted - was, -view.fade_step, view.fade_step);
+    shown[index] = now;
+    return vec2<f32>(now, select(0.0, 1.0, inside));
+}
+
+// Where `world` lies in the model's own metres, for an instance standing at `at`, turned by
+// `turn` and grown `scale` times.
+fn local_of(world: vec3<f32>, at: vec3<f32>, turn: vec2<f32>, scale: f32) -> vec3<f32> {
+    let way = world - at;
+    return vec3<f32>(turn.x * way.x - turn.y * way.z, way.y, turn.y * way.x + turn.x * way.z) / scale;
+}
+
+// Whether the segment from `a` to `b` passes through the box from `low` to `high`.
+fn crosses(a: vec3<f32>, b: vec3<f32>, low: vec3<f32>, high: vec3<f32>) -> bool {
+    let way = b - a;
+    var enter = 0.0;
+    var exit = 1.0;
+    for (var axis = 0u; axis < 3u; axis++) {
+        if abs(way[axis]) < 1e-6 {
+            if a[axis] < low[axis] || a[axis] > high[axis] {
+                return false;
+            }
+            continue;
+        }
+        let t1 = (low[axis] - a[axis]) / way[axis];
+        let t2 = (high[axis] - a[axis]) / way[axis];
+        enter = max(enter, min(t1, t2));
+        exit = min(exit, max(t1, t2));
+        if enter > exit {
+            return false;
+        }
+    }
+    return true;
 }
 
 // Whether a sphere about `center`, `radius` across, reaches into the view's frustum.

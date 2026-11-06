@@ -29,7 +29,7 @@ import bevy_pbr::render::{pbr_fragment::pbr_input_from_standard_material, pbr_fu
 import engine::core::render::world::shade::lighting;
 
 @if(PROP_INSTANCE)
-import engine::core::render::world::gpu::instance::{placement, turned, world_of};
+import engine::core::render::world::gpu::instance::{clear_instance, placement, shown_of, turned, world_of};
 
 @if(PREPASS_PIPELINE)
 import bevy_render::globals::Globals;
@@ -131,6 +131,9 @@ struct MergedOutput {
     @location(5) @interpolate(flat) place: vec4<f32>,
     @location(6) @interpolate(flat) turn: vec4<f32>,
     @location(7) unclipped_depth: f32,
+    // How far the instance shows and whether the eye stands inside it, for a prop drawn from the
+    // arenas.
+    @location(8) @interpolate(flat) shown: vec2<f32>,
 }
 
 @if(!MERGED)
@@ -150,7 +153,7 @@ fn vertex(vertex_in: Vertex, @location(14) place: vec4<f32>, @location(15) turn:
     let world_from_local = mesh_functions::get_world_from_local(vertex_in.instance_index);
     let placed = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
     stand_merged(place, turn, placed.xyz);
-    return merged_output(vertex_output(vertex, placed.xyz), vertex_in.instance_index, place, turn);
+    return merged_output(vertex_output(vertex, placed.xyz), vertex_in.instance_index, place, turn, vec2<f32>(1.0, 0.0));
 }
 
 // The vertex of the instance the command draws as its `instance_index`th, its normal and tangent
@@ -181,13 +184,13 @@ fn vertex(vertex_in: Vertex) -> MergedOutput {
     let world = world_of(placed, vertex_in.position);
     let place = vec4<f32>(placed.at, placed.scale);
     stand_merged(place, placed.turn, world);
-    return merged_output(vertex_output(vertex, world), 0u, place, placed.turn);
+    return merged_output(vertex_output(vertex, world), 0u, place, placed.turn, shown_of(vertex_in.instance_index));
 }
 
-// The merged output of `out`, its piece standing at `place.xyz`, grown `place.w` times and turned
-// by `turn`.
+// The merged output of `out`, its piece standing at `place.xyz`, grown `place.w` times, turned
+// by `turn` and showing as far as `shown` says.
 @if(MERGED)
-fn merged_output(out: VertexOutput, instance_index: u32, place: vec4<f32>, turn: vec4<f32>) -> MergedOutput {
+fn merged_output(out: VertexOutput, instance_index: u32, place: vec4<f32>, turn: vec4<f32>, shown: vec2<f32>) -> MergedOutput {
     var merged: MergedOutput;
     merged.position = out.position;
     merged.world_position = out.world_position;
@@ -203,10 +206,19 @@ fn merged_output(out: VertexOutput, instance_index: u32, place: vec4<f32>, turn:
     merged.instance_index = instance_index;
     merged.place = place;
     merged.turn = turn;
+    merged.shown = shown;
     @if(PREPASS_PIPELINE && UNCLIPPED_DEPTH_ORTHO_EMULATION) {
         merged.unclipped_depth = out.unclipped_depth;
     }
     return merged;
+}
+
+// Drops the pixel where a prop drawn from the arenas clears as its instance says.
+@if(MERGED)
+fn clear_merged(merged: MergedOutput) {
+    @if(PROP_INSTANCE) {
+        clear_instance(merged.position.xy, merged.shown);
+    }
 }
 
 // The vertex output bevy's functions read, of a merged one, its pixel standing where it says.
@@ -292,6 +304,7 @@ fn vertex_output(vertex: UncompressedVertex, placed: vec3<f32>) -> VertexOutput 
 @fragment
 fn fragment(merged: MergedOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     clear_pixel(merged.position.xy);
+    clear_merged(merged);
     return prepass_output(unmerged(merged), is_front);
 }
 @elif(PREPASS_PIPELINE && PREPASS_FRAGMENT)
@@ -313,6 +326,7 @@ fn fragment(in: VertexOutput) {
 @elif(MERGED)
 @fragment
 fn fragment(merged: MergedOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+    clear_merged(merged);
     return shade(unmerged(merged), is_front);
 }
 @else

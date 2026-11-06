@@ -1,6 +1,9 @@
 // A prop drawn from the arenas: each instance a command draws is the culling kernel's, standing
-// where its record says, turned about the up axis and grown by the scale the kernel drew it at.
-// The model's vertices are the slab's, in the model's own metres.
+// where its record says, turned about the up axis and grown by the scale the kernel drew it at,
+// and cleared as far as the kernel says where it hides the camera's subject. The model's vertices
+// are the slab's, in the model's own metres.
+
+import engine::core::render::world::clearing::clear_at;
 
 struct Instance {
     x: f32,
@@ -14,8 +17,18 @@ struct Instance {
 }
 
 @group(2) @binding(100) var<storage, read> instances: array<Instance>;
-// Each instance the commands draw, by its place among `instances`, and its scale.
-@group(2) @binding(101) var<storage, read> drawn: array<vec2<u32>>;
+// Each instance the commands draw, by its place among `instances`, its scale, how far it shows
+// and whether the eye stands inside it.
+@group(2) @binding(101) var<storage, read> drawn: array<vec4<u32>>;
+
+// Where the camera's subject shows on the picture, and how many pixels round it a prop in the way
+// clears.
+struct Clearing {
+    focus: vec2<f32>,
+    focus_radius: f32,
+}
+
+@group(2) @binding(102) var<uniform> clearing: Clearing;
 
 // Where an instance stands: its place, the quaternion it is turned by, and its size.
 struct Placement {
@@ -34,6 +47,20 @@ fn placement(index: u32) -> Placement {
         vec4<f32>(0.0, sin(half), 0.0, cos(half)),
         bitcast<f32>(listed.y),
     );
+}
+
+// How far the instance a command draws as its `index`th shows, and whether the eye stands inside
+// it: 1 or more for inside.
+fn shown_of(index: u32) -> vec2<f32> {
+    let listed = drawn[index];
+    return vec2<f32>(bitcast<f32>(listed.z), f32(listed.w));
+}
+
+// Drops the pixel at `pixel` of an instance `shown` far, as `shown_of` says: a circle round the
+// subject cleared, or all of it while the eye stands inside it.
+fn clear_instance(pixel: vec2<f32>, shown: vec2<f32>) {
+    let radius = select(clearing.focus_radius, 3.4e38, shown.y > 0.5);
+    clear_at(pixel, shown.x, clearing.focus, radius);
 }
 
 // `way` turned by the quaternion `turn`.

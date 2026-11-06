@@ -358,12 +358,13 @@ pub enum InstanceChange {
     Dropped,
 }
 
-/// How a scenery draws a prop: each part of its model in its world material, and whether it casts
-/// a shadow.
+/// How a scenery draws a prop: each part of its model in its world material, whether it casts
+/// a shadow, and whether it clears away where it hides the camera's subject.
 #[derive(Clone, Debug)]
 pub struct DressedProp {
     pub materials: Vec<Handle<WorldMaterial>>,
     pub shadow: bool,
+    pub fades: bool,
 }
 
 /// What a chunk's instances are, as culling reads them: the box their places fill, the largest
@@ -486,6 +487,9 @@ pub struct InstanceArenas(pub HashMap<Entity, GpuInstances>);
 
 pub struct GpuInstances {
     pub slab: Slab,
+    /// How far each instance in the slab shows, by its place there: 1 whole, 0 cleared away
+    /// where it hides the camera's subject. An instance placed starts whole.
+    pub shown: Slab,
     pub chunks: HashMap<u32, GpuChunk>,
     pub dressed: HashMap<u32, Arc<DressedProp>>,
     pub changes: u64,
@@ -508,6 +512,7 @@ impl Default for GpuInstances {
                 "prop instances",
                 BufferUsages::STORAGE | BufferUsages::VERTEX,
             ),
+            shown: Slab::new("prop instances shown", BufferUsages::STORAGE),
             chunks: HashMap::new(),
             dressed: HashMap::new(),
             changes: 0,
@@ -758,10 +763,21 @@ fn write_instances(
             continue;
         }
         arena.slab.fit(&device, &queue, arena.capacity);
+        arena
+            .shown
+            .fit(&device, &queue, shown_bytes(arena.capacity));
         for (offset, bytes) in arena.pending.drain(..) {
             arena.slab.write(&queue, offset, &bytes);
+            let whole = 1.0f32.to_le_bytes();
+            let shown: Vec<u8> = whole.repeat(bytes.len() / InstanceRecord::BYTES as usize);
+            arena.shown.write(&queue, shown_bytes(offset), &shown);
         }
     }
+}
+
+/// Where the share shown of the instance `bytes` into the slab lies among the shares.
+fn shown_bytes(bytes: u64) -> u64 {
+    bytes / InstanceRecord::BYTES * 4
 }
 
 fn instance_bytes(records: &[InstanceRecord]) -> Vec<u8> {
