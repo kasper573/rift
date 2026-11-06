@@ -1,11 +1,11 @@
-//! The geometry a ground's cover is laid out as, from the paint: a sheet over the painted cells,
-//! blades standing up from the terrain, or copies of a prop strewn over it. Every vertex carries,
-//! in its second uv, how far up the geometry it stands (0 at the root, 1 at the top) and how
-//! heavily the material is painted there, for the shader that moves and paints it, and a blade's
-//! or a merged copy's vertex where its blade or copy stands, for the shader to bend it about. A
-//! strewn copy is an instance of its prop's own mesh, which carries only how far up the prop a
-//! vertex stands; it stands at its instance's origin, and the rest of its marks and its tint ride
-//! on its tag.
+//! The geometry a ground's cover is laid out as, from the paint: blades standing up from the
+//! terrain, or copies of a prop strewn over it; its sheet is drawn over the ground's own patches.
+//! Every vertex carries, in its second uv, how far up the geometry it stands (0 at the root, 1 at
+//! the top) and how heavily the material is painted there, for the shader that moves and paints
+//! it, and a blade's or a merged copy's vertex where its blade or copy stands, for the shader to
+//! bend it about. A strewn copy is an instance of its prop's own mesh, which carries only how far
+//! up the prop a vertex stands; it stands at its instance's origin, and the rest of its marks and
+//! its tint ride on its tag.
 
 use bevy::asset::RenderAssetUsages;
 use bevy::camera::primitives::{Aabb, Frustum, MeshAabb};
@@ -29,8 +29,7 @@ use bevy::shader::Shader;
 
 use super::lod::GRAIN_PIXELS;
 use super::merged::{self, MOST_MERGED_VERTICES, Shape, Silhouette};
-use super::terrain::grid_indices;
-use crate::core::ground::{Heightfield, SAMPLES_PER_METER, WaterSurface};
+use crate::core::ground::{Heightfield, SAMPLES_PER_METER};
 use crate::core::math::{Pos, Rng};
 use crate::core::units::{GROUND_ORIGIN, Meters};
 use crate::core::vfx::uniform::{ParamsUniform, SiteUniform, VfxShaderKey};
@@ -42,11 +41,6 @@ pub type CoverMaterial = ExtendedMaterial<StandardMaterial, CoverVfx>;
 /// for its shader to bend it about: carried by blades and merged copies, whose meshes hold many.
 pub const ATTRIBUTE_ROOT: MeshVertexAttribute =
     MeshVertexAttribute::new("CoverRoot", 0x7269_6674_6d03, VertexFormat::Float32x3);
-
-/// How far a vertex of a sheet on water lies from the nearest dry ground, and how the water's
-/// surface falls there toward east and south, in metres a metre: carried by sheets on water.
-pub const ATTRIBUTE_WATER: MeshVertexAttribute =
-    MeshVertexAttribute::new("CoverWater", 0x7269_6674_6d04, VertexFormat::Float32x3);
 
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug, Default)]
 #[bind_group_data(VfxShaderKey)]
@@ -69,8 +63,8 @@ impl From<&CoverVfx> for VfxShaderKey {
 }
 
 impl MaterialExtension for CoverVfx {
-    /// A mesh whose vertices carry their roots, or their water, reads them at shader locations
-    /// past every one bevy's own meshes use.
+    /// A mesh whose vertices carry their roots reads them at a shader location past every one
+    /// bevy's own meshes use.
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
         descriptor: &mut RenderPipelineDescriptor,
@@ -89,18 +83,6 @@ impl MaterialExtension for CoverVfx {
             descriptor.vertex.shader_defs.push("ROOTED".into());
             if let Some(fragment) = descriptor.fragment.as_mut() {
                 fragment.shader_defs.push("ROOTED".into());
-            }
-        }
-        if layout.0.contains(ATTRIBUTE_WATER) {
-            let waters = layout
-                .0
-                .get_layout(&[ATTRIBUTE_WATER.at_shader_location(15)])?;
-            descriptor.vertex.buffers[0]
-                .attributes
-                .extend(waters.attributes);
-            descriptor.vertex.shader_defs.push("WATERED".into());
-            if let Some(fragment) = descriptor.fragment.as_mut() {
-                fragment.shader_defs.push("WATERED".into());
             }
         }
         if let Some(fragment) = descriptor.fragment.as_mut() {
@@ -165,9 +147,6 @@ pub fn material(
 
 /// Cells of paint along a chunk's side; a chunk is one mesh, culled as one.
 pub const CHUNK_CELLS: u32 = 16;
-
-/// How far above the terrain a sheet lies, so it draws over the ground without fighting it.
-pub const SHEET_LIFT: f32 = 0.02;
 
 /// A chunk of the paint: `columns` and `rows` of half-metre cells from the cell at `first`, each
 /// painted `share(column, row)` of the material, 0 to 1.
@@ -297,276 +276,17 @@ impl Mark {
     }
 }
 
-/// What a sheet lies on: the ground, a hair over it, or the water of `surface`, wherever it stands
-/// over the ground.
-#[derive(Clone, Copy)]
-pub enum SheetOn<'a> {
+/// What a cover's sheet lies on: the ground, a hair over it, or the area's water, wherever it
+/// stands over the ground.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SheetOn {
     Ground,
-    Water(&'a WaterSurface),
+    Water,
 }
 
-/// How far from the shore a sheet on water tells its vertices they lie at most: past it, every
-/// vertex lies this far out.
+/// How far from the shore a sheet on water tells its points they lie at most: past it, every
+/// point lies this far out.
 pub const SHORE_REACH: Meters = Meters(16.0);
-
-/// How far either way along the water a sheet reads its surface's fall, in samples: far enough that
-/// the gentlest river's fall shows through the steps its heights are kept in.
-const FALL_SAMPLES: u32 = 4;
-
-/// A sheet over the patch's painted cells: a quad for every `stride` cells each way, each vertex
-/// weighted by how heavily the cells around it are painted, lying a hair over the ground or on the
-/// water, with the depth of water over the ground at each vertex, how far it lies from the nearest
-/// dry ground, up to [`SHORE_REACH`], and how the water's surface falls there, in metres a metre
-/// downhill. Its uv runs over the whole area, so a shader's pattern crosses from chunk to chunk
-/// unbroken. As meshes of a bounded size, none when nothing is painted.
-pub fn sheet(patch: &Patch, on: SheetOn, color: LinearRgba, stride: u32) -> Vec<Mesh> {
-    let (columns, rows) = (patch.columns, patch.rows);
-    let (area_columns, area_rows) = patch.heights.samples();
-    let step = 1.0 / SAMPLES_PER_METER as f32;
-    let weight_at = |column: u32, row: u32| -> f32 {
-        let mut total = 0.0;
-        let mut count = 0.0;
-        for (dc, dr) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
-            if column + dc >= 1 && row + dr >= 1 {
-                let (c, r) = (column + dc - 1, row + dr - 1);
-                if c >= patch.first.0
-                    && c < patch.first.0 + columns
-                    && r >= patch.first.1
-                    && r < patch.first.1 + rows
-                {
-                    total += (patch.share)(c, r).clamp(0.0, 1.0);
-                    count += 1.0;
-                }
-            }
-        }
-        if count > 0.0 { total / count } else { 0.0 }
-    };
-    let (across, down) = (strided(columns, stride), strided(rows, stride));
-    let shores = match on {
-        SheetOn::Water(surface) => Some(Shores::around(patch, surface, stride)),
-        SheetOn::Ground => None,
-    };
-    let mut any = false;
-    let mut positions = Vec::with_capacity(across.len() * down.len());
-    let mut normals = Vec::with_capacity(positions.capacity());
-    let mut uvs = Vec::with_capacity(positions.capacity());
-    let mut tips = Vec::with_capacity(positions.capacity());
-    let mut waters = Vec::new();
-    for row in down.iter().map(|row| patch.first.1 + row) {
-        for column in across.iter().map(|column| patch.first.0 + column) {
-            let at = Pos::new(
-                GROUND_ORIGIN.x + column as f32 * step,
-                GROUND_ORIGIN.y + row as f32 * step,
-            );
-            let weight = weight_at(column, row);
-            any |= weight > 0.0;
-            let ground = patch.heights.sample(column, row).0;
-            let measure = match (on, &shores) {
-                (SheetOn::Water(surface), Some(shores)) => {
-                    let level = surface_level(patch.heights, surface, column, row);
-                    let fall = fall_at(patch.heights, surface, column, row);
-                    positions.push([at.x, level, at.y]);
-                    normals.push(Vec3::new(fall.x, 1.0, fall.y).normalize().to_array());
-                    waters.push([shores.at(column, row), fall.x, fall.y]);
-                    (level - ground).max(0.0)
-                }
-                _ => {
-                    positions.push([at.x, ground + SHEET_LIFT, at.y]);
-                    normals.push(ground_normal(patch.heights, at));
-                    0.0
-                }
-            };
-            uvs.push([
-                column as f32 / (area_columns - 1).max(1) as f32,
-                row as f32 / (area_rows - 1).max(1) as f32,
-            ]);
-            tips.push(
-                Mark {
-                    measure,
-                    weight,
-                    piece: 0,
-                    seed: 0.0,
-                }
-                .pack(),
-            );
-        }
-    }
-    if !any {
-        return Vec::new();
-    }
-    let indices: Vec<u32> = grid_indices(across.len() as u32, down.len() as u32).collect();
-    let colors = vec![color.to_f32_array(); positions.len()];
-    assemble(
-        CoverVertices {
-            positions,
-            normals,
-            uvs,
-            tips,
-            colors: Some(colors),
-            roots: None,
-            waters: shores.is_some().then_some(waters),
-        },
-        indices,
-    )
-}
-
-/// How far each sample round a patch lies from the nearest dry ground, read on the lattice of the
-/// sheet's vertices and as far past the patch as [`SHORE_REACH`], so chunks meeting at a seam agree.
-struct Shores {
-    first: (i64, i64),
-    stride: u32,
-    side: (usize, usize),
-    distance: Vec<f32>,
-}
-
-impl Shores {
-    fn around(patch: &Patch, surface: &WaterSurface, stride: u32) -> Shores {
-        let stride = stride.max(1);
-        let spacing = stride as f32 / SAMPLES_PER_METER as f32;
-        let margin = (SHORE_REACH.0 / spacing).ceil() as i64;
-        let first = (
-            patch.first.0 as i64 / stride as i64 - margin,
-            patch.first.1 as i64 / stride as i64 - margin,
-        );
-        let side = (
-            (patch.columns.div_ceil(stride) as i64 + 1 + margin * 2) as usize,
-            (patch.rows.div_ceil(stride) as i64 + 1 + margin * 2) as usize,
-        );
-        let (columns, rows) = patch.heights.samples();
-        let sample = |x: usize, y: usize| {
-            let column = ((first.0 + x as i64) * stride as i64).clamp(0, columns as i64 - 1);
-            let row = ((first.1 + y as i64) * stride as i64).clamp(0, rows as i64 - 1);
-            (column as u32, row as u32)
-        };
-        let mut distance: Vec<f32> = (0..side.0 * side.1)
-            .map(|index| {
-                let (column, row) = sample(index % side.0, index / side.0);
-                let dry = surface.sample(column, row).0 <= patch.heights.sample(column, row).0;
-                if dry { 0.0 } else { SHORE_REACH.0 }
-            })
-            .collect();
-        chamfer(&mut distance, side, spacing);
-        Shores {
-            first,
-            stride,
-            side,
-            distance,
-        }
-    }
-
-    /// How far sample `(column, row)`, one of the sheet's vertices, lies from dry ground.
-    fn at(&self, column: u32, row: u32) -> f32 {
-        let x = (column / self.stride) as i64 - self.first.0;
-        let y = (row / self.stride) as i64 - self.first.1;
-        let x = x.clamp(0, self.side.0 as i64 - 1) as usize;
-        let y = y.clamp(0, self.side.1 as i64 - 1) as usize;
-        self.distance[y * self.side.0 + x].min(SHORE_REACH.0)
-    }
-}
-
-/// Every cell's distance to the nearest cell at nothing, cells `spacing` apart, by the two sweeps
-/// of an eight-way chamfer: within a few percent of the straight-line distance.
-fn chamfer(distance: &mut [f32], (columns, rows): (usize, usize), spacing: f32) {
-    let diagonal = spacing * std::f32::consts::SQRT_2;
-    let forward = [
-        (-1, 0, spacing),
-        (0, -1, spacing),
-        (-1, -1, diagonal),
-        (1, -1, diagonal),
-    ];
-    let mut sweep = |order: &mut dyn Iterator<Item = (usize, usize)>, sign: i64| {
-        for (x, y) in order {
-            let mut best = distance[y * columns + x];
-            for &(dx, dy, cost) in &forward {
-                let (nx, ny) = (x as i64 + dx * sign, y as i64 + dy * sign);
-                if nx >= 0 && ny >= 0 && (nx as usize) < columns && (ny as usize) < rows {
-                    best = best.min(distance[ny as usize * columns + nx as usize] + cost);
-                }
-            }
-            distance[y * columns + x] = best;
-        }
-    };
-    sweep(
-        &mut (0..rows).flat_map(|y| (0..columns).map(move |x| (x, y))),
-        1,
-    );
-    sweep(
-        &mut (0..rows)
-            .rev()
-            .flat_map(|y| (0..columns).rev().map(move |x| (x, y))),
-        -1,
-    );
-}
-
-/// The level a water sheet's vertex stands at over the sample `(column, row)`: the water's surface
-/// where water lies, and beside it the highest surface next to it, so the sheet runs on flat into
-/// the bank and meets it where the water does; under the ground away from any water.
-fn surface_level(heights: &Heightfield, surface: &WaterSurface, column: u32, row: u32) -> f32 {
-    let wet = |column: u32, row: u32| {
-        let level = surface.sample(column, row).0;
-        (level > heights.sample(column, row).0).then_some(level)
-    };
-    if let Some(level) = wet(column, row) {
-        return level;
-    }
-    let (columns, rows) = surface.samples();
-    let beside = (-1i64..=1)
-        .flat_map(|dy| (-1i64..=1).map(move |dx| (dx, dy)))
-        .filter_map(|(dx, dy)| {
-            let column = u32::try_from(i64::from(column) + dx)
-                .ok()
-                .filter(|&column| column < columns)?;
-            let row = u32::try_from(i64::from(row) + dy)
-                .ok()
-                .filter(|&row| row < rows)?;
-            wet(column, row)
-        })
-        .reduce(f32::max);
-    beside.unwrap_or(heights.sample(column, row).0 - DRY_SINK.0)
-}
-
-/// How far under the ground a water sheet's vertex lies away from any water.
-const DRY_SINK: Meters = Meters(1.0);
-
-/// How the water's surface falls at sample `(column, row)`, in metres a metre toward east and
-/// south: read across [`FALL_SAMPLES`] either way, as far as the water reaches, so a river's fall
-/// shows through the steps its heights are kept in and dry ground beside it doesn't count.
-fn fall_at(heights: &Heightfield, surface: &WaterSurface, column: u32, row: u32) -> Vec2 {
-    let (columns, rows) = heights.samples();
-    let wet = |column: u32, row: u32| surface.sample(column, row).0 > heights.sample(column, row).0;
-    let reach = |along: &dyn Fn(i64) -> Option<(u32, u32)>| {
-        (1..=FALL_SAMPLES as i64).rev().find_map(|samples| {
-            along(samples)
-                .filter(|&(c, r)| wet(c, r))
-                .map(|at| (at, samples))
-        })
-    };
-    let here = surface.sample(column, row).0;
-    let axis = |offset: &dyn Fn(i64) -> Option<(u32, u32)>| -> f32 {
-        let ahead = reach(&|samples| offset(samples));
-        let behind = reach(&|samples| offset(-samples));
-        let level = |found: Option<((u32, u32), i64)>| {
-            found.map_or((here, 0), |((c, r), samples)| {
-                (surface.sample(c, r).0, samples)
-            })
-        };
-        let ((front, ahead), (back, behind)) = (level(ahead), level(behind));
-        let span = (ahead + behind) as f32 / SAMPLES_PER_METER as f32;
-        if span > 0.0 {
-            (back - front) / span
-        } else {
-            0.0
-        }
-    };
-    let within = |column: i64, row: i64| {
-        (column >= 0 && row >= 0 && column < columns as i64 && row < rows as i64)
-            .then_some((column as u32, row as u32))
-    };
-    Vec2::new(
-        axis(&|samples| within(column as i64 + samples, row as i64)),
-        axis(&|samples| within(column as i64, row as i64 + samples)),
-    )
-}
 
 /// A blade of the `shape` standing at each of `places` on the ground of `heights`, a triangle at
 /// its place's size, turn and tint, its uv running across and up. As meshes of a bounded size, none
@@ -618,7 +338,6 @@ pub fn blades(
             tips,
             colors: Some(colors),
             roots: Some(roots),
-            waters: None,
         },
         indices,
     )
@@ -787,7 +506,6 @@ pub fn merged_copies(
                 tips,
                 colors: Some(colors),
                 roots: Some(roots),
-                waters: None,
             };
             assemble(vertices, indices)
                 .into_iter()
@@ -1171,13 +889,6 @@ const SEEDS: f32 = 255.0;
 
 const PIECE_STEP: f32 = 256.0;
 
-/// Every `stride`-th of `count` steps from 0, and `count` itself.
-fn strided(count: u32, stride: u32) -> Vec<u32> {
-    let mut steps: Vec<u32> = (0..count).step_by(stride.max(1) as usize).collect();
-    steps.push(count);
-    steps
-}
-
 fn seed_steps(seed: f32) -> f32 {
     (seed.clamp(0.0, 1.0) * SEEDS).floor()
 }
@@ -1292,7 +1003,6 @@ fn merged(piece: PieceVertices, height: f32) -> Mesh {
         tips,
         colors: piece.colors,
         roots: None,
-        waters: None,
     }
     .mesh(piece.indices)
 }
@@ -1391,7 +1101,6 @@ struct CoverVertices {
     tips: Vec<[f32; 2]>,
     colors: Option<Vec<[f32; 4]>>,
     roots: Option<Vec<[f32; 3]>>,
-    waters: Option<Vec<[f32; 3]>>,
 }
 
 impl CoverVertices {
@@ -1408,7 +1117,6 @@ impl CoverVertices {
             tips: picked(sources, &self.tips),
             colors: self.colors.as_deref().map(|colors| picked(sources, colors)),
             roots: self.roots.as_deref().map(|roots| picked(sources, roots)),
-            waters: self.waters.as_deref().map(|waters| picked(sources, waters)),
         }
     }
 
@@ -1429,9 +1137,6 @@ impl CoverVertices {
         }
         if let Some(roots) = self.roots {
             mesh.insert_attribute(ATTRIBUTE_ROOT, roots);
-        }
-        if let Some(waters) = self.waters {
-            mesh.insert_attribute(ATTRIBUTE_WATER, waters);
         }
         mesh
     }

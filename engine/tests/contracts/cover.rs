@@ -1,10 +1,10 @@
 use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
-use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER, WaterSurface};
+use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER, shore_distances};
 use engine::core::math::Pos;
 use engine::core::render::world::cover::{
-    ATTRIBUTE_WATER, BladeShape, CopyModel, Mark, Patch, Piece, Place, SHORE_REACH, SheetOn,
-    Spread, blades, copy_meshes, merged_copies, seen_at, sheet, strew_places,
+    BladeShape, CopyModel, Mark, Patch, Piece, Place, SHORE_REACH, Spread, blades, copy_meshes,
+    merged_copies, seen_at, strew_places,
 };
 use engine::core::render::world::lod::GRAIN_PIXELS;
 use engine::core::units::Meters;
@@ -191,110 +191,41 @@ fn blades_grow_as_thick_as_their_ground_is_painted_rooted_on_the_terrain_each_it
 }
 
 #[test]
-fn a_sheet_lies_on_the_terrain_or_on_the_water_weighted_as_the_cells_around_each_point_are_painted()
-{
-    let heights = slope();
-    let west = |column: u32, _: u32| if column < 8 { 1.0 } else { 0.0 };
-    let mesh = one(sheet(&patch(&heights, &west), SheetOn::Ground, DARK, 1));
-    assert!(
-        colors(&mesh)
-            .iter()
-            .all(|color| *color == DARK.to_f32_array()),
-        "a sheet is the ground's colour"
-    );
-    assert!(
-        mesh.attribute(ATTRIBUTE_WATER).is_none(),
-        "a sheet on the ground tells of no water"
-    );
-    for (position, mark) in positions(&mesh).iter().zip(marks(&mesh)) {
-        let at = Pos::new(position[0], position[2]);
-        let ground = heights.height_at(at).0;
-        assert!(
-            (position[1] - ground - 0.02).abs() < 0.01,
-            "{position:?} lies {} over the ground",
-            position[1] - ground
-        );
-        let column = ((at.x + 0.5) * SAMPLES_PER_METER as f32).round() as u32;
-        let wanted = match column {
-            0..=7 => 1.0,
-            8 => 0.5,
-            _ => 0.0,
-        };
-        assert!(
-            mark.measure == 0.0 && (mark.weight - wanted).abs() < 0.005,
-            "the mark at column {column}: {mark:?}, not a weight of {wanted}"
-        );
-    }
-    let full = |_: u32, _: u32| 1.0;
-    let level = 1.0;
-    let pond = WaterSurface::from_fn(SIZE, HEIGHTS, |_, _| Meters(level));
-    let pool = one(sheet(
-        &patch(&heights, &full),
-        SheetOn::Water(&pond),
-        DARK,
-        1,
-    ));
-    let shore_line = 4.0 - 0.5;
-    for ((position, mark), [shore, east, south]) in
-        positions(&pool).iter().zip(marks(&pool)).zip(waters(&pool))
-    {
-        let ground = heights.height_at(Pos::new(position[0], position[2])).0;
-        assert!(
-            (position[1] - level).abs() < 1e-3 || position[1] < ground - 0.5,
-            "a pond lies flat at its level, and sinks under the dry ground past its shore: {position:?} over ground at {ground}"
-        );
-        assert!(
-            (mark.measure - (level - ground).max(0.0)).abs() < 1e-3,
-            "{position:?} over ground at {ground} is marked {} m deep",
-            mark.measure
-        );
-        let ashore = (shore_line - position[0]).max(0.0);
-        assert!(
-            (shore - ashore).abs() <= 0.5 + ashore * 0.08,
-            "{position:?} lies {ashore} m from the shore, not {shore}"
-        );
-        assert!(
-            east.abs() < 1e-3 && south.abs() < 1e-3,
-            "a pond's water stands still"
-        );
-    }
-    let stream = WaterSurface::from_fn(SIZE, HEIGHTS, |column, row| {
-        Meters(heights.sample(column, row).0 + 0.5)
-    });
-    let river = one(sheet(
-        &patch(&heights, &full),
-        SheetOn::Water(&stream),
-        DARK,
-        1,
-    ));
-    for ((position, mark), [shore, east, south]) in positions(&river)
+fn water_tells_how_far_it_lies_from_the_nearest_dry_ground_up_to_the_shore_reach() {
+    let spacing = Meters(1.0 / SAMPLES_PER_METER as f32);
+    let (columns, rows) = (80, 4);
+    let lake: Vec<bool> = (0..columns * rows).map(|at| at % columns < 60).collect();
+    for (at, distance) in shore_distances(&lake, columns, spacing, SHORE_REACH)
         .iter()
-        .zip(marks(&river))
-        .zip(waters(&river))
+        .enumerate()
     {
-        let ground = heights.height_at(Pos::new(position[0], position[2])).0;
+        let column = at % columns;
+        let ashore = (60usize.saturating_sub(column)) as f32 * spacing.0;
         assert!(
-            (position[1] - ground - 0.5).abs() < 1e-3 && (mark.measure - 0.5).abs() < 1e-3,
-            "a river's sheet lies on its water, half a metre over the ground"
+            (distance.0 - ashore.min(SHORE_REACH.0)).abs() < 1e-4,
+            "column {column} lies {ashore} m out, not {}",
+            distance.0
         );
-        assert!(
-            (east + 0.25).abs() < 1e-2 && south.abs() < 1e-3,
-            "a river falls a metre every four westward, not {east} east and {south} south"
-        );
-        assert_eq!(shore, SHORE_REACH.0, "no dry ground in reach");
     }
-    let none = |_: u32, _: u32| 0.0;
+    let side = 41;
+    let rock: Vec<bool> = (0..side * side).map(|at| at != side * side / 2).collect();
+    for (at, distance) in shore_distances(&rock, side, spacing, SHORE_REACH)
+        .iter()
+        .enumerate()
+    {
+        let (x, y) = ((at % side) as f32 - 20.0, (at / side) as f32 - 20.0);
+        let straight = x.hypot(y) * spacing.0;
+        assert!(
+            (distance.0 - straight).abs() <= straight * 0.083,
+            "{x}, {y} from a rock lies {straight} m from it, not {}",
+            distance.0
+        );
+    }
+    let open = shore_distances(&[true; 64], 8, spacing, SHORE_REACH);
     assert!(
-        sheet(&patch(&heights, &none), SheetOn::Ground, DARK, 1).is_empty(),
-        "nothing painted, no sheet"
+        open.iter().all(|distance| *distance == SHORE_REACH),
+        "no dry ground in reach"
     );
-}
-
-fn waters(mesh: &Mesh) -> Vec<[f32; 3]> {
-    mesh.attribute(ATTRIBUTE_WATER)
-        .and_then(|waters| waters.as_float3())
-        .expect("a sheet on water tells of its water")
-        .to_vec()
 }
 
 #[test]

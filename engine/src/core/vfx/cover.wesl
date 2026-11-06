@@ -18,6 +18,8 @@
 // (a sheet's vertex is its own root). Off water, `depth`, `shore` and `fall` are 0. The cover's colours come from
 // its vertices: a blade's own, a copy's tint over its prop's, a sheet's ground colour. A blade's
 // or a merged copy's vertex carries its root; an instanced copy stands at its instance's origin.
+// A sheet is drawn over the ground's patches, its points read from the ground as they are drawn,
+// and lit as a white, rough, blended face of its ground's colour.
 @if(PREPASS_PIPELINE)
 import bevy_pbr::prepass::io::{Vertex, VertexOutput, FragmentOutput, decompress_vertex};
 @else
@@ -34,6 +36,20 @@ import bevy_pbr::render::pbr_types::PbrInput;
 import bevy_pbr::render::mesh_view_bindings::view;
 @if(!PREPASS_PIPELINE)
 import bevy_pbr::render::mesh_view_bindings::lights;
+@if(SHEET_PATCH)
+import engine::core::render::world::gpu::sheet::{drawn_sheet, sheet_point};
+@if(SHEET_PATCH)
+import bevy_pbr::render::mesh_types::{MESH_FLAGS_SHADOW_RECEIVER_BIT, MESH_FLAGS_SIGN_DETERMINANT_MODEL_3X3_BIT};
+@if(SHEET_PATCH)
+import bevy_pbr::render::pbr_functions::calculate_view;
+@if(SHEET_PATCH)
+import bevy_pbr::render::pbr_lighting::perceptualRoughnessToRoughness;
+@if(SHEET_PATCH)
+import bevy_pbr::render::pbr_types::{pbr_input_new, STANDARD_MATERIAL_FLAGS_ALPHA_MODE_BLEND, STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT};
+@if(SCREEN_SPACE_AMBIENT_OCCLUSION)
+import bevy_pbr::render::mesh_view_bindings::screen_space_ambient_occlusion_texture;
+@if(SCREEN_SPACE_AMBIENT_OCCLUSION)
+import bevy_pbr::ssao::utils::ssao_multibounce;
 
 @if(PREPASS_PIPELINE)
 import bevy_render::globals::Globals;
@@ -195,15 +211,32 @@ fn vertex(vertex_in: Vertex, @location(14) rooted: vec3<f32>) -> Output {
     return handed_on(stand(vertex_in, vec4<f32>(rooted, 1.0)));
 }
 
-@if(WATERED)
+@if(SHEET_PATCH)
 @vertex
-fn vertex(vertex_in: Vertex, @location(15) water: vec3<f32>) -> Output {
-    ashore = water.x;
-    falling = water.yz;
-    return handed_on(stand(vertex_in, vec4<f32>(0.0)));
+fn vertex(@builtin(instance_index) instance: u32, @location(0) grid: vec3<f32>) -> Output {
+    let point = sheet_point(grid, instance);
+    ashore = point.shore;
+    falling = point.fall;
+    stem = point.world;
+    spot = point.world;
+    let marks = vec2<f32>(point.depth, min(point.weight, 255.0 / 256.0));
+    mark(marks);
+    read_weather();
+    var out: VertexOutput;
+    out.uv = point.uv;
+    out.uv_b = marks;
+    out.color = drawn_sheet.color;
+    out.world_normal = point.normal;
+    let world = vec4<f32>(sway(point.world, up), 1.0);
+    out.world_position = world;
+    out.position = position_world_to_clip(world.xyz);
+    @if(VERTEX_OUTPUT_INSTANCE_INDEX) {
+        out.instance_index = instance;
+    }
+    return handed_on(out);
 }
 
-@if(!ROOTED && !WATERED)
+@if(!ROOTED && !SHEET_PATCH)
 @vertex
 fn vertex(vertex_in: Vertex) -> Output {
     return handed_on(stand(vertex_in, select(vec4<f32>(0.0), vec4<f32>(0.0, 0.0, 0.0, 1.0), strewn.on != 0u)));
@@ -240,6 +273,40 @@ fn handed_on(out: VertexOutput) -> CoverOutput {
 @else
 fn handed_on(out: VertexOutput) -> VertexOutput {
     return out;
+}
+
+// What the fragment lights: a mesh's material as bevy's standard material reads it, or a sheet
+// lit as a white, rough face of its ground's colour.
+@if(!PREPASS_PIPELINE && SHEET_PATCH)
+fn material_input(in: VertexOutput, is_front: bool) -> PbrInput {
+    var input = pbr_input_new();
+    input.flags = MESH_FLAGS_SHADOW_RECEIVER_BIT | MESH_FLAGS_SIGN_DETERMINANT_MODEL_3X3_BIT;
+    input.material.flags =
+        STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT | STANDARD_MATERIAL_FLAGS_ALPHA_MODE_BLEND;
+    input.material.base_color = in.color;
+    input.material.perceptual_roughness = 1.0;
+    input.material.metallic = 0.0;
+    input.material.reflectance = vec3<f32>(0.0);
+    input.frag_coord = in.position;
+    input.world_position = in.world_position;
+    input.world_normal = normalize(in.world_normal);
+    input.N = input.world_normal;
+    input.is_orthographic = view.clip_from_view[3].w == 1.0;
+    input.V = calculate_view(in.world_position, input.is_orthographic);
+    @if(SCREEN_SPACE_AMBIENT_OCCLUSION) {
+        let ssao_at = vec2<i32>(in.position.xy - view.viewport.xy);
+        let ssao = textureLoad(screen_space_ambient_occlusion_texture, ssao_at, 0i).r;
+        input.diffuse_occlusion = min(vec3<f32>(1.0), ssao_multibounce(ssao, in.color.rgb));
+        let n_dot_v = max(dot(input.N, input.V), 0.0001);
+        let roughness = perceptualRoughnessToRoughness(1.0);
+        input.specular_occlusion =
+            saturate(pow(n_dot_v + ssao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ssao);
+    }
+    return input;
+}
+@elif(!PREPASS_PIPELINE)
+fn material_input(in: VertexOutput, is_front: bool) -> PbrInput {
+    return pbr_input_from_standard_material(in, is_front);
 }
 
 // The fragment's input as bevy's lighting reads it.
@@ -344,7 +411,7 @@ fn fragment(on: CoverOutput, @builtin(front_facing) is_front: bool) -> FragmentO
     let in = taken_in(on);
     ashore = on.water.x;
     falling = on.water.yz;
-    var pbr_input = pbr_input_from_standard_material(in, is_front);
+    var pbr_input = material_input(in, is_front);
     let base = alpha_discard(
         pbr_input.material.flags,
         pbr_input.material.alpha_cutoff,

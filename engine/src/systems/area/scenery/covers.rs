@@ -1,10 +1,10 @@
 //! The covers an area's terrains grow, over the regions the scenery is cut into for the view. In
-//! a leaf a cover stands chunk by chunk: its sheet, its blades and the copies of the props it
-//! strews, each copy an instance of its prop. In every coarser region it stands merged, a mesh for
-//! each of its pieces, of the same copies where the chunks would strew them, each no finer than
-//! the view shows it: a sheet no finer than its pixels, and copies too small to tell apart thinned
-//! and the rest grown to cover as much, so a view over a whole area stands a few meshes, and what
-//! stands merged looks as what would stand chunk by chunk. A prop whose copies the view shows large
+//! a leaf a cover stands chunk by chunk: its blades and the copies of the props it strews, each
+//! copy an instance of its prop. In every coarser region it stands merged, a mesh for each of its
+//! pieces, of the same copies where the chunks would strew them, each no finer than the view shows
+//! it: copies too small to tell apart thinned and the rest grown to cover as much, so a view over a
+//! whole area stands a few meshes, and what stands merged looks as what would stand chunk by chunk.
+//! A cover's sheet stands with the ground, drawn over its patches wherever its terrain paints. A prop whose copies the view shows large
 //! there stands chunk by chunk too, and a coarser region stands its covers only once the view may
 //! see it, so ground out of sight costs nothing however far the scenery reaches.
 
@@ -26,12 +26,12 @@ use crate::core::assets;
 use crate::core::content::Content;
 use crate::core::content::media::GltfInfos;
 use crate::core::geometry::{PlacedShape, Shape};
-use crate::core::ground::{Heightfield, PaintMap, SAMPLES_PER_METER, WaterSurface};
+use crate::core::ground::{Heightfield, PaintMap, SAMPLES_PER_METER};
 use crate::core::math::{Pos, Rect, Size};
 use crate::core::render::camera::Lens;
 use crate::core::render::world::cover::{self, CopyModel, CoverMaterial};
+use crate::core::render::world::gpu::draw::GroundSheet;
 use crate::core::render::world::gpu::upload;
-use crate::core::render::world::lod::GRAIN_PIXELS;
 use crate::core::units::{MeterSize, Meters, Radians, Seconds};
 use crate::core::vfx::ParamFill;
 use crate::core::vfx::render::{self as vfx_render, Run, SiteFrame};
@@ -97,8 +97,9 @@ struct CoverChunk {
     chunk: PaintChunk,
 }
 
-/// A cover a terrain grows, ready to stand: its slot among the area's terrains, its pieces, the
-/// material its sheets and blades are drawn with, and the cover's seed.
+/// A cover a terrain grows, ready to stand: its slot among the area's terrains, what its sheet lies
+/// on if it has one and the terrain's colour it is drawn in, its pieces, the material its sheet and
+/// blades are drawn with, and the cover's seed.
 struct CoverLayer {
     slot: usize,
     seed: u64,
@@ -108,11 +109,10 @@ struct CoverLayer {
     blended: Handle<CoverMaterial>,
 }
 
-/// A piece of a cover as its layer stands it: its shape (none for the sheet) and how it is
-/// spread, the most a copy of it measures across where that is known, and for a prop the model it
+/// A piece of a cover as its layer stands it: its shape and how it is spread, the most a copy of it measures across where that is known, and for a prop the model it
 /// strews and the material its copies are drawn with.
 struct LayerPiece {
-    shape: Option<CoverPiece>,
+    shape: CoverPiece,
     extent: Option<Meters>,
     spread: cover::Spread,
     strewn: Option<Strewn>,
@@ -159,6 +159,24 @@ impl Covers {
             merged: HashMap::default(),
             stale: Vec::new(),
         }
+    }
+
+    /// The sheets the covers lay over the ground.
+    pub(super) fn sheets(&self) -> Vec<GroundSheet> {
+        self.layers
+            .iter()
+            .filter_map(|layer| {
+                Some(GroundSheet {
+                    terrain: u8::try_from(layer.slot).ok()?,
+                    on: match layer.sheet? {
+                        CoverSheet::Ground => cover::SheetOn::Ground,
+                        CoverSheet::Water => cover::SheetOn::Water,
+                    },
+                    color: layer.ground_color,
+                    material: layer.blended.clone(),
+                })
+            })
+            .collect()
     }
 
     /// Stands everything again over ground sculpted or painted anew.
@@ -558,12 +576,7 @@ fn stand_merge(
             piece: at,
             slot: cover.slot,
             seed: cover.seed,
-            sheet: cover.sheet,
-            ground_color: cover.ground_color,
-            shape: cover.pieces[piece]
-                .shape
-                .as_ref()
-                .map(|shape| shape.shape.clone()),
+            shape: cover.pieces[piece].shape.shape.clone(),
             spread: cover.pieces[piece].spread,
             model,
         });
@@ -574,7 +587,6 @@ fn stand_merge(
     let region = FarRegion {
         heights: streaming.heights.clone(),
         paint: streaming.paint.clone(),
-        water: streaming.water.clone(),
         region: merge.region,
         cells: (planner.regions.bounds(merge.region).size.width * SAMPLES_PER_METER as f32) as u32,
         pixels_per_meter: lens.pixels_per_meter(merge.detail.distance()),
@@ -619,7 +631,6 @@ fn spawn_merged(
 struct FarRegion {
     heights: Heightfield,
     paint: PaintMap,
-    water: WaterSurface,
     region: Region,
     cells: u32,
     pixels_per_meter: f32,
@@ -630,9 +641,7 @@ struct FarPiece {
     piece: PieceAt,
     slot: usize,
     seed: u64,
-    sheet: Option<CoverSheet>,
-    ground_color: LinearRgba,
-    shape: Option<PieceShape>,
+    shape: PieceShape,
     spread: cover::Spread,
     model: Option<Arc<CopyModel>>,
 }
@@ -713,16 +722,7 @@ impl FarRegion {
             (places, far.spread)
         };
         let meshes: Vec<(Option<Handle<GltfMaterial>>, Mesh)> = match (&far.shape, &far.model) {
-            (None, _) => cover::sheet(
-                &patch(first, self.cells),
-                sheet_on(far.sheet, &self.water),
-                far.ground_color,
-                self.sheet_stride(),
-            )
-            .into_iter()
-            .map(|mesh| (None, mesh))
-            .collect(),
-            (Some(PieceShape::Blade { width, height }), _) => {
+            (PieceShape::Blade { width, height }, _) => {
                 let (places, spread) = strewn(width.0.max(height.0));
                 let shape = cover::BladeShape {
                     width: width.0,
@@ -733,11 +733,11 @@ impl FarRegion {
                     .map(|mesh| (None, mesh))
                     .collect()
             }
-            (Some(PieceShape::Prop { .. }), Some(model)) => {
+            (PieceShape::Prop { .. }, Some(model)) => {
                 let (places, spread) = strewn(model.extent());
                 cover::merged_copies(&places, model, &spread, self.pixels_per_meter)
             }
-            (Some(PieceShape::Prop { .. }), None) => Vec::new(),
+            (PieceShape::Prop { .. }, None) => Vec::new(),
         };
         meshes
             .into_iter()
@@ -751,17 +751,6 @@ impl FarRegion {
             })
             .collect()
     }
-
-    /// How many cells of paint a quad of a sheet spans: as many as the view tells apart no better
-    /// than one.
-    fn sheet_stride(&self) -> u32 {
-        let cell = self.pixels_per_meter / SAMPLES_PER_METER as f32;
-        let mut stride = 1;
-        while (stride * 2) as f32 * cell <= GRAIN_PIXELS && stride * 2 <= self.cells {
-            stride *= 2;
-        }
-        stride
-    }
 }
 
 /// The chunks of paint from the cell at `first` to the one before `end`.
@@ -773,7 +762,7 @@ fn chunks_within(first: (u32, u32), end: (u32, u32)) -> impl Iterator<Item = Pai
 }
 
 /// Each terrain with a cover, readied to lay it chunk by chunk as the view comes: the material
-/// its sheets and blades are drawn with, through the terrain's cover shader with the area as its
+/// its sheet and blades are drawn with, through the terrain's cover shader with the area as its
 /// site, and its pieces with how each is spread, a prop piece with its model loading.
 fn cover_layers(world: &mut World, content: &Content, area: &Area) -> Vec<CoverLayer> {
     let bounds = area.size.bounds();
@@ -834,20 +823,11 @@ fn cover_layers(world: &mut World, content: &Content, area: &Area) -> Vec<CoverL
         };
         let blended = material(world, None);
         let ground_color = ground.color.color().to_linear();
-        let sheet = cover_def.sheet.map(|_| LayerPiece {
-            shape: None,
-            extent: None,
-            spread: cover::Spread {
-                piece: 0,
-                per_square_meter: 0.0,
-                size: (1.0, 1.0),
-                color: (ground_color, ground_color),
-            },
-            strewn: None,
-        });
-        let pieces: Vec<LayerPiece> = sheet
-            .into_iter()
-            .chain(cover_def.pieces.iter().enumerate().map(|(index, piece)| {
+        let pieces: Vec<LayerPiece> = cover_def
+            .pieces
+            .iter()
+            .enumerate()
+            .map(|(index, piece)| {
                 let spread = cover::Spread {
                     piece: index as u32,
                     per_square_meter: piece.per_square_meter(piece.shape.base_area(prop_bounds)),
@@ -870,11 +850,11 @@ fn cover_layers(world: &mut World, content: &Content, area: &Area) -> Vec<CoverL
                 };
                 LayerPiece {
                     extent: extent(&piece.shape).map(|extent| Meters(extent * piece.size.max)),
-                    shape: Some(piece.clone()),
+                    shape: piece.clone(),
                     spread,
                     strewn,
                 }
-            }))
+            })
             .collect();
         layers.push(CoverLayer {
             slot,
@@ -888,7 +868,7 @@ fn cover_layers(world: &mut World, content: &Content, area: &Area) -> Vec<CoverL
     layers
 }
 
-/// A chunk of a cover's piece, stood under `root`: its sheet or blades, or for a prop the copies
+/// A chunk of a cover's piece, stood under `root`: its blades, or for a prop the copies
 /// it strews once the prop has loaded; nothing where the chunk holds nothing of the piece.
 fn spawn_cover_chunk(
     world: &mut World,
@@ -923,14 +903,8 @@ fn spawn_cover_chunk(
             u64::from(chunk.column),
         ],
     );
-    let meshes = match shape.as_ref().map(|piece| &piece.shape) {
-        None => cover::sheet(
-            &patch,
-            sheet_on(layer.sheet, &streaming.water),
-            layer.ground_color,
-            1,
-        ),
-        Some(PieceShape::Blade { width, height }) => cover::blades(
+    let meshes = match &shape.shape {
+        PieceShape::Blade { width, height } => cover::blades(
             &streaming.heights,
             &cover::strew_places(&patch, spread, seed),
             &cover::BladeShape {
@@ -939,7 +913,7 @@ fn spawn_cover_chunk(
             },
             spread,
         ),
-        Some(PieceShape::Prop { .. }) => {
+        PieceShape::Prop { .. } => {
             let Some(Strewn { gltf, material, .. }) = strewn.as_ref() else {
                 return Vec::new();
             };
@@ -1004,13 +978,5 @@ fn painted_by(paint: &PaintMap, slot: usize) -> impl Fn(u32, u32) -> f32 + '_ {
         } else {
             0.0
         }
-    }
-}
-
-/// What the sheet of a cover lying `sheet` lies on, over the area's `water`.
-fn sheet_on(sheet: Option<CoverSheet>, water: &WaterSurface) -> cover::SheetOn<'_> {
-    match sheet {
-        Some(CoverSheet::Water) => cover::SheetOn::Water(water),
-        Some(CoverSheet::Ground) | None => cover::SheetOn::Ground,
     }
 }

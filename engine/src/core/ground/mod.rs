@@ -24,6 +24,9 @@ use peaks::Peaks;
 
 mod peaks;
 mod ray;
+mod shore;
+
+pub use shore::shore_distances;
 
 /// Positions on the ground are `f32` metres snapped to sixteenths, which stay exact up to here.
 pub const MAX_SIDE: u32 = 1 << 20;

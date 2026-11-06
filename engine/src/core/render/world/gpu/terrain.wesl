@@ -43,6 +43,21 @@ struct TerrainGround {
 // The slot each tile is held in, one past it, or none.
 @group(2) @binding(105) var table: texture_2d<u32>;
 
+// What the ground is painted with: the paint of the tiles held in detail, a layer a slot, and the
+// overview's.
+@group(2) @binding(106) var paints: texture_2d_array<u32>;
+@group(2) @binding(107) var overview_paint: texture_2d<u32>;
+
+// Where a point of the shared grid lies on the patch a view shows: its sample, the patch's
+// stride, and, where it lies on an edge the patch shares with a coarser one, the way along that
+// edge and the coarser one's stride, which is the patch's own elsewhere.
+struct PatchPoint {
+    sample: vec2<u32>,
+    stride: u32,
+    way: vec2<u32>,
+    across: u32,
+}
+
 // A point of a patch on the ground: where it lies in the world, its normal, and the stride of the
 // patch, which the paint under it is read at.
 struct GroundPoint {
@@ -53,7 +68,7 @@ struct GroundPoint {
 
 // Where the point `grid` of the shared grid, from 0 to 1 across each way, lies on the patch the
 // view shows as its `instance`th.
-fn ground_point(grid: vec3<f32>, instance: u32) -> GroundPoint {
+fn patch_point(grid: vec3<f32>, instance: u32) -> PatchPoint {
     let laid = patches[shown[instance]];
     let point = vec2<u32>(round(grid.xz * f32(ground.grid_cells)));
     let sample = laid.first + point * laid.stride;
@@ -69,33 +84,56 @@ fn ground_point(grid: vec3<f32>, instance: u32) -> GroundPoint {
     } else if point.y == ground.grid_cells {
         north_south = edge_stride(laid.edges, 3u);
     }
-    var lie: vec4<f32>;
     if west_east > laid.stride {
-        lie = along(sample, vec2<u32>(0u, 1u), west_east);
-    } else if north_south > laid.stride {
-        lie = along(sample, vec2<u32>(1u, 0u), north_south);
-    } else {
-        lie = lie_at(sample, laid.stride);
+        return PatchPoint(sample, laid.stride, vec2<u32>(0u, 1u), west_east);
     }
-    let last = ground.samples - 1u;
-    let at = ground.origin + vec2<f32>(min(sample, last)) / f32(ground.samples_per_metre);
-    return GroundPoint(vec3<f32>(at.x, lie.w, at.y), normalize(lie.xyz), laid.stride);
+    if north_south > laid.stride {
+        return PatchPoint(sample, laid.stride, vec2<u32>(1u, 0u), north_south);
+    }
+    return PatchPoint(sample, laid.stride, vec2<u32>(0u), laid.stride);
+}
+
+// The point on the ground of the point `grid` of the patch the view shows as its `instance`th.
+fn ground_point(grid: vec3<f32>, instance: u32) -> GroundPoint {
+    let at = patch_point(grid, instance);
+    var lie: vec4<f32>;
+    if at.across > at.stride {
+        let ends = edge_ends(at);
+        let a = lie_at(ends.before, at.across);
+        let b = lie_at(ends.after, at.across);
+        lie = vec4<f32>(
+            normalize(mix(normalize(a.xyz), normalize(b.xyz), ends.t)),
+            mix(a.w, b.w, ends.t),
+        );
+    } else {
+        lie = lie_at(at.sample, at.stride);
+    }
+    return GroundPoint(world_at(at.sample, lie.w), normalize(lie.xyz), at.stride);
+}
+
+// The samples either side of a point on an edge it shares with a coarser patch, which that patch
+// has points on, and how far along from the first to the second it lies.
+struct EdgeEnds {
+    before: vec2<u32>,
+    after: vec2<u32>,
+    t: f32,
+}
+
+fn edge_ends(at: PatchPoint) -> EdgeEnds {
+    let offset = dot(at.sample, at.way) % at.across;
+    let before = at.sample - at.way * offset;
+    return EdgeEnds(before, before + at.way * at.across, f32(offset) / f32(at.across));
+}
+
+// Where the sample `sample` lies in the world, at `height`.
+fn world_at(sample: vec2<u32>, height: f32) -> vec3<f32> {
+    let at = ground.origin + vec2<f32>(min(sample, ground.samples - 1u)) / f32(ground.samples_per_metre);
+    return vec3<f32>(at.x, height, at.y);
 }
 
 // The stride of the patch across edge `edge` of a patch whose edges are `edges`.
 fn edge_stride(edges: u32, edge: u32) -> u32 {
     return 1u << ((edges >> (edge * 8u)) & 0xffu);
-}
-
-// The lie of the ground at `sample` on the edge of a patch laid every `stride` samples along
-// `way`: between the points of that patch on either side of it.
-fn along(sample: vec2<u32>, way: vec2<u32>, stride: u32) -> vec4<f32> {
-    let offset = dot(sample, way) % stride;
-    let before = sample - way * offset;
-    let t = f32(offset) / f32(stride);
-    let a = lie_at(before, stride);
-    let b = lie_at(before + way * stride, stride);
-    return vec4<f32>(normalize(mix(normalize(a.xyz), normalize(b.xyz), t)), mix(a.w, b.w, t));
 }
 
 // The ground's normal at `sample`, its neighbours `stride` samples off each way, in xyz, and its
@@ -113,17 +151,23 @@ fn lie_at(sample: vec2<u32>, stride: u32) -> vec4<f32> {
 
 // The ground's height at `sample`, in metres.
 fn height_of(sample: vec2<u32>) -> f32 {
-    return (level_of(sample) - ground.ground_level) * ground.level_step;
+    return metres_of(level_in(heights, overview_heights, sample));
 }
 
-// The level of the height sample `sample`: from the slot of the tile it lies in where one holds
-// it, else read between the overview's.
-fn level_of(sample: vec2<u32>) -> f32 {
+// The height a level of the heights stands for, in metres.
+fn metres_of(level: f32) -> f32 {
+    return (level - ground.ground_level) * ground.level_step;
+}
+
+// The value at the sample `sample` of the ground `details` holds a slot a tile of, and `overview`
+// holds the overview of: from the slot of the tile it lies in where one holds it, else read
+// between the overview's.
+fn level_in(details: texture_2d_array<u32>, overview: texture_2d<u32>, sample: vec2<u32>) -> f32 {
     let tile = min(sample / ground.tile_pixels, ground.tiles - 1u);
     let slot = i32(textureLoad(table, tile, 0).r) - 1;
     if slot >= 0 {
         let local = sample - tile * ground.tile_pixels + 1u;
-        return f32(textureLoad(heights, local, slot, 0).r);
+        return f32(textureLoad(details, local, slot, 0).r);
     }
     let span = ground.overview_span;
     let last = ground.samples - 1u;
@@ -136,9 +180,22 @@ fn level_of(sample: vec2<u32>) -> f32 {
         vec2<f32>(sample - start) / vec2<f32>(max(end - start, vec2<u32>(1u))),
         end > start,
     );
-    let a = f32(textureLoad(overview_heights, vec2<u32>(low.x, low.y), 0).r);
-    let b = f32(textureLoad(overview_heights, vec2<u32>(high.x, low.y), 0).r);
-    let c = f32(textureLoad(overview_heights, vec2<u32>(low.x, high.y), 0).r);
-    let d = f32(textureLoad(overview_heights, vec2<u32>(high.x, high.y), 0).r);
+    let a = f32(textureLoad(overview, vec2<u32>(low.x, low.y), 0).r);
+    let b = f32(textureLoad(overview, vec2<u32>(high.x, low.y), 0).r);
+    let c = f32(textureLoad(overview, vec2<u32>(low.x, high.y), 0).r);
+    let d = f32(textureLoad(overview, vec2<u32>(high.x, high.y), 0).r);
     return mix(mix(a, b, t.x), mix(c, d, t.x), t.y);
+}
+
+// The terrain painting the pixel `pixel`: from the slot of the tile it lies in where one holds it,
+// else the overview's nearest.
+fn paint_of(pixel: vec2<u32>) -> u32 {
+    let tile = min(pixel / ground.tile_pixels, ground.tiles - 1u);
+    let slot = i32(textureLoad(table, tile, 0).r) - 1;
+    if slot >= 0 {
+        let local = pixel - tile * ground.tile_pixels + 1u;
+        return textureLoad(paints, local, slot, 0).r;
+    }
+    let texel = pixel / ground.overview_span;
+    return textureLoad(overview_paint, min(texel, ground.paint_overview - 1u), 0).r;
 }

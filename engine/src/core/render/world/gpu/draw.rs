@@ -1,7 +1,10 @@
 //! The ground of every terrain drawn from one shared grid, a patch an instance, its heights and
 //! paint read from the terrain's atlas, in every view's opaque pass, prepass and shadow maps.
-//! Each view draws the patches that lie in its frustum, among the terrains its layers show.
+//! Each view draws the patches that lie in its frustum, among the terrains its layers show. Over
+//! the ground, each cover's sheet is drawn from the same patches, blended in the view's
+//! transparent pass with its cover's material: on those of them whose ground its terrain paints.
 
+use std::any::TypeId;
 use std::ops::Range;
 use std::sync::Arc;
 
@@ -10,7 +13,8 @@ use bevy::asset::uuid::Uuid;
 use bevy::camera::primitives::{Aabb, Frustum};
 use bevy::camera::visibility::RenderLayers;
 use bevy::core_pipeline::core_3d::{
-    CORE_3D_DEPTH_FORMAT, Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey,
+    CORE_3D_DEPTH_FORMAT, Opaque3d, Opaque3dBatchSetKey, Opaque3dBinKey, Transparent3d,
+    TransparentSortingInfo3d,
 };
 use bevy::core_pipeline::prepass::{
     Opaque3dPrepass, OpaqueNoLightmap3dBatchSetKey, OpaqueNoLightmap3dBinKey,
@@ -19,25 +23,30 @@ use bevy::core_pipeline::prepass::{
 use bevy::ecs::query::{QueryItem, ROQueryItem};
 use bevy::ecs::system::SystemParamItem;
 use bevy::ecs::system::lifetimeless::{Read, SRes};
+use bevy::material::MaterialProperties;
+use bevy::material::key::{ErasedMaterialKey, ErasedMaterialPipelineKey, ErasedMeshPipelineKey};
 use bevy::math::Affine3A;
 use bevy::mesh::{
     Mesh, MeshVertexBufferLayoutRef, MeshVertexBufferLayouts, PrimitiveTopology, VertexBufferLayout,
 };
 use bevy::pbr::{
-    LightEntity, LightKeyCache, MeshPipeline, MeshPipelineKey, PrepassPipeline,
-    SetMeshViewBindGroup, SetMeshViewBindingArrayBindGroup, SetPrepassViewBindGroup,
-    SetPrepassViewEmptyBindGroup, Shadow, ShadowBatchSetKey, ShadowBinKey, ViewKeyCache,
-    ViewKeyPrepassCache, init_prepass_pipeline,
+    LightEntity, LightKeyCache, MATERIAL_BIND_GROUP_INDEX, MaterialFragmentShader,
+    MaterialPipeline, MaterialVertexShader, MeshPipeline, MeshPipelineKey, PreparedMaterial,
+    PrepassPipeline, SetMeshViewBindGroup, SetMeshViewBindingArrayBindGroup,
+    SetPrepassViewBindGroup, SetPrepassViewEmptyBindGroup, Shadow, ShadowBatchSetKey, ShadowBinKey,
+    ViewKeyCache, ViewKeyPrepassCache, alpha_mode_pipeline_key, init_prepass_pipeline,
 };
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
+use bevy::render::erased_render_asset::ErasedRenderAssets;
 use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
+use bevy::render::material_bind_groups::MaterialBindGroupAllocators;
 use bevy::render::mesh::allocator::MeshSlabs;
 use bevy::render::render_asset::RenderAssets;
 use bevy::render::render_phase::{
     AddRenderCommand, BinnedPhaseItem, BinnedRenderPhase, BinnedRenderPhaseType, DrawFunctions,
-    InputUniformIndex, PhaseItem, RenderCommand, RenderCommandResult, SetItemPipeline,
-    TrackedRenderPass, ViewBinnedRenderPhases,
+    InputUniformIndex, PhaseItem, PhaseItemExtraIndex, RenderCommand, RenderCommandResult,
+    SetItemPipeline, TrackedRenderPass, ViewBinnedRenderPhases, ViewSortedRenderPhases,
 };
 use bevy::render::render_resource::binding_types::{
     sampler, storage_buffer_read_only_sized, texture_2d, texture_2d_array, uniform_buffer,
@@ -60,19 +69,34 @@ use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::{Shader, ShaderDefVal};
 
 use super::atlas::{AtlasLayout, AtlasTexture, GpuTerrainAtlas, TerrainAtlas};
-use crate::core::ground::{OVERVIEW_STRIDE, SAMPLES_PER_METER, TILE_PIXELS};
+use crate::core::ground::{
+    OVERVIEW_STRIDE, PaintMap, SAMPLES_PER_METER, TILE_PIXELS, TileAt, TileVersion,
+};
+use crate::core::render::world::cover::{CoverMaterial, SHORE_REACH, SheetOn};
 use crate::core::units::GROUND_ORIGIN;
 use crate::core::vfx::shader::weather_helpers;
 
 /// The cells along a patch's side: a patch is a grid of a point more than this each way.
 pub const PATCH_CELLS: u32 = 128;
 
-/// The ground a terrain draws: the patches standing, and what its ground is painted with.
+/// The ground a terrain draws: the patches standing, what its ground is painted with, and the
+/// sheets its covers lay over it.
 #[derive(Component, Clone)]
-#[require(TerrainAtlas)]
+#[require(TerrainAtlas, SheetPatches)]
 pub struct GroundDraw {
     pub patches: Arc<[GroundPatch]>,
     pub paint: GroundPaint,
+    pub sheets: Arc<[GroundSheet]>,
+}
+
+/// A cover's sheet over the ground, where `terrain`, the terrain's place among the area's, paints
+/// it: lying on what `on` says, in the terrain's `color`, drawn with its cover's `material`.
+#[derive(Clone, Debug)]
+pub struct GroundSheet {
+    pub terrain: u8,
+    pub on: SheetOn,
+    pub color: LinearRgba,
+    pub material: Handle<CoverMaterial>,
 }
 
 /// What a terrain's ground is painted with: the terrains' pictures as one stack, white at the
@@ -147,12 +171,14 @@ pub struct GroundDrawPlugin;
 impl Plugin for GroundDrawPlugin {
     fn build(&self, app: &mut App) {
         bevy::shader::load_shader_library!(app, "terrain.wesl");
+        bevy::shader::load_shader_library!(app, "sheet.wesl");
         bevy::asset::embedded_asset!(app, "terrain_depth.wesl");
         let _ = app
             .world_mut()
             .resource_mut::<Assets<Shader>>()
             .insert(GROUND_LIT_SHADER.id(), ground_lit_shader());
-        app.add_plugins(ExtractComponentPlugin::<GroundDraw>::default());
+        app.add_plugins(ExtractComponentPlugin::<GroundDraw>::default())
+            .add_systems(PostUpdate, find_sheet_patches);
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
@@ -161,25 +187,30 @@ impl Plugin for GroundDrawPlugin {
             .add_render_command::<Opaque3d, DrawLitGround>()
             .add_render_command::<Opaque3dPrepass, DrawGroundDepth>()
             .add_render_command::<Shadow, DrawGroundDepth>()
+            .add_render_command::<Transparent3d, DrawGroundSheets>()
             .add_systems(RenderStartup, start.after(init_prepass_pipeline))
             .add_systems(
                 Render,
                 (
-                    (prepare_grounds, bind_grounds)
+                    (prepare_grounds, bind_grounds, bind_sheets)
                         .chain()
                         .in_set(RenderSystems::PrepareBindGroups),
-                    (queue_lit, queue_prepass, queue_shadows).in_set(RenderSystems::Queue),
+                    (queue_lit, queue_prepass, queue_shadows, queue_sheets)
+                        .in_set(RenderSystems::Queue),
                 ),
             );
     }
 }
 
-/// A terrain's ground as the render world draws it, while it is shown.
+/// A terrain's ground as the render world draws it, while it is shown: with its sheets, and the
+/// patches each sheet is drawn over, by their place among `patches`.
 #[derive(Component, Clone)]
 pub struct ExtractedGround {
     patches: Arc<[GroundPatch]>,
     paint: GroundPaint,
     layers: RenderLayers,
+    sheets: Arc<[GroundSheet]>,
+    sheet_patches: Arc<[Vec<u32>]>,
 }
 
 impl SyncComponent<RenderApp> for GroundDraw {
@@ -189,6 +220,7 @@ impl SyncComponent<RenderApp> for GroundDraw {
 impl ExtractComponent<RenderApp> for GroundDraw {
     type QueryData = (
         &'static GroundDraw,
+        &'static SheetPatches,
         Option<&'static RenderLayers>,
         &'static InheritedVisibility,
     );
@@ -196,14 +228,160 @@ impl ExtractComponent<RenderApp> for GroundDraw {
     type Out = ExtractedGround;
 
     fn extract_component(
-        (draw, layers, visible): QueryItem<'_, '_, Self::QueryData>,
+        (draw, found, layers, visible): QueryItem<'_, '_, Self::QueryData>,
     ) -> Option<ExtractedGround> {
+        let current =
+            Arc::ptr_eq(&found.over, &draw.patches) && found.lists.len() == draw.sheets.len();
         visible.get().then(|| ExtractedGround {
             patches: draw.patches.clone(),
             paint: draw.paint.clone(),
             layers: layers.cloned().unwrap_or_default(),
+            sheets: if current {
+                draw.sheets.clone()
+            } else {
+                Arc::new([])
+            },
+            sheet_patches: found.lists.clone(),
         })
     }
+}
+
+/// The patches each of a terrain's sheets is drawn over, found for the patches `over`, and which
+/// terrains paint each tile under them, as its paint was read at its version.
+#[derive(Component)]
+pub struct SheetPatches {
+    over: Arc<[GroundPatch]>,
+    lists: Arc<[Vec<u32>]>,
+    tiles: HashMap<TileAt, (TileVersion, Terrains)>,
+}
+
+impl Default for SheetPatches {
+    fn default() -> SheetPatches {
+        SheetPatches {
+            over: Arc::new([]),
+            lists: Arc::new([]),
+            tiles: HashMap::default(),
+        }
+    }
+}
+
+/// Which of the area's terrains paint somewhere, a bit each.
+#[derive(Clone, Copy, Default, PartialEq, Eq)]
+struct Terrains([u64; 4]);
+
+impl Terrains {
+    fn of(paint: &[u8]) -> Terrains {
+        let mut terrains = Terrains::default();
+        for &terrain in paint {
+            terrains.0[usize::from(terrain / 64)] |= 1 << (terrain % 64);
+        }
+        terrains
+    }
+
+    fn with(self, other: Terrains) -> Terrains {
+        Terrains(std::array::from_fn(|word| self.0[word] | other.0[word]))
+    }
+
+    fn contains(self, terrain: u8) -> bool {
+        self.0[usize::from(terrain / 64)] & (1 << (terrain % 64)) != 0
+    }
+}
+
+/// Finds the patches each terrain's sheets are drawn over: those over a tile its terrain paints,
+/// as the tile's paint is read now: from the tile where it has loaded, else from the overview,
+/// which holds no terrain the tile doesn't. Found again whenever the patches or the paint under
+/// them change.
+fn find_sheet_patches(mut grounds: Query<(&GroundDraw, &TerrainAtlas, &mut SheetPatches)>) {
+    for (draw, atlas, mut found) in &mut grounds {
+        let Some(paint) = atlas.paint() else {
+            continue;
+        };
+        let found = found.bypass_change_detection();
+        let mut changed =
+            !Arc::ptr_eq(&found.over, &draw.patches) || found.lists.len() != draw.sheets.len();
+        let tiles: Vec<(u32, u32, u32, u32)> = draw
+            .patches
+            .iter()
+            .map(|patch| tiles_under(patch, paint))
+            .collect();
+        for &(first_column, first_row, past_column, past_row) in &tiles {
+            for row in first_row..past_row {
+                for column in first_column..past_column {
+                    let tile = TileAt { column, row };
+                    let version = paint.version(tile);
+                    if found
+                        .tiles
+                        .get(&tile)
+                        .is_some_and(|(held, _)| *held == version)
+                    {
+                        continue;
+                    }
+                    found.tiles.insert(tile, (version, painted_in(paint, tile)));
+                    changed = true;
+                }
+            }
+        }
+        if !changed {
+            continue;
+        }
+        let under: Vec<Terrains> = tiles
+            .iter()
+            .map(|&(first_column, first_row, past_column, past_row)| {
+                (first_row..past_row)
+                    .flat_map(|row| {
+                        (first_column..past_column).map(move |column| TileAt { column, row })
+                    })
+                    .filter_map(|tile| found.tiles.get(&tile).map(|(_, terrains)| *terrains))
+                    .fold(Terrains::default(), Terrains::with)
+            })
+            .collect();
+        found.lists = draw
+            .sheets
+            .iter()
+            .map(|sheet| {
+                (0..under.len() as u32)
+                    .filter(|&patch| under[patch as usize].contains(sheet.terrain))
+                    .collect()
+            })
+            .collect();
+        found.over = draw.patches.clone();
+    }
+}
+
+/// The tiles of paint a sheet over `patch` reads, from the first column and row of them to the
+/// ones past the last: the pixels round each of its points.
+fn tiles_under(patch: &GroundPatch, paint: &PaintMap) -> (u32, u32, u32, u32) {
+    let (columns, rows) = paint.pixels();
+    let span = PATCH_CELLS * patch.stride;
+    let tile = |pixel: u32, pixels: u32| pixel.min(pixels.saturating_sub(1)) / TILE_PIXELS;
+    let (first, last) = (
+        (
+            patch.first.x.saturating_sub(1),
+            patch.first.y.saturating_sub(1),
+        ),
+        (patch.first.x + span, patch.first.y + span),
+    );
+    (
+        tile(first.0, columns),
+        tile(first.1, rows),
+        tile(last.0, columns) + 1,
+        tile(last.1, rows) + 1,
+    )
+}
+
+/// The terrains painting `tile`, as its paint is read now.
+fn painted_in(paint: &PaintMap, tile: TileAt) -> Terrains {
+    if paint.is_loaded(tile) {
+        let (columns, rows) = paint.pixels();
+        let first = (tile.column * TILE_PIXELS, tile.row * TILE_PIXELS);
+        let across = TILE_PIXELS.min(columns - first.0);
+        let down = TILE_PIXELS.min(rows - first.1);
+        return Terrains::of(&paint.block((i64::from(first.0), i64::from(first.1)), across, down));
+    }
+    let ((first_column, first_row), columns, rows) = paint.overview_span(tile);
+    let columns: Vec<u32> = (first_column..first_column + columns).collect();
+    let rows: Vec<u32> = (first_row..first_row + rows).collect();
+    Terrains::of(&paint.overview_at(&columns, &rows))
 }
 
 /// Lights the ground in the main pass, with the view's lights, shadows, ambient occlusion and fog.
@@ -223,7 +401,16 @@ type DrawGroundDepth = (
     DrawGround<false>,
 );
 
-/// The bind group of the ground's patches and atlas, after the view's two, and of its paint.
+/// Draws each of a terrain's sheets over its patches in the main pass, lit as the view's lights,
+/// shadows, ambient occlusion and fog light them, each with its cover's material.
+type DrawGroundSheets = (
+    SetMeshViewBindGroup<0>,
+    SetMeshViewBindingArrayBindGroup<1>,
+    DrawSheets,
+);
+
+/// The bind group of the ground's patches and atlas, after the view's two, and of its paint; a
+/// sheet's own with the ground's in its place, and its cover's material after.
 const GROUND_GROUP: usize = 2;
 const PAINT_GROUP: usize = 3;
 /// The points of the grid along each side of a patch.
@@ -279,8 +466,42 @@ struct GroundBuffers {
     patches: StorageBuffer<Vec<GroundPatch>>,
     shown: RawBufferVec<u32>,
     ground: UniformBuffer<TerrainGround>,
-    /// The instances each view draws, among `shown`.
+    /// The instances each view draws, among `shown`: of the ground, and of each sheet.
     views: HashMap<RetainedViewEntity, Range<u32>>,
+    sheet_views: HashMap<RetainedViewEntity, Vec<Range<u32>>>,
+}
+
+/// What a sheet tells its shader of itself.
+#[derive(ShaderType, Clone, Copy, Debug, Default)]
+struct SheetUniform {
+    color: Vec4,
+    terrain: u32,
+    on_water: u32,
+    shore_reach: f32,
+}
+
+/// A terrain's sheets as they are bound to draw, each once its cover's material is on the GPU.
+#[derive(Component)]
+struct SheetBindings(Vec<Option<BoundSheet>>);
+
+/// A sheet's bind group, its cover's material's, and how its material is drawn.
+struct BoundSheet {
+    sheet: BindGroup,
+    material: BindGroup,
+    properties: Arc<MaterialProperties>,
+}
+
+/// How the sheets are drawn: bevy's mesh pipeline, as a material draws a mesh, with the sheets'
+/// bindings where a mesh's would be, and the pipeline of every sheet's material for every view
+/// it has been drawn in, by the material's key.
+#[derive(Resource)]
+struct SheetPipeline {
+    material: MaterialPipeline,
+    sheets: BindGroupLayoutDescriptor,
+    layout: MeshVertexBufferLayoutRef,
+    built: HashMap<(MeshPipelineKey, ErasedMaterialKey), CachedRenderPipelineId>,
+    /// The pipeline of each sheet of each terrain each view draws, this frame.
+    drawn: HashMap<(RetainedViewEntity, Entity), Vec<Option<CachedRenderPipelineId>>>,
 }
 
 /// A terrain's bind groups: its patches and atlas, and its paint once its pictures are on the
@@ -531,6 +752,45 @@ fn start(
             ),
         ),
     );
+    let sheets = BindGroupLayoutDescriptor::new(
+        "ground_sheet",
+        &BindGroupLayoutEntries::with_indices(
+            stages,
+            (
+                (100, uniform_buffer::<TerrainGround>(false)),
+                (101, storage_buffer_read_only_sized(false, None)),
+                (102, storage_buffer_read_only_sized(false, None)),
+                (103, texture_2d_array(TextureSampleType::Uint)),
+                (104, texture_2d(TextureSampleType::Uint)),
+                (105, texture_2d(TextureSampleType::Uint)),
+                (106, texture_2d_array(TextureSampleType::Uint)),
+                (107, texture_2d(TextureSampleType::Uint)),
+                (108, texture_2d_array(TextureSampleType::Uint)),
+                (109, texture_2d(TextureSampleType::Uint)),
+                (110, texture_2d_array(TextureSampleType::Uint)),
+                (111, texture_2d(TextureSampleType::Uint)),
+                (112, uniform_buffer::<SheetUniform>(false)),
+            ),
+        ),
+    );
+    let sheet_mesh = Mesh::new(
+        PrimitiveTopology::TriangleList,
+        RenderAssetUsages::RENDER_WORLD,
+    )
+    .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, vec![[0.0f32; 3]])
+    .with_inserted_attribute(Mesh::ATTRIBUTE_NORMAL, vec![[0.0f32; 3]])
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.0f32; 2]])
+    .with_inserted_attribute(Mesh::ATTRIBUTE_UV_1, vec![[0.0f32; 2]])
+    .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, vec![[0.0f32; 4]]);
+    commands.insert_resource(SheetPipeline {
+        material: MaterialPipeline {
+            mesh_pipeline: mesh.clone(),
+        },
+        sheets,
+        layout: sheet_mesh.get_mesh_vertex_buffer_layout(&mut layouts),
+        built: HashMap::default(),
+        drawn: HashMap::default(),
+    });
     commands.insert_resource(GroundPipeline {
         mesh: mesh.clone(),
         prepass_moving: prepass.view_layout_motion_vectors.clone(),
@@ -589,21 +849,41 @@ fn prepare_grounds(
         buffers.ground.set(TerrainGround::of(atlas.layout));
         buffers.ground.write_buffer(&device, &queue);
         buffers.views.clear();
+        buffers.sheet_views.clear();
         buffers.shown.clear();
         for (view, frustum, layers, light) in &views {
             if !layers.unwrap_or_default().intersects(&ground.layers) {
                 continue;
             }
+            let seen: Vec<bool> = buffers
+                .bounds
+                .iter()
+                .map(|bounds| frustum.intersects_obb(bounds, &Affine3A::IDENTITY, !light, light))
+                .collect();
             let first = buffers.shown.len() as u32;
-            for (index, bounds) in buffers.bounds.iter().enumerate() {
-                if frustum.intersects_obb(bounds, &Affine3A::IDENTITY, !light, light) {
-                    buffers.shown.push(index as u32);
-                }
+            for (index, _) in seen.iter().enumerate().filter(|(_, seen)| **seen) {
+                buffers.shown.push(index as u32);
             }
             let past = buffers.shown.len() as u32;
             if past > first {
                 buffers.views.insert(view.retained_view_entity, first..past);
             }
+            if light || ground.sheets.is_empty() {
+                continue;
+            }
+            let mut sheets = Vec::with_capacity(ground.sheets.len());
+            for patches in ground.sheet_patches.iter() {
+                let first = buffers.shown.len() as u32;
+                for &patch in patches {
+                    if seen.get(patch as usize).copied().unwrap_or(false) {
+                        buffers.shown.push(patch);
+                    }
+                }
+                sheets.push(first..buffers.shown.len() as u32);
+            }
+            buffers
+                .sheet_views
+                .insert(view.retained_view_entity, sheets);
         }
         if buffers.shown.is_empty() {
             buffers.shown.push(0);
@@ -624,6 +904,7 @@ impl GroundBuffers {
             shown: RawBufferVec::new(BufferUsages::STORAGE),
             ground: UniformBuffer::default(),
             views: HashMap::default(),
+            sheet_views: HashMap::default(),
         }
     }
 
@@ -925,5 +1206,270 @@ fn queue_shadows(
                 },
             )
         });
+    }
+}
+
+/// Binds each terrain's sheets for their draws: the ground's patches and atlas with what each
+/// sheet tells its shader of itself, and its cover's material once that is on the GPU.
+#[allow(clippy::too_many_arguments)]
+fn bind_sheets(
+    mut commands: Commands,
+    device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
+    cache: Res<PipelineCache>,
+    pipeline: Option<Res<SheetPipeline>>,
+    materials: Res<ErasedRenderAssets<PreparedMaterial>>,
+    allocators: Res<MaterialBindGroupAllocators>,
+    grounds: Query<(Entity, &ExtractedGround, &GpuTerrainAtlas, &GroundBuffers)>,
+    mut uniforms: Local<HashMap<Entity, Vec<UniformBuffer<SheetUniform>>>>,
+) {
+    let Some(pipeline) = pipeline else {
+        return;
+    };
+    uniforms.retain(|entity, _| grounds.contains(*entity));
+    let layout = cache.get_bind_group_layout(&pipeline.sheets);
+    let allocator = allocators.get(&TypeId::of::<CoverMaterial>());
+    for (entity, ground, atlas, buffers) in &grounds {
+        let (Some(terrain), Some(patches), Some(shown)) = (
+            buffers.ground.binding(),
+            buffers.patches.binding(),
+            buffers.shown.buffer(),
+        ) else {
+            continue;
+        };
+        let held = uniforms.entry(entity).or_default();
+        held.resize_with(ground.sheets.len(), UniformBuffer::default);
+        let bound = ground
+            .sheets
+            .iter()
+            .zip(held.iter_mut())
+            .map(|(sheet, uniform)| {
+                uniform.set(SheetUniform {
+                    color: sheet.color.to_vec4(),
+                    terrain: u32::from(sheet.terrain),
+                    on_water: u32::from(sheet.on == SheetOn::Water),
+                    shore_reach: SHORE_REACH.0,
+                });
+                uniform.write_buffer(&device, &queue);
+                let prepared = materials.get(sheet.material.id())?;
+                let material = allocator?
+                    .get(prepared.binding.group)?
+                    .bind_group()?
+                    .clone();
+                let sheet = device.create_bind_group(
+                    "ground_sheet",
+                    &layout,
+                    &BindGroupEntries::with_indices((
+                        (100, terrain.clone()),
+                        (101, patches.clone()),
+                        (102, shown.as_entire_binding()),
+                        (103, atlas.view(AtlasTexture::Heights)),
+                        (104, atlas.view(AtlasTexture::OverviewHeights)),
+                        (105, atlas.view(AtlasTexture::Table)),
+                        (106, atlas.view(AtlasTexture::Paint)),
+                        (107, atlas.view(AtlasTexture::OverviewPaint)),
+                        (108, atlas.view(AtlasTexture::Water)),
+                        (109, atlas.view(AtlasTexture::OverviewWater)),
+                        (110, atlas.view(AtlasTexture::Shore)),
+                        (111, atlas.view(AtlasTexture::OverviewShore)),
+                        (112, uniform.binding()?),
+                    )),
+                );
+                Some(BoundSheet {
+                    sheet,
+                    material,
+                    properties: prepared.properties.clone(),
+                })
+            })
+            .collect();
+        commands.entity(entity).insert(SheetBindings(bound));
+    }
+}
+
+/// Queues each terrain's sheets into the transparent pass of every view that shows any of them,
+/// on its material's pipeline for the view. A sheet lies under whatever blended stands on it, so
+/// the sheets are drawn before everything else the pass blends.
+#[allow(clippy::too_many_arguments)]
+fn queue_sheets(
+    cache: Res<PipelineCache>,
+    pipeline: Option<ResMut<SheetPipeline>>,
+    draws: Res<DrawFunctions<Transparent3d>>,
+    mut phases: ResMut<ViewSortedRenderPhases<Transparent3d>>,
+    keys: Res<ViewKeyCache>,
+    views: Query<&ExtractedView>,
+    grounds: Query<(Entity, &MainEntity, &GroundBuffers, &SheetBindings)>,
+) {
+    let Some(mut pipeline) = pipeline else {
+        return;
+    };
+    let pipeline = &mut *pipeline;
+    pipeline.drawn.clear();
+    let draw_function = draws.read().id::<DrawGroundSheets>();
+    for view in &views {
+        let (Some(phase), Some(&key)) = (
+            phases.get_mut(&view.retained_view_entity),
+            keys.get(&view.retained_view_entity),
+        ) else {
+            continue;
+        };
+        for (entity, &main, buffers, bindings) in &grounds {
+            let Some(ranges) = buffers.sheet_views.get(&view.retained_view_entity) else {
+                continue;
+            };
+            let ids: Vec<Option<CachedRenderPipelineId>> = bindings
+                .0
+                .iter()
+                .zip(ranges)
+                .map(|(bound, range)| {
+                    let bound = bound.as_ref().filter(|_| !range.is_empty())?;
+                    pipeline.specialize(&cache, key, &bound.properties)
+                })
+                .collect();
+            let Some(first) = ids.iter().flatten().next().copied() else {
+                continue;
+            };
+            pipeline
+                .drawn
+                .insert((view.retained_view_entity, entity), ids);
+            phase.add_transient(Transparent3d {
+                sorting_info: TransparentSortingInfo3d::Sorted {
+                    mesh_center: Vec3::ZERO,
+                    depth_bias: f32::NEG_INFINITY,
+                },
+                distance: 0.0,
+                pipeline: first,
+                entity: (entity, main),
+                draw_function,
+                batch_range: 0..1,
+                extra_index: PhaseItemExtraIndex::None,
+                indexed: true,
+            });
+        }
+    }
+}
+
+impl SheetPipeline {
+    /// The pipeline drawing a sheet of the material `properties` describes in a view of `view`'s
+    /// key, queued the first time it is asked for.
+    fn specialize(
+        &mut self,
+        cache: &PipelineCache,
+        view: MeshPipelineKey,
+        properties: &MaterialProperties,
+    ) -> Option<CachedRenderPipelineId> {
+        let key = (view, properties.material_key.clone());
+        if let Some(&id) = self.built.get(&key) {
+            return Some(id);
+        }
+        let descriptor = self.descriptor(view, properties)?;
+        let id = cache.queue_render_pipeline(descriptor);
+        self.built.insert(key, id);
+        Some(id)
+    }
+
+    /// The pipeline bevy would draw a mesh with positions, normals, both uvs and colours of the
+    /// material in, its shader drawing a sheet instead: from the shared grid, with the sheet's
+    /// bindings where the mesh's would be.
+    fn descriptor(
+        &self,
+        view: MeshPipelineKey,
+        properties: &MaterialProperties,
+    ) -> Option<RenderPipelineDescriptor> {
+        let mesh_key =
+            view | MeshPipelineKey::from_primitive_topology_and_strip_index(
+                PrimitiveTopology::TriangleList,
+                None,
+            ) | properties
+                .mesh_pipeline_key_bits
+                .downcast::<MeshPipelineKey>()
+                | alpha_mode_pipeline_key(
+                    properties.alpha_mode,
+                    &Msaa::from_samples(view.msaa_samples()),
+                );
+        let mut descriptor = self
+            .material
+            .mesh_pipeline
+            .specialize(mesh_key, &self.layout)
+            .ok()?;
+        let group = ShaderDefVal::UInt(
+            "MATERIAL_BIND_GROUP".into(),
+            MATERIAL_BIND_GROUP_INDEX as u32,
+        );
+        let mut defs = vec![group, "SHEET_PATCH".into()];
+        if properties.bindless {
+            defs.push("BINDLESS".into());
+        }
+        if let Some(shader) = properties.get_shader(MaterialVertexShader) {
+            descriptor.vertex.shader = shader;
+        }
+        let fragment = descriptor.fragment.as_mut()?;
+        if let Some(shader) = properties.get_shader(MaterialFragmentShader) {
+            fragment.shader = shader;
+        }
+        descriptor.layout.insert(
+            MATERIAL_BIND_GROUP_INDEX,
+            properties.material_layout.clone()?,
+        );
+        if let Some(specialize) = properties.user_specialize {
+            let key = ErasedMaterialPipelineKey {
+                mesh_key: ErasedMeshPipelineKey::new(mesh_key),
+                material_key: properties.material_key.clone(),
+                type_id: TypeId::of::<CoverMaterial>(),
+            };
+            specialize(&self.material, &mut descriptor, &self.layout, key).ok()?;
+        }
+        descriptor.label = Some("ground_sheet".into());
+        descriptor.layout[GROUND_GROUP] = self.sheets.clone();
+        descriptor.vertex.buffers = vec![grid_layout()];
+        descriptor.vertex.shader_defs.extend(defs.iter().cloned());
+        descriptor.fragment.as_mut()?.shader_defs.extend(defs);
+        Some(descriptor)
+    }
+}
+
+/// Draws a terrain's sheets over the patches the view shows each on, each on its material's
+/// pipeline with its own bindings and its material's.
+struct DrawSheets;
+
+impl<P: PhaseItem> RenderCommand<P> for DrawSheets {
+    type Param = (SRes<GroundGrid>, SRes<SheetPipeline>, SRes<PipelineCache>);
+    type ViewQuery = Read<ExtractedView>;
+    type ItemQuery = (Read<GroundBuffers>, Read<SheetBindings>);
+
+    fn render<'w>(
+        item: &P,
+        view: ROQueryItem<'w, '_, Self::ViewQuery>,
+        sheets: Option<ROQueryItem<'w, '_, Self::ItemQuery>>,
+        (grid, pipeline, cache): SystemParamItem<'w, '_, Self::Param>,
+        pass: &mut TrackedRenderPass<'w>,
+    ) -> RenderCommandResult {
+        let (grid, pipeline, cache) =
+            (grid.into_inner(), pipeline.into_inner(), cache.into_inner());
+        let (Some((buffers, bindings)), Some(vertices), Some(indices)) =
+            (sheets, grid.vertices.buffer(), grid.indices.buffer())
+        else {
+            return RenderCommandResult::Skip;
+        };
+        let view = view.retained_view_entity;
+        let (Some(ranges), Some(ids)) = (
+            buffers.sheet_views.get(&view),
+            pipeline.drawn.get(&(view, item.entity())),
+        ) else {
+            return RenderCommandResult::Skip;
+        };
+        pass.set_vertex_buffer(0, vertices.slice(..));
+        pass.set_index_buffer(indices.slice(..), IndexFormat::Uint32);
+        for ((bound, range), id) in bindings.0.iter().zip(ranges).zip(ids) {
+            let (Some(bound), Some(drawn)) =
+                (bound, id.and_then(|id| cache.get_render_pipeline(id)))
+            else {
+                continue;
+            };
+            pass.set_render_pipeline(drawn);
+            pass.set_bind_group(GROUND_GROUP, &bound.sheet, &[]);
+            pass.set_bind_group(PAINT_GROUP, &bound.material, &[]);
+            pass.draw_indexed(0..grid.indices.len() as u32, 0, range.clone());
+        }
+        RenderCommandResult::Success
     }
 }

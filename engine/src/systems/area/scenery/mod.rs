@@ -151,6 +151,9 @@ pub fn spawn(
     }
     let terrain = spawn_terrain(world, content, area, &look, root);
     let covers = Covers::new(world, content, area);
+    if let Some(mut draw) = world.get_mut::<GroundDraw>(terrain) {
+        draw.sheets = covers.sheets().into();
+    }
     let planner = {
         let (content, area) = (content.clone(), area.clone());
         let pieces = covers.pieces(&area.paint);
@@ -1286,6 +1289,7 @@ fn spawn_terrain(
             GroundDraw {
                 patches: Arc::new([]),
                 paint,
+                sheets: Arc::new([]),
             },
             atlas,
             pictures,

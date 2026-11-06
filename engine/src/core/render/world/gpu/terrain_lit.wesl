@@ -10,13 +10,8 @@ import bevy_pbr::render::{
 import bevy_pbr::render::mesh_view_bindings::screen_space_ambient_occlusion_texture;
 @if(SCREEN_SPACE_AMBIENT_OCCLUSION)
 import bevy_pbr::ssao::utils::ssao_multibounce;
-import engine::core::render::world::gpu::terrain::{ground, ground_point, table};
+import engine::core::render::world::gpu::terrain::{ground, ground_point, paint_of};
 import engine::core::render::world::shade::lighting;
-
-// What the ground is painted with: the paint of the tiles held in detail, a layer a slot, and the
-// overview's.
-@group(2) @binding(106) var paints: texture_2d_array<u32>;
-@group(2) @binding(107) var overview_paint: texture_2d<u32>;
 
 // The terrains' pictures as one stack; for each terrain its colour and tile in the first row of
 // `layers`, its picture's place in the stack in the second and how it looks soaked in the third;
@@ -116,17 +111,4 @@ fn terrain_at(corner: vec2<f32>, step: vec2<f32>, stride: u32, at: vec2<f32>) ->
     let picture = i32(textureLoad(layers, vec2<i32>(terrain, 1), 0).r);
     let wet = textureLoad(layers, vec2<i32>(terrain, 2), 0).xyz;
     return Laid(look.rgb * textureSample(pictures, pictures_sampler, at / look.w, picture).rgb, wet);
-}
-
-// The terrain painting the pixel `pixel`: from the slot of the tile it lies in where one holds it,
-// else the overview's nearest.
-fn paint_of(pixel: vec2<u32>) -> u32 {
-    let tile = min(pixel / ground.tile_pixels, ground.tiles - 1u);
-    let slot = i32(textureLoad(table, tile, 0).r) - 1;
-    if slot >= 0 {
-        let local = pixel - tile * ground.tile_pixels + 1u;
-        return textureLoad(paints, local, slot, 0).r;
-    }
-    let texel = pixel / ground.overview_span;
-    return textureLoad(overview_paint, min(texel, ground.paint_overview - 1u), 0).r;
 }
