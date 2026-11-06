@@ -613,12 +613,6 @@ impl PropPipeline {
             if let Some(fragment) = descriptor.fragment.as_mut() {
                 fragment.shader = self.shader.clone();
             }
-        } else {
-            let defs: [ShaderDefVal; 2] = ["MERGED".into(), "PROP_INSTANCE".into()];
-            descriptor.vertex.shader_defs.extend(defs.iter().cloned());
-            if let Some(fragment) = descriptor.fragment.as_mut() {
-                fragment.shader_defs.extend(defs);
-            }
         }
         descriptor.layout[INSTANCE_GROUP] = self.instances.clone();
         descriptor

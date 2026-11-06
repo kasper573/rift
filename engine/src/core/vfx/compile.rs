@@ -142,15 +142,7 @@ fn passes(stage: Stage) -> Vec<(&'static str, Vec<ShaderDefVal>)> {
             ("blades prepass", with(&prepass, &["ROOTED"])),
             ("sheet", with(&main, &["SHEET_PATCH", "VERTEX_UVS_B"])),
         ],
-        Stage::Prop => vec![
-            ("main", main.clone()),
-            ("prepass", prepass.clone()),
-            ("instanced", with(&main, &["MERGED", "PROP_INSTANCE"])),
-            (
-                "instanced prepass",
-                with(&prepass, &["MERGED", "PROP_INSTANCE"]),
-            ),
-        ],
+        Stage::Prop => vec![("main", main.clone()), ("prepass", prepass.clone())],
         Stage::Surface | Stage::Sky | Stage::Rain => vec![("main", main)],
         Stage::Ground | Stage::Billboard | Stage::Screen | Stage::Text => Vec::new(),
     }

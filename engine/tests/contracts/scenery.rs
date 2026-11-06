@@ -22,11 +22,9 @@ use engine::core::ground;
 use engine::core::math::Pos;
 use engine::core::render::camera::Lens;
 use engine::core::render::camera::WorldPicture;
-use engine::core::render::video::{VideoPreferences, WorldRenderer};
 use engine::core::render::world::cover::CoverMaterial;
 use engine::core::render::world::gpu::draw::{GroundDraw, PATCH_CELLS};
 use engine::core::render::world::haze::Haze;
-use engine::core::render::world::material::WorldMaterial;
 use engine::core::render::world::sky::Daylight;
 use engine::core::render::world::{self, WorldScenePlugin};
 use engine::core::units::{Degrees, MeterSize, Meters};
@@ -190,10 +188,11 @@ fn settle(app: &mut App, done: impl Fn(&mut App) -> bool) -> bool {
     true
 }
 
-/// What stands of an area follows the view: its props and the copies its covers strew stand
-/// within the view's reach and go as the view leaves them behind, its ground stands finer near the
-/// view than far from it, and what the view takes in from afar stands merged into a few meshes, so
-/// a long field costs what the view takes in, not what the field holds.
+/// What stands of an area follows the view: its props stand in the scenery's arena chunk by chunk
+/// as the view reaches them, counted as missing until they do, and the copies its covers strew
+/// stand within the view's reach; both go as the view leaves them behind. Its ground stands finer
+/// near the view than far from it, and the covers the view takes in from afar stand merged into a
+/// few meshes, so a long field costs what the view takes in, not what the field holds.
 #[test]
 fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves() {
     let folder = tempfile::tempdir().expect("a scratch folder");
@@ -206,14 +205,20 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
     let content = app.world().resource::<Content>().clone();
     let stood = scenery::spawn(app.world_mut(), &content, &area, RenderLayers::default());
     let reach = Meters(64.0);
-    scenery::view_from(
-        app.world_mut(),
-        stood,
-        overhead(Pos::new(16.0, 8.0), reach, 10.0),
-    );
-    assert!(settle(&mut app, |app| {
-        !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
-    }));
+    let view = |app: &mut App, sight: Sight| {
+        scenery::view_from(app.world_mut(), stood, sight);
+        assert!(settle(app, |app| {
+            !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
+        }));
+        assert_eq!(
+            scenery::missing(app.world()),
+            0,
+            "the view's props all stand"
+        );
+        scenery::arena_props(app.world(), stood)
+    };
+
+    let tufts = view(&mut app, overhead(Pos::new(16.0, 8.0), reach, 10.0));
     let west = held(&app);
     let (near, far) = (
         ground_stride_at(&mut app, 16.0),
@@ -224,107 +229,50 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
         "the ground stands coarser far from the view: a sample in {far} far off, in {near} near"
     );
     assert_eq!(
-        (
-            tufts_standing(&mut app),
-            pebbles_between(&mut app, 256.0, 480.0)
-        ),
+        (tufts, pebbles_between(&mut app, 256.0, 480.0)),
         (0, 0),
         "nothing stands far east of the view"
     );
 
-    scenery::view_from(
-        app.world_mut(),
-        stood,
-        overhead(Pos::new(496.0, 8.0), reach, 10.0),
-    );
-    assert!(settle(&mut app, |app| {
-        !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
-    }));
-    assert_eq!(
-        tufts_standing(&mut app),
-        8,
-        "the tufts stand once the view reaches them"
-    );
+    let tufts = view(&mut app, overhead(Pos::new(496.0, 8.0), reach, 10.0));
+    assert_eq!(tufts, 8, "the tufts stand once the view reaches them");
     assert!(
         pebbles_between(&mut app, 432.0, 480.0) > 0,
         "the pebbles strewn east stand once the view reaches them"
     );
 
-    scenery::view_from(
-        app.world_mut(),
-        stood,
-        overhead(Pos::new(16.0, 8.0), reach, 10.0),
-    );
-    assert!(settle(&mut app, |app| {
-        !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
-    }));
-    assert_eq!(held(&app), west, "back west, the tufts are gone again");
-
-    // From so high over the east that a pebble or a tuft spans less than a pixel, neither stands.
-    scenery::view_from(
-        app.world_mut(),
-        stood,
-        overhead(Pos::new(496.0, 8.0), reach, 20_000.0),
-    );
-    assert!(settle(&mut app, |app| {
-        !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
-    }));
+    let tufts = view(&mut app, overhead(Pos::new(16.0, 8.0), reach, 10.0));
     assert_eq!(
-        (
-            tufts_standing(&mut app),
-            pebbles_between(&mut app, 432.0, 480.0)
-        ),
-        (0, 0),
-        "from high above, neither the tufts nor the pebbles stand"
+        (tufts, held(&app)),
+        (0, west),
+        "back west, the tufts and the pebbles are gone again"
     );
 
-    // From high over the east, reaching over the whole field, everything stands merged: no tuft or
-    // pebble in the east stands on its own, while meshes over it hold them. The pebbles merge
-    // wherever the view could turn to see them, so the west, far off the eye, holds them too.
-    scenery::view_from(
-        app.world_mut(),
-        stood,
+    // From so high over the east that a pebble spans less than a pixel, none stands.
+    view(&mut app, overhead(Pos::new(496.0, 8.0), reach, 20_000.0));
+    assert_eq!(
+        pebbles_between(&mut app, 432.0, 480.0),
+        0,
+        "from high above, the pebbles don't stand"
+    );
+
+    // From high over the east, reaching over the whole field, the pebbles stand merged: none in
+    // the east stands on its own, while meshes over it hold them. They merge wherever the view
+    // could turn to see them, so the west, far off the eye, holds them too.
+    let tufts = view(
+        &mut app,
         overhead(Pos::new(476.0, 8.0), Meters(512.0), 300.0),
     );
-    assert!(settle(&mut app, |app| {
-        !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
-    }));
     assert_eq!(
-        (
-            tufts_standing(&mut app),
-            pebbles_between(&mut app, 256.0, 512.0)
-        ),
-        (0, 0),
-        "from high over the east, nothing east stands on its own"
+        (tufts, pebbles_between(&mut app, 256.0, 512.0)),
+        (8, 0),
+        "from high over the east, the tufts stand and no pebble east stands on its own"
     );
     assert!(
-        merged_over::<WorldMaterial>(&mut app, Vec3::new(492.0, 0.0, 8.0))
-            && merged_over::<CoverMaterial>(&mut app, Vec3::new(460.0, 0.0, 8.0)),
-        "the tufts and the pebbles stand merged"
-    );
-    assert!(
-        merged_over::<CoverMaterial>(&mut app, Vec3::new(40.0, 0.0, 8.0)),
+        merged_over::<CoverMaterial>(&mut app, Vec3::new(460.0, 0.0, 8.0))
+            && merged_over::<CoverMaterial>(&mut app, Vec3::new(40.0, 0.0, 8.0)),
         "the pebbles the view could turn to see stand merged"
     );
-
-    // Looking along the field at its middle from as far off as the tufts lie, they stand on their
-    // own seen from beside them, and not from across the middle, where they are as far off the eye
-    // as the field is long.
-    for (eye, tufts) in [(492.0, 8), (20.0, 0)] {
-        scenery::view_from(
-            app.world_mut(),
-            stood,
-            along(Pos::new(256.0, 8.0), eye, Meters(512.0)),
-        );
-        assert!(settle(&mut app, |app| {
-            !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
-        }));
-        assert_eq!(
-            tufts_standing(&mut app),
-            tufts,
-            "seen from {eye} m along the field"
-        );
-    }
 
     scenery::view_from(
         app.world_mut(),
@@ -339,42 +287,6 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
         );
         !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
     }));
-    assert_eq!(
-        (
-            tufts_standing(&mut app),
-            merged_over::<WorldMaterial>(&mut app, Vec3::new(492.0, 0.0, 8.0))
-        ),
-        (8, false),
-        "coming near, the tufts stand on their own again"
-    );
-
-    // Drawn from the GPU, the props stand in the scenery's arena chunk by chunk as the view
-    // reaches them, counted as missing until they do, and go as it leaves them behind.
-    scenery::despawn(app.world_mut(), stood);
-    app.world_mut()
-        .resource_mut::<VideoPreferences>()
-        .world_renderer = WorldRenderer::Gpu;
-    let stood = scenery::spawn(app.world_mut(), &content, &area, RenderLayers::default());
-    for (at, tufts) in [(16.0, 0), (496.0, 8), (16.0, 0)] {
-        scenery::view_from(
-            app.world_mut(),
-            stood,
-            overhead(Pos::new(at, 8.0), reach, 10.0),
-        );
-        assert!(settle(&mut app, |app| {
-            !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
-        }));
-        assert_eq!(
-            (
-                scenery::arena_props(app.world(), stood),
-                scenery::missing(app.world()),
-                tufts_standing(&mut app)
-            ),
-            (tufts, 0, 0),
-            "viewed from {at} m along the field, the arena holds the tufts in reach, none missing, \
-             none standing as entities of their own"
-        );
-    }
 }
 
 /// Every how many samples the ground is drawn `x` metres along the field.
@@ -420,32 +332,14 @@ fn overhead(at: Pos<Meters>, reach: Meters, height: f32) -> Sight {
     }
 }
 
-/// A sight of `reach` around `at` from an eye 10 metres over the middle of the field `eye` metres
-/// along it, through the lens of [`overhead`].
-fn along(at: Pos<Meters>, eye: f32, reach: Meters) -> Sight {
-    Sight {
-        eyes: Eyes::standing(Vec3::new(eye, 10.0, at.y), at, Meters(0.0)),
-        ..overhead(at, reach, 10.0)
-    }
-}
-
-/// How many of the tufts stand, each at its own place along the middle of the field.
-fn tufts_standing(app: &mut App) -> usize {
-    placed(app, |at| at.z == 8.0 && (488.0..496.0).contains(&at.x))
-}
-
 /// How many pebbles stand between `from` and `to` along the field: whatever stands with a place
 /// of its own there, as the ground, the covers and their chunks stand at the origin.
 fn pebbles_between(app: &mut App, from: f32, to: f32) -> usize {
-    placed(app, |at| at.x > from && at.x < to && at.z != 8.0)
-}
-
-fn placed(app: &mut App, at: impl Fn(Vec3) -> bool) -> usize {
     let world = app.world_mut();
     world
         .query::<&Transform>()
         .iter(world)
-        .filter(|placed| at(placed.translation))
+        .filter(|placed| placed.translation.x > from && placed.translation.x < to)
         .count()
 }
 

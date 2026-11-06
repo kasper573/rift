@@ -28,7 +28,7 @@ use bevy::render::render_resource::{
 use bevy::shader::Shader;
 
 use super::lod::GRAIN_PIXELS;
-use super::merged::{self, MOST_MERGED_VERTICES, Shape, Silhouette};
+use super::shape::{self, MOST_MERGED_VERTICES, Shape};
 use crate::core::ground::{Heightfield, SAMPLES_PER_METER};
 use crate::core::math::{Pos, Rng};
 use crate::core::units::{GROUND_ORIGIN, Meters};
@@ -426,13 +426,13 @@ impl CopyModel {
                     .collect();
                 CopyShape {
                     material,
-                    shape: Shape::new(vertices, Silhouette::CutOut),
+                    shape: Shape::new(vertices),
                     measures,
                 }
             })
             .collect();
         CopyModel {
-            extent: merged::extent(shapes.iter().map(|copy| &copy.shape)),
+            extent: shape::extent(shapes.iter().map(|copy| &copy.shape)),
             triangles: shapes.iter().map(|copy| copy.shape.triangles()).sum(),
             shapes,
         }
@@ -470,7 +470,7 @@ pub fn merged_copies(
             for place in places {
                 let size = place.transform.scale.x;
                 let covered =
-                    merged::covered_pixels(model.extent * size * pixels_per_meter).min(apiece);
+                    shape::covered_pixels(model.extent * size * pixels_per_meter).min(apiece);
                 let level = copy.shape.level(pixels_per_meter * size, covered * share);
                 let tint = spread.color.0.mix(&spread.color.1, place.tint).to_vec4();
                 let matrix = place.transform.to_matrix();

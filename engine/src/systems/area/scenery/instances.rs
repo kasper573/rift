@@ -31,7 +31,8 @@ use crate::systems::area::{Area, PropPlacement};
 
 /// What a scenery holds of its props in its arena: the chunks standing there, those being worked
 /// out, those worked out and waiting for room in a frame's budget, the models of every prop they
-/// stand, held so they stay loaded, and the props dressed in their materials.
+/// stand, held so they stay loaded while any of them stands it, and the props dressed in their
+/// materials.
 #[derive(Default)]
 pub(super) struct Instances {
     arena: InstanceArena,
@@ -124,7 +125,8 @@ pub(super) fn stand(
     missing
 }
 
-/// Lets go of every chunk standing past what the plan keeps, and of any being worked out there.
+/// Lets go of every chunk standing past what the plan keeps, and of any being worked out there,
+/// and of the model and the dress of every prop no chunk left stands.
 pub(super) fn clear(world: &mut World, streaming: &mut Streaming, plan: &Plan, root: Entity) {
     let ground = streaming.area.size.bounds();
     let keep = plan.seen.reach.0 * KEEP_SHARE;
@@ -137,13 +139,35 @@ pub(super) fn clear(world: &mut World, streaming: &mut Streaming, plan: &Plan, r
         .chunks()
         .filter(|&key| !kept(chunk_of(ground, key)))
         .collect();
+    let mut changed = Vec::new();
     for key in gone {
         instances.standing.remove(&key);
-        if let Some(change) = instances.arena.remove(key)
-            && let Some(mut changes) = world.get_resource_mut::<InstanceChanges>()
-        {
-            changes.0.push((root, change));
-        }
+        changed.extend(instances.arena.remove(key));
+    }
+    let stood: HashSet<PropId> = instances
+        .standing
+        .values()
+        .chain(
+            instances
+                .expanded
+                .iter()
+                .map(|(_, expanded)| &expanded.props),
+        )
+        .flatten()
+        .copied()
+        .collect();
+    instances.models.retain(|prop, _| stood.contains(prop));
+    let undressed: Vec<PropId> = instances
+        .dressed
+        .extract_if(|prop| !stood.contains(prop))
+        .collect();
+    changed.extend(undressed.into_iter().map(|prop| InstanceChange::Undressed {
+        prop: prop.index() as u32,
+    }));
+    if let Some(mut changes) = world.get_resource_mut::<InstanceChanges>() {
+        changes
+            .0
+            .extend(changed.into_iter().map(|change| (root, change)));
     }
 }
 
@@ -231,7 +255,7 @@ fn dress(world: &mut World, streaming: &mut Streaming, root: Entity) {
                 let look = material
                     .as_ref()
                     .and_then(|material| names.get(&material.id()))
-                    .and_then(|name| looks.0.iter().find(|look| look.material == *name));
+                    .and_then(|name| looks.iter().find(|look| look.material == *name));
                 material::part_material(world, &model, material.as_ref(), look)
             })
             .collect();

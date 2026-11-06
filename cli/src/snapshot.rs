@@ -8,7 +8,6 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use engine::core::render::camera::Zoom;
-use engine::core::render::video::{VideoPreferences, WorldRenderer};
 use engine::core::units::{Degrees, Meters};
 use serde::{Deserialize, Serialize};
 
@@ -124,15 +123,13 @@ enum FixedHour {
 }
 
 /// Draws every shot under `shots` into `out`, at the presets `video` lets through, only those
-/// whose names match `only` when given, the world's props drawn the way `renderer` says where
-/// given.
+/// whose names match `only` when given.
 pub fn run(
     game: &Path,
     shots: &Path,
     out: &Path,
     video: VideoFilter,
     only: Option<&str>,
-    renderer: Option<WorldRenderer>,
 ) -> Result<(), String> {
     let expanded = expand_all(shots)?;
     let game = std::path::absolute(game).map_err(|error| error.to_string())?;
@@ -160,7 +157,6 @@ pub fn run(
                 name,
                 shot,
                 preset,
-                renderer,
                 &manifest.adapter,
             )?;
             if manifest.adapter.is_empty() {
@@ -206,7 +202,7 @@ pub fn noise(game: &Path, shots: &Path, out: &Path, runs: usize) -> Result<(), S
         .map(|run| out.join(format!("run-{run}")))
         .collect();
     for set in &sets {
-        run(game, shots, set, VideoFilter::Both, None, None)?;
+        run(game, shots, set, VideoFilter::Both, None)?;
     }
     let adapter = adapter_of(&sets[0])?;
     let sets: Vec<PathBuf> = sets.iter().map(|set| set.join(&adapter)).collect();
@@ -292,9 +288,7 @@ struct Drawn {
 }
 
 /// Draws `shot` at `preset` through a `rift render` process of its own into the set under `out`,
-/// the props drawn the way `renderer` says where given, by the adapter that draws it, which
-/// `adapter` names once known.
-#[allow(clippy::too_many_arguments)]
+/// by the adapter that draws it, which `adapter` names once known.
 fn draw(
     game: &Path,
     scratch: &Path,
@@ -302,17 +296,10 @@ fn draw(
     name: &str,
     shot: &Shot,
     preset: VideoPreset,
-    renderer: Option<WorldRenderer>,
     adapter: &str,
 ) -> Result<Drawn, String> {
     let mut shot = shot.clone();
-    shot.video = Some(match renderer {
-        Some(world_renderer) => VideoChoice::Each(VideoPreferences {
-            world_renderer,
-            ..preset.preferences()
-        }),
-        None => VideoChoice::Preset(preset),
-    });
+    shot.video = Some(VideoChoice::Preset(preset));
     let file = scratch.join(format!("{name}-{}.json", preset.name()));
     write_json(&file, &shot)?;
     let arriving = shot.arrive.is_some();

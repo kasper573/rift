@@ -1,5 +1,5 @@
 //! What the scenery stands for a sight, planned off the frame: the chunks of ground, the regions
-//! of props and covers and the lights a view could take in from anywhere its eye may stand, so a
+//! of covers and the lights a view could take in from anywhere its eye may stand, so a
 //! view turning, tilting or zooming within its sight plans nothing anew, and one moving across
 //! the ground plans anew only as it crosses into another cell of it. An eye that may stand any
 //! way round the ground stands near everything at its distance from it, so a view whose eye keeps
@@ -12,13 +12,11 @@ use bevy::math::Vec3;
 use bevy::platform::collections::HashSet;
 
 use super::covers::{CoverPieces, CoversPlan};
-use super::props::{Filed, PropsPlan};
-use super::regions::{Cut, Regions};
+use super::regions::Regions;
 use super::{Node, distance_to, nodes_for};
 use crate::core::ground::Heightfield;
 use crate::core::math::{Pos, Rect};
 use crate::core::render::camera::{CameraFraming, Lens};
-use crate::core::render::world_point;
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::{Meters, Radians};
 use crate::systems::area::Area;
@@ -232,15 +230,6 @@ impl Seen {
         (ahead < 0.0, point.distance_to(eye))
     }
 
-    /// The nearest any eye may come to `point`.
-    pub(super) fn eye_distance(&self, point: Vec3) -> f32 {
-        let at = self.at();
-        let off = (point.x - at.x, point.z - at.y);
-        let across = off.0.hypot(off.1);
-        let bearing = off.1.atan2(off.0);
-        self.nearest((across, across), Some((bearing, 0.0)), (point.y, point.y))
-    }
-
     /// The nearest any eye may come to ground over `bounds` lying from `lowest` to `highest`.
     pub(super) fn over(&self, bounds: Rect<Meters>, lowest: Meters, highest: Meters) -> f32 {
         let at = self.at();
@@ -262,11 +251,6 @@ impl Seen {
     /// How finely the view shows what lies `from_eye` off it.
     pub(super) fn detail(&self, from_eye: f32) -> Detail {
         Detail((2.0 * from_eye.max(NEAREST_GROUND.0).log2()).floor() as i32)
-    }
-
-    /// How finely the view shows a ground point's `at`, `ground` metres high.
-    pub(super) fn ground_detail(&self, at: Pos<Meters>, ground: Meters) -> Detail {
-        self.detail(self.eye_distance(world_point(at, ground)))
     }
 
     /// The nearest any eye may come to what lies from `across.0` to `across.1` along the ground
@@ -337,24 +321,21 @@ impl Detail {
 /// detail.
 const NEAREST_GROUND: Meters = Meters(0.5);
 
-/// What a plan is made from that stays as long as the area stands: where its props stand and
-/// how far across each measures, its covers' pieces, its regions and its lights.
+/// What a plan is made from that stays as long as the area stands: the area, its covers' pieces,
+/// its regions and its lights.
 pub(super) struct Planner {
     pub area: Arc<Area>,
     pub regions: Regions,
-    pub filed: Filed,
     pub pieces: CoverPieces,
     pub lights: SpatialIndex,
 }
 
-/// What the scenery stands for a sight: the ground's chunks, the regions of props and covers and
-/// what stands in them, and the lights.
+/// What the scenery stands for a sight: the ground's chunks, the regions of covers and what
+/// stands in them, and the lights.
 pub(super) struct Plan {
     pub seen: Seen,
     /// The chunks of ground, finest first.
     pub ground: Vec<Node>,
-    pub cut: Cut,
-    pub props: PropsPlan,
     pub covers: CoversPlan,
     pub lights: LightsPlan,
 }
@@ -377,10 +358,8 @@ impl Planner {
         let cut = self.regions.cut(heights, &seen);
         Plan {
             ground,
-            props: super::props::plan(self, heights, &seen, &cut),
             covers: super::covers::plan(self, heights, &seen, &cut),
             lights: self.plan_lights(&seen),
-            cut,
             seen,
         }
     }

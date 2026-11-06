@@ -335,7 +335,8 @@ pub struct InstanceArena {
 }
 
 /// A change to a scenery's arena the render world takes in: a chunk's instances written at an
-/// offset, with the bytes the slab must hold for them; a chunk let go; or the whole arena gone.
+/// offset, with the bytes the slab must hold for them; a chunk let go; a prop dressed or its dress
+/// let go; or the whole arena gone.
 #[derive(Clone)]
 pub enum InstanceChange {
     Placed {
@@ -354,6 +355,10 @@ pub enum InstanceChange {
     Dressed {
         prop: u32,
         dressed: Arc<DressedProp>,
+    },
+    /// A prop no chunk stands any more, its dress let go.
+    Undressed {
+        prop: u32,
     },
     Dropped,
 }
@@ -744,6 +749,12 @@ fn extract_instances(changes: Extract<Res<InstanceChanges>>, mut arenas: ResMut<
                 let arena = arenas.0.entry(scenery).or_default();
                 arena.dressed.insert(prop, dressed);
                 arena.changes += 1;
+            }
+            InstanceChange::Undressed { prop } => {
+                if let Some(arena) = arenas.0.get_mut(&scenery) {
+                    arena.dressed.remove(&prop);
+                    arena.changes += 1;
+                }
             }
             InstanceChange::Dropped => {
                 arenas.0.remove(&scenery);

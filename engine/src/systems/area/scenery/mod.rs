@@ -4,8 +4,8 @@
 //! in; the editor stands the area it edits, on render layers of its own, and both light it alike
 //! for the hour. The ground stands whole, finer the nearer the view, and the covers, props and
 //! lights stand within the view's reach alone, a few a frame through `SceneryPlugin` as the view
-//! moves, the props near the eye as scenes and the rest merged, so an area costs what the view
-//! takes in, however far it stretches.
+//! moves, the props in the GPU's arenas chunk by chunk and the covers far off the eye merged, so
+//! an area costs what the view takes in, however far it stretches.
 
 mod covers;
 pub mod expand;
@@ -20,7 +20,6 @@ pub use props::prop_transform;
 use covers::Covers;
 use instances::Instances;
 use plan::{Plan, Planner};
-use props::{Filed, Props};
 use regions::Regions;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -50,7 +49,6 @@ use crate::core::math::{Pos, Rect, Rng, Size};
 use crate::core::render::camera::WorldPicture;
 use crate::core::render::present::AreaGrade;
 use crate::core::render::sample::FrameWork;
-use crate::core::render::video::{VideoPreferences, WorldRenderer};
 use crate::core::render::world::clouds::{CloudDrift, CloudSheet};
 use crate::core::render::world::gpu::arena::PropArena;
 use crate::core::render::world::gpu::atlas::TerrainAtlas;
@@ -58,7 +56,6 @@ use crate::core::render::world::gpu::draw::{GroundDraw, GroundPatch, PATCH_CELLS
 use crate::core::render::world::gpu::upload;
 use crate::core::render::world::haze::Haze;
 use crate::core::render::world::lights::{self, Flicker};
-use crate::core::render::world::lod::MeshLevels;
 use crate::core::render::world::sky::{self, Daylight, SunLight};
 use crate::core::render::world::terrain::{self, GroundLayer};
 use crate::core::render::{CameraRig, Look, camera, world_point};
@@ -92,8 +89,7 @@ impl Plugin for SceneryPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TakenDown>()
             .init_resource::<Streams>()
-            .add_systems(Update, (take_down, stream))
-            .add_observer(props::level_ready_scene);
+            .add_systems(Update, (take_down, stream));
     }
 }
 
@@ -160,26 +156,20 @@ pub fn spawn(
         draw.sheets = covers.sheets().into();
     }
     let planner = {
-        let (content, area) = (content.clone(), area.clone());
+        let area = area.clone();
         let pieces = covers.pieces(&area.paint);
         Making::Task(AsyncComputeTaskPool::get().spawn(async move {
             let mut lights = SpatialIndex::new(PLACEMENT_CELL);
             lights.refile_spots(area.lights.iter().map(|light| light.at));
             Arc::new(Planner {
                 regions: Regions::of(&area),
-                filed: Filed::of(&content, &area),
                 pieces,
                 lights,
                 area,
             })
         }))
     };
-    let renderer = world
-        .get_resource::<VideoPreferences>()
-        .map_or_else(WorldRenderer::default, |video| video.world_renderer);
-    if renderer == WorldRenderer::Gpu {
-        world.entity_mut(root).insert(PropArena);
-    }
+    world.entity_mut(root).insert(PropArena);
     let streaming = Streaming {
         content: content.clone(),
         area: area.clone(),
@@ -188,9 +178,7 @@ pub fn spawn(
         water: area.water.clone(),
         terrain,
         covers,
-        props: Props::default(),
         instances: Instances::default(),
-        renderer,
         planner,
         sight: None,
         planning: None,
@@ -213,9 +201,9 @@ pub fn spawn(
 }
 
 /// Tells the scenery the sight it stands for: the covers, props and lights within its reach, a
-/// cover's pieces and a prop only where they span a pixel from the nearest its eyes may come, a
-/// prop's meshes no finer than shown from there. The ground stands whole, finer the nearer the
-/// ground the sight looks at. What stands follows over the frames.
+/// cover's pieces only where they span a pixel from the nearest its eyes may come; which props
+/// each view shows, and how finely, the GPU works out frame by frame. The ground stands whole,
+/// finer the nearer the ground the sight looks at. What stands follows over the frames.
 pub fn view_from(world: &mut World, scenery: Scenery, sight: Sight) {
     if let Some(streaming) = world
         .resource_mut::<Streams>()
@@ -392,10 +380,7 @@ struct Streaming {
     water: WaterSurface,
     terrain: Entity,
     covers: Covers,
-    props: Props,
     instances: Instances,
-    /// The way its props are drawn, as the video preferences asked when it stood.
-    renderer: WorldRenderer,
     planner: Making<Arc<Planner>>,
     sight: Option<Sight>,
     /// The plan being made, for the widened sight it is made for.
@@ -452,23 +437,19 @@ const OVERVIEW_LEVEL: u32 = OVERVIEW_STRIDE.trailing_zeros();
 /// How placements are filed to be found near the view, and the side of the leaves of the
 /// quadtree the props stand over.
 const PLACEMENT_CELL: Meters = Meters(32.0);
-/// How much stands in one frame, and among the props how many whose model no earlier prop asked
-/// for: a model's load falls on the frames after the prop that starts it.
+/// How many covers and merges of them stand in one frame.
 const COVERS_PER_FRAME: usize = 16;
-const PROPS_PER_FRAME: usize = 16;
-const FRESH_MODELS_PER_FRAME: usize = 1;
 const MERGES_PER_FRAME: usize = 4;
 const PARTS_TAKEN_DOWN_PER_FRAME: usize = 2000;
 
 fn stream(world: &mut World) {
-    let simplified = world.is_resource_changed::<MeshLevels>();
-    if !simplified && world.resource::<Streams>().0.values().all(Streaming::idle) {
+    if world.resource::<Streams>().0.values().all(Streaming::idle) {
         return;
     }
     world.resource_scope(|world, mut streams: Mut<Streams>| {
         for (&root, streaming) in streams.bypass_change_detection().0.iter_mut() {
             replan(world, streaming);
-            stream_plan(world, root, streaming, simplified);
+            stream_plan(world, root, streaming);
         }
     });
 }
@@ -511,15 +492,12 @@ fn replan(world: &mut World, streaming: &mut Streaming) {
 
 /// Stands what the plan takes in, as much as a frame's budget allows, and takes down what it
 /// left behind once what replaces it stands.
-fn stream_plan(world: &mut World, root: Entity, streaming: &mut Streaming, simplified: bool) {
+fn stream_plan(world: &mut World, root: Entity, streaming: &mut Streaming) {
     let (Some(planner), Some(plan)) = (streaming.planner.made().cloned(), streaming.plan.clone())
     else {
         return;
     };
     if streaming.whole {
-        if simplified {
-            props::level_props(world, streaming, &plan.seen);
-        }
         return;
     }
     streaming
@@ -530,28 +508,14 @@ fn stream_plan(world: &mut World, root: Entity, streaming: &mut Streaming, simpl
     if ground_missing > 0 {
         budget.defer();
     }
-    let props_missing = match streaming.renderer {
-        WorldRenderer::Legacy => {
-            let unstood = props::stand(world, streaming, &planner, &plan, root, &mut budget);
-            props::clear(world, streaming, &planner, &plan, &unstood);
-            if !unstood.is_empty() {
-                budget.defer();
-            }
-            unstood.len() as u32
-        }
-        WorldRenderer::Gpu => {
-            let missing = instances::stand(world, streaming, &plan, root, &mut budget);
-            instances::clear(world, streaming, &plan, root);
-            missing
-        }
-    };
+    let props_missing = instances::stand(world, streaming, &plan, root, &mut budget);
+    instances::clear(world, streaming, &plan, root);
     let covers_unstood = covers::stand(world, streaming, &planner, &plan, root, &mut budget);
     streaming.missing = ground_missing + props_missing + covers_unstood.len() as u32;
     covers::clear(world, streaming, &planner, &plan, &covers_unstood);
     if !covers_unstood.is_empty() {
         budget.defer();
     }
-    props::level_props(world, streaming, &plan.seen);
     stream_lights(world, streaming, &plan, root);
     streaming.whole = !budget.spent;
 }
@@ -561,8 +525,6 @@ fn stream_plan(world: &mut World, root: Entity, streaming: &mut Streaming, simpl
 /// cost the frame itself.
 struct Budget {
     covers: usize,
-    props: usize,
-    fresh: usize,
     merges: usize,
     /// Whether the upload stage takes more meshes this frame.
     staging: bool,
@@ -574,8 +536,6 @@ impl Budget {
     fn new(world: &World) -> Budget {
         Budget {
             covers: COVERS_PER_FRAME,
-            props: PROPS_PER_FRAME,
-            fresh: FRESH_MODELS_PER_FRAME,
             merges: MERGES_PER_FRAME,
             staging: upload::has_room(world),
             spent: false,
@@ -889,9 +849,7 @@ fn stream_lights(world: &mut World, streaming: &mut Streaming, plan: &Plan, root
 /// a whole area, is let go of off the frame.
 pub fn despawn(world: &mut World, scenery: Scenery) {
     if let Some(streaming) = world.resource_mut::<Streams>().0.remove(&scenery.root) {
-        if streaming.renderer == WorldRenderer::Gpu {
-            instances::drop_arena(world, scenery.root);
-        }
+        instances::drop_arena(world, scenery.root);
         AsyncComputeTaskPool::get()
             .spawn(async move { drop(streaming) })
             .detach();

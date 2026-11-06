@@ -1,4 +1,4 @@
-//! The quadtree over an area's ground that the scenery stands its props and covers by, cut finer
+//! The quadtree over an area's ground that the scenery stands its covers by, cut finer
 //! the nearer the eye. What lies in a leaf of the cut stands piece by piece, as near the eye it
 //! must; what lies in a coarser region stands merged, no finer than the view shows the region's
 //! nearest edge, so a view over a whole area stands a few meshes, however far it stretches.
@@ -128,11 +128,6 @@ impl Unstood {
     /// Whether the scenery stands all the view takes in over `bounds`.
     pub(super) fn stands_over(&self, bounds: Rect<Meters>) -> bool {
         !self.0.iter().any(|unstood| unstood.intersects(&bounds))
-    }
-
-    /// Whether the scenery stands all the view takes in at `at`.
-    pub(super) fn stands_at(&self, at: Pos<Meters>) -> bool {
-        !self.0.iter().any(|&unstood| holds(unstood, at))
     }
 }
 

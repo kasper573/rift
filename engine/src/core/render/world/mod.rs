@@ -7,7 +7,6 @@ pub mod body;
 pub mod clouds;
 pub mod cover;
 pub mod decal;
-pub mod fade;
 pub mod gpu;
 pub mod haze;
 pub mod layers;
@@ -15,9 +14,9 @@ pub mod lights;
 pub mod lod;
 pub mod mannequin;
 pub mod material;
-pub mod merged;
 pub mod paint;
 pub mod rig_clip;
+mod shape;
 pub mod sky;
 pub mod terrain;
 
@@ -48,8 +47,8 @@ impl Plugin for WorldScenePlugin {
         bevy::shader::load_shader_library!(app, "shade.wesl");
         bevy::shader::load_shader_library!(app, "prepass_write.wesl");
         bevy::shader::load_shader_library!(app, "clearing.wesl");
-        bevy::asset::embedded_asset!(app, "fade.wesl");
-        bevy::asset::embedded_asset!(app, "fade_prepass.wesl");
+        bevy::asset::embedded_asset!(app, "material.wesl");
+        bevy::asset::embedded_asset!(app, "material_prepass.wesl");
         bevy::asset::embedded_asset!(app, "decal.wesl");
         app.register_asset_loader(crate::core::assets::loader::PngLoader);
         let compiling = CompilingPipelines::default();
@@ -76,7 +75,6 @@ impl Plugin for WorldScenePlugin {
         .insert_resource(DirectionalLightShadowMap { size: SHADOW_MAP })
         .init_resource::<VideoPreferences>()
         .init_resource::<material::MaterialCache>()
-        .init_resource::<lod::MeshLevels>()
         .init_resource::<cover::CoverVariants>()
         .init_resource::<cover::CopyMeshes>()
         .add_observer(material::dress_scenes)
@@ -94,12 +92,9 @@ impl Plugin for WorldScenePlugin {
                 lights::cast_shadows,
                 lights::flicker,
                 mannequin::hold,
-                fade::fade_occluders.run_if(resource_exists::<CameraRig>),
                 cover::strew_loaded,
                 terrain::stack_pictures,
                 material::forget_dropped,
-                lod::finish_simplifying,
-                lod::forget_dropped,
                 cover::forget_dropped,
             ),
         )
