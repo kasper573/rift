@@ -1,7 +1,5 @@
-use std::cell::{OnceCell, RefCell};
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashSet};
 use std::ops::Range;
-use std::rc::Rc;
 use std::time::Instant;
 use ui::chip;
 use ui::drag;
@@ -12,13 +10,11 @@ use ui::theme;
 
 use ui::controls;
 use ui::egui::{
-    Align, Align2, Color32, FontId, Id, Layout, Pos2, Rangef, Rect, Stroke, StrokeKind, Ui, Vec2,
-};
-use ui::egui_ltreeview::{
-    Action, CloserState, DirPosition, IndentHintStyle, NodeBuilder, RowLayout, TreeView,
-    TreeViewBuilder, TreeViewState,
+    Align, Align2, Color32, FontId, Id, Layout, Pos2, Rangef, Rect, Stroke, StrokeKind, Ui,
+    UiBuilder, Vec2,
 };
 use ui::glyph::Mark;
+use ui::tree::{self as rows, DropSpot, RowLook, TreeLine, TreeList, VirtualTree};
 
 use super::widgets::{self, KindMark};
 use crate::icons::{self, IconTone, KindIcon, PictureTexture};
@@ -31,6 +27,9 @@ use crate::widgets::Badge;
 /// it; the tree brings the behaviour, the keys and the looks once.
 pub trait TreeSource {
     type Action;
+    /// What the rows listed are found from: while it stays the same, `children` and `is_folder`
+    /// answer the same, so the tree keeps its rows rather than walk the source again.
+    fn listing(&self) -> u64;
     /// The rows inside the folder `id` as they are shown, in order; the top of the tree is "".
     fn children(&self, id: &str) -> Vec<String>;
     /// The folder holding `id`, "" at the top.
@@ -135,17 +134,27 @@ pub enum DropAt {
     After(String),
 }
 
-/// A tree's own state between frames: what is selected and open, and what it was asked to do.
+/// A tree's own state between frames: what is selected and open, the rows it lists, and what it
+/// was asked to do.
 #[derive(Default)]
 pub struct TreeState {
-    view: TreeViewState<String>,
-    /// Openness while the rows are narrowed, kept apart so a search never closes a folder.
-    narrowed_view: TreeViewState<String>,
-    reveal: Option<String>,
+    rows: rows::TreeState,
+    /// The folders closed while the rows are narrowed, as narrowing opens every folder on what it
+    /// holds; kept apart so a search never closes a folder.
+    narrowed_closed: HashSet<String>,
+    /// Folders asked to open or close, done on the next frame.
+    asked_open: Vec<(String, bool)>,
+    reveal: Option<Reveal>,
     renaming: Option<Renaming>,
     flash: Option<(String, f64)>,
-    drag_hover: Option<(String, f64)>,
-    drag_cancelled: bool,
+    listed: Option<Listed>,
+}
+
+/// A row to reveal. A row asked for before the source lists it, as one just renamed, is waited
+/// for through the next change of what the source lists, and forgotten if it isn't there then.
+struct Reveal {
+    id: String,
+    missing_from: Option<u64>,
 }
 
 struct Renaming {
@@ -154,19 +163,30 @@ struct Renaming {
     focused: bool,
 }
 
+/// The rows a tree lists, and what they were found from.
+struct Listed {
+    listing: u64,
+    narrowed: bool,
+    open: BTreeSet<String>,
+    narrowed_closed: HashSet<String>,
+    list: TreeList,
+}
+
 impl TreeState {
     pub fn selected(&self) -> &[String] {
-        self.view.selected()
+        self.rows.selected()
     }
 
     pub fn select(&mut self, ids: Vec<String>) {
-        self.narrowed_view.set_selected(ids.clone());
-        self.view.set_selected(ids);
+        self.rows.select(ids);
     }
 
     /// Opens the folders above `id`, selects it, scrolls it into view and flashes it.
     pub fn reveal(&mut self, id: &str) {
-        self.reveal = Some(id.to_owned());
+        self.reveal = Some(Reveal {
+            id: id.to_owned(),
+            missing_from: None,
+        });
     }
 
     /// Puts `name` in an edit box on `id`'s row, ready to type over.
@@ -186,16 +206,14 @@ impl TreeState {
     /// Forgets which folders the tree holds open and what it has selected, for rows whose ids
     /// now name other things.
     pub fn forget(&mut self) {
-        self.view = TreeViewState::default();
-        self.narrowed_view = TreeViewState::default();
+        self.rows = rows::TreeState::default();
+        self.narrowed_closed.clear();
+        self.listed = None;
     }
 
     /// Opens or closes every folder among `ids`.
     pub fn set_open(&mut self, ids: impl IntoIterator<Item = String>, open: bool) {
-        for id in ids {
-            self.view.set_openness(id.clone(), open);
-            self.narrowed_view.set_openness(id, open);
-        }
+        self.asked_open.extend(ids.into_iter().map(|id| (id, open)));
     }
 }
 
@@ -216,8 +234,8 @@ pub struct TreeResponse<A> {
     pub hovered: Option<String>,
 }
 
-/// Draws the tree of `source`. `open` holds the folders open while nothing narrows the rows, kept
-/// by the caller; it answers whether that changed.
+/// Draws the tree of `source`, filling the room left. `open` holds the folders open while
+/// nothing narrows the rows, kept by the caller; it answers whether that changed.
 pub fn show<S: TreeSource>(
     ui: &mut Ui,
     name: &'static str,
@@ -228,119 +246,118 @@ pub fn show<S: TreeSource>(
 ) -> (TreeResponse<S::Action>, bool) {
     let started = Instant::now();
     let narrowed = source.narrowed();
-    if let Some(target) = &state.reveal {
-        let mut parent = source.parent(target);
-        while !parent.is_empty() {
-            state.view.set_openness(parent.clone(), true);
-            state.narrowed_view.set_openness(parent.clone(), true);
-            parent = source.parent(&parent);
-        }
-        state.select(vec![target.clone()]);
-    }
     let TreeState {
-        view,
-        narrowed_view,
+        rows,
+        narrowed_closed,
+        asked_open,
         reveal,
         renaming,
         flash,
-        drag_hover,
-        drag_cancelled,
+        listed,
     } = state;
-    let view = if narrowed { narrowed_view } else { view };
-    let lines = lines_of(source, "", &|id| {
-        view.is_open(&id.to_owned())
-            .unwrap_or(narrowed || open.contains(id))
-    });
-    let mut folders: Vec<(String, bool)> = Vec::new();
-    let mut revealed_at = None;
-    let mut index = 0;
-    walk_lines(&lines, &mut |line| {
-        if reveal.as_deref() == Some(line.id.as_str()) {
-            revealed_at = Some(index);
+    let mut changed = false;
+    for (folder, now_open) in asked_open.drain(..) {
+        changed |= set_open(open, narrowed_closed, folder, now_open);
+    }
+    let now = ui.input(|i| i.time);
+    if let Some(target) = reveal {
+        let mut parent = source.parent(&target.id);
+        while !parent.is_empty() {
+            let above = source.parent(&parent);
+            changed |= set_open(open, narrowed_closed, parent, true);
+            parent = above;
         }
-        if line.folder {
-            folders.push((line.id.clone(), line.open));
-        }
-        index += 1;
+    }
+    let listing = source.listing();
+    let kept = listed.take().filter(|listed| {
+        listed.listing == listing
+            && listed.narrowed == narrowed
+            && if narrowed {
+                listed.narrowed_closed == *narrowed_closed
+            } else {
+                listed.open == *open
+            }
     });
+    let list = &listed
+        .insert(kept.unwrap_or_else(|| Listed {
+            listing,
+            narrowed,
+            open: open.clone(),
+            narrowed_closed: narrowed_closed.clone(),
+            list: lines_of(source, &|folder| {
+                if narrowed {
+                    !narrowed_closed.contains(folder)
+                } else {
+                    open.contains(folder)
+                }
+            }),
+        }))
+        .list;
+    if let Some(target) = reveal.take() {
+        if list.index_of(&target.id).is_some() {
+            rows.select(vec![target.id.clone()]);
+            rows.scroll_to(&target.id);
+            *flash = Some((target.id, now));
+        } else if target.missing_from.is_none_or(|missing| missing == listing) {
+            *reveal = Some(Reveal {
+                missing_from: Some(listing),
+                ..target
+            });
+        }
+    }
 
-    let painter = ui.painter().clone();
-    let top = ui.cursor().min.y;
-    let drawn: RefCell<Vec<DrawnRow>> = RefCell::new(Vec::new());
-    let renamed: RefCell<Option<RenameEnd>> = RefCell::new(None);
-    let toggled: RefCell<Option<RowToggled>> = RefCell::new(None);
-    let picked: RefCell<Option<S::Action>> = RefCell::new(None);
     let rename_tip = renaming
         .as_ref()
         .and_then(|renaming| source.rename_tip(&renaming.id));
-    let renaming_cell = RefCell::new(renaming.take());
-    // The tree fills the room it is given, however few its rows, so it is given the panel less the
-    // room kept below it, which then fits too until the rows outgrow the panel.
-    let rows_room = egui::vec2(
-        ui.available_width(),
-        (ui.available_height() - EMPTY_ROOM - ui.spacing().item_spacing.y).max(0.0),
+    let mut cx = RowsCx {
+        renaming,
+        renamed: None,
+        toggled: None,
+        rename_tip: rename_tip.as_deref(),
+    };
+    let mut picked = None;
+    let tree = VirtualTree::new(id, list)
+        .row_height(ROW)
+        .indent(INDENT)
+        .empty_room(EMPTY_ROWS);
+    let said = tree.show(
+        ui,
+        rows,
+        |ui, line, look| row_ui(ui, &mut cx, source, line, look),
+        |ui, ids| {
+            if let Some(action) = source.menu(ui, ids) {
+                picked = Some(action);
+            }
+        },
     );
-    let (response, actions) = ui
-        .allocate_ui(rows_room, |ui| {
-            let visuals = ui.visuals_mut();
-            visuals.selection.bg_fill = theme::SELECTION;
-            // The tree fades the selection to 0.3 of this while it lacks focus; the selection reads
-            // the same either way.
-            visuals.widgets.inactive.weak_bg_fill = theme::SELECTION.linear_multiply(1.0 / 0.3);
-            TreeView::new(id)
-                .row_layout(RowLayout::AlignedIconsAndLabels)
-                .indent_hint_style(IndentHintStyle::Line)
-                .override_indent(Some(INDENT))
-                .default_node_height(Some(ROW))
-                .fallback_context_menu(|ui, ids| {
-                    if let Some(action) = source.menu(ui, ids) {
-                        *picked.borrow_mut() = Some(action);
-                    }
-                })
-                .show_state(ui, view, |builder| {
-                    builder.node(NodeBuilder::dir(String::new()).flatten(true));
-                    let rows = RowsCx {
-                        row: &|id| source.row(id),
-                        drawn: &drawn,
-                        renaming: &renaming_cell,
-                        renamed: &renamed,
-                        toggled: &toggled,
-                        rename_tip: rename_tip.as_deref(),
-                    };
-                    build(builder, lines, &rows);
-                    builder.close_dir();
-                })
+    let RowsCx {
+        renamed, toggled, ..
+    } = cx;
+    let drawn: Vec<DrawnRow> = said
+        .rows
+        .iter()
+        .filter_map(|(row, rect)| {
+            let line = list.get(row)?;
+            Some(DrawnRow {
+                id: row.clone(),
+                folder: line.folder,
+                open: line.open,
+                y: rect.y_range(),
+                left: rect.left() + tree.content_left(line.depth) + ICON + ICON_GAP,
+            })
         })
-        .inner;
-    let room = ui.allocate_response(
-        egui::vec2(ui.available_width(), EMPTY_ROOM),
-        egui::Sense::click(),
-    );
-    room.context_menu(|ui| {
-        if let Some(action) = source.menu(ui, &[]) {
-            *picked.borrow_mut() = Some(action);
-        }
-    });
-    *renaming = renaming_cell.into_inner();
-    let drawn = drawn.into_inner();
-    let now = ui.input(|i| i.time);
+        .collect();
     let mut out = TreeResponse {
-        selected: None,
-        activated: Vec::new(),
-        action: picked.into_inner(),
+        selected: said.selected,
+        activated: said.activated,
+        action: picked,
         dropped: None,
         renamed: None,
-        toggled: toggled.into_inner(),
-        focused: ui.memory(|m| m.has_focus(id)),
-        hovered: ui
-            .input(|i| i.pointer.hover_pos())
-            .filter(|&pointer| {
-                response.rect.contains(pointer) && ui.rect_contains_pointer(response.rect)
-            })
-            .and_then(|pointer| drawn.iter().find(|row| row.contains(pointer)))
-            .map(|row| row.id.clone()),
+        toggled,
+        focused: said.focused,
+        hovered: said.hovered,
     };
-    match renamed.into_inner() {
+    match renamed {
         Some(RenameEnd::Typed(id, text)) => {
             out.renamed = Some((id, text));
             *renaming = None;
@@ -348,21 +365,16 @@ pub fn show<S: TreeSource>(
         Some(RenameEnd::Left) => *renaming = None,
         None => {}
     }
-    if let Some(revealed) = reveal.take() {
-        if let Some(index) = revealed_at {
-            let row_height = ROW + ui.spacing().item_spacing.y;
-            let y = top + index as f32 * row_height;
-            let rect = Rect::from_x_y_ranges(response.rect.x_range(), Rangef::new(y, y + ROW));
-            ui.scroll_to_rect(rect, Some(egui::Align::Center));
-        }
-        *flash = Some((revealed, now));
+    for (folder, now_open) in said.opened {
+        changed |= set_open(open, narrowed_closed, folder, now_open);
     }
+    let painter = ui.painter_at(said.rect);
     if let Some((flashed, since)) = flash.clone() {
         let fade = 1.0 - ((now - since) / FLASH) as f32;
         match drawn.iter().find(|row| row.id == flashed) {
             Some(row) if fade > 0.0 => {
                 painter.rect_filled(
-                    row.rect(&response.rect),
+                    row.rect(&said.rect),
                     3.0,
                     ink::wash(theme::DROP, fade * 0.35),
                 );
@@ -372,95 +384,44 @@ pub fn show<S: TreeSource>(
             _ => {}
         }
     }
-
-    let escape = ui.input(|i| EditorKey::Cancel.pressed(i));
-    let mut dragging = false;
-    for action in actions {
-        match action {
-            Action::SetSelected(ids) => out.selected = Some(ids),
-            Action::Activate(activate) => out.activated = activate.selected,
-            Action::Drag(drag) => {
-                dragging = true;
-                drag.remove_drop_marker(ui);
-                if escape {
-                    *drag_cancelled = true;
-                }
-                if *drag_cancelled {
-                    continue;
-                }
-                let pointer = ui.input(|i| i.pointer.latest_pos()).unwrap_or_default();
-                let drop = drop_of(source, &drawn, pointer, &drag.target, &drag.position);
-                match source.drop_tip(&drag.source, &drop) {
-                    Ok(tip) => {
-                        mark_drop(&painter, source, &drawn, &response.rect, &drop);
-                        drag_tip(ui, pointer, &tip, theme::TEXT);
-                    }
-                    Err(refusal) => {
-                        if let Some(row) = drawn.iter().find(|row| row.contains(pointer)) {
-                            painter.rect_stroke(
-                                row.rect(&response.rect),
-                                3.0,
-                                Stroke::new(1.5, theme::BLOCKED),
-                                StrokeKind::Inside,
-                            );
-                        }
-                        drag_tip(ui, pointer, &refusal, theme::BLOCKED);
-                    }
-                }
-                open_on_hover(view, drag_hover, &drawn, pointer, now);
-                ui.ctx().request_repaint();
+    let pointer = ui.input(|i| i.pointer.latest_pos()).unwrap_or_default();
+    if let Some((dragged, spot)) = &said.dragging {
+        let drop = drop_of(source, &drawn, pointer, spot);
+        match source.drop_tip(dragged, &drop) {
+            Ok(tip) => {
+                mark_drop(&painter, source, &drawn, &said.rect, &drop);
+                drag_tip(ui, pointer, &tip, theme::TEXT);
             }
-            Action::Move(drag) => {
-                if !std::mem::take(drag_cancelled) {
-                    let pointer = ui.input(|i| i.pointer.latest_pos()).unwrap_or_default();
-                    let drop = drop_of(source, &drawn, pointer, &drag.target, &drag.position);
-                    if source.drop_tip(&drag.source, &drop).is_ok() {
-                        out.dropped = Some((drag.source, drop));
-                    }
+            Err(refusal) => {
+                if let Some(row) = drawn.iter().find(|row| row.contains(pointer)) {
+                    painter.rect_stroke(
+                        row.rect(&said.rect),
+                        3.0,
+                        Stroke::new(1.5, theme::BLOCKED),
+                        StrokeKind::Inside,
+                    );
                 }
+                drag_tip(ui, pointer, &refusal, theme::BLOCKED);
             }
-            Action::DragExternal(drag) => {
-                dragging = true;
-                if let Some(carried) = source.carried(&drag.source) {
-                    drag_tip(ui, drag.position, &carried.label(), theme::TEXT);
-                    drag::carry(ui.ctx(), carried);
-                }
-            }
-            Action::MoveExternal(_) => *drag_cancelled = false,
         }
     }
-    if !dragging {
-        *drag_hover = None;
-    }
-
-    let clicked = response.clicked() && ui.input(|i| i.modifiers.is_none());
-    if clicked
-        && out.toggled.is_none()
-        && let Some(pointer) = ui.input(|i| i.pointer.interact_pos())
-        && let Some(row) = drawn.iter().find(|row| row.contains(pointer))
-        && row.folder
-        && renaming.as_ref().is_none_or(|renaming| renaming.id != row.id)
-        // The tree toggles a folder itself when its closer is clicked.
-        && view.is_open(&row.id).unwrap_or(row.open) == row.open
+    if let Some(dragged) = &said.dragged_out
+        && let Some(carried) = source.carried(dragged)
     {
-        view.set_openness(row.id.clone(), !row.open);
+        drag_tip(ui, pointer, &carried.label(), theme::TEXT);
+        drag::carry(ui.ctx(), carried);
     }
-    let mut changed = false;
-    if !narrowed {
-        for (folder, was_open) in folders {
-            let now_open = view.is_open(&folder).unwrap_or(was_open);
-            changed |= if now_open {
-                open.insert(folder)
-            } else {
-                open.remove(&folder)
-            };
+    if let Some((dragged, spot)) = said.dropped {
+        let drop = drop_of(source, &drawn, pointer, &spot);
+        if source.drop_tip(&dragged, &drop).is_ok() {
+            out.dropped = Some((dragged, drop));
         }
     }
-    let rows = drawn
+    let rows_shown = drawn
         .iter()
         .map(|row| ShownRow {
             id: row.id.clone(),
-            rect: row.rect(&response.rect),
+            rect: row.rect(&said.rect),
             folder: row.folder,
             open: row.open,
         })
@@ -469,9 +430,9 @@ pub fn show<S: TreeSource>(
         ui.ctx(),
         ShownTree {
             name,
-            rect: response.rect,
-            rows,
-            selected: view.selected().to_vec(),
+            rect: said.rect,
+            rows: rows_shown,
+            selected: rows.selected().to_vec(),
         },
         started.elapsed(),
     );
@@ -479,12 +440,11 @@ pub fn show<S: TreeSource>(
 }
 
 const ROW: f32 = 22.0;
-/// The room a tree keeps below its last row, so its menu of empty space, where top-level files
-/// are made, stays in reach however long the tree grows.
-const EMPTY_ROOM: f32 = 3.0 * ROW;
+/// The rows' worth of room a tree keeps below its last row, so its menu of empty space, where
+/// top-level files are made, stays in reach however long the tree grows.
+const EMPTY_ROWS: usize = 3;
 const INDENT: f32 = 14.0;
 const FLASH: f64 = 0.9;
-const HOVER_OPENS: f64 = 0.5;
 const MARK: f32 = 14.0;
 const ICON: f32 = 15.0;
 const ICON_GAP: f32 = 2.0;
@@ -492,42 +452,52 @@ const TOGGLE: f32 = 17.0;
 const TOGGLE_GLYPH: f32 = 14.0;
 const SHOW_MENU_WIDTH: f32 = 220.0;
 
-/// A row's place in the tree. What it reads is asked of the source only once it is drawn, as a
-/// tree may hold far more rows than fit on screen.
-struct Line {
-    id: String,
-    folder: bool,
-    open: bool,
-    children: Vec<Line>,
-}
-
-fn lines_of<S: TreeSource>(source: &S, folder: &str, is_open: &dyn Fn(&str) -> bool) -> Vec<Line> {
-    source
-        .children(folder)
-        .into_iter()
-        .map(|id| {
-            let folder = source.is_folder(&id);
-            let open = folder && is_open(&id);
-            let children = if open {
-                lines_of(source, &id, is_open)
-            } else {
-                Vec::new()
-            };
-            Line {
-                id,
-                folder,
-                open,
-                children,
-            }
-        })
-        .collect()
-}
-
-fn walk_lines(lines: &[Line], visit: &mut dyn FnMut(&Line)) {
-    for line in lines {
-        visit(line);
-        walk_lines(&line.children, visit);
+/// Opens or closes `folder`, both while the rows are narrowed and while they aren't: whether the
+/// folders open while they aren't changed.
+fn set_open(
+    open: &mut BTreeSet<String>,
+    narrowed_closed: &mut HashSet<String>,
+    folder: String,
+    now_open: bool,
+) -> bool {
+    if now_open {
+        narrowed_closed.remove(&folder);
+        open.insert(folder)
+    } else {
+        narrowed_closed.insert(folder.clone());
+        open.remove(&folder)
     }
+}
+
+/// The rows `source` lists, each folder open by `is_open` followed by what it holds.
+fn lines_of<S: TreeSource>(source: &S, is_open: &dyn Fn(&str) -> bool) -> TreeList {
+    let mut lines = Vec::new();
+    let mut pending: Vec<(String, usize)> = source
+        .children("")
+        .into_iter()
+        .rev()
+        .map(|child| (child, 0))
+        .collect();
+    while let Some((id, depth)) = pending.pop() {
+        let folder = source.is_folder(&id);
+        let open = folder && is_open(&id);
+        if open {
+            pending.extend(
+                source
+                    .children(&id)
+                    .into_iter()
+                    .rev()
+                    .map(|child| (child, depth + 1)),
+            );
+        }
+        lines.push(TreeLine {
+            id,
+            depth,
+            folder,
+            open,
+        });
+    }
+    TreeList::new(lines)
 }
 
 /// A row as it was drawn this frame.
@@ -556,80 +526,32 @@ enum RenameEnd {
 }
 
 struct RowsCx<'a> {
-    row: &'a dyn Fn(&str) -> TreeRow,
-    drawn: &'a RefCell<Vec<DrawnRow>>,
-    renaming: &'a RefCell<Option<Renaming>>,
-    renamed: &'a RefCell<Option<RenameEnd>>,
-    toggled: &'a RefCell<Option<RowToggled>>,
+    renaming: &'a mut Option<Renaming>,
+    renamed: Option<RenameEnd>,
+    toggled: Option<RowToggled>,
     rename_tip: Option<&'a str>,
 }
 
-fn build(builder: &mut TreeViewBuilder<'_, String>, lines: Vec<Line>, cx: &RowsCx) {
-    for line in lines {
-        let Line {
-            id,
-            folder,
-            open,
-            children,
-        } = line;
-        let mut node = if folder {
-            NodeBuilder::dir(id.clone())
-                .default_open(open)
-                .activatable(true)
-        } else {
-            NodeBuilder::leaf(id.clone())
-        };
-        let label = Rc::new(LazyRow {
-            id,
-            row: OnceCell::new(),
-        });
-        let icon = label.clone();
-        node = node
-            .closer(|ui: &mut Ui, closer: CloserState| {
-                let mark = if closer.is_open {
-                    Mark::CaretDown
-                } else {
-                    Mark::CaretRight
-                };
-                let color = if closer.is_hovered {
-                    theme::TEXT
-                } else {
-                    theme::FAINT
-                };
-                mark.paint(
-                    ui.painter(),
-                    Rect::from_center_size(ui.max_rect().center(), Vec2::splat(10.0)),
-                    color,
-                );
-            })
-            .label_ui(move |ui: &mut Ui| {
-                row_label(ui, cx, &label.id, label.get(cx), open);
-            })
-            .icon(move |ui: &mut Ui| {
-                row_icon(ui, icon.get(cx), open);
-            });
-        builder.node(node);
-        if folder {
-            build(builder, children, cx);
-            builder.close_dir();
-        }
-    }
+/// Draws `line`'s row as `source` says it reads: its icon, then its name and marks.
+fn row_ui<S: TreeSource>(ui: &mut Ui, cx: &mut RowsCx, source: &S, line: &TreeLine, _: RowLook) {
+    let row = source.row(&line.id);
+    let (icon, _) =
+        ui.allocate_exact_size(Vec2::new(ICON, ui.available_height()), egui::Sense::hover());
+    row_icon(ui, icon, &row, line.open);
+    let rest = Rect::from_min_max(
+        egui::pos2(ui.cursor().min.x, ui.max_rect().top()),
+        ui.max_rect().max,
+    );
+    ui.scope_builder(
+        UiBuilder::new()
+            .max_rect(rest)
+            .layout(Layout::left_to_right(Align::Center)),
+        |ui| row_label(ui, cx, &line.id, &row, line.open),
+    );
 }
 
-/// A row's look, asked of the source the first time the row is drawn.
-struct LazyRow {
-    id: String,
-    row: OnceCell<TreeRow>,
-}
-
-impl LazyRow {
-    fn get(&self, cx: &RowsCx) -> &TreeRow {
-        self.row.get_or_init(|| (cx.row)(&self.id))
-    }
-}
-
-fn row_icon(ui: &mut Ui, row: &TreeRow, open: bool) {
-    let center = ui.max_rect().center();
+fn row_icon(ui: &Ui, room: Rect, row: &TreeRow, open: bool) {
+    let center = room.center();
     let badge = row.badge.as_ref().filter(|_| !row.folder);
     if let Some(&Badge { letter, color }) = badge {
         let rect = Rect::from_center_size(center, Vec2::splat(14.0));
@@ -664,7 +586,7 @@ fn row_icon(ui: &mut Ui, row: &TreeRow, open: bool) {
     }
 }
 
-fn row_label(ui: &mut Ui, cx: &RowsCx, id: &str, row: &TreeRow, open: bool) {
+fn row_label(ui: &mut Ui, cx: &mut RowsCx, id: &str, row: &TreeRow, open: bool) {
     let rect = ui.max_rect();
     ui.add_space(ICON_GAP);
     if row.lit {
@@ -709,18 +631,15 @@ fn row_label(ui: &mut Ui, cx: &RowsCx, id: &str, row: &TreeRow, open: bool) {
             theme::FAINT,
         );
     }
-    let mut renaming = cx.renaming.borrow_mut();
-    match renaming.as_mut().filter(|renaming| renaming.id == id) {
-        Some(renaming) => rename_box(ui, cx, renaming, width),
+    let rename_tip = cx.rename_tip;
+    match cx.renaming.as_mut().filter(|renaming| renaming.id == id) {
+        Some(renaming) => {
+            if let Some(end) = rename_box(ui, renaming, rename_tip, width) {
+                cx.renamed = Some(end);
+            }
+        }
         None => name_label(ui, row, width),
     }
-    cx.drawn.borrow_mut().push(DrawnRow {
-        id: id.to_owned(),
-        folder: row.folder,
-        open,
-        y: rect.y_range(),
-        left,
-    });
 }
 
 fn name_label(ui: &mut Ui, row: &TreeRow, width: f32) {
@@ -770,7 +689,13 @@ fn name_label(ui: &mut Ui, row: &TreeRow, width: f32) {
     }
 }
 
-fn rename_box(ui: &mut Ui, cx: &RowsCx, renaming: &mut Renaming, width: f32) {
+/// Draws `renaming`'s edit box: how the renaming ended, once it has.
+fn rename_box(
+    ui: &mut Ui,
+    renaming: &mut Renaming,
+    rename_tip: Option<&str>,
+    width: f32,
+) -> Option<RenameEnd> {
     let edit_id = Id::new(("tree rename", &renaming.id));
     let response = ui.add(
         egui::TextEdit::singleline(&mut renaming.text)
@@ -779,7 +704,7 @@ fn rename_box(ui: &mut Ui, cx: &RowsCx, renaming: &mut Renaming, width: f32) {
             .desired_width(width)
             .margin(egui::Margin::symmetric(2, 0)),
     );
-    if let Some(tip) = cx.rename_tip {
+    if let Some(tip) = rename_tip {
         let painter = ui
             .ctx()
             .layer_painter(egui::LayerId::new(egui::Order::Tooltip, edit_id));
@@ -796,7 +721,6 @@ fn rename_box(ui: &mut Ui, cx: &RowsCx, renaming: &mut Renaming, width: f32) {
     if !renaming.focused {
         renaming.focused = true;
         response.request_focus();
-        response.scroll_to_me(None);
         let mut edit = egui::TextEdit::load_state(ui.ctx(), edit_id).unwrap_or_default();
         let all = egui::text::CCursorRange::two(
             egui::text::CCursor::new(0),
@@ -810,8 +734,9 @@ fn rename_box(ui: &mut Ui, cx: &RowsCx, renaming: &mut Renaming, width: f32) {
         } else {
             RenameEnd::Left
         };
-        *cx.renamed.borrow_mut() = Some(end);
+        return Some(end);
     }
+    None
 }
 
 /// The marks at a row's right end, rightmost first. A folder shows a problem or an unsaved file
@@ -865,7 +790,7 @@ struct RowMark {
 /// rest of the row ends.
 fn row_toggles(
     ui: &mut Ui,
-    cx: &RowsCx,
+    cx: &mut RowsCx,
     id: &str,
     row: &TreeRow,
     toggles: RowToggles,
@@ -925,7 +850,7 @@ fn row_toggles(
             _ => said,
         };
         if response.on_hover_text(&said).clicked() {
-            *cx.toggled.borrow_mut() = Some(RowToggled {
+            cx.toggled = Some(RowToggled {
                 id: id.to_owned(),
                 toggle,
                 only: ui.input(|i| EditorKey::ShowOnly.held(i)),
@@ -1038,15 +963,17 @@ fn drop_of<S: TreeSource>(
     source: &S,
     drawn: &[DrawnRow],
     pointer: Pos2,
-    target: &str,
-    position: &DirPosition<String>,
+    spot: &DropSpot,
 ) -> TreeDrop {
     if source.ordered() {
-        let at = match position {
-            DirPosition::First => DropAt::First,
-            DirPosition::Last => DropAt::End,
-            DirPosition::Before(id) => DropAt::Before(id.clone()),
-            DirPosition::After(id) => DropAt::After(id.clone()),
+        let (folder, at) = match spot {
+            DropSpot::Before(id) => (source.parent(id), DropAt::Before(id.clone())),
+            DropSpot::After(id) => match drawn.iter().find(|row| row.id == *id) {
+                Some(row) if row.folder && row.open => (id.clone(), DropAt::First),
+                _ => (source.parent(id), DropAt::After(id.clone())),
+            },
+            DropSpot::Into(id) => (id.clone(), DropAt::End),
+            DropSpot::End => (String::new(), DropAt::End),
         };
         let onto = drawn
             .iter()
@@ -1056,11 +983,7 @@ fn drop_of<S: TreeSource>(
                 pointer.y > row.y.min + band && pointer.y < row.y.max - band
             })
             .map(|row| row.id.clone());
-        return TreeDrop {
-            folder: target.to_owned(),
-            at,
-            onto,
-        };
+        return TreeDrop { folder, at, onto };
     }
     let folder = match drawn.iter().find(|row| row.contains(pointer)) {
         Some(row) if row.folder => row.id.clone(),
@@ -1137,30 +1060,4 @@ fn drag_tip(ui: &Ui, pointer: Pos2, text: &str, ink: Color32) {
         ink,
         12.5,
     );
-}
-
-/// Opens a closed folder the pointer has rested on for a moment while dragging.
-fn open_on_hover(
-    view: &mut TreeViewState<String>,
-    hover: &mut Option<(String, f64)>,
-    drawn: &[DrawnRow],
-    pointer: Pos2,
-    now: f64,
-) {
-    let Some(row) = drawn
-        .iter()
-        .find(|row| row.contains(pointer) && row.folder && !row.open)
-    else {
-        *hover = None;
-        return;
-    };
-    match hover {
-        Some((id, since)) if *id == row.id => {
-            if now - *since >= HOVER_OPENS {
-                view.set_openness(row.id.clone(), true);
-                *hover = None;
-            }
-        }
-        _ => *hover = Some((row.id.clone(), now)),
-    }
 }

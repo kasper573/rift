@@ -486,11 +486,12 @@ fn scene_graph(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &Area
     }
     let mut open = shown_kinds.open.clone();
     let empty = snapshot.nodes().is_empty();
-    let (response, changed) = egui::ScrollArea::vertical()
-        .id_salt(("scene graph", view_key))
-        .auto_shrink([false, false])
-        .max_height(ui.available_height() - if empty { 90.0 } else { 0.0 })
-        .show(ui, |ui| {
+    let room = egui::vec2(
+        ui.available_width(),
+        ui.available_height() - if empty { 90.0 } else { 0.0 },
+    );
+    let (response, changed) = ui
+        .allocate_ui(room, |ui| {
             tree::show(
                 ui,
                 "scene",
@@ -522,9 +523,17 @@ fn scene_graph(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &Area
         empty_state(editor, ui, view_key, snapshot);
     }
     if let Some(ids) = response.selected {
-        select_rows(editor, view_key, snapshot, &ids);
+        let rows: Vec<String> = ids
+            .into_iter()
+            .filter(|id| scene_tree::group_of(id).is_none())
+            .collect();
+        select_rows(editor, view_key, snapshot, &rows);
     }
-    for id in response.activated {
+    for id in response
+        .activated
+        .into_iter()
+        .filter(|id| scene_tree::group_of(id).is_none())
+    {
         let placement = snapshot
             .scene_node(&id)
             .and_then(nodes::placement_of)
@@ -537,6 +546,7 @@ fn scene_graph(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &Area
         act(editor, view_key, snapshot, action);
     }
     if let Some((ids, drop)) = response.dropped
+        && let drop = scene_tree::unfolded(&drop)
         && let Err(error) = scene_tree::move_rows(editor, snapshot, &ids, &drop.folder, &drop.at)
     {
         editor.toast(error);
@@ -668,6 +678,7 @@ fn act(editor: &mut Editor, view_key: &str, snapshot: &AreaSnapshot, action: Sce
     };
     match action {
         SceneAction::Add { folder, kind } => scene_tree::add(editor, snapshot, &folder, kind),
+        SceneAction::Select(ids) => select_rows(editor, view_key, snapshot, &ids),
         SceneAction::NewFolder(folder) => {
             if let Some(id) = scene_tree::new_folder(editor, snapshot, &folder) {
                 begin_rename(editor, &id);

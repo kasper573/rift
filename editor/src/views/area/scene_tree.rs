@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::{BTreeSet, HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::sync::Arc;
 use ui::egui;
 use ui::menu;
@@ -46,6 +48,8 @@ pub enum SceneAction {
     ReturnDoor(String),
     MoveTo(Vec<String>),
     Group(Vec<String>),
+    /// Selects the rows, as a row folding modules selects all it folds.
+    Select(Vec<String>),
     Ungroup(Vec<String>),
     Toggle(Vec<String>, RowToggle),
     ShowOnly(String),
@@ -67,6 +71,7 @@ impl SceneAction {
         !matches!(
             self,
             SceneAction::ShowOnMap(_)
+                | SceneAction::Select(_)
                 | SceneAction::OpenBlueprint(_)
                 | SceneAction::EditInPlace(_)
                 | SceneAction::DoneEditing
@@ -94,6 +99,8 @@ pub struct SceneSource<'a> {
     pub placing: Option<(String, AreaModuleKind)>,
     read_only: Option<String>,
     can_paste: bool,
+    /// How many modules of each kind folded into one row each folder holds, counted once asked.
+    grouped_counts: RefCell<HashMap<String, HashMap<AreaModuleKind, usize>>>,
 }
 
 /// What the filter and Show leave of a scene, kept while neither nor the scene changes: finding
@@ -107,7 +114,7 @@ pub struct Narrowed {
     counted: (usize, usize),
 }
 
-#[derive(PartialEq)]
+#[derive(PartialEq, Hash)]
 struct NarrowedFrom {
     made: u64,
     needle: String,
@@ -170,6 +177,7 @@ impl<'a> SceneSource<'a> {
             placing: None,
             read_only: project.read_only.clone(),
             can_paste,
+            grouped_counts: RefCell::default(),
         };
         let selected = selected_ids(snapshot, selection);
         for id in &selected {
@@ -273,6 +281,78 @@ impl<'a> SceneSource<'a> {
         (0..count + usize::from(waiting))
             .map(|index| format!("{prefix}/{index}"))
             .collect()
+    }
+
+    /// The kind of module `id` is, when the folder holding it folds the modules of that kind into
+    /// one row. Nothing folds while the rows are narrowed, which lists every hit as it is.
+    fn grouped_kind(&self, id: &str) -> Option<AreaModuleKind> {
+        if self.narrowed.is_some() {
+            return None;
+        }
+        let kind = self
+            .module_kind(id)
+            .filter(|kind| GROUPED_KINDS.contains(kind))?;
+        let folder = parent_id(id);
+        let count = *self
+            .grouped_counts
+            .borrow_mut()
+            .entry(folder.clone())
+            .or_insert_with(|| {
+                let mut counts = HashMap::new();
+                for child in self.all_children(&folder) {
+                    if let Some(kind) = self.module_kind(&child) {
+                        *counts.entry(kind).or_default() += 1;
+                    }
+                }
+                counts
+            })
+            .get(&kind)
+            .unwrap_or(&0);
+        (count >= GROUPED_FROM).then_some(kind)
+    }
+
+    fn module_kind(&self, id: &str) -> Option<AreaModuleKind> {
+        match self.snapshot.scene_node(id)? {
+            SceneNode::Module(module) => Some(module.module.kind()),
+            SceneNode::Folder(_) => None,
+        }
+    }
+
+    /// The modules of `kind` that the row folding them in `folder` holds, in order.
+    fn group_members(&self, folder: &str, kind: AreaModuleKind) -> Vec<String> {
+        self.all_children(folder)
+            .into_iter()
+            .filter(|child| self.grouped_kind(child) == Some(kind))
+            .collect()
+    }
+
+    fn group_row(&self, id: &str, folder: &str, kind: AreaModuleKind) -> TreeRow {
+        let count = self.group_members(folder, kind).len();
+        let name = match kind {
+            AreaModuleKind::Scatter => "Scatters".to_owned(),
+            AreaModuleKind::Population => "Populations".to_owned(),
+            kind => format!("{} modules", kind.tag().replace('_', " ")),
+        };
+        TreeRow {
+            folder: true,
+            detail: count.to_string(),
+            spoken: Some(format!("{name}, {count} inside")),
+            holds_selected: self.holding.contains(id),
+            name,
+            ..TreeRow::default()
+        }
+    }
+
+    fn group_menu(&self, ui: &mut Ui, folder: &str, kind: AreaModuleKind) -> Option<SceneAction> {
+        let members = self.group_members(folder, kind);
+        let picked = ui
+            .button(format!("Select all {}", members.len()))
+            .clicked()
+            .then_some(SceneAction::Select(members));
+        if picked.is_some() {
+            ui.close();
+        }
+        picked
     }
 
     /// The faded row of a module waiting for its spot, when `id` is it.
@@ -703,27 +783,62 @@ impl<'a> SceneSource<'a> {
 impl TreeSource for SceneSource<'_> {
     type Action = SceneAction;
 
+    fn listing(&self) -> u64 {
+        let mut hasher = std::hash::DefaultHasher::new();
+        self.snapshot.made.hash(&mut hasher);
+        self.narrowed
+            .as_ref()
+            .map(|narrowed| &narrowed.from)
+            .hash(&mut hasher);
+        self.in_place.hash(&mut hasher);
+        self.placing
+            .as_ref()
+            .map(|(folder, kind)| (folder, kind.tag()))
+            .hash(&mut hasher);
+        hasher.finish()
+    }
+
     fn children(&self, id: &str) -> Vec<String> {
+        if let Some((folder, kind)) = group_of(id) {
+            return self.group_members(&folder, kind);
+        }
         let all = self.all_children(id);
-        match &self.narrowed {
-            Some(narrowed) => all
+        if let Some(narrowed) = &self.narrowed {
+            return all
                 .into_iter()
                 .filter(|child| narrowed.shown.contains(child))
-                .collect(),
-            None => all,
+                .collect();
         }
+        let mut folded = HashSet::new();
+        all.into_iter()
+            .filter_map(|child| match self.grouped_kind(&child) {
+                Some(kind) => folded.insert(kind).then(|| group_id(id, kind)),
+                None => Some(child),
+            })
+            .collect()
     }
 
     fn parent(&self, id: &str) -> String {
-        parent_id(id)
+        if let Some((folder, _)) = group_of(id) {
+            return folder;
+        }
+        let parent = parent_id(id);
+        match self.grouped_kind(id) {
+            Some(kind) => group_id(&parent, kind),
+            None => parent,
+        }
     }
 
     fn is_folder(&self, id: &str) -> bool {
-        self.in_place.iter().any(|place| place == id)
+        group_of(id).is_some()
+            || self.in_place.iter().any(|place| place == id)
             || self.snapshot.scene_node(id).is_some_and(nodes::is_folder)
     }
 
     fn row(&self, id: &str) -> TreeRow {
+        if let Some((folder, kind)) = group_of(id) {
+            return self.group_row(id, &folder, kind);
+        }
         let Some(node) = self.snapshot.scene_node(id) else {
             return self.waiting(id).unwrap_or_default();
         };
@@ -784,6 +899,7 @@ impl TreeSource for SceneSource<'_> {
         }
         match ids {
             [] => self.empty_menu(ui),
+            [one] if let Some((folder, kind)) = group_of(one) => self.group_menu(ui, &folder, kind),
             [one] => {
                 let node = self.snapshot.scene_node(one)?.clone();
                 if self.outside(one) && !self.in_place.contains(one) {
@@ -801,6 +917,10 @@ impl TreeSource for SceneSource<'_> {
     }
 
     fn drop_tip(&self, dragged: &[String], drop: &TreeDrop) -> Result<String, String> {
+        let drop = &unfolded(drop);
+        if dragged.iter().any(|id| group_of(id).is_some()) {
+            return Err("A row folding modules moves with its folder".to_owned());
+        }
         if let Some(reason) = &self.read_only {
             return Err(reason.clone());
         }
@@ -902,6 +1022,40 @@ pub fn add_menu(ui: &mut Ui, folder: &str, snapshot: &AreaSnapshot) -> Option<Sc
         }
     }
     picked
+}
+
+/// The kinds of module a folder holding many of folds into one row each, so they don't bury what
+/// else it holds.
+const GROUPED_KINDS: [AreaModuleKind; 2] = [AreaModuleKind::Scatter, AreaModuleKind::Population];
+/// How many modules of a kind a folder holds before they fold into one row.
+const GROUPED_FROM: usize = 10;
+const GROUP: &str = "/folded/";
+
+/// The row folding the modules of `kind` that `folder` holds.
+fn group_id(folder: &str, kind: AreaModuleKind) -> String {
+    format!("{folder}{GROUP}{}", kind.tag())
+}
+
+/// The folder and kind of module the row `id` folds, when it is such a row.
+pub(crate) fn group_of(id: &str) -> Option<(String, AreaModuleKind)> {
+    let at = id.rfind(GROUP)?;
+    let kind = id[at + GROUP.len()..].parse().ok()?;
+    Some((id[..at].to_owned(), kind))
+}
+
+/// `drop` with a row folding modules taken for the folder holding them.
+pub(crate) fn unfolded(drop: &TreeDrop) -> TreeDrop {
+    match group_of(&drop.folder) {
+        Some((folder, _)) => TreeDrop {
+            folder,
+            at: match &drop.at {
+                DropAt::First => DropAt::End,
+                at => at.clone(),
+            },
+            onto: drop.onto.clone(),
+        },
+        None => drop.clone(),
+    }
 }
 
 /// The row of the node holding the row `id`, "" at the top.

@@ -351,6 +351,81 @@ fn rows_never_drop_onto_a_placement_or_into_themselves() {
     );
 }
 
+/// A folder holding many scatters lists them under one row of their own, where the first of them
+/// was, which opens on them all, selects them all from its menu, and takes a drop as the folder.
+#[test]
+fn many_scatters_in_a_folder_fold_into_one_row() {
+    let scratch = tempfile::tempdir().expect("a scratch folder");
+    let scatter = |seed: u32| {
+        json!({
+            "type": "scatter",
+            "props": [path("prop", "tuft")],
+            "region": { "x": 5.0, "y": 5.0, "w": 2.0, "h": 2.0 },
+            "per_square_meter": 0.5,
+            "seed": seed
+        })
+    };
+    let game = support::game()
+        .prop("tuft", json!({ "type": "box", "width": 0.2, "depth": 0.2 }))
+        .edit_scene("area", support::AREA, |scene| {
+            let rows = scene.as_array_mut().expect("a scene");
+            let few = folder_json("Few", (0..3).map(scatter).collect());
+            let mut many: Vec<Value> = vec![object_json("well")];
+            many.extend((0..40).map(scatter));
+            many.push(object_json("gate"));
+            rows.extend([few, folder_json("Many", many)]);
+        });
+    let mut editor = open(game, &scratch);
+    let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
+    let project = editor.project.as_ref().expect("a project");
+    let source = SceneSource::new(
+        project,
+        &snapshot,
+        &editor.selection,
+        SceneNarrowing {
+            filter: "",
+            view: &TreeView::default(),
+            kept: &mut None,
+        },
+        &mut None,
+        false,
+    );
+    let few = snapshot.nodes().len() - 2;
+    let (few, many) = (format!("/{few}"), format!("/{}", few + 1));
+
+    assert_eq!(
+        source.children(&few).len(),
+        3,
+        "a few scatters stay rows of their own"
+    );
+    let listed = source.children(&many);
+    assert_eq!(listed.len(), 3, "{listed:?}");
+    assert_eq!(listed[0], format!("{many}/children/0"));
+    assert_eq!(listed[2], format!("{many}/children/41"));
+    let folded = &listed[1];
+    let row = source.row(folded);
+    assert!(row.folder && source.is_folder(folded));
+    assert_eq!((row.name.as_str(), row.detail.as_str()), ("Scatters", "40"));
+    let members = source.children(folded);
+    assert_eq!(members.len(), 40);
+    assert_eq!(members[0], format!("{many}/children/1"));
+    assert!(
+        members
+            .iter()
+            .all(|member| source.parent(member) == *folded)
+    );
+    assert_eq!(source.parent(folded), many);
+    let into = TreeDrop {
+        folder: folded.clone(),
+        at: DropAt::End,
+        onto: None,
+    };
+    let tip = source
+        .drop_tip(&[format!("{few}/children/0")], &into)
+        .expect("a drop on the folded row lands in its folder");
+    assert!(tip.ends_with("into Many"), "{tip}");
+}
+
 #[test]
 fn a_blueprint_that_would_hold_itself_is_refused_with_the_chain() {
     let scratch = tempfile::tempdir().expect("a scratch folder");
