@@ -40,8 +40,8 @@ pub struct VideoPreferences {
 /// arenas on the GPU.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum WorldRenderer {
-    #[default]
     Legacy,
+    #[default]
     Gpu,
 }
 

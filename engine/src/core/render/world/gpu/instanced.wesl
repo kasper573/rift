@@ -5,7 +5,9 @@
 // reading bevy's mesh data at the first entry, which stands for every instance alike.
 
 @if(PREPASS_PIPELINE)
-import bevy_pbr::prepass::io::{Vertex, VertexOutput, FragmentOutput};
+import bevy_pbr::prepass::io::{Vertex, VertexOutput};
+@if(PREPASS_PIPELINE && PREPASS_FRAGMENT)
+import bevy_pbr::prepass::io::FragmentOutput;
 @else
 import bevy_pbr::render::forward_io::{Vertex, VertexOutput, FragmentOutput};
 @if(PREPASS_PIPELINE)
@@ -46,7 +48,7 @@ struct InstancedOutput {
     @if(UNCLIPPED_DEPTH_ORTHO_EMULATION)
     @location(6) unclipped_depth: f32,
     @if(VERTEX_OUTPUT_INSTANCE_INDEX)
-    @location(7) instance_index: u32,
+    @location(7) @interpolate(flat) instance_index: u32,
     @if(VERTEX_COLORS)
     @location(8) color: vec4<f32>,
     @location(10) @interpolate(flat) shown: vec2<f32>,

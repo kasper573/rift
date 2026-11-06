@@ -89,7 +89,7 @@ pub struct CullView {
     grain_pixels: f32,
     stray_pixels: f32,
     near: f32,
-    target: Vec3,
+    subject: Vec3,
     fade_step: f32,
 }
 
@@ -113,16 +113,16 @@ impl CullView {
             grain_pixels: GRAIN_PIXELS,
             stray_pixels: STRAY_PIXELS,
             near: NEAR_PLANE.0,
-            target: Vec3::ZERO,
+            subject: Vec3::ZERO,
             fade_step: 0.0,
         }
     }
 
-    /// The view clearing what comes between its eye and `target`, each fade moving `step` of the
+    /// The view clearing what comes between its eye and `subject`, each fade moving `step` of the
     /// way this frame. Every other view draws its props whole.
-    pub fn clearing(self, target: Vec3, step: f32) -> CullView {
+    pub fn clearing(self, subject: Vec3, step: f32) -> CullView {
         CullView {
-            target,
+            subject,
             fade_step: step,
             ..self
         }

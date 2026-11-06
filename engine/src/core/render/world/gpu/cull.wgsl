@@ -24,7 +24,7 @@ struct CullView {
     near: f32,
     // Whom the view's camera follows, and how far a fade moves this frame: none for a view that
     // draws every prop whole.
-    target: vec3<f32>,
+    subject: vec3<f32>,
     fade_step: f32,
 }
 
@@ -155,9 +155,9 @@ fn faded(index: u32, instance: Instance, prop: Prop, turn: vec2<f32>) -> vec2<f3
     let high = vec3<f32>(prop.x + prop.half_x, prop.y + prop.half_y, prop.z + prop.half_z);
     let at = vec3<f32>(instance.x, instance.y, instance.z);
     let eye = local_of(view.eye, at, turn, instance.scale);
-    let target = local_of(view.target, at, turn, instance.scale);
+    let subject = local_of(view.subject, at, turn, instance.scale);
     let inside = all(eye >= low) && all(eye <= high);
-    let wanted = select(1.0, 0.0, inside || crosses(eye, target, low, high));
+    let wanted = select(1.0, 0.0, inside || crosses(eye, subject, low, high));
     let was = shown[index];
     let now = was + clamp(wanted - was, -view.fade_step, view.fade_step);
     shown[index] = now;
