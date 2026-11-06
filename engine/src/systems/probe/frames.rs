@@ -24,6 +24,9 @@ pub struct FrameSample {
     /// Unknown until the GPU's timings for the frame have come back, or for good where the
     /// adapter keeps no timestamps.
     pub gpu_ms: Option<Millis>,
+    /// Prop instances the GPU drew over every view: unknown until its counts have come back, or
+    /// for good where no view culled any.
+    pub props_drawn: Option<u32>,
     /// Chunks of ground and scenery the view takes in that stand coarser than wanted, or not yet.
     pub missing: u32,
     pub draws: u32,
@@ -159,6 +162,7 @@ impl FrameSamples {
     pub fn timed(&mut self, report: &GpuReport) {
         if let Some(sample) = self.sample_mut(report.frame) {
             sample.gpu_ms = Some(report.gpu_ms);
+            sample.props_drawn = report.props_drawn;
         }
         if let Some(slow) = self
             .slow

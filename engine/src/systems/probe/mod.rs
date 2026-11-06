@@ -261,6 +261,7 @@ pub fn sample_frame(world: &mut World) {
             cpu_main_ms,
             cpu_render_ms: None,
             gpu_ms: None,
+            props_drawn: None,
             missing,
             draws: 0,
             instances: 0,

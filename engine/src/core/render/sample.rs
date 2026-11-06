@@ -22,6 +22,7 @@ use bevy::render::renderer::{
 use bevy::render::texture::GpuImage;
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 
+use crate::core::render::world::gpu::cull;
 use crate::core::units::{Bytes, Millis};
 
 /// Measures every frame the renderer draws, for whoever reads [`RenderReports`] and
@@ -99,12 +100,14 @@ impl RenderReports {
     }
 }
 
-/// What the GPU measured of a frame: its passes' times, and their sum.
+/// What the GPU measured of a frame: its passes' times, their sum, and the prop instances its
+/// views drew, where any culled them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct GpuReport {
     pub frame: u32,
     pub gpu_ms: Millis,
     pub passes: Vec<(String, Millis)>,
+    pub props_drawn: Option<u32>,
 }
 
 /// The GPU reports that have landed in the diagnostics since last asked.
@@ -121,6 +124,8 @@ pub fn gpu_reports(store: &DiagnosticsStore, read: &mut GpuReportsRead) -> Vec<G
         return Vec::new();
     };
     read.0 = Some(*latest);
+    let props_drawn_path =
+        bevy::diagnostic::DiagnosticPath::from_components(["render", cull::PROPS_DRAWN]);
     batches
         .into_iter()
         .map(|(time, frame)| {
@@ -141,10 +146,18 @@ pub fn gpu_reports(store: &DiagnosticsStore, read: &mut GpuReportsRead) -> Vec<G
                     Some((name.to_owned(), Millis(measured.value as f32)))
                 })
                 .collect();
+            let props_drawn = store.get(&props_drawn_path).and_then(|drawn| {
+                drawn
+                    .measurements()
+                    .filter(|measured| measured.time == time)
+                    .map(|measured| measured.value as u32)
+                    .reduce(|all, drawn| all + drawn)
+            });
             GpuReport {
                 frame,
                 gpu_ms: Millis(passes.iter().map(|(_, ms)| ms.0).sum()),
                 passes,
+                props_drawn,
             }
         })
         .collect()
@@ -155,6 +168,7 @@ pub fn gpu_reports(store: &DiagnosticsStore, read: &mut GpuReportsRead) -> Vec<G
 pub struct GpuReportsRead(Option<Instant>);
 
 const FRAME_STAMP: &str = "frame_number";
+
 const FRAME_STAMP_PATH: bevy::diagnostic::DiagnosticPath =
     bevy::diagnostic::DiagnosticPath::const_new("render/frame_number");
 

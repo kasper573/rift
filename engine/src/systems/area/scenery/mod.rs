@@ -52,6 +52,7 @@ use crate::core::render::present::AreaGrade;
 use crate::core::render::sample::FrameWork;
 use crate::core::render::video::{VideoPreferences, WorldRenderer};
 use crate::core::render::world::clouds::{CloudDrift, CloudSheet};
+use crate::core::render::world::gpu::arena::PropArena;
 use crate::core::render::world::gpu::atlas::TerrainAtlas;
 use crate::core::render::world::gpu::draw::{GroundDraw, GroundPatch, PATCH_CELLS};
 use crate::core::render::world::gpu::upload;
@@ -173,6 +174,12 @@ pub fn spawn(
             })
         }))
     };
+    let renderer = world
+        .get_resource::<VideoPreferences>()
+        .map_or_else(WorldRenderer::default, |video| video.world_renderer);
+    if renderer == WorldRenderer::Gpu {
+        world.entity_mut(root).insert(PropArena);
+    }
     let streaming = Streaming {
         content: content.clone(),
         area: area.clone(),
@@ -183,9 +190,7 @@ pub fn spawn(
         covers,
         props: Props::default(),
         instances: Instances::default(),
-        renderer: world
-            .get_resource::<VideoPreferences>()
-            .map_or_else(WorldRenderer::default, |video| video.world_renderer),
+        renderer,
         planner,
         sight: None,
         planning: None,

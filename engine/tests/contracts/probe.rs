@@ -119,12 +119,14 @@ fn a_driver_reads_the_frames_on_from_the_last_it_saw_and_is_told_what_the_ring_l
         frame: 5,
         gpu_ms: Millis(4.0),
         passes: vec![("main_opaque_pass_3d".to_owned(), Millis(4.0))],
+        props_drawn: Some(120),
     });
     let read = frames.since(4);
     assert_eq!(read.samples[0].cpu_render_ms, Some(Millis(3.0)));
     assert_eq!(read.samples[0].draws, 7);
     assert_eq!(read.samples[0].upload_bytes, Bytes(1024));
     assert_eq!(read.samples[0].gpu_ms, Some(Millis(4.0)));
+    assert_eq!(read.samples[0].props_drawn, Some(120));
     assert_eq!(read.samples[1].cpu_render_ms, None);
     assert_eq!(read.samples[1].gpu_ms, None);
 }
@@ -161,6 +163,7 @@ fn a_slow_frame_keeps_the_gpus_time_by_pass_and_the_systems_it_waited_on() {
         frame: 17,
         gpu_ms: Millis(50.0),
         passes: vec![("shadows".to_owned(), Millis(50.0))],
+        props_drawn: None,
     });
     let read = frames.since(0);
     let slow: Vec<u32> = read.slow.iter().map(|slow| slow.frame).collect();
@@ -195,6 +198,7 @@ fn sample(frame: u32, dt_ms: Millis) -> FrameSample {
         cpu_main_ms: Millis(1.0),
         cpu_render_ms: None,
         gpu_ms: None,
+        props_drawn: None,
         missing: 0,
         draws: 0,
         instances: 0,

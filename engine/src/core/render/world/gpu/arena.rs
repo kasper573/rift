@@ -11,10 +11,14 @@ use std::hash::Hash;
 use std::sync::Arc;
 
 use bevy::camera::primitives::Aabb;
+use bevy::camera::visibility::RenderLayers;
+use bevy::ecs::query::QueryItem;
 use bevy::gltf::{Gltf, GltfMaterial, GltfMesh, GltfNode};
 use bevy::prelude::*;
+use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
 use bevy::render::render_resource::BufferUsages;
 use bevy::render::renderer::{RenderDevice, RenderQueue};
+use bevy::render::sync_component::SyncComponent;
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderSystems};
 use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
@@ -28,7 +32,8 @@ pub struct ModelArenaPlugin;
 
 impl Plugin for ModelArenaPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<PropModels>()
+        app.add_plugins(ExtractComponentPlugin::<PropArena>::default())
+            .init_resource::<PropModels>()
             .init_resource::<InstanceChanges>()
             .add_systems(First, clear_instance_changes)
             .add_systems(Last, (forget_models, prepare_models, send_models).chain());
@@ -42,6 +47,32 @@ impl Plugin for ModelArenaPlugin {
                     (write_models, write_instances).in_set(RenderSystems::PrepareResources),
                 );
         }
+    }
+}
+
+/// A scenery whose props are drawn from its arena, on its root.
+#[derive(Component, Clone, Copy, Debug, Default)]
+pub struct PropArena;
+
+/// A scenery's arena as the render world draws it: on the layers the scenery shows on.
+#[derive(Component, Clone, Debug)]
+pub struct ExtractedPropArena {
+    pub layers: RenderLayers,
+}
+
+impl SyncComponent<RenderApp> for PropArena {
+    type Target = ExtractedPropArena;
+}
+
+impl ExtractComponent<RenderApp> for PropArena {
+    type QueryData = Option<&'static RenderLayers>;
+    type QueryFilter = With<PropArena>;
+    type Out = ExtractedPropArena;
+
+    fn extract_component(layers: QueryItem<'_, '_, Self::QueryData>) -> Option<ExtractedPropArena> {
+        Some(ExtractedPropArena {
+            layers: layers.cloned().unwrap_or_default(),
+        })
     }
 }
 
@@ -307,11 +338,51 @@ pub enum InstanceChange {
         bytes: Arc<[u8]>,
         instances: u32,
         capacity: u64,
+        contents: Arc<ChunkContents>,
     },
     Removed {
         chunk: u32,
     },
     Dropped,
+}
+
+/// What a chunk's instances are, as culling reads them: the box their places fill, the largest
+/// scale among them, and each prop among them with its model and how many instances it has.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ChunkContents {
+    pub low: Vec3,
+    pub high: Vec3,
+    pub largest_scale: f32,
+    pub props: Vec<(u32, AssetId<Gltf>, u32)>,
+}
+
+impl ChunkContents {
+    /// What `records` are, each prop's model by `model_of`.
+    pub fn of(
+        records: &[InstanceRecord],
+        model_of: impl Fn(u32) -> AssetId<Gltf>,
+    ) -> ChunkContents {
+        let mut props: Vec<(u32, AssetId<Gltf>, u32)> = Vec::new();
+        let mut low = Vec3::INFINITY;
+        let mut high = Vec3::NEG_INFINITY;
+        let mut largest_scale = 0.0f32;
+        for record in records {
+            let at = Vec3::from_array(record.position);
+            low = low.min(at);
+            high = high.max(at);
+            largest_scale = largest_scale.max(record.scale);
+            match props.iter_mut().find(|(prop, _, _)| *prop == record.prop) {
+                Some((_, _, instances)) => *instances += 1,
+                None => props.push((record.prop, model_of(record.prop), 1)),
+            }
+        }
+        ChunkContents {
+            low,
+            high,
+            largest_scale,
+            props,
+        }
+    }
 }
 
 impl Default for InstanceArena {
@@ -324,9 +395,14 @@ impl Default for InstanceArena {
 }
 
 impl InstanceArena {
-    /// Places `records` as `chunk`'s instances, in place of those it held: the change that writes
-    /// them, none when there are none to write.
-    pub fn insert(&mut self, chunk: u32, records: &[InstanceRecord]) -> Option<InstanceChange> {
+    /// Places `records` as `chunk`'s instances, in place of those it held, each prop's model by
+    /// `model_of`: the change that writes them, none when there are none to write.
+    pub fn insert(
+        &mut self,
+        chunk: u32,
+        records: &[InstanceRecord],
+        model_of: impl Fn(u32) -> AssetId<Gltf>,
+    ) -> Option<InstanceChange> {
         let removed = self.remove(chunk);
         if records.is_empty() {
             self.chunks.insert(chunk, None);
@@ -347,6 +423,7 @@ impl InstanceArena {
             bytes: bytes.into(),
             instances: records.len() as u32,
             capacity: self.space.capacity(),
+            contents: Arc::new(ChunkContents::of(records, model_of)),
         })
     }
 
@@ -382,16 +459,25 @@ impl InstanceArena {
 #[derive(Resource, Default)]
 pub struct InstanceChanges(pub Vec<(Entity, InstanceChange)>);
 
-/// Each scenery's arena as the GPU holds it, by the scenery: its slab, and where each chunk's
-/// instances lie in it and how many there are.
+/// Each scenery's arena as the GPU holds it, by the scenery: its slab, each chunk's instances in
+/// it, and how many times its chunks have changed.
 #[derive(Resource, Default)]
 pub struct InstanceArenas(pub HashMap<Entity, GpuInstances>);
 
 pub struct GpuInstances {
     pub slab: Slab,
-    pub chunks: HashMap<u32, (u64, u32)>,
+    pub chunks: HashMap<u32, GpuChunk>,
+    pub changes: u64,
     pending: Vec<(u64, Arc<[u8]>)>,
     capacity: u64,
+}
+
+/// Where a chunk's instances lie in its arena's slab, in bytes, how many there are, and what
+/// they are.
+pub struct GpuChunk {
+    pub offset: u64,
+    pub instances: u32,
+    pub contents: Arc<ChunkContents>,
 }
 
 impl Default for GpuInstances {
@@ -402,6 +488,7 @@ impl Default for GpuInstances {
                 BufferUsages::STORAGE | BufferUsages::VERTEX,
             ),
             chunks: HashMap::new(),
+            changes: 0,
             pending: Vec::new(),
             capacity: 0,
         }
@@ -432,12 +519,14 @@ impl PropModels {
     }
 }
 
-/// The models the GPU holds, as [`ModelSlabs`] places them, and the slabs' buffers.
+/// The models the GPU holds, as [`ModelSlabs`] places them, the slabs' buffers, and how many
+/// times the models held have changed.
 #[derive(Resource)]
 pub struct ModelArena {
     pub slabs: ModelSlabs<AssetId<Gltf>>,
     pub vertices: Slab,
     pub indices: Slab,
+    pub changes: u64,
     incoming: Vec<(AssetId<Gltf>, Option<Arc<PreparedModel>>)>,
 }
 
@@ -450,6 +539,7 @@ impl Default for ModelArena {
                 BufferUsages::VERTEX | BufferUsages::STORAGE,
             ),
             indices: Slab::new("model indices", BufferUsages::INDEX | BufferUsages::STORAGE),
+            changes: 0,
             incoming: Vec::new(),
         }
     }
@@ -542,11 +632,16 @@ fn extract_models(models: Extract<Res<PropModels>>, mut arena: ResMut<ModelArena
 
 /// Writes the models sent this frame into the slabs, and lets go of those let go.
 fn write_models(mut arena: ResMut<ModelArena>, device: Res<RenderDevice>, queue: Res<RenderQueue>) {
+    if arena.incoming.is_empty() {
+        return;
+    }
+    arena.changes += 1;
     let ModelArena {
         slabs,
         vertices,
         indices,
         incoming,
+        ..
     } = &mut *arena;
     let mut writes = Vec::new();
     for (id, model) in incoming.drain(..) {
@@ -586,15 +681,25 @@ fn extract_instances(changes: Extract<Res<InstanceChanges>>, mut arenas: ResMut<
                 bytes,
                 instances,
                 capacity,
+                contents,
             } => {
                 let arena = arenas.0.entry(scenery).or_default();
-                arena.chunks.insert(chunk, (offset, instances));
+                arena.chunks.insert(
+                    chunk,
+                    GpuChunk {
+                        offset,
+                        instances,
+                        contents,
+                    },
+                );
+                arena.changes += 1;
                 arena.pending.push((offset, bytes));
                 arena.capacity = arena.capacity.max(capacity);
             }
             InstanceChange::Removed { chunk } => {
                 if let Some(arena) = arenas.0.get_mut(&scenery) {
                     arena.chunks.remove(&chunk);
+                    arena.changes += 1;
                 }
             }
             InstanceChange::Dropped => {

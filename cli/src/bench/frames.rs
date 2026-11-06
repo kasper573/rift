@@ -266,6 +266,7 @@ impl Window {
             gpu: median(self.samples.iter().filter_map(|sample| sample.gpu_ms)),
             draws: median_u32(self.samples.iter().map(|sample| sample.draws)),
             instances: median_u32(self.samples.iter().map(|sample| sample.instances)),
+            props_drawn: median_u32(self.samples.iter().filter_map(|sample| sample.props_drawn)),
             upload_bytes: median_u64(self.samples.iter().map(|sample| sample.upload_bytes.0))
                 .map(Bytes),
             vfx_writes: median_u32(self.samples.iter().map(|sample| sample.vfx_writes)),
@@ -301,6 +302,8 @@ pub struct FrameStats {
     pub gpu: Option<Millis>,
     pub draws: Option<u32>,
     pub instances: Option<u32>,
+    /// The prop instances the GPU drew a frame, where its views culled any.
+    pub props_drawn: Option<u32>,
     /// What a frame commonly sent the GPU, and how many vfx materials it painted anew and bodies it
     /// posed: the work it did for what changed on screen.
     pub upload_bytes: Option<Bytes>,

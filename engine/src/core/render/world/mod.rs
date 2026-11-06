@@ -67,6 +67,7 @@ impl Plugin for WorldScenePlugin {
             gpu::draw::GroundDrawPlugin,
             gpu::upload::UploadPlugin,
             gpu::arena::ModelArenaPlugin,
+            gpu::cull::PropCullPlugin,
             gpu::atlas::TerrainAtlasPlugin,
             haze::HazePlugin,
             layers::JointLayersPlugin,

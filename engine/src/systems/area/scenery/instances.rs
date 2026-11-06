@@ -155,20 +155,22 @@ fn send(world: &mut World, streaming: &mut Streaming, root: Entity, ground: Rect
             return;
         }
         let (chunk, expanded) = instances.expanded.remove(0);
-        for prop in expanded.props {
-            if instances.models.contains_key(&prop) {
-                continue;
-            }
-            let path = prop.get(&streaming.content).model.path();
-            let model = assets::model(world.resource::<AssetServer>(), path);
-            if let Some(mut models) = world.get_resource_mut::<PropModels>() {
-                models.want(&model);
-            }
-            instances.models.insert(prop, model);
+        let mut models_of = HashMap::new();
+        for &prop in &expanded.props {
+            let model = instances.models.entry(prop).or_insert_with(|| {
+                let path = prop.get(&streaming.content).model.path();
+                let model = assets::model(world.resource::<AssetServer>(), path);
+                if let Some(mut models) = world.get_resource_mut::<PropModels>() {
+                    models.want(&model);
+                }
+                model
+            });
+            models_of.insert(prop.index() as u32, model.id());
         }
+        let key = key_of(ground, chunk);
         if let Some(change) = instances
             .arena
-            .insert(key_of(ground, chunk), &expanded.records)
+            .insert(key, &expanded.records, |prop| models_of[&prop])
             && let Some(mut changes) = world.get_resource_mut::<InstanceChanges>()
         {
             changes.0.push((root, change));
