@@ -54,8 +54,6 @@ rift check <game>                    # the game loads whole, and every file read
 rift format <game>                   # rewrites every file that doesn't read as the editor writes it
 rift ask <game>                      # the probe's questions about the game itself, without a client
 rift render area <game> <shot> <out> # a picture of an area, drawn off screen through the world's own camera
-rift render area <game> <shot> <out> --patch
-                                     # …with a square of ground at the target drawn by the GPU draw path
 rift bench                           # the server's capacity, on a large game generated in code
 rift bench <game>                    # …on the game, then the client's and the editor's frame rates and memory (Linux)
 rift bench <game> --only memory      # …only the parts named: server, client, editor, memory

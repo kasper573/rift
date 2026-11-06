@@ -31,7 +31,7 @@ use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin};
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 use bevy::render::render_resource::PipelineCache;
-use bevy::render::{ExtractSchedule, Render, RenderApp, RenderSystems};
+use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::world_serialization::{WorldAssetRoot, WorldInstance, WorldInstanceSpawner};
 
 use super::Look;
@@ -51,36 +51,20 @@ impl Plugin for WorldScenePlugin {
         bevy::asset::embedded_asset!(app, "fade.wesl");
         bevy::asset::embedded_asset!(app, "fade_prepass.wesl");
         bevy::asset::embedded_asset!(app, "decal.wesl");
-        let _ = app
-            .world_mut()
-            .resource_mut::<Assets<Shader>>()
-            .insert(terrain::GROUND_SHADER.id(), terrain::ground_shader());
         app.register_asset_loader(crate::core::assets::loader::PngLoader);
         let compiling = CompilingPipelines::default();
         app.insert_resource(compiling.clone());
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
                 .insert_resource(compiling)
-                .init_resource::<terrain::LaidPaints>()
-                .add_systems(ExtractSchedule, terrain::extract_laid)
-                .add_systems(
-                    Render,
-                    (
-                        terrain::write_laid.in_set(RenderSystems::PrepareResources),
-                        count_compiling.in_set(RenderSystems::Cleanup),
-                    ),
-                );
-        }
-        if app.get_sub_app(RenderApp).is_some() {
-            app.init_resource::<terrain::LaidPaints>();
+                .add_systems(Render, count_compiling.in_set(RenderSystems::Cleanup));
         }
         app.add_plugins((
             MaterialPlugin::<material::WorldMaterial>::default(),
             MaterialPlugin::<decal::DecalMaterial>::default(),
-            MaterialPlugin::<terrain::GroundMaterial>::default(),
             HierarchyPropagatePlugin::<RenderLayers>::new(PostUpdate),
             body::BodyPlugin,
-            gpu::draw::GpuDrawPlugin,
+            gpu::draw::GroundDrawPlugin,
             gpu::upload::UploadPlugin,
             gpu::atlas::TerrainAtlasPlugin,
             haze::HazePlugin,

@@ -156,10 +156,6 @@ enum Render {
         /// pictures differ, failing when they differ by more than the eye can tell.
         #[arg(long)]
         check_determinism: bool,
-        /// Lays a square of flat ground at the target, drawn by the GPU draw path the world's
-        /// ground is moving onto, beside the ground as it is drawn today.
-        #[arg(long)]
-        patch: bool,
     },
 }
 
@@ -191,7 +187,6 @@ fn main() {
             shot,
             out,
             check_determinism,
-            patch,
         }) => {
             if check_determinism {
                 if let Err(failure) = render::check_determinism(&game, &shot, &out) {
@@ -199,7 +194,7 @@ fn main() {
                     std::process::exit(1);
                 }
             } else {
-                render::area(&game, &shot, &out, patch);
+                render::area(&game, &shot, &out);
             }
         }
         Command::Bench {

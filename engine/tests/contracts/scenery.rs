@@ -18,14 +18,15 @@ use bevy::render::view::ColorGrading;
 use bevy::shader::Shader;
 use bevy::world_serialization::WorldSerializationPlugin;
 use engine::core::content::Content;
+use engine::core::ground;
 use engine::core::math::Pos;
 use engine::core::render::camera::Lens;
 use engine::core::render::camera::WorldPicture;
 use engine::core::render::world::cover::CoverMaterial;
+use engine::core::render::world::gpu::draw::{GroundDraw, PATCH_CELLS};
 use engine::core::render::world::haze::Haze;
 use engine::core::render::world::material::WorldMaterial;
 use engine::core::render::world::sky::Daylight;
-use engine::core::render::world::terrain::GroundMaterial;
 use engine::core::render::world::{self, WorldScenePlugin};
 use engine::core::units::{Degrees, MeterSize, Meters};
 use engine::core::vfx::render::VfxMaterialsPlugin;
@@ -213,12 +214,13 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
         !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
     }));
     let west = held(&app);
-    let (columns, rows) = area.heights.samples();
-    let ground = ground_vertices(&mut app);
+    let (near, far) = (
+        ground_stride_at(&mut app, 16.0),
+        ground_stride_at(&mut app, 480.0),
+    );
     assert!(
-        ground < (columns * rows) as usize,
-        "the ground stands coarser far from the view: {ground} vertices for {} samples",
-        columns * rows
+        far > near,
+        "the ground stands coarser far from the view: a sample in {far} far off, in {near} near"
     );
     assert_eq!(
         (
@@ -346,20 +348,20 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
     );
 }
 
-/// How many vertices the ground's chunks hold.
-fn ground_vertices(app: &mut App) -> usize {
+/// Every how many samples the ground is drawn `x` metres along the field.
+fn ground_stride_at(app: &mut App, x: f32) -> u32 {
     let world = app.world_mut();
-    let chunks: Vec<Handle<Mesh>> = world
-        .query_filtered::<&Mesh3d, With<MeshMaterial3d<GroundMaterial>>>()
+    let column = (x * ground::SAMPLES_PER_METER as f32) as u32;
+    world
+        .query::<&GroundDraw>()
         .iter(world)
-        .map(|mesh| mesh.0.clone())
-        .collect();
-    let meshes = world.resource::<Assets<Mesh>>();
-    chunks
-        .iter()
-        .filter_map(|chunk| meshes.get(chunk))
-        .map(Mesh::count_vertices)
-        .sum()
+        .flat_map(|draw| draw.patches.iter())
+        .find(|patch| {
+            let (first, _) = patch.first();
+            (first..first + PATCH_CELLS * patch.stride()).contains(&column)
+        })
+        .map(|patch| patch.stride())
+        .expect("ground drawn there")
 }
 
 /// Whether a mesh drawn in `M` standing at the world's origin, as merged meshes stand, holds what

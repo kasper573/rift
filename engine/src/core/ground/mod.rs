@@ -229,11 +229,13 @@ impl HeightRange {
         }
     }
 
-    fn step(self) -> f32 {
+    /// The metres between one level of the 16 bits and the next.
+    pub fn step(self) -> f32 {
         (self.highest.0 - self.lowest.0) / u16::MAX as f32
     }
 
-    fn ground_level(self) -> u16 {
+    /// The level ground level lies on.
+    pub fn ground_level(self) -> u16 {
         (-self.lowest.0 / self.step()).round() as u16
     }
 

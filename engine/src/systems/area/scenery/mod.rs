@@ -29,12 +29,10 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::ecs::component::Mutable;
 use bevy::light::FogVolume;
 use bevy::light::atmosphere::ScatteringMedium;
-use bevy::mesh::MeshTag;
 use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, IoTaskPool, Task};
-use rayon::prelude::*;
 
 use super::lighting::DomeLook;
 use super::prop::PropId;
@@ -50,14 +48,14 @@ use crate::core::render::camera::WorldPicture;
 use crate::core::render::present::AreaGrade;
 use crate::core::render::sample::FrameWork;
 use crate::core::render::world::clouds::{CloudDrift, CloudSheet};
+use crate::core::render::world::gpu::atlas::TerrainAtlas;
+use crate::core::render::world::gpu::draw::{GroundDraw, GroundPatch, PATCH_CELLS};
 use crate::core::render::world::gpu::upload;
 use crate::core::render::world::haze::Haze;
 use crate::core::render::world::lights::{self, Flicker};
 use crate::core::render::world::lod::MeshLevels;
 use crate::core::render::world::sky::{self, Daylight, SunLight};
-use crate::core::render::world::terrain::{
-    self, ChunkPaint, ChunkPaints, GroundLayer, GroundMaterial,
-};
+use crate::core::render::world::terrain::{self, GroundLayer};
 use crate::core::render::{CameraRig, Look, camera, world_point};
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::{MeterSize, Meters};
@@ -151,7 +149,7 @@ pub fn spawn(
             .as_ref()
             .and_then(|rainfall| spawn_rain(world, content, rainfall, root));
     }
-    let (terrain, paints) = spawn_terrain(world, content, area, &look, root);
+    let terrain = spawn_terrain(world, content, area, &look, root);
     let covers = Covers::new(world, content, area);
     let planner = {
         let (content, area) = (content.clone(), area.clone());
@@ -175,7 +173,6 @@ pub fn spawn(
         paint: area.paint.clone(),
         water: area.water.clone(),
         terrain,
-        paints,
         covers,
         props: Props::default(),
         planner,
@@ -184,10 +181,9 @@ pub fn spawn(
         plan: None,
         whole: false,
         stood: Stood::default(),
-        loading: HashMap::default(),
-        making: HashMap::default(),
-        reshaped: HashMap::default(),
+        drawn: None,
         missing: 0,
+        loading: HashMap::default(),
     };
     world.resource_mut::<Streams>().0.insert(root, streaming);
     Scenery {
@@ -332,13 +328,14 @@ pub fn missing(world: &World) -> u32 {
         .sum()
 }
 
-/// How many chunks of ground stand for the sights.
+/// How many patches of ground are drawn for the sights.
 pub fn stood_chunks(world: &World) -> u32 {
     world
         .resource::<Streams>()
         .0
         .values()
-        .map(|streaming| streaming.stood.ground.len() as u32)
+        .filter_map(|streaming| world.get::<GroundDraw>(streaming.terrain))
+        .map(|draw| draw.patches.len() as u32)
         .sum()
 }
 
@@ -369,7 +366,6 @@ struct Streaming {
     paint: PaintMap,
     water: WaterSurface,
     terrain: Entity,
-    paints: ChunkPaints,
     covers: Covers,
     props: Props,
     planner: Making<Arc<Planner>>,
@@ -381,15 +377,12 @@ struct Streaming {
     /// stream.
     whole: bool,
     stood: Stood,
-    /// The tiles of ground being loaded, for the near chunks waiting on them.
-    loading: HashMap<TileAt, Task<()>>,
-    /// The chunks of ground being made, each its mesh and the paint under it.
-    making: HashMap<Node, Making<(Mesh, ChunkPaint)>>,
-    /// The chunks of ground laid anew, each with its new mesh and paint, showing as they were until
-    /// the new mesh is on the GPU.
-    reshaped: HashMap<Entity, (Handle<Mesh>, ChunkPaint)>,
-    /// How many chunks of ground and regions of scenery the plan takes in have yet to stand.
+    /// The plan whose ground the terrain draws.
+    drawn: Option<Arc<Plan>>,
+    /// How much of the ground and how many regions of scenery the plan takes in have yet to stand.
     missing: u32,
+    /// The tiles of ground being loaded for what stands on them.
+    loading: HashMap<TileAt, Task<()>>,
 }
 
 impl Streaming {
@@ -402,13 +395,12 @@ impl Streaming {
 
     /// Whether streaming has nothing to do until the sight moves.
     fn idle(&self) -> bool {
-        self.sight.is_none() || self.stands() && self.loading.is_empty() && self.reshaped.is_empty()
+        self.sight.is_none() || self.stands()
     }
 }
 
 #[derive(Default)]
 struct Stood {
-    ground: HashMap<Node, Entity>,
     lights: HashMap<usize, Entity>,
 }
 
@@ -421,16 +413,13 @@ struct Node {
     row: u32,
 }
 
-/// The samples along a leaf chunk's side.
-const LEAF_SAMPLES: u32 = 128;
-/// The pixels along every chunk's paint: a pixel per stride of its samples, and one beyond each
-/// edge.
-const PAINT_SIDE: u32 = LEAF_SAMPLES + 2;
+/// The samples along a leaf node's side: a node is drawn as a patch.
+const LEAF_SAMPLES: u32 = PATCH_CELLS;
 /// How near the view a node of the ground or a region of the scenery must lie, in its own sides,
 /// to be cut into finer ones.
 const SPLIT_WITHIN: f32 = 1.5;
-/// The level from which a chunk's stride is the overview's, so it stands from the overview alone;
-/// a finer chunk waits for the tiles of ground under it.
+/// The level from which a node's stride is the overview's, so it draws from the overview alone;
+/// a finer node wants the tiles of ground under it in detail.
 const OVERVIEW_LEVEL: u32 = OVERVIEW_STRIDE.trailing_zeros();
 /// How placements are filed to be found near the view, and the side of the leaves of the
 /// quadtree the props stand over.
@@ -499,15 +488,20 @@ fn stream_plan(world: &mut World, root: Entity, streaming: &mut Streaming, simpl
     else {
         return;
     };
-    reshape(world, streaming);
-    if streaming.whole && streaming.loading.is_empty() {
+    if streaming.whole {
         if simplified {
             props::level_props(world, streaming, &plan.seen);
         }
         return;
     }
+    streaming
+        .loading
+        .retain(|_, task| check_ready(task).is_none());
     let mut budget = Budget::new(world);
-    let ground_missing = stream_ground(world, streaming, &plan, &mut budget);
+    let ground_missing = draw_ground(world, streaming, &plan);
+    if ground_missing > 0 {
+        budget.defer();
+    }
     let props_unstood = props::stand(world, streaming, &planner, &plan, root, &mut budget);
     let covers_unstood = covers::stand(world, streaming, &planner, &plan, root, &mut budget);
     streaming.missing = ground_missing + (props_unstood.len() + covers_unstood.len()) as u32;
@@ -572,71 +566,45 @@ impl Budget {
     }
 }
 
-/// Stands the ground `plan` wants, as the budget allows; how many of its chunks have yet to stand.
-fn stream_ground(
-    world: &mut World,
-    streaming: &mut Streaming,
-    plan: &Plan,
-    budget: &mut Budget,
-) -> u32 {
-    streaming
-        .loading
-        .retain(|_, task| check_ready(task).is_none());
-    let wanted: HashSet<Node> = plan.ground.iter().copied().collect();
-    streaming.making.retain(|node, _| wanted.contains(node));
-    let gone: Vec<Node> = streaming
-        .stood
-        .ground
-        .keys()
-        .filter(|&node| !wanted.contains(node))
-        .copied()
-        .collect();
-    let missing: Vec<Node> = plan
-        .ground
-        .iter()
-        .filter(|&node| !streaming.stood.ground.contains_key(node))
-        .copied()
-        .collect();
-    for node in missing {
-        if node.level < OVERVIEW_LEVEL && !ground_loaded(streaming, node_rect(node).bounds()) {
-            budget.defer();
-            continue;
-        }
-        let making = streaming.making.entry(node).or_insert_with(|| {
-            Making::Task(make_chunk(&streaming.heights, &streaming.paint, node))
-        });
-        if making.made().is_none() {
-            budget.defer();
-            continue;
-        }
-        if !budget.stage() {
-            break;
-        }
-        let Some((mesh, paint)) = streaming.making.remove(&node).and_then(Making::into_made) else {
-            continue;
+/// Draws the ground `plan` wants, its nodes finer than the overview in detail as the terrain's
+/// atlas takes their tiles in, those any eye may come nearest first; how much of it has yet to
+/// reach the GPU.
+fn draw_ground(world: &mut World, streaming: &mut Streaming, plan: &Arc<Plan>) -> u32 {
+    let terrain = streaming.terrain;
+    if streaming
+        .drawn
+        .as_ref()
+        .is_none_or(|drawn| !Arc::ptr_eq(drawn, plan))
+    {
+        let samples = streaming.heights.samples();
+        let patches = patches_of(&plan.ground, samples);
+        let size = streaming.heights.size();
+        let nearest_eye = |tile: TileAt| {
+            let bounds = tile.rect(size);
+            let ground = streaming.heights.height_at(bounds.center());
+            plan.seen.over(bounds, ground, ground)
         };
-        let entity = spawn_chunk(world, streaming, mesh, &paint);
-        streaming.stood.ground.insert(node, entity);
-    }
-    let unstood = wanted
-        .iter()
-        .filter(|&node| {
-            streaming
-                .stood
-                .ground
-                .get(node)
-                .is_none_or(|&chunk| !upload::sent(world, chunk))
-        })
-        .count() as u32;
-    if unstood == 0 {
-        for node in gone {
-            if let Some(entity) = streaming.stood.ground.remove(&node) {
-                streaming.reshaped.remove(&entity);
-                take_down_chunk(world, &mut streaming.paints, entity);
-            }
+        let mut wanted: Vec<(f32, TileAt)> = plan
+            .ground
+            .iter()
+            .filter(|node| node.level < OVERVIEW_LEVEL)
+            .flat_map(|node| size.tiles_within(node_rect(*node).bounds()))
+            .collect::<HashSet<TileAt>>()
+            .into_iter()
+            .map(|tile| (nearest_eye(tile), tile))
+            .collect();
+        wanted.sort_by(|(a, at), (b, bt)| a.total_cmp(b).then(at.cmp(bt)));
+        if let Some(mut draw) = world.get_mut::<GroundDraw>(terrain) {
+            draw.patches = patches.into();
         }
+        if let Some(mut atlas) = world.get_mut::<TerrainAtlas>(terrain) {
+            atlas.want(wanted.into_iter().map(|(_, tile)| tile));
+        }
+        streaming.drawn = Some(plan.clone());
     }
-    unstood
+    world
+        .get::<TerrainAtlas>(terrain)
+        .map_or(0, TerrainAtlas::missing)
 }
 
 /// Whether every tile of ground under `bounds` is loaded, each not yet being loaded set loading on
@@ -669,6 +637,44 @@ fn ground_loaded(streaming: &mut Streaming, bounds: Rect<Meters>) -> bool {
         streaming.loading.insert(tile, task);
     }
     ready
+}
+
+/// The patches `nodes` are drawn as over a ground of `samples` across and down, each meeting a
+/// coarser neighbour on its points.
+fn patches_of(nodes: &[Node], samples: (u32, u32)) -> Vec<GroundPatch> {
+    let laid: HashSet<Node> = nodes.iter().copied().collect();
+    let top = nodes.iter().map(|node| node.level).max().unwrap_or(0);
+    let last = (samples.0.saturating_sub(1), samples.1.saturating_sub(1));
+    let stride_at = |node: Node, sample: Option<(u32, u32)>| {
+        let own = 1 << node.level;
+        let Some((column, row)) = sample.filter(|&(column, row)| column < last.0 && row < last.1)
+        else {
+            return own;
+        };
+        (node.level..=top)
+            .map(|level| Node {
+                level,
+                column: column / (LEAF_SAMPLES << level),
+                row: row / (LEAF_SAMPLES << level),
+            })
+            .find(|beside| laid.contains(beside))
+            .map_or(own, |beside| 1 << beside.level)
+    };
+    nodes
+        .iter()
+        .map(|&node| {
+            let NodeRect { first, side } = node_rect(node);
+            let middle = (first.0 + side / 2, first.1 + side / 2);
+            let beside = [
+                first.0.checked_sub(1).map(|column| (column, middle.1)),
+                first.1.checked_sub(1).map(|row| (middle.0, row)),
+                Some((first.0 + side, middle.1)),
+                Some((middle.0, first.1 + side)),
+            ]
+            .map(|sample| stride_at(node, sample));
+            GroundPatch::new(first, 1 << node.level, beside)
+        })
+        .collect()
 }
 
 /// The nodes of the quadtree over the ground's samples that stand for a view looking at ground
@@ -794,63 +800,6 @@ impl<T> Making<T> {
             Making::Made(made) => Some(made),
             Making::Task(_) => None,
         }
-    }
-
-    fn into_made(self) -> Option<T> {
-        match self {
-            Making::Made(made) => Some(made),
-            Making::Task(_) => None,
-        }
-    }
-}
-
-/// Makes the chunk of ground `node` on a task: its mesh and the paint under it.
-fn make_chunk(heights: &Heightfield, paint: &PaintMap, node: Node) -> Task<(Mesh, ChunkPaint)> {
-    let (heights, paint) = (heights.clone(), paint.clone());
-    AsyncComputeTaskPool::get().spawn(async move { made_chunk(&heights, &paint, node) })
-}
-
-fn made_chunk(heights: &Heightfield, paint: &PaintMap, node: Node) -> (Mesh, ChunkPaint) {
-    let samples = chunk_samples(node);
-    (
-        terrain::chunk(heights, samples),
-        ChunkPaint::of(paint, samples),
-    )
-}
-
-fn spawn_chunk(
-    world: &mut World,
-    streaming: &mut Streaming,
-    mesh: Mesh,
-    paint: &ChunkPaint,
-) -> Entity {
-    let mesh = upload::stage(world, mesh);
-    let tag = streaming.paints.lay(world, paint);
-    world
-        .spawn((
-            Mesh3d(mesh),
-            MeshMaterial3d(streaming.paints.material().clone()),
-            tag,
-            Transform::default(),
-            ChildOf(streaming.terrain),
-        ))
-        .id()
-}
-
-/// Takes down a chunk of ground, freeing the layer its paint lay on.
-fn take_down_chunk(world: &mut World, paints: &mut ChunkPaints, chunk: Entity) {
-    if let Some(tag) = world.get::<MeshTag>(chunk) {
-        paints.lift(tag);
-    }
-    world.despawn(chunk);
-}
-
-fn chunk_samples(node: Node) -> terrain::ChunkSamples {
-    let rect = node_rect(node);
-    terrain::ChunkSamples {
-        first: rect.first,
-        side: rect.side,
-        stride: 1 << node.level,
     }
 }
 
@@ -1308,81 +1257,43 @@ fn lay_streamed_ground(
 ) {
     streaming.heights = heights.clone();
     streaming.paint = paint.clone();
-    streaming.making.clear();
-    let stood: Vec<(Node, Entity)> = streaming
-        .stood
-        .ground
-        .iter()
-        .map(|(&node, &entity)| (node, entity))
-        .collect();
-    let made: Vec<(Entity, Mesh, ChunkPaint)> = stood
-        .into_par_iter()
-        .map(|(node, entity)| {
-            let (mesh, paint) = made_chunk(heights, paint, node);
-            (entity, mesh, paint)
-        })
-        .collect();
-    for (entity, mesh, paint) in made {
-        let mesh = upload::stage(world, mesh);
-        streaming.reshaped.insert(entity, (mesh, paint));
+    if let Some(mut atlas) = world.get_mut::<TerrainAtlas>(streaming.terrain) {
+        atlas.lay(heights, paint, &streaming.water);
     }
     streaming.covers.ground_changed();
     streaming.whole = false;
 }
 
-/// Shows every chunk of ground laid anew whose new mesh is on the GPU, with its new paint.
-fn reshape(world: &mut World, streaming: &mut Streaming) {
-    let sent: Vec<Entity> = streaming
-        .reshaped
-        .iter()
-        .filter(|(_, (mesh, _))| upload::mesh_sent(world, mesh))
-        .map(|(&chunk, _)| chunk)
-        .collect();
-    for chunk in sent {
-        let Some((mesh, paint)) = streaming.reshaped.remove(&chunk) else {
-            continue;
-        };
-        if let Ok(mut shown) = world.get_entity_mut(chunk) {
-            shown.insert(Mesh3d(mesh));
-        }
-        if let Some(tag) = world.get::<MeshTag>(chunk).cloned() {
-            streaming.paints.relay(world, &paint, &tag);
-        }
-    }
-}
-
-/// The ground's root, holding the material its chunks are painted with, and their paint.
+/// Stands the terrain of `area` under `root`: its ground drawn in the terrains laid under it, the
+/// pictures white until they load, from an atlas holding the area's ground.
 fn spawn_terrain(
     world: &mut World,
     content: &Content,
     area: &Area,
     look: &Look,
     root: Entity,
-) -> (Entity, ChunkPaints) {
+) -> Entity {
     let layers = ground_layers(content, area);
     let weather = world.resource::<WeatherImage>().0.clone();
-    let (material, pictures) = world.resource_scope(|world, mut images: Mut<Assets<Image>>| {
+    let (paint, pictures) = world.resource_scope(|world, mut images: Mut<Assets<Image>>| {
         let assets = world.resource::<AssetServer>();
-        terrain::ground_material(
-            &layers,
-            &look.materials,
-            weather,
-            assets,
-            &mut images,
-            PAINT_SIDE,
-        )
+        terrain::ground_paint(&layers, &look.materials, weather, assets, &mut images)
     });
-    let material = world.resource_mut::<Assets<GroundMaterial>>().add(material);
-    let terrain = world
+    let mut atlas = TerrainAtlas::default();
+    atlas.lay(&area.heights, &area.paint, &area.water);
+    world
         .spawn((
-            MeshMaterial3d(material.clone()),
+            GroundDraw {
+                patches: Arc::new([]),
+                paint,
+            },
+            atlas,
             pictures,
             Transform::default(),
             Visibility::default(),
             ChildOf(root),
         ))
-        .id();
-    (terrain, ChunkPaints::new(material, PAINT_SIDE))
+        .id()
 }
 
 /// Each of the area's terrains as the ground is painted with it.

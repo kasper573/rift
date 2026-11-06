@@ -36,13 +36,14 @@ pub struct TerrainAtlasPlugin;
 
 impl Plugin for TerrainAtlasPlugin {
     fn build(&self, app: &mut App) {
+        app.add_systems(PostUpdate, keep_atlases);
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
         render_app
             .add_systems(ExtractSchedule, extract_writes)
             .add_systems(Render, write_atlas.in_set(RenderSystems::PrepareResources));
-        app.add_systems(PostUpdate, keep_atlases);
+        app.insert_resource(AtlasesDrawn);
     }
 }
 
@@ -109,8 +110,8 @@ impl TerrainAtlas {
         self.wanted.clear();
     }
 
-    /// Asks for `tiles` in detail from now on, the most wanted first: those there are slots for
-    /// keep or take one, frame by frame, until other tiles are asked for.
+    /// Asks for `tiles` in detail from now on, the most wanted first, until other tiles are asked
+    /// for: as many as there are slots keep or take one, and the rest draw from the overview.
     pub fn want(&mut self, tiles: impl IntoIterator<Item = TileAt>) {
         self.wanted.clear();
         self.wanted.extend(tiles);
@@ -195,8 +196,16 @@ impl GpuTerrainAtlas {
     }
 }
 
+/// Marks a world whose atlases go to a GPU. Without one (a world stepped in a test) nothing is
+/// read or written, and every tile wanted is loaded and counts as held at once.
+#[derive(Resource)]
+struct AtlasesDrawn;
+
 /// The largest side of a texture every GPU holds, as wgpu's default limits guarantee.
 const MAX_TEXTURE_SIDE: u32 = 8192;
+
+/// How many slots are read at once, so what waits to be written stays a few frames' worth.
+const FILLS_AT_ONCE: usize = 4;
 
 /// The bytes a slot's heights, paint and water take.
 const SLOT_BYTES: usize = (SLOT_SIDE * SLOT_SIDE) as usize * 5;
@@ -270,6 +279,26 @@ impl Laid {
 
 /// A slot's heights, paint and water, as the GPU takes them.
 type SlotBytes = [Vec<u8>; 3];
+
+impl Laid {
+    /// Holds what is wanted as a GPU would, loaded at once, with nothing read or written.
+    fn hold_unseen(&mut self, wanted: &[TileAt]) {
+        self.overview.clear();
+        self.overview_sent = true;
+        self.residency.next_frame();
+        for &tile in wanted.iter().take(DETAIL_SLOTS as usize) {
+            let round = AtlasGround::round(tile, self.layout.tiles);
+            for near in round.into_iter().flatten() {
+                self.ground.load(near);
+            }
+            let stamp = self.ground.stamp(&round);
+            self.residency.want(tile);
+            if !self.residency.is_current(tile, &stamp) {
+                self.residency.admit(tile, stamp);
+            }
+        }
+    }
+}
 
 /// The versions of the values of `tile` and of every tile round it, which its slot holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -461,6 +490,7 @@ fn keep_atlases(
     mut atlases: Query<&mut TerrainAtlas>,
     mut budget: UploadBudget,
     handoff: Option<Res<Handoff>>,
+    drawn: Option<Res<AtlasesDrawn>>,
 ) {
     let handoff = handoff.as_deref().copied().unwrap_or_default();
     for mut atlas in &mut atlases {
@@ -469,6 +499,11 @@ fn keep_atlases(
             continue;
         };
         let wanted = &atlas.wanted;
+        if drawn.is_none() {
+            laid.hold_unseen(wanted);
+            atlas.writes.clear();
+            continue;
+        }
         while let Some(job) = laid.overview.front_mut() {
             if !job.is_done(handoff) {
                 break;
@@ -485,7 +520,7 @@ fn keep_atlases(
         }
         laid.loading.retain(|_, task| !task.is_finished());
         laid.residency.next_frame();
-        for &tile in wanted {
+        for &tile in wanted.iter().take(DETAIL_SLOTS as usize) {
             let round = AtlasGround::round(tile, laid.layout.tiles);
             let mut loaded = true;
             for near in round.into_iter().flatten() {
@@ -506,7 +541,9 @@ fn keep_atlases(
             if laid.residency.is_current(tile, &stamp) {
                 continue;
             }
-            if !shown && !laid.residency.has_room(tile) {
+            if !shown && !laid.residency.has_room(tile)
+                || !laid.filling.contains_key(&tile) && laid.filling.len() >= FILLS_AT_ONCE
+            {
                 continue;
             }
             let (filling, job) = laid.filling.entry(tile).or_insert_with(|| {
