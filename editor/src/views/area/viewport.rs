@@ -23,8 +23,8 @@ use engine::core::render::world::mannequin::Mannequin;
 use engine::core::render::world::mannequin::mannequin;
 use engine::core::render::world::rig_clip;
 use engine::core::render::{Look, camera};
+use engine::core::units::Meters;
 use engine::core::units::Seconds;
-use engine::core::units::{MeterSize, Meters};
 use engine::systems::actor::Action;
 use engine::systems::actor::layering::{self, Layering};
 use engine::systems::actor::model::{ActorModel, ModelId};
@@ -38,7 +38,7 @@ use ui::egui;
 
 use super::camera::OrbitCamera;
 use super::overlays::OutlineSet;
-use super::render_sync::{Respawn, StagePick, WorldSink};
+use super::render_sync::{StagePick, StandingScene};
 use crate::app::Editor;
 use crate::views::area::camera::LENS;
 
@@ -183,7 +183,7 @@ struct RenderedView {
     texture: egui::TextureId,
     size: [u32; 2],
     rendered: OrbitCamera,
-    scene: Respawn,
+    scene: StandingScene,
     stroke: Option<u64>,
     ghost: Option<(String, Entity)>,
     cast: Option<(Arc<[StandingActor]>, Vec<Entity>)>,
@@ -296,7 +296,7 @@ impl RenderedView {
             texture,
             size,
             rendered: OrbitCamera::default(),
-            scene: Respawn::new(root, layer, camera),
+            scene: StandingScene::new(root, layer, camera),
             stroke: None,
             ghost: None,
             cast: None,
@@ -369,18 +369,15 @@ impl RenderedView {
         let Some(area) = self.scene.area().cloned() else {
             return;
         };
-        let whole = area.size.bounds();
         match &request.stroke {
             Some(stroke) if self.stroke != Some(stroke.revision) => {
-                self.scene
-                    .upload_region(world, whole, &stroke.heights, &stroke.paint);
+                self.scene.lay_ground(world, &stroke.heights, &stroke.paint);
                 self.stroke = Some(stroke.revision);
             }
             Some(_) => {}
             None => {
                 if self.stroke.take().is_some() {
-                    self.scene
-                        .upload_region(world, whole, &area.heights, &area.paint);
+                    self.scene.lay_ground(world, &area.heights, &area.paint);
                 }
             }
         }

@@ -94,14 +94,7 @@ fn held(app: &App) -> Held {
 
 /// A client's world drawing `game`'s field, written to `folder`, its shaders compiled.
 fn client(game: Game, folder: &Path) -> (App, Arc<Area>) {
-    game.write_to(folder);
-    let content = game.load();
-    let id = content
-        .by_path::<AreaDef>(&path("area", "field"))
-        .expect("the field loads");
-    let area = area::picture(&content, area::Pictured::Area(id), area::Kept::All)
-        .expect("the field is pictured")
-        .area;
+    let (content, area) = picture(game, folder);
     let mut app = App::new();
     app.add_plugins((
         MinimalPlugins,
@@ -305,6 +298,89 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
         east_pebbles,
         "near again, every pebble stands as it did"
     );
+}
+
+/// A scenery takes in its area as an edit leaves it in place of standing anew: a prop moved
+/// across the field, taken away, or of a kind the area stood none of stands where it now does or
+/// goes, while every other prop and all that grows on the ground keep standing as they stood. An area that differs in what only
+/// standing anew takes in, lit otherwise, is refused and changes nothing.
+#[test]
+fn a_scenery_takes_in_its_area_edited_standing_anew_only_what_the_edit_changed() {
+    let tufts = |at: &[f32]| {
+        json!(at
+            .iter()
+            .map(|x| json!({ "type": "prop", "prop": path("prop", "tuft"), "at": { "x": x, "y": 8.0 } }))
+            .collect::<Vec<_>>())
+    };
+    let field = |scene| {
+        strewn_field(0.0016, &Map::open(128, 16), scene).prop("stone", json!({ "type": "none" }))
+    };
+    let folder = tempfile::tempdir().expect("a scratch folder");
+    let (mut app, area) = client(field(tufts(&[8.0, 9.0, 40.0, 41.0])), folder.path());
+    let stood = stand(&mut app, &area);
+    let standing =
+        |app: &App, node: &str| scenery::instances_of(app.world(), stood, |origin| origin == node);
+    let kept = (standing(&app, "/0"), standing(&app, "/1"));
+    let copies = scenery::arena_copies(app.world(), stood);
+    let blades = scenery::grass_blades(app.world(), stood);
+    assert_eq!(scenery::arena_props(app.world(), stood), 4);
+
+    let edited_folder = tempfile::tempdir().expect("a scratch folder");
+    let mut edited_scene = tufts(&[8.0, 9.0, 100.0]);
+    if let serde_json::Value::Array(nodes) = &mut edited_scene {
+        nodes.push(
+            json!({ "type": "prop", "prop": path("prop", "stone"), "at": { "x": 60.0, "y": 8.0 } }),
+        );
+    }
+    let (content, edited) = picture(field(edited_scene), edited_folder.path());
+    assert!(scenery::restand(app.world_mut(), stood, &content, &edited));
+    assert!(settle(&mut app, |app| {
+        !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
+    }));
+    assert_eq!(
+        (
+            scenery::arena_props(app.world(), stood),
+            standing(&app, "/2").len(),
+            standing(&app, "/3").len(),
+        ),
+        (4, 1, 1),
+        "the moved tuft and the new stone stand where they now do, and the tuft taken away is gone"
+    );
+    assert_eq!(
+        (
+            (standing(&app, "/0"), standing(&app, "/1")),
+            scenery::arena_copies(app.world(), stood),
+            scenery::grass_blades(app.world(), stood),
+        ),
+        (kept, copies, blades),
+        "the tufts the edit left alone and all that grows keep standing as they stood"
+    );
+
+    let lit_folder = tempfile::tempdir().expect("a scratch folder");
+    let (content, lit) = picture(
+        field(tufts(&[8.0, 9.0, 100.0])).edit("area", "field", |row| {
+            row["lighting"]["moist_scatter"] = json!(0.9);
+        }),
+        lit_folder.path(),
+    );
+    assert!(
+        !scenery::restand(app.world_mut(), stood, &content, &lit),
+        "an area lit otherwise stands only anew"
+    );
+    assert_eq!(scenery::arena_props(app.world(), stood), 4);
+}
+
+/// The field of `game` written to `folder`, as its content pictures it.
+fn picture(game: Game, folder: &Path) -> (Content, Arc<Area>) {
+    game.write_to(folder);
+    let content = game.load();
+    let id = content
+        .by_path::<AreaDef>(&path("area", "field"))
+        .expect("the field loads");
+    let area = area::picture(&content, area::Pictured::Area(id), area::Kept::All)
+        .expect("the field is pictured")
+        .area;
+    (content, area)
 }
 
 /// Every how many samples the ground is drawn `x` metres along the field.

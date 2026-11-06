@@ -935,6 +935,40 @@ impl<T: Value> GroundGrid<T> {
         self.tiles[self.grid.index(at)].is_loaded()
     }
 
+    /// The file the tile at `at` holds its values as, while it holds them as read from there:
+    /// none once they change, nor for a tile made in memory, blank or past the ground.
+    pub fn stored_at(&self, at: TileAt) -> Option<&str> {
+        let inside = at.column < self.grid.across && at.row < self.grid.down;
+        inside
+            .then(|| self.tiles[self.grid.index(at)].stored.as_ref())
+            .flatten()
+            .map(StoredPart::path)
+    }
+
+    /// Whether the tile at `at` holds nothing: no values and no file to read them from.
+    pub fn is_blank_at(&self, at: TileAt) -> bool {
+        let inside = at.column < self.grid.across && at.row < self.grid.down;
+        !inside || {
+            let slot = &self.tiles[self.grid.index(at)];
+            slot.stored.is_none() && slot.tile().is_none()
+        }
+    }
+
+    /// This ground with each tile `keep` takes as `from` holds it, which must be a ground of the
+    /// same size: the tiles kept are the very same, so they read as the same version.
+    pub fn keeping(&self, from: &GroundGrid<T>, keep: impl Fn(TileAt) -> bool) -> GroundGrid<T> {
+        let mut kept = self.clone();
+        if from.grid != self.grid {
+            return kept;
+        }
+        for (index, slot) in kept.tiles.iter_mut().enumerate() {
+            if keep(self.grid.at(index)) {
+                *slot = from.tiles[index].clone();
+            }
+        }
+        kept
+    }
+
     /// Which values the tile at `at` holds now: the same version only while they are the same
     /// values, none for a tile not loaded, blank or past the ground.
     pub fn version(&self, at: TileAt) -> TileVersion {

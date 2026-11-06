@@ -2184,7 +2184,11 @@ pub struct FileWriter {
     into: WrittenInto,
     written: Vec<String>,
     kept: usize,
+    wanted: Option<WantedFiles>,
 }
+
+/// Which files a writer writes, by their path from the game folder.
+type WantedFiles = Box<dyn Fn(&str) -> bool + Send + Sync>;
 
 enum WrittenInto {
     Folder(PathBuf),
@@ -2197,6 +2201,7 @@ impl FileWriter {
             into: WrittenInto::Folder(root.to_path_buf()),
             written: Vec::new(),
             kept: 0,
+            wanted: None,
         }
     }
 
@@ -2206,7 +2211,22 @@ impl FileWriter {
             into: WrittenInto::Memory(BTreeMap::new()),
             written: Vec::new(),
             kept: 0,
+            wanted: None,
         }
+    }
+
+    /// The writer writing only the files `wanted` takes, passing over the rest.
+    pub fn only(self, wanted: impl Fn(&str) -> bool + Send + Sync + 'static) -> FileWriter {
+        FileWriter {
+            wanted: Some(Box::new(wanted)),
+            ..self
+        }
+    }
+
+    /// Whether the writer writes `file`, so what would go into a file it passes over need not be
+    /// made.
+    pub fn wants(&self, file: &str) -> bool {
+        self.wanted.as_ref().is_none_or(|wanted| wanted(file))
     }
 
     /// Every file written in memory, by its path from the game folder.
@@ -2218,6 +2238,9 @@ impl FileWriter {
     }
 
     pub fn json<T: Serialize>(&mut self, file: &str, value: &T) -> io::Result<()> {
+        if !self.wants(file) {
+            return Ok(());
+        }
         let mut bytes = serde_json::to_vec_pretty(value)?;
         bytes.push(b'\n');
         self.file(file, &bytes)
@@ -2226,6 +2249,9 @@ impl FileWriter {
     /// A file shared with another folder through a symlink is written where the link points, so the
     /// one copy changes rather than the link turning into a copy of its own.
     pub fn file(&mut self, file: &str, bytes: &[u8]) -> io::Result<()> {
+        if !self.wants(file) {
+            return Ok(());
+        }
         let root = match &mut self.into {
             WrittenInto::Folder(root) => root,
             WrittenInto::Memory(files) => {

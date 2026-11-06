@@ -173,6 +173,35 @@ impl FolderReader {
         Ok(WrittenFiles { files, removed })
     }
 
+    /// The files of [`Self::write`] that `wanted` takes, by their paths from the game folder,
+    /// each written as `write` writes it and the rest never made, and those of them the folder
+    /// holds that the row no longer writes (a tile of the ground gone blank) in `removed`: all
+    /// that changes when only those of `row`'s files do.
+    pub fn write_only<Row: ContentFile>(
+        &self,
+        path: &str,
+        row: &Row,
+        wanted: impl Fn(&str) -> bool + Send + Sync + 'static,
+    ) -> io::Result<WrittenFiles> {
+        let loader = self.registry.loader_of::<Row>().ok_or_else(|| {
+            io::Error::other(format!("no {} files in this game's registry", Row::TABLE))
+        })?;
+        let wanted = Arc::new(wanted);
+        let files = with_content(self.listed.scope.clone(), || {
+            let taken = wanted.clone();
+            let mut writer = FileWriter::in_memory().only(move |file| taken(file));
+            loader.write_row(row, path, &mut writer)?;
+            Ok::<_, io::Error>(writer.into_files())
+        })
+        .0?;
+        let removed = self
+            .parts_left(loader, path, &files)
+            .into_iter()
+            .filter(|file| wanted(file))
+            .collect();
+        Ok(WrittenFiles { files, removed })
+    }
+
     /// The file `row`'s fields are kept in as the content file at `path`, by its path from the
     /// game folder, and what it holds: all that changes when a bundle's fields do and its parts
     /// stay as they stand.

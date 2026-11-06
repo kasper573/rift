@@ -94,6 +94,7 @@ impl Instances {
             .sources
             .get(local as usize)
             .copied()
+            .flatten()
     }
 
     /// Every instance among the arena's that a module among the area's prop sources `stood`
@@ -107,10 +108,38 @@ impl Instances {
                     .sources
                     .iter()
                     .enumerate()
-                    .filter(|(_, source)| stood(**source))
+                    .filter(|(_, source)| source.is_some_and(&stood))
                     .map(move |(at, _)| first + at as u32)
             })
             .collect()
+    }
+
+    /// Takes in the area's prop sources changed, the props they stood standing until what
+    /// replaces them does: the lots of props on the stretches of `ground` in `touched` stand
+    /// anew, and every other lot keeps standing, each of its props standing for the source
+    /// `moved` tells, by its place before.
+    pub(super) fn sources_changed(
+        &mut self,
+        ground: Rect<Meters>,
+        touched: &[Rect<Meters>],
+        moved: impl Fn(u32) -> Option<u32>,
+    ) {
+        let props = |lot: &Lot| matches!(lot, Lot::Props(_));
+        self.expanding.retain(|_, (lot, _)| !props(lot));
+        self.expanded.retain(|(_, lot, _)| !props(lot));
+        for (key, standing) in &mut self.standing {
+            if !props(&standing.lot) {
+                continue;
+            }
+            for source in &mut standing.sources {
+                *source = source.and_then(&moved);
+            }
+            let bounds = standing.lot.chunk().bounds(ground);
+            if touched.iter().any(|stretch| stretch.intersects(&bounds)) {
+                self.stale.insert(*key);
+            }
+        }
+        self.props_revision += 1;
     }
 
     /// A number that changes each time the props standing in the arena do.
@@ -126,12 +155,21 @@ impl Instances {
             .sum()
     }
 
-    /// Works everything out again over ground sculpted or painted anew, what stands standing
-    /// until what replaces it does.
-    pub(super) fn ground_changed(&mut self) {
-        self.expanding.clear();
-        self.expanded.clear();
-        self.stale.extend(self.standing.keys().copied());
+    /// Works out anew what stands on the stretches of `ground` in `changed`, sculpted or painted
+    /// anew, what stands there standing until what replaces it does.
+    pub(super) fn ground_changed(&mut self, ground: Rect<Meters>, changed: &[Rect<Meters>]) {
+        let touched = |lot: &Lot| {
+            let bounds = lot.chunk().bounds(ground);
+            changed.iter().any(|stretch| stretch.intersects(&bounds))
+        };
+        self.expanding.retain(|_, (lot, _)| !touched(lot));
+        self.expanded.retain(|(_, lot, _)| !touched(lot));
+        self.stale.extend(
+            self.standing
+                .iter()
+                .filter(|(_, standing)| touched(&standing.lot))
+                .map(|(key, _)| *key),
+        );
     }
 }
 
@@ -167,12 +205,13 @@ const COPIES_KEY: u32 = 1 << 31;
 const REPLACING_KEY: u32 = 1 << 30;
 
 /// A lot standing in the arena, what it draws, how many instances it holds, and for a lot of
-/// props the place among the area's prop sources of the module standing each.
+/// props the place among the area's prop sources of the module standing each, none for one since
+/// changed while the lot stands until what replaces it does.
 struct Standing {
     lot: Lot,
     drawn: HashSet<Drawn>,
     instances: u32,
-    sources: Vec<u32>,
+    sources: Vec<Option<u32>>,
 }
 
 /// What an instance in the arena is drawn as: a prop, or a copy strewn by a piece of the covers,
@@ -587,7 +626,7 @@ fn send(world: &mut World, streaming: &mut Streaming, root: Entity) {
                 lot,
                 drawn: expanded.drawn,
                 instances: expanded.records.len() as u32,
-                sources: expanded.sources,
+                sources: expanded.sources.into_iter().map(Some).collect(),
             },
         );
         changed(world, root, placed);

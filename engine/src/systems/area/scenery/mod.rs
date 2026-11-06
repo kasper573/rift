@@ -37,12 +37,13 @@ use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, IoTaskPool, Task};
 
 use super::lighting::DomeLook;
-use super::prop::PropId;
+use super::prop::{PropDef, PropId};
 use super::terrain::PieceShape;
-use super::{Area, FogBank, Lighting, PointLightDef, Rainfall, Weather};
-use crate::core::content::{Content, FileHash, FileHashes};
+use super::{Area, AreaModule, FogBank, Lighting, PointLightDef, Rainfall, Weather};
+use crate::core::content::{Content, ContentFile, FileHash, FileHashes};
 use crate::core::ground::{
-    Heightfield, OVERVIEW_STRIDE, PaintMap, SAMPLES_PER_METER, TileAt, WaterSurface,
+    GroundGrid, GroundValue, Heightfield, OVERVIEW_STRIDE, PaintMap, SAMPLES_PER_METER, TileAt,
+    TileVersion, WaterSurface,
 };
 use crate::core::jobs::Handoff;
 use crate::core::math::{Pos, Rect, Rng, Size};
@@ -164,14 +165,7 @@ pub fn spawn(
         draw.sheets = covers.sheets().into();
     }
     let grass = Grass::new(world, terrain, covers.grass());
-    let planner = {
-        let area = area.clone();
-        Making::Task(AsyncComputeTaskPool::get().spawn(async move {
-            let mut lights = SpatialIndex::new(PLACEMENT_CELL);
-            lights.refile_spots(area.lights.iter().map(|light| light.at));
-            Arc::new(Planner { lights, area })
-        }))
-    };
+    let planner = planner_of(area);
     world.entity_mut(root).insert(PropArena);
     let streaming = Streaming {
         content: content.clone(),
@@ -216,6 +210,100 @@ pub fn view_from(world: &mut World, scenery: Scenery, sight: Sight) {
     {
         streaming.sight = Some(sight);
     }
+}
+
+/// Stands `area`, read from `content`, in place of the area `scenery` stands, keeping all both
+/// stand alike: the props of every chunk where none moved, came or went, the ground and what
+/// grows on it wherever its tiles hold what they held, and the lights while none changed. False,
+/// changing nothing, when the two differ in what only standing anew takes in: the ground's size
+/// or water, the terrains, lighting or climate, or a file beyond the area both are made from.
+pub fn restand(world: &mut World, scenery: Scenery, content: &Content, area: &Arc<Area>) -> bool {
+    world.resource_scope(|world, mut streams: Mut<Streams>| {
+        let Some(streaming) = streams.0.get_mut(&scenery.root) else {
+            return false;
+        };
+        if Arc::ptr_eq(&streaming.area, area) {
+            return true;
+        }
+        let before = streaming.area.clone();
+        let was = &streaming.content;
+        let hashes = (
+            &was.built::<FileHashes>().0,
+            &content.built::<FileHashes>().0,
+        );
+        let terrains = |content: &Content, area: &Area| -> Vec<String> {
+            area.terrains
+                .iter()
+                .map(|terrain| terrain.path(content).to_owned())
+                .collect()
+        };
+        let water = streaming.water.size() == area.water.size()
+            && area
+                .water
+                .size()
+                .each_tile()
+                .all(|at| tile_alike(&streaming.water, &area.water, at, hashes));
+        let alike = area.size == before.size
+            && water
+            && area.lighting == before.lighting
+            && area.climate == before.climate
+            && area.rain == before.rain
+            && same_paths::<PropDef>(was, content)
+            && terrains(was, &before) == terrains(content, area)
+            && Sources::of(was, &before).agree(&Sources::of(content, area));
+        if !alike {
+            return false;
+        }
+        let heights = area.heights.keeping(&streaming.heights, |at| {
+            tile_alike(&streaming.heights, &area.heights, at, hashes)
+        });
+        let paint = area.paint.keeping(&streaming.paint, |at| {
+            tile_alike(&streaming.paint, &area.paint, at, hashes)
+        });
+        lay_streamed_ground(world, streaming, &heights, &paint);
+        let (old, new) = (&before.prop_sources, &area.prop_sources);
+        let first = old
+            .iter()
+            .zip(new)
+            .take_while(|(a, b)| same_source(a, b))
+            .count();
+        let last = old[first..]
+            .iter()
+            .rev()
+            .zip(new[first..].iter().rev())
+            .take_while(|(a, b)| same_source(a, b))
+            .count();
+        let (old_end, new_end) = (old.len() - last, new.len() - last);
+        let touched: Vec<Rect<Meters>> = old[first..old_end]
+            .iter()
+            .chain(&new[first..new_end])
+            .filter_map(stretch_of)
+            .collect();
+        streaming
+            .instances
+            .sources_changed(area.size.bounds(), &touched, |source| {
+                let source = source as usize;
+                if source < first {
+                    Some(source as u32)
+                } else if source >= old_end {
+                    Some((source - old_end + new_end) as u32)
+                } else {
+                    None
+                }
+            });
+        if area.lights != before.lights {
+            for (_, light) in streaming.stood.lights.drain() {
+                world.despawn(light);
+            }
+            streaming.planner = planner_of(area);
+            streaming.planning = None;
+            streaming.plan = None;
+        }
+        streaming.area = area.clone();
+        streaming.content = content.clone();
+        streaming.whole = false;
+        true
+    })
 }
 
 /// The files the scenery of an area is made from beyond the area itself, each with what it held
@@ -269,6 +357,21 @@ impl Sources {
             .map(|(path, hash)| (path.clone(), hash.clone()))
             .collect();
         Sources(held.into_iter().collect())
+    }
+
+    /// Whether every file both are made from holds the same in each: what one reads beyond the
+    /// other may differ.
+    pub fn agree(&self, other: &Sources) -> bool {
+        let theirs: BTreeMap<&str, &FileHash> = other
+            .0
+            .iter()
+            .map(|(path, hash)| (path.as_str(), hash))
+            .collect();
+        self.0.iter().all(|(path, hash)| {
+            theirs
+                .get(path.as_str())
+                .is_none_or(|theirs| *theirs == hash)
+        })
     }
 }
 
@@ -1235,15 +1338,34 @@ fn lay_streamed_ground(
     heights: &Heightfield,
     paint: &PaintMap,
 ) {
+    let size = streaming.heights.size();
+    let changed: Vec<Rect<Meters>> = size
+        .each_tile()
+        .filter(|&at| {
+            heights.version(at) != streaming.heights.version(at)
+                || paint.version(at) != streaming.paint.version(at)
+        })
+        .map(|at| at.rect(size).inflate(EDGE_REACH.0, EDGE_REACH.0))
+        .collect();
+    if changed.is_empty() {
+        return;
+    }
     streaming.heights = heights.clone();
     streaming.paint = paint.clone();
     if let Some(mut atlas) = world.get_mut::<TerrainAtlas>(streaming.terrain) {
         atlas.lay(heights, paint, &streaming.water);
     }
-    streaming.instances.ground_changed();
-    streaming.grass.ground_changed();
+    streaming
+        .instances
+        .ground_changed(streaming.area.size.bounds(), &changed);
+    streaming.grass.ground_changed(&changed);
     streaming.whole = false;
 }
+
+/// How far past a tile of ground what stands on it may read the ground, so a change to the tile
+/// changes it too: the samples a slope is read across, and the reach of a copy or a blade over
+/// the edge of the cell it is laid out in.
+const EDGE_REACH: Meters = Meters(2.0);
 
 /// Stands the terrain of `area` under `root`: its ground drawn in the terrains laid under it, the
 /// pictures white until they load, from an atlas holding the area's ground.
@@ -1319,4 +1441,61 @@ fn spawn_light(
         });
     }
     spawned.id()
+}
+
+/// Plans what an area's scenery stands for each sight, its lights filed off the frame.
+fn planner_of(area: &Arc<Area>) -> Making<Arc<Planner>> {
+    let area = area.clone();
+    Making::Task(AsyncComputeTaskPool::get().spawn(async move {
+        let mut lights = SpatialIndex::new(PLACEMENT_CELL);
+        lights.refile_spots(area.lights.iter().map(|light| light.at));
+        Arc::new(Planner { lights, area })
+    }))
+}
+
+/// Whether the tile at `at` holds the same values in `standing` as in `new`: the very same tile,
+/// both blank, or both as read from the same file holding the same, by `hashes`, the files of the
+/// contents each was read from.
+fn tile_alike<T: GroundValue>(
+    standing: &GroundGrid<T>,
+    new: &GroundGrid<T>,
+    at: TileAt,
+    (was, now): (&BTreeMap<String, FileHash>, &BTreeMap<String, FileHash>),
+) -> bool {
+    let version = standing.version(at);
+    if version != TileVersion::default() && version == new.version(at) {
+        return true;
+    }
+    if standing.is_blank_at(at) && new.is_blank_at(at) {
+        return true;
+    }
+    match (standing.stored_at(at), new.stored_at(at)) {
+        (Some(a), Some(b)) => a == b && was.get(a).is_some_and(|hash| now.get(b) == Some(hash)),
+        _ => false,
+    }
+}
+
+/// Whether two contents name the same files of `Row` by the same ids.
+fn same_paths<Row: ContentFile>(a: &Content, b: &Content) -> bool {
+    a.table::<Row>().len() == b.table::<Row>().len()
+        && a.ids::<Row>().all(|id| id.path(a) == id.path(b))
+}
+
+/// Whether two of an area's prop sources stand alike.
+fn same_source(a: &AreaModule, b: &AreaModule) -> bool {
+    match (a, b) {
+        (AreaModule::Prop(a), AreaModule::Prop(b)) => a == b,
+        (AreaModule::Scatter(a), AreaModule::Scatter(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// The ground a prop source stands its props over, a little wider for a prop on a chunk's edge.
+fn stretch_of(source: &AreaModule) -> Option<Rect<Meters>> {
+    match source {
+        AreaModule::Prop(prop) => Some(Rect::new(prop.at, Size::new(0.0, 0.0))),
+        AreaModule::Scatter(scatter) => Some(scatter.region),
+        _ => None,
+    }
+    .map(|stretch| stretch.inflate(EDGE_REACH.0, EDGE_REACH.0))
 }

@@ -140,8 +140,12 @@ pub fn read(
 }
 
 pub fn write(scene: &[SceneNode], bundle: &str, writer: &mut FileWriter) -> io::Result<()> {
+    let file = format!("{bundle}/{SCENE_FILE}");
+    if !writer.wants(&file) {
+        return Ok(());
+    }
     let files = files_of(scene).map_err(io::Error::other)?;
-    writer.json(&format!("{bundle}/{SCENE_FILE}"), &files)
+    writer.json(&file, &files)
 }
 
 /// `nodes` as a scene file holds them, in the scope being written in: how nodes travel apart from

@@ -296,33 +296,65 @@ impl Bundle for AreaDef {
         scene::write(&self.scene, bundle, writer)?;
         let part = |spec: PartSpec, key: &str| format!("{bundle}/{}", spec.named(key, "png"));
         for at in self.size.each_tile() {
-            if let Some(bytes) = self.heights.encode_tile(at) {
-                writer.file(&part(HEIGHT, &at.key()), &bytes)?;
-            }
-            if let Some(bytes) = self.paint.encode_tile(at) {
-                writer.file(&part(PAINT, &at.key()), &bytes)?;
-            }
-            if let Some(bytes) = self.water.encode_tile(at) {
-                writer.file(&part(WATER, &at.key()), &bytes)?;
-            }
+            put(writer, part(HEIGHT, &at.key()), || {
+                self.heights.encode_tile(at)
+            })?;
+            put(writer, part(PAINT, &at.key()), || {
+                self.paint.encode_tile(at)
+            })?;
+            put(writer, part(WATER, &at.key()), || {
+                self.water.encode_tile(at)
+            })?;
         }
-        if let Some(bytes) = self.heights.encode_overview() {
-            writer.file(&part(HEIGHT_OVERVIEW, ""), &bytes)?;
-        }
-        if let Some(bytes) = self.paint.encode_overview() {
-            writer.file(&part(PAINT_OVERVIEW, ""), &bytes)?;
-        }
-        if let Some(bytes) = self.water.encode_overview() {
-            writer.file(&part(WATER_OVERVIEW, ""), &bytes)?;
-        }
-        if let Some(rain) = &self.rain {
-            writer.file(&part(RAIN, ""), &rain.encode())?;
-        }
+        put(writer, part(HEIGHT_OVERVIEW, ""), || {
+            self.heights.encode_overview()
+        })?;
+        put(writer, part(PAINT_OVERVIEW, ""), || {
+            self.paint.encode_overview()
+        })?;
+        put(writer, part(WATER_OVERVIEW, ""), || {
+            self.water.encode_overview()
+        })?;
+        put(writer, part(RAIN, ""), || {
+            self.rain.as_ref().map(ShareMap::encode)
+        })?;
         Ok(())
     }
 }
 
 impl AreaDef {
+    /// The files of the area at `bundle` its ground keeps that differ from `before`'s: each tile
+    /// of its heights, paint or water whose values changed, and the overview of each that did.
+    pub fn ground_files_changed(&self, before: &AreaDef, bundle: &str) -> BTreeSet<String> {
+        let part = |spec: PartSpec, key: &str| format!("{bundle}/{}", spec.named(key, "png"));
+        let resized = self.size != before.size;
+        let mut files = BTreeSet::new();
+        let mut grounds = [
+            (HEIGHT, HEIGHT_OVERVIEW, false),
+            (PAINT, PAINT_OVERVIEW, false),
+            (WATER, WATER_OVERVIEW, false),
+        ];
+        for at in self.size.each_tile() {
+            let changed = [
+                self.heights.version(at) != before.heights.version(at),
+                self.paint.version(at) != before.paint.version(at),
+                self.water.version(at) != before.water.version(at),
+            ];
+            for ((tiles, _, any), changed) in grounds.iter_mut().zip(changed) {
+                if resized || changed {
+                    files.insert(part(*tiles, &at.key()));
+                    *any = true;
+                }
+            }
+        }
+        for (_, overview, any) in grounds {
+            if any {
+                files.insert(part(overview, ""));
+            }
+        }
+        files
+    }
+
     /// The area over ground of `size`, its heights, paint and water kept from the top-left corner.
     pub fn resized(&self, size: GroundSize) -> AreaDef {
         let mut area = self.clone();
@@ -1801,4 +1833,16 @@ fn describe_point(at: Pos<Meters>) -> String {
 
 pub fn sixteenth(v: f32) -> f32 {
     (v * 16.0).round() / 16.0
+}
+
+/// Writes `file` as `encode` makes it, if `writer` wants it and there is anything to write.
+fn put<Bytes: AsRef<[u8]>>(
+    writer: &mut FileWriter,
+    file: String,
+    encode: impl FnOnce() -> Option<Bytes>,
+) -> io::Result<()> {
+    match writer.wants(&file).then(encode).flatten() {
+        Some(bytes) => writer.file(&file, bytes.as_ref()),
+        None => Ok(()),
+    }
 }

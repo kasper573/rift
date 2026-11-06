@@ -14,7 +14,7 @@ use strum::{AsRefStr, VariantArray};
 
 use super::nodes;
 use crate::app::Editor;
-use crate::project::ContentEdit;
+use crate::project::{ContentEdit, FileBytes};
 
 pub const SMALLEST_RADIUS: Meters = Meters(0.5);
 pub const LARGEST_RADIUS: Meters = Meters(32.0);
@@ -246,13 +246,13 @@ fn under(
 
 /// Writes the stroke's terrain into the area at `bundle` as one step.
 pub fn commit(editor: &mut Editor, bundle: &str, stroke: &Stroke) -> bool {
-    let Some(nodes::SceneBundle::Area(area)) = nodes::bundle_of(editor, bundle) else {
+    let Some(nodes::SceneBundle::Area(before)) = nodes::bundle_of(editor, bundle) else {
         return false;
     };
     let Some(project) = editor.project.as_ref() else {
         return false;
     };
-    let mut area = (*area).clone();
+    let mut area = (*before).clone();
     let label = match stroke.what {
         StrokeKind::Sculpt(mode) => format!("{} the ground of {bundle}", title(mode.as_ref())),
         StrokeKind::Paint { terrain } => format!(
@@ -267,10 +267,33 @@ pub fn commit(editor: &mut Editor, bundle: &str, stroke: &Stroke) -> bool {
     area.heights = (*stroke.heights).clone();
     area.paint = (*stroke.paint).clone();
     area.terrains = stroke.terrains.clone();
+    let changed = area.ground_files_changed(&before, bundle);
+    let reader = project.reader();
     let mut edit = ContentEdit::new(label);
-    if let Err(error) = edit.write_content(project, bundle, &area) {
-        editor.toast(error);
-        return false;
+    let written = reader
+        .write_only(bundle, &area, move |file| changed.contains(file))
+        .and_then(|written| {
+            let fields = (area.terrains != before.terrains)
+                .then(|| reader.write_fields(bundle, &area))
+                .transpose()?;
+            Ok((written, fields))
+        });
+    match written {
+        Ok((written, fields)) => {
+            for (file, bytes) in written.files.into_iter().chain(fields) {
+                edit.write(file, FileBytes::from(bytes));
+            }
+            for file in written.removed {
+                edit.remove(file);
+            }
+        }
+        Err(error) => {
+            editor.toast(format!(
+                "{} does not write: {error}",
+                crate::tabs::shown_path(bundle)
+            ));
+            return false;
+        }
     }
     editor.apply(edit)
 }

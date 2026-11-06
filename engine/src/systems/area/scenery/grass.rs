@@ -10,6 +10,7 @@ use bevy::prelude::*;
 
 use super::plan::{KEEP_SHARE, Seen};
 use super::{Streaming, distance_to, ground_loaded};
+use crate::core::math::Rect;
 use crate::core::render::video::{GrassQuality, VideoPreferences};
 use crate::core::render::world::gpu::grass::{
     GRASS_CELL_PIXELS, GRASS_HEIGHT_SIDE, GrassArena, GrassCell, GrassChange, GrassChanges,
@@ -45,9 +46,12 @@ impl Grass {
         }
     }
 
-    /// Grows everything again over ground sculpted or painted anew.
-    pub(super) fn ground_changed(&mut self) {
-        self.stale.extend(self.arena.grown());
+    /// Grows anew the blades on the stretches of ground in `changed`, sculpted or painted anew.
+    pub(super) fn ground_changed(&mut self, changed: &[Rect<Meters>]) {
+        self.stale.extend(self.arena.grown().filter(|(_, cell)| {
+            let bounds = cell.bounds();
+            changed.iter().any(|stretch| stretch.intersects(&bounds))
+        }));
     }
 
     /// How many blades the GPU holds.

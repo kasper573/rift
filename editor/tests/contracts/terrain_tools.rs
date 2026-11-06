@@ -33,6 +33,11 @@ fn a_sculpt_stroke_lands_in_the_height_map() {
         Stroke::begin(&before, at, StrokeKind::Sculpt(SculptMode::Raise)).expect("a sculpt stroke");
     stroke.apply(&Brush::default(), at, 0.2, Meters(0.0));
     assert!(commit(&mut editor, &area(), &stroke));
+    let written = editor.project.as_ref().expect("a project").files.unsaved();
+    assert!(
+        !written.is_empty() && written.iter().all(|file| file.ends_with(".png")),
+        "a stroke writes only the maps of the ground it shapes, never the scene: {written:?}"
+    );
     support::settled(&mut editor);
     let raised = terrain(&editor);
     assert!(
