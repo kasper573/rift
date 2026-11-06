@@ -136,13 +136,8 @@ fn passes(stage: Stage) -> Vec<(&'static str, Vec<ShaderDefVal>)> {
     );
     match stage {
         Stage::Cover => vec![
-            ("copies", main.clone()),
-            ("copies prepass", prepass.clone()),
-            ("merged copies", with(&main, &["ROOTED", "VERTEX_UVS_B"])),
-            (
-                "merged copies prepass",
-                with(&prepass, &["ROOTED", "VERTEX_UVS_B"]),
-            ),
+            ("copies", with(&main, &["VERTEX_UVS_B"])),
+            ("copies prepass", with(&prepass, &["VERTEX_UVS_B"])),
             ("blades", with(&main, &["GRASS_BLADE", "VERTEX_UVS_B"])),
             ("sheet", with(&main, &["SHEET_PATCH", "VERTEX_UVS_B"])),
         ],

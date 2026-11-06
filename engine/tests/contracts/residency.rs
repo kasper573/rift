@@ -6,12 +6,12 @@ use std::ops::Range;
 use bevy::camera::primitives::Aabb;
 use bevy::prelude::*;
 use engine::core::math::Rng;
-use engine::core::render::world::cover::Piece;
 use engine::core::render::world::gpu::arena::{
     INDEX_BYTES, ModelSlabs, ModelVertex, PartRanges, PreparedLevel, PreparedModel, PreparedPart,
 };
 use engine::core::render::world::gpu::residency::{Admitted, Residency};
 use engine::core::render::world::gpu::slab::{SlabBlock, SlabSpace};
+use engine::core::render::world::model::Piece;
 
 #[test]
 fn a_slabs_blocks_keep_their_place_never_overlap_and_give_their_room_again_once_freed() {

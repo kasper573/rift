@@ -25,9 +25,8 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 
 use super::slab::{Slab, SlabBlock, SlabSpace};
 use super::upload::UploadBudget;
-use crate::core::render::world::cover::{self, Piece};
 use crate::core::render::world::lod::{self, Surface};
-use crate::core::render::world::material::WorldMaterial;
+use crate::core::render::world::model::{self, Piece};
 
 pub struct ModelArenaPlugin;
 
@@ -119,14 +118,14 @@ impl PreparedModel {
     /// [`lod`] simplifies every mesh of the world: worked out off the main thread. None when no
     /// piece holds a vertex.
     pub fn of(pieces: &[Piece]) -> Option<PreparedModel> {
-        let (drawn, _) = cover::by_material(pieces);
+        let drawn = model::by_material(pieces);
         let positions = drawn
             .iter()
             .flat_map(|drawn| drawn.vertices.positions.iter().copied());
         let bounds = Aabb::enclosing(positions)?;
         let parts = drawn
             .into_iter()
-            .map(|cover::DrawnIn { material, vertices }| {
+            .map(|model::DrawnIn { material, vertices }| {
                 let positions: Vec<[f32; 3]> =
                     vertices.positions.iter().map(|at| at.to_array()).collect();
                 let normals: Vec<[f32; 3]> =
@@ -363,11 +362,11 @@ pub enum InstanceChange {
     Dropped,
 }
 
-/// How a scenery draws a prop: each part of its model in its world material, whether it casts
-/// a shadow, and whether it clears away where it hides the camera's subject.
+/// How a scenery draws a prop: each part of its model in its material, of whatever kind draws it,
+/// whether it casts a shadow, and whether it clears away where it hides the camera's subject.
 #[derive(Clone, Debug)]
 pub struct DressedProp {
-    pub materials: Vec<Handle<WorldMaterial>>,
+    pub materials: Vec<UntypedHandle>,
     pub shadow: bool,
     pub fades: bool,
 }
@@ -468,15 +467,6 @@ impl InstanceArena {
     /// The chunks standing, by their keys.
     pub fn chunks(&self) -> impl Iterator<Item = u32> + '_ {
         self.chunks.keys().copied()
-    }
-
-    /// The instances standing in all.
-    pub fn instances(&self) -> u32 {
-        self.chunks
-            .values()
-            .flatten()
-            .map(|(_, instances)| instances)
-            .sum()
     }
 }
 
@@ -621,7 +611,7 @@ fn prepare_models(
             ModelState::Loading(gltf) if assets.is_loaded_with_dependencies(gltf.id()) => {
                 let Some(pieces) = gltfs
                     .get(gltf.id())
-                    .and_then(|loaded| cover::pieces_of(loaded, &nodes, &gltf_meshes, &meshes))
+                    .and_then(|loaded| model::pieces_of(loaded, &nodes, &gltf_meshes, &meshes))
                 else {
                     continue;
                 };

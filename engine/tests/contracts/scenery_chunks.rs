@@ -163,7 +163,7 @@ fn a_chunks_scenery_is_worked_out_from_the_chunk_alone() {
     let bounds = chunk.bounds();
     assert!(
         strewn.iter().all(|place| {
-            let at = place.transform.translation;
+            let at = place.at;
             bounds.contains(Pos::new(at.x, at.z))
         }),
         "every copy stands in its chunk"

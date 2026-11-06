@@ -14,9 +14,9 @@ pub mod lights;
 pub mod lod;
 pub mod mannequin;
 pub mod material;
+pub mod model;
 pub mod paint;
 pub mod rig_clip;
-mod shape;
 pub mod sky;
 pub mod terrain;
 
@@ -77,7 +77,6 @@ impl Plugin for WorldScenePlugin {
         .init_resource::<VideoPreferences>()
         .init_resource::<material::MaterialCache>()
         .init_resource::<cover::CoverVariants>()
-        .init_resource::<cover::CopyMeshes>()
         .add_observer(material::dress_scenes)
         .add_observer(mannequin::start)
         .add_observer(camera::finish_new_picture)
@@ -93,18 +92,10 @@ impl Plugin for WorldScenePlugin {
                 lights::cast_shadows,
                 lights::flicker,
                 mannequin::hold,
-                cover::strew_loaded,
                 terrain::stack_pictures,
                 material::forget_dropped,
                 cover::forget_dropped,
             ),
-        )
-        .add_systems(
-            PostUpdate,
-            cover::cull_strewn_chunks
-                .after(bevy::camera::visibility::VisibilitySystems::UpdateFrusta)
-                .after(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate)
-                .before(bevy::camera::visibility::VisibilitySystems::CheckVisibility),
         )
         .add_systems(
             PostUpdate,
@@ -144,16 +135,12 @@ fn count_compiling(cache: Res<PipelineCache>, compiling: Res<CompilingPipelines>
 }
 
 /// Whether anything the world draws is still on its way to standing: a model loading or not yet
-/// spawned, a texture a model or a cover draws with still decoding, a ground's pictures, a strewn prop, a
-/// body's skin waiting on its rig or its paint, or a pipeline something draws with compiling. A
+/// spawned, a texture a model or a cover draws with still decoding, a ground's pictures, a body's
+/// skin waiting on its rig or its paint, or a pipeline something draws with compiling. A
 /// view is shown only once nothing is, so it is first seen whole.
 pub fn readying(world: &mut World) -> bool {
     let waiting = world
-        .query_filtered::<(), Or<(
-            With<cover::Strewing>,
-            With<terrain::GroundPictures>,
-            With<body::SkinOf>,
-        )>>()
+        .query_filtered::<(), Or<(With<terrain::GroundPictures>, With<body::SkinOf>)>>()
         .iter(world)
         .next()
         .is_some();

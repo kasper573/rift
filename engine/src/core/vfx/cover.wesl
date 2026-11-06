@@ -16,16 +16,16 @@
 // cover's pieces the point belongs to (0 on a sheet), `seed` a number of the blade's or the copy's
 // own, 0 on a sheet, and, as a vertex moves, `root`, where its blade or copy stands on the ground
 // (a sheet's vertex is its own root). Off water, `depth`, `shore` and `fall` are 0. The cover's colours come from
-// its vertices: a blade's own, a copy's tint over its prop's, a sheet's ground colour. A merged
-// copy's vertex carries its root; an instanced copy stands at its instance's origin. A sheet is
-// drawn over the ground's patches, its points read from the ground as they are drawn, and blades
-// from the blades the GPU laid out for the ground; both are lit as a white, rough, blended face of
-// their colour.
+// its vertices: a blade's own, a copy's tint over its prop's, a sheet's ground colour. A copy is
+// an instance of its prop's model the scenery's arena holds, standing at its instance's origin,
+// its tint and seed riding on the instance. A sheet is drawn over the ground's patches, its points
+// read from the ground as they are drawn, and blades from the blades the GPU laid out for the
+// ground; both are lit as a white, rough, blended face of their colour.
 @if(PREPASS_PIPELINE)
-import bevy_pbr::prepass::io::{Vertex, VertexOutput, FragmentOutput, decompress_vertex};
+import bevy_pbr::prepass::io::{VertexOutput, FragmentOutput};
 @else
-import bevy_pbr::render::forward_io::{Vertex, VertexOutput, FragmentOutput, decompress_vertex};
-import bevy_pbr::render::{mesh_functions, view_transformations::position_world_to_clip};
+import bevy_pbr::render::forward_io::{VertexOutput, FragmentOutput};
+import bevy_pbr::render::view_transformations::position_world_to_clip;
 @if(PREPASS_PIPELINE)
 import engine::core::render::world::prepass_write::prepass_output;
 @else
@@ -41,6 +41,8 @@ import bevy_pbr::render::mesh_view_bindings::lights;
 import engine::core::render::world::gpu::sheet::{drawn_sheet, sheet_point};
 @if(GRASS_BLADE)
 import engine::core::render::world::gpu::grass::blade_point;
+@if(!SHEET_PATCH && !GRASS_BLADE)
+import engine::core::render::world::gpu::instance::{placement, seed_of, turned, world_of};
 @if(SHEET_PATCH || GRASS_BLADE)
 import bevy_pbr::render::mesh_types::{MESH_FLAGS_SHADOW_RECEIVER_BIT, MESH_FLAGS_SIGN_DETERMINANT_MODEL_3X3_BIT};
 @if(SHEET_PATCH || GRASS_BLADE)
@@ -71,7 +73,7 @@ struct Strewn {
     color_from: vec4<f32>,
     color_to: vec4<f32>,
     piece: u32,
-    on: u32,
+    height: f32,
 }
 
 var<private> lit: vec4<f32>;
@@ -200,20 +202,6 @@ fn mark(uv_b: vec2<f32>) {
     salt = (steps - f32(part) * 256.0) / 255.0;
 }
 
-// A strewn copy's marks as a sheet's or a blade's vertices carry them: how far up its prop it
-// stands from its mesh, its weight and seed from its tag, and its piece from its material.
-fn copy_marks(measure: f32, tag: u32) -> vec2<f32> {
-    let weight = min(f32(tag & 255u) / 255.0, 255.0 / 256.0);
-    let seed = f32((tag >> 8u) & 255u);
-    return vec2<f32>(measure, weight + seed + f32(strewn.piece) * 256.0);
-}
-
-@if(ROOTED)
-@vertex
-fn vertex(vertex_in: Vertex, @location(14) rooted: vec3<f32>) -> Output {
-    return handed_on(stand(vertex_in, vec4<f32>(rooted, 1.0)));
-}
-
 @if(SHEET_PATCH)
 @vertex
 fn vertex(@builtin(instance_index) instance: u32, @location(0) grid: vec3<f32>) -> Output {
@@ -266,10 +254,64 @@ fn vertex(@builtin(vertex_index) index: u32) -> Output {
     return handed_on(out);
 }
 
-@if(!ROOTED && !SHEET_PATCH && !GRASS_BLADE)
+// A strewn copy's vertex as the slab of models holds it, of the instance its command draws as its
+// `instance_index`th.
+@if(!SHEET_PATCH && !GRASS_BLADE)
+struct CopyVertex {
+    @builtin(instance_index) instance_index: u32,
+    @location(0) position: vec3<f32>,
+    @location(1) normal: vec3<f32>,
+    @location(2) uv: vec2<f32>,
+    @location(5) color: vec4<f32>,
+}
+
+// A strewn copy, standing where the culling kernel drew its instance and swayed about its origin:
+// how far up its prop the vertex stands, its weight full, and its seed and tint from the
+// instance's seed, the seed in its upper bits as the kernel thins it by and the tint in its lowest
+// byte.
+@if(!SHEET_PATCH && !GRASS_BLADE)
 @vertex
-fn vertex(vertex_in: Vertex) -> Output {
-    return handed_on(stand(vertex_in, select(vec4<f32>(0.0), vec4<f32>(0.0, 0.0, 0.0, 1.0), strewn.on != 0u)));
+fn vertex(in: CopyVertex) -> Output {
+    let placed = placement(in.instance_index);
+    let drawn = seed_of(in.instance_index);
+    let at = world_of(placed, in.position);
+    ashore = 0.0;
+    falling = vec2<f32>(0.0);
+    stem = placed.at;
+    spot = at;
+    let measure = clamp(in.position.y / strewn.height, 0.0, 1.0);
+    let steps = floor(f32(drawn >> 8u) / 16777216.0 * 255.0) + f32(strewn.piece) * 256.0;
+    let marks = vec2<f32>(measure, 255.0 / 256.0 + steps);
+    mark(marks);
+    read_weather();
+    var out: VertexOutput;
+    @if(VERTEX_UVS_A) {
+        out.uv = in.uv;
+    }
+    @if(VERTEX_UVS_B) {
+        out.uv_b = marks;
+    }
+    @if(VERTEX_COLORS) {
+        let tint = mix(strewn.color_from, strewn.color_to, f32(drawn & 255u) / 255.0);
+        out.color = in.color * tint;
+    }
+    let world = vec4<f32>(sway(at, up), 1.0);
+    out.world_position = world;
+    out.position = position_world_to_clip(world.xyz);
+    @if(!PREPASS_PIPELINE || NORMAL_PREPASS_OR_DEFERRED_PREPASS) {
+        out.world_normal = normalize(turned(placed.turn, in.normal));
+    }
+    @if(PREPASS_PIPELINE && UNCLIPPED_DEPTH_ORTHO_EMULATION) {
+        out.unclipped_depth = out.position.z;
+        out.position.z = min(out.position.z, 1.0);
+    }
+    @if(PREPASS_PIPELINE && MOTION_VECTOR_PREPASS) {
+        out.previous_world_position = world;
+    }
+    @if(VERTEX_OUTPUT_INSTANCE_INDEX) {
+        out.instance_index = 0u;
+    }
+    return handed_on(out);
 }
 
 // The vertex's output as its pass takes it: in the main pass with the water it lies on.
@@ -363,66 +405,6 @@ fn taken_in(on: CoverOutput) -> VertexOutput {
     }
     @if(VISIBILITY_RANGE_DITHER) {
         out.visibility_range_dither = on.visibility_range_dither;
-    }
-    return out;
-}
-
-// The vertex standing in the world, swayed about its root: `rooted`, in the mesh's own space, or
-// the vertex itself where `rooted.w` is 0.
-fn stand(vertex_in: Vertex, rooted: vec4<f32>) -> VertexOutput {
-    var out: VertexOutput;
-    let vertex = decompress_vertex(vertex_in, vertex_in.instance_index);
-    let world_from_local = mesh_functions::get_world_from_local(vertex_in.instance_index);
-    let placed = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
-    stem = placed.xyz;
-    if rooted.w > 0.5 {
-        stem = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(rooted.xyz, 1.0)).xyz;
-    }
-    painted = 1.0;
-    up = 0.0;
-    salt = 0.0;
-    part = 0u;
-    @if(VERTEX_UVS_A) {
-        out.uv = vertex.uv;
-    }
-    var tint = vec4<f32>(1.0);
-    @if(VERTEX_UVS_B) {
-        var marks = vertex.uv_b;
-        if strewn.on != 0u {
-            let tag = mesh_functions::get_tag(vertex_in.instance_index);
-            marks = copy_marks(vertex.uv_b.x, tag);
-            tint = mix(strewn.color_from, strewn.color_to, f32((tag >> 16u) & 255u) / 255.0);
-        }
-        mark(marks);
-        out.uv_b = marks;
-    }
-    spot = placed.xyz;
-    read_weather();
-    let world = vec4<f32>(sway(placed.xyz, up), 1.0);
-    out.world_position = world;
-    out.position = position_world_to_clip(world.xyz);
-    @if(PREPASS_PIPELINE) {
-        @if(UNCLIPPED_DEPTH_ORTHO_EMULATION) {
-            out.unclipped_depth = out.position.z;
-            out.position.z = min(out.position.z, 1.0);
-        }
-        @if(NORMAL_PREPASS_OR_DEFERRED_PREPASS && VERTEX_NORMALS) {
-            out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex_in.instance_index);
-        }
-        @if(MOTION_VECTOR_PREPASS) {
-            out.previous_world_position = world;
-        }
-    }
-    @else {
-        @if(VERTEX_NORMALS) {
-            out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex_in.instance_index);
-        }
-    }
-    @if(VERTEX_COLORS) {
-        out.color = vertex.color * tint;
-    }
-    @if(VERTEX_OUTPUT_INSTANCE_INDEX) {
-        out.instance_index = vertex_in.instance_index;
     }
     return out;
 }

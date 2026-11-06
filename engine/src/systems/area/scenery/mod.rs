@@ -4,8 +4,8 @@
 //! in; the editor stands the area it edits, on render layers of its own, and both light it alike
 //! for the hour. The ground stands whole, finer the nearer the view, and the covers, props and
 //! lights stand within the view's reach alone, a few a frame through `SceneryPlugin` as the view
-//! moves, the props in the GPU's arenas chunk by chunk and the covers far off the eye merged, so
-//! an area costs what the view takes in, however far it stretches.
+//! moves, the props and the covers' copies in the GPU's arenas chunk by chunk, thinned far off the
+//! eye as the view shows them, so an area costs what the view takes in, however far it stretches.
 
 mod covers;
 pub mod expand;
@@ -13,7 +13,6 @@ mod grass;
 mod instances;
 mod plan;
 mod props;
-mod regions;
 
 pub use plan::{Eyes, Sight};
 pub use props::prop_transform;
@@ -22,7 +21,6 @@ use covers::Covers;
 use grass::Grass;
 use instances::Instances;
 use plan::{Plan, Planner};
-use regions::Regions;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
@@ -56,7 +54,6 @@ use crate::core::render::world::clouds::{CloudDrift, CloudSheet};
 use crate::core::render::world::gpu::arena::PropArena;
 use crate::core::render::world::gpu::atlas::TerrainAtlas;
 use crate::core::render::world::gpu::draw::{GroundDraw, GroundPatch, PATCH_CELLS};
-use crate::core::render::world::gpu::upload;
 use crate::core::render::world::haze::Haze;
 use crate::core::render::world::lights::{self, Flicker};
 use crate::core::render::world::sky::{self, Daylight, SunLight};
@@ -169,16 +166,10 @@ pub fn spawn(
     let grass = Grass::new(world, terrain, covers.grass());
     let planner = {
         let area = area.clone();
-        let pieces = covers.pieces(&area.paint);
         Making::Task(AsyncComputeTaskPool::get().spawn(async move {
             let mut lights = SpatialIndex::new(PLACEMENT_CELL);
             lights.refile_spots(area.lights.iter().map(|light| light.at));
-            Arc::new(Planner {
-                regions: Regions::of(&area),
-                pieces,
-                lights,
-                area,
-            })
+            Arc::new(Planner { lights, area })
         }))
     };
     world.entity_mut(root).insert(PropArena);
@@ -189,9 +180,8 @@ pub fn spawn(
         paint: area.paint.clone(),
         water: area.water.clone(),
         terrain,
-        covers,
         grass,
-        instances: Instances::default(),
+        instances: Instances::new(content, covers.copies()),
         planner,
         sight: None,
         planning: None,
@@ -335,7 +325,8 @@ pub fn standing(world: &World) -> bool {
         .any(|streaming| !streaming.stands())
 }
 
-/// How many chunks of ground and regions of scenery the sights take in that have yet to stand.
+/// How much of the ground, the props, the covers' copies and their blades the sights take in has
+/// yet to stand.
 pub fn missing(world: &World) -> u32 {
     world
         .resource::<Streams>()
@@ -352,6 +343,15 @@ pub fn arena_props(world: &World, scenery: Scenery) -> u32 {
         .0
         .get(&scenery.root)
         .map_or(0, |streaming| streaming.instances.props())
+}
+
+/// How many copies of its covers' pieces `scenery` holds in its arena on the GPU.
+pub fn arena_copies(world: &World, scenery: Scenery) -> u32 {
+    world
+        .resource::<Streams>()
+        .0
+        .get(&scenery.root)
+        .map_or(0, |streaming| streaming.instances.copies())
 }
 
 /// How many blades of its covers' grass `scenery` holds on the GPU.
@@ -401,7 +401,6 @@ struct Streaming {
     paint: PaintMap,
     water: WaterSurface,
     terrain: Entity,
-    covers: Covers,
     grass: Grass,
     instances: Instances,
     planner: Making<Arc<Planner>>,
@@ -415,7 +414,8 @@ struct Streaming {
     stood: Stood,
     /// The plan whose ground the terrain draws.
     drawn: Option<Arc<Plan>>,
-    /// How much of the ground and how many regions of scenery the plan takes in have yet to stand.
+    /// How much of the ground, the props, the covers' copies and their blades the plan takes in
+    /// has yet to stand.
     missing: u32,
     /// The tiles of ground being loaded for what stands on them.
     loading: HashMap<TileAt, Task<()>>,
@@ -451,8 +451,7 @@ struct Node {
 
 /// The samples along a leaf node's side: a node is drawn as a patch.
 const LEAF_SAMPLES: u32 = PATCH_CELLS;
-/// How near the view a node of the ground or a region of the scenery must lie, in its own sides,
-/// to be cut into finer ones.
+/// How near the view a node of the ground must lie, in its own sides, to be cut into finer ones.
 const SPLIT_WITHIN: f32 = 1.5;
 /// The level from which a node's stride is the overview's, so it draws from the overview alone;
 /// a finer node wants the tiles of ground under it in detail.
@@ -460,9 +459,6 @@ const OVERVIEW_LEVEL: u32 = OVERVIEW_STRIDE.trailing_zeros();
 /// How placements are filed to be found near the view, and the side of the leaves of the
 /// quadtree the props stand over.
 const PLACEMENT_CELL: Meters = Meters(32.0);
-/// How many covers and merges of them stand in one frame.
-const COVERS_PER_FRAME: usize = 16;
-const MERGES_PER_FRAME: usize = 4;
 const PARTS_TAKEN_DOWN_PER_FRAME: usize = 2000;
 
 fn stream(world: &mut World) {
@@ -516,8 +512,7 @@ fn replan(world: &mut World, streaming: &mut Streaming) {
 /// Stands what the plan takes in, as much as a frame's budget allows, and takes down what it
 /// left behind once what replaces it stands.
 fn stream_plan(world: &mut World, root: Entity, streaming: &mut Streaming) {
-    let (Some(planner), Some(plan)) = (streaming.planner.made().cloned(), streaming.plan.clone())
-    else {
+    let (Some(_), Some(plan)) = (streaming.planner.made(), streaming.plan.clone()) else {
         return;
     };
     if streaming.whole {
@@ -526,72 +521,33 @@ fn stream_plan(world: &mut World, root: Entity, streaming: &mut Streaming) {
     streaming
         .loading
         .retain(|_, task| check_ready(task).is_none());
-    let mut budget = Budget::new(world);
+    let mut budget = Budget::default();
     let ground_missing = draw_ground(world, streaming, &plan);
     if ground_missing > 0 {
         budget.defer();
     }
     let props_missing = instances::stand(world, streaming, &plan, root, &mut budget);
     instances::clear(world, streaming, &plan, root);
-    let covers_unstood = covers::stand(world, streaming, &planner, &plan, root, &mut budget);
-    streaming.missing = ground_missing + props_missing + covers_unstood.len() as u32;
-    covers::clear(world, streaming, &planner, &plan, &covers_unstood);
-    if !covers_unstood.is_empty() {
-        budget.defer();
-    }
     let grass_missing = grass::grow(world, streaming, &plan.seen);
     if grass_missing > 0 {
         budget.defer();
     }
-    streaming.missing += grass_missing;
+    streaming.missing = ground_missing + props_missing + grass_missing;
     stream_lights(world, streaming, &plan, root);
     streaming.whole = !budget.spent;
 }
 
-/// What a frame may still stand: the meshes it stands go to the GPU as the upload stage sends
-/// them, so new ones are made only while it has room, while the entities and scenes it spawns
-/// cost the frame itself.
+/// What a frame left to stand.
+#[derive(Default)]
 struct Budget {
-    covers: usize,
-    merges: usize,
-    /// Whether the upload stage takes more meshes this frame.
-    staging: bool,
     /// Whether the frame left something to stand.
     spent: bool,
 }
 
 impl Budget {
-    fn new(world: &World) -> Budget {
-        Budget {
-            covers: COVERS_PER_FRAME,
-            merges: MERGES_PER_FRAME,
-            staging: upload::has_room(world),
-            spent: false,
-        }
-    }
-
     /// Leaves something to stand on a later frame, as it waits on what is being made or loaded.
     fn defer(&mut self) {
         self.spent = true;
-    }
-
-    /// Whether the frame makes or stands meshes for the GPU: once the upload stage has room for
-    /// them.
-    fn stage(&mut self) -> bool {
-        if !self.staging {
-            self.spent = true;
-        }
-        self.staging
-    }
-
-    fn take(&mut self, left: fn(&mut Budget) -> &mut usize) -> bool {
-        let left = left(self);
-        if *left == 0 {
-            self.spent = true;
-            return false;
-        }
-        *left -= 1;
-        true
     }
 }
 
@@ -766,48 +722,6 @@ impl NodeRect {
             Heightfield::sample_pos(self.first.0, self.first.1),
             Size::new(side, side),
         )
-    }
-}
-
-/// What stands of a merged region: waiting on what it merges, its meshes `M` being made, or
-/// standing.
-enum Merged<W, M> {
-    Waiting(W),
-    Merging(Making<Vec<M>>),
-    Standing(Vec<Entity>),
-}
-
-impl<W, M> Merged<W, M> {
-    /// Stands what is made, each by `spawn`, once it is: whether all of it stands with its meshes
-    /// on the GPU, none while waiting.
-    fn rise(
-        &mut self,
-        world: &mut World,
-        mut spawn: impl FnMut(&mut World, M) -> Option<Entity>,
-    ) -> Option<bool> {
-        if let Merged::Merging(making) = self {
-            let Some(made) = making.made() else {
-                return Some(false);
-            };
-            let made = std::mem::take(made);
-            *self = Merged::Standing(
-                made.into_iter()
-                    .filter_map(|next| spawn(world, next))
-                    .collect(),
-            );
-        }
-        let Merged::Standing(stood) = self else {
-            return None;
-        };
-        Some(stood.iter().all(|&mesh| upload::sent(world, mesh)))
-    }
-
-    /// What stands of the region.
-    fn stood(&self) -> &[Entity] {
-        match self {
-            Merged::Standing(stood) => stood,
-            Merged::Waiting(_) | Merged::Merging(_) => &[],
-        }
     }
 }
 
@@ -1298,7 +1212,7 @@ fn lay_streamed_ground(
     if let Some(mut atlas) = world.get_mut::<TerrainAtlas>(streaming.terrain) {
         atlas.lay(heights, paint, &streaming.water);
     }
-    streaming.covers.ground_changed();
+    streaming.instances.ground_changed();
     streaming.grass.ground_changed();
     streaming.whole = false;
 }

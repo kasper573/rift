@@ -1,9 +1,10 @@
 //! The props the arenas hold, drawn as the culling kernel left them: in every view's alpha-masked
-//! pass, its prepass and its lights' shadow maps. Each part of a prop is drawn in its own world
-//! material on that material's own pipeline, built from bevy's material pipeline pieces as a mesh
-//! of the model slab's vertices would be, its vertex stage reading the instance its command
-//! draws in place of a mesh's transform. A part drawn by a shader of the game's draws through the
-//! shader's own instanced stage. A view draws each part's levels in one indirect multi-draw.
+//! pass, its prepass and its lights' shadow maps. Each part of a prop is drawn in its own material,
+//! a world material or a cover's for the copies a cover strews, on that material's own pipeline,
+//! built from bevy's material pipeline pieces as a mesh of the model slab's vertices would be, its
+//! vertex stage reading the instance its command draws in place of a mesh's transform. A part
+//! drawn by a shader of the game's draws through the shader's own instanced stage. A view draws
+//! each part's levels in one indirect multi-draw.
 
 use std::any::TypeId;
 use std::sync::Arc;
@@ -55,7 +56,6 @@ use bevy::shader::{Shader, ShaderDefVal};
 use super::arena::{ExtractedPropArena, InstanceArenas, ModelArena};
 use super::clearing::Clearing;
 use super::cull::{self, PropCulls, ViewCull};
-use crate::core::render::world::material::WorldMaterial;
 
 pub struct PropDrawPlugin;
 
@@ -146,7 +146,8 @@ struct PropPipeline {
     clearing: UniformBuffer<ClearingUniform>,
     /// Bevy's mesh data for every instance alike: placed where it stands, receiving shadows.
     mesh: StorageBuffer<Vec<MeshUniform>>,
-    built: HashMap<(bool, MeshPipelineKey, ErasedMaterialKey), Option<CachedRenderPipelineId>>,
+    built:
+        HashMap<(bool, MeshPipelineKey, TypeId, ErasedMaterialKey), Option<CachedRenderPipelineId>>,
 }
 
 fn start(
@@ -300,7 +301,6 @@ impl PropQueue<'_, '_> {
         let Some(pipeline) = self.pipeline.as_mut() else {
             return Vec::new();
         };
-        let allocator = self.allocators.get(&TypeId::of::<WorldMaterial>());
         let mut queued = Vec::new();
         for (entity, &main) in &self.sceneries {
             let scenery = main.id();
@@ -326,12 +326,19 @@ impl PropQueue<'_, '_> {
                     if light && !prepared.properties.shadows_enabled {
                         return None;
                     }
-                    let bound = allocator?
+                    let bound = self
+                        .allocators
+                        .get(&material.type_id())?
                         .get(prepared.binding.group)?
                         .bind_group()?
                         .clone();
-                    let id =
-                        pipeline.specialize(&self.cache, view_key, lit, &prepared.properties)?;
+                    let id = pipeline.specialize(
+                        &self.cache,
+                        view_key,
+                        lit,
+                        material.type_id(),
+                        &prepared.properties,
+                    )?;
                     Some(PartDraw {
                         pipeline: id,
                         material: bound,
@@ -490,23 +497,24 @@ impl Queued {
 }
 
 impl PropPipeline {
-    /// The pipeline drawing a part of the material `properties` describes in the pass `lit`
-    /// names, in a view of `view`'s key, queued the first time it is asked for.
+    /// The pipeline drawing a part in a material of the kind `kind` that `properties` describes,
+    /// in the pass `lit` names, in a view of `view`'s key, queued the first time it is asked for.
     fn specialize(
         &mut self,
         cache: &PipelineCache,
         view: MeshPipelineKey,
         lit: bool,
+        kind: TypeId,
         properties: &Arc<MaterialProperties>,
     ) -> Option<CachedRenderPipelineId> {
-        let key = (lit, view, properties.material_key.clone());
+        let key = (lit, view, kind, properties.material_key.clone());
         if let Some(&id) = self.built.get(&key) {
             return id;
         }
         let descriptor = if lit {
-            self.lit(view, properties)
+            self.lit(view, kind, properties)
         } else {
-            self.depth(view, properties)
+            self.depth(view, kind, properties)
         };
         let id = descriptor.map(|descriptor| cache.queue_render_pipeline(descriptor));
         self.built.insert(key, id);
@@ -517,6 +525,7 @@ impl PropPipeline {
     fn lit(
         &self,
         view: MeshPipelineKey,
+        kind: TypeId,
         properties: &MaterialProperties,
     ) -> Option<RenderPipelineDescriptor> {
         let mesh_key =
@@ -560,7 +569,7 @@ impl PropPipeline {
                 &self.material,
                 &mut descriptor,
                 &self.layout,
-                material_key(mesh_key, properties),
+                material_key(mesh_key, kind, properties),
             )
             .ok()?;
         }
@@ -573,6 +582,7 @@ impl PropPipeline {
     fn depth(
         &self,
         view: MeshPipelineKey,
+        kind: TypeId,
         properties: &Arc<MaterialProperties>,
     ) -> Option<RenderPipelineDescriptor> {
         let mut mesh_key =
@@ -593,7 +603,7 @@ impl PropPipeline {
             properties: properties.clone(),
         };
         let mut descriptor = specializer
-            .specialize(material_key(mesh_key, properties), &self.layout)
+            .specialize(material_key(mesh_key, kind, properties), &self.layout)
             .ok()?;
         descriptor.label = Some("prop_depth".into());
         Some(self.instanced(descriptor, &self.prepass.default_prepass_shader))
@@ -621,12 +631,13 @@ impl PropPipeline {
 
 fn material_key(
     mesh_key: MeshPipelineKey,
+    kind: TypeId,
     properties: &MaterialProperties,
 ) -> ErasedMaterialPipelineKey {
     ErasedMaterialPipelineKey {
         mesh_key: ErasedMeshPipelineKey::new(mesh_key),
         material_key: properties.material_key.clone(),
-        type_id: TypeId::of::<WorldMaterial>(),
+        type_id: kind,
     }
 }
 

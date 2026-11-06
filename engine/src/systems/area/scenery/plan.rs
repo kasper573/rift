@@ -1,5 +1,5 @@
-//! What the scenery stands for a sight, planned off the frame: the chunks of ground, the regions
-//! of covers and the lights a view could take in from anywhere its eye may stand, so a
+//! What the scenery stands for a sight, planned off the frame: the chunks of ground and the lights
+//! a view could take in from anywhere its eye may stand, so a
 //! view turning, tilting or zooming within its sight plans nothing anew, and one moving across
 //! the ground plans anew only as it crosses into another cell of it. An eye that may stand any
 //! way round the ground stands near everything at its distance from it, so a view whose eye keeps
@@ -11,8 +11,6 @@ use std::sync::Arc;
 use bevy::math::Vec3;
 use bevy::platform::collections::HashSet;
 
-use super::covers::{CoverPieces, CoversPlan};
-use super::regions::Regions;
 use super::{Node, distance_to, nodes_for};
 use crate::core::ground::Heightfield;
 use crate::core::math::{Pos, Rect};
@@ -307,7 +305,7 @@ fn wrapped(angle: f32) -> f32 {
 
 /// How finely the scenery shows what lies somewhere off the eye: as finely as what lies 2^(n/2)
 /// metres off it, taken to the half octave nearer.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub(super) struct Detail(i32);
 
 impl Detail {
@@ -321,22 +319,18 @@ impl Detail {
 /// detail.
 const NEAREST_GROUND: Meters = Meters(0.5);
 
-/// What a plan is made from that stays as long as the area stands: the area, its covers' pieces,
-/// its regions and its lights.
+/// What a plan is made from that stays as long as the area stands: the area and its lights.
 pub(super) struct Planner {
     pub area: Arc<Area>,
-    pub regions: Regions,
-    pub pieces: CoverPieces,
     pub lights: SpatialIndex,
 }
 
-/// What the scenery stands for a sight: the ground's chunks, the regions of covers and what
-/// stands in them, and the lights.
+/// What the scenery stands for a sight: where it is seen from, the ground's chunks and the
+/// lights.
 pub(super) struct Plan {
     pub seen: Seen,
     /// The chunks of ground, finest first.
     pub ground: Vec<Node>,
-    pub covers: CoversPlan,
     pub lights: LightsPlan,
 }
 
@@ -355,10 +349,8 @@ impl Planner {
         let seen = Seen::of(sight, heights);
         let mut ground = nodes_for(heights, seen.at(), OFF_MIDDLE);
         ground.sort_by_key(|node| node.level);
-        let cut = self.regions.cut(heights, &seen);
         Plan {
             ground,
-            covers: super::covers::plan(self, heights, &seen, &cut),
             lights: self.plan_lights(&seen),
             seen,
         }

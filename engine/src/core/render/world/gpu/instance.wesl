@@ -49,6 +49,11 @@ fn placement(index: u32) -> Placement {
     );
 }
 
+// The seed of the instance a command draws as its `index`th.
+fn seed_of(index: u32) -> u32 {
+    return instances[drawn[index].x].seed;
+}
+
 // How far the instance a command draws as its `index`th shows, and whether the eye stands inside
 // it: 1 or more for inside.
 fn shown_of(index: u32) -> vec2<f32> {

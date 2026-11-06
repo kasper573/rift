@@ -10,10 +10,9 @@ use crate::systems::area::prop::Scatter;
 use crate::systems::area::{AreaModule, PropPlacement};
 
 use super::PLACEMENT_CELL;
-use super::regions;
 
-/// A chunk of an area's ground the side of the scenery's finest region, by its place among the
-/// chunks across and down from the ground's corner.
+/// A chunk of an area's ground, by its place among the chunks across and down from the ground's
+/// corner.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct SceneryChunk {
     pub column: u32,
@@ -67,7 +66,7 @@ impl SceneryChunk {
 
     /// Whether `at` lies in the chunk of `ground`.
     pub fn holds(self, ground: Rect<Meters>, at: Pos<Meters>) -> bool {
-        regions::holds(self.bounds(ground), at)
+        holds(self.bounds(ground), at)
     }
 }
 
@@ -108,7 +107,7 @@ pub fn scattered_in(
     }
     scatter
         .expand()
-        .filter(|placed| regions::holds(bounds, placed.at))
+        .filter(|placed| holds(bounds, placed.at))
         .collect()
 }
 
@@ -120,6 +119,9 @@ pub struct PaintChunk {
 }
 
 impl PaintChunk {
+    /// How far a chunk reaches along each side.
+    pub const SIDE: Meters = Meters(cover::CHUNK_CELLS as f32 / SAMPLES_PER_METER as f32);
+
     /// The cell of paint the chunk begins at.
     pub fn first_cell(self) -> (u32, u32) {
         (
@@ -211,4 +213,13 @@ pub(super) fn mixed_seed(seed: u64, parts: [u64; 4]) -> u64 {
         mixed ^= mixed >> 31;
     }
     mixed
+}
+
+/// Whether `at` lies within `bounds`, its far edges left to the chunks beyond, so a point lies in
+/// one chunk alone.
+fn holds(bounds: Rect<Meters>, at: Pos<Meters>) -> bool {
+    at.x >= bounds.min().x
+        && at.x < bounds.max().x
+        && at.y >= bounds.min().y
+        && at.y < bounds.max().y
 }
