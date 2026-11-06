@@ -6,6 +6,7 @@ pub mod arena;
 pub mod atlas;
 pub mod cull;
 pub mod draw;
+pub mod prop_draw;
 pub mod residency;
 pub mod slab;
 pub mod upload;

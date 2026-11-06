@@ -106,6 +106,9 @@ enum Command {
         /// Draws only the shots whose names match, `*` standing for anything.
         #[arg(long)]
         only: Option<String>,
+        /// Draws the world's props this way, whatever each preset says.
+        #[arg(long, value_enum)]
+        world_renderer: Option<render::RendererChoice>,
     },
     /// Compares the snapshots in CANDIDATE against those in BASELINE, shot by shot: exit 0 alike,
     /// 1 a shot strayed, 2 the sets don't compare, 3 a render crashed.
@@ -245,7 +248,15 @@ fn main() {
             out,
             video,
             only,
-        } => exit_on(snapshot::run(&game, &shots, &out, video, only.as_deref())),
+            world_renderer,
+        } => exit_on(snapshot::run(
+            &game,
+            &shots,
+            &out,
+            video,
+            only.as_deref(),
+            world_renderer.map(render::RendererChoice::renderer),
+        )),
         Command::Compare {
             baseline,
             candidate,

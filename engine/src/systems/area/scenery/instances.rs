@@ -4,7 +4,9 @@
 //! nearest the sight first, and sent to the GPU within the frame's upload budget. A chunk the
 //! sight leaves past what it keeps is let go.
 
-use bevy::gltf::Gltf;
+use std::sync::Arc;
+
+use bevy::gltf::{Gltf, GltfMaterial};
 use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use bevy::tasks::futures::check_ready;
@@ -12,28 +14,33 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 
 use super::expand::{self, SceneryChunk};
 use super::plan::{KEEP_SHARE, Plan};
+use super::props;
 use super::{Budget, Streaming, distance_to, ground_loaded};
 use crate::core::assets;
 use crate::core::ground::Heightfield;
 use crate::core::math::{Offset, Rect, Size};
 use crate::core::render::world::gpu::arena::{
-    InstanceArena, InstanceChange, InstanceChanges, InstanceRecord, PropModels,
+    DressedProp, InstanceArena, InstanceChange, InstanceChanges, InstanceRecord, PropModels,
 };
 use crate::core::render::world::gpu::upload;
+use crate::core::render::world::material::{self, WorldMaterial};
 use crate::core::render::world_point;
 use crate::core::units::{MeterSize, Meters};
 use crate::systems::area::prop::PropId;
 use crate::systems::area::{Area, PropPlacement};
 
 /// What a scenery holds of its props in its arena: the chunks standing there, those being worked
-/// out, those worked out and waiting for room in a frame's budget, and the models of every prop
-/// they stand, held so they stay loaded.
+/// out, those worked out and waiting for room in a frame's budget, the models of every prop they
+/// stand, held so they stay loaded, and the props dressed in their materials.
 #[derive(Default)]
 pub(super) struct Instances {
     arena: InstanceArena,
     expanding: HashMap<SceneryChunk, Task<Expanded>>,
     expanded: Vec<(SceneryChunk, Expanded)>,
     models: HashMap<PropId, Handle<Gltf>>,
+    dressed: HashSet<PropId>,
+    /// The props each chunk standing in the arena stands, by its key.
+    standing: HashMap<u32, HashSet<PropId>>,
 }
 
 impl Instances {
@@ -86,11 +93,15 @@ pub(super) fn stand(
             None => true,
         });
     send(world, streaming, root, ground);
+    dress(world, streaming, root);
     let mut missing = 0;
     for chunk in wanted {
         let key = key_of(ground, chunk);
         let instances = &streaming.instances;
-        if instances.arena.holds(key) {
+        if let Some(props) = instances.standing.get(&key) {
+            if !props.iter().all(|prop| instances.dressed.contains(prop)) {
+                missing += 1;
+            }
             continue;
         }
         missing += 1;
@@ -127,6 +138,7 @@ pub(super) fn clear(world: &mut World, streaming: &mut Streaming, plan: &Plan, r
         .filter(|&key| !kept(chunk_of(ground, key)))
         .collect();
     for key in gone {
+        instances.standing.remove(&key);
         if let Some(change) = instances.arena.remove(key)
             && let Some(mut changes) = world.get_resource_mut::<InstanceChanges>()
         {
@@ -168,12 +180,76 @@ fn send(world: &mut World, streaming: &mut Streaming, root: Entity, ground: Rect
             models_of.insert(prop.index() as u32, model.id());
         }
         let key = key_of(ground, chunk);
+        instances.standing.insert(key, expanded.props);
         if let Some(change) = instances
             .arena
             .insert(key, &expanded.records, |prop| models_of[&prop])
             && let Some(mut changes) = world.get_resource_mut::<InstanceChanges>()
         {
             changes.0.push((root, change));
+        }
+    }
+}
+
+/// Dresses every prop the arena stands whose model is on the GPU: each part of the model in the
+/// world material its glTF material and the prop's looks give it, once every look's shader is
+/// compiled.
+fn dress(world: &mut World, streaming: &mut Streaming, root: Entity) {
+    let instances = &mut streaming.instances;
+    let undressed: Vec<(PropId, Handle<Gltf>)> = instances
+        .models
+        .iter()
+        .filter(|(prop, _)| !instances.dressed.contains(*prop))
+        .map(|(prop, model)| (*prop, model.clone()))
+        .collect();
+    for (prop, model) in undressed {
+        let Some(parts) = world
+            .get_resource::<PropModels>()
+            .and_then(|models| models.parts(model.id()))
+            .map(<[_]>::to_vec)
+        else {
+            continue;
+        };
+        let def = prop.get(&streaming.content);
+        let Some(looks) = props::compiled_looks(world, &streaming.content, def) else {
+            continue;
+        };
+        let names: HashMap<AssetId<GltfMaterial>, String> = world
+            .resource::<Assets<Gltf>>()
+            .get(model.id())
+            .map(|loaded| {
+                loaded
+                    .named_materials
+                    .iter()
+                    .map(|(name, material)| (material.id(), name.to_string()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let materials: Option<Vec<Handle<WorldMaterial>>> = parts
+            .iter()
+            .map(|material| {
+                let look = material
+                    .as_ref()
+                    .and_then(|material| names.get(&material.id()))
+                    .and_then(|name| looks.0.iter().find(|look| look.material == *name));
+                material::part_material(world, &model, material.as_ref(), look)
+            })
+            .collect();
+        let Some(materials) = materials else {
+            continue;
+        };
+        streaming.instances.dressed.insert(prop);
+        if let Some(mut changes) = world.get_resource_mut::<InstanceChanges>() {
+            changes.0.push((
+                root,
+                InstanceChange::Dressed {
+                    prop: prop.index() as u32,
+                    dressed: Arc::new(DressedProp {
+                        materials,
+                        shadow: def.shadow,
+                    }),
+                },
+            ));
         }
     }
 }

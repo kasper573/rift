@@ -27,6 +27,7 @@ use super::slab::{Slab, SlabBlock, SlabSpace};
 use super::upload::UploadBudget;
 use crate::core::render::world::cover::{self, Piece};
 use crate::core::render::world::lod::{self, Surface};
+use crate::core::render::world::material::WorldMaterial;
 
 pub struct ModelArenaPlugin;
 
@@ -76,17 +77,18 @@ impl ExtractComponent<RenderApp> for PropArena {
     }
 }
 
-/// A vertex of a model as the slab holds it: where it stands in the model, the way it faces and
-/// its texture coordinates.
+/// A vertex of a model as the slab holds it: where it stands in the model, the way it faces, its
+/// texture coordinates and its colour, white where the model gives none.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ModelVertex {
     pub position: [f32; 3],
     pub normal: [f32; 3],
     pub uv: [f32; 2],
+    pub color: [f32; 4],
 }
 
 impl ModelVertex {
-    pub const BYTES: u64 = 32;
+    pub const BYTES: u64 = 48;
 }
 
 /// The bytes an index takes in the index slab.
@@ -151,6 +153,10 @@ impl PreparedModel {
                             position: positions[vertex],
                             normal: normals[vertex],
                             uv: vertices.uvs[vertex],
+                            color: vertices
+                                .colors
+                                .as_ref()
+                                .map_or([1.0; 4], |colors| colors[vertex]),
                         })
                         .collect(),
                     levels,
@@ -343,7 +349,21 @@ pub enum InstanceChange {
     Removed {
         chunk: u32,
     },
+    /// A prop dressed: each part of its model in its world material, and whether it casts a
+    /// shadow.
+    Dressed {
+        prop: u32,
+        dressed: Arc<DressedProp>,
+    },
     Dropped,
+}
+
+/// How a scenery draws a prop: each part of its model in its world material, and whether it casts
+/// a shadow.
+#[derive(Clone, Debug)]
+pub struct DressedProp {
+    pub materials: Vec<Handle<WorldMaterial>>,
+    pub shadow: bool,
 }
 
 /// What a chunk's instances are, as culling reads them: the box their places fill, the largest
@@ -467,6 +487,7 @@ pub struct InstanceArenas(pub HashMap<Entity, GpuInstances>);
 pub struct GpuInstances {
     pub slab: Slab,
     pub chunks: HashMap<u32, GpuChunk>,
+    pub dressed: HashMap<u32, Arc<DressedProp>>,
     pub changes: u64,
     pending: Vec<(u64, Arc<[u8]>)>,
     capacity: u64,
@@ -488,6 +509,7 @@ impl Default for GpuInstances {
                 BufferUsages::STORAGE | BufferUsages::VERTEX,
             ),
             chunks: HashMap::new(),
+            dressed: HashMap::new(),
             changes: 0,
             pending: Vec::new(),
             capacity: 0,
@@ -513,9 +535,13 @@ impl PropModels {
             .or_insert_with(|| ModelState::Loading(gltf.clone()));
     }
 
-    /// Whether `gltf`'s model is on the GPU, or on its way there this frame.
-    pub fn sent(&self, gltf: AssetId<Gltf>) -> bool {
-        matches!(self.models.get(&gltf), Some(ModelState::Sent))
+    /// The material of each part of `gltf`'s model, once the model is on the GPU or on its way
+    /// there this frame.
+    pub fn parts(&self, gltf: AssetId<Gltf>) -> Option<&[Option<Handle<GltfMaterial>>]> {
+        match self.models.get(&gltf)? {
+            ModelState::Sent(parts) => Some(parts),
+            _ => None,
+        }
     }
 }
 
@@ -554,7 +580,8 @@ enum ModelState {
         model: Arc<PreparedModel>,
         _asset: Handle<Gltf>,
     },
-    Sent,
+    /// On the GPU, with the material of each of its parts.
+    Sent(Arc<[Option<Handle<GltfMaterial>>]>),
 }
 
 /// Lets go of the models whose asset is gone, on the GPU as well.
@@ -563,7 +590,7 @@ fn forget_models(mut events: MessageReader<AssetEvent<Gltf>>, mut models: ResMut
     for event in events.read() {
         if let AssetEvent::Removed { id } | AssetEvent::Unused { id } = *event
             && let Some(state) = models.models.remove(&id)
-            && matches!(state, ModelState::Sent)
+            && matches!(state, ModelState::Sent(_))
         {
             models.outgoing.push((id, None));
         }
@@ -599,7 +626,7 @@ fn prepare_models(
                             model: Arc::new(prepared),
                             _asset: gltf.clone(),
                         },
-                        None => ModelState::Sent,
+                        None => ModelState::Sent(Arc::new([])),
                     };
                 }
             }
@@ -622,7 +649,13 @@ fn send_models(mut models: ResMut<PropModels>, mut budget: UploadBudget) {
             break;
         }
         outgoing.push((id, Some(prepared.clone())));
-        *state = ModelState::Sent;
+        *state = ModelState::Sent(
+            prepared
+                .parts
+                .iter()
+                .map(|part| part.material.clone())
+                .collect(),
+        );
     }
 }
 
@@ -702,6 +735,11 @@ fn extract_instances(changes: Extract<Res<InstanceChanges>>, mut arenas: ResMut<
                     arena.changes += 1;
                 }
             }
+            InstanceChange::Dressed { prop, dressed } => {
+                let arena = arenas.0.entry(scenery).or_default();
+                arena.dressed.insert(prop, dressed);
+                arena.changes += 1;
+            }
             InstanceChange::Dropped => {
                 arenas.0.remove(&scenery);
             }
@@ -752,6 +790,7 @@ fn vertex_bytes(vertices: &[ModelVertex]) -> Vec<u8> {
                 .into_iter()
                 .chain(vertex.normal)
                 .chain(vertex.uv)
+                .chain(vertex.color)
         })
         .flat_map(f32::to_le_bytes)
         .collect()

@@ -11,7 +11,7 @@
 // prop fades where it hides the camera's subject like everything else.
 // A mesh merged of many props carries in every vertex where its piece of the model stands, how
 // much it is grown and how it is turned, and passes them on to the pixel, so the shader reads
-// them alike either way.
+// them alike either way. A prop drawn from the arenas passes on its instance's place the same way.
 @if(PREPASS_PIPELINE)
 import bevy_pbr::prepass::io::{Vertex, UncompressedVertex, VertexOutput, FragmentOutput, decompress_vertex};
 @else
@@ -27,6 +27,9 @@ import engine::core::render::world::prepass_write::prepass_output;
 import bevy_pbr::render::{pbr_fragment::pbr_input_from_standard_material, pbr_functions::{alpha_discard, main_pass_post_lighting_processing}};
 @if(!PREPASS_PIPELINE)
 import engine::core::render::world::shade::lighting;
+
+@if(PROP_INSTANCE)
+import engine::core::render::world::gpu::instance::{placement, turned, world_of};
 
 @if(PREPASS_PIPELINE)
 import bevy_render::globals::Globals;
@@ -140,14 +143,51 @@ fn vertex(vertex_in: Vertex) -> VertexOutput {
     return vertex_output(vertex, placed.xyz);
 }
 
-@if(MERGED)
+@if(MERGED && !PROP_INSTANCE)
 @vertex
 fn vertex(vertex_in: Vertex, @location(14) place: vec4<f32>, @location(15) turn: vec4<f32>) -> MergedOutput {
     let vertex = decompress_vertex(vertex_in, vertex_in.instance_index);
     let world_from_local = mesh_functions::get_world_from_local(vertex_in.instance_index);
     let placed = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
     stand_merged(place, turn, placed.xyz);
-    let out = vertex_output(vertex, placed.xyz);
+    return merged_output(vertex_output(vertex, placed.xyz), vertex_in.instance_index, place, turn);
+}
+
+// The vertex of the instance the command draws as its `instance_index`th, its normal and tangent
+// turned as the instance is, bevy's mesh data read at the first entry, which stands for every
+// instance alike.
+@if(MERGED && PROP_INSTANCE)
+@vertex
+fn vertex(vertex_in: Vertex) -> MergedOutput {
+    let placed = placement(vertex_in.instance_index);
+    var vertex: UncompressedVertex;
+    vertex.instance_index = 0u;
+    vertex.position = vertex_in.position;
+    @if(VERTEX_UVS_A) {
+        vertex.uv = vertex_in.uv;
+    }
+    @if(VERTEX_UVS_B) {
+        vertex.uv_b = vertex_in.uv_b;
+    }
+    @if(VERTEX_NORMALS && (!PREPASS_PIPELINE || NORMAL_PREPASS_OR_DEFERRED_PREPASS)) {
+        vertex.normal = turned(placed.turn, vertex_in.normal);
+    }
+    @if(VERTEX_TANGENTS && (!PREPASS_PIPELINE || NORMAL_PREPASS_OR_DEFERRED_PREPASS)) {
+        vertex.tangent = vec4<f32>(turned(placed.turn, vertex_in.tangent.xyz), vertex_in.tangent.w);
+    }
+    @if(VERTEX_COLORS) {
+        vertex.color = vertex_in.color;
+    }
+    let world = world_of(placed, vertex_in.position);
+    let place = vec4<f32>(placed.at, placed.scale);
+    stand_merged(place, placed.turn, world);
+    return merged_output(vertex_output(vertex, world), 0u, place, placed.turn);
+}
+
+// The merged output of `out`, its piece standing at `place.xyz`, grown `place.w` times and turned
+// by `turn`.
+@if(MERGED)
+fn merged_output(out: VertexOutput, instance_index: u32, place: vec4<f32>, turn: vec4<f32>) -> MergedOutput {
     var merged: MergedOutput;
     merged.position = out.position;
     merged.world_position = out.world_position;
@@ -160,7 +200,7 @@ fn vertex(vertex_in: Vertex, @location(14) place: vec4<f32>, @location(15) turn:
     @if(VERTEX_COLORS) {
         merged.color = out.color;
     }
-    merged.instance_index = vertex_in.instance_index;
+    merged.instance_index = instance_index;
     merged.place = place;
     merged.turn = turn;
     @if(PREPASS_PIPELINE && UNCLIPPED_DEPTH_ORTHO_EMULATION) {

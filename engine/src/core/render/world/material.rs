@@ -6,7 +6,8 @@
 
 use bevy::asset::{AssetPath, embedded_path};
 use bevy::ecs::system::SystemParam;
-use bevy::gltf::GltfMaterialName;
+use bevy::ecs::system::SystemState;
+use bevy::gltf::{Gltf, GltfAssetLabel, GltfMaterial, GltfMaterialName};
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{
     ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
@@ -312,6 +313,27 @@ impl Wardrobe<'_> {
             .get(material)
             .is_some_and(|material| cuts_out(material.base.alpha_mode))
     }
+}
+
+/// The world material a part of `model` drawn in its glTF `material` gets under `look`, shared with
+/// every mesh loaded with that material and look: once the model has loaded.
+pub fn part_material(
+    world: &mut World,
+    model: &Handle<Gltf>,
+    material: Option<&Handle<GltfMaterial>>,
+    look: Option<&MaterialLook>,
+) -> Option<Handle<WorldMaterial>> {
+    let label = match material {
+        Some(material) => format!("{}/std", material.path()?.label()?),
+        None => format!("{}/std", GltfAssetLabel::DefaultMaterial),
+    };
+    let standard = world
+        .resource::<AssetServer>()
+        .get_handle::<StandardMaterial>(model.path()?.clone().with_label(label))?;
+    let mut wardrobe = SystemState::<Wardrobe>::new(world);
+    let made = wardrobe.get_mut(world).ok()?.material_for(&standard, look);
+    wardrobe.apply(world);
+    made
 }
 
 /// Every scene that finishes spawning trades its standard materials for world ones, each drawn

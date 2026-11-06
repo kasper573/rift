@@ -666,13 +666,14 @@ fn cull_props(
     }
 }
 
-/// The table drawing what `arena` holds, of the models on the GPU.
+/// The table drawing what `arena` holds of the props dressed, whose models are on the GPU.
 fn draw_table(arena: &GpuInstances, models: &ModelArena) -> DrawTable {
     DrawTable::of(arena.chunks.values().flat_map(|chunk| {
         chunk
             .contents
             .props
             .iter()
+            .filter(|(prop, _, _)| arena.dressed.contains_key(prop))
             .filter_map(|&(prop, model, instances)| {
                 Some((prop, models.slabs.get(&model)?, instances))
             })

@@ -265,6 +265,7 @@ fn model(rng: &mut Rng) -> PreparedModel {
                         position: [vertex as f32, 0.0, 0.0],
                         normal: [0.0, 1.0, 0.0],
                         uv: [0.0, 0.0],
+                        color: [1.0; 4],
                     })
                     .collect(),
                 levels: (0..rng.rand_range(1..5))

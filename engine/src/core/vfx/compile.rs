@@ -105,7 +105,7 @@ const LOADING_AT_MOST: Duration = Duration::from_secs(30);
 
 /// The passes a shader of `stage` draws in, each with the defs its pipeline compiles it under: as
 /// a lit mesh with positions, normals, uvs and colours, in the main pass, and in the prepass where
-/// the stage writes depth and normals ahead of it; a surface leaves the prepass to the material it
+/// the stage writes depth and normals ahead of it, a prop also drawn from the arenas; a surface leaves the prepass to the material it
 /// plays over, and a cover's sheet, blended over the ground's patches, draws in the main pass
 /// alone.
 fn passes(stage: Stage) -> Vec<(&'static str, Vec<ShaderDefVal>)> {
@@ -142,7 +142,15 @@ fn passes(stage: Stage) -> Vec<(&'static str, Vec<ShaderDefVal>)> {
             ("blades prepass", with(&prepass, &["ROOTED"])),
             ("sheet", with(&main, &["SHEET_PATCH", "VERTEX_UVS_B"])),
         ],
-        Stage::Prop => vec![("main", main), ("prepass", prepass)],
+        Stage::Prop => vec![
+            ("main", main.clone()),
+            ("prepass", prepass.clone()),
+            ("instanced", with(&main, &["MERGED", "PROP_INSTANCE"])),
+            (
+                "instanced prepass",
+                with(&prepass, &["MERGED", "PROP_INSTANCE"]),
+            ),
+        ],
         Stage::Surface | Stage::Sky | Stage::Rain => vec![("main", main)],
         Stage::Ground | Stage::Billboard | Stage::Screen | Stage::Text => Vec::new(),
     }

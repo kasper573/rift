@@ -576,24 +576,40 @@ fn spawn_merged(world: &mut World, merged: MergedMesh, root: Entity) -> Entity {
     merged.id()
 }
 
-/// The materials of `def`'s model the game's shaders draw, each with its parameters.
+/// The materials of `def`'s model the game's shaders draw, each with its parameters, of those
+/// whose shaders are compiled.
 fn looks_of(world: &World, content: &Content, def: &PropDef) -> MaterialLooks {
-    MaterialLooks(
-        def.materials
-            .iter()
-            .filter_map(|(name, material)| {
-                let material = material.get(content);
-                Some(MaterialLook {
-                    material: name.clone(),
-                    shader: vfx_render::compiled_shader(world, material.shader)?,
-                    params: ParamsUniform::pack(material.shader.get(content), |param| {
-                        material.params.get(param).copied()
-                    }),
-                    translucency: material.translucency,
-                })
-            })
-            .collect(),
-    )
+    MaterialLooks(looks(world, content, def).flatten().collect())
+}
+
+/// The materials of `def`'s model the game's shaders draw, each with its parameters, once every
+/// one of their shaders is compiled.
+pub(super) fn compiled_looks(
+    world: &World,
+    content: &Content,
+    def: &PropDef,
+) -> Option<MaterialLooks> {
+    looks(world, content, def)
+        .collect::<Option<Vec<_>>>()
+        .map(MaterialLooks)
+}
+
+fn looks<'a>(
+    world: &'a World,
+    content: &'a Content,
+    def: &'a PropDef,
+) -> impl Iterator<Item = Option<MaterialLook>> + 'a {
+    def.materials.iter().map(|(name, material)| {
+        let material = material.get(content);
+        Some(MaterialLook {
+            material: name.clone(),
+            shader: vfx_render::compiled_shader(world, material.shader)?,
+            params: ParamsUniform::pack(material.shader.get(content), |param| {
+                material.params.get(param).copied()
+            }),
+            translucency: material.translucency,
+        })
+    })
 }
 
 fn spawn_prop(

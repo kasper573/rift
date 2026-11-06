@@ -197,6 +197,22 @@ impl VideoPreset {
     }
 }
 
+/// The way a command draws the world's props, in place of the one its video settings name.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
+pub enum RendererChoice {
+    Legacy,
+    Gpu,
+}
+
+impl RendererChoice {
+    pub fn renderer(self) -> engine::core::render::video::WorldRenderer {
+        match self {
+            RendererChoice::Legacy => engine::core::render::video::WorldRenderer::Legacy,
+            RendererChoice::Gpu => engine::core::render::video::WorldRenderer::Gpu,
+        }
+    }
+}
+
 /// Which of the video presets a command runs at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, clap::ValueEnum)]
 pub enum VideoFilter {
