@@ -32,6 +32,17 @@ pub struct VideoPreferences {
     pub bloom: bool,
     /// How far around the player the world's props, covers and lights stand.
     pub view_distance: ViewDistance,
+    /// Which way the world's props are drawn while the GPU's way replaces the old one.
+    pub world_renderer: WorldRenderer,
+}
+
+/// The way the world's props are drawn: each as entities of its own and merged meshes, or from
+/// arenas on the GPU.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum WorldRenderer {
+    #[default]
+    Legacy,
+    Gpu,
 }
 
 impl Default for VideoPreferences {
@@ -45,6 +56,7 @@ impl Default for VideoPreferences {
             anti_aliasing: AntiAliasingQuality::default(),
             bloom: true,
             view_distance: ViewDistance::default(),
+            world_renderer: WorldRenderer::default(),
         }
     }
 }
@@ -61,6 +73,7 @@ impl VideoPreferences {
             anti_aliasing: AntiAliasingQuality::Off,
             bloom: false,
             view_distance: ViewDistance::Near,
+            world_renderer: WorldRenderer::default(),
         }
     }
 }

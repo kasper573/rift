@@ -59,6 +59,7 @@ fn a_players_video_preferences_draw_the_world_as_picked_from_the_moment_they_are
                 anti_aliasing: AntiAliasingQuality::Low,
                 bloom: true,
                 view_distance: ViewDistance::Middle,
+                ..VideoPreferences::default()
             },
             Drawn {
                 shadows: Some((1, false)),

@@ -1,8 +1,10 @@
-//! The world's prop models as the GPU holds them: every model's meshes in one vertex slab and one
-//! index slab, a part for each material the model is drawn in, each at levels from its full mesh
-//! down to coarser stand-ins over the same vertices, so what draws a prop names its model and a
-//! level and reads where they lie here. A model is prepared off the frame once it is wanted and
-//! loaded, sent to the GPU within the frame's upload budget, and let go when its asset goes.
+//! The world's props as the GPU holds them. Every prop model's meshes lie in one vertex slab and
+//! one index slab, a part for each material the model is drawn in, each at levels from its full
+//! mesh down to coarser stand-ins over the same vertices. A model is prepared off the frame once
+//! it is wanted and loaded, sent to the GPU within the frame's upload budget, and let go when its
+//! asset goes. Each scenery's prop instances lie in an arena of its own, chunk by chunk, each
+//! chunk's in a block of the arena's slab that it keeps while it stands, sent within the same
+//! budget.
 
 use std::collections::HashMap;
 use std::hash::Hash;
@@ -27,12 +29,18 @@ pub struct ModelArenaPlugin;
 impl Plugin for ModelArenaPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<PropModels>()
+            .init_resource::<InstanceChanges>()
+            .add_systems(First, clear_instance_changes)
             .add_systems(Last, (forget_models, prepare_models, send_models).chain());
         if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
             render_app
                 .init_resource::<ModelArena>()
-                .add_systems(ExtractSchedule, extract_models)
-                .add_systems(Render, write_models.in_set(RenderSystems::PrepareResources));
+                .init_resource::<InstanceArenas>()
+                .add_systems(ExtractSchedule, (extract_models, extract_instances))
+                .add_systems(
+                    Render,
+                    (write_models, write_instances).in_set(RenderSystems::PrepareResources),
+                );
         }
     }
 }
@@ -264,6 +272,142 @@ impl<K: Eq + Hash> ModelSlabs<K> {
     }
 }
 
+/// A prop standing in the world as the arenas hold it: where it stands, its turn about the up axis
+/// and its size, the prop it is by its place among the content's props, a seed of its own, and
+/// the chunk of its scenery it stands in, by the scenery's own key for it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct InstanceRecord {
+    pub position: [f32; 3],
+    pub yaw: f32,
+    pub scale: f32,
+    pub prop: u32,
+    pub seed: u32,
+    pub chunk: u32,
+}
+
+impl InstanceRecord {
+    pub const BYTES: u64 = 32;
+}
+
+/// Where one scenery's prop instances lie in its arena's slab, chunk by chunk, each chunk by a key
+/// of the scenery's own: a chunk's instances in a block of their own, kept where it is for as long
+/// as the chunk stands, and none for a chunk standing with no props.
+pub struct InstanceArena {
+    space: SlabSpace,
+    chunks: HashMap<u32, Option<(SlabBlock, u32)>>,
+}
+
+/// A change to a scenery's arena the render world takes in: a chunk's instances written at an
+/// offset, with the bytes the slab must hold for them; a chunk let go; or the whole arena gone.
+#[derive(Clone)]
+pub enum InstanceChange {
+    Placed {
+        chunk: u32,
+        offset: u64,
+        bytes: Arc<[u8]>,
+        instances: u32,
+        capacity: u64,
+    },
+    Removed {
+        chunk: u32,
+    },
+    Dropped,
+}
+
+impl Default for InstanceArena {
+    fn default() -> InstanceArena {
+        InstanceArena {
+            space: SlabSpace::new(InstanceRecord::BYTES),
+            chunks: HashMap::new(),
+        }
+    }
+}
+
+impl InstanceArena {
+    /// Places `records` as `chunk`'s instances, in place of those it held: the change that writes
+    /// them, none when there are none to write.
+    pub fn insert(&mut self, chunk: u32, records: &[InstanceRecord]) -> Option<InstanceChange> {
+        let removed = self.remove(chunk);
+        if records.is_empty() {
+            self.chunks.insert(chunk, None);
+            return removed;
+        }
+        let bytes = instance_bytes(records);
+        let block = self.space.alloc(bytes.len() as u64);
+        let offset = self
+            .space
+            .range(block)
+            .expect("a block just given out has its range")
+            .start;
+        self.chunks
+            .insert(chunk, Some((block, records.len() as u32)));
+        Some(InstanceChange::Placed {
+            chunk,
+            offset,
+            bytes: bytes.into(),
+            instances: records.len() as u32,
+            capacity: self.space.capacity(),
+        })
+    }
+
+    /// Lets go of `chunk`'s instances: the change that lets them go, none when it held none.
+    pub fn remove(&mut self, chunk: u32) -> Option<InstanceChange> {
+        let (block, _) = self.chunks.remove(&chunk)??;
+        self.space.free(block);
+        Some(InstanceChange::Removed { chunk })
+    }
+
+    /// Whether `chunk`'s instances stand in the arena, if it has any.
+    pub fn holds(&self, chunk: u32) -> bool {
+        self.chunks.contains_key(&chunk)
+    }
+
+    /// The chunks standing, by their keys.
+    pub fn chunks(&self) -> impl Iterator<Item = u32> + '_ {
+        self.chunks.keys().copied()
+    }
+
+    /// The instances standing in all.
+    pub fn instances(&self) -> u32 {
+        self.chunks
+            .values()
+            .flatten()
+            .map(|(_, instances)| instances)
+            .sum()
+    }
+}
+
+/// The changes the sceneries made to their arenas this frame, each by the scenery it belongs to,
+/// in order, for the render world to take in.
+#[derive(Resource, Default)]
+pub struct InstanceChanges(pub Vec<(Entity, InstanceChange)>);
+
+/// Each scenery's arena as the GPU holds it, by the scenery: its slab, and where each chunk's
+/// instances lie in it and how many there are.
+#[derive(Resource, Default)]
+pub struct InstanceArenas(pub HashMap<Entity, GpuInstances>);
+
+pub struct GpuInstances {
+    pub slab: Slab,
+    pub chunks: HashMap<u32, (u64, u32)>,
+    pending: Vec<(u64, Arc<[u8]>)>,
+    capacity: u64,
+}
+
+impl Default for GpuInstances {
+    fn default() -> GpuInstances {
+        GpuInstances {
+            slab: Slab::new(
+                "prop instances",
+                BufferUsages::STORAGE | BufferUsages::VERTEX,
+            ),
+            chunks: HashMap::new(),
+            pending: Vec::new(),
+            capacity: 0,
+        }
+    }
+}
+
 /// The prop models the world wants on the GPU, each by its asset, as far as each has come: waiting
 /// for its asset to load, being prepared, waiting for room in a frame's upload budget, or sent.
 #[derive(Resource, Default)]
@@ -427,6 +571,71 @@ fn write_models(mut arena: ResMut<ModelArena>, device: Res<RenderDevice>, queue:
             indices.write(&queue, offset, &bytes);
         }
     }
+}
+
+fn clear_instance_changes(mut changes: ResMut<InstanceChanges>) {
+    changes.0.clear();
+}
+
+fn extract_instances(changes: Extract<Res<InstanceChanges>>, mut arenas: ResMut<InstanceArenas>) {
+    for (scenery, change) in changes.0.iter().cloned() {
+        match change {
+            InstanceChange::Placed {
+                chunk,
+                offset,
+                bytes,
+                instances,
+                capacity,
+            } => {
+                let arena = arenas.0.entry(scenery).or_default();
+                arena.chunks.insert(chunk, (offset, instances));
+                arena.pending.push((offset, bytes));
+                arena.capacity = arena.capacity.max(capacity);
+            }
+            InstanceChange::Removed { chunk } => {
+                if let Some(arena) = arenas.0.get_mut(&scenery) {
+                    arena.chunks.remove(&chunk);
+                }
+            }
+            InstanceChange::Dropped => {
+                arenas.0.remove(&scenery);
+            }
+        }
+    }
+}
+
+/// Writes the instances placed this frame into each arena's slab, grown first to hold them.
+fn write_instances(
+    mut arenas: ResMut<InstanceArenas>,
+    device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
+) {
+    for arena in arenas.0.values_mut() {
+        if arena.pending.is_empty() {
+            continue;
+        }
+        arena.slab.fit(&device, &queue, arena.capacity);
+        for (offset, bytes) in arena.pending.drain(..) {
+            arena.slab.write(&queue, offset, &bytes);
+        }
+    }
+}
+
+fn instance_bytes(records: &[InstanceRecord]) -> Vec<u8> {
+    records
+        .iter()
+        .flat_map(|record| {
+            let floats = record
+                .position
+                .into_iter()
+                .chain([record.yaw, record.scale])
+                .flat_map(f32::to_le_bytes);
+            let words = [record.prop, record.seed, record.chunk]
+                .into_iter()
+                .flat_map(u32::to_le_bytes);
+            floats.chain(words)
+        })
+        .collect()
 }
 
 fn vertex_bytes(vertices: &[ModelVertex]) -> Vec<u8> {

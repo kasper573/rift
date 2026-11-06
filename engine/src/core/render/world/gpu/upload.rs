@@ -76,6 +76,17 @@ impl UploadBudget<'_> {
     }
 }
 
+/// Spends `bytes` of the frame's budget for writing the world's data to the GPU, if what is left
+/// holds them, as [`UploadBudget::spend`] does for a system of its own.
+pub fn spend(world: &mut World, bytes: usize) -> bool {
+    let covered = world
+        .get_resource::<ActiveTransition>()
+        .is_some_and(hides_world);
+    world
+        .get_resource_mut::<FrameUploads>()
+        .is_none_or(|mut uploads| uploads.spend(bytes, per_frame(covered)))
+}
+
 /// Whether every mesh `entity` and everything under it draws is on the GPU, so it shows whole.
 pub fn sent(world: &World, entity: Entity) -> bool {
     let Some(arrivals) = world.get_resource::<Arrivals>() else {

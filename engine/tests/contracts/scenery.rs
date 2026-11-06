@@ -22,6 +22,7 @@ use engine::core::ground;
 use engine::core::math::Pos;
 use engine::core::render::camera::Lens;
 use engine::core::render::camera::WorldPicture;
+use engine::core::render::video::{VideoPreferences, WorldRenderer};
 use engine::core::render::world::cover::CoverMaterial;
 use engine::core::render::world::gpu::draw::{GroundDraw, PATCH_CELLS};
 use engine::core::render::world::haze::Haze;
@@ -346,6 +347,34 @@ fn an_areas_scenery_stands_what_the_view_takes_in_and_lets_go_of_what_it_leaves(
         (8, false),
         "coming near, the tufts stand on their own again"
     );
+
+    // Drawn from the GPU, the props stand in the scenery's arena chunk by chunk as the view
+    // reaches them, counted as missing until they do, and go as it leaves them behind.
+    scenery::despawn(app.world_mut(), stood);
+    app.world_mut()
+        .resource_mut::<VideoPreferences>()
+        .world_renderer = WorldRenderer::Gpu;
+    let stood = scenery::spawn(app.world_mut(), &content, &area, RenderLayers::default());
+    for (at, tufts) in [(16.0, 0), (496.0, 8), (16.0, 0)] {
+        scenery::view_from(
+            app.world_mut(),
+            stood,
+            overhead(Pos::new(at, 8.0), reach, 10.0),
+        );
+        assert!(settle(&mut app, |app| {
+            !scenery::standing(app.world_mut()) && !world::readying(app.world_mut())
+        }));
+        assert_eq!(
+            (
+                scenery::arena_props(app.world(), stood),
+                scenery::missing(app.world()),
+                tufts_standing(&mut app)
+            ),
+            (tufts, 0, 0),
+            "viewed from {at} m along the field, the arena holds the tufts in reach, none missing, \
+             none standing as entities of their own"
+        );
+    }
 }
 
 /// Every how many samples the ground is drawn `x` metres along the field.

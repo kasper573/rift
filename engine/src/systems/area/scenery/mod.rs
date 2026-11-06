@@ -9,6 +9,7 @@
 
 mod covers;
 pub mod expand;
+mod instances;
 mod plan;
 mod props;
 mod regions;
@@ -17,6 +18,7 @@ pub use plan::{Eyes, Sight};
 pub use props::prop_transform;
 
 use covers::Covers;
+use instances::Instances;
 use plan::{Plan, Planner};
 use props::{Filed, Props};
 use regions::Regions;
@@ -48,6 +50,7 @@ use crate::core::math::{Pos, Rect, Rng, Size};
 use crate::core::render::camera::WorldPicture;
 use crate::core::render::present::AreaGrade;
 use crate::core::render::sample::FrameWork;
+use crate::core::render::video::{VideoPreferences, WorldRenderer};
 use crate::core::render::world::clouds::{CloudDrift, CloudSheet};
 use crate::core::render::world::gpu::atlas::TerrainAtlas;
 use crate::core::render::world::gpu::draw::{GroundDraw, GroundPatch, PATCH_CELLS};
@@ -179,6 +182,10 @@ pub fn spawn(
         terrain,
         covers,
         props: Props::default(),
+        instances: Instances::default(),
+        renderer: world
+            .get_resource::<VideoPreferences>()
+            .map_or_else(WorldRenderer::default, |video| video.world_renderer),
         planner,
         sight: None,
         planning: None,
@@ -332,6 +339,15 @@ pub fn missing(world: &World) -> u32 {
         .sum()
 }
 
+/// How many props `scenery` holds in its arena on the GPU.
+pub fn arena_props(world: &World, scenery: Scenery) -> u32 {
+    world
+        .resource::<Streams>()
+        .0
+        .get(&scenery.root)
+        .map_or(0, |streaming| streaming.instances.props())
+}
+
 /// How many patches of ground are drawn for the sights.
 pub fn stood_chunks(world: &World) -> u32 {
     world
@@ -372,6 +388,9 @@ struct Streaming {
     terrain: Entity,
     covers: Covers,
     props: Props,
+    instances: Instances,
+    /// The way its props are drawn, as the video preferences asked when it stood.
+    renderer: WorldRenderer,
     planner: Making<Arc<Planner>>,
     sight: Option<Sight>,
     /// The plan being made, for the widened sight it is made for.
@@ -506,12 +525,25 @@ fn stream_plan(world: &mut World, root: Entity, streaming: &mut Streaming, simpl
     if ground_missing > 0 {
         budget.defer();
     }
-    let props_unstood = props::stand(world, streaming, &planner, &plan, root, &mut budget);
+    let props_missing = match streaming.renderer {
+        WorldRenderer::Legacy => {
+            let unstood = props::stand(world, streaming, &planner, &plan, root, &mut budget);
+            props::clear(world, streaming, &planner, &plan, &unstood);
+            if !unstood.is_empty() {
+                budget.defer();
+            }
+            unstood.len() as u32
+        }
+        WorldRenderer::Gpu => {
+            let missing = instances::stand(world, streaming, &plan, root, &mut budget);
+            instances::clear(world, streaming, &plan, root);
+            missing
+        }
+    };
     let covers_unstood = covers::stand(world, streaming, &planner, &plan, root, &mut budget);
-    streaming.missing = ground_missing + (props_unstood.len() + covers_unstood.len()) as u32;
-    props::clear(world, streaming, &planner, &plan, &props_unstood);
+    streaming.missing = ground_missing + props_missing + covers_unstood.len() as u32;
     covers::clear(world, streaming, &planner, &plan, &covers_unstood);
-    if !props_unstood.is_empty() || !covers_unstood.is_empty() {
+    if !covers_unstood.is_empty() {
         budget.defer();
     }
     props::level_props(world, streaming, &plan.seen);
@@ -852,6 +884,9 @@ fn stream_lights(world: &mut World, streaming: &mut Streaming, plan: &Plan, root
 /// a whole area, is let go of off the frame.
 pub fn despawn(world: &mut World, scenery: Scenery) {
     if let Some(streaming) = world.resource_mut::<Streams>().0.remove(&scenery.root) {
+        if streaming.renderer == WorldRenderer::Gpu {
+            instances::drop_arena(world, scenery.root);
+        }
         AsyncComputeTaskPool::get()
             .spawn(async move { drop(streaming) })
             .detach();
