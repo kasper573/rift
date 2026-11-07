@@ -127,9 +127,8 @@ fn the_gpu_draws_each_prop_the_view_sees_at_the_level_its_size_asks_for() {
     let read = culled.read(&device, &queue);
 
     let mut drawn: HashMap<u32, Vec<(u32, ListedInstance)>> = HashMap::new();
-    for (command, (&count, start)) in read.instances.iter().zip(&table.commands).enumerate() {
-        let region = start.first_drawn as usize..(start.first_drawn + count) as usize;
-        for listed in &read.listed[region] {
+    for (command, region) in read.commands.iter().enumerate() {
+        for listed in &read.listed[region.start as usize..region.end as usize] {
             drawn
                 .entry(listed.record)
                 .or_default()

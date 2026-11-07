@@ -1,10 +1,13 @@
-// Which of a scenery's prop instances a view draws, and at which level of each part: one
-// workgroup for each chunk the view may see, its threads striding through the chunk's instances.
-// An instance the view sees is listed in the region of the command that draws its part at the
-// level its size on screen asks for, as many times as its model has parts. The view that clears
-// what hides the camera's subject moves each fading instance it sees a step toward cleared while
-// the way from its eye to the subject passes through the instance's box, and back toward whole
-// once it doesn't, and lists it with how far it shows and whether the eye stands inside it.
+// Which of a scenery's prop instances a view draws, and at which level of each part, in three
+// passes: one workgroup for each chunk the view may see, its threads striding through the chunk's
+// instances. `count` counts each instance the view sees in the command that draws its part at
+// the level its size on screen asks for, as many times as its model has parts. `place` lays the
+// commands' regions of the drawn instances out one after another, each as large as its count,
+// and starts the counts over. `list` then lists each seen instance in its commands' regions. The
+// view that clears what hides the camera's subject moves each fading instance it sees a step
+// toward cleared while the way from its eye to the subject passes through the instance's box,
+// and back toward whole once it doesn't, and lists it with how far it shows and whether the eye
+// stands inside it.
 
 struct CullView {
     // The frustum's half-spaces, each facing in: left, right, bottom, top, near and far.
@@ -98,30 +101,112 @@ struct Commands {
 @group(0) @binding(8) var<storage, read_write> shown: array<f32>;
 
 const THREADS: u32 = 64u;
+const PLACERS: u32 = 256u;
 
 @compute @workgroup_size(64)
-fn cull(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index) thread: u32) {
+fn count(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index) thread: u32) {
     let chunk = chunks[group.x];
     for (var at = thread; at < chunk.y; at += THREADS) {
-        cull_instance(chunk.x + at);
+        count_instance(chunk.x + at);
     }
 }
 
-fn cull_instance(index: u32) {
+var<workgroup> stripes: array<u32, 256>;
+
+// Each thread sums a stripe of the commands' counts, the stripes are summed up in turn, and each
+// thread then lays its stripe's regions out from where the stripes before it end.
+@compute @workgroup_size(256)
+fn place(@builtin(local_invocation_index) thread: u32) {
+    let all = arrayLength(&commands.commands);
+    let stripe = (all + PLACERS - 1u) / PLACERS;
+    let low = min(thread * stripe, all);
+    let high = min(low + stripe, all);
+    var counted = 0u;
+    for (var command = low; command < high; command++) {
+        counted += atomicLoad(&commands.commands[command].instance_count);
+    }
+    stripes[thread] = counted;
+    workgroupBarrier();
+    if thread == 0u {
+        var before = 0u;
+        for (var at = 0u; at < PLACERS; at++) {
+            let here = stripes[at];
+            stripes[at] = before;
+            before += here;
+        }
+    }
+    workgroupBarrier();
+    var first = stripes[thread];
+    for (var command = low; command < high; command++) {
+        commands.commands[command].first_instance = first;
+        first += atomicExchange(&commands.commands[command].instance_count, 0u);
+    }
+}
+
+@compute @workgroup_size(64)
+fn list(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index) thread: u32) {
+    let chunk = chunks[group.x];
+    for (var at = thread; at < chunk.y; at += THREADS) {
+        list_instance(chunk.x + at);
+    }
+}
+
+// An instance as the view sees it: whether it does at all, the scale it is drawn at, and how far
+// a level may stray from the full mesh in the model's own units.
+struct Sighted {
+    seen: bool,
+    scale: f32,
+    allowed: f32,
+    prop: Prop,
+    turn: vec2<f32>,
+}
+
+fn count_instance(index: u32) {
     let instance = instances[index];
-    if instance.prop >= arrayLength(&props) {
+    let sighted = sight(instance);
+    if !sighted.seen {
         return;
+    }
+    atomicAdd(&commands.drawn, 1u);
+    let prop = sighted.prop;
+    for (var part = prop.first_part; part < prop.first_part + prop.parts; part++) {
+        let level = levels[coarsest_within(parts[part], sighted.allowed)];
+        atomicAdd(&commands.commands[level.command].instance_count, 1u);
+    }
+}
+
+fn list_instance(index: u32) {
+    let instance = instances[index];
+    let sighted = sight(instance);
+    if !sighted.seen {
+        return;
+    }
+    let prop = sighted.prop;
+    let fade = faded(index, instance, prop, sighted.turn);
+    let listed = vec4<u32>(index, bitcast<u32>(sighted.scale), bitcast<u32>(fade.x), u32(fade.y));
+    for (var part = prop.first_part; part < prop.first_part + prop.parts; part++) {
+        let level = levels[coarsest_within(parts[part], sighted.allowed)];
+        let slot = atomicAdd(&commands.commands[level.command].instance_count, 1u);
+        drawn[commands.commands[level.command].first_instance + slot] = listed;
+    }
+}
+
+fn sight(instance: Instance) -> Sighted {
+    var sighted: Sighted;
+    sighted.seen = false;
+    if instance.prop >= arrayLength(&props) {
+        return sighted;
     }
     let prop = props[instance.prop];
     if prop.parts == 0u {
-        return;
+        return sighted;
     }
     let turn = vec2<f32>(cos(instance.yaw), sin(instance.yaw));
     let middle = vec3<f32>(prop.x, prop.y, prop.z) * instance.scale;
     let center = vec3<f32>(instance.x, instance.y, instance.z)
         + vec3<f32>(turn.x * middle.x + turn.y * middle.z, middle.y, -turn.y * middle.x + turn.x * middle.z);
     if !in_frustum(center, prop.radius * instance.scale) {
-        return;
+        return sighted;
     }
     let pixels_per_meter = pixels_per_meter_at(distance(center, view.eye));
     var scale = instance.scale;
@@ -129,19 +214,16 @@ fn cull_instance(index: u32) {
     if across < view.grain_pixels {
         let grown = view.grain_pixels / max(across, 1e-6);
         if seed_share(instance.seed) >= 1.0 / (grown * grown) {
-            return;
+            return sighted;
         }
         scale *= grown;
     }
-    atomicAdd(&commands.drawn, 1u);
-    let fade = faded(index, instance, prop, turn);
-    let allowed = view.stray_pixels / (pixels_per_meter * scale);
-    for (var part = prop.first_part; part < prop.first_part + prop.parts; part++) {
-        let level = levels[coarsest_within(parts[part], allowed)];
-        let slot = atomicAdd(&commands.commands[level.command].instance_count, 1u);
-        let first = commands.commands[level.command].first_instance;
-        drawn[first + slot] = vec4<u32>(index, bitcast<u32>(scale), bitcast<u32>(fade.x), u32(fade.y));
-    }
+    sighted.seen = true;
+    sighted.scale = scale;
+    sighted.allowed = view.stray_pixels / (pixels_per_meter * scale);
+    sighted.prop = prop;
+    sighted.turn = turn;
+    return sighted;
 }
 
 // How far the instance at `index` shows this frame, moved a step toward cleared while the way

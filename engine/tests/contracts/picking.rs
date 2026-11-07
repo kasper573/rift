@@ -128,10 +128,8 @@ fn a_views_picture_names_the_instance_it_shows_at_each_pixel() {
     let kernel = CullKernel::new(&device);
     let gpu_table = GpuDrawTable::new(&device, &queue, table.clone()).expect("a table to draw");
     let (clip_from_world, frustum, view) = camera(eye);
-    let seen: Vec<UVec2> = seen_chunks(&chunks, &table, &frustum, &view)
-        .into_iter()
-        .filter(|chunk| chunk.x != firsts[&1])
-        .collect();
+    let mut seen = seen_chunks(&chunks, &table, &frustum, &view);
+    seen.spans.retain(|chunk| chunk.x != firsts[&1]);
     let mut cull = ViewCull::new(&device, &gpu_table);
     let instances = slab.buffer().expect("the instances written");
     let mut shown = Slab::new("instances shown", BufferUsages::STORAGE);

@@ -1,12 +1,14 @@
 //! Which prop instances each view draws, worked out on the GPU. Every scenery's arena has a draw
 //! table: for each prop whose model is on the GPU, the sphere round its model, and for each of its
-//! parts a command per level, each with a region of its own in a view's drawn instances, as large
-//! as the prop's instances in the arena. Each frame, every view lists the arena's chunks whose box
-//! reaches into its frustum, and the kernel culls their instances one by one: those it sees go into
-//! the region of the level their size on screen asks for, of each part, and count in the command
-//! drawing it. Instances smaller on screen than the grain are thinned by their seeds and grown to
-//! make up for those dropped, as strewn copies are. The commands are drawn indirectly, so what the
-//! kernel leaves out is never seen by the CPU.
+//! parts a command per level. Each frame, every view lists the arena's chunks whose box reaches
+//! into its frustum, and the kernel culls their instances one by one: those it sees count in the
+//! command of the level their size on screen asks for, of each part; the commands' regions of the
+//! view's drawn instances are then laid out as large as their counts, one after another, and the
+//! seen instances listed in them. So a view's drawn instances take room for what it may see, each
+//! instance once for each part of its model, and never for every level besides. Instances smaller
+//! on screen than the grain are thinned by their seeds and grown to make up for those dropped, as
+//! strewn copies are. The commands are drawn indirectly, so what the kernel leaves out is never
+//! seen by the CPU.
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
@@ -148,8 +150,7 @@ impl CullView {
 
 /// What a scenery's arena draws, as the kernel reads it: for each prop by its place among the
 /// content's props, the sphere round its model and its parts; each part's levels, finest first;
-/// each level's command; and the commands as they start each frame, each with its region of the
-/// drawn instances and none in it yet.
+/// each level's command; and the commands as they start each frame, with nothing drawn by them.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DrawTable {
     pub props: Vec<PropDraw>,
@@ -158,8 +159,6 @@ pub struct DrawTable {
     pub commands: Vec<DrawCommand>,
     /// The parts drawn, each in its material, with its levels' commands among `commands`.
     pub buckets: Vec<DrawBucket>,
-    /// The drawn instances all the regions hold.
-    pub drawn_capacity: u32,
 }
 
 #[derive(ShaderType, Clone, Copy, Debug, Default, PartialEq)]
@@ -192,26 +191,26 @@ pub struct LevelDraw {
     pub command: u32,
 }
 
-/// A command drawing one level of one part: its indices among the model slab's, the vertex they
-/// count from, and its region of the drawn instances.
+/// A command drawing one level of one part: its indices among the model slab's, and the vertex
+/// they count from. Its region of the drawn instances is the kernel's to lay out each frame.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct DrawCommand {
     pub first_index: u32,
     pub indices: u32,
     pub base_vertex: u32,
-    pub first_drawn: u32,
 }
 
 impl DrawCommand {
     pub const BYTES: u64 = 20;
 
-    fn args(&self, instances: u32) -> DrawIndexedIndirectArgs {
+    /// The command as a frame starts it: nothing drawn, and its region nowhere yet.
+    fn start(&self) -> DrawIndexedIndirectArgs {
         DrawIndexedIndirectArgs {
             index_count: self.indices,
-            instance_count: instances,
+            instance_count: 0,
             first_index: self.first_index,
             base_vertex: self.base_vertex as i32,
-            first_instance: self.first_drawn,
+            first_instance: 0,
         }
     }
 }
@@ -247,7 +246,7 @@ impl DrawTable {
             ],
             ..default()
         };
-        for (prop, model, instances, fades) in props {
+        for (prop, model, _, fades) in props {
             let middle = model.bounds.center;
             let half = model.bounds.half_extents;
             table.props[prop as usize] = PropDraw {
@@ -279,9 +278,7 @@ impl DrawTable {
                         first_index: level.first_index,
                         indices: level.indices,
                         base_vertex: part.first_vertex,
-                        first_drawn: table.drawn_capacity,
                     });
-                    table.drawn_capacity += instances;
                 }
                 table.buckets.push(DrawBucket {
                     prop,
@@ -291,6 +288,11 @@ impl DrawTable {
             }
         }
         table
+    }
+
+    /// How many parts the model of `prop` is drawn in: none when nothing of it is drawn.
+    fn parts_of(&self, prop: u32) -> u32 {
+        self.props.get(prop as usize).map_or(0, |drawn| drawn.parts)
     }
 
     /// The radius round a placement the model of `prop` reaches, at scale 1.
@@ -308,7 +310,9 @@ impl DrawTable {
 #[derive(Resource)]
 pub struct CullKernel {
     layout: BindGroupLayout,
-    pipeline: ComputePipeline,
+    count: ComputePipeline,
+    place: ComputePipeline,
+    list: ComputePipeline,
 }
 
 impl CullKernel {
@@ -339,15 +343,22 @@ impl CullKernel {
             bind_group_layouts: &[Some(&layout)],
             ..default()
         });
-        let pipeline = device.create_compute_pipeline(&RawComputePipelineDescriptor {
-            label: Some("prop cull"),
-            layout: Some(&pipeline_layout),
-            module: &module,
-            entry_point: Some("cull"),
-            compilation_options: PipelineCompilationOptions::default(),
-            cache: None,
-        });
-        CullKernel { layout, pipeline }
+        let pass = |entry: &'static str| {
+            device.create_compute_pipeline(&RawComputePipelineDescriptor {
+                label: Some(entry),
+                layout: Some(&pipeline_layout),
+                module: &module,
+                entry_point: Some(entry),
+                compilation_options: PipelineCompilationOptions::default(),
+                cache: None,
+            })
+        };
+        CullKernel {
+            layout,
+            count: pass("count"),
+            place: pass("place"),
+            list: pass("list"),
+        }
     }
 }
 
@@ -399,7 +410,8 @@ impl GpuDrawTable {
 }
 
 /// What one view draws of a scenery: the view, the chunks it may see, each by its first instance
-/// in the arena and how many it holds, the commands, and the instances they draw.
+/// in the arena and how many it holds, the commands, and the instances they draw, with room for
+/// every instance the chunks hold, once for each part of its model.
 pub struct ViewCull {
     view: Option<UniformBuffer<CullView>>,
     chunks: StorageBuffer<Vec<UVec2>>,
@@ -425,12 +437,7 @@ impl ViewCull {
                     | BufferUsages::COPY_SRC,
                 mapped_at_creation: false,
             }),
-            drawn: device.create_buffer(&BufferDescriptor {
-                label: Some("props drawn"),
-                size: u64::from(table.table.drawn_capacity.max(1)) * DRAWN_BYTES,
-                usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
-                mapped_at_creation: false,
-            }),
+            drawn: drawn_buffer(device, 1),
             bind_group: None,
         }
     }
@@ -446,14 +453,17 @@ impl ViewCull {
         table: &GpuDrawTable,
         records: &Buffer,
         shown: &Buffer,
-        seen: Vec<UVec2>,
+        seen: SeenChunks,
         view: CullView,
     ) {
-        self.seen = seen.len() as u32;
-        self.chunks.set(if seen.is_empty() {
+        if u64::from(seen.listed) * DRAWN_BYTES > self.drawn.size() {
+            self.drawn = drawn_buffer(device, seen.listed);
+        }
+        self.seen = seen.spans.len() as u32;
+        self.chunks.set(if seen.spans.is_empty() {
             vec![UVec2::ZERO]
         } else {
-            seen
+            seen.spans
         });
         self.chunks.write_buffer(device, queue);
         let uniform = self.view.get_or_insert_with(|| UniformBuffer::from(view));
@@ -476,19 +486,26 @@ impl ViewCull {
         ));
     }
 
-    /// Starts every command anew and culls the chunks seen into them.
+    /// Starts every command anew and culls the chunks seen into them: counted, placed and listed,
+    /// each pass over once the one before is through.
     pub fn encode(&self, kernel: &CullKernel, table: &GpuDrawTable, encoder: &mut CommandEncoder) {
         encoder.copy_buffer_to_buffer(&table.starts, 0, &self.commands, 0, self.commands.size());
         let Some(bind_group) = self.bind_group.as_ref().filter(|_| self.seen > 0) else {
             return;
         };
-        let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
-            label: Some("prop cull"),
-            timestamp_writes: None,
-        });
-        pass.set_pipeline(&kernel.pipeline);
-        pass.set_bind_group(0, bind_group, &[]);
-        pass.dispatch_workgroups(self.seen, 1, 1);
+        for (label, pipeline, groups) in [
+            ("prop cull count", &kernel.count, self.seen),
+            ("prop cull place", &kernel.place, 1),
+            ("prop cull list", &kernel.list, self.seen),
+        ] {
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+                label: Some(label),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, bind_group, &[]);
+            pass.dispatch_workgroups(groups, 1, 1);
+        }
     }
 
     /// The commands the view draws its props with, after the four bytes the count drawn takes.
@@ -522,11 +539,11 @@ impl ViewCull {
         let command_words = words(&commands);
         CullReadback {
             drawn: command_words[0],
-            instances: command_words[1..]
+            commands: command_words[1..]
                 .as_chunks::<5>()
                 .0
                 .iter()
-                .map(|command| command[1])
+                .map(|&[_, instances, _, _, first]| first..first + instances)
                 .collect(),
             listed: words(&drawn)
                 .as_chunks::<4>()
@@ -543,12 +560,12 @@ impl ViewCull {
     }
 }
 
-/// What a view's kernel drew: how many instances in all, each command's count, and the drawn
-/// instances' list, as far as it was filled.
+/// What a view's kernel drew: how many instances in all, each command's region of the drawn
+/// instances' list, and the list, as far as it was filled.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CullReadback {
     pub drawn: u32,
-    pub instances: Vec<u32>,
+    pub commands: Vec<Range<u32>>,
     pub listed: Vec<ListedInstance>,
 }
 
@@ -562,14 +579,23 @@ pub struct ListedInstance {
     pub around_eye: bool,
 }
 
-/// The chunks of an arena whose box reaches into `view`'s frustum, each by its first instance
-/// among the arena's and how many it holds, in the order of their keys.
+/// The chunks of an arena a view may see: each by its first instance among the arena's and how
+/// many it holds, and how many drawn instances they can list at most, each instance once for
+/// each part of its model.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SeenChunks {
+    pub spans: Vec<UVec2>,
+    pub listed: u32,
+}
+
+/// The chunks of an arena whose box reaches into `view`'s frustum, in the order of their keys.
 pub fn seen_chunks(
     chunks: &HashMap<u32, GpuChunk>,
     table: &DrawTable,
     frustum: &Frustum,
     view: &CullView,
-) -> Vec<UVec2> {
+) -> SeenChunks {
+    let mut listed = 0;
     let mut seen: Vec<(u32, UVec2)> = chunks
         .iter()
         .filter(|(_, chunk)| {
@@ -587,6 +613,9 @@ pub fn seen_chunks(
             frustum.intersects_obb(&bounds, &Affine3A::IDENTITY, view.intersect_near(), true)
         })
         .map(|(&key, chunk)| {
+            for &(prop, _, instances) in &chunk.contents.props {
+                listed += instances * table.parts_of(prop);
+            }
             (
                 key,
                 UVec2::new(
@@ -597,7 +626,10 @@ pub fn seen_chunks(
         })
         .collect();
     seen.sort_by_key(|(key, _)| *key);
-    seen.into_iter().map(|(_, span)| span).collect()
+    SeenChunks {
+        spans: seen.into_iter().map(|(_, span)| span).collect(),
+        listed,
+    }
 }
 
 /// What each scenery draws: its table, and what each view draws of it.
@@ -751,9 +783,19 @@ fn commands_bytes(commands: usize) -> u64 {
 fn starts_bytes(commands: &[DrawCommand]) -> Vec<u8> {
     let mut bytes = vec![0; COUNT_BYTES as usize];
     for command in commands {
-        bytes.extend_from_slice(command.args(0).as_bytes());
+        bytes.extend_from_slice(command.start().as_bytes());
     }
     bytes
+}
+
+/// Room for `listed` drawn instances, at least one.
+fn drawn_buffer(device: &RenderDevice, listed: u32) -> Buffer {
+    device.create_buffer(&BufferDescriptor {
+        label: Some("props drawn"),
+        size: u64::from(listed.max(1)) * DRAWN_BYTES,
+        usage: BufferUsages::STORAGE | BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    })
 }
 
 pub(super) fn read_buffer(device: &RenderDevice, queue: &RenderQueue, buffer: &Buffer) -> Vec<u8> {
