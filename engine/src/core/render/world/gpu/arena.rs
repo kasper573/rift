@@ -429,6 +429,10 @@ pub struct DressedProp {
     pub materials: Vec<UntypedHandle>,
     pub shadow: bool,
     pub fades: bool,
+    /// How far its shaders draw past its model at most, in the model's metres.
+    pub overhang: Meters,
+    /// How translucent its materials are at most.
+    pub translucency: f32,
 }
 
 /// What a chunk's instances are, as culling reads them: the box their places fill, the largest
@@ -630,22 +634,43 @@ impl PropModels {
             .or_insert_with(|| ModelState::Loading(gltf.clone()));
     }
 
-    /// The material of each part of `gltf`'s model, once the model is on the GPU or on its way
-    /// there this frame.
-    /// How wide `gltf`'s model is across its widest side, once it is prepared.
-    pub fn extent(&self, gltf: AssetId<Gltf>) -> Option<Meters> {
+    /// How big `gltf`'s model is, once it is prepared.
+    pub fn size(&self, gltf: AssetId<Gltf>) -> Option<ModelSize> {
         let bounds = match self.models.get(&gltf)? {
             ModelState::Prepared { model, .. } => model.bounds,
             ModelState::Sent(_, bounds) => *bounds,
             _ => return None,
         };
-        Some(Meters(2.0 * bounds.half_extents.max_element()))
+        Some(ModelSize {
+            extent: Meters(2.0 * bounds.half_extents.max_element()),
+            radius: Meters(Vec3::from(bounds.half_extents).length()),
+        })
     }
 
+    /// The material of each part of `gltf`'s model, once the model is on the GPU or on its way
+    /// there this frame.
     pub fn parts(&self, gltf: AssetId<Gltf>) -> Option<&[Option<Handle<GltfMaterial>>]> {
         match self.models.get(&gltf)? {
             ModelState::Sent(parts, _) => Some(parts),
             _ => None,
+        }
+    }
+}
+
+/// How big a prop model is: how wide across its widest side, and the radius of the sphere its
+/// impostor is framed to.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ModelSize {
+    pub extent: Meters,
+    pub radius: Meters,
+}
+
+impl ModelSize {
+    /// The size grown `by` on every side, as a prop's shaders draw past its model.
+    pub fn grown(self, by: Meters) -> ModelSize {
+        ModelSize {
+            extent: Meters(self.extent.0 + 2.0 * by.0),
+            radius: Meters(self.radius.0 + by.0),
         }
     }
 }

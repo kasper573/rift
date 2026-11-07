@@ -53,12 +53,12 @@ use bevy::render::render_resource::binding_types::{
 };
 use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BufferUsages,
-    CachedRenderPipelineId, CompareFunction, DepthBiasState, DepthStencilState, Face,
+    CachedRenderPipelineId, CompareFunction, DepthBiasState, DepthStencilState, Face, FilterMode,
     FragmentState, IndexFormat, MultisampleState, PipelineCache, PrimitiveState, RawBufferVec,
-    RenderPipelineDescriptor, SamplerBindingType, ShaderStages, ShaderType,
-    SpecializedMeshPipeline, SpecializedRenderPipeline, SpecializedRenderPipelines, StencilState,
-    StorageBuffer, TextureSampleType, UniformBuffer, VertexAttribute, VertexFormat, VertexState,
-    VertexStepMode,
+    RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages,
+    ShaderType, SpecializedMeshPipeline, SpecializedRenderPipeline, SpecializedRenderPipelines,
+    StencilState, StorageBuffer, TextureSampleType, UniformBuffer, VertexAttribute, VertexFormat,
+    VertexState, VertexStepMode,
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::sync_component::SyncComponent;
@@ -68,12 +68,13 @@ use bevy::render::view::{ExtractedView, RetainedViewEntity};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::{Shader, ShaderDefVal};
 
-use super::atlas::{AtlasLayout, AtlasTexture, GpuTerrainAtlas, TerrainAtlas};
+use super::atlas::{AtlasLayout, AtlasTexture, CANOPY_EXTENT_MAX, GpuTerrainAtlas, TerrainAtlas};
 use crate::core::ground::{
     OVERVIEW_STRIDE, PaintMap, SAMPLES_PER_METER, TILE_PIXELS, TileAt, TileVersion,
 };
 use crate::core::render::world::RenderProgress;
 use crate::core::render::world::cover::{CoverMaterial, SHORE_REACH, SheetOn};
+use crate::core::render::world::lod::GRAIN_PIXELS;
 use crate::core::units::GROUND_ORIGIN;
 use crate::core::vfx::shader::weather_helpers;
 
@@ -438,6 +439,12 @@ struct TerrainGround {
     grid_cells: u32,
     level_step: f32,
     ground_level: f32,
+    /// The ground a canopy texel spans each way, in metres, and the widest a canopy's props are
+    /// told to be.
+    canopy_texel: f32,
+    canopy_extent_max: f32,
+    /// How many pixels across a prop must span for the view to draw it rather than thin it away.
+    grain_pixels: f32,
 }
 
 impl TerrainGround {
@@ -455,6 +462,9 @@ impl TerrainGround {
             grid_cells: PATCH_CELLS,
             level_step: layout.range.step(),
             ground_level: f32::from(layout.range.ground_level()),
+            canopy_texel: layout.canopy_texel().0,
+            canopy_extent_max: CANOPY_EXTENT_MAX.0,
+            grain_pixels: GRAIN_PIXELS,
         }
     }
 }
@@ -528,6 +538,7 @@ struct GroundPipeline {
     empty: BindGroupLayoutDescriptor,
     ground: BindGroupLayoutDescriptor,
     paint: BindGroupLayoutDescriptor,
+    canopy_sampler: Sampler,
     grid: MeshVertexBufferLayoutRef,
     depth: Handle<Shader>,
     depth_clip_control: bool,
@@ -757,6 +768,15 @@ fn start(
                     texture_2d(TextureSampleType::Float { filterable: false }),
                 ),
                 (104, uniform_buffer::<Vec2>(false)),
+                (
+                    105,
+                    texture_2d_array(TextureSampleType::Float { filterable: true }),
+                ),
+                (
+                    106,
+                    texture_2d_array(TextureSampleType::Float { filterable: true }),
+                ),
+                (107, sampler(SamplerBindingType::Filtering)),
             ),
         ),
     );
@@ -806,6 +826,12 @@ fn start(
         empty: prepass.empty_layout.clone(),
         ground,
         paint,
+        canopy_sampler: device.create_sampler(&SamplerDescriptor {
+            label: Some("ground canopy"),
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            ..default()
+        }),
         grid: grid.get_mesh_vertex_buffer_layout(&mut layouts),
         depth: bevy::asset::load_embedded_asset!(assets.as_ref(), "terrain_depth.wesl"),
         depth_clip_control: prepass.depth_clip_control_supported,
@@ -1011,6 +1037,9 @@ fn bind_grounds(
                         (102, &weather.texture_view),
                         (103, &layers.texture_view),
                         (104, finish),
+                        (105, atlas.view(AtlasTexture::OverviewCanopy)),
+                        (106, atlas.view(AtlasTexture::OverviewCanopyExtent)),
+                        (107, &pipeline.canopy_sampler),
                     )),
                 ))
             }

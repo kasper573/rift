@@ -7,6 +7,7 @@ use crate::core::content::Content;
 use crate::core::ground::Heightfield;
 use crate::core::render::world::material::MaterialLook;
 use crate::core::render::world_point;
+use crate::core::units::Meters;
 use crate::core::vfx::render as vfx_render;
 use crate::core::vfx::uniform::ParamsUniform;
 use crate::systems::area::PropPlacement;
@@ -19,6 +20,19 @@ pub fn prop_transform(heights: &Heightfield, placed: &PropPlacement) -> Transfor
         rotation: Quat::from_rotation_y(-placed.yaw.radians().0),
         scale: Vec3::splat(placed.scale),
     }
+}
+
+/// How far the shaders of `def`'s materials draw past its model at most, in the model's metres.
+pub(super) fn overhang(content: &Content, def: &PropDef) -> Meters {
+    def.materials
+        .values()
+        .map(|material| material.get(content).overhang)
+        .fold(
+            Meters(0.0),
+            |most, overhang| {
+                if overhang > most { overhang } else { most }
+            },
+        )
 }
 
 /// The materials of `def`'s model the game's shaders draw, each with its parameters, once every

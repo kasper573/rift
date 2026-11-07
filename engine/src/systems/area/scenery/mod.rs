@@ -707,6 +707,7 @@ fn stream_plan(world: &mut World, root: Entity, streaming: &mut Streaming) {
     let mut shortfall = draw_ground(world, streaming, &plan);
     shortfall += instances::stand(world, streaming, &plan, root);
     instances::clear(world, streaming, &plan, root);
+    shortfall += instances::lay_canopy(world, streaming);
     shortfall += grass::grow(world, streaming, &plan.seen);
     streaming.shortfall = shortfall;
     stream_lights(world, streaming, &plan, root);

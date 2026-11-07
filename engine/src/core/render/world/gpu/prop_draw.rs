@@ -461,7 +461,7 @@ fn draw_bakes(bakes: BakeQueue) {
             orders.bakes.push(job);
             continue;
         };
-        let cells = impostor::bake_cells(&job.placed);
+        let cells = impostor::bake_cells(&job.placed, job.overhang);
         let mut written = encase::StorageBuffer::new(Vec::<u8>::new());
         written
             .write(&cells)
@@ -556,7 +556,7 @@ fn bake_parts<'a>(
 ) -> Option<Vec<BakePart<'a>>> {
     let mut parts = Vec::new();
     for (part, material) in job.placed.parts.iter().zip(job.materials.iter()) {
-        let Some(level) = impostor::bake_level(&job.placed, part) else {
+        let Some(level) = impostor::bake_level(&job.placed, job.overhang, part) else {
             continue;
         };
         let prepared = materials.get(material.id())?;
@@ -1072,7 +1072,8 @@ impl PropPipeline {
             .mesh_pipeline
             .specialize(mesh_key, &self.layout)
             .ok()?;
-        let defs = shape_defs(proxy);
+        let mut defs = shape_defs(proxy);
+        defs.push("STANDARD_MATERIAL_DIFFUSE_TRANSMISSION".into());
         descriptor.label = Some(if proxy { "proxy_lit" } else { "impostor_lit" }.into());
         descriptor.layout.truncate(INSTANCE_GROUP);
         descriptor.layout.push(self.instances.clone());

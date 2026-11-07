@@ -1,9 +1,10 @@
 // A prop drawn from its impostor atlas, as the far field draws it: a square facing the eye at
 // the middle of the instance's bounding sphere, a radius each way, on which the model's picture
 // from the eye's direction is read between the four cells of the atlas round that direction,
-// each cell's picture seen through its own orthographic view. The pixel is dropped below half
-// coverage, lit by the baked normal in the world's light, and given the depth the baked depth
-// puts it at, so an impostor sorts against the ground and its neighbours as the model would.
+// each cell's picture seen through its own orthographic view. The pixel is dropped as often as
+// its coverage falls short, lit by the baked normal in the world's light, and given the depth
+// the baked depth puts it at, so an impostor sorts against the ground and its neighbours as the
+// model would.
 // Without the atlas, a box of the prop's bounds stands in its place, coloured by its seed. In the
 // prepass and the shadow maps the same shapes write depth alone.
 
@@ -19,6 +20,7 @@ import bevy_pbr::render::{
 import engine::core::render::world::shade::lighting;
 import bevy_pbr::render::mesh_view_bindings::view;
 import bevy_pbr::render::view_transformations::position_world_to_clip;
+import engine::core::render::world::clearing::dither;
 import engine::core::render::world::gpu::instance::{
     Placement, clear_impostor, placement, prop_of, seed_of, shown_of, turned, world_of,
 };
@@ -38,6 +40,9 @@ struct Prop {
     half_z: f32,
     impostor_command: u32,
     proxy_command: u32,
+    // How translucent its materials are at most, which lights its leaves from behind as the
+    // model's are lit.
+    translucency: f32,
 }
 
 @group(2) @binding(103) var<storage, read> props: array<Prop>;
@@ -76,6 +81,7 @@ struct ImpostorOutput {
     @location(8) @interpolate(flat) color: vec3<f32>,
     @if(PREPASS_PIPELINE && UNCLIPPED_DEPTH_ORTHO_EMULATION)
     @location(9) unclipped_depth: f32,
+    @location(10) @interpolate(flat) translucency: f32,
 }
 
 @vertex
@@ -85,6 +91,7 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
     var out: ImpostorOutput;
     out.turn = placed.turn;
     out.shown = shown_of(instance);
+    out.translucency = prop.translucency;
     out.middle = world_of(placed, vec3<f32>(prop.x, prop.y, prop.z));
     @if(PROXY) {
         let face = vertex / 4u;
@@ -129,8 +136,10 @@ struct Surface {
     world: vec3<f32>,
 }
 
-// The pixel's surface: for a proxy its face, else what the atlas shows there, dropped below half
-// coverage or off the square's picture.
+// The pixel's surface: for a proxy its face, else what the atlas shows there, dropped off the
+// square's picture, and as often as the atlas's coverage there falls short of whole: a dither
+// keeps the share of pixels the coverage says, so a model of thin parts shows as much of itself
+// from afar as its mesh does from near, where a cut at half would keep only its densest middle.
 fn surface(in: ImpostorOutput) -> Surface {
     clear_impostor(in.position.xy, in.shown);
     var out: Surface;
@@ -141,12 +150,16 @@ fn surface(in: ImpostorOutput) -> Surface {
     }
     @if(!PROXY) {
         out = read_atlas(in);
-        if out.color.a < 0.5 {
+        if out.color.a < dither(in.position.xy + COVER_OFFSET) {
             discard;
         }
     }
     return out;
 }
+
+// The coverage's dither is stepped off the clearing's and the fade's, so the three never drop the
+// same pixels.
+const COVER_OFFSET: vec2<f32> = vec2<f32>(41.0, 11.0);
 
 @if(!PROXY)
 fn read_atlas(in: ImpostorOutput) -> Surface {
@@ -170,8 +183,9 @@ fn read_atlas(in: ImpostorOutput) -> Surface {
         let seen = unfold_hemi(cell / (CELLS - 1.0));
         let cell_right = normalize(cross(cell_up(seen), seen));
         let cell_up_way = cross(seen, cell_right);
-        // Where the square's point lands on the cell's picture, which looks along `seen`.
-        let picture = vec2<f32>(dot(point, cell_right), dot(point, cell_up_way)) * 0.5 + 0.5;
+        // Where the square's point lands on the cell's picture, which looks along `seen` with its
+        // up at its top row, as the bake draws it.
+        let picture = vec2<f32>(dot(point, cell_right), -dot(point, cell_up_way)) * 0.5 + 0.5;
         if any(picture < vec2<f32>(0.0)) || any(picture > vec2<f32>(1.0)) {
             continue;
         }
@@ -213,6 +227,7 @@ fn fragment(in: ImpostorOutput) -> LitOutput {
     input.material.base_color = vec4<f32>(found.color.rgb, 1.0);
     input.material.metallic = 0.0;
     input.material.perceptual_roughness = 0.9;
+    input.material.diffuse_transmission = in.translucency;
     input.flags = MESH_FLAGS_SHADOW_RECEIVER_BIT | MESH_FLAGS_SIGN_DETERMINANT_MODEL_3X3_BIT;
     input.frag_coord = vec4<f32>(in.position.xy, clip.z / clip.w, in.position.w);
     input.world_position = vec4<f32>(found.world, 1.0);

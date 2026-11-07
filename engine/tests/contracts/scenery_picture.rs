@@ -46,6 +46,10 @@ const BLOCK: Pos<Meters> = Pos::new(24.0, 10.0);
 const LANTERN: Pos<Meters> = Pos::new(24.0, 22.0);
 /// How high up each prop the picture is read.
 const PROP_HEIGHT: f32 = 2.0;
+/// Where the specks are strewn on the bare half, far enough off the eye to fall under the grain,
+/// and how wide each is.
+const SPECKS: (Pos<Meters>, Pos<Meters>) = (Pos::new(17.0, 1.0), Pos::new(31.0, 7.0));
+const SPECK: f32 = 0.35;
 /// How tall the props stand: enough to span more than the impostor band on the picture, so each
 /// is drawn by its model in its material rather than by its impostor.
 const PROP_TALL: f32 = 12.0;
@@ -106,6 +110,33 @@ fn a_picture_of_a_scenery_shows_its_props_in_every_material_each_shadowing_the_g
     assert!(
         blades > 60,
         "the magenta blades grown on the turf show: {blades} magenta pixels"
+    );
+}
+
+/// Far enough off the eye that the view thins a crowd of props away, the ground under them
+/// shows their colour from above by how much of it they cover, so a wood thinned to nothing
+/// leaves no bare ground behind.
+#[test]
+fn the_ground_under_props_the_view_thins_away_shows_their_colour_from_above() {
+    let mut staged = stage();
+    let picture = staged.shoot();
+    let redness = |[r, g, _]: [f32; 3]| r - g;
+    let bare: Vec<f32> = picture
+        .colors(Pos::new(18.0, 26.0), Pos::new(22.0, 30.0))
+        .map(redness)
+        .collect();
+    let (from, to) = SPECKS;
+    let strewn: Vec<f32> = picture
+        .colors(
+            Pos::new(from.x + 1.0, from.y + 1.0),
+            Pos::new(to.x - 1.0, to.y - 1.0),
+        )
+        .map(redness)
+        .collect();
+    let (bare, strewn) = (median(&bare), median(&strewn));
+    assert!(
+        strewn > bare + 15.0,
+        "the ground under the red specks reads redder than the bare rock: {strewn} against {bare}"
     );
 }
 
@@ -363,12 +394,24 @@ fn field() -> Game {
                 "materials": { "glow": path("prop_material", "glow") },
             }),
         )
+        .prop_of(
+            "speck",
+            box_glb(Vec3::splat(SPECK), "paint", [1.0, 0.0, 0.0, 1.0]),
+            json!({ "footprint": { "type": "none" } }),
+        )
         .area(
             "field",
             &Map::of(&rows),
             json!([
                 { "type": "prop", "prop": path("prop", "block"), "at": { "x": BLOCK.x, "y": BLOCK.y } },
                 { "type": "prop", "prop": path("prop", "lantern"), "at": { "x": LANTERN.x, "y": LANTERN.y } },
+                {
+                    "type": "scatter",
+                    "props": [path("prop", "speck")],
+                    "region": { "x": SPECKS.0.x, "y": SPECKS.0.y, "w": SPECKS.1.x - SPECKS.0.x, "h": SPECKS.1.y - SPECKS.0.y },
+                    "per_square_meter": 2.0,
+                    "seed": 11,
+                },
             ]),
         )
         .hero("field", 2.0, 2.0)

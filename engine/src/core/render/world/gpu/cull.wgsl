@@ -68,6 +68,7 @@ struct Prop {
     half_z: f32,
     impostor_command: u32,
     proxy_command: u32,
+    translucency: f32,
 }
 
 // A part's levels among `levels`, finest first.

@@ -9,6 +9,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::content::SchemaMark;
 use crate::core::content::{ContentFile, ContentId, Loading, Nearby, RowCheck, serial};
+use crate::core::units::Meters;
 use crate::core::vfx::shader::{Stage, VfxShaderDef};
 use crate::core::vfx::{ParamValue, VfxShaderId};
 
@@ -17,7 +18,9 @@ pub type PropMaterialId = ContentId<PropMaterialDef>;
 /// A shader of the prop stage, and the values it fills the shader's parameters with; a parameter
 /// left out keeps the shader's default. A thin material, a leaf or a petal, is `translucency`
 /// translucent: that share of the light falling on either side of a face shines through to the
-/// other, so a crown seen from beneath glows where the sun stands over it.
+/// other, so a crown seen from beneath glows where the sun stands over it. A shader that draws
+/// past the mesh, spreading its leaves into cards facing the eye, says how far at most in
+/// `overhang`, in the model's metres: the prop's bounds and its impostor's frame grow by it.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct PropMaterialDef {
@@ -27,6 +30,8 @@ pub struct PropMaterialDef {
     pub params: BTreeMap<String, ParamValue>,
     #[serde(default, skip_serializing_if = "serial::is_zero_f32")]
     pub translucency: f32,
+    #[serde(default, skip_serializing_if = "serial::is_zero_meters")]
+    pub overhang: Meters,
 }
 
 impl ContentFile for PropMaterialDef {
@@ -39,6 +44,7 @@ impl ContentFile for PropMaterialDef {
             })?,
             params: BTreeMap::new(),
             translucency: 0.0,
+            overhang: Meters(0.0),
         })
     }
 
@@ -50,6 +56,7 @@ impl ContentFile for PropMaterialDef {
             1.0,
             "of the light shining through",
         );
+        cx.at_least("/overhang", self.overhang.0, 0.0, "metres past the mesh");
     }
 }
 

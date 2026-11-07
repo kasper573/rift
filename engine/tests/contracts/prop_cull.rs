@@ -98,6 +98,8 @@ fn the_gpu_draws_each_prop_the_view_sees_at_the_level_its_size_asks_for() {
                         instances,
                         dressed: true,
                         fades: fades(prop),
+                        overhang: 0.0,
+                        translucency: 0.0,
                     },
                 )
             })
@@ -613,6 +615,8 @@ fn the_gpu_hands_a_prop_from_its_model_to_its_impostor_across_the_band() {
                     instances,
                     dressed: prop < UNDRESSED_WITH_IMPOSTOR,
                     fades: false,
+                    overhang: 0.0,
+                    translucency: 0.0,
                 },
             )
         })

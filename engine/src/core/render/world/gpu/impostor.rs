@@ -34,6 +34,7 @@ use super::upload::UploadBudget;
 use crate::core::os::Profile;
 use crate::core::render::world::RenderProgress;
 use crate::core::render::world::lod::STRAY_PIXELS;
+use crate::core::units::Meters;
 use crate::core::vfx::shader::PARAMS_BYTES;
 
 pub struct ImpostorPlugin;
@@ -82,8 +83,19 @@ const IMPOSTORS: &str = "impostors";
 #[derive(Resource)]
 pub struct ImpostorStore {
     models: HashMap<AssetId<Gltf>, ImpostorState>,
+    looks: HashMap<AssetId<Gltf>, LookFromAbove>,
     outgoing: Vec<ImpostorOrder>,
     baked: Baked,
+}
+
+/// What a model looks like from straight above, as its atlas's cells nearest that way show it:
+/// the mean colour of what they see, and how much of a cell it fills. A cell frames the model's
+/// bounding sphere, so the cover times the sphere's diameter squared is the ground the model
+/// hides from above.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct LookFromAbove {
+    pub color: LinearRgba,
+    pub cover: f32,
 }
 
 /// What the render world is told of a model's impostor: its atlas read from its file, to bake it,
@@ -99,6 +111,7 @@ pub enum ImpostorOrder {
         model: AssetId<Gltf>,
         key: String,
         materials: Arc<[UntypedHandle]>,
+        overhang: Meters,
     },
     Forget {
         model: AssetId<Gltf>,
@@ -109,6 +122,7 @@ enum ImpostorState {
     Reading {
         key: String,
         materials: Arc<[UntypedHandle]>,
+        overhang: Meters,
         task: Task<Option<ImpostorTexels>>,
     },
     Read {
@@ -118,6 +132,7 @@ enum ImpostorState {
     ToBake {
         key: String,
         materials: Arc<[UntypedHandle]>,
+        overhang: Meters,
     },
     Sent {
         key: String,
@@ -132,20 +147,28 @@ impl ImpostorStore {
     fn new(baked: Baked) -> ImpostorStore {
         ImpostorStore {
             models: HashMap::new(),
+            looks: HashMap::new(),
             outgoing: Vec::new(),
             baked,
         }
     }
 
+    /// What `model` looks like from above, once its atlas has been read or baked.
+    pub fn look_from_above(&self, model: AssetId<Gltf>) -> Option<LookFromAbove> {
+        self.looks.get(&model).copied()
+    }
+
     /// Wants `model`'s impostor on the GPU, baked by `materials`, the world materials its parts
-    /// are drawn in, or read from the file kept under `key` in `profile`, until the model's asset
-    /// goes. A model wanted again under another key is baked or read anew.
+    /// are drawn in, framed `overhang` past the model's bounds for what they draw beyond it, or
+    /// read from the file kept under `key` in `profile`, until the model's asset goes. A model
+    /// wanted again under another key is baked or read anew.
     pub fn want(
         &mut self,
         profile: &Profile,
         model: AssetId<Gltf>,
         key: String,
         materials: Arc<[UntypedHandle]>,
+        overhang: Meters,
     ) {
         let current = self.models.get(&model).is_some_and(|state| match state {
             ImpostorState::Reading { key: held, .. }
@@ -161,11 +184,16 @@ impl ImpostorStore {
             ImpostorState::Reading {
                 key,
                 materials,
+                overhang,
                 task: IoTaskPool::get()
                     .spawn(async move { ImpostorTexels::from_file(&std::fs::read(file).ok()?) }),
             }
         } else {
-            ImpostorState::ToBake { key, materials }
+            ImpostorState::ToBake {
+                key,
+                materials,
+                overhang,
+            }
         };
         self.models.insert(model, state);
     }
@@ -193,11 +221,13 @@ fn keep_impostors(
         if let AssetEvent::Removed { id } | AssetEvent::Unused { id } = *event
             && store.models.remove(&id).is_some()
         {
+            store.looks.remove(&id);
             store.outgoing.push(ImpostorOrder::Forget { model: id });
         }
     }
     let ImpostorStore {
         models,
+        looks,
         outgoing,
         baked,
     } = &mut *store;
@@ -206,17 +236,22 @@ fn keep_impostors(
             ImpostorState::Reading {
                 key,
                 materials,
+                overhang,
                 task,
             } => {
                 if let Some(read) = check_ready(task) {
                     *state = match read {
-                        Some(texels) => ImpostorState::Read {
-                            key: key.clone(),
-                            texels: Arc::new(texels),
-                        },
+                        Some(texels) => {
+                            looks.insert(model, LookFromAbove::of(&texels));
+                            ImpostorState::Read {
+                                key: key.clone(),
+                                texels: Arc::new(texels),
+                            }
+                        }
                         None => ImpostorState::ToBake {
                             key: key.clone(),
                             materials: materials.clone(),
+                            overhang: *overhang,
                         },
                     };
                 }
@@ -231,11 +266,16 @@ fn keep_impostors(
                     *state = ImpostorState::Sent { key: key.clone() };
                 }
             }
-            ImpostorState::ToBake { key, materials } => {
+            ImpostorState::ToBake {
+                key,
+                materials,
+                overhang,
+            } => {
                 outgoing.push(ImpostorOrder::Bake {
                     model,
                     key: key.clone(),
                     materials: materials.clone(),
+                    overhang: *overhang,
                 });
                 *state = ImpostorState::Sent { key: key.clone() };
             }
@@ -246,6 +286,13 @@ fn keep_impostors(
         std::mem::take(&mut *baked.0.lock().expect("the baked atlases lock"));
     let dir = folder_under(&profile);
     for (key, texels) in written {
+        let baked_model = models.iter().find_map(|(model, state)| match state {
+            ImpostorState::Sent { key: held } if *held == key => Some(*model),
+            _ => None,
+        });
+        if let Some(model) = baked_model {
+            looks.insert(model, LookFromAbove::of(&texels));
+        }
         let dir = dir.clone();
         IoTaskPool::get()
             .spawn(async move {
@@ -283,6 +330,7 @@ pub(super) struct BakeJob {
     pub layer: u32,
     pub materials: Arc<[UntypedHandle]>,
     pub placed: PlacedModel,
+    pub overhang: Meters,
 }
 
 fn start(mut commands: Commands, device: Res<RenderDevice>) {
@@ -338,6 +386,7 @@ fn prepare_impostors(
                 model,
                 ref key,
                 ref materials,
+                overhang,
             } => {
                 let placed = models.slabs.get(&model);
                 let admitted = placed
@@ -353,6 +402,7 @@ fn prepare_impostors(
                             layer: admitted.slot,
                             materials: materials.clone(),
                             placed: placed.clone(),
+                            overhang,
                         });
                     }
                     _ => later.push(order),
@@ -366,13 +416,23 @@ fn prepare_impostors(
     orders.pending = later;
 }
 
-/// Hands every baked atlas that has come back to the main world, for its file.
-fn read_bakes(mut orders: ResMut<ImpostorOrders>, baked: Res<Baked>) {
+/// Takes in every baked atlas that has come back: its texels spread past the model's edges, written
+/// back to its layer, and handed to the main world for its file.
+fn read_bakes(
+    mut orders: ResMut<ImpostorOrders>,
+    baked: Res<Baked>,
+    atlas: Option<Res<ImpostorAtlas>>,
+    queue: Res<RenderQueue>,
+) {
     orders
         .readbacks
         .retain_mut(|readback| match readback.poll() {
             None => true,
-            Some(Ok(texels)) => {
+            Some(Ok(mut texels)) => {
+                texels.spread();
+                if let Some(atlas) = &atlas {
+                    atlas.write(&queue, readback.layer, &texels);
+                }
                 baked
                     .0
                     .lock()
@@ -448,6 +508,45 @@ pub fn fold(direction: Vec3) -> Vec2 {
     ((folded + Vec2::ONE) * 0.5).clamp(Vec2::ZERO, Vec2::ONE)
 }
 
+impl LookFromAbove {
+    /// How `texels` look from straight above: the four cells round the way up, each texel's
+    /// colour weighed by its coverage.
+    fn of(texels: &ImpostorTexels) -> LookFromAbove {
+        let up = cell_of(Vec3::Y);
+        let first = up.floor().as_uvec2().min(UVec2::splat(CELLS - 2));
+        let mut color = LinearRgba::NONE;
+        let mut covered = 0.0;
+        let mut pixels = 0.0f32;
+        for cell in [
+            first,
+            first + UVec2::X,
+            first + UVec2::Y,
+            first + UVec2::ONE,
+        ] {
+            for row in cell.y * CELL_PIXELS..(cell.y + 1) * CELL_PIXELS {
+                for column in cell.x * CELL_PIXELS..(cell.x + 1) * CELL_PIXELS {
+                    let at = ((row * ATLAS_PIXELS + column) as usize) * ALBEDO_BYTES;
+                    let [r, g, b, a]: [u8; ALBEDO_BYTES] = texels.albedo[at..at + ALBEDO_BYTES]
+                        .try_into()
+                        .expect("four bytes an albedo texel");
+                    let cover = f32::from(a) / 255.0;
+                    color += LinearRgba::from(Srgba::rgb_u8(r, g, b)) * cover;
+                    covered += cover;
+                    pixels += 1.0;
+                }
+            }
+        }
+        LookFromAbove {
+            color: if covered > 0.0 {
+                (color / covered).with_alpha(1.0)
+            } else {
+                LinearRgba::BLACK
+            },
+            cover: covered / pixels.max(1.0),
+        }
+    }
+}
+
 /// What an atlas file under the profile begins with: how it was baked, so a file baked otherwise
 /// is read as none. The texels follow the header's line: the albedo with its coverage (four bytes
 /// a pixel), then the normal folded as a direction is (two), then the depth (one), each
@@ -479,6 +578,17 @@ pub const ALBEDO_BYTES: usize = 4;
 pub const NORMAL_BYTES: usize = 2;
 pub const DEPTH_BYTES: usize = 1;
 
+/// How many texels out a model's edges are spread, see `ImpostorTexels::spread`: past the one a
+/// read blends in, so a read at the edge's far side still finds the model's own values.
+const SPREAD_TEXELS: usize = 2;
+
+/// The eight texels round `(x, y)`, within an atlas `side` texels across.
+fn neighbours(x: usize, y: usize, side: usize) -> impl Iterator<Item = (usize, usize)> {
+    (y.saturating_sub(1)..=(y + 1).min(side - 1))
+        .flat_map(move |ny| (x.saturating_sub(1)..=(x + 1).min(side - 1)).map(move |nx| (nx, ny)))
+        .filter(move |&(nx, ny)| (nx, ny) != (x, y))
+}
+
 /// The texels of a model's atlas as they are baked, read and kept.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ImpostorTexels {
@@ -496,6 +606,63 @@ impl ImpostorTexels {
         file.extend_from_slice(&self.normal);
         file.extend_from_slice(&self.depth);
         file
+    }
+
+    /// Spreads what the model's edge texels show into the uncovered texels beside them, a few
+    /// texels out within each cell, with the coverage left as it is: a read of the atlas blends
+    /// between neighbouring texels, so at the model's edges it would otherwise take in the
+    /// clearing's black, flat normal and near depth for part of every pixel, and a model of thin
+    /// parts, a tuft of grass or a bare branch, which is edges all over, would draw dark and sunken.
+    pub fn spread(&mut self) {
+        let side = ATLAS_PIXELS as usize;
+        let cell = CELL_PIXELS as usize;
+        let mut filled: Vec<bool> = (0..side * side)
+            .map(|at| self.albedo[at * ALBEDO_BYTES + 3] > 0)
+            .collect();
+        for _ in 0..SPREAD_TEXELS {
+            let was = filled.clone();
+            for y in 0..side {
+                for x in 0..side {
+                    let at = y * side + x;
+                    if was[at] {
+                        continue;
+                    }
+                    let mut albedo = [0u32; 3];
+                    let mut normal = [0u32; NORMAL_BYTES];
+                    let mut depth = 0u32;
+                    let mut found = 0u32;
+                    for (nx, ny) in neighbours(x, y, side) {
+                        let near = ny * side + nx;
+                        if nx / cell != x / cell || ny / cell != y / cell || !was[near] {
+                            continue;
+                        }
+                        for (sum, byte) in
+                            albedo.iter_mut().zip(&self.albedo[near * ALBEDO_BYTES..])
+                        {
+                            *sum += u32::from(*byte);
+                        }
+                        for (sum, byte) in
+                            normal.iter_mut().zip(&self.normal[near * NORMAL_BYTES..])
+                        {
+                            *sum += u32::from(*byte);
+                        }
+                        depth += u32::from(self.depth[near]);
+                        found += 1;
+                    }
+                    if found == 0 {
+                        continue;
+                    }
+                    for (byte, sum) in self.albedo[at * ALBEDO_BYTES..].iter_mut().zip(albedo) {
+                        *byte = (sum / found) as u8;
+                    }
+                    for (byte, sum) in self.normal[at * NORMAL_BYTES..].iter_mut().zip(normal) {
+                        *byte = (sum / found) as u8;
+                    }
+                    self.depth[at] = (depth / found) as u8;
+                    filled[at] = true;
+                }
+            }
+        }
     }
 
     /// The texels `file` keeps, if it was baked as the current build bakes.
@@ -520,11 +687,13 @@ impl ImpostorTexels {
     }
 }
 
-/// The name a model's atlas is kept under: what the model is made of and how it is baked, so a
-/// model changed, dressed otherwise or baked by another build bakes anew.
-pub fn atlas_key(model_hash: &str, materials: &[BakeMaterialKey]) -> String {
+/// The name a model's atlas is kept under: what the model is made of, how far past it its
+/// shaders draw and how it is baked, so a model changed, dressed otherwise or baked by another
+/// build bakes anew.
+pub fn atlas_key(model_hash: &str, overhang: Meters, materials: &[BakeMaterialKey]) -> String {
     let mut hasher = blake3::Hasher::new();
     hasher.update(model_hash.as_bytes());
+    hasher.update(&overhang.0.to_le_bytes());
     for material in materials {
         hasher.update(&material.color.map(f32::to_le_bytes).concat());
         hasher.update(material.texture.as_deref().unwrap_or("").as_bytes());
@@ -657,7 +826,7 @@ impl ImpostorAtlas {
         }
     }
 
-    /// Writes `texels`, read from a file, into `layer`.
+    /// Writes `texels` into `layer`.
     pub fn write(&self, queue: &RenderQueue, layer: u32, texels: &ImpostorTexels) {
         for (texture, bytes, texel_bytes) in [
             (&self.albedo, &texels.albedo, ALBEDO_BYTES),
@@ -754,8 +923,9 @@ pub(super) struct BakeCell {
     place: Vec4,
 }
 
-/// Every cell of `model`'s atlas, in the order the bake draws them as instances.
-pub(super) fn bake_cells(model: &PlacedModel) -> Vec<BakeCell> {
+/// Every cell of `model`'s atlas, framed `overhang` past its bounds, in the order the bake draws
+/// them as instances.
+pub(super) fn bake_cells(model: &PlacedModel, overhang: Meters) -> Vec<BakeCell> {
     let cells = CELLS as f32;
     CellView::all()
         .map(|view| {
@@ -769,7 +939,7 @@ pub(super) fn bake_cells(model: &PlacedModel) -> Vec<BakeCell> {
             let up = seen.cross(right);
             let cell = view.cell.as_vec2();
             BakeCell {
-                clip_from_model: clip_from_model(model, seen),
+                clip_from_model: clip_from_model(model, overhang, seen),
                 seen: seen.extend(0.0),
                 right: right.extend(0.0),
                 up: up.extend(0.0),
@@ -785,9 +955,13 @@ pub(super) fn bake_cells(model: &PlacedModel) -> Vec<BakeCell> {
 }
 
 /// The level of `part` the bake draws: the coarsest that still lands within half a pixel of a
-/// cell, or none for a part with nothing to draw.
-pub(super) fn bake_level<'a>(model: &PlacedModel, part: &'a PartRanges) -> Option<&'a LevelRange> {
-    let allowed = cell_stray(model);
+/// cell framed `overhang` past the model, or none for a part with nothing to draw.
+pub(super) fn bake_level<'a>(
+    model: &PlacedModel,
+    overhang: Meters,
+    part: &'a PartRanges,
+) -> Option<&'a LevelRange> {
+    let allowed = cell_stray(framed_radius(model, overhang));
     part.levels
         .iter()
         .rev()
@@ -795,10 +969,11 @@ pub(super) fn bake_level<'a>(model: &PlacedModel, part: &'a PartRanges) -> Optio
         .or(part.levels.first())
 }
 
-/// A layer's texels on their way back from the GPU, to be kept in a file.
+/// A layer's texels on their way back from the GPU, to be spread and kept in a file.
 pub struct Readback {
     pub model: AssetId<Gltf>,
     pub key: String,
+    layer: u32,
     buffer: Buffer,
     mapped: Option<Arc<Mutex<Option<bool>>>>,
 }
@@ -842,6 +1017,7 @@ impl Readback {
         Readback {
             model,
             key,
+            layer,
             buffer,
             mapped: None,
         }
@@ -877,18 +1053,23 @@ impl Readback {
     }
 }
 
-/// How far a level of `model` may stray from its full mesh and still land within half a pixel
-/// of a cell, which frames the model's bounding sphere across `CELL_PIXELS`.
-fn cell_stray(model: &PlacedModel) -> f32 {
-    let radius = Vec3::from(model.bounds.half_extents).length().max(1e-3);
+/// How far a level of a model may stray from its full mesh and still land within half a pixel
+/// of a cell, which frames the model's sphere of `radius` across `CELL_PIXELS`.
+fn cell_stray(radius: f32) -> f32 {
     STRAY_PIXELS * 2.0 * radius / CELL_PIXELS as f32
 }
 
-/// The orthographic view of `model` from `direction`, framed to its bounding sphere: the eye a
-/// radius out from the sphere's middle, the near plane there and the far one a diameter in.
-pub fn clip_from_model(model: &PlacedModel, direction: Vec3) -> Mat4 {
+/// The radius of the sphere a cell frames: the model's bounding sphere grown by `overhang`.
+fn framed_radius(model: &PlacedModel, overhang: Meters) -> f32 {
+    (Vec3::from(model.bounds.half_extents).length() + overhang.0).max(1e-3)
+}
+
+/// The orthographic view of `model` from `direction`, framed to its bounding sphere grown by
+/// `overhang`: the eye a radius out from the sphere's middle, the near plane there and the far
+/// one a diameter in.
+pub fn clip_from_model(model: &PlacedModel, overhang: Meters, direction: Vec3) -> Mat4 {
     let middle = Vec3::from(model.bounds.center);
-    let radius = Vec3::from(model.bounds.half_extents).length().max(1e-3);
+    let radius = framed_radius(model, overhang);
     let up = if direction.y.abs() > 0.999 {
         Vec3::NEG_Z
     } else {

@@ -20,6 +20,12 @@ import engine::core::render::world::shade::lighting;
 @group(3) @binding(101) var pictures_sampler: sampler;
 @group(3) @binding(103) var layers: texture_2d<f32>;
 @group(3) @binding(104) var<uniform> finish: vec2<f32>;
+// What the props standing over the ground look like from above, a layer a band of their
+// extent: their colour with how much of the ground they cover, and how wide they are as a share
+// of the widest told.
+@group(3) @binding(105) var canopy: texture_2d_array<f32>;
+@group(3) @binding(106) var canopy_extent: texture_2d_array<f32>;
+@group(3) @binding(107) var canopy_sampler: sampler;
 
 struct Vertex {
     @builtin(instance_index) instance: u32,
@@ -75,7 +81,9 @@ fn fragment(in: Placed) -> @location(0) vec4<f32> {
     }
     let laid = painted(in.world_position.xz, in.stride);
     let soaked = wetness(in.world_position.xyz) * laid.wet.z;
-    input.material.base_color = vec4<f32>(laid.color * mix(1.0, laid.wet.x, soaked), 1.0);
+    let over = canopied(in.world_position.xyz);
+    let color = mix(laid.color, over.rgb, over.a);
+    input.material.base_color = vec4<f32>(color * mix(1.0, laid.wet.x, soaked), 1.0);
     input.material.perceptual_roughness = mix(finish.x, laid.wet.y, soaked);
     return main_pass_post_lighting_processing(input, lighting(input));
 }
@@ -111,4 +119,29 @@ fn terrain_at(corner: vec2<f32>, step: vec2<f32>, stride: u32, at: vec2<f32>) ->
     let picture = i32(textureLoad(layers, vec2<i32>(terrain, 1), 0).r);
     let wet = textureLoad(layers, vec2<i32>(terrain, 2), 0).xyz;
     return Laid(look.rgb * textureSample(pictures, pictures_sampler, at / look.w, picture).rgb, wet);
+}
+
+// The colour of the props standing over `at`, as far as the view thins them away: each band of
+// them whole where its typical prop spans no more than the grain, from where it spans twice
+// that, by how much of the ground it covers. Up close, where the props themselves stand, nothing
+// shows of it.
+fn canopied(at: vec3<f32>) -> vec4<f32> {
+    let uv = (at.xz - ground.origin) / (ground.canopy_texel * vec2<f32>(textureDimensions(canopy)));
+    let away = max(distance(at, view.world_position), 1e-3);
+    let pixels_per_metre = view.viewport.w * 0.5 * view.clip_from_view[1][1] / away;
+    var color = vec3<f32>(0.0);
+    var cover = 0.0;
+    for (var band = 0; band < i32(textureNumLayers(canopy)); band++) {
+        let look = textureSample(canopy, canopy_sampler, uv, band);
+        let extent = textureSample(canopy_extent, canopy_sampler, uv, band).r * ground.canopy_extent_max;
+        let across = extent * pixels_per_metre;
+        let thinned = clamp((2.0 * ground.grain_pixels - across) / ground.grain_pixels, 0.0, 1.0);
+        let hidden = look.a * thinned;
+        color += look.rgb * hidden;
+        cover += hidden;
+    }
+    if cover <= 0.0 {
+        return vec4<f32>(0.0);
+    }
+    return vec4<f32>(color / cover, min(cover, 1.0));
 }

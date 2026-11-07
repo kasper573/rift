@@ -31,10 +31,13 @@ use crate::core::render::camera::Lens;
 use crate::core::render::world::cover::{self, Place};
 use crate::core::render::world::gpu::arena::{
     ChunkPlace, DressedProp, InstanceArena, InstanceChange, InstanceChanges, InstanceRecord,
-    PropModels,
+    ModelSize, PropModels,
+};
+use crate::core::render::world::gpu::atlas::{
+    AtlasLayout, CANOPY_BANDS, CANOPY_EXTENT_MAX, CanopyMap, TerrainAtlas,
 };
 use crate::core::render::world::gpu::impostor::{
-    self, BakeMaterialKey, ImpostorStore, LookBakeKey,
+    self, BakeMaterialKey, ImpostorStore, LookBakeKey, LookFromAbove,
 };
 use crate::core::render::world::gpu::upload;
 use crate::core::render::world::lod::GRAIN_PIXELS;
@@ -42,7 +45,7 @@ use crate::core::render::world::material::{self, MaterialLook, WorldMaterial};
 use crate::core::render::world_point;
 use crate::core::units::{GROUND_ORIGIN, MeterSize, Meters};
 use crate::core::vfx::shader::CompiledVfxShaders;
-use crate::systems::area::prop::{PropDef, PropId};
+use crate::systems::area::prop::{PropDef, PropId, Scatter};
 use crate::systems::area::{Area, AreaModule, PropPlacement};
 
 /// What a scenery holds in its arena: the lots standing there, by their keys, those being worked
@@ -53,12 +56,18 @@ pub(super) struct Instances {
     arena: InstanceArena,
     copies: Arc<[CopyPiece]>,
     /// Every prop the area stands, placed or scattered: the far field keeps those of them whose
-    /// models are wide enough to show, so it wants every one's model until its width is known.
+    /// models are wide enough to show, and the canopy shows the rest from above, so every one's
+    /// model is wanted until its size and its look from above are known.
     area_props: Vec<PropId>,
     /// Which of the area's prop sources reach each chunk, for the lots worked out off the frame.
     filed: Arc<SourcesByChunk>,
-    /// How wide each area prop's model is, as far as the models have been prepared.
-    extents: HashMap<PropId, Meters>,
+    /// How big each area prop's model is, as far as the models have been prepared.
+    sizes: HashMap<PropId, ModelSize>,
+    /// What each area prop looks like from above, as far as the impostors have been baked or read.
+    looks: HashMap<PropId, LookFromAbove>,
+    /// The area props whose impostor has been wanted for its look.
+    impostors_wanted: HashSet<PropId>,
+    canopy: Canopy,
     /// How many props the content holds: the arena draws the copies of a cover's pieces after
     /// them.
     props: u32,
@@ -75,23 +84,15 @@ pub(super) struct Instances {
 impl Instances {
     /// What the arena of an area holding the content's props and strewing `copies` holds.
     pub(super) fn new(content: &Content, area: &Area, copies: Arc<[CopyPiece]>) -> Instances {
-        let mut area_props: Vec<PropId> = area
-            .prop_sources
-            .iter()
-            .flat_map(|module| match module {
-                AreaModule::Prop(placed) => vec![placed.prop],
-                AreaModule::Scatter(scatter) => scatter.props.clone(),
-                _ => Vec::new(),
-            })
-            .collect();
-        area_props.sort_unstable();
-        area_props.dedup();
         Instances {
             arena: InstanceArena::default(),
             copies,
-            area_props,
+            area_props: area_props_of(area),
             filed: Arc::new(SourcesByChunk::of(&area.prop_sources, area.size.bounds())),
-            extents: HashMap::default(),
+            sizes: HashMap::default(),
+            looks: HashMap::default(),
+            impostors_wanted: HashSet::default(),
+            canopy: Canopy::default(),
             props: content.table::<PropDef>().len() as u32,
             expanding: HashMap::default(),
             expanded: Vec::new(),
@@ -154,6 +155,7 @@ impl Instances {
         touched: &[Rect<Meters>],
         moved: impl Fn(u32) -> Option<u32>,
     ) {
+        self.area_props = area_props_of(area);
         self.filed = Arc::new(SourcesByChunk::of(&area.prop_sources, ground));
         let props = |lot: &Lot| matches!(lot, Lot::Props(_) | Lot::Far(..));
         self.expanding.retain(|_, (lot, _)| !props(lot));
@@ -171,6 +173,7 @@ impl Instances {
             }
         }
         self.props_revision += 1;
+        self.canopy.sources_revision += 1;
     }
 
     /// A number that changes each time the props standing in the arena do.
@@ -202,6 +205,22 @@ impl Instances {
                 .map(|(key, _)| *key),
         );
     }
+}
+
+/// Every prop `area` stands, placed or scattered, each once.
+fn area_props_of(area: &Area) -> Vec<PropId> {
+    let mut props: Vec<PropId> = area
+        .prop_sources
+        .iter()
+        .flat_map(|module| match module {
+            AreaModule::Prop(placed) => vec![placed.prop],
+            AreaModule::Scatter(scatter) => scatter.props.clone(),
+            _ => Vec::new(),
+        })
+        .collect();
+    props.sort_unstable();
+    props.dedup();
+    props
 }
 
 /// What a chunk of the arena holds: the props standing in a chunk of the ground, the copies its
@@ -331,9 +350,19 @@ struct Expanded {
     sources: Vec<u32>,
 }
 
-/// How wide each prop's model is, for the far field to keep the props wide enough to show: none
+/// How big each prop's model is, for the far field to keep the props wide enough to show: none
 /// until every model of the area's props is prepared.
-type Extents = Arc<HashMap<PropId, Meters>>;
+type Extents = Arc<HashMap<PropId, ModelSize>>;
+
+/// The canopy over the area's ground, as far as it has come: the map being worked out for a
+/// layout of the atlas and a revision of the prop sources, and the one laid last.
+#[derive(Default)]
+struct Canopy {
+    making: Option<((AtlasLayout, u64), Task<CanopyMap>)>,
+    made_for: Option<(AtlasLayout, u64)>,
+    /// Counts each time the area's prop sources change.
+    sources_revision: u64,
+}
 
 /// Stands in the arena every lot the plan reaches, as far as the frame's budget goes: how many of
 /// them don't stand yet.
@@ -347,7 +376,7 @@ pub(super) fn stand(
     let wanted = wanted_lots(streaming, &plan.seen, ground);
     let wanted_at: HashMap<[u32; 2], Lot> =
         wanted.iter().map(|&lot| (lot.keys(ground), lot)).collect();
-    let extents = extents(world, streaming);
+    let extents = sizes(world, streaming);
     let instances = &mut streaming.instances;
     instances
         .expanding
@@ -476,10 +505,18 @@ pub(super) fn clear(world: &mut World, streaming: &mut Streaming, plan: &Plan, r
         .iter()
         .map(|drawn| prop_of(&instances.copies, *drawn))
         .collect();
+    let looks_wanted = world.contains_resource::<ImpostorStore>();
     let Instances {
-        models, extents, ..
+        models,
+        sizes,
+        looks,
+        ..
     } = &mut *instances;
-    models.retain(|prop, _| props.contains(prop) || !extents.contains_key(prop));
+    models.retain(|prop, _| {
+        props.contains(prop)
+            || !sizes.contains_key(prop)
+            || looks_wanted && !looks.contains_key(prop)
+    });
     let undressed: Vec<Drawn> = instances
         .dressed
         .extract_if(|dressed| !drawn.contains(dressed))
@@ -572,15 +609,21 @@ fn farthest_from(bounds: Rect<Meters>, at: Pos<Meters>) -> f32 {
     .fold(0.0, f32::max)
 }
 
-/// How wide each model of the area's props is, once every one has been prepared; until then the
-/// ones whose width isn't known yet are wanted, and kept, so each is prepared once.
-fn extents(world: &mut World, streaming: &mut Streaming) -> Option<Extents> {
+/// How big each model of the area's props is, once every one has been prepared; until then the
+/// ones whose size isn't known yet are wanted, and kept, so each is prepared once. Each model is
+/// kept as well until its look from above is known, its impostor wanted for it once the model is
+/// on the GPU and dressed.
+fn sizes(world: &mut World, streaming: &mut Streaming) -> Option<Extents> {
+    let looks_wanted = world.contains_resource::<ImpostorStore>();
     let area_props = streaming.instances.area_props.clone();
     for prop in area_props {
-        if streaming.instances.extents.contains_key(&prop) {
+        let instances = &streaming.instances;
+        let known = instances.sizes.contains_key(&prop)
+            && (!looks_wanted || instances.looks.contains_key(&prop));
+        if known {
             continue;
         }
-        let handle = streaming
+        let model = streaming
             .instances
             .models
             .entry(prop)
@@ -592,17 +635,247 @@ fn extents(world: &mut World, streaming: &mut Streaming) -> Option<Extents> {
                 }
                 model
             })
-            .id();
-        if let Some(extent) = world
+            .clone();
+        if let Some(size) = world
             .get_resource::<PropModels>()
-            .and_then(|models| models.extent(handle))
+            .and_then(|models| models.size(model.id()))
         {
-            streaming.instances.extents.insert(prop, extent);
+            let def = prop.get(&streaming.content);
+            let size = size.grown(props::overhang(&streaming.content, def));
+            streaming.instances.sizes.insert(prop, size);
+        }
+        if !looks_wanted {
+            continue;
+        }
+        if let Some(look) = world
+            .resource::<ImpostorStore>()
+            .look_from_above(model.id())
+        {
+            streaming.instances.looks.insert(prop, look);
+        } else if !streaming.instances.impostors_wanted.contains(&prop)
+            && let Some(parts) = world
+                .get_resource::<PropModels>()
+                .and_then(|models| models.parts(model.id()))
+                .map(<[_]>::to_vec)
+            && prop_dress(world, &streaming.content, prop, &model, &parts).is_some()
+        {
+            streaming.instances.impostors_wanted.insert(prop);
         }
     }
     let instances = &streaming.instances;
-    (instances.extents.len() == instances.area_props.len())
-        .then(|| Arc::new(instances.extents.clone()))
+    (instances.sizes.len() == instances.area_props.len()).then(|| Arc::new(instances.sizes.clone()))
+}
+
+/// Lays the canopy over the terrain's atlas as the area's props and the atlas's layout stand now,
+/// worked out off the frame once every prop's size and look from above are known: how much of it
+/// has yet to be laid.
+pub(super) fn lay_canopy(world: &mut World, streaming: &mut Streaming) -> Shortfall {
+    if !world.contains_resource::<ImpostorStore>() {
+        return Shortfall::default();
+    }
+    let Some(layout) = world
+        .get::<TerrainAtlas>(streaming.terrain)
+        .and_then(TerrainAtlas::layout)
+    else {
+        return Shortfall::default();
+    };
+    let instances = &mut streaming.instances;
+    let wanted = (layout, instances.canopy.sources_revision);
+    let finished = match &mut instances.canopy.making {
+        Some((made_for, _)) if *made_for != wanted => Some(None),
+        Some((_, task)) => check_ready(task).map(Some),
+        None => None,
+    };
+    if let Some(made) = finished {
+        instances.canopy.making = None;
+        if let Some(map) = made {
+            if let Some(mut atlas) = world.get_mut::<TerrainAtlas>(streaming.terrain) {
+                atlas.lay_canopy(&map);
+            }
+            instances.canopy.made_for = Some(wanted);
+        }
+    }
+    if instances.canopy.made_for == Some(wanted) {
+        return Shortfall::default();
+    }
+    let known = instances.sizes.len() == instances.area_props.len()
+        && instances.looks.len() == instances.area_props.len();
+    if instances.canopy.making.is_none() && known {
+        let area = streaming.area.clone();
+        let sizes = instances.sizes.clone();
+        let looks = instances.looks.clone();
+        let task = AsyncComputeTaskPool::get()
+            .spawn(async move { canopy_map(&area, layout, &sizes, &looks) });
+        instances.canopy.making = Some((wanted, task));
+    }
+    Shortfall {
+        missing: 1,
+        stale: 0,
+    }
+}
+
+/// What the props of `area` look like from above over each texel of the canopy of `layout`: the
+/// ground a prop hides is its look's cover of the square framing its model's sphere, at its
+/// scale, laid where it stands; a scatter's over its region, as many a square metre as it strews.
+/// Where more than one covers a texel their colours and extents are weighed by how much each
+/// covers, and the cover tops out at the whole texel.
+fn canopy_map(
+    area: &Area,
+    layout: AtlasLayout,
+    sizes: &HashMap<PropId, ModelSize>,
+    looks: &HashMap<PropId, LookFromAbove>,
+) -> CanopyMap {
+    let (columns, rows) = layout.canopy;
+    let texel = layout.canopy_texel().0;
+    let bounds = layout.canopy_bounds();
+    let band_texels = CanopyMap::texels(&layout);
+    let texels = band_texels * CANOPY_BANDS.len();
+    let mut covers = vec![0.0f32; texels];
+    let mut colors = vec![Vec3::ZERO; texels];
+    let mut extents = vec![0.0f32; texels];
+    let hides = |prop: PropId| -> Option<Hiding> {
+        let (size, look) = (sizes.get(&prop)?, looks.get(&prop)?);
+        let framed = 2.0 * size.radius.0;
+        Some(Hiding {
+            ground: look.cover * framed * framed,
+            color: Vec3::new(look.color.red, look.color.green, look.color.blue),
+            extent: size.extent.0,
+        })
+    };
+    let mut spread = |region: Rect<Meters>, density: f32, color: Vec3, extent: f32| {
+        let Some(within) = region.intersection(&bounds) else {
+            return;
+        };
+        let band = CanopyMap::band(Meters(extent)) * band_texels;
+        let first = |at: f32, origin: f32| ((at - origin) / texel).floor().max(0.0) as u32;
+        let past = |at: f32, origin: f32, count: u32| {
+            (((at - origin) / texel).ceil().max(0.0) as u32).min(count)
+        };
+        for row in first(within.min_y(), bounds.min_y())..past(within.max_y(), bounds.min_y(), rows)
+        {
+            for column in
+                first(within.min_x(), bounds.min_x())..past(within.max_x(), bounds.min_x(), columns)
+            {
+                let cell = Rect::new(
+                    Pos::new(
+                        bounds.min_x() + column as f32 * texel,
+                        bounds.min_y() + row as f32 * texel,
+                    ),
+                    Size::new(texel, texel),
+                );
+                let Some(overlap) = cell.intersection(&within) else {
+                    continue;
+                };
+                let share = density * overlap.area() / (texel * texel);
+                let at = band + (row * columns + column) as usize;
+                covers[at] += share;
+                colors[at] += color * share;
+                extents[at] += extent * share;
+            }
+        }
+    };
+    for module in &area.prop_sources {
+        match module {
+            AreaModule::Prop(placed) => {
+                let Some(hiding) = hides(placed.prop) else {
+                    continue;
+                };
+                let Some(size) = sizes.get(&placed.prop) else {
+                    continue;
+                };
+                let framed = 2.0 * size.radius.0 * placed.scale;
+                let region = Rect::new(
+                    Pos::new(placed.at.x - framed / 2.0, placed.at.y - framed / 2.0),
+                    Size::new(framed, framed),
+                );
+                let cover = hiding.ground / (2.0 * size.radius.0).powi(2).max(f32::EPSILON);
+                spread(region, cover, hiding.color, hiding.extent * placed.scale);
+            }
+            AreaModule::Scatter(scatter) => {
+                let Some(hiding) = scattered_hiding(scatter, &hides) else {
+                    continue;
+                };
+                let (min, max) = (scatter.scale.min, scatter.scale.max);
+                let mean_square = (min * min + min * max + max * max) / 3.0;
+                let mean = (min + max) / 2.0;
+                spread(
+                    scatter.region,
+                    scatter.per_square_meter * hiding.ground * mean_square,
+                    hiding.color,
+                    hiding.extent * mean,
+                );
+            }
+            _ => {}
+        }
+    }
+    let mut map = CanopyMap {
+        layout,
+        colors: Vec::with_capacity(texels),
+        extents: Vec::with_capacity(texels),
+    };
+    for at in 0..texels {
+        let covered = covers[at];
+        let color = if covered > 0.0 {
+            colors[at] / covered
+        } else {
+            Vec3::ZERO
+        };
+        let srgb = Srgba::from(LinearRgba::new(color.x, color.y, color.z, 1.0));
+        let byte = |share: f32| (share.clamp(0.0, 1.0) * 255.0).round() as u8;
+        map.colors.push([
+            byte(srgb.red),
+            byte(srgb.green),
+            byte(srgb.blue),
+            byte(covered),
+        ]);
+        let extent = if covered > 0.0 {
+            extents[at] / covered
+        } else {
+            0.0
+        };
+        map.extents
+            .push(((extent / CANOPY_EXTENT_MAX.0).clamp(0.0, 1.0) * 65535.0).round() as u16);
+    }
+    map
+}
+
+/// The ground a prop hides from above at its model's size, its colour there, and how wide it is.
+#[derive(Clone, Copy)]
+struct Hiding {
+    ground: f32,
+    color: Vec3,
+    extent: f32,
+}
+
+/// What `scatter`'s props hide from above, one of them on average: each weighs by the ground it
+/// hides, as the scatter strews them alike.
+fn scattered_hiding(
+    scatter: &Scatter,
+    hides: &impl Fn(PropId) -> Option<Hiding>,
+) -> Option<Hiding> {
+    let hidings: Vec<Hiding> = scatter
+        .props
+        .iter()
+        .filter_map(|&prop| hides(prop))
+        .collect();
+    if hidings.is_empty() {
+        return None;
+    }
+    let ground: f32 = hidings.iter().map(|hiding| hiding.ground).sum();
+    let weight = ground.max(f32::EPSILON);
+    Some(Hiding {
+        ground: ground / hidings.len() as f32,
+        color: hidings
+            .iter()
+            .map(|hiding| hiding.color * hiding.ground)
+            .sum::<Vec3>()
+            / weight,
+        extent: hidings
+            .iter()
+            .map(|hiding| hiding.extent * hiding.ground)
+            .sum::<f32>()
+            / weight,
+    })
 }
 
 /// How near the eye every piece's copies stand as they are strewn: each told apart from the next,
@@ -700,7 +973,7 @@ fn far_expanded(
     heights: &Heightfield,
     ground: Rect<Meters>,
     tile: FarTile,
-    extents: &HashMap<PropId, Meters>,
+    extents: &HashMap<PropId, ModelSize>,
     least: f32,
 ) -> Expanded {
     let mut expanded = Expanded {
@@ -712,7 +985,7 @@ fn far_expanded(
     for (source, chunk, placed) in filed.sourced_props_within(&area.prop_sources, ground, &span) {
         let wide = extents
             .get(&placed.prop)
-            .is_some_and(|extent| extent.0 * placed.scale >= least);
+            .is_some_and(|size| size.extent.0 * placed.scale >= least);
         if !wide {
             continue;
         }
@@ -962,16 +1235,28 @@ fn prop_dress(
         .map(|(material, look)| material::part_material(world, model, material.as_ref(), *look))
         .collect();
     let materials = materials?;
-    want_impostor(world, content, def, model, parts, &looks, &materials);
+    let overhang = props::overhang(content, def);
+    want_impostor(
+        world, content, def, model, parts, &looks, &materials, overhang,
+    );
+    let translucency = looks
+        .iter()
+        .flatten()
+        .map(|look| look.translucency)
+        .fold(0.0, f32::max);
     Some(DressedProp {
         materials: materials.into_iter().map(Handle::untyped).collect(),
         shadow: def.shadow,
         fades: def.fade,
+        overhang,
+        translucency,
     })
 }
 
 /// Wants `model`'s impostor, baked by `materials`, the world materials its parts are drawn in
-/// under `looks`, or read from the file kept for a model made of the same and dressed alike.
+/// under `looks`, framed `overhang` past the model, or read from the file kept for a model made
+/// of the same and dressed alike.
+#[allow(clippy::too_many_arguments)]
 fn want_impostor(
     world: &mut World,
     content: &Content,
@@ -980,6 +1265,7 @@ fn want_impostor(
     parts: &[Option<Handle<GltfMaterial>>],
     looks: &[Option<&MaterialLook>],
     materials: &[Handle<WorldMaterial>],
+    overhang: Meters,
 ) {
     let Some(path) = model.path().cloned() else {
         return;
@@ -1041,14 +1327,14 @@ fn want_impostor(
         .get(def.model.as_str())
         .map(|hash| hash.hash.as_str())
         .unwrap_or_default();
-    let key = impostor::atlas_key(model_hash, &keys);
+    let key = impostor::atlas_key(model_hash, overhang, &keys);
     if world.contains_resource::<ImpostorStore>() {
         let profile = world.resource::<Profile>().clone();
         let materials: Arc<[UntypedHandle]> =
             materials.iter().cloned().map(Handle::untyped).collect();
         world
             .resource_mut::<ImpostorStore>()
-            .want(&profile, model.id(), key, materials);
+            .want(&profile, model.id(), key, materials, overhang);
     }
 }
 
@@ -1083,6 +1369,8 @@ fn copy_dress(
         materials: materials?,
         shadow: false,
         fades: false,
+        overhang: Meters(0.0),
+        translucency: 0.0,
     })
 }
 

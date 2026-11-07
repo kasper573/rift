@@ -32,6 +32,12 @@ struct TerrainGround {
     // The metres a level of the heights stands for, and the level ground level lies on.
     level_step: f32,
     ground_level: f32,
+    // The ground a canopy texel spans each way, in metres, the widest a canopy's props are told
+    // to be, and how many pixels across a prop must span for the view to draw it rather than thin
+    // it away.
+    canopy_texel: f32,
+    canopy_extent_max: f32,
+    grain_pixels: f32,
 }
 
 @group(2) @binding(100) var<uniform> ground: TerrainGround;

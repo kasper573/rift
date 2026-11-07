@@ -132,6 +132,8 @@ fn a_views_picture_names_the_instance_it_shows_at_each_pixel() {
                         instances,
                         dressed: true,
                         fades: false,
+                        overhang: 0.0,
+                        translucency: 0.0,
                     },
                 )
             }),

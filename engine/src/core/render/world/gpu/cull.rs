@@ -18,7 +18,7 @@ use std::sync::{Arc, Mutex};
 use bevy::camera::primitives::{Aabb, Frustum};
 use bevy::camera::visibility::RenderLayers;
 use bevy::core_pipeline::{Core3d, Core3dSystems};
-use bevy::math::Affine3A;
+use bevy::math::{Affine3A, Vec3A};
 use bevy::pbr::{
     EARLY_SHADOW_PASS, LightEntity, ViewLightEntities, per_view_shadow_pass, shared_shadow_pass,
 };
@@ -206,6 +206,8 @@ pub struct PropDraw {
     pub half_z: f32,
     pub impostor_command: u32,
     pub proxy_command: u32,
+    /// How translucent its materials are at most, which its impostor is lit by.
+    pub translucency: f32,
 }
 
 #[derive(ShaderType, Clone, Copy, Debug, Default, PartialEq)]
@@ -263,6 +265,11 @@ pub struct DrawnProp<'a> {
     pub instances: u32,
     pub dressed: bool,
     pub fades: bool,
+    /// How far its shaders draw past its model, in the model's metres, which its sphere and box
+    /// grow by.
+    pub overhang: f32,
+    /// How translucent its materials are at most.
+    pub translucency: f32,
 }
 
 impl DrawTable {
@@ -292,14 +299,15 @@ impl DrawTable {
         for (prop, drawn) in &props {
             let model = drawn.placed;
             let middle = model.bounds.center;
-            let half = model.bounds.half_extents;
+            let half = model.bounds.half_extents + Vec3A::splat(drawn.overhang);
             table.models[*prop as usize] = Some(drawn.model);
             table.props[*prop as usize] = PropDraw {
                 x: middle.x,
                 y: middle.y,
                 z: middle.z,
-                radius: model.bounds.half_extents.length().max(f32::MIN_POSITIVE),
-                extent: 2.0 * model.bounds.half_extents.max_element(),
+                radius: (model.bounds.half_extents.length() + drawn.overhang)
+                    .max(f32::MIN_POSITIVE),
+                extent: 2.0 * half.max_element(),
                 first_part: table.parts.len() as u32,
                 parts: if drawn.dressed {
                     model.parts.len() as u32
@@ -312,6 +320,7 @@ impl DrawTable {
                 half_z: half.z,
                 impostor_command: 0,
                 proxy_command: 0,
+                translucency: drawn.translucency,
             };
             if !drawn.dressed {
                 continue;
@@ -1024,6 +1033,8 @@ fn draw_table(arena: &GpuInstances, models: &ModelArena) -> DrawTable {
                         instances,
                         dressed: dressed.is_some(),
                         fades: dressed.is_some_and(|dressed| dressed.fades),
+                        overhang: dressed.map_or(0.0, |dressed| dressed.overhang.0),
+                        translucency: dressed.map_or(0.0, |dressed| dressed.translucency),
                     },
                 ))
             })

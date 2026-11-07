@@ -4,6 +4,8 @@
 //! reads a tile reads across its seams from its slot alone. A table of the area's tiles says which slot holds each, so a draw reads the
 //! overview wherever a tile holds none. A tile keeps its slot while it is wanted and is filled
 //! again as its values change; a tile wanted anew takes a free slot or the one wanted longest ago.
+//! Over the overview lies the canopy: what the area's props look like from above wherever they
+//! stand, for the ground to show where the view thins them away.
 
 use std::collections::{HashMap, VecDeque};
 
@@ -26,14 +28,21 @@ use crate::core::ground::{
     shore_distances,
 };
 use crate::core::jobs::Handoff;
+use crate::core::math::{Rect, Size};
 use crate::core::render::sample::UploadedBytes;
 use crate::core::render::world::cover::SHORE_REACH;
-use crate::core::units::Meters;
+use crate::core::units::{GROUND_ORIGIN, Meters};
 
 /// How many tiles the GPU holds in detail at once.
 pub const DETAIL_SLOTS: u32 = 49;
 /// The values along a slot's side: a tile's samples, and one more all round.
 pub const SLOT_SIDE: u32 = TILE_PIXELS + 3;
+/// The widest a canopy texel's props are told to be: an extent past it reads as this wide.
+pub const CANOPY_EXTENT_MAX: Meters = Meters(256.0);
+/// The canopy keeps the props over a texel in bands of their extent, a layer each, so the view
+/// thins each band on its own: a band holds the props up to its extent that the band below
+/// doesn't, the last every wider one.
+pub const CANOPY_BANDS: [Meters; 4] = [Meters(1.0), Meters(4.0), Meters(16.0), Meters(64.0)];
 
 pub struct TerrainAtlasPlugin;
 
@@ -73,6 +82,8 @@ pub struct AtlasLayout {
     pub heights_overview: (u32, u32),
     /// The texels across and down of the overview of the paint.
     pub paint_overview: (u32, u32),
+    /// The texels across and down of the canopy.
+    pub canopy: (u32, u32),
 }
 
 /// The textures of the atlas, as they are bound to draw: the detail arrays a layer a slot, the
@@ -88,7 +99,40 @@ pub enum AtlasTexture {
     OverviewPaint,
     OverviewWater,
     OverviewShore,
+    /// What the props standing over each stretch of ground look like from above, a layer a
+    /// band of [`CANOPY_BANDS`]: their colour, and how much of the ground they cover.
+    OverviewCanopy,
+    /// How wide those props are, a layer a band, as a share of [`CANOPY_EXTENT_MAX`].
+    OverviewCanopyExtent,
     Table,
+}
+
+/// What the area's props look like from above over each texel of the canopy, laid out for a
+/// layout of the atlas, in the bands of [`CANOPY_BANDS`]: a colour with how much of the texel's
+/// ground the band's props cover, and how wide they typically are.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CanopyMap {
+    pub layout: AtlasLayout,
+    /// Red, green and blue in sRGB, then the cover: a texel each, row by row, a band after the
+    /// other.
+    pub colors: Vec<[u8; 4]>,
+    /// The props' extent as a share of [`CANOPY_EXTENT_MAX`] in 16 bits, laid out as the colours.
+    pub extents: Vec<u16>,
+}
+
+impl CanopyMap {
+    /// The band of [`CANOPY_BANDS`] a prop `extent` wide belongs to.
+    pub fn band(extent: Meters) -> usize {
+        CANOPY_BANDS
+            .iter()
+            .position(|band| extent < *band)
+            .unwrap_or(CANOPY_BANDS.len() - 1)
+    }
+
+    /// How many texels each band holds.
+    pub fn texels(layout: &AtlasLayout) -> usize {
+        (layout.canopy.0 * layout.canopy.1) as usize
+    }
 }
 
 impl TerrainAtlas {
@@ -179,9 +223,63 @@ impl TerrainAtlas {
     pub fn paint(&self) -> Option<&PaintMap> {
         self.laid.as_ref().map(|laid| &laid.ground.paint)
     }
+
+    /// Lays `canopy` over the ground laid, if it was worked out for its layout: written after
+    /// whatever of the overview is on its way, within the frames' budgets.
+    pub fn lay_canopy(&mut self, canopy: &CanopyMap) {
+        let Some(laid) = &mut self.laid else {
+            return;
+        };
+        if laid.layout != canopy.layout {
+            return;
+        }
+        let (columns, rows) = canopy.layout.canopy;
+        let band_texels = CanopyMap::texels(&canopy.layout);
+        for band in 0..CANOPY_BANDS.len() {
+            for first_row in (0..rows).step_by(CANOPY_ROWS_PER_WRITE as usize) {
+                let past = (first_row + CANOPY_ROWS_PER_WRITE).min(rows);
+                let first = band * band_texels + (first_row * columns) as usize;
+                let texels = first..first + ((past - first_row) * columns) as usize;
+                let size = UVec2::new(columns, past - first_row);
+                let origin = UVec3::new(0, first_row, band as u32);
+                laid.overview_writes.push_back(AtlasWrite::Texels {
+                    texture: AtlasTexture::OverviewCanopy,
+                    origin,
+                    size,
+                    bytes: canopy.colors[texels.clone()].concat(),
+                });
+                laid.overview_writes.push_back(AtlasWrite::Texels {
+                    texture: AtlasTexture::OverviewCanopyExtent,
+                    origin,
+                    size,
+                    bytes: canopy.extents[texels]
+                        .iter()
+                        .flat_map(|extent| extent.to_le_bytes())
+                        .collect(),
+                });
+            }
+        }
+    }
 }
 
 impl AtlasLayout {
+    /// The ground a canopy texel spans each way: the first texel from the ground's corner.
+    pub fn canopy_texel(&self) -> Meters {
+        Meters(
+            (OVERVIEW_STRIDE * self.overview_step * CANOPY_STRIDE) as f32
+                / SAMPLES_PER_METER as f32,
+        )
+    }
+
+    /// The ground the canopy's texels span.
+    pub fn canopy_bounds(&self) -> Rect<Meters> {
+        let texel = self.canopy_texel().0;
+        Rect::new(
+            GROUND_ORIGIN,
+            Size::new(self.canopy.0 as f32 * texel, self.canopy.1 as f32 * texel),
+        )
+    }
+
     fn of(heights: &Heightfield, paint: &PaintMap) -> AtlasLayout {
         let size = heights.size();
         let overview = heights.overview_dims();
@@ -190,14 +288,22 @@ impl AtlasLayout {
         while texels(overview.0.max(overview.1), step) > MAX_TEXTURE_SIDE {
             step *= 2;
         }
-        AtlasLayout {
+        let mut layout = AtlasLayout {
             size,
             range: heights.range(),
             tiles: size.tiles(),
             overview_step: step,
             heights_overview: (texels(overview.0, step), texels(overview.1, step)),
             paint_overview: (texels(paint.0, step), texels(paint.1, step)),
-        }
+            canopy: (0, 0),
+        };
+        let texel = layout.canopy_texel().0;
+        let ground = size.meters();
+        layout.canopy = (
+            (ground.width / texel).ceil().max(1.0) as u32,
+            (ground.height / texel).ceil().max(1.0) as u32,
+        );
+        layout
     }
 }
 
@@ -236,6 +342,13 @@ const MAX_TEXTURE_SIDE: u32 = 8192;
 
 /// How many slots are read at once, so what waits to be written stays a few frames' worth.
 const FILLS_AT_ONCE: usize = 4;
+
+/// The overview's texels a canopy texel spans each way: the far field thins by the grain at
+/// hundreds of metres, which a texel this coarse still follows.
+const CANOPY_STRIDE: u32 = 4;
+
+/// The rows of the canopy written at once, so each write fits a frame's budget.
+const CANOPY_ROWS_PER_WRITE: u32 = 64;
 
 /// The bytes a slot's heights, paint, water and shore take.
 const SLOT_BYTES: usize = (SLOT_SIDE * SLOT_SIDE) as usize * 6;
@@ -809,6 +922,8 @@ impl GpuTerrainAtlas {
             AtlasTexture::OverviewPaint,
             AtlasTexture::OverviewWater,
             AtlasTexture::OverviewShore,
+            AtlasTexture::OverviewCanopy,
+            AtlasTexture::OverviewCanopyExtent,
             AtlasTexture::Table,
         ]
         .into_iter()
@@ -850,6 +965,8 @@ impl AtlasTexture {
             | AtlasTexture::OverviewPaint
             | AtlasTexture::Shore
             | AtlasTexture::OverviewShore => TextureFormat::R8Uint,
+            AtlasTexture::OverviewCanopy => TextureFormat::Rgba8UnormSrgb,
+            AtlasTexture::OverviewCanopyExtent => TextureFormat::R16Unorm,
             AtlasTexture::Table => TextureFormat::R32Uint,
             _ => TextureFormat::R16Uint,
         }
@@ -858,7 +975,7 @@ impl AtlasTexture {
     fn texel_bytes(self) -> u32 {
         match self.format() {
             TextureFormat::R8Uint => 1,
-            TextureFormat::R32Uint => 4,
+            TextureFormat::R32Uint | TextureFormat::Rgba8UnormSrgb => 4,
             _ => 2,
         }
     }
@@ -876,6 +993,9 @@ impl AtlasTexture {
                 (layout.heights_overview.0, layout.heights_overview.1, 1)
             }
             AtlasTexture::OverviewPaint => (layout.paint_overview.0, layout.paint_overview.1, 1),
+            AtlasTexture::OverviewCanopy | AtlasTexture::OverviewCanopyExtent => {
+                (layout.canopy.0, layout.canopy.1, CANOPY_BANDS.len() as u32)
+            }
             AtlasTexture::Table => (layout.tiles.0, layout.tiles.1, 1),
         }
     }
