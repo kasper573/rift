@@ -27,7 +27,8 @@ use ui::theme;
 
 use bevy::prelude::*;
 use bevy::winit::{UpdateMode, WinitSettings};
-use engine::core::content::ContentFile;
+use engine::core::content::{Content, ContentFile};
+use engine::core::jobs;
 use engine::core::math::Pos;
 use engine::core::units::Meters;
 use engine::systems::GameSettings;
@@ -151,6 +152,9 @@ fn share_content(editor: &mut Editor, world: &mut World) {
         return;
     };
     if editor.views.shared_generation != Some(generation) {
+        if let Some(replaced) = world.remove_resource::<Content>() {
+            jobs::drop_off_thread(replaced);
+        }
         world.insert_resource(content);
         editor.views.shared_generation = Some(generation);
     }

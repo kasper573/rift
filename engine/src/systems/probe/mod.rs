@@ -236,6 +236,7 @@ pub fn sample_frame(world: &mut World) {
             Millis(began.elapsed().as_secs_f32() * 1000.0)
         });
     let missing = area::scenery::missing(world);
+    let stale = area::scenery::stale(world);
     let visible_chunks = area::scenery::stood_chunks(world);
     let entities = world.entities().len();
     let work = world
@@ -263,6 +264,7 @@ pub fn sample_frame(world: &mut World) {
             gpu_ms: None,
             props_drawn: None,
             missing,
+            stale,
             draws: 0,
             instances: 0,
             entities,

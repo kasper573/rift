@@ -257,6 +257,11 @@ impl Window {
                 .iter()
                 .filter(|sample| sample.missing > 0)
                 .count() as u32,
+            stale_frames: self
+                .samples
+                .iter()
+                .filter(|sample| sample.stale > 0)
+                .count() as u32,
             cpu_main: median(self.samples.iter().map(|sample| sample.cpu_main_ms)),
             cpu_render: median(
                 self.samples
@@ -297,6 +302,8 @@ pub struct FrameStats {
     pub stalls: u32,
     /// Frames that showed anything the view takes in missing.
     pub missing_frames: u32,
+    /// Frames that showed anything the view takes in as it stood before an edit.
+    pub stale_frames: u32,
     pub cpu_main: Option<Millis>,
     pub cpu_render: Option<Millis>,
     pub gpu: Option<Millis>,

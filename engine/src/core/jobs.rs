@@ -3,7 +3,15 @@
 //! it was handed out, so it comes out alike every time.
 
 use bevy::prelude::*;
-use bevy::tasks::{Task, block_on};
+use bevy::tasks::{AsyncComputeTaskPool, Task, block_on};
+
+/// Lets go of `value` off the main thread, so freeing what a whole game or area is made of never
+/// holds up a frame.
+pub fn drop_off_thread<T: Send + 'static>(value: T) {
+    AsyncComputeTaskPool::get()
+        .spawn(async move { drop(value) })
+        .detach();
+}
 
 /// How the world takes back the work it hands off the main thread.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq, Eq)]

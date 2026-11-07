@@ -200,6 +200,7 @@ fn sample(frame: u32, dt_ms: Millis) -> FrameSample {
         gpu_ms: None,
         props_drawn: None,
         missing: 0,
+        stale: 0,
         draws: 0,
         instances: 0,
         entities: 0,

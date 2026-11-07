@@ -25,6 +25,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use engine::core::content::ErrorPlace::WholeFile;
 use engine::core::content::check::RowError;
+use engine::core::content::media;
 use engine::core::content::{
     CheckedFiles, Content, ContentFile, ContentId, ContentNames, ContentProblem, FileHashes,
     FolderReader, LoadError, LoadPurpose, LoadReport, MISSING_FILE, NamedContent, ReadRow,
@@ -1374,13 +1375,26 @@ pub struct CheckedEdit {
 }
 
 impl PreparedEdit {
-    /// The bytes of the content the check reads: what it costs.
-    pub fn weight(&self) -> usize {
-        self.touched
-            .iter()
-            .filter_map(|file| self.next.get(file))
-            .map(|bytes| bytes.len())
-            .sum()
+    /// Whether the check decodes no more than `budget` bytes of content: what it costs.
+    /// Checking a part of a bundle reads the bundle whole, as the game does, however small the
+    /// part, and an image's cost is its pixels, not its file.
+    pub fn checks_within(&self, budget: usize) -> bool {
+        let mut read: BTreeSet<String> = self.touched.iter().cloned().collect();
+        for file in &self.touched {
+            if let Some(content) = content_holding(file) {
+                read.extend(self.next.files_of(content));
+            }
+        }
+        let mut decoded = 0;
+        for file in &read {
+            if let Some(bytes) = self.next.get(file) {
+                decoded += media::decoded_size(file, &bytes);
+            }
+            if decoded > budget {
+                return false;
+            }
+        }
+        true
     }
 
     /// The edit taken as it is, for the load after it to vouch for.
@@ -1399,23 +1413,28 @@ impl PreparedEdit {
         }
     }
 
-    /// Checks the files the edit touches as they stand and after it.
+    /// Checks the files the edit touches after it, and as they stand where that finds problems,
+    /// to tell those the edit introduces.
     pub fn check(self) -> CheckedEdit {
-        let known = match &self.known {
-            Known::Found(known) => known.clone(),
-            Known::Unchecked(reader) => reader
-                .check(&self.touched)
-                .errors
-                .iter()
-                .map(error_key)
-                .collect(),
-        };
         let CheckedFiles { errors, read } = self.next_reader.check(&self.touched);
-        let introduced = errors
-            .iter()
-            .filter(|error| !known.contains(&error_key(error)))
-            .cloned()
-            .collect();
+        let introduced = if errors.is_empty() {
+            Vec::new()
+        } else {
+            let known = match &self.known {
+                Known::Found(known) => known.clone(),
+                Known::Unchecked(reader) => reader
+                    .check(&self.touched)
+                    .errors
+                    .iter()
+                    .map(error_key)
+                    .collect(),
+            };
+            errors
+                .iter()
+                .filter(|error| !known.contains(&error_key(error)))
+                .cloned()
+                .collect()
+        };
         CheckedEdit {
             label: self.label,
             merge: self.merge,

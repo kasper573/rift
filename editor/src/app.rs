@@ -121,8 +121,8 @@ impl Plugin for EditorPlugin {
 }
 
 const FRAME_RATE_MARGIN: f32 = 8.0;
-/// The most bytes of content an edit's check reads on the frame: one reading more is applied at
-/// once, and the load after it vouches for it.
+/// The most bytes of content an edit's check decodes on the frame: one decoding more is applied
+/// at once, and the load after it vouches for it.
 const CHECKED_ON_THE_FRAME: usize = 256 << 10;
 
 /// A line per frame, each a [`FrameRecord`] in JSON, written once the frame's sample has settled.
@@ -707,10 +707,10 @@ impl Editor {
                 return Err(refusal.sentence());
             }
         };
-        let checked = if prepared.weight() > CHECKED_ON_THE_FRAME {
-            prepared.unchecked()
-        } else {
+        let checked = if prepared.checks_within(CHECKED_ON_THE_FRAME) {
             prepared.check()
+        } else {
+            prepared.unchecked()
         };
         self.commit(&label, &files, checked, viewpoint)
     }

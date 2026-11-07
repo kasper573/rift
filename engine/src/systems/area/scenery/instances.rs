@@ -20,7 +20,7 @@ use super::covers::CopyPiece;
 use super::expand::{self, PaintChunk, SceneryChunk};
 use super::plan::{Detail, KEEP_SHARE, Plan, Seen};
 use super::props;
-use super::{Budget, Streaming, distance_to, ground_loaded};
+use super::{Shortfall, Streaming, distance_to, ground_loaded};
 use crate::core::assets;
 use crate::core::content::Content;
 use crate::core::ground::{Heightfield, PaintMap};
@@ -248,8 +248,7 @@ pub(super) fn stand(
     streaming: &mut Streaming,
     plan: &Plan,
     root: Entity,
-    budget: &mut Budget,
-) -> u32 {
+) -> Shortfall {
     let ground = streaming.area.size.bounds();
     let wanted = wanted_lots(streaming, &plan.seen, ground);
     let wanted_at: HashMap<[u32; 2], Lot> =
@@ -274,25 +273,37 @@ pub(super) fn stand(
     instances.expanded.extend(finished);
     send(world, streaming, root);
     dress(world, streaming, root);
-    let mut missing = 0;
+    let mut shortfall = Shortfall::default();
     for lot in wanted {
         let keys = lot.keys(ground);
         let instances = &streaming.instances;
-        let standing = keys.iter().find(|key| {
-            !instances.stale.contains(*key)
-                && instances
-                    .standing
-                    .get(*key)
-                    .is_some_and(|standing| standing.lot == lot)
-        });
-        if let Some(key) = standing {
-            let drawn = &instances.standing[key].drawn;
-            if !drawn.iter().all(|drawn| instances.dressed.contains(drawn)) {
-                missing += 1;
+        let standing_as = |key: &u32| {
+            instances
+                .standing
+                .get(key)
+                .filter(|standing| standing.lot == lot)
+        };
+        let dressed = |standing: &Standing| {
+            standing
+                .drawn
+                .iter()
+                .all(|drawn| instances.dressed.contains(drawn))
+        };
+        let fresh = keys
+            .iter()
+            .filter(|key| !instances.stale.contains(*key))
+            .find_map(standing_as);
+        if let Some(standing) = fresh {
+            if !dressed(standing) {
+                shortfall.missing += 1;
             }
             continue;
         }
-        missing += 1;
+        if keys.iter().filter_map(standing_as).any(dressed) {
+            shortfall.stale += 1;
+        } else {
+            shortfall.missing += 1;
+        }
         let waiting = keys.iter().any(|key| {
             instances.expanding.contains_key(key)
                 || instances.expanded.iter().any(|(held, ..)| held == key)
@@ -321,10 +332,7 @@ pub(super) fn stand(
             .expanding
             .insert(key, (lot, AsyncComputeTaskPool::get().spawn(task)));
     }
-    if missing > 0 {
-        budget.defer();
-    }
-    missing
+    shortfall
 }
 
 /// Lets go of every lot standing past what the plan keeps, and of any being worked out there, and

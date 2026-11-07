@@ -123,20 +123,37 @@ impl TerrainAtlas {
         self.wanted.extend(tiles);
     }
 
-    /// How much of what is asked for is yet to reach the GPU as it is now: the overview, and each
-    /// tile wanted there is a slot for whose slot doesn't hold its values yet.
+    /// How much of what is asked for the GPU has nothing of yet: the overview until it is first
+    /// sent, and each tile wanted there is a slot for that holds no slot.
     pub fn missing(&self) -> u32 {
         let Some(laid) = &self.laid else {
             return 0;
         };
-        let overview = u32::from(!laid.overview_sent || !laid.overview.is_empty());
+        let overview = u32::from(!laid.overview_sent);
+        let tiles = self
+            .wanted
+            .iter()
+            .take(DETAIL_SLOTS as usize)
+            .filter(|&&tile| laid.residency.slot(tile).is_none())
+            .count() as u32;
+        overview + tiles
+    }
+
+    /// How much of what is asked for the GPU draws as it stood before a change: the overview
+    /// while it is drawn anew, and each tile whose slot holds earlier values than its own.
+    pub fn stale(&self) -> u32 {
+        let Some(laid) = &self.laid else {
+            return 0;
+        };
+        let overview = u32::from(laid.overview_sent && !laid.overview.is_empty());
         let tiles = self
             .wanted
             .iter()
             .take(DETAIL_SLOTS as usize)
             .filter(|&&tile| {
                 let round = AtlasGround::round(tile, laid.layout.tiles);
-                !laid.residency.is_current(tile, &laid.ground.stamp(&round))
+                laid.residency.slot(tile).is_some()
+                    && !laid.residency.is_current(tile, &laid.ground.stamp(&round))
             })
             .count() as u32;
         overview + tiles

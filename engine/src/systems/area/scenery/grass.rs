@@ -9,7 +9,7 @@ use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 
 use super::plan::{KEEP_SHARE, Seen};
-use super::{Streaming, distance_to, ground_loaded};
+use super::{Shortfall, Streaming, distance_to, ground_loaded};
 use crate::core::math::Rect;
 use crate::core::render::video::{GrassQuality, VideoPreferences};
 use crate::core::render::world::gpu::grass::{
@@ -62,10 +62,10 @@ impl Grass {
 }
 
 /// Grows the blades `seen` takes in and lets go of those it left behind: how many of its cells
-/// have yet to grow.
-pub(super) fn grow(world: &mut World, streaming: &mut Streaming, seen: &Seen) -> u32 {
+/// have yet to grow, and how many stand as they grew before the ground under them changed.
+pub(super) fn grow(world: &mut World, streaming: &mut Streaming, seen: &Seen) -> Shortfall {
     if streaming.grass.pieces.is_empty() {
-        return 0;
+        return Shortfall::default();
     }
     let quality = world
         .get_resource::<VideoPreferences>()
@@ -87,14 +87,19 @@ pub(super) fn grow(world: &mut World, streaming: &mut Streaming, seen: &Seen) ->
         grass.stale.remove(&(piece, cell));
         changes.extend(grass.arena.cut(piece, cell));
     }
-    let mut missing = 0;
+    let mut shortfall = Shortfall::default();
     for (piece, cell) in wanted {
         let grass = &streaming.grass;
-        if grass.arena.holds(piece, cell) && !grass.stale.contains(&(piece, cell)) {
+        let held = grass.arena.holds(piece, cell);
+        if held && !grass.stale.contains(&(piece, cell)) {
             continue;
         }
         if !ground_loaded(streaming, cell.bounds()) || !upload::spend(world, GROUND_BYTES) {
-            missing += 1;
+            if held {
+                shortfall.stale += 1;
+            } else {
+                shortfall.missing += 1;
+            }
             continue;
         }
         let ground = Arc::new(GrassGround::of(cell, &streaming.heights, &streaming.paint));
@@ -106,7 +111,7 @@ pub(super) fn grow(world: &mut World, streaming: &mut Streaming, seen: &Seen) ->
         held.0
             .extend(changes.into_iter().map(|change| (terrain, change)));
     }
-    missing
+    shortfall
 }
 
 /// Lets the GPU go of all the grass of the terrain `terrain`.

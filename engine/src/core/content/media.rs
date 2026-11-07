@@ -279,6 +279,19 @@ pub fn visible_columns(bytes: &[u8]) -> Result<Option<VisiblePixelColumns>, Stri
     }))
 }
 
+/// How many bytes `bytes`, the file at `path`, take once decoded as a check reads them: an
+/// image's pixels, read off its header; any other file its own bytes.
+pub fn decoded_size(path: &str, bytes: &[u8]) -> usize {
+    let pixels = || {
+        let reader = png::Decoder::new(Cursor::new(bytes)).read_info().ok()?;
+        reader.output_buffer_size()
+    };
+    match AssetKind::of(path) {
+        Some(AssetKind::Image) => pixels().unwrap_or(bytes.len()),
+        _ => bytes.len(),
+    }
+}
+
 fn png_size(bytes: &[u8]) -> Result<(u32, u32), String> {
     let reader = png::Decoder::new(Cursor::new(bytes))
         .read_info()

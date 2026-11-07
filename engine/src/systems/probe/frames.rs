@@ -29,6 +29,9 @@ pub struct FrameSample {
     pub props_drawn: Option<u32>,
     /// Chunks of ground and scenery the view takes in that stand coarser than wanted, or not yet.
     pub missing: u32,
+    /// Chunks of ground and scenery the view takes in that stand as they did before an edit,
+    /// their new values on their way.
+    pub stale: u32,
     pub draws: u32,
     pub instances: u32,
     pub entities: u32,

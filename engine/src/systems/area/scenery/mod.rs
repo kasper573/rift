@@ -45,7 +45,7 @@ use crate::core::ground::{
     GroundGrid, GroundValue, Heightfield, OVERVIEW_STRIDE, PaintMap, SAMPLES_PER_METER, TileAt,
     TileVersion, WaterSurface,
 };
-use crate::core::jobs::Handoff;
+use crate::core::jobs::{self, Handoff};
 use crate::core::math::{Pos, Rect, Rng, Size};
 use crate::core::render::camera::WorldPicture;
 use crate::core::render::present::AreaGrade;
@@ -185,7 +185,7 @@ pub fn spawn(
         stood_at: None,
         stood: Stood::default(),
         drawn: None,
-        missing: 0,
+        shortfall: Shortfall::default(),
         loading: HashMap::default(),
     };
     world.resource_mut::<Streams>().0.insert(root, streaming);
@@ -301,8 +301,11 @@ pub fn restand(world: &mut World, scenery: Scenery, content: &Content, area: &Ar
             streaming.planning = None;
             streaming.plan = None;
         }
-        streaming.area = area.clone();
-        streaming.content = content.clone();
+        let replaced = (
+            std::mem::replace(&mut streaming.area, area.clone()),
+            std::mem::replace(&mut streaming.content, content.clone()),
+        );
+        jobs::drop_off_thread(replaced);
         streaming.whole = false;
         true
     })
@@ -432,14 +435,47 @@ pub fn standing(world: &World) -> bool {
 }
 
 /// How much of the ground, the props, the covers' copies and their blades the sights take in has
-/// yet to stand.
+/// yet to stand at all.
 pub fn missing(world: &World) -> u32 {
     world
         .resource::<Streams>()
         .0
         .values()
-        .map(|streaming| streaming.missing)
+        .map(|streaming| streaming.shortfall.missing)
         .sum()
+}
+
+/// How much of the ground, the props, the covers' copies and their blades the sights take in
+/// stands as it did before an edit, its new values on their way.
+pub fn stale(world: &World) -> u32 {
+    world
+        .resource::<Streams>()
+        .0
+        .values()
+        .map(|streaming| streaming.shortfall.stale)
+        .sum()
+}
+
+/// How much of what a plan takes in has yet to stand as it is now.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Shortfall {
+    /// Not standing at all, or coarser than wanted.
+    pub missing: u32,
+    /// Standing as it did before an edit, its new values on their way.
+    pub stale: u32,
+}
+
+impl Shortfall {
+    pub fn any(self) -> bool {
+        self.missing > 0 || self.stale > 0
+    }
+}
+
+impl std::ops::AddAssign for Shortfall {
+    fn add_assign(&mut self, other: Shortfall) {
+        self.missing += other.missing;
+        self.stale += other.stale;
+    }
 }
 
 /// How many props `scenery` holds in its arena on the GPU.
@@ -552,8 +588,8 @@ struct Streaming {
     /// The plan whose ground the terrain draws.
     drawn: Option<Arc<Plan>>,
     /// How much of the ground, the props, the covers' copies and their blades the plan takes in
-    /// has yet to stand.
-    missing: u32,
+    /// has yet to stand as it is now.
+    shortfall: Shortfall,
     /// The tiles of ground being loaded for what stands on them.
     loading: HashMap<TileAt, Task<()>>,
 }
@@ -667,43 +703,22 @@ fn stream_plan(world: &mut World, root: Entity, streaming: &mut Streaming) {
     streaming
         .loading
         .retain(|_, task| check_ready(task).is_none());
-    let mut budget = Budget::default();
-    let ground_missing = draw_ground(world, streaming, &plan);
-    if ground_missing > 0 {
-        budget.defer();
-    }
-    let props_missing = instances::stand(world, streaming, &plan, root, &mut budget);
+    let mut shortfall = draw_ground(world, streaming, &plan);
+    shortfall += instances::stand(world, streaming, &plan, root);
     instances::clear(world, streaming, &plan, root);
-    let grass_missing = grass::grow(world, streaming, &plan.seen);
-    if grass_missing > 0 {
-        budget.defer();
-    }
-    streaming.missing = ground_missing + props_missing + grass_missing;
+    shortfall += grass::grow(world, streaming, &plan.seen);
+    streaming.shortfall = shortfall;
     stream_lights(world, streaming, &plan, root);
-    streaming.whole = !budget.spent;
+    streaming.whole = !shortfall.any();
     if streaming.whole {
         streaming.stood_at = frames_drawn(world);
     }
 }
 
-/// What a frame left to stand.
-#[derive(Default)]
-struct Budget {
-    /// Whether the frame left something to stand.
-    spent: bool,
-}
-
-impl Budget {
-    /// Leaves something to stand on a later frame, as it waits on what is being made or loaded.
-    fn defer(&mut self) {
-        self.spent = true;
-    }
-}
-
 /// Draws the ground `plan` wants, its nodes finer than the overview in detail as the terrain's
 /// atlas takes their tiles in, those any eye may come nearest first; how much of it has yet to
-/// reach the GPU.
-fn draw_ground(world: &mut World, streaming: &mut Streaming, plan: &Arc<Plan>) -> u32 {
+/// reach the GPU as it is now.
+fn draw_ground(world: &mut World, streaming: &mut Streaming, plan: &Arc<Plan>) -> Shortfall {
     let terrain = streaming.terrain;
     if streaming
         .drawn
@@ -738,7 +753,10 @@ fn draw_ground(world: &mut World, streaming: &mut Streaming, plan: &Arc<Plan>) -
     }
     world
         .get::<TerrainAtlas>(terrain)
-        .map_or(0, TerrainAtlas::missing)
+        .map_or(Shortfall::default(), |atlas| Shortfall {
+            missing: atlas.missing(),
+            stale: atlas.stale(),
+        })
 }
 
 /// Whether every tile of ground under `bounds` is loaded, each not yet being loaded set loading on
@@ -942,9 +960,7 @@ pub fn despawn(world: &mut World, scenery: Scenery) {
     if let Some(streaming) = world.resource_mut::<Streams>().0.remove(&scenery.root) {
         instances::drop_arena(world, scenery.root);
         grass::drop_grass(world, streaming.terrain);
-        AsyncComputeTaskPool::get()
-            .spawn(async move { drop(streaming) })
-            .detach();
+        jobs::drop_off_thread(streaming);
     }
     take_away(world, scenery.root);
 }
