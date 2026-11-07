@@ -85,6 +85,13 @@ impl<K: Copy + Eq + Hash, S: PartialEq> Residency<K, S> {
         Some(Admitted { slot, evicted })
     }
 
+    /// Lets go of the slot `key` holds, if any.
+    pub fn release(&mut self, key: K) {
+        if let Some(slot) = self.by_key.remove(&key) {
+            self.slots[slot as usize] = None;
+        }
+    }
+
     /// Whether `key` holds a slot or could take one this frame.
     pub fn has_room(&self, key: K) -> bool {
         self.by_key.contains_key(&key) || self.vacancy().is_some()

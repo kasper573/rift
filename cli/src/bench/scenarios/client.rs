@@ -18,6 +18,13 @@ use crate::bench::scenario::{
     Button, CameraOp, Cond, Ground, Point, Scenario, Step, Target, UiTarget,
 };
 
+/// The client's opening, measured from the player's entry into the world until the scenery
+/// stands whole where they arrive: cold, on a profile no client has run the game on, so every
+/// cache is built behind the loading screen; and warm, on the profile the cold start kept its
+/// caches under.
+pub const OPEN_COLD: &str = "open-cold";
+pub const OPEN_WARM: &str = "open-warm";
+
 /// Every scenario of the catalogue, in the order they run; with `smoke`, one short scenario that
 /// proves the harness alone.
 pub fn catalogue(slots: &ScenarioSlots, content: &Content, smoke: bool) -> Vec<Scenario> {

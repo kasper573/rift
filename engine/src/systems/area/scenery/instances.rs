@@ -23,12 +23,17 @@ use super::props;
 use super::{Shortfall, Streaming, distance_to, ground_loaded};
 use crate::core::assets;
 use crate::core::content::Content;
+use crate::core::content::load::FileHashes;
 use crate::core::ground::{Heightfield, PaintMap};
 use crate::core::math::{Offset, Rect, Size};
+use crate::core::os::Profile;
 use crate::core::render::camera::Lens;
 use crate::core::render::world::cover::{self, Place};
 use crate::core::render::world::gpu::arena::{
     DressedProp, InstanceArena, InstanceChange, InstanceChanges, InstanceRecord, PropModels,
+};
+use crate::core::render::world::gpu::impostor::{
+    self, BakeMaterial, BakeMaterialKey, ImpostorStore,
 };
 use crate::core::render::world::gpu::upload;
 use crate::core::render::world::lod::GRAIN_PIXELS;
@@ -734,11 +739,88 @@ fn prop_dress(
             material::part_material(world, model, material.as_ref(), look)
         })
         .collect();
+    let materials = materials?;
+    want_impostor(world, content, def, model, parts);
     Some(DressedProp {
-        materials: materials?.into_iter().map(Handle::untyped).collect(),
+        materials: materials.into_iter().map(Handle::untyped).collect(),
         shadow: def.shadow,
         fades: def.fade,
     })
+}
+
+/// Wants `model`'s impostor, baked from what its glTF materials show or read from the file kept
+/// for a model made of the same and dressed alike.
+fn want_impostor(
+    world: &mut World,
+    content: &Content,
+    def: &PropDef,
+    model: &Handle<Gltf>,
+    parts: &[Option<Handle<GltfMaterial>>],
+) {
+    let Some(path) = model.path().cloned() else {
+        return;
+    };
+    let standards: Vec<Option<StandardMaterial>> = parts
+        .iter()
+        .map(|material| {
+            let label = match material {
+                Some(material) => format!("{}/std", material.path()?.label()?),
+                None => format!("{}/std", GltfAssetLabel::DefaultMaterial),
+            };
+            let handle = world
+                .resource::<AssetServer>()
+                .get_handle::<StandardMaterial>(path.clone().with_label(label))?;
+            world
+                .resource::<Assets<StandardMaterial>>()
+                .get(&handle)
+                .cloned()
+        })
+        .collect();
+    let bakes: Vec<BakeMaterial> = standards
+        .iter()
+        .map(|standard| match standard {
+            Some(standard) => BakeMaterial {
+                color: standard.base_color.to_linear().to_f32_array(),
+                texture: standard.base_color_texture.as_ref().map(Handle::id),
+                cutoff: match standard.alpha_mode {
+                    AlphaMode::Opaque => 0.0,
+                    AlphaMode::Mask(cutoff) => cutoff,
+                    _ => 0.5,
+                },
+            },
+            None => BakeMaterial {
+                color: [1.0; 4],
+                texture: None,
+                cutoff: 0.0,
+            },
+        })
+        .collect();
+    let keys: Vec<BakeMaterialKey> = standards
+        .iter()
+        .zip(&bakes)
+        .map(|(standard, bake)| BakeMaterialKey {
+            color: bake.color,
+            texture: standard
+                .as_ref()
+                .and_then(|standard| standard.base_color_texture.as_ref())
+                .and_then(|texture| texture.path())
+                .map(ToString::to_string),
+            cutoff: bake.cutoff,
+        })
+        .collect();
+    let model_hash = content
+        .built::<FileHashes>()
+        .0
+        .get(def.model.as_str())
+        .map(|hash| hash.hash.as_str())
+        .unwrap_or_default();
+    let key = impostor::atlas_key(model_hash, &keys);
+    if world.contains_resource::<ImpostorStore>() {
+        let profile = world.resource::<Profile>().clone();
+        world
+            .resource_mut::<ImpostorStore>()
+            .want(&profile, model.id(), key, bakes.into());
+    }
 }
 
 /// How the arena draws the copies `piece` strews, its prop's model drawn in `parts`: casting no

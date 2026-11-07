@@ -16,7 +16,7 @@ use bevy::ecs::query::QueryItem;
 use bevy::gltf::{Gltf, GltfMaterial, GltfMesh, GltfNode};
 use bevy::prelude::*;
 use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
-use bevy::render::render_resource::BufferUsages;
+use bevy::render::render_resource::{BufferUsages, VertexAttribute, VertexFormat};
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::sync_component::SyncComponent;
 use bevy::render::{Extract, ExtractSchedule, MainWorld, Render, RenderApp, RenderSystems};
@@ -89,6 +89,30 @@ pub struct ModelVertex {
 
 impl ModelVertex {
     pub const BYTES: u64 = 48;
+
+    /// The vertex as a pipeline reads it from the slab: position, normal, uv, colour.
+    pub const ATTRIBUTES: [VertexAttribute; 4] = [
+        VertexAttribute {
+            format: VertexFormat::Float32x3,
+            offset: 0,
+            shader_location: 0,
+        },
+        VertexAttribute {
+            format: VertexFormat::Float32x3,
+            offset: 12,
+            shader_location: 1,
+        },
+        VertexAttribute {
+            format: VertexFormat::Float32x2,
+            offset: 24,
+            shader_location: 2,
+        },
+        VertexAttribute {
+            format: VertexFormat::Float32x4,
+            offset: 32,
+            shader_location: 3,
+        },
+    ];
 }
 
 /// The bytes an index takes in the index slab.
@@ -301,6 +325,11 @@ impl<K: Eq + Hash> ModelSlabs<K> {
 
     pub fn get(&self, key: &K) -> Option<&PlacedModel> {
         self.models.get(key).map(|held| &held.placed)
+    }
+
+    /// Every model held, by its key.
+    pub fn keys(&self) -> impl Iterator<Item = &K> {
+        self.models.keys()
     }
 
     /// The bytes the vertex slab's buffer must hold, and the index slab's, for every model to fit.
@@ -656,7 +685,7 @@ fn prepare_models(
 }
 
 /// Sends the prepared models to the GPU, as many as what is left of the frame's budget holds.
-fn send_models(mut models: ResMut<PropModels>, mut budget: UploadBudget) {
+pub(super) fn send_models(mut models: ResMut<PropModels>, mut budget: UploadBudget) {
     let PropModels { models, outgoing } = &mut *models;
     for (&id, state) in models.iter_mut() {
         let ModelState::Prepared {

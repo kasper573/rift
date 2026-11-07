@@ -145,7 +145,9 @@ impl TerrainAtlas {
         let Some(laid) = &self.laid else {
             return 0;
         };
-        let overview = u32::from(laid.overview_sent && !laid.overview.is_empty());
+        let overview = u32::from(
+            laid.overview_sent && (!laid.overview.is_empty() || !laid.overview_writes.is_empty()),
+        );
         let tiles = self
             .wanted
             .iter()
@@ -259,6 +261,9 @@ struct Laid {
     versions: Vec<[TileVersion; 3]>,
     /// The overview's texels being read, the whole first, in the order they are to be written.
     overview: VecDeque<Job<Vec<AtlasWrite>>>,
+    /// The overview's writes read and waiting for the frame's budget, tile by tile.
+    overview_writes: VecDeque<AtlasWrite>,
+    /// Whether the whole overview has been sent, so the whole ground draws.
     overview_sent: bool,
     /// The slots being read for the tiles wanted, each at the stamp it is read at.
     filling: HashMap<TileAt, (TileStamp, Job<SlotBytes>)>,
@@ -270,13 +275,14 @@ impl Laid {
         let tiles: Vec<TileAt> = layout.size.each_tile().collect();
         let versions = tiles.iter().map(|&tile| ground.versions(tile)).collect();
         let reading = ground.clone();
-        let whole = Job::spawn(move || reading.overview(layout, None));
+        let whole = Job::spawn(move || reading.overview(layout, &tiles));
         Laid {
             ground,
             layout,
             residency: Residency::new(DETAIL_SLOTS),
             versions,
             overview: VecDeque::from([whole]),
+            overview_writes: VecDeque::new(),
             overview_sent: false,
             filling: HashMap::new(),
             loading: HashMap::new(),
@@ -305,7 +311,7 @@ impl Laid {
         }
         let (reading, layout) = (self.ground.clone(), self.layout);
         self.overview
-            .push_back(Job::spawn(move || reading.overview(layout, Some(&changed))));
+            .push_back(Job::spawn(move || reading.overview(layout, &changed)));
     }
 }
 
@@ -316,6 +322,7 @@ impl Laid {
     /// Holds what is wanted as a GPU would, loaded at once, with nothing read or written.
     fn hold_unseen(&mut self, wanted: &[TileAt]) {
         self.overview.clear();
+        self.overview_writes.clear();
         self.overview_sent = true;
         self.residency.next_frame();
         for &tile in wanted.iter().take(DETAIL_SLOTS as usize) {
@@ -404,14 +411,12 @@ impl AtlasGround {
     }
 
     /// The writes of the overview's texels of `tiles`, or of all of it.
-    fn overview(&self, layout: AtlasLayout, tiles: Option<&[TileAt]>) -> Vec<AtlasWrite> {
+    /// The writes of the overview under each of `tiles`, a tile at a time so each fits a frame's
+    /// budget.
+    fn overview(&self, layout: AtlasLayout, tiles: &[TileAt]) -> Vec<AtlasWrite> {
         let step = layout.overview_step;
-        let spans: Vec<Option<TileAt>> = match tiles {
-            None => vec![None],
-            Some(tiles) => tiles.iter().copied().map(Some).collect(),
-        };
         let mut writes = Vec::new();
-        for tile in spans {
+        for &tile in tiles {
             writes.extend(overview_write(
                 AtlasTexture::OverviewHeights,
                 &self.heights,
@@ -438,10 +443,9 @@ impl AtlasGround {
         writes
     }
 
-    /// The write of the overview's shore under `tile`, or of all of it, at one texel every `step`
-    /// overview values each way: read across as far round as the shore reaches, so it meets the
-    /// shore round it.
-    fn overview_shore(&self, tile: Option<TileAt>, step: u32) -> Option<AtlasWrite> {
+    /// The write of the overview's shore under `tile` at one texel every `step` overview values
+    /// each way: read across as far round as the shore reaches, so it meets the shore round it.
+    fn overview_shore(&self, tile: TileAt, step: u32) -> Option<AtlasWrite> {
         let values = self.heights.overview_dims();
         let (low, high) = overview_bounds(&self.heights, tile);
         let spacing = Meters((OVERVIEW_STRIDE * step) as f32 / SAMPLES_PER_METER as f32);
@@ -493,25 +497,17 @@ fn shore_bytes(heights: &[u16], water: &[WaterLevel], columns: usize, spacing: M
 }
 
 /// The overview values under `tile`, or all of them: from the first, and past the last, each way.
-fn overview_bounds<T: GroundValue>(
-    grid: &GroundGrid<T>,
-    tile: Option<TileAt>,
-) -> ((u32, u32), (u32, u32)) {
-    match tile {
-        None => ((0, 0), grid.overview_dims()),
-        Some(tile) => {
-            let (first, columns, rows) = grid.overview_span(tile);
-            (first, (first.0 + columns, first.1 + rows))
-        }
-    }
+fn overview_bounds<T: GroundValue>(grid: &GroundGrid<T>, tile: TileAt) -> ((u32, u32), (u32, u32)) {
+    let (first, columns, rows) = grid.overview_span(tile);
+    (first, (first.0 + columns, first.1 + rows))
 }
 
-/// The write of `texture`'s texels of `grid`'s overview under `tile`, or of all of it, at one
-/// texel every `step` values each way.
+/// The write of `texture`'s texels of `grid`'s overview under `tile` at one texel every `step`
+/// values each way.
 fn overview_write<T: GroundValue>(
     texture: AtlasTexture,
     grid: &GroundGrid<T>,
-    tile: Option<TileAt>,
+    tile: TileAt,
     step: u32,
     bytes: fn(&[T]) -> Vec<u8>,
 ) -> Option<AtlasWrite> {
@@ -587,13 +583,6 @@ impl<T: Send + 'static> Job<T> {
             }
         }
     }
-
-    fn done(&self) -> Option<&T> {
-        match self {
-            Job::Done(done) => Some(done),
-            _ => None,
-        }
-    }
 }
 
 /// Keeps the GPU's atlases in step with the grounds laid and the tiles wanted this frame, within
@@ -620,15 +609,17 @@ fn keep_atlases(
             if !job.is_done(handoff) {
                 break;
             }
-            let bytes = job
-                .done()
-                .map_or(0, |writes| writes.iter().map(AtlasWrite::bytes).sum());
-            if !budget.spend(bytes) {
+            let writes = job.take().unwrap_or_default();
+            laid.overview_sent |= writes.is_empty();
+            laid.overview_writes.extend(writes);
+            laid.overview.pop_front();
+        }
+        while let Some(write) = laid.overview_writes.front() {
+            if !budget.spend(write.bytes()) {
                 break;
             }
-            atlas.writes.extend(job.take().into_iter().flatten());
-            laid.overview.pop_front();
-            laid.overview_sent = true;
+            atlas.writes.extend(laid.overview_writes.pop_front());
+            laid.overview_sent |= laid.overview_writes.is_empty();
         }
         laid.loading.retain(|_, task| !task.is_finished());
         laid.residency.next_frame();

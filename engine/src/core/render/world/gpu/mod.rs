@@ -8,6 +8,7 @@ pub mod clearing;
 pub mod cull;
 pub mod draw;
 pub mod grass;
+pub mod impostor;
 pub mod pick;
 pub mod prop_draw;
 pub mod residency;

@@ -234,6 +234,14 @@ impl Window {
             .count();
         let first = self.samples.first().map_or(0, |sample| sample.frame);
         let last = self.samples.last().map_or(0, |sample| sample.frame);
+        let mut stalled: Vec<ProbeSlowFrame> = self
+            .slow
+            .iter()
+            .filter(|frame| frame.frame >= first && frame.frame <= last)
+            .filter(|frame| frame.dt_ms.0 > criteria.stall.0)
+            .cloned()
+            .collect();
+        stalled.sort_by_key(|frame| frame.frame);
         let worst = self
             .slow
             .iter()
@@ -279,6 +287,7 @@ impl Window {
             plans: Some(self.samples.iter().map(|sample| sample.plans).sum()),
             interface: self.interface(first, last),
             worst_frame: worst,
+            stalled_frames: stalled,
         })
     }
 }
@@ -323,6 +332,10 @@ pub struct FrameStats {
     /// The slowest of the window's slow frames, with the GPU's passes and the systems it waited
     /// on.
     pub worst_frame: Option<ProbeSlowFrame>,
+    /// Every frame of the window slower than the stall the criteria allow, in order, each with
+    /// the GPU's passes and the systems it waited on, as far as the probe kept them.
+    #[serde(default)]
+    pub stalled_frames: Vec<ProbeSlowFrame>,
 }
 
 /// How long the editor took over its interface, frame by frame: the median of the whole

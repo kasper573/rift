@@ -76,6 +76,7 @@ impl Plugin for EditorPlugin {
             None => UserFolder::locate(),
         };
         let settings = user.load_settings();
+        app.insert_resource(user.profile());
         let mut editor = Editor::new(user, settings);
         editor.scene = self.launch.scene.clone();
         if let Some(folder) = &self.launch.folder {

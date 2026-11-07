@@ -37,8 +37,10 @@ pub fn client(
     let shots = client_shots(slots)?;
     let mut set: Option<Set> = None;
     let mut failed = Vec::new();
+    let profiles = tempfile::tempdir().expect("a folder for the clients' profiles");
     for &video in videos {
-        let mut driver = Driver::start(game, content, slots.character, video, steps)
+        let profile = profiles.path().join(video.name());
+        let mut driver = Driver::start(game, content, slots.character, video, &profile, steps)
             .map_err(|failure| failure_text(&failure))?;
         let adapter = driver
             .adapter()
@@ -59,8 +61,9 @@ pub fn client(
                     );
                     failed.push(format!("{}/{}", video.name(), shot.name));
                     if matches!(failure, Failure::Crashed(_)) {
-                        driver = Driver::start(game, content, slots.character, video, steps)
-                            .map_err(|failure| failure_text(&failure))?;
+                        driver =
+                            Driver::start(game, content, slots.character, video, &profile, steps)
+                                .map_err(|failure| failure_text(&failure))?;
                     }
                 }
             }

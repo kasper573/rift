@@ -1,9 +1,11 @@
 //! How much of the world's data the GPU is sent a frame: whatever writes it spends one budget, a
 //! few megabytes a frame, so much arriving at once costs many frames a little rather than one frame
-//! a lot; behind a cover, where a long frame shows nothing, far more.
+//! a lot; behind a cover, where a long frame shows nothing, far more. Bevy's own assets, the
+//! meshes and images, are held to the same budget a frame through its limit.
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
+use bevy::render::render_asset::RenderAssetBytesPerFrame;
 
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 
@@ -46,8 +48,10 @@ pub fn spend(world: &mut World, bytes: usize) -> bool {
 /// The most bytes written to the GPU for the world in a frame: what is larger than what is left goes
 /// in a frame of its own.
 const PER_FRAME: usize = 4 << 20;
-/// The same while a cover hides the world, so what stands behind it stands in a few frames.
-const PER_COVERED_FRAME: usize = 64 << 20;
+/// The same while a cover hides the world, so what stands behind it stands in a few frames: as
+/// much as a frame still writes within its time, as the cover's own frames keep the frame
+/// budget too.
+const PER_COVERED_FRAME: usize = 16 << 20;
 
 /// The bytes spent this frame on writing the world's data to the GPU.
 #[derive(Resource, Default)]
@@ -65,8 +69,16 @@ impl FrameUploads {
     }
 }
 
-fn begin_frame(mut uploads: ResMut<FrameUploads>) {
+fn begin_frame(
+    mut uploads: ResMut<FrameUploads>,
+    assets: Option<ResMut<RenderAssetBytesPerFrame>>,
+    transition: Option<Res<ActiveTransition>>,
+) {
     uploads.spent = 0;
+    let covered = transition.as_deref().is_some_and(hides_world);
+    if let Some(mut assets) = assets {
+        assets.max_bytes = Some(per_frame(covered));
+    }
 }
 
 fn per_frame(covered: bool) -> usize {

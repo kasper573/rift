@@ -40,15 +40,18 @@ pub struct Playtest {
 impl Playtest {
     /// The test character `character`, else the game's first, at the game's initial spawn, or a
     /// fresh character where the game has none, in a client on a desktop of the bench's own,
-    /// shown as `video` asks. Refused when the server or the client doesn't come up.
+    /// shown as `video` asks, keeping its profile under `profile`: a folder no client has run on
+    /// starts cold, and one an earlier client kept its caches under starts warm. Refused when the
+    /// server or the client doesn't come up.
     pub fn start(
         game: &Path,
         content: &Content,
         character: Option<ContentId<CharacterSnapshot>>,
         video: VideoPreferences,
+        profile: &Path,
     ) -> Result<Playtest, String> {
-        let folder = tempfile::tempdir().expect("a folder for the client's profile and log");
-        settings::save_video(&Profile(folder.path().join("profile")), video);
+        let folder = tempfile::tempdir().expect("a folder for the client's desktop and log");
+        settings::save_video(&Profile(profile.to_path_buf()), video);
         let server = GameServer::start(&binaries::beside(GAME_SERVER), &bench_config(game));
         if let Some(character) = character.or_else(|| content.ids::<CharacterSnapshot>().next()) {
             let request = TestCharacterRequest {
@@ -64,7 +67,7 @@ impl Playtest {
             game_server_url: server.http_url(),
             auth: AuthMode::Fake,
             access_token: Some(launch::fake_token(ACCOUNT)),
-            profile_dir: folder.path().join("profile"),
+            profile_dir: profile.to_path_buf(),
             exit_on_stdin_eof: true,
             probe: Some(listener.local_addr().expect("a bound probe port")),
         };

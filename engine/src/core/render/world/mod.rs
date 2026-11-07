@@ -74,6 +74,7 @@ impl Plugin for WorldScenePlugin {
             gpu::prop_draw::PropDrawPlugin,
             gpu::grass::GrassPlugin,
             gpu::pick::PickPlugin,
+            gpu::impostor::ImpostorPlugin,
             gpu::atlas::TerrainAtlasPlugin,
             haze::HazePlugin,
             layers::JointLayersPlugin,
@@ -211,8 +212,12 @@ pub fn readying(world: &mut World) -> bool {
     let Some(assets) = world.get_resource::<AssetServer>() else {
         return waiting || compiling;
     };
+    let baking = world
+        .get_resource::<gpu::impostor::ImpostorStore>()
+        .is_some_and(|store| store.pending() > 0);
     waiting
         || compiling
+        || baking
         || models.into_iter().any(|model| !model_stands(world, model))
         || textures
             .iter()

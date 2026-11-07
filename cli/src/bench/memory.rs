@@ -45,7 +45,14 @@ const GPU_SLACK: Slack = Slack {
 
 /// Fails naming what grew.
 pub fn run(game: &Path, content: &Content) -> Result<(), String> {
-    let mut me = Playtest::start(game, content, None, VideoPreferences::default())?;
+    let profile = tempfile::tempdir().expect("a folder for the client's profile");
+    let mut me = Playtest::start(
+        game,
+        content,
+        None,
+        VideoPreferences::default(),
+        profile.path(),
+    )?;
     let home = settled_in_world(&mut me);
     let Some(away) = away_from(content, home) else {
         println!("[memory-bench] not benched: no warp out of the spawn area");

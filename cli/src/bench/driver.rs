@@ -49,16 +49,18 @@ pub struct Measured {
 }
 
 impl Driver {
-    /// A client on a server of its own, every step it is put through noted in the log at
-    /// `steps`, which a run's drivers share.
+    /// A client on a server of its own, its profile kept under `profile` as [`Playtest::start`]
+    /// keeps it, every step it is put through noted in the log at `steps`, which a run's drivers
+    /// share. Its frames count from its first, for [`Driver::opened`].
     pub fn start(
         game: &Path,
         content: &Content,
         character: Option<ContentId<CharacterSnapshot>>,
         video: VideoPreset,
+        profile: &Path,
         steps: &Path,
     ) -> Result<Driver, Failure> {
-        let play = Playtest::start(game, content, character, video.preferences())
+        let play = Playtest::start(game, content, character, video.preferences(), profile)
             .map_err(Failure::Crashed)?;
         let steps = File::options()
             .append(true)
@@ -76,11 +78,26 @@ impl Driver {
             measuring: None,
             steps,
         };
-        hands::wait_for(&mut driver, "the player in the world", LONG, |snapshot| {
+        let entered = hands::wait_for(&mut driver, "the player in the world", LONG, |snapshot| {
             (snapshot.me.is_some() && snapshot.transition == ScreenTransitionPhase::Idle)
-                .then_some(())
+                .then_some(snapshot.frame)
         })?;
+        driver.measuring = Some(Measuring::since(entered));
         Ok(driver)
+    }
+
+    /// The frames from the player's entry into the world until the scenery stands whole where
+    /// they arrived, and the frame it stood at. The screens before the entry, signing in and
+    /// loading the content, frame slowly on purpose, so the opening leaves them out.
+    pub fn opened(&mut self) -> Result<(Window, u32), Failure> {
+        let outcome = hands::wait_for(self, "the scenery to stand", LONG, |snapshot| {
+            (!snapshot.scenery_standing).then_some(snapshot.frame)
+        });
+        let measured = self.read_frames(true);
+        let measuring = self.measuring.take().expect("measuring the opening");
+        let stood = outcome?;
+        measured?;
+        Ok((measuring.window, stood))
     }
 
     pub fn adapter(&mut self) -> Result<Option<String>, Failure> {
@@ -104,13 +121,7 @@ impl Driver {
     pub fn run(&mut self, scenario: &Scenario) -> Result<Measured, Failure> {
         self.set_scene(&scenario.name, &scenario.stage, &scenario.setup)?;
         let start = self.snapshot()?.frame;
-        self.measuring = Some(Measuring {
-            window: Window::default(),
-            since: start,
-            last_read: Instant::now(),
-            stood_after_frames: Vec::new(),
-            arrival_since: None,
-        });
+        self.measuring = Some(Measuring::since(start));
         let outcome = self.play_script(scenario);
         let measuring = self.measuring.take().expect("measuring");
         outcome?;
@@ -121,13 +132,15 @@ impl Driver {
     }
 
     /// Stages `stage` and plays `setup`, with nothing left open over the world by the scene
-    /// before, and each place staged standing before the setup plays.
+    /// before, and each place staged standing before the setup plays. Whatever was being
+    /// measured before is dropped.
     pub fn set_scene(
         &mut self,
         name: &str,
         stage: &[Staging],
         setup: &[Step],
     ) -> Result<(), Failure> {
+        self.measuring = None;
         self.note(&format!("=== {name}"));
         self.close_windows()?;
         for staging in stage {
@@ -976,6 +989,18 @@ struct Measuring {
     last_read: Instant,
     stood_after_frames: Vec<u32>,
     arrival_since: Option<u32>,
+}
+
+impl Measuring {
+    fn since(frame: u32) -> Measuring {
+        Measuring {
+            window: Window::default(),
+            since: frame,
+            last_read: Instant::now(),
+            stood_after_frames: Vec::new(),
+            arrival_since: None,
+        }
+    }
 }
 
 const LONG: Duration = Duration::from_secs(180);

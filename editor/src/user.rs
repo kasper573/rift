@@ -2,6 +2,7 @@ use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+use engine::core::os::Profile;
 use engine::core::render::video::VideoPreferences;
 use engine::core::time::UnixMillis;
 use serde::de::DeserializeOwned;
@@ -24,6 +25,11 @@ impl UserFolder {
     pub fn locate() -> UserFolder {
         let base = dirs::data_local_dir().unwrap_or_else(std::env::temp_dir);
         UserFolder::at(base.join("rift-editor"))
+    }
+
+    /// The folder as a profile, for what the engine caches per user.
+    pub fn profile(&self) -> Profile {
+        Profile(self.root.clone())
     }
 
     pub fn settings_file(&self) -> PathBuf {

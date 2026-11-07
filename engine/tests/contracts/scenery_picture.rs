@@ -14,6 +14,7 @@ use engine::core::audio::playback::Listener;
 use engine::core::content::Content;
 use engine::core::jobs::Handoff;
 use engine::core::math::{Pos, Rng};
+use engine::core::os::Profile;
 use engine::core::render::camera::{self, Lens};
 use engine::core::render::video::{GrassQuality, ShadowQuality, VideoPreferences};
 use engine::core::render::world::clouds::CloudDrift;
@@ -27,6 +28,7 @@ use engine::core::vfx::shader::Stage;
 use engine::systems::area::scenery::{self, Eyes, SceneryPlugin, Sight};
 use engine::systems::area::{self, AreaDef};
 use serde_json::json;
+use tempfile::TempDir;
 use testkit::{Game, Map, box_glb, path};
 
 /// The picture is `SIDE` pixels square, looking down at the middle of a field `FIELD` metres
@@ -160,6 +162,7 @@ struct Staged {
     camera: Entity,
     image: Handle<Image>,
     stood: scenery::Scenery,
+    _profile: TempDir,
 }
 
 impl Staged {
@@ -206,6 +209,7 @@ impl Staged {
 
 fn stage() -> Staged {
     let folder = tempfile::tempdir().expect("a scratch folder");
+    let profile = tempfile::tempdir().expect("a scratch profile");
     let game = field();
     game.write_to(folder.path());
     let content = game.load();
@@ -231,6 +235,7 @@ fn stage() -> Staged {
     )
     .insert_resource(Rng::new(testkit::drawn_seed()))
     .insert_resource(Handoff::NextFrame)
+    .insert_resource(Profile(profile.path().to_path_buf()))
     .add_plugins((WorldScenePlugin, VfxMaterialsPlugin, SceneryPlugin))
     .insert_resource(testkit::look())
     .insert_resource(content.clone())
@@ -313,6 +318,7 @@ fn stage() -> Staged {
         camera,
         image,
         stood,
+        _profile: profile,
     }
 }
 

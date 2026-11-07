@@ -13,6 +13,7 @@ mod equipment;
 mod exchange;
 mod gestures;
 mod grass;
+mod impostor;
 mod interaction;
 mod kill_credit;
 mod launch;

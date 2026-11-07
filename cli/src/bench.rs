@@ -36,6 +36,7 @@ use hands::Failure;
 use report::{BenchReport, Resolution, ScenarioResult, Verdict};
 use scenario::{Scenario, Target};
 use scenarios::ScenarioSlots;
+use scenarios::client::{OPEN_COLD, OPEN_WARM};
 use sim::{Bench, load};
 
 // Must exceed the budget crossover (and the probe that overshoots it) but stay within RAM: the bench
@@ -185,12 +186,16 @@ fn client(
                 .is_none_or(|only| crate::compare::matches(only, &scenario.name))
         })
         .collect();
-    let desktop = !args.smoke
-        && args
-            .scenario
-            .as_deref()
-            .is_none_or(|only| crate::compare::matches(only, DESKTOP));
-    if scenarios.is_empty() && !desktop {
+    let wanted = |name: &str| {
+        !args.smoke
+            && args
+                .scenario
+                .as_deref()
+                .is_none_or(|only| crate::compare::matches(only, name))
+    };
+    let desktop = wanted(DESKTOP);
+    let opening = wanted(OPEN_COLD) || wanted(OPEN_WARM);
+    if scenarios.is_empty() && !desktop && !opening {
         println!("[client-bench] no scenario to run");
         return Ok(());
     }
@@ -200,13 +205,59 @@ fn client(
     if desktop {
         desktop_check(game, args, &steps, report)?;
     }
-    if scenarios.is_empty() {
+    if scenarios.is_empty() && !opening {
         return Ok(());
     }
+    let profiles = tempfile::tempdir().expect("a folder for the clients' profiles");
     for &video in videos {
-        let mut driver = Driver::start(game, content, slots.character, video, &steps)
-            .map_err(|failure| failure_text(&failure))?;
+        let mut profile = profiles.path().join(video.name());
+        let start = |profile: &Path| {
+            Driver::start(game, content, slots.character, video, profile, &steps)
+                .map_err(|failure| failure_text(&failure))
+        };
+        let mut driver = None;
+        let mut openings = Vec::new();
+        if opening {
+            let mut cold = Vec::new();
+            let mut warm = Vec::new();
+            for run in 0..args.repeat.max(1) {
+                profile = profiles.path().join(format!("{}-{run}", video.name()));
+                let mut started = start(&profile)?;
+                let opened = started.opened();
+                cold.push(result_of(
+                    OPEN_COLD,
+                    Target::Client,
+                    Class::Busy,
+                    video,
+                    &Criteria::opening(video),
+                    opened.map(|(window, stood)| (window, vec![stood])),
+                    args.smoke,
+                ));
+                drop(started);
+                let mut started = start(&profile)?;
+                let opened = started.opened();
+                warm.push(result_of(
+                    OPEN_WARM,
+                    Target::Client,
+                    Class::Busy,
+                    video,
+                    &Criteria::opening(video),
+                    opened.map(|(window, stood)| (window, vec![stood])),
+                    args.smoke,
+                ));
+                driver = Some(started);
+            }
+            openings = vec![median_run(cold), median_run(warm)];
+        }
+        let mut driver = match driver {
+            Some(driver) => driver,
+            None => start(&profile)?,
+        };
         let report = client_report(report, &mut driver, game, args)?;
+        for result in openings {
+            print_result(&result);
+            report.add(result);
+        }
         for scenario in &scenarios {
             let result = measure(
                 &mut driver,
@@ -217,14 +268,14 @@ fn client(
                     game,
                     content,
                     slots: &slots,
+                    profile: &profile,
                     steps: &steps,
                 },
             );
             print_result(&result);
             report.add(result);
             if driver_dead(&mut driver) {
-                driver = Driver::start(game, content, slots.character, video, &steps)
-                    .map_err(|failure| failure_text(&failure))?;
+                driver = start(&profile)?;
             }
         }
     }
@@ -266,13 +317,15 @@ fn desktop_check(
         ..scenarios::client::empty_view(&slots, home)
     };
     let video = VideoPreset::Lowest;
-    let mut driver = Driver::start(&checked, &content, slots.character, video, steps)
+    let profile = folder.path().join("profile");
+    let mut driver = Driver::start(&checked, &content, slots.character, video, &profile, steps)
         .map_err(|failure| failure_text(&failure))?;
     let report = client_report(report, &mut driver, game, args)?;
     let restart = Restart {
         game: &checked,
         content: &content,
         slots: &slots,
+        profile: &profile,
         steps,
     };
     let mut result = measure(&mut driver, &scenario, video, args, &restart);
@@ -423,6 +476,7 @@ struct Restart<'a> {
     game: &'a Path,
     content: &'a Content,
     slots: &'a ScenarioSlots,
+    profile: &'a Path,
     steps: &'a Path,
 }
 
@@ -477,6 +531,7 @@ fn measure(
                 restart.content,
                 restart.slots.character,
                 video,
+                restart.profile,
                 restart.steps,
             ) {
                 Ok(fresh) => *driver = fresh,
