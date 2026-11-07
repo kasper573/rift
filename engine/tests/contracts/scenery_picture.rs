@@ -1,3 +1,4 @@
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use bevy::app::PluginsState;
@@ -16,6 +17,7 @@ use engine::core::math::{Pos, Rng};
 use engine::core::render::camera::{self, Lens};
 use engine::core::render::video::{GrassQuality, ShadowQuality, VideoPreferences};
 use engine::core::render::world::clouds::CloudDrift;
+use engine::core::render::world::gpu::pick::{Outline, Picking};
 use engine::core::render::world::sky::Daylight;
 use engine::core::render::world::{self, WorldScenePlugin};
 use engine::core::units::{Degrees, Meters};
@@ -49,6 +51,160 @@ const PROP_HEIGHT: f32 = 2.0;
 /// over, as a client lifts its veil, so what is first seen is seen whole.
 #[test]
 fn a_picture_of_a_scenery_shows_its_props_in_every_material_each_shadowing_the_ground() {
+    let mut staged = stage();
+    let picture = staged.shoot();
+
+    let [r, g, b] = picture.around(Vec3::new(BLOCK.x, PROP_HEIGHT, BLOCK.y), 1);
+    assert!(
+        b > r && b > g && b > 40.0,
+        "the block shows blue, in the world's material: {r} {g} {b}"
+    );
+    let [r, g, b] = picture.around(Vec3::new(LANTERN.x, PROP_HEIGHT, LANTERN.y), 1);
+    assert!(
+        r > g && r > b && r > 40.0,
+        "the lantern shows red, as the game's shader paints it: {r} {g} {b}"
+    );
+
+    let bare = picture.luminances(Pos::new(18.0, 26.0), Pos::new(22.0, 30.0));
+    let rock = median(&bare);
+    let darkest = (0..24)
+        .map(|step| {
+            let angle = step as f32 / 24.0 * std::f32::consts::TAU;
+            let at = Vec3::new(
+                BLOCK.x + 1.5 * angle.cos(),
+                0.01,
+                BLOCK.y + 1.5 * angle.sin(),
+            );
+            luminance(picture.around(at, 1))
+        })
+        .fold(f32::MAX, f32::min);
+    assert!(
+        darkest < 0.7 * rock,
+        "the block's shadow darkens the ground beside it: {darkest} against the bare rock's {rock}"
+    );
+
+    let turf = picture.luminances(Pos::new(2.0, 2.0), Pos::new(14.0, 30.0));
+    let turf_at = median(&turf);
+    let pebbles = turf
+        .iter()
+        .filter(|&&luminance| luminance > 1.2 * turf_at)
+        .count();
+    assert!(
+        pebbles > 30,
+        "the white pebbles strewn on the turf show over it: {pebbles} bright pixels over {turf_at}"
+    );
+    let blades = picture
+        .colors(Pos::new(2.0, 2.0), Pos::new(14.0, 30.0))
+        .filter(|[r, g, b]| *r > 1.2 * g && *b > 1.2 * g && *r > 100.0)
+        .count();
+    assert!(
+        blades > 60,
+        "the magenta blades grown on the turf show: {blades} magenta pixels"
+    );
+}
+
+/// Outlining props singles them out on the picture: every pixel within the outline's width of
+/// one, showing anything else, takes the outline's colour.
+#[test]
+fn an_outlined_prop_is_edged_in_the_outlines_colour() {
+    let mut staged = stage();
+    let picture = staged.shoot();
+    let cyan = |[r, g, b]: [f32; 3]| g > 150.0 && r < 0.9 * g && b > 0.9 * g;
+    let bare = picture.counted_near(Vec3::new(BLOCK.x, PROP_HEIGHT, BLOCK.y), 12, cyan);
+    assert_eq!(bare, 0, "nothing shows cyan before the block is outlined");
+    drop(picture);
+
+    let world = staged.app.world_mut();
+    let instances: Arc<[(Entity, u32)]> = scenery::instances_of(world, staged.stood, |_| true)
+        .into_iter()
+        .map(|instance| (staged.stood.root, instance))
+        .collect();
+    assert!(!instances.is_empty(), "the field's props stand");
+    world.entity_mut(staged.camera).insert(Picking {
+        pointer: None,
+        outlines: [
+            Outline {
+                color: LinearRgba::new(0.0, 1.0, 1.0, 1.0),
+                instances,
+            },
+            Outline::default(),
+        ],
+    });
+    let mut drawn = 0;
+    assert!(
+        settle(&mut staged.app, Duration::from_secs(120), |app| {
+            let ready = !world::readying(app.world_mut());
+            drawn += u32::from(ready);
+            drawn >= 3
+        }),
+        "the outline's pipeline compiles"
+    );
+    let picture = staged.shoot();
+    let edged = picture.counted_near(Vec3::new(BLOCK.x, PROP_HEIGHT, BLOCK.y), 12, cyan);
+    let bluest = picture.bluest_near(Vec3::new(BLOCK.x, PROP_HEIGHT, BLOCK.y), 12);
+    assert!(
+        edged > 20,
+        "the block is edged in cyan: {edged} cyan pixels about it, the bluest {bluest:?}"
+    );
+    let [r, g, b] = picture.around(Vec3::new(BLOCK.x, PROP_HEIGHT, BLOCK.y), 1);
+    assert!(
+        b > r && b > g,
+        "the block itself still shows blue: {r} {g} {b}"
+    );
+}
+
+/// The field standing whole before a camera whose picture is read back: the app, kept so what
+/// it holds can be asked.
+struct Staged {
+    app: App,
+    camera: Entity,
+    image: Handle<Image>,
+    stood: scenery::Scenery,
+}
+
+impl Staged {
+    /// Takes the camera's picture as the world stands now.
+    fn shoot(&mut self) -> Picture<'_> {
+        camera::forget_history(self.app.world_mut());
+        let readback = self
+            .app
+            .world_mut()
+            .spawn(Readback::texture(self.image.clone()))
+            .id();
+        assert!(
+            settle(&mut self.app, Duration::from_secs(60), |app| {
+                app.world()
+                    .resource::<Read>()
+                    .0
+                    .iter()
+                    .any(|(entity, _)| *entity == readback)
+            }),
+            "the picture is read back"
+        );
+        let pixels = self
+            .app
+            .world_mut()
+            .resource_mut::<Read>()
+            .0
+            .iter()
+            .find(|(entity, _)| *entity == readback)
+            .map(|(_, pixels)| pixels.clone())
+            .expect("the picture");
+        self.app.world_mut().despawn(readback);
+        assert_eq!(
+            pixels.len(),
+            (SIDE * SIDE * 4) as usize,
+            "a picture of {SIDE}² pixels"
+        );
+        Picture {
+            pixels,
+            app: &self.app,
+            camera: self.camera,
+        }
+    }
+}
+
+fn stage() -> Staged {
     let folder = tempfile::tempdir().expect("a scratch folder");
     let game = field();
     game.write_to(folder.path());
@@ -152,85 +308,12 @@ fn a_picture_of_a_scenery_shows_its_props_in_every_material_each_shadowing_the_g
         }),
         "the scenery stands whole"
     );
-    camera::forget_history(app.world_mut());
-    let readback = app.world_mut().spawn(Readback::texture(image.clone())).id();
-    assert!(
-        settle(&mut app, Duration::from_secs(60), |app| {
-            app.world()
-                .resource::<Read>()
-                .0
-                .iter()
-                .any(|(entity, _)| *entity == readback)
-        }),
-        "the picture is read back"
-    );
-    let pixels = app
-        .world_mut()
-        .resource_mut::<Read>()
-        .0
-        .iter()
-        .find(|(entity, _)| *entity == readback)
-        .map(|(_, pixels)| pixels.clone())
-        .expect("the picture");
-    app.world_mut().despawn(readback);
-    assert_eq!(
-        pixels.len(),
-        (SIDE * SIDE * 4) as usize,
-        "a picture of {SIDE}² pixels"
-    );
-    let picture = Picture {
-        pixels,
+    Staged {
         app,
         camera,
-    };
-
-    let [r, g, b] = picture.around(Vec3::new(BLOCK.x, PROP_HEIGHT, BLOCK.y), 1);
-    assert!(
-        b > r && b > g && b > 40.0,
-        "the block shows blue, in the world's material: {r} {g} {b}"
-    );
-    let [r, g, b] = picture.around(Vec3::new(LANTERN.x, PROP_HEIGHT, LANTERN.y), 1);
-    assert!(
-        r > g && r > b && r > 40.0,
-        "the lantern shows red, as the game's shader paints it: {r} {g} {b}"
-    );
-
-    let bare = picture.luminances(Pos::new(18.0, 26.0), Pos::new(22.0, 30.0));
-    let rock = median(&bare);
-    let darkest = (0..24)
-        .map(|step| {
-            let angle = step as f32 / 24.0 * std::f32::consts::TAU;
-            let at = Vec3::new(
-                BLOCK.x + 1.5 * angle.cos(),
-                0.01,
-                BLOCK.y + 1.5 * angle.sin(),
-            );
-            luminance(picture.around(at, 1))
-        })
-        .fold(f32::MAX, f32::min);
-    assert!(
-        darkest < 0.7 * rock,
-        "the block's shadow darkens the ground beside it: {darkest} against the bare rock's {rock}"
-    );
-
-    let turf = picture.luminances(Pos::new(2.0, 2.0), Pos::new(14.0, 30.0));
-    let turf_at = median(&turf);
-    let pebbles = turf
-        .iter()
-        .filter(|&&luminance| luminance > 1.2 * turf_at)
-        .count();
-    assert!(
-        pebbles > 30,
-        "the white pebbles strewn on the turf show over it: {pebbles} bright pixels over {turf_at}"
-    );
-    let blades = picture
-        .colors(Pos::new(2.0, 2.0), Pos::new(14.0, 30.0))
-        .filter(|[r, g, b]| *r > 1.2 * g && *b > 1.2 * g && *r > 100.0)
-        .count();
-    assert!(
-        blades > 60,
-        "the magenta blades grown on the turf show: {blades} magenta pixels"
-    );
+        image,
+        stood,
+    }
 }
 
 /// A field whose western half is turf strewn with white pebbles among magenta blades, and whose
@@ -303,13 +386,31 @@ fn field() -> Game {
 struct Read(Vec<(Entity, Vec<u8>)>);
 
 /// The picture taken, and the world it was taken of, to tell where a point of it shows.
-struct Picture {
+struct Picture<'a> {
     pixels: Vec<u8>,
-    app: App,
+    app: &'a App,
     camera: Entity,
 }
 
-impl Picture {
+impl Picture<'_> {
+    /// How many pixels within `radius` of the one showing `at` are `wanted`.
+    fn counted_near(&self, at: Vec3, radius: i32, wanted: impl Fn([f32; 3]) -> bool) -> usize {
+        let center = self.pixel(at);
+        let mut count = 0;
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                let (x, y) = (center.x as i32 + dx, center.y as i32 + dy);
+                if (0..SIDE as i32).contains(&x)
+                    && (0..SIDE as i32).contains(&y)
+                    && wanted(self.at(x as u32, y as u32))
+                {
+                    count += 1;
+                }
+            }
+        }
+        count
+    }
+
     /// The colour at the pixel showing `at`, averaged `radius` pixels around.
     fn around(&self, at: Vec3, radius: i32) -> [f32; 3] {
         let center = self.pixel(at);
@@ -346,6 +447,23 @@ impl Picture {
         let y0 = corners.iter().map(|at| at.y).fold(f32::MAX, f32::min) as u32;
         let y1 = corners.iter().map(|at| at.y).fold(f32::MIN, f32::max) as u32;
         (y0..y1).flat_map(move |y| (x0..x1).map(move |x| self.at(x, y)))
+    }
+
+    /// The five colours within `radius` of the pixel showing `at` that lean most to cyan.
+    fn bluest_near(&self, at: Vec3, radius: i32) -> Vec<[f32; 3]> {
+        let center = self.pixel(at);
+        let mut colors = Vec::new();
+        for dy in -radius..=radius {
+            for dx in -radius..=radius {
+                let (x, y) = (center.x as i32 + dx, center.y as i32 + dy);
+                if (0..SIDE as i32).contains(&x) && (0..SIDE as i32).contains(&y) {
+                    colors.push(self.at(x as u32, y as u32));
+                }
+            }
+        }
+        colors.sort_by(|a, b| (b[1] + b[2] - b[0]).total_cmp(&(a[1] + a[2] - a[0])));
+        colors.truncate(5);
+        colors
     }
 
     fn at(&self, x: u32, y: u32) -> [f32; 3] {

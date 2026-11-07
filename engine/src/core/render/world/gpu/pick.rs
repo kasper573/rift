@@ -394,8 +394,11 @@ struct PendingPick {
 /// The most ids on their way back at once: past them, the oldest are let go.
 const MOST_PENDING: usize = 8;
 
+/// A picking camera as it is made or changed, or as it takes up picking.
+type PickingCameraChanged = (With<Picking>, Or<(Changed<Camera3d>, Added<Picking>)>);
+
 /// Every picking camera's depth can be read once the world is drawn, as the pick pass reads it.
-fn let_depth_be_read(mut cameras: Query<&mut Camera3d, (With<Picking>, Changed<Camera3d>)>) {
+fn let_depth_be_read(mut cameras: Query<&mut Camera3d, PickingCameraChanged>) {
     for mut camera in &mut cameras {
         let usages = TextureUsages::from(camera.depth_texture_usages);
         if !usages.contains(TextureUsages::TEXTURE_BINDING) {
