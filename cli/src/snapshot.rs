@@ -235,6 +235,7 @@ pub fn noise_between(sets: &[PathBuf], out: &Path) -> Result<(), String> {
             worst_tile: 1.0,
             delta_e_share: 0.0,
         };
+        let mut popped = compare::pop_in(first_set, taken)?;
         for (set, manifest) in &others {
             let again = manifest
                 .shots
@@ -246,16 +247,22 @@ pub fn noise_between(sets: &[PathBuf], out: &Path) -> Result<(), String> {
             }
             let (a, b) = compare::compared_pictures((first_set, taken), (set, again))?;
             worst = worst.worst(compare::measure(&a, &b));
+            popped = match (popped, compare::pop_in(set, again)?) {
+                (Some(worst), Some(popped)) => Some(worst.max(popped)),
+                (worst, popped) => worst.or(popped),
+            };
         }
-        let allowance = Allowance::of_noise(&worst, NOISE_TIMES);
+        let allowance = Allowance::of_noise(&worst, popped, NOISE_TIMES);
         println!(
-            "[noise] {key:<60} structure {:.5} worst tile {:.5} colour shift {:.3}% → allowance {:.5} / {:.5} / {:.3}%",
+            "[noise] {key:<60} structure {:.5} worst tile {:.5} colour shift {:.3}% popped {:.3}% → allowance {:.5} / {:.5} / {:.3}% / {:.3}%",
             worst.mssim,
             worst.worst_tile,
             worst.delta_e_share * 100.0,
+            popped.unwrap_or_default() * 100.0,
             allowance.mssim_loss,
             allowance.tile_loss,
-            allowance.delta_e_share * 100.0
+            allowance.delta_e_share * 100.0,
+            allowance.pop_share * 100.0
         );
         thresholds.shots.insert(key, allowance);
     }

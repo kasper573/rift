@@ -6,9 +6,10 @@
 //! noise of drawing it again and again, else the floor every shot gets.
 //!
 //! An arrival is a run of frames: its last, settled frame compares as a picture, and once the
-//! area stood whole, no more of a frame's pixels may shift colour from the frame before than the
-//! allowance lets a picture shift, else something popped in after the area stood. A fade passes,
-//! a step at a time; a pop is a step too far.
+//! area stood whole and the picture's smoothing, started over then, has settled, no more of a
+//! frame's pixels may shift colour from the frame before than the arrival's own noise lets, else
+//! something popped in after the area stood. A fade passes, a step at a time; a pop is a step too
+//! far.
 
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -17,6 +18,7 @@ use image::{GrayImage, RgbImage};
 use image_compare::Algorithm;
 use serde::{Deserialize, Serialize};
 
+use crate::render::TAA_SETTLE;
 use crate::snapshot::{MANIFEST, Manifest, PictureRect, TakenShot};
 
 /// What a run of the comparison ends with, as its exit code says.
@@ -45,13 +47,16 @@ impl Outcome {
 }
 
 /// How far a picture may stray from its baseline: how much structure the whole and its worst tile
-/// may lose, and the share of pixels that may shift colour.
+/// may lose, and the share of pixels that may shift colour; and of an arrival, the share of
+/// pixels that may shift colour from one settled frame to the next.
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Allowance {
     pub mssim_loss: f64,
     pub tile_loss: f64,
     pub delta_e_share: f64,
+    #[serde(default = "Allowance::floor_pop_share")]
+    pub pop_share: f64,
 }
 
 impl Allowance {
@@ -60,7 +65,12 @@ impl Allowance {
         mssim_loss: 0.002,
         tile_loss: 0.02,
         delta_e_share: 0.002,
+        pop_share: 0.002,
     };
+
+    fn floor_pop_share() -> f64 {
+        Allowance::FLOOR.pop_share
+    }
 
     /// What `metrics` break of the allowance, if anything.
     pub fn failure(&self, metrics: &Metrics) -> Option<String> {
@@ -87,12 +97,14 @@ impl Allowance {
         (!broken.is_empty()).then(|| broken.join(", "))
     }
 
-    /// An allowance `times` as wide as the loss `metrics` show, at least the floor.
-    pub fn of_noise(metrics: &Metrics, times: f64) -> Allowance {
+    /// An allowance `times` as wide as the loss `metrics` show, and as the shift `popped` between
+    /// an arrival's settled frames, at least the floor.
+    pub fn of_noise(metrics: &Metrics, popped: Option<f64>, times: f64) -> Allowance {
         Allowance {
             mssim_loss: ((1.0 - metrics.mssim) * times).max(Allowance::FLOOR.mssim_loss),
             tile_loss: ((1.0 - metrics.worst_tile) * times).max(Allowance::FLOOR.tile_loss),
             delta_e_share: (metrics.delta_e_share * times).max(Allowance::FLOOR.delta_e_share),
+            pop_share: (popped.unwrap_or_default() * times).max(Allowance::FLOOR.pop_share),
         }
     }
 }
@@ -236,18 +248,15 @@ pub fn run(
         }
         let (a, b) = compared_pictures((baseline, was), (candidate, taken))?;
         let metrics = measure(&a, &b);
-        let popped_share = match taken.stood_after_frames {
-            Some(stood) if taken.frames.is_some() => Some(pop_in(candidate, taken, stood)?),
-            _ => None,
-        };
+        let popped_share = pop_in(candidate, taken)?;
         let mut failure = allowance.failure(&metrics);
         if let Some(popped) = popped_share
-            && popped > allowance.delta_e_share
+            && popped > allowance.pop_share
         {
             let popped = format!(
                 "after standing, {:.2}% of pixels shifted colour from one frame to the next (allowed {:.2}%)",
                 popped * 100.0,
-                allowance.delta_e_share * 100.0
+                allowance.pop_share * 100.0
             );
             failure = Some(match failure {
                 Some(failure) => format!("{failure}; {popped}"),
@@ -426,20 +435,23 @@ fn frame_paths(folder: &Path) -> Result<Vec<PathBuf>, String> {
 }
 
 /// The largest share of pixels any frame of the arrival `taken` shifts in colour from the frame
-/// before it, from the frame after the one the area stood on, which starts the picture's
-/// smoothing over.
-fn pop_in(set: &Path, taken: &TakenShot, stood: usize) -> Result<f64, String> {
+/// before it, once the area stood and the picture's smoothing, started over on the frame it
+/// stood, has settled; none of a picture, or of an arrival whose area never stood.
+pub fn pop_in(set: &Path, taken: &TakenShot) -> Result<Option<f64>, String> {
+    let (Some(stood), Some(_)) = (taken.stood_after_frames, taken.frames) else {
+        return Ok(None);
+    };
     let frames = frame_paths(&set.join(&taken.path))?;
     let mut worst: f64 = 0.0;
     let mut before: Option<RgbImage> = None;
-    for frame in frames.iter().skip(stood + 1) {
+    for frame in frames.iter().skip(stood + 1 + TAA_SETTLE as usize) {
         let frame = load(frame)?;
         if let Some(before) = &before {
             worst = worst.max(delta_e_share(before, &frame));
         }
         before = Some(frame);
     }
-    Ok(worst)
+    Ok(Some(worst))
 }
 
 /// Paints `mask` of `picture` over in one colour, so whatever moved there compares alike.
