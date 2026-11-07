@@ -17,7 +17,7 @@ use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 
 use super::covers::CopyPiece;
-use super::expand::{self, PaintChunk, SceneryChunk};
+use super::expand::{self, ChunkSpan, PaintChunk, SceneryChunk, SourcesByChunk};
 use super::plan::{Detail, KEEP_SHARE, Plan, Seen};
 use super::props;
 use super::{Shortfall, Streaming, distance_to, ground_loaded};
@@ -54,6 +54,8 @@ pub(super) struct Instances {
     /// Every prop the area stands, placed or scattered: the far field keeps those of them whose
     /// models are wide enough to show, so it wants every one's model until its width is known.
     area_props: Vec<PropId>,
+    /// Which of the area's prop sources reach each chunk, for the lots worked out off the frame.
+    filed: Arc<SourcesByChunk>,
     /// How wide each area prop's model is, as far as the models have been prepared.
     extents: HashMap<PropId, Meters>,
     /// How many props the content holds: the arena draws the copies of a cover's pieces after
@@ -87,6 +89,7 @@ impl Instances {
             arena: InstanceArena::default(),
             copies,
             area_props,
+            filed: Arc::new(SourcesByChunk::of(&area.prop_sources, area.size.bounds())),
             extents: HashMap::default(),
             props: content.table::<PropDef>().len() as u32,
             expanding: HashMap::default(),
@@ -145,10 +148,12 @@ impl Instances {
     /// `moved` tells, by its place before.
     pub(super) fn sources_changed(
         &mut self,
+        area: &Area,
         ground: Rect<Meters>,
         touched: &[Rect<Meters>],
         moved: impl Fn(u32) -> Option<u32>,
     ) {
+        self.filed = Arc::new(SourcesByChunk::of(&area.prop_sources, ground));
         let props = |lot: &Lot| matches!(lot, Lot::Props(_) | Lot::Far(..));
         self.expanding.retain(|_, (lot, _)| !props(lot));
         self.expanded.retain(|(_, lot, _)| !props(lot));
@@ -262,17 +267,17 @@ impl FarTile {
     }
 
     /// The chunks of `ground` the tile covers.
-    fn chunks(self, ground: Rect<Meters>) -> impl Iterator<Item = SceneryChunk> {
+    fn chunks(self, ground: Rect<Meters>) -> ChunkSpan {
         let first = SceneryChunk {
             column: self.column * FAR_CHUNKS,
             row: self.row * FAR_CHUNKS,
         };
         let across = across(ground);
         let down = (ground.size.height / SceneryChunk::SIDE.0).ceil() as u32;
-        (first.row..(first.row + FAR_CHUNKS).min(down)).flat_map(move |row| {
-            (first.column..(first.column + FAR_CHUNKS).min(across))
-                .map(move |column| SceneryChunk { column, row })
-        })
+        ChunkSpan {
+            columns: first.column..(first.column + FAR_CHUNKS).min(across),
+            rows: first.row..(first.row + FAR_CHUNKS).min(down),
+        }
     }
 }
 
@@ -493,7 +498,7 @@ pub(super) fn drop_arena(world: &mut World, root: Entity) {
 }
 
 /// The most lots being worked out at once.
-const EXPANDING_AT_ONCE: usize = 8;
+const EXPANDING_AT_ONCE: usize = 64;
 
 /// Every lot the sight takes in, nearest first: the props of every chunk within its reach, the
 /// copies of every chunk within as far as the view shows any piece's, worked out for the detail
@@ -631,6 +636,7 @@ fn expansion(
     key: u32,
 ) -> impl Future<Output = Expanded> + Send + 'static {
     let area = streaming.area.clone();
+    let filed = streaming.instances.filed.clone();
     let heights = streaming.heights.clone();
     let paint = streaming.paint.clone();
     let copies = streaming.instances.copies.clone();
@@ -638,9 +644,10 @@ fn expansion(
     let lens = seen.lens();
     async move {
         match lot {
-            Lot::Props(chunk) => props_expanded(&area, &heights, ground, chunk, key),
+            Lot::Props(chunk) => props_expanded(&area, &filed, &heights, ground, chunk, key),
             Lot::Far(tile, detail) => far_expanded(
                 &area,
+                &filed,
                 &heights,
                 ground,
                 tile,
@@ -663,12 +670,13 @@ fn expansion(
 /// of `heights` under it.
 fn props_expanded(
     area: &Area,
+    filed: &SourcesByChunk,
     heights: &Heightfield,
     ground: Rect<Meters>,
     chunk: SceneryChunk,
     key: u32,
 ) -> Expanded {
-    let placed = expand::sourced_props_in(&area.prop_sources, ground, chunk);
+    let placed = filed.sourced_props_in(&area.prop_sources, ground, chunk);
     Expanded {
         drawn: placed
             .iter()
@@ -687,6 +695,7 @@ fn props_expanded(
 /// `heights` under it and carrying the index of the chunk it lies in.
 fn far_expanded(
     area: &Area,
+    filed: &SourcesByChunk,
     heights: &Heightfield,
     ground: Rect<Meters>,
     tile: FarTile,
@@ -698,19 +707,19 @@ fn far_expanded(
         drawn: HashSet::default(),
         sources: Vec::new(),
     };
-    for chunk in tile.chunks(ground) {
-        let index = chunk_index(ground, chunk);
-        for (source, placed) in expand::sourced_props_in(&area.prop_sources, ground, chunk) {
-            let wide = extents
-                .get(&placed.prop)
-                .is_some_and(|extent| extent.0 * placed.scale >= least);
-            if !wide {
-                continue;
-            }
-            expanded.drawn.insert(Drawn::Prop(placed.prop));
-            expanded.records.push(prop_record(heights, &placed, index));
-            expanded.sources.push(source);
+    let span = tile.chunks(ground);
+    for (source, chunk, placed) in filed.sourced_props_within(&area.prop_sources, ground, &span) {
+        let wide = extents
+            .get(&placed.prop)
+            .is_some_and(|extent| extent.0 * placed.scale >= least);
+        if !wide {
+            continue;
         }
+        expanded.drawn.insert(Drawn::Prop(placed.prop));
+        expanded
+            .records
+            .push(prop_record(heights, &placed, chunk_index(ground, chunk)));
+        expanded.sources.push(source);
     }
     expanded
 }

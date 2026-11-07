@@ -3,6 +3,8 @@
 //! same props and copies on every machine, whichever chunks they are worked out by.
 
 use crate::core::ground::{Heightfield, PaintMap, SAMPLES_PER_METER};
+use std::ops::Range;
+
 use crate::core::math::{Pos, Rect, Size};
 use crate::core::render::world::cover::{self, Place, Spread};
 use crate::core::units::{GROUND_ORIGIN, Meters};
@@ -24,30 +26,43 @@ impl SceneryChunk {
 
     /// Every chunk of `ground`, row by row.
     pub fn all(ground: Rect<Meters>) -> impl Iterator<Item = SceneryChunk> {
-        let across = (ground.size.width / Self::SIDE.0).ceil() as u32;
-        let down = (ground.size.height / Self::SIDE.0).ceil() as u32;
-        (0..down).flat_map(move |row| (0..across).map(move |column| SceneryChunk { column, row }))
+        let (across, down) = counts(ground);
+        ChunkSpan {
+            columns: 0..across,
+            rows: 0..down,
+        }
+        .into_iter()
     }
 
-    /// Every chunk of `ground` that `rect` reaches into, row by row.
-    pub fn within(ground: Rect<Meters>, rect: Rect<Meters>) -> impl Iterator<Item = SceneryChunk> {
+    /// Every chunk of `ground` that `rect` reaches into, those on its far edges among them.
+    pub fn within(ground: Rect<Meters>, rect: Rect<Meters>) -> ChunkSpan {
         let side = Self::SIDE.0;
-        let across = (ground.size.width / side).ceil() as i64;
-        let down = (ground.size.height / side).ceil() as i64;
-        let first = |at: f32, origin: f32, count: i64| {
-            (((at - origin) / side).floor() as i64).clamp(0, count) as u32
+        let (across, down) = counts(ground);
+        let first = |at: f32, origin: f32, count: u32| {
+            (((at - origin) / side).floor() as i64).clamp(0, i64::from(count)) as u32
         };
-        let past = |at: f32, origin: f32, count: i64| {
-            ((((at - origin) / side).floor() as i64) + 1).clamp(0, count) as u32
+        let past = |at: f32, origin: f32, count: u32| {
+            ((((at - origin) / side).floor() as i64) + 1).clamp(0, i64::from(count)) as u32
         };
-        let columns = first(rect.min_x(), ground.origin.x, across)
-            ..past(rect.max_x(), ground.origin.x, across);
-        let rows =
-            first(rect.min_y(), ground.origin.y, down)..past(rect.max_y(), ground.origin.y, down);
-        rows.flat_map(move |row| {
-            columns
-                .clone()
-                .map(move |column| SceneryChunk { column, row })
+        ChunkSpan {
+            columns: first(rect.min_x(), ground.origin.x, across)
+                ..past(rect.max_x(), ground.origin.x, across),
+            rows: first(rect.min_y(), ground.origin.y, down)
+                ..past(rect.max_y(), ground.origin.y, down),
+        }
+    }
+
+    /// The chunk of `ground` that `at` lies in, if any: a point on a chunk's far edges lies in
+    /// the chunk beyond, so every point lies in one chunk alone.
+    pub fn at(ground: Rect<Meters>, at: Pos<Meters>) -> Option<SceneryChunk> {
+        let side = Self::SIDE.0;
+        let (across, down) = counts(ground);
+        let column = ((at.x - ground.origin.x) / side).floor();
+        let row = ((at.y - ground.origin.y) / side).floor();
+        let within = column >= 0.0 && column < across as f32 && row >= 0.0 && row < down as f32;
+        within.then_some(SceneryChunk {
+            column: column as u32,
+            row: row as u32,
         })
     }
 
@@ -66,7 +81,141 @@ impl SceneryChunk {
 
     /// Whether `at` lies in the chunk of `ground`.
     pub fn holds(self, ground: Rect<Meters>, at: Pos<Meters>) -> bool {
-        holds(self.bounds(ground), at)
+        Self::at(ground, at) == Some(self)
+    }
+}
+
+/// A rectangle of chunks: those in `columns` across each of `rows` down.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ChunkSpan {
+    pub columns: Range<u32>,
+    pub rows: Range<u32>,
+}
+
+impl ChunkSpan {
+    /// Whether the span takes in `chunk`.
+    pub fn holds(&self, chunk: SceneryChunk) -> bool {
+        self.columns.contains(&chunk.column) && self.rows.contains(&chunk.row)
+    }
+
+    /// The chunks of the span, row by row.
+    pub fn iter(&self) -> impl Iterator<Item = SceneryChunk> + use<> {
+        let columns = self.columns.clone();
+        self.rows.clone().flat_map(move |row| {
+            columns
+                .clone()
+                .map(move |column| SceneryChunk { column, row })
+        })
+    }
+}
+
+impl IntoIterator for ChunkSpan {
+    type Item = SceneryChunk;
+    type IntoIter = Box<dyn Iterator<Item = SceneryChunk>>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        Box::new(self.iter())
+    }
+}
+
+/// Which of an area's prop sources reach each chunk of its ground, filed once from where each
+/// stands or strews, so that working a chunk out looks at the sources that may stand anything in
+/// it alone, rather than at every source of the area.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct SourcesByChunk {
+    across: u32,
+    reaching: Vec<Vec<u32>>,
+}
+
+impl SourcesByChunk {
+    pub fn of<'a>(
+        modules: impl IntoIterator<Item = &'a AreaModule>,
+        ground: Rect<Meters>,
+    ) -> SourcesByChunk {
+        let (across, down) = counts(ground);
+        let mut filed = SourcesByChunk {
+            across,
+            reaching: vec![Vec::new(); (across * down) as usize],
+        };
+        for (source, module) in modules.into_iter().enumerate() {
+            let source = source as u32;
+            match module {
+                AreaModule::Prop(prop) => {
+                    if let Some(chunk) = SceneryChunk::at(ground, prop.at) {
+                        filed.file(chunk, source);
+                    }
+                }
+                AreaModule::Scatter(scatter) => {
+                    for chunk in SceneryChunk::within(ground, scatter.region) {
+                        filed.file(chunk, source);
+                    }
+                }
+                _ => {}
+            }
+        }
+        filed
+    }
+
+    /// [`props_in`] of the sources filed as reaching `chunk`, each prop with the place among
+    /// `modules` of the module standing it.
+    pub fn sourced_props_in(
+        &self,
+        modules: &[AreaModule],
+        ground: Rect<Meters>,
+        chunk: SceneryChunk,
+    ) -> Vec<(u32, PropPlacement)> {
+        let sources = self
+            .reaching(chunk)
+            .iter()
+            .map(|&source| (source, &modules[source as usize]));
+        props_from(sources, ground, chunk)
+    }
+
+    /// The props standing in every chunk of `span`, each with the place among `modules` of the
+    /// module standing it and the chunk it stands in: the same props as [`props_in`] of each
+    /// chunk, worked out with each source expanded once over the whole span.
+    pub fn sourced_props_within(
+        &self,
+        modules: &[AreaModule],
+        ground: Rect<Meters>,
+        span: &ChunkSpan,
+    ) -> Vec<(u32, SceneryChunk, PropPlacement)> {
+        let mut sources: Vec<u32> = span
+            .iter()
+            .flat_map(|chunk| self.reaching(chunk).iter().copied())
+            .collect();
+        sources.sort_unstable();
+        sources.dedup();
+        let mut props = Vec::new();
+        for source in sources {
+            let chunk_within = |placed: &PropPlacement| {
+                SceneryChunk::at(ground, placed.at).filter(|chunk| span.holds(*chunk))
+            };
+            match &modules[source as usize] {
+                AreaModule::Prop(prop) => {
+                    if let Some(chunk) = chunk_within(prop) {
+                        props.push((source, chunk, prop.clone()));
+                    }
+                }
+                AreaModule::Scatter(scatter) => {
+                    props.extend(scatter.expand().filter_map(|placed| {
+                        chunk_within(&placed).map(|chunk| (source, chunk, placed))
+                    }))
+                }
+                _ => {}
+            }
+        }
+        props
+    }
+
+    fn reaching(&self, chunk: SceneryChunk) -> &[u32] {
+        self.reaching
+            .get((chunk.row * self.across + chunk.column) as usize)
+            .map_or(&[], Vec::as_slice)
+    }
+
+    fn file(&mut self, chunk: SceneryChunk, source: u32) {
+        self.reaching[(chunk.row * self.across + chunk.column) as usize].push(source);
     }
 }
 
@@ -89,22 +238,11 @@ pub fn sourced_props_in<'a>(
     ground: Rect<Meters>,
     chunk: SceneryChunk,
 ) -> Vec<(u32, PropPlacement)> {
-    let mut props = Vec::new();
-    for (source, module) in modules.into_iter().enumerate() {
-        let source = source as u32;
-        match module {
-            AreaModule::Prop(prop) if chunk.holds(ground, prop.at) => {
-                props.push((source, prop.clone()));
-            }
-            AreaModule::Scatter(scatter) => props.extend(
-                scattered_in(scatter, ground, chunk)
-                    .into_iter()
-                    .map(|placed| (source, placed)),
-            ),
-            _ => {}
-        }
-    }
-    props
+    let sources = modules
+        .into_iter()
+        .enumerate()
+        .map(|(source, module)| (source as u32, module));
+    props_from(sources, ground, chunk)
 }
 
 /// The props `scatter` strews that stand in `chunk` of `ground`: the same, bit for bit and in the
@@ -126,7 +264,7 @@ pub fn scattered_in(
     }
     scatter
         .expand()
-        .filter(|placed| holds(bounds, placed.at))
+        .filter(|placed| chunk.holds(ground, placed.at))
         .collect()
 }
 
@@ -234,11 +372,34 @@ pub(super) fn mixed_seed(seed: u64, parts: [u64; 4]) -> u64 {
     mixed
 }
 
-/// Whether `at` lies within `bounds`, its far edges left to the chunks beyond, so a point lies in
-/// one chunk alone.
-fn holds(bounds: Rect<Meters>, at: Pos<Meters>) -> bool {
-    at.x >= bounds.min().x
-        && at.x < bounds.max().x
-        && at.y >= bounds.min().y
-        && at.y < bounds.max().y
+/// The props the `sources` stand in `chunk` of `ground`, each with its source's place.
+fn props_from<'a>(
+    sources: impl Iterator<Item = (u32, &'a AreaModule)>,
+    ground: Rect<Meters>,
+    chunk: SceneryChunk,
+) -> Vec<(u32, PropPlacement)> {
+    let mut props = Vec::new();
+    for (source, module) in sources {
+        match module {
+            AreaModule::Prop(prop) if chunk.holds(ground, prop.at) => {
+                props.push((source, prop.clone()));
+            }
+            AreaModule::Scatter(scatter) => props.extend(
+                scattered_in(scatter, ground, chunk)
+                    .into_iter()
+                    .map(|placed| (source, placed)),
+            ),
+            _ => {}
+        }
+    }
+    props
+}
+
+/// How many chunks `ground` has across and down.
+fn counts(ground: Rect<Meters>) -> (u32, u32) {
+    let side = SceneryChunk::SIDE.0;
+    (
+        (ground.size.width / side).ceil() as u32,
+        (ground.size.height / side).ceil() as u32,
+    )
 }

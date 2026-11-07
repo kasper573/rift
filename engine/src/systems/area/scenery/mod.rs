@@ -283,7 +283,7 @@ pub fn restand(world: &mut World, scenery: Scenery, content: &Content, area: &Ar
             .collect();
         streaming
             .instances
-            .sources_changed(area.size.bounds(), &touched, |source| {
+            .sources_changed(area, area.size.bounds(), &touched, |source| {
                 let source = source as usize;
                 if source < first {
                     Some(source as u32)

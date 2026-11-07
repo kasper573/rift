@@ -5,7 +5,7 @@ use engine::core::render::world::cover::{CHUNK_CELLS, Spread};
 use engine::core::units::{MeterSize, Meters};
 use engine::systems::area::prop::{PropDef, ScaleRange, Scatter};
 use engine::systems::area::scenery::expand::{
-    PaintChunk, SceneryChunk, StrewnCover, props_in, scattered_in, strewn_in,
+    PaintChunk, SceneryChunk, SourcesByChunk, StrewnCover, props_in, scattered_in, strewn_in,
 };
 use engine::systems::area::{self, AreaDef};
 use serde_json::json;
@@ -65,6 +65,9 @@ fn a_chunks_scenery_is_worked_out_from_the_chunk_alone() {
             .iter()
             .map(|placed| &placed.module)
     };
+    let filed = SourcesByChunk::of(modules(), field_ground);
+    let whole = SceneryChunk::within(field_ground, field_ground);
+    let over_the_whole = filed.sourced_props_within(&field.prop_sources, field_ground, &whole);
     let mut found = 0;
     for chunk in SceneryChunk::all(field_ground) {
         let held: Vec<_> = field
@@ -77,6 +80,24 @@ fn a_chunks_scenery_is_worked_out_from_the_chunk_alone() {
         assert_eq!(
             worked_out, held,
             "the field stands the same props in chunk {chunk:?} (test seed {seed})"
+        );
+        let from_filed: Vec<_> = filed
+            .sourced_props_in(&field.prop_sources, field_ground, chunk)
+            .into_iter()
+            .map(|(_, placed)| placed)
+            .collect();
+        assert_eq!(
+            from_filed, held,
+            "the sources filed by chunk stand the same props in chunk {chunk:?} (test seed {seed})"
+        );
+        let from_the_whole: Vec<_> = over_the_whole
+            .iter()
+            .filter(|(_, in_chunk, _)| *in_chunk == chunk)
+            .map(|(_, _, placed)| placed.clone())
+            .collect();
+        assert_eq!(
+            from_the_whole, held,
+            "the whole ground worked out at once stands the same props in chunk {chunk:?} (test seed {seed})"
         );
         found += worked_out.len();
     }
