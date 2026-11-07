@@ -22,15 +22,16 @@ use bevy::render::render_resource::binding_types::{
 use bevy::render::render_resource::{
     BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries, Buffer, BufferBinding,
     BufferDescriptor, BufferInitDescriptor, BufferUsages, ColorTargetState, ColorWrites,
-    CommandEncoder, CompareFunction, DepthStencilState, Extent3d, IndexFormat, LoadOp, MapMode,
-    MultisampleState, Operations, Origin3d, PipelineCompilationOptions, PipelineLayoutDescriptor,
-    PrimitiveState, RawFragmentState, RawRenderPipelineDescriptor, RawVertexBufferLayout,
-    RawVertexState, RenderPassColorAttachment, RenderPassDepthStencilAttachment,
-    RenderPassDescriptor, RenderPipeline, Sampler, SamplerBindingType, ShaderModuleDescriptor,
-    ShaderSource, ShaderStages, ShaderType, StoreOp, TexelCopyBufferInfo, TexelCopyBufferLayout,
-    TexelCopyTextureInfo, Texture, TextureAspect, TextureDescriptor, TextureDimension,
-    TextureFormat, TextureSampleType, TextureUsages, TextureView, TextureViewDescriptor,
-    TextureViewDimension, VertexStepMode, encase,
+    CommandEncoder, CompareFunction, DepthStencilState, Extent3d, FilterMode, IndexFormat, LoadOp,
+    MapMode, MultisampleState, Operations, Origin3d, PipelineCompilationOptions,
+    PipelineLayoutDescriptor, PrimitiveState, RawFragmentState, RawRenderPipelineDescriptor,
+    RawVertexBufferLayout, RawVertexState, RenderPassColorAttachment,
+    RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipeline, Sampler,
+    SamplerBindingType, SamplerDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages,
+    ShaderType, StoreOp, TexelCopyBufferInfo, TexelCopyBufferLayout, TexelCopyTextureInfo, Texture,
+    TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType,
+    TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension, VertexStepMode,
+    encase,
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::texture::GpuImage;
@@ -63,6 +64,7 @@ impl Plugin for ImpostorPlugin {
                 Render,
                 (
                     prepare_impostors
+                        .in_set(ImpostorsPrepared)
                         .after(arena::write_models)
                         .before(RenderSystems::Queue),
                     read_bakes.in_set(RenderSystems::Cleanup),
@@ -72,6 +74,11 @@ impl Plugin for ImpostorPlugin {
             .add_systems(Last, keep_impostors.after(arena::send_models));
     }
 }
+
+/// The frame's impostors given their layers and bakes, after which the atlas's layers stand for
+/// the frame.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) struct ImpostorsPrepared;
 
 /// How many models the GPU bakes in one frame, each about a millisecond of its time.
 const BAKES_PER_FRAME: usize = 4;
@@ -316,13 +323,19 @@ fn prepare_impostors(
     let mut bakes = Vec::new();
     for order in waiting {
         match order {
-            ImpostorOrder::Forget { model } => atlas.layers.release(model),
+            ImpostorOrder::Forget { model } => {
+                atlas.layers.release(model);
+                atlas.round += 1;
+            }
             ImpostorOrder::Read {
                 model,
                 ref key,
                 ref texels,
             } => match atlas.layers.admit(model, key.clone()) {
-                Some(admitted) => atlas.write(&queue, admitted.slot, texels),
+                Some(admitted) => {
+                    atlas.write(&queue, admitted.slot, texels);
+                    atlas.round += 1;
+                }
                 None => later.push(order),
             },
             ImpostorOrder::Bake {
@@ -336,6 +349,7 @@ fn prepare_impostors(
                     .and_then(|_| atlas.layers.admit(model, key.clone()));
                 match (placed, admitted) {
                     (Some(placed), Some(admitted)) => {
+                        atlas.round += 1;
                         bakes.push((model, key.clone(), materials.clone(), placed, admitted.slot));
                     }
                     _ => later.push(order),
@@ -580,7 +594,15 @@ pub struct ImpostorAtlas {
     pub albedo: Texture,
     pub normal: Texture,
     pub depth: Texture,
+    /// The three textures whole, as the impostor stages read them, and how they are sampled.
+    pub albedo_view: TextureView,
+    pub normal_view: TextureView,
+    pub depth_view: TextureView,
+    pub sampler: Sampler,
     pub layers: Residency<AssetId<Gltf>, String>,
+    /// Counts each time a layer is given or taken, for what tells the kernel which props have
+    /// one.
+    pub round: u64,
     bake_depth: Texture,
 }
 
@@ -606,11 +628,31 @@ impl ImpostorAtlas {
             | TextureUsages::TEXTURE_BINDING
             | TextureUsages::COPY_SRC
             | TextureUsages::COPY_DST;
+        let albedo = texture("impostor albedo", ALBEDO_FORMAT, baked);
+        let normal = texture("impostor normals", NORMAL_FORMAT, baked);
+        let depth = texture("impostor depths", DEPTH_FORMAT, baked);
+        let whole = |texture: &Texture| {
+            texture.create_view(&TextureViewDescriptor {
+                label: Some("impostor atlas"),
+                dimension: Some(TextureViewDimension::D2Array),
+                ..default()
+            })
+        };
         ImpostorAtlas {
-            albedo: texture("impostor albedo", ALBEDO_FORMAT, baked),
-            normal: texture("impostor normals", NORMAL_FORMAT, baked),
-            depth: texture("impostor depths", DEPTH_FORMAT, baked),
+            albedo_view: whole(&albedo),
+            normal_view: whole(&normal),
+            depth_view: whole(&depth),
+            albedo,
+            normal,
+            depth,
+            sampler: device.create_sampler(&SamplerDescriptor {
+                label: Some("impostor atlas"),
+                mag_filter: FilterMode::Linear,
+                min_filter: FilterMode::Linear,
+                ..default()
+            }),
             layers: Residency::new(LAYERS),
+            round: 0,
             bake_depth: device.create_texture(&TextureDescriptor {
                 label: Some("impostor bake depth"),
                 size: Extent3d {

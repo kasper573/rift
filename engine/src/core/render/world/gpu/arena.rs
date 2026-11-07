@@ -27,6 +27,7 @@ use super::slab::{Slab, SlabBlock, SlabSpace};
 use super::upload::UploadBudget;
 use crate::core::render::world::lod::{self, Surface};
 use crate::core::render::world::model::{self, Piece};
+use crate::core::units::Meters;
 
 pub struct ModelArenaPlugin;
 
@@ -253,13 +254,29 @@ struct Held {
 
 impl<K: Eq + Hash> Default for ModelSlabs<K> {
     fn default() -> ModelSlabs<K> {
+        let mut indices = SlabSpace::new(INDEX_BYTES);
+        let shapes = indices.alloc(SHAPES.len() as u64 * INDEX_BYTES);
+        debug_assert_eq!(indices.range(shapes).map(|range| range.start), Some(0));
         ModelSlabs {
             vertices: SlabSpace::new(ModelVertex::BYTES),
-            indices: SlabSpace::new(INDEX_BYTES),
+            indices,
             models: HashMap::new(),
         }
     }
 }
+
+/// The indices of the shapes the impostor stages pull their vertices by, at the start of the
+/// index slab: a quad of two triangles over four corners, then a box of six faces over four
+/// corners each.
+pub const SHAPES: [u32; 42] = [
+    0, 1, 2, 2, 1, 3, //
+    0, 1, 2, 2, 1, 3, 4, 5, 6, 6, 5, 7, 8, 9, 10, 10, 9, 11, //
+    12, 13, 14, 14, 13, 15, 16, 17, 18, 18, 17, 19, 20, 21, 22, 22, 21, 23,
+];
+
+/// Where the shapes' indices lie among [`SHAPES`]: the quad's, then the box's.
+pub const QUAD_INDICES: std::ops::Range<u32> = 0..6;
+pub const BOX_INDICES: std::ops::Range<u32> = 6..42;
 
 impl<K: Eq + Hash> ModelSlabs<K> {
     /// Places `model` as `key`, in place of the model `key` held before: the bytes to write for it.
@@ -409,6 +426,18 @@ pub struct ChunkContents {
     pub high: Vec3,
     pub largest_scale: f32,
     pub props: Vec<(u32, AssetId<Gltf>, u32)>,
+    /// Where the chunk stands: near, over the chunk of ground `index` among the area's, or far,
+    /// its instances each carrying the index of the near chunk they lie in.
+    pub place: ChunkPlace,
+}
+
+/// Where a chunk of the arena stands: near, over one chunk of the ground, drawn by whatever its
+/// instances' sizes ask, or far, drawn only where the near chunk an instance lies in doesn't
+/// stand.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ChunkPlace {
+    Near { index: u32 },
+    Far,
 }
 
 impl ChunkContents {
@@ -416,6 +445,7 @@ impl ChunkContents {
     pub fn of(
         records: &[InstanceRecord],
         model_of: impl Fn(u32) -> AssetId<Gltf>,
+        place: ChunkPlace,
     ) -> ChunkContents {
         let mut props: Vec<(u32, AssetId<Gltf>, u32)> = Vec::new();
         let mut low = Vec3::INFINITY;
@@ -436,6 +466,7 @@ impl ChunkContents {
             high,
             largest_scale,
             props,
+            place,
         }
     }
 }
@@ -450,13 +481,15 @@ impl Default for InstanceArena {
 }
 
 impl InstanceArena {
-    /// Places `records` as `chunk`'s instances, in place of those it held, each prop's model by
-    /// `model_of`: the change that writes them, none when there are none to write.
+    /// Places `records` as `chunk`'s instances, standing at `place`, in place of those it held,
+    /// each prop's model by `model_of`: the change that writes them, none when there are none to
+    /// write.
     pub fn insert(
         &mut self,
         chunk: u32,
         records: &[InstanceRecord],
         model_of: impl Fn(u32) -> AssetId<Gltf>,
+        place: ChunkPlace,
     ) -> Option<InstanceChange> {
         let removed = self.remove(chunk);
         if records.is_empty() {
@@ -478,7 +511,7 @@ impl InstanceArena {
             bytes: bytes.into(),
             instances: records.len() as u32,
             capacity: self.space.capacity(),
-            contents: Arc::new(ChunkContents::of(records, model_of)),
+            contents: Arc::new(ChunkContents::of(records, model_of, place)),
         })
     }
 
@@ -586,9 +619,19 @@ impl PropModels {
 
     /// The material of each part of `gltf`'s model, once the model is on the GPU or on its way
     /// there this frame.
+    /// How wide `gltf`'s model is across its widest side, once it is prepared.
+    pub fn extent(&self, gltf: AssetId<Gltf>) -> Option<Meters> {
+        let bounds = match self.models.get(&gltf)? {
+            ModelState::Prepared { model, .. } => model.bounds,
+            ModelState::Sent(_, bounds) => *bounds,
+            _ => return None,
+        };
+        Some(Meters(2.0 * bounds.half_extents.max_element()))
+    }
+
     pub fn parts(&self, gltf: AssetId<Gltf>) -> Option<&[Option<Handle<GltfMaterial>>]> {
         match self.models.get(&gltf)? {
-            ModelState::Sent(parts) => Some(parts),
+            ModelState::Sent(parts, _) => Some(parts),
             _ => None,
         }
     }
@@ -629,8 +672,8 @@ enum ModelState {
         model: Arc<PreparedModel>,
         _asset: Handle<Gltf>,
     },
-    /// On the GPU, with the material of each of its parts.
-    Sent(Arc<[Option<Handle<GltfMaterial>>]>),
+    /// On the GPU, with the material of each of its parts and its bounds.
+    Sent(Arc<[Option<Handle<GltfMaterial>>]>, Aabb),
 }
 
 /// Lets go of the models whose asset is gone, on the GPU as well.
@@ -639,7 +682,7 @@ fn forget_models(mut events: MessageReader<AssetEvent<Gltf>>, mut models: ResMut
     for event in events.read() {
         if let AssetEvent::Removed { id } | AssetEvent::Unused { id } = *event
             && let Some(state) = models.models.remove(&id)
-            && matches!(state, ModelState::Sent(_))
+            && matches!(state, ModelState::Sent(..))
         {
             models.outgoing.push((id, None));
         }
@@ -675,7 +718,7 @@ fn prepare_models(
                             model: Arc::new(prepared),
                             _asset: gltf.clone(),
                         },
-                        None => ModelState::Sent(Arc::new([])),
+                        None => ModelState::Sent(Arc::new([]), Aabb::default()),
                     };
                 }
             }
@@ -704,6 +747,7 @@ pub(super) fn send_models(mut models: ResMut<PropModels>, mut budget: UploadBudg
                 .iter()
                 .map(|part| part.material.clone())
                 .collect(),
+            prepared.bounds,
         );
     }
 }
@@ -743,7 +787,15 @@ pub(super) fn write_models(
     }
     let (vertex_bytes, index_bytes) = slabs.capacity();
     vertices.fit(&device, &queue, vertex_bytes);
+    let first = indices.buffer().is_none();
     indices.fit(&device, &queue, index_bytes);
+    if first {
+        let shapes: Vec<u8> = SHAPES
+            .iter()
+            .flat_map(|index| index.to_le_bytes())
+            .collect();
+        indices.write(&queue, 0, &shapes);
+    }
     for written in writes {
         for (offset, bytes) in written.vertices {
             vertices.write(&queue, offset, &bytes);

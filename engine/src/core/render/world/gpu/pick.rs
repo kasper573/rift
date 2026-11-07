@@ -568,7 +568,7 @@ fn draw_picks(
                 indices,
                 drawn: culled.drawn(),
                 commands_buffer: culled.commands(),
-                commands: cull.table.as_ref()?.table().commands.len() as u32,
+                commands: cull.table.as_ref()?.table().impostors.start,
             })
         })
         .collect();

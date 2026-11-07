@@ -20,7 +20,7 @@ import bevy_pbr::render::view_transformations::position_world_to_clip;
 import engine::core::render::world::gpu::instance::{clear_instance, placement, shown_of, turned, world_of};
 
 // Bevy's vertex output, in the places bevy's own shaders read it from, and how far the instance
-// shows, which no shader of bevy's reads.
+// shows and fades in, which no shader of bevy's reads.
 @if(!PREPASS_PIPELINE)
 struct InstancedOutput {
     @builtin(position) position: vec4<f32>,
@@ -32,7 +32,7 @@ struct InstancedOutput {
     @location(5) color: vec4<f32>,
     @if(VERTEX_OUTPUT_INSTANCE_INDEX)
     @location(6) @interpolate(flat) instance_index: u32,
-    @location(10) @interpolate(flat) shown: vec2<f32>,
+    @location(10) @interpolate(flat) shown: vec3<f32>,
 }
 
 @if(PREPASS_PIPELINE)
@@ -51,7 +51,7 @@ struct InstancedOutput {
     @location(7) @interpolate(flat) instance_index: u32,
     @if(VERTEX_COLORS)
     @location(8) color: vec4<f32>,
-    @location(10) @interpolate(flat) shown: vec2<f32>,
+    @location(10) @interpolate(flat) shown: vec3<f32>,
 }
 
 @vertex

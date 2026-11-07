@@ -156,6 +156,11 @@ enum Render {
         /// pictures differ, failing when they differ by more than the eye can tell.
         #[arg(long)]
         check_determinism: bool,
+        /// The folder the renderer keeps what it works out once and reads again (the models'
+        /// impostors) in, as a player's profile keeps it: a fresh one for this run when not
+        /// given.
+        #[arg(long)]
+        profile: Option<PathBuf>,
     },
 }
 
@@ -187,14 +192,17 @@ fn main() {
             shot,
             out,
             check_determinism,
+            profile,
         }) => {
             if check_determinism {
-                if let Err(failure) = render::check_determinism(&game, &shot, &out) {
+                if let Err(failure) =
+                    render::check_determinism(&game, &shot, &out, profile.as_deref())
+                {
                     eprintln!("{failure}");
                     std::process::exit(1);
                 }
             } else {
-                render::area(&game, &shot, &out);
+                render::area(&game, &shot, &out, profile.as_deref());
             }
         }
         Command::Bench {

@@ -25,12 +25,13 @@ use crate::core::assets;
 use crate::core::content::Content;
 use crate::core::content::load::FileHashes;
 use crate::core::ground::{Heightfield, PaintMap};
-use crate::core::math::{Offset, Rect, Size};
+use crate::core::math::{Offset, Pos, Rect, Size};
 use crate::core::os::Profile;
 use crate::core::render::camera::Lens;
 use crate::core::render::world::cover::{self, Place};
 use crate::core::render::world::gpu::arena::{
-    DressedProp, InstanceArena, InstanceChange, InstanceChanges, InstanceRecord, PropModels,
+    ChunkPlace, DressedProp, InstanceArena, InstanceChange, InstanceChanges, InstanceRecord,
+    PropModels,
 };
 use crate::core::render::world::gpu::impostor::{
     self, BakeMaterial, BakeMaterialKey, ImpostorStore,
@@ -41,7 +42,7 @@ use crate::core::render::world::material::{self, WorldMaterial};
 use crate::core::render::world_point;
 use crate::core::units::{GROUND_ORIGIN, MeterSize, Meters};
 use crate::systems::area::prop::{PropDef, PropId};
-use crate::systems::area::{Area, PropPlacement};
+use crate::systems::area::{Area, AreaModule, PropPlacement};
 
 /// What a scenery holds in its arena: the lots standing there, by their keys, those being worked
 /// out and those worked out waiting for room in a frame's budget, the models of every prop they
@@ -50,6 +51,11 @@ use crate::systems::area::{Area, PropPlacement};
 pub(super) struct Instances {
     arena: InstanceArena,
     copies: Arc<[CopyPiece]>,
+    /// Every prop the area stands, placed or scattered: the far field keeps those of them whose
+    /// models are wide enough to show, so it wants every one's model until its width is known.
+    area_props: Vec<PropId>,
+    /// How wide each area prop's model is, as far as the models have been prepared.
+    extents: HashMap<PropId, Meters>,
     /// How many props the content holds: the arena draws the copies of a cover's pieces after
     /// them.
     props: u32,
@@ -65,10 +71,23 @@ pub(super) struct Instances {
 
 impl Instances {
     /// What the arena of an area holding the content's props and strewing `copies` holds.
-    pub(super) fn new(content: &Content, copies: Arc<[CopyPiece]>) -> Instances {
+    pub(super) fn new(content: &Content, area: &Area, copies: Arc<[CopyPiece]>) -> Instances {
+        let mut area_props: Vec<PropId> = area
+            .prop_sources
+            .iter()
+            .flat_map(|module| match module {
+                AreaModule::Prop(placed) => vec![placed.prop],
+                AreaModule::Scatter(scatter) => scatter.props.clone(),
+                _ => Vec::new(),
+            })
+            .collect();
+        area_props.sort_unstable();
+        area_props.dedup();
         Instances {
             arena: InstanceArena::default(),
             copies,
+            area_props,
+            extents: HashMap::default(),
             props: content.table::<PropDef>().len() as u32,
             expanding: HashMap::default(),
             expanded: Vec::new(),
@@ -103,10 +122,11 @@ impl Instances {
     }
 
     /// Every instance among the arena's that a module among the area's prop sources `stood`
-    /// takes stands.
+    /// takes stands near, where the module stands whole; the far field's are left out.
     pub(super) fn standing_for(&self, stood: impl Fn(u32) -> bool) -> Vec<u32> {
         self.standing
             .iter()
+            .filter(|(_, standing)| !matches!(standing.lot, Lot::Far(..)))
             .filter_map(|(key, standing)| Some((self.arena.first_of(*key)?, standing)))
             .flat_map(|(first, standing)| {
                 standing
@@ -129,7 +149,7 @@ impl Instances {
         touched: &[Rect<Meters>],
         moved: impl Fn(u32) -> Option<u32>,
     ) {
-        let props = |lot: &Lot| matches!(lot, Lot::Props(_));
+        let props = |lot: &Lot| matches!(lot, Lot::Props(_) | Lot::Far(..));
         self.expanding.retain(|_, (lot, _)| !props(lot));
         self.expanded.retain(|(_, lot, _)| !props(lot));
         for (key, standing) in &mut self.standing {
@@ -139,7 +159,7 @@ impl Instances {
             for source in &mut standing.sources {
                 *source = source.and_then(&moved);
             }
-            let bounds = standing.lot.chunk().bounds(ground);
+            let bounds = standing.lot.bounds(ground);
             if touched.iter().any(|stretch| stretch.intersects(&bounds)) {
                 self.stale.insert(*key);
             }
@@ -164,7 +184,7 @@ impl Instances {
     /// anew, what stands there standing until what replaces it does.
     pub(super) fn ground_changed(&mut self, ground: Rect<Meters>, changed: &[Rect<Meters>]) {
         let touched = |lot: &Lot| {
-            let bounds = lot.chunk().bounds(ground);
+            let bounds = lot.bounds(ground);
             changed.iter().any(|stretch| stretch.intersects(&bounds))
         };
         self.expanding.retain(|_, (lot, _)| !touched(lot));
@@ -178,36 +198,95 @@ impl Instances {
     }
 }
 
-/// What a chunk of the arena holds: the props standing in a chunk of the ground, or the copies its
-/// covers strew there as a view shows them from as near as a detail.
+/// What a chunk of the arena holds: the props standing in a chunk of the ground, the copies its
+/// covers strew there as a view shows them from as near as a detail, or the far field's props
+/// over a tile of chunks, those wide enough to show from as far as a detail.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum Lot {
     Props(SceneryChunk),
     Copies(SceneryChunk, Detail),
+    Far(FarTile, Detail),
 }
 
 impl Lot {
-    fn chunk(self) -> SceneryChunk {
+    /// The ground the lot stands over.
+    fn bounds(self, ground: Rect<Meters>) -> Rect<Meters> {
         match self {
-            Lot::Props(chunk) | Lot::Copies(chunk, _) => chunk,
+            Lot::Props(chunk) | Lot::Copies(chunk, _) => chunk.bounds(ground),
+            Lot::Far(tile, _) => tile.bounds(ground),
         }
     }
 
     /// The two keys the lot may stand at in the arena: one for what stands, the other for what
     /// replaces it.
     fn keys(self, ground: Rect<Meters>) -> [u32; 2] {
-        let chunk = self.chunk();
-        let index = chunk.row * across(ground) + chunk.column;
-        let kind = match self {
-            Lot::Props(_) => 0,
-            Lot::Copies(..) => COPIES_KEY,
+        let (kind, index) = match self {
+            Lot::Props(chunk) => (0, chunk_index(ground, chunk)),
+            Lot::Copies(chunk, _) => (COPIES_KEY, chunk_index(ground, chunk)),
+            Lot::Far(tile, _) => (FAR_KEY, tile.row * FarTile::across(ground) + tile.column),
         };
         [kind | index, kind | REPLACING_KEY | index]
     }
 }
 
+/// A tile of the far field: `FAR_CHUNKS` chunks of the ground a side, by its place among the
+/// tiles across and down from the ground's corner.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct FarTile {
+    column: u32,
+    row: u32,
+}
+
+impl FarTile {
+    const SIDE: Meters = Meters(SceneryChunk::SIDE.0 * FAR_CHUNKS as f32);
+
+    /// Every tile of `ground`, row by row.
+    fn all(ground: Rect<Meters>) -> impl Iterator<Item = FarTile> {
+        let across = FarTile::across(ground);
+        let down = (ground.size.height / FarTile::SIDE.0).ceil() as u32;
+        (0..down).flat_map(move |row| (0..across).map(move |column| FarTile { column, row }))
+    }
+
+    fn across(ground: Rect<Meters>) -> u32 {
+        (ground.size.width / FarTile::SIDE.0).ceil() as u32
+    }
+
+    fn bounds(self, ground: Rect<Meters>) -> Rect<Meters> {
+        Rect::new(
+            Pos::new(
+                ground.origin.x + self.column as f32 * FarTile::SIDE.0,
+                ground.origin.y + self.row as f32 * FarTile::SIDE.0,
+            ),
+            Size::new(FarTile::SIDE.0, FarTile::SIDE.0),
+        )
+    }
+
+    /// The chunks of `ground` the tile covers.
+    fn chunks(self, ground: Rect<Meters>) -> impl Iterator<Item = SceneryChunk> {
+        let first = SceneryChunk {
+            column: self.column * FAR_CHUNKS,
+            row: self.row * FAR_CHUNKS,
+        };
+        let across = across(ground);
+        let down = (ground.size.height / SceneryChunk::SIDE.0).ceil() as u32;
+        (first.row..(first.row + FAR_CHUNKS).min(down)).flat_map(move |row| {
+            (first.column..(first.column + FAR_CHUNKS).min(across))
+                .map(move |column| SceneryChunk { column, row })
+        })
+    }
+}
+
+/// The index of `chunk` among the chunks of `ground`, row by row, as the arena's keys and the
+/// far field's records name it.
+fn chunk_index(ground: Rect<Meters>, chunk: SceneryChunk) -> u32 {
+    chunk.row * across(ground) + chunk.column
+}
+
 const COPIES_KEY: u32 = 1 << 31;
 const REPLACING_KEY: u32 = 1 << 30;
+const FAR_KEY: u32 = 1 << 29;
+/// The chunks a far tile spans each way.
+const FAR_CHUNKS: u32 = 8;
 
 /// A lot standing in the arena, what it draws, how many instances it holds, and for a lot of
 /// props the place among the area's prop sources of the module standing each, none for one since
@@ -246,6 +325,10 @@ struct Expanded {
     sources: Vec<u32>,
 }
 
+/// How wide each prop's model is, for the far field to keep the props wide enough to show: none
+/// until every model of the area's props is prepared.
+type Extents = Arc<HashMap<PropId, Meters>>;
+
 /// Stands in the arena every lot the plan reaches, as far as the frame's budget goes: how many of
 /// them don't stand yet.
 pub(super) fn stand(
@@ -258,6 +341,7 @@ pub(super) fn stand(
     let wanted = wanted_lots(streaming, &plan.seen, ground);
     let wanted_at: HashMap<[u32; 2], Lot> =
         wanted.iter().map(|&lot| (lot.keys(ground), lot)).collect();
+    let extents = extents(world, streaming);
     let instances = &mut streaming.instances;
     instances
         .expanding
@@ -316,9 +400,18 @@ pub(super) fn stand(
         if waiting || instances.expanding.len() >= EXPANDING_AT_ONCE {
             continue;
         }
-        if !ground_loaded(streaming, lot.chunk().bounds(ground)) {
-            continue;
-        }
+        let extents = match lot {
+            Lot::Far(..) => match &extents {
+                Some(extents) => Some(extents.clone()),
+                None => continue,
+            },
+            _ => {
+                if !ground_loaded(streaming, lot.bounds(ground)) {
+                    continue;
+                }
+                None
+            }
+        };
         let instances = &mut streaming.instances;
         let key = match keys
             .iter()
@@ -331,7 +424,7 @@ pub(super) fn stand(
                 replacing
             }
         };
-        let task = expansion(streaming, &plan.seen, ground, lot, key);
+        let task = expansion(streaming, &plan.seen, ground, lot, extents, key);
         streaming
             .instances
             .expanding
@@ -345,14 +438,16 @@ pub(super) fn stand(
 pub(super) fn clear(world: &mut World, streaming: &mut Streaming, plan: &Plan, root: Entity) {
     let ground = streaming.area.size.bounds();
     let keep = plan.seen.reach.0 * KEEP_SHARE;
-    let kept = |chunk: SceneryChunk| distance_to(chunk.bounds(ground), plan.seen.at()) <= keep;
+    let kept = |lot: Lot| {
+        matches!(lot, Lot::Far(..)) || distance_to(lot.bounds(ground), plan.seen.at()) <= keep
+    };
     let instances = &mut streaming.instances;
-    instances.expanding.retain(|_, (lot, _)| kept(lot.chunk()));
-    instances.expanded.retain(|(_, lot, _)| kept(lot.chunk()));
+    instances.expanding.retain(|_, (lot, _)| kept(*lot));
+    instances.expanded.retain(|(_, lot, _)| kept(*lot));
     let gone: Vec<u32> = instances
         .standing
         .iter()
-        .filter(|(_, standing)| !kept(standing.lot.chunk()))
+        .filter(|(_, standing)| !kept(standing.lot))
         .map(|(key, _)| *key)
         .collect();
     for key in gone {
@@ -375,7 +470,10 @@ pub(super) fn clear(world: &mut World, streaming: &mut Streaming, plan: &Plan, r
         .iter()
         .map(|drawn| prop_of(&instances.copies, *drawn))
         .collect();
-    instances.models.retain(|prop, _| props.contains(prop));
+    let Instances {
+        models, extents, ..
+    } = &mut *instances;
+    models.retain(|prop, _| props.contains(prop) || !extents.contains_key(prop));
     let undressed: Vec<Drawn> = instances
         .dressed
         .extract_if(|dressed| !drawn.contains(dressed))
@@ -397,9 +495,11 @@ pub(super) fn drop_arena(world: &mut World, root: Entity) {
 /// The most lots being worked out at once.
 const EXPANDING_AT_ONCE: usize = 8;
 
-/// Every lot the sight takes in, nearest first: the props of every chunk within its reach, and
-/// the copies of every chunk within as far as the view shows any piece's, worked out for the
-/// detail the nearest eye shows the chunk at, or the finest that thins nothing nearer than that.
+/// Every lot the sight takes in, nearest first: the props of every chunk within its reach, the
+/// copies of every chunk within as far as the view shows any piece's, worked out for the detail
+/// the nearest eye shows the chunk at, or the finest that thins nothing nearer than that, and
+/// after them the far field: every tile of the ground not wholly within the reach, worked out
+/// for the detail the nearest eye shows it at.
 fn wanted_lots(streaming: &Streaming, seen: &Seen, ground: Rect<Meters>) -> Vec<Lot> {
     let at = seen.at();
     let reach = seen.reach.0;
@@ -436,7 +536,67 @@ fn wanted_lots(streaming: &Streaming, seen: &Seen, ground: Rect<Meters>) -> Vec<
         );
         a.0.cmp(&b.0).then(a.1.total_cmp(&b.1))
     });
-    wanted.into_iter().map(|(_, lot)| lot).collect()
+    let mut far: Vec<(f32, Lot)> = FarTile::all(ground)
+        .filter(|tile| farthest_from(tile.bounds(ground), at) > reach)
+        .map(|tile| {
+            let bounds = tile.bounds(ground);
+            let middle = streaming.heights.height_at(bounds.center());
+            let detail = seen.detail(seen.over(bounds, middle, middle).max(reach));
+            (distance_to(bounds, at), Lot::Far(tile, detail))
+        })
+        .collect();
+    far.sort_by(|a, b| a.0.total_cmp(&b.0));
+    wanted
+        .into_iter()
+        .map(|(_, lot)| lot)
+        .chain(far.into_iter().map(|(_, lot)| lot))
+        .collect()
+}
+
+/// How far the farthest point of `bounds` lies from `at`.
+fn farthest_from(bounds: Rect<Meters>, at: Pos<Meters>) -> f32 {
+    [
+        bounds.min(),
+        bounds.max(),
+        Pos::new(bounds.min_x(), bounds.max_y()),
+        Pos::new(bounds.max_x(), bounds.min_y()),
+    ]
+    .into_iter()
+    .map(|corner| corner.distance_to(at))
+    .fold(0.0, f32::max)
+}
+
+/// How wide each model of the area's props is, once every one has been prepared; until then the
+/// ones whose width isn't known yet are wanted, and kept, so each is prepared once.
+fn extents(world: &mut World, streaming: &mut Streaming) -> Option<Extents> {
+    let area_props = streaming.instances.area_props.clone();
+    for prop in area_props {
+        if streaming.instances.extents.contains_key(&prop) {
+            continue;
+        }
+        let handle = streaming
+            .instances
+            .models
+            .entry(prop)
+            .or_insert_with(|| {
+                let path = prop.get(&streaming.content).model.path();
+                let model = assets::model(world.resource::<AssetServer>(), path);
+                if let Some(mut models) = world.get_resource_mut::<PropModels>() {
+                    models.want(&model);
+                }
+                model
+            })
+            .id();
+        if let Some(extent) = world
+            .get_resource::<PropModels>()
+            .and_then(|models| models.extent(handle))
+        {
+            streaming.instances.extents.insert(prop, extent);
+        }
+    }
+    let instances = &streaming.instances;
+    (instances.extents.len() == instances.area_props.len())
+        .then(|| Arc::new(instances.extents.clone()))
 }
 
 /// How near the eye every piece's copies stand as they are strewn: each told apart from the next,
@@ -467,6 +627,7 @@ fn expansion(
     seen: &Seen,
     ground: Rect<Meters>,
     lot: Lot,
+    extents: Option<Extents>,
     key: u32,
 ) -> impl Future<Output = Expanded> + Send + 'static {
     let area = streaming.area.clone();
@@ -478,6 +639,14 @@ fn expansion(
     async move {
         match lot {
             Lot::Props(chunk) => props_expanded(&area, &heights, ground, chunk, key),
+            Lot::Far(tile, detail) => far_expanded(
+                &area,
+                &heights,
+                ground,
+                tile,
+                &extents.unwrap_or_default(),
+                GRAIN_PIXELS / lens.pixels_per_meter(detail.distance()),
+            ),
             Lot::Copies(chunk, detail) => {
                 let ground = Ground {
                     heights: &heights,
@@ -511,6 +680,39 @@ fn props_expanded(
             .collect(),
         sources: placed.iter().map(|(source, _)| *source).collect(),
     }
+}
+
+/// The props of the far field standing in `tile` of `area`'s `ground` as the arena holds them:
+/// those whose model, at the scale placed, spans at least `least` metres, each on the ground of
+/// `heights` under it and carrying the index of the chunk it lies in.
+fn far_expanded(
+    area: &Area,
+    heights: &Heightfield,
+    ground: Rect<Meters>,
+    tile: FarTile,
+    extents: &HashMap<PropId, Meters>,
+    least: f32,
+) -> Expanded {
+    let mut expanded = Expanded {
+        records: Vec::new(),
+        drawn: HashSet::default(),
+        sources: Vec::new(),
+    };
+    for chunk in tile.chunks(ground) {
+        let index = chunk_index(ground, chunk);
+        for (source, placed) in expand::sourced_props_in(&area.prop_sources, ground, chunk) {
+            let wide = extents
+                .get(&placed.prop)
+                .is_some_and(|extent| extent.0 * placed.scale >= least);
+            if !wide {
+                continue;
+            }
+            expanded.drawn.insert(Drawn::Prop(placed.prop));
+            expanded.records.push(prop_record(heights, &placed, index));
+            expanded.sources.push(source);
+        }
+    }
+    expanded
 }
 
 /// The ground copies are strewn over: its heights, its paint, and the bounds of all of it.
@@ -626,11 +828,17 @@ fn send(world: &mut World, streaming: &mut Streaming, root: Entity) {
             models_of.insert(drawn.id(streaming.instances.props), model);
         }
         let instances = &mut streaming.instances;
+        let place = match lot {
+            Lot::Props(chunk) | Lot::Copies(chunk, _) => ChunkPlace::Near {
+                index: chunk_index(streaming.area.size.bounds(), chunk),
+            },
+            Lot::Far(..) => ChunkPlace::Far,
+        };
         let placed = instances
             .arena
-            .insert(key, &expanded.records, |prop| models_of[&prop]);
+            .insert(key, &expanded.records, |prop| models_of[&prop], place);
         instances.stale.remove(&key);
-        if matches!(lot, Lot::Props(_)) {
+        if matches!(lot, Lot::Props(_) | Lot::Far(..)) {
             instances.props_revision += 1;
         }
         instances.standing.insert(
@@ -653,7 +861,7 @@ fn send(world: &mut World, streaming: &mut Streaming, root: Entity) {
 fn take_away(world: &mut World, instances: &mut Instances, root: Entity, key: u32) {
     instances.stale.remove(&key);
     if let Some(standing) = instances.standing.remove(&key) {
-        if matches!(standing.lot, Lot::Props(_)) {
+        if matches!(standing.lot, Lot::Props(_) | Lot::Far(..)) {
             instances.props_revision += 1;
         }
         changed(world, root, instances.arena.remove(key));

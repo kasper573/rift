@@ -1,9 +1,10 @@
 // A prop drawn from the arenas: each instance a command draws is the culling kernel's, standing
 // where its record says, turned about the up axis and grown by the scale the kernel drew it at,
-// and cleared as far as the kernel says where it hides the camera's subject. The model's vertices
+// cleared as far as the kernel says where it hides the camera's subject, and faded in as far as
+// the kernel says where its model and its impostor give way to each other. The model's vertices
 // are the slab's, in the model's own metres.
 
-import engine::core::render::world::clearing::clear_at;
+import engine::core::render::world::clearing::{clear_at, dither};
 
 struct Instance {
     x: f32,
@@ -17,8 +18,8 @@ struct Instance {
 }
 
 @group(2) @binding(100) var<storage, read> instances: array<Instance>;
-// Each instance the commands draw, by its place among `instances`, its scale, how far it shows
-// and whether the eye stands inside it.
+// Each instance the commands draw, by its place among `instances`, its scale, how far it shows,
+// and how far it fades in with whether the eye stands inside it.
 @group(2) @binding(101) var<storage, read> drawn: array<vec4<u32>>;
 
 // Where the camera's subject shows on the picture, and how many pixels round it a prop in the way
@@ -54,16 +55,25 @@ fn seed_of(index: u32) -> u32 {
     return instances[drawn[index].x].seed;
 }
 
-// How far the instance a command draws as its `index`th shows, and whether the eye stands inside
-// it: 1 or more for inside.
-fn shown_of(index: u32) -> vec2<f32> {
+// The prop of the instance a command draws as its `index`th, by its place among the table's.
+fn prop_of(index: u32) -> u32 {
+    return instances[drawn[index].x].prop;
+}
+
+// How far the instance a command draws as its `index`th shows, whether the eye stands inside it
+// (1 or more for inside), and how far it fades in.
+fn shown_of(index: u32) -> vec3<f32> {
     let listed = drawn[index];
-    return vec2<f32>(bitcast<f32>(listed.z), f32(listed.w));
+    return vec3<f32>(bitcast<f32>(listed.z), f32(listed.w & 1u), f32(listed.w >> 1u) / 65535.0);
 }
 
 // Drops the pixel at `pixel` of an instance `shown` far, as `shown_of` says: a circle round the
-// subject cleared, or all of it while the eye stands inside it.
-fn clear_instance(pixel: vec2<f32>, shown: vec2<f32>) {
+// subject cleared, or all of it while the eye stands inside it, and the share of it not yet
+// faded in.
+fn clear_instance(pixel: vec2<f32>, shown: vec3<f32>) {
+    if dither(pixel + vec2<f32>(17.0, 29.0)) >= shown.z {
+        discard;
+    }
     let radius = select(clearing.focus_radius, 3.4e38, shown.y > 0.5);
     clear_at(pixel, shown.x, clearing.focus, radius);
 }

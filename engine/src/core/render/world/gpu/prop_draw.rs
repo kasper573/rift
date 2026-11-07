@@ -4,15 +4,17 @@
 //! built from bevy's material pipeline pieces as a mesh of the model slab's vertices would be, its
 //! vertex stage reading the instance its command draws in place of a mesh's transform. A part
 //! drawn by a shader of the game's draws through the shader's own instanced stage. A view draws
-//! each part's levels in one indirect multi-draw.
+//! each part's levels in one indirect multi-draw, then the props' impostors from the atlas and
+//! the boxes standing in for what the GPU lacks, each in one more.
 
 use std::any::TypeId;
 use std::sync::Arc;
 
 use bevy::asset::RenderAssetUsages;
-use bevy::core_pipeline::core_3d::AlphaMask3d;
+use bevy::core_pipeline::core_3d::{AlphaMask3d, CORE_3D_DEPTH_FORMAT};
 use bevy::core_pipeline::prepass::{
     AlphaMask3dPrepass, OpaqueNoLightmap3dBatchSetKey, OpaqueNoLightmap3dBinKey,
+    prepass_target_descriptors,
 };
 use bevy::ecs::query::ROQueryItem;
 use bevy::ecs::system::SystemParamItem;
@@ -40,12 +42,15 @@ use bevy::render::render_phase::{
     PhaseItem, RenderCommand, RenderCommandResult, TrackedRenderPass, ViewBinnedRenderPhases,
 };
 use bevy::render::render_resource::binding_types::{
-    storage_buffer_read_only_sized, uniform_buffer,
+    sampler, storage_buffer_read_only_sized, texture_2d_array, uniform_buffer,
 };
 use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
-    CachedRenderPipelineId, IndexFormat, PipelineCache, RenderPipelineDescriptor, ShaderStages,
-    ShaderType, SpecializedMeshPipeline, StorageBuffer, UniformBuffer,
+    CachedRenderPipelineId, CompareFunction, DepthBiasState, DepthStencilState, FragmentState,
+    IndexFormat, MultisampleState, PipelineCache, PrimitiveState, PrimitiveTopology as RawTopology,
+    RenderPipelineDescriptor, SamplerBindingType, ShaderStages, ShaderType,
+    SpecializedMeshPipeline, StencilState, StorageBuffer, TextureSampleType, UniformBuffer,
+    VertexState,
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::sync_world::MainEntity;
@@ -56,6 +61,7 @@ use bevy::shader::{Shader, ShaderDefVal};
 use super::arena::{ExtractedPropArena, InstanceArenas, ModelArena};
 use super::clearing::Clearing;
 use super::cull::{PropCulls, ViewCull};
+use super::impostor::ImpostorAtlas;
 use crate::core::render::world::RenderProgress;
 
 pub struct PropDrawPlugin;
@@ -64,6 +70,7 @@ impl Plugin for PropDrawPlugin {
     fn build(&self, app: &mut App) {
         bevy::shader::load_shader_library!(app, "instance.wesl");
         bevy::asset::embedded_asset!(app, "instanced.wesl");
+        bevy::asset::embedded_asset!(app, "impostor.wesl");
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
@@ -123,6 +130,8 @@ const INSTANCE_GROUP: usize = 2;
 struct PropBindings {
     instances: HashMap<(Entity, RetainedViewEntity), BindGroup>,
     drawn: HashMap<(Entity, RetainedViewEntity, bool), Vec<PartDraw>>,
+    /// The impostor atlas, bound where a part's material would be.
+    atlas: Option<BindGroup>,
 }
 
 /// A part a view draws: its pipeline, its material's bind group, and its levels' commands.
@@ -151,6 +160,20 @@ struct PropPipeline {
     mesh: StorageBuffer<Vec<MeshUniform>>,
     built:
         HashMap<(bool, MeshPipelineKey, TypeId, ErasedMaterialKey), Option<CachedRenderPipelineId>>,
+    impostors: ImpostorPipeline,
+}
+
+/// How the impostors and the proxies are drawn: the mesh pipeline's lit descriptor and the
+/// prepass's depth one, each drawing `impostor.wesl` with the instances where a mesh's bindings
+/// would be and the atlas after, one pipeline a pass, view key and shape.
+struct ImpostorPipeline {
+    shader: Handle<Shader>,
+    atlas: BindGroupLayoutDescriptor,
+    prepass_moving: BindGroupLayoutDescriptor,
+    prepass_still: BindGroupLayoutDescriptor,
+    empty: BindGroupLayoutDescriptor,
+    depth_clip_control: bool,
+    built: HashMap<(bool, MeshPipelineKey, bool), CachedRenderPipelineId>,
 }
 
 fn start(
@@ -179,6 +202,29 @@ fn start(
                 (100, storage_buffer_read_only_sized(false, None)),
                 (101, storage_buffer_read_only_sized(false, None)),
                 (102, uniform_buffer::<ClearingUniform>(false)),
+                (103, storage_buffer_read_only_sized(false, None)),
+                (104, storage_buffer_read_only_sized(false, None)),
+            ),
+        ),
+    );
+    let atlas = BindGroupLayoutDescriptor::new(
+        "impostor_atlas",
+        &BindGroupLayoutEntries::with_indices(
+            ShaderStages::FRAGMENT,
+            (
+                (
+                    100,
+                    texture_2d_array(TextureSampleType::Float { filterable: true }),
+                ),
+                (
+                    101,
+                    texture_2d_array(TextureSampleType::Float { filterable: true }),
+                ),
+                (
+                    102,
+                    texture_2d_array(TextureSampleType::Float { filterable: true }),
+                ),
+                (103, sampler(SamplerBindingType::Filtering)),
             ),
         ),
     );
@@ -209,6 +255,15 @@ fn start(
         clearing: UniformBuffer::default(),
         mesh: every,
         built: HashMap::default(),
+        impostors: ImpostorPipeline {
+            shader: bevy::asset::load_embedded_asset!(assets.as_ref(), "impostor.wesl"),
+            atlas,
+            prepass_moving: prepass.view_layout_motion_vectors.clone(),
+            prepass_still: prepass.view_layout_no_motion_vectors.clone(),
+            empty: prepass.empty_layout.clone(),
+            depth_clip_control: prepass.depth_clip_control_supported,
+            built: HashMap::default(),
+        },
     });
 }
 
@@ -218,6 +273,7 @@ fn bind_props(
     device: Res<RenderDevice>,
     cache: Res<PipelineCache>,
     pipeline: Option<Res<PropPipeline>>,
+    atlas: Option<Res<ImpostorAtlas>>,
     culls: Res<PropCulls>,
     arenas: Res<InstanceArenas>,
     mut bindings: ResMut<PropBindings>,
@@ -233,8 +289,25 @@ fn bind_props(
     ) else {
         return;
     };
+    if bindings.atlas.is_none()
+        && let Some(atlas) = atlas
+    {
+        bindings.atlas = Some(device.create_bind_group(
+            "impostor_atlas",
+            &cache.get_bind_group_layout(&pipeline.impostors.atlas),
+            &BindGroupEntries::with_indices((
+                (100, &atlas.albedo_view),
+                (101, &atlas.normal_view),
+                (102, &atlas.depth_view),
+                (103, &atlas.sampler),
+            )),
+        ));
+    }
     for (scenery, cull) in &culls.0 {
-        let Some(records) = arenas.0.get(scenery).and_then(|arena| arena.slab.buffer()) else {
+        let (Some(records), Some((props, layers))) = (
+            arenas.0.get(scenery).and_then(|arena| arena.slab.buffer()),
+            cull.table.as_ref().and_then(|table| table.prop_bindings()),
+        ) else {
             continue;
         };
         for (view, culled) in &cull.views {
@@ -248,6 +321,8 @@ fn bind_props(
                         (100, records.as_entire_binding()),
                         (101, culled.drawn().as_entire_binding()),
                         (102, clearing.clone()),
+                        (103, props.clone()),
+                        (104, layers.clone()),
                     )),
                 ),
             );
@@ -376,6 +451,28 @@ impl PropQueue<'_, '_> {
                     })
                 })
                 .collect();
+            let mut parts = parts;
+            if let Some(atlas) = &self.bindings.atlas {
+                let table = table.table();
+                for (proxy, commands) in [(false, &table.impostors), (true, &table.proxies)] {
+                    if commands.is_empty() {
+                        continue;
+                    }
+                    let Some(id) = pipeline.specialize_impostors(&self.cache, view_key, lit, proxy)
+                    else {
+                        progress.left_out();
+                        continue;
+                    };
+                    parts.push(PartDraw {
+                        pipeline: id,
+                        material: atlas.clone(),
+                        first_command: commands.start,
+                        commands: commands.len() as u32,
+                    });
+                }
+            } else {
+                progress.left_out();
+            }
             let Some(first) = parts.first().map(|part| part.pipeline) else {
                 continue;
             };
@@ -638,6 +735,136 @@ impl PropPipeline {
         Some(self.instanced(descriptor, &self.prepass.default_prepass_shader))
     }
 
+    /// The pipeline drawing the impostors, or the proxies where `proxy`, in the pass `lit` names,
+    /// in a view of `view`'s key, queued the first time it is asked for.
+    fn specialize_impostors(
+        &mut self,
+        cache: &PipelineCache,
+        view: MeshPipelineKey,
+        lit: bool,
+        proxy: bool,
+    ) -> Option<CachedRenderPipelineId> {
+        let key = (lit, view, proxy);
+        if let Some(&id) = self.impostors.built.get(&key) {
+            return Some(id);
+        }
+        let descriptor = if lit {
+            self.impostors_lit(view, proxy)?
+        } else {
+            self.impostors_depth(view, proxy)
+        };
+        let id = cache.queue_render_pipeline(descriptor);
+        self.impostors.built.insert(key, id);
+        Some(id)
+    }
+
+    /// The mesh pipeline's own lit descriptor, drawing the impostor stages with the instances
+    /// where a mesh's bindings would be and the atlas after.
+    fn impostors_lit(
+        &self,
+        view: MeshPipelineKey,
+        proxy: bool,
+    ) -> Option<RenderPipelineDescriptor> {
+        let mesh_key =
+            view | MeshPipelineKey::from_primitive_topology_and_strip_index(
+                PrimitiveTopology::TriangleList,
+                None,
+            ) | MeshPipelineKey::MAY_DISCARD;
+        let mut descriptor = self
+            .material
+            .mesh_pipeline
+            .specialize(mesh_key, &self.layout)
+            .ok()?;
+        let defs = shape_defs(proxy);
+        descriptor.label = Some(if proxy { "proxy_lit" } else { "impostor_lit" }.into());
+        descriptor.layout.truncate(INSTANCE_GROUP);
+        descriptor.layout.push(self.instances.clone());
+        descriptor.layout.push(self.impostors.atlas.clone());
+        descriptor.vertex.shader = self.impostors.shader.clone();
+        descriptor.vertex.buffers = Vec::new();
+        descriptor.vertex.shader_defs.extend(defs.iter().cloned());
+        let fragment = descriptor.fragment.as_mut()?;
+        fragment.shader = self.impostors.shader.clone();
+        fragment.shader_defs.extend(defs);
+        descriptor.primitive.cull_mode = None;
+        Some(descriptor)
+    }
+
+    /// As bevy's prepass draws an opaque mesh, for the impostor stages: depth always, the normal
+    /// and motion the view keeps, depth unclipped toward a directional light.
+    fn impostors_depth(&self, view: MeshPipelineKey, proxy: bool) -> RenderPipelineDescriptor {
+        let normal = view.contains(MeshPipelineKey::NORMAL_PREPASS);
+        let moving = view.contains(MeshPipelineKey::MOTION_VECTOR_PREPASS);
+        let unclipped = view.contains(MeshPipelineKey::UNCLIPPED_DEPTH_ORTHO);
+        let emulated = unclipped && !self.impostors.depth_clip_control;
+        let mut defs = shape_defs(proxy);
+        defs.push("PREPASS_PIPELINE".into());
+        if normal {
+            defs.push("NORMAL_PREPASS".into());
+        }
+        if moving {
+            defs.push("MOTION_VECTOR_PREPASS".into());
+        }
+        if emulated {
+            defs.push("UNCLIPPED_DEPTH_ORTHO_EMULATION".into());
+        }
+        let mut targets = prepass_target_descriptors(normal, moving, false);
+        if targets.iter().all(Option::is_none) {
+            targets.clear();
+        }
+        defs.push("PREPASS_FRAGMENT".into());
+        RenderPipelineDescriptor {
+            label: Some(
+                if proxy {
+                    "proxy_depth"
+                } else {
+                    "impostor_depth"
+                }
+                .into(),
+            ),
+            layout: vec![
+                if moving {
+                    self.impostors.prepass_moving.clone()
+                } else {
+                    self.impostors.prepass_still.clone()
+                },
+                self.impostors.empty.clone(),
+                self.instances.clone(),
+                self.impostors.atlas.clone(),
+            ],
+            vertex: VertexState {
+                shader: self.impostors.shader.clone(),
+                shader_defs: defs.clone(),
+                buffers: Vec::new(),
+                ..default()
+            },
+            fragment: Some(FragmentState {
+                shader: self.impostors.shader.clone(),
+                shader_defs: defs,
+                targets,
+                ..default()
+            }),
+            primitive: PrimitiveState {
+                topology: RawTopology::TriangleList,
+                cull_mode: None,
+                unclipped_depth: unclipped && self.impostors.depth_clip_control,
+                ..default()
+            },
+            depth_stencil: Some(DepthStencilState {
+                format: CORE_3D_DEPTH_FORMAT,
+                depth_write_enabled: Some(true),
+                depth_compare: Some(CompareFunction::GreaterEqual),
+                stencil: StencilState::default(),
+                bias: DepthBiasState::default(),
+            }),
+            multisample: MultisampleState {
+                count: view.msaa_samples(),
+                ..default()
+            },
+            ..default()
+        }
+    }
+
     /// `descriptor` drawing the instances its commands list: from the arenas' instances where a
     /// mesh's bindings would be, through the shader of the game's that draws the material, in
     /// its instanced stages, else through the instanced stages of the world's own material in
@@ -730,5 +957,14 @@ impl<P: PhaseItem, const LIT: bool> RenderCommand<P> for DrawProps<LIT> {
             );
         }
         RenderCommandResult::Success
+    }
+}
+
+/// The shader definitions telling the impostor stages which shape they draw.
+fn shape_defs(proxy: bool) -> Vec<ShaderDefVal> {
+    if proxy {
+        vec!["PROXY".into()]
+    } else {
+        Vec::new()
     }
 }

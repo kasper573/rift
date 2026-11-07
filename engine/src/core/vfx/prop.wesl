@@ -121,8 +121,8 @@ struct PropOutput {
     @location(5) @interpolate(flat) place: vec4<f32>,
     @location(6) @interpolate(flat) turn: vec4<f32>,
     @location(7) unclipped_depth: f32,
-    // How far the instance shows and whether the eye stands inside it.
-    @location(8) @interpolate(flat) shown: vec2<f32>,
+    // How far the instance shows, whether the eye stands inside it, and how far it fades in.
+    @location(8) @interpolate(flat) shown: vec3<f32>,
 }
 
 // The vertex of the instance the command draws as its `instance_index`th, its normal and tangent
@@ -157,7 +157,7 @@ fn vertex(vertex_in: Vertex) -> PropOutput {
 
 // The prop output of `out`, its instance standing at `place.xyz`, grown `place.w` times, turned
 // by `turn` and showing as far as `shown` says.
-fn prop_output(out: VertexOutput, place: vec4<f32>, turn: vec4<f32>, shown: vec2<f32>) -> PropOutput {
+fn prop_output(out: VertexOutput, place: vec4<f32>, turn: vec4<f32>, shown: vec3<f32>) -> PropOutput {
     var prop: PropOutput;
     prop.position = out.position;
     prop.world_position = out.world_position;

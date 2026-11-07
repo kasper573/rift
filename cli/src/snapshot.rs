@@ -327,6 +327,8 @@ fn draw(
     let drawn = Command::new(rift)
         .args(["render", "area"])
         .args([game, &file, &pending])
+        .arg("--profile")
+        .arg(scratch.join("profile"))
         .output()
         .map_err(|error| format!("rift doesn't run again: {error}"))?;
     let stdout = String::from_utf8_lossy(&drawn.stdout);

@@ -21,7 +21,7 @@ pub mod sky;
 pub mod terrain;
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
 use bevy::app::HierarchyPropagatePlugin;
 use bevy::camera::visibility::RenderLayers;
@@ -143,12 +143,19 @@ struct Progress {
     frames: AtomicU64,
     left_out: AtomicBool,
     whole: AtomicBool,
+    missing: AtomicU32,
 }
 
 impl RenderProgress {
     /// Notes that a draw of this frame was left out for want of something still on its way.
     pub(crate) fn left_out(&self) {
         self.0.left_out.store(true, Ordering::Relaxed);
+    }
+
+    /// Notes how many instances the camera views' kernels drew coarser than their size asked, in
+    /// the latest frame read back.
+    pub(crate) fn missing_drawn(&self, instances: u32) {
+        self.0.missing.store(instances, Ordering::Relaxed);
     }
 
     /// Notes a draw left out for want of a pipeline in `state`, unless it failed for good.
@@ -186,6 +193,14 @@ pub fn frames_drawn(world: &World) -> Option<u64> {
 }
 
 pub const DRAWN_FRAMES_AFTER: u64 = 2;
+
+/// How many prop instances the camera views drew coarser than their size asked, for want of a
+/// model or an impostor still on its way, in the latest frame the kernel's count came back from.
+pub fn missing_drawn(world: &World) -> u32 {
+    world
+        .get_resource::<RenderProgress>()
+        .map_or(0, |progress| progress.0.missing.load(Ordering::Relaxed))
+}
 
 /// Whether anything the world draws is still on its way to standing: a model loading or not yet
 /// spawned, a texture a model or a cover draws with still decoding, a ground's pictures, a body's

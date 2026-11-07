@@ -59,7 +59,7 @@ use crate::core::render::world::haze::Haze;
 use crate::core::render::world::lights::{self, Flicker};
 use crate::core::render::world::sky::{self, Daylight, SunLight};
 use crate::core::render::world::terrain::{self, GroundLayer};
-use crate::core::render::world::{DRAWN_FRAMES_AFTER, frames_drawn};
+use crate::core::render::world::{DRAWN_FRAMES_AFTER, frames_drawn, missing_drawn};
 use crate::core::render::{CameraRig, Look, camera, world_point};
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::{MeterSize, Meters};
@@ -176,7 +176,7 @@ pub fn spawn(
         water: area.water.clone(),
         terrain,
         grass,
-        instances: Instances::new(content, covers.copies()),
+        instances: Instances::new(content, area, covers.copies()),
         planner,
         sight: None,
         planning: None,
@@ -437,12 +437,13 @@ pub fn standing(world: &World) -> bool {
 /// How much of the ground, the props, the covers' copies and their blades the sights take in has
 /// yet to stand at all.
 pub fn missing(world: &World) -> u32 {
-    world
+    let standing: u32 = world
         .resource::<Streams>()
         .0
         .values()
         .map(|streaming| streaming.shortfall.missing)
-        .sum()
+        .sum();
+    standing + missing_drawn(world)
 }
 
 /// How much of the ground, the props, the covers' copies and their blades the sights take in

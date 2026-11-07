@@ -4,16 +4,18 @@ use bevy::camera::primitives::{Aabb, Frustum, Sphere};
 use bevy::camera::{CameraProjection, PerspectiveProjection};
 use bevy::gltf::Gltf;
 use bevy::prelude::*;
-use bevy::render::render_resource::BufferUsages;
-use bevy::render::renderer::initialize_renderer;
+use bevy::render::render_resource::{Buffer, BufferInitDescriptor, BufferUsages};
+use bevy::render::renderer::{RenderDevice, initialize_renderer};
 use bevy::render::settings::{Backends, RenderResources, WgpuSettings};
 use bevy::shape::ViewFrustum;
 use engine::core::math::Rng;
 use engine::core::render::world::gpu::arena::{
-    GpuChunk, InstanceArena, InstanceChange, InstanceRecord, LevelRange, PartRanges, PlacedModel,
+    ChunkPlace, GpuChunk, InstanceArena, InstanceChange, InstanceRecord, LevelRange, PartRanges,
+    PlacedModel,
 };
 use engine::core::render::world::gpu::cull::{
-    CullKernel, CullView, DrawTable, GpuDrawTable, ListedInstance, ViewCull, seen_chunks,
+    BAND_PIXELS, CullKernel, CullView, DrawTable, DrawnProp, GpuDrawTable, IMPOSTOR_PIXELS,
+    ListedInstance, ViewCull, seen_chunks,
 };
 use engine::core::render::world::gpu::slab::Slab;
 
@@ -54,7 +56,7 @@ fn the_gpu_draws_each_prop_the_view_sees_at_the_level_its_size_asks_for() {
         let placed: Vec<InstanceRecord> = (0..rng.rand_range(0..300))
             .map(|_| instance(&mut rng, chunk))
             .collect();
-        let change = arena.insert(chunk, &placed, model_id);
+        let change = arena.insert(chunk, &placed, model_id, ChunkPlace::Near { index: chunk });
         if let Some(InstanceChange::Placed {
             offset,
             bytes,
@@ -87,7 +89,18 @@ fn the_gpu_draws_each_prop_the_view_sees_at_the_level_its_size_asks_for() {
             .props
             .iter()
             .filter(|(prop, _, _)| *prop < MODELLED)
-            .map(|&(prop, _, instances)| (prop, &models[prop as usize], instances, fades(prop)))
+            .map(|&(prop, _, instances)| {
+                (
+                    prop,
+                    DrawnProp {
+                        model: model_id(prop),
+                        placed: &models[prop as usize],
+                        instances,
+                        dressed: true,
+                        fades: fades(prop),
+                    },
+                )
+            })
     }));
     let kernel = CullKernel::new(&device);
     let gpu_table = GpuDrawTable::new(&device, &queue, table.clone()).expect("a table to draw");
@@ -118,6 +131,7 @@ fn the_gpu_draws_each_prop_the_view_sees_at_the_level_its_size_asks_for() {
         &gpu_table,
         instances,
         shown.buffer().expect("the shares shown written"),
+        &no_chunk_standing(&device),
         seen,
         view.clearing(subject, STEP),
     );
@@ -173,9 +187,10 @@ fn the_gpu_draws_each_prop_the_view_sees_at_the_level_its_size_asks_for() {
                 got.scale
             );
             assert_eq!(
-                (got.shown, got.around_eye),
-                (expected_shown, around_eye),
-                "instance {index} ({record:?}) shows as far as the reference says (test seed {seed})"
+                (got.shown, got.around_eye, got.faded_in),
+                (expected_shown, around_eye, 1.0),
+                "instance {index} ({record:?}) shows as far as the reference says, by its model \
+                 whole without an impostor (test seed {seed})"
             );
         }
         cleared += u32::from(!expected.is_empty() && expected_shown < 1.0);
@@ -183,6 +198,10 @@ fn the_gpu_draws_each_prop_the_view_sees_at_the_level_its_size_asks_for() {
     assert!(
         drawn.is_empty(),
         "nothing but the arena's instances is drawn (test seed {seed})"
+    );
+    assert_eq!(
+        read.missing, 0,
+        "every instance is drawn as its size asks, by its model (test seed {seed})"
     );
     let ambiguous = records.iter().flatten().count() as u32 - judged;
     assert!(
@@ -460,3 +479,273 @@ fn model_id(prop: u32) -> AssetId<Gltf> {
         uuid: bevy::asset::uuid::Uuid::from_u128(u128::from(prop) + 1),
     }
 }
+
+/// The buffer telling the kernel which near chunks of the ground stand: none, for a scene with no
+/// far field.
+fn no_chunk_standing(device: &RenderDevice) -> Buffer {
+    device.create_buffer_with_data(&BufferInitDescriptor {
+        label: Some("no chunk standing"),
+        contents: &[0; 4],
+        usage: BufferUsages::STORAGE,
+    })
+}
+
+/// Across the impostor band the GPU hands a prop from its model to its impostor: an instance
+/// wider across than the band is drawn by its model's parts alone, one narrower than the band by
+/// its impostor alone, and one within it by both, each faded in by its share of the band. A prop
+/// the atlas holds no impostor of is drawn by its model however narrow; one whose model stands
+/// undressed is drawn by its impostor, or by its box without one, and counted missing. An
+/// instance of the far field is drawn by its impostor alone, and not at all where the near chunk
+/// it belongs to stands.
+#[test]
+fn the_gpu_hands_a_prop_from_its_model_to_its_impostor_across_the_band() {
+    let RenderResources(device, queue, ..) = bevy::tasks::block_on(initialize_renderer(
+        Backends::all(),
+        None,
+        &WgpuSettings::default(),
+    ));
+    let model = PlacedModel {
+        bounds: Aabb {
+            center: Vec3::new(0.0, 1.0, 0.0).into(),
+            half_extents: Vec3::ONE.into(),
+        },
+        parts: vec![PartRanges {
+            material: None,
+            first_vertex: 0,
+            vertices: 100,
+            levels: vec![LevelRange {
+                first_index: 0,
+                indices: 300,
+                strays: 0.0,
+            }],
+        }],
+    };
+    let (frustum, view) = camera(Vec3::ZERO);
+    let eye = frustum_eye();
+    let way = (Vec3::ZERO - eye).normalize();
+    let across = |pixels: f32| 2.0 * PIXELS_AT_A_METER / pixels;
+    let standing_at = |prop: u32, distance: f32, chunk: u32| InstanceRecord {
+        position: (eye + way * distance - Vec3::Y).to_array(),
+        yaw: 0.0,
+        scale: 1.0,
+        prop,
+        seed: 0,
+        chunk,
+    };
+    let near = [
+        standing_at(
+            DRESSED_WITH_IMPOSTOR,
+            across(IMPOSTOR_PIXELS + BAND_PIXELS),
+            NEAR_CHUNK,
+        ),
+        standing_at(DRESSED_WITH_IMPOSTOR, across(IMPOSTOR_PIXELS), NEAR_CHUNK),
+        standing_at(
+            DRESSED_WITH_IMPOSTOR,
+            across(IMPOSTOR_PIXELS - BAND_PIXELS),
+            NEAR_CHUNK,
+        ),
+        standing_at(
+            DRESSED_WITHOUT_IMPOSTOR,
+            across(IMPOSTOR_PIXELS - BAND_PIXELS),
+            NEAR_CHUNK,
+        ),
+        standing_at(
+            UNDRESSED_WITH_IMPOSTOR,
+            across(IMPOSTOR_PIXELS + BAND_PIXELS),
+            NEAR_CHUNK,
+        ),
+        standing_at(
+            UNDRESSED_WITHOUT_IMPOSTOR,
+            across(IMPOSTOR_PIXELS + BAND_PIXELS),
+            NEAR_CHUNK,
+        ),
+    ];
+    let far = [
+        standing_at(
+            DRESSED_WITH_IMPOSTOR,
+            across(IMPOSTOR_PIXELS + BAND_PIXELS),
+            NEAR_CHUNK,
+        ),
+        standing_at(
+            DRESSED_WITH_IMPOSTOR,
+            across(IMPOSTOR_PIXELS + BAND_PIXELS),
+            ABSENT_CHUNK,
+        ),
+    ];
+    let mut arena = InstanceArena::default();
+    let mut slab = Slab::new("instances", BufferUsages::STORAGE);
+    let mut chunks = HashMap::new();
+    let mut firsts = HashMap::new();
+    for (chunk, records, place) in [
+        (0, &near[..], ChunkPlace::Near { index: NEAR_CHUNK }),
+        (1, &far[..], ChunkPlace::Far),
+    ] {
+        let Some(InstanceChange::Placed {
+            offset,
+            bytes,
+            instances,
+            capacity,
+            contents,
+            ..
+        }) = arena.insert(chunk, records, model_id, place)
+        else {
+            panic!("the chunk {chunk} placed");
+        };
+        slab.fit(&device, &queue, capacity);
+        slab.write(&queue, offset, &bytes);
+        firsts.insert(chunk, (offset / InstanceRecord::BYTES) as u32);
+        chunks.insert(
+            chunk,
+            GpuChunk {
+                offset,
+                instances,
+                contents,
+            },
+        );
+    }
+    let table = DrawTable::of(chunks.values().flat_map(|chunk| {
+        chunk.contents.props.iter().map(|&(prop, _, instances)| {
+            (
+                prop,
+                DrawnProp {
+                    model: model_id(prop),
+                    placed: &model,
+                    instances,
+                    dressed: prop < UNDRESSED_WITH_IMPOSTOR,
+                    fades: false,
+                },
+            )
+        })
+    }));
+    let kernel = CullKernel::new(&device);
+    let mut gpu_table = GpuDrawTable::new(&device, &queue, table.clone()).expect("a table to draw");
+    gpu_table.place_impostors(&device, &queue, 1, |model| {
+        [DRESSED_WITH_IMPOSTOR, UNDRESSED_WITH_IMPOSTOR]
+            .into_iter()
+            .position(|prop| model_id(prop) == model)
+            .map(|layer| layer as u32)
+    });
+    let seen = seen_chunks(&chunks, &table, &frustum, &view);
+    let mut culled = ViewCull::new(&device, &gpu_table);
+    let mut shown = Slab::new("instances shown", BufferUsages::STORAGE);
+    let records = near.len() + far.len();
+    shown.fit(&device, &queue, records as u64 * 4);
+    shown.write(&queue, 0, &1.0f32.to_le_bytes().repeat(records));
+    let standing = device.create_buffer_with_data(&BufferInitDescriptor {
+        label: Some("near chunks standing"),
+        contents: &(1u32 << NEAR_CHUNK).to_le_bytes(),
+        usage: BufferUsages::STORAGE,
+    });
+    culled.update(
+        &device,
+        &queue,
+        &kernel,
+        &gpu_table,
+        slab.buffer().expect("the instances written"),
+        shown.buffer().expect("the shares shown written"),
+        &standing,
+        seen,
+        view,
+    );
+    let mut encoder = device.create_command_encoder(&default());
+    culled.encode(&kernel, &gpu_table, &mut encoder);
+    queue.submit([encoder.finish()]);
+    let read = culled.read(&device, &queue);
+
+    let drawn_by = |record: u32| -> Vec<DrawnBy> {
+        let table = &table;
+        let mut listed: Vec<DrawnBy> = read
+            .commands
+            .iter()
+            .enumerate()
+            .flat_map(|(command, region)| {
+                read.listed[region.start as usize..region.end as usize]
+                    .iter()
+                    .filter(|listed| listed.record == record)
+                    .map(move |listed| (Drawn::by(table, command as u32), listed.faded_in))
+            })
+            .collect();
+        listed.sort_by_key(|(drawn, _)| *drawn);
+        listed
+    };
+    let near_first = firsts[&0];
+    let far_first = firsts[&1];
+    let expected: [(&str, u32, Vec<DrawnBy>); 8] = [
+        ("wider than the band", near_first, vec![(Drawn::Model, 1.0)]),
+        (
+            "within the band",
+            near_first + 1,
+            vec![(Drawn::Model, 0.5), (Drawn::Impostor, 0.5)],
+        ),
+        (
+            "narrower than the band",
+            near_first + 2,
+            vec![(Drawn::Impostor, 1.0)],
+        ),
+        (
+            "without an impostor",
+            near_first + 3,
+            vec![(Drawn::Model, 1.0)],
+        ),
+        ("undressed", near_first + 4, vec![(Drawn::Impostor, 1.0)]),
+        (
+            "undressed without an impostor",
+            near_first + 5,
+            vec![(Drawn::Box, 1.0)],
+        ),
+        ("far where the near chunk stands", far_first, vec![]),
+        ("far", far_first + 1, vec![(Drawn::Impostor, 1.0)]),
+    ];
+    for (what, record, wanted) in expected {
+        let got = drawn_by(record);
+        let alike = got.len() == wanted.len()
+            && got
+                .iter()
+                .zip(&wanted)
+                .all(|((drawn, faded), (by, share))| drawn == by && (faded - share).abs() < 0.02);
+        assert!(
+            alike,
+            "the instance {what} is drawn as {wanted:?}, not {got:?}"
+        );
+    }
+    assert_eq!(
+        read.missing, 2,
+        "the undressed instances are counted missing"
+    );
+    assert_eq!(
+        read.drawn, 7,
+        "every instance but the far one whose near chunk stands is drawn"
+    );
+}
+
+/// What a command draws an instance by, and how far the instance has faded into it.
+type DrawnBy = (Drawn, f32);
+
+/// What a command draws a prop by.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum Drawn {
+    Model,
+    Impostor,
+    Box,
+}
+
+impl Drawn {
+    fn by(table: &DrawTable, command: u32) -> Drawn {
+        if table.impostors.contains(&command) {
+            Drawn::Impostor
+        } else if table.proxies.contains(&command) {
+            Drawn::Box
+        } else {
+            Drawn::Model
+        }
+    }
+}
+
+const DRESSED_WITH_IMPOSTOR: u32 = 0;
+const DRESSED_WITHOUT_IMPOSTOR: u32 = 1;
+const UNDRESSED_WITH_IMPOSTOR: u32 = 2;
+const UNDRESSED_WITHOUT_IMPOSTOR: u32 = 3;
+/// The near chunk of the ground the band's instances stand in, which stands in the arena.
+const NEAR_CHUNK: u32 = 7;
+/// A near chunk of the ground that doesn't stand in the arena.
+const ABSENT_CHUNK: u32 = 9;

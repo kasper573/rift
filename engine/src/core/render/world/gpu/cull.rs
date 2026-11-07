@@ -10,8 +10,10 @@
 //! strewn copies are. The commands are drawn indirectly, so what the kernel leaves out is never
 //! seen by the CPU.
 
+use std::collections::btree_map::Entry;
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::Range;
+use std::sync::{Arc, Mutex};
 
 use bevy::camera::primitives::{Aabb, Frustum};
 use bevy::camera::visibility::RenderLayers;
@@ -27,10 +29,11 @@ use bevy::render::render_resource::binding_types::{
     storage_buffer_read_only_sized, storage_buffer_sized, uniform_buffer,
 };
 use bevy::render::render_resource::{
-    BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries, Buffer, BufferDescriptor,
-    BufferUsages, CommandEncoder, ComputePassDescriptor, ComputePipeline, DrawIndexedIndirectArgs,
-    PipelineCompilationOptions, PipelineLayoutDescriptor, RawComputePipelineDescriptor,
-    ShaderModuleDescriptor, ShaderSource, ShaderStages, ShaderType, StorageBuffer, UniformBuffer,
+    BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries, BindingResource, Buffer,
+    BufferDescriptor, BufferInitDescriptor, BufferUsages, CommandEncoder, ComputePassDescriptor,
+    ComputePipeline, DrawIndexedIndirectArgs, MapMode, PipelineCompilationOptions,
+    PipelineLayoutDescriptor, RawComputePipelineDescriptor, ShaderModuleDescriptor, ShaderSource,
+    ShaderStages, ShaderType, StorageBuffer, UniformBuffer,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy::render::sync_world::MainEntity;
@@ -38,11 +41,13 @@ use bevy::render::view::{ExtractedView, RetainedViewEntity};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 
 use super::arena::{
-    self, ExtractedPropArena, GpuChunk, GpuInstances, InstanceArenas, InstanceRecord, ModelArena,
-    PlacedModel,
+    self, BOX_INDICES, ChunkPlace, ExtractedPropArena, GpuChunk, GpuInstances, InstanceArenas,
+    InstanceRecord, ModelArena, PlacedModel, QUAD_INDICES,
 };
 use super::clearing::{self, Clearing};
+use super::impostor::{self, ImpostorAtlas};
 use crate::core::render::camera::NEAR_PLANE;
+use crate::core::render::world::RenderProgress;
 use crate::core::render::world::lod::{GRAIN_PIXELS, STRAY_PIXELS};
 
 pub struct PropCullPlugin;
@@ -57,13 +62,18 @@ impl Plugin for PropCullPlugin {
         };
         render_app
             .init_resource::<PropCulls>()
+            .init_resource::<MissingReadbacks>()
             .add_systems(RenderStartup, make_kernel)
             .add_systems(
                 Render,
-                prepare_culls
-                    .after(arena::write_models)
-                    .after(arena::write_instances)
-                    .before(RenderSystems::Queue),
+                (
+                    prepare_culls
+                        .after(arena::write_models)
+                        .after(arena::write_instances)
+                        .after(impostor::ImpostorsPrepared)
+                        .before(RenderSystems::Queue),
+                    read_missing.in_set(RenderSystems::Cleanup),
+                ),
             )
             .add_systems(
                 Core3d,
@@ -98,6 +108,8 @@ pub struct CullView {
     grain_pixels: f32,
     stray_pixels: f32,
     near: f32,
+    impostor_pixels: f32,
+    band_pixels: f32,
     subject: Vec3,
     fade_step: f32,
 }
@@ -122,6 +134,8 @@ impl CullView {
             grain_pixels: GRAIN_PIXELS,
             stray_pixels: STRAY_PIXELS,
             near: NEAR_PLANE.0,
+            impostor_pixels: IMPOSTOR_PIXELS,
+            band_pixels: BAND_PIXELS,
             subject: Vec3::ZERO,
             fade_step: 0.0,
         }
@@ -156,7 +170,8 @@ impl CullView {
 }
 
 /// What a scenery's arena draws, as the kernel reads it: for each prop by its place among the
-/// content's props, the sphere round its model and its parts; each part's levels, finest first;
+/// content's props, the sphere round its model, its parts and the commands drawing its impostor
+/// and its box; each part's levels, finest first;
 /// each level's command; and the commands as they start each frame, with nothing drawn by them.
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct DrawTable {
@@ -166,6 +181,12 @@ pub struct DrawTable {
     pub commands: Vec<DrawCommand>,
     /// The parts drawn, each in its material, with its levels' commands among `commands`.
     pub buckets: Vec<DrawBucket>,
+    /// The commands drawing the props' impostors, one a prop drawn, and those drawing their
+    /// boxes, in the same order, among `commands`.
+    pub impostors: Range<u32>,
+    pub proxies: Range<u32>,
+    /// Each prop's model, by its place among `props`: none for a prop drawn by nothing.
+    pub models: Vec<Option<AssetId<Gltf>>>,
 }
 
 #[derive(ShaderType, Clone, Copy, Debug, Default, PartialEq)]
@@ -183,7 +204,8 @@ pub struct PropDraw {
     pub half_x: f32,
     pub half_y: f32,
     pub half_z: f32,
-    unused: u32,
+    pub impostor_command: u32,
+    pub proxy_command: u32,
 }
 
 #[derive(ShaderType, Clone, Copy, Debug, Default, PartialEq)]
@@ -231,45 +253,70 @@ pub struct DrawBucket {
     pub commands: Range<u32>,
 }
 
+/// A prop as the table is made from: its model as the slabs hold it, how many of its instances
+/// the arena holds, whether its parts are drawn, in their materials, and whether it clears away
+/// where it hides the camera's subject.
+#[derive(Clone, Copy)]
+pub struct DrawnProp<'a> {
+    pub model: AssetId<Gltf>,
+    pub placed: &'a PlacedModel,
+    pub instances: u32,
+    pub dressed: bool,
+    pub fades: bool,
+}
+
 impl DrawTable {
-    /// The table drawing `props`: each prop by its place among the content's props, with its model
-    /// as the slabs hold it, how many of its instances the arena holds, the counts of a prop named
-    /// more than once, as by each chunk it stands in, added up, and whether it clears away where it
-    /// hides the camera's subject.
-    pub fn of<'a>(props: impl IntoIterator<Item = (u32, &'a PlacedModel, u32, bool)>) -> DrawTable {
-        let mut held: BTreeMap<u32, (&PlacedModel, u32, bool)> = BTreeMap::new();
-        for (prop, model, instances, fades) in props {
-            held.entry(prop).or_insert((model, 0, fades)).1 += instances;
+    /// The table drawing `props`: each prop by its place among the content's props, the counts of
+    /// a prop named more than once, as by each chunk it stands in, added up. A prop's parts are
+    /// drawn only while it is dressed; its impostor and its box whenever its model is held.
+    pub fn of<'a>(props: impl IntoIterator<Item = (u32, DrawnProp<'a>)>) -> DrawTable {
+        let mut held: BTreeMap<u32, DrawnProp> = BTreeMap::new();
+        for (prop, drawn) in props {
+            match held.entry(prop) {
+                Entry::Vacant(vacant) => {
+                    vacant.insert(drawn);
+                }
+                Entry::Occupied(mut occupied) => occupied.get_mut().instances += drawn.instances,
+            }
         }
-        let props: Vec<(u32, &PlacedModel, u32, bool)> = held
+        let props: Vec<(u32, DrawnProp)> = held
             .into_iter()
-            .filter(|(_, (_, instances, _))| *instances > 0)
-            .map(|(prop, (model, instances, fades))| (prop, model, instances, fades))
+            .filter(|(_, drawn)| drawn.instances > 0)
             .collect();
+        let count = props.last().map_or(0, |(prop, _)| *prop as usize + 1);
         let mut table = DrawTable {
-            props: vec![
-                PropDraw::default();
-                props.last().map_or(0, |(prop, _, _, _)| *prop as usize + 1)
-            ],
+            props: vec![PropDraw::default(); count],
+            models: vec![None; count],
             ..default()
         };
-        for (prop, model, _, fades) in props {
+        for (prop, drawn) in &props {
+            let model = drawn.placed;
             let middle = model.bounds.center;
             let half = model.bounds.half_extents;
-            table.props[prop as usize] = PropDraw {
+            table.models[*prop as usize] = Some(drawn.model);
+            table.props[*prop as usize] = PropDraw {
                 x: middle.x,
                 y: middle.y,
                 z: middle.z,
-                radius: model.bounds.half_extents.length(),
+                radius: model.bounds.half_extents.length().max(f32::MIN_POSITIVE),
                 extent: 2.0 * model.bounds.half_extents.max_element(),
                 first_part: table.parts.len() as u32,
-                parts: model.parts.len() as u32,
-                fades: u32::from(fades),
+                parts: if drawn.dressed {
+                    model.parts.len() as u32
+                } else {
+                    0
+                },
+                fades: u32::from(drawn.fades),
                 half_x: half.x,
                 half_y: half.y,
                 half_z: half.z,
-                unused: 0,
+                impostor_command: 0,
+                proxy_command: 0,
             };
+            if !drawn.dressed {
+                continue;
+            }
+            let prop = *prop;
             for (at, part) in (0..).zip(&model.parts) {
                 let first_command = table.commands.len() as u32;
                 table.parts.push(PartDraw {
@@ -294,19 +341,35 @@ impl DrawTable {
                 });
             }
         }
+        let first_impostor = table.commands.len() as u32;
+        for (prop, _) in &props {
+            table.props[*prop as usize].impostor_command = table.commands.len() as u32;
+            table.commands.push(Shapes::QUAD);
+        }
+        let first_proxy = table.commands.len() as u32;
+        for (prop, _) in &props {
+            table.props[*prop as usize].proxy_command = table.commands.len() as u32;
+            table.commands.push(Shapes::BOX);
+        }
+        table.impostors = first_impostor..first_proxy;
+        table.proxies = first_proxy..table.commands.len() as u32;
         table
     }
 
-    /// How many parts the model of `prop` is drawn in: none when nothing of it is drawn.
-    fn parts_of(&self, prop: u32) -> u32 {
-        self.props.get(prop as usize).map_or(0, |drawn| drawn.parts)
+    /// How many times an instance of `prop` may be listed at most: once for each part of its
+    /// model and once more for its impostor or its box; none when nothing of it is drawn.
+    fn listings_of(&self, prop: u32) -> u32 {
+        self.props
+            .get(prop as usize)
+            .filter(|drawn| drawn.radius > 0.0)
+            .map_or(0, |drawn| drawn.parts + 1)
     }
 
     /// The radius round a placement the model of `prop` reaches, at scale 1.
     fn radius_of(&self, prop: u32) -> f32 {
         self.props
             .get(prop as usize)
-            .filter(|drawn| drawn.parts > 0)
+            .filter(|drawn| drawn.radius > 0.0)
             .map_or(0.0, |drawn| {
                 drawn.radius + Vec3::new(drawn.x, drawn.y, drawn.z).length()
             })
@@ -338,6 +401,8 @@ impl CullKernel {
                     storage_buffer_sized(false, None),
                     storage_buffer_sized(false, None),
                     storage_buffer_sized(false, None),
+                    storage_buffer_read_only_sized(false, None),
+                    storage_buffer_read_only_sized(false, None),
                 ),
             ),
         );
@@ -375,7 +440,11 @@ pub struct GpuDrawTable {
     props: StorageBuffer<Vec<PropDraw>>,
     parts: StorageBuffer<Vec<PartDraw>>,
     levels: StorageBuffer<Vec<LevelDraw>>,
-    /// The commands as each frame starts them, after the four bytes the drawn count takes.
+    /// Each prop's layer of the impostor atlas, one more than it is, 0 for none, and the
+    /// residency's round it was written after.
+    impostors: StorageBuffer<Vec<u32>>,
+    impostors_after: Option<u64>,
+    /// The commands as each frame starts them, after the bytes the counts take.
     starts: Buffer,
 }
 
@@ -392,9 +461,11 @@ impl GpuDrawTable {
         let mut props = StorageBuffer::from(table.props.clone());
         let mut parts = StorageBuffer::from(table.parts.clone());
         let mut levels = StorageBuffer::from(table.levels.clone());
+        let mut impostors = StorageBuffer::from(vec![0u32; table.props.len().max(1)]);
         props.write_buffer(device, queue);
         parts.write_buffer(device, queue);
         levels.write_buffer(device, queue);
+        impostors.write_buffer(device, queue);
         let starts = device.create_buffer(&BufferDescriptor {
             label: Some("prop draw starts"),
             size: commands_bytes(table.commands.len()),
@@ -407,12 +478,44 @@ impl GpuDrawTable {
             props,
             parts,
             levels,
+            impostors,
+            impostors_after: None,
             starts,
         })
     }
 
     pub fn table(&self) -> &DrawTable {
         &self.table
+    }
+
+    /// Tells the kernel which props the impostor atlas holds a picture of, at which layer, as
+    /// `layer_of` says, once the atlas's `round` differs from the one told before.
+    pub fn place_impostors(
+        &mut self,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+        round: u64,
+        layer_of: impl Fn(AssetId<Gltf>) -> Option<u32>,
+    ) {
+        if self.impostors_after == Some(round) {
+            return;
+        }
+        let layers: Vec<u32> = self
+            .table
+            .models
+            .iter()
+            .map(|model| model.and_then(&layer_of).map_or(0, |layer| layer + 1))
+            .collect();
+        self.impostors
+            .set(if layers.is_empty() { vec![0] } else { layers });
+        self.impostors.write_buffer(device, queue);
+        self.impostors_after = Some(round);
+    }
+
+    /// The props' bindings the stages read beside the instances: the props and their impostor
+    /// layers.
+    pub fn prop_bindings(&self) -> Option<(BindingResource<'_>, BindingResource<'_>)> {
+        Some((self.props.binding()?, self.impostors.binding()?))
     }
 }
 
@@ -421,7 +524,7 @@ impl GpuDrawTable {
 /// every instance the chunks hold, once for each part of its model.
 pub struct ViewCull {
     view: Option<UniformBuffer<CullView>>,
-    chunks: StorageBuffer<Vec<UVec2>>,
+    chunks: StorageBuffer<Vec<UVec4>>,
     seen: u32,
     commands: Buffer,
     drawn: Buffer,
@@ -450,7 +553,7 @@ impl ViewCull {
     }
 
     /// Culls the chunks `seen` of the instances `records` holds through `view` this frame, `shown`
-    /// holding how far each shows.
+    /// holding how far each shows, and `standing` which near chunks of the ground stand.
     #[allow(clippy::too_many_arguments)]
     pub fn update(
         &mut self,
@@ -460,6 +563,7 @@ impl ViewCull {
         table: &GpuDrawTable,
         records: &Buffer,
         shown: &Buffer,
+        standing: &Buffer,
         seen: SeenChunks,
         view: CullView,
     ) {
@@ -468,7 +572,7 @@ impl ViewCull {
         }
         self.seen = seen.spans.len() as u32;
         self.chunks.set(if seen.spans.is_empty() {
-            vec![UVec2::ZERO]
+            vec![UVec4::ZERO]
         } else {
             seen.spans
         });
@@ -476,21 +580,28 @@ impl ViewCull {
         let uniform = self.view.get_or_insert_with(|| UniformBuffer::from(view));
         uniform.set(view);
         uniform.write_buffer(device, queue);
-        self.bind_group = Some(device.create_bind_group(
-            "prop cull",
-            &kernel.layout,
-            &BindGroupEntries::sequential((
-                uniform.binding().expect("a view just written"),
-                records.as_entire_binding(),
-                self.chunks.binding().expect("chunks just written"),
-                table.props.binding().expect("a table written when made"),
-                table.parts.binding().expect("a table written when made"),
-                table.levels.binding().expect("a table written when made"),
-                self.commands.as_entire_binding(),
-                self.drawn.as_entire_binding(),
-                shown.as_entire_binding(),
-            )),
-        ));
+        self.bind_group = Some(
+            device.create_bind_group(
+                "prop cull",
+                &kernel.layout,
+                &BindGroupEntries::sequential((
+                    uniform.binding().expect("a view just written"),
+                    records.as_entire_binding(),
+                    self.chunks.binding().expect("chunks just written"),
+                    table.props.binding().expect("a table written when made"),
+                    table.parts.binding().expect("a table written when made"),
+                    table.levels.binding().expect("a table written when made"),
+                    self.commands.as_entire_binding(),
+                    self.drawn.as_entire_binding(),
+                    shown.as_entire_binding(),
+                    table
+                        .impostors
+                        .binding()
+                        .expect("a table written when made"),
+                    standing.as_entire_binding(),
+                )),
+            ),
+        );
     }
 
     /// Starts every command anew and culls the chunks seen into them: counted, placed and listed,
@@ -515,13 +626,14 @@ impl ViewCull {
         }
     }
 
-    /// The commands the view draws its props with, after the four bytes the count drawn takes.
+    /// The commands the view draws its props with, after the bytes the counts take: the
+    /// instances drawn, and those drawn coarser than their size asks.
     pub fn commands(&self) -> &Buffer {
         &self.commands
     }
 
     /// The instances the commands draw, each by its place among the arena's, the scale it is drawn
-    /// at, how far it shows, and whether the eye stands inside it.
+    /// at, how far it shows, and how far it fades in with whether the eye stands inside it.
     pub fn drawn(&self) -> &Buffer {
         &self.drawn
     }
@@ -546,7 +658,8 @@ impl ViewCull {
         let command_words = words(&commands);
         CullReadback {
             drawn: command_words[0],
-            commands: command_words[1..]
+            missing: command_words[1],
+            commands: command_words[2..]
                 .as_chunks::<5>()
                 .0
                 .iter()
@@ -556,42 +669,47 @@ impl ViewCull {
                 .as_chunks::<4>()
                 .0
                 .iter()
-                .map(|&[record, scale, shown, around_eye]| ListedInstance {
+                .map(|&[record, scale, shown, packed]| ListedInstance {
                     record,
                     scale: f32::from_bits(scale),
                     shown: f32::from_bits(shown),
-                    around_eye: around_eye != 0,
+                    around_eye: packed & 1 != 0,
+                    faded_in: (packed >> 1) as f32 / 65535.0,
                 })
                 .collect(),
         }
     }
 }
 
-/// What a view's kernel drew: how many instances in all, each command's region of the drawn
-/// instances' list, and the list, as far as it was filled.
+/// What a view's kernel drew: how many instances in all, how many of them coarser than their
+/// size asks, each command's region of the drawn instances' list, and the list, as far as it
+/// was filled.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CullReadback {
     pub drawn: u32,
+    pub missing: u32,
     pub commands: Vec<Range<u32>>,
     pub listed: Vec<ListedInstance>,
 }
 
 /// An instance a view draws: its place among the arena's, the scale it is drawn at, how far it
-/// shows, and whether the eye stands inside it, so that it clears away whole.
+/// shows, whether the eye stands inside it, so that it clears away whole, and how far it has
+/// faded into the representation the listing draws it as.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ListedInstance {
     pub record: u32,
     pub scale: f32,
     pub shown: f32,
     pub around_eye: bool,
+    pub faded_in: f32,
 }
 
-/// The chunks of an arena a view may see: each by its first instance among the arena's and how
-/// many it holds, and how many drawn instances they can list at most, each instance once for
-/// each part of its model.
+/// The chunks of an arena a view may see: each by its first instance among the arena's, how
+/// many it holds and whether it stands in the far field, and how many drawn instances they can
+/// list at most.
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SeenChunks {
-    pub spans: Vec<UVec2>,
+    pub spans: Vec<UVec4>,
     pub listed: u32,
 }
 
@@ -603,7 +721,7 @@ pub fn seen_chunks(
     view: &CullView,
 ) -> SeenChunks {
     let mut listed = 0;
-    let mut seen: Vec<(u32, UVec2)> = chunks
+    let mut seen: Vec<(u32, UVec4)> = chunks
         .iter()
         .filter(|(_, chunk)| {
             let reach = chunk
@@ -621,13 +739,15 @@ pub fn seen_chunks(
         })
         .map(|(&key, chunk)| {
             for &(prop, _, instances) in &chunk.contents.props {
-                listed += instances * table.parts_of(prop);
+                listed += instances * table.listings_of(prop);
             }
             (
                 key,
-                UVec2::new(
+                UVec4::new(
                     (chunk.offset / InstanceRecord::BYTES) as u32,
                     chunk.instances,
+                    u32::from(chunk.contents.place == ChunkPlace::Far),
+                    0,
                 ),
             )
         })
@@ -648,14 +768,49 @@ pub struct SceneryCull {
     pub table: Option<GpuDrawTable>,
     /// The arena's and the models' changes the table was made after.
     made_after: Option<(u64, u64)>,
+    /// Which near chunks of the ground the arena holds, a bit each by the chunk's index.
+    standing: Option<Buffer>,
     pub views: HashMap<RetainedViewEntity, ViewCull>,
+}
+
+/// The missing counts of the camera views on their way back from the GPU.
+#[derive(Resource, Default)]
+struct MissingReadbacks(Vec<MissingReadback>);
+
+struct MissingReadback {
+    view: RetainedViewEntity,
+    buffer: Buffer,
+    mapped: Option<Arc<Mutex<Option<bool>>>>,
 }
 
 /// The bytes a drawn instance takes: its place among the arena's, its scale, how far it shows,
 /// and whether the eye stands inside it.
 const DRAWN_BYTES: u64 = 16;
-/// The bytes the count of instances drawn takes, before the commands.
-const COUNT_BYTES: u64 = 4;
+/// The bytes the counts take before the commands: the instances drawn, and those drawn coarser
+/// than their size asks.
+const COUNT_BYTES: u64 = 8;
+
+/// How many pixels across an instance spans at the middle of the band where its model gives way
+/// to its impostor: the atlas cell's side, below which the cell's picture loses nothing of the
+/// model; and how wide the band is.
+pub const IMPOSTOR_PIXELS: f32 = impostor::CELL_PIXELS as f32;
+pub const BAND_PIXELS: f32 = 16.0;
+
+/// The commands drawing the shapes the impostor stages pull their vertices by.
+struct Shapes;
+
+impl Shapes {
+    const QUAD: DrawCommand = DrawCommand {
+        first_index: QUAD_INDICES.start,
+        indices: QUAD_INDICES.end - QUAD_INDICES.start,
+        base_vertex: 0,
+    };
+    const BOX: DrawCommand = DrawCommand {
+        first_index: BOX_INDICES.start,
+        indices: BOX_INDICES.end - BOX_INDICES.start,
+        base_vertex: 0,
+    };
+}
 
 fn make_kernel(mut commands: Commands, device: Res<RenderDevice>) {
     commands.insert_resource(CullKernel::new(&device));
@@ -670,6 +825,7 @@ pub(super) fn prepare_culls(
     kernel: Option<Res<CullKernel>>,
     arenas: Res<InstanceArenas>,
     models: Res<ModelArena>,
+    atlas: Option<Res<ImpostorAtlas>>,
     clearing: Res<Clearing>,
     mut culls: ResMut<PropCulls>,
     sceneries: Query<(&MainEntity, &ExtractedPropArena)>,
@@ -694,12 +850,21 @@ pub(super) fn prepare_culls(
         let changes = (arena.changes, models.changes);
         if cull.made_after != Some(changes) {
             cull.table = GpuDrawTable::new(&device, &queue, draw_table(arena, &models));
+            cull.standing = Some(standing_buffer(&device, arena));
             cull.made_after = Some(changes);
             cull.views.clear();
         }
-        let (Some(table), Some(records), Some(shares)) =
-            (&cull.table, arena.slab.buffer(), arena.shown.buffer())
-        else {
+        if let (Some(table), Some(atlas)) = (&mut cull.table, atlas.as_deref()) {
+            table.place_impostors(&device, &queue, atlas.round, |model| {
+                atlas.layers.slot(model)
+            });
+        }
+        let (Some(table), Some(records), Some(shares), Some(standing)) = (
+            &cull.table,
+            arena.slab.buffer(),
+            arena.shown.buffer(),
+            &cull.standing,
+        ) else {
             continue;
         };
         let mut shown = HashSet::new();
@@ -719,7 +884,7 @@ pub(super) fn prepare_culls(
                 .entry(view.retained_view_entity)
                 .or_insert_with(|| ViewCull::new(&device, table))
                 .update(
-                    &device, &queue, &kernel, table, records, shares, seen, culled,
+                    &device, &queue, &kernel, table, records, shares, standing, seen, culled,
                 );
             shown.insert(view.retained_view_entity);
         }
@@ -735,12 +900,14 @@ fn cull_props(
     lights: Query<&ExtractedView, With<LightEntity>>,
     kernel: Option<Res<CullKernel>>,
     culls: Res<PropCulls>,
+    mut readbacks: ResMut<MissingReadbacks>,
     mut ctx: RenderContext,
 ) {
     let Some(kernel) = kernel else {
         return;
     };
     let (seen, view_lights) = view.into_inner();
+    let device = ctx.render_device().clone();
     let shadows: Vec<RetainedViewEntity> = view_lights
         .into_iter()
         .flat_map(|view_lights| view_lights.lights.iter())
@@ -758,8 +925,20 @@ fn cull_props(
         if let Some(culled) = cull.views.get(&seen.retained_view_entity) {
             culled.encode(&kernel, table, encoder);
             if let Some(recorder) = recorder {
-                recorder.record_u32(encoder, &culled.commands.slice(0..COUNT_BYTES), PROPS_DRAWN);
+                recorder.record_u32(encoder, &culled.commands.slice(0..4), PROPS_DRAWN);
             }
+            let buffer = device.create_buffer(&BufferDescriptor {
+                label: Some("props missing"),
+                size: 4,
+                usage: BufferUsages::MAP_READ | BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            encoder.copy_buffer_to_buffer(&culled.commands, 4, &buffer, 0, 4);
+            readbacks.0.push(MissingReadback {
+                view: seen.retained_view_entity,
+                buffer,
+                mapped: None,
+            });
         }
         for light in &shadows {
             if let Some(culled) = cull.views.get(light) {
@@ -772,7 +951,63 @@ fn cull_props(
     }
 }
 
-/// The table drawing what `arena` holds of the props dressed, whose models are on the GPU.
+/// Asks the GPU for each camera view's missing count once the frame that wrote it is sent, and
+/// notes the latest counts, summed over the views, in the render progress once they come back.
+fn read_missing(mut readbacks: ResMut<MissingReadbacks>, progress: Res<RenderProgress>) {
+    let mut latest: HashMap<RetainedViewEntity, u32> = HashMap::new();
+    readbacks.0.retain_mut(|readback| {
+        let Some(mapped) = &readback.mapped else {
+            let mapped = Arc::new(Mutex::new(None));
+            let answer = mapped.clone();
+            readback
+                .buffer
+                .slice(..)
+                .map_async(MapMode::Read, move |result| {
+                    *answer.lock().expect("the missing count's answer lock") = Some(result.is_ok());
+                });
+            readback.mapped = Some(mapped);
+            return true;
+        };
+        let Some(ok) = *mapped.lock().expect("the missing count's answer lock") else {
+            return true;
+        };
+        let count = ok
+            .then(|| {
+                let bytes = readback.buffer.slice(..).get_mapped_range().ok()?.to_vec();
+                Some(u32::from_le_bytes(bytes.try_into().ok()?))
+            })
+            .flatten()
+            .unwrap_or(0);
+        latest.insert(readback.view, count);
+        false
+    });
+    if !latest.is_empty() {
+        progress.missing_drawn(latest.into_values().sum());
+    }
+}
+
+/// Which near chunks of the ground `arena` holds, a bit each by the chunk's index.
+fn standing_buffer(device: &RenderDevice, arena: &GpuInstances) -> Buffer {
+    let mut words = vec![0u32; 1];
+    for chunk in arena.chunks.values() {
+        if let ChunkPlace::Near { index } = chunk.contents.place {
+            let word = (index / 32) as usize;
+            if words.len() <= word {
+                words.resize(word + 1, 0);
+            }
+            words[word] |= 1 << (index % 32);
+        }
+    }
+    let bytes: Vec<u8> = words.iter().flat_map(|word| word.to_le_bytes()).collect();
+    device.create_buffer_with_data(&BufferInitDescriptor {
+        label: Some("near chunks standing"),
+        contents: &bytes,
+        usage: BufferUsages::STORAGE,
+    })
+}
+
+/// The table drawing what `arena` holds of the props whose models are on the GPU: their parts
+/// where they are dressed, their impostors and boxes regardless.
 fn draw_table(arena: &GpuInstances, models: &ModelArena) -> DrawTable {
     DrawTable::of(arena.chunks.values().flat_map(|chunk| {
         chunk
@@ -780,8 +1015,17 @@ fn draw_table(arena: &GpuInstances, models: &ModelArena) -> DrawTable {
             .props
             .iter()
             .filter_map(|&(prop, model, instances)| {
-                let dressed = arena.dressed.get(&prop)?;
-                Some((prop, models.slabs.get(&model)?, instances, dressed.fades))
+                let dressed = arena.dressed.get(&prop);
+                Some((
+                    prop,
+                    DrawnProp {
+                        model,
+                        placed: models.slabs.get(&model)?,
+                        instances,
+                        dressed: dressed.is_some(),
+                        fades: dressed.is_some_and(|dressed| dressed.fades),
+                    },
+                ))
             })
     }))
 }
@@ -790,7 +1034,8 @@ fn commands_bytes(commands: usize) -> u64 {
     COUNT_BYTES + commands as u64 * DrawCommand::BYTES
 }
 
-/// The bytes of `commands` as each frame starts them: none drawn, and no instance in any.
+/// The bytes of `commands` as each frame starts them: none drawn, none missing, and no instance
+/// in any.
 fn starts_bytes(commands: &[DrawCommand]) -> Vec<u8> {
     let mut bytes = vec![0; COUNT_BYTES as usize];
     for command in commands {
@@ -821,12 +1066,9 @@ pub(super) fn read_buffer(device: &RenderDevice, queue: &RenderQueue, buffer: &B
     queue.submit([encoder.finish()]);
     let slice = staging.slice(..);
     let (sender, receiver) = std::sync::mpsc::channel();
-    slice.map_async(
-        bevy::render::render_resource::MapMode::Read,
-        move |mapped| {
-            let _ = sender.send(mapped);
-        },
-    );
+    slice.map_async(MapMode::Read, move |mapped| {
+        let _ = sender.send(mapped);
+    });
     device
         .poll(bevy::render::render_resource::PollType::wait_indefinitely())
         .expect("the GPU finishing the readback");

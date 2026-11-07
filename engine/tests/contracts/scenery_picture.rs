@@ -44,7 +44,11 @@ const FOV: Degrees = Degrees(50.0);
 /// the other.
 const BLOCK: Pos<Meters> = Pos::new(24.0, 10.0);
 const LANTERN: Pos<Meters> = Pos::new(24.0, 22.0);
+/// How high up each prop the picture is read.
 const PROP_HEIGHT: f32 = 2.0;
+/// How tall the props stand: enough to span more than the impostor band on the picture, so each
+/// is drawn by its model in its material rather than by its impostor.
+const PROP_TALL: f32 = 12.0;
 
 /// A picture of a scenery shows every prop the view sees, each drawn as its material asks: in
 /// the world's own material, through a shader of the game's, and strewn as a cover's copies,
@@ -348,12 +352,12 @@ fn field() -> Game {
         )
         .prop_of(
             "block",
-            box_glb(Vec3::new(1.0, PROP_HEIGHT, 1.0), "paint", [0.1, 0.2, 1.0, 1.0]),
+            box_glb(Vec3::new(1.0, PROP_TALL, 1.0), "paint", [0.1, 0.2, 1.0, 1.0]),
             json!({ "footprint": { "type": "none" } }),
         )
         .prop_of(
             "lantern",
-            box_glb(Vec3::new(1.0, PROP_HEIGHT, 1.0), "glow", white),
+            box_glb(Vec3::new(1.0, PROP_TALL, 1.0), "glow", white),
             json!({
                 "footprint": { "type": "none" },
                 "materials": { "glow": path("prop_material", "glow") },

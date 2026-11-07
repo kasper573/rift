@@ -35,6 +35,7 @@ use engine::core::content::Content;
 use engine::core::ground::Heightfield;
 use engine::core::jobs::Handoff;
 use engine::core::math::{Pos, Rng};
+use engine::core::os::Profile;
 use engine::core::render::camera::{self, Zoom, world_point};
 use engine::core::render::sample::{FrameSamplingPlugin, GpuReportsRead, gpu_reports};
 use engine::core::render::video::VideoPreferences;
@@ -405,8 +406,13 @@ struct Prop {
 #[derive(Resource, Default)]
 struct Read(Vec<(Entity, Vec<u8>)>);
 
-pub fn area(folder: &Path, shot: &Path, out: &Path) {
+/// Draws `shot` of the game in `folder` as the picture `out`, keeping what the renderer works out
+/// once (the models' impostors) under `profile`, or under a folder of this run's alone.
+pub fn area(folder: &Path, shot: &Path, out: &Path, profile: Option<&Path>) {
     let folder = std::fs::canonicalize(folder).expect("a game folder");
+    let own_profile = tempfile::tempdir().expect("a scratch profile");
+    let profile =
+        Profile(profile.map_or_else(|| own_profile.path().to_path_buf(), Path::to_path_buf));
     let shot: Shot =
         serde_json::from_slice(&std::fs::read(shot).expect("a shot file")).expect("a shot");
     assert!(
@@ -450,6 +456,7 @@ pub fn area(folder: &Path, shot: &Path, out: &Path) {
         )))
         .insert_resource(Rng::new(seed))
         .insert_resource(Handoff::NextFrame)
+        .insert_resource(profile)
         .add_plugins((
             WorldScenePlugin,
             VfxMaterialsPlugin,
@@ -495,15 +502,23 @@ pub fn area(folder: &Path, shot: &Path, out: &Path) {
 /// refused when they differ by more than the eye can tell. Of an arrival, the frames before the
 /// area stood whole in both runs, and the frames the picture settles over after that, come as
 /// the loading happens to go and are left out.
-pub fn check_determinism(folder: &Path, shot: &Path, out: &Path) -> Result<(), String> {
+pub fn check_determinism(
+    folder: &Path,
+    shot: &Path,
+    out: &Path,
+    profile: Option<&Path>,
+) -> Result<(), String> {
     let again = tempfile::tempdir().map_err(|error| error.to_string())?;
     let twin = again.path().join(out.file_name().ok_or("an output name")?);
+    let profile = profile.map_or_else(|| again.path().join("profile"), Path::to_path_buf);
     let mut stood = Vec::new();
     for out in [out, twin.as_path()] {
         let rift = std::env::current_exe().map_err(|error| error.to_string())?;
         let drawn = Command::new(rift)
             .args(["render", "area"])
             .args([folder, shot, out])
+            .arg("--profile")
+            .arg(&profile)
             .output()
             .map_err(|error| format!("rift doesn't run again: {error}"))?;
         println!("{}", String::from_utf8_lossy(&drawn.stdout).trim_end());

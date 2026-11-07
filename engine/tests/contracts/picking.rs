@@ -18,10 +18,10 @@ use bevy::render::renderer::{RenderDevice, RenderQueue, initialize_renderer};
 use bevy::render::settings::{Backends, RenderResources, WgpuSettings};
 use bevy::shape::ViewFrustum;
 use engine::core::render::world::gpu::arena::{
-    GpuChunk, InstanceArena, InstanceChange, InstanceRecord, ModelSlabs, PreparedModel,
+    ChunkPlace, GpuChunk, InstanceArena, InstanceChange, InstanceRecord, ModelSlabs, PreparedModel,
 };
 use engine::core::render::world::gpu::cull::{
-    CullKernel, CullView, DrawTable, GpuDrawTable, ViewCull, seen_chunks,
+    CullKernel, CullView, DrawTable, DrawnProp, GpuDrawTable, ViewCull, seen_chunks,
 };
 use engine::core::render::world::gpu::pick::{
     self, PICK_DEPTH, PICK_IDS, PickDraw, PickPass, PickTargets,
@@ -93,7 +93,7 @@ fn a_views_picture_names_the_instance_it_shows_at_each_pixel() {
             capacity,
             contents,
             ..
-        }) = arena.insert(chunk, &held, model_id)
+        }) = arena.insert(chunk, &held, model_id, ChunkPlace::Near { index: chunk })
         else {
             panic!("the chunk {chunk} placed");
         };
@@ -123,7 +123,18 @@ fn a_views_picture_names_the_instance_it_shows_at_each_pixel() {
         chunks
             .values()
             .flat_map(|chunk| chunk.contents.props.iter())
-            .map(|&(prop, _, instances)| (prop, &placed, instances, false)),
+            .map(|&(prop, _, instances)| {
+                (
+                    prop,
+                    DrawnProp {
+                        model: model_id(prop),
+                        placed: &placed,
+                        instances,
+                        dressed: true,
+                        fades: false,
+                    },
+                )
+            }),
     );
     let kernel = CullKernel::new(&device);
     let gpu_table = GpuDrawTable::new(&device, &queue, table.clone()).expect("a table to draw");
@@ -142,6 +153,7 @@ fn a_views_picture_names_the_instance_it_shows_at_each_pixel() {
         &gpu_table,
         instances,
         shown.buffer().expect("the shares shown written"),
+        &no_chunk_standing(&device),
         seen,
         view,
     );
@@ -451,4 +463,14 @@ fn read_ids(
         .iter()
         .map(|word| u32::from_le_bytes(*word))
         .collect()
+}
+
+/// The buffer telling the kernel which near chunks of the ground stand: none, for a scene with no
+/// far field.
+fn no_chunk_standing(device: &RenderDevice) -> Buffer {
+    device.create_buffer_with_data(&BufferInitDescriptor {
+        label: Some("no chunk standing"),
+        contents: &[0; 4],
+        usage: BufferUsages::STORAGE,
+    })
 }

@@ -1,13 +1,16 @@
-// Which of a scenery's prop instances a view draws, and at which level of each part, in three
-// passes: one workgroup for each chunk the view may see, its threads striding through the chunk's
-// instances. `count` counts each instance the view sees in the command that draws its part at
-// the level its size on screen asks for, as many times as its model has parts. `place` lays the
-// commands' regions of the drawn instances out one after another, each as large as its count,
-// and starts the counts over. `list` then lists each seen instance in its commands' regions. The
-// view that clears what hides the camera's subject moves each fading instance it sees a step
-// toward cleared while the way from its eye to the subject passes through the instance's box,
-// and back toward whole once it doesn't, and lists it with how far it shows and whether the eye
-// stands inside it.
+// Which of a scenery's prop instances a view draws, and as what, in three passes: one workgroup
+// for each chunk the view may see, its threads striding through the chunk's instances. `count`
+// counts each instance the view sees in the commands that draw it: its model's parts, each in
+// the command of the level its size on screen asks for, while it spans more pixels than the
+// impostor band; its impostor below that, down to the grain; both across the band between, each
+// fading into the other; and a box of its bounds where what it wants is not on the GPU. `place`
+// lays the commands' regions of the drawn instances out one after another, each as large as its
+// count, and starts the counts over. `list` then lists each seen instance in its commands'
+// regions. The view that clears what hides the camera's subject moves each fading instance it
+// sees a step toward cleared while the way from its eye to the subject passes through the
+// instance's box, and back toward whole once it doesn't, and lists it with how far it shows and
+// whether the eye stands inside it. An instance drawn coarser than its size asks, for want of
+// its model or its impostor, is counted missing.
 
 struct CullView {
     // The frustum's half-spaces, each facing in: left, right, bottom, top, near and far.
@@ -25,6 +28,10 @@ struct CullView {
     grain_pixels: f32,
     stray_pixels: f32,
     near: f32,
+    // How many pixels across an instance spans at the middle of the band where its model gives
+    // way to its impostor, and how wide the band is.
+    impostor_pixels: f32,
+    band_pixels: f32,
     // Whom the view's camera follows, and how far a fade moves this frame: none for a view that
     // draws every prop whole.
     subject: vec3<f32>,
@@ -43,7 +50,8 @@ struct Instance {
 }
 
 // A prop as the view draws it: the middle of its model's box and the radius round it holding the
-// box, the box's widest span, and its parts among `parts`, none when nothing of it is drawn.
+// box, the box's widest span, its parts among `parts`, none when nothing of it is drawn, and the
+// commands drawing its impostor and its box.
 struct Prop {
     x: f32,
     y: f32,
@@ -58,7 +66,8 @@ struct Prop {
     half_x: f32,
     half_y: f32,
     half_z: f32,
-    _unused: u32,
+    impostor_command: u32,
+    proxy_command: u32,
 }
 
 // A part's levels among `levels`, finest first.
@@ -83,22 +92,29 @@ struct Command {
 
 struct Commands {
     drawn: atomic<u32>,
+    missing: atomic<u32>,
     commands: array<Command>,
 }
 
 @group(0) @binding(0) var<uniform> view: CullView;
 @group(0) @binding(1) var<storage, read> instances: array<Instance>;
-// The chunks the view may see: each one's first instance among `instances`, and how many it has.
-@group(0) @binding(2) var<storage, read> chunks: array<vec2<u32>>;
+// The chunks the view may see: each one's first instance among `instances`, how many it has, and
+// whether it stands in the far field, drawn by impostors alone.
+@group(0) @binding(2) var<storage, read> chunks: array<vec4<u32>>;
 @group(0) @binding(3) var<storage, read> props: array<Prop>;
 @group(0) @binding(4) var<storage, read> parts: array<Part>;
 @group(0) @binding(5) var<storage, read> levels: array<Level>;
 @group(0) @binding(6) var<storage, read_write> commands: Commands;
-// Each drawn instance by its place among `instances`, the scale it is drawn at, how far it shows
-// and whether the eye stands inside it.
+// Each drawn instance by its place among `instances`, the scale it is drawn at, how far it shows,
+// and how far it fades into its other representation with whether the eye stands inside it.
 @group(0) @binding(7) var<storage, read_write> drawn: array<vec4<u32>>;
 // How far each instance shows, by its place among `instances`: 1 whole, 0 cleared away.
 @group(0) @binding(8) var<storage, read_write> shown: array<f32>;
+// Each prop's layer of the impostor atlas, one more than it is: 0 for none.
+@group(0) @binding(9) var<storage, read> impostors: array<u32>;
+// Which near chunks of the ground stand in the arena, a bit each by the chunk's index: a far
+// instance is drawn only where the near chunk it lies in doesn't.
+@group(0) @binding(10) var<storage, read> standing: array<u32>;
 
 const THREADS: u32 = 64u;
 const PLACERS: u32 = 256u;
@@ -107,7 +123,7 @@ const PLACERS: u32 = 256u;
 fn count(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index) thread: u32) {
     let chunk = chunks[group.x];
     for (var at = thread; at < chunk.y; at += THREADS) {
-        count_instance(chunk.x + at);
+        count_instance(chunk.x + at, chunk.z != 0u);
     }
 }
 
@@ -147,58 +163,96 @@ fn place(@builtin(local_invocation_index) thread: u32) {
 fn list(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index) thread: u32) {
     let chunk = chunks[group.x];
     for (var at = thread; at < chunk.y; at += THREADS) {
-        list_instance(chunk.x + at);
+        list_instance(chunk.x + at, chunk.z != 0u);
     }
 }
 
-// An instance as the view sees it: whether it does at all, the scale it is drawn at, and how far
-// a level may stray from the full mesh in the model's own units.
+// An instance as the view sees it: whether it does at all, the scale it is drawn at, how far a
+// level may stray from the full mesh in the model's own units, and how far it fades into each of
+// its representations: its model, its impostor and its box, 0 for one not drawn.
 struct Sighted {
     seen: bool,
     scale: f32,
     allowed: f32,
     prop: Prop,
     turn: vec2<f32>,
+    model: f32,
+    impostor: f32,
+    proxy: f32,
+    missing: bool,
 }
 
-fn count_instance(index: u32) {
+fn count_instance(index: u32, far: bool) {
     let instance = instances[index];
-    let sighted = sight(instance);
+    let sighted = sight(instance, far);
     if !sighted.seen {
         return;
     }
     atomicAdd(&commands.drawn, 1u);
+    if sighted.missing {
+        atomicAdd(&commands.missing, 1u);
+    }
     let prop = sighted.prop;
-    for (var part = prop.first_part; part < prop.first_part + prop.parts; part++) {
-        let level = levels[coarsest_within(parts[part], sighted.allowed)];
-        atomicAdd(&commands.commands[level.command].instance_count, 1u);
+    if sighted.model > 0.0 {
+        for (var part = prop.first_part; part < prop.first_part + prop.parts; part++) {
+            let level = levels[coarsest_within(parts[part], sighted.allowed)];
+            atomicAdd(&commands.commands[level.command].instance_count, 1u);
+        }
+    }
+    if sighted.impostor > 0.0 {
+        atomicAdd(&commands.commands[prop.impostor_command].instance_count, 1u);
+    }
+    if sighted.proxy > 0.0 {
+        atomicAdd(&commands.commands[prop.proxy_command].instance_count, 1u);
     }
 }
 
-fn list_instance(index: u32) {
+fn list_instance(index: u32, far: bool) {
     let instance = instances[index];
-    let sighted = sight(instance);
+    let sighted = sight(instance, far);
     if !sighted.seen {
         return;
     }
     let prop = sighted.prop;
     let fade = faded(index, instance, prop, sighted.turn);
-    let listed = vec4<u32>(index, bitcast<u32>(sighted.scale), bitcast<u32>(fade.x), u32(fade.y));
-    for (var part = prop.first_part; part < prop.first_part + prop.parts; part++) {
-        let level = levels[coarsest_within(parts[part], sighted.allowed)];
-        let slot = atomicAdd(&commands.commands[level.command].instance_count, 1u);
-        drawn[commands.commands[level.command].first_instance + slot] = listed;
+    if sighted.model > 0.0 {
+        let listed = listing(index, sighted.scale, fade, sighted.model);
+        for (var part = prop.first_part; part < prop.first_part + prop.parts; part++) {
+            let level = levels[coarsest_within(parts[part], sighted.allowed)];
+            list_in(level.command, listed);
+        }
+    }
+    if sighted.impostor > 0.0 {
+        list_in(prop.impostor_command, listing(index, sighted.scale, fade, sighted.impostor));
+    }
+    if sighted.proxy > 0.0 {
+        list_in(prop.proxy_command, listing(index, sighted.scale, fade, sighted.proxy));
     }
 }
 
-fn sight(instance: Instance) -> Sighted {
+fn list_in(command: u32, listed: vec4<u32>) {
+    let slot = atomicAdd(&commands.commands[command].instance_count, 1u);
+    drawn[commands.commands[command].first_instance + slot] = listed;
+}
+
+// A drawn instance as the stages read it: its place, its scale, how far it shows, and how far it
+// fades in with whether the eye stands inside it, packed as `instance.wesl` unpacks them.
+fn listing(index: u32, scale: f32, fade: vec2<f32>, faded_in: f32) -> vec4<u32> {
+    let packed = u32(fade.y) | (u32(clamp(faded_in, 0.0, 1.0) * 65535.0) << 1u);
+    return vec4<u32>(index, bitcast<u32>(scale), bitcast<u32>(fade.x), packed);
+}
+
+fn sight(instance: Instance, far: bool) -> Sighted {
     var sighted: Sighted;
     sighted.seen = false;
     if instance.prop >= arrayLength(&props) {
         return sighted;
     }
     let prop = props[instance.prop];
-    if prop.parts == 0u {
+    if prop.radius <= 0.0 {
+        return sighted;
+    }
+    if far && near_stands(instance.chunk) {
         return sighted;
     }
     let turn = vec2<f32>(cos(instance.yaw), sin(instance.yaw));
@@ -223,6 +277,39 @@ fn sight(instance: Instance) -> Sighted {
     sighted.allowed = view.stray_pixels / (pixels_per_meter * scale);
     sighted.prop = prop;
     sighted.turn = turn;
+    // How far across the band the instance lies: 1 all model, 0 all impostor.
+    var share = clamp((across - view.impostor_pixels) / max(view.band_pixels, 1e-6) + 0.5, 0.0, 1.0);
+    if far {
+        share = 0.0;
+    }
+    let has_model = prop.parts > 0u;
+    let has_impostor = impostors[instance.prop] != 0u;
+    sighted.model = 0.0;
+    sighted.impostor = 0.0;
+    sighted.proxy = 0.0;
+    sighted.missing = false;
+    if share > 0.0 {
+        if has_model {
+            sighted.model = share;
+        } else {
+            sighted.missing = true;
+            if has_impostor {
+                sighted.impostor = 1.0;
+            } else {
+                sighted.proxy = 1.0;
+            }
+        }
+    }
+    if share < 1.0 {
+        if has_impostor {
+            sighted.impostor = max(sighted.impostor, 1.0 - share);
+        } else if has_model {
+            sighted.model = 1.0;
+        } else {
+            sighted.missing = true;
+            sighted.proxy = 1.0;
+        }
+    }
     return sighted;
 }
 
@@ -305,6 +392,15 @@ fn coarsest_within(part: Part, allowed: f32) -> u32 {
         }
     }
     return chosen;
+}
+
+// Whether the near chunk of the ground at `index` stands in the arena.
+fn near_stands(index: u32) -> bool {
+    let word = index / 32u;
+    if word >= arrayLength(&standing) {
+        return false;
+    }
+    return (standing[word] & (1u << (index % 32u))) != 0u;
 }
 
 // An instance's seed as a share between 0 and 1.
