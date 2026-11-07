@@ -79,6 +79,10 @@ impl Plugin for PropCullPlugin {
 /// diagnostics: one measurement for each scenery a view culled.
 pub const PROPS_DRAWN: &str = "props_drawn";
 
+/// The name the passes culling a view's props and its shadows' go by among the render
+/// diagnostics.
+pub const PROP_CULL: &str = "prop_cull";
+
 /// How a view culls: its frustum's half-spaces (left, right, bottom, top, near and far), where
 /// sizes on screen are measured from and how many pixels a metre spans a metre off it, whether a
 /// metre spans as many however far it lies, whether what lies behind the near half-space is left
@@ -746,6 +750,7 @@ fn cull_props(
     let recorder = ctx.diagnostic_recorder();
     let recorder = recorder.as_deref();
     let encoder = ctx.command_encoder();
+    let span = recorder.map(|recorder| recorder.time_span(encoder, PROP_CULL));
     for cull in culls.0.values() {
         let Some(table) = &cull.table else {
             continue;
@@ -761,6 +766,9 @@ fn cull_props(
                 culled.encode(&kernel, table, encoder);
             }
         }
+    }
+    if let Some(span) = span {
+        span.end(encoder);
     }
 }
 
