@@ -55,7 +55,7 @@ use bevy::shader::{Shader, ShaderDefVal};
 
 use super::arena::{ExtractedPropArena, InstanceArenas, ModelArena};
 use super::clearing::Clearing;
-use super::cull::{self, PropCulls, ViewCull};
+use super::cull::{PropCulls, ViewCull};
 use crate::core::render::world::RenderProgress;
 
 pub struct PropDrawPlugin;
@@ -77,9 +77,7 @@ impl Plugin for PropDrawPlugin {
                 Render,
                 (
                     write_clearing.in_set(RenderSystems::PrepareResources),
-                    bind_props
-                        .in_set(RenderSystems::PrepareBindGroups)
-                        .after(cull::prepare_culls),
+                    bind_props.in_set(RenderSystems::PrepareBindGroups),
                     (
                         forget_drawn,
                         (queue_lit, queue_prepass, queue_shadows).after(forget_drawn),

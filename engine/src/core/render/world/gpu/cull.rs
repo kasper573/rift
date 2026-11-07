@@ -38,7 +38,7 @@ use bevy::render::view::{ExtractedView, RetainedViewEntity};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 
 use super::arena::{
-    ExtractedPropArena, GpuChunk, GpuInstances, InstanceArenas, InstanceRecord, ModelArena,
+    self, ExtractedPropArena, GpuChunk, GpuInstances, InstanceArenas, InstanceRecord, ModelArena,
     PlacedModel,
 };
 use super::clearing::{self, Clearing};
@@ -60,7 +60,10 @@ impl Plugin for PropCullPlugin {
             .add_systems(RenderStartup, make_kernel)
             .add_systems(
                 Render,
-                prepare_culls.in_set(RenderSystems::PrepareBindGroups),
+                prepare_culls
+                    .after(arena::write_models)
+                    .after(arena::write_instances)
+                    .before(RenderSystems::Queue),
             )
             .add_systems(
                 Core3d,

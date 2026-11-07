@@ -79,7 +79,9 @@ impl Plugin for GrassPlugin {
             .add_systems(
                 Render,
                 (
-                    grow_grass.in_set(RenderSystems::PrepareResources),
+                    grow_grass
+                        .after(RenderSystems::PrepareViews)
+                        .before(RenderSystems::Queue),
                     bind_grass.in_set(RenderSystems::PrepareBindGroups),
                     queue_grass.in_set(RenderSystems::Queue),
                 ),

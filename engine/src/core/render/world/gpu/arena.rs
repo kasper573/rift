@@ -43,7 +43,9 @@ impl Plugin for ModelArenaPlugin {
                 .add_systems(ExtractSchedule, (extract_models, extract_instances))
                 .add_systems(
                     Render,
-                    (write_models, write_instances).in_set(RenderSystems::PrepareResources),
+                    (write_models, write_instances)
+                        .after(RenderSystems::PrepareViews)
+                        .before(RenderSystems::Queue),
                 );
         }
     }
@@ -682,7 +684,11 @@ fn extract_models(models: Extract<Res<PropModels>>, mut arena: ResMut<ModelArena
 }
 
 /// Writes the models sent this frame into the slabs, and lets go of those let go.
-fn write_models(mut arena: ResMut<ModelArena>, device: Res<RenderDevice>, queue: Res<RenderQueue>) {
+pub(super) fn write_models(
+    mut arena: ResMut<ModelArena>,
+    device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
+) {
     if arena.incoming.is_empty() {
         return;
     }
@@ -776,7 +782,7 @@ fn extract_instances(mut main: ResMut<MainWorld>, mut arenas: ResMut<InstanceAre
 }
 
 /// Writes the instances placed this frame into each arena's slab, grown first to hold them.
-fn write_instances(
+pub(super) fn write_instances(
     mut arenas: ResMut<InstanceArenas>,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
