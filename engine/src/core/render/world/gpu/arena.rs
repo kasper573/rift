@@ -370,6 +370,19 @@ pub struct InstanceRecord {
 
 impl InstanceRecord {
     pub const BYTES: u64 = 32;
+
+    /// The record as the slab holds it.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        let floats = self
+            .position
+            .into_iter()
+            .chain([self.yaw, self.scale])
+            .flat_map(f32::to_le_bytes);
+        let words = [self.prop, self.seed, self.chunk]
+            .into_iter()
+            .flat_map(u32::to_le_bytes);
+        floats.chain(words).collect()
+    }
 }
 
 /// Where one scenery's prop instances lie in its arena's slab, chunk by chunk, each chunk by a key
@@ -891,20 +904,7 @@ fn shown_bytes(bytes: u64) -> u64 {
 }
 
 fn instance_bytes(records: &[InstanceRecord]) -> Vec<u8> {
-    records
-        .iter()
-        .flat_map(|record| {
-            let floats = record
-                .position
-                .into_iter()
-                .chain([record.yaw, record.scale])
-                .flat_map(f32::to_le_bytes);
-            let words = [record.prop, record.seed, record.chunk]
-                .into_iter()
-                .flat_map(u32::to_le_bytes);
-            floats.chain(words)
-        })
-        .collect()
+    records.iter().flat_map(InstanceRecord::to_bytes).collect()
 }
 
 fn vertex_bytes(vertices: &[ModelVertex]) -> Vec<u8> {

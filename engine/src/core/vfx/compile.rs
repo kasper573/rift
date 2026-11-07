@@ -107,7 +107,7 @@ const LOADING_AT_MOST: Duration = Duration::from_secs(30);
 /// a lit mesh with positions, normals, uvs and colours, in the main pass, and in the prepass where
 /// the stage writes depth and normals ahead of it; a surface leaves the prepass to the material it
 /// plays over, and a cover's sheet and blades, blended over the ground, draw in the main pass
-/// alone.
+/// alone. A prop's shader bakes its model's impostor as well.
 fn passes(stage: Stage) -> Vec<(&'static str, Vec<ShaderDefVal>)> {
     let main: Vec<ShaderDefVal> = vec![
         ShaderDefVal::UInt(
@@ -141,7 +141,11 @@ fn passes(stage: Stage) -> Vec<(&'static str, Vec<ShaderDefVal>)> {
             ("blades", with(&main, &["GRASS_BLADE", "VERTEX_UVS_B"])),
             ("sheet", with(&main, &["SHEET_PATCH", "VERTEX_UVS_B"])),
         ],
-        Stage::Prop => vec![("main", main.clone()), ("prepass", prepass.clone())],
+        Stage::Prop => vec![
+            ("main", main.clone()),
+            ("prepass", prepass.clone()),
+            ("bake", with(&main, &["IMPOSTOR_BAKE"])),
+        ],
         Stage::Surface | Stage::Sky | Stage::Rain => vec![("main", main)],
         Stage::Ground | Stage::Billboard | Stage::Screen | Stage::Text => Vec::new(),
     }

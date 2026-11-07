@@ -3,15 +3,18 @@ use std::time::{Duration, Instant};
 
 use bevy::app::PluginsState;
 use bevy::asset::AssetPlugin;
+use bevy::camera::RenderTarget;
 use bevy::camera::visibility::RenderLayers;
+use bevy::image::ImageSampler;
 use bevy::prelude::*;
+use bevy::render::render_resource::{TextureFormat, TextureUsages};
 use bevy::window::ExitCondition;
 use engine::core::audio::playback::Listener;
 use engine::core::content::Content;
 use engine::core::jobs::Handoff;
 use engine::core::math::{Pos, Rng};
 use engine::core::os::Profile;
-use engine::core::render::camera::Lens;
+use engine::core::render::camera::{self, Lens};
 use engine::core::render::video::VideoPreferences;
 use engine::core::render::world::clouds::CloudDrift;
 use engine::core::render::world::gpu::impostor::{
@@ -22,21 +25,26 @@ use engine::core::render::world::{self, WorldScenePlugin};
 use engine::core::units::{Degrees, Meters};
 use engine::core::vfx::rain::{RainField, Shelter};
 use engine::core::vfx::render::VfxMaterialsPlugin;
+use engine::core::vfx::shader::Stage;
 use engine::systems::area::scenery::{self, Eyes, SceneryPlugin, Sight};
 use engine::systems::area::{self, AreaDef};
 use serde_json::json;
 use testkit::{Game, Map, box_glb, path};
 
 const FIELD: f32 = 32.0;
+const SIDE: u32 = 256;
+const FOV: Degrees = Degrees(50.0);
 const BLOCK: Pos<Meters> = Pos::new(16.0, 16.0);
-/// The block is a tall blue slab, so from the horizon it fills its cell's height and from
-/// above it shows a narrow top.
+/// The block is a tall slab, so from the horizon it fills its cell's height and from above it
+/// shows a narrow top.
 const BLOCK_SIZE: Vec3 = Vec3::new(1.0, 4.0, 2.0);
 
-/// A prop's model gets an impostor once it stands: an atlas looking at the model from every way
-/// round the upper hemisphere, each cell showing the model's base colour where the model covers
-/// the cell and nothing where it doesn't, kept under the profile. The next start of the same
-/// game on the same profile reads the atlas from there instead of baking it again.
+/// A prop's model gets an impostor once it stands before a camera: an atlas looking at the model
+/// from every way round the upper hemisphere, each cell showing the model where it covers the
+/// cell and nothing where it doesn't, as the model's own shaders draw it, in white light: the
+/// block's glTF is blue, but the game's shader paints it red, so red is what the atlas shows. The atlas is kept
+/// under the profile, and the next start of the same game on the same profile reads it from
+/// there instead of baking it again.
 #[test]
 fn a_prop_models_impostor_is_baked_once_and_read_from_the_profile_after() {
     let folder = tempfile::tempdir().expect("a scratch folder");
@@ -60,16 +68,16 @@ fn a_prop_models_impostor_is_baked_once_and_read_from_the_profile_after() {
     let from_above = cell_of(Vec3::Y).floor().as_uvec2();
     let middle = middle_of(&texels, from_above);
     assert!(
-        middle[3] == 255 && middle[2] > middle[0] && middle[2] > middle[1],
-        "seen from above, the middle of the cell shows the block's blue top: {middle:?}"
+        middle[3] == 255 && middle[0] > middle[2] && middle[0] > middle[1],
+        "seen from above, the middle of the cell shows the block's top as its shader paints it, red: {middle:?}"
     );
     let corner = corner_of(&texels, from_above);
     assert_eq!(corner[3], 0, "the cell's corner shows nothing: {corner:?}");
     let horizon = CellView::all().next().expect("a first cell");
     let middle = middle_of(&texels, horizon.cell);
     assert!(
-        middle[3] == 255 && middle[2] > middle[0],
-        "seen from the horizon, the middle of the cell shows the block's blue side: {middle:?}"
+        middle[3] == 255 && middle[0] > middle[2],
+        "seen from the horizon, the middle of the cell shows the block's side, red: {middle:?}"
     );
 
     let again = stand(field(), folder.path(), profile.path());
@@ -89,8 +97,8 @@ fn a_prop_models_impostor_is_baked_once_and_read_from_the_profile_after() {
     );
 }
 
-/// A field with one blue block on it, standing through the whole render app on `profile` until
-/// nothing is readying: the app, kept so what it holds can be asked.
+/// A field with one block on it, standing before a camera through the whole render app on
+/// `profile` until nothing is readying: the app, kept so what it holds can be asked.
 fn stand(game: Game, folder: &Path, profile: &Path) -> App {
     let content = game.load();
     let id = content
@@ -140,6 +148,17 @@ fn stand(game: Game, folder: &Path, profile: &Path) -> App {
     let world = app.world_mut();
     let middle = Pos::new(FIELD / 2.0, FIELD / 2.0);
     let eye = Vec3::new(middle.x, 20.0, middle.y + 10.0);
+    let mut image = Image::new_target_texture(SIDE, SIDE, TextureFormat::Rgba8UnormSrgb, None);
+    image.sampler = ImageSampler::linear();
+    image.texture_descriptor.usage |= TextureUsages::COPY_SRC;
+    let image = world.resource_mut::<Assets<Image>>().add(image);
+    world.spawn((
+        Camera3d::default(),
+        RenderTarget::Image(image.into()),
+        camera::lens(FOV, SIDE, SIDE),
+        camera::picture(testkit::look().picture),
+        Transform::from_translation(eye).looking_at(Vec3::new(middle.x, 0.0, middle.y), Vec3::Y),
+    ));
     let stood = scenery::spawn(world, &content, &area, RenderLayers::default());
     scenery::view_from(
         world,
@@ -147,7 +166,7 @@ fn stand(game: Game, folder: &Path, profile: &Path) -> App {
         Sight {
             at: middle,
             reach: Meters(FIELD),
-            lens: Lens::new(256.0, Degrees(50.0)),
+            lens: Lens::new(SIDE as f32, FOV),
             eyes: Eyes::standing(eye, middle, Meters(0.0)),
         },
     );
@@ -170,10 +189,19 @@ fn field() -> Game {
     let rows: Vec<String> = (0..32).map(|_| ".".repeat(32)).collect();
     let rows: Vec<&str> = rows.iter().map(String::as_str).collect();
     Game::new()
+        .shader_of(
+            "red",
+            Stage::Prop,
+            "fn vfx(uv: vec2<f32>) -> vec4<f32> {\n    return vec4<f32>(1.0, 0.0, 0.0, 1.0) * vec4<f32>(light(), 1.0);\n}\nfn sway(world: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {\n    return world;\n}\n",
+        )
+        .row("prop_material", "red", json!({ "shader": path("vfx_shader", "red") }))
         .prop_of(
             "block",
             box_glb(BLOCK_SIZE, "paint", [0.1, 0.2, 1.0, 1.0]),
-            json!({ "footprint": { "type": "none" } }),
+            json!({
+                "footprint": { "type": "none" },
+                "materials": { "paint": path("prop_material", "red") },
+            }),
         )
         .area(
             "field",

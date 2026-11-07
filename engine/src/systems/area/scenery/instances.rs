@@ -34,13 +34,14 @@ use crate::core::render::world::gpu::arena::{
     PropModels,
 };
 use crate::core::render::world::gpu::impostor::{
-    self, BakeMaterial, BakeMaterialKey, ImpostorStore,
+    self, BakeMaterialKey, ImpostorStore, LookBakeKey,
 };
 use crate::core::render::world::gpu::upload;
 use crate::core::render::world::lod::GRAIN_PIXELS;
-use crate::core::render::world::material::{self, WorldMaterial};
+use crate::core::render::world::material::{self, MaterialLook, WorldMaterial};
 use crate::core::render::world_point;
 use crate::core::units::{GROUND_ORIGIN, MeterSize, Meters};
+use crate::core::vfx::shader::CompiledVfxShaders;
 use crate::systems::area::prop::{PropDef, PropId};
 use crate::systems::area::{Area, AreaModule, PropPlacement};
 
@@ -946,18 +947,22 @@ fn prop_dress(
                 .collect()
         })
         .unwrap_or_default();
-    let materials: Option<Vec<Handle<WorldMaterial>>> = parts
+    let looks: Vec<Option<&MaterialLook>> = parts
         .iter()
         .map(|material| {
-            let look = material
+            material
                 .as_ref()
                 .and_then(|material| names.get(&material.id()))
-                .and_then(|name| looks.iter().find(|look| look.material == *name));
-            material::part_material(world, model, material.as_ref(), look)
+                .and_then(|name| looks.iter().find(|look| look.material == *name))
         })
         .collect();
+    let materials: Option<Vec<Handle<WorldMaterial>>> = parts
+        .iter()
+        .zip(&looks)
+        .map(|(material, look)| material::part_material(world, model, material.as_ref(), *look))
+        .collect();
     let materials = materials?;
-    want_impostor(world, content, def, model, parts);
+    want_impostor(world, content, def, model, parts, &looks, &materials);
     Some(DressedProp {
         materials: materials.into_iter().map(Handle::untyped).collect(),
         shadow: def.shadow,
@@ -965,64 +970,69 @@ fn prop_dress(
     })
 }
 
-/// Wants `model`'s impostor, baked from what its glTF materials show or read from the file kept
-/// for a model made of the same and dressed alike.
+/// Wants `model`'s impostor, baked by `materials`, the world materials its parts are drawn in
+/// under `looks`, or read from the file kept for a model made of the same and dressed alike.
 fn want_impostor(
     world: &mut World,
     content: &Content,
     def: &PropDef,
     model: &Handle<Gltf>,
     parts: &[Option<Handle<GltfMaterial>>],
+    looks: &[Option<&MaterialLook>],
+    materials: &[Handle<WorldMaterial>],
 ) {
     let Some(path) = model.path().cloned() else {
         return;
     };
-    let standards: Vec<Option<StandardMaterial>> = parts
+    let keys: Vec<BakeMaterialKey> = parts
         .iter()
-        .map(|material| {
+        .zip(looks)
+        .map(|(material, look)| {
             let label = match material {
-                Some(material) => format!("{}/std", material.path()?.label()?),
-                None => format!("{}/std", GltfAssetLabel::DefaultMaterial),
+                Some(material) => material
+                    .path()
+                    .and_then(|path| path.label())
+                    .map(|label| format!("{label}/std")),
+                None => Some(format!("{}/std", GltfAssetLabel::DefaultMaterial)),
             };
-            let handle = world
-                .resource::<AssetServer>()
-                .get_handle::<StandardMaterial>(path.clone().with_label(label))?;
-            world
-                .resource::<Assets<StandardMaterial>>()
-                .get(&handle)
-                .cloned()
-        })
-        .collect();
-    let bakes: Vec<BakeMaterial> = standards
-        .iter()
-        .map(|standard| match standard {
-            Some(standard) => BakeMaterial {
-                color: standard.base_color.to_linear().to_f32_array(),
-                texture: standard.base_color_texture.as_ref().map(Handle::id),
-                cutoff: match standard.alpha_mode {
-                    AlphaMode::Opaque => 0.0,
-                    AlphaMode::Mask(cutoff) => cutoff,
-                    _ => 0.5,
+            let standard = label
+                .and_then(|label| {
+                    world
+                        .resource::<AssetServer>()
+                        .get_handle::<StandardMaterial>(path.clone().with_label(label))
+                })
+                .and_then(|handle| world.resource::<Assets<StandardMaterial>>().get(&handle));
+            let look = look.and_then(|look| {
+                let shader = def.materials.get(&look.material)?.get(content).shader;
+                let source = content.built::<CompiledVfxShaders>().0.get(&shader)?;
+                Some(LookBakeKey {
+                    shader: blake3::hash(source.as_bytes()).to_hex().to_string(),
+                    params: look.params.bits(),
+                    translucency: look.translucency,
+                })
+            });
+            match standard {
+                Some(standard) => BakeMaterialKey {
+                    color: standard.base_color.to_linear().to_f32_array(),
+                    texture: standard
+                        .base_color_texture
+                        .as_ref()
+                        .and_then(|texture| texture.path())
+                        .map(ToString::to_string),
+                    cutoff: match standard.alpha_mode {
+                        AlphaMode::Opaque => 0.0,
+                        AlphaMode::Mask(cutoff) => cutoff,
+                        _ => 0.5,
+                    },
+                    look,
                 },
-            },
-            None => BakeMaterial {
-                color: [1.0; 4],
-                texture: None,
-                cutoff: 0.0,
-            },
-        })
-        .collect();
-    let keys: Vec<BakeMaterialKey> = standards
-        .iter()
-        .zip(&bakes)
-        .map(|(standard, bake)| BakeMaterialKey {
-            color: bake.color,
-            texture: standard
-                .as_ref()
-                .and_then(|standard| standard.base_color_texture.as_ref())
-                .and_then(|texture| texture.path())
-                .map(ToString::to_string),
-            cutoff: bake.cutoff,
+                None => BakeMaterialKey {
+                    color: [1.0; 4],
+                    texture: None,
+                    cutoff: 0.0,
+                    look,
+                },
+            }
         })
         .collect();
     let model_hash = content
@@ -1034,9 +1044,11 @@ fn want_impostor(
     let key = impostor::atlas_key(model_hash, &keys);
     if world.contains_resource::<ImpostorStore>() {
         let profile = world.resource::<Profile>().clone();
+        let materials: Arc<[UntypedHandle]> =
+            materials.iter().cloned().map(Handle::untyped).collect();
         world
             .resource_mut::<ImpostorStore>()
-            .want(&profile, model.id(), key, bakes.into());
+            .want(&profile, model.id(), key, materials);
     }
 }
 

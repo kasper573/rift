@@ -5,7 +5,8 @@
 //! vertex stage reading the instance its command draws in place of a mesh's transform. A part
 //! drawn by a shader of the game's draws through the shader's own instanced stage. A view draws
 //! each part's levels in one indirect multi-draw, then the props' impostors from the atlas and
-//! the boxes standing in for what the GPU lacks, each in one more.
+//! the boxes standing in for what the GPU lacks, each in one more. A model's impostor is baked
+//! by the same pipelines, each part's shaders drawing the atlas's cells as instances.
 
 use std::any::TypeId;
 use std::sync::Arc;
@@ -26,16 +27,18 @@ use bevy::mesh::{Mesh, MeshVertexBufferLayoutRef, MeshVertexBufferLayouts, Primi
 use bevy::pbr::{
     LightEntity, LightKeyCache, MATERIAL_BIND_GROUP_INDEX, MaterialFragmentShader,
     MaterialPipeline, MaterialVertexShader, MeshFlags, MeshPipeline, MeshPipelineKey,
-    MeshTransforms, MeshUniform, PreparedMaterial, PrepassFragmentShader, PrepassPipeline,
-    PrepassPipelineSpecializer, PrepassVertexShader, SetMeshViewBindGroup,
+    MeshTransforms, MeshUniform, MeshViewBindGroup, PreparedMaterial, PrepassFragmentShader,
+    PrepassPipeline, PrepassPipelineSpecializer, PrepassVertexShader, SetMeshViewBindGroup,
     SetMeshViewBindingArrayBindGroup, SetPrepassViewBindGroup, SetPrepassViewEmptyBindGroup,
     Shadow, ShadowBatchSetKey, ShadowBinKey, ViewKeyCache, ViewKeyPrepassCache,
-    alpha_mode_pipeline_key, init_prepass_pipeline,
+    alpha_mode_pipeline_key, init_prepass_pipeline, prepare_mesh_view_bind_groups,
 };
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::erased_render_asset::ErasedRenderAssets;
-use bevy::render::material_bind_groups::MaterialBindGroupAllocators;
+use bevy::render::material_bind_groups::{
+    MaterialBindGroupAllocators, prepare_material_bind_groups, write_material_bind_group_buffers,
+};
 use bevy::render::mesh::allocator::MeshSlabs;
 use bevy::render::render_phase::{
     AddRenderCommand, BinnedPhaseItem, BinnedRenderPhaseType, DrawFunctions, InputUniformIndex,
@@ -45,12 +48,13 @@ use bevy::render::render_resource::binding_types::{
     sampler, storage_buffer_read_only_sized, texture_2d_array, uniform_buffer,
 };
 use bevy::render::render_resource::{
-    BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
-    CachedRenderPipelineId, CompareFunction, DepthBiasState, DepthStencilState, FragmentState,
-    IndexFormat, MultisampleState, PipelineCache, PrimitiveState, PrimitiveTopology as RawTopology,
-    RenderPipelineDescriptor, SamplerBindingType, ShaderStages, ShaderType,
+    BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer,
+    BufferInitDescriptor, BufferUsages, CachedRenderPipelineId, ColorTargetState, ColorWrites,
+    CompareFunction, DepthBiasState, DepthStencilState, FragmentState, IndexFormat,
+    MultisampleState, PipelineCache, PrimitiveState, PrimitiveTopology as RawTopology,
+    RenderPipeline, RenderPipelineDescriptor, SamplerBindingType, ShaderStages, ShaderType,
     SpecializedMeshPipeline, StencilState, StorageBuffer, TextureSampleType, UniformBuffer,
-    VertexState,
+    VertexState, encase,
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::sync_world::MainEntity;
@@ -58,10 +62,13 @@ use bevy::render::view::{ExtractedView, RetainedViewEntity};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::{Shader, ShaderDefVal};
 
-use super::arena::{ExtractedPropArena, InstanceArenas, ModelArena};
+use super::arena::{ExtractedPropArena, InstanceArenas, InstanceRecord, LevelRange, ModelArena};
 use super::clearing::Clearing;
 use super::cull::{PropCulls, ViewCull};
-use super::impostor::ImpostorAtlas;
+use super::impostor::{
+    self, ALBEDO_FORMAT, BAKE_DEPTH, BakeJob, CELLS, DEPTH_FORMAT, ImpostorAtlas, ImpostorOrders,
+    NORMAL_FORMAT, Readback,
+};
 use crate::core::render::world::RenderProgress;
 
 pub struct PropDrawPlugin;
@@ -69,6 +76,7 @@ pub struct PropDrawPlugin;
 impl Plugin for PropDrawPlugin {
     fn build(&self, app: &mut App) {
         bevy::shader::load_shader_library!(app, "instance.wesl");
+        bevy::shader::load_shader_library!(app, "impostor_bake.wesl");
         bevy::asset::embedded_asset!(app, "instanced.wesl");
         bevy::asset::embedded_asset!(app, "impostor.wesl");
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
@@ -84,7 +92,14 @@ impl Plugin for PropDrawPlugin {
                 Render,
                 (
                     write_clearing.in_set(RenderSystems::PrepareResources),
-                    bind_props.in_set(RenderSystems::PrepareBindGroups),
+                    (
+                        bind_props,
+                        draw_bakes
+                            .after(prepare_mesh_view_bind_groups)
+                            .after(prepare_material_bind_groups)
+                            .after(write_material_bind_group_buffers),
+                    )
+                        .in_set(RenderSystems::PrepareBindGroups),
                     (
                         forget_drawn,
                         (queue_lit, queue_prepass, queue_shadows).after(forget_drawn),
@@ -123,6 +138,15 @@ struct ClearingUniform {
 /// would be, and of a part's material after it.
 const INSTANCE_GROUP: usize = 2;
 
+/// The passes a part's material is drawn in: lit in a view's alpha-masked pass, its depth in a
+/// view's prepass or a light's shadow map, and baked into its model's impostor atlas.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+enum PropPass {
+    Lit,
+    Depth,
+    Bake,
+}
+
 /// The bind groups each view's props are drawn with, by scenery and view, and the parts each
 /// view draws of each scenery in each pass: on what pipeline, in what material, with which of
 /// the view's commands.
@@ -158,9 +182,20 @@ struct PropPipeline {
     clearing: UniformBuffer<ClearingUniform>,
     /// Bevy's mesh data for every instance alike: placed where it stands, receiving shadows.
     mesh: StorageBuffer<Vec<MeshUniform>>,
-    built:
-        HashMap<(bool, MeshPipelineKey, TypeId, ErasedMaterialKey), Option<CachedRenderPipelineId>>,
+    built: HashMap<
+        (PropPass, MeshPipelineKey, TypeId, ErasedMaterialKey),
+        Option<CachedRenderPipelineId>,
+    >,
     impostors: ImpostorPipeline,
+    bake: BakeBindings,
+}
+
+/// What a bake binds where a scenery's instances would be: one instance standing at the origin,
+/// grown once and shown whole, drawn once a cell, and the cells after it.
+struct BakeBindings {
+    layout: BindGroupLayoutDescriptor,
+    instance: Buffer,
+    drawn: Buffer,
 }
 
 /// How the impostors and the proxies are drawn: the mesh pipeline's lit descriptor and the
@@ -228,6 +263,45 @@ fn start(
             ),
         ),
     );
+    let bake_instances = BindGroupLayoutDescriptor::new(
+        "prop_bake_instances",
+        &BindGroupLayoutEntries::with_indices(
+            ShaderStages::VERTEX_FRAGMENT,
+            (
+                (0, storage_buffer_read_only_sized(false, None)),
+                (100, storage_buffer_read_only_sized(false, None)),
+                (101, storage_buffer_read_only_sized(false, None)),
+                (102, uniform_buffer::<ClearingUniform>(false)),
+                (105, storage_buffer_read_only_sized(false, None)),
+            ),
+        ),
+    );
+    let origin = InstanceRecord {
+        position: [0.0; 3],
+        yaw: 0.0,
+        scale: 1.0,
+        prop: 0,
+        seed: 0,
+        chunk: 0,
+    };
+    let whole = [0u32, 1.0f32.to_bits(), 1.0f32.to_bits(), 65535 << 1];
+    let bake = BakeBindings {
+        layout: bake_instances,
+        instance: device.create_buffer_with_data(&BufferInitDescriptor {
+            label: Some("prop_bake_instance"),
+            contents: &origin.to_bytes(),
+            usage: BufferUsages::STORAGE,
+        }),
+        drawn: device.create_buffer_with_data(&BufferInitDescriptor {
+            label: Some("prop_bake_drawn"),
+            contents: &whole
+                .iter()
+                .flat_map(|word| word.to_le_bytes())
+                .collect::<Vec<u8>>()
+                .repeat((CELLS * CELLS) as usize),
+            usage: BufferUsages::STORAGE,
+        }),
+    };
     let still = MeshTransforms {
         world_from_local: Affine3::IDENTITY,
         previous_world_from_local: Affine3::IDENTITY,
@@ -255,6 +329,7 @@ fn start(
         clearing: UniformBuffer::default(),
         mesh: every,
         built: HashMap::default(),
+        bake,
         impostors: ImpostorPipeline {
             shader: bevy::asset::load_embedded_asset!(assets.as_ref(), "impostor.wesl"),
             atlas,
@@ -328,6 +403,185 @@ fn bind_props(
             );
         }
     }
+}
+
+/// Bakes every impostor waiting whose parts' pipelines are built and materials bound: each model
+/// drawn into its layer of the atlas by its parts' own shaders, the view bound as the lit pass
+/// binds it and the atlas's cells where the instances would be, and its texels sent for.
+fn draw_bakes(bakes: BakeQueue) {
+    let BakeQueue {
+        device,
+        queue,
+        cache,
+        pipeline,
+        atlas,
+        models,
+        materials,
+        allocators,
+        keys,
+        views,
+        mut orders,
+        progress,
+    } = bakes;
+    if orders.bakes.is_empty() {
+        return;
+    }
+    let (Some(mut pipeline), Some(atlas)) = (pipeline, atlas) else {
+        progress.left_out();
+        return;
+    };
+    let (Some(vertices), Some(indices), Some(mesh), Some(clearing)) = (
+        models.vertices.buffer(),
+        models.indices.buffer(),
+        pipeline.mesh.buffer().cloned(),
+        pipeline.clearing.buffer().cloned(),
+    ) else {
+        progress.left_out();
+        return;
+    };
+    let Some((view_key, view_group)) = views
+        .iter()
+        .find_map(|(view, group)| Some((*keys.get(&view.retained_view_entity)?, group)))
+    else {
+        progress.left_out();
+        return;
+    };
+    let jobs = std::mem::take(&mut orders.bakes);
+    let mut encoder = device.create_command_encoder(&default());
+    let mut baked = false;
+    for job in jobs {
+        let Some(parts) = bake_parts(
+            &mut pipeline,
+            &cache,
+            view_key,
+            &materials,
+            &allocators,
+            &job,
+        ) else {
+            orders.bakes.push(job);
+            continue;
+        };
+        let cells = impostor::bake_cells(&job.placed);
+        let mut written = encase::StorageBuffer::new(Vec::<u8>::new());
+        written
+            .write(&cells)
+            .expect("the cells write as a storage buffer");
+        let cells = device.create_buffer_with_data(&BufferInitDescriptor {
+            label: Some("prop_bake_cells"),
+            contents: written.as_ref(),
+            usage: BufferUsages::STORAGE,
+        });
+        let instances = device.create_bind_group(
+            "prop_bake_instances",
+            &cache.get_bind_group_layout(&pipeline.bake.layout),
+            &BindGroupEntries::with_indices((
+                (0, mesh.as_entire_binding()),
+                (100, pipeline.bake.instance.as_entire_binding()),
+                (101, pipeline.bake.drawn.as_entire_binding()),
+                (102, clearing.as_entire_binding()),
+                (105, cells.as_entire_binding()),
+            )),
+        );
+        let targets = atlas.bake_targets(job.layer);
+        let mut pass = targets.begin(&mut encoder);
+        pass.set_vertex_buffer(0, *vertices.slice(..));
+        pass.set_index_buffer(*indices.slice(..), IndexFormat::Uint32);
+        pass.set_bind_group(0, Some(&*view_group.main), &view_group.main_offsets);
+        pass.set_bind_group(1, Some(&*view_group.binding_array), &[]);
+        pass.set_bind_group(INSTANCE_GROUP as u32, Some(&*instances), &[]);
+        for part in &parts {
+            pass.set_pipeline(part.pipeline);
+            pass.set_bind_group(MATERIAL_BIND_GROUP_INDEX as u32, Some(&*part.material), &[]);
+            pass.draw_indexed(
+                part.level.first_index..part.level.first_index + part.level.indices,
+                part.first_vertex as i32,
+                0..CELLS * CELLS,
+            );
+        }
+        drop(pass);
+        orders.readbacks.push(Readback::of(
+            &device,
+            &mut encoder,
+            &atlas,
+            job.layer,
+            job.model,
+            job.key.clone(),
+        ));
+        baked = true;
+    }
+    if baked {
+        queue.submit([encoder.finish()]);
+    }
+    if !orders.bakes.is_empty() {
+        progress.left_out();
+    }
+}
+
+/// What the bakes draw with.
+#[derive(bevy::ecs::system::SystemParam)]
+struct BakeQueue<'w, 's> {
+    device: Res<'w, RenderDevice>,
+    queue: Res<'w, RenderQueue>,
+    cache: Res<'w, PipelineCache>,
+    pipeline: Option<ResMut<'w, PropPipeline>>,
+    atlas: Option<Res<'w, ImpostorAtlas>>,
+    models: Res<'w, ModelArena>,
+    materials: Res<'w, ErasedRenderAssets<PreparedMaterial>>,
+    allocators: Res<'w, MaterialBindGroupAllocators>,
+    keys: Res<'w, ViewKeyCache>,
+    views:
+        Query<'w, 's, (&'static ExtractedView, &'static MeshViewBindGroup), Without<LightEntity>>,
+    orders: ResMut<'w, ImpostorOrders>,
+    progress: Res<'w, RenderProgress>,
+}
+
+/// A part as a bake draws it: on its material's bake pipeline, in its material, the level the
+/// bake draws of it.
+struct BakePart<'a> {
+    pipeline: &'a RenderPipeline,
+    material: BindGroup,
+    level: LevelRange,
+    first_vertex: u32,
+}
+
+/// Every part of `job`'s model the bake draws, once each one's pipeline is built and its material
+/// bound; a part no pass can draw is left out, as the lit pass leaves it out.
+fn bake_parts<'a>(
+    pipeline: &mut PropPipeline,
+    cache: &'a PipelineCache,
+    view: MeshPipelineKey,
+    materials: &ErasedRenderAssets<PreparedMaterial>,
+    allocators: &MaterialBindGroupAllocators,
+    job: &BakeJob,
+) -> Option<Vec<BakePart<'a>>> {
+    let mut parts = Vec::new();
+    for (part, material) in job.placed.parts.iter().zip(job.materials.iter()) {
+        let Some(level) = impostor::bake_level(&job.placed, part) else {
+            continue;
+        };
+        let prepared = materials.get(material.id())?;
+        let bound = allocators
+            .get(&material.type_id())?
+            .get(prepared.binding.group)?
+            .bind_group()?
+            .clone();
+        let Some(id) = pipeline.specialize(
+            cache,
+            view,
+            PropPass::Bake,
+            material.type_id(),
+            &prepared.properties,
+        ) else {
+            continue;
+        };
+        parts.push(BakePart {
+            pipeline: cache.get_render_pipeline(id)?,
+            material: bound,
+            level: *level,
+            first_vertex: part.first_vertex,
+        });
+    }
+    Some(parts)
 }
 
 /// Forgets what the views drew last frame, for the queues to say what they draw this frame.
@@ -439,7 +693,7 @@ impl PropQueue<'_, '_> {
                     let id = pipeline.specialize(
                         &self.cache,
                         view_key,
-                        lit,
+                        if lit { PropPass::Lit } else { PropPass::Depth },
                         material.type_id(),
                         &prepared.properties,
                     )?;
@@ -624,36 +878,44 @@ impl Queued {
 
 impl PropPipeline {
     /// The pipeline drawing a part in a material of the kind `kind` that `properties` describes,
-    /// in the pass `lit` names, in a view of `view`'s key, queued the first time it is asked for.
+    /// in `pass`, in a view of `view`'s key, queued the first time it is asked for.
     fn specialize(
         &mut self,
         cache: &PipelineCache,
         view: MeshPipelineKey,
-        lit: bool,
+        pass: PropPass,
         kind: TypeId,
         properties: &Arc<MaterialProperties>,
     ) -> Option<CachedRenderPipelineId> {
-        let key = (lit, view, kind, properties.material_key.clone());
+        let key = (pass, view, kind, properties.material_key.clone());
         if let Some(&id) = self.built.get(&key) {
             return id;
         }
-        let descriptor = if lit {
-            self.lit(view, kind, properties)
-        } else {
-            self.depth(view, kind, properties)
+        let descriptor = match pass {
+            PropPass::Lit => self.lit(view, kind, properties, false),
+            PropPass::Depth => self.depth(view, kind, properties),
+            PropPass::Bake => self.bake(view, kind, properties),
         };
         let id = descriptor.map(|descriptor| cache.queue_render_pipeline(descriptor));
         self.built.insert(key, id);
         id
     }
 
-    /// The pipeline bevy would draw a mesh of the model slab's layout in the material in, lit.
+    /// The pipeline bevy would draw a mesh of the model slab's layout in the material in, lit;
+    /// or, where `bake`, its shaders baking an impostor, which draws on one sample and drops its
+    /// bare pixels itself.
     fn lit(
         &self,
         view: MeshPipelineKey,
         kind: TypeId,
         properties: &MaterialProperties,
+        bake: bool,
     ) -> Option<RenderPipelineDescriptor> {
+        let msaa = if bake {
+            Msaa::Off
+        } else {
+            Msaa::from_samples(view.msaa_samples())
+        };
         let mesh_key =
             view | MeshPipelineKey::from_primitive_topology_and_strip_index(
                 PrimitiveTopology::TriangleList,
@@ -661,10 +923,7 @@ impl PropPipeline {
             ) | properties
                 .mesh_pipeline_key_bits
                 .downcast::<MeshPipelineKey>()
-                | alpha_mode_pipeline_key(
-                    properties.alpha_mode,
-                    &Msaa::from_samples(view.msaa_samples()),
-                );
+                | alpha_mode_pipeline_key(properties.alpha_mode, &msaa);
         let mut descriptor = self
             .material
             .mesh_pipeline
@@ -677,6 +936,9 @@ impl PropPipeline {
         )];
         if properties.bindless {
             defs.push("BINDLESS".into());
+        }
+        if bake {
+            defs.push("IMPOSTOR_BAKE".into());
         }
         if let Some(shader) = properties.get_shader(MaterialVertexShader) {
             descriptor.vertex.shader = shader;
@@ -701,6 +963,41 @@ impl PropPipeline {
         }
         descriptor.label = Some("prop_lit".into());
         Some(self.instanced(descriptor, &untouched))
+    }
+
+    /// The lit pipeline's shaders baking an impostor: drawing the atlas's cells where the
+    /// instances would be, into a layer's albedo, normal and depth, sorted by the bake's own
+    /// depth.
+    fn bake(
+        &self,
+        view: MeshPipelineKey,
+        kind: TypeId,
+        properties: &MaterialProperties,
+    ) -> Option<RenderPipelineDescriptor> {
+        let mut descriptor = self.lit(view, kind, properties, true)?;
+        descriptor.label = Some("prop_bake".into());
+        descriptor.layout[INSTANCE_GROUP] = self.bake.layout.clone();
+        let target = |format| {
+            Some(ColorTargetState {
+                format,
+                blend: None,
+                write_mask: ColorWrites::ALL,
+            })
+        };
+        descriptor.fragment.as_mut()?.targets = vec![
+            target(ALBEDO_FORMAT),
+            target(NORMAL_FORMAT),
+            target(DEPTH_FORMAT),
+        ];
+        descriptor.depth_stencil = Some(DepthStencilState {
+            format: BAKE_DEPTH,
+            depth_write_enabled: Some(true),
+            depth_compare: Some(CompareFunction::LessEqual),
+            stencil: StencilState::default(),
+            bias: DepthBiasState::default(),
+        });
+        descriptor.multisample = MultisampleState::default();
+        Some(descriptor)
     }
 
     /// The pipeline bevy's prepass would write a mesh of the model slab's layout in the material

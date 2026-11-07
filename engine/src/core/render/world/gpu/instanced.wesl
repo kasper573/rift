@@ -2,7 +2,9 @@
 // vertex as bevy's material shaders read it, of the instance its command draws as its
 // `instance_index`th, carrying on to the pixel how far the instance shows. The pixel clears as
 // the instance says, then is lit, or written to the prepass, as bevy's material shaders do it,
-// reading bevy's mesh data at the first entry, which stands for every instance alike.
+// reading bevy's mesh data at the first entry, which stands for every instance alike. Baking an
+// impostor, each instance is a cell of the atlas, and the pixel is written unlit as the far field
+// reads it.
 
 @if(PREPASS_PIPELINE)
 import bevy_pbr::prepass::io::{Vertex, VertexOutput};
@@ -14,8 +16,12 @@ import bevy_pbr::prepass::io::FragmentOutput;
 import bevy_pbr::render::pbr_prepass_functions;
 @if(PREPASS_PIPELINE && PREPASS_FRAGMENT)
 import engine::core::render::world::prepass_write::prepass_output;
-@if(!PREPASS_PIPELINE)
+@if(!PREPASS_PIPELINE && !IMPOSTOR_BAKE)
 import engine::core::render::world::shade::lit_color;
+@if(IMPOSTOR_BAKE)
+import bevy_pbr::render::{pbr_fragment::pbr_input_from_standard_material, pbr_functions::alpha_discard};
+@if(IMPOSTOR_BAKE)
+import engine::core::render::world::gpu::impostor_bake::{BakeOutput, bake_clip, baked};
 import bevy_pbr::render::view_transformations::position_world_to_clip;
 import engine::core::render::world::gpu::instance::{clear_instance, placement, shown_of, turned, world_of};
 
@@ -59,7 +65,12 @@ fn vertex(in: Vertex) -> InstancedOutput {
     let placed = placement(in.instance_index);
     let world = world_of(placed, in.position);
     var out: InstancedOutput;
-    out.position = position_world_to_clip(world);
+    @if(IMPOSTOR_BAKE) {
+        out.position = bake_clip(in.instance_index, world);
+    }
+    @else {
+        out.position = position_world_to_clip(world);
+    }
     out.world_position = vec4<f32>(world, 1.0);
     @if(!PREPASS_PIPELINE || NORMAL_PREPASS_OR_DEFERRED_PREPASS) {
         out.world_normal = normalize(turned(placed.turn, in.normal));
@@ -84,13 +95,25 @@ fn vertex(in: Vertex) -> InstancedOutput {
     return out;
 }
 
-@if(!PREPASS_PIPELINE)
+@if(!PREPASS_PIPELINE && !IMPOSTOR_BAKE)
 @fragment
 fn fragment(in: InstancedOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     clear_instance(in.position.xy, in.shown);
     var out: FragmentOutput;
     out.color = lit_color(bevy_output(in), is_front);
     return out;
+}
+
+@if(IMPOSTOR_BAKE)
+@fragment
+fn fragment(in: InstancedOutput, @builtin(front_facing) is_front: bool) -> BakeOutput {
+    let pbr_input = pbr_input_from_standard_material(bevy_output(in), is_front);
+    let base = alpha_discard(
+        pbr_input.material.flags,
+        pbr_input.material.alpha_cutoff,
+        pbr_input.material.base_color
+    );
+    return baked(base.rgb, pbr_input.N, in.position.z);
 }
 
 @if(PREPASS_PIPELINE && PREPASS_FRAGMENT)

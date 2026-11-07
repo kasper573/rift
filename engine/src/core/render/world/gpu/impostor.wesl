@@ -20,7 +20,7 @@ import engine::core::render::world::shade::lighting;
 import bevy_pbr::render::mesh_view_bindings::view;
 import bevy_pbr::render::view_transformations::position_world_to_clip;
 import engine::core::render::world::gpu::instance::{
-    Placement, clear_instance, placement, prop_of, seed_of, shown_of, turned, world_of,
+    Placement, clear_impostor, placement, prop_of, seed_of, shown_of, turned, world_of,
 };
 
 // A prop as the kernel reads it, for the sphere round its model and the box within it.
@@ -37,6 +37,7 @@ struct Prop {
     half_y: f32,
     half_z: f32,
     impostor_command: u32,
+    proxy_command: u32,
 }
 
 @group(2) @binding(103) var<storage, read> props: array<Prop>;
@@ -131,7 +132,7 @@ struct Surface {
 // The pixel's surface: for a proxy its face, else what the atlas shows there, dropped below half
 // coverage or off the square's picture.
 fn surface(in: ImpostorOutput) -> Surface {
-    clear_instance(in.position.xy, in.shown);
+    clear_impostor(in.position.xy, in.shown);
     var out: Surface;
     @if(PROXY) {
         out.color = vec4<f32>(in.color, 1.0);

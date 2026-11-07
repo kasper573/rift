@@ -1,6 +1,6 @@
 //! A prop model as the far field draws it: an atlas of its pictures from every way round the
-//! upper hemisphere, baked on the GPU once the model is in the slabs, and kept under the profile
-//! so the next start reads it instead. A cell of the atlas looks at the middle of the model's
+//! upper hemisphere, baked on the GPU by the shaders that draw the model once it is in the slabs,
+//! and kept under the profile so the next start reads it instead. A cell of the atlas looks at the middle of the model's
 //! bounding sphere from one direction, orthographically, framed to the sphere, and holds what it
 //! sees: the base colour with its coverage, the normal and the depth. The directions lie on a
 //! hemi-octahedron, so a direction finds its cell by a fold and a cell its direction by the
@@ -10,42 +10,31 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
-use bevy::asset::AssetId;
-use bevy::ecs::system::SystemParam;
+use bevy::asset::{AssetId, UntypedHandle};
 use bevy::gltf::Gltf;
-use bevy::math::{Mat4, UVec2, Vec2, Vec3, proj};
+use bevy::math::{Mat4, UVec2, Vec2, Vec3, Vec4, proj};
 use bevy::prelude::*;
-use bevy::render::render_asset::RenderAssets;
-use bevy::render::render_resource::binding_types::{
-    sampler, storage_buffer_read_only_sized, texture_2d, uniform_buffer,
-};
 use bevy::render::render_resource::{
-    BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries, Buffer, BufferBinding,
-    BufferDescriptor, BufferInitDescriptor, BufferUsages, ColorTargetState, ColorWrites,
-    CommandEncoder, CompareFunction, DepthStencilState, Extent3d, FilterMode, IndexFormat, LoadOp,
-    MapMode, MultisampleState, Operations, Origin3d, PipelineCompilationOptions,
-    PipelineLayoutDescriptor, PrimitiveState, RawFragmentState, RawRenderPipelineDescriptor,
-    RawVertexBufferLayout, RawVertexState, RenderPassColorAttachment,
-    RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipeline, Sampler,
-    SamplerBindingType, SamplerDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages,
-    ShaderType, StoreOp, TexelCopyBufferInfo, TexelCopyBufferLayout, TexelCopyTextureInfo, Texture,
-    TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType,
-    TextureUsages, TextureView, TextureViewDescriptor, TextureViewDimension, VertexStepMode,
-    encase,
+    Buffer, BufferDescriptor, BufferUsages, CommandEncoder, Extent3d, FilterMode, LoadOp, MapMode,
+    Operations, Origin3d, RenderPassColorAttachment, RenderPassDepthStencilAttachment,
+    RenderPassDescriptor, Sampler, SamplerDescriptor, ShaderType, StoreOp, TexelCopyBufferInfo,
+    TexelCopyBufferLayout, TexelCopyTextureInfo, Texture, TextureAspect, TextureDescriptor,
+    TextureDimension, TextureFormat, TextureUsages, TextureView, TextureViewDescriptor,
+    TextureViewDimension,
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue};
-use bevy::render::texture::GpuImage;
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::tasks::futures::check_ready;
 use bevy::tasks::{IoTaskPool, Task};
 use serde::{Deserialize, Serialize};
 
-use super::arena::{self, ModelArena, ModelVertex, PlacedModel};
+use super::arena::{self, LevelRange, ModelArena, PartRanges, PlacedModel};
 use super::residency::Residency;
 use super::upload::UploadBudget;
 use crate::core::os::Profile;
 use crate::core::render::world::RenderProgress;
 use crate::core::render::world::lod::STRAY_PIXELS;
+use crate::core::vfx::shader::PARAMS_BYTES;
 
 pub struct ImpostorPlugin;
 
@@ -80,7 +69,8 @@ impl Plugin for ImpostorPlugin {
 #[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub(super) struct ImpostorsPrepared;
 
-/// How many models the GPU bakes in one frame, each about a millisecond of its time.
+/// How many models' bakes are set going in one frame, each about a millisecond of the GPU's time
+/// once its parts' pipelines are built.
 const BAKES_PER_FRAME: usize = 4;
 
 /// The folder under the profile the atlases are kept in.
@@ -108,7 +98,7 @@ pub enum ImpostorOrder {
     Bake {
         model: AssetId<Gltf>,
         key: String,
-        materials: Arc<[BakeMaterial]>,
+        materials: Arc<[UntypedHandle]>,
     },
     Forget {
         model: AssetId<Gltf>,
@@ -118,7 +108,7 @@ pub enum ImpostorOrder {
 enum ImpostorState {
     Reading {
         key: String,
-        materials: Arc<[BakeMaterial]>,
+        materials: Arc<[UntypedHandle]>,
         task: Task<Option<ImpostorTexels>>,
     },
     Read {
@@ -127,7 +117,7 @@ enum ImpostorState {
     },
     ToBake {
         key: String,
-        materials: Arc<[BakeMaterial]>,
+        materials: Arc<[UntypedHandle]>,
     },
     Sent {
         key: String,
@@ -147,15 +137,15 @@ impl ImpostorStore {
         }
     }
 
-    /// Wants `model`'s impostor on the GPU, baked from `materials` or read from the file kept
-    /// under `key` in `profile`, until the model's asset goes. A model wanted again under another
-    /// key is baked or read anew.
+    /// Wants `model`'s impostor on the GPU, baked by `materials`, the world materials its parts
+    /// are drawn in, or read from the file kept under `key` in `profile`, until the model's asset
+    /// goes. A model wanted again under another key is baked or read anew.
     pub fn want(
         &mut self,
         profile: &Profile,
         model: AssetId<Gltf>,
         key: String,
-        materials: Arc<[BakeMaterial]>,
+        materials: Arc<[UntypedHandle]>,
     ) {
         let current = self.models.get(&model).is_some_and(|state| match state {
             ImpostorState::Reading { key: held, .. }
@@ -275,42 +265,47 @@ fn folder_under(profile: &Profile) -> PathBuf {
 }
 
 /// What the render world has been told and not yet done: orders waiting for their model to be in
-/// the slabs or for a layer, and bakes whose texels are on their way back.
+/// the slabs or for a layer, bakes waiting for their parts' pipelines, and bakes whose texels are
+/// on their way back.
 #[derive(Resource, Default)]
-struct ImpostorOrders {
+pub(super) struct ImpostorOrders {
     incoming: Vec<ImpostorOrder>,
     pending: Vec<ImpostorOrder>,
-    readbacks: Vec<Readback>,
+    pub(super) bakes: Vec<BakeJob>,
+    pub(super) readbacks: Vec<Readback>,
 }
 
-fn start(mut commands: Commands, device: Res<RenderDevice>, queue: Res<RenderQueue>) {
+/// A model to bake into its layer of the atlas, by the world materials its parts are drawn in,
+/// where it lies in the slabs.
+pub(super) struct BakeJob {
+    pub model: AssetId<Gltf>,
+    pub key: String,
+    pub layer: u32,
+    pub materials: Arc<[UntypedHandle]>,
+    pub placed: PlacedModel,
+}
+
+fn start(mut commands: Commands, device: Res<RenderDevice>) {
     commands.insert_resource(ImpostorAtlas::new(&device));
-    commands.insert_resource(BakePass::new(&device, &queue));
 }
 
 fn extract_impostors(store: Extract<Res<ImpostorStore>>, mut orders: ResMut<ImpostorOrders>) {
     orders.incoming.extend(store.outgoing.iter().cloned());
 }
 
-/// Gives every atlas read its layer, bakes a few of those ordered whose model is in the slabs,
-/// and lets go of the layers of models let go. While anything is left to do the frame is not
-/// whole, so a veil holds until every impostor stands.
+/// Gives every atlas read its layer, sets going the bakes of a few of those ordered whose model
+/// is in the slabs, and lets go of the layers of models let go. While anything is left to do the
+/// frame is not whole, so a veil holds until every impostor stands.
 fn prepare_impostors(
-    gpu: Gpu,
+    queue: Res<RenderQueue>,
+    models: Res<ModelArena>,
     atlas: Option<ResMut<ImpostorAtlas>>,
-    pass: Option<Res<BakePass>>,
     mut orders: ResMut<ImpostorOrders>,
     progress: Res<RenderProgress>,
 ) {
-    let (Some(mut atlas), Some(pass)) = (atlas, pass) else {
+    let Some(mut atlas) = atlas else {
         return;
     };
-    let Gpu {
-        device,
-        queue,
-        models,
-        images,
-    } = gpu;
     atlas.layers.next_frame();
     for model in models.slabs.keys() {
         atlas.layers.want(*model);
@@ -320,12 +315,13 @@ fn prepare_impostors(
         .chain(std::mem::take(&mut orders.incoming))
         .collect();
     let mut later = Vec::new();
-    let mut bakes = Vec::new();
+    let mut started = 0;
     for order in waiting {
         match order {
             ImpostorOrder::Forget { model } => {
                 atlas.layers.release(model);
                 atlas.round += 1;
+                orders.bakes.retain(|job| job.model != model);
             }
             ImpostorOrder::Read {
                 model,
@@ -345,54 +341,29 @@ fn prepare_impostors(
             } => {
                 let placed = models.slabs.get(&model);
                 let admitted = placed
-                    .filter(|_| bakes.len() < BAKES_PER_FRAME)
+                    .filter(|_| started < BAKES_PER_FRAME)
                     .and_then(|_| atlas.layers.admit(model, key.clone()));
                 match (placed, admitted) {
                     (Some(placed), Some(admitted)) => {
                         atlas.round += 1;
-                        bakes.push((model, key.clone(), materials.clone(), placed, admitted.slot));
+                        started += 1;
+                        orders.bakes.push(BakeJob {
+                            model,
+                            key: key.clone(),
+                            layer: admitted.slot,
+                            materials: materials.clone(),
+                            placed: placed.clone(),
+                        });
                     }
                     _ => later.push(order),
                 }
             }
         }
     }
-    if !bakes.is_empty() {
-        let mut encoder = device.create_command_encoder(&default());
-        let drawn: Vec<Bake> = bakes
-            .iter()
-            .map(|(_, _, materials, placed, layer)| Bake {
-                model: placed,
-                materials,
-                layer: *layer,
-            })
-            .collect();
-        pass.encode(&device, &mut encoder, &atlas, &models, &images, &drawn);
-        for (model, key, _, _, layer) in &bakes {
-            orders.readbacks.push(Readback::of(
-                &device,
-                &mut encoder,
-                &atlas,
-                *layer,
-                *model,
-                key.clone(),
-            ));
-        }
-        queue.submit([encoder.finish()]);
-    }
-    if !later.is_empty() || !bakes.is_empty() {
+    if !later.is_empty() || !orders.bakes.is_empty() {
         progress.left_out();
     }
     orders.pending = later;
-}
-
-/// The device and what the bakes draw from: the models in the slabs and their textures.
-#[derive(SystemParam)]
-struct Gpu<'w> {
-    device: Res<'w, RenderDevice>,
-    queue: Res<'w, RenderQueue>,
-    models: Res<'w, ModelArena>,
-    images: Res<'w, RenderAssets<GpuImage>>,
 }
 
 /// Hands every baked atlas that has come back to the main world, for its file.
@@ -558,6 +529,11 @@ pub fn atlas_key(model_hash: &str, materials: &[BakeMaterialKey]) -> String {
         hasher.update(&material.color.map(f32::to_le_bytes).concat());
         hasher.update(material.texture.as_deref().unwrap_or("").as_bytes());
         hasher.update(&material.cutoff.to_le_bytes());
+        if let Some(look) = &material.look {
+            hasher.update(look.shader.as_bytes());
+            hasher.update(&look.params.map(u32::to_le_bytes).concat());
+            hasher.update(&look.translucency.to_le_bytes());
+        }
     }
     let header = ImpostorHeader::current();
     hasher.update(&header.cells.to_le_bytes());
@@ -567,12 +543,23 @@ pub fn atlas_key(model_hash: &str, materials: &[BakeMaterialKey]) -> String {
 }
 
 /// What of a part's material the bake shows, as the key tells it apart: the base colour, the
-/// path of its texture, and the coverage below which a pixel is bare.
+/// path of its texture, the coverage below which a pixel is bare, and the look a shader of the
+/// game's gives it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct BakeMaterialKey {
     pub color: [f32; 4],
     pub texture: Option<String>,
     pub cutoff: f32,
+    pub look: Option<LookBakeKey>,
+}
+
+/// What of a look the bake shows: the shader as it is compiled, the parameters it is filled with
+/// and how translucent it is.
+#[derive(Clone, Debug, PartialEq)]
+pub struct LookBakeKey {
+    pub shader: String,
+    pub params: [u32; PARAMS_BYTES / 4],
+    pub translucency: f32,
 }
 
 /// The most models whose atlases the GPU holds at once; past that the one wanted longest ago
@@ -585,7 +572,7 @@ pub const ALBEDO_FORMAT: TextureFormat = TextureFormat::Rgba8UnormSrgb;
 pub const NORMAL_FORMAT: TextureFormat = TextureFormat::Rg8Unorm;
 /// The depth across the model's bounding sphere, 0 nearest the cell's eye.
 pub const DEPTH_FORMAT: TextureFormat = TextureFormat::R8Unorm;
-const BAKE_DEPTH: TextureFormat = TextureFormat::Depth32Float;
+pub(super) const BAKE_DEPTH: TextureFormat = TextureFormat::Depth32Float;
 
 /// The atlases of every model the GPU holds, a layer of each texture a model, and which model
 /// holds which layer, by the key its atlas was baked or read under.
@@ -690,216 +677,32 @@ impl ImpostorAtlas {
         }
     }
 
-    fn layer_view(texture: &Texture, layer: u32) -> TextureView {
-        texture.create_view(&TextureViewDescriptor {
-            label: Some("impostor layer"),
-            dimension: Some(TextureViewDimension::D2),
-            base_array_layer: layer,
-            array_layer_count: Some(1),
-            ..default()
-        })
-    }
-}
-
-/// What of a part's material the bake draws: the base colour, its texture if it has one, and the
-/// coverage below which a pixel is bare.
-#[derive(Clone, Debug)]
-pub struct BakeMaterial {
-    pub color: [f32; 4],
-    pub texture: Option<AssetId<Image>>,
-    pub cutoff: f32,
-}
-
-/// The bake pipeline and what it binds.
-#[derive(Resource)]
-pub struct BakePass {
-    layout: BindGroupLayout,
-    pipeline: RenderPipeline,
-    blank: (TextureView, Sampler),
-}
-
-/// A model to bake into a layer: where it lies in the slabs, what it is drawn in, part by part,
-/// and the layer.
-pub struct Bake<'a> {
-    pub model: &'a PlacedModel,
-    pub materials: &'a [BakeMaterial],
-    pub layer: u32,
-}
-
-/// What a part is drawn in, as the bake shader reads it.
-#[derive(ShaderType, Clone, Copy)]
-struct BakePart {
-    color: Vec4,
-    cutoff: f32,
-    textured: u32,
-}
-
-impl BakePass {
-    pub fn new(device: &RenderDevice, queue: &RenderQueue) -> BakePass {
-        let layout = device.create_bind_group_layout(
-            "impostor bake",
-            &BindGroupLayoutEntries::sequential(
-                ShaderStages::VERTEX_FRAGMENT,
-                (
-                    storage_buffer_read_only_sized(false, None),
-                    uniform_buffer::<BakePart>(false),
-                    texture_2d(TextureSampleType::Float { filterable: true }),
-                    sampler(SamplerBindingType::Filtering),
-                ),
-            ),
-        );
-        let module = device.create_and_validate_shader_module(ShaderModuleDescriptor {
-            label: Some("impostor bake"),
-            source: ShaderSource::Wgsl(include_str!("impostor_bake.wgsl").into()),
-        });
-        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            label: Some("impostor bake"),
-            bind_group_layouts: &[Some(&layout)],
-            ..default()
-        });
-        let target = |format| {
-            Some(ColorTargetState {
-                format,
-                blend: None,
-                write_mask: ColorWrites::ALL,
-            })
-        };
-        let pipeline = device.create_render_pipeline(&RawRenderPipelineDescriptor {
-            label: Some("impostor bake"),
-            layout: Some(&pipeline_layout),
-            vertex: RawVertexState {
-                module: &module,
-                entry_point: Some("vertex"),
-                compilation_options: PipelineCompilationOptions {
-                    constants: &[("CELLS", f64::from(CELLS))],
-                    ..default()
-                },
-                buffers: &[Some(RawVertexBufferLayout {
-                    array_stride: ModelVertex::BYTES,
-                    step_mode: VertexStepMode::Vertex,
-                    attributes: &ModelVertex::ATTRIBUTES,
-                })],
-            },
-            primitive: PrimitiveState {
-                cull_mode: None,
-                ..default()
-            },
-            depth_stencil: Some(DepthStencilState {
-                format: BAKE_DEPTH,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(CompareFunction::LessEqual),
-                stencil: default(),
-                bias: default(),
-            }),
-            multisample: MultisampleState::default(),
-            fragment: Some(RawFragmentState {
-                module: &module,
-                entry_point: Some("fragment"),
-                compilation_options: PipelineCompilationOptions::default(),
-                targets: &[
-                    target(ALBEDO_FORMAT),
-                    target(NORMAL_FORMAT),
-                    target(DEPTH_FORMAT),
-                ],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-        BakePass {
-            layout,
-            pipeline,
-            blank: blank_image(device, queue),
+    /// The attachments a bake into `layer` draws to.
+    pub(super) fn bake_targets(&self, layer: u32) -> BakeTargets {
+        BakeTargets {
+            color: [
+                layer_view(&self.albedo, layer),
+                layer_view(&self.normal, layer),
+                layer_view(&self.depth, layer),
+            ],
+            depth: layer_view(&self.bake_depth, 0),
         }
     }
+}
 
-    /// Draws each of `bakes` into its layer of `atlas` over `encoder`: every part once, an
-    /// instance a cell, each placed in its cell by the cell's view.
-    pub fn encode(
-        &self,
-        device: &RenderDevice,
-        encoder: &mut CommandEncoder,
-        atlas: &ImpostorAtlas,
-        models: &ModelArena,
-        images: &RenderAssets<GpuImage>,
-        bakes: &[Bake],
-    ) {
-        let (Some(vertices), Some(indices)) = (models.vertices.buffer(), models.indices.buffer())
-        else {
-            return;
-        };
-        let alignment = u64::from(device.limits().min_uniform_buffer_offset_alignment).max(1);
-        let stride = BakePart::min_size().get().div_ceil(alignment) * alignment;
-        let bake_depth = ImpostorAtlas::layer_view(&atlas.bake_depth, 0);
-        for bake in bakes {
-            let views: Vec<Mat4> = CellView::all()
-                .map(|view| clip_from_model(bake.model, view.direction))
-                .collect();
-            let mut written = encase::StorageBuffer::new(Vec::<u8>::new());
-            written
-                .write(&views)
-                .expect("the cells' views write as a storage buffer");
-            let views = device.create_buffer_with_data(&BufferInitDescriptor {
-                label: Some("impostor bake views"),
-                contents: written.as_ref(),
-                usage: BufferUsages::STORAGE,
-            });
-            let mut parts = Vec::new();
-            let mut bound = Vec::new();
-            for (part, material) in bake.model.parts.iter().zip(bake.materials) {
-                if part.levels.is_empty() {
-                    continue;
-                }
-                let mut written = encase::UniformBuffer::new(Vec::<u8>::new());
-                written
-                    .write(&BakePart {
-                        color: Vec4::from_array(material.color),
-                        cutoff: material.cutoff,
-                        textured: u32::from(material.texture.is_some()),
-                    })
-                    .expect("a bake part writes as a uniform");
-                let mut bytes = written.into_inner();
-                bytes.resize(stride as usize, 0);
-                let offset = parts.len() as u64 * stride;
-                parts.push(bytes);
-                let image = material
-                    .texture
-                    .and_then(|texture| images.get(texture))
-                    .map_or((&self.blank.0, &self.blank.1), |image| {
-                        (&image.texture_view, &image.sampler)
-                    });
-                bound.push((part, offset, image));
-            }
-            let parts: Vec<u8> = parts.concat();
-            let parts = device.create_buffer_with_data(&BufferInitDescriptor {
-                label: Some("impostor bake parts"),
-                contents: &parts,
-                usage: BufferUsages::UNIFORM,
-            });
-            let groups: Vec<_> = bound
-                .iter()
-                .map(|(_, offset, (view, sampler))| {
-                    device.create_bind_group(
-                        "impostor bake",
-                        &self.layout,
-                        &BindGroupEntries::sequential((
-                            views.as_entire_binding(),
-                            BufferBinding {
-                                buffer: &parts,
-                                offset: *offset,
-                                size: Some(BakePart::min_size()),
-                            },
-                            *view,
-                            *sampler,
-                        )),
-                    )
-                })
-                .collect();
-            let targets = [
-                ImpostorAtlas::layer_view(&atlas.albedo, bake.layer),
-                ImpostorAtlas::layer_view(&atlas.normal, bake.layer),
-                ImpostorAtlas::layer_view(&atlas.depth, bake.layer),
-            ];
-            let attachments = targets.iter().map(|view| {
+/// A layer's albedo, normal and depth, and the depth buffer the bake sorts by.
+pub(super) struct BakeTargets {
+    color: [TextureView; 3],
+    depth: TextureView,
+}
+
+impl BakeTargets {
+    /// A pass drawing into the targets, each cleared first.
+    pub(super) fn begin<'a>(&'a self, encoder: &'a mut CommandEncoder) -> wgpu::RenderPass<'a> {
+        let attachments: Vec<_> = self
+            .color
+            .iter()
+            .map(|view| {
                 Some(RenderPassColorAttachment {
                     view,
                     depth_slice: None,
@@ -909,42 +712,87 @@ impl BakePass {
                         store: StoreOp::Store,
                     },
                 })
-            });
-            let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-                label: Some("impostor bake"),
-                color_attachments: &attachments.collect::<Vec<_>>(),
-                depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
-                    view: &bake_depth,
-                    depth_ops: Some(Operations {
-                        load: LoadOp::Clear(1.0),
-                        store: StoreOp::Discard,
-                    }),
-                    stencil_ops: None,
+            })
+            .collect();
+        encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("impostor bake"),
+            color_attachments: &attachments,
+            depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                view: &self.depth,
+                depth_ops: Some(Operations {
+                    load: LoadOp::Clear(1.0),
+                    store: StoreOp::Discard,
                 }),
-                timestamp_writes: None,
-                occlusion_query_set: None,
-                multiview_mask: None,
-            });
-            pass.set_pipeline(&self.pipeline);
-            pass.set_vertex_buffer(0, *vertices.slice(..));
-            pass.set_index_buffer(*indices.slice(..), IndexFormat::Uint32);
-            let allowed = cell_stray(bake.model);
-            for ((part, _, _), group) in bound.iter().zip(&groups) {
-                pass.set_bind_group(0, Some(&**group), &[]);
-                let level = part
-                    .levels
-                    .iter()
-                    .rev()
-                    .find(|level| level.strays <= allowed)
-                    .unwrap_or(&part.levels[0]);
-                pass.draw_indexed(
-                    level.first_index..level.first_index + level.indices,
-                    part.first_vertex as i32,
-                    0..CELLS * CELLS,
-                );
-            }
-        }
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+            multiview_mask: None,
+        })
     }
+}
+
+fn layer_view(texture: &Texture, layer: u32) -> TextureView {
+    texture.create_view(&TextureViewDescriptor {
+        label: Some("impostor layer"),
+        dimension: Some(TextureViewDimension::D2),
+        base_array_layer: layer,
+        array_layer_count: Some(1),
+        ..default()
+    })
+}
+
+/// A cell of the atlas as the bake draws it: the clip space of its view from the model's own
+/// metres, the way it looks from, the ways its picture's right and up run in the model, and
+/// where its square lies in the layer as an offset and a scale of its clip space.
+#[derive(ShaderType, Clone, Copy, Debug)]
+pub(super) struct BakeCell {
+    clip_from_model: Mat4,
+    seen: Vec4,
+    right: Vec4,
+    up: Vec4,
+    place: Vec4,
+}
+
+/// Every cell of `model`'s atlas, in the order the bake draws them as instances.
+pub(super) fn bake_cells(model: &PlacedModel) -> Vec<BakeCell> {
+    let cells = CELLS as f32;
+    CellView::all()
+        .map(|view| {
+            let seen = view.direction;
+            let up_hint = if seen.y.abs() > 0.999 {
+                Vec3::NEG_Z
+            } else {
+                Vec3::Y
+            };
+            let right = up_hint.cross(seen).normalize();
+            let up = seen.cross(right);
+            let cell = view.cell.as_vec2();
+            BakeCell {
+                clip_from_model: clip_from_model(model, seen),
+                seen: seen.extend(0.0),
+                right: right.extend(0.0),
+                up: up.extend(0.0),
+                place: Vec4::new(
+                    (1.0 + 2.0 * cell.x) / cells - 1.0,
+                    (-1.0 - 2.0 * cell.y) / cells + 1.0,
+                    1.0 / cells,
+                    0.0,
+                ),
+            }
+        })
+        .collect()
+}
+
+/// The level of `part` the bake draws: the coarsest that still lands within half a pixel of a
+/// cell, or none for a part with nothing to draw.
+pub(super) fn bake_level<'a>(model: &PlacedModel, part: &'a PartRanges) -> Option<&'a LevelRange> {
+    let allowed = cell_stray(model);
+    part.levels
+        .iter()
+        .rev()
+        .find(|level| level.strays <= allowed)
+        .or(part.levels.first())
 }
 
 /// A layer's texels on their way back from the GPU, to be kept in a file.
@@ -1029,8 +877,6 @@ impl Readback {
     }
 }
 
-/// The orthographic view of `model` from `direction`, framed to its bounding sphere: the eye a
-/// radius out from the sphere's middle, the near plane there and the far one a diameter in.
 /// How far a level of `model` may stray from its full mesh and still land within half a pixel
 /// of a cell, which frames the model's bounding sphere across `CELL_PIXELS`.
 fn cell_stray(model: &PlacedModel) -> f32 {
@@ -1038,6 +884,8 @@ fn cell_stray(model: &PlacedModel) -> f32 {
     STRAY_PIXELS * 2.0 * radius / CELL_PIXELS as f32
 }
 
+/// The orthographic view of `model` from `direction`, framed to its bounding sphere: the eye a
+/// radius out from the sphere's middle, the near plane there and the far one a diameter in.
 pub fn clip_from_model(model: &PlacedModel, direction: Vec3) -> Mat4 {
     let middle = Vec3::from(model.bounds.center);
     let radius = Vec3::from(model.bounds.half_extents).length().max(1e-3);
@@ -1073,45 +921,4 @@ fn layer_size() -> Extent3d {
         height: ATLAS_PIXELS,
         depth_or_array_layers: 1,
     }
-}
-
-/// A white pixel for a part with no texture, so every part binds alike.
-fn blank_image(device: &RenderDevice, queue: &RenderQueue) -> (TextureView, Sampler) {
-    let texture = device.create_texture(&TextureDescriptor {
-        label: Some("impostor blank"),
-        size: Extent3d {
-            width: 1,
-            height: 1,
-            depth_or_array_layers: 1,
-        },
-        mip_level_count: 1,
-        sample_count: 1,
-        dimension: TextureDimension::D2,
-        format: TextureFormat::Rgba8Unorm,
-        usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
-        view_formats: &[],
-    });
-    queue.write_texture(
-        TexelCopyTextureInfo {
-            texture: &texture,
-            mip_level: 0,
-            origin: Origin3d::ZERO,
-            aspect: TextureAspect::All,
-        },
-        &[255, 255, 255, 255],
-        TexelCopyBufferLayout {
-            offset: 0,
-            bytes_per_row: Some(4),
-            rows_per_image: Some(1),
-        },
-        Extent3d {
-            width: 1,
-            height: 1,
-            depth_or_array_layers: 1,
-        },
-    );
-    (
-        texture.create_view(&default()),
-        device.create_sampler(&default()),
-    )
 }

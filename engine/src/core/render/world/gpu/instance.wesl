@@ -67,13 +67,30 @@ fn shown_of(index: u32) -> vec3<f32> {
     return vec3<f32>(bitcast<f32>(listed.z), f32(listed.w & 1u), f32(listed.w >> 1u) / 65535.0);
 }
 
-// Drops the pixel at `pixel` of an instance `shown` far, as `shown_of` says: a circle round the
-// subject cleared, or all of it while the eye stands inside it, and the share of it not yet
-// faded in.
+// Drops the pixel at `pixel` of an instance's model `shown` far, as `shown_of` says: a circle
+// round the subject cleared, or all of it while the eye stands inside it, and the share of it not
+// yet faded in.
 fn clear_instance(pixel: vec2<f32>, shown: vec3<f32>) {
-    if dither(pixel + vec2<f32>(17.0, 29.0)) >= shown.z {
+    if dither(pixel + FADE_OFFSET) >= shown.z {
         discard;
     }
+    clear_round(pixel, shown);
+}
+
+// Drops the pixel at `pixel` of an instance's impostor `shown` far, as `clear_instance` drops its
+// model's: the pixels the model keeps while the two fade into each other are the ones the
+// impostor drops, so no pixel of the band shows both or neither.
+fn clear_impostor(pixel: vec2<f32>, shown: vec3<f32>) {
+    if 1.0 - dither(pixel + FADE_OFFSET) > shown.z {
+        discard;
+    }
+    clear_round(pixel, shown);
+}
+
+// The fade's dither is stepped off the clearing's, so the two never drop the same pixels.
+const FADE_OFFSET: vec2<f32> = vec2<f32>(17.0, 29.0);
+
+fn clear_round(pixel: vec2<f32>, shown: vec3<f32>) {
     let radius = select(clearing.focus_radius, 3.4e38, shown.y > 0.5);
     clear_at(pixel, shown.x, clearing.focus, radius);
 }

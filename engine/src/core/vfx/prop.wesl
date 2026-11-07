@@ -26,6 +26,10 @@ import engine::core::render::world::prepass_write::prepass_output;
 import bevy_pbr::render::{pbr_fragment::pbr_input_from_standard_material, pbr_functions::{alpha_discard, main_pass_post_lighting_processing}};
 @if(!PREPASS_PIPELINE)
 import engine::core::render::world::shade::lighting;
+@if(!PREPASS_PIPELINE)
+import bevy_pbr::render::pbr_types::PbrInput;
+@if(IMPOSTOR_BAKE)
+import engine::core::render::world::gpu::impostor_bake::{BakeOutput, bake_clip, bake_right, bake_seen, bake_up, baked};
 
 import engine::core::render::world::gpu::instance::{clear_instance, placement, shown_of, turned, world_of};
 
@@ -51,6 +55,10 @@ var<private> own: vec4<f32>;
 var<private> facing: vec3<f32>;
 var<private> eye_way: vec3<f32>;
 var<private> spot: vec3<f32>;
+// The cell of the atlas the vertex is baked into, when the shader bakes an impostor instead of
+// drawing a frame.
+@if(IMPOSTOR_BAKE)
+var<private> bake_cell: u32;
 
 fn local() -> vec3<f32> {
     return at_local;
@@ -69,11 +77,21 @@ fn tint() -> vec4<f32> {
 }
 
 fn screen_right() -> vec3<f32> {
-    return normalize(view.world_from_view[0].xyz);
+    @if(IMPOSTOR_BAKE) {
+        return bake_right(bake_cell);
+    }
+    @else {
+        return normalize(view.world_from_view[0].xyz);
+    }
 }
 
 fn screen_up() -> vec3<f32> {
-    return normalize(view.world_from_view[1].xyz);
+    @if(IMPOSTOR_BAKE) {
+        return bake_up(bake_cell);
+    }
+    @else {
+        return normalize(view.world_from_view[1].xyz);
+    }
 }
 
 fn sample(at: vec2<f32>) -> vec4<f32> {
@@ -123,6 +141,8 @@ struct PropOutput {
     @location(7) unclipped_depth: f32,
     // How far the instance shows, whether the eye stands inside it, and how far it fades in.
     @location(8) @interpolate(flat) shown: vec3<f32>,
+    @if(IMPOSTOR_BAKE)
+    @location(9) @interpolate(flat) cell: u32,
 }
 
 // The vertex of the instance the command draws as its `instance_index`th, its normal and tangent
@@ -130,6 +150,9 @@ struct PropOutput {
 // instance alike.
 @vertex
 fn vertex(vertex_in: Vertex) -> PropOutput {
+    @if(IMPOSTOR_BAKE) {
+        bake_cell = vertex_in.instance_index;
+    }
     let placed = placement(vertex_in.instance_index);
     var vertex: UncompressedVertex;
     vertex.instance_index = 0u;
@@ -173,6 +196,9 @@ fn prop_output(out: VertexOutput, place: vec4<f32>, turn: vec4<f32>, shown: vec3
     prop.place = place;
     prop.turn = turn;
     prop.shown = shown;
+    @if(IMPOSTOR_BAKE) {
+        prop.cell = bake_cell;
+    }
     @if(PREPASS_PIPELINE && UNCLIPPED_DEPTH_ORTHO_EMULATION) {
         prop.unclipped_depth = out.unclipped_depth;
     }
@@ -225,9 +251,17 @@ fn vertex_output(vertex: UncompressedVertex, placed: vec3<f32>) -> VertexOutput 
         uv = vertex.uv;
     }
     read_weather();
+    @if(IMPOSTOR_BAKE) {
+        still_weather();
+    }
     let world = vec4<f32>(sway(placed, uv), 1.0);
     out.world_position = world;
-    out.position = position_world_to_clip(world.xyz);
+    @if(IMPOSTOR_BAKE) {
+        out.position = bake_clip(bake_cell, world.xyz);
+    }
+    @else {
+        out.position = position_world_to_clip(world.xyz);
+    }
     @if(PREPASS_PIPELINE) {
         @if(UNCLIPPED_DEPTH_ORTHO_EMULATION) {
             out.unclipped_depth = out.position.z;
@@ -268,6 +302,17 @@ fn fragment(prop: PropOutput, @builtin(front_facing) is_front: bool) -> Fragment
 fn fragment(prop: PropOutput) {
     pbr_prepass_functions::prepass_sample_color_and_alpha_discard(unpacked(prop));
 }
+@elif(IMPOSTOR_BAKE)
+@fragment
+fn fragment(prop: PropOutput, @builtin(front_facing) is_front: bool) -> BakeOutput {
+    let in = unpacked(prop);
+    let pbr_input = prepare(in, is_front);
+    shine = vec3<f32>(1.0);
+    eye_way = bake_seen(prop.cell);
+    read_weather();
+    still_weather();
+    return baked(vfx(uv_of(in)).rgb, facing, prop.position.z);
+}
 @else
 @fragment
 fn fragment(prop: PropOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
@@ -278,6 +323,19 @@ fn fragment(prop: PropOutput, @builtin(front_facing) is_front: bool) -> Fragment
 // The pixel the shader paints, where `stand` has said its piece stands.
 @if(!PREPASS_PIPELINE)
 fn shade(in: VertexOutput, is_front: bool) -> FragmentOutput {
+    let pbr_input = prepare(in, is_front);
+    shine = lighting(pbr_input).rgb;
+    lit = vec4<f32>(shine * lit.rgb, lit.a);
+    read_weather();
+    var out: FragmentOutput;
+    out.color = main_pass_post_lighting_processing(pbr_input, vfx(uv_of(in)));
+    return out;
+}
+
+// The pixel's piece as its material gives it, before its light: what `vfx` reads of it, and
+// bevy's input for lighting a white face there, so the light alone is what `light` tells.
+@if(!PREPASS_PIPELINE)
+fn prepare(in: VertexOutput, is_front: bool) -> PbrInput {
     tinted = vec4<f32>(1.0);
     @if(VERTEX_COLORS) {
         tinted = in.color;
@@ -292,15 +350,27 @@ fn shade(in: VertexOutput, is_front: bool) -> FragmentOutput {
     facing = pbr_input.N;
     eye_way = pbr_input.V;
     spot = in.world_position.xyz;
+    lit = base;
     pbr_input.material.base_color = vec4<f32>(1.0, 1.0, 1.0, base.a);
-    shine = lighting(pbr_input).rgb;
-    lit = vec4<f32>(shine * base.rgb, base.a);
-    read_weather();
+    return pbr_input;
+}
+
+fn uv_of(in: VertexOutput) -> vec2<f32> {
     var uv = vec2<f32>(0.5);
     @if(VERTEX_UVS_A) {
         uv = in.uv;
     }
-    var out: FragmentOutput;
-    out.color = main_pass_post_lighting_processing(pbr_input, vfx(uv));
-    return out;
+    return uv;
+}
+
+// Stills the weather, so a baked impostor shows the model at rest: no wind, no rain, no flash,
+// nobody treading, and the time at its start.
+@if(IMPOSTOR_BAKE)
+fn still_weather() {
+    weather.wind = vec2<f32>(0.0);
+    weather.time = 0.0;
+    weather.treads = 0u;
+    weather.rain = 0.0;
+    weather.flash = 0.0;
+    rain_most = vec2<f32>(0.0);
 }
