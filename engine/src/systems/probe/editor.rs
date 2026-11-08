@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 
 use super::{ProbeInput, ProbeUiElement};
 use crate::core::math::{MatrixSchema, Offset, Pos, PosSchema, Rect, RectSchema, Size, SizeSchema};
+use crate::core::render::world::OnItsWay;
 use crate::core::units::{Meters, Radians, WindowPx};
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -46,6 +47,10 @@ pub struct EditorSnapshot {
     /// The stage of the area or blueprint view in front, when one shows.
     pub stage: Option<EditorStage>,
     pub scenery: EditorScenery,
+    /// How many views' sceneries have yet to stand what their sight takes in.
+    pub sceneries_standing: u32,
+    /// What the views draw that is still on its way to standing.
+    pub on_its_way: OnItsWay,
     /// Whether the editor is busy with work the interface waits on, such as opening a folder.
     pub busy: bool,
     /// The rows selected, as the scene tree names them.

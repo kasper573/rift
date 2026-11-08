@@ -53,13 +53,19 @@ impl SceneryChunk {
     }
 
     /// The chunk of `ground` that `at` lies in, if any: a point on a chunk's far edges lies in
-    /// the chunk beyond, so every point lies in one chunk alone.
+    /// the chunk beyond, and one on the ground's own far edges in its last chunk, so every point
+    /// of the ground lies in one chunk alone.
     pub fn at(ground: Rect<Meters>, at: Pos<Meters>) -> Option<SceneryChunk> {
         let side = Self::SIDE.0;
         let (across, down) = counts(ground);
-        let column = ((at.x - ground.origin.x) / side).floor();
-        let row = ((at.y - ground.origin.y) / side).floor();
-        let within = column >= 0.0 && column < across as f32 && row >= 0.0 && row < down as f32;
+        let column = ((at.x - ground.origin.x) / side)
+            .floor()
+            .min(across as f32 - 1.0);
+        let row = ((at.y - ground.origin.y) / side)
+            .floor()
+            .min(down as f32 - 1.0);
+        let within =
+            column >= 0.0 && row >= 0.0 && at.x <= ground.max_x() && at.y <= ground.max_y();
         within.then_some(SceneryChunk {
             column: column as u32,
             row: row as u32,

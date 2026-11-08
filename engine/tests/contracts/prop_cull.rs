@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use bevy::camera::primitives::{Aabb, Frustum, Sphere};
-use bevy::camera::{CameraProjection, PerspectiveProjection};
+use bevy::camera::{CameraProjection, OrthographicProjection, PerspectiveProjection};
 use bevy::gltf::Gltf;
 use bevy::prelude::*;
 use bevy::render::render_resource::{
@@ -11,17 +11,19 @@ use bevy::render::render_resource::{
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue, initialize_renderer};
 use bevy::render::settings::{Backends, RenderResources, WgpuSettings};
-use bevy::shape::ViewFrustum;
+use bevy::shape::{HalfSpace, ViewFrustum};
 use engine::core::math::Rng;
 use engine::core::render::world::gpu::arena::{
     ChunkPlace, GpuChunk, InstanceArena, InstanceChange, InstanceRecord, LevelRange, PartRanges,
     PlacedModel,
 };
 use engine::core::render::world::gpu::cull::{
-    BAND_PIXELS, CullKernel, CullView, DrawTable, DrawnProp, GpuDrawTable, IMPOSTOR_PIXELS,
-    ListedInstance, ViewCull, seen_chunks,
+    BAND_PIXELS, CullKernel, CullReadback, CullView, DrawTable, DrawnProp, GpuDrawTable,
+    IMPOSTOR_PIXELS, ListedInstance, ViewCull, lit_frustum, seen_chunks,
 };
+use engine::core::render::world::gpu::impostor::{AtlasKey, atlas_key};
 use engine::core::render::world::gpu::slab::Slab;
+use engine::core::units::Meters;
 
 const PROPS: u32 = 8;
 /// The props past the last with a model, whose instances the arena holds but nothing draws.
@@ -41,9 +43,10 @@ const STEP: f32 = 0.25;
 /// than a pixel, listed in that level's command once for each part, and nothing of a prop
 /// whose model isn't on the GPU. An instance of a prop that fades, whose box the way from the eye
 /// to the camera's subject passes through or the eye stands in, is drawn a step cleared; every
-/// other one whole.
+/// other one whole. All of it holds the frame after the same view took in the whole field.
 #[test]
 fn the_gpu_draws_each_prop_the_view_sees_at_the_level_its_size_asks_for() {
+    let _gpu = crate::gpu::exclusive();
     let seed = testkit::drawn_seed();
     let mut rng = Rng::new(seed);
     let (device, queue) = renderer();
@@ -100,6 +103,7 @@ fn the_gpu_draws_each_prop_the_view_sees_at_the_level_its_size_asks_for() {
                         fades: fades(prop),
                         overhang: 0.0,
                         translucency: 0.0,
+                        impostor: None,
                     },
                 )
             })
@@ -126,6 +130,32 @@ fn the_gpu_draws_each_prop_the_view_sees_at_the_level_its_size_asks_for() {
     let mut shown = Slab::new("instances shown", BufferUsages::STORAGE);
     shown.fit(&device, &queue, records.len() as u64 * 4);
     shown.write(&queue, 0, &1.0f32.to_le_bytes().repeat(records.len()));
+    let everywhere = Frustum(ViewFrustum {
+        half_spaces: [
+            Vec3::X,
+            Vec3::NEG_X,
+            Vec3::Y,
+            Vec3::NEG_Y,
+            Vec3::Z,
+            Vec3::NEG_Z,
+        ]
+        .map(|normal| HalfSpace::new(normal.extend(4.0 * FIELD))),
+    });
+    let overview = CullView::new(&everywhere, frustum_eye(), PIXELS_AT_A_METER, false, false);
+    culled.update(
+        &device,
+        &queue,
+        &kernel,
+        &gpu_table,
+        instances,
+        shown.buffer().expect("the shares shown written"),
+        &no_chunk_standing(&device),
+        seen_chunks(&chunks, &table, &everywhere, &overview),
+        overview,
+    );
+    let mut encoder = device.create_command_encoder(&default());
+    culled.encode(&kernel, &gpu_table, &mut encoder);
+    queue.submit([encoder.finish()]);
     culled.update(
         &device,
         &queue,
@@ -499,6 +529,11 @@ fn frustum_eye() -> Vec3 {
     Vec3::new(-FIELD / 3.0, 30.0, -FIELD / 3.0)
 }
 
+/// The atlas a test prop is drawn from afar by, one a prop.
+fn atlas_of(prop: u32) -> AtlasKey {
+    atlas_key(&prop.to_string(), Meters(0.0), &[])
+}
+
 fn model_id(prop: u32) -> AssetId<Gltf> {
     AssetId::Uuid {
         uuid: bevy::asset::uuid::Uuid::from_u128(u128::from(prop) + 1),
@@ -524,6 +559,7 @@ fn no_chunk_standing(device: &RenderDevice) -> Buffer {
 /// it belongs to stands.
 #[test]
 fn the_gpu_hands_a_prop_from_its_model_to_its_impostor_across_the_band() {
+    let _gpu = crate::gpu::exclusive();
     let (device, queue) = renderer();
     let model = PlacedModel {
         bounds: Aabb {
@@ -636,16 +672,17 @@ fn the_gpu_hands_a_prop_from_its_model_to_its_impostor_across_the_band() {
                     fades: false,
                     overhang: 0.0,
                     translucency: 0.0,
+                    impostor: Some(atlas_of(prop)),
                 },
             )
         })
     }));
     let kernel = CullKernel::new(&device);
     let mut gpu_table = GpuDrawTable::new(&device, &queue, table.clone()).expect("a table to draw");
-    gpu_table.place_impostors(&device, &queue, 1, |model| {
+    gpu_table.place_impostors(&device, &queue, 1, |atlas| {
         [DRESSED_WITH_IMPOSTOR, UNDRESSED_WITH_IMPOSTOR]
             .into_iter()
-            .position(|prop| model_id(prop) == model)
+            .position(|prop| atlas_of(prop) == atlas)
             .map(|layer| layer as u32)
     });
     let seen = seen_chunks(&chunks, &table, &frustum, &view);
@@ -675,7 +712,7 @@ fn the_gpu_hands_a_prop_from_its_model_to_its_impostor_across_the_band() {
     queue.submit([encoder.finish()]);
     let read = culled.read(&device, &queue);
 
-    let drawn_by = |record: u32| -> Vec<DrawnBy> {
+    let drawn_by = |read: &CullReadback, record: u32| -> Vec<DrawnBy> {
         let table = &table;
         let mut listed: Vec<DrawnBy> = read
             .commands
@@ -719,15 +756,17 @@ fn the_gpu_hands_a_prop_from_its_model_to_its_impostor_across_the_band() {
         ("far where the near chunk stands", far_first, vec![]),
         ("far", far_first + 1, vec![(Drawn::Impostor, 1.0)]),
     ];
-    for (what, record, wanted) in expected {
-        let got = drawn_by(record);
-        let alike = got.len() == wanted.len()
+    let alike = |got: &[DrawnBy], wanted: &[DrawnBy]| {
+        got.len() == wanted.len()
             && got
                 .iter()
-                .zip(&wanted)
-                .all(|((drawn, faded), (by, share))| drawn == by && (faded - share).abs() < 0.02);
+                .zip(wanted)
+                .all(|((drawn, faded), (by, share))| drawn == by && (faded - share).abs() < 0.02)
+    };
+    for (what, record, wanted) in expected {
+        let got = drawn_by(&read, record);
         assert!(
-            alike,
+            alike(&got, &wanted),
             "the instance {what} is drawn as {wanted:?}, not {got:?}"
         );
     }
@@ -738,6 +777,168 @@ fn the_gpu_hands_a_prop_from_its_model_to_its_impostor_across_the_band() {
     assert_eq!(
         read.drawn, 7,
         "every instance but the far one whose near chunk stands is drawn"
+    );
+
+    let seen = seen_chunks(&chunks, &table, &frustum, &view);
+    culled.update(
+        &device,
+        &queue,
+        &kernel,
+        &gpu_table,
+        slab.buffer().expect("the instances written"),
+        shown.buffer().expect("the shares shown written"),
+        &standing,
+        seen,
+        view.handing_over_at(2.0 * IMPOSTOR_PIXELS),
+    );
+    let mut encoder = device.create_command_encoder(&default());
+    culled.encode(&kernel, &gpu_table, &mut encoder);
+    queue.submit([encoder.finish()]);
+    let read = culled.read(&device, &queue);
+    let got = drawn_by(&read, near_first);
+    assert!(
+        alike(&got, &[(Drawn::Impostor, 1.0)]),
+        "handing over at twice the width, the instance wider than the band stands narrower than it and draws its impostor, not {got:?}"
+    );
+}
+
+/// A light's view keeps the casters behind its near half-space whose shadows can still fall
+/// into what it sees: with the sun `sine` of the way up the sky, a caster no farther behind than
+/// its height over that sine, and leaves out one farther; a light at the horizon keeps them all.
+#[test]
+fn a_lights_view_leaves_out_the_casters_whose_shadows_fall_short_of_it() {
+    let _gpu = crate::gpu::exclusive();
+    let (device, queue) = renderer();
+    let model = PlacedModel {
+        bounds: Aabb {
+            center: Vec3::new(0.0, 1.0, 0.0).into(),
+            half_extents: Vec3::ONE.into(),
+        },
+        parts: vec![PartRanges {
+            material: None,
+            first_vertex: 0,
+            vertices: 100,
+            levels: vec![LevelRange {
+                first_index: 0,
+                indices: 300,
+                strays: 0.0,
+            }],
+        }],
+    };
+    let sine: f32 = 0.5;
+    let sun = Vec3::new(0.0, sine, -(1.0 - sine * sine).sqrt()).normalize();
+    let eye = Vec3::new(0.0, 0.0, 0.0) + sun * 20.0;
+    let world_from_view = Transform::from_translation(eye)
+        .looking_to(-sun, Vec3::Y)
+        .to_matrix();
+    let clip_from_view = OrthographicProjection {
+        near: 0.0,
+        far: 400.0,
+        area: Rect::new(-200.0, -200.0, 200.0, 200.0),
+        ..OrthographicProjection::default_3d()
+    }
+    .get_clip_from_view();
+    let clip_from_world = clip_from_view * world_from_view.inverse();
+    let frustum = lit_frustum(
+        &clip_from_world,
+        &Frustum(ViewFrustum::from_clip_from_world(&clip_from_world)),
+    );
+    let radius = Vec3::ONE.length();
+    let caster_at = |behind: f32| InstanceRecord {
+        position: (eye + sun * behind - Vec3::new(0.0, 1.0, 0.0)).to_array(),
+        yaw: 0.0,
+        scale: 1.0,
+        prop: DRESSED_WITH_IMPOSTOR,
+        seed: 0,
+        chunk: NEAR_CHUNK,
+    };
+    let reach = 2.0 * radius / sine;
+    let casters = [caster_at(reach * 0.5), caster_at(reach * 2.0)];
+    let mut arena = InstanceArena::default();
+    let mut slab = Slab::new("instances", BufferUsages::STORAGE);
+    let Some(InstanceChange::Placed {
+        offset,
+        bytes,
+        instances,
+        capacity,
+        contents,
+        ..
+    }) = arena.insert(
+        0,
+        &casters,
+        model_id,
+        ChunkPlace::Near { index: NEAR_CHUNK },
+    )
+    else {
+        panic!("the casters placed");
+    };
+    slab.fit(&device, &queue, capacity);
+    slab.write(&queue, offset, &bytes);
+    let first = (offset / InstanceRecord::BYTES) as u32;
+    let chunks = HashMap::from([(
+        0,
+        GpuChunk {
+            offset,
+            instances,
+            contents,
+        },
+    )]);
+    let table = DrawTable::of(chunks.values().flat_map(|chunk| {
+        chunk.contents.props.iter().map(|&(prop, _, instances)| {
+            (
+                prop,
+                DrawnProp {
+                    model: model_id(prop),
+                    placed: &model,
+                    instances,
+                    dressed: true,
+                    fades: false,
+                    overhang: 0.0,
+                    translucency: 0.0,
+                    impostor: None,
+                },
+            )
+        })
+    }));
+    let kernel = CullKernel::new(&device);
+    let gpu_table = GpuDrawTable::new(&device, &queue, table.clone()).expect("a table to draw");
+    let mut shown = Slab::new("instances shown", BufferUsages::STORAGE);
+    shown.fit(&device, &queue, casters.len() as u64 * 4);
+    shown.write(&queue, 0, &1.0f32.to_le_bytes().repeat(casters.len()));
+    let standing = no_chunk_standing(&device);
+    let listed = |view: CullView| -> Vec<u32> {
+        let seen = seen_chunks(&chunks, &table, &frustum, &view);
+        let mut culled = ViewCull::new(&device, &gpu_table);
+        culled.update(
+            &device,
+            &queue,
+            &kernel,
+            &gpu_table,
+            slab.buffer().expect("the instances written"),
+            shown.buffer().expect("the shares shown written"),
+            &standing,
+            seen,
+            view,
+        );
+        let mut encoder = device.create_command_encoder(&default());
+        culled.encode(&kernel, &gpu_table, &mut encoder);
+        queue.submit([encoder.finish()]);
+        let read = culled.read(&device, &queue);
+        let mut listed: Vec<u32> = read.listed.iter().map(|listed| listed.record).collect();
+        listed.sort_unstable();
+        listed.dedup();
+        listed
+    };
+    let at_the_rim = CullView::new(&frustum, eye, PIXELS_AT_A_METER, true, true);
+    assert_eq!(
+        listed(at_the_rim),
+        vec![first, first + 1],
+        "a light at the horizon keeps every caster behind it"
+    );
+    assert_eq!(
+        listed(at_the_rim.lit_from(sine)),
+        vec![first],
+        "a light up the sky keeps the caster whose shadow reaches it and leaves out the one whose shadow falls short"
     );
 }
 
@@ -778,6 +979,7 @@ const ABSENT_CHUNK: u32 = 9;
 /// that depth, one reaching across it, and all of them where nothing was drawn.
 #[test]
 fn the_lit_passes_leave_out_what_the_prepass_depth_hides() {
+    let _gpu = crate::gpu::exclusive();
     let (device, queue) = renderer();
     let model = PlacedModel {
         bounds: Aabb {
@@ -820,6 +1022,7 @@ fn the_lit_passes_leave_out_what_the_prepass_depth_hides() {
                     fades: false,
                     overhang: 0.0,
                     translucency: 0.0,
+                    impostor: None,
                 },
             )
         }))

@@ -3,9 +3,11 @@
 //! scenario's mean may fall below, a share of frames that may come slower than that, a stall no
 //! frame may reach, and nothing the view takes in left missing.
 
+use std::collections::BTreeMap;
+
 use editor::app::DrawnPass;
 use engine::core::units::{Bytes, Millis};
-use engine::systems::probe::{FrameSample, ProbeSlowFrame};
+use engine::systems::probe::{FrameSample, MissingParts, ProbeSlowFrame};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -68,7 +70,8 @@ pub struct Criteria {
     pub slow_share: f64,
     /// How long no frame may take.
     pub stall: Millis,
-    /// How many frames may show anything the view takes in missing.
+    /// How many frames may show anything the view takes in missing, the frames between a move to
+    /// a new place and the area standing there aside.
     pub missing_frames: u32,
 }
 
@@ -152,11 +155,26 @@ pub struct Window {
     slow: Vec<ProbeSlowFrame>,
     /// What the editor drew over each frame, by frame, where the editor logged it.
     passes: Vec<(u32, DrawnPass)>,
+    /// The frames from each move of the player to a new place until the area stood there: the
+    /// view takes in what is still standing then, and is timed for it rather than faulted.
+    arrivals: Vec<(u32, u32)>,
 }
 
 impl Window {
     pub fn extend(&mut self, samples: impl IntoIterator<Item = FrameSample>) {
         self.samples.extend(samples);
+    }
+
+    /// Notes the area standing at frame `stood` after the player moved to a new place at
+    /// frame `since`.
+    pub fn arrived(&mut self, since: u32, stood: u32) {
+        self.arrivals.push((since, stood));
+    }
+
+    fn arriving(&self, frame: u32) -> bool {
+        self.arrivals
+            .iter()
+            .any(|&(since, stood)| (since..=stood).contains(&frame))
     }
 
     /// The slow frames the probe kept with their passes and the systems they waited on.
@@ -192,6 +210,7 @@ impl Window {
             samples: kept,
             slow: self.slow.clone(),
             passes: self.passes.clone(),
+            arrivals: self.arrivals.clone(),
         }
     }
 
@@ -234,20 +253,43 @@ impl Window {
             .count();
         let first = self.samples.first().map_or(0, |sample| sample.frame);
         let last = self.samples.last().map_or(0, |sample| sample.frame);
-        let mut stalled: Vec<ProbeSlowFrame> = self
+        let slow_frames: Vec<&ProbeSlowFrame> = self
             .slow
             .iter()
             .filter(|frame| frame.frame >= first && frame.frame <= last)
+            .collect();
+        let mut stalled: Vec<ProbeSlowFrame> = slow_frames
+            .iter()
             .filter(|frame| frame.dt_ms.0 > criteria.stall.0)
-            .cloned()
+            .map(|&frame| frame.clone())
             .collect();
         stalled.sort_by_key(|frame| frame.frame);
-        let worst = self
-            .slow
+        let worst = slow_frames
             .iter()
-            .filter(|frame| frame.frame >= first && frame.frame <= last)
             .max_by(|a, b| a.dt_ms.0.total_cmp(&b.dt_ms.0))
-            .cloned();
+            .map(|&frame| frame.clone());
+        let mut by_pass: BTreeMap<&str, Vec<f32>> = BTreeMap::new();
+        for frame in &slow_frames {
+            for pass in &frame.passes {
+                by_pass
+                    .entry(pass.name.as_str())
+                    .or_default()
+                    .push(pass.gpu_ms.0);
+            }
+        }
+        let mut passes: Vec<PassSummary> = by_pass
+            .into_iter()
+            .map(|(name, mut times)| {
+                times.sort_by(f32::total_cmp);
+                PassSummary {
+                    name: name.to_owned(),
+                    median: Millis(times[times.len() / 2]),
+                    worst: Millis(times[times.len() - 1]),
+                    frames: times.len() as u32,
+                }
+            })
+            .collect();
+        passes.sort_by(|a, b| b.median.0.total_cmp(&a.median.0));
         let trace = self
             .samples
             .iter()
@@ -258,6 +300,9 @@ impl Window {
                 cpu_render: sample.cpu_render_ms,
                 gpu: sample.gpu_ms,
                 props_drawn: sample.props_drawn,
+                missing: sample.missing,
+                missing_parts: sample.missing_parts,
+                upload_bytes: sample.upload_bytes,
             })
             .collect();
         Some(FrameStats {
@@ -276,7 +321,7 @@ impl Window {
             missing_frames: self
                 .samples
                 .iter()
-                .filter(|sample| sample.missing > 0)
+                .filter(|sample| sample.missing > 0 && !self.arriving(sample.frame))
                 .count() as u32,
             stale_frames: self
                 .samples
@@ -301,6 +346,7 @@ impl Window {
             interface: self.interface(first, last),
             worst_frame: worst,
             stalled_frames: stalled,
+            passes,
         })
     }
 }
@@ -349,9 +395,23 @@ pub struct FrameStats {
     /// the GPU's passes and the systems it waited on, as far as the probe kept them.
     #[serde(default)]
     pub stalled_frames: Vec<ProbeSlowFrame>,
+    /// The GPU's passes over the window's slow frames, the costliest first: each pass's median
+    /// and longest time, and how many of those frames timed it.
+    #[serde(default)]
+    pub passes: Vec<PassSummary>,
     /// Every frame of the window in order, for the course of a scenario's frame times: where its
     /// slow frames fall, and what the main world, the render world and the GPU took on each.
     pub trace: Vec<FrameTrace>,
+}
+
+/// A pass of the GPU over a window's slow frames: its median and longest time, and how many of
+/// those frames timed it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct PassSummary {
+    pub name: String,
+    pub median: Millis,
+    pub worst: Millis,
+    pub frames: u32,
 }
 
 /// How long the editor took over its interface, frame by frame: the median of the whole
@@ -406,4 +466,12 @@ pub struct FrameTrace {
     pub cpu_render: Option<Millis>,
     pub gpu: Option<Millis>,
     pub props_drawn: Option<u32>,
+    /// What the view took in that stood coarser than wanted, or not yet.
+    #[serde(default)]
+    pub missing: u32,
+    #[serde(default)]
+    pub missing_parts: MissingParts,
+    /// What the frame wrote to the GPU for the world.
+    #[serde(default)]
+    pub upload_bytes: Bytes,
 }

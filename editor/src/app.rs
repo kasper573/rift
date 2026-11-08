@@ -19,6 +19,7 @@ use bevy_egui::{
 use engine::core::content::{Content, ContentFile, FolderReader, Unreadable, fields_file, version};
 use engine::core::render::camera;
 use engine::core::render::video::VideoPreferences;
+use engine::core::render::world::OnItsWay;
 use engine::core::units::{Meters, Millis};
 use engine::systems;
 use engine::systems::area::scenery;
@@ -157,6 +158,8 @@ pub struct DrawnPass {
     pub images: usize,
     pub meshes: usize,
     pub scenery: EditorScenery,
+    pub sceneries_standing: u32,
+    pub on_its_way: OnItsWay,
 }
 
 /// The passes of the frames whose samples haven't settled yet, by frame.
@@ -272,6 +275,8 @@ pub(crate) fn keep_pass(world: &mut World) {
         images: world.resource::<Assets<Image>>().len(),
         meshes: world.resource::<Assets<Mesh>>().len(),
         scenery: scenery_of(world),
+        sceneries_standing: scenery::sceneries_standing(world),
+        on_its_way: engine::core::render::world::on_its_way(world),
     };
     let mut passes = world.resource_mut::<DrawnPasses>();
     if passes.0.len() == FRAMES_KEPT {

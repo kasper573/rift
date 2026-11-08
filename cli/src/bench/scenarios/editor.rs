@@ -389,10 +389,12 @@ fn open_file_tab(driver: &mut EditorDriver) -> Result<(), Failure> {
         opened.push(folder.id);
     };
     hands::move_pointer(driver, row_point(&leaf))?;
+    driver.arriving();
     hands::click(driver, Button::Left, 2)?;
     hands::wait_for(driver, "the file to open in a tab", BUDGET, |snapshot| {
         (snapshot.tab.as_ref() != Some(&area)).then_some(())
     })?;
+    driver.wait_stood()?;
     click_tab(driver, &area)
 }
 

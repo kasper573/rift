@@ -38,7 +38,7 @@ use engine::core::math::{Pos, Rng};
 use engine::core::os::Profile;
 use engine::core::render::camera::{self, Zoom, world_point};
 use engine::core::render::sample::{FrameSamplingPlugin, GpuReportsRead, gpu_reports};
-use engine::core::render::video::VideoPreferences;
+use engine::core::render::video::{Quality, VideoPreferences};
 use engine::core::render::world::WorldScenePlugin;
 use engine::core::render::world::body;
 use engine::core::render::world::clouds::CloudDrift;
@@ -199,7 +199,7 @@ impl VideoPreset {
     pub fn preferences(self) -> VideoPreferences {
         match self {
             VideoPreset::Highest => VideoPreferences::default(),
-            VideoPreset::Lowest => VideoPreferences::lowest(),
+            VideoPreset::Lowest => VideoPreferences::default().at(Quality::Lowest),
         }
     }
 }

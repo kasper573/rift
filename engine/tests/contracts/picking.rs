@@ -40,6 +40,7 @@ const SLOT: u8 = 3;
 /// leaves out, and an id names back the slot and instance it was written for.
 #[test]
 fn a_views_picture_names_the_instance_it_shows_at_each_pixel() {
+    let _gpu = crate::gpu::exclusive();
     let seed = testkit::drawn_seed();
     let RenderResources(device, queue, ..) = bevy::tasks::block_on(initialize_renderer(
         Backends::all(),
@@ -134,6 +135,7 @@ fn a_views_picture_names_the_instance_it_shows_at_each_pixel() {
                         fades: false,
                         overhang: 0.0,
                         translucency: 0.0,
+                        impostor: None,
                     },
                 )
             }),

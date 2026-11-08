@@ -1,5 +1,6 @@
 //! What a slow frame waited on: every system's run timed through the span bevy opens around it,
-//! so the probe can name the systems that ran longest before a slow frame.
+//! and every other span the engine and bevy open (a render graph node, the frame's presentation,
+//! a pipeline's compilation), so the probe can name what ran longest before a slow frame.
 
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -26,8 +27,8 @@ pub fn timing_layer(app: &mut App) -> Option<BoxedLayer> {
     Some(Box::new(SystemTimer { times }))
 }
 
-/// How long each system ran since the times were last taken, of its runs of [`NOTED`] or longer,
-/// timed only while something listens.
+/// How long each system and every other span ran since the times were last taken, of its runs of
+/// [`NOTED`] or longer, timed only while something listens.
 #[derive(Resource, Clone, Default)]
 pub struct SystemTimes(Arc<Timed>);
 
@@ -71,14 +72,12 @@ struct SystemTimer {
     times: SystemTimes,
 }
 
-/// The shortest run of a system worth keeping: shorter ones never make a frame slow, and passing
+/// The shortest run of a span worth keeping: shorter ones never make a frame slow, and passing
 /// them by keeps the timing off the frames it times.
 const NOTED: Duration = Duration::from_micros(250);
 
-/// The span bevy opens around every run of a system, named by the system it runs.
-const SYSTEM_SPAN: &str = "system";
-
-/// A system's span: the system's name, and when its current run began.
+/// A span: what it is named for (a system's span carries its system's name in a field, the
+/// others are named by their span), and when its current run began.
 struct SpanRun {
     name: Arc<str>,
     began: Option<Instant>,
@@ -94,19 +93,19 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for SystemTimer {
         }
     }
 
-    /// Opens only systems' spans, and those only while a probe listens: every span opened costs
-    /// the frame, and nothing else reads them.
+    /// Opens spans only while a probe listens: every span opened costs the frame, and nothing
+    /// else reads them.
     fn enabled(&self, metadata: &Metadata<'_>, _: Context<'_, S>) -> bool {
-        !metadata.is_span() || (metadata.name() == SYSTEM_SPAN && self.times.listening())
+        !metadata.is_span() || self.times.listening()
     }
 
     fn on_new_span(&self, attributes: &Attributes<'_>, id: &Id, context: Context<'_, S>) {
-        if attributes.metadata().name() != SYSTEM_SPAN {
-            return;
-        }
         let mut name = SpanName(None);
         attributes.record(&mut name);
-        if let (Some(name), Some(span)) = (name.0, context.span(id)) {
+        let name = name
+            .0
+            .unwrap_or_else(|| attributes.metadata().name().to_owned());
+        if let Some(span) = context.span(id) {
             span.extensions_mut().insert(SpanRun {
                 name: name.into(),
                 began: None,
@@ -140,7 +139,7 @@ impl<S: Subscriber + for<'a> LookupSpan<'a>> Layer<S> for SystemTimer {
     }
 }
 
-/// Reads the name a system's span carries.
+/// Reads the name a span carries in its `name` field, as a system's does.
 struct SpanName(Option<String>);
 
 impl Visit for SpanName {

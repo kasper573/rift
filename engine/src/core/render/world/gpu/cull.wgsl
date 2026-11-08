@@ -20,9 +20,13 @@ struct CullView {
     pixels_at_a_meter: f32,
     // Whether a metre spans as many pixels however far off the eye it lies.
     orthographic: u32,
-    // Whether what lies behind the near half-space is left out: not for a light, whose casters
-    // there still cast into what it sees.
+    // Whether what lies behind the near half-space is left out: not for a light at the horizon,
+    // whose casters there still cast into what it sees.
     test_near: u32,
+    // For a light's view, the sine of how high its sun stands: a caster farther behind the near
+    // half-space than its height over it throws its shadow short of what the view sees. 0 for any
+    // other view.
+    casting_sine: f32,
     // How many pixels across a thing among many alike must span to be told apart, how far a level
     // may stray from the full mesh in pixels, and how near the eye nothing is measured from.
     grain_pixels: f32,
@@ -40,6 +44,9 @@ struct CullView {
     // draws every prop whole.
     subject: vec3<f32>,
     fade_step: f32,
+    // How many of `chunks` the view sees this frame: the buffer keeps the larger size it was
+    // written at for a frame that saw more, so its length doesn't tell.
+    chunks_seen: u32,
 }
 
 
@@ -158,7 +165,7 @@ fn count(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_inde
 // `instances`, 1 while there is one, and whether the chunk stands in the far field.
 fn chunk_of(nth: u32) -> vec3<u32> {
     var low = 0u;
-    var high = arrayLength(&chunks);
+    var high = view.chunks_seen;
     while high - low > 1u {
         let middle = (low + high) / 2u;
         if chunks[middle].w <= nth {
@@ -526,10 +533,16 @@ fn center_of(instance: Instance, prop: Prop, turn: vec2<f32>, scale: f32) -> vec
 // Whether a sphere about `center`, `radius` across, reaches into the view's frustum.
 fn in_frustum(center: vec3<f32>, radius: f32) -> bool {
     for (var plane = 0u; plane < 6u; plane++) {
-        if plane == 4u && view.test_near == 0u {
-            continue;
+        var beyond = radius;
+        if plane == 4u {
+            if view.test_near == 0u {
+                continue;
+            }
+            if view.casting_sine > 0.0 {
+                beyond += 2.0 * radius / view.casting_sine;
+            }
         }
-        if dot(view.planes[plane], vec4<f32>(center, 1.0)) + radius <= 0.0 {
+        if dot(view.planes[plane], vec4<f32>(center, 1.0)) + beyond <= 0.0 {
             return false;
         }
     }

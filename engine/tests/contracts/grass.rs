@@ -26,6 +26,7 @@ const SIZES: (f32, f32) = (0.7, 1.3);
 /// lays out, a cell running off the ground's edge too.
 #[test]
 fn a_covers_blades_grow_on_the_gpu_where_its_terrain_paints_rooted_on_the_ground() {
+    let _gpu = crate::gpu::exclusive();
     let seed = testkit::drawn_seed();
     let RenderResources(device, queue, ..) = bevy::tasks::block_on(initialize_renderer(
         Backends::all(),

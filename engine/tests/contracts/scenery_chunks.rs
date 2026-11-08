@@ -144,6 +144,23 @@ fn a_chunks_scenery_is_worked_out_from_the_chunk_alone() {
             scatter.seed
         );
     }
+    let (across, down) = (
+        (ground.size.width / SceneryChunk::SIDE.0).ceil() as u32,
+        (ground.size.height / SceneryChunk::SIDE.0).ceil() as u32,
+    );
+    assert_eq!(
+        SceneryChunk::at(ground, Pos::new(ground.max_x(), ground.max_y())),
+        Some(SceneryChunk {
+            column: across - 1,
+            row: down - 1,
+        }),
+        "a prop strewn onto the ground's far corner lies in its last chunk"
+    );
+    assert_eq!(
+        SceneryChunk::at(ground, Pos::new(ground.max_x() + 0.01, ground.max_y())),
+        None,
+        "a point past the ground lies in no chunk"
+    );
     let heights = Heightfield::from_fn(GROUND, HEIGHTS, |column, row| {
         Meters((column + row) as f32 / SAMPLES_PER_METER as f32 / 8.0)
     });

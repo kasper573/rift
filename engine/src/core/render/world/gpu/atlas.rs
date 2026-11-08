@@ -33,8 +33,6 @@ use crate::core::render::sample::UploadedBytes;
 use crate::core::render::world::cover::SHORE_REACH;
 use crate::core::units::{GROUND_ORIGIN, Meters};
 
-/// How many tiles the GPU holds in detail at once.
-pub const DETAIL_SLOTS: u32 = 49;
 /// The values along a slot's side: a tile's samples, and one more all round.
 pub const SLOT_SIDE: u32 = TILE_PIXELS + 3;
 /// The widest a canopy texel's props are told to be: an extent past it reads as this wide.
@@ -84,6 +82,8 @@ pub struct AtlasLayout {
     pub paint_overview: (u32, u32),
     /// The texels across and down of the canopy.
     pub canopy: (u32, u32),
+    /// How many tiles the GPU holds in detail at once: as many as a view may want.
+    pub slots: u32,
 }
 
 /// The textures of the atlas, as they are bound to draw: the detail arrays a layer a slot, the
@@ -136,15 +136,22 @@ impl CanopyMap {
 }
 
 impl TerrainAtlas {
-    /// Holds the ground of `heights`, `paint` and `water`: laid anew for a ground of another size
-    /// or range, else each tile filled again as its values changed.
-    pub fn lay(&mut self, heights: &Heightfield, paint: &PaintMap, water: &WaterSurface) {
+    /// Holds the ground of `heights`, `paint` and `water`, with `slots` tiles in detail at once:
+    /// laid anew for a ground of another size or range, else each tile filled again as its values
+    /// changed.
+    pub fn lay(
+        &mut self,
+        heights: &Heightfield,
+        paint: &PaintMap,
+        water: &WaterSurface,
+        slots: u32,
+    ) {
         let ground = AtlasGround {
             heights: heights.clone(),
             paint: paint.clone(),
             water: water.clone(),
         };
-        let layout = AtlasLayout::of(heights, paint);
+        let layout = AtlasLayout::of(heights, paint, slots);
         match &mut self.laid {
             Some(laid) if laid.layout == layout => laid.relay(ground),
             _ => {
@@ -170,17 +177,22 @@ impl TerrainAtlas {
     /// How much of what is asked for the GPU has nothing of yet: the overview until it is first
     /// sent, and each tile wanted there is a slot for that holds no slot.
     pub fn missing(&self) -> u32 {
-        let Some(laid) = &self.laid else {
-            return 0;
-        };
-        let overview = u32::from(!laid.overview_sent);
-        let tiles = self
-            .wanted
+        u32::from(self.overview_missing()) + self.missing_tiles().count() as u32
+    }
+
+    /// Whether the overview has yet to be first sent to the GPU.
+    pub fn overview_missing(&self) -> bool {
+        self.laid.as_ref().is_some_and(|laid| !laid.overview_sent)
+    }
+
+    /// The tiles wanted there is a slot for that hold no slot yet.
+    pub fn missing_tiles(&self) -> impl Iterator<Item = TileAt> + '_ {
+        let laid = self.laid.as_ref();
+        self.wanted
             .iter()
-            .take(DETAIL_SLOTS as usize)
-            .filter(|&&tile| laid.residency.slot(tile).is_none())
-            .count() as u32;
-        overview + tiles
+            .take(laid.map_or(0, |laid| laid.layout.slots as usize))
+            .copied()
+            .filter(move |&tile| laid.is_some_and(|laid| laid.residency.slot(tile).is_none()))
     }
 
     /// How much of what is asked for the GPU draws as it stood before a change: the overview
@@ -195,7 +207,7 @@ impl TerrainAtlas {
         let tiles = self
             .wanted
             .iter()
-            .take(DETAIL_SLOTS as usize)
+            .take(laid.layout.slots as usize)
             .filter(|&&tile| {
                 let round = AtlasGround::round(tile, laid.layout.tiles);
                 laid.residency.slot(tile).is_some()
@@ -280,7 +292,7 @@ impl AtlasLayout {
         )
     }
 
-    fn of(heights: &Heightfield, paint: &PaintMap) -> AtlasLayout {
+    fn of(heights: &Heightfield, paint: &PaintMap, slots: u32) -> AtlasLayout {
         let size = heights.size();
         let overview = heights.overview_dims();
         let paint = paint.overview_dims();
@@ -296,6 +308,7 @@ impl AtlasLayout {
             heights_overview: (texels(overview.0, step), texels(overview.1, step)),
             paint_overview: (texels(paint.0, step), texels(paint.1, step)),
             canopy: (0, 0),
+            slots,
         };
         let texel = layout.canopy_texel().0;
         let ground = size.meters();
@@ -405,7 +418,7 @@ impl Laid {
         Laid {
             ground,
             layout,
-            residency: Residency::new(DETAIL_SLOTS),
+            residency: Residency::new(layout.slots),
             versions,
             overview: VecDeque::from([whole]),
             overview_writes: VecDeque::new(),
@@ -451,7 +464,7 @@ impl Laid {
         self.overview_writes.clear();
         self.overview_sent = true;
         self.residency.next_frame();
-        for &tile in wanted.iter().take(DETAIL_SLOTS as usize) {
+        for &tile in wanted.iter().take(self.layout.slots as usize) {
             let round = AtlasGround::round(tile, self.layout.tiles);
             for near in round.into_iter().flatten() {
                 self.ground.load(near);
@@ -813,7 +826,7 @@ fn keep_atlases(
         }
         laid.loading.retain(|_, task| !task.is_finished());
         laid.residency.next_frame();
-        for &tile in wanted.iter().take(DETAIL_SLOTS as usize) {
+        for &tile in wanted.iter().take(laid.layout.slots as usize) {
             let round = AtlasGround::round(tile, laid.layout.tiles);
             let mut loaded = true;
             for near in round.into_iter().flatten() {
@@ -1057,7 +1070,7 @@ impl AtlasTexture {
     fn extent(self, layout: AtlasLayout) -> (u32, u32, u32) {
         match self {
             AtlasTexture::Heights | AtlasTexture::Paint | AtlasTexture::Surface => {
-                (SLOT_SIDE, SLOT_SIDE, DETAIL_SLOTS)
+                (SLOT_SIDE, SLOT_SIDE, layout.slots)
             }
             AtlasTexture::OverviewHeights | AtlasTexture::OverviewSurface => {
                 (layout.heights_overview.0, layout.heights_overview.1, 1)

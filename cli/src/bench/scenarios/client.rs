@@ -3,7 +3,7 @@
 
 use engine::core::content::Content;
 use engine::core::math::Pos;
-use engine::core::render::video::{BLOOM_TOGGLE, FULLSCREEN_TOGGLE, LIGHT_SHAFTS_TOGGLE};
+use engine::core::render::video::{BLOOM_TOGGLE, LIGHT_SHAFTS_TOGGLE};
 use engine::core::units::{Degrees, Meters, Seconds};
 use engine::systems::GameSettings;
 use engine::systems::input::map::InputAction;
@@ -87,6 +87,20 @@ pub fn catalogue(slots: &ScenarioSlots, content: &Content, smoke: bool) -> Vec<S
                 Step::Camera(CameraOp::Tilt(Degrees(90.0))),
                 Step::Camera(CameraOp::Tilt(Degrees(-90.0))),
                 Step::Camera(CameraOp::Home),
+            ],
+        ),
+        scenario(
+            "about-face",
+            Class::Typical,
+            at(home),
+            settled(),
+            Scenario::LEAST,
+            vec![
+                Step::Camera(CameraOp::Turn(Degrees(180.0))),
+                Step::Wait(Cond::Seconds(Seconds(2.0))),
+                Step::Camera(CameraOp::Home),
+                Step::Camera(CameraOp::Zoom(i32::MAX)),
+                Step::Wait(Cond::Seconds(Seconds(3.0))),
             ],
         ),
         scenario(
@@ -407,10 +421,10 @@ pub fn catalogue(slots: &ScenarioSlots, content: &Content, smoke: bool) -> Vec<S
             },
             Step::Wait(Cond::Stood),
             Step::Wait(Cond::Seconds(Seconds(1.0))),
-            Step::ClickUi(UiTarget::Text(FULLSCREEN_TOGGLE.to_owned())),
+            Step::Fullscreen,
             Step::Wait(Cond::Stood),
             Step::Wait(Cond::Seconds(Seconds(1.0))),
-            Step::ClickUi(UiTarget::Text(FULLSCREEN_TOGGLE.to_owned())),
+            Step::Fullscreen,
             Step::Wait(Cond::Stood),
             Step::Wait(Cond::Seconds(Seconds(1.0))),
         ],

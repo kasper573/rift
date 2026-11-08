@@ -13,6 +13,7 @@ use std::time::{Duration, Instant};
 use engine::core::content::{Content, ContentId};
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::render::transition::ScreenTransitionPhase;
+use engine::core::render::video::FULLSCREEN_TOGGLE;
 use engine::core::units::{Degrees, MeterPos, Meters, Radians, WindowPx};
 use engine::systems::input::camera::DRAG_TURN;
 use engine::systems::input::map::{InputAction, InputBinding, InputMap, KeyModifiers};
@@ -252,6 +253,25 @@ impl Driver {
         }
     }
 
+    /// Notes that the view is about to take in a new place or a new window, which the scenery
+    /// then stands anew: the frames until it stands are timed, not faulted for what is missing.
+    /// A failure to stand, told what still stands and what is on its way.
+    fn explain_standing(&mut self, failure: Failure) -> Failure {
+        match (failure, self.snapshot()) {
+            (Failure::Harness(why), Ok(snapshot)) => Failure::Harness(format!(
+                "{why}: {} sceneries standing, on its way: {}",
+                snapshot.sceneries_standing, snapshot.on_its_way
+            )),
+            (failure, _) => failure,
+        }
+    }
+
+    fn arriving(&mut self) {
+        if let Some(measuring) = &mut self.measuring {
+            measuring.arrival_since = Some(self.frame);
+        }
+    }
+
     fn step(&mut self, step: &Step) -> Result<(), Failure> {
         match step {
             Step::Move(point) => {
@@ -346,15 +366,22 @@ impl Driver {
                 None => self.note("no item slot to rest the pointer on"),
             },
             Step::CloseWindows => self.close_windows()?,
-            Step::Resize { width, height } => hands::resize(self, *width, *height)?,
+            Step::Resize { width, height } => {
+                self.arriving();
+                hands::resize(self, *width, *height)?;
+            }
+            Step::Fullscreen => {
+                self.arriving();
+                let element = self.find_ui(&UiTarget::Text(FULLSCREEN_TOGGLE.to_owned()))?;
+                hands::move_pointer(self, element.rect.center())?;
+                hands::click(self, Button::Left, 1)?;
+            }
             Step::Camera(op) => self.camera(*op)?,
             Step::Stage(staging) => match staging {
                 Staging::Walk { to } => self.walk(*to)?,
                 Staging::Place { .. } => {
+                    self.arriving();
                     self.stage(staging)?;
-                    if let Some(measuring) = &mut self.measuring {
-                        measuring.arrival_since = Some(self.frame);
-                    }
                 }
                 _ => self.stage(staging)?,
             },
@@ -372,9 +399,7 @@ impl Driver {
                     .cloned()
                     .ok_or_else(|| Failure::Harness("the client shows no warp".to_owned()))?;
                 self.stage(&Staging::Walk { to: warp.at })?;
-                if let Some(measuring) = &mut self.measuring {
-                    measuring.arrival_since = Some(self.frame);
-                }
+                self.arriving();
                 hands::wait_for(self, "the warp to lead on", LONG, move |snapshot| {
                     (snapshot.area == Some(warp.to)
                         && snapshot.me.is_some()
@@ -488,15 +513,37 @@ impl Driver {
                 Ok(())
             }
             Cond::Stood => {
-                let seen = hands::wait_for(self, "the scenery to stand", LONG, |snapshot| {
+                let mut seen = hands::wait_for(self, "the scenery to stand", LONG, |snapshot| {
                     (!snapshot.scenery_standing).then_some(snapshot.frame)
-                })?;
+                })
+                .map_err(|failure| self.explain_standing(failure))?;
+                loop {
+                    let settled = seen + STOOD_SETTLE;
+                    let later =
+                        hands::wait_for(self, "the scenery to stay stood", LONG, |snapshot| {
+                            (snapshot.frame >= settled || snapshot.scenery_standing)
+                                .then_some((snapshot.frame, snapshot.scenery_standing))
+                        })?;
+                    match later {
+                        (frame, false) => {
+                            seen = frame;
+                            break;
+                        }
+                        _ => {
+                            seen =
+                                hands::wait_for(self, "the scenery to stand", LONG, |snapshot| {
+                                    (!snapshot.scenery_standing).then_some(snapshot.frame)
+                                })?;
+                        }
+                    }
+                }
                 if let Some(measuring) = &mut self.measuring
                     && let Some(since) = measuring.arrival_since.take()
                 {
                     measuring
                         .stood_after_frames
                         .push(seen.saturating_sub(since));
+                    measuring.window.arrived(since, seen);
                 }
                 Ok(())
             }
@@ -1004,6 +1051,10 @@ impl Measuring {
 }
 
 const LONG: Duration = Duration::from_secs(180);
+/// Frames the scenery must stay stood for after a move before the view counts as standing: the
+/// sight follows the camera, which follows the character a frame or two behind its arrival, so
+/// the scenery may stand for a frame where the character left before it stands where it arrived.
+const STOOD_SETTLE: u32 = 12;
 /// How often the probe's ring of frames is read while measuring: well within what it holds at
 /// any frame rate.
 const READ_EVERY: Duration = Duration::from_secs(2);

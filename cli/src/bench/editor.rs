@@ -240,6 +240,40 @@ impl EditorDriver {
         Ok((measuring.window, stood))
     }
 
+    /// Notes that a scene not standing yet is about to open in view, as a file's tab opens on an
+    /// area: the frames until it stands, closed by [`EditorDriver::wait_stood`], are timed rather
+    /// than faulted for what is missing.
+    pub fn arriving(&mut self) {
+        if let Some(measuring) = &mut self.measuring {
+            measuring.arrival_since = Some(self.frame);
+        }
+    }
+
+    /// Waits for every view's scenery to stand whole, or for no view to show an area.
+    pub fn wait_stood(&mut self) -> Result<(), Failure> {
+        let stood = hands::wait_for(self, "the scenery to stand", LONG, |snapshot| {
+            (snapshot.scenery != EditorScenery::Standing).then_some(snapshot.frame)
+        })
+        .map_err(|failure| self.explain_standing(failure))?;
+        if let Some(measuring) = &mut self.measuring
+            && let Some(since) = measuring.arrival_since.take()
+        {
+            measuring.window.arrived(since, stood);
+        }
+        Ok(())
+    }
+
+    /// A failure to stand, told what still stands and what is on its way.
+    fn explain_standing(&mut self, failure: Failure) -> Failure {
+        match (failure, self.snapshot()) {
+            (Failure::Harness(why), Ok(snapshot)) => Failure::Harness(format!(
+                "{why}: {} sceneries standing, on its way: {}",
+                snapshot.sceneries_standing, snapshot.on_its_way
+            )),
+            (failure, _) => failure,
+        }
+    }
+
     /// Sets `scenario` up and plays its script, measuring the script's frames, then leaves the
     /// editor as the scenario found it: its teardown played, whatever was left open dismissed and
     /// every edit it made undone.
@@ -549,6 +583,8 @@ struct Measuring {
     window: Window,
     since: u32,
     last_read: Instant,
+    /// The frame a scene not standing yet was opened at, until it stands.
+    arrival_since: Option<u32>,
 }
 
 impl Measuring {
@@ -557,6 +593,7 @@ impl Measuring {
             window: Window::default(),
             since: frame,
             last_read: Instant::now(),
+            arrival_since: None,
         }
     }
 }

@@ -18,9 +18,9 @@ use bevy::tasks::{AsyncComputeTaskPool, Task};
 
 use super::covers::CopyPiece;
 use super::expand::{self, ChunkSpan, PaintChunk, SceneryChunk, SourcesByChunk};
-use super::plan::{Detail, KEEP_SHARE, Plan, Seen};
+use super::plan::{AHEAD, Detail, KEEP_SHARE, OFF_MIDDLE, Plan, Seen, Sight};
 use super::props;
-use super::{Shortfall, Streaming, distance_to, ground_loaded};
+use super::{Shortfall, Shortfalls, Streaming, distance_to, ground_loaded};
 use crate::core::assets;
 use crate::core::content::Content;
 use crate::core::content::load::FileHashes;
@@ -37,7 +37,7 @@ use crate::core::render::world::gpu::atlas::{
     AtlasLayout, CANOPY_BANDS, CANOPY_EXTENT_MAX, CanopyMap, TerrainAtlas,
 };
 use crate::core::render::world::gpu::impostor::{
-    self, BakeMaterialKey, ImpostorStore, LookBakeKey, LookFromAbove,
+    self, AtlasKey, BakeMaterialKey, ImpostorStore, LookBakeKey, LookFromAbove,
 };
 use crate::core::render::world::gpu::upload;
 use crate::core::render::world::lod::GRAIN_PIXELS;
@@ -65,8 +65,9 @@ pub(super) struct Instances {
     sizes: HashMap<PropId, ModelSize>,
     /// What each area prop looks like from above, as far as the impostors have been baked or read.
     looks: HashMap<PropId, LookFromAbove>,
-    /// The area props whose impostor has been wanted for its look.
-    impostors_wanted: HashSet<PropId>,
+    /// The atlas each area prop is drawn from afar by, as far as their dress is known, wanted for
+    /// its look from above.
+    impostor_keys: HashMap<PropId, AtlasKey>,
     canopy: Canopy,
     /// How many props the content holds: the arena draws the copies of a cover's pieces after
     /// them.
@@ -91,7 +92,7 @@ impl Instances {
             filed: Arc::new(SourcesByChunk::of(&area.prop_sources, area.size.bounds())),
             sizes: HashMap::default(),
             looks: HashMap::default(),
-            impostors_wanted: HashSet::default(),
+            impostor_keys: HashMap::default(),
             canopy: Canopy::default(),
             props: content.table::<PropDef>().len() as u32,
             expanding: HashMap::default(),
@@ -242,6 +243,15 @@ impl Lot {
         }
     }
 
+    /// Whether `other` stands over the same ground as this lot, at whatever detail.
+    fn same_place(self, other: Lot) -> bool {
+        match (self, other) {
+            (Lot::Props(a), Lot::Props(b)) | (Lot::Copies(a, _), Lot::Copies(b, _)) => a == b,
+            (Lot::Far(a, _), Lot::Far(b, _)) => a == b,
+            _ => false,
+        }
+    }
+
     /// The two keys the lot may stand at in the arena: one for what stands, the other for what
     /// replaces it.
     fn keys(self, ground: Rect<Meters>) -> [u32; 2] {
@@ -321,6 +331,9 @@ struct Standing {
     drawn: HashSet<Drawn>,
     instances: u32,
     sources: Vec<Option<u32>>,
+    /// The key of what stood at the lot's place before, drawn on until this lot is dressed, so
+    /// the place is never bare while the models it needs load.
+    replacing: Option<u32>,
 }
 
 /// What an instance in the arena is drawn as: a prop, or a copy strewn by a piece of the covers,
@@ -365,17 +378,20 @@ struct Canopy {
 }
 
 /// Stands in the arena every lot the plan reaches, as far as the frame's budget goes: how many of
-/// them don't stand yet.
+/// them don't stand yet, by the kind of lot.
 pub(super) fn stand(
     world: &mut World,
     streaming: &mut Streaming,
     plan: &Plan,
     root: Entity,
-) -> Shortfall {
+) -> Shortfalls {
     let ground = streaming.area.size.bounds();
     let wanted = wanted_lots(streaming, &plan.seen, ground);
     let wanted_at: HashMap<[u32; 2], Lot> =
         wanted.iter().map(|&lot| (lot.keys(ground), lot)).collect();
+    let taken_in = streaming
+        .sight
+        .map(|sight| Reaches::of(&streaming.instances.copies, sight, sight.reach.0));
     let extents = sizes(world, streaming);
     let instances = &mut streaming.instances;
     instances
@@ -397,7 +413,8 @@ pub(super) fn stand(
     instances.expanded.extend(finished);
     send(world, streaming, root);
     dress(world, streaming, root);
-    let mut shortfall = Shortfall::default();
+    retire(world, streaming, root);
+    let mut shortfalls = Shortfalls::default();
     for lot in wanted {
         let keys = lot.keys(ground);
         let instances = &streaming.instances;
@@ -417,16 +434,48 @@ pub(super) fn stand(
             .iter()
             .filter(|key| !instances.stale.contains(*key))
             .find_map(standing_as);
+        let shortfall = match lot {
+            Lot::Props(_) => &mut shortfalls.props,
+            Lot::Copies(..) => &mut shortfalls.copies,
+            Lot::Far(..) => &mut shortfalls.far,
+        };
+        let standing_there = |key: &u32| {
+            instances
+                .standing
+                .get(key)
+                .filter(|standing| standing.lot.same_place(lot))
+        };
+        let (short, missing) = if !taken_in.is_none_or(|reaches| reaches.take(lot, ground)) {
+            (&mut shortfall.ahead, false)
+        } else if keys.iter().filter_map(standing_as).any(dressed) {
+            (&mut shortfall.stale, false)
+        } else if keys.iter().filter_map(standing_there).any(dressed) {
+            (&mut shortfall.ahead, false)
+        } else {
+            (&mut shortfall.missing, true)
+        };
         if let Some(standing) = fresh {
             if !dressed(standing) {
-                shortfall.missing += 1;
+                *short += 1;
+                if missing {
+                    debug!("{lot:?} missing: standing, not yet dressed");
+                }
             }
             continue;
         }
-        if keys.iter().filter_map(standing_as).any(dressed) {
-            shortfall.stale += 1;
-        } else {
-            shortfall.missing += 1;
+        *short += 1;
+        if missing {
+            let state = if keys.iter().any(|key| instances.expanding.contains_key(key)) {
+                "expanding"
+            } else if matches!(lot, Lot::Far(..)) && extents.is_none() {
+                "waiting for every model's size"
+            } else {
+                "not yet expanding"
+            };
+            debug!(
+                "{lot:?} missing: {state}, {} expanding",
+                instances.expanding.len()
+            );
         }
         let waiting = keys.iter().any(|key| {
             instances.expanding.contains_key(key)
@@ -454,9 +503,20 @@ pub(super) fn stand(
         {
             Some(&free) => free,
             None => {
-                let [_, replacing] = keys;
-                take_away(world, instances, root, replacing);
-                replacing
+                let [first, replacing] = keys;
+                let still_dressing = |key: &u32| {
+                    instances
+                        .standing
+                        .get(key)
+                        .is_some_and(|standing| standing.replacing.is_some())
+                };
+                let newer = if still_dressing(&first) {
+                    first
+                } else {
+                    replacing
+                };
+                take_away(world, instances, root, newer);
+                newer
             }
         };
         let task = expansion(streaming, &plan.seen, ground, lot, extents, key);
@@ -465,11 +525,14 @@ pub(super) fn stand(
             .expanding
             .insert(key, (lot, AsyncComputeTaskPool::get().spawn(task)));
     }
-    shortfall
+    shortfalls
 }
 
 /// Lets go of every lot standing past what the plan keeps, and of any being worked out there, and
-/// of the model and the dress of everything no lot left draws.
+/// of the dress of everything no lot left draws, and the model too unless it is one of the area's
+/// own props: those are loaded and their impostors baked as the area is readied, and are kept
+/// while it stands, so a walk back to one finds its model and its atlas rather than loading and
+/// baking them again.
 pub(super) fn clear(world: &mut World, streaming: &mut Streaming, plan: &Plan, root: Entity) {
     let ground = streaming.area.size.bounds();
     let keep = plan.seen.reach.0 * KEEP_SHARE;
@@ -505,18 +568,10 @@ pub(super) fn clear(world: &mut World, streaming: &mut Streaming, plan: &Plan, r
         .iter()
         .map(|drawn| prop_of(&instances.copies, *drawn))
         .collect();
-    let looks_wanted = world.contains_resource::<ImpostorStore>();
     let Instances {
-        models,
-        sizes,
-        looks,
-        ..
+        models, area_props, ..
     } = &mut *instances;
-    models.retain(|prop, _| {
-        props.contains(prop)
-            || !sizes.contains_key(prop)
-            || looks_wanted && !looks.contains_key(prop)
-    });
+    models.retain(|prop, _| props.contains(prop) || area_props.binary_search(prop).is_ok());
     let undressed: Vec<Drawn> = instances
         .dressed
         .extract_if(|dressed| !drawn.contains(dressed))
@@ -548,11 +603,15 @@ fn wanted_lots(streaming: &Streaming, seen: &Seen, ground: Rect<Meters>) -> Vec<
     let reach = seen.reach.0;
     let lens = seen.lens();
     let copies = &streaming.instances.copies;
-    let shown = copies
-        .iter()
-        .map(|piece| lens.shown_within(piece.largest()).0)
-        .fold(0.0, f32::max)
-        .min(reach);
+    let reaches = Reaches::of(
+        copies,
+        Sight {
+            reach: seen.reach,
+            horizon: seen.horizon,
+            ..seen.sight
+        },
+        seen.sight.reach.0 - (OFF_MIDDLE + 2.0 * AHEAD),
+    );
     let whole = seen.detail(whole_within(copies, lens).0);
     let around = Rect::new(
         at - Offset::new(reach, reach),
@@ -561,12 +620,11 @@ fn wanted_lots(streaming: &Streaming, seen: &Seen, ground: Rect<Meters>) -> Vec<
     let mut wanted: Vec<(SceneryChunk, Lot)> = Vec::new();
     for chunk in SceneryChunk::within(ground, around) {
         let bounds = chunk.bounds(ground);
-        let apart = distance_to(bounds, at);
-        if apart > reach {
+        if !reaches.props_over(bounds) {
             continue;
         }
         wanted.push((chunk, Lot::Props(chunk)));
-        if !copies.is_empty() && apart <= shown {
+        if !copies.is_empty() && reaches.copies_over(bounds) {
             let middle = streaming.heights.height_at(bounds.center());
             let detail = seen.detail(seen.over(bounds, middle, middle)).max(whole);
             wanted.push((chunk, Lot::Copies(chunk, detail)));
@@ -579,13 +637,8 @@ fn wanted_lots(streaming: &Streaming, seen: &Seen, ground: Rect<Meters>) -> Vec<
         );
         a.0.cmp(&b.0).then(a.1.total_cmp(&b.1))
     });
-    let horizon = seen
-        .sight
-        .horizon
-        .map_or(f32::INFINITY, |horizon| horizon.0);
     let mut far: Vec<(f32, Lot)> = FarTile::all(ground)
-        .filter(|tile| farthest_from(tile.bounds(ground), at) > reach)
-        .filter(|tile| distance_to(tile.bounds(ground), at) <= horizon)
+        .filter(|tile| reaches.far_over(tile.bounds(ground)))
         .map(|tile| {
             let bounds = tile.bounds(ground);
             let middle = streaming.heights.height_at(bounds.center());
@@ -599,6 +652,57 @@ fn wanted_lots(streaming: &Streaming, seen: &Seen, ground: Rect<Meters>) -> Vec<
         .map(|(_, lot)| lot)
         .chain(far.into_iter().map(|(_, lot)| lot))
         .collect()
+}
+
+/// How far around an eye at `at` the lots of each kind are taken in: props out to the reach,
+/// copies as far as the view shows their blades, and far tiles out to the horizon where they
+/// reach past `far_from`: the props' reach for the eye itself, and short of it by what the plan
+/// looks ahead for a plan, so a tile's far field stands before its props lots leave the reach.
+#[derive(Clone, Copy)]
+struct Reaches {
+    at: Pos<Meters>,
+    props: f32,
+    copies: f32,
+    far: f32,
+    far_from: f32,
+}
+
+impl Reaches {
+    fn of(copies: &[CopyPiece], sight: Sight, far_from: f32) -> Reaches {
+        let reach = sight.reach.0;
+        Reaches {
+            at: sight.at,
+            props: reach,
+            copies: copies
+                .iter()
+                .map(|piece| sight.lens.shown_within(piece.largest()).0)
+                .fold(0.0, f32::max)
+                .min(reach),
+            far: sight.horizon.map_or(f32::INFINITY, |horizon| horizon.0),
+            far_from,
+        }
+    }
+
+    fn take(self, lot: Lot, ground: Rect<Meters>) -> bool {
+        let bounds = lot.bounds(ground);
+        match lot {
+            Lot::Props(_) => self.props_over(bounds),
+            Lot::Copies(..) => self.copies_over(bounds),
+            Lot::Far(..) => self.far_over(bounds),
+        }
+    }
+
+    fn props_over(self, bounds: Rect<Meters>) -> bool {
+        distance_to(bounds, self.at) <= self.props
+    }
+
+    fn copies_over(self, bounds: Rect<Meters>) -> bool {
+        distance_to(bounds, self.at) <= self.copies
+    }
+
+    fn far_over(self, bounds: Rect<Meters>) -> bool {
+        distance_to(bounds, self.at) <= self.far && farthest_from(bounds, self.at) > self.far_from
+    }
 }
 
 /// How far the farthest point of `bounds` lies from `at`.
@@ -652,19 +756,25 @@ fn sizes(world: &mut World, streaming: &mut Streaming) -> Option<Extents> {
         if !looks_wanted {
             continue;
         }
-        if let Some(look) = world
-            .resource::<ImpostorStore>()
-            .look_from_above(model.id())
+        let key = match streaming.instances.impostor_keys.get(&prop) {
+            Some(key) => Some(*key),
+            None => {
+                let key = world
+                    .get_resource::<PropModels>()
+                    .and_then(|models| models.parts(model.id()))
+                    .map(<[_]>::to_vec)
+                    .and_then(|parts| prop_dress(world, &streaming.content, prop, &model, &parts))
+                    .and_then(|dressed| dressed.impostor);
+                if let Some(key) = key {
+                    streaming.instances.impostor_keys.insert(prop, key);
+                }
+                key
+            }
+        };
+        if let Some(key) = key
+            && let Some(look) = world.resource::<ImpostorStore>().look_from_above(key)
         {
             streaming.instances.looks.insert(prop, look);
-        } else if !streaming.instances.impostors_wanted.contains(&prop)
-            && let Some(parts) = world
-                .get_resource::<PropModels>()
-                .and_then(|models| models.parts(model.id()))
-                .map(<[_]>::to_vec)
-            && prop_dress(world, &streaming.content, prop, &model, &parts).is_some()
-        {
-            streaming.instances.impostors_wanted.insert(prop);
         }
     }
     let instances = &streaming.instances;
@@ -713,10 +823,13 @@ pub(super) fn lay_canopy(world: &mut World, streaming: &mut Streaming) -> Shortf
             .spawn(async move { canopy_map(&area, layout, &sizes, &looks) });
         instances.canopy.making = Some((wanted, task));
     }
-    Shortfall {
-        missing: 1,
-        stale: 0,
+    let mut shortfall = Shortfall::default();
+    if instances.canopy.made_for.is_some() {
+        shortfall.stale = 1;
+    } else {
+        shortfall.missing = 1;
     }
+    shortfall
 }
 
 /// What the props of `area` look like from above over each texel of the canopy of `layout`: the
@@ -1088,8 +1201,8 @@ fn paint_chunks(bounds: Rect<Meters>) -> impl Iterator<Item = PaintChunk> {
 }
 
 /// Sends the lots worked out to the arena, nearest first as they were asked for, as many as the
-/// frame's budget holds, wanting the models of what they draw, each taking the place of what
-/// stood at its pair's other key.
+/// frame's budget holds, wanting the models of what they draw, each to take the place of what
+/// stands at its pair's other key once it is dressed.
 fn send(world: &mut World, streaming: &mut Streaming, root: Entity) {
     while let Some((_, _, expanded)) = streaming.instances.expanded.first() {
         let bytes = expanded.records.len() * InstanceRecord::BYTES as usize;
@@ -1129,6 +1242,8 @@ fn send(world: &mut World, streaming: &mut Streaming, root: Entity) {
         if matches!(lot, Lot::Props(_) | Lot::Far(..)) {
             instances.props_revision += 1;
         }
+        let [first, replacing] = sibling_keys(key);
+        let replaced = if key == first { replacing } else { first };
         instances.standing.insert(
             key,
             Standing {
@@ -1136,12 +1251,36 @@ fn send(world: &mut World, streaming: &mut Streaming, root: Entity) {
                 drawn: expanded.drawn,
                 instances: expanded.records.len() as u32,
                 sources: expanded.sources.into_iter().map(Some).collect(),
+                replacing: instances
+                    .standing
+                    .contains_key(&replaced)
+                    .then_some(replaced),
             },
         );
         changed(world, root, placed);
-        let [first, replacing] = sibling_keys(key);
-        let replaced = if key == first { replacing } else { first };
-        take_away(world, &mut streaming.instances, root, replaced);
+    }
+}
+
+/// Lets go of what stood at a place once what replaces it there stands dressed.
+fn retire(world: &mut World, streaming: &mut Streaming, root: Entity) {
+    let instances = &streaming.instances;
+    let retired: Vec<(u32, u32)> = instances
+        .standing
+        .iter()
+        .filter(|(_, standing)| {
+            standing
+                .drawn
+                .iter()
+                .all(|drawn| instances.dressed.contains(drawn))
+        })
+        .filter_map(|(key, standing)| standing.replacing.map(|replaced| (*key, replaced)))
+        .collect();
+    let instances = &mut streaming.instances;
+    for (key, replaced) in retired {
+        take_away(world, instances, root, replaced);
+        if let Some(standing) = instances.standing.get_mut(&key) {
+            standing.replacing = None;
+        }
     }
 }
 
@@ -1241,7 +1380,7 @@ fn prop_dress(
         .collect();
     let materials = materials?;
     let overhang = props::overhang(content, def);
-    want_impostor(
+    let impostor = want_impostor(
         world, content, def, model, parts, &looks, &materials, overhang,
     );
     let translucency = looks
@@ -1255,12 +1394,13 @@ fn prop_dress(
         fades: def.fade,
         overhang,
         translucency,
+        impostor,
     })
 }
 
-/// Wants `model`'s impostor, baked by `materials`, the world materials its parts are drawn in
-/// under `looks`, framed `overhang` past the model, or read from the file kept for a model made
-/// of the same and dressed alike.
+/// Wants the atlas of `model` dressed by `materials`, the world materials its parts are drawn in
+/// under `looks`, framed `overhang` past the model: read from the file kept for a model made of
+/// the same and dressed alike, else baked. The atlas's key.
 #[allow(clippy::too_many_arguments)]
 fn want_impostor(
     world: &mut World,
@@ -1271,10 +1411,8 @@ fn want_impostor(
     looks: &[Option<&MaterialLook>],
     materials: &[Handle<WorldMaterial>],
     overhang: Meters,
-) {
-    let Some(path) = model.path().cloned() else {
-        return;
-    };
+) -> Option<AtlasKey> {
+    let path = model.path().cloned()?;
     let keys: Vec<BakeMaterialKey> = parts
         .iter()
         .zip(looks)
@@ -1341,6 +1479,7 @@ fn want_impostor(
             .resource_mut::<ImpostorStore>()
             .want(&profile, model.id(), key, materials, overhang);
     }
+    Some(key)
 }
 
 /// How the arena draws the copies `piece` strews, its prop's model drawn in `parts`: casting no
@@ -1376,6 +1515,7 @@ fn copy_dress(
         fades: false,
         overhang: Meters(0.0),
         translucency: 0.0,
+        impostor: None,
     })
 }
 

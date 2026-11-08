@@ -422,6 +422,8 @@ fn draw_bakes(bakes: BakeQueue) {
         materials,
         allocators,
         keys,
+        prepass_keys,
+        light_keys,
         views,
         mut orders,
         progress,
@@ -449,6 +451,15 @@ fn draw_bakes(bakes: BakeQueue) {
         progress.left_out();
         return;
     };
+    let warmth = Warmth {
+        lit: keys.values().copied().collect(),
+        depth: prepass_keys
+            .values()
+            .chain(light_keys.values())
+            .copied()
+            .collect(),
+    };
+    warmth.warm_impostors(&mut pipeline, &cache);
     let jobs = std::mem::take(&mut orders.bakes);
     let mut encoder = device.create_command_encoder(&default());
     let mut baked = false;
@@ -457,6 +468,7 @@ fn draw_bakes(bakes: BakeQueue) {
             &mut pipeline,
             &cache,
             view_key,
+            &warmth,
             &materials,
             &allocators,
             &job,
@@ -507,8 +519,7 @@ fn draw_bakes(bakes: BakeQueue) {
             &mut encoder,
             &atlas,
             job.layer,
-            job.model,
-            job.key.clone(),
+            job.key,
         ));
         baked = true;
     }
@@ -532,10 +543,48 @@ struct BakeQueue<'w, 's> {
     materials: Res<'w, ErasedRenderAssets<PreparedMaterial>>,
     allocators: Res<'w, MaterialBindGroupAllocators>,
     keys: Res<'w, ViewKeyCache>,
+    prepass_keys: Res<'w, ViewKeyPrepassCache>,
+    light_keys: Res<'w, LightKeyCache>,
     views:
         Query<'w, 's, (&'static ExtractedView, &'static MeshViewBindGroup), Without<LightEntity>>,
     orders: ResMut<'w, ImpostorOrders>,
     progress: Res<'w, RenderProgress>,
+}
+
+/// The keys of every view there is, lit, and of every depth view, the cameras' prepasses and the
+/// lights', which every pipeline a model may draw with is queued for as the model is baked: a
+/// model is baked as it is readied, under the cover, so no pipeline compiles at its first draw.
+struct Warmth {
+    lit: Vec<MeshPipelineKey>,
+    depth: Vec<MeshPipelineKey>,
+}
+
+impl Warmth {
+    fn warm(
+        &self,
+        pipeline: &mut PropPipeline,
+        cache: &PipelineCache,
+        kind: TypeId,
+        properties: &Arc<MaterialProperties>,
+    ) {
+        for &view in &self.lit {
+            pipeline.specialize(cache, view, PropPass::Lit, kind, properties);
+        }
+        for &view in &self.depth {
+            pipeline.specialize(cache, view, PropPass::Depth, kind, properties);
+        }
+    }
+
+    fn warm_impostors(&self, pipeline: &mut PropPipeline, cache: &PipelineCache) {
+        for proxy in [false, true] {
+            for &view in &self.lit {
+                pipeline.specialize_impostors(cache, view, true, proxy);
+            }
+            for &view in &self.depth {
+                pipeline.specialize_impostors(cache, view, false, proxy);
+            }
+        }
+    }
 }
 
 /// A part as a bake draws it: on its material's bake pipeline, in its material, the level the
@@ -553,16 +602,18 @@ fn bake_parts<'a>(
     pipeline: &mut PropPipeline,
     cache: &'a PipelineCache,
     view: MeshPipelineKey,
+    warmth: &Warmth,
     materials: &ErasedRenderAssets<PreparedMaterial>,
     allocators: &MaterialBindGroupAllocators,
     job: &BakeJob,
 ) -> Option<Vec<BakePart<'a>>> {
     let mut parts = Vec::new();
     for (part, material) in job.placed.parts.iter().zip(job.materials.iter()) {
+        let prepared = materials.get(material.id())?;
+        warmth.warm(pipeline, cache, material.type_id(), &prepared.properties);
         let Some(level) = impostor::bake_level(&job.placed, job.overhang, part) else {
             continue;
         };
-        let prepared = materials.get(material.id())?;
         let bound = allocators
             .get(&material.type_id())?
             .get(prepared.binding.group)?
@@ -647,16 +698,16 @@ impl PropQueue<'_, '_> {
             let Some(arena) = self.arenas.0.get(&scenery) else {
                 continue;
             };
-            let (Some(table), true) = (
-                self.culls
-                    .0
-                    .get(&scenery)
-                    .and_then(|cull| cull.table.as_ref()),
-                self.culls
-                    .0
-                    .get(&scenery)
-                    .is_some_and(|cull| cull.views.contains_key(&view)),
-            ) else {
+            let Some(cull) = self.culls.0.get(&scenery) else {
+                if !arena.chunks.is_empty() {
+                    self.progress.left_out();
+                }
+                continue;
+            };
+            if !cull.views.contains_key(&view) {
+                continue;
+            }
+            let Some(table) = cull.table.as_ref() else {
                 if !arena.chunks.is_empty() {
                     self.progress.left_out();
                 }

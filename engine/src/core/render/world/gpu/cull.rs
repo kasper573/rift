@@ -44,13 +44,14 @@ use bevy::render::sync_world::MainEntity;
 use bevy::render::texture::TextureCache;
 use bevy::render::view::{ExtractedView, RetainedViewEntity, ViewDepthStencilTexture};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
+use bevy::shape::HalfSpace;
 
 use super::arena::{
     self, BOX_INDICES, ChunkPlace, ExtractedPropArena, GpuChunk, GpuInstances, InstanceArenas,
     InstanceRecord, ModelArena, PlacedModel, QUAD_INDICES,
 };
 use super::clearing::{self, Clearing};
-use super::impostor::{self, ImpostorAtlas};
+use super::impostor::{self, AtlasKey, ImpostorAtlas};
 use crate::core::render::camera::NEAR_PLANE;
 use crate::core::render::video::VideoPreferences;
 use crate::core::render::world::RenderProgress;
@@ -116,8 +117,8 @@ pub const PROP_OCCLUDE: &str = "prop_occlude";
 /// sizes on screen are measured from and how many pixels a metre spans a metre off it, whether a
 /// metre spans as many however far it lies, whether what lies behind the near half-space is left
 /// out, the sizes on screen the kernel judges by, how far off the eye props still stand (none
-/// for as far as they go), and for the view that clears what hides the camera's subject, whom it
-/// follows and how far a fade moves this frame.
+/// for as far as they go), for the view that clears what hides the camera's subject, whom it
+/// follows and how far a fade moves this frame, and how many chunks it sees this frame.
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
 pub struct CullView {
     planes: [Vec4; 6],
@@ -125,6 +126,7 @@ pub struct CullView {
     pixels_at_a_meter: f32,
     orthographic: u32,
     test_near: u32,
+    casting_sine: f32,
     grain_pixels: f32,
     stray_pixels: f32,
     near: f32,
@@ -134,6 +136,7 @@ pub struct CullView {
     horizon: f32,
     subject: Vec3,
     fade_step: f32,
+    chunks_seen: u32,
 }
 
 impl CullView {
@@ -153,6 +156,7 @@ impl CullView {
             pixels_at_a_meter,
             orthographic: u32::from(orthographic),
             test_near: u32::from(!light),
+            casting_sine: 0.0,
             grain_pixels: GRAIN_PIXELS,
             stray_pixels: DRAWN_STRAY_PIXELS,
             near: NEAR_PLANE.0,
@@ -162,6 +166,7 @@ impl CullView {
             horizon: 0.0,
             subject: Vec3::ZERO,
             fade_step: 0.0,
+            chunks_seen: 0,
         }
     }
 
@@ -176,6 +181,14 @@ impl CullView {
         }
     }
 
+    /// The view handing each prop from its model to its impostor where it spans `pixels` across.
+    pub fn handing_over_at(self, pixels: f32) -> CullView {
+        CullView {
+            impostor_pixels: pixels,
+            ..self
+        }
+    }
+
     /// The view clearing what comes between its eye and `subject`, each fade moving `step` of the
     /// way this frame. Every other view draws its props whole.
     pub fn clearing(self, subject: Vec3, step: f32) -> CullView {
@@ -186,22 +199,88 @@ impl CullView {
         }
     }
 
-    /// The view an extracted view culls through, a light's when `light`.
+    /// The view an extracted view culls through, a light's when `light`: through `frustum`, a
+    /// light's with the near half-space its projection puts there (see [`lit_frustum`]).
     pub fn of(view: &ExtractedView, frustum: &Frustum, light: bool) -> CullView {
         let orthographic = view.clip_from_view.w_axis.w == 1.0;
         let pixels_at_a_meter = view.viewport.w as f32 / 2.0 * view.clip_from_view.y_axis.y;
-        CullView::new(
+        let culled = CullView::new(
             frustum,
             view.world_from_view.translation(),
             pixels_at_a_meter,
             orthographic,
             light,
-        )
+        );
+        if light {
+            culled.lit_from(sun_sine(view))
+        } else {
+            culled
+        }
+    }
+
+    /// A light's view whose sun stands `sine` of the way up the sky: a caster farther toward the
+    /// sun than its height over that sine throws its shadow short of what the view sees, so the
+    /// view leaves it out, as far as the near half-space those casters lie behind tells.
+    pub fn lit_from(self, sine: f32) -> CullView {
+        if sine <= SUN_RIM {
+            return self;
+        }
+        CullView {
+            test_near: 1,
+            casting_sine: sine,
+            ..self
+        }
     }
 
     fn intersect_near(&self) -> bool {
         self.test_near != 0
     }
+
+    /// How far behind the near half-space a caster `height` tall may still throw its shadow into
+    /// the view, in metres: without end for a view that keeps all behind it.
+    fn casting_from(&self, height: f32) -> f32 {
+        if self.casting_sine > 0.0 {
+            height / self.casting_sine
+        } else {
+            f32::INFINITY
+        }
+    }
+}
+
+/// How high the sun's sine must stand for a light's view to bound its casters: lower, their
+/// shadows run too long for the bound to leave any out.
+pub const SUN_RIM: f32 = 0.01;
+
+/// The sine of how high the sun of a light's view stands over the horizon: what the view looks
+/// back along, lifted.
+pub fn sun_sine(view: &ExtractedView) -> f32 {
+    view.world_from_view.back().y
+}
+
+/// A light's `frustum` with the near half-space its orthographic projection puts there. The
+/// frustum bevy derives from a reversed-depth orthographic projection holds no near half-space
+/// (its fifth lies twice the far depth off), so that every caster behind a cascade casts into it;
+/// a cull that bounds those casters needs the plane.
+pub fn lit_frustum(clip_from_world: &Mat4, frustum: &Frustum) -> Frustum {
+    let mut frustum = *frustum;
+    frustum.half_spaces[4] = HalfSpace::new(clip_from_world.row(3) - clip_from_world.row(2));
+    frustum
+}
+
+/// The matrix an extracted view projects the world through.
+pub fn clip_from_world_of(view: &ExtractedView) -> Mat4 {
+    view.clip_from_view * view.world_from_view.to_matrix().inverse()
+}
+
+/// `frustum` with its near half-space moved `beyond` metres back, so a light's view keeps the
+/// casters behind it that still throw their shadows into it.
+pub fn casting_frustum(frustum: &Frustum, beyond: f32) -> Frustum {
+    let mut frustum = *frustum;
+    if beyond.is_finite() {
+        let near = frustum.half_spaces[4].normal_d();
+        frustum.half_spaces[4] = HalfSpace::new(near + Vec4::new(0.0, 0.0, 0.0, beyond));
+    }
+    frustum
 }
 
 /// What a scenery's arena draws, as the kernel reads it: for each prop by its place among the
@@ -220,8 +299,9 @@ pub struct DrawTable {
     /// boxes, in the same order, among `commands`.
     pub impostors: Range<u32>,
     pub proxies: Range<u32>,
-    /// Each prop's model, by its place among `props`: none for a prop drawn by nothing.
-    pub models: Vec<Option<AssetId<Gltf>>>,
+    /// The atlas each prop is drawn from afar by, by its place among `props`: none for a prop
+    /// drawn by nothing or as its mesh alone.
+    pub atlases: Vec<Option<AtlasKey>>,
 }
 
 #[derive(ShaderType, Clone, Copy, Debug, Default, PartialEq)]
@@ -305,6 +385,8 @@ pub struct DrawnProp<'a> {
     pub overhang: f32,
     /// How translucent its materials are at most.
     pub translucency: f32,
+    /// The atlas it is drawn from afar by, if it has one.
+    pub impostor: Option<AtlasKey>,
 }
 
 impl DrawTable {
@@ -328,14 +410,14 @@ impl DrawTable {
         let count = props.last().map_or(0, |(prop, _)| *prop as usize + 1);
         let mut table = DrawTable {
             props: vec![PropDraw::default(); count],
-            models: vec![None; count],
+            atlases: vec![None; count],
             ..default()
         };
         for (prop, drawn) in &props {
             let model = drawn.placed;
             let middle = model.bounds.center;
             let half = model.bounds.half_extents + Vec3A::splat(drawn.overhang);
-            table.models[*prop as usize] = Some(drawn.model);
+            table.atlases[*prop as usize] = drawn.impostor;
             table.props[*prop as usize] = PropDraw {
                 x: middle.x,
                 y: middle.y,
@@ -569,16 +651,16 @@ impl GpuDrawTable {
         device: &RenderDevice,
         queue: &RenderQueue,
         round: u64,
-        layer_of: impl Fn(AssetId<Gltf>) -> Option<u32>,
+        layer_of: impl Fn(AtlasKey) -> Option<u32>,
     ) {
         if self.impostors_after == Some(round) {
             return;
         }
         let layers: Vec<u32> = self
             .table
-            .models
+            .atlases
             .iter()
-            .map(|model| model.and_then(&layer_of).map_or(0, |layer| layer + 1))
+            .map(|key| key.and_then(&layer_of).map_or(0, |layer| layer + 1))
             .collect();
         self.impostors
             .set(if layers.is_empty() { vec![0] } else { layers });
@@ -749,6 +831,10 @@ impl ViewCull {
         }
         self.occluding = None;
         self.groups = seen.instances.div_ceil(THREADS);
+        let view = CullView {
+            chunks_seen: seen.spans.len() as u32,
+            ..view
+        };
         self.chunks.set(if seen.spans.is_empty() {
             vec![UVec4::ZERO]
         } else {
@@ -931,11 +1017,11 @@ pub fn seen_chunks(
                 .map(|(prop, _, _)| table.radius_of(*prop))
                 .fold(0.0, f32::max)
                 * chunk.contents.largest_scale;
-            let bounds = Aabb::from_min_max(
-                chunk.contents.low - Vec3::splat(reach),
-                chunk.contents.high + Vec3::splat(reach),
-            );
-            frustum.intersects_obb(&bounds, &Affine3A::IDENTITY, view.intersect_near(), true)
+            let low = chunk.contents.low - Vec3::splat(reach);
+            let high = chunk.contents.high + Vec3::splat(reach);
+            let bounds = Aabb::from_min_max(low, high);
+            let casting = casting_frustum(frustum, view.casting_from(high.y - low.y));
+            casting.intersects_obb(&bounds, &Affine3A::IDENTITY, view.intersect_near(), true)
         })
         .map(|(&key, chunk)| {
             for &(prop, _, instances) in &chunk.contents.props {
@@ -1078,9 +1164,7 @@ pub(super) fn prepare_culls(
             cull.views.clear();
         }
         if let (Some(table), Some(atlas)) = (&mut cull.table, atlas.as_deref()) {
-            table.place_impostors(&device, &queue, atlas.round, |model| {
-                atlas.layers.slot(model)
-            });
+            table.place_impostors(&device, &queue, atlas.round, |key| atlas.layers.slot(key));
         }
         let (Some(table), Some(records), Some(shares), Some(standing)) = (
             &cull.table,
@@ -1095,9 +1179,13 @@ pub(super) fn prepare_culls(
             if !layers.unwrap_or_default().intersects(&drawn.layers) {
                 continue;
             }
+            let lit = light.then(|| lit_frustum(&clip_from_world_of(view), frustum));
+            let frustum = lit.as_ref().unwrap_or(frustum);
             let mut culled = CullView::of(view, frustum, light);
             if !light {
-                culled = culled.within(video.view_distance.horizon());
+                culled = culled
+                    .within(video.view_distance.horizon())
+                    .handing_over_at(IMPOSTOR_PIXELS * video.detail.impostor_widths());
             }
             if let Some(clearing) = clearing.0
                 && !light
@@ -1394,6 +1482,7 @@ fn draw_table(arena: &GpuInstances, models: &ModelArena) -> DrawTable {
                         fades: dressed.is_some_and(|dressed| dressed.fades),
                         overhang: dressed.map_or(0.0, |dressed| dressed.overhang.0),
                         translucency: dressed.map_or(0.0, |dressed| dressed.translucency),
+                        impostor: dressed.and_then(|dressed| dressed.impostor),
                     },
                 ))
             })

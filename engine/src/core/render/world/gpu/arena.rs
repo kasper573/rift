@@ -23,6 +23,7 @@ use bevy::render::{Extract, ExtractSchedule, MainWorld, Render, RenderApp, Rende
 use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, Task};
 
+use super::impostor::AtlasKey;
 use super::slab::{Slab, SlabBlock, SlabSpace};
 use super::upload::UploadBudget;
 use crate::core::render::world::lod::{self, Surface};
@@ -433,6 +434,8 @@ pub struct DressedProp {
     pub overhang: Meters,
     /// How translucent its materials are at most.
     pub translucency: f32,
+    /// The atlas it is drawn from afar as a picture of, none for a cover's copy.
+    pub impostor: Option<AtlasKey>,
 }
 
 /// What a chunk's instances are, as culling reads them: the box their places fill, the largest

@@ -20,6 +20,7 @@ pub mod rig_clip;
 pub mod sky;
 pub mod terrain;
 
+use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
@@ -32,13 +33,15 @@ use bevy::prelude::*;
 use bevy::render::render_resource::{CachedPipelineState, PipelineCache};
 use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::world_serialization::{WorldAssetRoot, WorldInstance, WorldInstanceSpawner};
+use schemars::JsonSchema;
+use serde::{Deserialize, Serialize};
 
 use super::Look;
 use super::camera::{self, CameraRig};
 use super::video::VideoPreferences;
 
 /// The width of each cascade of the sun's shadow map in texels.
-const SHADOW_MAP: usize = 4096;
+const SHADOW_MAP: usize = 2048;
 
 pub struct WorldScenePlugin;
 
@@ -202,41 +205,109 @@ pub fn missing_drawn(world: &World) -> u32 {
         .map_or(0, |progress| progress.0.missing.load(Ordering::Relaxed))
 }
 
-/// Whether anything the world draws is still on its way to standing: a model loading or not yet
-/// spawned, a texture a model or a cover draws with still decoding, a ground's pictures, a body's
-/// skin waiting on its rig or its paint, or a pipeline something draws with compiling. A
-/// view is shown only once nothing is, so it is first seen whole.
+/// Whether anything the world draws is still on its way to standing. A view is shown only once
+/// nothing is, so it is first seen whole.
 pub fn readying(world: &mut World) -> bool {
-    let waiting = world
-        .query_filtered::<(), Or<(With<terrain::GroundPictures>, With<body::SkinOf>)>>()
+    on_its_way(world).any()
+}
+
+/// What the world draws that is still on its way to standing: grounds whose pictures are loading
+/// or being stacked, bodies whose skin waits on its rig or its paint, pipelines compiling, a draw
+/// the latest frame left out for want of something, impostors baking, models loading or not yet
+/// spawned, and textures a model or a cover draws with still decoding.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct OnItsWay {
+    pub pictures: u32,
+    pub skins: u32,
+    pub compiling: u32,
+    pub left_out: bool,
+    pub baking: u32,
+    pub models: u32,
+    pub textures: u32,
+}
+
+impl OnItsWay {
+    pub fn any(self) -> bool {
+        self != OnItsWay::default()
+    }
+}
+
+impl fmt::Display for OnItsWay {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let counted = [
+            ("pictures", self.pictures),
+            ("skins", self.skins),
+            ("pipelines compiling", self.compiling),
+            ("impostors baking", self.baking),
+            ("models", self.models),
+            ("textures", self.textures),
+        ];
+        let mut parts: Vec<String> = counted
+            .into_iter()
+            .filter(|(_, count)| *count > 0)
+            .map(|(what, count)| format!("{count} {what}"))
+            .collect();
+        if self.left_out {
+            parts.push("a draw left out".to_owned());
+        }
+        if parts.is_empty() {
+            f.write_str("nothing")
+        } else {
+            f.write_str(&parts.join(", "))
+        }
+    }
+}
+
+pub fn on_its_way(world: &mut World) -> OnItsWay {
+    let pictures = world
+        .query_filtered::<(), With<terrain::GroundPictures>>()
         .iter(world)
-        .next()
-        .is_some();
+        .count() as u32;
+    let skins = world
+        .query_filtered::<(), With<body::SkinOf>>()
+        .iter(world)
+        .count() as u32;
     let models: Vec<Entity> = world
         .query_filtered::<Entity, With<WorldAssetRoot>>()
         .iter(world)
         .collect();
     let mut textures = drawn_textures::<material::WorldLook>(world);
     textures.extend(drawn_textures::<cover::CoverVfx>(world));
-    let compiling = world
-        .get_resource::<RenderProgress>()
-        .is_some_and(|progress| {
-            progress.0.compiling.load(Ordering::Relaxed) > 0
-                || !progress.0.whole.load(Ordering::Relaxed)
-        });
+    let (compiling, left_out) =
+        world
+            .get_resource::<RenderProgress>()
+            .map_or((0, false), |progress| {
+                (
+                    progress.0.compiling.load(Ordering::Relaxed) as u32,
+                    !progress.0.whole.load(Ordering::Relaxed),
+                )
+            });
     let Some(assets) = world.get_resource::<AssetServer>() else {
-        return waiting || compiling;
+        return OnItsWay {
+            pictures,
+            skins,
+            compiling,
+            left_out,
+            ..OnItsWay::default()
+        };
     };
-    let baking = world
-        .get_resource::<gpu::impostor::ImpostorStore>()
-        .is_some_and(|store| store.pending() > 0);
-    waiting
-        || compiling
-        || baking
-        || models.into_iter().any(|model| !model_stands(world, model))
-        || textures
+    OnItsWay {
+        pictures,
+        skins,
+        compiling,
+        left_out,
+        baking: world
+            .get_resource::<gpu::impostor::ImpostorStore>()
+            .map_or(0, |store| store.pending() as u32),
+        models: models
+            .into_iter()
+            .filter(|model| !model_stands(world, *model))
+            .count() as u32,
+        textures: textures
             .iter()
-            .any(|texture| assets.load_state(texture).is_loading())
+            .filter(|texture| assets.load_state(*texture).is_loading())
+            .count() as u32,
+    }
 }
 
 /// The textures of the standard part of every material of kind `E` a mesh draws with.

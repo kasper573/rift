@@ -42,8 +42,8 @@ use super::terrain::PieceShape;
 use super::{Area, AreaModule, FogBank, Lighting, PointLightDef, Rainfall, Weather};
 use crate::core::content::{Content, ContentFile, FileHash, FileHashes};
 use crate::core::ground::{
-    GroundGrid, GroundValue, Heightfield, OVERVIEW_STRIDE, PaintMap, SAMPLES_PER_METER, TileAt,
-    TileVersion, WaterSurface,
+    GroundGrid, GroundValue, Heightfield, OVERVIEW_STRIDE, PaintMap, SAMPLES_PER_METER, TILE_SIDE,
+    TileAt, TileVersion, WaterSurface,
 };
 use crate::core::jobs::{self, Handoff};
 use crate::core::math::{Pos, Rect, Rng, Size};
@@ -179,13 +179,14 @@ pub fn spawn(
         instances: Instances::new(content, area, covers.copies()),
         planner,
         sight: None,
+        seen: false,
         planning: None,
         plan: None,
         whole: false,
         stood_at: None,
         stood: Stood::default(),
         drawn: None,
-        shortfall: Shortfall::default(),
+        shortfalls: Shortfalls::default(),
         loading: HashMap::default(),
     };
     world.resource_mut::<Streams>().0.insert(root, streaming);
@@ -211,6 +212,19 @@ pub fn view_from(world: &mut World, scenery: Scenery, sight: Sight) {
         .get_mut(&scenery.root)
     {
         streaming.sight = Some(sight);
+        streaming.seen = true;
+    }
+}
+
+/// Tells the scenery no eye looks at it until it is viewed again.
+pub fn unseen(world: &mut World, scenery: Scenery) {
+    if let Some(streaming) = world
+        .resource_mut::<Streams>()
+        .bypass_change_detection()
+        .0
+        .get_mut(&scenery.root)
+    {
+        streaming.seen = false;
     }
 }
 
@@ -424,51 +438,61 @@ pub fn shaders_ready(world: &World, content: &Content, area: &Area) -> bool {
         })
 }
 
-/// Whether any scenery has yet to stand what its sight takes in.
+/// Whether any scenery an eye looks at has yet to stand what its sight takes in.
 pub fn standing(world: &World) -> bool {
+    sceneries_standing(world) > 0
+}
+
+/// How many sceneries an eye looks at have yet to stand what their sight takes in.
+pub fn sceneries_standing(world: &World) -> u32 {
     let drawn = frames_drawn(world);
     world
         .resource::<Streams>()
         .0
         .values()
-        .any(|streaming| !streaming.stands(drawn))
+        .filter(|streaming| streaming.seen && !streaming.stands(drawn))
+        .count() as u32
 }
 
 /// How much of the ground, the props, the covers' copies and their blades the sights take in has
 /// yet to stand at all.
 pub fn missing(world: &World) -> u32 {
-    let standing: u32 = world
-        .resource::<Streams>()
-        .0
-        .values()
-        .map(|streaming| streaming.shortfall.missing)
-        .sum();
-    standing + missing_drawn(world)
+    shortfalls(world).total().missing + missing_drawn(world)
 }
 
 /// How much of the ground, the props, the covers' copies and their blades the sights take in
 /// stands as it did before an edit, its new values on their way.
 pub fn stale(world: &World) -> u32 {
-    world
-        .resource::<Streams>()
-        .0
-        .values()
-        .map(|streaming| streaming.shortfall.stale)
-        .sum()
+    shortfalls(world).total().stale
+}
+
+/// How much of each part of what the sights take in has yet to stand as it is now, over every
+/// scenery streaming.
+pub fn shortfalls(world: &World) -> Shortfalls {
+    let mut all = Shortfalls::default();
+    for streaming in world.resource::<Streams>().0.values() {
+        if streaming.seen {
+            all += streaming.shortfalls;
+        }
+    }
+    all
 }
 
 /// How much of what a plan takes in has yet to stand as it is now.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Shortfall {
-    /// Not standing at all, or coarser than wanted.
+    /// Not standing at all, or coarser than wanted, where the sights take it in.
     pub missing: u32,
     /// Standing as it did before an edit, its new values on their way.
     pub stale: u32,
+    /// Not standing yet, or coarser or older than wanted, beyond what the sights take in: the
+    /// plan stands past their edges so that what they move onto stands before they reach it.
+    pub ahead: u32,
 }
 
 impl Shortfall {
     pub fn any(self) -> bool {
-        self.missing > 0 || self.stale > 0
+        self.missing > 0 || self.stale > 0 || self.ahead > 0
     }
 }
 
@@ -476,6 +500,48 @@ impl std::ops::AddAssign for Shortfall {
     fn add_assign(&mut self, other: Shortfall) {
         self.missing += other.missing;
         self.stale += other.stale;
+        self.ahead += other.ahead;
+    }
+}
+
+/// How much of each part of what a plan takes in has yet to stand as it is now: the ground's
+/// tiles, the lots of props, of the covers' copies and of the far field, the canopy over the
+/// ground, and the covers' blades.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Shortfalls {
+    pub ground: Shortfall,
+    pub props: Shortfall,
+    pub copies: Shortfall,
+    pub far: Shortfall,
+    pub canopy: Shortfall,
+    pub grass: Shortfall,
+}
+
+impl Shortfalls {
+    pub fn total(self) -> Shortfall {
+        let mut total = Shortfall::default();
+        for part in [
+            self.ground,
+            self.props,
+            self.copies,
+            self.far,
+            self.canopy,
+            self.grass,
+        ] {
+            total += part;
+        }
+        total
+    }
+}
+
+impl std::ops::AddAssign for Shortfalls {
+    fn add_assign(&mut self, other: Shortfalls) {
+        self.ground += other.ground;
+        self.props += other.props;
+        self.copies += other.copies;
+        self.far += other.far;
+        self.canopy += other.canopy;
+        self.grass += other.grass;
     }
 }
 
@@ -577,6 +643,9 @@ struct Streaming {
     instances: Instances,
     planner: Making<Arc<Planner>>,
     sight: Option<Sight>,
+    /// Whether an eye looks at it now: a scenery kept while no view shows it goes on standing
+    /// what it can, but its shortfall is no one's wait.
+    seen: bool,
     /// The plan being made, for the widened sight it is made for.
     planning: Option<(Sight, Task<Plan>)>,
     plan: Option<Arc<Plan>>,
@@ -588,9 +657,8 @@ struct Streaming {
     stood: Stood,
     /// The plan whose ground the terrain draws.
     drawn: Option<Arc<Plan>>,
-    /// How much of the ground, the props, the covers' copies and their blades the plan takes in
-    /// has yet to stand as it is now.
-    shortfall: Shortfall,
+    /// How much of each part of what the plan takes in has yet to stand as it is now.
+    shortfalls: Shortfalls,
     /// The tiles of ground being loaded for what stands on them.
     loading: HashMap<TileAt, Task<()>>,
 }
@@ -704,14 +772,15 @@ fn stream_plan(world: &mut World, root: Entity, streaming: &mut Streaming) {
     streaming
         .loading
         .retain(|_, task| check_ready(task).is_none());
-    let mut shortfall = draw_ground(world, streaming, &plan);
-    shortfall += instances::stand(world, streaming, &plan, root);
+    let ground = draw_ground(world, streaming, &plan);
+    let mut shortfalls = instances::stand(world, streaming, &plan, root);
     instances::clear(world, streaming, &plan, root);
-    shortfall += instances::lay_canopy(world, streaming);
-    shortfall += grass::grow(world, streaming, &plan.seen);
-    streaming.shortfall = shortfall;
+    shortfalls.ground = ground;
+    shortfalls.canopy = instances::lay_canopy(world, streaming);
+    shortfalls.grass = grass::grow(world, streaming, &plan.seen);
+    streaming.shortfalls = shortfalls;
     stream_lights(world, streaming, &plan, root);
-    streaming.whole = !shortfall.any();
+    streaming.whole = !shortfalls.total().any();
     if streaming.whole {
         streaming.stood_at = frames_drawn(world);
     }
@@ -753,12 +822,34 @@ fn draw_ground(world: &mut World, streaming: &mut Streaming, plan: &Arc<Plan>) -
         }
         streaming.drawn = Some(plan.clone());
     }
-    world
-        .get::<TerrainAtlas>(terrain)
-        .map_or(Shortfall::default(), |atlas| Shortfall {
-            missing: atlas.missing(),
-            stale: atlas.stale(),
-        })
+    let Some(atlas) = world.get::<TerrainAtlas>(terrain) else {
+        return Shortfall::default();
+    };
+    let mut shortfall = Shortfall {
+        missing: u32::from(atlas.overview_missing()),
+        stale: atlas.stale(),
+        ahead: 0,
+    };
+    let mut missing = atlas.missing_tiles().peekable();
+    if missing.peek().is_none() {
+        return shortfall;
+    }
+    let taken_in: Option<HashSet<TileAt>> = streaming.sight.map(|sight| {
+        let size = streaming.heights.size();
+        nodes_for(&streaming.heights, sight.at, 0.0)
+            .into_iter()
+            .filter(|node| node.level < OVERVIEW_LEVEL)
+            .flat_map(|node| size.tiles_within(node_rect(node).bounds()))
+            .collect()
+    });
+    for tile in missing {
+        if taken_in.as_ref().is_none_or(|taken| taken.contains(&tile)) {
+            shortfall.missing += 1;
+        } else {
+            shortfall.ahead += 1;
+        }
+    }
+    shortfall
 }
 
 /// Whether every tile of ground under `bounds` is loaded, each not yet being loaded set loading on
@@ -835,6 +926,17 @@ fn patches_of(nodes: &[Node], samples: (u32, u32)) -> Vec<GroundPatch> {
 /// within `off` of `at`: every node is cut in four while it may lie within `SPLIT_WITHIN` of its
 /// sides from that ground and is wider than a leaf; what remains covers the ground once over,
 /// finer the nearer the view.
+/// How many tiles of ground a view may want in detail at once, so every tile its plan wants has
+/// a slot as soon as it is wanted: the tiles under the nodes finer than the overview, which lie
+/// as far as the plan splits an overview node from wherever its eyes may stand, each at most
+/// half as wide as that node.
+fn detail_slots() -> u32 {
+    let overview_node = (LEAF_SAMPLES << OVERVIEW_LEVEL) as f32 / SAMPLES_PER_METER as f32;
+    let reach = overview_node * SPLIT_WITHIN + plan::OFF_MIDDLE + plan::AHEAD + overview_node / 2.0;
+    let across = (2.0 * reach / TILE_SIDE.0).ceil() as u32 + 1;
+    across * across
+}
+
 fn nodes_for(heights: &Heightfield, at: Pos<Meters>, off: f32) -> Vec<Node> {
     let (columns, rows) = heights.samples();
     let cells = (columns.max(rows).saturating_sub(1)).max(1);
@@ -1389,7 +1491,7 @@ fn lay_streamed_ground(
     streaming.heights = heights.clone();
     streaming.paint = paint.clone();
     if let Some(mut atlas) = world.get_mut::<TerrainAtlas>(streaming.terrain) {
-        atlas.lay(heights, paint, &streaming.water);
+        atlas.lay(heights, paint, &streaming.water, detail_slots());
     }
     streaming
         .instances
@@ -1419,7 +1521,7 @@ fn spawn_terrain(
         terrain::ground_paint(&layers, &look.materials, weather, assets, &mut images)
     });
     let mut atlas = TerrainAtlas::default();
-    atlas.lay(&area.heights, &area.paint, &area.water);
+    atlas.lay(&area.heights, &area.paint, &area.water, detail_slots());
     world
         .spawn((
             GroundDraw {

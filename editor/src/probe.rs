@@ -156,7 +156,11 @@ fn snapshot(world: &mut World, ctx: &ui::egui::Context) -> EditorSnapshot {
                 .collect(),
             picked: stage.picked,
         }),
-        scenery: latest.map_or(EditorScenery::None, |pass| pass.scenery),
+        scenery: latest
+            .as_ref()
+            .map_or(EditorScenery::None, |pass| pass.scenery),
+        sceneries_standing: latest.as_ref().map_or(0, |pass| pass.sceneries_standing),
+        on_its_way: latest.as_ref().map_or_default(|pass| pass.on_its_way),
         busy,
         selected,
         undoable,

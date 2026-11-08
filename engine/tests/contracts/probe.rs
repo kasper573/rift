@@ -4,8 +4,8 @@ use engine::core::render::sample::{GpuReport, RenderReport};
 use engine::core::units::{Bytes, Meters, Millis};
 use engine::systems::area::AreaDef;
 use engine::systems::probe::{
-    FrameSample, FrameSamples, HITCH, ProbeFrames, ProbeGame, ProbeGameQuestion, ProbeSystem,
-    answer,
+    FrameSample, FrameSamples, HITCH, MissingParts, ProbeFrames, ProbeGame, ProbeGameQuestion,
+    ProbeSystem, answer,
 };
 use serde::de::DeserializeOwned;
 use serde_json::json;
@@ -200,6 +200,7 @@ fn sample(frame: u32, dt_ms: Millis) -> FrameSample {
         gpu_ms: None,
         props_drawn: None,
         missing: 0,
+        missing_parts: MissingParts::default(),
         stale: 0,
         draws: 0,
         instances: 0,

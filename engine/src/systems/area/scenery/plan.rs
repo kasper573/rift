@@ -164,7 +164,12 @@ impl Sight {
 const PLAN_CELL: Meters = Meters(16.0);
 
 /// The farthest ground within a cell lies from its middle.
-const OFF_MIDDLE: f32 = PLAN_CELL.0 / std::f32::consts::SQRT_2;
+pub(super) const OFF_MIDDLE: f32 = PLAN_CELL.0 / std::f32::consts::SQRT_2;
+
+/// How far past where its eyes may stand a plan stands things: a cell, so that what a view moves
+/// onto stands before it reaches it, through the plan made for the next cell and the loads and
+/// expansions it asks for.
+pub(super) const AHEAD: f32 = PLAN_CELL.0;
 
 /// A widened sight as the plan measures from it: where off the cell's middle any of its eyes may
 /// stand along the ground and how high, with the ground looked at lying anywhere in the cell, as
@@ -174,6 +179,9 @@ pub(super) struct Seen {
     pub sight: Sight,
     /// How far around the cell's middle the scenery stands, out to the far side of the cell.
     pub reach: Meters,
+    /// How far around the cell's middle the far field stands, as far past the horizon as the
+    /// scenery stands past the reach, where the sight has a horizon.
+    pub horizon: Option<Meters>,
     /// How far an eye may stand along the ground off the ground looked at.
     across: (f32, f32),
     /// The arc of bearings it may stand at, none for any.
@@ -199,7 +207,10 @@ impl Seen {
         let eyes = sight.eyes;
         Seen {
             sight,
-            reach: Meters(sight.reach.0 + OFF_MIDDLE),
+            reach: Meters(sight.reach.0 + OFF_MIDDLE + AHEAD),
+            horizon: sight
+                .horizon
+                .map(|horizon| Meters(horizon.0 + OFF_MIDDLE + AHEAD)),
             across: (eyes.nearest.0, eyes.farthest.0),
             arc: eyes.bearings.arc(),
             heights: (
@@ -350,7 +361,7 @@ pub(super) const KEEP_SHARE: f32 = 1.25;
 impl Planner {
     pub(super) fn plan(&self, sight: Sight, heights: &Heightfield) -> Plan {
         let seen = Seen::of(sight, heights);
-        let mut ground = nodes_for(heights, seen.at(), OFF_MIDDLE);
+        let mut ground = nodes_for(heights, seen.at(), OFF_MIDDLE + AHEAD);
         ground.sort_by_key(|node| node.level);
         Plan {
             ground,

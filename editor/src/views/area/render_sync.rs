@@ -130,6 +130,13 @@ impl StandingScene {
         }
     }
 
+    /// Keeps what stands while no view shows it.
+    pub fn unsee(&self, world: &mut World) {
+        if let Some(stood) = &self.stood {
+            scenery::unseen(world, stood.scenery);
+        }
+    }
+
     /// Draws `outlines` as the set `set`, in place of what it drew as that set before.
     pub fn outline(&mut self, world: &mut World, set: usize, outlines: &OutlineSet) {
         let standing = self

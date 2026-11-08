@@ -4,7 +4,7 @@
 //! scenery when the picture changes, swaps the terrain while a brush stroke shapes it, and keeps
 //! the ghost of what is being placed and the cast of residents under the pointer.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use bevy::camera::visibility::RenderLayers;
@@ -40,6 +40,7 @@ use super::camera::OrbitCamera;
 use super::overlays::OutlineSet;
 use super::render_sync::{StagePick, StandingScene};
 use crate::app::Editor;
+use crate::tabs::EditorTab;
 use crate::views::area::camera::LENS;
 
 const FIRST_LAYER: usize = 400;
@@ -221,9 +222,25 @@ impl Viewports {
     }
 }
 
-/// Draws every viewport asked for this frame and lets go of the rest.
+/// Draws every viewport asked for this frame, keeps standing but undrawn those whose bundle's tab
+/// stays open behind another, so coming back to the tab shows the scene as it stood, and lets go
+/// of the rest.
 pub fn sync(editor: &mut Editor, world: &mut World) {
     let requests = std::mem::take(&mut editor.views.area.viewports.requests);
+    let requested: HashSet<&str> = requests
+        .iter()
+        .map(|request| request.key.as_str())
+        .collect();
+    let open: HashSet<String> = editor
+        .dock
+        .iter_all_tabs()
+        .map(|(_, tab)| tab)
+        .chain(editor.open_tabs.iter().map(|(tab, _)| tab))
+        .filter_map(|tab| match tab {
+            EditorTab::Area { key } | EditorTab::Blueprint { key } => Some(super::view_key(key)),
+            _ => None,
+        })
+        .collect();
     let viewports = &mut editor.views.area.viewports;
     let loaded = editor
         .project
@@ -232,7 +249,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
     let gone: Vec<String> = viewports
         .shown
         .keys()
-        .filter(|key| !requests.iter().any(|request| request.key == **key) || loaded.is_none())
+        .filter(|key| loaded.is_none() || !requested.contains(key.as_str()) && !open.contains(*key))
         .cloned()
         .collect();
     for key in gone {
@@ -243,6 +260,12 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
     }
     if loaded.is_none() {
         return;
+    }
+    for (key, viewport) in &viewports.shown {
+        if !requested.contains(key.as_str()) {
+            viewport.set_active(world, false);
+            viewport.scene.unsee(world);
+        }
     }
     for request in requests {
         let viewport = viewports
@@ -304,7 +327,14 @@ impl RenderedView {
         }
     }
 
+    fn set_active(&self, world: &mut World, active: bool) {
+        if let Some(mut camera) = world.get_mut::<Camera>(self.camera) {
+            camera.is_active = active;
+        }
+    }
+
     fn draw(&mut self, world: &mut World, request: Request) {
+        self.set_active(world, true);
         if request.size != self.size && request.size[0] > 0 && request.size[1] > 0 {
             world
                 .resource_mut::<EguiUserTextures>()

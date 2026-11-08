@@ -71,6 +71,7 @@ use bevy::shader::{Shader, ShaderDefVal};
 use super::atlas::{
     AtlasLayout, AtlasTexture, CANOPY_EXTENT_MAX, GpuTerrainAtlas, SURFACE_FALL_UNIT, TerrainAtlas,
 };
+use super::cull;
 use crate::core::ground::{
     OVERVIEW_STRIDE, PaintMap, SAMPLES_PER_METER, TILE_PIXELS, TileAt, TileVersion,
 };
@@ -902,10 +903,23 @@ fn prepare_grounds(
             if !layers.unwrap_or_default().intersects(&ground.layers) {
                 continue;
             }
+            let casters = light.then(|| {
+                let span = atlas.layout.range.highest.0 - atlas.layout.range.lowest.0;
+                let sine = cull::sun_sine(view);
+                (sine > cull::SUN_RIM).then(|| {
+                    let lit = cull::lit_frustum(&cull::clip_from_world_of(view), frustum);
+                    cull::casting_frustum(&lit, span / sine)
+                })
+            });
+            let (frustum, near) = match &casters {
+                Some(Some(casting)) => (casting, true),
+                Some(None) => (frustum, false),
+                None => (frustum, true),
+            };
             let seen: Vec<bool> = buffers
                 .bounds
                 .iter()
-                .map(|bounds| frustum.intersects_obb(bounds, &Affine3A::IDENTITY, !light, light))
+                .map(|bounds| frustum.intersects_obb(bounds, &Affine3A::IDENTITY, near, light))
                 .collect();
             let first = buffers.shown.len() as u32;
             for (index, _) in seen.iter().enumerate().filter(|(_, seen)| **seen) {

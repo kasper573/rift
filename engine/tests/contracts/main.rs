@@ -12,6 +12,7 @@ mod effects;
 mod equipment;
 mod exchange;
 mod gestures;
+mod gpu;
 mod grass;
 mod impostor;
 mod interaction;

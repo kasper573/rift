@@ -16,7 +16,9 @@ use engine::core::jobs::Handoff;
 use engine::core::math::{Pos, Rng};
 use engine::core::os::Profile;
 use engine::core::render::camera::{self, Lens};
-use engine::core::render::video::{GrassQuality, ShadowQuality, VideoPreferences};
+use engine::core::render::video::{
+    GrassQuality, PropDetail, Quality, ShadowQuality, VideoPreferences,
+};
 use engine::core::render::world::clouds::CloudDrift;
 use engine::core::render::world::gpu::pick::{Outline, Picking};
 use engine::core::render::world::sky::Daylight;
@@ -61,6 +63,7 @@ const PROP_TALL: f32 = 12.0;
 /// over, as a client lifts its veil, so what is first seen is seen whole.
 #[test]
 fn a_picture_of_a_scenery_shows_its_props_in_every_material_each_shadowing_the_ground() {
+    let _gpu = crate::gpu::exclusive();
     let mut staged = stage();
     let picture = staged.shoot();
 
@@ -118,6 +121,7 @@ fn a_picture_of_a_scenery_shows_its_props_in_every_material_each_shadowing_the_g
 /// leaves no bare ground behind.
 #[test]
 fn the_ground_under_props_the_view_thins_away_shows_their_colour_from_above() {
+    let _gpu = crate::gpu::exclusive();
     let mut staged = stage();
     let picture = staged.shoot();
     let redness = |[r, g, _]: [f32; 3]| r - g;
@@ -144,6 +148,7 @@ fn the_ground_under_props_the_view_thins_away_shows_their_colour_from_above() {
 /// one, showing anything else, takes the outline's colour.
 #[test]
 fn an_outlined_prop_is_edged_in_the_outlines_colour() {
+    let _gpu = crate::gpu::exclusive();
     let mut staged = stage();
     let picture = staged.shoot();
     let cyan = |[r, g, b]: [f32; 3]| g > 150.0 && r < 0.9 * g && b > 0.9 * g;
@@ -277,7 +282,8 @@ fn stage() -> Staged {
     .insert_resource(VideoPreferences {
         shadows: ShadowQuality::Low,
         grass: GrassQuality::High,
-        ..VideoPreferences::lowest()
+        detail: PropDetail::High,
+        ..VideoPreferences::default().at(Quality::Lowest)
     })
     .insert_resource(CloudDrift::carried_for(0.0))
     .insert_resource(Daylight::Fixed)

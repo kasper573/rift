@@ -434,6 +434,19 @@ fn fragment(on: CoverOutput, @builtin(front_facing) is_front: bool) -> FragmentO
     let in = taken_in(on);
     ashore = on.water.x;
     falling = on.water.yz;
+    painted = 1.0;
+    up = 0.0;
+    salt = 0.0;
+    part = 0u;
+    @if(VERTEX_UVS_B) {
+        mark(in.uv_b);
+    }
+    // The lighting is most of what a pixel costs, and a sheet lies over every pixel of its
+    // patches, those its terrain isn't painted on included: where the paint gives the cover
+    // nothing, it has nothing to lay, and the pixel is dropped before the lighting is paid for.
+    if painted <= 0.0 {
+        discard;
+    }
     var pbr_input = material_input(in, is_front);
     let base = alpha_discard(
         pbr_input.material.flags,
@@ -449,16 +462,9 @@ fn fragment(on: CoverOutput, @builtin(front_facing) is_front: bool) -> FragmentO
     facing_input = pbr_input;
     shine = lighting(pbr_input).rgb;
     lit = vec4<f32>(shine * base.rgb, base.a);
-    painted = 1.0;
-    up = 0.0;
-    salt = 0.0;
-    part = 0u;
     var uv = vec2<f32>(0.5);
     @if(VERTEX_UVS_A) {
         uv = in.uv;
-    }
-    @if(VERTEX_UVS_B) {
-        mark(in.uv_b);
     }
     spot = in.world_position.xyz;
     read_weather();

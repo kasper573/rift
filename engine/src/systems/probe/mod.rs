@@ -10,8 +10,8 @@ pub use editor::{
 };
 
 pub use frames::{
-    FRAMES_KEPT, FrameSample, FrameSamples, HITCH, LONGEST_SYSTEMS, ProbeFrames, ProbePass,
-    ProbeSlowFrame, ProbeSystem, SETTLE_FRAMES, SLOW_KEPT,
+    FRAMES_KEPT, FrameSample, FrameSamples, HITCH, LONGEST_SYSTEMS, MissingParts, ProbeFrames,
+    ProbePass, ProbeSlowFrame, ProbeSystem, SETTLE_FRAMES, SLOW_KEPT,
 };
 pub use game::{
     ProbeArea, ProbeBinding, ProbeBindings, ProbeButton, ProbeFrameQuestion, ProbeGame,
@@ -56,6 +56,7 @@ use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::render::video::VideoPreferences;
 use crate::core::render::world::layers::Layered;
 use crate::core::render::world::sky::Daylight;
+use crate::core::render::world::{OnItsWay, missing_drawn};
 use crate::core::render::{self, CameraRig, GroundHeights, Pointed, ground_height, world_point};
 use crate::core::time;
 use crate::core::units::{
@@ -235,8 +236,19 @@ pub fn sample_frame(world: &mut World) {
         .map_or(Millis(0.0), |began| {
             Millis(began.elapsed().as_secs_f32() * 1000.0)
         });
-    let missing = area::scenery::missing(world);
-    let stale = area::scenery::stale(world);
+    let shortfalls = area::scenery::shortfalls(world);
+    let drawn_coarser = missing_drawn(world);
+    let missing = shortfalls.total().missing + drawn_coarser;
+    let missing_parts = MissingParts {
+        ground: shortfalls.ground.missing,
+        props: shortfalls.props.missing,
+        copies: shortfalls.copies.missing,
+        far: shortfalls.far.missing,
+        canopy: shortfalls.canopy.missing,
+        grass: shortfalls.grass.missing,
+        drawn: drawn_coarser,
+    };
+    let stale = shortfalls.total().stale;
     let visible_chunks = area::scenery::stood_chunks(world);
     let entities = world.entities().len();
     let work = world
@@ -264,6 +276,7 @@ pub fn sample_frame(world: &mut World) {
             gpu_ms: None,
             props_drawn: None,
             missing,
+            missing_parts,
             stale,
             draws: 0,
             instances: 0,
@@ -336,6 +349,10 @@ pub struct ProbeSnapshot {
     /// Whether the scenery has yet to stand all the view takes in: until it has, some of what the
     /// view shows is missing.
     pub scenery_standing: bool,
+    /// How many sceneries have yet to stand what their sight takes in.
+    pub sceneries_standing: u32,
+    /// What the world draws that is still on its way to standing.
+    pub on_its_way: OnItsWay,
     /// The graphics adapter the client draws with, by the name its driver gives it.
     pub adapter: Option<String>,
 }
@@ -954,6 +971,8 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         .query_filtered::<&CursorOptions, With<PrimaryWindow>>()
         .single(world)
         .is_ok_and(|options| options.visible);
+    let sceneries_standing = area::scenery::sceneries_standing(world);
+    let on_its_way = render::world::on_its_way(world);
     ProbeSnapshot {
         frame: world.resource::<FrameCount>().0,
         input: ProbeInput {
@@ -1092,7 +1111,9 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
             .unwrap_or_default(),
         gpu_memory: gpu_memory(world),
         frame_times: world.resource_mut::<FrameTimes>().0.drain(..).collect(),
-        scenery_standing: area::scenery::standing(world) || render::world::readying(world),
+        scenery_standing: sceneries_standing > 0 || on_its_way.any(),
+        sceneries_standing,
+        on_its_way,
         adapter: world
             .get_resource::<RenderAdapterInfo>()
             .map(|adapter| adapter.name.clone()),

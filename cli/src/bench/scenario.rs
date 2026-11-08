@@ -99,6 +99,8 @@ pub enum Step {
         width: u32,
         height: u32,
     },
+    /// The client's window taken fullscreen or back into a window, through its settings.
+    Fullscreen,
     Camera(CameraOp),
     /// Staged on the server mid-script.
     Stage(Staging),

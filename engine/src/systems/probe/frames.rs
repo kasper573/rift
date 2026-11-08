@@ -2,7 +2,7 @@
 //! the probe, cursoring on from the last frame it saw, told how many it missed when the ring has
 //! wrapped past its cursor.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 
 use bevy::prelude::*;
 use schemars::JsonSchema;
@@ -29,6 +29,8 @@ pub struct FrameSample {
     pub props_drawn: Option<u32>,
     /// Chunks of ground and scenery the view takes in that stand coarser than wanted, or not yet.
     pub missing: u32,
+    /// The same, by what is missing.
+    pub missing_parts: MissingParts,
     /// Chunks of ground and scenery the view takes in that stand as they did before an edit,
     /// their new values on their way.
     pub stale: u32,
@@ -43,6 +45,20 @@ pub struct FrameSample {
     pub posed: u32,
     /// Plans of what the scenery stands begun this frame, as its sight moved out of the last.
     pub plans: u32,
+}
+
+/// What the view takes in that stands coarser than wanted, or not yet, by what it is: the
+/// ground's tiles, lots of props, of the covers' copies and of the far field, the canopy over
+/// the ground, the covers' blades, and the props the GPU drew coarser than their size asks.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MissingParts {
+    pub ground: u32,
+    pub props: u32,
+    pub copies: u32,
+    pub far: u32,
+    pub canopy: u32,
+    pub grass: u32,
+    pub drawn: u32,
 }
 
 /// The frames after the one a driver last saw, and how many of those the ring had already let go.
@@ -107,9 +123,10 @@ pub const HITCH: Millis = Millis(20.0);
 /// How many slow frames are kept: the latest, however long ago.
 pub const SLOW_KEPT: usize = 512;
 /// How many of the systems that ran longest a slow frame names.
-pub const LONGEST_SYSTEMS: usize = 3;
-/// How many frames before a slow frame it may have waited on: its own time measures the work of
-/// the frame before it, which waited on the render world drawing the one before that.
+pub const LONGEST_SYSTEMS: usize = 24;
+/// How many frames before a slow frame it may have waited on, beside its own: its own time
+/// measures the work of the frame before it, which waited on the render world drawing the one
+/// before that; a slow frame's spans are summed by name over them all.
 const WAITED_ON: usize = 3;
 
 impl FrameSamples {
@@ -131,8 +148,17 @@ impl FrameSamples {
         }
         self.ring.push_back(sample);
         if sample.dt_ms.0 > HITCH.0 {
-            let mut waited_on: Vec<ProbeSystem> =
-                self.latest_systems.iter().flatten().cloned().collect();
+            let mut by_name: HashMap<&str, f32> = HashMap::new();
+            for system in self.latest_systems.iter().flatten().chain(&systems) {
+                *by_name.entry(system.name.as_str()).or_default() += system.ms.0;
+            }
+            let mut waited_on: Vec<ProbeSystem> = by_name
+                .into_iter()
+                .map(|(name, ms)| ProbeSystem {
+                    name: name.to_owned(),
+                    ms: Millis(ms),
+                })
+                .collect();
             waited_on.sort_by(|a, b| b.ms.0.total_cmp(&a.ms.0));
             waited_on.truncate(LONGEST_SYSTEMS);
             if self.slow.len() == SLOW_KEPT {

@@ -16,7 +16,7 @@ use engine::core::jobs::Handoff;
 use engine::core::math::{Pos, Rng};
 use engine::core::os::Profile;
 use engine::core::render::camera::{self, Lens};
-use engine::core::render::video::VideoPreferences;
+use engine::core::render::video::{Quality, VideoPreferences};
 use engine::core::render::world::clouds::CloudDrift;
 use engine::core::render::world::gpu::impostor::{
     ATLAS_PIXELS, CELL_PIXELS, CellView, ImpostorStore, ImpostorTexels, cell_of,
@@ -75,6 +75,7 @@ const LOWER: UVec2 = UVec2::new(CELL_PIXELS / 2, 5 * CELL_PIXELS / 8);
 /// from there instead of baking them again.
 #[test]
 fn a_prop_models_impostor_is_baked_once_and_read_from_the_profile_after() {
+    let _gpu = crate::gpu::exclusive();
     let folder = tempfile::tempdir().expect("a scratch folder");
     let profile = tempfile::tempdir().expect("a scratch profile");
     field().write_to(folder.path());
@@ -215,7 +216,7 @@ fn stand(game: Game, folder: &Path, profile: &Path, eye: Vec3) -> (App, Handle<I
     .add_plugins((WorldScenePlugin, VfxMaterialsPlugin, SceneryPlugin))
     .insert_resource(testkit::look())
     .insert_resource(content.clone())
-    .insert_resource(VideoPreferences::lowest())
+    .insert_resource(VideoPreferences::default().at(Quality::Lowest))
     .insert_resource(CloudDrift::carried_for(0.0))
     .insert_resource(Daylight::Fixed)
     .init_resource::<RainField>()

@@ -7,6 +7,7 @@
 //! unfold, and neighbouring cells look neighbouring ways.
 
 use std::collections::HashMap;
+use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 
@@ -28,7 +29,7 @@ use bevy::tasks::futures::check_ready;
 use bevy::tasks::{IoTaskPool, Task};
 use serde::{Deserialize, Serialize};
 
-use super::arena::{self, LevelRange, ModelArena, PartRanges, PlacedModel};
+use super::arena::{self, InstanceArenas, LevelRange, ModelArena, PartRanges, PlacedModel};
 use super::residency::Residency;
 use super::upload::UploadBudget;
 use crate::core::os::Profile;
@@ -82,8 +83,8 @@ const IMPOSTORS: &str = "impostors";
 /// baked or read. Held only beside a render world, which takes what it sends.
 #[derive(Resource)]
 pub struct ImpostorStore {
-    models: HashMap<AssetId<Gltf>, ImpostorState>,
-    looks: HashMap<AssetId<Gltf>, LookFromAbove>,
+    atlases: HashMap<AtlasKey, ImpostorState>,
+    looks: HashMap<AtlasKey, LookFromAbove>,
     outgoing: Vec<ImpostorOrder>,
     baked: Baked,
 }
@@ -98,91 +99,96 @@ pub struct LookFromAbove {
     pub cover: f32,
 }
 
-/// What the render world is told of a model's impostor: its atlas read from its file, to bake it,
-/// or to let it go.
+/// What the render world is told of an atlas: read from its file, to bake it from its model, or
+/// to let it go.
 #[derive(Clone)]
 pub enum ImpostorOrder {
     Read {
-        model: AssetId<Gltf>,
-        key: String,
+        key: AtlasKey,
         texels: Arc<ImpostorTexels>,
     },
     Bake {
+        key: AtlasKey,
         model: AssetId<Gltf>,
-        key: String,
         materials: Arc<[UntypedHandle]>,
         overhang: Meters,
     },
     Forget {
-        model: AssetId<Gltf>,
+        key: AtlasKey,
     },
 }
 
+/// Where an atlas is on its way to the GPU, and the model it is baked from.
 enum ImpostorState {
     Reading {
-        key: String,
+        model: AssetId<Gltf>,
         materials: Arc<[UntypedHandle]>,
         overhang: Meters,
         task: Task<Option<ImpostorTexels>>,
     },
     Read {
-        key: String,
+        model: AssetId<Gltf>,
         texels: Arc<ImpostorTexels>,
     },
     ToBake {
-        key: String,
+        model: AssetId<Gltf>,
         materials: Arc<[UntypedHandle]>,
         overhang: Meters,
     },
     Sent {
-        key: String,
+        model: AssetId<Gltf>,
     },
+}
+
+impl ImpostorState {
+    fn model(&self) -> AssetId<Gltf> {
+        match self {
+            ImpostorState::Reading { model, .. }
+            | ImpostorState::Read { model, .. }
+            | ImpostorState::ToBake { model, .. }
+            | ImpostorState::Sent { model } => *model,
+        }
+    }
 }
 
 /// The atlases the render world has baked and read back, for the files that keep them.
 #[derive(Resource, Clone, Default)]
-struct Baked(Arc<Mutex<Vec<(String, ImpostorTexels)>>>);
+struct Baked(Arc<Mutex<Vec<(AtlasKey, ImpostorTexels)>>>);
 
 impl ImpostorStore {
     fn new(baked: Baked) -> ImpostorStore {
         ImpostorStore {
-            models: HashMap::new(),
+            atlases: HashMap::new(),
             looks: HashMap::new(),
             outgoing: Vec::new(),
             baked,
         }
     }
 
-    /// What `model` looks like from above, once its atlas has been read or baked.
-    pub fn look_from_above(&self, model: AssetId<Gltf>) -> Option<LookFromAbove> {
-        self.looks.get(&model).copied()
+    /// What the atlas kept under `key` shows from above, once it has been read or baked.
+    pub fn look_from_above(&self, key: AtlasKey) -> Option<LookFromAbove> {
+        self.looks.get(&key).copied()
     }
 
-    /// Wants `model`'s impostor on the GPU, baked by `materials`, the world materials its parts
-    /// are drawn in, framed `overhang` past the model's bounds for what they draw beyond it, or
-    /// read from the file kept under `key` in `profile`, until the model's asset goes. A model
-    /// wanted again under another key is baked or read anew.
+    /// Wants the atlas kept under `key` on the GPU: read from its file in `profile`, else baked
+    /// from `model` by `materials`, the world materials its parts are drawn in, framed `overhang`
+    /// past the model's bounds for what they draw beyond it; until the model's asset goes. Two
+    /// props of one model dressed alike share the atlas, dressed apart each have their own.
     pub fn want(
         &mut self,
         profile: &Profile,
         model: AssetId<Gltf>,
-        key: String,
+        key: AtlasKey,
         materials: Arc<[UntypedHandle]>,
         overhang: Meters,
     ) {
-        let current = self.models.get(&model).is_some_and(|state| match state {
-            ImpostorState::Reading { key: held, .. }
-            | ImpostorState::Read { key: held, .. }
-            | ImpostorState::ToBake { key: held, .. }
-            | ImpostorState::Sent { key: held } => *held == key,
-        });
-        if current {
+        if self.atlases.contains_key(&key) {
             return;
         }
-        let file = folder_under(profile).join(&key);
+        let file = folder_under(profile).join(key.to_string());
         let state = if file.is_file() {
             ImpostorState::Reading {
-                key,
+                model,
                 materials,
                 overhang,
                 task: IoTaskPool::get()
@@ -190,17 +196,17 @@ impl ImpostorStore {
             }
         } else {
             ImpostorState::ToBake {
-                key,
+                model,
                 materials,
                 overhang,
             }
         };
-        self.models.insert(model, state);
+        self.atlases.insert(key, state);
     }
 
-    /// How many models' impostors are still on their way to the GPU.
+    /// How many atlases are still on their way to the GPU.
     pub fn pending(&self) -> usize {
-        self.models
+        self.atlases
             .values()
             .filter(|state| !matches!(state, ImpostorState::Sent { .. }))
             .count()
@@ -218,86 +224,89 @@ fn keep_impostors(
 ) {
     store.outgoing.clear();
     for event in events.read() {
-        if let AssetEvent::Removed { id } | AssetEvent::Unused { id } = *event
-            && store.models.remove(&id).is_some()
-        {
-            store.looks.remove(&id);
-            store.outgoing.push(ImpostorOrder::Forget { model: id });
+        if let AssetEvent::Removed { id } | AssetEvent::Unused { id } = *event {
+            let gone: Vec<AtlasKey> = store
+                .atlases
+                .iter()
+                .filter(|(_, state)| state.model() == id)
+                .map(|(key, _)| *key)
+                .collect();
+            for key in gone {
+                store.atlases.remove(&key);
+                store.looks.remove(&key);
+                store.outgoing.push(ImpostorOrder::Forget { key });
+            }
         }
     }
     let ImpostorStore {
-        models,
+        atlases,
         looks,
         outgoing,
         baked,
     } = &mut *store;
-    for (&model, state) in models.iter_mut() {
+    for (&key, state) in atlases.iter_mut() {
+        let model = state.model();
         match state {
             ImpostorState::Reading {
-                key,
                 materials,
                 overhang,
                 task,
+                ..
             } => {
                 if let Some(read) = check_ready(task) {
                     *state = match read {
                         Some(texels) => {
-                            looks.insert(model, LookFromAbove::of(&texels));
+                            looks.insert(key, LookFromAbove::of(&texels));
                             ImpostorState::Read {
-                                key: key.clone(),
+                                model,
                                 texels: Arc::new(texels),
                             }
                         }
                         None => ImpostorState::ToBake {
-                            key: key.clone(),
+                            model,
                             materials: materials.clone(),
                             overhang: *overhang,
                         },
                     };
                 }
             }
-            ImpostorState::Read { key, texels } => {
+            ImpostorState::Read { texels, .. } => {
                 if budget.spend(texels.albedo.len() + texels.normal.len() + texels.depth.len()) {
                     outgoing.push(ImpostorOrder::Read {
-                        model,
-                        key: key.clone(),
+                        key,
                         texels: texels.clone(),
                     });
-                    *state = ImpostorState::Sent { key: key.clone() };
+                    *state = ImpostorState::Sent { model };
                 }
             }
             ImpostorState::ToBake {
-                key,
                 materials,
                 overhang,
+                ..
             } => {
                 outgoing.push(ImpostorOrder::Bake {
+                    key,
                     model,
-                    key: key.clone(),
                     materials: materials.clone(),
                     overhang: *overhang,
                 });
-                *state = ImpostorState::Sent { key: key.clone() };
+                *state = ImpostorState::Sent { model };
             }
             ImpostorState::Sent { .. } => {}
         }
     }
-    let written: Vec<(String, ImpostorTexels)> =
+    let written: Vec<(AtlasKey, ImpostorTexels)> =
         std::mem::take(&mut *baked.0.lock().expect("the baked atlases lock"));
     let dir = folder_under(&profile);
     for (key, texels) in written {
-        let baked_model = models.iter().find_map(|(model, state)| match state {
-            ImpostorState::Sent { key: held } if *held == key => Some(*model),
-            _ => None,
-        });
-        if let Some(model) = baked_model {
-            looks.insert(model, LookFromAbove::of(&texels));
+        if atlases.contains_key(&key) {
+            looks.insert(key, LookFromAbove::of(&texels));
         }
         let dir = dir.clone();
         IoTaskPool::get()
             .spawn(async move {
                 let written = std::fs::create_dir_all(&dir)
-                    .and_then(|()| std::fs::write(dir.join(&key), texels.to_file()));
+                    .and_then(|()| std::fs::write(dir.join(key.to_string()), texels.to_file()));
                 if let Err(error) = written {
                     warn!("impostor atlas not kept: {error}");
                 }
@@ -322,11 +331,10 @@ pub(super) struct ImpostorOrders {
     pub(super) readbacks: Vec<Readback>,
 }
 
-/// A model to bake into its layer of the atlas, by the world materials its parts are drawn in,
-/// where it lies in the slabs.
+/// An atlas to bake into its layer, from its model where it lies in the slabs, by the world
+/// materials the model's parts are drawn in.
 pub(super) struct BakeJob {
-    pub model: AssetId<Gltf>,
-    pub key: String,
+    pub key: AtlasKey,
     pub layer: u32,
     pub materials: Arc<[UntypedHandle]>,
     pub placed: PlacedModel,
@@ -342,11 +350,13 @@ fn extract_impostors(store: Extract<Res<ImpostorStore>>, mut orders: ResMut<Impo
 }
 
 /// Gives every atlas read its layer, sets going the bakes of a few of those ordered whose model
-/// is in the slabs, and lets go of the layers of models let go. While anything is left to do the
+/// is in the slabs, and lets go of the layers of atlases let go. The atlases the arenas' dressed
+/// props draw from, and those on their way, keep their layers. While anything is left to do the
 /// frame is not whole, so a veil holds until every impostor stands.
 fn prepare_impostors(
     queue: Res<RenderQueue>,
     models: Res<ModelArena>,
+    arenas: Res<InstanceArenas>,
     atlas: Option<ResMut<ImpostorAtlas>>,
     mut orders: ResMut<ImpostorOrders>,
     progress: Res<RenderProgress>,
@@ -355,8 +365,18 @@ fn prepare_impostors(
         return;
     };
     atlas.layers.next_frame();
-    for model in models.slabs.keys() {
-        atlas.layers.want(*model);
+    let drawn = arenas
+        .0
+        .values()
+        .flat_map(|arena| arena.dressed.values())
+        .filter_map(|dressed| dressed.impostor);
+    let on_their_way = orders
+        .bakes
+        .iter()
+        .map(|job| job.key)
+        .chain(orders.readbacks.iter().map(|readback| readback.key));
+    for key in drawn.chain(on_their_way) {
+        atlas.layers.want(key);
     }
     let waiting: Vec<ImpostorOrder> = std::mem::take(&mut orders.pending)
         .into_iter()
@@ -366,39 +386,45 @@ fn prepare_impostors(
     let mut started = 0;
     for order in waiting {
         match order {
-            ImpostorOrder::Forget { model } => {
-                atlas.layers.release(model);
+            ImpostorOrder::Forget { key } => {
+                debug!("atlas {key} let go");
+                atlas.layers.release(key);
                 atlas.round += 1;
-                orders.bakes.retain(|job| job.model != model);
+                orders.bakes.retain(|job| job.key != key);
             }
-            ImpostorOrder::Read {
-                model,
-                ref key,
-                ref texels,
-            } => match atlas.layers.admit(model, key.clone()) {
+            ImpostorOrder::Read { key, ref texels } => match atlas.layers.admit(key, ()) {
                 Some(admitted) => {
+                    debug!(
+                        "atlas {key} read into layer {}, {} evicted",
+                        admitted.slot,
+                        evicted(admitted.evicted)
+                    );
                     atlas.write(&queue, admitted.slot, texels);
                     atlas.round += 1;
                 }
                 None => later.push(order),
             },
             ImpostorOrder::Bake {
+                key,
                 model,
-                ref key,
                 ref materials,
                 overhang,
             } => {
                 let placed = models.slabs.get(&model);
                 let admitted = placed
                     .filter(|_| started < BAKES_PER_FRAME)
-                    .and_then(|_| atlas.layers.admit(model, key.clone()));
+                    .and_then(|_| atlas.layers.admit(key, ()));
                 match (placed, admitted) {
                     (Some(placed), Some(admitted)) => {
+                        debug!(
+                            "atlas {key} baked from {model} into layer {}, {} evicted",
+                            admitted.slot,
+                            evicted(admitted.evicted)
+                        );
                         atlas.round += 1;
                         started += 1;
                         orders.bakes.push(BakeJob {
-                            model,
-                            key: key.clone(),
+                            key,
                             layer: admitted.slot,
                             materials: materials.clone(),
                             placed: placed.clone(),
@@ -414,6 +440,10 @@ fn prepare_impostors(
         progress.left_out();
     }
     orders.pending = later;
+}
+
+fn evicted(key: Option<AtlasKey>) -> String {
+    key.map_or_else(|| "none".to_owned(), |key| key.to_string())
 }
 
 /// Takes in every baked atlas that has come back: its texels spread past the model's edges, written
@@ -437,7 +467,7 @@ fn read_bakes(
                     .0
                     .lock()
                     .expect("the baked atlases lock")
-                    .push((readback.key.clone(), texels));
+                    .push((readback.key, texels));
                 false
             }
             Some(Err(())) => false,
@@ -687,10 +717,21 @@ impl ImpostorTexels {
     }
 }
 
-/// The name a model's atlas is kept under: what the model is made of, how far past it its
+/// The name an atlas is kept under: a hash of what its model is made of, how far past it its
 /// shaders draw and how it is baked, so a model changed, dressed otherwise or baked by another
-/// build bakes anew.
-pub fn atlas_key(model_hash: &str, overhang: Meters, materials: &[BakeMaterialKey]) -> String {
+/// build bakes anew, and two props of one model dressed alike share one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct AtlasKey([u8; blake3::OUT_LEN]);
+
+impl fmt::Display for AtlasKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", blake3::Hash::from(self.0).to_hex())
+    }
+}
+
+/// The key of the atlas of a model `model_hash` names, framed `overhang` past it, its parts in
+/// `materials`.
+pub fn atlas_key(model_hash: &str, overhang: Meters, materials: &[BakeMaterialKey]) -> AtlasKey {
     let mut hasher = blake3::Hasher::new();
     hasher.update(model_hash.as_bytes());
     hasher.update(&overhang.0.to_le_bytes());
@@ -708,7 +749,7 @@ pub fn atlas_key(model_hash: &str, overhang: Meters, materials: &[BakeMaterialKe
     hasher.update(&header.cells.to_le_bytes());
     hasher.update(&header.cell_pixels.to_le_bytes());
     hasher.update(header.build.as_bytes());
-    hasher.finalize().to_hex().to_string()
+    AtlasKey(*hasher.finalize().as_bytes())
 }
 
 /// What of a part's material the bake shows, as the key tells it apart: the base colour, the
@@ -743,8 +784,8 @@ pub const NORMAL_FORMAT: TextureFormat = TextureFormat::Rg8Unorm;
 pub const DEPTH_FORMAT: TextureFormat = TextureFormat::R8Unorm;
 pub(super) const BAKE_DEPTH: TextureFormat = TextureFormat::Depth32Float;
 
-/// The atlases of every model the GPU holds, a layer of each texture a model, and which model
-/// holds which layer, by the key its atlas was baked or read under.
+/// The atlases the GPU holds, a layer of each texture an atlas, and which atlas holds which
+/// layer.
 #[derive(Resource)]
 pub struct ImpostorAtlas {
     pub albedo: Texture,
@@ -755,7 +796,7 @@ pub struct ImpostorAtlas {
     pub normal_view: TextureView,
     pub depth_view: TextureView,
     pub sampler: Sampler,
-    pub layers: Residency<AssetId<Gltf>, String>,
+    pub layers: Residency<AtlasKey, ()>,
     /// Counts each time a layer is given or taken, for what tells the kernel which props have
     /// one.
     pub round: u64,
@@ -971,8 +1012,7 @@ pub(super) fn bake_level<'a>(
 
 /// A layer's texels on their way back from the GPU, to be spread and kept in a file.
 pub struct Readback {
-    pub model: AssetId<Gltf>,
-    pub key: String,
+    pub key: AtlasKey,
     layer: u32,
     buffer: Buffer,
     mapped: Option<Arc<Mutex<Option<bool>>>>,
@@ -985,8 +1025,7 @@ impl Readback {
         encoder: &mut CommandEncoder,
         atlas: &ImpostorAtlas,
         layer: u32,
-        model: AssetId<Gltf>,
-        key: String,
+        key: AtlasKey,
     ) -> Readback {
         let buffer = device.create_buffer(&BufferDescriptor {
             label: Some("impostor readback"),
@@ -1015,7 +1054,6 @@ impl Readback {
             offset += (ATLAS_PIXELS * ATLAS_PIXELS) as u64 * texel_bytes as u64;
         }
         Readback {
-            model,
             key,
             layer,
             buffer,
