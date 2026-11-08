@@ -302,6 +302,21 @@ pub struct DroppedItems {
     pub click_reach: Meters,
 }
 
+/// How the server runs its world's day and weather as it starts them: what staging returns the
+/// world to once a bench is done holding either.
+#[derive(Resource, Clone, Copy, Debug, PartialEq)]
+pub struct ServerClocks {
+    pub day: Option<TimeCourse<f32>>,
+    pub weather: TimeCourse<usize>,
+}
+
+/// Runs the world's day and weather on `clocks`, as the server does from its start.
+pub fn start_clocks(world: &mut World, clocks: ServerClocks) {
+    world.insert_resource(DayClock(clocks.day));
+    world.insert_resource(WeatherClock(Some(clocks.weather)));
+    world.insert_resource(clocks);
+}
+
 pub fn server_app(
     area: AreaId,
     ordinal: u64,
@@ -319,10 +334,13 @@ pub fn server_app(
     let settings = content.built::<GameSettings>();
     app.insert_resource(WorldArea(area));
     app.insert_resource(clock);
-    app.insert_resource(DayClock(
-        settings.daylight.map(|cycle| cycle.course(day, clock.now)),
-    ));
-    app.insert_resource(WeatherClock(Some(weather)));
+    start_clocks(
+        app.world_mut(),
+        ServerClocks {
+            day: settings.daylight.map(|cycle| cycle.course(day, clock.now)),
+            weather,
+        },
+    );
     app.insert_resource(input::map::InputMap::new(content));
     app.add_plugins(bevy_time::TimePlugin);
     // Every tick steps the same span of game time however long it took, so a seeded world plays out

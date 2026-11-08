@@ -11,7 +11,9 @@ use engine::systems::npc::NpcDef;
 use engine::systems::region;
 use engine::systems::script::Place;
 use engine::systems::staging::{Staging, stage};
-use engine::systems::{GameSettings, actor, dialogue, npc, reach, script, skill, stat};
+use engine::systems::{
+    GameSettings, ServerClocks, actor, dialogue, npc, reach, script, skill, start_clocks, stat,
+};
 use serde_json::json;
 use testkit::{Game, Map, Sim, hunting, path};
 
@@ -88,7 +90,7 @@ fn a_bench_is_told_when_there_is_nothing_to_stage() {
 }
 
 #[test]
-fn a_bench_holds_an_areas_weather_at_a_named_spell_until_staged_again() {
+fn a_bench_holds_an_areas_weather_at_a_named_spell_until_staged_again_or_restored() {
     let mut sim = Sim::new(
         Game::new()
             .area("yard", &Map::open(20, 9), json!([]))
@@ -115,6 +117,11 @@ fn a_bench_holds_an_areas_weather_at_a_named_spell_until_staged_again() {
             .load(),
     );
     sim.serve("yard");
+    let served = ServerClocks {
+        day: None,
+        weather: TimeCourse::Since(sim.world.resource::<WallClock>().now),
+    };
+    start_clocks(&mut sim.world, served);
     sim.join(1);
     let conn = sim.conn(1);
 
@@ -147,10 +154,17 @@ fn a_bench_holds_an_areas_weather_at_a_named_spell_until_staged_again() {
         .is_err(),
         "a spell the climate lacks is refused"
     );
+
+    stage(&mut sim.world, conn, Staging::Restore).expect("a server's own weather");
+    assert_eq!(
+        sim.world.resource::<WeatherClock>().0,
+        Some(served.weather),
+        "restored, the weather runs its course as the server started it"
+    );
 }
 
 #[test]
-fn a_bench_sets_the_servers_day_to_an_hour_held_or_turning_on_from_it() {
+fn a_bench_sets_the_servers_day_to_an_hour_held_or_turning_on_from_it_until_restored() {
     let mut sim = Sim::new(
         Game::new()
             .area("yard", &Map::open(20, 9), json!([]))
@@ -161,6 +175,13 @@ fn a_bench_sets_the_servers_day_to_an_hour_held_or_turning_on_from_it() {
             .load(),
     );
     sim.serve("yard");
+    start_clocks(
+        &mut sim.world,
+        ServerClocks {
+            day: Some(TimeCourse::Held(10.0)),
+            weather: TimeCourse::Held(0),
+        },
+    );
     sim.join(1);
     let conn = sim.conn(1);
     let cycle = sim
@@ -222,6 +243,14 @@ fn a_bench_sets_the_servers_day_to_an_hour_held_or_turning_on_from_it() {
         )
         .is_err(),
         "an hour past the day is refused"
+    );
+
+    stage(&mut sim.world, conn, Staging::Restore).expect("a server's own day");
+    sim.run(150.0);
+    assert!(
+        (hour_now(&sim) - 10.0).abs() < 0.01,
+        "restored, the day runs as the server started it: {}",
+        hour_now(&sim)
     );
 }
 

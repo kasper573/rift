@@ -18,7 +18,7 @@ use crate::systems::npc::Npc;
 use crate::systems::player::{conn_player, tell_clocks};
 use crate::systems::script::Place;
 use crate::systems::text::LineText;
-use crate::systems::{GameSettings, WorldArea, from_client, stat};
+use crate::systems::{GameSettings, ServerClocks, WorldArea, from_client, start_clocks, stat};
 
 /// Where a game server that stages scenes takes them, beside its test characters.
 pub const STAGING_ROUTE: &str = "/test/stage";
@@ -40,11 +40,14 @@ pub enum Staging {
     /// Puts the character at `place`, in its own area or another.
     Place { place: Place },
     /// Holds the weather of the character's area at the spell of its climate named `spell`, for
-    /// everyone in the area, until staged again.
+    /// everyone in the area, until staged again or restored.
     Weather { spell: String },
     /// Sets the day to `hour` o'clock for everyone on the server, turning on from there or held,
-    /// until staged again.
+    /// until staged again or restored.
     Day { hour: f32, turning: bool },
+    /// Returns the day and the weather of the character's area to how the server runs them, as
+    /// it started them.
+    Restore,
     /// Tells the character's player the notification `notification`, as a script tells it, with
     /// nothing in the places its text leaves for a script's values.
     Notify { notification: NotificationId },
@@ -102,6 +105,11 @@ pub fn stage(world: &mut World, conn: Entity, staging: Staging) -> Result<(), St
                 TimeCourse::Held(hour)
             };
             world.insert_resource(DayClock(Some(course)));
+            tell_clocks(world);
+        }
+        Staging::Restore => {
+            let clocks = *world.resource::<ServerClocks>();
+            start_clocks(world, clocks);
             tell_clocks(world);
         }
         Staging::Notify { notification } => {

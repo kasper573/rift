@@ -133,8 +133,9 @@ impl Driver {
     }
 
     /// Stages `stage` and plays `setup`, with nothing left open over the world by the scene
-    /// before, and each place staged standing before the setup plays. Whatever was being
-    /// measured before is dropped.
+    /// before, and each place staged standing, its day and weather as the server runs them,
+    /// before the setup plays: what a scene before held stays held until restored, and would
+    /// play on into this one. Whatever was being measured before is dropped.
     pub fn set_scene(
         &mut self,
         name: &str,
@@ -149,6 +150,7 @@ impl Driver {
             if let Staging::Place { place } = staging {
                 self.wait(&Cond::Arrived(*place))?;
                 self.wait(&Cond::Stood)?;
+                self.stage(&Staging::Restore)?;
             }
         }
         for step in setup {
