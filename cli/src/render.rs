@@ -848,6 +848,7 @@ fn see(
         Sight {
             at,
             reach: Meters(framed.eye.distance(framed.target) * SCENERY_REACH),
+            horizon: world.resource::<VideoPreferences>().view_distance.horizon(),
             lens: camera::Lens::new(shot.height as f32, framed.fov),
             eyes: Eyes::standing(framed.eye, at, heights.height_at(at)),
         },

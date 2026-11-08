@@ -6,13 +6,18 @@
 use bevy::anti_alias::smaa::SmaaPreset;
 use bevy::pbr::ScreenSpaceAmbientOcclusionQualityLevel;
 use bevy::prelude::*;
+use bevy::render::RenderApp;
+use bevy::render::extract_resource::ExtractResource;
 use bevy::window::{MonitorSelection, PresentMode, PrimaryWindow, WindowMode};
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, VariantArray};
 use ui::controls;
 use ui::egui::Ui;
 
-#[derive(Resource, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+use crate::core::units::Meters;
+
+#[derive(Resource, ExtractResource, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+#[extract_app(RenderApp)]
 #[serde(default)]
 pub struct VideoPreferences {
     /// The window fills the screen it is on.
@@ -202,6 +207,15 @@ impl ViewDistance {
             ViewDistance::Near => 0.5,
             ViewDistance::Middle => 0.75,
             ViewDistance::Far => 1.0,
+        }
+    }
+
+    /// How far off the eye the far field's props still stand, or as far as the ground goes.
+    pub fn horizon(self) -> Option<Meters> {
+        match self {
+            ViewDistance::Near => Some(Meters(300.0)),
+            ViewDistance::Middle => Some(Meters(600.0)),
+            ViewDistance::Far => None,
         }
     }
 }

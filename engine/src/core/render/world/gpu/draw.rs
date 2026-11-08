@@ -68,14 +68,17 @@ use bevy::render::view::{ExtractedView, RetainedViewEntity};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::{Shader, ShaderDefVal};
 
-use super::atlas::{AtlasLayout, AtlasTexture, CANOPY_EXTENT_MAX, GpuTerrainAtlas, TerrainAtlas};
+use super::atlas::{
+    AtlasLayout, AtlasTexture, CANOPY_EXTENT_MAX, GpuTerrainAtlas, SURFACE_FALL_UNIT, TerrainAtlas,
+};
 use crate::core::ground::{
     OVERVIEW_STRIDE, PaintMap, SAMPLES_PER_METER, TILE_PIXELS, TileAt, TileVersion,
 };
+use crate::core::render::video::VideoPreferences;
 use crate::core::render::world::RenderProgress;
 use crate::core::render::world::cover::{CoverMaterial, SHORE_REACH, SheetOn};
-use crate::core::render::world::lod::GRAIN_PIXELS;
-use crate::core::units::GROUND_ORIGIN;
+use crate::core::render::world::lod::{GRAIN_PIXELS, horizon_band};
+use crate::core::units::{GROUND_ORIGIN, Meters};
 use crate::core::vfx::shader::weather_helpers;
 
 /// The cells along a patch's side: a patch is a grid of a point more than this each way.
@@ -445,10 +448,15 @@ struct TerrainGround {
     canopy_extent_max: f32,
     /// How many pixels across a prop must span for the view to draw it rather than thin it away.
     grain_pixels: f32,
+    /// From where off the eye the props thin out toward the view's horizon, and the horizon: 0
+    /// and 0 where they stand as far as the ground goes.
+    horizon_start: f32,
+    horizon: f32,
 }
 
 impl TerrainGround {
-    fn of(layout: AtlasLayout) -> TerrainGround {
+    fn of(layout: AtlasLayout, horizon: Option<Meters>) -> TerrainGround {
+        let (horizon_start, horizon) = horizon_band(horizon);
         let (columns, rows) = layout.size.samples();
         TerrainGround {
             origin: Vec2::new(GROUND_ORIGIN.x, GROUND_ORIGIN.y),
@@ -465,6 +473,8 @@ impl TerrainGround {
             canopy_texel: layout.canopy_texel().0,
             canopy_extent_max: CANOPY_EXTENT_MAX.0,
             grain_pixels: GRAIN_PIXELS,
+            horizon_start,
+            horizon,
         }
     }
 }
@@ -496,6 +506,7 @@ struct SheetUniform {
     terrain: u32,
     on_water: u32,
     shore_reach: f32,
+    fall_unit: f32,
 }
 
 /// A terrain's sheets as they are bound to draw, each once its cover's material is on the GPU.
@@ -795,9 +806,7 @@ fn start(
                 (107, texture_2d(TextureSampleType::Uint)),
                 (108, texture_2d_array(TextureSampleType::Uint)),
                 (109, texture_2d(TextureSampleType::Uint)),
-                (110, texture_2d_array(TextureSampleType::Uint)),
-                (111, texture_2d(TextureSampleType::Uint)),
-                (112, uniform_buffer::<SheetUniform>(false)),
+                (110, uniform_buffer::<SheetUniform>(false)),
             ),
         ),
     );
@@ -858,6 +867,7 @@ fn prepare_grounds(
     mut commands: Commands,
     device: Res<RenderDevice>,
     queue: Res<RenderQueue>,
+    video: Res<VideoPreferences>,
     mut grounds: Query<(
         Entity,
         &ExtractedGround,
@@ -880,7 +890,10 @@ fn prepare_grounds(
         if !Arc::ptr_eq(&buffers.drawn, &ground.patches) {
             buffers.lay(ground.patches.clone(), atlas.layout, &device, &queue);
         }
-        buffers.ground.set(TerrainGround::of(atlas.layout));
+        buffers.ground.set(TerrainGround::of(
+            atlas.layout,
+            video.view_distance.horizon(),
+        ));
         buffers.ground.write_buffer(&device, &queue);
         buffers.views.clear();
         buffers.sheet_views.clear();
@@ -1286,6 +1299,7 @@ fn bind_sheets(
                     terrain: u32::from(sheet.terrain),
                     on_water: u32::from(sheet.on == SheetOn::Water),
                     shore_reach: SHORE_REACH.0,
+                    fall_unit: SURFACE_FALL_UNIT,
                 });
                 uniform.write_buffer(&device, &queue);
                 let prepared = materials.get(sheet.material.id())?;
@@ -1305,11 +1319,9 @@ fn bind_sheets(
                         (105, atlas.view(AtlasTexture::Table)),
                         (106, atlas.view(AtlasTexture::Paint)),
                         (107, atlas.view(AtlasTexture::OverviewPaint)),
-                        (108, atlas.view(AtlasTexture::Water)),
-                        (109, atlas.view(AtlasTexture::OverviewWater)),
-                        (110, atlas.view(AtlasTexture::Shore)),
-                        (111, atlas.view(AtlasTexture::OverviewShore)),
-                        (112, uniform.binding()?),
+                        (108, atlas.view(AtlasTexture::Surface)),
+                        (109, atlas.view(AtlasTexture::OverviewSurface)),
+                        (110, uniform.binding()?),
                     )),
                 );
                 Some(BoundSheet {

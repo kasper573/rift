@@ -1,11 +1,15 @@
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 use bevy::camera::primitives::{Aabb, Frustum, Sphere};
 use bevy::camera::{CameraProjection, PerspectiveProjection};
 use bevy::gltf::Gltf;
 use bevy::prelude::*;
-use bevy::render::render_resource::{Buffer, BufferInitDescriptor, BufferUsages};
-use bevy::render::renderer::{RenderDevice, initialize_renderer};
+use bevy::render::render_resource::{
+    Buffer, BufferInitDescriptor, BufferUsages, Extent3d, TexelCopyBufferLayout, TextureDescriptor,
+    TextureDimension, TextureFormat, TextureUsages,
+};
+use bevy::render::renderer::{RenderDevice, RenderQueue, initialize_renderer};
 use bevy::render::settings::{Backends, RenderResources, WgpuSettings};
 use bevy::shape::ViewFrustum;
 use engine::core::math::Rng;
@@ -26,7 +30,7 @@ const CHUNKS: u32 = 48;
 const FIELD: f32 = 1600.0;
 const PIXELS_AT_A_METER: f32 = 935.0;
 const GRAIN_PIXELS: f32 = 2.0;
-const STRAY_PIXELS: f32 = 0.5;
+const STRAY_PIXELS: f32 = 1.0;
 const NEAR: f32 = 0.5;
 /// How far a fade moves in the frame culled.
 const STEP: f32 = 0.25;
@@ -34,7 +38,7 @@ const STEP: f32 = 0.25;
 /// The GPU draws a scenery's props as a reference culler on the CPU would: every instance whose
 /// model's sphere reaches into the view's frustum, those smaller than the grain thinned by their
 /// seeds and grown to make up for the rest, each part at the coarsest level straying by no more
-/// than half a pixel, listed in that level's command once for each part, and nothing of a prop
+/// than a pixel, listed in that level's command once for each part, and nothing of a prop
 /// whose model isn't on the GPU. An instance of a prop that fades, whose box the way from the eye
 /// to the camera's subject passes through or the eye stands in, is drawn a step cleared; every
 /// other one whole.
@@ -42,11 +46,7 @@ const STEP: f32 = 0.25;
 fn the_gpu_draws_each_prop_the_view_sees_at_the_level_its_size_asks_for() {
     let seed = testkit::drawn_seed();
     let mut rng = Rng::new(seed);
-    let RenderResources(device, queue, ..) = bevy::tasks::block_on(initialize_renderer(
-        Backends::all(),
-        None,
-        &WgpuSettings::default(),
-    ));
+    let (device, queue) = renderer();
     let models: Vec<PlacedModel> = (0..MODELLED).map(|_| model(&mut rng)).collect();
     let mut arena = InstanceArena::default();
     let mut slab = Slab::new("instances", BufferUsages::STORAGE);
@@ -431,18 +431,8 @@ fn instance(rng: &mut Rng, chunk: u32) -> InstanceRecord {
 /// through it.
 fn camera(target: Vec3) -> (Frustum, CullView) {
     let eye = frustum_eye();
-    let fov = 2.0 * (1.0 / (PIXELS_AT_A_METER / 540.0)).atan();
-    let projection = PerspectiveProjection {
-        fov,
-        aspect_ratio: 16.0 / 9.0,
-        near: NEAR,
-        far: FIELD,
-        ..default()
-    }
-    .get_clip_from_view();
-    let world_from_view = Transform::from_translation(eye)
-        .looking_at(target, Vec3::Y)
-        .to_matrix();
+    let projection = lens();
+    let world_from_view = world_from_view(target);
     let backward = world_from_view.z_axis.truncate();
     let frustum = Frustum(ViewFrustum::from_clip_from_world_custom_far(
         &(projection * world_from_view.inverse()),
@@ -452,6 +442,24 @@ fn camera(target: Vec3) -> (Frustum, CullView) {
     ));
     let view = CullView::new(&frustum, eye, PIXELS_AT_A_METER, false, false);
     (frustum, view)
+}
+
+fn lens() -> Mat4 {
+    let fov = 2.0 * (1.0 / (PIXELS_AT_A_METER / 540.0)).atan();
+    PerspectiveProjection {
+        fov,
+        aspect_ratio: 16.0 / 9.0,
+        near: NEAR,
+        far: FIELD,
+        ..default()
+    }
+    .get_clip_from_view()
+}
+
+fn world_from_view(target: Vec3) -> Mat4 {
+    Transform::from_translation(frustum_eye())
+        .looking_at(target, Vec3::Y)
+        .to_matrix()
 }
 
 /// Whether `record` stands where a camera at [`frustum_eye`] looking through it looks out level
@@ -470,6 +478,21 @@ fn hides_level_across_the_field(record: &InstanceRecord, model: &PlacedModel) ->
     level.length() > 200.0
         && level.normalize().dot(across_the_field) > 0.9
         && pixels_across > 2.0 * GRAIN_PIXELS
+}
+
+/// The one GPU the kernel's contracts share: the driver takes devices made at once badly.
+fn renderer() -> (RenderDevice, RenderQueue) {
+    static RENDERER: OnceLock<(RenderDevice, RenderQueue)> = OnceLock::new();
+    RENDERER
+        .get_or_init(|| {
+            let RenderResources(device, queue, ..) = bevy::tasks::block_on(initialize_renderer(
+                Backends::all(),
+                None,
+                &WgpuSettings::default(),
+            ));
+            (device, queue)
+        })
+        .clone()
 }
 
 fn frustum_eye() -> Vec3 {
@@ -501,11 +524,7 @@ fn no_chunk_standing(device: &RenderDevice) -> Buffer {
 /// it belongs to stands.
 #[test]
 fn the_gpu_hands_a_prop_from_its_model_to_its_impostor_across_the_band() {
-    let RenderResources(device, queue, ..) = bevy::tasks::block_on(initialize_renderer(
-        Backends::all(),
-        None,
-        &WgpuSettings::default(),
-    ));
+    let (device, queue) = renderer();
     let model = PlacedModel {
         bounds: Aabb {
             center: Vec3::new(0.0, 1.0, 0.0).into(),
@@ -753,3 +772,188 @@ const UNDRESSED_WITHOUT_IMPOSTOR: u32 = 3;
 const NEAR_CHUNK: u32 = 7;
 /// A near chunk of the ground that doesn't stand in the arena.
 const ABSENT_CHUNK: u32 = 9;
+
+/// Once the prepass is drawn, the lit passes leave out every instance whose sphere lies wholly
+/// farther than the farthest depth drawn under its outline, and keep every other: one nearer than
+/// that depth, one reaching across it, and all of them where nothing was drawn.
+#[test]
+fn the_lit_passes_leave_out_what_the_prepass_depth_hides() {
+    let (device, queue) = renderer();
+    let model = PlacedModel {
+        bounds: Aabb {
+            center: Vec3::new(0.0, 1.0, 0.0).into(),
+            half_extents: Vec3::ONE.into(),
+        },
+        parts: vec![PartRanges {
+            material: None,
+            first_vertex: 0,
+            vertices: 100,
+            levels: vec![LevelRange {
+                first_index: 0,
+                indices: 300,
+                strays: 0.0,
+            }],
+        }],
+    };
+    let (frustum, view) = camera(Vec3::ZERO);
+    let eye = frustum_eye();
+    let way = (Vec3::ZERO - eye).normalize();
+    let mut arena = InstanceArena::default();
+    let mut slab = Slab::new("instances", BufferUsages::STORAGE);
+    let standing_at = |distance: f32| InstanceRecord {
+        position: (eye + way * distance - Vec3::Y).to_array(),
+        yaw: 0.0,
+        scale: 1.0,
+        prop: 0,
+        seed: 0,
+        chunk: NEAR_CHUNK,
+    };
+    let table_of = |records: &[InstanceRecord]| {
+        DrawTable::of(records.iter().take(1).map(|record| {
+            (
+                record.prop,
+                DrawnProp {
+                    model: model_id(record.prop),
+                    placed: &model,
+                    instances: records.len() as u32,
+                    dressed: true,
+                    fades: false,
+                    overhang: 0.0,
+                    translucency: 0.0,
+                },
+            )
+        }))
+    };
+    let radius = table_of(&[standing_at(WALL)]).radius_of(0);
+    let records = [
+        standing_at(WALL - radius - 1.0),
+        standing_at(WALL),
+        standing_at(WALL + radius + 1.0),
+    ];
+    let Some(InstanceChange::Placed {
+        offset,
+        bytes,
+        instances,
+        capacity,
+        contents,
+        ..
+    }) = arena.insert(
+        0,
+        &records,
+        model_id,
+        ChunkPlace::Near { index: NEAR_CHUNK },
+    )
+    else {
+        panic!("the chunk placed");
+    };
+    slab.fit(&device, &queue, capacity);
+    slab.write(&queue, offset, &bytes);
+    let first = (offset / InstanceRecord::BYTES) as u32;
+    let chunks = HashMap::from([(
+        0,
+        GpuChunk {
+            offset,
+            instances,
+            contents,
+        },
+    )]);
+    let table = table_of(&records);
+    let kernel = CullKernel::new(&device);
+    let gpu_table = GpuDrawTable::new(&device, &queue, table.clone()).expect("a table to draw");
+    let seen = seen_chunks(&chunks, &table, &frustum, &view);
+    let mut culled = ViewCull::new(&device, &gpu_table);
+    let mut shown = Slab::new("instances shown", BufferUsages::STORAGE);
+    shown.fit(&device, &queue, records.len() as u64 * 4);
+    shown.write(&queue, 0, &1.0f32.to_le_bytes().repeat(records.len()));
+    let standing = device.create_buffer_with_data(&BufferInitDescriptor {
+        label: Some("near chunk standing"),
+        contents: &(1u32 << NEAR_CHUNK).to_le_bytes(),
+        usage: BufferUsages::STORAGE,
+    });
+    let depth_of = |distance: f32| {
+        let clip = lens() * Vec4::new(0.0, 0.0, -distance, 1.0);
+        clip.z / clip.w
+    };
+    let pyramid_of = |depth: f32| {
+        let texture = device.create_texture(&TextureDescriptor {
+            label: Some("prepass depth"),
+            size: Extent3d {
+                width: 2,
+                height: 2,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::R32Float,
+            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            texture.as_image_copy(),
+            &depth.to_le_bytes().repeat(4),
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(8),
+                rows_per_image: Some(2),
+            },
+            Extent3d {
+                width: 2,
+                height: 2,
+                depth_or_array_layers: 1,
+            },
+        );
+        texture.create_view(&default())
+    };
+    for (drawn_depth, kept) in [
+        (depth_of(WALL), vec![first, first + 1]),
+        (0.0, vec![first, first + 1, first + 2]),
+    ] {
+        culled.update(
+            &device,
+            &queue,
+            &kernel,
+            &gpu_table,
+            slab.buffer().expect("the instances written"),
+            shown.buffer().expect("the shares shown written"),
+            &standing,
+            seen.clone(),
+            view,
+        );
+        culled.occlude_with(
+            &device,
+            &queue,
+            &kernel,
+            &pyramid_of(drawn_depth),
+            world_from_view(Vec3::ZERO),
+            lens(),
+        );
+        let mut encoder = device.create_command_encoder(&default());
+        culled.encode(&kernel, &gpu_table, &mut encoder);
+        culled.encode_occlusion(&kernel, &gpu_table, &mut encoder);
+        queue.submit([encoder.finish()]);
+        let read = culled.read(&device, &queue);
+        let records_in = |regions: &[std::ops::Range<u32>], listed: &[ListedInstance]| {
+            let mut records: Vec<u32> = regions
+                .iter()
+                .flat_map(|region| listed[region.start as usize..region.end as usize].iter())
+                .map(|listed| listed.record)
+                .collect();
+            records.sort_unstable();
+            records
+        };
+        assert_eq!(
+            records_in(&read.commands, &read.listed),
+            vec![first, first + 1, first + 2],
+            "every instance listed at a drawn depth of {drawn_depth}"
+        );
+        assert_eq!(
+            records_in(&read.kept_commands, &read.kept),
+            kept,
+            "the instances kept at a drawn depth of {drawn_depth}"
+        );
+    }
+}
+
+/// How far off the eye the prepass's depth lies in the occlusion contract.
+const WALL: f32 = 40.0;

@@ -64,7 +64,7 @@ use bevy::shader::{Shader, ShaderDefVal};
 
 use super::arena::{ExtractedPropArena, InstanceArenas, InstanceRecord, LevelRange, ModelArena};
 use super::clearing::Clearing;
-use super::cull::{PropCulls, ViewCull};
+use super::cull::{self, PropCulls, ViewCull};
 use super::impostor::{
     self, ALBEDO_FORMAT, BAKE_DEPTH, BakeJob, CELLS, DEPTH_FORMAT, ImpostorAtlas, ImpostorOrders,
     NORMAL_FORMAT, Readback,
@@ -93,7 +93,7 @@ impl Plugin for PropDrawPlugin {
                 (
                     write_clearing.in_set(RenderSystems::PrepareResources),
                     (
-                        bind_props,
+                        bind_props.after(cull::prepare_occlusion),
                         draw_bakes
                             .after(prepare_mesh_view_bind_groups)
                             .after(prepare_material_bind_groups)
@@ -152,7 +152,8 @@ enum PropPass {
 /// the view's commands.
 #[derive(Resource, Default)]
 struct PropBindings {
-    instances: HashMap<(Entity, RetainedViewEntity), BindGroup>,
+    /// Each view's instances of each scenery: for the depth passes, and for the lit ones.
+    instances: HashMap<(Entity, RetainedViewEntity, bool), BindGroup>,
     drawn: HashMap<(Entity, RetainedViewEntity, bool), Vec<PartDraw>>,
     /// The impostor atlas, bound where a part's material would be.
     atlas: Option<BindGroup>,
@@ -386,21 +387,23 @@ fn bind_props(
             continue;
         };
         for (view, culled) in &cull.views {
-            bindings.instances.insert(
-                (*scenery, *view),
-                device.create_bind_group(
-                    "prop_instances",
-                    &layout,
-                    &BindGroupEntries::with_indices((
-                        (0, mesh.clone()),
-                        (100, records.as_entire_binding()),
-                        (101, culled.drawn().as_entire_binding()),
-                        (102, clearing.clone()),
-                        (103, props.clone()),
-                        (104, layers.clone()),
-                    )),
-                ),
-            );
+            for (lit, drawn) in [(false, culled.drawn()), (true, culled.lit_drawn())] {
+                bindings.instances.insert(
+                    (*scenery, *view, lit),
+                    device.create_bind_group(
+                        "prop_instances",
+                        &layout,
+                        &BindGroupEntries::with_indices((
+                            (0, mesh.clone()),
+                            (100, records.as_entire_binding()),
+                            (101, drawn.as_entire_binding()),
+                            (102, clearing.clone()),
+                            (103, props.clone()),
+                            (104, layers.clone()),
+                        )),
+                    ),
+                );
+            }
         }
     }
 }
@@ -1230,7 +1233,7 @@ impl<P: PhaseItem, const LIT: bool> RenderCommand<P> for DrawProps<LIT> {
         let view = view.retained_view_entity;
         let (Some(parts), Some(instances), Some(culled), Some(vertices), Some(indices)) = (
             bindings.drawn.get(&(scenery, view, LIT)),
-            bindings.instances.get(&(scenery, view)),
+            bindings.instances.get(&(scenery, view, LIT)),
             culls.0.get(&scenery).and_then(|cull| cull.views.get(&view)),
             models.vertices.buffer(),
             models.indices.buffer(),
@@ -1249,7 +1252,11 @@ impl<P: PhaseItem, const LIT: bool> RenderCommand<P> for DrawProps<LIT> {
             pass.set_render_pipeline(drawn);
             pass.set_bind_group(MATERIAL_BIND_GROUP_INDEX, &part.material, &[]);
             pass.multi_draw_indexed_indirect(
-                culled.commands(),
+                if LIT {
+                    culled.lit_commands()
+                } else {
+                    culled.commands()
+                },
                 ViewCull::command_offset(part.first_command),
                 part.commands,
             );

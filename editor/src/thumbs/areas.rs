@@ -165,6 +165,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
                         Sight {
                             at,
                             reach: Meters(bounds.size.width.hypot(bounds.size.height)),
+                            horizon: None,
                             lens: drawing.view.lens(),
                             eyes: Eyes::standing(
                                 drawing.view.eye(),

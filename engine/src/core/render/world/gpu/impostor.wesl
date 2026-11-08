@@ -1,10 +1,11 @@
 // A prop drawn from its impostor atlas, as the far field draws it: a square facing the eye at
-// the middle of the instance's bounding sphere, a radius each way, on which the model's picture
-// from the eye's direction is read between the four cells of the atlas round that direction,
-// each cell's picture seen through its own orthographic view. The pixel is dropped as often as
-// its coverage falls short, lit by the baked normal in the world's light, and given the depth
-// the baked depth puts it at, so an impostor sorts against the ground and its neighbours as the
-// model would.
+// the near side of the instance's bounding sphere, a radius each way, on which the model's
+// picture from the eye's direction is read between the four cells of the atlas round that
+// direction, each cell's picture seen through its own orthographic view. The pixel is dropped as
+// often as its coverage falls short, lit by the baked normal in the world's light, and given the
+// depth the baked depth puts it at, so an impostor sorts against the ground and its neighbours as
+// the model would. The square stands at the sphere's near side so that depth is never nearer
+// than the square's own, which lets the depth test run before the pixel is shaded.
 // Without the atlas, a box of the prop's bounds stands in its place, coloured by its seed. In the
 // prepass and the shadow maps the same shapes write depth alone.
 
@@ -56,6 +57,10 @@ struct Prop {
 
 // The atlas's cells along each side, as it was baked.
 const CELLS: f32 = 8.0;
+// How far out from the middle toward the eye the square stands, in radii: past the sphere's near
+// side by a hair, so the surface read from the atlas, which lies within the sphere, never comes
+// nearer than the square whatever cell it is read from.
+const NEAR_SIDE: f32 = 1.05;
 // The corners of a square, in the order its index strip draws them.
 const CORNERS: array<vec2<f32>, 4> = array<vec2<f32>, 4>(
     vec2<f32>(-1.0, -1.0), vec2<f32>(1.0, -1.0), vec2<f32>(-1.0, 1.0), vec2<f32>(1.0, 1.0),
@@ -69,8 +74,6 @@ const FACES: array<vec3<f32>, 6> = array<vec3<f32>, 6>(
 struct ImpostorOutput {
     @builtin(position) position: vec4<f32>,
     @location(0) world_position: vec4<f32>,
-    // Where on the square the pixel lies, a radius each way of the middle.
-    @location(1) square: vec2<f32>,
     // The eye's direction from the instance's middle, in the model's own frame.
     @location(2) @interpolate(flat) direction: vec3<f32>,
     @location(3) @interpolate(flat) middle: vec3<f32>,
@@ -113,10 +116,9 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
         let right = normalize(cross(vec3<f32>(0.0, 1.0, 0.0), eye));
         let up = cross(eye, right);
         let corner = CORNERS[vertex % 4u];
-        let world = out.middle + (right * corner.x + up * corner.y) * radius;
+        let world = out.middle + (eye * NEAR_SIDE + right * corner.x + up * corner.y) * radius;
         out.position = position_world_to_clip(world);
         out.world_position = vec4<f32>(world, 1.0);
-        out.square = corner;
         out.direction = unturned(placed.turn, eye);
         out.radius_layer = vec2<f32>(radius, f32(layers[prop_of(instance)]));
         out.world_normal = eye;
@@ -149,10 +151,7 @@ fn surface(in: ImpostorOutput) -> Surface {
         out.world = in.world_position.xyz;
     }
     @if(!PROXY) {
-        out = read_atlas(in);
-        if out.color.a < dither(in.position.xy + COVER_OFFSET) {
-            discard;
-        }
+        out = read_atlas(in, dither(in.position.xy + COVER_OFFSET));
     }
     return out;
 }
@@ -161,24 +160,25 @@ fn surface(in: ImpostorOutput) -> Surface {
 // same pixels.
 const COVER_OFFSET: vec2<f32> = vec2<f32>(41.0, 11.0);
 
+// What the atlas shows at the pixel, dropped where its coverage falls short of `kept`: the
+// colour and coverage are read first, from the four cells, and the pixel dropped on them alone
+// before the normals and depths are read, so a bare pixel of the square, most of them, costs
+// four reads and no lighting.
 @if(!PROXY)
-fn read_atlas(in: ImpostorOutput) -> Surface {
+fn read_atlas(in: ImpostorOutput, kept: f32) -> Surface {
     let layer = i32(in.radius_layer.y) - 1;
     let radius = in.radius_layer.x;
     let at = fold_hemi(in.direction) * (CELLS - 1.0);
     let low = floor(min(at, vec2<f32>(CELLS - 1.001)));
     let t = at - low;
     let weights = vec4<f32>((1.0 - t.x) * (1.0 - t.y), t.x * (1.0 - t.y), (1.0 - t.x) * t.y, t.x * t.y);
-    let right = normalize(cross(vec3<f32>(0.0, 1.0, 0.0), in.direction));
-    let up = cross(in.direction, right);
-    // The pixel's point on the square, in the model's frame, a radius each way of the middle.
-    let point = right * in.square.x + up * in.square.y;
+    let point = point_of(in);
+    var texels: array<vec2<f32>, 4>;
+    var weighed: array<f32, 4>;
+    var seens: array<vec3<f32>, 4>;
     var color = vec4<f32>(0.0);
-    var normal = vec3<f32>(0.0);
-    var depth = 0.0;
-    var heaviest = 0.0;
-    var heaviest_seen = in.direction;
     for (var k = 0u; k < 4u; k++) {
+        weighed[k] = 0.0;
         let cell = low + vec2<f32>(f32(k & 1u), f32(k >> 1u));
         let seen = unfold_hemi(cell / (CELLS - 1.0));
         let cell_right = normalize(cross(cell_up(seen), seen));
@@ -193,14 +193,30 @@ fn read_atlas(in: ImpostorOutput) -> Surface {
         let read = textureSample(albedo, atlas_sampler, texel, layer);
         let weight = weights[k] * read.a;
         color += vec4<f32>(read.rgb * weight, weight);
-        normal += unfold_oct(textureSample(normals, atlas_sampler, texel, layer).xy) * weight;
-        depth += textureSample(depths, atlas_sampler, texel, layer).x * weight;
+        texels[k] = texel;
+        weighed[k] = weight;
+        seens[k] = seen;
+    }
+    if color.a <= kept {
+        discard;
+    }
+    var normal = vec3<f32>(0.0);
+    var depth = 0.0;
+    var heaviest = 0.0;
+    var heaviest_seen = in.direction;
+    for (var k = 0u; k < 4u; k++) {
+        let weight = weighed[k];
+        if weight <= 0.0 {
+            continue;
+        }
+        normal += unfold_oct(textureSample(normals, atlas_sampler, texels[k], layer).xy) * weight;
+        depth += textureSample(depths, atlas_sampler, texels[k], layer).x * weight;
         if weight > heaviest {
             heaviest = weight;
-            heaviest_seen = seen;
+            heaviest_seen = seens[k];
         }
     }
-    let coverage = max(color.a, 1e-4);
+    let coverage = color.a;
     var out: Surface;
     out.color = vec4<f32>(color.rgb / coverage, color.a);
     out.normal = normalize(turned(in.turn, normal / coverage));
@@ -218,6 +234,7 @@ struct LitOutput {
 }
 
 @if(!PREPASS_PIPELINE)
+@early_depth_test(less_equal)
 @fragment
 fn fragment(in: ImpostorOutput) -> LitOutput {
     let found = surface(in);
@@ -253,6 +270,7 @@ struct DepthOutput {
 }
 
 @if(PREPASS_PIPELINE)
+@early_depth_test(less_equal)
 @fragment
 fn fragment(in: ImpostorOutput) -> DepthOutput {
     let found = surface(in);
@@ -274,6 +292,21 @@ fn fragment(in: ImpostorOutput) -> DepthOutput {
 @if(PREPASS_PIPELINE)
 fn input_world(found: Surface) -> vec4<f32> {
     return vec4<f32>(found.world, 1.0);
+}
+
+// The pixel's point on the plane through the middle that faces the eye, in the model's frame, a
+// radius each way of the middle: where the eye's ray through the pixel meets that plane, so the
+// picture is drawn the size the model is however near the square stands.
+@if(!PROXY)
+fn point_of(in: ImpostorOutput) -> vec3<f32> {
+    let eye = eye_from(in.middle);
+    let pixel = in.world_position.xyz;
+    var ray = -eye;
+    if view.clip_from_view[3][3] != 1.0 {
+        ray = pixel - view.world_position;
+    }
+    let hit = pixel + ray * (dot(in.middle - pixel, eye) / dot(ray, eye));
+    return unturned(in.turn, hit - in.middle) / in.radius_layer.x;
 }
 
 // The way from `at` to the eye: straight back through the view where it is orthographic.

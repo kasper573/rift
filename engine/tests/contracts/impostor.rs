@@ -258,6 +258,7 @@ fn stand(game: Game, folder: &Path, profile: &Path, eye: Vec3) -> (App, Handle<I
         Sight {
             at: middle,
             reach: Meters(FIELD),
+            horizon: None,
             lens: Lens::new(SIDE as f32, FOV),
             eyes: Eyes::standing(eye, middle, Meters(0.0)),
         },

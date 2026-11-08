@@ -123,19 +123,24 @@ fn terrain_at(corner: vec2<f32>, step: vec2<f32>, stride: u32, at: vec2<f32>) ->
 
 // The colour of the props standing over `at`, as far as the view thins them away: each band of
 // them whole where its typical prop spans no more than the grain, from where it spans twice
-// that, by how much of the ground it covers. Up close, where the props themselves stand, nothing
-// shows of it.
+// that, and every band whole past the view's horizon, from where the props thin toward it, by
+// how much of the ground it covers. Up close, where the props themselves stand, nothing shows of
+// it.
 fn canopied(at: vec3<f32>) -> vec4<f32> {
     let uv = (at.xz - ground.origin) / (ground.canopy_texel * vec2<f32>(textureDimensions(canopy)));
     let away = max(distance(at, view.world_position), 1e-3);
     let pixels_per_metre = view.viewport.w * 0.5 * view.clip_from_view[1][1] / away;
+    var past = 0.0;
+    if ground.horizon > 0.0 {
+        past = clamp((away - ground.horizon_start) / (ground.horizon - ground.horizon_start), 0.0, 1.0);
+    }
     var color = vec3<f32>(0.0);
     var cover = 0.0;
     for (var band = 0; band < i32(textureNumLayers(canopy)); band++) {
         let look = textureSample(canopy, canopy_sampler, uv, band);
         let extent = textureSample(canopy_extent, canopy_sampler, uv, band).r * ground.canopy_extent_max;
         let across = extent * pixels_per_metre;
-        let thinned = clamp((2.0 * ground.grain_pixels - across) / ground.grain_pixels, 0.0, 1.0);
+        let thinned = max(clamp((2.0 * ground.grain_pixels - across) / ground.grain_pixels, 0.0, 1.0), past);
         let hidden = look.a * thinned;
         color += look.rgb * hidden;
         cover += hidden;

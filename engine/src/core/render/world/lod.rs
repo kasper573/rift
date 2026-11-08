@@ -2,6 +2,7 @@
 //! the triangles of a mesh, coarser and coarser, each with how far its shape strays, so a mesh far
 //! off the eye draws with no more triangles than its pixels show.
 
+use crate::core::units::Meters;
 use meshopt::SimplifyOptions;
 
 /// How many pixels across a thing among many alike must span for the view to tell it apart from
@@ -9,8 +10,28 @@ use meshopt::SimplifyOptions;
 /// crowd looks the same.
 pub const GRAIN_PIXELS: f32 = 2.0;
 
-/// How far a stand-in's shape may stray from its mesh's, in pixels of the view it is seen in.
+/// The share of the horizon over which the far field thins out to nothing at it, by the props'
+/// seeds in the kernel and by the canopy over the ground.
+const HORIZON_BAND: f32 = 0.2;
+
+/// Where the far field begins to thin toward a horizon `horizon` off the eye, and the horizon,
+/// in metres: 0 and 0 for none.
+pub fn horizon_band(horizon: Option<Meters>) -> (f32, f32) {
+    horizon.map_or((0.0, 0.0), |horizon| {
+        (horizon.0 * (1.0 - HORIZON_BAND), horizon.0)
+    })
+}
+
+/// How far a stand-in's shape may stray from its mesh's, in pixels of the view it is seen in,
+/// where the stand-in is seen on its own: a model's impostor, baked from the levels within it.
 pub(super) const STRAY_PIXELS: f32 = 0.5;
+
+/// How far a level of a prop's model may stray from its mesh in the view that draws it: twice
+/// what a stand-in is held to on its own. A prop stands among its kind, in grass, scrub or wood,
+/// where the eye reads the crowd and not a blade's edge, and a level that strays less than this
+/// costs triangles that show no difference there, most of them in the nearest tufts; at two
+/// pixels the tufts' coarser levels drop blades the crowd does miss.
+pub(super) const DRAWN_STRAY_PIXELS: f32 = 1.0;
 
 /// The triangles of the mesh `indices` draw over `positions`, coarser and coarser: halved each
 /// time while the simplifier still can, collapsing across the seams of its texture coordinates and

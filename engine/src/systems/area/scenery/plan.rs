@@ -20,12 +20,14 @@ use crate::core::units::{Meters, Radians};
 use crate::systems::area::Area;
 
 /// Where a view may look from, as the scenery stands for it: the ground it looks at, how far
-/// around that ground the covers, props and lights stand, its lens, and everywhere around that
-/// ground its eye may stand. The scenery stands for every view the sight allows.
+/// around that ground the covers, props and lights stand, how far off it the far field's props
+/// still stand (or as far as the ground goes), its lens, and everywhere around that ground its
+/// eye may stand. The scenery stands for every view the sight allows.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Sight {
     pub at: Pos<Meters>,
     pub reach: Meters,
+    pub horizon: Option<Meters>,
     pub lens: Lens,
     pub eyes: Eyes,
 }
@@ -140,6 +142,7 @@ impl Sight {
         Sight {
             at: Pos::new(middle(self.at.x), middle(self.at.y)),
             reach: Meters((self.reach.0 / cell).ceil() * cell),
+            horizon: self.horizon,
             lens: self.lens,
             eyes: Eyes {
                 nearest,

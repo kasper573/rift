@@ -3,7 +3,7 @@
 // four paint pixels round it are painted with the sheet's terrain. Where a patch borders a coarser
 // one, its points along that edge lie between the coarser one's, as the ground's do.
 import engine::core::render::world::gpu::terrain::{
-    ground, edge_ends, height_of, level_in, lie_at, metres_of, paint_of, patch_point, world_at,
+    ground, edge_ends, lie_at, metres_of, paint_of, patch_point, texels_in, world_at,
 };
 
 struct Sheet {
@@ -12,22 +12,23 @@ struct Sheet {
     on_water: u32,
     // How far the shore's texels reach at their most, in metres.
     shore_reach: f32,
+    // The fall a level of the surface's fall stands for, in metres a metre.
+    fall_unit: f32,
 }
 
-// The water's surface and its shore, held as the heights are.
-@group(2) @binding(108) var waters: texture_2d_array<u32>;
-@group(2) @binding(109) var overview_water: texture_2d<u32>;
-@group(2) @binding(110) var shores: texture_2d_array<u32>;
-@group(2) @binding(111) var overview_shore: texture_2d<u32>;
-@group(2) @binding(112) var<uniform> drawn_sheet: Sheet;
+// The surface a sheet on water lies on, held as the heights are: its level, its fall toward east
+// and south as levels over `FALL_MIDDLE`, and how far it lies from the nearest dry ground, up to
+// `shore_reach` at the texel's most.
+@group(2) @binding(108) var surfaces: texture_2d_array<u32>;
+@group(2) @binding(109) var overview_surface: texture_2d<u32>;
+@group(2) @binding(110) var<uniform> drawn_sheet: Sheet;
 
 // How far above the ground a sheet on it lies, so it draws over the ground without fighting it.
 const SHEET_LIFT: f32 = 0.02;
-// How far under the ground a sheet on water lies away from any water.
-const DRY_SINK: f32 = 1.0;
-// How far either way along the water a sheet reads its surface's fall, in samples: far enough
-// that the gentlest river's fall shows through the steps its heights are kept in.
-const FALL_SAMPLES: i32 = 4;
+// The fall level of a surface that doesn't fall.
+const FALL_MIDDLE: f32 = 32768.0;
+// The shore level of a surface at the shore's reach.
+const SHORE_MOST: f32 = 65535.0;
 
 // A point of a sheet: where it lies, its normal, its uv over the whole area, how much water stands
 // over the ground under it, how heavily the sheet's terrain is painted there, how far it lies from
@@ -70,12 +71,13 @@ fn sheet_at(sample: vec2<u32>, stride: u32) -> SheetPoint {
         point.normal = normalize(lie.xyz);
         return point;
     }
-    let level = surface_level(sample);
+    let surface = texels_in(surfaces, overview_surface, sample);
+    let level = metres_of(surface.x);
     point.world = vec3<f32>(0.0, level, 0.0);
     point.depth = max(level - lie.w, 0.0);
-    point.fall = fall_at(sample);
+    point.fall = (surface.yz - FALL_MIDDLE) * drawn_sheet.fall_unit;
     point.normal = normalize(vec3<f32>(point.fall.x, 1.0, point.fall.y));
-    point.shore = level_in(shores, overview_shore, sample) / 255.0 * drawn_sheet.shore_reach;
+    point.shore = surface.w / SHORE_MOST * drawn_sheet.shore_reach;
     return point;
 }
 
@@ -104,68 +106,4 @@ fn painted(sample: vec2<u32>) -> f32 {
         }
     }
     return select(0.0, total / count, count > 0.0);
-}
-
-// The height of the water's surface at `sample`, in metres.
-fn water_of(sample: vec2<u32>) -> f32 {
-    return metres_of(level_in(waters, overview_water, sample));
-}
-
-// Whether water stands over the ground at `sample`.
-fn wet(sample: vec2<u32>) -> bool {
-    return water_of(sample) > height_of(sample);
-}
-
-// Whether `sample` lies on the ground.
-fn inside(sample: vec2<i32>) -> bool {
-    return all(sample >= vec2<i32>(0)) && all(sample < vec2<i32>(ground.samples));
-}
-
-// The level the sheet stands at over `sample`: the water's surface where water lies, and beside it
-// the highest surface next to it, so the sheet runs on flat into the bank and meets it where the
-// water does; under the ground away from any water.
-fn surface_level(sample: vec2<u32>) -> f32 {
-    if wet(sample) {
-        return water_of(sample);
-    }
-    var beside = 0.0;
-    var any = false;
-    for (var near = 0; near < 9; near++) {
-        let at = vec2<i32>(sample) + vec2<i32>(near % 3, near / 3) - 1;
-        if inside(at) && wet(vec2<u32>(at)) {
-            let level = water_of(vec2<u32>(at));
-            beside = select(level, max(beside, level), any);
-            any = true;
-        }
-    }
-    return select(height_of(sample) - DRY_SINK, beside, any);
-}
-
-// How the water's surface falls at `sample`, in metres a metre toward east and south: read across
-// `FALL_SAMPLES` either way, as far as the water reaches, so dry ground beside it doesn't count.
-fn fall_at(sample: vec2<u32>) -> vec2<f32> {
-    let here = water_of(sample);
-    return vec2<f32>(
-        fall_along(sample, vec2<i32>(1, 0), here),
-        fall_along(sample, vec2<i32>(0, 1), here),
-    );
-}
-
-fn fall_along(sample: vec2<u32>, way: vec2<i32>, here: f32) -> f32 {
-    let ahead = reach(sample, way, here);
-    let behind = reach(sample, -way, here);
-    let span = (ahead.y + behind.y) / f32(ground.samples_per_metre);
-    return select(0.0, (behind.x - ahead.x) / span, span > 0.0);
-}
-
-// The surface of the farthest water within `FALL_SAMPLES` of `sample` along `way`, and how many
-// samples off it lies: `here` and none where no water lies along it.
-fn reach(sample: vec2<u32>, way: vec2<i32>, here: f32) -> vec2<f32> {
-    for (var samples = FALL_SAMPLES; samples >= 1; samples--) {
-        let at = vec2<i32>(sample) + way * samples;
-        if inside(at) && wet(vec2<u32>(at)) {
-            return vec2<f32>(water_of(vec2<u32>(at)), f32(samples));
-        }
-    }
-    return vec2<f32>(here, 0.0);
 }

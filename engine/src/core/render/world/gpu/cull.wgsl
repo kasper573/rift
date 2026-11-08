@@ -32,11 +32,16 @@ struct CullView {
     // way to its impostor, and how wide the band is.
     impostor_pixels: f32,
     band_pixels: f32,
+    // How far off the eye props still stand, and from where they thin out toward it: 0 and 0 for
+    // as far as they go.
+    horizon_start: f32,
+    horizon: f32,
     // Whom the view's camera follows, and how far a fade moves this frame: none for a view that
     // draws every prop whole.
     subject: vec3<f32>,
     fade_step: f32,
 }
+
 
 struct Instance {
     x: f32,
@@ -99,8 +104,9 @@ struct Commands {
 
 @group(0) @binding(0) var<uniform> view: CullView;
 @group(0) @binding(1) var<storage, read> instances: array<Instance>;
-// The chunks the view may see: each one's first instance among `instances`, how many it has, and
-// whether it stands in the far field, drawn by impostors alone.
+// The chunks the view may see: each one's first instance among `instances`, how many it has,
+// whether it stands in the far field, drawn by impostors alone, and how many instances the chunks
+// before it hold, so every thread finds its instance.
 @group(0) @binding(2) var<storage, read> chunks: array<vec4<u32>>;
 @group(0) @binding(3) var<storage, read> props: array<Prop>;
 @group(0) @binding(4) var<storage, read> parts: array<Part>;
@@ -117,15 +123,53 @@ struct Commands {
 // instance is drawn only where the near chunk it lies in doesn't.
 @group(0) @binding(10) var<storage, read> standing: array<u32>;
 
+// What the lit passes keep of the listed instances: the view's own matrices, the pyramid of the
+// depth the prepass drew (each texel of a level the farthest of the four under it, 0 where
+// nothing was drawn), and the commands and listings kept for the instances that depth doesn't
+// hide whole.
+struct Occlusion {
+    view_from_world: mat4x4<f32>,
+    clip_from_view: mat4x4<f32>,
+}
+@group(1) @binding(0) var<uniform> occlusion: Occlusion;
+@group(1) @binding(1) var pyramid: texture_2d<f32>;
+@group(1) @binding(2) var<storage, read_write> kept_commands: Commands;
+@group(1) @binding(3) var<storage, read_write> kept: array<vec4<u32>>;
+
 const THREADS: u32 = 64u;
 const PLACERS: u32 = 256u;
+const GROUPS_A_ROW: u32 = 65535u;
+
+// The workgroups a pass is spread over are laid out in rows of `GROUPS_A_ROW`, as many rows as
+// they take: the thread `thread` of `group` is the nth of the pass.
+fn nth_of(group: vec3<u32>, thread: u32) -> u32 {
+    return (group.y * GROUPS_A_ROW + group.x) * THREADS + thread;
+}
 
 @compute @workgroup_size(64)
 fn count(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index) thread: u32) {
-    let chunk = chunks[group.x];
-    for (var at = thread; at < chunk.y; at += THREADS) {
-        count_instance(chunk.x + at, chunk.z != 0u);
+    let chunk = chunk_of(nth_of(group, thread));
+    if chunk.y > 0u {
+        count_instance(chunk.x, chunk.z != 0u);
     }
+}
+
+// The chunk holding the `nth` instance of all the chunks hold: the instance's place among
+// `instances`, 1 while there is one, and whether the chunk stands in the far field.
+fn chunk_of(nth: u32) -> vec3<u32> {
+    var low = 0u;
+    var high = arrayLength(&chunks);
+    while high - low > 1u {
+        let middle = (low + high) / 2u;
+        if chunks[middle].w <= nth {
+            low = middle;
+        } else {
+            high = middle;
+        }
+    }
+    let chunk = chunks[low];
+    let at = nth - chunk.w;
+    return vec3<u32>(chunk.x + at, u32(at < chunk.y), chunk.z);
 }
 
 var<workgroup> stripes: array<u32, 256>;
@@ -162,10 +206,116 @@ fn place(@builtin(local_invocation_index) thread: u32) {
 
 @compute @workgroup_size(64)
 fn list(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index) thread: u32) {
-    let chunk = chunks[group.x];
-    for (var at = thread; at < chunk.y; at += THREADS) {
-        list_instance(chunk.x + at, chunk.z != 0u);
+    let chunk = chunk_of(nth_of(group, thread));
+    if chunk.y > 0u {
+        list_instance(chunk.x, chunk.z != 0u);
     }
+}
+
+// Starts the kept commands anew: each as listed, from where its listings begin, holding none yet.
+@compute @workgroup_size(64)
+fn reset_kept(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index) thread: u32) {
+    let command = nth_of(group, thread);
+    if command >= arrayLength(&commands.commands) {
+        return;
+    }
+    atomicStore(&kept_commands.commands[command].instance_count, 0u);
+}
+
+// Keeps the `nth` listing for the lit passes unless the depth the prepass drew hides its instance
+// whole.
+@compute @workgroup_size(64)
+fn occlude(@builtin(workgroup_id) group: vec3<u32>, @builtin(local_invocation_index) thread: u32) {
+    let nth = nth_of(group, thread);
+    let last = arrayLength(&commands.commands) - 1u;
+    let listed = commands.commands[last].first_instance
+        + atomicLoad(&commands.commands[last].instance_count);
+    if nth >= listed {
+        return;
+    }
+    let listing = drawn[nth];
+    if hidden(listing) {
+        return;
+    }
+    let command = command_of(nth);
+    let slot = atomicAdd(&kept_commands.commands[command].instance_count, 1u);
+    kept[kept_commands.commands[command].first_instance + slot] = listing;
+}
+
+// The command whose listings hold the `nth`: the last to begin at or before it.
+fn command_of(nth: u32) -> u32 {
+    var low = 0u;
+    var high = arrayLength(&commands.commands);
+    while high - low > 1u {
+        let middle = (low + high) / 2u;
+        if commands.commands[middle].first_instance <= nth {
+            low = middle;
+        } else {
+            high = middle;
+        }
+    }
+    return low;
+}
+
+// Whether the depth the prepass drew hides the instance `listing` draws whole: its sphere lies
+// wholly farther than the farthest depth under its outline on screen. A sphere reaching the near
+// plane is never hidden, nor is anything from a view with no perspective.
+fn hidden(listing: vec4<u32>) -> bool {
+    let instance = instances[listing.x];
+    if view.orthographic != 0u || instance.prop >= arrayLength(&props) {
+        return false;
+    }
+    let prop = props[instance.prop];
+    let scale = bitcast<f32>(listing.y);
+    let turn = vec2<f32>(cos(instance.yaw), sin(instance.yaw));
+    let radius = prop.radius * scale;
+    let seen = occlusion.view_from_world * vec4<f32>(center_of(instance, prop, turn, scale), 1.0);
+    let nearest_z = seen.z + radius;
+    if nearest_z >= -occlusion.clip_from_view[3][2] {
+        return false;
+    }
+    var low = vec2<f32>(1.0);
+    var high = vec2<f32>(0.0);
+    for (var corner = 0u; corner < 8u; corner++) {
+        let off = vec3<f32>(
+            select(-radius, radius, (corner & 1u) != 0u),
+            select(-radius, radius, (corner & 2u) != 0u),
+            select(-radius, radius, (corner & 4u) != 0u),
+        );
+        let clip = occlusion.clip_from_view * vec4<f32>(seen.xyz + off, 1.0);
+        let uv = clip.xy / clip.w * vec2<f32>(0.5, -0.5) + 0.5;
+        low = min(low, uv);
+        high = max(high, uv);
+    }
+    low = clamp(low, vec2<f32>(0.0), vec2<f32>(1.0));
+    high = clamp(high, vec2<f32>(0.0), vec2<f32>(1.0));
+    let nearest = occlusion.clip_from_view * vec4<f32>(0.0, 0.0, nearest_z, 1.0);
+    return nearest.z / nearest.w < farthest_under(low, high);
+}
+
+// The farthest depth the prepass drew under the outline from `low` to `high` over the screen,
+// as the pyramid holds it: read from the level whose texels span the outline, the four from its
+// top-left corner.
+fn farthest_under(low: vec2<f32>, high: vec2<f32>) -> f32 {
+    let span = (high - low) * vec2<f32>(textureDimensions(pyramid, 0));
+    let level = clamp(
+        i32(ceil(log2(max(max(span.x, span.y), 1.0)))),
+        0,
+        i32(textureNumLevels(pyramid)) - 1,
+    );
+    let size = textureDimensions(pyramid, level);
+    let top_left = min(vec2<u32>(low * vec2<f32>(size)), size - 1u);
+    let next = min(top_left + 1u, size - 1u);
+    return min(
+        min(
+            textureLoad(pyramid, top_left, level).x,
+            textureLoad(pyramid, vec2<u32>(next.x, top_left.y), level).x,
+        ),
+        min(
+            textureLoad(pyramid, vec2<u32>(top_left.x, next.y), level).x,
+            textureLoad(pyramid, next, level).x,
+        ),
+    );
 }
 
 // An instance as the view sees it: whether it does at all, the scale it is drawn at, how far a
@@ -257,10 +407,11 @@ fn sight(instance: Instance, far: bool) -> Sighted {
         return sighted;
     }
     let turn = vec2<f32>(cos(instance.yaw), sin(instance.yaw));
-    let middle = vec3<f32>(prop.x, prop.y, prop.z) * instance.scale;
-    let center = vec3<f32>(instance.x, instance.y, instance.z)
-        + vec3<f32>(turn.x * middle.x + turn.y * middle.z, middle.y, -turn.y * middle.x + turn.x * middle.z);
+    let center = center_of(instance, prop, turn, instance.scale);
     if !in_frustum(center, prop.radius * instance.scale) {
+        return sighted;
+    }
+    if view.horizon > 0.0 && past_horizon(center, instance.seed) {
         return sighted;
     }
     let pixels_per_meter = pixels_per_meter_at(distance(center, view.eye));
@@ -364,6 +515,14 @@ fn crosses(a: vec3<f32>, b: vec3<f32>, low: vec3<f32>, high: vec3<f32>) -> bool 
     return true;
 }
 
+// The middle of `prop`'s sphere for `instance`, turned by `turn` and drawn `scale` times its
+// size.
+fn center_of(instance: Instance, prop: Prop, turn: vec2<f32>, scale: f32) -> vec3<f32> {
+    let middle = vec3<f32>(prop.x, prop.y, prop.z) * scale;
+    return vec3<f32>(instance.x, instance.y, instance.z)
+        + vec3<f32>(turn.x * middle.x + turn.y * middle.z, middle.y, -turn.y * middle.x + turn.x * middle.z);
+}
+
 // Whether a sphere about `center`, `radius` across, reaches into the view's frustum.
 fn in_frustum(center: vec3<f32>, radius: f32) -> bool {
     for (var plane = 0u; plane < 6u; plane++) {
@@ -405,6 +564,15 @@ fn near_stands(index: u32) -> bool {
 }
 
 // An instance's seed as a share between 0 and 1.
+// Whether an instance standing at `center` is left out for lying toward the view's horizon: all
+// of them past it, and a share of them growing from none to all over the band before it, by
+// their seeds, so the far field thins out instead of ending on a line.
+fn past_horizon(center: vec3<f32>, seed: u32) -> bool {
+    let off = distance(center, view.eye);
+    let thinned = clamp((off - view.horizon_start) / (view.horizon - view.horizon_start), 0.0, 1.0);
+    return seed_share(seed) < thinned;
+}
+
 fn seed_share(seed: u32) -> f32 {
     return f32(seed >> 8u) / 16777216.0;
 }

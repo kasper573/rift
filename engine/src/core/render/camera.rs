@@ -95,8 +95,10 @@ pub struct WorldCamera;
 #[derive(Component, Clone, Copy)]
 pub struct WorldPicture(pub PictureGrade);
 
-/// How many steps the air is marched in along each pixel's ray for the sun's shafts.
-const AIR_STEPS: u32 = 32;
+/// How many steps the air is marched in along each pixel's ray for the sun's shafts: eight
+/// under the jitter the shafts are drawn with, which the temporal anti-aliasing spreads over
+/// frames, show as thirty-two did at a quarter of the cost.
+const AIR_STEPS: u32 = 8;
 
 /// How every camera that draws the world finishes its picture: in a high range of light, the air
 /// lit by the sun's shafts, creases shaded by what stands around them, soft shadows, under the

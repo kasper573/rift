@@ -124,9 +124,11 @@ fn follow_view(world: &mut World) {
     let target = rig.target();
     let at = camera::ground_pos(target);
     let lift = Meters(target.y - ground_height(world, at).0);
+    let video = world.resource::<VideoPreferences>();
     let sight = Sight {
         at,
-        reach: view_reach(rig.framing(), world.resource::<VideoPreferences>()),
+        reach: view_reach(rig.framing(), video),
+        horizon: video.view_distance.horizon(),
         lens,
         eyes: Eyes::orbiting(rig.framing(), lift),
     };

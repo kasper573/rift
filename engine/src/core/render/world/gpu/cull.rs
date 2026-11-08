@@ -17,6 +17,9 @@ use std::sync::{Arc, Mutex};
 
 use bevy::camera::primitives::{Aabb, Frustum};
 use bevy::camera::visibility::RenderLayers;
+use bevy::core_pipeline::mip_generation::experimental::depth::{
+    DepthPyramidDummyTexture, DownsampleDepthPipelines, ViewDepthPyramid,
+};
 use bevy::core_pipeline::{Core3d, Core3dSystems};
 use bevy::math::{Affine3A, Vec3A};
 use bevy::pbr::{
@@ -26,18 +29,20 @@ use bevy::prelude::*;
 use bevy::render::diagnostic::RecordDiagnostics;
 use bevy::render::extract_resource::ExtractResourcePlugin;
 use bevy::render::render_resource::binding_types::{
-    storage_buffer_read_only_sized, storage_buffer_sized, uniform_buffer,
+    storage_buffer_read_only_sized, storage_buffer_sized, texture_2d, uniform_buffer,
 };
 use bevy::render::render_resource::{
     BindGroup, BindGroupEntries, BindGroupLayout, BindGroupLayoutEntries, BindingResource, Buffer,
     BufferDescriptor, BufferInitDescriptor, BufferUsages, CommandEncoder, ComputePassDescriptor,
-    ComputePipeline, DrawIndexedIndirectArgs, MapMode, PipelineCompilationOptions,
+    ComputePipeline, DrawIndexedIndirectArgs, MapMode, PipelineCache, PipelineCompilationOptions,
     PipelineLayoutDescriptor, RawComputePipelineDescriptor, ShaderModuleDescriptor, ShaderSource,
-    ShaderStages, ShaderType, StorageBuffer, UniformBuffer,
+    ShaderStages, ShaderType, StorageBuffer, TextureSampleType, TextureUsages, TextureView,
+    UniformBuffer,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy::render::sync_world::MainEntity;
-use bevy::render::view::{ExtractedView, RetainedViewEntity};
+use bevy::render::texture::TextureCache;
+use bevy::render::view::{ExtractedView, RetainedViewEntity, ViewDepthStencilTexture};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 
 use super::arena::{
@@ -47,16 +52,21 @@ use super::arena::{
 use super::clearing::{self, Clearing};
 use super::impostor::{self, ImpostorAtlas};
 use crate::core::render::camera::NEAR_PLANE;
+use crate::core::render::video::VideoPreferences;
 use crate::core::render::world::RenderProgress;
-use crate::core::render::world::lod::{GRAIN_PIXELS, STRAY_PIXELS};
+use crate::core::render::world::lod::{DRAWN_STRAY_PIXELS, GRAIN_PIXELS, horizon_band};
+use crate::core::units::Meters;
 
 pub struct PropCullPlugin;
 
 impl Plugin for PropCullPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<Clearing>()
-            .add_plugins(ExtractResourcePlugin::<Clearing>::default())
-            .add_systems(PostUpdate, clearing::aim_clearing);
+            .add_plugins((
+                ExtractResourcePlugin::<Clearing>::default(),
+                ExtractResourcePlugin::<VideoPreferences>::default(),
+            ))
+            .add_systems(PostUpdate, (clearing::aim_clearing, let_depth_be_read));
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
@@ -72,15 +82,21 @@ impl Plugin for PropCullPlugin {
                         .after(arena::write_instances)
                         .after(impostor::ImpostorsPrepared)
                         .before(RenderSystems::Queue),
+                    prepare_occlusion.in_set(RenderSystems::PrepareBindGroups),
                     read_missing.in_set(RenderSystems::Cleanup),
                 ),
             )
             .add_systems(
                 Core3d,
-                cull_props
-                    .before(Core3dSystems::Prepass)
-                    .before(per_view_shadow_pass::<EARLY_SHADOW_PASS>)
-                    .before(shared_shadow_pass::<EARLY_SHADOW_PASS>),
+                (
+                    cull_props
+                        .before(Core3dSystems::Prepass)
+                        .before(per_view_shadow_pass::<EARLY_SHADOW_PASS>)
+                        .before(shared_shadow_pass::<EARLY_SHADOW_PASS>),
+                    occlude_props
+                        .after(Core3dSystems::Prepass)
+                        .before(Core3dSystems::MainPass),
+                ),
             );
     }
 }
@@ -92,12 +108,16 @@ pub const PROPS_DRAWN: &str = "props_drawn";
 /// The name the passes culling a view's props and its shadows' go by among the render
 /// diagnostics.
 pub const PROP_CULL: &str = "prop_cull";
+/// The GPU pass that builds a view's depth pyramid and keeps what it doesn't hide, in the frame's
+/// timings.
+pub const PROP_OCCLUDE: &str = "prop_occlude";
 
 /// How a view culls: its frustum's half-spaces (left, right, bottom, top, near and far), where
 /// sizes on screen are measured from and how many pixels a metre spans a metre off it, whether a
 /// metre spans as many however far it lies, whether what lies behind the near half-space is left
-/// out, the sizes on screen the kernel judges by, and for the view that clears what hides the
-/// camera's subject, whom it follows and how far a fade moves this frame.
+/// out, the sizes on screen the kernel judges by, how far off the eye props still stand (none
+/// for as far as they go), and for the view that clears what hides the camera's subject, whom it
+/// follows and how far a fade moves this frame.
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
 pub struct CullView {
     planes: [Vec4; 6],
@@ -110,6 +130,8 @@ pub struct CullView {
     near: f32,
     impostor_pixels: f32,
     band_pixels: f32,
+    horizon_start: f32,
+    horizon: f32,
     subject: Vec3,
     fade_step: f32,
 }
@@ -132,12 +154,25 @@ impl CullView {
             orthographic: u32::from(orthographic),
             test_near: u32::from(!light),
             grain_pixels: GRAIN_PIXELS,
-            stray_pixels: STRAY_PIXELS,
+            stray_pixels: DRAWN_STRAY_PIXELS,
             near: NEAR_PLANE.0,
             impostor_pixels: IMPOSTOR_PIXELS,
             band_pixels: BAND_PIXELS,
+            horizon_start: 0.0,
+            horizon: 0.0,
             subject: Vec3::ZERO,
             fade_step: 0.0,
+        }
+    }
+
+    /// The view with its props standing no farther off its eye than `horizon`, thinning out
+    /// toward it.
+    pub fn within(self, horizon: Option<Meters>) -> CullView {
+        let (horizon_start, horizon) = horizon_band(horizon);
+        CullView {
+            horizon_start,
+            horizon,
+            ..self
         }
     }
 
@@ -375,7 +410,7 @@ impl DrawTable {
     }
 
     /// The radius round a placement the model of `prop` reaches, at scale 1.
-    fn radius_of(&self, prop: u32) -> f32 {
+    pub fn radius_of(&self, prop: u32) -> f32 {
         self.props
             .get(prop as usize)
             .filter(|drawn| drawn.radius > 0.0)
@@ -389,9 +424,19 @@ impl DrawTable {
 #[derive(Resource)]
 pub struct CullKernel {
     layout: BindGroupLayout,
+    occlusion_layout: BindGroupLayout,
     count: ComputePipeline,
     place: ComputePipeline,
     list: ComputePipeline,
+    reset_kept: ComputePipeline,
+    occlude: ComputePipeline,
+}
+
+/// What the occlusion of a view's listings reads: its matrices.
+#[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
+struct Occlusion {
+    view_from_world: Mat4,
+    clip_from_view: Mat4,
 }
 
 impl CullKernel {
@@ -415,6 +460,18 @@ impl CullKernel {
                 ),
             ),
         );
+        let occlusion_layout = device.create_bind_group_layout(
+            "prop occlusion",
+            &BindGroupLayoutEntries::sequential(
+                ShaderStages::COMPUTE,
+                (
+                    uniform_buffer::<Occlusion>(false),
+                    texture_2d(TextureSampleType::Float { filterable: false }),
+                    storage_buffer_sized(false, None),
+                    storage_buffer_sized(false, None),
+                ),
+            ),
+        );
         let module = device.create_and_validate_shader_module(ShaderModuleDescriptor {
             label: Some("prop cull"),
             source: ShaderSource::Wgsl(include_str!("cull.wgsl").into()),
@@ -424,10 +481,15 @@ impl CullKernel {
             bind_group_layouts: &[Some(&layout)],
             ..default()
         });
-        let pass = |entry: &'static str| {
+        let occlusion_pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Some("prop occlusion"),
+            bind_group_layouts: &[Some(&layout), Some(&occlusion_layout)],
+            ..default()
+        });
+        let pass = |pipeline_layout: &_, entry: &'static str| {
             device.create_compute_pipeline(&RawComputePipelineDescriptor {
                 label: Some(entry),
-                layout: Some(&pipeline_layout),
+                layout: Some(pipeline_layout),
                 module: &module,
                 entry_point: Some(entry),
                 compilation_options: PipelineCompilationOptions::default(),
@@ -435,10 +497,13 @@ impl CullKernel {
             })
         };
         CullKernel {
+            count: pass(&pipeline_layout, "count"),
+            place: pass(&pipeline_layout, "place"),
+            list: pass(&pipeline_layout, "list"),
+            reset_kept: pass(&occlusion_pipeline_layout, "reset_kept"),
+            occlude: pass(&occlusion_pipeline_layout, "occlude"),
             layout,
-            count: pass("count"),
-            place: pass("place"),
-            list: pass("list"),
+            occlusion_layout,
         }
     }
 }
@@ -530,14 +595,20 @@ impl GpuDrawTable {
 
 /// What one view draws of a scenery: the view, the chunks it may see, each by its first instance
 /// in the arena and how many it holds, the commands, and the instances they draw, with room for
-/// every instance the chunks hold, once for each part of its model.
+/// every instance the chunks hold, once for each part of its model; and for a view whose prepass
+/// depth is read, the commands and instances kept of them for the lit passes.
 pub struct ViewCull {
     view: Option<UniformBuffer<CullView>>,
     chunks: StorageBuffer<Vec<UVec4>>,
-    seen: u32,
+    /// The workgroups that give every instance of the chunks seen a thread.
+    groups: u32,
     commands: Buffer,
     drawn: Buffer,
     bind_group: Option<BindGroup>,
+    kept_commands: Buffer,
+    kept: Buffer,
+    occlusion: Option<UniformBuffer<Occlusion>>,
+    occluding: Option<BindGroup>,
 }
 
 impl ViewCull {
@@ -546,18 +617,114 @@ impl ViewCull {
         ViewCull {
             view: None,
             chunks: StorageBuffer::default(),
-            seen: 0,
-            commands: device.create_buffer(&BufferDescriptor {
-                label: Some("prop draw commands"),
-                size: commands_bytes(table.table.commands.len()),
-                usage: BufferUsages::STORAGE
-                    | BufferUsages::INDIRECT
-                    | BufferUsages::COPY_DST
-                    | BufferUsages::COPY_SRC,
-                mapped_at_creation: false,
-            }),
+            groups: 0,
+            commands: commands_buffer(device, table),
             drawn: drawn_buffer(device, 1),
             bind_group: None,
+            kept_commands: commands_buffer(device, table),
+            kept: drawn_buffer(device, 1),
+            occlusion: None,
+            occluding: None,
+        }
+    }
+
+    /// Keeps for the lit passes only the listings whose instances the depth the prepass drew,
+    /// `pyramid` holding each level of it, doesn't hide whole; until the next update. The view
+    /// is the one of `world_from_view` through `clip_from_view`.
+    pub fn occlude_with(
+        &mut self,
+        device: &RenderDevice,
+        queue: &RenderQueue,
+        kernel: &CullKernel,
+        pyramid: &TextureView,
+        world_from_view: Mat4,
+        clip_from_view: Mat4,
+    ) {
+        let occlusion = Occlusion {
+            view_from_world: world_from_view.inverse(),
+            clip_from_view,
+        };
+        let uniform = self
+            .occlusion
+            .get_or_insert_with(|| UniformBuffer::from(occlusion));
+        uniform.set(occlusion);
+        uniform.write_buffer(device, queue);
+        self.occluding = Some(device.create_bind_group(
+            "prop occlusion",
+            &kernel.occlusion_layout,
+            &BindGroupEntries::sequential((
+                uniform.binding().expect("an occlusion just written"),
+                pyramid,
+                self.kept_commands.as_entire_binding(),
+                self.kept.as_entire_binding(),
+            )),
+        ));
+    }
+
+    /// Whether the lit passes draw what the prepass's depth leaves of the listings.
+    pub fn occludes(&self) -> bool {
+        self.occluding.is_some()
+    }
+
+    /// The commands the lit passes draw with: [`Self::commands`] but for what the prepass's
+    /// depth hides.
+    pub fn lit_commands(&self) -> &Buffer {
+        if self.occludes() {
+            &self.kept_commands
+        } else {
+            &self.commands
+        }
+    }
+
+    /// The instances the lit passes draw: [`Self::drawn`] but for what the prepass's depth hides.
+    pub fn lit_drawn(&self) -> &Buffer {
+        if self.occludes() {
+            &self.kept
+        } else {
+            &self.drawn
+        }
+    }
+
+    /// Keeps the listings the prepass's depth doesn't hide for the lit passes, once the prepass is
+    /// drawn and `pyramid` holds its depth.
+    pub fn encode_occlusion(
+        &self,
+        kernel: &CullKernel,
+        table: &GpuDrawTable,
+        encoder: &mut CommandEncoder,
+    ) {
+        let (Some(bind_group), Some(occluding)) = (&self.bind_group, &self.occluding) else {
+            return;
+        };
+        encoder.copy_buffer_to_buffer(
+            &self.commands,
+            0,
+            &self.kept_commands,
+            0,
+            self.commands.size(),
+        );
+        let listings = (self.drawn.size() / DRAWN_BYTES) as u32;
+        for (label, pipeline, groups) in [
+            (
+                "prop occlusion reset",
+                &kernel.reset_kept,
+                (table.table.commands.len() as u32).div_ceil(THREADS),
+            ),
+            (
+                "prop occlusion",
+                &kernel.occlude,
+                listings.div_ceil(THREADS),
+            ),
+        ] {
+            let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
+                label: Some(label),
+                timestamp_writes: None,
+            });
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(0, bind_group, &[]);
+            pass.set_bind_group(1, occluding, &[]);
+            let (columns, rows) = spread(groups);
+            pass.dispatch_workgroups(columns, rows, 1);
         }
     }
 
@@ -578,8 +745,10 @@ impl ViewCull {
     ) {
         if u64::from(seen.listed) * DRAWN_BYTES > self.drawn.size() {
             self.drawn = drawn_buffer(device, seen.listed);
+            self.kept = drawn_buffer(device, seen.listed);
         }
-        self.seen = seen.spans.len() as u32;
+        self.occluding = None;
+        self.groups = seen.instances.div_ceil(THREADS);
         self.chunks.set(if seen.spans.is_empty() {
             vec![UVec4::ZERO]
         } else {
@@ -617,13 +786,13 @@ impl ViewCull {
     /// each pass over once the one before is through.
     pub fn encode(&self, kernel: &CullKernel, table: &GpuDrawTable, encoder: &mut CommandEncoder) {
         encoder.copy_buffer_to_buffer(&table.starts, 0, &self.commands, 0, self.commands.size());
-        let Some(bind_group) = self.bind_group.as_ref().filter(|_| self.seen > 0) else {
+        let Some(bind_group) = self.bind_group.as_ref().filter(|_| self.groups > 0) else {
             return;
         };
         for (label, pipeline, groups) in [
-            ("prop cull count", &kernel.count, self.seen),
+            ("prop cull count", &kernel.count, self.groups),
             ("prop cull place", &kernel.place, 1),
-            ("prop cull list", &kernel.list, self.seen),
+            ("prop cull list", &kernel.list, self.groups),
         ] {
             let mut pass = encoder.begin_compute_pass(&ComputePassDescriptor {
                 label: Some(label),
@@ -631,7 +800,8 @@ impl ViewCull {
             });
             pass.set_pipeline(pipeline);
             pass.set_bind_group(0, bind_group, &[]);
-            pass.dispatch_workgroups(groups, 1, 1);
+            let (columns, rows) = spread(groups);
+            pass.dispatch_workgroups(columns, rows, 1);
         }
     }
 
@@ -655,7 +825,6 @@ impl ViewCull {
     /// Reads back what the view's kernel drew, waiting for the GPU: for checks of the kernel.
     pub fn read(&self, device: &RenderDevice, queue: &RenderQueue) -> CullReadback {
         let commands = read_buffer(device, queue, &self.commands);
-        let drawn = read_buffer(device, queue, &self.drawn);
         let words = |bytes: &[u8]| -> Vec<u32> {
             bytes
                 .as_chunks::<4>()
@@ -664,17 +833,16 @@ impl ViewCull {
                 .map(|word| u32::from_le_bytes(*word))
                 .collect()
         };
-        let command_words = words(&commands);
-        CullReadback {
-            drawn: command_words[0],
-            missing: command_words[1],
-            commands: command_words[2..]
+        let regions = |bytes: &[u8]| -> Vec<Range<u32>> {
+            words(bytes)[2..]
                 .as_chunks::<5>()
                 .0
                 .iter()
                 .map(|&[_, instances, _, _, first]| first..first + instances)
-                .collect(),
-            listed: words(&drawn)
+                .collect()
+        };
+        let listings = |bytes: &[u8]| -> Vec<ListedInstance> {
+            words(bytes)
                 .as_chunks::<4>()
                 .0
                 .iter()
@@ -685,7 +853,24 @@ impl ViewCull {
                     around_eye: packed & 1 != 0,
                     faded_in: (packed >> 1) as f32 / 65535.0,
                 })
-                .collect(),
+                .collect()
+        };
+        let command_words = words(&commands);
+        let (kept_commands, kept) = if self.occludes() {
+            (
+                regions(&read_buffer(device, queue, &self.kept_commands)),
+                listings(&read_buffer(device, queue, &self.kept)),
+            )
+        } else {
+            (Vec::new(), Vec::new())
+        };
+        CullReadback {
+            drawn: command_words[0],
+            missing: command_words[1],
+            commands: regions(&commands),
+            listed: listings(&read_buffer(device, queue, &self.drawn)),
+            kept_commands,
+            kept,
         }
     }
 }
@@ -699,6 +884,10 @@ pub struct CullReadback {
     pub missing: u32,
     pub commands: Vec<Range<u32>>,
     pub listed: Vec<ListedInstance>,
+    /// What the lit passes draw of them once the prepass's depth has hidden its share: each
+    /// command's region of the kept list, and the list; nothing for a view that occludes nothing.
+    pub kept_commands: Vec<Range<u32>>,
+    pub kept: Vec<ListedInstance>,
 }
 
 /// An instance a view draws: its place among the arena's, the scale it is drawn at, how far it
@@ -719,6 +908,8 @@ pub struct ListedInstance {
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct SeenChunks {
     pub spans: Vec<UVec4>,
+    /// How many instances the chunks hold together.
+    pub instances: u32,
     pub listed: u32,
 }
 
@@ -762,8 +953,18 @@ pub fn seen_chunks(
         })
         .collect();
     seen.sort_by_key(|(key, _)| *key);
+    let mut instances = 0;
+    let spans = seen
+        .into_iter()
+        .map(|(_, mut span)| {
+            span.w = instances;
+            instances += span.y;
+            span
+        })
+        .collect();
     SeenChunks {
-        spans: seen.into_iter().map(|(_, span)| span).collect(),
+        spans,
+        instances,
         listed,
     }
 }
@@ -795,6 +996,18 @@ struct MissingReadback {
 /// The bytes a drawn instance takes: its place among the arena's, its scale, how far it shows,
 /// and whether the eye stands inside it.
 const DRAWN_BYTES: u64 = 16;
+
+/// The threads of a workgroup of the count and list passes, as the kernel lays them out.
+const THREADS: u32 = 64;
+
+/// The most workgroups a dispatch may lay in a row, as the kernel lays them out.
+const GROUPS_A_ROW: u32 = 65535;
+
+/// `groups` workgroups laid out in rows the kernel reads: as many columns as fit a row, and the
+/// rows they take.
+fn spread(groups: u32) -> (u32, u32) {
+    (groups.min(GROUPS_A_ROW), groups.div_ceil(GROUPS_A_ROW))
+}
 /// The bytes the counts take before the commands: the instances drawn, and those drawn coarser
 /// than their size asks.
 const COUNT_BYTES: u64 = 8;
@@ -836,6 +1049,7 @@ pub(super) fn prepare_culls(
     models: Res<ModelArena>,
     atlas: Option<Res<ImpostorAtlas>>,
     clearing: Res<Clearing>,
+    video: Res<VideoPreferences>,
     mut culls: ResMut<PropCulls>,
     sceneries: Query<(&MainEntity, &ExtractedPropArena)>,
     views: Query<(
@@ -882,6 +1096,9 @@ pub(super) fn prepare_culls(
                 continue;
             }
             let mut culled = CullView::of(view, frustum, light);
+            if !light {
+                culled = culled.within(video.view_distance.horizon());
+            }
             if let Some(clearing) = clearing.0
                 && !light
                 && view.retained_view_entity.main_entity.id() == clearing.camera
@@ -904,6 +1121,148 @@ pub(super) fn prepare_culls(
 /// Culls every scenery the view shows, and what each of the view's lights casts shadows of,
 /// before anything of the view or its shadows is drawn: the props the view itself draws counted
 /// among the render diagnostics.
+/// Every camera's depth can be read once its prepass is drawn, as the occlusion reads it.
+fn let_depth_be_read(mut cameras: Query<&mut Camera3d, Changed<Camera3d>>) {
+    for mut camera in &mut cameras {
+        let usages = TextureUsages::from(camera.depth_texture_usages);
+        if !usages.contains(TextureUsages::TEXTURE_BINDING) {
+            camera.depth_texture_usages = (usages | TextureUsages::TEXTURE_BINDING).into();
+        }
+    }
+}
+
+/// The pyramid of a view's prepass depth, and the bind group that builds it from the depth.
+#[derive(Component)]
+struct PropPyramid {
+    pyramid: ViewDepthPyramid,
+    downsample: BindGroup,
+}
+
+/// Gives every camera view that culls props a pyramid of its prepass depth, and sets each of its
+/// culls to keep only what that depth doesn't hide for the lit passes.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn prepare_occlusion(
+    mut commands: Commands,
+    device: Res<RenderDevice>,
+    queue: Res<RenderQueue>,
+    mut textures: ResMut<TextureCache>,
+    dummy: Option<Res<DepthPyramidDummyTexture>>,
+    pipelines: Option<Res<DownsampleDepthPipelines>>,
+    cache: Res<PipelineCache>,
+    kernel: Option<Res<CullKernel>>,
+    mut culls: ResMut<PropCulls>,
+    views: Query<(Entity, &ExtractedView, &ViewDepthStencilTexture), Without<LightEntity>>,
+) {
+    let (Some(dummy), Some(pipelines), Some(kernel)) = (dummy, pipelines, kernel) else {
+        return;
+    };
+    let ready = [&pipelines.first, &pipelines.second]
+        .iter()
+        .all(|pipeline| {
+            pipeline
+                .pipeline_id
+                .is_some_and(|id| cache.get_compute_pipeline(id).is_some())
+        });
+    for (entity, view, depth) in &views {
+        let culled = ready
+            && culls
+                .0
+                .values()
+                .any(|cull| cull.views.contains_key(&view.retained_view_entity));
+        let Some(depth_view) = depth
+            .attachment
+            .depth_stencil_views()
+            .depth_only_view()
+            .filter(|_| culled && depth.texture().sample_count() == 1)
+        else {
+            commands.entity(entity).remove::<PropPyramid>();
+            continue;
+        };
+        let pyramid = ViewDepthPyramid::new(
+            &device,
+            &mut textures,
+            &dummy,
+            view.viewport.zw(),
+            "prop depth pyramid",
+            "prop depth pyramid level",
+        );
+        for cull in culls.0.values_mut() {
+            if let Some(culled) = cull.views.get_mut(&view.retained_view_entity) {
+                culled.occlude_with(
+                    &device,
+                    &queue,
+                    &kernel,
+                    &pyramid.all_mips,
+                    view.world_from_view.to_matrix(),
+                    view.clip_from_view,
+                );
+            }
+        }
+        let downsample = pyramid.create_bind_group(
+            &device,
+            "prop depth pyramid",
+            &cache.get_bind_group_layout(&pipelines.first.bind_group_layout),
+            depth_view,
+            &pipelines.sampler,
+        );
+        commands.entity(entity).insert(PropPyramid {
+            pyramid,
+            downsample,
+        });
+    }
+}
+
+/// Builds the view's pyramid of the depth the prepass drew, and keeps for the lit passes what
+/// it doesn't hide of each cull's listings.
+fn occlude_props(
+    view: ViewQuery<(&ExtractedView, &PropPyramid)>,
+    pipelines: Option<Res<DownsampleDepthPipelines>>,
+    cache: Res<PipelineCache>,
+    kernel: Option<Res<CullKernel>>,
+    culls: Res<PropCulls>,
+    mut ctx: RenderContext,
+) {
+    let (seen, prop_pyramid) = view.into_inner();
+    let (Some(pipelines), Some(kernel)) = (pipelines, kernel) else {
+        return;
+    };
+    let (Some(first), Some(second)) = (
+        pipelines
+            .first
+            .pipeline_id
+            .and_then(|id| cache.get_compute_pipeline(id)),
+        pipelines
+            .second
+            .pipeline_id
+            .and_then(|id| cache.get_compute_pipeline(id)),
+    ) else {
+        return;
+    };
+    let recorder = ctx.diagnostic_recorder();
+    let recorder = recorder.as_deref();
+    let span = recorder.map(|recorder| recorder.time_span(ctx.command_encoder(), PROP_OCCLUDE));
+    prop_pyramid.pyramid.downsample_depth_with_ctx(
+        "prop depth pyramid",
+        &mut ctx,
+        seen.viewport.zw(),
+        &prop_pyramid.downsample,
+        first,
+        second,
+    );
+    let encoder = ctx.command_encoder();
+    for cull in culls.0.values() {
+        let Some(table) = &cull.table else {
+            continue;
+        };
+        if let Some(culled) = cull.views.get(&seen.retained_view_entity) {
+            culled.encode_occlusion(&kernel, table, encoder);
+        }
+    }
+    if let Some(span) = span {
+        span.end(encoder);
+    }
+}
+
 fn cull_props(
     view: ViewQuery<(&ExtractedView, Option<&ViewLightEntities>)>,
     lights: Query<&ExtractedView, With<LightEntity>>,
@@ -1056,6 +1415,18 @@ fn starts_bytes(commands: &[DrawCommand]) -> Vec<u8> {
 }
 
 /// Room for `listed` drawn instances, at least one.
+fn commands_buffer(device: &RenderDevice, table: &GpuDrawTable) -> Buffer {
+    device.create_buffer(&BufferDescriptor {
+        label: Some("prop draw commands"),
+        size: commands_bytes(table.table.commands.len()),
+        usage: BufferUsages::STORAGE
+            | BufferUsages::INDIRECT
+            | BufferUsages::COPY_DST
+            | BufferUsages::COPY_SRC,
+        mapped_at_creation: false,
+    })
+}
+
 fn drawn_buffer(device: &RenderDevice, listed: u32) -> Buffer {
     device.create_buffer(&BufferDescriptor {
         label: Some("props drawn"),

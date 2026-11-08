@@ -38,6 +38,10 @@ struct TerrainGround {
     canopy_texel: f32,
     canopy_extent_max: f32,
     grain_pixels: f32,
+    // From where off the eye the props thin out toward the view's horizon, and the horizon: 0 and
+    // 0 where they stand as far as the ground goes.
+    horizon_start: f32,
+    horizon: f32,
 }
 
 @group(2) @binding(100) var<uniform> ground: TerrainGround;
@@ -169,11 +173,16 @@ fn metres_of(level: f32) -> f32 {
 // holds the overview of: from the slot of the tile it lies in where one holds it, else read
 // between the overview's.
 fn level_in(details: texture_2d_array<u32>, overview: texture_2d<u32>, sample: vec2<u32>) -> f32 {
+    return texels_in(details, overview, sample).r;
+}
+
+// Every channel of the value at the sample `sample`, read as `level_in` reads one.
+fn texels_in(details: texture_2d_array<u32>, overview: texture_2d<u32>, sample: vec2<u32>) -> vec4<f32> {
     let tile = min(sample / ground.tile_pixels, ground.tiles - 1u);
     let slot = i32(textureLoad(table, tile, 0).r) - 1;
     if slot >= 0 {
         let local = sample - tile * ground.tile_pixels + 1u;
-        return f32(textureLoad(details, local, slot, 0).r);
+        return vec4<f32>(textureLoad(details, local, slot, 0));
     }
     let span = ground.overview_span;
     let last = ground.samples - 1u;
@@ -186,10 +195,10 @@ fn level_in(details: texture_2d_array<u32>, overview: texture_2d<u32>, sample: v
         vec2<f32>(sample - start) / vec2<f32>(max(end - start, vec2<u32>(1u))),
         end > start,
     );
-    let a = f32(textureLoad(overview, vec2<u32>(low.x, low.y), 0).r);
-    let b = f32(textureLoad(overview, vec2<u32>(high.x, low.y), 0).r);
-    let c = f32(textureLoad(overview, vec2<u32>(low.x, high.y), 0).r);
-    let d = f32(textureLoad(overview, vec2<u32>(high.x, high.y), 0).r);
+    let a = vec4<f32>(textureLoad(overview, vec2<u32>(low.x, low.y), 0));
+    let b = vec4<f32>(textureLoad(overview, vec2<u32>(high.x, low.y), 0));
+    let c = vec4<f32>(textureLoad(overview, vec2<u32>(low.x, high.y), 0));
+    let d = vec4<f32>(textureLoad(overview, vec2<u32>(high.x, high.y), 0));
     return mix(mix(a, b, t.x), mix(c, d, t.x), t.y);
 }
 

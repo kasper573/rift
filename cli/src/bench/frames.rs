@@ -248,7 +248,20 @@ impl Window {
             .filter(|frame| frame.frame >= first && frame.frame <= last)
             .max_by(|a, b| a.dt_ms.0.total_cmp(&b.dt_ms.0))
             .cloned();
+        let trace = self
+            .samples
+            .iter()
+            .map(|sample| FrameTrace {
+                frame: sample.frame,
+                ms: sample.dt_ms,
+                cpu_main: sample.cpu_main_ms,
+                cpu_render: sample.cpu_render_ms,
+                gpu: sample.gpu_ms,
+                props_drawn: sample.props_drawn,
+            })
+            .collect();
         Some(FrameStats {
+            trace,
             frames: count as u32,
             seconds: f64::from(lasted) / 1000.0,
             mean: Fps(count as f64 / f64::from(lasted.max(f32::EPSILON)) * 1000.0),
@@ -336,6 +349,9 @@ pub struct FrameStats {
     /// the GPU's passes and the systems it waited on, as far as the probe kept them.
     #[serde(default)]
     pub stalled_frames: Vec<ProbeSlowFrame>,
+    /// Every frame of the window in order, for the course of a scenario's frame times: where its
+    /// slow frames fall, and what the main world, the render world and the GPU took on each.
+    pub trace: Vec<FrameTrace>,
 }
 
 /// How long the editor took over its interface, frame by frame: the median of the whole
@@ -378,4 +394,16 @@ fn median_u64(values: impl Iterator<Item = u64>) -> Option<u64> {
     }
     values.sort_unstable();
     Some(values[values.len() / 2])
+}
+
+/// A frame of a scenario's window: how long it took, and how long the main world, the render world
+/// and the GPU each took on it, where known.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct FrameTrace {
+    pub frame: u32,
+    pub ms: Millis,
+    pub cpu_main: Millis,
+    pub cpu_render: Option<Millis>,
+    pub gpu: Option<Millis>,
+    pub props_drawn: Option<u32>,
 }

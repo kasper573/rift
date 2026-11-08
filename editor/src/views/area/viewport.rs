@@ -345,6 +345,7 @@ impl RenderedView {
                 Sight {
                     at,
                     reach,
+                    horizon: None,
                     lens: view.lens(),
                     eyes: Eyes::standing(view.eye(), at, ground),
                 },

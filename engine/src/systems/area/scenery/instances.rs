@@ -541,8 +541,8 @@ const EXPANDING_AT_ONCE: usize = 64;
 /// Every lot the sight takes in, nearest first: the props of every chunk within its reach, the
 /// copies of every chunk within as far as the view shows any piece's, worked out for the detail
 /// the nearest eye shows the chunk at, or the finest that thins nothing nearer than that, and
-/// after them the far field: every tile of the ground not wholly within the reach, worked out
-/// for the detail the nearest eye shows it at.
+/// after them the far field: every tile of the ground not wholly within the reach and not wholly
+/// past the horizon, worked out for the detail the nearest eye shows it at.
 fn wanted_lots(streaming: &Streaming, seen: &Seen, ground: Rect<Meters>) -> Vec<Lot> {
     let at = seen.at();
     let reach = seen.reach.0;
@@ -579,8 +579,13 @@ fn wanted_lots(streaming: &Streaming, seen: &Seen, ground: Rect<Meters>) -> Vec<
         );
         a.0.cmp(&b.0).then(a.1.total_cmp(&b.1))
     });
+    let horizon = seen
+        .sight
+        .horizon
+        .map_or(f32::INFINITY, |horizon| horizon.0);
     let mut far: Vec<(f32, Lot)> = FarTile::all(ground)
         .filter(|tile| farthest_from(tile.bounds(ground), at) > reach)
+        .filter(|tile| distance_to(tile.bounds(ground), at) <= horizon)
         .map(|tile| {
             let bounds = tile.bounds(ground);
             let middle = streaming.heights.height_at(bounds.center());

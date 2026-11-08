@@ -87,18 +87,18 @@ pub struct AtlasLayout {
 }
 
 /// The textures of the atlas, as they are bound to draw: the detail arrays a layer a slot, the
-/// overviews, and the table naming the slot of each tile, one past it, or none. A shore texel says
-/// how far its point lies from the nearest dry ground, up to [`SHORE_REACH`] at 255.
+/// overviews, and the table naming the slot of each tile, one past it, or none.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum AtlasTexture {
     Heights,
     Paint,
-    Water,
-    Shore,
+    /// The surface a sheet on water lies on, a texel a sample: its level as the heights are held,
+    /// how it falls toward east and south as levels of [`SURFACE_FALL_UNIT`] over the midpoint,
+    /// and how far it lies from the nearest dry ground, up to [`SHORE_REACH`] at the most.
+    Surface,
     OverviewHeights,
     OverviewPaint,
-    OverviewWater,
-    OverviewShore,
+    OverviewSurface,
     /// What the props standing over each stretch of ground look like from above, a layer a
     /// band of [`CANOPY_BANDS`]: their colour, and how much of the ground they cover.
     OverviewCanopy,
@@ -350,12 +350,25 @@ const CANOPY_STRIDE: u32 = 4;
 /// The rows of the canopy written at once, so each write fits a frame's budget.
 const CANOPY_ROWS_PER_WRITE: u32 = 64;
 
-/// The bytes a slot's heights, paint, water and shore take.
-const SLOT_BYTES: usize = (SLOT_SIDE * SLOT_SIDE) as usize * 6;
+/// The bytes a slot's heights, paint and surface take.
+const SLOT_BYTES: usize = (SLOT_SIDE * SLOT_SIDE) as usize * 11;
 
-/// The samples past a slot that its shore is read across, so a slot's shore meets its
-/// neighbours'.
+/// The samples past a slot that its surface is read across, so a slot's surface meets its
+/// neighbours': as far as the shore reaches, farther than the fall is read.
 const SHORE_MARGIN: u32 = (SHORE_REACH.0 * SAMPLES_PER_METER as f32) as u32;
+
+/// How far under the ground the surface lies away from any water.
+const DRY_SINK: Meters = Meters(1.0);
+
+/// How far either way along the water the surface's fall is read, in samples: far enough that the
+/// gentlest river's fall shows through the steps its levels are kept in.
+const FALL_SAMPLES: usize = 4;
+
+/// The fall a level of a surface texel's fall stands for, in metres a metre.
+pub const SURFACE_FALL_UNIT: f32 = 1.0 / 4096.0;
+
+/// The fall level of a surface that doesn't fall.
+const FALL_MIDDLE: f32 = 32768.0;
 
 /// The grids of the ground the atlas holds, shared with the area's.
 #[derive(Clone)]
@@ -428,8 +441,8 @@ impl Laid {
     }
 }
 
-/// A slot's heights, paint, water and shore, as the GPU takes them.
-type SlotBytes = [Vec<u8>; 4];
+/// A slot's heights, paint and surface, as the GPU takes them.
+type SlotBytes = [Vec<u8>; 3];
 
 impl Laid {
     /// Holds what is wanted as a GPU would, loaded at once, with nothing read or written.
@@ -492,7 +505,7 @@ impl AtlasGround {
         TileStamp(round.map(|tile| tile.map(|tile| self.versions(tile)).unwrap_or_default()))
     }
 
-    /// The heights, paint, water and shore of the slot of `tile`, as the GPU takes them.
+    /// The heights, paint and surface of the slot of `tile`, as the GPU takes them.
     fn slot(&self, tile: TileAt) -> SlotBytes {
         let first = (
             i64::from(tile.column * TILE_PIXELS) - 1,
@@ -504,7 +517,13 @@ impl AtlasGround {
         let heights = self.heights.block(around, wide, wide);
         let water = self.water.block(around, wide, wide);
         let spacing = Meters(1.0 / SAMPLES_PER_METER as f32);
-        let shore = shore_bytes(&heights, &water, wide as usize, spacing);
+        let surface = surface_bytes(
+            &heights,
+            &water,
+            wide as usize,
+            spacing,
+            self.heights.range(),
+        );
         let inner = |values: &[u8], bytes: usize| -> Vec<u8> {
             let (side, wide) = (SLOT_SIDE as usize, wide as usize);
             let skip = SHORE_MARGIN as usize;
@@ -518,8 +537,7 @@ impl AtlasGround {
         [
             inner(&levels(&heights), 2),
             self.paint.block(first, SLOT_SIDE, SLOT_SIDE),
-            inner(&levels(&water), 2),
-            inner(&shore, 1),
+            inner(&surface, 8),
         ]
     }
 
@@ -544,25 +562,19 @@ impl AtlasGround {
                 step,
                 <[u8]>::to_vec,
             ));
-            writes.extend(overview_write(
-                AtlasTexture::OverviewWater,
-                &self.water,
-                tile,
-                step,
-                levels,
-            ));
-            writes.extend(self.overview_shore(tile, step));
+            writes.extend(self.overview_surface(tile, step));
         }
         writes
     }
 
-    /// The write of the overview's shore under `tile` at one texel every `step` overview values
-    /// each way: read across as far round as the shore reaches, so it meets the shore round it.
-    fn overview_shore(&self, tile: TileAt, step: u32) -> Option<AtlasWrite> {
+    /// The write of the overview's surface under `tile` at one texel every `step` overview values
+    /// each way: read across as far round as the shore reaches and the fall is read, so it meets
+    /// the surface round it.
+    fn overview_surface(&self, tile: TileAt, step: u32) -> Option<AtlasWrite> {
         let values = self.heights.overview_dims();
         let (low, high) = overview_bounds(&self.heights, tile);
         let spacing = Meters((OVERVIEW_STRIDE * step) as f32 / SAMPLES_PER_METER as f32);
-        let margin = (SHORE_REACH.0 / spacing.0).ceil() as u32;
+        let margin = ((SHORE_REACH.0 / spacing.0).ceil() as u32).max(FALL_SAMPLES as u32);
         let (first_column, columns) = sources(low.0, high.0, values.0, step);
         let (first_row, rows) = sources(low.1, high.1, values.1, step);
         if columns.is_empty() || rows.is_empty() {
@@ -578,15 +590,22 @@ impl AtlasGround {
         let (skip_rows, wide_rows) = around(first_row, rows.len(), values.1);
         let heights = self.heights.overview_at(&wide_columns, &wide_rows);
         let water = self.water.overview_at(&wide_columns, &wide_rows);
-        let shore = shore_bytes(&heights, &water, wide_columns.len(), spacing);
+        let surface = surface_bytes(
+            &heights,
+            &water,
+            wide_columns.len(),
+            spacing,
+            self.heights.range(),
+        );
         let bytes = (0..rows.len())
             .flat_map(|row| {
-                let start = (row + skip_rows as usize) * wide_columns.len() + skip_columns as usize;
-                shore[start..start + columns.len()].iter().copied()
+                let start =
+                    ((row + skip_rows as usize) * wide_columns.len() + skip_columns as usize) * 8;
+                surface[start..start + columns.len() * 8].iter().copied()
             })
             .collect();
         Some(AtlasWrite::Texels {
-            texture: AtlasTexture::OverviewShore,
+            texture: AtlasTexture::OverviewSurface,
             origin: UVec3::new(first_column, first_row, 0),
             size: UVec2::new(columns.len() as u32, rows.len() as u32),
             bytes,
@@ -594,19 +613,77 @@ impl AtlasGround {
     }
 }
 
-/// How far each of a lattice of points `columns` across lies from the nearest dry ground, as the
-/// shore's texels hold it, the ground's and the water's levels at each given, the points lying
-/// `spacing` apart.
-fn shore_bytes(heights: &[u16], water: &[WaterLevel], columns: usize, spacing: Meters) -> Vec<u8> {
+/// The surface a sheet on water lies on over each of a lattice of points `columns` across, as
+/// the surface's texels hold it, the ground's and the water's levels at each given, the points
+/// lying `spacing` apart and the levels spanning `range`. The surface is the water's where water
+/// stands over the ground, and beside it the highest water's next to it, so a sheet runs on flat
+/// into the bank and meets it where the water does; away from any water it lies under the ground.
+/// Its fall is read as far along the water as [`FALL_SAMPLES`] either way, so dry ground beside it
+/// doesn't count.
+fn surface_bytes(
+    heights: &[u16],
+    water: &[WaterLevel],
+    columns: usize,
+    spacing: Meters,
+    range: HeightRange,
+) -> Vec<u8> {
+    let rows = heights.len() / columns;
     let wet: Vec<bool> = heights
         .iter()
         .zip(water)
         .map(|(ground, surface)| surface.level() > *ground)
         .collect();
-    shore_distances(&wet, columns, spacing, SHORE_REACH)
-        .into_iter()
-        .map(|distance| (distance.0 / SHORE_REACH.0 * 255.0).round() as u8)
-        .collect()
+    let shores = shore_distances(&wet, columns, spacing, SHORE_REACH);
+    let sink = (DRY_SINK.0 / range.step()).ceil() as u16;
+    let at = |column: usize, row: usize| row * columns + column;
+    let wet_at = |column: isize, row: isize| {
+        (column >= 0 && row >= 0 && (column as usize) < columns && (row as usize) < rows)
+            .then(|| at(column as usize, row as usize))
+            .filter(|&index| wet[index])
+    };
+    let mut bytes = Vec::with_capacity(heights.len() * 8);
+    for row in 0..rows {
+        for column in 0..columns {
+            let here = at(column, row);
+            let level = if wet[here] {
+                water[here].level()
+            } else {
+                let beside = (-1..=1)
+                    .flat_map(|down| (-1..=1).map(move |across| (across, down)))
+                    .filter_map(|(across, down)| {
+                        wet_at(column as isize + across, row as isize + down)
+                    })
+                    .map(|index| water[index].level())
+                    .max();
+                beside.unwrap_or_else(|| heights[here].saturating_sub(sink))
+            };
+            let fall = |way: (isize, isize)| {
+                let reach = |sign: isize| {
+                    (1..=FALL_SAMPLES).rev().find_map(|samples| {
+                        let off = samples as isize * sign;
+                        wet_at(column as isize + way.0 * off, row as isize + way.1 * off)
+                            .map(|index| (f32::from(water[index].level()), samples))
+                    })
+                };
+                let here = (f32::from(water[here].level()), 0);
+                let (ahead, behind) = (reach(1).unwrap_or(here), reach(-1).unwrap_or(here));
+                let span = (ahead.1 + behind.1) as f32 * spacing.0;
+                let fall = if span > 0.0 {
+                    (behind.0 - ahead.0) * range.step() / span
+                } else {
+                    0.0
+                };
+                (fall / SURFACE_FALL_UNIT + FALL_MIDDLE)
+                    .round()
+                    .clamp(0.0, f32::from(u16::MAX)) as u16
+            };
+            let shore = (shores[here].0 / SHORE_REACH.0 * f32::from(u16::MAX)).round() as u16;
+            for value in [level, fall((1, 0)), fall((0, 1)), shore] {
+                bytes.extend(value.to_le_bytes());
+            }
+        }
+    }
+    bytes
 }
 
 /// The overview values under `tile`, or all of them: from the first, and past the last, each way.
@@ -774,7 +851,7 @@ fn keep_atlases(
             if !job.is_done(handoff) || !budget.spend(SLOT_BYTES) {
                 continue;
             }
-            let Some([heights, paint, water, shore]) = job.take() else {
+            let Some([heights, paint, surface]) = job.take() else {
                 continue;
             };
             laid.filling.remove(&tile);
@@ -785,8 +862,7 @@ fn keep_atlases(
             for (texture, bytes) in [
                 (AtlasTexture::Heights, heights),
                 (AtlasTexture::Paint, paint),
-                (AtlasTexture::Water, water),
-                (AtlasTexture::Shore, shore),
+                (AtlasTexture::Surface, surface),
             ] {
                 atlas.writes.push(AtlasWrite::Texels {
                     texture,
@@ -916,12 +992,10 @@ impl GpuTerrainAtlas {
         let textures = [
             AtlasTexture::Heights,
             AtlasTexture::Paint,
-            AtlasTexture::Water,
-            AtlasTexture::Shore,
+            AtlasTexture::Surface,
             AtlasTexture::OverviewHeights,
             AtlasTexture::OverviewPaint,
-            AtlasTexture::OverviewWater,
-            AtlasTexture::OverviewShore,
+            AtlasTexture::OverviewSurface,
             AtlasTexture::OverviewCanopy,
             AtlasTexture::OverviewCanopyExtent,
             AtlasTexture::Table,
@@ -961,10 +1035,8 @@ impl GpuTerrainAtlas {
 impl AtlasTexture {
     fn format(self) -> TextureFormat {
         match self {
-            AtlasTexture::Paint
-            | AtlasTexture::OverviewPaint
-            | AtlasTexture::Shore
-            | AtlasTexture::OverviewShore => TextureFormat::R8Uint,
+            AtlasTexture::Paint | AtlasTexture::OverviewPaint => TextureFormat::R8Uint,
+            AtlasTexture::Surface | AtlasTexture::OverviewSurface => TextureFormat::Rgba16Uint,
             AtlasTexture::OverviewCanopy => TextureFormat::Rgba8UnormSrgb,
             AtlasTexture::OverviewCanopyExtent => TextureFormat::R16Unorm,
             AtlasTexture::Table => TextureFormat::R32Uint,
@@ -976,6 +1048,7 @@ impl AtlasTexture {
         match self.format() {
             TextureFormat::R8Uint => 1,
             TextureFormat::R32Uint | TextureFormat::Rgba8UnormSrgb => 4,
+            TextureFormat::Rgba16Uint => 8,
             _ => 2,
         }
     }
@@ -983,13 +1056,10 @@ impl AtlasTexture {
     /// The texels across and down and the layers of the texture over a ground of `layout`.
     fn extent(self, layout: AtlasLayout) -> (u32, u32, u32) {
         match self {
-            AtlasTexture::Heights
-            | AtlasTexture::Paint
-            | AtlasTexture::Water
-            | AtlasTexture::Shore => (SLOT_SIDE, SLOT_SIDE, DETAIL_SLOTS),
-            AtlasTexture::OverviewHeights
-            | AtlasTexture::OverviewWater
-            | AtlasTexture::OverviewShore => {
+            AtlasTexture::Heights | AtlasTexture::Paint | AtlasTexture::Surface => {
+                (SLOT_SIDE, SLOT_SIDE, DETAIL_SLOTS)
+            }
+            AtlasTexture::OverviewHeights | AtlasTexture::OverviewSurface => {
                 (layout.heights_overview.0, layout.heights_overview.1, 1)
             }
             AtlasTexture::OverviewPaint => (layout.paint_overview.0, layout.paint_overview.1, 1),

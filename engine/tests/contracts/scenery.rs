@@ -406,6 +406,7 @@ fn overhead(at: Pos<Meters>, reach: Meters, height: f32) -> Sight {
     Sight {
         at,
         reach,
+        horizon: None,
         lens: Lens::new(720.0, Degrees(0.1)),
         eyes: Eyes::standing(Vec3::new(at.x, height, at.y), at, Meters(0.0)),
     }
