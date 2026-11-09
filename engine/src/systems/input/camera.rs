@@ -8,7 +8,7 @@ use bevy_egui::input::egui_wants_any_keyboard_input;
 
 use super::map::{self, InputAction};
 use crate::core::gui;
-use crate::core::render::{CameraFraming, CameraRig};
+use crate::core::render::{CameraFraming, CameraRig, CameraRigSystems};
 use crate::core::units::Degrees;
 use crate::systems::screen::ClientScreen;
 
@@ -25,6 +25,7 @@ pub fn plugin(app: &mut App) {
             steer_by_keys.run_if(not(egui_wants_any_keyboard_input)),
             steer_by_pointer,
         )
+            .in_set(CameraRigSystems)
             .run_if(in_state(ClientScreen::Area)),
     );
 }

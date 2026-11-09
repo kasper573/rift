@@ -291,6 +291,11 @@ impl Zoom {
     }
 }
 
+/// Every system that moves the [`CameraRig`] in a frame, run before the world's view takes in where
+/// the camera looks, so what stands for the view is the frame's own.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CameraRigSystems;
+
 /// Where the camera looks from: at a point of the world, from a yaw and a distance that ease toward
 /// what the player last asked for, framed as the game frames it. A client resource, never
 /// replicated, there once the game's look is known.

@@ -8,9 +8,9 @@ pub mod video;
 pub mod world;
 
 pub use camera::{
-    CameraFraming, CameraPreferences, CameraRig, GroundHeights, PictureGrade, View, WorldCamera,
-    Zoom, Zooms, cursor_ground, cursor_ray, facing_rotation, ground_height, ground_pos, view_of,
-    window_point, world_point,
+    CameraFraming, CameraPreferences, CameraRig, CameraRigSystems, GroundHeights, PictureGrade,
+    View, WorldCamera, Zoom, Zooms, cursor_ground, cursor_ray, facing_rotation, ground_height,
+    ground_pos, view_of, window_point, world_point,
 };
 pub use pick::{Pointed, capsule_hit, pointed};
 
@@ -60,11 +60,19 @@ impl Plugin for WorldRenderPlugin {
                 .run_if(not(transition::covering))
                 .after(RenderValueSystems),
         )
+        .configure_sets(
+            Update,
+            CameraRigSystems.before(transition::WorldViewSystems),
+        )
         .add_systems(Startup, present::setup)
         .add_systems(First, take_look.run_if(resource_exists_and_changed::<Look>))
         .add_systems(
             Update,
-            (present::fit, icons::keep_icons_resident, camera::ease),
+            (
+                present::fit,
+                icons::keep_icons_resident,
+                camera::ease.in_set(CameraRigSystems),
+            ),
         )
         .add_systems(
             PostUpdate,
