@@ -13,7 +13,7 @@ use super::flags::RowFlags;
 use super::placement::{self, AreaPlacement, PartView};
 use super::{
     AreaDrag, AreaFrame, AreaSnapshot, AreaTool, AreaViewState, PasteGhost, ResizeCorner,
-    blueprint, nodes, pick, pins, scene_tree, shapes,
+    StagePress, blueprint, nodes, pick, pins, scene_tree, shapes,
 };
 use crate::app::Editor;
 use crate::clipboard::{Clipboard, SceneClip};
@@ -62,8 +62,30 @@ pub(super) fn select_input(
         }
     }
     let hit = scope.hit(frame, ground);
+    if response.hovered() && ui.input(|i| i.pointer.primary_pressed()) {
+        editor.views.area.view_mut(view_key).press =
+            ui.input(|i| i.pointer.press_origin()).and_then(|at| {
+                let ground = frame.canvas.to_ground(at)?;
+                Some(StagePress {
+                    at,
+                    ground,
+                    hit: scope.hit_at(frame, at, ground),
+                })
+            });
+    }
     if response.drag_started_by(egui::PointerButton::Primary) {
-        start_select_drag(editor, view_key, frame, &scope, ground, hit);
+        let press = editor
+            .views
+            .area
+            .view_mut(view_key)
+            .press
+            .take()
+            .unwrap_or(StagePress {
+                at: frame.pointer.unwrap_or_default(),
+                ground,
+                hit,
+            });
+        start_select_drag(editor, view_key, frame, &scope, press);
         return;
     }
     if response.dragged_by(egui::PointerButton::Primary) {
@@ -148,15 +170,15 @@ impl SelectScope<'_> {
     fn hit(&self, frame: &AreaFrame, ground: Pos<Meters>) -> Option<String> {
         match self {
             SelectScope::Area => frame.hit_pointer().or_else(|| frame.hit(ground)),
-            SelectScope::Blueprint { parts, .. } => parts
-                .iter()
-                .filter(|part| !part.locked && part.bounds.is_some_and(|b| b.contains(ground)))
-                .min_by(|a, b| {
-                    a.bounds
-                        .map_or(0.0, |b| b.area())
-                        .total_cmp(&b.bounds.map_or(0.0, |b| b.area()))
-                })
-                .map(|part| part.part.clone()),
+            SelectScope::Blueprint { parts, .. } => part_at(parts, ground),
+        }
+    }
+
+    /// What a press at `screen`, over `ground`, picks.
+    fn hit_at(&self, frame: &AreaFrame, screen: Pos2, ground: Pos<Meters>) -> Option<String> {
+        match self {
+            SelectScope::Area => frame.hit_screen(screen).or_else(|| frame.hit(ground)),
+            SelectScope::Blueprint { parts, .. } => part_at(parts, ground),
         }
     }
 
@@ -255,16 +277,14 @@ fn start_select_drag(
     view_key: &str,
     frame: &AreaFrame,
     scope: &SelectScope,
-    ground: Pos<Meters>,
-    hit: Option<String>,
+    press: StagePress,
 ) {
+    let StagePress { at, ground, hit } = press;
     if scope.is_area() {
-        let on_handle = frame.pointer.and_then(|pointer| {
-            scope
-                .selected(editor, frame)
-                .into_iter()
-                .find_map(|node| handle_at(frame, &node, pointer))
-        });
+        let on_handle = scope
+            .selected(editor, frame)
+            .into_iter()
+            .find_map(|node| handle_at(frame, &node, at));
         if let Some((part, corner, start)) = on_handle {
             set_drag(
                 editor,
@@ -277,7 +297,7 @@ fn start_select_drag(
             );
             return;
         }
-        if let Some(pin) = pins::pin_at(editor, frame, frame.pointer.unwrap_or_default()) {
+        if let Some(pin) = pins::pin_at(editor, frame, at) {
             set_drag(
                 editor,
                 view_key,
@@ -731,4 +751,17 @@ impl Skipped {
             ));
         }
     }
+}
+
+/// The smallest part in place that isn't locked and covers `ground`.
+fn part_at(parts: &[PartView], ground: Pos<Meters>) -> Option<String> {
+    parts
+        .iter()
+        .filter(|part| !part.locked && part.bounds.is_some_and(|b| b.contains(ground)))
+        .min_by(|a, b| {
+            a.bounds
+                .map_or(0.0, |b| b.area())
+                .total_cmp(&b.bounds.map_or(0.0, |b| b.area()))
+        })
+        .map(|part| part.part.clone())
 }

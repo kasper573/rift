@@ -210,6 +210,8 @@ pub struct AreaViewState {
     pub tool: AreaTool,
     pub overlays: HashSet<AreaOverlay>,
     pub drag: Option<AreaDrag>,
+    /// What the last press on the stage found under the pointer, for the drag it may start.
+    pub(crate) press: Option<StagePress>,
     pub brush: Brush,
     pub sculpt: SculptMode,
     /// The height a level stroke pulls the ground toward.
@@ -326,6 +328,15 @@ struct PreviewPlaces {
     roams: Option<Rect<Meters>>,
     seed: u64,
     places: Vec<Pos<Meters>>,
+}
+
+/// Where a press on the stage was and what it found there. A drag starts only once the pointer has
+/// moved some way from the press, by when it may have left what it pressed.
+#[derive(Clone, Debug)]
+pub(crate) struct StagePress {
+    pub at: Pos2,
+    pub ground: Pos<Meters>,
+    pub hit: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -723,22 +734,7 @@ fn canvas(
         .filter(|_| response.hovered())
         .or_else(|| held.map(|ground| canvas.to_screen(ground)));
     let pointer_ground = hovered.and_then(|p| canvas.to_ground(p));
-    let pixels_per_point = ui.ctx().pixels_per_point();
-    let pointer_pixel = hovered.filter(|p| rect.contains(*p)).map(|p| {
-        let at = (p - rect.min) * pixels_per_point;
-        UVec2::new(at.x as u32, at.y as u32)
-    });
-    let stage = pointer_pixel.and_then(|pixel| {
-        editor
-            .views
-            .area
-            .viewports
-            .picked(view_key)
-            .filter(|picked| {
-                picked.at.as_ivec2().distance_squared(pixel.as_ivec2()) <= STAGE_SLACK * STAGE_SLACK
-            })
-            .cloned()
-    });
+    let picked = editor.views.area.viewports.picked(view_key).cloned();
     if let Some(ground) = pointer_ground {
         editor.views.area.hover = Some(AreaHover {
             area: bundle.clone(),
@@ -751,8 +747,8 @@ fn canvas(
         canvas,
         pointer: hovered,
         pointer_ground,
-        pointer_pixel,
-        stage,
+        picked,
+        pixels_per_point: ui.ctx().pixels_per_point(),
         response: &response,
         labels: AreaLabels::default(),
     };
@@ -889,7 +885,7 @@ fn request_viewport(editor: &mut Editor, ui: &Ui, view_key: &str, frame: &AreaFr
         ghost,
         cast,
         outlines,
-        pointer: frame.pointer_pixel,
+        pointer: frame.pointer.and_then(|pointer| frame.pixel(pointer)),
     });
     if repaint {
         ui.ctx().request_repaint();
@@ -1179,11 +1175,9 @@ pub struct AreaFrame<'a> {
     pub canvas: AreaCanvas,
     pub pointer: Option<Pos2>,
     pub pointer_ground: Option<Pos<Meters>>,
-    /// The pixel of the picture the pointer is over, none while it is off the picture.
-    pub pointer_pixel: Option<UVec2>,
-    /// What the world last found in the picture near where the pointer is, none until it has
-    /// looked there.
-    pub stage: Option<StagePick>,
+    /// What the world last found in the picture, where it looked.
+    picked: Option<StagePick>,
+    pixels_per_point: f32,
     pub response: &'a egui::Response,
     pub labels: AreaLabels,
 }
@@ -1765,8 +1759,35 @@ impl AreaFrame<'_> {
             &self.canvas,
             screen,
             self.pointer_ground,
-            self.stage.as_ref(),
+            self.pick_near(screen),
         )
+    }
+
+    /// The module a press at `screen` picks, as [`AreaFrame::hit_pointer`] does at the pointer.
+    pub(crate) fn hit_screen(&self, screen: Pos2) -> Option<String> {
+        self.snapshot.hit_at(
+            &self.canvas,
+            screen,
+            self.canvas.to_ground(screen),
+            self.pick_near(screen),
+        )
+    }
+
+    /// The pixel of the picture `screen` is over, none off the picture.
+    pub(crate) fn pixel(&self, screen: Pos2) -> Option<UVec2> {
+        let rect = self.canvas.screen;
+        rect.contains(screen).then(|| {
+            let at = (screen - rect.min) * self.pixels_per_point;
+            UVec2::new(at.x as u32, at.y as u32)
+        })
+    }
+
+    /// What the world last found in the picture, when it looked near `screen`.
+    fn pick_near(&self, screen: Pos2) -> Option<&StagePick> {
+        let pixel = self.pixel(screen)?;
+        self.picked.as_ref().filter(|picked| {
+            picked.at.as_ivec2().distance_squared(pixel.as_ivec2()) <= STAGE_SLACK * STAGE_SLACK
+        })
     }
 
     /// The locked module a click under the pointer passes through.
