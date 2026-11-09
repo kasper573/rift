@@ -26,7 +26,7 @@ use rayon::prelude::*;
 use ui::egui::{Color32, Pos2, Rect as ERect, Stroke as EStroke, Vec2};
 
 use super::camera::AreaCanvas;
-use super::{AreaFrame, AreaTool, selected_parts, shapes};
+use super::{AreaFrame, AreaSnapshot, AreaTool, selected_parts, shapes};
 use crate::app::Editor;
 use crate::doc::DocModule;
 use crate::forms;
@@ -402,8 +402,20 @@ pub(super) fn overlay_modules(
     }
     let mut dots = shapes::Dots::default();
     let mut footprints: HashMap<PropId, Option<&Footprint>> = HashMap::new();
-    let mut seen: Vec<DocModule> = frame.placed_within(frame.seen_ground()).collect();
+    let asked = hovered_modules(frame, pointed.as_deref(), row.as_deref())
+        .into_iter()
+        .chain(
+            selected
+                .iter()
+                .chain(&parts)
+                .filter_map(|pointer| frame.doc.module_at(pointer)),
+        );
+    let mut seen: Vec<DocModule> = frame
+        .drawn_unasked_within(frame.seen_ground())
+        .chain(asked)
+        .collect();
     seen.sort_by_key(|module| module.id);
+    seen.dedup_by_key(|module| module.id);
     for node in seen {
         let Some(footing) = frame.footing(node).filter(|_| frame.shown(node)) else {
             continue;
@@ -496,6 +508,12 @@ fn holds(row: &str, pointer: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
+/// Whether the map draws `module` though nothing asks for it: one it doesn't outline on the
+/// ground, of a kind that shows unasked.
+pub(super) fn drawn_unasked(snapshot: &AreaSnapshot, module: &AreaModule) -> bool {
+    !outlined_on_ground(snapshot, module) && shown_unasked(module)
+}
+
 /// Whether a module shows on the map when nothing asks for it: a scatter or a blueprint placement,
 /// which can tile a whole area, only when selected or hovered.
 fn shown_unasked(module: &AreaModule) -> bool {
@@ -504,11 +522,11 @@ fn shown_unasked(module: &AreaModule) -> bool {
 
 /// Whether a module is outlined on the ground by the rectangle it takes, as a line the viewport
 /// draws: every module shaped as its rectangle, rather than as a point, a circle or a footprint.
-fn outlined_on_ground(frame: &AreaFrame, module: &AreaModule) -> bool {
+fn outlined_on_ground(snapshot: &AreaSnapshot, module: &AreaModule) -> bool {
     match module {
         AreaModule::Soundscape(_) => !shapes::is_ellipse(module),
         AreaModule::Object(_) => !shapes::is_point(module),
-        AreaModule::Blueprint(_) => loads(frame, module),
+        AreaModule::Blueprint(_) => loads(snapshot, module),
         AreaModule::SafeZone(_)
         | AreaModule::Fog(_)
         | AreaModule::Scatter(_)
@@ -521,12 +539,12 @@ fn outlined_on_ground(frame: &AreaFrame, module: &AreaModule) -> bool {
 }
 
 /// Whether a module loads: a blueprint placement whose blueprint does; every other module.
-fn loads(frame: &AreaFrame, module: &AreaModule) -> bool {
+fn loads(snapshot: &AreaSnapshot, module: &AreaModule) -> bool {
     match module {
-        AreaModule::Blueprint(placement) => frame
+        AreaModule::Blueprint(placement) => snapshot
             .reader
             .path_of(placement.blueprint)
-            .and_then(|path| frame.content.by_path::<BlueprintDef>(path))
+            .and_then(|path| snapshot.content.by_path::<BlueprintDef>(path))
             .is_some(),
         _ => true,
     }

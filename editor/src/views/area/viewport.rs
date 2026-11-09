@@ -16,6 +16,8 @@ use bevy_egui::{EguiTextureHandle, EguiUserTextures};
 use engine::core::audio::playback::{self, PlaySfx, SfxPlace};
 use engine::core::content::Content;
 use engine::core::ground::{Heightfield, PaintMap};
+use engine::core::math::Pos;
+use engine::core::render::video::VideoPreferences;
 use engine::core::render::world::body::{self, Body, Figure};
 use engine::core::render::world::gpu::pick::Picking;
 use engine::core::render::world::layers::Layered;
@@ -32,6 +34,7 @@ use engine::systems::actor::render;
 use engine::systems::actor::rigging::BuiltSkeleton;
 use engine::systems::actor::skeleton::Cue;
 use engine::systems::actor::stance::HandIndex;
+use engine::systems::area::render::view_reach;
 use engine::systems::area::scenery::{self, Eyes, Sight};
 use engine::systems::area::{Area, Picture, Weather};
 use ui::egui;
@@ -190,10 +193,6 @@ struct RenderedView {
     cast: Option<(Arc<[StandingActor]>, Vec<Entity>)>,
     picked: Option<StagePick>,
 }
-
-/// How far around the camera's target the covers, props and lights stand while it takes in the
-/// horizon, in the camera's distance from it.
-const HORIZON_REACH_PER_DISTANCE: f32 = 4.0;
 
 impl Viewports {
     /// Asks for `request` to be drawn for the next frame.
@@ -364,12 +363,19 @@ impl RenderedView {
         {
             let viewport = Vec2::new(request.size[0] as f32, request.size[1] as f32);
             let view = request.camera.view(ground, viewport);
-            let reach = view
-                .ground_reach(request.camera.target, area.heights.range().lowest)
-                .unwrap_or(Meters(
-                    request.camera.distance.0 * HORIZON_REACH_PER_DISTANCE,
-                ));
             let at = request.camera.target;
+            let near_eye = within_reach_of(
+                view.eye(),
+                at,
+                ground,
+                view_reach(
+                    &world.resource::<Look>().camera,
+                    world.resource::<VideoPreferences>(),
+                ),
+            );
+            let reach = view
+                .ground_reach(at, area.heights.range().lowest)
+                .map_or(near_eye, |seen| Meters(seen.0.min(near_eye.0)));
             self.scene.see(
                 world,
                 Sight {
@@ -701,6 +707,19 @@ fn run_layers(world: &mut World) {
         );
     }
 }
+/// How far around `at`, on ground `ground` metres high, lies all the ground within `reach` of an
+/// eye standing at `eye`: the scenery stands its props, covers and lights only that near an eye,
+/// as the game does round its camera, and leaves the rest to the far field however far back the
+/// stage draws.
+fn within_reach_of(eye: Vec3, at: Pos<Meters>, ground: Meters, reach: Meters) -> Meters {
+    let over = eye.y - ground.0;
+    if over >= reach.0 {
+        return Meters(0.0);
+    }
+    let across = Pos::new(eye.x, eye.z).distance_to(at);
+    Meters(across + (reach.0 * reach.0 - over * over).sqrt())
+}
+
 /// An offscreen picture of `size` pixels a camera renders to, and the egui texture that shows it.
 fn render_target(
     world: &mut World,

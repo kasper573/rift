@@ -11,7 +11,7 @@ use crate::views::area::camera::OrbitCamera;
 
 #[derive(Clone, Default)]
 pub struct ShownPass {
-    /// Whether a probe watches the editor, so the pass reports what only a probe reads.
+    /// Whether a probe asked for a snapshot of the pass, so it reports what only a probe reads.
     pub probed: bool,
     pub panels: Vec<(&'static str, Rect)>,
     pub trees: Vec<ShownTree>,
@@ -48,7 +48,7 @@ pub struct ShownStage {
     pub picked: Option<String>,
 }
 
-/// Begins a pass, reporting what only a probe reads when `probed`.
+/// Begins a pass, reporting what only a probe reads when `probed`: when a probe asked for it.
 pub fn begin(ctx: &Context, probed: bool) {
     ctx.data_mut(|data| {
         data.insert_temp(

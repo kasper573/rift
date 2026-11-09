@@ -51,7 +51,7 @@ use bevy::math::Vec3Swizzles;
 use bevy::prelude::{Ray3d, Transform, UVec2, Vec3};
 use engine::core::content::media::GltfInfos;
 use engine::core::content::{Content, ContentFile, FolderReader, table_of};
-use engine::core::math::{Pos, Rect, Size};
+use engine::core::math::{Offset, Pos, Rect, Size};
 use engine::core::render::camera::View;
 use engine::core::render::{facing_rotation, world_point};
 use engine::core::units::{Degrees, MeterSize, Meters};
@@ -812,28 +812,46 @@ fn canvas(
     remember_camera(editor, view_key);
 }
 
-/// The stage as `frame` shows it in `rect`, with what it holds nearest the middle where each shows.
+/// The stage as `frame` shows it in `rect`, with what it holds nearest the middle where each shows:
+/// looked for round the ground the camera looks at, which shows in the middle, a square twice as
+/// wide each time until the square holds enough or the whole area.
 fn shown_stage(frame: &AreaFrame, rect: ERect) -> shown::ShownStage {
     let middle = rect.center();
-    let mut marks: Vec<(String, egui::Pos2)> = frame
-        .placed()
-        .grid
-        .within(frame.seen_ground())
-        .filter(|(_, _, target)| target.selectable && target.shown)
-        .filter_map(|(id, bounds, _)| {
-            let (at, _) = frame.canvas.glance(*bounds)?;
-            rect.contains(at)
-                .then(|| {
-                    frame
-                        .doc
-                        .pointer(*id)
-                        .map(|pointer| (pointer.to_owned(), at))
-                })
-                .flatten()
-        })
+    let whole = frame.canvas.area().size.bounds();
+    let looked_at = frame.canvas.camera.target;
+    let mut half = FIRST_MARKS_LOOK.0;
+    let mut shown = loop {
+        let around = Rect::new(
+            looked_at - Offset::new(half, half),
+            Size::new(2.0 * half, 2.0 * half),
+        );
+        let shown: Vec<(NodeId, egui::Pos2)> = frame
+            .placed()
+            .grid
+            .within(around)
+            .filter(|(_, _, target)| target.selectable && target.shown)
+            .filter_map(|(id, bounds, target)| {
+                let (at, _) = frame.canvas.glance_from(target.middle, *bounds)?;
+                rect.contains(at).then_some((*id, at))
+            })
+            .collect();
+        if shown.len() >= STAGE_MARKS || around.contains_rect(&whole) {
+            break shown;
+        }
+        half *= 2.0;
+    };
+    let nearer = |a: &(NodeId, egui::Pos2), b: &(NodeId, egui::Pos2)| {
+        a.1.distance_sq(middle).total_cmp(&b.1.distance_sq(middle))
+    };
+    if shown.len() > STAGE_MARKS {
+        shown.select_nth_unstable_by(STAGE_MARKS, nearer);
+        shown.truncate(STAGE_MARKS);
+    }
+    shown.sort_by(nearer);
+    let marks = shown
+        .into_iter()
+        .filter_map(|(id, at)| Some((frame.doc.pointer(id)?.to_owned(), at)))
         .collect();
-    marks.sort_by(|a, b| a.1.distance_sq(middle).total_cmp(&b.1.distance_sq(middle)));
-    marks.truncate(STAGE_MARKS);
     shown::ShownStage {
         rect,
         view_proj: frame.canvas.view().view_proj(),
@@ -850,6 +868,8 @@ fn shown_stage(frame: &AreaFrame, rect: ERect) -> shown::ShownStage {
 
 /// How many of what the stage holds the probe is told of, nearest the middle first.
 const STAGE_MARKS: usize = 64;
+/// How far round the ground the camera looks at the stage's marks are first looked for.
+const FIRST_MARKS_LOOK: Meters = Meters(16.0);
 
 /// Asks the viewport for the picture of the next frame: the scene as it stands, the terrain as a
 /// stroke shapes it, the ghost under the pointer and the cast standing where they live.
@@ -1156,6 +1176,8 @@ struct Mapped {
 /// which their bodies stand.
 struct Placed {
     grid: NodeGrid<MapTarget>,
+    /// Those of them the map draws whether or not anything asks for them.
+    drawn_unasked: NodeGrid<()>,
     floor: f32,
     ceiling: f32,
 }
@@ -1166,6 +1188,8 @@ struct MapTarget {
     selectable: bool,
     /// What it stands over its bounds, for a pick to catch it above the ground.
     body: Option<StandingBox>,
+    /// The middle of its bounds on the ground, where the map glances at it.
+    middle: Vec3,
     shown: bool,
     locked: bool,
 }
@@ -1370,6 +1394,18 @@ impl AreaSnapshot {
             .filter_map(|(id, _, _)| self.doc.doc_module(*id))
     }
 
+    /// Every module of the bundle within `reach` the map draws whether or not anything asks for
+    /// it, in no order.
+    pub(crate) fn drawn_unasked_within(
+        &self,
+        reach: Rect<Meters>,
+    ) -> impl Iterator<Item = DocModule<'_>> {
+        self.placed()
+            .drawn_unasked
+            .within(reach)
+            .filter_map(|(id, _, _)| self.doc.doc_module(*id))
+    }
+
     /// Whether the map lets the pointer at the module: not hidden, not locked, and not outside the
     /// placement edited in place.
     pub(crate) fn pickable(&self, pointer: &str) -> bool {
@@ -1534,20 +1570,37 @@ impl AreaSnapshot {
     fn placed(&self) -> &Placed {
         self.mapped.placed.get_or_init(|| {
             let area = &self.picture.area;
-            let grid = NodeGrid::new(self.doc.modules().filter_map(|module| {
-                let bounds = self.bounds_of(module)?;
+            let placed: Vec<(DocModule, Rect<Meters>)> = self
+                .doc
+                .modules()
+                .filter_map(|module| Some((module, self.bounds_of(module)?)))
+                .collect();
+            let grid = NodeGrid::new(placed.iter().map(|&(module, bounds)| {
                 let height = standing_height(&self.mapped.content, &self.reader, module.module());
-                Some((
+                (
                     module.id,
                     bounds,
                     MapTarget {
                         selectable: is_selectable(module.module()),
                         body: (height > 0.0).then(|| StandingBox::on(area, bounds, height)),
+                        middle: world_point(
+                            bounds.center(),
+                            area.heights.height_at(bounds.center()),
+                        ),
                         shown: !self.flags.hidden(module.pointer),
                         locked: self.flags.locked(module.pointer),
                     },
-                ))
+                )
             }));
+            let drawn_unasked = NodeGrid::new(
+                placed
+                    .iter()
+                    .filter(|(module, _)| {
+                        !self.flags.hidden(module.pointer)
+                            && overlays::drawn_unasked(self, module.module())
+                    })
+                    .map(|&(module, bounds)| (module.id, bounds, ())),
+            );
             let range = area.heights.range();
             let ceiling = grid
                 .iter()
@@ -1555,6 +1608,7 @@ impl AreaSnapshot {
                 .fold(range.highest.0, f32::max);
             Placed {
                 grid,
+                drawn_unasked,
                 floor: range.lowest.0,
                 ceiling,
             }

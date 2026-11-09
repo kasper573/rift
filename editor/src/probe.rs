@@ -21,9 +21,12 @@ use engine::systems::probe::{
 use crate::app::{DrawnPasses, Editor, keep_pass, primary_context};
 use crate::shown;
 
-/// Marks an editor a probe watches, which then reports what only a probe reads.
-#[derive(Resource)]
-pub struct Probed;
+/// Marks an editor a probe watches: whether the probe asked this frame for a snapshot, which
+/// reports what only a probe reads of the interface's pass, so the pass works that out only then.
+#[derive(Resource, Default)]
+pub struct Probed {
+    pub snapshot_asked: bool,
+}
 
 /// Answers the driver at `driver`, a frame after each question.
 pub fn install(app: &mut App, driver: SocketAddr) {
@@ -31,18 +34,35 @@ pub fn install(app: &mut App, driver: SocketAddr) {
         bevy::log::error!("the editor's probe was asked {line}, which it doesn't answer");
         std::process::exit(1);
     });
-    app.insert_non_send(EditorProbe(socket))
-        .insert_resource(Probed)
-        .add_plugins(ProbeInterfacePlugin)
-        .add_systems(PreUpdate, read_accessibly)
-        .add_systems(
-            PostUpdate,
-            count_clicks.after(EguiPostUpdateSet::ProcessOutput),
-        )
-        .add_systems(Last, answer.after(keep_pass));
+    app.insert_non_send(EditorProbe {
+        socket,
+        asked: Vec::new(),
+    })
+    .init_resource::<Probed>()
+    .add_plugins(ProbeInterfacePlugin)
+    .add_systems(First, take_questions)
+    .add_systems(PreUpdate, read_accessibly)
+    .add_systems(
+        PostUpdate,
+        count_clicks.after(EguiPostUpdateSet::ProcessOutput),
+    )
+    .add_systems(Last, answer.after(keep_pass));
 }
 
-struct EditorProbe(ProbeSocket<EditorFrameQuestion>);
+/// The probe's socket, and the questions asked since the last frame, answered at its end.
+struct EditorProbe {
+    socket: ProbeSocket<EditorFrameQuestion>,
+    asked: Vec<EditorFrameQuestion>,
+}
+
+fn take_questions(mut probe: NonSendMut<EditorProbe>, mut probed: ResMut<Probed>) {
+    let asked = probe.socket.asked();
+    probe.asked.extend(asked);
+    probed.snapshot_asked = probe
+        .asked
+        .iter()
+        .any(|question| matches!(question, EditorFrameQuestion::Snapshot));
+}
 
 // Editors never pay for the accessibility tree; only one the driver watches turns it on.
 fn read_accessibly(mut contexts: Query<&mut EguiContext, Added<PrimaryEguiContext>>) {
@@ -61,11 +81,11 @@ fn count_clicks(
 }
 
 fn answer(world: &mut World) {
-    let asked = world.non_send::<EditorProbe>().0.asked();
+    let asked = std::mem::take(&mut world.non_send_mut::<EditorProbe>().asked);
     if asked.is_empty() {
         return;
     }
-    let answers = world.non_send::<EditorProbe>().0.answers();
+    let answers = world.non_send::<EditorProbe>().socket.answers();
     let Some(ctx) = primary_context(world) else {
         return;
     };

@@ -1211,7 +1211,10 @@ fn editor_ui(world: &mut World) {
     let Some(ctx) = primary_context(world) else {
         return;
     };
-    shown::begin(&ctx, world.contains_resource::<crate::probe::Probed>());
+    let snapshot_asked = world
+        .get_resource::<crate::probe::Probed>()
+        .is_some_and(|probed| probed.snapshot_asked);
+    shown::begin(&ctx, snapshot_asked);
     let (ui_ms, tab, camera) = world.resource_scope(|world, mut editor: Mut<Editor>| {
         let started = Instant::now();
         shell::show(&mut editor, &ctx);
