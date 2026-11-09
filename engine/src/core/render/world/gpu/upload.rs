@@ -1,11 +1,13 @@
 //! How much of the world's data the GPU is sent a frame: whatever writes it spends one budget, a
 //! few megabytes a frame, so much arriving at once costs many frames a little rather than one frame
-//! a lot; behind a cover, where a long frame shows nothing, far more. Bevy's own assets, the
-//! meshes and images, are held to the same budget a frame through its limit.
+//! a lot; behind a cover, where a long frame shows nothing, far more.
+//!
+//! Bevy's own assets, the meshes and images, are left out of the budget: bevy 0.20 never draws a
+//! mesh whose upload its per-frame limit put off past the frame that first asked for its pipeline,
+//! so a body's part or a held item would stay missing for good.
 
 use bevy::ecs::system::SystemParam;
 use bevy::prelude::*;
-use bevy::render::render_asset::RenderAssetBytesPerFrame;
 
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 
@@ -69,16 +71,8 @@ impl FrameUploads {
     }
 }
 
-fn begin_frame(
-    mut uploads: ResMut<FrameUploads>,
-    assets: Option<ResMut<RenderAssetBytesPerFrame>>,
-    transition: Option<Res<ActiveTransition>>,
-) {
+fn begin_frame(mut uploads: ResMut<FrameUploads>) {
     uploads.spent = 0;
-    let covered = transition.as_deref().is_some_and(hides_world);
-    if let Some(mut assets) = assets {
-        assets.max_bytes = Some(per_frame(covered));
-    }
 }
 
 fn per_frame(covered: bool) -> usize {
