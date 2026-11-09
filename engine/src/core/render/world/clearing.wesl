@@ -20,8 +20,13 @@ fn clear_at(pixel: vec2<f32>, shown: f32, focus: vec2<f32>, focus_radius: f32) {
 }
 
 // Interleaved gradient noise, stepped on by the golden ratio each frame, which the picture's
-// settling over the frames blends into a translucency.
+// settling over the frames blends into a translucency. A pass that writes no motion is a light's
+// shadow map, which keeps nothing from one frame to the next for a stepping dither to settle
+// over: there it holds still, or what it drops would flicker the shadow frame by frame.
 fn dither(pixel: vec2<f32>) -> f32 {
-    let p = pixel + 5.588238 * f32(view.frame_count % 64u);
+    var p = pixel;
+    @if(!PREPASS_PIPELINE || MOTION_VECTOR_PREPASS) {
+        p += 5.588238 * f32(view.frame_count % 64u);
+    }
     return fract(52.9829189 * fract(0.06711056 * p.x + 0.00583715 * p.y));
 }
