@@ -556,7 +556,9 @@ fn no_chunk_standing(device: &RenderDevice) -> Buffer {
 /// the atlas holds no impostor of is drawn by its model however narrow; one whose model stands
 /// undressed is drawn by its impostor, or by its box without one, and counted missing. An
 /// instance of the far field is drawn by its impostor alone, and not at all where the near chunk
-/// it belongs to stands.
+/// it belongs to stands. Where the player's prop detail eases the hand-over to a wider width, an
+/// instance no farther off than the view's focus still hands over at the picture's own width,
+/// and one past twice as far, or in a view without a focus, at the eased width.
 #[test]
 fn the_gpu_hands_a_prop_from_its_model_to_its_impostor_across_the_band() {
     let _gpu = crate::gpu::exclusive();
@@ -779,27 +781,42 @@ fn the_gpu_hands_a_prop_from_its_model_to_its_impostor_across_the_band() {
         "every instance but the far one whose near chunk stands is drawn"
     );
 
-    let seen = seen_chunks(&chunks, &table, &frustum, &view);
-    culled.update(
-        &device,
-        &queue,
-        &kernel,
-        &gpu_table,
-        slab.buffer().expect("the instances written"),
-        shown.buffer().expect("the shares shown written"),
-        &standing,
-        seen,
-        view.handing_over_at(2.0 * IMPOSTOR_PIXELS),
-    );
-    let mut encoder = device.create_command_encoder(&default());
-    culled.encode(&kernel, &gpu_table, &mut encoder);
-    queue.submit([encoder.finish()]);
-    let read = culled.read(&device, &queue);
-    let got = drawn_by(&read, near_first);
-    assert!(
-        alike(&got, &[(Drawn::Impostor, 1.0)]),
-        "handing over at twice the width, the instance wider than the band stands narrower than it and draws its impostor, not {got:?}"
-    );
+    let distance = across(IMPOSTOR_PIXELS + BAND_PIXELS);
+    for (focus, wanted, what) in [
+        (None, Drawn::Impostor, "with no focus"),
+        (
+            Some(eye + way * distance),
+            Drawn::Model,
+            "standing no farther off than the focus",
+        ),
+        (
+            Some(eye + way * distance * 0.4),
+            Drawn::Impostor,
+            "standing over twice as far off as the focus",
+        ),
+    ] {
+        let seen = seen_chunks(&chunks, &table, &frustum, &view);
+        culled.update(
+            &device,
+            &queue,
+            &kernel,
+            &gpu_table,
+            slab.buffer().expect("the instances written"),
+            shown.buffer().expect("the shares shown written"),
+            &standing,
+            seen,
+            view.handing_over_at(2.0 * IMPOSTOR_PIXELS, focus),
+        );
+        let mut encoder = device.create_command_encoder(&default());
+        culled.encode(&kernel, &gpu_table, &mut encoder);
+        queue.submit([encoder.finish()]);
+        let read = culled.read(&device, &queue);
+        let got = drawn_by(&read, near_first);
+        assert!(
+            alike(&got, &[(wanted, 1.0)]),
+            "eased to hand over at twice the width, the instance wider than the band {what} is drawn by {wanted:?}, not {got:?}"
+        );
+    }
 }
 
 /// A light's view keeps the casters behind its near half-space whose shadows can still fall

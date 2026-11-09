@@ -19,6 +19,8 @@ import bevy_pbr::render::{
 };
 @if(!PREPASS_PIPELINE)
 import engine::core::render::world::shade::lighting;
+@if(!PREPASS_PIPELINE)
+import bevy_pbr::render::mesh_view_bindings::lights;
 import bevy_pbr::render::mesh_view_bindings::view;
 import bevy_pbr::render::view_transformations::position_world_to_clip;
 import engine::core::render::world::clearing::dither;
@@ -247,7 +249,7 @@ fn fragment(in: ImpostorOutput) -> LitOutput {
     input.material.diffuse_transmission = in.translucency;
     input.flags = MESH_FLAGS_SHADOW_RECEIVER_BIT | MESH_FLAGS_SIGN_DETERMINANT_MODEL_3X3_BIT;
     input.frag_coord = vec4<f32>(in.position.xy, clip.z / clip.w, in.position.w);
-    input.world_position = vec4<f32>(found.world, 1.0);
+    input.world_position = vec4<f32>(clear_of_its_shadow(found.world, in.radius_layer.x), 1.0);
     input.world_normal = found.normal;
     input.N = found.normal;
     input.is_orthographic = view.clip_from_view[3].w == 1.0;
@@ -257,6 +259,22 @@ fn fragment(in: ImpostorOutput) -> LitOutput {
     out.depth = clip.z / clip.w;
     return out;
 }
+
+// Where a picture's surface at `world`, of a model `radius` round, is lit as standing: as far
+// toward the sun as the picture is unsure of it. A picture keeps its surface only to within a
+// texel of its cell, and its read blends a texel either side, which lies deeper than the shadow
+// maps clear a face of its own shadow by, so the model's own shadow would darken its picture.
+@if(!PREPASS_PIPELINE)
+fn clear_of_its_shadow(world: vec3<f32>, radius: f32) -> vec3<f32> {
+    if lights.n_directional_lights == 0u {
+        return world;
+    }
+    let texel = 2.0 * radius * CELLS / f32(textureDimensions(albedo).x);
+    return world + lights.directional_lights[0].direction_to_light * UNSURE_TEXELS * texel;
+}
+
+@if(!PREPASS_PIPELINE)
+const UNSURE_TEXELS: f32 = 2.0;
 
 // What the prepass writes of the surface: bevy's prepass outputs, and the depth the surface lies
 // at, which every prepass of the impostors writes.

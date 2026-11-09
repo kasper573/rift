@@ -8,9 +8,9 @@ pub mod video;
 pub mod world;
 
 pub use camera::{
-    CameraFraming, CameraPreferences, CameraRig, CameraRigSystems, GroundHeights, PictureGrade,
-    View, WorldCamera, Zoom, Zooms, cursor_ground, cursor_ray, facing_rotation, ground_height,
-    ground_pos, view_of, window_point, world_point,
+    CameraFocus, CameraFraming, CameraPreferences, CameraRig, CameraRigSystems, GroundHeights,
+    PictureGrade, View, WorldCamera, Zoom, Zooms, cursor_ground, cursor_ray, facing_rotation,
+    ground_height, ground_pos, view_of, window_point, world_point,
 };
 pub use pick::{Pointed, capsule_hit, pointed};
 

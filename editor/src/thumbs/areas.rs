@@ -303,6 +303,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
                 RenderTarget::Image(target.clone().into()),
                 world_camera::lens(LENS, size[0], size[1]),
                 world_camera::picture(grade),
+                world_camera::CameraFocus(center),
                 RenderLayers::from_layers(&[LAYER]),
                 eye,
             ))

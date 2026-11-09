@@ -239,6 +239,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
                 RenderTarget::Image(target.clone().into()),
                 world_camera::lens(LENS, SIZE, SIZE),
                 world_camera::picture(look.picture),
+                world_camera::CameraFocus(center),
                 AmbientLight {
                     color: Color::WHITE,
                     brightness: look.light.ambient_nits,

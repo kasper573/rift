@@ -36,6 +36,11 @@ struct CullView {
     // way to its impostor, and how wide the band is.
     impostor_pixels: f32,
     band_pixels: f32,
+    // How many pixels across the band's middle lies for an instance the player's prop detail
+    // eases, and how far off the eye the view's focus lies, past which the ease comes in: 0 for a
+    // view that eases every instance alike.
+    eased_pixels: f32,
+    focus: f32,
     // How far off the eye props still stand, and from where they thin out toward it: 0 and 0 for
     // as far as they go.
     horizon_start: f32,
@@ -421,7 +426,8 @@ fn sight(instance: Instance, far: bool) -> Sighted {
     if view.horizon > 0.0 && past_horizon(center, instance.seed) {
         return sighted;
     }
-    let pixels_per_meter = pixels_per_meter_at(distance(center, view.eye));
+    let off = distance(center, view.eye);
+    let pixels_per_meter = pixels_per_meter_at(off);
     var scale = instance.scale;
     let across = prop.extent * scale * pixels_per_meter;
     if across < view.grain_pixels {
@@ -437,7 +443,7 @@ fn sight(instance: Instance, far: bool) -> Sighted {
     sighted.prop = prop;
     sighted.turn = turn;
     // How far across the band the instance lies: 1 all model, 0 all impostor.
-    var share = clamp((across - view.impostor_pixels) / max(view.band_pixels, 1e-6) + 0.5, 0.0, 1.0);
+    var share = clamp((across - handing_over_at(off)) / max(view.band_pixels, 1e-6) + 0.5, 0.0, 1.0);
     if far {
         share = 0.0;
     }
@@ -471,6 +477,19 @@ fn sight(instance: Instance, far: bool) -> Sighted {
     }
     return sighted;
 }
+
+// The middle of the band where an instance `off` metres from the eye gives its model over to its
+// impostor: where its picture stands sharp as far off as the view's focus, the player's prop
+// detail easing it in from there to fully at `EASED_PAST` times as far.
+fn handing_over_at(off: f32) -> f32 {
+    if view.focus <= 0.0 {
+        return view.eased_pixels;
+    }
+    let past = smoothstep(view.focus, view.focus * EASED_PAST, off);
+    return mix(view.impostor_pixels, view.eased_pixels, past);
+}
+
+const EASED_PAST: f32 = 2.0;
 
 // How far the instance at `index` shows this frame, moved a step toward cleared while the way
 // from the eye to the subject passes through its box and toward whole once it doesn't, and

@@ -27,6 +27,7 @@ use bevy::pbr::{
 };
 use bevy::prelude::*;
 use bevy::render::diagnostic::RecordDiagnostics;
+use bevy::render::extract_component::ExtractComponentPlugin;
 use bevy::render::extract_resource::ExtractResourcePlugin;
 use bevy::render::render_resource::binding_types::{
     storage_buffer_read_only_sized, storage_buffer_sized, texture_2d, uniform_buffer,
@@ -51,7 +52,7 @@ use super::arena::{
 };
 use super::clearing::{self, Clearing};
 use super::impostor::{self, AtlasKey, ImpostorAtlas};
-use crate::core::render::camera::NEAR_PLANE;
+use crate::core::render::camera::{CameraFocus, NEAR_PLANE};
 use crate::core::render::video::VideoPreferences;
 use crate::core::render::world::RenderProgress;
 use crate::core::render::world::lod::{DRAWN_STRAY_PIXELS, GRAIN_PIXELS, horizon_band};
@@ -65,6 +66,7 @@ impl Plugin for PropCullPlugin {
             .add_plugins((
                 ExtractResourcePlugin::<Clearing>::default(),
                 ExtractResourcePlugin::<VideoPreferences>::default(),
+                ExtractComponentPlugin::<CameraFocus>::default(),
             ))
             .add_systems(PostUpdate, clearing::aim_clearing);
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
@@ -115,7 +117,7 @@ pub const PROP_OCCLUDE: &str = "prop_occlude";
 /// How a view culls: its frustum's half-spaces (left, right, bottom, top, near and far), where
 /// sizes on screen are measured from and how many pixels a metre spans a metre off it, whether a
 /// metre spans as many however far it lies, whether what lies behind the near half-space is left
-/// out, the sizes on screen the kernel judges by, how far off the eye props still stand (none
+/// out, the sizes on screen the kernel judges by and how far off the eye its focus lies, how far off the eye props still stand (none
 /// for as far as they go), for the view that clears what hides the camera's subject, whom it
 /// follows and how far a fade moves this frame, and how many chunks it sees this frame.
 #[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
@@ -131,6 +133,8 @@ pub struct CullView {
     near: f32,
     impostor_pixels: f32,
     band_pixels: f32,
+    eased_pixels: f32,
+    focus: f32,
     horizon_start: f32,
     horizon: f32,
     subject: Vec3,
@@ -161,6 +165,8 @@ impl CullView {
             near: NEAR_PLANE.0,
             impostor_pixels: IMPOSTOR_PIXELS,
             band_pixels: BAND_PIXELS,
+            eased_pixels: IMPOSTOR_PIXELS,
+            focus: 0.0,
             horizon_start: 0.0,
             horizon: 0.0,
             subject: Vec3::ZERO,
@@ -180,10 +186,14 @@ impl CullView {
         }
     }
 
-    /// The view handing each prop from its model to its impostor where it spans `pixels` across.
-    pub fn handing_over_at(self, pixels: f32) -> CullView {
+    /// The view handing each prop from its model to its impostor where it spans `eased` pixels
+    /// across, eased as far as it stands past the view's `focus`: one no farther off the eye than
+    /// the focus hands over where its picture still stands sharp, and the ease comes in fully by
+    /// twice as far. A view with no focus eases every prop alike.
+    pub fn handing_over_at(self, eased: f32, focus: Option<Vec3>) -> CullView {
         CullView {
-            impostor_pixels: pixels,
+            eased_pixels: eased,
+            focus: focus.map_or(0.0, |focus| focus.distance(self.eye)),
             ..self
         }
     }
@@ -1123,6 +1133,16 @@ fn make_kernel(mut commands: Commands, device: Res<RenderDevice>) {
     commands.insert_resource(CullKernel::new(&device));
 }
 
+/// A view as it culls: what it sees through, which layers it draws, what its camera looks at, and
+/// whether it is a light's.
+type CulledView = (
+    &'static ExtractedView,
+    &'static Frustum,
+    Option<&'static RenderLayers>,
+    Option<&'static CameraFocus>,
+    Has<LightEntity>,
+);
+
 /// Makes each scenery's table anew once its arena or the models have changed, and what each view
 /// that shows it culls: the chunks that reach into its frustum.
 #[allow(clippy::too_many_arguments)]
@@ -1137,12 +1157,7 @@ pub(super) fn prepare_culls(
     video: Res<VideoPreferences>,
     mut culls: ResMut<PropCulls>,
     sceneries: Query<(&MainEntity, &ExtractedPropArena)>,
-    views: Query<(
-        &ExtractedView,
-        &Frustum,
-        Option<&RenderLayers>,
-        Has<LightEntity>,
-    )>,
+    views: Query<CulledView>,
 ) {
     let Some(kernel) = kernel else {
         return;
@@ -1174,7 +1189,7 @@ pub(super) fn prepare_culls(
             continue;
         };
         let mut shown = HashSet::new();
-        for (view, frustum, layers, light) in &views {
+        for (view, frustum, layers, focus, light) in &views {
             if !layers.unwrap_or_default().intersects(&drawn.layers) {
                 continue;
             }
@@ -1184,7 +1199,10 @@ pub(super) fn prepare_culls(
             if !light {
                 culled = culled
                     .within(video.view_distance.horizon())
-                    .handing_over_at(IMPOSTOR_PIXELS * video.detail.impostor_widths());
+                    .handing_over_at(
+                        IMPOSTOR_PIXELS * video.detail.impostor_widths(),
+                        focus.map(|focus| focus.0),
+                    );
             }
             if let Some(clearing) = clearing.0
                 && !light

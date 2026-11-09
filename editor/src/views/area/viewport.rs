@@ -22,7 +22,7 @@ use engine::core::render::world::layers::Layered;
 use engine::core::render::world::mannequin::Mannequin;
 use engine::core::render::world::mannequin::mannequin;
 use engine::core::render::world::rig_clip;
-use engine::core::render::{Look, camera};
+use engine::core::render::{CameraFocus, Look, camera, world_point};
 use engine::core::units::Meters;
 use engine::core::units::Seconds;
 use engine::systems::actor::Action;
@@ -381,8 +381,11 @@ impl RenderedView {
                 },
             );
         }
-        if let Some(mut transform) = world.get_mut::<Transform>(self.camera) {
-            *transform = request.camera.transform(ground);
+        if let Ok(mut camera) = world.get_entity_mut(self.camera) {
+            camera.insert((
+                request.camera.transform(ground),
+                CameraFocus(world_point(request.camera.target, ground)),
+            ));
         }
         self.rendered = request.camera;
         self.shape(world, &request);

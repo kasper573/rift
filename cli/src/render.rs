@@ -45,7 +45,7 @@ use engine::core::render::world::layers::Layered;
 use engine::core::render::world::mannequin::mannequin;
 use engine::core::render::world::rig_clip;
 use engine::core::render::world::sky::Daylight;
-use engine::core::render::{CameraRig, Look};
+use engine::core::render::{CameraFocus, CameraRig, Look};
 use engine::core::units::{Degrees, Meters, Radians, Seconds};
 use engine::core::vfx::rain::{RainField, Shelter};
 use engine::core::vfx::render::VfxMaterialsPlugin;
@@ -778,6 +778,7 @@ fn set_up(
             RenderTarget::Image(image.clone().into()),
             camera::lens(framed.fov, shot.width, shot.height),
             camera::picture(look.picture),
+            CameraFocus(framed.target),
             placed,
         ))
         .id();
@@ -845,6 +846,7 @@ fn jump(world: &mut World, shot: &Shot, stood: &Stood) {
     world.entity_mut(stood.camera).insert((
         camera::lens(framed.fov, shot.width, shot.height),
         Transform::from_translation(framed.eye).looking_at(framed.target, Vec3::Y),
+        CameraFocus(framed.target),
     ));
     world
         .resource_mut::<CameraRig>()

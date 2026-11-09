@@ -12,6 +12,8 @@ use bevy::light::{ShadowFilteringMethod, VolumetricFog};
 use bevy::pbr::ScreenSpaceAmbientOcclusion;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
+use bevy::render::RenderApp;
+use bevy::render::extract_component::ExtractComponent;
 use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
 use bevy::shape::ViewFrustum;
 use bevy::window::PrimaryWindow;
@@ -90,6 +92,14 @@ pub struct PictureGrade {
 
 #[derive(Component)]
 pub struct WorldCamera;
+
+/// Where in the world a camera that draws the world looks: the subject of its view. The props
+/// as near its eye as that are what the view is about, and the player's prop detail never hands
+/// them over to their pictures sooner than their pictures stay sharp (see `PropDetail`). A camera
+/// without one eases every prop alike.
+#[derive(Component, ExtractComponent, Clone, Copy, Debug, PartialEq)]
+#[extract_app(RenderApp)]
+pub struct CameraFocus(pub Vec3);
 
 /// A camera that draws the world the way the player sees it, finished by `picture` in its grade.
 #[derive(Component, Clone, Copy)]
@@ -718,13 +728,27 @@ pub(super) fn ease(
     }
 }
 
+/// The world camera as the rig places it: where it stands, and what it looks at once aimed.
+type PlacedCamera = (
+    Entity,
+    &'static mut Transform,
+    Option<&'static mut CameraFocus>,
+);
+
 pub(super) fn place(
     rig: Option<Res<CameraRig>>,
-    mut camera: Query<&mut Transform, With<WorldCamera>>,
+    mut camera: Query<PlacedCamera, With<WorldCamera>>,
+    mut commands: Commands,
 ) {
     if let Some(rig) = rig
-        && let Ok(mut transform) = camera.single_mut()
+        && let Ok((camera, mut transform, focus)) = camera.single_mut()
     {
         *transform = rig.transform();
+        match focus {
+            Some(mut focus) => focus.0 = rig.target(),
+            None => {
+                commands.entity(camera).insert(CameraFocus(rig.target()));
+            }
+        }
     }
 }
