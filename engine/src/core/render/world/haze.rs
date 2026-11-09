@@ -16,7 +16,7 @@ use bevy::render::render_resource::{
     BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BlendComponent,
     BlendState, CachedRenderPipelineId, ColorTargetState, ColorWrites, FragmentState,
     PipelineCache, RenderPassDescriptor, RenderPipelineDescriptor, ShaderStages, ShaderType,
-    TextureFormat, TextureUsages,
+    TextureFormat,
 };
 use bevy::render::renderer::{RenderContext, ViewQuery};
 use bevy::render::view::{
@@ -82,8 +82,7 @@ impl Plugin for HazePlugin {
         app.add_plugins((
             ExtractComponentPlugin::<Haze>::default(),
             UniformComponentPlugin::<Haze>::default(),
-        ))
-        .add_systems(PostUpdate, let_depth_be_read);
+        ));
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
@@ -97,16 +96,6 @@ impl Plugin for HazePlugin {
                     .in_set(Core3dSystems::MainPass)
                     .in_set(Hazing),
             );
-    }
-}
-
-/// Every hazed camera's depth can be read once the world is drawn, as the haze reads it.
-fn let_depth_be_read(mut cameras: Query<&mut Camera3d, (With<Haze>, Changed<Camera3d>)>) {
-    for mut camera in &mut cameras {
-        let usages = TextureUsages::from(camera.depth_texture_usages);
-        if !usages.contains(TextureUsages::TEXTURE_BINDING) {
-            camera.depth_texture_usages = (usages | TextureUsages::TEXTURE_BINDING).into();
-        }
     }
 }
 

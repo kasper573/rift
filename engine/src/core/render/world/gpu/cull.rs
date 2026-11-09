@@ -36,8 +36,7 @@ use bevy::render::render_resource::{
     BufferDescriptor, BufferInitDescriptor, BufferUsages, CommandEncoder, ComputePassDescriptor,
     ComputePipeline, DrawIndexedIndirectArgs, MapMode, PipelineCache, PipelineCompilationOptions,
     PipelineLayoutDescriptor, RawComputePipelineDescriptor, ShaderModuleDescriptor, ShaderSource,
-    ShaderStages, ShaderType, StorageBuffer, TextureSampleType, TextureUsages, TextureView,
-    UniformBuffer,
+    ShaderStages, ShaderType, StorageBuffer, TextureSampleType, TextureView, UniformBuffer,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy::render::sync_world::MainEntity;
@@ -67,7 +66,7 @@ impl Plugin for PropCullPlugin {
                 ExtractResourcePlugin::<Clearing>::default(),
                 ExtractResourcePlugin::<VideoPreferences>::default(),
             ))
-            .add_systems(PostUpdate, (clearing::aim_clearing, let_depth_be_read));
+            .add_systems(PostUpdate, clearing::aim_clearing);
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
@@ -1203,17 +1202,6 @@ pub(super) fn prepare_culls(
             shown.insert(view.retained_view_entity);
         }
         cull.views.retain(|view, _| shown.contains(view));
-    }
-}
-
-/// Every camera's depth can be read once its prepass is drawn, as the occlusion and the picking
-/// read it.
-fn let_depth_be_read(mut cameras: Query<&mut Camera3d, Changed<Camera3d>>) {
-    for mut camera in &mut cameras {
-        let usages = TextureUsages::from(camera.depth_texture_usages);
-        if !usages.contains(TextureUsages::TEXTURE_BINDING) {
-            camera.depth_texture_usages = (usages | TextureUsages::TEXTURE_BINDING).into();
-        }
     }
 }
 

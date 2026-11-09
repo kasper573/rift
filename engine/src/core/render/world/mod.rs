@@ -30,7 +30,7 @@ use bevy::light::DirectionalLightShadowMap;
 use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin};
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
-use bevy::render::render_resource::{CachedPipelineState, PipelineCache};
+use bevy::render::render_resource::{CachedPipelineState, PipelineCache, TextureUsages};
 use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::world_serialization::{WorldAssetRoot, WorldInstance, WorldInstanceSpawner};
 use schemars::JsonSchema;
@@ -115,7 +115,18 @@ impl Plugin for WorldScenePlugin {
                 .run_if(resource_exists::<CameraRig>)
                 .after(camera::place)
                 .before(bevy::transform::TransformSystems::Propagate),
-        );
+        )
+        .add_systems(PostUpdate, let_depth_be_read);
+    }
+}
+
+/// Every camera's depth can be read once its prepass is drawn, for the passes that sample it.
+fn let_depth_be_read(mut cameras: Query<&mut Camera3d, Changed<Camera3d>>) {
+    for mut camera in &mut cameras {
+        let usages = TextureUsages::from(camera.depth_texture_usages);
+        if !usages.contains(TextureUsages::TEXTURE_BINDING) {
+            camera.depth_texture_usages = (usages | TextureUsages::TEXTURE_BINDING).into();
+        }
     }
 }
 
