@@ -11,10 +11,12 @@ const MOST_BEND: f32 = 1.4;
 
 // How far the limbs of the bodies treading nearby push aside the tip of the blade whose point
 // `world` stands `tip` of the way up it, in metres over the ground, the cover feeling each limb
-// `brush` metres beyond its flesh as the body brushes through.
+// `brush` metres beyond its flesh as the body brushes through. The blade is pushed as a whole,
+// from where it stands: a strewn copy spreads wide round its root, and pushed point by point the
+// points either side of a limb would part and tear its faces across it.
 fn tread_push(world: vec3<f32>, tip: f32, brush: f32) -> vec2<f32> {
-    let height = blade_height(world, tip, root());
-    let base = vec3<f32>(world.x, root().y, world.z);
+    let base = root();
+    let height = blade_height(world, tip, base);
     var push = vec2<f32>(0.0);
     if height <= 0.0 {
         return push;
