@@ -234,9 +234,13 @@ fn fog_lies_over_the_ground_where_it_is_placed_and_no_further_than_the_ground_re
         )]
     );
 
-    for (rule, refused) in [
-        ("outside the terrain", bank(12.0, 8.0, 0.5)),
-        ("out of range", bank(1.0, 6.0, 1.5)),
+    for (rule, refused, told) in [
+        (
+            "outside the terrain",
+            bank(12.0, 8.0, 0.5),
+            "lands outside the terrain at 20, 6",
+        ),
+        ("out of range", bank(1.0, 6.0, 1.5), ""),
     ] {
         let report = game()
             .area("meadow", &Map::open(16, 16), json!([refused.clone()]))
@@ -244,6 +248,7 @@ fn fog_lies_over_the_ground_where_it_is_placed_and_no_further_than_the_ground_re
             .err()
             .expect("refused");
         assert!(rules(&report).contains(&rule), "{refused}: {report}");
+        assert!(report.to_string().contains(told), "{refused}: {report}");
     }
 }
 

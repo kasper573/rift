@@ -1434,40 +1434,39 @@ fn module_pointer(placed: &Flattened, field: &str) -> String {
 
 fn check_bounds(content: &Content, size: GroundSize, modules: &[Flattened], check: &mut RowCheck) {
     let bounds = size.bounds();
-    let outside = |at: Pos<Meters>| !bounds.contains(at);
-    let rect_outside =
-        |rect: Rect<Meters>| outside(rect.min()) || outside(rect.max() - Offset::new(0.001, 0.001));
+    let outside = |at: Pos<Meters>| (!bounds.contains(at)).then_some(at);
+    let corner_outside = |rect: Rect<Meters>| {
+        outside(rect.min())
+            .or_else(|| outside(rect.max() - Offset::new(0.001, 0.001)).map(|_| rect.max()))
+    };
     for placed in modules {
-        let site = |field: &str| module_pointer(placed, field);
-        let what = placed.describe(content);
-        let out = |check: &mut RowCheck, at: Pos<Meters>| {
+        let lands = match &placed.module {
+            AreaModule::Object(object) => corner_outside(object.shape.bounds()),
+            AreaModule::Prop(prop) => outside(prop.at),
+            AreaModule::Scatter(scatter) => corner_outside(scatter.region),
+            AreaModule::Fog(bank) => corner_outside(bank.rect),
+            AreaModule::Light(light) => outside(light.at),
+            AreaModule::Resident(resident) => outside(resident.at),
+            AreaModule::Population(Population {
+                roams: Some(roams), ..
+            }) => outside(roams.min()),
+            _ => None,
+        };
+        if let Some(at) = lands {
             check.error(
-                site(""),
+                module_pointer(placed, ""),
                 "outside the terrain",
-                format!("{what} lands outside the terrain at {}, {}", at.x, at.y),
+                format!(
+                    "{} lands outside the terrain at {}, {}",
+                    placed.describe(content),
+                    at.x,
+                    at.y
+                ),
                 format!(
                     "everything inside the {} × {} m ground",
                     size.width, size.height
                 ),
             );
-        };
-        match &placed.module {
-            AreaModule::Object(object) => {
-                if rect_outside(object.shape.bounds()) {
-                    out(check, object.shape.origin());
-                }
-            }
-            AreaModule::Prop(prop) if outside(prop.at) => out(check, prop.at),
-            AreaModule::Scatter(scatter) if rect_outside(scatter.region) => {
-                out(check, scatter.region.origin)
-            }
-            AreaModule::Fog(bank) if rect_outside(bank.rect) => out(check, bank.rect.origin),
-            AreaModule::Light(light) if outside(light.at) => out(check, light.at),
-            AreaModule::Resident(resident) if outside(resident.at) => out(check, resident.at),
-            AreaModule::Population(Population {
-                roams: Some(roams), ..
-            }) if outside(roams.min()) => out(check, roams.min()),
-            _ => {}
         }
     }
 }
