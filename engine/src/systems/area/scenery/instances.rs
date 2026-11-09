@@ -661,11 +661,11 @@ impl Reaches {
     }
 
     fn props_over(self, bounds: Rect<Meters>) -> bool {
-        distance_to(bounds, self.at) <= self.props
+        distance_to(bounds, self.at) < self.props
     }
 
     fn copies_over(self, bounds: Rect<Meters>) -> bool {
-        distance_to(bounds, self.at) <= self.copies
+        distance_to(bounds, self.at) < self.copies
     }
 
     fn far_over(self, bounds: Rect<Meters>) -> bool {

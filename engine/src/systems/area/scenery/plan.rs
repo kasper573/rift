@@ -260,6 +260,11 @@ impl Seen {
         )
     }
 
+    /// How far above ground `highest` high its lowest eye may stand.
+    pub(super) fn above(&self, highest: Meters) -> f32 {
+        (self.heights.0 - highest.0).max(0.0)
+    }
+
     /// How finely the view shows what lies `from_eye` off it.
     pub(super) fn detail(&self, from_eye: f32) -> Detail {
         Detail((2.0 * from_eye.max(NEAREST_GROUND.0).log2()).floor() as i32)
@@ -361,7 +366,7 @@ pub(super) const KEEP_SHARE: f32 = 1.25;
 impl Planner {
     pub(super) fn plan(&self, sight: Sight, heights: &Heightfield) -> Plan {
         let seen = Seen::of(sight, heights);
-        let mut ground = nodes_for(heights, seen.at(), OFF_MIDDLE + AHEAD);
+        let mut ground = nodes_for(heights, &seen, OFF_MIDDLE + AHEAD);
         ground.sort_by_key(|node| node.level);
         Plan {
             ground,

@@ -20,7 +20,7 @@ pub use props::prop_transform;
 use covers::Covers;
 use grass::Grass;
 use instances::Instances;
-use plan::{Plan, Planner};
+use plan::{Plan, Planner, Seen};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
@@ -830,11 +830,15 @@ fn draw_ground(world: &mut World, streaming: &mut Streaming, plan: &Arc<Plan>) -
     }
     let taken_in: Option<HashSet<TileAt>> = streaming.sight.map(|sight| {
         let size = streaming.heights.size();
-        nodes_for(&streaming.heights, sight.at, 0.0)
-            .into_iter()
-            .filter(|node| node.level < OVERVIEW_LEVEL)
-            .flat_map(|node| size.tiles_within(node_rect(node).bounds()))
-            .collect()
+        nodes_for(
+            &streaming.heights,
+            &Seen::of(sight, &streaming.heights),
+            0.0,
+        )
+        .into_iter()
+        .filter(|node| node.level < OVERVIEW_LEVEL)
+        .flat_map(|node| size.tiles_within(node_rect(node).bounds()))
+        .collect()
     });
     for tile in missing {
         if taken_in.as_ref().is_none_or(|taken| taken.contains(&tile)) {
@@ -927,11 +931,14 @@ fn detail_slots() -> u32 {
     across * across
 }
 
-/// The nodes of the quadtree over the ground's samples that stand for a view looking at ground
-/// within `off` of `at`: every node is cut in four while it may lie within `SPLIT_WITHIN` of its
-/// sides from that ground and is wider than a leaf; what remains covers the ground once over,
-/// finer the nearer the view.
-fn nodes_for(heights: &Heightfield, at: Pos<Meters>, off: f32) -> Vec<Node> {
+/// The nodes of the quadtree over the ground's samples that stand for `seen` looking at ground
+/// within `off` of where it looks: every node is cut in four while it may lie within
+/// `SPLIT_WITHIN` of its sides from that ground, with its eyes standing as high above the ground
+/// as they may, and is wider than a leaf; what remains covers the ground once over, finer the
+/// nearer the view.
+fn nodes_for(heights: &Heightfield, seen: &Seen, off: f32) -> Vec<Node> {
+    let at = seen.at();
+    let above = seen.above(heights.range().highest);
     let (columns, rows) = heights.samples();
     let cells = (columns.max(rows).saturating_sub(1)).max(1);
     let levels = (cells.div_ceil(LEAF_SAMPLES))
@@ -949,7 +956,8 @@ fn nodes_for(heights: &Heightfield, at: Pos<Meters>, off: f32) -> Vec<Node> {
             continue;
         }
         let bounds = rect.bounds();
-        let near = distance_to(bounds, at) - off < bounds.size.width * SPLIT_WITHIN;
+        let along = (distance_to(bounds, at) - off).max(0.0);
+        let near = along.hypot(above) < bounds.size.width * SPLIT_WITHIN;
         if node.level > 0 && near {
             for (dc, dr) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
                 open.push(Node {
