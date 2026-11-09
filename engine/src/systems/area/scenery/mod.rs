@@ -1178,6 +1178,7 @@ pub fn light(
         if let Some(mut transform) = world.get_mut::<Transform>(entity) {
             transform.set_if_neq(cast);
         }
+        reach_shadows(world, area, entity, camera);
         if scenery.sky.is_some() || scenery.rain.is_some() {
             let heavens = Heavens::new(
                 placed.back().as_vec3(),
@@ -1245,6 +1246,25 @@ pub fn light(
         hold(world, camera, camera::grading(tone, grade));
     }
     sky::show(world, camera, area.lighting.sky);
+}
+
+/// Reaches the sun's shadows as far as `camera` sees the ground of `area`.
+fn reach_shadows(world: &mut World, area: &Area, sun: Entity, camera: Entity) {
+    let (Some(lens), Some(eye)) = (
+        world.get::<Camera>(camera),
+        world.get::<GlobalTransform>(camera),
+    ) else {
+        return;
+    };
+    let bounds = area.size.bounds();
+    let needed = lights::ShadowReach::seen(lens.clip_from_view(), eye, |ray| {
+        camera::ground_hit(&area.heights, bounds, ray)
+            .map(|at| world_point(at, area.heights.height_at(at)))
+    });
+    if let Some(mut reach) = world.get_mut::<lights::ShadowReach>(sun) {
+        let next = reach.following(needed);
+        reach.set_if_neq(next);
+    }
 }
 
 /// Gives `entity` `value`, unless it holds it already.

@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::render::Look;
 use crate::core::render::video::{ShadowQuality, VideoPreferences};
-use crate::core::units::{Degrees, Seconds};
+use crate::core::units::{Degrees, Meters, Seconds};
 
 /// How strong the world's lights are, and how soft the sun's shadows.
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -32,11 +32,21 @@ pub struct LightLook {
 }
 /// Lumens per unit of a content light's intensity.
 const LUMENS_PER_UNIT: f32 = 4_000.0;
-/// How far the sun's shadows reach from the camera.
-const SHADOW_REACH: f32 = 70.0;
+/// How far the sun's shadows reach from the camera at the farthest.
+const SHADOW_REACH: Meters = Meters(70.0);
 
-/// How far the near shadow cascade reaches, at the finer of the two.
-const NEAR_SHADOWS: f32 = 25.0;
+/// The share of the shadows' reach the finer of two cascades takes, nearest the camera.
+const NEAR_SHARE: f32 = 25.0 / 70.0;
+
+/// How near the camera the shadows reach at the least.
+const LEAST_REACH: Meters = Meters(1.0);
+
+/// How many steps a shadows' reach takes as it doubles: the shadow map's texels grow and shrink
+/// with it, so it moves only by steps, and only on to the next once the view needs it.
+const REACH_STEPS_A_DOUBLING: f32 = 4.0;
+
+/// How many rays along each edge of a camera's view find how far it sees the ground.
+const RIM_RAYS: u32 = 8;
 
 /// A sun shining from `elevation` above the horizon at `azimuth` clockwise from north: soft
 /// shadows from two cascades, and shafts of light through the air.
@@ -48,7 +58,8 @@ pub fn sun(color: Color, illuminance: f32, elevation: Degrees, azimuth: Degrees)
             shadow_maps_enabled: true,
             ..default()
         },
-        shadow_cascades(ShadowQuality::High),
+        shadow_cascades(ShadowQuality::High, ShadowReach::FARTHEST),
+        ShadowReach::FARTHEST,
         VolumetricLight,
         // The light stands a little over the horizon when its sun or moon has sunk to it, so the
         // sky draws them where they truly stand rather than leaving it to the light.
@@ -57,24 +68,83 @@ pub fn sun(color: Color, illuminance: f32, elevation: Degrees, azimuth: Degrees)
     )
 }
 
-/// Every sun and moon casts its shadows as the player's video preferences ask, anew whenever they
-/// change.
+/// How far off its camera a sun's shadows reach: as far as the camera sees the ground, and no
+/// farther than [`SHADOW_REACH`]. The sun's shadow map spans what its cascades reach, so the nearer
+/// the farthest ground in view, the finer its texels: a camera looking down on the ground from
+/// near it spends them all on the ground it sees. The sun turns as the day goes, and each frame
+/// its shadows are drawn anew under it, so a texel coarse beside the screen's pixels would show
+/// the edges of every shadow shifting from frame to frame.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub struct ShadowReach(pub Meters);
+
+impl ShadowReach {
+    pub const FARTHEST: ShadowReach = ShadowReach(SHADOW_REACH);
+
+    /// The reach a camera with `clip_from_view` at `eye` needs, where `ground` says where a ray
+    /// first meets the ground, if it does: as far along the camera's gaze as the farthest ground on
+    /// the rim of its view. Over a field of heights, the higher up the view a point lies the
+    /// farther the ground it shows, so no ground in view lies farther than the rim's.
+    pub fn seen(
+        clip_from_view: Mat4,
+        eye: &GlobalTransform,
+        ground: impl Fn(Ray3d) -> Option<Vec3>,
+    ) -> ShadowReach {
+        let forward = *eye.forward();
+        let mut farthest = 0.0f32;
+        for corner in rim() {
+            let Some(landed) = ray_through(clip_from_view, eye, corner).and_then(&ground) else {
+                return ShadowReach::FARTHEST;
+            };
+            farthest = farthest.max((landed - eye.translation()).dot(forward));
+        }
+        ShadowReach::stepped_to(Meters(farthest))
+    }
+
+    /// The reach that follows this one to `needed`: on up a step as soon as the view needs more,
+    /// and down only once it needs two steps less, so a view on the edge of a step keeps to it.
+    pub fn following(self, needed: ShadowReach) -> ShadowReach {
+        let step = 2.0f32.powf(1.0 / REACH_STEPS_A_DOUBLING);
+        if needed.0.0 > self.0.0 || needed.0.0 * step * step < self.0.0 {
+            needed
+        } else {
+            self
+        }
+    }
+
+    fn stepped_to(farthest: Meters) -> ShadowReach {
+        let steps = (farthest.0.max(LEAST_REACH.0).log2() * REACH_STEPS_A_DOUBLING).ceil();
+        ShadowReach(Meters(
+            (steps / REACH_STEPS_A_DOUBLING).exp2().min(SHADOW_REACH.0),
+        ))
+    }
+}
+
+/// Every sun and moon casts its shadows as the player's video preferences ask, as far as its
+/// camera sees, anew whenever either changes.
 pub(super) fn cast_shadows(
     video: Res<VideoPreferences>,
     look: Option<Res<Look>>,
-    mut lights: Query<(&mut DirectionalLight, &mut CascadeShadowConfig)>,
+    mut lights: Query<(
+        &mut DirectionalLight,
+        &mut CascadeShadowConfig,
+        Option<Ref<ShadowReach>>,
+    )>,
 ) {
     let Some(look) = look else {
         return;
     };
-    for (mut light, mut cascades) in &mut lights {
-        if !light.is_added() && !video.is_changed() && !look.is_changed() {
+    for (mut light, mut cascades, reach) in &mut lights {
+        let reached = reach.as_ref().is_some_and(Ref::is_changed);
+        if !light.is_added() && !video.is_changed() && !look.is_changed() && !reached {
             continue;
         }
         light.shadow_maps_enabled = video.shadows != ShadowQuality::Off;
         light.soft_shadow_size =
             (video.shadows == ShadowQuality::High).then_some(look.light.sun_width);
-        *cascades = shadow_cascades(video.shadows);
+        *cascades = shadow_cascades(
+            video.shadows,
+            reach.map_or(ShadowReach::FARTHEST, |reach| *reach),
+        );
     }
 }
 
@@ -130,13 +200,36 @@ pub(super) fn flicker(time: Res<Time>, mut lights: Query<(&Flicker, &mut PointLi
     }
 }
 
-/// The cascades `quality` asks for: a fine one near the camera at the highest, and one otherwise.
-fn shadow_cascades(quality: ShadowQuality) -> CascadeShadowConfig {
+/// The cascades `quality` asks for out to `reach`: a fine one near the camera at the highest, and
+/// one otherwise.
+fn shadow_cascades(quality: ShadowQuality, reach: ShadowReach) -> CascadeShadowConfig {
     CascadeShadowConfigBuilder {
         num_cascades: if quality == ShadowQuality::High { 2 } else { 1 },
-        maximum_distance: SHADOW_REACH,
-        first_cascade_far_bound: NEAR_SHADOWS,
+        maximum_distance: reach.0.0,
+        first_cascade_far_bound: reach.0.0 * NEAR_SHARE,
         ..default()
     }
     .build()
+}
+
+/// Points round the rim of a view, in normalized device coordinates.
+fn rim() -> impl Iterator<Item = Vec2> {
+    (0..RIM_RAYS).flat_map(|nth| {
+        let along = nth as f32 / RIM_RAYS as f32 * 2.0 - 1.0;
+        [
+            Vec2::new(along, 1.0),
+            Vec2::new(1.0, -along),
+            Vec2::new(-along, -1.0),
+            Vec2::new(-1.0, along),
+        ]
+    })
+}
+
+/// The ray from a camera with `clip_from_view` at `eye` through `ndc` of its view.
+fn ray_through(clip_from_view: Mat4, eye: &GlobalTransform, ndc: Vec2) -> Option<Ray3d> {
+    let view_from_clip = clip_from_view.inverse();
+    let near = view_from_clip.project_point3(ndc.extend(1.0));
+    let far = view_from_clip.project_point3(ndc.extend(f32::EPSILON));
+    let direction = Dir3::new(eye.affine().transform_vector3(far - near)).ok()?;
+    Some(Ray3d::new(eye.transform_point(near), direction))
 }
