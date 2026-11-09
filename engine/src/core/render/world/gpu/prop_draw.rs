@@ -33,7 +33,7 @@ use bevy::pbr::{
     Shadow, ShadowBatchSetKey, ShadowBinKey, ViewKeyCache, ViewKeyPrepassCache,
     alpha_mode_pipeline_key, init_prepass_pipeline, prepare_mesh_view_bind_groups,
 };
-use bevy::platform::collections::HashMap;
+use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use bevy::render::erased_render_asset::ErasedRenderAssets;
 use bevy::render::material_bind_groups::{
@@ -799,11 +799,13 @@ fn queue_lit(
     mut queued: Local<Queued>,
 ) {
     let draw_function = draws.read().id::<DrawLitProps>();
+    queued.keep_only(views.iter().map(|view| view.retained_view_entity));
     for view in &views {
         let (Some(phase), Some(&key)) = (
             phases.get_mut(&view.retained_view_entity),
             keys.get(&view.retained_view_entity),
         ) else {
+            queued.forget(view.retained_view_entity);
             continue;
         };
         let drawn = queue.drawn(view.retained_view_entity, key, true, false);
@@ -832,11 +834,13 @@ fn queue_prepass(
     mut queued: Local<Queued>,
 ) {
     let draw_function = draws.read().id::<DrawPropDepth>();
+    queued.keep_only(views.iter().map(|view| view.retained_view_entity));
     for view in &views {
         let (Some(phase), Some(&key)) = (
             phases.get_mut(&view.retained_view_entity),
             keys.get(&view.retained_view_entity),
         ) else {
+            queued.forget(view.retained_view_entity);
             continue;
         };
         let drawn = queue.drawn(view.retained_view_entity, key, false, false);
@@ -865,11 +869,13 @@ fn queue_shadows(
     mut queued: Local<Queued>,
 ) {
     let draw_function = draws.read().id::<DrawPropDepth>();
+    queued.keep_only(views.iter().map(|view| view.retained_view_entity));
     for view in &views {
         let (Some(phase), Some(&key)) = (
             phases.get_mut(&view.retained_view_entity),
             keys.get(&view.retained_view_entity),
         ) else {
+            queued.forget(view.retained_view_entity);
             continue;
         };
         let drawn = queue.drawn(view.retained_view_entity, key, false, true);
@@ -894,6 +900,20 @@ fn queue_shadows(
 struct Queued(HashMap<RetainedViewEntity, HashMap<MainEntity, CachedRenderPipelineId>>);
 
 impl Queued {
+    /// Forgets every view but `live`. Bevy drops the phase of a view that isn't drawn in a frame,
+    /// such as the far cascade of a sun's shadows while the shadows take one, and starts it
+    /// empty when the view is drawn again, so what was queued into the dropped phase is queued
+    /// anew.
+    fn keep_only(&mut self, live: impl IntoIterator<Item = RetainedViewEntity>) {
+        let live: HashSet<RetainedViewEntity> = live.into_iter().collect();
+        self.0.retain(|view, _| live.contains(view));
+    }
+
+    /// Forgets what was queued into `view`, whose phase can't be queued into this frame.
+    fn forget(&mut self, view: RetainedViewEntity) {
+        self.0.remove(&view);
+    }
+
     /// Queues every one of `sceneries` into `phase` on its pipeline, taking out first what was
     /// queued on another pipeline or is gone.
     fn queue<P: BinnedPhaseItem>(
