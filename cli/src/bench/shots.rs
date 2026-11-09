@@ -61,6 +61,7 @@ pub fn client(
                     );
                     failed.push(format!("{}/{}", video.name(), shot.name));
                     if matches!(failure, Failure::Crashed(_)) {
+                        driver.end();
                         driver =
                             Driver::start(game, content, slots.character, video, &profile, steps)
                                 .map_err(|failure| failure_text(&failure))?;

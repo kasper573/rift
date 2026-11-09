@@ -75,6 +75,7 @@ pub fn run(
         let mut openings = Vec::new();
         let mut driver = None;
         for _ in 0..if opening { args.repeat.max(1) } else { 1 } {
+            drop(driver.take());
             let mut started = start(video).map_err(|failure| failure_text(&failure))?;
             let opened = started.opened();
             openings.push(result_of(
@@ -125,6 +126,7 @@ pub fn run(
                     began.elapsed().as_secs_f64()
                 );
                 if crashed || driver.exited().is_some() {
+                    driver.end();
                     driver = start(video).map_err(|failure| failure_text(&failure))?;
                     driver.opened().map_err(|failure| failure_text(&failure))?;
                 }
@@ -429,6 +431,13 @@ impl EditorDriver {
     }
 
     /// How the editor exited, once it has.
+    /// Ends the editor, as the driver ends it once dropped: before another starts, so the two
+    /// never draw at once.
+    pub fn end(&mut self) {
+        let _ = self.editor.kill();
+        let _ = self.editor.wait();
+    }
+
     pub fn exited(&mut self) -> Option<ExitStatus> {
         self.editor.try_wait().ok().flatten()
     }
@@ -560,8 +569,7 @@ impl Driven for EditorDriver {
 
 impl Drop for EditorDriver {
     fn drop(&mut self) {
-        let _ = self.editor.kill();
-        let _ = self.editor.wait();
+        self.end();
     }
 }
 

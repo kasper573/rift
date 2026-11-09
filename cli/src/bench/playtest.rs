@@ -182,12 +182,18 @@ impl Playtest {
     pub fn content(&self) -> &Content {
         &self.content
     }
+
+    /// Ends the client, as the playtest ends once dropped: before another starts, so the two
+    /// never draw at once.
+    pub fn end(&mut self) {
+        let _ = self.client.kill();
+        let _ = self.client.wait();
+    }
 }
 
 impl Drop for Playtest {
     fn drop(&mut self) {
-        let _ = self.client.kill();
-        let _ = self.client.wait();
+        self.end();
     }
 }
 

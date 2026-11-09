@@ -222,6 +222,7 @@ fn client(
             let mut warm = Vec::new();
             for run in 0..args.repeat.max(1) {
                 profile = profiles.path().join(format!("{}-{run}", video.name()));
+                drop(driver.take());
                 let mut started = start(&profile)?;
                 let opened = started.opened();
                 cold.push(result_of(
@@ -275,6 +276,7 @@ fn client(
             print_result(&result);
             report.add(result);
             if driver_dead(&mut driver) {
+                driver.end();
                 driver = start(&profile)?;
             }
         }
@@ -524,6 +526,7 @@ fn measure(
         let crashed = result.verdict == Verdict::Crashed;
         results.push(result);
         if crashed && run + 1 < args.repeat.max(1) {
+            driver.end();
             match Driver::start(
                 restart.game,
                 restart.content,

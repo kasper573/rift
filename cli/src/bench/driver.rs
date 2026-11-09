@@ -101,6 +101,11 @@ impl Driver {
         Ok((measuring.window, stood))
     }
 
+    /// Ends the client before another starts, so the two never draw at once.
+    pub fn end(&mut self) {
+        self.play.end();
+    }
+
     pub fn adapter(&mut self) -> Result<Option<String>, Failure> {
         Ok(self.snapshot()?.adapter)
     }
