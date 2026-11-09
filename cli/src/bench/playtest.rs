@@ -162,10 +162,6 @@ impl Playtest {
         self.desktop.display()
     }
 
-    pub fn client_pid(&self) -> u32 {
-        self.client.id()
-    }
-
     /// Where the server takes requests over HTTP.
     pub fn server_url(&self) -> String {
         self.server.http_url()

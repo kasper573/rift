@@ -28,10 +28,7 @@ ureq = { workspace = true, features = ["rustls", "platform-verifier"] }
 sysinfo.workspace = true
 walkdir.workspace = true
 image.workspace = true
-image-compare = "0.5"
 schemars = "1"
-blake3 = "1"
-chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [lints]
 workspace = true

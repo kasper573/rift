@@ -5,7 +5,7 @@
 use std::process::Command;
 use std::time::{Duration, Instant};
 
-use engine::core::math::{Pos, Size};
+use engine::core::math::Pos;
 use engine::core::units::WindowPx;
 use engine::systems::input::map::KeyModifiers;
 use engine::systems::probe::{ProbeInput, ProbeInputSeen};
@@ -29,7 +29,6 @@ pub trait Driven {
     /// What the app shows in a frame after asking; keeps the input, pointer and frame it tells.
     fn snapshot(&mut self) -> Result<Self::Snapshot, Failure>;
     fn input(snapshot: &Self::Snapshot) -> &ProbeInput;
-    fn screen(snapshot: &Self::Snapshot) -> Option<Size<WindowPx>>;
     fn frame_of(snapshot: &Self::Snapshot) -> u32;
     /// The input the latest snapshot counted.
     fn seen(&self) -> ProbeInputSeen;
@@ -39,7 +38,6 @@ pub trait Driven {
     fn frame(&self) -> u32;
     /// The X display the app's window is on.
     fn display(&self) -> &str;
-    fn pid(&self) -> u32;
     /// Notes a step the app was put through in the steps log.
     fn note(&mut self, step: &str);
 }
@@ -258,39 +256,6 @@ pub fn hold<D: Driven>(
         key_up(driven, key)?;
     }
     outcome
-}
-
-/// Resizes the app's window as a window manager does, and waits for the app to draw at the new
-/// size.
-pub fn resize<D: Driven>(driven: &mut D, width: u32, height: u32) -> Result<(), Failure> {
-    let pid = driven.pid().to_string();
-    xdotool(
-        driven,
-        &[
-            "search".to_owned(),
-            "--sync".to_owned(),
-            "--onlyvisible".to_owned(),
-            "--pid".to_owned(),
-            pid,
-            "--name".to_owned(),
-            ".".to_owned(),
-            "windowsize".to_owned(),
-            "--sync".to_owned(),
-            width.to_string(),
-            height.to_string(),
-        ],
-    )?;
-    wait_for(
-        driven,
-        "the window to take its size",
-        BUDGET,
-        move |snapshot| {
-            let screen = D::screen(snapshot)?;
-            (screen.width as u32 == width && screen.height as u32 == height).then_some(())
-        },
-    )?;
-    driven.note(&format!("resized to {width}×{height}"));
-    Ok(())
 }
 
 /// The X keysyms of the modifier keys `held` holds down.

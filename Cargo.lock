@@ -2639,13 +2639,10 @@ dependencies = [
  "bevy_ecs",
  "bevy_replication",
  "bevy_time",
- "blake3",
- "chrono",
  "clap",
  "editor",
  "engine",
  "image",
- "image-compare",
  "rayon",
  "schemars 1.2.3",
  "serde",
@@ -5003,18 +5000,6 @@ dependencies = [
  "num-traits",
  "png",
  "tiff",
-]
-
-[[package]]
-name = "image-compare"
-version = "0.5.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "176623a137baf75908084aff53578d6336cbd932bffaf12fabe26b343eb13338"
-dependencies = [
- "image",
- "itertools 0.14.0",
- "rayon",
- "thiserror 2.0.21",
 ]
 
 [[package]]

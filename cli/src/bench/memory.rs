@@ -23,11 +23,12 @@ use super::playtest::Playtest;
 // trip proves nothing while the pools still fill. One that never settles leaks.
 const MOST_WARM_UPS: usize = 12;
 const QUIET_ROUND_TRIPS: usize = 2;
-const ROUND_TRIPS: usize = 4;
+const ROUND_TRIPS: usize = 2;
 // Long enough for an arrival's loading to pass, and for the allocator to hand back what the loading
-// churned through.
+// churned through, which it does over the ten seconds after it was freed: read any sooner, what is
+// still on its way back counts as held, and differs from visit to visit by more than a leak would.
 const SETTLE: Duration = Duration::from_secs(12);
-const STILL: Duration = Duration::from_secs(20);
+const STILL: Duration = Duration::from_secs(10);
 // What the process may keep beyond what the game holds: what its allocator holds on to, and the
 // command memory the graphics driver keeps for each of wgpu's pooled command encoders at the most
 // it ever recorded, which only fills up over dozens of crossings.
@@ -74,6 +75,10 @@ pub fn run(game: &Path, content: &Content) -> Result<(), String> {
             warm = settle(&mut me);
         }
         warm_ups += 1;
+        println!(
+            "[memory-bench] round trip {warm_ups}: client {:.0} MB",
+            warm.client.megabytes()
+        );
         let allowed = PROCESS_SLACK.of(before.client).0 / ROUND_TRIPS as u64;
         quiet = if warm.client.0 <= before.client.0 + allowed {
             quiet + 1

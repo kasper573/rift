@@ -1,5 +1,5 @@
-//! Plays the editor's scenarios on the editor as a designer works it: opened on the game with the
-//! area the game starts in on view, every input sent through the X server and confirmed through
+//! Plays the editor's scenarios on the editor as a designer works it: opened on the game with an
+//! area on view, every input sent through the X server and confirmed through
 //! the editor's probe before the next, its targets found in what the probe reports of the trees,
 //! the stage and the interface. The frames come from the editor's own clock, read from the probe's
 //! ring every few seconds, so the pace of the input only paces the script.
@@ -21,8 +21,8 @@ use engine::systems::GameSettings;
 use engine::systems::input::map::KeyModifiers;
 use engine::systems::launch::ProbeDriver;
 use engine::systems::probe::{
-    EditorFrameQuestion, EditorScenery, EditorSnapshot, EditorStage, EditorTree, EditorTrees,
-    ProbeFrames, ProbeInput, ProbeInputSeen,
+    EditorFrameQuestion, EditorScenery, EditorSnapshot, EditorStage, ProbeFrames, ProbeInput,
+    ProbeInputSeen,
 };
 use serde::de::DeserializeOwned;
 use tempfile::TempDir;
@@ -55,7 +55,7 @@ pub fn run(
     let wanted = |name: &str| {
         args.scenario
             .as_deref()
-            .is_none_or(|only| crate::compare::matches(only, name))
+            .is_none_or(|only| super::named_by(only, name))
     };
     let scenarios: Vec<EditorScenario> = super::scenarios::editor::catalogue()
         .into_iter()
@@ -77,7 +77,7 @@ pub fn run(
         .path(content)
         .to_owned();
     let home = slots
-        .home()
+        .home
         .map(|place| place.area.path(content).to_owned())
         .ok_or("the scenarios have no home place")?;
     let start = |video| EditorDriver::start(game, &area, &[], video, steps);
@@ -274,40 +274,6 @@ impl EditorDriver {
         Ok((measuring.window, stood))
     }
 
-    /// Notes that a scene not standing yet is about to open in view, as a file's tab opens on an
-    /// area: the frames until it stands, closed by [`EditorDriver::wait_stood`], are timed rather
-    /// than faulted for what is missing.
-    pub fn arriving(&mut self) {
-        if let Some(measuring) = &mut self.measuring {
-            measuring.arrival_since = Some(self.frame);
-        }
-    }
-
-    /// Waits for every view's scenery to stand whole, or for no view to show an area.
-    pub fn wait_stood(&mut self) -> Result<(), Failure> {
-        let stood = hands::wait_for(self, "the scenery to stand", LONG, |snapshot| {
-            (snapshot.scenery != EditorScenery::Standing).then_some(snapshot.frame)
-        })
-        .map_err(|failure| self.explain_standing(failure))?;
-        if let Some(measuring) = &mut self.measuring
-            && let Some(since) = measuring.arrival_since.take()
-        {
-            measuring.window.arrived(since, stood);
-        }
-        Ok(())
-    }
-
-    /// A failure to stand, told what still stands and what is on its way.
-    fn explain_standing(&mut self, failure: Failure) -> Failure {
-        match (failure, self.snapshot()) {
-            (Failure::Harness(why), Ok(snapshot)) => Failure::Harness(format!(
-                "{why}: {} sceneries standing, on its way: {}",
-                snapshot.sceneries_standing, snapshot.on_its_way
-            )),
-            (failure, _) => failure,
-        }
-    }
-
     /// Sets `scenario` up and plays its script, measuring the script's frames, then leaves the
     /// editor as the scenario found it: its teardown played, whatever was left open dismissed and
     /// every edit it made undone.
@@ -368,35 +334,6 @@ impl EditorDriver {
         Ok(snapshot)
     }
 
-    /// The tree called `name` as a frame after asking drew it.
-    pub fn tree(&mut self, name: &str) -> Result<EditorTree, Failure> {
-        self.read_frames(false)?;
-        let trees: EditorTrees = self.ask(&EditorFrameQuestion::TreeRows)?;
-        trees
-            .trees
-            .into_iter()
-            .find(|tree| tree.name == name)
-            .ok_or_else(|| Failure::Harness(format!("the editor draws no {name} tree")))
-    }
-
-    /// Asks for the tree called `name` until `found` finds what it waits for in it.
-    pub fn wait_for_tree<T>(
-        &mut self,
-        name: &str,
-        what: &str,
-        mut found: impl FnMut(&EditorTree) -> Option<T>,
-    ) -> Result<T, Failure> {
-        let since = Instant::now();
-        loop {
-            if let Some(done) = found(&self.tree(name)?) {
-                return Ok(done);
-            }
-            if since.elapsed() >= BUDGET {
-                return Err(Failure::Harness(format!("gave up waiting for {what}")));
-            }
-        }
-    }
-
     /// The stage in view.
     pub fn stage(&mut self) -> Result<EditorStage, Failure> {
         self.snapshot()?
@@ -441,18 +378,6 @@ impl EditorDriver {
         self.shortcut(CTRL, "z")?;
         hands::wait_for(self, "the edit to be undone", BUDGET, |snapshot| {
             (snapshot.undoable < before).then_some(())
-        })
-    }
-
-    /// Redoes the latest edit undone, as Ctrl Shift Z does.
-    pub fn redo(&mut self) -> Result<(), Failure> {
-        let before = self.snapshot()?.redoable;
-        if before == 0 {
-            return Err(Failure::Harness("there was no edit to redo".to_owned()));
-        }
-        self.shortcut(CTRL_SHIFT, "z")?;
-        hands::wait_for(self, "the edit to be redone", BUDGET, |snapshot| {
-            (snapshot.redoable < before).then_some(())
         })
     }
 
@@ -571,10 +496,6 @@ impl Driven for EditorDriver {
         &snapshot.input
     }
 
-    fn screen(snapshot: &EditorSnapshot) -> Option<Size<WindowPx>> {
-        snapshot.screen
-    }
-
     fn frame_of(snapshot: &EditorSnapshot) -> u32 {
         snapshot.frame
     }
@@ -595,10 +516,6 @@ impl Driven for EditorDriver {
         self.desktop.display()
     }
 
-    fn pid(&self) -> u32 {
-        self.editor.id()
-    }
-
     fn note(&mut self, step: &str) {
         let _ = writeln!(self.steps, "editor frame {}: {step}", self.frame);
     }
@@ -616,20 +533,11 @@ pub const CTRL: KeyModifiers = KeyModifiers {
     alt: false,
     super_key: false,
 };
-pub const CTRL_SHIFT: KeyModifiers = KeyModifiers {
-    ctrl: true,
-    shift: true,
-    alt: false,
-    super_key: false,
-};
-
 /// The measured window being filled: the frames read so far and where the next read starts.
 struct Measuring {
     window: Window,
     since: u32,
     last_read: Instant,
-    /// The frame a scene not standing yet was opened at, until it stands.
-    arrival_since: Option<u32>,
 }
 
 impl Measuring {
@@ -638,7 +546,6 @@ impl Measuring {
             window: Window::default(),
             since: frame,
             last_read: Instant::now(),
-            arrival_since: None,
         }
     }
 }

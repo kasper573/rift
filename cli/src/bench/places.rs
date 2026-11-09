@@ -1,15 +1,12 @@
-//! Places of a game the benches play at when the game names none itself: where the player
-//! starts, where its warps lead, the open ground near the middle of each area, and open ground a
-//! walk away.
-
-use std::path::Path;
+//! Places of a game the benches play at when the game names none itself: where its warps lead,
+//! and open ground a walk away.
 
 use engine::core::content::Content;
 use engine::core::ground::TILE_SIDE;
 use engine::core::math::{Pos, Rect};
 use engine::core::render::transition::ScreenTransitionPhase;
-use engine::core::units::{MeterPos, MeterSize, Meters};
-use engine::systems::area::{self, AreaDef};
+use engine::core::units::{MeterPos, Meters};
+use engine::systems::area;
 use engine::systems::probe::ProbeSnapshot;
 use engine::systems::script::{EffectReach, OwnerRow, Place, RiftScripts};
 use engine::systems::sleep;
@@ -42,37 +39,6 @@ pub fn arrived(snapshot: &ProbeSnapshot, place: Place) -> bool {
 pub fn staged(me: &Playtest, staging: Staging) {
     me.stage(&staging)
         .unwrap_or_else(|problem| panic!("the server didn't stage {staging:?}: {problem}"));
-}
-
-/// A place in each of the game's areas, each named by its file: home's where the player starts,
-/// another's the first a warp leads into it at, or the open ground nearest its middle.
-pub fn arrivals(content: &Content, home: Place) -> Vec<(String, Place)> {
-    let mut places = vec![home];
-    for area in content.ids::<AreaDef>() {
-        for to in warps_from(content, area) {
-            if places.iter().all(|place| place.area != to.area) {
-                places.push(to);
-            }
-        }
-    }
-    for area in content.ids::<AreaDef>() {
-        if places.iter().all(|place| place.area != area)
-            && let Some(at) = open_middle(content, area)
-        {
-            places.push(Place { area, at });
-        }
-    }
-    places
-        .into_iter()
-        .map(|place| {
-            let path = place.area.path(content);
-            let name = Path::new(path).file_stem().map_or_else(
-                || path.to_owned(),
-                |stem| stem.to_string_lossy().into_owned(),
-            );
-            (name, place)
-        })
-        .collect()
 }
 
 /// Where the warps out of `from` lead.
@@ -145,17 +111,6 @@ pub fn beside_warp(content: &Content, area: area::AreaId) -> Option<Place> {
 
 /// How far from a warp a walk into it starts.
 const WARP_REACH: f32 = 12.0;
-
-/// The open ground nearest the middle of `area`.
-pub fn open_middle(content: &Content, area: area::AreaId) -> Option<Pos<Meters>> {
-    let loaded = area::load(content, area);
-    let middle = loaded.size.bounds().center();
-    let _held = loaded.hold(loaded.tiles_around(middle, Meters(MIDDLE_REACH)));
-    loaded.mesh().nearest(middle)
-}
-
-/// How far from an area's middle its open ground is looked for.
-const MIDDLE_REACH: f32 = 64.0;
 
 /// Open ground a walk from `from` reaches, as far off as the first of `distances` that has some,
 /// in the first of eight directions round from east that does.

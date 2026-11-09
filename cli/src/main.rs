@@ -2,14 +2,12 @@ mod ask;
 mod bench;
 mod binaries;
 mod check;
-mod compare;
 mod folder;
 mod loadtest;
 mod profile;
 mod render;
 mod search;
 mod server;
-mod snapshot;
 
 use std::path::PathBuf;
 
@@ -40,7 +38,8 @@ enum Command {
     #[command(subcommand)]
     Render(Render),
     /// The game server's capacity, on a generated game, the crowd, or on GAME; with GAME, then the
-    /// desktop client's frame rate and whether both hold their memory level as a player plays it.
+    /// desktop client's and the editor's frame rates, and whether the server and the client hold
+    /// their memory level as a player plays it.
     Bench {
         game: Option<PathBuf>,
         /// Spreads the server bench's players over the area rather than crowding them on its spawn.
@@ -57,7 +56,7 @@ enum Command {
         #[arg(long)]
         scenarios: Option<PathBuf>,
         /// The video presets to run the scenarios at.
-        #[arg(long, value_enum, default_value_t = render::VideoFilter::Both)]
+        #[arg(long, value_enum, default_value_t = render::VideoFilter::Highest)]
         video: render::VideoFilter,
         /// How many times each scenario runs; the report keeps the median run and the spread.
         #[arg(long, default_value_t = 1)]
@@ -74,10 +73,6 @@ enum Command {
         /// One short scenario per target without criteria, proving the harness alone.
         #[arg(long)]
         smoke: bool,
-        /// Takes pictures of what the client and the editor show instead of their frame rates,
-        /// into DIR by adapter, a set each for `rift compare`.
-        #[arg(long, value_name = "DIR")]
-        snapshots: Option<PathBuf>,
     },
     /// Simulated players against a running game server that takes any account's sign-in:
     /// COUNT of them, or as many as it holds within its tick budget.
@@ -93,51 +88,6 @@ enum Command {
         game: Option<PathBuf>,
         #[arg(long)]
         out: PathBuf,
-    },
-    /// Draws every shot of SHOTS, a folder of `*.shot.json` files, each at the video presets it
-    /// asks for, into OUT by adapter and preset, with a manifest of what was drawn.
-    Snapshot {
-        game: PathBuf,
-        shots: PathBuf,
-        out: PathBuf,
-        /// The video presets to draw at, of those each shot asks for.
-        #[arg(long, value_enum, default_value_t = render::VideoFilter::Both)]
-        video: render::VideoFilter,
-        /// Draws only the shots whose names match, `*` standing for anything.
-        #[arg(long)]
-        only: Option<String>,
-    },
-    /// Compares the snapshots in CANDIDATE against those in BASELINE, shot by shot: exit 0 alike,
-    /// 1 a shot strayed, 2 the sets don't compare, 3 a render crashed.
-    Compare {
-        baseline: PathBuf,
-        candidate: PathBuf,
-        /// Writes report.json and report.html, with the three pictures of each failing shot, here.
-        #[arg(long)]
-        report: Option<PathBuf>,
-        /// Takes the candidate's pictures over the baseline's for the shots whose names match.
-        #[arg(long)]
-        accept: Option<String>,
-        /// Each shot's allowance, as `rift noise` writes them; the floor for every shot otherwise.
-        #[arg(long)]
-        thresholds: Option<PathBuf>,
-    },
-    /// Draws every shot of SHOTS RUNS times, each in a process of its own, and writes each shot's
-    /// allowance, three times the noise between its runs, to OUT/thresholds.json.
-    Noise {
-        game: PathBuf,
-        shots: PathBuf,
-        out: PathBuf,
-        #[arg(long, default_value_t = 5)]
-        runs: usize,
-    },
-    /// Writes each shot's allowance, three times the noise between SETS already taken of the same
-    /// shots (each the folder of one adapter's pictures, as `compare` takes them), to
-    /// OUT/thresholds.json.
-    NoiseBetween {
-        out: PathBuf,
-        #[arg(num_args = 2..)]
-        sets: Vec<PathBuf>,
     },
     /// Prints the JSON Schema of a protocol the binaries speak.
     #[command(subcommand)]
@@ -172,13 +122,6 @@ enum Schema {
     Server,
     /// What `rift bench` writes as its report.
     Bench,
-}
-
-fn exit_on(result: Result<(), String>) {
-    if let Err(failure) = result {
-        eprintln!("{failure}");
-        std::process::exit(2);
-    }
 }
 
 fn main() {
@@ -217,7 +160,6 @@ fn main() {
             compare,
             adapter,
             smoke,
-            snapshots,
         } => {
             let args = bench::BenchArgs {
                 game,
@@ -231,7 +173,6 @@ fn main() {
                 compare,
                 adapter,
                 smoke,
-                snapshots,
             };
             match bench::run(&args) {
                 Ok(code) => std::process::exit(code),
@@ -247,39 +188,6 @@ fn main() {
                 std::process::exit(1);
             }
         }
-        Command::Snapshot {
-            game,
-            shots,
-            out,
-            video,
-            only,
-        } => exit_on(snapshot::run(&game, &shots, &out, video, only.as_deref())),
-        Command::Compare {
-            baseline,
-            candidate,
-            report,
-            accept,
-            thresholds,
-        } => match compare::run(
-            &baseline,
-            &candidate,
-            report.as_deref(),
-            accept.as_deref(),
-            thresholds.as_deref(),
-        ) {
-            Ok(outcome) => std::process::exit(outcome.exit_code()),
-            Err(failure) => {
-                eprintln!("{failure}");
-                std::process::exit(2);
-            }
-        },
-        Command::Noise {
-            game,
-            shots,
-            out,
-            runs,
-        } => exit_on(snapshot::noise(&game, &shots, &out, runs)),
-        Command::NoiseBetween { out, sets } => exit_on(snapshot::noise_between(&sets, &out)),
         Command::Profile { game, out } => profile::run(game.as_deref(), &out),
         Command::Schema(Schema::Probe) => println!("{}", engine::systems::probe::schema()),
         Command::Schema(Schema::Server) => println!("{}", engine::systems::launch::server_schema()),

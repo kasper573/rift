@@ -13,7 +13,6 @@ use std::time::{Duration, Instant};
 use engine::core::content::{Content, ContentId};
 use engine::core::math::{Pos, Rect, Size};
 use engine::core::render::transition::ScreenTransitionPhase;
-use engine::core::render::video::FULLSCREEN_TOGGLE;
 use engine::core::units::{Degrees, MeterPos, Meters, Radians, WindowPx};
 use engine::systems::input::camera::DRAG_TURN;
 use engine::systems::input::map::{InputAction, InputBinding, InputMap, KeyModifiers};
@@ -27,7 +26,7 @@ use engine::systems::staging::Staging;
 use super::frames::Window;
 use super::hands::{self, BUDGET, Driven, Failure};
 use super::playtest::Playtest;
-use super::scenario::{Button, CameraOp, Cond, Ground, Point, Scenario, Step, UiTarget};
+use super::scenario::{Button, CameraOp, Cond, Scenario, Step};
 use crate::render::VideoPreset;
 
 /// A desktop client on a server, played through its window.
@@ -164,25 +163,6 @@ impl Driver {
         Ok(())
     }
 
-    /// Writes a picture of the window as the frame after asking draws it, as a PNG at `path`.
-    pub fn picture(&mut self, path: &Path) -> Result<(), Failure> {
-        let written: bool = match self.play.ask(&ProbeFrameQuestion::Picture {
-            path: path.to_owned(),
-        }) {
-            Ok(written) => written,
-            Err(problem) => return Err(self.died_or(problem)),
-        };
-        if written {
-            self.note(&format!("picture {}", path.display()));
-            Ok(())
-        } else {
-            Err(Failure::Harness(format!(
-                "the client wrote no picture at {}",
-                path.display()
-            )))
-        }
-    }
-
     /// Plays the script over and over until the scenario's duration has passed, then through to
     /// its end.
     fn play_script(&mut self, scenario: &Scenario) -> Result<(), Failure> {
@@ -261,26 +241,6 @@ impl Driver {
 
     fn step(&mut self, step: &Step) -> Result<(), Failure> {
         match step {
-            Step::Move(point) => {
-                let to = self.locate(point)?;
-                hands::move_pointer(self, to)?;
-            }
-            Step::Sweep(points) => {
-                let mut through = Vec::with_capacity(points.len());
-                for point in points {
-                    through.push(self.locate(point)?);
-                }
-                hands::sweep(self, &through)?;
-            }
-            Step::Click { button, times } => {
-                hands::click(self, *button, *times)?;
-            }
-            Step::Down(button) => {
-                hands::button_down(self, *button)?;
-            }
-            Step::Up(button) => {
-                hands::button_up(self, *button)?;
-            }
             Step::Wheel(lines) => {
                 hands::wheel(self, *lines)?;
             }
@@ -308,20 +268,9 @@ impl Driver {
                     hands::sweep(self, &through)?;
                 }
             }
-            Step::ClickUi(target) => {
-                let element = self.find_ui(target)?;
+            Step::HoverField => {
+                let element = self.find_field()?;
                 hands::move_pointer(self, element.rect.center())?;
-                hands::click(self, Button::Left, 1)?;
-            }
-            Step::HoverUi(target) => {
-                let element = self.find_ui(target)?;
-                hands::move_pointer(self, element.rect.center())?;
-            }
-            Step::DragUi { from, to } => {
-                let from = self.find_ui(from)?.rect.center();
-                let to = self.find_ui(to)?.rect.center();
-                let (button, held) = self.mouse_binding(InputAction::CarryItem)?;
-                hands::drag(self, button, &held, from, to)?;
             }
             Step::DragWindows => self.drag_windows()?,
             Step::DragItems => {
@@ -346,23 +295,7 @@ impl Driver {
                     self.note("no item slot to open the options of");
                 }
             }
-            Step::HoverSlot => match self.slots()?.first() {
-                Some(&slot) => {
-                    hands::move_pointer(self, slot)?;
-                }
-                None => self.note("no item slot to rest the pointer on"),
-            },
             Step::CloseWindows => self.close_windows()?,
-            Step::Resize { width, height } => {
-                self.arriving();
-                hands::resize(self, *width, *height)?;
-            }
-            Step::Fullscreen => {
-                self.arriving();
-                let element = self.find_ui(&UiTarget::Text(FULLSCREEN_TOGGLE.to_owned()))?;
-                hands::move_pointer(self, element.rect.center())?;
-                hands::click(self, Button::Left, 1)?;
-            }
             Step::Camera(op) => self.camera(*op)?,
             Step::Stage(staging) => match staging {
                 Staging::Walk { to } => self.walk(*to)?,
@@ -416,13 +349,13 @@ impl Driver {
         )))
     }
 
-    /// The element the target names, shown and in reach of the pointer: where no window shows
+    /// The field that takes typing, shown and in reach of the pointer: where no window shows
     /// it, each is scrolled down a little at a time until one does.
-    fn find_ui(&mut self, target: &UiTarget) -> Result<ProbeUiElement, Failure> {
+    fn find_field(&mut self) -> Result<ProbeUiElement, Failure> {
         self.wait(&Cond::Settled)?;
         for _ in 0..SCROLL_TRIES {
             let snapshot = self.snapshot()?;
-            if let Some(element) = shown_element(&snapshot, target) {
+            if let Some(element) = shown_field(&snapshot) {
                 return Ok(element);
             }
             for cover in snapshot.covered {
@@ -431,9 +364,9 @@ impl Driver {
             }
             self.wait(&Cond::Settled)?;
         }
-        Err(Failure::Harness(format!(
-            "the interface never showed {target:?}"
-        )))
+        Err(Failure::Harness(
+            "the interface never showed a field to type in".to_owned(),
+        ))
     }
 
     /// Every slot of the interface showing an item, as the slot's picture.
@@ -664,37 +597,6 @@ impl Driver {
         }
     }
 
-    fn locate(&mut self, point: &Point) -> Result<Pos<WindowPx>, Failure> {
-        match point {
-            Point::Screen { across, down } => {
-                let screen = self.screen()?;
-                Ok(Pos::new(screen.width * across, screen.height * down))
-            }
-            Point::Ground(ground) => {
-                let snapshot = self.snapshot()?;
-                let at = match *ground {
-                    Ground::NearMe { dx, dy } => {
-                        let me = snapshot
-                            .me
-                            .as_ref()
-                            .ok_or_else(|| {
-                                Failure::Harness("the player is not in the world".to_owned())
-                            })?
-                            .at;
-                        Pos::new(me.x + dx.0, me.y + dy.0)
-                    }
-                };
-                clickable_point(&snapshot, at).ok_or_else(|| {
-                    Failure::Harness(format!(
-                        "the ground at {:?} is {}",
-                        (at.x, at.y),
-                        hidden_by(&snapshot, at)
-                    ))
-                })
-            }
-        }
-    }
-
     fn camera(&mut self, op: CameraOp) -> Result<(), Failure> {
         match op {
             CameraOp::Turn(by) => {
@@ -716,27 +618,6 @@ impl Driver {
                     |view| view.pitch,
                     Nudge::down(STEER_STEP),
                 )
-            }
-            CameraOp::Zoom(steps) => {
-                let here = self.open_ground()?;
-                hands::move_pointer(self, here)?;
-                let mut zoom = self.snapshot()?.view.map(|view| view.zoom);
-                let mut moved = 0;
-                while moved < steps.unsigned_abs() {
-                    hands::wheel(self, -steps.signum())?;
-                    let now = self.snapshot()?.view.map(|view| view.zoom);
-                    match (zoom, now) {
-                        (Some(was), Some(is)) if was != is => moved += u32::from(was.abs_diff(is)),
-                        _ => break,
-                    }
-                    zoom = now;
-                }
-                if moved == 0 {
-                    return Err(Failure::Harness(
-                        "a click of the wheel didn't zoom the camera".to_owned(),
-                    ));
-                }
-                Ok(())
             }
             CameraOp::Face(to) => {
                 let mut sign = 1.0;
@@ -962,10 +843,6 @@ impl Driven for Driver {
         &snapshot.input
     }
 
-    fn screen(snapshot: &ProbeSnapshot) -> Option<Size<WindowPx>> {
-        snapshot.screen
-    }
-
     fn frame_of(snapshot: &ProbeSnapshot) -> u32 {
         snapshot.frame
     }
@@ -984,10 +861,6 @@ impl Driven for Driver {
 
     fn display(&self) -> &str {
         self.play.display()
-    }
-
-    fn pid(&self) -> u32 {
-        self.play.client_pid()
     }
 
     fn note(&mut self, step: &str) {
@@ -1113,19 +986,12 @@ pub fn clickable_point(snapshot: &ProbeSnapshot, at: Pos<Meters>) -> Option<Pos<
     (window.contains(point) && !covered).then_some(point)
 }
 
-fn shown_element(snapshot: &ProbeSnapshot, target: &UiTarget) -> Option<ProbeUiElement> {
+fn shown_field(snapshot: &ProbeSnapshot) -> Option<ProbeUiElement> {
     snapshot
         .ui
         .iter()
-        .find(|element| !element.in_world && !element.click_through && element_is(element, target))
+        .find(|element| !element.in_world && !element.click_through && element.editable)
         .cloned()
-}
-
-fn element_is(element: &ProbeUiElement, target: &UiTarget) -> bool {
-    match target {
-        UiTarget::Text(text) => element.text.as_deref() == Some(text.as_str()),
-        UiTarget::Field => element.editable,
-    }
 }
 
 /// What the interface showed at `point` in `snapshot`: every element there, by what it reads, and
@@ -1166,42 +1032,6 @@ fn under_point(snapshot: &ProbeSnapshot, point: Pos<WindowPx>) -> String {
             "the world taking the pointer there"
         }
     )
-}
-
-/// Why the ground at `at` can't be pointed at: off the window, or under a window of the
-/// interface, named by the first thing it reads.
-fn hidden_by(snapshot: &ProbeSnapshot, at: Pos<Meters>) -> String {
-    let Some(view) = &snapshot.view else {
-        return "unseen: there is no view".to_owned();
-    };
-    let height = snapshot
-        .terrain
-        .as_ref()
-        .map_or(Meters(0.0), |terrain| terrain.height_at(at));
-    let point = view.window_point(at, height).round();
-    let covers: Vec<String> = snapshot
-        .covered
-        .iter()
-        .filter(|cover| cover.contains(point))
-        .map(|cover| {
-            let reads = snapshot
-                .ui
-                .iter()
-                .filter(|element| cover.contains(element.rect.center()))
-                .filter_map(|element| element.text.as_deref())
-                .next()
-                .unwrap_or("nothing");
-            format!(
-                "a window reading {reads:?} at {:?}",
-                (cover.min().x, cover.min().y, cover.width(), cover.height())
-            )
-        })
-        .collect();
-    if covers.is_empty() {
-        format!("out of view at {:?}", (point.x, point.y))
-    } else {
-        format!("under {}", covers.join(", "))
-    }
 }
 
 fn button_of(button: bevy::input::mouse::MouseButton) -> Button {

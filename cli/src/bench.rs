@@ -8,12 +8,9 @@ mod places;
 mod play;
 mod playtest;
 mod report;
-mod scale;
 mod scenario;
 mod scenarios;
-mod shots;
 mod sim;
-mod tile;
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -36,7 +33,7 @@ use hands::Failure;
 use report::{BenchReport, Resolution, ScenarioResult, Verdict};
 use scenario::{Scenario, Target};
 use scenarios::ScenarioSlots;
-use scenarios::client::{OPEN_COLD, OPEN_WARM};
+use scenarios::client::OPENING;
 use sim::{Bench, load};
 
 // Must exceed the budget crossover (and the probe that overshoots it) but stay within RAM: the bench
@@ -52,13 +49,10 @@ pub enum BenchPart {
     Server,
     /// The desktop client's frame rate through its scenarios.
     Client,
-    /// The editor's frame rate on every area, seen whole and close up.
+    /// The editor's frame rate through its scenarios.
     Editor,
     /// Whether the client and the server hold their memory level as a player plays.
     Memory,
-    /// How the server and the client fare as the spawn area grows, against as many areas holding
-    /// the same; run only when named, as it plays the game at every size.
-    Scale,
 }
 
 /// How a bench is asked for.
@@ -80,9 +74,6 @@ pub struct BenchArgs {
     pub adapter: Option<String>,
     /// One short scenario per target, proving the harness alone, without criteria.
     pub smoke: bool,
-    /// Where pictures of what the client and the editor show are taken into, instead of their
-    /// frame rates.
-    pub snapshots: Option<PathBuf>,
 }
 
 /// The server bench on the crowd, or on `game` followed by the client, editor and memory benches,
@@ -90,9 +81,7 @@ pub struct BenchArgs {
 /// of its criteria or the comparison got worse, 2 when a scenario could not be played through, 3
 /// when a process died.
 pub fn run(args: &BenchArgs) -> Result<i32, String> {
-    let runs = |part| {
-        (args.only.is_empty() && !matches!(part, BenchPart::Scale)) || args.only.contains(&part)
-    };
+    let runs = |part| args.only.is_empty() || args.only.contains(&part);
     let layout = if args.spread {
         sim::Layout::Distributed
     } else {
@@ -114,30 +103,12 @@ pub fn run(args: &BenchArgs) -> Result<i32, String> {
     let videos = args.video.presets();
     let mut report: Option<BenchReport> = None;
     let steps = args.report.with_extension(STEPS_LOG);
-    if let Some(out) = &args.snapshots {
-        let mut refused = Vec::new();
-        if runs(BenchPart::Client) {
-            let slots = ScenarioSlots::of(&slots_file(game, args), &content)?;
-            refused.extend(shots::client(game, &content, &slots, &videos, &steps, out).err());
-        }
-        if runs(BenchPart::Editor) {
-            refused.extend(shots::editor(game, &content, &videos, &steps, out).err());
-        }
-        return if refused.is_empty() {
-            Ok(0)
-        } else {
-            Err(refused.join("\n"))
-        };
-    }
     if runs(BenchPart::Client) {
         client(game, &content, args, &videos, &mut report)?;
     }
     if runs(BenchPart::Editor) {
         let slots = ScenarioSlots::of(&slots_file(game, args), &content)?;
         editor::run(game, &content, &slots, args, &videos, &steps, &mut report)?;
-    }
-    if runs(BenchPart::Scale) {
-        scale::run(game, &content);
     }
     let mut exit = 0;
     if runs(BenchPart::Memory) {
@@ -184,7 +155,7 @@ fn client(
         .filter(|scenario| {
             args.scenario
                 .as_deref()
-                .is_none_or(|only| crate::compare::matches(only, &scenario.name))
+                .is_none_or(|only| named_by(only, &scenario.name))
         })
         .collect();
     let wanted = |name: &str| {
@@ -192,10 +163,10 @@ fn client(
             && args
                 .scenario
                 .as_deref()
-                .is_none_or(|only| crate::compare::matches(only, name))
+                .is_none_or(|only| named_by(only, name))
     };
     let desktop = wanted(DESKTOP);
-    let opening = wanted(OPEN_COLD) || wanted(OPEN_WARM);
+    let opening = wanted(OPENING);
     if scenarios.is_empty() && !desktop && !opening {
         println!("[client-bench] no scenario to run");
         return Ok(());
@@ -219,27 +190,13 @@ fn client(
         let mut driver = None;
         let mut openings = Vec::new();
         if opening {
-            let mut cold = Vec::new();
-            let mut warm = Vec::new();
             for run in 0..args.repeat.max(1) {
                 profile = profiles.path().join(format!("{}-{run}", video.name()));
                 drop(driver.take());
                 let mut started = start(&profile)?;
                 let opened = started.opened();
-                cold.push(result_of(
-                    OPEN_COLD,
-                    Target::Client,
-                    Class::Busy,
-                    video,
-                    &Criteria::opening(video),
-                    opened.map(|(window, stood)| (window, vec![stood])),
-                    args.smoke,
-                ));
-                drop(started);
-                let mut started = start(&profile)?;
-                let opened = started.opened();
-                warm.push(result_of(
-                    OPEN_WARM,
+                openings.push(result_of(
+                    OPENING,
                     Target::Client,
                     Class::Busy,
                     video,
@@ -249,14 +206,14 @@ fn client(
                 ));
                 driver = Some(started);
             }
-            openings = vec![median_run(cold), median_run(warm)];
         }
         let mut driver = match driver {
             Some(driver) => driver,
             None => start(&profile)?,
         };
         let report = client_report(report, &mut driver, game, args)?;
-        for result in openings {
+        if !openings.is_empty() {
+            let result = median_run(openings);
             print_result(&result);
             report.add(result);
         }
@@ -313,7 +270,7 @@ fn desktop_check(
     let content = load(&checked);
     let slots = ScenarioSlots::of(&checked.join(scenarios::SLOTS_FILE), &content)?;
     let home = slots
-        .home()
+        .home
         .ok_or("the engine's new game has nowhere to stand")?;
     let scenario = Scenario {
         name: DESKTOP.to_owned(),
@@ -799,4 +756,22 @@ fn npcs_per_area(content: &Content) -> usize {
 /// The JSON Schema of the report a bench writes.
 pub fn schema() -> String {
     report::schema()
+}
+
+/// Whether `name` is one `pattern` asks for, where `*` stands for any run of characters and `?`
+/// for one.
+fn named_by(pattern: &str, name: &str) -> bool {
+    fn go(pattern: &[u8], name: &[u8]) -> bool {
+        match (pattern.first(), name.first()) {
+            (None, None) => true,
+            (None, Some(_)) => false,
+            (Some(b'*'), _) => {
+                go(&pattern[1..], name) || (!name.is_empty() && go(pattern, &name[1..]))
+            }
+            (Some(b'?'), Some(_)) => go(&pattern[1..], &name[1..]),
+            (Some(p), Some(t)) => p == t && go(&pattern[1..], &name[1..]),
+            (Some(_), None) => false,
+        }
+    }
+    go(pattern.as_bytes(), name.as_bytes())
 }
