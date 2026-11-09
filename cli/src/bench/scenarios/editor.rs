@@ -1,8 +1,9 @@
 //! The editor's scenarios, played on the area the game starts in as a designer works it: the scene
 //! tree hovered, opened, selected, scrolled and dragged through; the stage turned, panned, zoomed,
 //! hovered, clicked, dragged on and sculpted; the pages and tabs switched; edits undone and redone,
-//! fields typed into, folders hidden and shown, and the window's panels resized. Every target comes
-//! from what the editor's probe reports, so a scenario names nothing of any game.
+//! fields typed into, folders hidden and shown, and the window's panels resized; and on the area of
+//! the game's home place, the stage drawn back over all it takes in. Every target comes from what
+//! the editor's probe reports, so a scenario names nothing of any game.
 
 use std::time::Instant;
 
@@ -73,6 +74,15 @@ pub fn catalogue() -> Vec<EditorScenario> {
         },
         scenario("e20-hover-orbit", Class::Typical, hover_while_orbiting),
     ]
+}
+
+/// The scenarios played on the area the game's home place lies in, which may be far larger than the
+/// one the game starts in, with the stage drawn back over as much of it as the camera takes in.
+pub fn overview_catalogue() -> Vec<EditorScenario> {
+    vec![EditorScenario {
+        setup: draw_back,
+        ..scenario("e21-stage-overview", Class::Typical, overview_camera)
+    }]
 }
 
 fn scenario(
@@ -234,6 +244,35 @@ fn stage_camera(driver: &mut EditorDriver) -> Result<(), Failure> {
             stage.distance.0, stage.farthest.0
         )));
     }
+    for dx in [QUICK_TURN, -QUICK_TURN, QUICK_TURN, -QUICK_TURN] {
+        quick_turn(driver, middle, dx)?;
+    }
+    Ok(())
+}
+
+/// The stage drawn back as far as the camera draws back.
+fn draw_back(driver: &mut EditorDriver) -> Result<(), Failure> {
+    let middle = driver.stage_at_rest()?.viewport.center();
+    hands::move_pointer(driver, middle)?;
+    hands::wheel(driver, FLICK)?;
+    let stage = driver.stage_at_rest()?;
+    if stage.distance.0 < stage.farthest.0 {
+        return Err(harness(&format!(
+            "the wheel drew the camera back only to {:.0} m of the {:.0} m it draws back to",
+            stage.distance.0, stage.farthest.0
+        )));
+    }
+    Ok(())
+}
+
+/// E21: the stage, drawn back as far as it goes, turned and panned there and back, and turned
+/// quickly there.
+fn overview_camera(driver: &mut EditorDriver) -> Result<(), Failure> {
+    let middle = driver.stage_at_rest()?.viewport.center();
+    turn(driver, middle, ORBIT_DRAG)?;
+    pan(driver, middle, PAN_DRAG)?;
+    pan(driver, middle, -PAN_DRAG)?;
+    turn(driver, middle, -ORBIT_DRAG)?;
     for dx in [QUICK_TURN, -QUICK_TURN, QUICK_TURN, -QUICK_TURN] {
         quick_turn(driver, middle, dx)?;
     }

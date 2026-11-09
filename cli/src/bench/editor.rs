@@ -32,6 +32,7 @@ use super::frames::{Class, Criteria, Window};
 use super::hands::{self, BUDGET, Driven, Failure};
 use super::report::BenchReport;
 use super::scenario::{Scenario, Target};
+use super::scenarios::ScenarioSlots;
 use super::scenarios::editor::{EditorScenario, OPENING};
 use super::{BenchArgs, failure_text, median_run, print_result, report_of, result_of};
 use crate::binaries::{self, EDITOR};
@@ -39,11 +40,13 @@ use crate::render::VideoPreset;
 use crate::server::LOCALHOST;
 
 /// Every editor scenario whose name `args` asks for, at each of `videos`, on an editor of its own
-/// per preset, started over when one dies. The opening is measured on every editor started for
-/// it, as it is what starting one does.
+/// per preset, started over when one dies: the overviews on the area of the home place `slots`
+/// name, the rest on the area the game starts in. The opening is measured on every editor started
+/// for it, as it is what starting one does.
 pub fn run(
     game: &Path,
     content: &Content,
+    slots: &ScenarioSlots,
     args: &BenchArgs,
     videos: &[VideoPreset],
     steps: &Path,
@@ -58,8 +61,12 @@ pub fn run(
         .into_iter()
         .filter(|scenario| wanted(scenario.name))
         .collect();
+    let overviews: Vec<EditorScenario> = super::scenarios::editor::overview_catalogue()
+        .into_iter()
+        .filter(|scenario| wanted(scenario.name))
+        .collect();
     let opening = wanted(OPENING);
-    if scenarios.is_empty() && !opening {
+    if scenarios.is_empty() && overviews.is_empty() && !opening {
         println!("[editor-bench] no scenario to run");
         return Ok(());
     }
@@ -69,9 +76,13 @@ pub fn run(
         .area
         .path(content)
         .to_owned();
+    let home = slots
+        .home()
+        .map(|place| place.area.path(content).to_owned())
+        .ok_or("the scenarios have no home place")?;
     let start = |video| EditorDriver::start(game, &area, &[], video, steps);
+    let start_home = |video| EditorDriver::start(game, &home, &[], video, steps);
     for &video in videos {
-        let criteria = Criteria::global(video);
         let mut openings = Vec::new();
         let mut driver = None;
         for _ in 0..if opening { args.repeat.max(1) } else { 1 } {
@@ -102,39 +113,60 @@ pub fn run(
             print_result(&result);
             report.add(result);
         }
-        for scenario in &scenarios {
-            let mut runs = Vec::new();
-            for run in 0..args.repeat.max(1) {
-                let began = Instant::now();
-                let measured = driver.measure(scenario);
-                let crashed = matches!(measured, Err(Failure::Crashed(_)));
-                runs.push(result_of(
-                    scenario.name,
-                    Target::Editor,
-                    scenario.class,
-                    video,
-                    &criteria,
-                    measured.map(|window| (window, Vec::new())),
-                    args.smoke,
-                ));
-                println!(
-                    "[editor-bench] {:<8} {:<24} run {} of {} in {:.0} s",
-                    video.name(),
-                    scenario.name,
-                    run + 1,
-                    args.repeat.max(1),
-                    began.elapsed().as_secs_f64()
-                );
-                if crashed || driver.exited().is_some() {
-                    driver.end();
-                    driver = start(video).map_err(|failure| failure_text(&failure))?;
-                    driver.opened().map_err(|failure| failure_text(&failure))?;
-                }
-            }
-            let result = median_run(runs);
-            print_result(&result);
-            report.add(result);
+        play(&mut driver, &scenarios, video, args, report, &start)?;
+        if !overviews.is_empty() {
+            driver.end();
+            driver = start_home(video).map_err(|failure| failure_text(&failure))?;
+            driver.opened().map_err(|failure| failure_text(&failure))?;
+            play(&mut driver, &overviews, video, args, report, &start_home)?;
         }
+    }
+    Ok(())
+}
+
+/// Every one of `scenarios` measured on `driver` at `video`, as often as `args` repeats them, the
+/// driver started anew by `start` when it dies.
+fn play(
+    driver: &mut EditorDriver,
+    scenarios: &[EditorScenario],
+    video: VideoPreset,
+    args: &BenchArgs,
+    report: &mut BenchReport,
+    start: &dyn Fn(VideoPreset) -> Result<EditorDriver, Failure>,
+) -> Result<(), String> {
+    let criteria = Criteria::global(video);
+    for scenario in scenarios {
+        let mut runs = Vec::new();
+        for run in 0..args.repeat.max(1) {
+            let began = Instant::now();
+            let measured = driver.measure(scenario);
+            let crashed = matches!(measured, Err(Failure::Crashed(_)));
+            runs.push(result_of(
+                scenario.name,
+                Target::Editor,
+                scenario.class,
+                video,
+                &criteria,
+                measured.map(|window| (window, Vec::new())),
+                args.smoke,
+            ));
+            println!(
+                "[editor-bench] {:<8} {:<24} run {} of {} in {:.0} s",
+                video.name(),
+                scenario.name,
+                run + 1,
+                args.repeat.max(1),
+                began.elapsed().as_secs_f64()
+            );
+            if crashed || driver.exited().is_some() {
+                driver.end();
+                *driver = start(video).map_err(|failure| failure_text(&failure))?;
+                driver.opened().map_err(|failure| failure_text(&failure))?;
+            }
+        }
+        let result = median_run(runs);
+        print_result(&result);
+        report.add(result);
     }
     Ok(())
 }

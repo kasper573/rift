@@ -133,7 +133,8 @@ pub fn run(args: &BenchArgs) -> Result<i32, String> {
         client(game, &content, args, &videos, &mut report)?;
     }
     if runs(BenchPart::Editor) {
-        editor::run(game, &content, args, &videos, &steps, &mut report)?;
+        let slots = ScenarioSlots::of(&slots_file(game, args), &content)?;
+        editor::run(game, &content, &slots, args, &videos, &steps, &mut report)?;
     }
     if runs(BenchPart::Scale) {
         scale::run(game, &content);
