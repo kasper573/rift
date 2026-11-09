@@ -1,13 +1,5 @@
 import bevy_pbr::render::mesh_view_bindings::view;
 
-struct FadeStyle {
-    focus: vec2<f32>,
-    shown: f32,
-    focus_radius: f32,
-}
-
-@group(3) @binding(100) var<uniform> fade: FadeStyle;
-
 // Where the clearing starts to soften, as a share of its radius.
 const RIM: f32 = 0.55;
 
@@ -18,18 +10,23 @@ const RIM: f32 = 0.55;
 // settles, which the temporal anti-aliasing turns into a plain translucency, so the thing keeps
 // its depth and its lighting and never shows its inside. Every pass of the frame drops the same
 // pixels.
-fn clear_pixel(pixel: vec2<f32>) {
-    let spread = distance(pixel, fade.focus) / max(fade.focus_radius, 1.0);
+fn clear_at(pixel: vec2<f32>, shown: f32, focus: vec2<f32>, focus_radius: f32) {
+    let spread = distance(pixel, focus) / max(focus_radius, 1.0);
     let rim = smoothstep(RIM, 1.0, spread);
-    let visibility = mix(rim, 1.0, fade.shown);
+    let visibility = mix(rim, 1.0, shown);
     if dither(pixel) >= visibility {
         discard;
     }
 }
 
 // Interleaved gradient noise, stepped on by the golden ratio each frame, which the picture's
-// settling over the frames blends into a translucency.
+// settling over the frames blends into a translucency. A pass that writes no motion is a light's
+// shadow map, which keeps nothing from one frame to the next for a stepping dither to settle
+// over: there it holds still, or what it drops would flicker the shadow frame by frame.
 fn dither(pixel: vec2<f32>) -> f32 {
-    let p = pixel + 5.588238 * f32(view.frame_count % 64u);
+    var p = pixel;
+    @if(!PREPASS_PIPELINE || MOTION_VECTOR_PREPASS) {
+        p += 5.588238 * f32(view.frame_count % 64u);
+    }
     return fract(52.9829189 * fract(0.06711056 * p.x + 0.00583715 * p.y));
 }

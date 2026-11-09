@@ -4,7 +4,7 @@
 //! scenery when the picture changes, swaps the terrain while a brush stroke shapes it, and keeps
 //! the ghost of what is being placed and the cast of residents under the pointer.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use bevy::camera::visibility::RenderLayers;
@@ -16,13 +16,15 @@ use bevy_egui::{EguiTextureHandle, EguiUserTextures};
 use engine::core::audio::playback::{self, PlaySfx, SfxPlace};
 use engine::core::content::Content;
 use engine::core::ground::{Heightfield, PaintMap};
+use engine::core::math::Pos;
+use engine::core::render::video::VideoPreferences;
 use engine::core::render::world::body::{self, Body, Figure};
+use engine::core::render::world::gpu::pick::Picking;
 use engine::core::render::world::layers::Layered;
 use engine::core::render::world::mannequin::Mannequin;
 use engine::core::render::world::mannequin::mannequin;
 use engine::core::render::world::rig_clip;
-use engine::core::render::world::sky::Daylight;
-use engine::core::render::{Look, camera};
+use engine::core::render::{CameraFocus, Look, camera, world_point};
 use engine::core::units::Meters;
 use engine::core::units::Seconds;
 use engine::systems::actor::Action;
@@ -32,19 +34,19 @@ use engine::systems::actor::render;
 use engine::systems::actor::rigging::BuiltSkeleton;
 use engine::systems::actor::skeleton::Cue;
 use engine::systems::actor::stance::HandIndex;
-use engine::systems::area::scenery::{self, Scenery};
+use engine::systems::area::render::view_reach;
+use engine::systems::area::scenery::{self, Eyes, Sight};
 use engine::systems::area::{Area, Picture, Weather};
 use ui::egui;
 
 use super::camera::OrbitCamera;
-use super::overlays::GroundLines;
+use super::overlays::OutlineSet;
+use super::render_sync::{StagePick, StandingScene};
 use crate::app::Editor;
+use crate::tabs::EditorTab;
 use crate::views::area::camera::LENS;
 
 const FIRST_LAYER: usize = 400;
-/// How wide the outlines over the ground are drawn, and those of what is selected.
-const LINE_PIXELS: f32 = 1.0;
-const BOLD_LINE_PIXELS: f32 = 2.0;
 
 /// What a view asks its viewport to show this frame.
 pub struct Request {
@@ -59,9 +61,11 @@ pub struct Request {
     /// The terrain as a brush stroke is shaping it, shown in place of the picture's.
     pub stroke: Option<StrokeTerrain>,
     pub ghost: Option<Ghost>,
-    pub cast: Vec<StandingActor>,
-    /// The sets of outlines drawn over the ground, each laid apart from the others.
-    pub lines: [GroundLines; 2],
+    pub cast: Arc<[StandingActor]>,
+    /// The sets of outlines drawn, each laid apart from the other.
+    pub outlines: [OutlineSet; 2],
+    /// The pixel of the picture the pointer is over, none while it is off it.
+    pub pointer: Option<UVec2>,
 }
 
 /// A terrain mid-stroke, numbered so it is laid again only when the stroke moves on.
@@ -183,29 +187,27 @@ struct RenderedView {
     texture: egui::TextureId,
     size: [u32; 2],
     rendered: OrbitCamera,
-    stood: Option<Stood>,
+    scene: StandingScene,
     stroke: Option<u64>,
     ghost: Option<(String, Entity)>,
-    cast: Option<(Vec<StandingActor>, Vec<Entity>)>,
-    /// For each set of outlines, the revision laid, and the thin and the bold lines' gizmos.
-    lines: [Option<(u64, [Entity; 2])>; 2],
-}
-
-/// How far around the camera's target the covers, props and lights stand while it takes in the
-/// horizon, in the camera's distance from it.
-const HORIZON_REACH_PER_DISTANCE: f32 = 4.0;
-
-struct Stood {
-    scenery: Scenery,
-    area: Arc<Area>,
-    /// The weather the scenery was last lit under.
-    lit: Weather,
+    cast: Option<(Arc<[StandingActor]>, Vec<Entity>)>,
+    picked: Option<StagePick>,
 }
 
 impl Viewports {
     /// Asks for `request` to be drawn for the next frame.
     pub fn request(&mut self, request: Request) {
         self.requests.push(request);
+    }
+
+    /// Whether any view shows the world this frame.
+    pub fn showing(&self) -> bool {
+        !self.shown.is_empty()
+    }
+
+    /// What the world last found under the pointer in the view `key`'s picture.
+    pub fn picked(&self, key: &str) -> Option<&StagePick> {
+        self.shown.get(key)?.picked.as_ref()
     }
 
     /// The picture last drawn for the view `key`.
@@ -219,9 +221,25 @@ impl Viewports {
     }
 }
 
-/// Draws every viewport asked for this frame and lets go of the rest.
+/// Draws every viewport asked for this frame, keeps standing but undrawn those whose bundle's tab
+/// stays open behind another, so coming back to the tab shows the scene as it stood, and lets go
+/// of the rest.
 pub fn sync(editor: &mut Editor, world: &mut World) {
     let requests = std::mem::take(&mut editor.views.area.viewports.requests);
+    let requested: HashSet<&str> = requests
+        .iter()
+        .map(|request| request.key.as_str())
+        .collect();
+    let open: HashSet<String> = editor
+        .dock
+        .iter_all_tabs()
+        .map(|(_, tab)| tab)
+        .chain(editor.open_tabs.iter().map(|(tab, _)| tab))
+        .filter_map(|tab| match tab {
+            EditorTab::Area { key } | EditorTab::Blueprint { key } => Some(super::view_key(key)),
+            _ => None,
+        })
+        .collect();
     let viewports = &mut editor.views.area.viewports;
     let loaded = editor
         .project
@@ -230,7 +248,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
     let gone: Vec<String> = viewports
         .shown
         .keys()
-        .filter(|key| !requests.iter().any(|request| request.key == **key) || loaded.is_none())
+        .filter(|key| loaded.is_none() || !requested.contains(key.as_str()) && !open.contains(*key))
         .cloned()
         .collect();
     for key in gone {
@@ -241,6 +259,12 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
     }
     if loaded.is_none() {
         return;
+    }
+    for (key, viewport) in &viewports.shown {
+        if !requested.contains(key.as_str()) {
+            viewport.set_active(world, false);
+            viewport.scene.unsee(world);
+        }
     }
     for request in requests {
         let viewport = viewports
@@ -283,6 +307,7 @@ impl RenderedView {
                 camera::picture(grade),
                 RenderLayers::from_layers(&[layer]),
                 Transform::default(),
+                Picking::default(),
             ))
             .id();
         RenderedView {
@@ -293,15 +318,22 @@ impl RenderedView {
             texture,
             size,
             rendered: OrbitCamera::default(),
-            stood: None,
+            scene: StandingScene::new(root, layer, camera),
             stroke: None,
             ghost: None,
             cast: None,
-            lines: [None; 2],
+            picked: None,
+        }
+    }
+
+    fn set_active(&self, world: &mut World, active: bool) {
+        if let Some(mut camera) = world.get_mut::<Camera>(self.camera) {
+            camera.is_active = active;
         }
     }
 
     fn draw(&mut self, world: &mut World, request: Request) {
+        self.set_active(world, true);
         if request.size != self.size && request.size[0] > 0 && request.size[1] > 0 {
             world
                 .resource_mut::<EguiUserTextures>()
@@ -318,129 +350,74 @@ impl RenderedView {
             }
         }
         let area = request.picture.area.clone();
-        let stale = self
-            .stood
-            .as_ref()
-            .is_none_or(|stood| !Arc::ptr_eq(&stood.area, &area));
-        if stale && scenery::shaders_ready(world, &request.content, &area) {
-            let stood = scenery::spawn(
-                world,
-                &request.content,
-                &area,
-                RenderLayers::from_layers(&[self.layer]),
-            );
-            if let Some(old) = self.stood.take() {
-                scenery::despawn(world, old.scenery);
-            }
-            world.entity_mut(stood.root).insert(ChildOf(self.root));
-            scenery::light(
-                world,
-                &area,
-                &request.weather,
-                Daylight::Fixed,
-                stood,
-                self.camera,
-            );
-            self.stood = Some(Stood {
-                scenery: stood,
-                area: area.clone(),
-                lit: request.weather,
-            });
+        let anew = self
+            .scene
+            .area()
+            .is_none_or(|stood| !Arc::ptr_eq(stood, &area));
+        if self.scene.stand(world, &area, &request.content) && anew {
             self.stroke = None;
         }
-        if let Some(stood) = self.stood.as_mut()
-            && stood.lit != request.weather
-        {
-            scenery::light(
-                world,
-                &area,
-                &request.weather,
-                Daylight::Fixed,
-                stood.scenery,
-                self.camera,
-            );
-            stood.lit = request.weather;
-        }
+        self.scene.light(world, &request.weather, self.camera);
         world.insert_resource(scenery::shown_weather(&request.weather, 0.0));
         let ground = area.heights.height_at(request.camera.target);
-        if let Some(stood) = &self.stood {
+        {
             let viewport = Vec2::new(request.size[0] as f32, request.size[1] as f32);
             let view = request.camera.view(ground, viewport);
+            let at = request.camera.target;
+            let near_eye = within_reach_of(
+                view.eye(),
+                at,
+                ground,
+                view_reach(
+                    &world.resource::<Look>().camera,
+                    world.resource::<VideoPreferences>(),
+                ),
+            );
             let reach = view
-                .ground_reach(request.camera.target, area.heights.range().lowest)
-                .unwrap_or(Meters(
-                    request.camera.distance.0 * HORIZON_REACH_PER_DISTANCE,
-                ));
-            scenery::view_from(world, stood.scenery, request.camera.target, reach, view);
+                .ground_reach(at, area.heights.range().lowest)
+                .map_or(near_eye, |seen| Meters(seen.0.min(near_eye.0)));
+            self.scene.see(
+                world,
+                Sight {
+                    at,
+                    reach,
+                    horizon: None,
+                    lens: view.lens(),
+                    eyes: Eyes::standing(view.eye(), at, ground),
+                },
+            );
         }
-        if let Some(mut transform) = world.get_mut::<Transform>(self.camera) {
-            *transform = request.camera.transform(ground);
+        if let Ok(mut camera) = world.get_entity_mut(self.camera) {
+            camera.insert((
+                request.camera.transform(ground),
+                CameraFocus(world_point(request.camera.target, ground)),
+            ));
         }
         self.rendered = request.camera;
         self.shape(world, &request);
         self.haunt(world, request.ghost);
         sound(world, &area, &request.cast);
         self.people(world, request.cast);
-        for (set, lines) in request.lines.iter().enumerate() {
-            self.outline(world, set, lines);
+        for (set, outlines) in request.outlines.iter().enumerate() {
+            self.scene.outline(world, set, outlines);
         }
-    }
-
-    /// Lays the outlines over the ground anew when they changed: drawn over the picture, every
-    /// line as many pixels wide however far off.
-    fn outline(&mut self, world: &mut World, set: usize, lines: &GroundLines) {
-        if self.lines[set].is_some_and(|(revision, _)| revision == lines.revision) {
-            return;
-        }
-        let mut drawn = [GizmoAsset::default(), GizmoAsset::default()];
-        for line in lines.runs.iter() {
-            let [r, g, b, a] = line.color.to_srgba_unmultiplied();
-            drawn[usize::from(line.bold)]
-                .linestrip(line.points.iter().copied(), Color::srgba_u8(r, g, b, a));
-        }
-        let handles = drawn.map(|asset| world.resource_mut::<Assets<GizmoAsset>>().add(asset));
-        let entities = match self.lines[set] {
-            Some((_, entities)) => entities,
-            None => [LINE_PIXELS, BOLD_LINE_PIXELS].map(|width| {
-                world
-                    .spawn((
-                        Gizmo {
-                            line_config: GizmoLineConfig { width, ..default() },
-                            depth_bias: -1.0,
-                            ..default()
-                        },
-                        ChildOf(self.root),
-                    ))
-                    .id()
-            }),
-        };
-        for (entity, handle) in entities.into_iter().zip(handles) {
-            if let Some(mut gizmo) = world.get_mut::<Gizmo>(entity) {
-                gizmo.handle = handle;
-            }
-        }
-        self.lines[set] = Some((lines.revision, entities));
+        self.picked = self.scene.pick(world, request.pointer);
     }
 
     /// Lays the terrain as the stroke shapes it, once per step of the stroke.
     fn shape(&mut self, world: &mut World, request: &Request) {
-        let Some(stood) = &self.stood else {
+        let Some(area) = self.scene.area().cloned() else {
             return;
         };
         match &request.stroke {
             Some(stroke) if self.stroke != Some(stroke.revision) => {
-                scenery::lay_ground(world, stood.scenery, &stroke.heights, &stroke.paint);
+                self.scene.lay_ground(world, &stroke.heights, &stroke.paint);
                 self.stroke = Some(stroke.revision);
             }
             Some(_) => {}
             None => {
                 if self.stroke.take().is_some() {
-                    scenery::lay_ground(
-                        world,
-                        stood.scenery,
-                        &stood.area.heights,
-                        &stood.area.paint,
-                    );
+                    self.scene.lay_ground(world, &area.heights, &area.paint);
                 }
             }
         }
@@ -478,18 +455,21 @@ impl RenderedView {
 
     /// Stands the cast: a rig already standing in its clip is moved and held where it is asked
     /// to, the rest are spawned anew.
-    fn people(&mut self, world: &mut World, cast: Vec<StandingActor>) {
+    fn people(&mut self, world: &mut World, cast: Arc<[StandingActor]>) {
         if self
             .cast
             .as_ref()
-            .is_some_and(|(standing, _)| *standing == cast)
+            .is_some_and(|(standing, _)| Arc::ptr_eq(standing, &cast) || **standing == *cast)
         {
             return;
         }
-        let (stood, entities) = self.cast.take().unwrap_or_default();
-        let mut spare: Vec<(StandingActor, Entity)> = stood.into_iter().zip(entities).collect();
+        let (stood, entities) = self
+            .cast
+            .take()
+            .unwrap_or_else(|| (Arc::new([]), Vec::new()));
+        let mut spare: Vec<(StandingActor, Entity)> = stood.iter().cloned().zip(entities).collect();
         let mut kept: Vec<Entity> = Vec::with_capacity(cast.len());
-        for standing in &cast {
+        for standing in cast.iter() {
             let reused = spare
                 .iter()
                 .position(|(old, _)| old.same_rig(standing))
@@ -544,10 +524,8 @@ impl RenderedView {
         self.cast = Some((cast, kept));
     }
 
-    fn despawn(self, world: &mut World) {
-        if let Some(stood) = self.stood {
-            scenery::despawn(world, stood.scenery);
-        }
+    fn despawn(mut self, world: &mut World) {
+        self.scene.despawn(world);
         world.despawn(self.root);
         world.despawn(self.camera);
         world
@@ -729,6 +707,19 @@ fn run_layers(world: &mut World) {
         );
     }
 }
+/// How far around `at`, on ground `ground` metres high, lies all the ground within `reach` of an
+/// eye standing at `eye`: the scenery stands its props, covers and lights only that near an eye,
+/// as the game does round its camera, and leaves the rest to the far field however far back the
+/// stage draws.
+fn within_reach_of(eye: Vec3, at: Pos<Meters>, ground: Meters, reach: Meters) -> Meters {
+    let over = eye.y - ground.0;
+    if over >= reach.0 {
+        return Meters(0.0);
+    }
+    let across = Pos::new(eye.x, eye.z).distance_to(at);
+    Meters(across + (reach.0 * reach.0 - over * over).sqrt())
+}
+
 /// An offscreen picture of `size` pixels a camera renders to, and the egui texture that shows it.
 fn render_target(
     world: &mut World,

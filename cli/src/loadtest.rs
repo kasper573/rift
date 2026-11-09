@@ -106,6 +106,18 @@ pub fn run_dyn(http_url: &str) -> Result<Pool, String> {
 pub struct Pool(Vec<App>);
 
 impl Pool {
+    /// `count` players connected to the server at `http_url`, as many as it let in.
+    pub fn open(http_url: &str, count: usize) -> Pool {
+        let mut clients = Vec::new();
+        let mut next_id = 0usize;
+        set_player_count(&mut clients, http_url, &mut next_id, count);
+        Pool(clients)
+    }
+
+    pub fn connected(&self) -> usize {
+        connected_count(&self.0)
+    }
+
     /// Keeps every client answering the server for `lasting`.
     pub fn hold(&mut self, lasting: Duration) {
         pump(&mut self.0, lasting);

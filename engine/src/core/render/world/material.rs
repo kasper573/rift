@@ -1,12 +1,12 @@
 //! The material every mesh of the world is drawn with: bevy's standard lighting over the model's
-//! own colours, a rough dielectric with a faint sheen, a face marked as glowing shining unlit,
-//! and dithered away where the mesh stands between the camera and its subject, in every pass
-//! alike, so what fades keeps its depth, its shadow and its lighting and never shows its inside. A scene may have the game's own
-//! shaders draw some of its materials in place of that look, each named by its material.
+//! own colours, a rough dielectric with a faint sheen, and a face marked as glowing shining unlit.
+//! A prop may have the game's own shaders draw some of its materials in place of that look, each
+//! named by its material.
 
 use bevy::asset::{AssetPath, embedded_path};
 use bevy::ecs::system::SystemParam;
-use bevy::gltf::GltfMaterialName;
+use bevy::ecs::system::SystemState;
+use bevy::gltf::{Gltf, GltfAssetLabel, GltfMaterial};
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{
     ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
@@ -14,15 +14,14 @@ use bevy::pbr::{
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::render_resource::{
-    AsBindGroup, RenderPipelineDescriptor, ShaderType, SpecializedMeshPipelineError,
+    AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError,
 };
-use bevy::shader::{Shader, ShaderDefVal, ShaderRef};
+use bevy::shader::{Shader, ShaderRef};
 use bevy::world_serialization::WorldInstanceReady;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::merged;
 use crate::core::render::Look;
 use crate::core::vfx::shader::PARAMS_BYTES;
 use crate::core::vfx::uniform::{ParamsUniform, SiteUniform, VfxShaderKey, WeatherImage};
@@ -42,14 +41,12 @@ pub fn textures(material: &StandardMaterial) -> impl Iterator<Item = &Handle<Ima
     .flatten()
 }
 
-/// How the world draws a mesh beyond its standard material, which has none of these: its fade,
-/// and the game's shader where one draws the mesh, with its parameters, the weather it reads and
+/// How the world draws a mesh beyond its standard material, which has none of these: the game's
+/// shader where one draws the mesh, with its parameters, the weather it reads and
 /// the site its prelude reads.
 #[derive(Asset, AsBindGroup, Clone, Debug, TypePath)]
 #[bind_group_data(WorldLookKey)]
 pub struct WorldLook {
-    #[uniform(100)]
-    pub style: FadeStyle,
     #[uniform(101)]
     pub params: ParamsUniform,
     #[texture(102, sample_type = "float", filterable = false)]
@@ -70,31 +67,6 @@ pub struct MaterialLook {
     pub translucency: f32,
 }
 
-/// The materials of a scene the game's shaders draw, on the scene's root.
-#[derive(Component, Clone, Debug, Default)]
-pub struct MaterialLooks(pub Vec<MaterialLook>);
-
-/// How far a mesh has faded for standing in front of the camera's subject: `shown` 1 untouched,
-/// 0 fully, a circle of `focus_radius` picture pixels around `focus`, where the subject shows,
-/// seen through and softening out to its rim. The shadow it casts stays whole, as the thing
-/// itself does.
-#[derive(ShaderType, Clone, Copy, Debug, PartialEq)]
-pub struct FadeStyle {
-    pub focus: Vec2,
-    pub shown: f32,
-    pub focus_radius: f32,
-}
-
-impl Default for FadeStyle {
-    fn default() -> FadeStyle {
-        FadeStyle {
-            focus: Vec2::ZERO,
-            shown: 1.0,
-            focus_radius: 0.0,
-        }
-    }
-}
-
 /// What a world material's shaders are built for: the game's shader when one draws it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct WorldLookKey {
@@ -111,50 +83,31 @@ impl From<&WorldLook> for WorldLookKey {
 
 impl MaterialExtension for WorldLook {
     fn fragment_shader() -> ShaderRef {
-        embedded("fade.wesl")
+        embedded("material.wesl")
     }
 
     fn prepass_fragment_shader() -> ShaderRef {
-        embedded("fade_prepass.wesl")
+        embedded("material_prepass.wesl")
     }
 
-    /// The game's shader draws a mesh merged of many props from where each vertex says its piece
-    /// stands, at shader locations past every one bevy's own meshes use.
+    /// The game's shader draws the mesh where one is given.
     fn specialize(
         _pipeline: &MaterialExtensionPipeline,
         descriptor: &mut RenderPipelineDescriptor,
-        layout: &MeshVertexBufferLayoutRef,
+        _layout: &MeshVertexBufferLayoutRef,
         key: MaterialExtensionKey<WorldLook>,
     ) -> Result<(), SpecializedMeshPipelineError> {
         let WorldLookKey { shader } = key.bind_group_data;
         let Some(shader) = shader else {
             return Ok(());
         };
-        let mut defs: Vec<ShaderDefVal> = vec!["VERTEX_OUTPUT_INSTANCE_INDEX".into()];
-        if layout.0.contains(merged::ATTRIBUTE_PIECE_ORIGIN) {
-            let pieces = layout.0.get_layout(&[
-                merged::ATTRIBUTE_PIECE_ORIGIN.at_shader_location(14),
-                merged::ATTRIBUTE_PIECE_TURN.at_shader_location(15),
-            ])?;
-            descriptor.vertex.buffers[0]
-                .attributes
-                .extend(pieces.attributes);
-            defs.push("MERGED".into());
-        }
         let shader = shader.handle();
         descriptor.vertex.shader = shader.clone();
-        descriptor.vertex.shader_defs.extend(defs.iter().cloned());
         if let Some(fragment) = descriptor.fragment.as_mut() {
             fragment.shader = shader;
-            fragment.shader_defs.extend(defs);
         }
         Ok(())
     }
-}
-
-/// Whether a material of `alpha` cuts its shape out of its texture, as foliage does.
-fn cuts_out(alpha: AlphaMode) -> bool {
-    matches!(alpha, AlphaMode::Mask(cutoff) if cutoff > 0.0)
 }
 
 fn world_alpha(alpha: AlphaMode) -> AlphaMode {
@@ -188,7 +141,7 @@ pub struct SurfaceFinish {
 /// material cut out by its texture's alpha stays cut at its own cutoff, a blended one is cut
 /// where it is mostly clear, and any other is masked at a cutoff of zero, which drops nothing by
 /// itself: bevy lets a material's shaders drop pixels only when its alpha mode says they may, and
-/// the fade drops them in every pass.
+/// a prop clearing from the camera's subject drops them in every pass.
 pub fn world_material(base: StandardMaterial, finish: &SurfaceFinish) -> WorldMaterial {
     ExtendedMaterial {
         base: StandardMaterial {
@@ -196,7 +149,6 @@ pub fn world_material(base: StandardMaterial, finish: &SurfaceFinish) -> WorldMa
             ..dielectric(base, finish)
         },
         extension: WorldLook {
-            style: FadeStyle::default(),
             params: ParamsUniform::default(),
             weather: Handle::default(),
             site: SiteUniform::default(),
@@ -305,39 +257,42 @@ impl Wardrobe<'_> {
                 .clone(),
         )
     }
-
-    /// Whether a mesh drawn in `material` is cut out of its texture, as foliage is.
-    pub(super) fn cuts_out(&self, material: &Handle<WorldMaterial>) -> bool {
-        self.materials
-            .get(material)
-            .is_some_and(|material| cuts_out(material.base.alpha_mode))
-    }
 }
 
-/// Every scene that finishes spawning trades its standard materials for world ones, each drawn
-/// by the game's shader when the scene's looks name its material.
+/// The world material a part of `model` drawn in its glTF `material` gets under `look`, shared with
+/// every mesh loaded with that material and look: once the model has loaded.
+pub fn part_material(
+    world: &mut World,
+    model: &Handle<Gltf>,
+    material: Option<&Handle<GltfMaterial>>,
+    look: Option<&MaterialLook>,
+) -> Option<Handle<WorldMaterial>> {
+    let label = match material {
+        Some(material) => format!("{}/std", material.path()?.label()?),
+        None => format!("{}/std", GltfAssetLabel::DefaultMaterial),
+    };
+    let standard = world
+        .resource::<AssetServer>()
+        .get_handle::<StandardMaterial>(model.path()?.clone().with_label(label))?;
+    let mut wardrobe = SystemState::<Wardrobe>::new(world);
+    let made = wardrobe.get_mut(world).ok()?.material_for(&standard, look);
+    wardrobe.apply(world);
+    made
+}
+
+/// Every scene that finishes spawning trades its standard materials for world ones.
 pub(super) fn dress_scenes(
     ready: On<WorldInstanceReady>,
     children: Query<&Children>,
-    meshes: Query<(
-        Entity,
-        &MeshMaterial3d<StandardMaterial>,
-        Option<&GltfMaterialName>,
-    )>,
-    looks: Query<&MaterialLooks>,
+    meshes: Query<&MeshMaterial3d<StandardMaterial>>,
     mut wardrobe: Wardrobe,
     mut commands: Commands,
 ) {
-    let root = ready.entity;
-    let looks = looks.get(root).ok();
-    for entity in children.iter_descendants(root) {
-        let Ok((entity, material, name)) = meshes.get(entity) else {
+    for entity in children.iter_descendants(ready.entity) {
+        let Ok(material) = meshes.get(entity) else {
             continue;
         };
-        let look = looks
-            .zip(name)
-            .and_then(|(looks, name)| looks.0.iter().find(|look| look.material == name.0));
-        let Some(dressed) = wardrobe.material_for(&material.0, look) else {
+        let Some(dressed) = wardrobe.material_for(&material.0, None) else {
             continue;
         };
         commands

@@ -5,6 +5,7 @@
 
 use std::hash::{Hash, Hasher};
 use std::marker::PhantomData;
+use std::time::Duration;
 use ui::egui;
 
 use bevy::asset::uuid::Uuid;
@@ -17,9 +18,11 @@ use bevy::pbr::{
 };
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
+use bevy::render::extract_resource::ExtractResourcePlugin;
 use bevy::render::render_resource::{
     AsBindGroup, RenderPipelineDescriptor, SpecializedMeshPipelineError,
 };
+use bevy::render::{Render, RenderApp, RenderSystems};
 use bevy::shader::{Shader, ShaderRef};
 use bevy::sprite_render::{
     AlphaMode2d, Material2d, Material2dKey, Material2dPipeline, Material2dPlugin,
@@ -39,6 +42,7 @@ use crate::core::geometry::{PlacedShape, Shape};
 use crate::core::gui::{self, Band, WidgetRects};
 use crate::core::math::{Pos, Rgba, Size};
 use crate::core::render::present::{self, PRESENT_LAYER};
+use crate::core::render::sample::{FrameWork, UploadedBytes};
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::billboard::Billboard;
 use crate::core::render::world::cover::CoverMaterial;
@@ -65,8 +69,14 @@ impl Plugin for VfxMaterialsPlugin {
             .init_resource::<VfxShaders>()
             .init_resource::<VfxAssets>()
             .init_resource::<WeatherImage>()
+            .init_resource::<FrameWork>()
+            .init_resource::<super::cover::WeatherWrites>()
             .init_resource::<super::rain::RainField>()
             .init_resource::<super::rain::Shelter>()
+            .add_plugins((
+                ExtractResourcePlugin::<WeatherImage>::default(),
+                ExtractResourcePlugin::<super::cover::WeatherWrites>::default(),
+            ))
             .add_systems(
                 Update,
                 (
@@ -74,6 +84,17 @@ impl Plugin for VfxMaterialsPlugin {
                     super::cover::blow,
                 ),
             );
+        // The world's shaders sway on the frame's time from bevy's globals: wrapping it, as
+        // bevy does every hour by default, would jump every swaying thing at once.
+        if let Some(mut time) = app.world_mut().get_resource_mut::<Time<Virtual>>() {
+            time.set_wrap_period(Duration::MAX);
+        }
+        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
+            render_app.init_resource::<UploadedBytes>().add_systems(
+                Render,
+                super::cover::write_weather.in_set(RenderSystems::PrepareResources),
+            );
+        }
     }
 }
 
@@ -261,13 +282,17 @@ pub fn present_shader(
             if let Some(handle) = world
                 .get::<MeshMaterial2d<VfxMaterial>>(piece)
                 .map(|material| material.0.clone())
-                && let Some(mut material) =
-                    world.resource_mut::<Assets<VfxMaterial>>().get_mut(&handle)
             {
-                material.image = image;
-                material.site = site;
-                material.params = params;
-                material.shader = shader;
+                let painted = VfxMaterial {
+                    image,
+                    site,
+                    params,
+                    shader,
+                };
+                repaint(world, &handle, painted, |was, now| {
+                    (&was.image, &was.site, &was.params, &was.shader)
+                        == (&now.image, &now.site, &now.params, &now.shader)
+                });
             }
             place(
                 world,
@@ -1144,18 +1169,45 @@ fn paint_world(
     params: ParamsUniform,
     shader: Handle<Shader>,
 ) {
-    if let Some(handle) = world
+    let Some(handle) = world
         .get::<MeshMaterial3d<VfxWorldMaterial>>(piece)
         .map(|material| material.0.clone())
-        && let Some(mut material) = world
-            .resource_mut::<Assets<VfxWorldMaterial>>()
-            .get_mut(&handle)
-    {
-        material.image = image;
-        material.site = site;
-        material.params = params;
-        material.shader = shader;
+    else {
+        return;
+    };
+    let Some(depth_bias) = world
+        .resource::<Assets<VfxWorldMaterial>>()
+        .get(&handle)
+        .map(|material| material.depth_bias)
+    else {
+        return;
+    };
+    let painted = VfxWorldMaterial {
+        image,
+        site,
+        params,
+        shader,
+        depth_bias,
+    };
+    repaint(world, &handle, painted, |was, now| {
+        (&was.image, &was.site, &was.params, &was.shader)
+            == (&now.image, &now.site, &now.params, &now.shader)
+    });
+}
+
+/// Paints the material `handle` as `painted`, unless `same` finds it painted so already: a
+/// material written to is prepared anew for the GPU, so one that holds still is left alone.
+fn repaint<M: Asset>(world: &mut World, handle: &Handle<M>, painted: M, same: fn(&M, &M) -> bool) {
+    let mut materials = world.resource_mut::<Assets<M>>();
+    if materials.get(handle).is_some_and(|was| same(was, &painted)) {
+        return;
     }
+    let Some(mut material) = materials.get_mut(handle) else {
+        return;
+    };
+    *material = painted;
+    drop(material);
+    world.resource_mut::<FrameWork>().vfx_writes += 1;
 }
 
 /// Lays a ground piece's patch over the terrain at `at`, `size` metres across, afresh when the
@@ -1180,7 +1232,7 @@ fn lay_patch(world: &mut World, piece: Entity, at: Vec3, size: Vec2) {
 fn place(world: &mut World, piece: Entity, transform: Transform) {
     let mut entity = world.entity_mut(piece);
     if let Some(mut shown) = entity.get_mut::<Transform>() {
-        *shown = transform;
+        shown.set_if_neq(transform);
     }
     if let Some(mut visibility) = entity.get_mut::<Visibility>() {
         visibility.set_if_neq(Visibility::Inherited);

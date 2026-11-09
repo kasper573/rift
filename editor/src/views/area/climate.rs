@@ -9,11 +9,13 @@ use ui::egui::{self, Ui};
 use ui::input::InputField;
 use ui::{chip, controls, draft, form, panel, sheet, theme, words};
 
+use super::nodes::SceneBundle;
 use crate::app::Editor;
 use crate::forms::{self, FormChange, FormCx};
 use crate::project::ContentEdit;
 use crate::row_form;
 use crate::tabs::file_title;
+use std::sync::Arc;
 
 /// What the climate page works on: a spell, by its place among the climate's, the rain, or the
 /// lightning; and the spell whose weather the area is shown under.
@@ -422,7 +424,7 @@ pub fn remove_spell(editor: &mut Editor, bundle: &str, index: usize) -> bool {
 fn write(editor: &mut Editor, bundle: &str, area: &AreaDef, climate: Climate, label: &str) {
     let mut edited = area.clone();
     edited.climate = climate;
-    editor.write_content(label, bundle, &edited);
+    editor.write_fields(label, bundle, SceneBundle::Area(Arc::new(edited)));
 }
 
 /// `name` with the lowest number after it that no spell of `climate` is called yet.

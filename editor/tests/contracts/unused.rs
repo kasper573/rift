@@ -137,7 +137,7 @@ fn renaming_a_prop_rewrites_the_blueprint_scenes_that_name_it() {
     support::settled(&mut editor);
     let reader = editor.reader().expect("a reader");
     let props: Vec<Option<&str>> =
-        nodes::modules(&nodes::scene_of(&editor, &path("blueprint", "rock")))
+        nodes::modules(&support::scene(&editor, &path("blueprint", "rock")))
             .iter()
             .filter_map(|module| match module.module() {
                 AreaModule::Prop(prop) => Some(reader.path_of(prop.prop)),

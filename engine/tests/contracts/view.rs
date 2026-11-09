@@ -4,28 +4,18 @@ use std::time::{Duration, Instant};
 
 use bevy::animation::AnimationPlugin;
 use bevy::asset::AssetPlugin;
-use bevy::camera::primitives::Aabb;
-use bevy::camera::visibility::VisibilityPlugin;
-use bevy::ecs::system::RunSystemOnce;
 use bevy::gltf::GltfPlugin;
-use bevy::light::atmosphere::ScatteringMedium;
 use bevy::prelude::*;
-use bevy::shader::Shader;
 use bevy::time::TimeUpdateStrategy;
-use bevy::window::PrimaryWindow;
 use bevy::world_serialization::WorldSerializationPlugin;
 use engine::core::audio::playback::{PlaySfx, SfxDef, SfxId, SfxPlace};
 use engine::core::content::gltf::PLACEHOLDER_LIFT;
-use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER};
-use engine::core::math::Pos;
-use engine::core::render::View;
+use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER, TileAt};
+use engine::core::math::{Pos, Rect};
 use engine::core::render::camera::ground_hit;
-use engine::core::render::world::WorldScenePlugin;
 use engine::core::render::world::body::{Body, BodyPlugin};
-use engine::core::render::world::fade::Fades;
 use engine::core::render::world::layers::JointLayersPlugin;
-use engine::core::render::world::lod::{MeshLevels, Simplifier};
-use engine::core::render::world::material::{FadeStyle, WorldMaterial, world_material};
+use engine::core::render::world::material::WorldMaterial;
 use engine::core::render::{
     Animator, CameraPreferences, CameraRig, capsule_hit, facing_rotation, world_point,
 };
@@ -33,7 +23,6 @@ use engine::core::text::Typewriter;
 use engine::core::units::{
     Degrees, MeterPos, Meters, MetersPerSec, PlaybackRate, Radians, Seconds,
 };
-use engine::core::vfx::render::VfxMaterialsPlugin;
 use engine::systems::actor::held::Held;
 use engine::systems::actor::render::{self, HeldProp, RenderActor};
 use engine::systems::actor::skeleton::GestureName;
@@ -152,6 +141,149 @@ fn the_pointer_ray_lands_where_the_ground_shows() {
             );
         }
     }
+}
+
+#[test]
+fn pointing_at_the_ground_meets_it_where_a_fine_march_does() {
+    // Three tiles by two of rolling ground, held as play holds it: one tile read, the others
+    // answered by the overview until they are.
+    let size = GroundSize {
+        width: 600,
+        height: 300,
+    };
+    let rolling = Heightfield::from_fn(size, HEIGHTS, |column, row| {
+        let x = column as f32 / SAMPLES_PER_METER as f32;
+        let y = row as f32 / SAMPLES_PER_METER as f32;
+        Meters(4.0 * (x / 23.0).sin() * (y / 17.0).cos() + 2.5 * ((x + y) / 9.0).sin() + 3.0)
+    });
+    let game = size.each_tile().fold(
+        Game::new()
+            .area("rolling", &Map::open(600, 300), json!([]))
+            .part(
+                "area",
+                "rolling",
+                "height_overview.png",
+                rolling.encode_overview().expect("heights that aren't flat"),
+            ),
+        |game, at| {
+            let tile = rolling.encode_tile(at).expect("heights that aren't flat");
+            game.part(
+                "area",
+                "rolling",
+                &format!("height/{}.png", at.key()),
+                tile.to_vec(),
+            )
+        },
+    );
+    let content = game.hero("rolling", 1.0, 1.0).load_to_play();
+    let rolling = content
+        .by_path::<area::AreaDef>(&path("area", "rolling"))
+        .expect("the area loads");
+    let mut heights = area::load(&content, rolling).heights.clone();
+    heights
+        .load(TileAt { column: 1, row: 0 })
+        .expect("the tile reads");
+    let bounds = size.bounds().inflate(2.0, 2.0);
+    let mound = Pos::new(300.0, 100.0);
+    let pit = Pos::new(380.0, 60.0);
+
+    let mut rays = Vec::new();
+    for x in [-10.0, 120.0, 255.5, 400.0, 511.5, 610.0] {
+        for z in [-10.0, 150.0, 255.5, 310.0] {
+            let eye = Vec3::new(x, 40.0, z);
+            for yaw in (0..8).map(|step| step as f32 * 45.0 + 10.0) {
+                for pitch in [-15.0f32, -35.0, -70.0] {
+                    let (yaw, pitch) = (yaw.to_radians(), pitch.to_radians());
+                    let heading = Vec3::new(
+                        yaw.cos() * pitch.cos(),
+                        pitch.sin(),
+                        yaw.sin() * pitch.cos(),
+                    );
+                    rays.push(Ray3d::new(eye, Dir3::new(heading).expect("a heading")));
+                }
+            }
+        }
+    }
+    for (at, height) in [(mound, 13.0), (pit, -5.0)] {
+        for side in 0..6 {
+            let side = side as f32 * 1.05;
+            let eye = Vec3::new(at.x + 30.0 * side.cos(), 30.0, at.y + 30.0 * side.sin());
+            let aim = Vec3::new(at.x, height, at.y) - eye;
+            rays.push(Ray3d::new(eye, Dir3::new(aim).expect("a heading")));
+        }
+    }
+
+    let agree = |heights: &Heightfield, held: &str| {
+        for ray in &rays {
+            let found = ground_hit(heights, bounds, *ray);
+            let marched = marched(heights, bounds, *ray);
+            match (found, marched) {
+                (Some(found), Some(marched)) => assert!(
+                    found.distance(marched) < Meters(0.01),
+                    "{held}: the ray from {:?} heading {:?} meets the ground at {found:?}, a \
+                     fine march at {marched:?}",
+                    ray.origin,
+                    ray.direction
+                ),
+                (found, marched) => assert_eq!(
+                    found, marched,
+                    "{held}: the ray from {:?} heading {:?}",
+                    ray.origin, ray.direction
+                ),
+            }
+        }
+    };
+    agree(&heights, "a tile read, the rest from the overview");
+    heights
+        .load(TileAt { column: 2, row: 0 })
+        .expect("the tile reads");
+    agree(&heights, "another tile read since");
+
+    let samples = |at: Pos<Meters>| {
+        let column = ((at.x + 0.5) * SAMPLES_PER_METER as f32) as u32;
+        let row = ((at.y + 0.5) * SAMPLES_PER_METER as f32) as u32;
+        (column - 12..column + 12)
+            .flat_map(move |column| (row - 12..row + 12).map(move |row| (column, row)))
+    };
+    for (column, row) in samples(mound) {
+        heights.set_sample(column, row, Meters(13.0));
+    }
+    for (column, row) in samples(pit) {
+        heights.set_sample(column, row, Meters(-5.0));
+    }
+    agree(&heights, "a mound raised and a pit dug");
+}
+
+/// Where a ray first comes down to the ground, marched a couple of centimetres at a time and the
+/// crossing then halved down to nothing; none once it has passed under the lowest ground there is.
+fn marched(heights: &Heightfield, bounds: Rect<Meters>, ray: Ray3d) -> Option<Pos<Meters>> {
+    const STEP: f32 = 0.02;
+    let under = |t: f32| {
+        let point = ray.get_point(t);
+        let at = Pos::new(point.x, point.z);
+        bounds.contains(at) && point.y <= heights.height_at(at).0
+    };
+    let mut t = 0.0;
+    while t < 400.0 {
+        if ray.get_point(t + STEP).y < heights.range().lowest.0 {
+            return None;
+        }
+        if under(t + STEP) {
+            let (mut above, mut below) = (t, t + STEP);
+            for _ in 0..24 {
+                let middle = (above + below) / 2.0;
+                if under(middle) {
+                    below = middle;
+                } else {
+                    above = middle;
+                }
+            }
+            let point = ray.get_point(below);
+            return Some(Pos::new(point.x, point.z));
+        }
+        t += STEP;
+    }
+    None
 }
 
 #[test]
@@ -972,185 +1104,4 @@ fn props(app: &mut App) -> Vec<(Entity, engine::systems::item::ItemId)> {
 /// The cues of the plain skeleton's attack: its apex.
 fn attacked() -> serde_json::Value {
     json!({ "clip": testkit::clip("attack"), "cues": [{ "at": APEX.0, "apex": true }] })
-}
-
-/// A mesh far off the eye draws with fewer triangles the farther it is, its full mesh up close,
-/// and the shape it is drawn with never strays from the mesh's by a pixel of the view.
-#[test]
-fn a_mesh_far_off_the_eye_draws_with_fewer_triangles_none_straying_a_pixel() {
-    let mut app = drawn_world();
-    let ball = app
-        .world_mut()
-        .resource_mut::<Assets<Mesh>>()
-        .add(Sphere::new(1.0).mesh().ico(40).expect("an ico sphere"));
-    let held = ball.clone();
-    app.world_mut()
-        .run_system_once(move |mut simplifier: Simplifier| simplifier.simplify(&held))
-        .expect("the simplifier runs");
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while app.world().resource::<MeshLevels>().of(&ball).is_none() {
-        assert!(Instant::now() < deadline, "the ball is simplified");
-        app.update();
-    }
-    let levels = app
-        .world()
-        .resource::<MeshLevels>()
-        .of(&ball)
-        .expect("the ball's levels");
-    let meshes = app.world().resource::<Assets<Mesh>>();
-    let depth = |mesh: &Handle<Mesh>| {
-        triangles(meshes.get(mesh).expect("a level is held"))
-            .iter()
-            .map(|[a, b, c]| 1.0 - ((*a + *b + *c) / 3.0).length())
-            .fold(0.0f32, f32::max)
-    };
-    let full = triangles(meshes.get(&ball).expect("the ball")).len();
-    let own_depth = depth(&ball);
-    let mut drawn = full;
-    for distance in [2.0, 50.0, 500.0, 5000.0] {
-        let view = View::new(
-            Transform::from_xyz(0.0, 0.0, distance).looking_at(Vec3::ZERO, Vec3::Y),
-            WINDOW,
-            Degrees(45.0),
-        );
-        let level = levels.for_view(&view, Meters(distance), 1.0);
-        let count = level.map_or(full, |level| {
-            triangles(meshes.get(level).expect("a level is held")).len()
-        });
-        let stray =
-            view.pixels_per_meter(Meters(distance)) * (level.map_or(own_depth, depth) - own_depth);
-        assert!(
-            count <= drawn && stray < 1.0,
-            "{distance} m off, the ball draws {count} triangles (nearer {drawn}), straying {stray} px"
-        );
-        drawn = count;
-    }
-    let close = View::new(
-        Transform::from_xyz(0.0, 0.0, 2.0).looking_at(Vec3::ZERO, Vec3::Y),
-        WINDOW,
-        Degrees(1.0),
-    );
-    assert!(
-        levels.for_view(&close, Meters(2.0), 1.0).is_none() && drawn * 10 < full,
-        "through a long lens up close the ball draws its own mesh, far off a tenth of its {full} \
-         triangles at most: {drawn}"
-    );
-}
-
-/// What hides the camera's subject fades on its own, things that look alike staying whole, and
-/// once it is whole again it looks alike with them again, holding no look of its own.
-#[test]
-fn a_thing_hiding_the_subject_fades_on_its_own_and_shares_its_look_again_once_whole() {
-    let mut app = drawn_world();
-    app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
-        50,
-    )));
-    app.world_mut().spawn((Window::default(), PrimaryWindow));
-    let mut rig = CameraRig::new(testkit::look().camera);
-    rig.look_at(Pos::new(0.0, 0.0), Meters(0.0));
-    let between = (rig.eye() + rig.target()) / 2.0;
-    app.insert_resource(rig);
-    let finish = testkit::look().materials;
-    let look = app
-        .world_mut()
-        .resource_mut::<Assets<WorldMaterial>>()
-        .add(world_material(StandardMaterial::default(), &finish));
-    let mut tree = |at: Vec3| {
-        let world = app.world_mut();
-        let tree = world
-            .spawn((
-                Fades::default(),
-                Transform::from_translation(at),
-                Visibility::default(),
-            ))
-            .id();
-        world
-            .spawn((
-                Aabb::from_min_max(Vec3::new(-1.0, -1.0, -1.0), Vec3::new(1.0, 1.0, 1.0)),
-                MeshMaterial3d(look.clone()),
-                Transform::default(),
-                Visibility::default(),
-                ChildOf(tree),
-            ))
-            .id()
-    };
-    let (hiding, aside) = (tree(between), tree(between + Vec3::new(40.0, 0.0, 40.0)));
-    let worn = |app: &App, mesh: Entity| {
-        app.world()
-            .get::<MeshMaterial3d<WorldMaterial>>(mesh)
-            .expect("the mesh wears a world material")
-            .0
-            .clone()
-    };
-    for _ in 0..20 {
-        app.update();
-    }
-    let faded = worn(&app, hiding);
-    let style = app
-        .world()
-        .resource::<Assets<WorldMaterial>>()
-        .get(&faded)
-        .map(|material| material.extension.style);
-    assert!(
-        faded != look && worn(&app, aside) == look && style.is_some_and(|style| style.shown < 1.0),
-        "the tree between the camera and its subject fades in a look of its own, the other stays as it was: {style:?}"
-    );
-
-    let mut rig = *app.world().resource::<CameraRig>();
-    rig.look_at(Pos::new(-60.0, -60.0), Meters(0.0));
-    app.insert_resource(rig);
-    drop(faded);
-    for _ in 0..20 {
-        app.update();
-    }
-    assert!(
-        worn(&app, hiding) == look
-            && app.world().resource::<Assets<WorldMaterial>>().len() == 1
-            && app
-                .world()
-                .resource::<Assets<WorldMaterial>>()
-                .get(&look)
-                .map(|material| material.extension.style)
-                == Some(FadeStyle::default()),
-        "once whole, the tree looks alike with the other again and no look of its own is left"
-    );
-}
-
-/// A world drawn as the client draws it, with no window shown.
-fn drawn_world() -> App {
-    let mut app = App::new();
-    app.add_plugins((
-        MinimalPlugins,
-        AssetPlugin::default(),
-        WorldSerializationPlugin,
-        AnimationPlugin,
-        GltfPlugin::default(),
-        bevy::mesh::MeshPlugin,
-        TransformPlugin,
-        VisibilityPlugin,
-    ))
-    .init_asset::<Shader>()
-    .init_asset::<Image>()
-    .init_asset::<StandardMaterial>()
-    .init_asset::<ScatteringMedium>()
-    .add_plugins((VfxMaterialsPlugin, WorldScenePlugin))
-    .insert_resource(testkit::look());
-    app.finish();
-    app.cleanup();
-    app
-}
-
-/// The corners of every triangle of `mesh`.
-fn triangles(mesh: &Mesh) -> Vec<[Vec3; 3]> {
-    let positions = mesh
-        .attribute(Mesh::ATTRIBUTE_POSITION)
-        .and_then(|positions| positions.as_float3())
-        .expect("a mesh of positions");
-    let indices: Vec<usize> = mesh.indices().expect("an indexed mesh").iter().collect();
-    indices
-        .as_chunks::<3>()
-        .0
-        .iter()
-        .map(|corners| corners.map(|corner| Vec3::from(positions[corner])))
-        .collect()
 }

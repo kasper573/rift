@@ -57,19 +57,48 @@ rift render area <game> <shot> <out> # a picture of an area, drawn off screen th
 rift bench                           # the server's capacity, on a large game generated in code
 rift bench <game>                    # …on the game, then the client's and the editor's frame rates and memory (Linux)
 rift bench <game> --only memory      # …only the parts named: server, client, editor, memory
-rift bench <game> --only scale       # …the spawn area grown side by side, against as many areas: run only when named
+rift bench <game> --scenario 'orbit*' --video both --repeat 3
+                                     # …only the scenarios named, at both presets, each run three times
+rift bench <game> --report out.json --compare before.json
+                                     # …the report written there, and held against an earlier run's
 rift loadtest --http <url> --ws <url> [count]
 rift profile --out <dir> [game]      # game-server-profiling under load, sampled by perf (Linux)
 rift schema probe                    # the JSON Schema of the desktop client's probe
 rift schema server                   # …of what a game server prints once ready, and its test routes
+rift schema bench                    # …of the report `rift bench` writes
 ```
 
-`rift bench <game>` starts `game-server` and `desktop-client` from its binaries folder; it plays the
-game's first test character, staging each scene on the server. The client plays on a desktop of the
-bench's own: a headless `weston` screen it draws on through `Xwayland`, its window seated there by
-`xdotool`, and a silent sink on a PulseAudio-compatible sound server (`pactl`). Its frame rate is then its own, and nothing reaches the
-machine's display or speakers. The editor plays on such a desktop too: it opens each of the game's
-areas, seen whole and close up, and its frame rate is taken once all the view takes in stands.
+`rift bench <game>` starts `game-server` and `desktop-client` from its binaries folder; it plays a
+test character of the game, or a fresh one where the game has none, through a short catalogue of
+scenarios: each staged on the server, then played as a player would through the client's own
+bindings, its input confirmed through the probe. What the scenarios play with comes from the
+game's scenarios file, `bench/scenarios.json` in the game's folder unless `--scenarios` names
+another, every slot it leaves empty filled from the content: the `home` the scenarios play at and
+a `crowd_place` to fight at (each an `area`, `x` and `y`), the ground an `empty_view` looks
+toward, the `windows` to open by their actions, ground to `walk_to`, and the test `character`
+to play. The catalogue is the client's opening on a profile no client has run the game on, a
+still view, an orbit, a walk, warp crossings, combat, the interface stormed, and fifty other
+players in view; each plays for a few seconds, at the highest video preset unless `--video` says
+otherwise. Before them, the `desktop` check plays the emptiest view of the engine's own new game
+at the lowest settings, which must exceed 300 fps whatever the game benched costs to draw, or the
+desktop is holding the frames and the harness fails. Every scenario's frames are held to the same
+criteria: a mean at or over the floor of its video preset (60 fps at the highest, 90 at the
+lowest), at most 1% of frames slower than the floor's period, no frame past 48 ms, and nothing
+the view takes in missing. The client plays on a desktop of the bench's own: a headless `weston`
+screen it draws on through `Xwayland`, its window seated there by `xdotool`, and a silent sink on
+a PulseAudio-compatible sound server (`pactl`). Its frame rate is then its own, and nothing
+reaches the machine's display or speakers; a load average over half the cores is warned about and
+kept in the report. The editor plays on such a desktop too, worked as a designer works it, its
+input confirmed through its own probe: on the area the game starts in, its opening until the area
+stands, the stage turned, panned and flicked out and in, and its terrain sculpted; and on the
+scenarios' home area, the stage turned and panned once drawn back as far as it goes. Its frames
+are held to the client's criteria. The memory check then crosses a player back and forth between
+the spawn area and the area its first warp leads to, and stands them still: the server and the
+client must hold the memory level the first crossings reached. The run's report,
+`bench-report.json` unless `--report` says where, is described by `rift schema bench`; `--compare` holds it against an earlier run's and
+fails when a scenario that passed now fails, a mean fell by more than a tenth or a p99 rose by more
+than a fifth. The exit code says how the run went: 0 passed, 1 a scenario fell short of its
+criteria or the comparison got worse, 2 a scenario could not be played through, 3 a process died.
 
 ## A game is a folder
 
@@ -96,8 +125,9 @@ required unless it says otherwise, and a binary refuses to start without one.
 - **`game-server`** reads `RIFT_GAME_SERVER_*`: where it listens (`BIND`, `PORT` for HTTP, `UDP_PORT`
   for play), the address players reach the machine at (`PUBLIC_IP`), the game
   folder (`CONTENT_DIR`), `MAX_CLIENTS`, `PLAYER_SPAWN_POLICY` (`map` or `dist`), `PLAYER_IMMORTAL`,
-  `DAYLIGHT` (`turning`, or `still`, which holds the game's day at its start hour for tests that
-  compare how the world looks), `DAILY_RESET_UTC_HOUR`, `AUTH` (`oidc`, or `fake`, which takes a token's claims without checking
+  `DAYLIGHT` (`turning`; `still`, which holds the game's day at its start hour for tests that
+  compare how the world looks; or `fixed`, which holds it at `HOUR`, 0 to 24), `WEATHER` (`turning`,
+  or `still`, which holds every area's weather at its first spell), `DAILY_RESET_UTC_HOUR`, `AUTH` (`oidc`, or `fake`, which takes a token's claims without checking
   its signature, so an unsigned JWT signs in any account), `TEST_CHARACTERS`, `EXIT_ON_STDIN_EOF`
   and, optionally, `RNG_SEED`. Started on port 0 it picks free ports, and prints them on stdout
   once players can connect.
@@ -133,7 +163,9 @@ The runtimes know no infrastructure, only protocols:
 - **The probe.** A desktop client started with `RIFT_CLIENT_PROBE=<host:port>` connects there and
   answers questions about what it shows, one JSON line each: a frame's snapshot, a picture of its
   window, or where the game's things are and how its ground walks. `rift ask <game>` answers the questions about the game
-  itself the same way, without a client, and `rift schema probe` prints the protocol's schema.
+  itself the same way, without a client. The editor started with `--probe <host:port>` answers its
+  own: a frame's snapshot (its input, interface, panels, stage and selection), the rows its trees
+  drew, and its frames. `rift schema probe` prints the protocol's schema.
 - **Test routes.** A game server with `TEST_CHARACTERS` set hands the game's test characters out
   over HTTP, to whoever drives it: `/test/character` makes the asking account's next sign-in play
   one, and `/test/stage` has the character that account plays walk, fight, talk or move.

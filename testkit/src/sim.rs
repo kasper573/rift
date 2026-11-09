@@ -6,6 +6,7 @@ use bevy_ecs::system::ScheduleSystem;
 use bevy_replication::ToClient;
 use bevy_time::Time;
 use engine::core::content::{Content, ContentFile, ContentId};
+use engine::core::jobs::Handoff;
 use engine::core::math::Rng;
 use engine::core::tick::{self, Planners, Tick};
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
@@ -31,6 +32,7 @@ impl Sim {
     pub fn new(content: Content) -> Sim {
         let mut world = World::new();
         world.insert_resource(Rng::new(drawn_seed()));
+        world.insert_resource(Handoff::NextFrame);
         world.insert_resource(Time::<()>::default());
         world.insert_resource(WallClock {
             now: UnixMillis(0),

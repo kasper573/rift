@@ -6,9 +6,11 @@ use engine::systems::area::AreaDef;
 use ui::egui::Ui;
 use ui::{form, panel, sheet, theme};
 
+use super::nodes::SceneBundle;
 use crate::app::Editor;
 use crate::forms::{self, FormChange, FormCx};
 use crate::row_form;
+use std::sync::Arc;
 
 pub fn show(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
     let bundle = editor.views.area.view(view_key).bundle.clone();
@@ -84,7 +86,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
     if let Some(label) = changed.label(&bundle) {
         let mut edited = (*area).clone();
         edited.lighting = lighting;
-        editor.write_content(&label, &bundle, &edited);
+        editor.write_fields(&label, &bundle, SceneBundle::Area(Arc::new(edited)));
     }
 }
 

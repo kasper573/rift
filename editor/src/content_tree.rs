@@ -1,5 +1,6 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::hash::{Hash, Hasher};
 use std::sync::{Arc, Mutex, PoisonError};
 use ui::egui;
 use ui::input;
@@ -61,7 +62,7 @@ struct Listing {
 }
 
 /// Everything what the tree lists depends on.
-#[derive(PartialEq)]
+#[derive(PartialEq, Hash)]
 struct ListedFrom {
     files: u64,
     generation: u64,
@@ -213,19 +214,14 @@ pub fn show(editor: &mut Editor, ui: &mut Ui) {
         GameFolder::new(project, content_tree, view).with_previews(ui.ctx(), &mut form.thumbnails);
     let first_hit = open_first.then(|| first_file(&source, "")).flatten();
     let mut open = view.open.clone();
-    let (response, changed) = egui::ScrollArea::vertical()
-        .id_salt("content tree")
-        .auto_shrink([false, false])
-        .show(ui, |ui| {
-            tree::show(
-                ui,
-                egui::Id::new("content tree"),
-                &mut content_tree.tree,
-                &source,
-                &mut open,
-            )
-        })
-        .inner;
+    let (response, changed) = tree::show(
+        ui,
+        "files",
+        egui::Id::new("content tree"),
+        &mut content_tree.tree,
+        &source,
+        &mut open,
+    );
     let hovered = ui.ui_contains_pointer();
     drop(source);
     if changed {
@@ -632,6 +628,8 @@ struct GameFolder<'a> {
     unsaved: HashSet<String>,
     problems: HashMap<String, String>,
     listing: Arc<Mutex<Option<Listing>>>,
+    /// What the rows listed are found from.
+    listed: u64,
     shown: Option<Arc<HashSet<String>>>,
     narrowed: bool,
     filtered: bool,
@@ -722,6 +720,7 @@ impl<'a> GameFolder<'a> {
             unsaved,
             problems,
             listing: tree.listing.clone(),
+            listed: 0,
             shown: None,
             narrowed,
             filtered,
@@ -739,6 +738,11 @@ impl<'a> GameFolder<'a> {
             only_unused: tree.only_unused,
             hidden_kinds: view.hidden_kinds.clone(),
             hide_empty_folders: view.hide_empty_folders,
+        };
+        folder.listed = {
+            let mut hasher = std::hash::DefaultHasher::new();
+            from.hash(&mut hasher);
+            hasher.finish()
         };
         folder.shown = {
             let mut listing = tree.listing.lock().unwrap_or_else(PoisonError::into_inner);
@@ -1026,6 +1030,10 @@ impl<'a> GameFolder<'a> {
 
 impl TreeSource for GameFolder<'_> {
     type Action = TreeAction;
+
+    fn listing(&self) -> u64 {
+        self.listed
+    }
 
     fn children(&self, id: &str) -> Vec<String> {
         let mut listing = self.listing.lock().unwrap_or_else(PoisonError::into_inner);

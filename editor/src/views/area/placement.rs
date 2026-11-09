@@ -215,19 +215,15 @@ pub(super) fn short_value(value: &VarValue, project: &Project) -> String {
     }
 }
 
-/// The values every selected placement gives, edited for all of them at once when they place the
-/// same blueprint.
+/// The values every selected placement of `selected`, each with its pointer, gives, edited for
+/// all of them at once when they place the same blueprint.
 pub(crate) fn shared_values(
     ui: &mut Ui,
     cx: &mut FormCx,
-    nodes: &mut [SceneNode],
-    pointers: &[String],
+    selected: &mut [(String, ModuleNode)],
 ) -> bool {
     let reader = cx.project.reader();
-    let modules: Vec<&AreaModule> = pointers
-        .iter()
-        .filter_map(|pointer| nodes::module_node(nodes, pointer).map(|node| &node.module))
-        .collect();
+    let modules: Vec<&AreaModule> = selected.iter().map(|(_, node)| &node.module).collect();
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
     for module in &modules {
         *counts.entry(module.kind().tag()).or_default() += 1;
@@ -242,7 +238,7 @@ pub(crate) fn shared_values(
             _ => None,
         })
         .collect();
-    if blueprints.len() != 1 || modules.len() != pointers.len() || counts.len() != 1 {
+    if blueprints.len() != 1 || counts.len() != 1 {
         return false;
     }
     let Some(def) = blueprints
@@ -255,27 +251,23 @@ pub(crate) fn shared_values(
     };
     ui.label(RichText::new("Shared values").strong());
     let mut changed = false;
-    let value_of = |nodes: &[SceneNode], pointer: &str, name: &str| -> Option<Value> {
-        match &nodes::module_node(nodes, pointer)?.module {
+    let value_of = |node: &ModuleNode, name: &str| -> Option<Value> {
+        match &node.module {
             AreaModule::Blueprint(placement) => reader.to_json(placement.values.get(name)?).ok(),
             _ => None,
         }
     };
-    let set_all = |nodes: &mut [SceneNode], name: &str, value: VarValue| {
-        for pointer in pointers {
-            if let Some(ModuleNode {
-                module: AreaModule::Blueprint(placement),
-                ..
-            }) = nodes::module_node_mut(nodes, pointer)
-            {
+    let set_all = |selected: &mut [(String, ModuleNode)], name: &str, value: VarValue| {
+        for (_, node) in selected {
+            if let AreaModule::Blueprint(placement) = &mut node.module {
                 placement.values.insert(name.to_owned(), value.clone());
             }
         }
     };
     for (name, variable) in &def.variables {
-        let values: Vec<Option<Value>> = pointers
+        let values: Vec<Option<Value>> = selected
             .iter()
-            .map(|pointer| value_of(nodes, pointer, name))
+            .map(|(_, node)| value_of(node, name))
             .collect();
         let distinct: HashSet<String> = values
             .iter()
@@ -294,7 +286,7 @@ pub(crate) fn shared_values(
                         let template = variable_default(&reader, variable)
                             .unwrap_or_else(|| variable_template(variable, cx.nearby()));
                         if let Ok(read) = reader.from_json::<VarValue>(&template) {
-                            set_all(nodes, name, read);
+                            set_all(selected, name, read);
                             changed = true;
                         }
                     }
@@ -303,7 +295,7 @@ pub(crate) fn shared_values(
                     if variable_field(ui, cx, variable, &mut value, &format!("/shared/{name}"))
                         && let Ok(read) = reader.from_json::<VarValue>(&value)
                     {
-                        set_all(nodes, name, read);
+                        set_all(selected, name, read);
                         changed = true;
                     }
                 }
@@ -452,11 +444,13 @@ pub(super) fn nested_bounds(
 }
 
 fn start_in_place(editor: &mut Editor, view_key: &str, area_key: &str, node: &str) {
-    let scene = nodes::scene_of(editor, area_key);
+    let Some(read) = nodes::bundle_of(editor, area_key) else {
+        return;
+    };
     let Some(ModuleNode {
         module: AreaModule::Blueprint(placement),
         ..
-    }) = nodes::module_node(&scene, node)
+    }) = nodes::module_node(read.nodes(), node)
     else {
         return;
     };
@@ -557,7 +551,7 @@ pub(crate) fn move_parts_in_place(
     let count = placement_count(&frame.content, &place.blueprint);
     nodes::change_scene(editor, &place.blueprint, |scene| {
         for part in parts {
-            nodes::module_node_mut(scene, part)?.module.shift(bx, by);
+            scene.module_mut(part)?.module.shift(bx, by);
         }
         Some(format!(
             "Move {} parts of {} · {count}",
@@ -653,12 +647,15 @@ pub fn unpack(editor: &mut Editor, frame: &AreaSnapshot, node: &str) {
         return;
     };
     let applied = nodes::change_scene(editor, &bundle, |scene| {
-        *nodes::node_mut(scene, node)? = SceneNode::Folder(SceneFolder {
-            label: label.clone(),
-            hidden: false,
-            locked: false,
-            children,
-        });
+        scene.replace(
+            node,
+            SceneNode::Folder(SceneFolder {
+                label: label.clone(),
+                hidden: false,
+                locked: false,
+                children,
+            }),
+        )?;
         Some(format!("Unpack {label} into a folder"))
     });
     if applied {
@@ -695,8 +692,7 @@ pub(crate) fn replace_with(editor: &mut Editor, bundle: &str, node: &str, replac
     };
     let mut replaced = None;
     let applied = nodes::change_scene(editor, bundle, |scene| {
-        let AreaModule::Blueprint(placement) = &mut nodes::module_node_mut(scene, node)?.module
-        else {
+        let AreaModule::Blueprint(placement) = &mut scene.module_mut(node)?.module else {
             return None;
         };
         let old = reader.path_of(placement.blueprint)?.to_owned();

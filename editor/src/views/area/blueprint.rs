@@ -26,13 +26,13 @@ pub(crate) fn make_blueprint_from_selection(editor: &mut Editor, frame: &AreaSna
     let Some(own) = nodes::bundle_of(editor, &bundle) else {
         return;
     };
-    let scene = own.nodes().to_vec();
-    let selected = selected_nodes(editor, &bundle, &scene);
+    let scene = own.nodes();
+    let selected = selected_nodes(editor, &bundle, scene);
     let Some(first) = selected.first().cloned() else {
         editor.toast("Select modules or a folder to make a blueprint of");
         return;
     };
-    let node = |pointer: &str| nodes::node(&scene, pointer).cloned();
+    let node = |pointer: &str| nodes::node(scene, pointer).cloned();
     let held: Vec<SceneNode> = match selected.as_slice() {
         [only] => match node(only) {
             Some(SceneNode::Folder(folder)) => folder.children,
@@ -93,37 +93,40 @@ pub(crate) fn make_blueprint_from_selection(editor: &mut Editor, frame: &AreaSna
         return;
     }
     let after = project.reader_after(&edit);
-    let Some(written) = after.id_of::<BlueprintDef>(&path).and_then(|made| {
-        let mut changed = own.draft();
-        changed.variables = rescoped(&changed.variables, reader.scope(), after.scope()).ok()?;
-        changed.nodes = nodes::CopiedNodes::of(&reader, &changed.nodes)?
-            .read(&after, &changed.variables)
-            .ok()?;
-        *nodes::node_mut(&mut changed.nodes, &first)? = SceneNode::Module(ModuleNode {
-            label: Some(label.clone()),
-            holes: Holes(
-                named
-                    .iter()
-                    .map(|name| (format!("/values/{}", escape(name)), name.clone()))
-                    .collect(),
-            ),
-            ..ModuleNode::new(AreaModule::Blueprint(Placement {
-                blueprint: made,
-                at: origin,
-                yaw: Degrees::default(),
-                values: BTreeMap::new(),
-            }))
-        });
-        nodes::SceneTree::new(&mut changed.nodes).remove(&selected[1..]);
-        changed.nodes = nodes::CopiedNodes::of(&after, &changed.nodes)?
-            .read(&after, &changed.variables)
-            .ok()?;
-        Some(changed)
-    }) else {
+    // The new file moves the paths ids are among, so the scene is read anew among them before the
+    // placement takes the selection's place in it.
+    let Some((made, variables, rescoped_own)) =
+        after.id_of::<BlueprintDef>(&path).and_then(|made| {
+            let variables = rescoped(own.variables(), reader.scope(), after.scope()).ok()?;
+            let nodes = nodes::CopiedNodes::of(&reader, own.nodes())?
+                .read(&after, &variables)
+                .ok()?;
+            Some((made, variables, own.with_nodes(nodes)))
+        })
+    else {
         editor.toast("The new blueprint doesn't read where it was made");
         return;
     };
-    let wrote = own.write_in(&mut edit, &after, &bundle, |draft| *draft = written);
+    let placement = SceneNode::Module(ModuleNode {
+        label: Some(label.clone()),
+        holes: Holes(
+            named
+                .iter()
+                .map(|name| (format!("/values/{}", escape(name)), name.clone()))
+                .collect(),
+        ),
+        ..ModuleNode::new(AreaModule::Blueprint(Placement {
+            blueprint: made,
+            at: origin,
+            yaw: Degrees::default(),
+            values: BTreeMap::new(),
+        }))
+    });
+    let wrote = rescoped_own.write_in(&mut edit, &after, &bundle, |scene, kept| {
+        *kept = variables;
+        scene.replace(&first, placement);
+        nodes::SceneTree::new(scene).remove(&selected[1..]);
+    });
     if let Err(error) = wrote.and_then(|()| editor.try_apply(edit)) {
         editor.toast(error);
         return;

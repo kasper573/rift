@@ -89,7 +89,8 @@ pub(crate) fn go_to(editor: &mut Editor, problem: &Problem) {
             .node
             .as_ref()
             .and_then(|node| {
-                nodes::module_node(&nodes::scene_of(editor, bundle), node)
+                let read = nodes::bundle_of(editor, bundle)?;
+                nodes::module_node(read.nodes(), node)
                     .and_then(|module| super::shapes::bounds(&module.module, None))
             })
             .map(|bounds| {
@@ -167,7 +168,7 @@ pub fn output(editor: &mut Editor, ui: &mut Ui) {
 pub fn move_there(editor: &mut Editor, bundle: &str, node: &str, to: Pos<Meters>) {
     let reader = editor.reader();
     nodes::change_scene(editor, bundle, |scene| {
-        let module = &mut nodes::module_node_mut(scene, node)?.module;
+        let module = &mut scene.module_mut(node)?.module;
         let from = super::shapes::bounds(module, None)?.center();
         module.shift(to.x - from.x, to.y - from.y);
         Some(format!(

@@ -10,7 +10,7 @@ use engine::core::script::VariableType;
 use engine::core::units::{Degrees, MeterPos, Meters};
 use engine::systems::area::blueprint::{BlueprintDef, BlueprintId, Placement};
 use engine::systems::area::scene::{ModuleNode, SceneNode};
-use engine::systems::area::{self, AreaModule};
+use engine::systems::area::{self, AreaModule, AreaModuleKind};
 use engine::systems::script::VarValue;
 use ui::egui::{Color32, Pos2, Rect as ERect, Stroke as EStroke, Ui, Vec2};
 
@@ -42,7 +42,7 @@ pub(crate) fn stamp_panel(
 ) {
     let content = &snapshot.content;
     let mut counts: BTreeMap<&str, usize> = BTreeMap::new();
-    for module in snapshot.modules.iter() {
+    for module in snapshot.doc.of_kind(AreaModuleKind::Blueprint) {
         if let AreaModule::Blueprint(placement) = module.module()
             && let Some(path) = snapshot.reader.path_of(placement.blueprint)
         {

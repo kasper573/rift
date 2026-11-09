@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use engine::core::content::id::LeafKind;
 use engine::core::content::locate::unescape;
@@ -7,7 +8,7 @@ use engine::systems::registry;
 use rayon::prelude::*;
 use serde_json::Value;
 
-use crate::project::ProjectFiles;
+use crate::project::{FileStamp, ProjectFiles};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ContentUsage {
@@ -37,26 +38,48 @@ impl ContentUsage {
 pub struct ContentUsages {
     content: HashMap<String, Vec<ContentUsage>>,
     media: HashMap<String, Vec<ContentUsage>>,
-    by_file: HashMap<String, Vec<Reference>>,
+    by_file: HashMap<String, Arc<[Reference]>>,
+    /// The version of each file its references were read from, among the paths of
+    /// `paths_revision`.
+    read_from: HashMap<String, FileStamp>,
+    paths_revision: u64,
 }
 
 impl ContentUsages {
-    pub fn build(reader: &FolderReader, files: &ProjectFiles) -> ContentUsages {
+    /// Where `files` name content and media, read anew only from the files `last` didn't read as
+    /// they stand: a file names among the folder's paths, so once a path comes or goes every file
+    /// is read anew.
+    pub fn build(
+        reader: &FolderReader,
+        files: &ProjectFiles,
+        last: Option<&ContentUsages>,
+    ) -> ContentUsages {
         let registry = registry();
+        let last = last.filter(|last| last.paths_revision == files.paths_revision());
         let naming: Vec<&String> = files
             .paths()
             .filter(|path| registry.names_content(path))
             .collect();
-        let parsed: Vec<(String, Vec<Reference>)> = naming
+        let parsed: Vec<(String, FileStamp, Arc<[Reference]>)> = naming
             .par_iter()
             .filter_map(|path| {
-                let text = files.text(path)?;
-                Some(((*path).clone(), registry.references(reader, path, &text)))
+                let stamp = files.stamp_of(path)?;
+                let kept = last
+                    .filter(|last| last.read_from.get(*path) == Some(&stamp))
+                    .and_then(|last| last.by_file.get(*path));
+                let references = match kept {
+                    Some(references) => references.clone(),
+                    None => registry.references(reader, path, &files.text(path)?).into(),
+                };
+                Some(((*path).clone(), stamp, references))
             })
             .collect();
-        let mut usages = ContentUsages::default();
-        for (file, references) in parsed {
-            for reference in &references {
+        let mut usages = ContentUsages {
+            paths_revision: files.paths_revision(),
+            ..ContentUsages::default()
+        };
+        for (file, stamp, references) in parsed {
+            for reference in references.iter() {
                 let usage = ContentUsage {
                     file: file.clone(),
                     pointer: reference.pointer.clone(),
@@ -72,6 +95,7 @@ impl ContentUsages {
                     .or_default()
                     .push(usage);
             }
+            usages.read_from.insert(file.clone(), stamp);
             usages.by_file.insert(file, references);
         }
         usages
@@ -100,7 +124,9 @@ impl ContentUsages {
     }
 
     pub(crate) fn in_file(&self, file: &str) -> &[Reference] {
-        self.by_file.get(file).map_or(&[], Vec::as_slice)
+        self.by_file
+            .get(file)
+            .map_or(&[], |references| &references[..])
     }
 
     pub(crate) fn files_naming(&self, path: &str) -> Vec<(String, Vec<String>)> {

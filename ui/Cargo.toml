@@ -11,7 +11,6 @@ ab_glyph = "0.2"
 egui.workspace = true
 egui_code_editor = "0.4.2"
 egui_dock = "0.21"
-egui_ltreeview = "0.9"
 egui-snarl = "0.12"
 egui-phosphor = { version = "0.14", default-features = false, features = ["regular", "fill"] }
 image.workspace = true

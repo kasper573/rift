@@ -21,11 +21,14 @@ pub mod vfx;
 pub mod world;
 
 use std::sync::Arc;
+use std::time::Duration;
 use ui::egui;
 use ui::theme;
 
 use bevy::prelude::*;
-use engine::core::content::ContentFile;
+use bevy::winit::{UpdateMode, WinitSettings};
+use engine::core::content::{Content, ContentFile};
+use engine::core::jobs;
 use engine::core::math::Pos;
 use engine::core::units::Meters;
 use engine::systems::GameSettings;
@@ -118,6 +121,25 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
     area::viewport::sync(editor, world);
     crate::thumbs::props::sync(editor, world);
     crate::thumbs::areas::sync(editor, world);
+    pace(editor, world);
+}
+
+/// How long the editor rests between frames while nothing asks for one.
+const IDLE_FRAME: Duration = Duration::from_millis(100);
+
+/// Draws every frame while a view shows the world, whose weather and bodies move of themselves,
+/// and otherwise a frame only when the interface or the input asks for one.
+fn pace(editor: &Editor, world: &mut World) {
+    let mode = if editor.views.area.viewports.showing() {
+        UpdateMode::Continuous
+    } else {
+        UpdateMode::reactive(IDLE_FRAME)
+    };
+    let mut settings = world.resource_mut::<WinitSettings>();
+    if settings.focused_mode != mode || settings.unfocused_mode != mode {
+        settings.focused_mode = mode;
+        settings.unfocused_mode = mode;
+    }
 }
 
 fn share_content(editor: &mut Editor, world: &mut World) {
@@ -130,6 +152,9 @@ fn share_content(editor: &mut Editor, world: &mut World) {
         return;
     };
     if editor.views.shared_generation != Some(generation) {
+        if let Some(replaced) = world.remove_resource::<Content>() {
+            jobs::drop_off_thread(replaced);
+        }
         world.insert_resource(content);
         editor.views.shared_generation = Some(generation);
     }

@@ -1,18 +1,22 @@
 //! The area on view, drawn: its scenery stood when the player's character arrives, lit again as
 //! the day moves on, and torn down when the view leaves it.
 
+use std::sync::Arc;
+
 use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 
-use super::scenery::{self, Scenery, SceneryPlugin};
+use super::scenery::{self, Eyes, Scenery, SceneryPlugin, Sight};
 use super::{AreaId, AreaObject, AreaTag};
 use crate::core::content::Content;
 use crate::core::math::{Pos, Rect};
 use crate::core::render::transition::WorldViewSystems;
+use crate::core::render::video::VideoPreferences;
 use crate::core::render::world::sky::Daylight;
 use crate::core::render::{CameraFraming, CameraRig, camera};
 use crate::core::render::{GroundHeights, WorldCamera, ground_height, world_point};
 use crate::core::units::{MeterSize, Meters};
+use crate::core::vfx::cover::ShownWeather;
 use crate::core::vfx::render::SiteExtent;
 use crate::systems::movement::RenderPosition;
 use crate::systems::player::session::MyCharacter;
@@ -92,8 +96,9 @@ fn show_area(world: &mut World) {
     light_area(world, area_id, &area, &weather);
 }
 
-/// Tells the shown scenery where the player's character stands, so what stands around them
-/// follows them: as far as the camera sees from its widest, and the fades past that.
+/// Tells the shown scenery what the camera looks at, from wherever its framing lets it stand,
+/// once the player's character is there for it to follow: so what stands around them follows
+/// them, as far as the camera sees from its widest, and the fades past that.
 fn follow_view(world: &mut World) {
     let Some(stood) = world
         .resource::<ShownArea>()
@@ -103,28 +108,38 @@ fn follow_view(world: &mut World) {
     else {
         return;
     };
-    let Some(at) = world
+    let followed = world
         .resource::<MyCharacter>()
         .0
-        .and_then(|seen| world.get::<RenderPosition>(seen))
-        .map(|position| position.0)
+        .is_some_and(|seen| world.get::<RenderPosition>(seen).is_some());
+    let Some(lens) = camera::view_of(world)
+        .filter(|_| followed)
+        .map(|view| view.lens())
     else {
         return;
     };
     let Some(rig) = world.get_resource::<CameraRig>() else {
         return;
     };
-    let reach = view_reach(rig.framing());
-    let Some(view) = camera::view_of(world) else {
-        return;
+    let target = rig.target();
+    let at = camera::ground_pos(target);
+    let lift = Meters(target.y - ground_height(world, at).0);
+    let video = world.resource::<VideoPreferences>();
+    let sight = Sight {
+        at,
+        reach: view_reach(rig.framing(), video),
+        horizon: video.view_distance.horizon(),
+        lens,
+        eyes: Eyes::orbiting(rig.framing(), lift),
     };
-    scenery::view_from(world, stood, at, reach, view);
+    scenery::view_from(world, stood, sight);
 }
 
 /// How far around the character the covers, props and lights stand: the ground the camera takes
-/// in from its widest, and as far again for what the frame's edge fades.
-pub fn view_reach(framing: &CameraFraming) -> Meters {
-    Meters(framing.zooms.wide.0 * 4.0)
+/// in from its widest, and as far again for what the frame's edge fades, as much of it as the
+/// player's view distance takes in.
+pub fn view_reach(framing: &CameraFraming, video: &VideoPreferences) -> Meters {
+    Meters(framing.zooms.wide.0 * 4.0 * video.view_distance.share())
 }
 
 /// Turns the shown area's sun with the hour as it moves, its clouds with the wind, and lets its
@@ -137,7 +152,13 @@ fn follow_daylight(world: &mut World) {
     let area = super::shared(&content, area_id).clone();
     let weather = super::weather::weather_now(world, area_id, &area.climate);
     let flash = light_area(world, area_id, &area, &weather);
-    world.insert_resource(scenery::shown_weather(&weather, flash));
+    let shown = scenery::shown_weather(&weather, flash);
+    match world.get_resource_mut::<ShownWeather>() {
+        Some(mut was) => {
+            was.set_if_neq(shown);
+        }
+        None => world.insert_resource(shown),
+    }
 }
 
 /// Lights the shown scenery of `area` under `weather` and lets its rain fall, returning how
@@ -145,7 +166,7 @@ fn follow_daylight(world: &mut World) {
 fn light_area(
     world: &mut World,
     area_id: AreaId,
-    area: &super::Area,
+    area: &Arc<super::Area>,
     weather: &super::Weather,
 ) -> f32 {
     let daylight = *world.resource::<Daylight>();
@@ -164,7 +185,13 @@ fn light_area(
         return 0.0;
     };
     scenery::light(world, area, weather, daylight, stood, camera);
-    if let Some(standing) = world.resource_mut::<ShownArea>().0.as_mut() {
+    if let Some(mut shown) = world.get_resource_mut::<ShownArea>()
+        && shown
+            .0
+            .as_ref()
+            .is_some_and(|standing| standing.shone != Some(daylight))
+        && let Some(standing) = shown.0.as_mut()
+    {
         standing.shone = Some(daylight);
     }
     super::rain::fall(world, area_id, area, weather, stood.rain, camera)

@@ -296,33 +296,65 @@ impl Bundle for AreaDef {
         scene::write(&self.scene, bundle, writer)?;
         let part = |spec: PartSpec, key: &str| format!("{bundle}/{}", spec.named(key, "png"));
         for at in self.size.each_tile() {
-            if let Some(bytes) = self.heights.encode_tile(at) {
-                writer.file(&part(HEIGHT, &at.key()), &bytes)?;
-            }
-            if let Some(bytes) = self.paint.encode_tile(at) {
-                writer.file(&part(PAINT, &at.key()), &bytes)?;
-            }
-            if let Some(bytes) = self.water.encode_tile(at) {
-                writer.file(&part(WATER, &at.key()), &bytes)?;
-            }
+            put(writer, part(HEIGHT, &at.key()), || {
+                self.heights.encode_tile(at)
+            })?;
+            put(writer, part(PAINT, &at.key()), || {
+                self.paint.encode_tile(at)
+            })?;
+            put(writer, part(WATER, &at.key()), || {
+                self.water.encode_tile(at)
+            })?;
         }
-        if let Some(bytes) = self.heights.encode_overview() {
-            writer.file(&part(HEIGHT_OVERVIEW, ""), &bytes)?;
-        }
-        if let Some(bytes) = self.paint.encode_overview() {
-            writer.file(&part(PAINT_OVERVIEW, ""), &bytes)?;
-        }
-        if let Some(bytes) = self.water.encode_overview() {
-            writer.file(&part(WATER_OVERVIEW, ""), &bytes)?;
-        }
-        if let Some(rain) = &self.rain {
-            writer.file(&part(RAIN, ""), &rain.encode())?;
-        }
+        put(writer, part(HEIGHT_OVERVIEW, ""), || {
+            self.heights.encode_overview()
+        })?;
+        put(writer, part(PAINT_OVERVIEW, ""), || {
+            self.paint.encode_overview()
+        })?;
+        put(writer, part(WATER_OVERVIEW, ""), || {
+            self.water.encode_overview()
+        })?;
+        put(writer, part(RAIN, ""), || {
+            self.rain.as_ref().map(ShareMap::encode)
+        })?;
         Ok(())
     }
 }
 
 impl AreaDef {
+    /// The files of the area at `bundle` its ground keeps that differ from `before`'s: each tile
+    /// of its heights, paint or water whose values changed, and the overview of each that did.
+    pub fn ground_files_changed(&self, before: &AreaDef, bundle: &str) -> BTreeSet<String> {
+        let part = |spec: PartSpec, key: &str| format!("{bundle}/{}", spec.named(key, "png"));
+        let resized = self.size != before.size;
+        let mut files = BTreeSet::new();
+        let mut grounds = [
+            (HEIGHT, HEIGHT_OVERVIEW, false),
+            (PAINT, PAINT_OVERVIEW, false),
+            (WATER, WATER_OVERVIEW, false),
+        ];
+        for at in self.size.each_tile() {
+            let changed = [
+                self.heights.version(at) != before.heights.version(at),
+                self.paint.version(at) != before.paint.version(at),
+                self.water.version(at) != before.water.version(at),
+            ];
+            for ((tiles, _, any), changed) in grounds.iter_mut().zip(changed) {
+                if resized || changed {
+                    files.insert(part(*tiles, &at.key()));
+                    *any = true;
+                }
+            }
+        }
+        for (_, overview, any) in grounds {
+            if any {
+                files.insert(part(overview, ""));
+            }
+        }
+        files
+    }
+
     /// The area over ground of `size`, its heights, paint and water kept from the top-left corner.
     pub fn resized(&self, size: GroundSize) -> AreaDef {
         let mut area = self.clone();
@@ -560,7 +592,8 @@ impl AreaModule {
         }
     }
 
-    fn check(&self, pointer: &str, cx: &mut RowCheck) {
+    /// Holds the module, at `pointer` of its scene file, to the rules it keeps alone.
+    pub fn check(&self, pointer: &str, cx: &mut RowCheck) {
         match self {
             AreaModule::Population(population) => {
                 cx.at_least(format!("{pointer}/count"), population.count, 1, "npcs")
@@ -831,6 +864,12 @@ pub struct Area {
     pub soundscape: Vec<SoundscapeZone>,
     /// Every prop standing in the area, scattered ones expanded.
     pub props: Vec<PropPlacement>,
+    /// The modules that stand the area's props, placed and scattered, in the order `props`
+    /// expands them: what any chunk's props are worked out from alone.
+    pub prop_sources: Vec<AreaModule>,
+    /// Where each of `prop_sources` was written: the path of the node in the area's scene that is
+    /// the module or brings it.
+    pub prop_origins: Vec<String>,
     pub lights: Vec<PointLightDef>,
     underfoot: Vec<walk::Underfoot>,
     footprints: Vec<Vec<Pos<Meters>>>,
@@ -1295,11 +1334,21 @@ fn build_area(
         })
         .collect();
     let mut props: Vec<PropPlacement> = Vec::new();
+    let mut prop_sources: Vec<AreaModule> = Vec::new();
+    let mut prop_origins: Vec<String> = Vec::new();
     let mut lights: Vec<PointLightDef> = Vec::new();
     for placed in modules {
         match &placed.module {
-            AreaModule::Prop(prop) => props.push(prop.clone()),
-            AreaModule::Scatter(scatter) => props.extend(scatter.expand()),
+            AreaModule::Prop(prop) => {
+                props.push(prop.clone());
+                prop_sources.push(placed.module.clone());
+                prop_origins.push(placed.origin.clone());
+            }
+            AreaModule::Scatter(scatter) => {
+                props.extend(scatter.expand());
+                prop_sources.push(placed.module.clone());
+                prop_origins.push(placed.origin.clone());
+            }
             AreaModule::Light(light) => {
                 if lights.len() == MAX_LIGHTS * tiles {
                     check.error(
@@ -1363,6 +1412,8 @@ fn build_area(
         footprints,
         footprint_index,
         props,
+        prop_sources,
+        prop_origins,
         lights,
         meshes: walk::Meshes::empty(ground.size.bounds()),
         modules_by_tile,
@@ -1383,40 +1434,39 @@ fn module_pointer(placed: &Flattened, field: &str) -> String {
 
 fn check_bounds(content: &Content, size: GroundSize, modules: &[Flattened], check: &mut RowCheck) {
     let bounds = size.bounds();
-    let outside = |at: Pos<Meters>| !bounds.contains(at);
-    let rect_outside =
-        |rect: Rect<Meters>| outside(rect.min()) || outside(rect.max() - Offset::new(0.001, 0.001));
+    let outside = |at: Pos<Meters>| (!bounds.contains(at)).then_some(at);
+    let corner_outside = |rect: Rect<Meters>| {
+        outside(rect.min())
+            .or_else(|| outside(rect.max() - Offset::new(0.001, 0.001)).map(|_| rect.max()))
+    };
     for placed in modules {
-        let site = |field: &str| module_pointer(placed, field);
-        let what = placed.describe(content);
-        let out = |check: &mut RowCheck, at: Pos<Meters>| {
+        let lands = match &placed.module {
+            AreaModule::Object(object) => corner_outside(object.shape.bounds()),
+            AreaModule::Prop(prop) => outside(prop.at),
+            AreaModule::Scatter(scatter) => corner_outside(scatter.region),
+            AreaModule::Fog(bank) => corner_outside(bank.rect),
+            AreaModule::Light(light) => outside(light.at),
+            AreaModule::Resident(resident) => outside(resident.at),
+            AreaModule::Population(Population {
+                roams: Some(roams), ..
+            }) => outside(roams.min()),
+            _ => None,
+        };
+        if let Some(at) = lands {
             check.error(
-                site(""),
+                module_pointer(placed, ""),
                 "outside the terrain",
-                format!("{what} lands outside the terrain at {}, {}", at.x, at.y),
+                format!(
+                    "{} lands outside the terrain at {}, {}",
+                    placed.describe(content),
+                    at.x,
+                    at.y
+                ),
                 format!(
                     "everything inside the {} × {} m ground",
                     size.width, size.height
                 ),
             );
-        };
-        match &placed.module {
-            AreaModule::Object(object) => {
-                if rect_outside(object.shape.bounds()) {
-                    out(check, object.shape.origin());
-                }
-            }
-            AreaModule::Prop(prop) if outside(prop.at) => out(check, prop.at),
-            AreaModule::Scatter(scatter) if rect_outside(scatter.region) => {
-                out(check, scatter.region.origin)
-            }
-            AreaModule::Fog(bank) if rect_outside(bank.rect) => out(check, bank.rect.origin),
-            AreaModule::Light(light) if outside(light.at) => out(check, light.at),
-            AreaModule::Resident(resident) if outside(resident.at) => out(check, resident.at),
-            AreaModule::Population(Population {
-                roams: Some(roams), ..
-            }) if outside(roams.min()) => out(check, roams.min()),
-            _ => {}
         }
     }
 }
@@ -1782,4 +1832,16 @@ fn describe_point(at: Pos<Meters>) -> String {
 
 pub fn sixteenth(v: f32) -> f32 {
     (v * 16.0).round() / 16.0
+}
+
+/// Writes `file` as `encode` makes it, if `writer` wants it and there is anything to write.
+fn put<Bytes: AsRef<[u8]>>(
+    writer: &mut FileWriter,
+    file: String,
+    encode: impl FnOnce() -> Option<Bytes>,
+) -> io::Result<()> {
+    match writer.wants(&file).then(encode).flatten() {
+        Some(bytes) => writer.file(&file, bytes.as_ref()),
+        None => Ok(()),
+    }
 }

@@ -6,6 +6,8 @@ use std::marker::PhantomData;
 use bevy::asset::RenderAssetUsages;
 use bevy::asset::uuid::Uuid;
 use bevy::prelude::*;
+use bevy::render::RenderApp;
+use bevy::render::extract_resource::ExtractResource;
 use bevy::render::render_resource::{Extent3d, ShaderType, TextureDimension, TextureFormat};
 use bevy::shader::Shader;
 
@@ -126,30 +128,27 @@ impl VfxShaderKey {
     }
 }
 
-/// The weather as every cover reads it: a picture a texel per value, painted over in place each
-/// frame. The covers' materials stand unchanged while the wind blows and bodies tread through
-/// them, so none of their meshes is drawn up again for it.
-#[derive(Resource)]
+/// The weather as every cover reads it: a picture a texel per value, its changed texels written
+/// over in place on the GPU, so a frame in which nothing of it changed writes nothing. The covers'
+/// materials stand unchanged while the wind blows and bodies tread through them, so none of their
+/// meshes is drawn up again for it.
+#[derive(Resource, Clone, ExtractResource)]
+#[extract_app(RenderApp)]
 pub struct WeatherImage(pub Handle<Image>);
 
 impl FromWorld for WeatherImage {
     fn from_world(world: &mut World) -> WeatherImage {
-        WeatherImage(
-            world
-                .resource_mut::<Assets<Image>>()
-                .add(Weather::default().image()),
-        )
+        WeatherImage(world.resource_mut::<Assets<Image>>().add(Weather::image()))
     }
 }
 
 /// The weather as the headers' `weather` reads it: the wind as a direction scaled by its
-/// strength, the moment, how far through its day the game is, how clouded the sky, how much water
+/// strength, how far through its day the game is, how clouded the sky, how much water
 /// the cloud holds, how hard it rains under the wettest and how brightly lightning lights the
 /// world, and the bodies treading through.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Weather {
     pub(super) wind: Vec2,
-    pub(super) time: f32,
     pub(super) daylight: f32,
     pub(super) clouds: f32,
     pub(super) water: f32,
@@ -183,7 +182,6 @@ impl Default for Weather {
     fn default() -> Weather {
         Weather {
             wind: Vec2::ZERO,
-            time: 0.0,
             daylight: 0.5,
             clouds: 0.0,
             water: 0.0,
@@ -195,7 +193,7 @@ impl Default for Weather {
 }
 
 /// How many texels a row of the weather's picture holds: it is read in order, row by row.
-const PICTURE_WIDTH: usize = 256;
+pub(super) const PICTURE_WIDTH: usize = 256;
 /// Where the first tread's texel lies: after the climate's, the storm's, where the rain field and
 /// the shelter lie, and the most the field holds.
 const FIRST_TREAD: usize = 6;
@@ -210,7 +208,13 @@ const WEATHER_TEXELS: usize =
     (FIRST_SHELTER + SHELTER_SIDE * SHELTER_SIDE / 4).div_ceil(PICTURE_WIDTH) * PICTURE_WIDTH;
 
 impl Weather {
-    pub(super) fn image(&self) -> Image {
+    /// The texels of the picture as it is first made, before any weather is known.
+    pub(super) fn still() -> Vec<Vec4> {
+        Weather::default().texels(&RainField::default(), &Shelter::default())
+    }
+
+    /// The picture as it is first made, holding `still`'s texels.
+    pub(super) fn image() -> Image {
         Image::new(
             Extent3d {
                 width: PICTURE_WIDTH as u32,
@@ -218,14 +222,14 @@ impl Weather {
                 depth_or_array_layers: 1,
             },
             TextureDimension::D2,
-            self.texels(&RainField::default(), &Shelter::default()),
+            texel_bytes(&Weather::still()),
             TextureFormat::Rgba32Float,
             RenderAssetUsages::default(),
         )
     }
 
-    /// The weather laid out as the headers read it, texel by texel, row by row: the wind, the
-    /// moment and the count of treads in the first texel, the daylight, the cloud, its water and
+    /// The weather laid out as the headers read it, texel by texel, row by row: the wind and the
+    /// count of treads in the first texel, the daylight, the cloud, its water and
     /// the rain in the second; the flash and where the rain field's, the shelter's and the
     /// treads' first texels lie in the third; where the rain field and the shelter lie on the
     /// ground in the fourth and fifth, their north-west corner, a cell's side and the cells each
@@ -236,14 +240,9 @@ impl Weather {
     /// texels for each tread's trail, a point's place, when it was laid and 1, or nothing past the
     /// trail's end; then a texel a cell of the rain field, its share of the downpour, its
     /// wetness and its rain, and the tops of the shelter's cells, four to a texel.
-    pub(super) fn texels(&self, rain: &RainField, shelter: &Shelter) -> Vec<u8> {
+    pub(super) fn texels(&self, rain: &RainField, shelter: &Shelter) -> Vec<Vec4> {
         let mut texels = vec![Vec4::ZERO; WEATHER_TEXELS];
-        texels[0] = Vec4::new(
-            self.wind.x,
-            self.wind.y,
-            self.time,
-            self.treads.len() as f32,
-        );
+        texels[0] = Vec4::new(self.wind.x, self.wind.y, 0.0, self.treads.len() as f32);
         texels[1] = Vec4::new(self.daylight, self.clouds, self.water, self.rain);
         texels[2] = Vec4::new(
             self.flash,
@@ -285,9 +284,14 @@ impl Weather {
             }
         }
         texels
-            .iter()
-            .flat_map(Vec4::to_array)
-            .flat_map(f32::to_le_bytes)
-            .collect()
     }
+}
+
+/// The weather's texels as the picture holds them.
+pub(super) fn texel_bytes(texels: &[Vec4]) -> Vec<u8> {
+    texels
+        .iter()
+        .flat_map(Vec4::to_array)
+        .flat_map(f32::to_le_bytes)
+        .collect()
 }

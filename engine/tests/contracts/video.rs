@@ -9,13 +9,12 @@ use bevy::prelude::*;
 use bevy::shader::Shader;
 use bevy::world_serialization::WorldSerializationPlugin;
 use engine::core::render::camera;
-use engine::core::render::video::{
-    AmbientOcclusionQuality, AntiAliasingQuality, ShadowQuality, VideoPreferences,
-};
+use engine::core::render::video::{AntiAliasingQuality, Quality, ShadowQuality, VideoPreferences};
 use engine::core::render::world::WorldScenePlugin;
 use engine::core::render::world::lights;
-use engine::core::units::Degrees;
+use engine::core::units::{Degrees, Meters};
 use engine::core::vfx::render::VfxMaterialsPlugin;
+use engine::systems::area;
 use strum::VariantArray;
 
 /// How a picture and the sun over it are drawn, in the parts a player's video preferences choose.
@@ -28,46 +27,74 @@ struct Drawn {
     /// The quality whose smoothing the picture is drawn with.
     smoothing: Option<AntiAliasingQuality>,
     bloom: bool,
+    /// How far around the player the props, covers and lights stand.
+    reach: Meters,
 }
 
 #[test]
 fn a_players_video_preferences_draw_the_world_as_picked_from_the_moment_they_are_picked() {
+    let preset = |quality| VideoPreferences::default().at(quality);
     let cases = [
         (
-            "everything off",
-            VideoPreferences::lowest(),
+            "the lowest preset",
+            preset(Quality::Lowest),
             Drawn {
                 shadows: None,
                 occlusion: None,
                 shafts: false,
                 smoothing: None,
                 bloom: false,
+                reach: Meters(widest() * 0.5),
             },
         ),
         (
-            "everything low",
-            VideoPreferences {
-                fullscreen: false,
-                vsync: false,
-                shadows: ShadowQuality::Low,
-                ambient_occlusion: AmbientOcclusionQuality::Low,
-                light_shafts: true,
-                anti_aliasing: AntiAliasingQuality::Low,
-                bloom: true,
-            },
+            "the low preset",
+            preset(Quality::Low),
             Drawn {
                 shadows: Some((1, false)),
                 occlusion: Some(ScreenSpaceAmbientOcclusionQualityLevel::Low),
-                shafts: true,
+                shafts: false,
                 smoothing: Some(AntiAliasingQuality::Low),
-                bloom: true,
+                bloom: false,
+                reach: Meters(widest() * 0.75),
             },
         ),
         (
-            "everything at its best again",
-            VideoPreferences::default(),
-            best(),
+            "the medium preset",
+            preset(Quality::Medium),
+            Drawn {
+                shadows: Some((1, false)),
+                occlusion: Some(ScreenSpaceAmbientOcclusionQualityLevel::Medium),
+                shafts: false,
+                smoothing: Some(AntiAliasingQuality::Medium),
+                bloom: true,
+                reach: Meters(widest() * 0.75),
+            },
         ),
+        (
+            "the high preset",
+            preset(Quality::High),
+            Drawn {
+                smoothing: Some(AntiAliasingQuality::High),
+                ..best()
+            },
+        ),
+        (
+            "a part picked by hand",
+            VideoPreferences {
+                shadows: ShadowQuality::Low,
+                ..preset(Quality::Lowest)
+            },
+            Drawn {
+                shadows: Some((1, false)),
+                occlusion: None,
+                shafts: false,
+                smoothing: None,
+                bloom: false,
+                reach: Meters(widest() * 0.5),
+            },
+        ),
+        ("the max preset again", preset(Quality::Max), best()),
     ];
     let mut app = client();
     let first = stand(&mut app);
@@ -95,6 +122,46 @@ fn a_players_video_preferences_draw_the_world_as_picked_from_the_moment_they_are
     }
 }
 
+#[test]
+fn a_preset_picks_every_part_at_once_and_a_part_picked_by_hand_leaves_the_rest_as_the_preset_set_them()
+ {
+    let window = VideoPreferences {
+        fullscreen: true,
+        vsync: true,
+        ..VideoPreferences::default()
+    };
+    assert_eq!(
+        VideoPreferences::default().quality(),
+        Some(Quality::Max),
+        "unpicked, every part is at its best"
+    );
+    for &quality in Quality::VARIANTS {
+        let picked = window.at(quality);
+        assert_eq!(picked.quality(), Some(quality), "{quality:?} picked");
+        assert!(
+            picked.fullscreen && picked.vsync,
+            "{quality:?} leaves the window as it was"
+        );
+        let by_hand = VideoPreferences {
+            bloom: !picked.bloom,
+            ..picked
+        };
+        assert_eq!(
+            VideoPreferences {
+                bloom: picked.bloom,
+                ..by_hand
+            },
+            picked,
+            "{quality:?}, then the bloom by hand: the rest stands as the preset set it"
+        );
+        assert_eq!(
+            by_hand.quality(),
+            None,
+            "{quality:?}, then the bloom by hand: at no preset"
+        );
+    }
+}
+
 /// Everything at its highest quality.
 fn best() -> Drawn {
     Drawn {
@@ -103,7 +170,14 @@ fn best() -> Drawn {
         shafts: true,
         smoothing: Some(AntiAliasingQuality::Ultra),
         bloom: true,
+        reach: Meters(widest()),
     }
+}
+
+/// How far around the player the props, covers and lights stand at most: the ground the camera
+/// takes in from its widest, and as far again for what the frame's edge fades.
+fn widest() -> f32 {
+    testkit::look().camera.zooms.wide.0 * 4.0
 }
 
 /// A client's world drawing nothing but its picture and its sun.
@@ -169,5 +243,9 @@ fn drawn(app: &mut App, (picture, sun): (Entity, Entity)) -> Drawn {
                 .expect("a quality of the picture's smoothing")
         }),
         bloom: picture.contains::<Bloom>(),
+        reach: area::render::view_reach(
+            &testkit::look().camera,
+            world.resource::<VideoPreferences>(),
+        ),
     }
 }

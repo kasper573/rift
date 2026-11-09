@@ -86,7 +86,7 @@ pub struct Body {
     waiting: Vec<Running>,
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, PartialEq)]
 struct Running {
     act: Act,
     priority: Priority,
@@ -172,6 +172,9 @@ impl Planner for DriveBodies {
 
     fn apply(&mut self, world: &mut World) {
         for (npc, drive) in self.drives.drain(..) {
+            if !drive.still_current(world, npc) {
+                continue;
+            }
             match drive {
                 Drive::Halt => movement::halt(world, npc),
                 Drive::Drop => {
@@ -197,7 +200,7 @@ impl Planner for DriveBodies {
                     let outcome = step(world, npc, current);
                     carry_on(world, npc, current, outcome);
                 }
-                Drive::Wander(ground) => {
+                Drive::Wander(_, ground) => {
                     wander_to(world, npc, ground);
                     mark_started(world, npc);
                 }
@@ -229,10 +232,29 @@ enum Drive {
     Step(Running),
     /// Walks on toward where its current act leads, as planned from the world as the tick found it.
     Walk(Running, Option<ApproachPlan>),
-    /// Sets out wandering, over the ground it may wander: triangles to draw a spot from.
-    Wander(Vec<[Pos<Meters>; 3]>),
+    /// Sets out on its current act, wandering over the ground it may wander: triangles to draw a
+    /// spot from.
+    Wander(Running, Vec<[Pos<Meters>; 3]>),
     /// Its current act came to an end on its own.
     Done(Running, Outcome),
+}
+
+impl Drive {
+    /// Whether the act the drive was worked out for is still the npc's current one. Drives are
+    /// worked out from the world as the tick found it, and an order made since in the same tick
+    /// replaces the act: the drive is then left for the next tick to work out anew, so it never
+    /// ends or moves an act it wasn't worked out for.
+    fn still_current(&self, world: &World, npc: Entity) -> bool {
+        match self {
+            Drive::Step(running)
+            | Drive::Walk(running, _)
+            | Drive::Wander(running, _)
+            | Drive::Done(running, _) => {
+                world.get::<Body>(npc).and_then(|body| body.current) == Some(*running)
+            }
+            Drive::Halt | Drive::Drop | Drive::Start => true,
+        }
+    }
 }
 
 fn drive_of(world: &World, npc: Entity, talking: &[Entity]) -> Option<Drive> {
@@ -253,7 +275,7 @@ fn drive_of(world: &World, npc: Entity, talking: &[Entity]) -> Option<Drive> {
             }
             Drive::Done(current, Outcome::Next)
         }
-        Act::Wander { leash } => Drive::Wander(wander_ground(world, npc, leash)),
+        Act::Wander { leash } => Drive::Wander(current, wander_ground(world, npc, leash)),
         Act::WalkTo { to, within } => Drive::Walk(
             current,
             destination(world, npc, to, within)

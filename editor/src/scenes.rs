@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use engine::core::content::ContentFile;
-use engine::core::units::Meters;
+use engine::core::units::{Degrees, Meters};
 use engine::systems::actor::Action;
 use engine::systems::actor::model::ModelDef;
 use engine::systems::actor::skeleton::{BuildName, Clip, SkeletonDef};
@@ -62,9 +62,14 @@ pub enum SceneStep {
     Spell {
         index: usize,
     },
-    /// Looks at the middle of the open area or blueprint from `distance` off.
+    /// Looks at the middle of the open area or blueprint from `distance` off, turned to `yaw` and
+    /// tilted to `pitch` where given.
     Camera {
         distance: Meters,
+        #[serde(default)]
+        yaw: Option<Degrees>,
+        #[serde(default)]
+        pitch: Option<Degrees>,
     },
     /// Holds the row `row` of the open area's scene tree hovered, "" the whole scene, as the
     /// pointer over it would.
@@ -141,6 +146,25 @@ pub enum SceneStep {
     },
     Game,
     Asset(String),
+    /// Writes the window as a PNG at this path once the scene stands, then goes on with the rest.
+    Screenshot(PathBuf),
+    /// Selects these rows of the open area's or blueprint's scene.
+    Select(Vec<String>),
+    /// Moves these rows of the open area's or blueprint's scene `dx` and `dy` metres along the
+    /// ground, as dragging them there does.
+    Drag {
+        rows: Vec<String>,
+        dx: f32,
+        dy: f32,
+    },
+    /// Holds the stage of the open area or blueprint hovered over this point of the ground, as the
+    /// pointer resting there would.
+    HoverViewport {
+        x: f32,
+        y: f32,
+    },
+    Undo,
+    Redo,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -276,8 +300,33 @@ pub fn open(editor: &mut Editor, steps: &[SceneStep]) {
             editor.when_idle("Setting the scene", move |editor| open(editor, &rest));
             return;
         }
+        if let SceneStep::Screenshot(path) = step {
+            editor.shot = Some(PendingShot {
+                path: path.clone(),
+                rest: steps[at + 1..].to_vec(),
+            });
+            return;
+        }
         open_one(editor, step);
     }
+}
+
+/// A picture of the window the scene waits on, and the steps it goes on with once it is taken.
+#[derive(Clone, Debug)]
+pub struct PendingShot {
+    pub path: PathBuf,
+    pub rest: Vec<SceneStep>,
+}
+
+/// The open area or blueprint the scene works on, by its table and key.
+fn last_opened_scene(editor: &Editor) -> Option<(&'static str, String)> {
+    let key = last_opened_bundle(editor)?;
+    let table = if editor.read::<AreaDef>(&key).is_some() {
+        AreaDef::TABLE
+    } else {
+        BlueprintDef::TABLE
+    };
+    Some((table, key))
 }
 
 /// The area or blueprint the scene opened last, whose tab may not be placed in the dock yet.
@@ -348,9 +397,21 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
                 view.climate.pick_spell(*index);
             }
         }
-        SceneStep::Camera { distance } => {
+        SceneStep::Camera {
+            distance,
+            yaw,
+            pitch,
+        } => {
             if let Some(bundle) = last_opened_bundle(editor) {
-                editor.views.area.ensure_view(&bundle).look_from(*distance);
+                editor
+                    .views
+                    .area
+                    .ensure_view(&bundle)
+                    .look_from(area_view::CameraLook {
+                        distance: *distance,
+                        yaw: *yaw,
+                        pitch: *pitch,
+                    });
             }
         }
         SceneStep::Hover { row } => {
@@ -409,7 +470,8 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
         SceneStep::Clipboard { key, node } => {
             let (Some(reader), Some(mut copied)) = (
                 editor.reader(),
-                area_view::nodes::node(&area_view::nodes::scene_of(editor, key), node).cloned(),
+                area_view::nodes::bundle_of(editor, key)
+                    .and_then(|read| area_view::nodes::node(read.nodes(), node).cloned()),
             ) else {
                 return;
             };
@@ -481,6 +543,34 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
         SceneStep::Import { folder, sources } => {
             import::begin(editor, folder.clone(), sources.clone())
         }
+        SceneStep::Screenshot(_) => {}
+        SceneStep::Select(rows) => {
+            if let Some((table, key)) = last_opened_scene(editor) {
+                editor.select(RowSelection {
+                    table: table.to_owned(),
+                    keys: vec![key],
+                    parts: rows.clone(),
+                });
+            }
+        }
+        SceneStep::Drag { rows, dx, dy } => {
+            if let Some(bundle) = last_opened_bundle(editor) {
+                area_view::nodes::change_scene(editor, &bundle, |scene| {
+                    for row in rows {
+                        scene.module_mut(row)?.module.shift(*dx, *dy);
+                    }
+                    Some(format!("Move {} modules", rows.len()))
+                });
+            }
+        }
+        SceneStep::HoverViewport { x, y } => {
+            if let Some(bundle) = last_opened_bundle(editor) {
+                editor.views.area.ensure_view(&bundle).held_ground =
+                    Some(engine::core::math::Pos::new(*x, *y));
+            }
+        }
+        SceneStep::Undo => editor.undo(),
+        SceneStep::Redo => editor.redo(),
     }
 }
 

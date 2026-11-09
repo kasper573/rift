@@ -8,12 +8,12 @@ use bevy_egui::input::egui_wants_any_keyboard_input;
 
 use super::map::{self, InputAction};
 use crate::core::gui;
-use crate::core::render::{CameraFraming, CameraRig};
+use crate::core::render::{CameraFraming, CameraRig, CameraRigSystems};
 use crate::core::units::Degrees;
 use crate::systems::screen::ClientScreen;
 
 /// How far the camera turns or tilts for a pixel the pointer moves while it is held to.
-const DRAG_TURN: Degrees = Degrees(0.4);
+pub const DRAG_TURN: Degrees = Degrees(0.4);
 /// How many scrolled lines take the zoom one step.
 const LINES_PER_STEP: f32 = 1.0;
 const PIXELS_PER_STEP: f32 = 60.0;
@@ -25,6 +25,7 @@ pub fn plugin(app: &mut App) {
             steer_by_keys.run_if(not(egui_wants_any_keyboard_input)),
             steer_by_pointer,
         )
+            .in_set(CameraRigSystems)
             .run_if(in_state(ClientScreen::Area)),
     );
 }

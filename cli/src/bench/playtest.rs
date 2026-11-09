@@ -1,10 +1,10 @@
 use std::fs::File;
 use std::net::TcpListener;
 use std::path::Path;
-use std::process::{Child, Command, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
-use engine::core::content::{Content, ContentScope, with_content};
+use engine::core::content::{Content, ContentId, ContentScope, with_content};
 use engine::core::os::Profile;
 use engine::core::render::video::VideoPreferences;
 use engine::core::units::Bytes;
@@ -38,29 +38,36 @@ pub struct Playtest {
 }
 
 impl Playtest {
-    /// The game's first test character, at the game's initial spawn, in a client on a desktop of the
-    /// bench's own, shown as `video` asks.
-    pub fn start(game: &Path, content: &Content, video: VideoPreferences) -> Playtest {
-        let folder = tempfile::tempdir().expect("a folder for the client's profile and log");
-        settings::save_video(&Profile(folder.path().join("profile")), video);
+    /// The test character `character`, else the game's first, at the game's initial spawn, or a
+    /// fresh character where the game has none, in a client on a desktop of the bench's own,
+    /// shown as `video` asks, keeping its profile under `profile`: a folder no client has run on
+    /// starts cold, and one an earlier client kept its caches under starts warm. Refused when the
+    /// server or the client doesn't come up.
+    pub fn start(
+        game: &Path,
+        content: &Content,
+        character: Option<ContentId<CharacterSnapshot>>,
+        video: VideoPreferences,
+        profile: &Path,
+    ) -> Result<Playtest, String> {
+        let folder = tempfile::tempdir().expect("a folder for the client's desktop and log");
+        settings::save_video(&Profile(profile.to_path_buf()), video);
         let server = GameServer::start(&binaries::beside(GAME_SERVER), &bench_config(game));
-        let character = content
-            .ids::<CharacterSnapshot>()
-            .next()
-            .expect("the game has a test character to play the bench as");
-        let request = TestCharacterRequest {
-            test_character: character.path(content).to_owned(),
-            start: Some(content.built::<GameSettings>().initial_spawn),
-        };
-        post(&server, content, TEST_CHARACTER_ROUTE, &request)
-            .unwrap_or_else(|problem| panic!("the server refused the test character: {problem}"));
+        if let Some(character) = character.or_else(|| content.ids::<CharacterSnapshot>().next()) {
+            let request = TestCharacterRequest {
+                test_character: character.path(content).to_owned(),
+                start: Some(content.built::<GameSettings>().initial_spawn),
+            };
+            post(&server, content, TEST_CHARACTER_ROUTE, &request)
+                .map_err(|problem| format!("the server refused the test character: {problem}"))?;
+        }
 
         let listener = TcpListener::bind((LOCALHOST, 0)).expect("a probe port");
         let config = ClientConfig {
             game_server_url: server.http_url(),
             auth: AuthMode::Fake,
             access_token: Some(launch::fake_token(ACCOUNT)),
-            profile_dir: folder.path().join("profile"),
+            profile_dir: profile.to_path_buf(),
             exit_on_stdin_eof: true,
             probe: Some(listener.local_addr().expect("a bound probe port")),
         };
@@ -73,46 +80,59 @@ impl Playtest {
             .stdout(log.try_clone().expect("a second handle on the client log"))
             .stderr(log)
             .spawn()
-            .expect("the desktop client runs");
-        let probe = ProbeDriver::accept(&listener, &mut client, WAIT).unwrap_or_else(|problem| {
-            panic!(
-                "{problem}; its log is {}",
-                folder.path().join(CLIENT_LOG).display()
-            )
-        });
+            .map_err(|error| format!("the desktop client doesn't run: {error}"))?;
+        let probe = match ProbeDriver::accept(&listener, &mut client, WAIT) {
+            Ok(probe) => probe,
+            Err(problem) => {
+                let _ = client.kill();
+                let _ = client.wait();
+                return Err(format!(
+                    "{problem}; its log is {}",
+                    folder.path().join(CLIENT_LOG).display()
+                ));
+            }
+        };
         desktop.seat(client.id());
-        Playtest {
+        Ok(Playtest {
             content: content.clone(),
             server,
             client,
             probe,
             desktop,
             folder,
-        }
+        })
     }
 
+    /// What the client shows in a frame after asking; a client that doesn't answer ends the bench.
     pub fn snapshot(&mut self) -> ProbeSnapshot {
         self.ask(&ProbeFrameQuestion::Snapshot)
+            .unwrap_or_else(|problem| panic!("{problem}; its log ends:\n{}", self.log_tail()))
     }
 
-    pub fn ask<Answer: DeserializeOwned>(&mut self, question: &ProbeFrameQuestion) -> Answer {
-        let answer = self
-            .probe
-            .ask(question)
-            .unwrap_or_else(|problem| panic!("{problem}; its log ends:\n{}", self.log_tail()));
+    /// The client's answer to `question`, or why it gave none.
+    pub fn ask<Answer: DeserializeOwned>(
+        &mut self,
+        question: &ProbeFrameQuestion,
+    ) -> Result<Answer, String> {
+        let answer = self.probe.ask(question)?;
         in_scope(&self.content, || serde_json::from_str(&answer))
-            .unwrap_or_else(|error| panic!("an unreadable answer to {question:?}: {error}"))
+            .map_err(|error| format!("an unreadable answer to {question:?}: {error}"))
     }
 
-    fn log_tail(&self) -> String {
+    /// How the client exited, once it has.
+    pub fn exited(&mut self) -> Option<ExitStatus> {
+        self.client.try_wait().ok().flatten()
+    }
+
+    pub fn log_tail(&self) -> String {
         let log = std::fs::read_to_string(self.folder.path().join(CLIENT_LOG)).unwrap_or_default();
         let lines: Vec<&str> = log.lines().collect();
         lines[lines.len().saturating_sub(LOG_TAIL)..].join("\n")
     }
 
     /// Asks the server to stage `staging` for the character, and tells why it couldn't.
-    pub fn stage(&self, staging: Staging) -> Result<(), String> {
-        post(&self.server, &self.content, STAGING_ROUTE, &staging)
+    pub fn stage(&self, staging: &Staging) -> Result<(), String> {
+        post(&self.server, &self.content, STAGING_ROUTE, staging)
     }
 
     pub fn wait_until(
@@ -137,9 +157,14 @@ impl Playtest {
         std::thread::sleep(lasting);
     }
 
-    /// Turns the mouse wheel over the game `clicks` notches, toward the player when positive.
-    pub fn scroll(&self, clicks: i32) {
-        self.desktop.scroll(self.client.id(), clicks);
+    /// The X display the client's window is on.
+    pub fn display(&self) -> &str {
+        self.desktop.display()
+    }
+
+    /// Where the server takes requests over HTTP.
+    pub fn server_url(&self) -> String {
+        self.server.http_url()
     }
 
     pub fn client_memory(&self) -> Bytes {
@@ -153,12 +178,18 @@ impl Playtest {
     pub fn content(&self) -> &Content {
         &self.content
     }
+
+    /// Ends the client, as the playtest ends once dropped: before another starts, so the two
+    /// never draw at once.
+    pub fn end(&mut self) {
+        let _ = self.client.kill();
+        let _ = self.client.wait();
+    }
 }
 
 impl Drop for Playtest {
     fn drop(&mut self) {
-        let _ = self.client.kill();
-        let _ = self.client.wait();
+        self.end();
     }
 }
 

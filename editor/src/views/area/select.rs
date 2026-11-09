@@ -13,10 +13,11 @@ use super::flags::RowFlags;
 use super::placement::{self, AreaPlacement, PartView};
 use super::{
     AreaDrag, AreaFrame, AreaSnapshot, AreaTool, AreaViewState, PasteGhost, ResizeCorner,
-    blueprint, nodes, pick, pins, scene_tree, shapes,
+    StagePress, blueprint, nodes, pick, pins, scene_tree, shapes,
 };
 use crate::app::Editor;
 use crate::clipboard::{Clipboard, SceneClip};
+use crate::doc::DocModule;
 use crate::keymap::EditorKey;
 use crate::project::RowSelection;
 
@@ -61,8 +62,30 @@ pub(super) fn select_input(
         }
     }
     let hit = scope.hit(frame, ground);
+    if response.hovered() && ui.input(|i| i.pointer.primary_pressed()) {
+        editor.views.area.view_mut(view_key).press =
+            ui.input(|i| i.pointer.press_origin()).and_then(|at| {
+                let ground = frame.canvas.to_ground(at)?;
+                Some(StagePress {
+                    at,
+                    ground,
+                    hit: scope.hit_at(frame, at, ground),
+                })
+            });
+    }
     if response.drag_started_by(egui::PointerButton::Primary) {
-        start_select_drag(editor, view_key, frame, &scope, ground, hit);
+        let press = editor
+            .views
+            .area
+            .view_mut(view_key)
+            .press
+            .take()
+            .unwrap_or(StagePress {
+                at: frame.pointer.unwrap_or_default(),
+                ground,
+                hit,
+            });
+        start_select_drag(editor, view_key, frame, &scope, press);
         return;
     }
     if response.dragged_by(egui::PointerButton::Primary) {
@@ -147,15 +170,15 @@ impl SelectScope<'_> {
     fn hit(&self, frame: &AreaFrame, ground: Pos<Meters>) -> Option<String> {
         match self {
             SelectScope::Area => frame.hit_pointer().or_else(|| frame.hit(ground)),
-            SelectScope::Blueprint { parts, .. } => parts
-                .iter()
-                .filter(|part| !part.locked && part.bounds.is_some_and(|b| b.contains(ground)))
-                .min_by(|a, b| {
-                    a.bounds
-                        .map_or(0.0, |b| b.area())
-                        .total_cmp(&b.bounds.map_or(0.0, |b| b.area()))
-                })
-                .map(|part| part.part.clone()),
+            SelectScope::Blueprint { parts, .. } => part_at(parts, ground),
+        }
+    }
+
+    /// What a press at `screen`, over `ground`, picks.
+    fn hit_at(&self, frame: &AreaFrame, screen: Pos2, ground: Pos<Meters>) -> Option<String> {
+        match self {
+            SelectScope::Area => frame.hit_screen(screen).or_else(|| frame.hit(ground)),
+            SelectScope::Blueprint { parts, .. } => part_at(parts, ground),
         }
     }
 
@@ -163,18 +186,23 @@ impl SelectScope<'_> {
     fn contained(&self, frame: &AreaFrame, rect: Rect<Meters>) -> (Vec<String>, Skipped) {
         let mut skipped = Skipped::default();
         let taken = match self {
-            SelectScope::Area => frame
-                .modules
-                .iter()
-                .filter(|module| {
-                    super::is_selectable(module.module())
-                        && frame
-                            .bounds_of(module)
-                            .is_some_and(|bounds| rect.contains_rect(&bounds))
-                })
-                .filter(|module| skipped.passes(&frame.flags.row(&module.pointer)))
-                .map(|module| module.pointer.clone())
-                .collect(),
+            SelectScope::Area => {
+                let mut taken: Vec<DocModule> = frame
+                    .placed_within(rect)
+                    .filter(|module| {
+                        super::is_selectable(module.module())
+                            && frame
+                                .bounds_of(*module)
+                                .is_some_and(|bounds| rect.contains_rect(&bounds))
+                    })
+                    .collect();
+                taken.sort_by_key(|module| module.id);
+                taken
+                    .into_iter()
+                    .filter(|module| skipped.passes(&frame.flags.row(module.pointer)))
+                    .map(|module| module.pointer.to_owned())
+                    .collect()
+            }
             SelectScope::Blueprint { parts, .. } => parts
                 .iter()
                 .filter(|part| part.bounds.is_some_and(|b| rect.contains_rect(&b)))
@@ -249,16 +277,14 @@ fn start_select_drag(
     view_key: &str,
     frame: &AreaFrame,
     scope: &SelectScope,
-    ground: Pos<Meters>,
-    hit: Option<String>,
+    press: StagePress,
 ) {
+    let StagePress { at, ground, hit } = press;
     if scope.is_area() {
-        let on_handle = frame.pointer.and_then(|pointer| {
-            scope
-                .selected(editor, frame)
-                .into_iter()
-                .find_map(|node| handle_at(frame, &node, pointer))
-        });
+        let on_handle = scope
+            .selected(editor, frame)
+            .into_iter()
+            .find_map(|node| handle_at(frame, &node, at));
         if let Some((part, corner, start)) = on_handle {
             set_drag(
                 editor,
@@ -271,7 +297,7 @@ fn start_select_drag(
             );
             return;
         }
-        if let Some(pin) = pins::pin_at(editor, frame, frame.pointer.unwrap_or_default()) {
+        if let Some(pin) = pins::pin_at(editor, frame, at) {
             set_drag(
                 editor,
                 view_key,
@@ -463,7 +489,7 @@ fn finish_select_drag(
             let h = (new_max.y - new_min.y).max(1.0);
             let reader = frame.reader.clone();
             nodes::change_scene(editor, &frame.bundle, |scene| {
-                let module = &mut nodes::module_node_mut(scene, &part)?.module;
+                let module = &mut scene.module_mut(&part)?.module;
                 module.shift(new_min.x - min.x, new_min.y - min.y);
                 shapes::resize(module, w, h);
                 Some(format!("Resize {}", shapes::label(module, reader.as_ref())))
@@ -505,7 +531,7 @@ pub(crate) fn move_selection(editor: &mut Editor, frame: &AreaFrame, dx: f32, dy
     let reader = frame.reader.clone();
     nodes::change_scene(editor, &frame.bundle, |scene| {
         for node in &moved {
-            nodes::module_node_mut(scene, node)?.module.shift(dx, dy);
+            scene.module_mut(node)?.module.shift(dx, dy);
         }
         Some(match moved.as_slice() {
             [one] => format!(
@@ -682,11 +708,11 @@ pub(crate) fn select_all(editor: &mut Editor, frame: &AreaFrame) {
         None => (
             frame.bundle.clone(),
             frame
-                .modules
-                .iter()
+                .doc
+                .modules()
                 .filter(|module| super::is_selectable(module.module()))
-                .filter(|module| skipped.passes(&frame.flags.row(&module.pointer)))
-                .map(|module| module.pointer.clone())
+                .filter(|module| skipped.passes(&frame.flags.row(module.pointer)))
+                .map(|module| module.pointer.to_owned())
                 .collect(),
         ),
     };
@@ -725,4 +751,17 @@ impl Skipped {
             ));
         }
     }
+}
+
+/// The smallest part in place that isn't locked and covers `ground`.
+fn part_at(parts: &[PartView], ground: Pos<Meters>) -> Option<String> {
+    parts
+        .iter()
+        .filter(|part| !part.locked && part.bounds.is_some_and(|b| b.contains(ground)))
+        .min_by(|a, b| {
+            a.bounds
+                .map_or(0.0, |b| b.area())
+                .total_cmp(&b.bounds.map_or(0.0, |b| b.area()))
+        })
+        .map(|part| part.part.clone())
 }

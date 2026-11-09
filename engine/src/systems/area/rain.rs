@@ -5,8 +5,11 @@
 //! lightning striking under storm cloud, flashing over the world and its thunder rolling in after;
 //! and the rain the listener hears.
 
+use std::sync::Arc;
+
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
+use bevy::tasks::{AsyncComputeTaskPool, Task, TaskPool};
 
 use super::weather::RainSound;
 use super::{Area, AreaId, Rainfall, Weather};
@@ -17,8 +20,9 @@ use crate::core::audio::soundscape::{
 };
 use crate::core::content::Content;
 use crate::core::content::media::GltfInfos;
+use crate::core::jobs::Handoff;
 use crate::core::math::{Pos, Rect, Rng, Size};
-use crate::core::render::world::clouds::{CLOUD_TILE, CloudDrift, CloudSheet};
+use crate::core::render::world::clouds::{CLOUD_TILE, CloudDrift, CloudReading, CloudSheet};
 use crate::core::render::{CameraRig, Look};
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::Meters;
@@ -35,7 +39,7 @@ use crate::systems::area::scenery::{prop_transform, shown_weather};
 pub fn rain_at(
     area: &Area,
     weather: &Weather,
-    sheet: &CloudSheet,
+    sheet: &CloudReading,
     drift: Vec2,
     lean: Vec2,
     at: Pos<Meters>,
@@ -112,7 +116,7 @@ pub fn rain_zone(area: &Area, heard: RainHeard) -> Option<SoundscapeZone> {
 pub fn fall(
     world: &mut World,
     area_id: AreaId,
-    area: &Area,
+    area: &Arc<Area>,
     weather: &Weather,
     shells: Option<Entity>,
     camera: Entity,
@@ -191,21 +195,85 @@ const STRIKE_TRIES: usize = 8;
 const STORM_RAIN: f32 = 0.05;
 
 /// The rain falling over the shown area as the client keeps it: the field of rain laid last, its
-/// cells by their place on the ground, and when; where the shelter was laid round; the props that
-/// shelter, filed by the ground they cover; the strokes of lightning still flashing and the
-/// thunder still to come.
+/// cells by their place on the ground, and when, with the next one being laid off the main thread;
+/// where the shelter was laid round; the props that shelter, filed by the ground they cover; the
+/// strokes of lightning still flashing and the thunder still to come.
 #[derive(Resource)]
 struct FallingRain {
     area: AreaId,
-    field: HashMap<IVec2, RainCell>,
+    field: Arc<HashMap<IVec2, RainCell>>,
     corner: IVec2,
     laid: Option<f32>,
+    laying: Option<Task<LaidRain>>,
     sheltered_round: Option<Vec2>,
     shelters: Vec<Sheltering>,
     shelter_index: SpatialIndex,
     strokes: Vec<Stroke>,
     thunder: Vec<Thunder>,
     rng: Rng,
+}
+
+/// What laying a field of rain reads: the area and its weather, the clouds as they drifted, the
+/// field's north-west cell, and the field laid before it, `since` seconds earlier.
+struct RainJob {
+    area: Arc<Area>,
+    weather: Weather,
+    rainfall: Rainfall,
+    clouds: CloudReading,
+    drift: Vec2,
+    corner: IVec2,
+    was: Arc<HashMap<IVec2, RainCell>>,
+    since: f32,
+}
+
+/// A field of rain as laid: its cells by their place on the ground, its north-west cell, and the
+/// field as the shaders read it.
+struct LaidRain {
+    field: Arc<HashMap<IVec2, RainCell>>,
+    corner: IVec2,
+    shown: RainField,
+}
+
+impl RainJob {
+    fn lay(self) -> LaidRain {
+        let lean = self.rainfall.lean(shown_weather(&self.weather, 0.0).wind);
+        let mut field = HashMap::with_capacity(RAIN_SIDE * RAIN_SIDE);
+        let mut cells = Vec::with_capacity(RAIN_SIDE * RAIN_SIDE);
+        for row in 0..RAIN_SIDE as i32 {
+            for column in 0..RAIN_SIDE as i32 {
+                let at = self.corner + IVec2::new(column, row);
+                let center = (at.as_vec2() + 0.5) * RAIN_CELL.0;
+                let center = Pos::new(center.x, center.y);
+                let rain = rain_at(
+                    &self.area,
+                    &self.weather,
+                    &self.clouds,
+                    self.drift,
+                    lean,
+                    center,
+                );
+                let wetness = match self.was.get(&at) {
+                    Some(was) => soaked(was.wetness, rain, self.since, &self.rainfall),
+                    None => (rain / STORM_RAIN).min(1.0),
+                };
+                let cell = RainCell {
+                    share: self.area.rain_share(center),
+                    wetness,
+                    rain,
+                };
+                field.insert(at, cell);
+                cells.push(cell);
+            }
+        }
+        LaidRain {
+            field: Arc::new(field),
+            corner: self.corner,
+            shown: RainField {
+                corner: self.corner.as_vec2() * RAIN_CELL.0,
+                cells,
+            },
+        }
+    }
 }
 
 /// A prop that keeps the rain off the ground under it: where its model's box lies, as the prop
@@ -231,7 +299,7 @@ struct Thunder {
 }
 
 impl FallingRain {
-    fn new(world: &World, area_id: AreaId, area: &Area) -> FallingRain {
+    fn new(world: &mut World, area_id: AreaId, area: &Area) -> FallingRain {
         let content = world.resource::<Content>();
         let models = content.built::<GltfInfos>();
         let shelters: Vec<Sheltering> = area
@@ -257,68 +325,60 @@ impl FallingRain {
         shelter_index.refile(shelters.iter().map(Sheltering::ground));
         FallingRain {
             area: area_id,
-            field: HashMap::default(),
+            field: Arc::default(),
             corner: IVec2::ZERO,
             laid: None,
+            laying: None,
             sheltered_round: None,
             shelters,
             shelter_index,
             strokes: Vec::new(),
             thunder: Vec::new(),
-            rng: Rng::from_entropy(),
+            rng: Rng::fork_of(world),
         }
     }
 
-    /// Lays the field of rain round `subject` anew, every [`FIELD_EVERY`] seconds: each cell's
-    /// share of the downpour and its rain under the clouds as they have drifted, its ground wetter
-    /// for the rain since it was last laid, or drier without it. A cell newly taken in lies as
-    /// wet as its rain makes it.
+    /// Lays the field of rain round `subject` anew, every [`FIELD_EVERY`] seconds, off the main
+    /// thread, and takes in the one laid the frame before: each cell's share of the downpour and
+    /// its rain under the clouds as they have drifted, its ground wetter for the rain since it was
+    /// last laid, or drier without it. A cell newly taken in lies as wet as its rain makes it.
     fn lay_field(
         &mut self,
         world: &mut World,
-        area: &Area,
+        area: &Arc<Area>,
         weather: &Weather,
         rainfall: &Rainfall,
         subject: Vec2,
         now: f32,
     ) {
-        if self.laid.is_some_and(|laid| now - laid < FIELD_EVERY) {
+        if let Some(laying) = self.laying.take() {
+            match Handoff::of(world).take(laying) {
+                Ok(laid) => {
+                    self.field = laid.field;
+                    self.corner = laid.corner;
+                    world.resource_mut::<RainField>().set_if_neq(laid.shown);
+                }
+                Err(laying) => self.laying = Some(laying),
+            }
+        }
+        if self.laying.is_some() || self.laid.is_some_and(|laid| now - laid < FIELD_EVERY) {
             return;
         }
         let since = self.laid.map_or(0.0, |laid| now - laid);
         self.laid = Some(now);
-        self.corner =
-            (subject / RAIN_CELL.0).floor().as_ivec2() - IVec2::splat(RAIN_SIDE as i32 / 2);
-        let drift = world.resource::<CloudDrift>().drift();
-        let lean = rainfall.lean(shown_weather(weather, 0.0).wind);
-        let sheet = world.resource::<CloudSheet>();
-        let mut field = HashMap::with_capacity(RAIN_SIDE * RAIN_SIDE);
-        let mut cells = Vec::with_capacity(RAIN_SIDE * RAIN_SIDE);
-        for row in 0..RAIN_SIDE as i32 {
-            for column in 0..RAIN_SIDE as i32 {
-                let at = self.corner + IVec2::new(column, row);
-                let center = (at.as_vec2() + 0.5) * RAIN_CELL.0;
-                let center = Pos::new(center.x, center.y);
-                let rain = rain_at(area, weather, sheet, drift, lean, center);
-                let wetness = match self.field.get(&at) {
-                    Some(was) => soaked(was.wetness, rain, since, rainfall),
-                    None => (rain / STORM_RAIN).min(1.0),
-                };
-                let cell = RainCell {
-                    share: area.rain_share(center),
-                    wetness,
-                    rain,
-                };
-                field.insert(at, cell);
-                cells.push(cell);
-            }
-        }
-        self.field = field;
-        let laid = RainField {
-            corner: self.corner.as_vec2() * RAIN_CELL.0,
-            cells,
+        let job = RainJob {
+            area: area.clone(),
+            weather: *weather,
+            rainfall: rainfall.clone(),
+            clouds: world.resource::<CloudSheet>().reading(),
+            drift: world.resource::<CloudDrift>().drift(),
+            corner: (subject / RAIN_CELL.0).floor().as_ivec2() - IVec2::splat(RAIN_SIDE as i32 / 2),
+            was: self.field.clone(),
+            since,
         };
-        world.resource_mut::<RainField>().set_if_neq(laid);
+        self.laying = Some(
+            AsyncComputeTaskPool::get_or_init(TaskPool::default).spawn(async move { job.lay() }),
+        );
     }
 
     /// Lays the shelter round `subject` anew once it has slipped [`SHELTER_SLIP`] from where it

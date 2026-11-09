@@ -374,8 +374,9 @@ pub fn request(
         content,
         stroke: None,
         ghost: None,
-        cast,
-        lines: Default::default(),
+        cast: cast.into(),
+        outlines: Default::default(),
+        pointer: None,
     });
 }
 

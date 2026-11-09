@@ -185,6 +185,7 @@ fn rename(project: &Project, name: &str) -> ContentEdit {
             file: SETTINGS_FILE.to_owned(),
             bytes: Some(json_bytes(&game)),
         }],
+        scenes: Vec::new(),
         merge: false,
         amends: None,
     }

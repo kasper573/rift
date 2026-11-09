@@ -143,8 +143,8 @@ pub struct RespawnRequest;
 pub struct Welcome {
     pub id: ClientId,
     pub now: UnixMillis,
-    pub day: Option<TimeCourse>,
-    pub weather: Option<TimeCourse>,
+    pub day: Option<TimeCourse<f32>>,
+    pub weather: Option<TimeCourse<usize>>,
 }
 
 pub type PlayerDefId = ContentId<PlayerDef>;
@@ -278,23 +278,37 @@ pub fn greet(add: On<Add<ClientId>>, clients: Query<&ClientId>, mut commands: Co
         return;
     };
     let conn = add.entity;
-    commands.queue(move |world: &mut World| {
-        let now = world.resource::<WallClock>().now;
-        let day = world.get_resource::<DayClock>().and_then(|clock| clock.0);
-        let weather = world
-            .get_resource::<WeatherClock>()
-            .and_then(|clock| clock.0);
-        visibility::send_to(
-            world,
-            conn,
-            Welcome {
-                id,
-                now,
-                day,
-                weather,
-            },
-        );
-    });
+    commands.queue(move |world: &mut World| welcome(world, conn, id));
+}
+
+/// Tells every client in the world how its clocks run, as its greeting did, once they change.
+pub fn tell_clocks(world: &mut World) {
+    let conns: Vec<(Entity, ClientId)> = world
+        .query::<(Entity, &ClientId)>()
+        .iter(world)
+        .map(|(conn, &id)| (conn, id))
+        .collect();
+    for (conn, id) in conns {
+        welcome(world, conn, id);
+    }
+}
+
+fn welcome(world: &mut World, conn: Entity, id: ClientId) {
+    let now = world.resource::<WallClock>().now;
+    let day = world.get_resource::<DayClock>().and_then(|clock| clock.0);
+    let weather = world
+        .get_resource::<WeatherClock>()
+        .and_then(|clock| clock.0);
+    visibility::send_to(
+        world,
+        conn,
+        Welcome {
+            id,
+            now,
+            day,
+            weather,
+        },
+    );
 }
 
 pub fn client_left(

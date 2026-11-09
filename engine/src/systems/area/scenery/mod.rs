@@ -4,18 +4,23 @@
 //! in; the editor stands the area it edits, on render layers of its own, and both light it alike
 //! for the hour. The ground stands whole, finer the nearer the view, and the covers, props and
 //! lights stand within the view's reach alone, a few a frame through `SceneryPlugin` as the view
-//! moves, the props near the eye as scenes and the rest merged, so an area costs what the view
-//! takes in, however far it stretches.
+//! moves, the props and the covers' copies in the GPU's arenas chunk by chunk, thinned far off the
+//! eye as the view shows them, so an area costs what the view takes in, however far it stretches.
 
 mod covers;
+pub mod expand;
+mod grass;
+mod instances;
+mod plan;
 mod props;
-mod regions;
 
+pub use plan::{Eyes, Sight};
 pub use props::prop_transform;
 
 use covers::Covers;
-use props::Props;
-use regions::Regions;
+use grass::Grass;
+use instances::Instances;
+use plan::{Plan, Planner, Seen};
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::ops::Bound;
@@ -23,34 +28,38 @@ use std::sync::Arc;
 
 use bevy::app::Propagate;
 use bevy::camera::visibility::RenderLayers;
+use bevy::ecs::component::Mutable;
 use bevy::light::FogVolume;
 use bevy::light::atmosphere::ScatteringMedium;
-use bevy::mesh::MeshTag;
 use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
 use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, IoTaskPool, Task};
-use rayon::prelude::*;
 
 use super::lighting::DomeLook;
-use super::prop::PropId;
+use super::prop::{PropDef, PropId};
 use super::terrain::PieceShape;
-use super::{Area, FogBank, Lighting, PointLightDef, Rainfall, Weather};
-use crate::core::content::{Content, FileHash, FileHashes};
+use super::{Area, AreaModule, FogBank, Lighting, PointLightDef, Rainfall, Weather};
+use crate::core::content::{Content, ContentFile, FileHash, FileHashes};
 use crate::core::ground::{
-    Heightfield, OVERVIEW_STRIDE, PaintMap, SAMPLES_PER_METER, TileAt, WaterSurface,
+    GroundGrid, GroundValue, Heightfield, OVERVIEW_STRIDE, PaintMap, SAMPLES_PER_METER, TILE_SIDE,
+    TileAt, TileVersion, WaterSurface,
 };
+use crate::core::jobs::{self, Handoff};
 use crate::core::math::{Pos, Rect, Rng, Size};
-use crate::core::render::camera::{View, WorldPicture};
+use crate::core::render::camera::WorldPicture;
 use crate::core::render::present::AreaGrade;
+use crate::core::render::sample::FrameWork;
+use crate::core::render::video::VideoPreferences;
 use crate::core::render::world::clouds::{CloudDrift, CloudSheet};
+use crate::core::render::world::gpu::arena::PropArena;
+use crate::core::render::world::gpu::atlas::TerrainAtlas;
+use crate::core::render::world::gpu::draw::{GroundDraw, GroundPatch, PATCH_CELLS};
 use crate::core::render::world::haze::Haze;
 use crate::core::render::world::lights::{self, Flicker};
-use crate::core::render::world::lod::MeshLevels;
 use crate::core::render::world::sky::{self, Daylight, SunLight};
-use crate::core::render::world::terrain::{
-    self, ChunkPaint, ChunkPaints, GroundLayer, GroundMaterial,
-};
+use crate::core::render::world::terrain::{self, GroundLayer};
+use crate::core::render::world::{DRAWN_FRAMES_AFTER, frames_drawn, missing_drawn};
 use crate::core::render::{CameraRig, Look, camera, world_point};
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::{MeterSize, Meters};
@@ -81,13 +90,21 @@ pub struct SceneryPlugin;
 impl Plugin for SceneryPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TakenDown>()
-            .add_systems(Update, (take_down, stream))
-            .add_observer(props::level_ready_scene);
+            .init_resource::<Streams>()
+            .add_systems(
+                Update,
+                (
+                    regrow_grass.run_if(resource_changed::<VideoPreferences>),
+                    take_down,
+                    stream,
+                )
+                    .chain(),
+            );
     }
 }
 
 /// Stands `area` in the world on `layers`: its sun, sky and air at once, and its ground, covers,
-/// props and lights as the view comes to them, from where [`view_from`] says it is.
+/// props and lights as the view comes to them, for the sight [`view_from`] gives it.
 pub fn spawn(
     world: &mut World,
     content: &Content,
@@ -111,7 +128,7 @@ pub fn spawn(
             ))
             .id()
     });
-    let look = world.resource::<Look>().clone();
+    let look = *world.resource::<Look>();
     let humidity = humidity(&area.climate.first(), &look);
     let atmosphere = sky::atmosphere(
         &mut world.resource_mut::<Assets<ScatteringMedium>>(),
@@ -143,29 +160,36 @@ pub fn spawn(
             .as_ref()
             .and_then(|rainfall| spawn_rain(world, content, rainfall, root));
     }
-    let (terrain, paints) = spawn_terrain(world, content, area, &look, root);
-    let props = Props::new(content, area);
+    let terrain = spawn_terrain(world, content, area, &look, root);
     let covers = Covers::new(world, content, area);
-    let mut lights = SpatialIndex::new(PLACEMENT_CELL);
-    lights.refile_spots(area.lights.iter().map(|light| light.at));
-    world.entity_mut(root).insert(Streaming {
+    if let Some(mut draw) = world.get_mut::<GroundDraw>(terrain) {
+        draw.sheets = covers.sheets().into();
+    }
+    let grass = Grass::new(world, terrain, covers.grass());
+    let planner = planner_of(area);
+    world.entity_mut(root).insert(PropArena);
+    let streaming = Streaming {
         content: content.clone(),
         area: area.clone(),
         heights: area.heights.clone(),
         paint: area.paint.clone(),
         water: area.water.clone(),
         terrain,
-        paints,
-        regions: Regions::of(area),
-        covers,
-        props,
-        lights,
-        view: None,
+        grass,
+        instances: Instances::new(content, area, covers.copies()),
+        planner,
+        sight: None,
+        seen: false,
+        planning: None,
+        plan: None,
+        whole: false,
+        stood_at: None,
         stood: Stood::default(),
+        drawn: None,
+        shortfalls: Shortfalls::default(),
         loading: HashMap::default(),
-        making: HashMap::default(),
-        stood_for: None,
-    });
+    };
+    world.resource_mut::<Streams>().0.insert(root, streaming);
     Scenery {
         root,
         terrain,
@@ -176,21 +200,129 @@ pub fn spawn(
     }
 }
 
-/// Tells the scenery where `view` looks at, and how far around it the covers, props and lights
-/// are to stand: a cover's pieces and a prop only where they span a pixel of the view, a prop's
-/// meshes no finer than the view shows them. The ground stands whole, finer the nearer the view.
-/// What stands follows over the frames.
-pub fn view_from(world: &mut World, scenery: Scenery, at: Pos<Meters>, reach: Meters, view: View) {
-    if let Some(mut streaming) = world.get_mut::<Streaming>(scenery.root) {
-        let eye = view.eye();
-        let above_ground = Meters(eye.y - streaming.heights.height_at(camera::ground_pos(eye)).0);
-        streaming.view = Some(Seen {
-            at,
-            reach,
-            view,
-            above_ground,
-        });
+/// Tells the scenery the sight it stands for: the covers, props and lights within its reach, a
+/// cover's pieces only where they span a pixel from the nearest its eyes may come; which props
+/// each view shows, and how finely, the GPU works out frame by frame. The ground stands whole,
+/// finer the nearer the ground the sight looks at. What stands follows over the frames.
+pub fn view_from(world: &mut World, scenery: Scenery, sight: Sight) {
+    if let Some(streaming) = world
+        .resource_mut::<Streams>()
+        .bypass_change_detection()
+        .0
+        .get_mut(&scenery.root)
+    {
+        streaming.sight = Some(sight);
+        streaming.seen = true;
     }
+}
+
+/// Tells the scenery no eye looks at it until it is viewed again.
+pub fn unseen(world: &mut World, scenery: Scenery) {
+    if let Some(streaming) = world
+        .resource_mut::<Streams>()
+        .bypass_change_detection()
+        .0
+        .get_mut(&scenery.root)
+    {
+        streaming.seen = false;
+    }
+}
+
+/// Stands `area`, read from `content`, in place of the area `scenery` stands, keeping all both
+/// stand alike: the props of every chunk where none moved, came or went, the ground and what
+/// grows on it wherever its tiles hold what they held, and the lights while none changed. False,
+/// changing nothing, when the two differ in what only standing anew takes in: the ground's size
+/// or water, the terrains, lighting or climate, or a file beyond the area both are made from.
+pub fn restand(world: &mut World, scenery: Scenery, content: &Content, area: &Arc<Area>) -> bool {
+    world.resource_scope(|world, mut streams: Mut<Streams>| {
+        let Some(streaming) = streams.0.get_mut(&scenery.root) else {
+            return false;
+        };
+        if Arc::ptr_eq(&streaming.area, area) {
+            return true;
+        }
+        let before = streaming.area.clone();
+        let was = &streaming.content;
+        let hashes = (
+            &was.built::<FileHashes>().0,
+            &content.built::<FileHashes>().0,
+        );
+        let terrains = |content: &Content, area: &Area| -> Vec<String> {
+            area.terrains
+                .iter()
+                .map(|terrain| terrain.path(content).to_owned())
+                .collect()
+        };
+        let water = streaming.water.size() == area.water.size()
+            && area
+                .water
+                .size()
+                .each_tile()
+                .all(|at| tile_alike(&streaming.water, &area.water, at, hashes));
+        let alike = area.size == before.size
+            && water
+            && area.lighting == before.lighting
+            && area.climate == before.climate
+            && area.rain == before.rain
+            && same_paths::<PropDef>(was, content)
+            && terrains(was, &before) == terrains(content, area)
+            && Sources::of(was, &before).agree(&Sources::of(content, area));
+        if !alike {
+            return false;
+        }
+        let heights = area.heights.keeping(&streaming.heights, |at| {
+            tile_alike(&streaming.heights, &area.heights, at, hashes)
+        });
+        let paint = area.paint.keeping(&streaming.paint, |at| {
+            tile_alike(&streaming.paint, &area.paint, at, hashes)
+        });
+        lay_streamed_ground(world, streaming, &heights, &paint);
+        let (old, new) = (&before.prop_sources, &area.prop_sources);
+        let first = old
+            .iter()
+            .zip(new)
+            .take_while(|(a, b)| same_source(a, b))
+            .count();
+        let last = old[first..]
+            .iter()
+            .rev()
+            .zip(new[first..].iter().rev())
+            .take_while(|(a, b)| same_source(a, b))
+            .count();
+        let (old_end, new_end) = (old.len() - last, new.len() - last);
+        let touched: Vec<Rect<Meters>> = old[first..old_end]
+            .iter()
+            .chain(&new[first..new_end])
+            .filter_map(stretch_of)
+            .collect();
+        streaming
+            .instances
+            .sources_changed(area, area.size.bounds(), &touched, |source| {
+                let source = source as usize;
+                if source < first {
+                    Some(source as u32)
+                } else if source >= old_end {
+                    Some((source - old_end + new_end) as u32)
+                } else {
+                    None
+                }
+            });
+        if area.lights != before.lights {
+            for (_, light) in streaming.stood.lights.drain() {
+                world.despawn(light);
+            }
+            streaming.planner = planner_of(area);
+            streaming.planning = None;
+            streaming.plan = None;
+        }
+        let replaced = (
+            std::mem::replace(&mut streaming.area, area.clone()),
+            std::mem::replace(&mut streaming.content, content.clone()),
+        );
+        jobs::drop_off_thread(replaced);
+        streaming.whole = false;
+        true
+    })
 }
 
 /// The files the scenery of an area is made from beyond the area itself, each with what it held
@@ -245,6 +377,21 @@ impl Sources {
             .collect();
         Sources(held.into_iter().collect())
     }
+
+    /// Whether every file both are made from holds the same in each: what one reads beyond the
+    /// other may differ.
+    pub fn agree(&self, other: &Sources) -> bool {
+        let theirs: BTreeMap<&str, &FileHash> = other
+            .0
+            .iter()
+            .map(|(path, hash)| (path.as_str(), hash))
+            .collect();
+        self.0.iter().all(|(path, hash)| {
+            theirs
+                .get(path.as_str())
+                .is_none_or(|theirs| *theirs == hash)
+        })
+    }
 }
 
 /// The path just past every part of `file`'s bundle in path order: after `file` itself and
@@ -254,7 +401,7 @@ fn file_bound(file: &str) -> String {
 }
 
 /// The props standing in the area, each once.
-fn props_of(area: &Area) -> Vec<PropId> {
+pub(super) fn props_of(area: &Area) -> Vec<PropId> {
     let mut props: Vec<PropId> = area.props.iter().map(|placed| placed.prop).collect();
     props.sort_unstable();
     props.dedup();
@@ -291,29 +438,194 @@ pub fn shaders_ready(world: &World, content: &Content, area: &Area) -> bool {
         })
 }
 
-/// Whether any scenery has yet to stand what its view takes in.
-pub fn standing(world: &mut World) -> bool {
-    world
-        .query::<&Streaming>()
-        .iter(world)
-        .any(|streaming| streaming.stood_for.is_none())
+/// Whether any scenery an eye looks at has yet to stand what its sight takes in.
+pub fn standing(world: &World) -> bool {
+    sceneries_standing(world) > 0
 }
 
-/// Whether `scenery` stands all its view takes in.
-pub fn stood(world: &World, scenery: Scenery) -> bool {
+/// How many sceneries an eye looks at have yet to stand what their sight takes in.
+pub fn sceneries_standing(world: &World) -> u32 {
+    let drawn = frames_drawn(world);
     world
-        .get::<Streaming>(scenery.root)
-        .is_some_and(|streaming| streaming.stood_for.is_some())
+        .resource::<Streams>()
+        .0
+        .values()
+        .filter(|streaming| streaming.seen && !streaming.stands(drawn))
+        .count() as u32
+}
+
+/// How much of the ground, the props, the covers' copies and their blades the sights take in has
+/// yet to stand at all.
+pub fn missing(world: &World) -> u32 {
+    shortfalls(world).total().missing + missing_drawn(world)
+}
+
+/// How much of each part of what the sights take in has yet to stand as it is now, over every
+/// scenery streaming.
+pub fn shortfalls(world: &World) -> Shortfalls {
+    let mut all = Shortfalls::default();
+    for streaming in world.resource::<Streams>().0.values() {
+        if streaming.seen {
+            all += streaming.shortfalls;
+        }
+    }
+    all
+}
+
+/// How much of what a plan takes in has yet to stand as it is now.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Shortfall {
+    /// Not standing at all, or coarser than wanted, where the sights take it in.
+    pub missing: u32,
+    /// Standing as it did before an edit, its new values on their way.
+    pub stale: u32,
+    /// Not standing yet, or coarser or older than wanted, beyond what the sights take in: the
+    /// plan stands past their edges so that what they move onto stands before they reach it.
+    pub ahead: u32,
+}
+
+impl Shortfall {
+    pub fn any(self) -> bool {
+        self.missing > 0 || self.stale > 0 || self.ahead > 0
+    }
+}
+
+impl std::ops::AddAssign for Shortfall {
+    fn add_assign(&mut self, other: Shortfall) {
+        self.missing += other.missing;
+        self.stale += other.stale;
+        self.ahead += other.ahead;
+    }
+}
+
+/// How much of each part of what a plan takes in has yet to stand as it is now: the ground's
+/// tiles, the lots of props, of the covers' copies and of the far field, the canopy over the
+/// ground, and the covers' blades.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Shortfalls {
+    pub ground: Shortfall,
+    pub props: Shortfall,
+    pub copies: Shortfall,
+    pub far: Shortfall,
+    pub canopy: Shortfall,
+    pub grass: Shortfall,
+}
+
+impl Shortfalls {
+    pub fn total(self) -> Shortfall {
+        let mut total = Shortfall::default();
+        for part in [
+            self.ground,
+            self.props,
+            self.copies,
+            self.far,
+            self.canopy,
+            self.grass,
+        ] {
+            total += part;
+        }
+        total
+    }
+}
+
+impl std::ops::AddAssign for Shortfalls {
+    fn add_assign(&mut self, other: Shortfalls) {
+        self.ground += other.ground;
+        self.props += other.props;
+        self.copies += other.copies;
+        self.far += other.far;
+        self.canopy += other.canopy;
+        self.grass += other.grass;
+    }
+}
+
+/// How many props `scenery` holds in its arena on the GPU.
+pub fn arena_props(world: &World, scenery: Scenery) -> u32 {
+    world
+        .resource::<Streams>()
+        .0
+        .get(&scenery.root)
+        .map_or(0, |streaming| streaming.instances.props())
+}
+
+/// Where the module standing the instance at `instance` of `scenery`'s arena was written: the
+/// path of the node in the area's scene that is the module or brings it. None for a cover's copy.
+pub fn origin_of(world: &World, scenery: Scenery, instance: u32) -> Option<String> {
+    let streaming = world.resource::<Streams>().0.get(&scenery.root)?;
+    let source = streaming.instances.source_of(instance)?;
+    streaming.area.prop_origins.get(source as usize).cloned()
+}
+
+/// A number that changes each time the props standing in `scenery`'s arena do, and with it what
+/// [`origin_of`] and [`instances_of`] tell.
+pub fn props_revision(world: &World, scenery: Scenery) -> Option<u64> {
+    let streaming = world.resource::<Streams>().0.get(&scenery.root)?;
+    Some(streaming.instances.props_revision())
+}
+
+/// Every instance of `scenery`'s arena that a module written at an origin `outlined` takes stands.
+pub fn instances_of(world: &World, scenery: Scenery, outlined: impl Fn(&str) -> bool) -> Vec<u32> {
+    let Some(streaming) = world.resource::<Streams>().0.get(&scenery.root) else {
+        return Vec::new();
+    };
+    let origins = &streaming.area.prop_origins;
+    streaming.instances.standing_for(|source| {
+        origins
+            .get(source as usize)
+            .is_some_and(|origin| outlined(origin))
+    })
+}
+
+/// How many copies of its covers' pieces `scenery` holds in its arena on the GPU.
+pub fn arena_copies(world: &World, scenery: Scenery) -> u32 {
+    world
+        .resource::<Streams>()
+        .0
+        .get(&scenery.root)
+        .map_or(0, |streaming| streaming.instances.copies())
+}
+
+/// How many blades of its covers' grass `scenery` holds on the GPU.
+pub fn grass_blades(world: &World, scenery: Scenery) -> u64 {
+    world
+        .resource::<Streams>()
+        .0
+        .get(&scenery.root)
+        .map_or(0, |streaming| streaming.grass.blades())
+}
+
+/// How many patches of ground are drawn for the sights.
+pub fn stood_chunks(world: &World) -> u32 {
+    world
+        .resource::<Streams>()
+        .0
+        .values()
+        .filter_map(|streaming| world.get::<GroundDraw>(streaming.terrain))
+        .map(|draw| draw.patches.len() as u32)
+        .sum()
+}
+
+/// Whether `scenery` stands all its sight takes in, drawn.
+pub fn stood(world: &World, scenery: Scenery) -> bool {
+    let drawn = frames_drawn(world);
+    world
+        .resource::<Streams>()
+        .0
+        .get(&scenery.root)
+        .is_some_and(|streaming| streaming.stands(drawn))
 }
 
 /// How many sceneries stand.
-pub fn sceneries(world: &mut World) -> usize {
-    world.query::<&Streaming>().iter(world).count()
+pub fn sceneries(world: &World) -> usize {
+    world.resource::<Streams>().0.len()
 }
 
-/// What an area's scenery stands as the view moves: the area and what it's drawn from, where the
-/// view is, and what stands now, by what it stands for.
-#[derive(Component)]
+/// What every scenery standing stands as its sight moves, by its root.
+#[derive(Resource, Default)]
+struct Streams(HashMap<Entity, Streaming>);
+
+/// What an area's scenery stands as its sight moves: the area and what it's drawn from, the
+/// sight, the plan for it, and what stands now.
 struct Streaming {
     content: Content,
     area: Arc<Area>,
@@ -321,60 +633,55 @@ struct Streaming {
     paint: PaintMap,
     water: WaterSurface,
     terrain: Entity,
-    paints: ChunkPaints,
-    regions: Regions,
-    covers: Covers,
-    props: Props,
-    lights: SpatialIndex,
-    view: Option<Seen>,
+    grass: Grass,
+    instances: Instances,
+    planner: Making<Arc<Planner>>,
+    sight: Option<Sight>,
+    /// Whether an eye looks at it now: a scenery kept while no view shows it goes on standing
+    /// what it can, but its shortfall is no one's wait.
+    seen: bool,
+    /// The plan being made, for the widened sight it is made for.
+    planning: Option<(Sight, Task<Plan>)>,
+    plan: Option<Arc<Plan>>,
+    /// Whether all the plan takes in stands, so a sight that stays within it costs nothing to
+    /// stream.
+    whole: bool,
+    /// How many frames the render world had drawn when it last came to stand whole.
+    stood_at: Option<u64>,
     stood: Stood,
-    /// The tiles of ground being loaded, for the near chunks waiting on them.
+    /// The plan whose ground the terrain draws.
+    drawn: Option<Arc<Plan>>,
+    /// How much of each part of what the plan takes in has yet to stand as it is now.
+    shortfalls: Shortfalls,
+    /// The tiles of ground being loaded for what stands on them.
     loading: HashMap<TileAt, Task<()>>,
-    /// The chunks of ground being made, each its mesh and the paint under it.
-    making: HashMap<Node, Making<(Mesh, ChunkPaint)>>,
-    /// The view all that it takes in stands for, once it does, so a view that stays put costs
-    /// nothing to stream.
-    stood_for: Option<Seen>,
 }
 
-/// Where the view looks at, how far around it the scenery stands, the view, and how high its eye
-/// stands over the ground below it.
-#[derive(Clone, Copy, PartialEq)]
-struct Seen {
-    at: Pos<Meters>,
-    reach: Meters,
-    view: View,
-    above_ground: Meters,
-}
-
-impl Seen {
-    /// How finely the view shows what lies `from_eye` off it.
-    fn detail(&self, from_eye: f32) -> Detail {
-        let nearest = self.above_ground.0.max(NEAREST_GROUND.0);
-        let anchor = (nearest.log2() * 2.0).floor() as i32;
-        let octaves = (from_eye / nearest).max(1.0).log2().floor() as i32;
-        Detail(anchor + 2 * octaves)
+impl Streaming {
+    /// Whether all the latest sight takes in stands, and the render world, `drawn` frames in, has
+    /// drawn it since, so whatever it draws with has been asked of the GPU.
+    fn stands(&self, drawn: Option<u64>) -> bool {
+        self.stood()
+            && drawn
+                .zip(self.stood_at)
+                .is_none_or(|(drawn, stood)| drawn >= stood + DRAWN_FRAMES_AFTER)
     }
-}
 
-/// How finely the scenery shows what lies somewhere off the eye: as finely as what lies 2^(n/2)
-/// metres off it. Everything within twice as far as the ground below the eye shows as finely as
-/// that ground, taken to the half octave nearer, and every doubling beyond an octave coarser. So
-/// all a camera looking down on the ground sees shows alike and changes at once as it zooms, while
-/// a camera looking along the ground sees detail fall away with distance.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
-struct Detail(i32);
+    /// Whether all the latest sight takes in stands.
+    fn stood(&self) -> bool {
+        self.whole
+            && self.sight.is_some()
+            && self.plan.as_ref().map(|plan| plan.seen.sight) == self.sight.map(Sight::widened)
+    }
 
-impl Detail {
-    /// How far off the eye what shows at this detail is taken to be.
-    fn distance(self) -> Meters {
-        Meters((self.0 as f32 / 2.0).exp2())
+    /// Whether streaming has nothing to do until the sight moves.
+    fn idle(&self) -> bool {
+        self.sight.is_none() || self.stood()
     }
 }
 
 #[derive(Default)]
 struct Stood {
-    ground: HashMap<Node, Entity>,
     lights: HashMap<usize, Entity>,
 }
 
@@ -387,193 +694,167 @@ struct Node {
     row: u32,
 }
 
-/// The samples along a leaf chunk's side.
-const LEAF_SAMPLES: u32 = 128;
-/// The pixels along every chunk's paint: a pixel per stride of its samples, and one beyond each
-/// edge.
-const PAINT_SIDE: u32 = LEAF_SAMPLES + 2;
-/// How near the view a node of the ground or a region of the scenery must lie, in its own sides,
-/// to be cut into finer ones.
+/// The samples along a leaf node's side: a node is drawn as a patch.
+const LEAF_SAMPLES: u32 = PATCH_CELLS;
+/// How near the view a node of the ground must lie, in its own sides, to be cut into finer ones.
 const SPLIT_WITHIN: f32 = 1.5;
-/// The level from which a chunk's stride is the overview's, so it stands from the overview alone;
-/// a finer chunk waits for the tiles of ground under it.
+/// The level from which a node's stride is the overview's, so it draws from the overview alone;
+/// a finer node wants the tiles of ground under it in detail.
 const OVERVIEW_LEVEL: u32 = OVERVIEW_STRIDE.trailing_zeros();
 /// How placements are filed to be found near the view, and the side of the leaves of the
 /// quadtree the props stand over.
 const PLACEMENT_CELL: Meters = Meters(32.0);
-/// How far past its reach the view keeps what stands, so pacing back and forth over the edge
-/// stands nothing twice.
-const KEEP_SHARE: f32 = 1.25;
-/// The nearest the ground is taken to come to the eye, so an eye on or below it still shows a
-/// detail.
-const NEAREST_GROUND: Meters = Meters(0.5);
-/// How many bytes of new meshes a frame sends to the GPU: what stands past them waits for the
-/// next frame, so a view taking in much at once costs many frames a little rather than one frame a
-/// lot. A piece larger than this stands in a frame of its own.
-const MESH_BYTES_PER_FRAME: usize = 2 << 20;
-/// How much stands in one frame, and among the props how many whose model no earlier prop asked
-/// for: a model's load falls on the frames after the prop that starts it.
-const COVERS_PER_FRAME: usize = 16;
-const PROPS_PER_FRAME: usize = 16;
-const FRESH_MODELS_PER_FRAME: usize = 1;
-const MERGES_PER_FRAME: usize = 4;
 const PARTS_TAKEN_DOWN_PER_FRAME: usize = 2000;
 
 fn stream(world: &mut World) {
-    let roots: Vec<Entity> = world
-        .query_filtered::<Entity, With<Streaming>>()
-        .iter(world)
-        .collect();
-    let simplified = world.is_resource_changed::<MeshLevels>();
-    for root in roots {
-        let Some(mut streaming) = world.entity_mut(root).take::<Streaming>() else {
-            continue;
-        };
-        let Some(seen) = streaming.view else {
-            world.entity_mut(root).insert(streaming);
-            continue;
-        };
-        if streaming.stood_for == Some(seen) && streaming.loading.is_empty() {
-            if simplified {
-                props::level_props(world, &streaming, &seen);
+    if world.resource::<Streams>().0.values().all(Streaming::idle) {
+        return;
+    }
+    world.resource_scope(|world, mut streams: Mut<Streams>| {
+        for (&root, streaming) in streams.bypass_change_detection().0.iter_mut() {
+            replan(world, streaming);
+            stream_plan(world, root, streaming);
+        }
+    });
+}
+
+/// Plans for the sight anew once it has moved out of the steps the plan was made for, letting go
+/// of a plan being made for a sight it has since left, and takes the plan once it is made.
+fn replan(world: &mut World, streaming: &mut Streaming) {
+    let Some(sight) = streaming.sight.map(Sight::widened) else {
+        return;
+    };
+    let Some(planner) = streaming.planner.made().cloned() else {
+        return;
+    };
+    if let Some((planned, task)) = streaming.planning.take()
+        && planned == sight
+    {
+        match Handoff::of(world).take(task) {
+            Ok(plan) => {
+                streaming.plan = Some(Arc::new(plan));
+                streaming.whole = false;
             }
-            world.entity_mut(root).insert(streaming);
-            continue;
+            Err(task) => streaming.planning = Some((planned, task)),
         }
-        let Seen { at, reach, .. } = seen;
-        let keep = Meters(reach.0 * KEEP_SHARE);
-        let mut budget = Budget::new();
-        stream_ground(world, &mut streaming, at, &mut budget);
-        let cut = streaming.regions.cut(&streaming.heights, seen);
-        let props_unstood = props::stand(world, &mut streaming, root, seen, &cut, &mut budget);
-        let covers_unstood = covers::stand(world, &mut streaming, root, seen, &cut, &mut budget);
-        props::clear(world, &mut streaming, seen, &cut, &props_unstood);
-        covers::clear(world, &mut streaming, seen, &cut, &covers_unstood);
-        if !props_unstood.is_empty() || !covers_unstood.is_empty() {
-            budget.defer();
-        }
-        props::level_props(world, &streaming, &seen);
-        stream_lights(world, &mut streaming, root, at, reach, keep);
-        streaming.stood_for = (!budget.spent).then_some(seen);
-        world.entity_mut(root).insert(streaming);
+        return;
+    }
+    if streaming
+        .plan
+        .as_ref()
+        .is_some_and(|plan| plan.seen.sight == sight)
+    {
+        return;
+    }
+    let heights = streaming.heights.clone();
+    let task = AsyncComputeTaskPool::get().spawn(async move { planner.plan(sight, &heights) });
+    streaming.planning = Some((sight, task));
+    if let Some(mut work) = world.get_resource_mut::<FrameWork>() {
+        work.plans += 1;
     }
 }
 
-/// What a frame may still stand.
-struct Budget {
-    mesh_bytes: usize,
-    covers: usize,
-    props: usize,
-    fresh: usize,
-    merges: usize,
-    /// Whether the frame left something to stand.
-    spent: bool,
-}
-
-impl Budget {
-    fn new() -> Budget {
-        Budget {
-            mesh_bytes: MESH_BYTES_PER_FRAME,
-            covers: COVERS_PER_FRAME,
-            props: PROPS_PER_FRAME,
-            fresh: FRESH_MODELS_PER_FRAME,
-            merges: MERGES_PER_FRAME,
-            spent: false,
-        }
+/// Stands what the plan takes in, as much as a frame's budget allows, and takes down what it
+/// left behind once what replaces it stands.
+fn stream_plan(world: &mut World, root: Entity, streaming: &mut Streaming) {
+    let (Some(_), Some(plan)) = (streaming.planner.made(), streaming.plan.clone()) else {
+        return;
+    };
+    if streaming.whole {
+        return;
     }
-
-    /// Leaves something to stand on a later frame, as it waits on what is being made or loaded.
-    fn defer(&mut self) {
-        self.spent = true;
-    }
-
-    /// Whether the frame sends meshes of `bytes` to the GPU: when it has room for them, or has sent
-    /// none yet.
-    fn send(&mut self, bytes: usize) -> bool {
-        if bytes > self.mesh_bytes && self.mesh_bytes < MESH_BYTES_PER_FRAME {
-            self.spent = true;
-            return false;
-        }
-        self.mesh_bytes = self.mesh_bytes.saturating_sub(bytes);
-        true
-    }
-
-    fn take(&mut self, left: fn(&mut Budget) -> &mut usize) -> bool {
-        let left = left(self);
-        if *left == 0 {
-            self.spent = true;
-            return false;
-        }
-        *left -= 1;
-        true
-    }
-}
-
-fn stream_ground(
-    world: &mut World,
-    streaming: &mut Streaming,
-    at: Pos<Meters>,
-    budget: &mut Budget,
-) {
     streaming
         .loading
         .retain(|_, task| check_ready(task).is_none());
-    let wanted: HashSet<Node> = nodes_for(&streaming.heights, at).into_iter().collect();
-    streaming.making.retain(|node, _| wanted.contains(node));
-    let gone: Vec<Node> = streaming
-        .stood
-        .ground
-        .keys()
-        .filter(|&node| !wanted.contains(node))
-        .copied()
-        .collect();
-    let mut missing: Vec<Node> = wanted
-        .iter()
-        .filter(|&node| !streaming.stood.ground.contains_key(node))
-        .copied()
-        .collect();
-    missing.sort_by_key(|node| node.level);
-    for node in missing {
-        if !ground_under(streaming, node) {
-            budget.defer();
-            continue;
-        }
-        let making = streaming.making.entry(node).or_insert_with(|| {
-            Making::Task(make_chunk(&streaming.heights, &streaming.paint, node))
-        });
-        let Some((mesh, _)) = making.made() else {
-            budget.defer();
-            continue;
-        };
-        if !budget.send(mesh_bytes(mesh)) {
-            break;
-        }
-        let Some((mesh, paint)) = streaming.making.remove(&node).and_then(Making::into_made) else {
-            continue;
-        };
-        let entity = spawn_chunk(world, streaming, mesh, &paint);
-        streaming.stood.ground.insert(node, entity);
-    }
-    if wanted
-        .iter()
-        .all(|node| streaming.stood.ground.contains_key(node))
-    {
-        for node in gone {
-            if let Some(entity) = streaming.stood.ground.remove(&node) {
-                take_down_chunk(world, &mut streaming.paints, entity);
-            }
-        }
+    let ground = draw_ground(world, streaming, &plan);
+    let mut shortfalls = instances::stand(world, streaming, &plan, root);
+    instances::clear(world, streaming, &plan, root);
+    shortfalls.ground = ground;
+    shortfalls.canopy = instances::lay_canopy(world, streaming);
+    shortfalls.grass = grass::grow(world, streaming, &plan.seen);
+    streaming.shortfalls = shortfalls;
+    stream_lights(world, streaming, &plan, root);
+    streaming.whole = !shortfalls.total().any();
+    if streaming.whole {
+        streaming.stood_at = frames_drawn(world);
     }
 }
 
-/// Whether the ground under `node` is there to stand it on: the overview, for a chunk as coarse as
-/// it; else every tile under it loaded, each not yet being loaded set loading on a task.
-fn ground_under(streaming: &mut Streaming, node: Node) -> bool {
-    if node.level >= OVERVIEW_LEVEL {
-        return true;
+/// Draws the ground `plan` wants, its nodes finer than the overview in detail as the terrain's
+/// atlas takes their tiles in, those any eye may come nearest first; how much of it has yet to
+/// reach the GPU as it is now.
+fn draw_ground(world: &mut World, streaming: &mut Streaming, plan: &Arc<Plan>) -> Shortfall {
+    let terrain = streaming.terrain;
+    if streaming
+        .drawn
+        .as_ref()
+        .is_none_or(|drawn| !Arc::ptr_eq(drawn, plan))
+    {
+        let samples = streaming.heights.samples();
+        let patches = patches_of(&plan.ground, samples);
+        let size = streaming.heights.size();
+        let nearest_eye = |tile: TileAt| {
+            let bounds = tile.rect(size);
+            let ground = streaming.heights.height_at(bounds.center());
+            plan.seen.over(bounds, ground, ground)
+        };
+        let mut wanted: Vec<(f32, TileAt)> = plan
+            .ground
+            .iter()
+            .filter(|node| node.level < OVERVIEW_LEVEL)
+            .flat_map(|node| size.tiles_within(node_rect(*node).bounds()))
+            .collect::<HashSet<TileAt>>()
+            .into_iter()
+            .map(|tile| (nearest_eye(tile), tile))
+            .collect();
+        wanted.sort_by(|(a, at), (b, bt)| a.total_cmp(b).then(at.cmp(bt)));
+        if let Some(mut draw) = world.get_mut::<GroundDraw>(terrain) {
+            draw.patches = patches.into();
+        }
+        if let Some(mut atlas) = world.get_mut::<TerrainAtlas>(terrain) {
+            atlas.want(wanted.into_iter().map(|(_, tile)| tile));
+        }
+        streaming.drawn = Some(plan.clone());
     }
+    let Some(atlas) = world.get::<TerrainAtlas>(terrain) else {
+        return Shortfall::default();
+    };
+    let mut shortfall = Shortfall {
+        missing: u32::from(atlas.overview_missing()),
+        stale: atlas.stale(),
+        ahead: 0,
+    };
+    let mut missing = atlas.missing_tiles().peekable();
+    if missing.peek().is_none() {
+        return shortfall;
+    }
+    let taken_in: Option<HashSet<TileAt>> = streaming.sight.map(|sight| {
+        let size = streaming.heights.size();
+        nodes_for(
+            &streaming.heights,
+            &Seen::of(sight, &streaming.heights),
+            0.0,
+        )
+        .into_iter()
+        .filter(|node| node.level < OVERVIEW_LEVEL)
+        .flat_map(|node| size.tiles_within(node_rect(node).bounds()))
+        .collect()
+    });
+    for tile in missing {
+        if taken_in.as_ref().is_none_or(|taken| taken.contains(&tile)) {
+            shortfall.missing += 1;
+        } else {
+            shortfall.ahead += 1;
+        }
+    }
+    shortfall
+}
+
+/// Whether every tile of ground under `bounds` is loaded, each not yet being loaded set loading on
+/// a task. What stands on the ground waits for it: until a tile loads, its values are read from
+/// the overview, and what stood from those would stay as it stood.
+fn ground_loaded(streaming: &mut Streaming, bounds: Rect<Meters>) -> bool {
     let (heights, paint, water) = (&streaming.heights, &streaming.paint, &streaming.water);
-    let bounds = node_rect(node).bounds();
     let mut ready = true;
     for tile in heights.size().tiles_within(bounds) {
         if heights.is_loaded(tile) && paint.is_loaded(tile) && water.is_loaded(tile) {
@@ -601,10 +882,63 @@ fn ground_under(streaming: &mut Streaming, node: Node) -> bool {
     ready
 }
 
-/// The nodes of the quadtree over the ground's samples that stand for the view at `at`: every node
-/// is cut in four while it lies within `SPLIT_WITHIN` of its sides from the view and is wider than
-/// a leaf; what remains covers the ground once over, finer the nearer the view.
-fn nodes_for(heights: &Heightfield, at: Pos<Meters>) -> Vec<Node> {
+/// The patches `nodes` are drawn as over a ground of `samples` across and down, each meeting a
+/// coarser neighbour on its points.
+fn patches_of(nodes: &[Node], samples: (u32, u32)) -> Vec<GroundPatch> {
+    let laid: HashSet<Node> = nodes.iter().copied().collect();
+    let top = nodes.iter().map(|node| node.level).max().unwrap_or(0);
+    let last = (samples.0.saturating_sub(1), samples.1.saturating_sub(1));
+    let stride_at = |node: Node, sample: Option<(u32, u32)>| {
+        let own = 1 << node.level;
+        let Some((column, row)) = sample.filter(|&(column, row)| column < last.0 && row < last.1)
+        else {
+            return own;
+        };
+        (node.level..=top)
+            .map(|level| Node {
+                level,
+                column: column / (LEAF_SAMPLES << level),
+                row: row / (LEAF_SAMPLES << level),
+            })
+            .find(|beside| laid.contains(beside))
+            .map_or(own, |beside| 1 << beside.level)
+    };
+    nodes
+        .iter()
+        .map(|&node| {
+            let NodeRect { first, side } = node_rect(node);
+            let middle = (first.0 + side / 2, first.1 + side / 2);
+            let beside = [
+                first.0.checked_sub(1).map(|column| (column, middle.1)),
+                first.1.checked_sub(1).map(|row| (middle.0, row)),
+                Some((first.0 + side, middle.1)),
+                Some((middle.0, first.1 + side)),
+            ]
+            .map(|sample| stride_at(node, sample));
+            GroundPatch::new(first, 1 << node.level, beside)
+        })
+        .collect()
+}
+
+/// How many tiles of ground a view may want in detail at once, so every tile its plan wants has
+/// a slot as soon as it is wanted: the tiles under the nodes finer than the overview, which lie
+/// as far as the plan splits an overview node from wherever its eyes may stand, each at most
+/// half as wide as that node.
+fn detail_slots() -> u32 {
+    let overview_node = (LEAF_SAMPLES << OVERVIEW_LEVEL) as f32 / SAMPLES_PER_METER as f32;
+    let reach = overview_node * SPLIT_WITHIN + plan::OFF_MIDDLE + plan::AHEAD + overview_node / 2.0;
+    let across = (2.0 * reach / TILE_SIDE.0).ceil() as u32 + 1;
+    across * across
+}
+
+/// The nodes of the quadtree over the ground's samples that stand for `seen` looking at ground
+/// within `off` of where it looks: every node is cut in four while it may lie within
+/// `SPLIT_WITHIN` of its sides from that ground, with its eyes standing as high above the ground
+/// as they may, and is wider than a leaf; what remains covers the ground once over, finer the
+/// nearer the view.
+fn nodes_for(heights: &Heightfield, seen: &Seen, off: f32) -> Vec<Node> {
+    let at = seen.at();
+    let above = seen.above(heights.range().highest);
     let (columns, rows) = heights.samples();
     let cells = (columns.max(rows).saturating_sub(1)).max(1);
     let levels = (cells.div_ceil(LEAF_SAMPLES))
@@ -622,7 +956,8 @@ fn nodes_for(heights: &Heightfield, at: Pos<Meters>) -> Vec<Node> {
             continue;
         }
         let bounds = rect.bounds();
-        let near = distance_to(bounds, at) < bounds.size.width * SPLIT_WITHIN;
+        let along = (distance_to(bounds, at) - off).max(0.0);
+        let near = along.hypot(above) < bounds.size.width * SPLIT_WITHIN;
         if node.level > 0 && near {
             for (dc, dr) in [(0, 0), (1, 0), (0, 1), (1, 1)] {
                 open.push(Node {
@@ -663,55 +998,6 @@ impl NodeRect {
     }
 }
 
-/// What stands of a merged region: waiting on what it merges, its meshes `M` being made, or
-/// standing, those made rising as many a frame as the budget sends.
-enum Merged<W, M> {
-    Waiting(W),
-    Merging(Making<Vec<M>>),
-    Standing { stood: Vec<Entity>, rising: Vec<M> },
-}
-
-impl<W, M> Merged<W, M> {
-    /// Stands what is made, as many a frame as `budget` sends of the `bytes` each takes, each by
-    /// `spawn`: whether all of it stands, none while waiting.
-    fn rise(
-        &mut self,
-        budget: &mut Budget,
-        bytes: impl Fn(&M) -> usize,
-        mut spawn: impl FnMut(M) -> Option<Entity>,
-    ) -> Option<bool> {
-        if let Merged::Merging(making) = self {
-            let Some(made) = making.made() else {
-                return Some(false);
-            };
-            let rising = std::mem::take(made);
-            *self = Merged::Standing {
-                stood: Vec::new(),
-                rising,
-            };
-        }
-        let Merged::Standing { stood, rising } = self else {
-            return None;
-        };
-        while rising.last().is_some_and(|next| budget.send(bytes(next))) {
-            if let Some(next) = rising.pop()
-                && let Some(standing) = spawn(next)
-            {
-                stood.push(standing);
-            }
-        }
-        Some(rising.is_empty())
-    }
-
-    /// What stands of the region.
-    fn stood(&self) -> &[Entity] {
-        match self {
-            Merged::Standing { stood, .. } => stood,
-            Merged::Waiting(_) | Merged::Merging(_) => &[],
-        }
-    }
-}
-
 /// What a task makes for the scenery, kept once it is made until a frame has room to stand it.
 enum Making<T> {
     Task(Task<T>),
@@ -731,72 +1017,6 @@ impl<T> Making<T> {
             Making::Task(_) => None,
         }
     }
-
-    fn into_made(self) -> Option<T> {
-        match self {
-            Making::Made(made) => Some(made),
-            Making::Task(_) => None,
-        }
-    }
-}
-
-/// The bytes `mesh` takes on the GPU.
-fn mesh_bytes(mesh: &Mesh) -> usize {
-    mesh.get_vertex_buffer_size() + mesh.get_index_buffer_bytes().map_or(0, <[u8]>::len)
-}
-
-/// Makes the chunk of ground `node` on a task: its mesh and the paint under it.
-fn make_chunk(heights: &Heightfield, paint: &PaintMap, node: Node) -> Task<(Mesh, ChunkPaint)> {
-    let (heights, paint) = (heights.clone(), paint.clone());
-    AsyncComputeTaskPool::get().spawn(async move { made_chunk(&heights, &paint, node) })
-}
-
-fn made_chunk(heights: &Heightfield, paint: &PaintMap, node: Node) -> (Mesh, ChunkPaint) {
-    let samples = chunk_samples(node);
-    (
-        terrain::chunk(heights, samples),
-        ChunkPaint::of(paint, samples),
-    )
-}
-
-fn spawn_chunk(
-    world: &mut World,
-    streaming: &mut Streaming,
-    mesh: Mesh,
-    paint: &ChunkPaint,
-) -> Entity {
-    let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
-    let tag = streaming.paints.lay(world, paint);
-    world
-        .spawn((
-            Mesh3d(mesh),
-            MeshMaterial3d(streaming.paints.material().clone()),
-            tag,
-            Transform::default(),
-            ChildOf(streaming.terrain),
-        ))
-        .id()
-}
-
-/// Takes down a chunk of ground, freeing the layer its paint lay on.
-fn take_down_chunk(world: &mut World, paints: &mut ChunkPaints, chunk: Entity) {
-    if let Some(tag) = world.get::<MeshTag>(chunk) {
-        paints.lift(tag);
-    }
-    world.despawn(chunk);
-}
-
-fn chunk_samples(node: Node) -> terrain::ChunkSamples {
-    let rect = node_rect(node);
-    terrain::ChunkSamples {
-        first: rect.first,
-        side: rect.side,
-        stride: 1 << node.level,
-    }
-}
-
-fn far(from: Pos<Meters>, to: Pos<Meters>, by: Meters) -> bool {
-    (from - to).length() > by.0
 }
 
 fn distance_to(bounds: Rect<Meters>, at: Pos<Meters>) -> f32 {
@@ -805,20 +1025,14 @@ fn distance_to(bounds: Rect<Meters>, at: Pos<Meters>) -> f32 {
     (dx * dx + dy * dy).sqrt()
 }
 
-fn stream_lights(
-    world: &mut World,
-    streaming: &mut Streaming,
-    root: Entity,
-    at: Pos<Meters>,
-    reach: Meters,
-    keep: Meters,
-) {
-    let area = streaming.area.clone();
+/// Stands the lights `plan` stands, and takes down those it no longer keeps.
+fn stream_lights(world: &mut World, streaming: &mut Streaming, plan: &Plan, root: Entity) {
+    let lights = &plan.lights;
     let gone: Vec<usize> = streaming
         .stood
         .lights
         .keys()
-        .filter(|&&index| far(area.lights[index].at, at, keep))
+        .filter(|index| !lights.kept.contains(*index))
         .copied()
         .collect();
     for index in gone {
@@ -826,19 +1040,18 @@ fn stream_lights(
             world.despawn(entity);
         }
     }
-    let near: Vec<usize> = streaming
-        .lights
-        .near(at, reach)
-        .filter(|&index| {
-            !streaming.stood.lights.contains_key(&index) && !far(area.lights[index].at, at, reach)
-        })
+    let near: Vec<usize> = lights
+        .near
+        .iter()
+        .filter(|index| !streaming.stood.lights.contains_key(*index))
+        .copied()
         .collect();
-    let mut rng = Rng::from_entropy();
+    let mut rng = Rng::fork_of(world);
     for index in near {
         let entity = spawn_light(
             world,
             &streaming.heights,
-            &area.lights[index],
+            &streaming.area.lights[index],
             &mut rng,
             root,
         );
@@ -850,12 +1063,10 @@ fn stream_lights(
 /// whole area going doesn't hold up a frame. What its streaming held, which may be the last of
 /// a whole area, is let go of off the frame.
 pub fn despawn(world: &mut World, scenery: Scenery) {
-    if let Ok(mut root) = world.get_entity_mut(scenery.root)
-        && let Some(streaming) = root.take::<Streaming>()
-    {
-        AsyncComputeTaskPool::get()
-            .spawn(async move { drop(streaming) })
-            .detach();
+    if let Some(streaming) = world.resource_mut::<Streams>().0.remove(&scenery.root) {
+        instances::drop_arena(world, scenery.root);
+        grass::drop_grass(world, streaming.terrain);
+        jobs::drop_off_thread(streaming);
     }
     take_away(world, scenery.root);
 }
@@ -868,6 +1079,13 @@ fn take_away(world: &mut World, entity: Entity) {
     };
     gone.insert(Visibility::Hidden);
     world.resource_mut::<TakenDown>().0.push(entity);
+}
+
+/// Grows every scenery's grass again as the player's settings ask, once they change.
+fn regrow_grass(mut streams: ResMut<Streams>) {
+    for streaming in streams.0.values_mut() {
+        streaming.whole = false;
+    }
 }
 
 /// What is out of the view, still being taken out of the world.
@@ -904,7 +1122,8 @@ fn parts_of(world: &World, entity: Entity) -> usize {
 /// Lights `area` for the hour under its weather: its sun turned and coloured, or by night the full
 /// moon in its place, the eye opened to how strongly it shines, its clouds carried
 /// on by the wind, and the ambient light, the haze of the sun as it shines and the area's sky put
-/// on `camera`; cheap enough to do every frame.
+/// on `camera`; cheap enough to do every frame. Only what comes out different is written, so
+/// what follows the light sees a change only when there is one.
 pub fn light(
     world: &mut World,
     area: &Area,
@@ -913,20 +1132,25 @@ pub fn light(
     scenery: Scenery,
     camera: Entity,
 ) {
-    let look = world.resource::<Look>().clone();
+    // Copied out rather than taken out by `resource_scope`, whose putting back counts as a
+    // change to the look and has everything that follows it remade every frame.
+    let look = *world.resource::<Look>();
+    let look = &look;
     let (clouds, water) = (weather.clouds, weather.water);
-    let sun = sun_at(area, weather, daylight, &look);
+    let sun = sun_at(area, weather, daylight, look);
     let elevation = sun.map(|sun| sun.elevation);
     let ambient = AmbientLight {
         color: area.lighting.ambient.color(),
         brightness: look.light.ambient_nits
-            * sky::ambient_at(daylight, elevation, clouds, water, &look),
+            * sky::ambient_at(daylight, elevation, clouds, water, look),
         ..default()
     };
     world.resource_mut::<CloudSheet>().cover(clouds, water);
-    let shining = sun.map(|sun| sky::shining(sun, clouds, water, &look));
+    let shining = sun.map(|sun| sky::shining(sun, clouds, water, look));
     if let (Some(sun), Some(shining), Some(entity)) = (sun, shining, scenery.sun) {
-        if let Some(mut light) = world.get_mut::<DirectionalLight>(entity) {
+        if let Some(mut light) = world.get_mut::<DirectionalLight>(entity)
+            && (light.color, light.illuminance) != (shining.color, shining.illuminance)
+        {
             light.color = shining.color;
             light.illuminance = shining.illuminance;
         }
@@ -942,17 +1166,24 @@ pub fn light(
             shining.azimuth,
             Vec2::new(center.x, center.y),
         );
+        let handoff = Handoff::of(world);
         let cast = world.resource_scope(|world, mut sheet: Mut<CloudSheet>| {
-            sheet.lay(placed, drifted, &mut world.resource_mut::<Assets<Image>>())
+            sheet.lay(
+                placed,
+                drifted,
+                &mut world.resource_mut::<Assets<Image>>(),
+                handoff,
+            )
         });
         if let Some(mut transform) = world.get_mut::<Transform>(entity) {
-            *transform = cast;
+            transform.set_if_neq(cast);
         }
+        reach_shadows(world, area, entity, camera);
         if scenery.sky.is_some() || scenery.rain.is_some() {
             let heavens = Heavens::new(
                 placed.back().as_vec3(),
                 shining.color,
-                shining.illuminance / (look.light.sun_lux * sky::clouded(clouds, water, &look)),
+                shining.illuminance / (look.light.sun_lux * sky::clouded(clouds, water, look)),
                 -lights::toward(sun.elevation, sun.azimuth),
                 sky::night(daylight, sun, &look.sky),
                 &look.clouds,
@@ -979,27 +1210,26 @@ pub fn light(
     }
     let mut tone = area.lighting.grade.tone();
     let mut lit = 1.0;
-    if let (Some(shining), Some(noon)) = (shining, sun_at(area, weather, Daylight::Fixed, &look)) {
-        let opened = sky::adaptation(daylight, shining, &look);
+    if let (Some(shining), Some(noon)) = (shining, sun_at(area, weather, Daylight::Fixed, look)) {
+        let opened = sky::adaptation(daylight, shining, look);
         tone.exposure.0 += opened.0;
-        let sky_light = sky::ambient_at(daylight, elevation, clouds, water, &look)
-            / sky::ambient_at(Daylight::Fixed, None, clouds, water, &look);
-        lit = sky::lit(shining, sky_light, opened, noon, &look);
+        let sky_light = sky::ambient_at(daylight, elevation, clouds, water, look)
+            / sky::ambient_at(Daylight::Fixed, None, clouds, water, look);
+        lit = sky::lit(shining, sky_light, opened, noon, look);
     }
     let rains = world.get_resource::<CameraRig>().map_or(0.0, |rig| {
         world.resource::<RainField>().rain_at(rig.target().xz())
     });
-    let moist = humidity(weather, &look);
+    let moist = humidity(weather, look);
     let eye = world
         .get::<GlobalTransform>(camera)
         .map(GlobalTransform::translation);
     if let Some(eye) = eye {
         let ground = area.heights.height_at(Pos::new(eye.x, eye.z));
         if let Some(air) = scenery.air {
-            let low_air = air_round(area, eye.xz(), ground, moist);
-            if let Ok(mut air) = world.get_entity_mut(air) {
-                air.insert(low_air);
-            }
+            let (volume, placed) = air_round(area, eye.xz(), ground, moist);
+            hold_by(world, air, volume, same_air);
+            hold(world, air, placed);
         }
         let color = sky::haze(sun, lit, area.lighting.sky, moist, rains, &look.sky);
         let mut banks: Vec<&FogBank> = area.fogs.iter().collect();
@@ -1009,18 +1239,92 @@ pub fn light(
             ground.0,
             banks.into_iter().map(|bank| bank.seen(moist, rains)),
         );
-        if let Ok(mut camera) = world.get_entity_mut(camera) {
-            camera.insert(haze);
-        }
+        hold(world, camera, haze);
     }
-    if let Ok(mut camera) = world.get_entity_mut(camera) {
-        let grade = camera.get::<WorldPicture>().map(|picture| picture.0);
-        camera.insert(ambient);
-        if let Some(grade) = grade {
-            camera.insert(camera::grading(tone, grade));
-        }
+    hold_by(world, camera, ambient, same_ambient);
+    if let Some(grade) = world.get::<WorldPicture>(camera).map(|picture| picture.0) {
+        hold(world, camera, camera::grading(tone, grade));
     }
     sky::show(world, camera, area.lighting.sky);
+}
+
+/// Reaches the sun's shadows as far as `camera` sees the ground of `area`.
+fn reach_shadows(world: &mut World, area: &Area, sun: Entity, camera: Entity) {
+    let (Some(lens), Some(eye)) = (
+        world.get::<Camera>(camera),
+        world.get::<GlobalTransform>(camera),
+    ) else {
+        return;
+    };
+    let bounds = area.size.bounds();
+    let needed = lights::ShadowReach::seen(lens.clip_from_view(), eye, |ray| {
+        camera::ground_hit(&area.heights, bounds, ray)
+            .map(|at| world_point(at, area.heights.height_at(at)))
+    });
+    if let Some(mut reach) = world.get_mut::<lights::ShadowReach>(sun) {
+        let next = reach.following(needed);
+        reach.set_if_neq(next);
+    }
+}
+
+/// Gives `entity` `value`, unless it holds it already.
+fn hold<C: Component<Mutability = Mutable> + PartialEq>(
+    world: &mut World,
+    entity: Entity,
+    value: C,
+) {
+    hold_by(world, entity, value, C::eq);
+}
+
+/// Gives `entity` `value`, unless it holds one `same` takes for it already.
+fn hold_by<C: Component<Mutability = Mutable>>(
+    world: &mut World,
+    entity: Entity,
+    value: C,
+    same: fn(&C, &C) -> bool,
+) {
+    let Ok(mut held) = world.get_entity_mut(entity) else {
+        return;
+    };
+    match held.get_mut::<C>() {
+        Some(mut current) => {
+            if !same(&current, &value) {
+                *current = value;
+            }
+        }
+        None => {
+            held.insert(value);
+        }
+    }
+}
+
+fn same_ambient(a: &AmbientLight, b: &AmbientLight) -> bool {
+    (a.color, a.brightness, a.affects_lightmapped_meshes)
+        == (b.color, b.brightness, b.affects_lightmapped_meshes)
+}
+
+fn same_air(a: &FogVolume, b: &FogVolume) -> bool {
+    (
+        a.fog_color,
+        a.density_factor,
+        &a.density_texture,
+        a.density_texture_offset,
+        a.absorption,
+        a.scattering,
+        a.scattering_asymmetry,
+        a.light_tint,
+        a.light_intensity,
+    ) == (
+        b.fog_color,
+        b.density_factor,
+        &b.density_texture,
+        b.density_texture_offset,
+        b.absorption,
+        b.scattering,
+        b.scattering_asymmetry,
+        b.light_tint,
+        b.light_intensity,
+    )
 }
 
 /// The low air the sun's shafts show in round `eye` (x east, y south), over ground `ground` high:
@@ -1181,71 +1485,79 @@ pub fn grade(lighting: &Lighting) -> AreaGrade {
 
 /// Lays `scenery`'s ground anew on `heights` painted with `paint`, as a stroke shapes it.
 pub fn lay_ground(world: &mut World, scenery: Scenery, heights: &Heightfield, paint: &PaintMap) {
-    let Some(mut streaming) = world.entity_mut(scenery.root).take::<Streaming>() else {
-        return;
-    };
-    streaming.heights = heights.clone();
-    streaming.paint = paint.clone();
-    streaming.making.clear();
-    let stood: Vec<(Node, Entity)> = streaming
-        .stood
-        .ground
-        .iter()
-        .map(|(&node, &entity)| (node, entity))
-        .collect();
-    let made: Vec<(Entity, Mesh, ChunkPaint)> = stood
-        .into_par_iter()
-        .map(|(node, entity)| {
-            let (mesh, paint) = made_chunk(heights, paint, node);
-            (entity, mesh, paint)
-        })
-        .collect();
-    for (entity, mesh, paint) in made {
-        let mesh = world.resource_mut::<Assets<Mesh>>().add(mesh);
-        if let Ok(mut chunk) = world.get_entity_mut(entity) {
-            chunk.insert(Mesh3d(mesh));
+    world.resource_scope(|world, mut streams: Mut<Streams>| {
+        if let Some(streaming) = streams.0.get_mut(&scenery.root) {
+            lay_streamed_ground(world, streaming, heights, paint);
         }
-        let Some(tag) = world.get::<MeshTag>(entity).cloned() else {
-            continue;
-        };
-        streaming.paints.relay(world, &paint, &tag);
-    }
-    streaming.covers.ground_changed();
-    world.entity_mut(scenery.root).insert(streaming);
+    });
 }
 
-/// The ground's root, holding the material its chunks are painted with, and their paint.
+fn lay_streamed_ground(
+    world: &mut World,
+    streaming: &mut Streaming,
+    heights: &Heightfield,
+    paint: &PaintMap,
+) {
+    let size = streaming.heights.size();
+    let changed: Vec<Rect<Meters>> = size
+        .each_tile()
+        .filter(|&at| {
+            heights.version(at) != streaming.heights.version(at)
+                || paint.version(at) != streaming.paint.version(at)
+        })
+        .map(|at| at.rect(size).inflate(EDGE_REACH.0, EDGE_REACH.0))
+        .collect();
+    if changed.is_empty() {
+        return;
+    }
+    streaming.heights = heights.clone();
+    streaming.paint = paint.clone();
+    if let Some(mut atlas) = world.get_mut::<TerrainAtlas>(streaming.terrain) {
+        atlas.lay(heights, paint, &streaming.water, detail_slots());
+    }
+    streaming
+        .instances
+        .ground_changed(streaming.area.size.bounds(), &changed);
+    streaming.grass.ground_changed(&changed);
+    streaming.whole = false;
+}
+
+/// How far past a tile of ground what stands on it may read the ground, so a change to the tile
+/// changes it too: the samples a slope is read across, and the reach of a copy or a blade over
+/// the edge of the cell it is laid out in.
+const EDGE_REACH: Meters = Meters(2.0);
+
+/// Stands the terrain of `area` under `root`: its ground drawn in the terrains laid under it, the
+/// pictures white until they load, from an atlas holding the area's ground.
 fn spawn_terrain(
     world: &mut World,
     content: &Content,
     area: &Area,
     look: &Look,
     root: Entity,
-) -> (Entity, ChunkPaints) {
+) -> Entity {
     let layers = ground_layers(content, area);
     let weather = world.resource::<WeatherImage>().0.clone();
-    let (material, pictures) = world.resource_scope(|world, mut images: Mut<Assets<Image>>| {
+    let (paint, pictures) = world.resource_scope(|world, mut images: Mut<Assets<Image>>| {
         let assets = world.resource::<AssetServer>();
-        terrain::ground_material(
-            &layers,
-            &look.materials,
-            weather,
-            assets,
-            &mut images,
-            PAINT_SIDE,
-        )
+        terrain::ground_paint(&layers, &look.materials, weather, assets, &mut images)
     });
-    let material = world.resource_mut::<Assets<GroundMaterial>>().add(material);
-    let terrain = world
+    let mut atlas = TerrainAtlas::default();
+    atlas.lay(&area.heights, &area.paint, &area.water, detail_slots());
+    world
         .spawn((
-            MeshMaterial3d(material.clone()),
+            GroundDraw {
+                patches: Arc::new([]),
+                paint,
+                sheets: Arc::new([]),
+            },
+            atlas,
             pictures,
             Transform::default(),
             Visibility::default(),
             ChildOf(root),
         ))
-        .id();
-    (terrain, ChunkPaints::new(material, PAINT_SIDE))
+        .id()
 }
 
 /// Each of the area's terrains as the ground is painted with it.
@@ -1289,4 +1601,61 @@ fn spawn_light(
         });
     }
     spawned.id()
+}
+
+/// Plans what an area's scenery stands for each sight, its lights filed off the frame.
+fn planner_of(area: &Arc<Area>) -> Making<Arc<Planner>> {
+    let area = area.clone();
+    Making::Task(AsyncComputeTaskPool::get().spawn(async move {
+        let mut lights = SpatialIndex::new(PLACEMENT_CELL);
+        lights.refile_spots(area.lights.iter().map(|light| light.at));
+        Arc::new(Planner { lights, area })
+    }))
+}
+
+/// Whether the tile at `at` holds the same values in `standing` as in `new`: the very same tile,
+/// both blank, or both as read from the same file holding the same, by `hashes`, the files of the
+/// contents each was read from.
+fn tile_alike<T: GroundValue>(
+    standing: &GroundGrid<T>,
+    new: &GroundGrid<T>,
+    at: TileAt,
+    (was, now): (&BTreeMap<String, FileHash>, &BTreeMap<String, FileHash>),
+) -> bool {
+    let version = standing.version(at);
+    if version != TileVersion::default() && version == new.version(at) {
+        return true;
+    }
+    if standing.is_blank_at(at) && new.is_blank_at(at) {
+        return true;
+    }
+    match (standing.stored_at(at), new.stored_at(at)) {
+        (Some(a), Some(b)) => a == b && was.get(a).is_some_and(|hash| now.get(b) == Some(hash)),
+        _ => false,
+    }
+}
+
+/// Whether two contents name the same files of `Row` by the same ids.
+fn same_paths<Row: ContentFile>(a: &Content, b: &Content) -> bool {
+    a.table::<Row>().len() == b.table::<Row>().len()
+        && a.ids::<Row>().all(|id| id.path(a) == id.path(b))
+}
+
+/// Whether two of an area's prop sources stand alike.
+fn same_source(a: &AreaModule, b: &AreaModule) -> bool {
+    match (a, b) {
+        (AreaModule::Prop(a), AreaModule::Prop(b)) => a == b,
+        (AreaModule::Scatter(a), AreaModule::Scatter(b)) => a == b,
+        _ => false,
+    }
+}
+
+/// The ground a prop source stands its props over, a little wider for a prop on a chunk's edge.
+fn stretch_of(source: &AreaModule) -> Option<Rect<Meters>> {
+    match source {
+        AreaModule::Prop(prop) => Some(Rect::new(prop.at, Size::new(0.0, 0.0))),
+        AreaModule::Scatter(scatter) => Some(scatter.region),
+        _ => None,
+    }
+    .map(|stretch| stretch.inflate(EDGE_REACH.0, EDGE_REACH.0))
 }

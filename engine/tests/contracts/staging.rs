@@ -1,14 +1,19 @@
+use engine::core::content::Content;
 use engine::core::math::Pos;
+use engine::core::time::{DayClock, TimeCourse, WallClock, WeatherClock};
 use engine::core::units::{MeterPos, Meters};
 use engine::systems::area::AreaDef;
 use engine::systems::combat::{self, AttackRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::movement::{self, MoveRequest, position};
+use engine::systems::notification::NotificationDef;
 use engine::systems::npc::NpcDef;
 use engine::systems::region;
 use engine::systems::script::Place;
 use engine::systems::staging::{Staging, stage};
-use engine::systems::{actor, dialogue, npc, reach, script, skill, stat};
+use engine::systems::{
+    GameSettings, ServerClocks, actor, dialogue, npc, reach, script, skill, start_clocks, stat,
+};
 use serde_json::json;
 use testkit::{Game, Map, Sim, hunting, path};
 
@@ -54,6 +59,18 @@ fn a_bench_stages_what_a_test_character_does_through_its_own_requests() {
     stage(&mut sim.world, conn, Staging::Fight).expect("a foe");
     assert!(sim.run_until(10.0, |world| reach::attacking(world, player)
         == Some(raider)));
+
+    let notice = sim.id::<NotificationDef>("notice");
+    stage(
+        &mut sim.world,
+        conn,
+        Staging::Notify {
+            notification: notice,
+        },
+    )
+    .expect("a notification");
+    let notice = sim.spoken("notice");
+    assert!(sim.told(1).contains(&notice));
 }
 
 #[test]
@@ -70,6 +87,173 @@ fn a_bench_is_told_when_there_is_nothing_to_stage() {
 
     assert!(stage(&mut sim.world, conn, Staging::Fight).is_err());
     assert!(stage(&mut sim.world, conn, Staging::Talk).is_err());
+    let off_the_ground = Pos::new(100.0, 100.0);
+    assert!(stage(&mut sim.world, conn, Staging::Walk { to: off_the_ground }).is_err());
+}
+
+#[test]
+fn a_bench_holds_an_areas_weather_at_a_named_spell_until_staged_again_or_restored() {
+    let mut sim = Sim::new(
+        Game::new()
+            .area("yard", &Map::open(20, 9), json!([]))
+            .edit("area", "yard", |area| {
+                area["climate"] = json!({
+                    "turns": 10.0,
+                    "spells": [
+                        {
+                            "name": "fair",
+                            "weather": { "clouds": 0.1 },
+                            "lasts": { "shortest": 60.0, "longest": 60.0 },
+                            "next": [{ "spell": "storm", "weight": 1.0 }],
+                        },
+                        {
+                            "name": "storm",
+                            "weather": { "clouds": 1.0, "water": 1.0, "rain": 1.0 },
+                            "lasts": { "shortest": 60.0, "longest": 60.0 },
+                            "next": [{ "spell": "fair", "weight": 1.0 }],
+                        },
+                    ],
+                });
+            })
+            .hero("yard", SPAWN.x, SPAWN.y)
+            .load(),
+    );
+    sim.serve("yard");
+    let served = ServerClocks {
+        day: None,
+        weather: TimeCourse::Since(sim.world.resource::<WallClock>().now),
+    };
+    start_clocks(&mut sim.world, served);
+    sim.join(1);
+    let conn = sim.conn(1);
+
+    stage(
+        &mut sim.world,
+        conn,
+        Staging::Weather {
+            spell: "storm".to_owned(),
+        },
+    )
+    .expect("a spell of the climate");
+    assert_eq!(
+        sim.world.resource::<WeatherClock>().0,
+        Some(TimeCourse::Held(1))
+    );
+    sim.run_until(120.0, |_| false);
+    assert_eq!(
+        sim.world.resource::<WeatherClock>().0,
+        Some(TimeCourse::Held(1)),
+        "the spell holds however long the world runs"
+    );
+    assert!(
+        stage(
+            &mut sim.world,
+            conn,
+            Staging::Weather {
+                spell: "monsoon".to_owned(),
+            },
+        )
+        .is_err(),
+        "a spell the climate lacks is refused"
+    );
+
+    stage(&mut sim.world, conn, Staging::Restore).expect("a server's own weather");
+    assert_eq!(
+        sim.world.resource::<WeatherClock>().0,
+        Some(served.weather),
+        "restored, the weather runs its course as the server started it"
+    );
+}
+
+#[test]
+fn a_bench_sets_the_servers_day_to_an_hour_held_or_turning_on_from_it_until_restored() {
+    let mut sim = Sim::new(
+        Game::new()
+            .area("yard", &Map::open(20, 9), json!([]))
+            .hero("yard", SPAWN.x, SPAWN.y)
+            .edit_settings(|settings| {
+                settings["daylight"] = json!({ "day_length": 1200.0, "start": 10.0 });
+            })
+            .load(),
+    );
+    sim.serve("yard");
+    start_clocks(
+        &mut sim.world,
+        ServerClocks {
+            day: Some(TimeCourse::Held(10.0)),
+            weather: TimeCourse::Held(0),
+        },
+    );
+    sim.join(1);
+    let conn = sim.conn(1);
+    let cycle = sim
+        .world
+        .resource::<Content>()
+        .built::<GameSettings>()
+        .daylight
+        .expect("a day cycle");
+    sim.later(cycle.day_length.0);
+    let hour_now = |sim: &Sim| {
+        let course = sim.world.resource::<DayClock>().0.expect("a day course");
+        cycle.hour(course, sim.world.resource::<WallClock>().now)
+    };
+
+    stage(
+        &mut sim.world,
+        conn,
+        Staging::Day {
+            hour: 18.0,
+            turning: false,
+        },
+    )
+    .expect("an hour of the day");
+    sim.run(300.0);
+    assert!(
+        (hour_now(&sim) - 18.0).abs() < 0.01,
+        "a held day stays at its hour however long the world runs"
+    );
+
+    stage(
+        &mut sim.world,
+        conn,
+        Staging::Day {
+            hour: 18.0,
+            turning: true,
+        },
+    )
+    .expect("an hour of the day");
+    assert!(
+        (hour_now(&sim) - 18.0).abs() < 0.01,
+        "a turning day starts at its hour: {}",
+        hour_now(&sim)
+    );
+    sim.run(150.0);
+    assert!(
+        (hour_now(&sim) - 21.0).abs() < 0.1,
+        "a turning day turns on from its hour at the game's pace: {}",
+        hour_now(&sim)
+    );
+
+    assert!(
+        stage(
+            &mut sim.world,
+            conn,
+            Staging::Day {
+                hour: 25.0,
+                turning: false,
+            },
+        )
+        .is_err(),
+        "an hour past the day is refused"
+    );
+
+    stage(&mut sim.world, conn, Staging::Restore).expect("a server's own day");
+    sim.run(150.0);
+    assert!(
+        (hour_now(&sim) - 10.0).abs() < 0.01,
+        "restored, the day runs as the server started it: {}",
+        hour_now(&sim)
+    );
 }
 
 fn sim() -> Sim {
@@ -107,6 +291,14 @@ fn sim() -> Sim {
             json!([{ "type": "script", "script": path("script", "raider_hunt") }]),
         )
         .row("script", "raider_hunt", hunting(1.0))
+        .row(
+            "notification",
+            "notice",
+            json!({
+                "kind": { "type": "narration", "label": "A notice" },
+                "text": ["Something happened."],
+            }),
+        )
         .mark("talking")
         .sfx("ui_refuse")
         .sfx("ui_close")

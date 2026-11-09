@@ -14,6 +14,8 @@ bevy = { workspace = true, features = [
     "async_executor",
     "bevy_asset",
     "bevy_log",
+    # Spans around every system's run, which the probe names the systems slow frames waited on by.
+    "trace",
     "bevy_state",
     "reflect_auto_register",
     "std",

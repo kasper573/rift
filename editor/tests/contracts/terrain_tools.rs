@@ -33,6 +33,11 @@ fn a_sculpt_stroke_lands_in_the_height_map() {
         Stroke::begin(&before, at, StrokeKind::Sculpt(SculptMode::Raise)).expect("a sculpt stroke");
     stroke.apply(&Brush::default(), at, 0.2, Meters(0.0));
     assert!(commit(&mut editor, &area(), &stroke));
+    let written = editor.project.as_ref().expect("a project").files.unsaved();
+    assert!(
+        !written.is_empty() && written.iter().all(|file| file.ends_with(".png")),
+        "a stroke writes only the maps of the ground it shapes, never the scene: {written:?}"
+    );
     support::settled(&mut editor);
     let raised = terrain(&editor);
     assert!(
@@ -112,7 +117,7 @@ fn placing_and_scattering_a_prop_land_as_modules() {
     let region = Rect::new(Pos::new(4.0, 4.0), Size::new(3.0, 2.0));
     scatter::scatter(&mut editor, &snapshot, &stone, region);
     editor.finish_busy();
-    let modules = nodes::modules(&nodes::scene_of(&editor, &area()));
+    let modules = nodes::modules(&support::scene(&editor, &area()));
     let placed: Vec<&AreaModule> = modules.iter().map(|node| node.module()).collect();
     assert!(placed.iter().any(|module| matches!(
         module,

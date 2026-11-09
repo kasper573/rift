@@ -3,6 +3,7 @@ use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
 use crate::core::content::SchemaMark;
 use crate::core::math::{Pos, Rect, Size};
+use crate::core::units::Meters;
 
 /// The variant a value of a tagged enum is, by the tag every tagged content type writes it with.
 #[derive(Deserialize)]
@@ -141,4 +142,8 @@ pub fn is_zero_u64(value: &u64) -> bool {
 
 pub fn is_zero_f32(value: &f32) -> bool {
     *value == 0.0
+}
+
+pub fn is_zero_meters(value: &Meters) -> bool {
+    value.0 == 0.0
 }

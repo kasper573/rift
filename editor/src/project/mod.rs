@@ -5,12 +5,16 @@ mod index;
 pub mod journal;
 pub mod lock;
 pub mod save;
+mod scene_files;
 mod typed;
 pub mod watch;
 
+use self::history::LaterEdit;
 pub use files::{FileBytes, FileChange, FileStamp, OnDisk, ProjectFiles, hash, json_bytes};
 pub use gltfs::GltfCache;
 pub use history::{EditHistory, EditStep, RowSelection};
+pub use scene_files::SceneChange;
+pub(crate) use scene_files::scene_file;
 pub use typed::IdPaths;
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
@@ -20,6 +24,8 @@ use std::sync::{Arc, Mutex, OnceLock, PoisonError};
 use std::time::{Duration, Instant, SystemTime};
 
 use engine::core::content::ErrorPlace::WholeFile;
+use engine::core::content::check::RowError;
+use engine::core::content::media;
 use engine::core::content::{
     CheckedFiles, Content, ContentFile, ContentId, ContentNames, ContentProblem, FileHashes,
     FolderReader, LoadError, LoadPurpose, LoadReport, MISSING_FILE, NamedContent, ReadRow,
@@ -30,16 +36,23 @@ use engine::systems::{self, GameSettings};
 use self::files::{Vouched, content_holding};
 use self::watch::FolderChange;
 use crate::busy::Progress;
+use crate::doc::SceneChanges;
+use crate::doc::history::SceneStep;
+use crate::doc::ops::apply_all;
 use crate::inbox::ChannelInbox;
 use crate::schema::SchemaShapes;
 use crate::unused::UnusedContent;
 use crate::usages::ContentUsages;
+use crate::views::area::nodes::SceneBundle;
 use crate::views::script::nodes::NodeCatalogue;
 
 #[derive(Clone, Debug, Default)]
 pub struct ContentEdit {
     pub label: String,
     pub changes: Vec<FileChange>,
+    /// The scenes it changes, each as its bundle reads after it: written to their files only once
+    /// something reads them.
+    pub scenes: Vec<SceneChange>,
     pub merge: bool,
     /// The label of the last step this edit joins, taking its own label, when that step is still
     /// the last one made.
@@ -51,9 +64,29 @@ impl ContentEdit {
         ContentEdit {
             label: label.into(),
             changes: Vec::new(),
+            scenes: Vec::new(),
             merge: false,
             amends: None,
         }
+    }
+
+    /// Changes the scene of the bundle at `bundle` as `changes` did, leaving it as `scene` holds
+    /// it, its ids among `reader`'s paths.
+    pub fn change_scene(
+        &mut self,
+        reader: &FolderReader,
+        bundle: &str,
+        scene: SceneBundle,
+        changes: SceneChanges,
+    ) -> &mut ContentEdit {
+        self.scenes.retain(|known| known.bundle != bundle);
+        self.scenes.push(SceneChange {
+            bundle: bundle.to_owned(),
+            scene,
+            changes,
+            scope: reader.scope().clone(),
+        });
+        self
     }
 
     pub fn merging(mut self) -> ContentEdit {
@@ -168,6 +201,26 @@ impl ContentEdit {
         Ok(self)
     }
 
+    /// Writes the fields of `scene`, the bundle at `path`, its ids among `reader`'s paths: its
+    /// parts stay as they stand, and its row is kept as read.
+    pub fn write_fields_in(
+        &mut self,
+        reader: &FolderReader,
+        path: &str,
+        scene: SceneBundle,
+    ) -> Result<&mut ContentEdit, String> {
+        let written = match &scene {
+            SceneBundle::Area(area) => reader.write_fields(path, &**area),
+            SceneBundle::Blueprint(blueprint) => reader.write_fields(path, &**blueprint),
+        };
+        let (file, bytes) = written.map_err(|error| {
+            format!("{} does not write: {error}", crate::tabs::shown_path(path))
+        })?;
+        self.write(file, FileBytes::from(bytes));
+        self.change_scene(reader, path, scene, SceneChanges::default());
+        Ok(self)
+    }
+
     pub fn write_settings(
         &mut self,
         project: &Project,
@@ -275,9 +328,9 @@ pub struct Project {
     pub files: ProjectFiles,
     unsaved: Mutex<Option<UnsavedFiles>>,
     pub content: Option<Content>,
-    pub report: Option<LoadReport>,
+    pub report: Option<Arc<LoadReport>>,
     pub history: EditHistory,
-    pub usages: ContentUsages,
+    pub usages: Arc<ContentUsages>,
     pub unused: UnusedContent,
     pub shapes: Arc<SchemaShapes>,
     pub read_only: Option<String>,
@@ -378,7 +431,7 @@ impl Project {
             content: None,
             report: None,
             history: EditHistory::default(),
-            usages: ContentUsages::default(),
+            usages: Arc::default(),
             unused: UnusedContent::default(),
             shapes,
             read_only: None,
@@ -499,14 +552,14 @@ impl Project {
         self.loading = None;
         self.stale = false;
         self.unverified = None;
-        match Loaded::of(&self.files, LoadPurpose::Play) {
+        match Loaded::of(&self.files, LoadPurpose::Play, None) {
             Ok(loaded) => {
                 self.report = None;
                 self.install(loaded);
                 self.verifying = Some(self.files.revision());
                 self.begin_load();
             }
-            Err(report) => self.report = Some(report),
+            Err(report) => self.report = Some(Arc::new(report)),
         }
     }
 
@@ -592,7 +645,7 @@ impl Project {
                     });
                     self.begin_load();
                 }
-                None => self.report = Some(report),
+                None => self.report = Some(Arc::new(report)),
             },
         }
         if std::mem::take(&mut self.stale) {
@@ -637,6 +690,33 @@ impl Project {
         }
     }
 
+    /// Refuses `scene` when a node it made or changed breaks a rule a module keeps alone that the
+    /// last load didn't already find there: what the rest of the folder makes of it, the load
+    /// after the edit finds.
+    fn check_scene(&self, scene: &SceneChange) -> Result<(), Box<EditRefusal>> {
+        let file = scene_file(&scene.bundle);
+        let known: HashSet<(&str, &str)> = self
+            .report
+            .iter()
+            .flat_map(|report| report.errors.iter())
+            .filter(|error| error.file == file)
+            .map(|error| (error.at.pointer(), error.problem.rule))
+            .collect();
+        let introduced: Vec<RowError> = scene_files::problems(scene)
+            .into_iter()
+            .filter(|error| !known.contains(&(error.pointer.as_str(), error.problem.rule)))
+            .collect();
+        match introduced.first() {
+            None => Ok(()),
+            Some(first) => Err(Box::new(EditRefusal {
+                file,
+                pointer: first.pointer.clone(),
+                problem: first.problem.clone(),
+                errors: introduced.len(),
+            })),
+        }
+    }
+
     /// `edit` worked out against the files as they stand, ready to be checked on any thread: none
     /// when it changes nothing. What names a removed file is known only from the usages of a
     /// settled load.
@@ -656,6 +736,7 @@ impl Project {
         let ContentEdit {
             label,
             changes,
+            scenes,
             merge,
             amends,
         } = edit;
@@ -669,8 +750,11 @@ impl Project {
                 },
             )
             .collect();
-        if changes.is_empty() {
+        if changes.is_empty() && scenes.iter().all(|scene| scene.changes.is_empty()) {
             return Ok(None);
+        }
+        for scene in &scenes {
+            self.check_scene(scene)?;
         }
         let filled = self.filled_folders(&changes);
         changes.extend(filled.into_iter().map(|entry| FileChange {
@@ -700,7 +784,10 @@ impl Project {
             }
             _ => Known::Unchecked(self.reader()),
         };
-        let next = self.files.with(&changes);
+        let mut next = self.files.with(&changes);
+        for scene in scenes.iter().filter(|scene| !scene.changes.is_empty()) {
+            scene_files::put_scene(&mut next, &scene.bundle, &scene.scene, &scene.scope, None);
+        }
         Ok(Some(PreparedEdit {
             label,
             merge,
@@ -709,6 +796,7 @@ impl Project {
             next_reader: self.reader_of(&next),
             next,
             changes,
+            scenes,
             touched,
             known,
         }))
@@ -726,6 +814,7 @@ impl Project {
             let edit = ContentEdit {
                 label: checked.label,
                 changes: checked.changes,
+                scenes: checked.scenes,
                 merge: checked.merge,
                 amends: checked.amends,
             };
@@ -743,12 +832,15 @@ impl Project {
             amends,
             next,
             changes,
+            scenes,
             checked,
             read,
             ..
         } = checked;
         let continues = merge || amends.is_some();
-        self.checked = Some(checked);
+        let editor_only =
+            changes.is_empty() && scenes.iter().all(|scene| scene.changes.editor_only());
+        self.checked = checked;
         let before: Vec<FileChange> = changes
             .iter()
             .map(|change| FileChange {
@@ -760,7 +852,7 @@ impl Project {
         match &mut self.unverified {
             Some(unverified) if !continues => unverified.later += 1,
             Some(_) => {}
-            None if loads => {
+            None if loads && !editor_only => {
                 self.unverified = Some(Unverified {
                     label: label.clone(),
                     later: 0,
@@ -770,22 +862,43 @@ impl Project {
             }
             None => {}
         }
-        self.adopt(next);
+        let scene_steps: Vec<SceneStep> = scenes
+            .iter()
+            .filter(|scene| !scene.changes.is_empty())
+            .map(|scene| {
+                let file = scene_file(&scene.bundle);
+                SceneStep {
+                    bundle: scene.bundle.clone(),
+                    ops: scene.changes.undo.clone(),
+                    before: self.files.same_as(&file).unwrap_or_default(),
+                    after: next.same_as(&file).unwrap_or_default(),
+                    scope: scene.scope.clone(),
+                    paths_revision: next.paths_revision(),
+                }
+            })
+            .collect();
+        if editor_only {
+            self.files = next;
+        } else {
+            self.adopt(next);
+        }
         self.typed.keep(&self.files, read);
-        let amended = amends.as_deref().is_some_and(|step| {
-            self.history
-                .amend_last(step, &label, changes.clone(), &before)
-        });
-        let merged = amended
-            || (merge
-                && self
-                    .history
-                    .merge_into_last(&label, changes.clone(), &before));
+        self.keep_scenes(&scenes);
+        let later = || LaterEdit {
+            after: changes.clone(),
+            before: &before,
+            scenes: scene_steps.clone(),
+        };
+        let amended = amends
+            .as_deref()
+            .is_some_and(|step| self.history.amend_last(step, &label, later()));
+        let merged = amended || (merge && self.history.merge_into_last(&label, later()));
         if !merged {
             self.history.push(EditStep {
                 label,
                 before,
                 after: changes,
+                scenes: scene_steps,
                 selection: viewpoint.selection,
                 camera: viewpoint.camera,
                 at: SystemTime::now(),
@@ -795,17 +908,25 @@ impl Project {
     }
 
     pub fn undo(&mut self) -> Option<AppliedStep> {
-        let step = self.history.undo_step()?;
-        let (applied, changes) = (AppliedStep::of(step), step.before.clone());
-        self.restore(&changes);
+        let mut step = self.history.undo_step()?.clone();
+        let applied = AppliedStep::of(&step);
+        let changes = step.before.clone();
+        self.revisit(&changes, &mut step.scenes, |scene| scene.before)?;
+        if let Some(stood) = self.history.undo_step() {
+            *stood = step;
+        }
         self.history.undone();
         Some(applied)
     }
 
     pub(crate) fn redo(&mut self) -> Option<AppliedStep> {
-        let step = self.history.redo_step()?;
-        let (applied, changes) = (AppliedStep::of(step), step.after.clone());
-        self.restore(&changes);
+        let mut step = self.history.redo_step()?.clone();
+        let applied = AppliedStep::of(&step);
+        let changes = step.after.clone();
+        self.revisit(&changes, &mut step.scenes, |scene| scene.after)?;
+        if let Some(undone) = self.history.redo_step() {
+            *undone = step;
+        }
         self.history.redone();
         Some(applied)
     }
@@ -827,9 +948,77 @@ impl Project {
         last
     }
 
-    fn restore(&mut self, changes: &[FileChange]) {
-        let next = self.files.with(changes);
-        self.adopt(next);
+    /// Brings the files to the other side of a step: `changes` written, and each scene of
+    /// `scenes` changed by its changes, which then hold those that take this back; each scene
+    /// file the same as `side` tells. Nothing changes when a scene's changes can't be made.
+    fn revisit(
+        &mut self,
+        changes: &[FileChange],
+        scenes: &mut [SceneStep],
+        side: impl Fn(&SceneStep) -> FileStamp,
+    ) -> Option<()> {
+        let mut next = self.files.with(changes);
+        let reader = self.reader();
+        let mut made = Vec::new();
+        for scene in scenes.iter_mut() {
+            let read = crate::views::area::nodes::bundle_in(self, &scene.bundle)?;
+            let ops = if scene.paths_revision == self.files.paths_revision() {
+                scene.ops.clone()
+            } else {
+                scene_files::rescoped_ops(
+                    &scene.ops,
+                    &scene.scope,
+                    reader.scope(),
+                    read.variables(),
+                )?
+            };
+            let mut nodes = read.nodes().to_vec();
+            let back = apply_all(&mut nodes, ops).ok()?;
+            let changed = read.with_nodes(nodes);
+            let same_as = side(scene);
+            scene_files::put_scene(
+                &mut next,
+                &scene.bundle,
+                &changed,
+                reader.scope(),
+                Some(same_as),
+            );
+            made.push((scene, back, changed));
+        }
+        let paths_revision = next.paths_revision();
+        let editor_only = changes.is_empty()
+            && made
+                .iter()
+                .all(|(_, back, _)| crate::doc::ops::editor_only(back));
+        let mut kept = Vec::new();
+        for (scene, back, changed) in made {
+            scene.ops = back;
+            scene.scope = reader.scope().clone();
+            scene.paths_revision = paths_revision;
+            kept.push(SceneChange {
+                bundle: scene.bundle.clone(),
+                scene: changed,
+                changes: SceneChanges::default(),
+                scope: reader.scope().clone(),
+            });
+        }
+        if editor_only {
+            self.files = next;
+        } else {
+            self.adopt(next);
+        }
+        self.keep_scenes(&kept);
+        Some(())
+    }
+
+    /// Keeps each scene of `scenes` as the read of its bundle, so no view reads again what an edit
+    /// just made.
+    fn keep_scenes(&self, scenes: &[SceneChange]) {
+        let rows = scenes
+            .iter()
+            .map(|scene| scene_files::scene_read(&scene.bundle, &scene.scene))
+            .collect();
+        self.typed.keep(&self.files, rows);
     }
 
     /// What refuses an edit, on any thread, when loading the whole folder after it finds
@@ -853,11 +1042,12 @@ impl Project {
             self.stale = true;
             return;
         }
-        let files = self.files.clone();
+        let (files, last) = (self.files.clone(), self.usages.clone());
         let (sender, receiver) = mpsc::channel();
         self.loading = Some(ChannelInbox::new(receiver));
         std::thread::spawn(move || {
-            let outcome = background().install(|| Loaded::of(&files, LoadPurpose::Check));
+            let outcome =
+                background().install(|| Loaded::of(&files, LoadPurpose::Check, Some(&last)));
             let _ = sender.send(outcome);
         });
     }
@@ -867,7 +1057,7 @@ impl Project {
         self.moved_outside.clear();
         self.last_load = Some(loaded.took);
         self.last_usages = Some(loaded.usages_took);
-        self.usages = loaded.usages;
+        self.usages = Arc::new(loaded.usages);
         self.unused = loaded.unused;
         drop_in_background(self.content.replace(loaded.content));
         self.generation += 1;
@@ -1051,14 +1241,22 @@ impl ContentNames for Project {
 }
 
 impl Loaded {
-    /// The files loaded for `purpose`, and the usages they hold, worked out side by side.
-    fn of(files: &ProjectFiles, purpose: LoadPurpose) -> Result<Loaded, LoadReport> {
+    /// The files loaded for `purpose`, and the usages they hold, worked out side by side: anew
+    /// only in the files `last` didn't read as they stand.
+    fn of(
+        files: &ProjectFiles,
+        purpose: LoadPurpose,
+        last: Option<&ContentUsages>,
+    ) -> Result<Loaded, LoadReport> {
         let reader = FolderReader::new(systems::making_registry(), Arc::new(files.clone()));
         let (loaded, (usages, usages_took)) = rayon::join(
             || load_for(files, purpose),
             || {
                 let started = Instant::now();
-                (ContentUsages::build(&reader, files), started.elapsed())
+                (
+                    ContentUsages::build(&reader, files, last),
+                    started.elapsed(),
+                )
             },
         );
         let (content, took) = loaded?;
@@ -1146,6 +1344,7 @@ pub struct PreparedEdit {
     next: ProjectFiles,
     next_reader: FolderReader,
     changes: Vec<FileChange>,
+    scenes: Vec<SceneChange>,
     /// The files whose problems the edit may change.
     touched: Vec<String>,
     known: Known,
@@ -1166,52 +1365,89 @@ pub struct CheckedEdit {
     from: u64,
     next: ProjectFiles,
     changes: Vec<FileChange>,
+    scenes: Vec<SceneChange>,
     /// The problems it brings into the files it touches that they did not have before.
     introduced: Vec<LoadError>,
-    checked: Checked,
+    /// What checking the files it touches found, when they were checked.
+    checked: Option<Checked>,
     /// The content among the touched files that reads whole after it.
     read: Vec<ReadRow>,
 }
 
 impl PreparedEdit {
-    /// The bytes of the content the check reads: what it costs.
-    pub fn weight(&self) -> usize {
-        self.touched
-            .iter()
-            .filter_map(|file| self.next.get(file))
-            .map(|bytes| bytes.len())
-            .sum()
+    /// Whether the check decodes no more than `budget` bytes of content: what it costs.
+    /// Checking a part of a bundle reads the bundle whole, as the game does, however small the
+    /// part, and an image's cost is its pixels, not its file.
+    pub fn checks_within(&self, budget: usize) -> bool {
+        let mut read: BTreeSet<String> = self.touched.iter().cloned().collect();
+        for file in &self.touched {
+            if let Some(content) = content_holding(file) {
+                read.extend(self.next.files_of(content));
+            }
+        }
+        let mut decoded = 0;
+        for file in &read {
+            if let Some(bytes) = self.next.get(file) {
+                decoded += media::decoded_size(file, &bytes);
+            }
+            if decoded > budget {
+                return false;
+            }
+        }
+        true
     }
 
-    /// Checks the files the edit touches as they stand and after it.
-    pub fn check(self) -> CheckedEdit {
-        let known = match &self.known {
-            Known::Found(known) => known.clone(),
-            Known::Unchecked(reader) => reader
-                .check(&self.touched)
-                .errors
-                .iter()
-                .map(error_key)
-                .collect(),
-        };
-        let CheckedFiles { errors, read } = self.next_reader.check(&self.touched);
-        let introduced = errors
-            .iter()
-            .filter(|error| !known.contains(&error_key(error)))
-            .cloned()
-            .collect();
+    /// The edit taken as it is, for the load after it to vouch for.
+    pub fn unchecked(self) -> CheckedEdit {
         CheckedEdit {
             label: self.label,
             merge: self.merge,
             amends: self.amends,
             from: self.from,
-            checked: Checked {
+            checked: None,
+            next: self.next,
+            changes: self.changes,
+            scenes: self.scenes,
+            introduced: Vec::new(),
+            read: Vec::new(),
+        }
+    }
+
+    /// Checks the files the edit touches after it, and as they stand where that finds problems,
+    /// to tell those the edit introduces.
+    pub fn check(self) -> CheckedEdit {
+        let CheckedFiles { errors, read } = self.next_reader.check(&self.touched);
+        let introduced = if errors.is_empty() {
+            Vec::new()
+        } else {
+            let known = match &self.known {
+                Known::Found(known) => known.clone(),
+                Known::Unchecked(reader) => reader
+                    .check(&self.touched)
+                    .errors
+                    .iter()
+                    .map(error_key)
+                    .collect(),
+            };
+            errors
+                .iter()
+                .filter(|error| !known.contains(&error_key(error)))
+                .cloned()
+                .collect()
+        };
+        CheckedEdit {
+            label: self.label,
+            merge: self.merge,
+            amends: self.amends,
+            from: self.from,
+            checked: Some(Checked {
                 revision: self.next.revision(),
                 touched: self.touched,
                 errors,
-            },
+            }),
             next: self.next,
             changes: self.changes,
+            scenes: self.scenes,
             introduced,
             read,
         }
@@ -1230,7 +1466,7 @@ pub struct EditChecker {
 impl EditChecker {
     /// Refuses `edit` when the folder loaded after it has problems it doesn't have now.
     pub fn check(&self, edit: &ContentEdit) -> Result<(), Box<EditRefusal>> {
-        let Err(report) = load(&self.files.with(&edit.changes)) else {
+        let Err(report) = load(&files_after(&self.files, edit)) else {
             return Ok(());
         };
         let known = self.known.get_or_init(|| {
@@ -1253,6 +1489,15 @@ impl EditChecker {
             Err(Box::new(EditRefusal::of_errors(&introduced)))
         }
     }
+}
+
+/// `files` as `edit` leaves them.
+fn files_after(files: &ProjectFiles, edit: &ContentEdit) -> ProjectFiles {
+    let mut after = files.with(&edit.changes);
+    for scene in edit.scenes.iter().filter(|scene| !scene.changes.is_empty()) {
+        scene_files::put_scene(&mut after, &scene.bundle, &scene.scene, &scene.scope, None);
+    }
+    after
 }
 
 /// The files as they stand, to be loaded as a play-test would.

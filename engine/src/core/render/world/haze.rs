@@ -16,7 +16,7 @@ use bevy::render::render_resource::{
     BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BlendComponent,
     BlendState, CachedRenderPipelineId, ColorTargetState, ColorWrites, FragmentState,
     PipelineCache, RenderPassDescriptor, RenderPipelineDescriptor, ShaderStages, ShaderType,
-    TextureFormat, TextureUsages,
+    TextureFormat,
 };
 use bevy::render::renderer::{RenderContext, ViewQuery};
 use bevy::render::view::{
@@ -30,7 +30,7 @@ pub const MAX_HAZE_BOXES: usize = 32;
 
 /// The haze a camera sees the world through: `color`, lying in `boxes` (the first `count` of
 /// them), with the ground `ground` high under the eye.
-#[derive(Component, ExtractComponent, ShaderType, Clone, Copy, Debug, Default)]
+#[derive(Component, ExtractComponent, ShaderType, Clone, Copy, Debug, Default, PartialEq)]
 #[extract_app(RenderApp)]
 pub struct Haze {
     pub color: Vec3,
@@ -72,14 +72,17 @@ impl Haze {
 
 pub struct HazePlugin;
 
+/// Where the haze is laid over what a camera sees, for what is laid over the haze in turn.
+#[derive(SystemSet, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct Hazing;
+
 impl Plugin for HazePlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "haze.wesl");
         app.add_plugins((
             ExtractComponentPlugin::<Haze>::default(),
             UniformComponentPlugin::<Haze>::default(),
-        ))
-        .add_systems(PostUpdate, let_depth_be_read);
+        ));
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
@@ -90,18 +93,9 @@ impl Plugin for HazePlugin {
                 Core3d,
                 draw_haze
                     .after(main_transparent_pass_3d)
-                    .in_set(Core3dSystems::MainPass),
+                    .in_set(Core3dSystems::MainPass)
+                    .in_set(Hazing),
             );
-    }
-}
-
-/// Every hazed camera's depth can be read once the world is drawn, as the haze reads it.
-fn let_depth_be_read(mut cameras: Query<&mut Camera3d, (With<Haze>, Changed<Camera3d>)>) {
-    for mut camera in &mut cameras {
-        let usages = TextureUsages::from(camera.depth_texture_usages);
-        if !usages.contains(TextureUsages::TEXTURE_BINDING) {
-            camera.depth_texture_usages = (usages | TextureUsages::TEXTURE_BINDING).into();
-        }
     }
 }
 

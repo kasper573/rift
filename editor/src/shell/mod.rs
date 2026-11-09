@@ -41,7 +41,7 @@ use crate::views::{
     stance, vfx, world,
 };
 use crate::widgets::VIEW_PADDING;
-use crate::{content_tree, row_form, widgets};
+use crate::{content_tree, row_form, shown, widgets};
 
 pub fn show(editor: &mut Editor, ctx: &Context) {
     crate::busy::show(editor, ctx);
@@ -322,6 +322,7 @@ fn workspace(editor: &mut Editor, root: &mut egui::Ui) {
             });
         });
     panel::divide(root, content.response.rect, panel::Edge::Right);
+    shown::panel(root.ctx(), "content", content.response.rect);
     let bottom_tabs = views::bottom_tabs(editor);
     if !bottom_tabs.iter().any(|(tab, _)| *tab == editor.bottom_tab) {
         editor.bottom_tab = bottom_tabs
@@ -353,6 +354,7 @@ fn workspace(editor: &mut Editor, root: &mut egui::Ui) {
             });
         });
     panel::divide(root, bottom.response.rect, panel::Edge::Top);
+    shown::panel(root.ctx(), "bottom", bottom.response.rect);
     let mut dock = mem::replace(&mut editor.dock, DockState::new(Vec::new()));
     egui::CentralPanel::default()
         .frame(egui::Frame::new())

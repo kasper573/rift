@@ -50,6 +50,7 @@ pub struct ScenePanel {
     shown: Vec<String>,
     /// What the filter and Show last left of the scene.
     narrowed: Option<Arc<scene_tree::Narrowed>>,
+    problems: Option<scene_tree::KeptProblems>,
     /// What another part of the view asked of the scene graph, done on its next frame.
     pub queued: Option<SceneAction>,
     /// A folder just made by grouping, with its step, so naming it joins that step.
@@ -85,7 +86,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, view_key: &str) {
 
 fn boxes(editor: &mut Editor, ui: &mut Ui, snapshot: &AreaSnapshot) {
     let bundle = snapshot.bundle.clone();
-    let def = snapshot.def.clone();
+    let def = snapshot.doc.bundle().clone();
     let folded = editor.settings.boxes_folded;
     let size = snapshot.size();
     let facts = format!("{} × {} m", size.width, size.height);
@@ -160,13 +161,13 @@ fn boxes(editor: &mut Editor, ui: &mut Ui, snapshot: &AreaSnapshot) {
             let mut area = (**area).clone();
             area.name = name;
             let label = format!("Rename area {}", file_title(&bundle));
-            editor.write_content(&label, &bundle, &area);
+            editor.write_fields(&label, &bundle, SceneBundle::Area(Arc::new(area)));
         }
         (SceneBundle::Blueprint(blueprint), _) if let Some(variables) = variables_changed => {
             let mut blueprint = (**blueprint).clone();
             blueprint.variables = variables;
             let label = format!("Edit the variables of {}", file_title(&bundle));
-            editor.write_content(&label, &bundle, &blueprint);
+            editor.write_fields(&label, &bundle, SceneBundle::Blueprint(Arc::new(blueprint)));
         }
         _ => {}
     }
@@ -277,7 +278,7 @@ fn set_by(editor: &Editor, bundle: &str) -> HashMap<String, (usize, usize)> {
 }
 
 fn header(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &AreaSnapshot) {
-    let count = snapshot.modules.iter().len();
+    let count = snapshot.doc.module_count();
     let selected = scene_tree::selected_ids(snapshot, &editor.selection).len();
     let flagged = snapshot.flags.said();
     let (hidden, locked) = (snapshot.flags.hidden, snapshot.flags.locked);
@@ -475,6 +476,7 @@ fn scene_graph(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &Area
             view: shown_kinds,
             kept: &mut panel.narrowed,
         },
+        &mut panel.problems,
         clipboard.is_some() || !panel.cut.is_empty(),
     );
     source.lit = lit;
@@ -484,13 +486,15 @@ fn scene_graph(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &Area
     }
     let mut open = shown_kinds.open.clone();
     let empty = snapshot.nodes().is_empty();
-    let (response, changed) = egui::ScrollArea::vertical()
-        .id_salt(("scene graph", view_key))
-        .auto_shrink([false, false])
-        .max_height(ui.available_height() - if empty { 90.0 } else { 0.0 })
-        .show(ui, |ui| {
+    let room = egui::vec2(
+        ui.available_width(),
+        ui.available_height() - if empty { 90.0 } else { 0.0 },
+    );
+    let (response, changed) = ui
+        .allocate_ui(room, |ui| {
             tree::show(
                 ui,
+                "scene",
                 egui::Id::new(("scene graph", view_key)),
                 &mut panel.tree,
                 &source,
@@ -519,9 +523,17 @@ fn scene_graph(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &Area
         empty_state(editor, ui, view_key, snapshot);
     }
     if let Some(ids) = response.selected {
-        select_rows(editor, view_key, snapshot, &ids);
+        let rows: Vec<String> = ids
+            .into_iter()
+            .filter(|id| scene_tree::group_of(id).is_none())
+            .collect();
+        select_rows(editor, view_key, snapshot, &rows);
     }
-    for id in response.activated {
+    for id in response
+        .activated
+        .into_iter()
+        .filter(|id| scene_tree::group_of(id).is_none())
+    {
         let placement = snapshot
             .scene_node(&id)
             .and_then(nodes::placement_of)
@@ -534,6 +546,7 @@ fn scene_graph(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &Area
         act(editor, view_key, snapshot, action);
     }
     if let Some((ids, drop)) = response.dropped
+        && let drop = scene_tree::unfolded(&drop)
         && let Err(error) = scene_tree::move_rows(editor, snapshot, &ids, &drop.folder, &drop.at)
     {
         editor.toast(error);
@@ -665,6 +678,7 @@ fn act(editor: &mut Editor, view_key: &str, snapshot: &AreaSnapshot, action: Sce
     };
     match action {
         SceneAction::Add { folder, kind } => scene_tree::add(editor, snapshot, &folder, kind),
+        SceneAction::Select(ids) => select_rows(editor, view_key, snapshot, &ids),
         SceneAction::NewFolder(folder) => {
             if let Some(id) = scene_tree::new_folder(editor, snapshot, &folder) {
                 begin_rename(editor, &id);
@@ -837,9 +851,10 @@ fn show_on_map(editor: &mut Editor, view_key: &str, snapshot: &AreaSnapshot, id:
     } else if nodes::is_folder(node) {
         let pointer = scene_tree::local(id);
         snapshot
-            .modules
-            .iter()
-            .filter(|module| module.pointer.starts_with(&format!("{pointer}/")))
+            .doc
+            .id(pointer)
+            .into_iter()
+            .flat_map(|folder| snapshot.doc.modules_under(folder))
             .filter_map(|module| snapshot.bounds_of(module))
             .reduce(|a, b| a.union(&b))
     } else {

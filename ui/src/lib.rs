@@ -1,7 +1,6 @@
 pub use egui;
 pub use egui_code_editor;
 pub use egui_dock;
-pub use egui_ltreeview;
 pub use egui_snarl;
 
 pub mod card;
@@ -28,6 +27,7 @@ pub mod raster;
 pub mod sheet;
 pub mod slip;
 pub mod theme;
+pub mod tree;
 pub mod words;
 
 use egui::{Context, Margin, Stroke, Style, TextStyle};

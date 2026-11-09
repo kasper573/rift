@@ -32,6 +32,9 @@ pub struct ProjectFiles {
     disk: OrdMap<String, OnDisk>,
     /// Every path whose entry may differ from what is on disk.
     changed: OrdSet<String>,
+    /// What the entry at a path holds the same as when it stands on disk as the editor last saw
+    /// it, for the paths edited since: an entry the same as it differs from disk in nothing.
+    saved_as: OrdMap<String, FileStamp>,
     index: Arc<FolderIndex>,
     cache: Arc<DiskCache>,
     revision: u64,
@@ -65,7 +68,7 @@ impl Vouched {
 
 /// Which version of a file an entry holds: two entries with the same stamp hold the same bytes, so
 /// what is worked out from a file keeps while its stamp stays.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash)]
 pub struct FileStamp(u64);
 
 impl fmt::Display for FileStamp {
@@ -124,17 +127,30 @@ enum Entry {
     Folder,
 }
 
-/// Bytes an edit put at a path.
+/// Bytes an edit put at a path: given, or made the first time they are asked for.
 struct Edited {
     stamp: FileStamp,
-    bytes: FileBytes,
+    /// The entry it holds the same as: itself, or one it was made to be like again.
+    same_as: FileStamp,
+    bytes: OnceLock<FileBytes>,
+    make: Option<MakeBytes>,
     hash: OnceLock<String>,
     json: OnceLock<Option<Arc<serde_json::Value>>>,
 }
 
+/// What makes a file's bytes from what the editor holds of it, on whatever thread first asks.
+pub type MakeBytes = Box<dyn Fn() -> FileBytes + Send + Sync>;
+
 impl Edited {
+    fn bytes(&self) -> &FileBytes {
+        self.bytes.get_or_init(|| match &self.make {
+            Some(make) => make(),
+            None => FileBytes::from([]),
+        })
+    }
+
     fn hash(&self) -> &str {
-        self.hash.get_or_init(|| hash(&self.bytes))
+        self.hash.get_or_init(|| hash(self.bytes()))
     }
 }
 
@@ -170,6 +186,7 @@ impl ProjectFiles {
             entries: OrdMap::new(),
             disk: OrdMap::new(),
             changed: OrdSet::new(),
+            saved_as: OrdMap::new(),
             index: Arc::default(),
             cache: Arc::new(DiskCache::new()),
             revision: next_revision(),
@@ -182,9 +199,19 @@ impl ProjectFiles {
     /// The bytes of the file or kept folder at `path`, as the files stand now.
     pub fn get(&self, path: &str) -> Option<FileBytes> {
         match self.entries.get(path)? {
-            Entry::Edited(edited) => Some(edited.bytes.clone()),
+            Entry::Edited(edited) => Some(edited.bytes().clone()),
             Entry::Folder => Some(FileBytes::from([])),
             Entry::OnDisk { stamp, .. } => self.read_disk(path, *stamp),
+        }
+    }
+
+    /// The entry the file at `path` holds the same as: two files the same as one entry hold the
+    /// same, though the bytes they are written in may differ.
+    pub fn same_as(&self, path: &str) -> Option<FileStamp> {
+        match self.entries.get(path)? {
+            Entry::Edited(edited) => Some(edited.same_as),
+            Entry::OnDisk { stamp, .. } => Some(self.saved_as.get(path).copied().unwrap_or(*stamp)),
+            Entry::Folder => None,
         }
     }
 
@@ -208,9 +235,12 @@ impl ProjectFiles {
     }
 
     pub fn insert(&mut self, path: String, bytes: FileBytes) {
+        let stamp = FileStamp(next_revision());
         let edited = Entry::Edited(Arc::new(Edited {
-            stamp: FileStamp(next_revision()),
-            bytes,
+            stamp,
+            same_as: stamp,
+            bytes: OnceLock::from(bytes),
+            make: None,
             hash: OnceLock::new(),
             json: OnceLock::new(),
         }));
@@ -222,6 +252,28 @@ impl ProjectFiles {
         self.put(path, Some(entry));
     }
 
+    /// Puts at `path` a file whose bytes `make` makes once something asks for them, the same as
+    /// the entry `same_as` when it is one made again; answers what it is the same as.
+    pub(crate) fn project(
+        &mut self,
+        path: String,
+        same_as: Option<FileStamp>,
+        make: MakeBytes,
+    ) -> FileStamp {
+        let stamp = FileStamp(next_revision());
+        let same_as = same_as.unwrap_or(stamp);
+        let entry = Entry::Edited(Arc::new(Edited {
+            stamp,
+            same_as,
+            bytes: OnceLock::new(),
+            make: Some(make),
+            hash: OnceLock::new(),
+            json: OnceLock::new(),
+        }));
+        self.put(path, Some(entry));
+        same_as
+    }
+
     pub fn remove(&mut self, path: &str) {
         self.put(path.to_owned(), None);
     }
@@ -229,11 +281,17 @@ impl ProjectFiles {
     fn put(&mut self, path: String, entry: Option<Entry>) {
         self.revision = next_revision();
         self.changed.insert(path.clone());
-        let held = match entry {
-            Some(entry) => self.entries.insert(path.clone(), entry).is_some(),
-            None => self.entries.remove(&path).is_none(),
+        let was = match entry {
+            Some(entry) => self.entries.insert(path.clone(), entry),
+            None => self.entries.remove(&path),
         };
-        if !held {
+        if let Some(Entry::OnDisk { stamp, file }) = &was
+            && self.disk.get(&path) == Some(&OnDisk::File(*file))
+            && !self.saved_as.contains_key(&path)
+        {
+            self.saved_as.insert(path.clone(), *stamp);
+        }
+        if was.is_some() != self.entries.contains_key(&path) {
             let index = Arc::make_mut(&mut self.index);
             if self.entries.contains_key(&path) {
                 index.add(&path);
@@ -293,7 +351,7 @@ impl ProjectFiles {
         match self.entries.get(path)? {
             Entry::Edited(edited) => edited
                 .json
-                .get_or_init(|| parse_json(&edited.bytes))
+                .get_or_init(|| parse_json(edited.bytes()))
                 .clone(),
             Entry::Folder => None,
             Entry::OnDisk { stamp, .. } => {
@@ -396,6 +454,12 @@ impl ProjectFiles {
         match (self.entries.get(path), self.disk.get(path)) {
             (None, None) | (Some(Entry::Folder), Some(OnDisk::Folder)) => false,
             (Some(Entry::OnDisk { file, .. }), Some(OnDisk::File(disk))) => file != disk,
+            (Some(Entry::Edited(edited)), Some(OnDisk::File(_)))
+                if self.saved_as.get(path) == Some(&edited.same_as) =>
+            {
+                false
+            }
+            (Some(Entry::Edited(edited)), Some(OnDisk::File(_))) if edited.make.is_some() => true,
             (Some(Entry::Edited(edited)), Some(OnDisk::File(disk))) => {
                 self.disk_file_hash(path, *disk).as_deref() != Some(edited.hash())
             }
@@ -434,6 +498,12 @@ impl ProjectFiles {
     pub(crate) fn saved(&mut self, path: &str, now: Option<OnDisk>) {
         self.disk_revision = next_revision();
         self.changed.remove(path);
+        match (self.same_as(path), now) {
+            (Some(same_as), Some(OnDisk::File(_))) => {
+                self.saved_as.insert(path.to_owned(), same_as)
+            }
+            _ => self.saved_as.remove(path),
+        };
         match now {
             Some(now) => self.disk.insert(path.to_owned(), now),
             None => self.disk.remove(path),
@@ -442,7 +512,9 @@ impl ProjectFiles {
             (self.entries.get(path), now)
         {
             let edited = edited.clone();
-            self.cache.bytes.insert(edited.stamp, edited.bytes.clone());
+            self.cache
+                .bytes
+                .insert(edited.stamp, edited.bytes().clone());
             self.cache
                 .hashes
                 .insert((path.to_owned(), file), edited.hash().to_owned());
@@ -460,6 +532,7 @@ impl ProjectFiles {
     pub(crate) fn take_from_disk(&mut self, path: &str, now: Option<OnDisk>) {
         let entry = now.map(Entry::from_disk);
         self.put(path.to_owned(), entry);
+        self.saved_as.remove(path);
         self.saved(path, now);
     }
 
@@ -467,6 +540,7 @@ impl ProjectFiles {
     pub(crate) fn disk_moved_on(&mut self, path: &str, now: Option<OnDisk>) {
         self.disk_revision = next_revision();
         self.changed.insert(path.to_owned());
+        self.saved_as.remove(path);
         match now {
             Some(now) => self.disk.insert(path.to_owned(), now),
             None => self.disk.remove(path),

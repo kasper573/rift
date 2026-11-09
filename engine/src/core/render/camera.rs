@@ -12,6 +12,8 @@ use bevy::light::{ShadowFilteringMethod, VolumetricFog};
 use bevy::pbr::ScreenSpaceAmbientOcclusion;
 use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
+use bevy::render::RenderApp;
+use bevy::render::extract_component::ExtractComponent;
 use bevy::render::view::{ColorGrading, ColorGradingGlobal, ColorGradingSection};
 use bevy::shape::ViewFrustum;
 use bevy::window::PrimaryWindow;
@@ -30,8 +32,6 @@ pub const NEAR_PLANE: Meters = Meters(0.5);
 const FEWEST_PIXELS: f32 = 1.0;
 /// How far a ray is followed through the world before it is given up as hitting nothing.
 const REACH: f32 = 200.0;
-const MARCH_STEP: f32 = 0.25;
-const BISECTIONS: u32 = 12;
 /// How near the angle it eases to the camera comes to rest on it, too near to see.
 const REST_ANGLE: Radians = Radians(0.001);
 /// How near the distance it eases to the camera comes to rest on it, too near to see.
@@ -93,12 +93,22 @@ pub struct PictureGrade {
 #[derive(Component)]
 pub struct WorldCamera;
 
+/// Where in the world a camera that draws the world looks: the subject of its view. The props
+/// as near its eye as that are what the view is about, and the player's prop detail never hands
+/// them over to their pictures sooner than their pictures stay sharp (see `PropDetail`). A camera
+/// without one eases every prop alike.
+#[derive(Component, ExtractComponent, Clone, Copy, Debug, PartialEq)]
+#[extract_app(RenderApp)]
+pub struct CameraFocus(pub Vec3);
+
 /// A camera that draws the world the way the player sees it, finished by `picture` in its grade.
 #[derive(Component, Clone, Copy)]
 pub struct WorldPicture(pub PictureGrade);
 
-/// How many steps the air is marched in along each pixel's ray for the sun's shafts.
-const AIR_STEPS: u32 = 32;
+/// How many steps the air is marched in along each pixel's ray for the sun's shafts: eight
+/// under the jitter the shafts are drawn with, which the temporal anti-aliasing spreads over
+/// frames, show as thirty-two did at a quarter of the cost.
+const AIR_STEPS: u32 = 8;
 
 /// How every camera that draws the world finishes its picture: in a high range of light, the air
 /// lit by the sun's shafts, creases shaded by what stands around them, soft shadows, under the
@@ -118,6 +128,20 @@ pub fn picture(grade: PictureGrade) -> impl Bundle {
         grading(Tone::NEUTRAL, grade),
         DebandDither::Enabled,
     )
+}
+
+/// Starts every world picture's temporal smoothing over from the frame being drawn, so that what
+/// the frames before showed, however many the world took to stand, leaves no trace in it. The
+/// smoothing blends a frame in a little at a time, and what is thin on the screen, a blade of
+/// grass or a pebble's shadow, takes seconds to show whole against a history without it: whoever
+/// lifts a veil onto a world calls this as it does, so the world is first seen whole.
+pub fn forget_history(world: &mut World) {
+    for mut smoothing in world
+        .query_filtered::<&mut TemporalAntiAliasing, With<WorldPicture>>()
+        .iter_mut(world)
+    {
+        smoothing.reset = true;
+    }
 }
 
 /// How a picture is finished beside the engine's own finish: opened `exposure` brighter, its
@@ -277,6 +301,11 @@ impl Zoom {
     }
 }
 
+/// Every system that moves the [`CameraRig`] in a frame, run before the world's view takes in where
+/// the camera looks, so what stands for the view is the frame's own.
+#[derive(SystemSet, Debug, Clone, PartialEq, Eq, Hash)]
+pub struct CameraRigSystems;
+
 /// Where the camera looks from: at a point of the world, from a yaw and a distance that ease toward
 /// what the player last asked for, framed as the game frames it. A client resource, never
 /// replicated, there once the game's look is known.
@@ -332,6 +361,16 @@ impl CameraRig {
 
     pub fn target(&self) -> Vec3 {
         self.target
+    }
+
+    /// Puts the camera at `yaw`, `pitch` and `zoom` at once, at rest there, as a shot frames it.
+    pub fn put(&mut self, yaw: Degrees, pitch: Degrees, zoom: Zoom) {
+        self.yaw = yaw.radians();
+        self.wanted_yaw = self.yaw;
+        self.pitch = pitch.radians();
+        self.wanted_pitch = self.pitch;
+        self.zoom = zoom;
+        self.distance = zoom.distance(&self.framing.zooms);
     }
 
     pub fn turn(&mut self, by: Degrees) {
@@ -439,6 +478,32 @@ fn approach(from: f32, to: f32, caught: f32, rest: f32) -> f32 {
     if (to - moved).abs() < rest { to } else { moved }
 }
 
+/// What a view's lens makes of things by how far off the eye they lie, whichever way it looks:
+/// its viewport's height and its field of view, and nothing of where it stands or turns.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Lens {
+    pixels_at_a_meter: f32,
+}
+
+impl Lens {
+    /// The lens of a viewport `height` pixels tall taking in `fov` of the world top to bottom.
+    pub fn new(height: f32, fov: Degrees) -> Lens {
+        Lens {
+            pixels_at_a_meter: height / 2.0 / (fov.radians().0 / 2.0).tan(),
+        }
+    }
+
+    /// How many pixels a metre spans `distance` off the eye, across the view.
+    pub fn pixels_per_meter(&self, distance: Meters) -> f32 {
+        self.pixels_at_a_meter / distance.0.max(NEAR_PLANE.0)
+    }
+
+    /// How far off the eye a thing `extent` across still spans enough pixels to be drawn.
+    pub fn shown_within(&self, extent: Meters) -> Meters {
+        Meters(extent.0 * self.pixels_at_a_meter / FEWEST_PIXELS)
+    }
+}
+
 /// A camera's projection of the world onto a viewport, as the renderer and everything that places
 /// points in the window share it.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -505,12 +570,14 @@ impl View {
 
     /// How many pixels of the viewport a metre spans `distance` off the eye, across the view.
     pub fn pixels_per_meter(&self, distance: Meters) -> f32 {
-        self.viewport.y / 2.0 * self.clip_from_view.y_axis.y / distance.0.max(NEAR_PLANE.0)
+        self.lens().pixels_per_meter(distance)
     }
 
-    /// How far off the eye a thing `extent` across still spans enough pixels to be drawn.
-    pub fn shown_within(&self, extent: Meters) -> Meters {
-        Meters(extent.0 * self.pixels_per_meter(Meters(1.0)) / FEWEST_PIXELS)
+    /// What the view's lens makes of things by how far off the eye they lie.
+    pub fn lens(&self) -> Lens {
+        Lens {
+            pixels_at_a_meter: self.viewport.y / 2.0 * self.clip_from_view.y_axis.y,
+        }
     }
 
     pub fn view_proj(&self) -> Mat4 {
@@ -561,47 +628,32 @@ impl GroundHeights {
     }
 }
 
-/// The ground point a ray lands on: the ray is marched a quarter metre at a time from where it
-/// enters the heights' range until it dips under the ground, then the crossing is bisected.
+/// The ground point a ray lands on: where it first comes down to the ground within `bounds`, no
+/// further than [`REACH`] past where it could first meet it.
 pub fn ground_hit(heights: &Heightfield, bounds: Rect<Meters>, ray: Ray3d) -> Option<Pos<Meters>> {
-    let origin = ray.origin;
-    let direction = *ray.direction;
-    let under = |t: f32| {
-        let point = origin + direction * t;
-        let at = ground_pos(point);
-        bounds.contains(at) && point.y <= heights.height_at(at).0
-    };
+    let (origin, direction) = (ray.origin, *ray.direction);
     let range = heights.range();
-    let mut t = if origin.y > range.highest.0 && direction.y < 0.0 {
-        (range.highest.0 - origin.y) / direction.y
-    } else {
-        0.0
-    };
-    if under(t) {
-        return Some(ground_pos(origin + direction * t));
-    }
-    let end = t + REACH;
-    while t < end {
-        let next = t + MARCH_STEP;
-        let point = origin + direction * next;
-        if point.y < range.lowest.0 && direction.y < 0.0 {
-            return None;
-        }
-        if under(next) {
-            let (mut above, mut below) = (t, next);
-            for _ in 0..BISECTIONS {
-                let mid = (above + below) / 2.0;
-                if under(mid) {
-                    below = mid;
-                } else {
-                    above = mid;
-                }
+    let (mut from, mut to) = (0.0f32, f32::INFINITY);
+    let mut within = |low: f32, high: f32, start: f32, heading: f32| {
+        if heading == 0.0 {
+            if !(low..=high).contains(&start) {
+                to = f32::NEG_INFINITY;
             }
-            return Some(ground_pos(origin + direction * below));
+            return;
         }
-        t = next;
+        let (a, b) = ((low - start) / heading, (high - start) / heading);
+        from = from.max(a.min(b));
+        to = to.min(a.max(b));
+    };
+    within(bounds.min_x(), bounds.max_x(), origin.x, direction.x);
+    within(bounds.min_y(), bounds.max_y(), origin.z, direction.z);
+    within(f32::NEG_INFINITY, range.highest.0, origin.y, direction.y);
+    if direction.y < 0.0 {
+        to = to.min((range.lowest.0 - origin.y) / direction.y);
     }
-    None
+    let to = to.min(from + REACH);
+    let t = heights.first_under(origin, direction, from, to)?;
+    Some(ground_pos(origin + direction * t))
 }
 
 /// A point of the ground `height` above it, in the world the camera sees: x east, y up, z south.
@@ -655,8 +707,7 @@ pub fn cursor_ray(world: &mut World) -> Option<Ray3d> {
 
 /// The ground under the pointer.
 pub fn cursor_ground(world: &mut World) -> Option<Pos<Meters>> {
-    let ray = cursor_ray(world)?;
-    world.get_resource::<GroundHeights>()?.hit(ray)
+    super::pointed(world)?.ground
 }
 
 /// Where a point `height` above the ground at `at` shows in the window.
@@ -677,13 +728,27 @@ pub(super) fn ease(
     }
 }
 
+/// The world camera as the rig places it: where it stands, and what it looks at once aimed.
+type PlacedCamera = (
+    Entity,
+    &'static mut Transform,
+    Option<&'static mut CameraFocus>,
+);
+
 pub(super) fn place(
     rig: Option<Res<CameraRig>>,
-    mut camera: Query<&mut Transform, With<WorldCamera>>,
+    mut camera: Query<PlacedCamera, With<WorldCamera>>,
+    mut commands: Commands,
 ) {
     if let Some(rig) = rig
-        && let Ok(mut transform) = camera.single_mut()
+        && let Ok((camera, mut transform, focus)) = camera.single_mut()
     {
         *transform = rig.transform();
+        match focus {
+            Some(mut focus) => focus.0 = rig.target(),
+            None => {
+                commands.entity(camera).insert(CameraFocus(rig.target()));
+            }
+        }
     }
 }

@@ -2,31 +2,33 @@ pub mod camera;
 mod icons;
 pub mod pick;
 pub mod present;
+pub mod sample;
 pub mod transition;
 pub mod video;
 pub mod world;
 
 pub use camera::{
-    CameraFraming, CameraPreferences, CameraRig, GroundHeights, PictureGrade, View, WorldCamera,
-    Zoom, Zooms, cursor_ground, cursor_ray, facing_rotation, ground_height, ground_pos, view_of,
-    window_point, world_point,
+    CameraFocus, CameraFraming, CameraPreferences, CameraRig, CameraRigSystems, GroundHeights,
+    PictureGrade, View, WorldCamera, Zoom, Zooms, cursor_ground, cursor_ray, facing_rotation,
+    ground_height, ground_pos, view_of, window_point, world_point,
 };
 pub use pick::{Pointed, capsule_hit, pointed};
 
 use std::collections::HashMap;
 
 use bevy::prelude::*;
-use bevy::render::batching::gpu_preprocessing::{GpuPreprocessingMode, GpuPreprocessingSupport};
-use bevy::render::{RenderApp, RenderStartup, init_gpu_resource};
+use bevy::render::renderer::RenderAdapterInfo;
+use bevy::render::view::NoIndirectDrawing;
 use bevy::sprite_render::Material2dPlugin;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
+use wgpu::DeviceType;
 
 use crate::core::interpolate::RenderValueSystems;
 use crate::core::math::Rng;
 use crate::core::units::Seconds;
 pub use world::clouds::CloudLook;
-pub use world::fade::ClearingLook;
+pub use world::gpu::clearing::ClearingLook;
 pub use world::lights::LightLook;
 pub use world::material::SurfaceFinish;
 pub use world::sky::SkyLook;
@@ -36,12 +38,7 @@ pub struct WorldRenderPlugin;
 impl Plugin for WorldRenderPlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "present.wesl");
-        if let Some(render_app) = app.get_sub_app_mut(RenderApp) {
-            render_app.add_systems(
-                RenderStartup,
-                draw_directly.after(init_gpu_resource::<GpuPreprocessingSupport>),
-            );
-        }
+        app.add_systems(PostUpdate, draw_directly_in_software);
         app.add_plugins((
             Material2dPlugin::<present::Present>::default(),
             world::WorldScenePlugin,
@@ -63,11 +60,19 @@ impl Plugin for WorldRenderPlugin {
                 .run_if(not(transition::covering))
                 .after(RenderValueSystems),
         )
+        .configure_sets(
+            Update,
+            CameraRigSystems.before(transition::WorldViewSystems),
+        )
         .add_systems(Startup, present::setup)
         .add_systems(First, take_look.run_if(resource_exists_and_changed::<Look>))
         .add_systems(
             Update,
-            (present::fit, icons::keep_icons_resident, camera::ease),
+            (
+                present::fit,
+                icons::keep_icons_resident,
+                camera::ease.in_set(CameraRigSystems),
+            ),
         )
         .add_systems(
             PostUpdate,
@@ -82,7 +87,7 @@ impl Plugin for WorldRenderPlugin {
 /// How a game looks: how its camera frames the world, how the picture is finished, the air and
 /// clouds over the world and the light they let through, how its surfaces take the light, and
 /// how what hides the player clears away.
-#[derive(Resource, JsonSchema, Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[derive(Resource, JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct Look {
     pub camera: CameraFraming,
@@ -97,7 +102,7 @@ pub struct Look {
 /// Frames the camera and finishes the world's picture as the game's look says, once it is known
 /// and whenever it changes.
 fn take_look(world: &mut World) {
-    let look = world.resource::<Look>().clone();
+    let look = *world.resource::<Look>();
     match world.get_resource_mut::<CameraRig>() {
         Some(mut rig) => rig.reframe(look.camera),
         None => world.insert_resource(CameraRig::new(look.camera)),
@@ -113,11 +118,11 @@ pub struct Animator {
     rng: Rng,
 }
 
-impl Default for Animator {
-    fn default() -> Animator {
+impl FromWorld for Animator {
+    fn from_world(world: &mut World) -> Animator {
         Animator {
             anchors: HashMap::new(),
-            rng: Rng::from_entropy(),
+            rng: Rng::fork_of(world),
         }
     }
 }
@@ -206,10 +211,18 @@ impl Animator {
     }
 }
 
-/// Every view draws directly, with no GPU culling: bevy's GPU-driven indirect drawing costs more
-/// CPU a frame than it saves on a scene of a few hundred meshes (half the frame rate on the client
-/// bench). Capped for the whole renderer rather than per camera, so the sun's shadow maps draw the
-/// same way as the cameras.
-fn draw_directly(mut support: ResMut<GpuPreprocessingSupport>) {
-    support.max_supported_mode = support.min(GpuPreprocessingMode::PreprocessingOnly);
+/// A camera drawing on an adapter that renders in software draws each of bevy's meshes directly:
+/// there the GPU's culling and indirect draws run on the same processor as everything else, and
+/// cost more than they save.
+fn draw_directly_in_software(
+    mut commands: Commands,
+    adapter: Option<Res<RenderAdapterInfo>>,
+    cameras: Query<Entity, Added<Camera3d>>,
+) {
+    if adapter.is_none_or(|adapter| adapter.device_type != DeviceType::Cpu) {
+        return;
+    }
+    for camera in &cameras {
+        commands.entity(camera).insert(NoIndirectDrawing);
+    }
 }

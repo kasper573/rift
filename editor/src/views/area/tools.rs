@@ -593,10 +593,7 @@ pub fn keys(editor: &mut Editor, ui: &mut Ui, view_key: &str, frame: &AreaFrame)
                 } else if !turned.is_empty() {
                     nodes::change_scene(editor, &frame.bundle, |scene| {
                         for node in &turned {
-                            shapes::turn(
-                                &mut nodes::module_node_mut(scene, node)?.module,
-                                clockwise,
-                            );
+                            shapes::turn(&mut scene.module_mut(node)?.module, clockwise);
                         }
                         Some(format!("Turn {} modules", turned.len()))
                     });

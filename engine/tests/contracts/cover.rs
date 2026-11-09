@@ -1,31 +1,17 @@
-use bevy::mesh::VertexAttributeValues;
 use bevy::prelude::*;
-use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER, WaterSurface};
+use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER, shore_distances};
 use engine::core::math::Pos;
-use engine::core::render::world::cover::{
-    ATTRIBUTE_WATER, BladeShape, CopyModel, Mark, Patch, Piece, Place, SHORE_REACH, SheetOn,
-    Spread, blades, copy_meshes, merged_copies, seen_at, sheet, strew_places,
-};
+use engine::core::render::world::cover::{Patch, Place, SHORE_REACH, Spread, strew_places};
 use engine::core::render::world::lod::GRAIN_PIXELS;
-use engine::core::units::Meters;
+use engine::core::units::{GROUND_ORIGIN, Meters};
 use testkit::HEIGHTS;
 
 const SIZE: GroundSize = GroundSize {
     width: 16,
     height: 16,
 };
-const BLADE: BladeShape = BladeShape {
-    width: 0.06,
-    height: 0.4,
-};
 const DARK: LinearRgba = LinearRgba::rgb(0.1, 0.4, 0.1);
 const LIGHT: LinearRgba = LinearRgba::rgb(0.4, 0.8, 0.3);
-const SPREAD: Spread = Spread {
-    piece: 2,
-    per_square_meter: 16.0,
-    size: (0.7, 1.3),
-    color: (DARK, LIGHT),
-};
 
 /// Ground rising a metre every four metres eastward.
 fn slope() -> Heightfield {
@@ -45,266 +31,52 @@ fn patch<'a>(heights: &'a Heightfield, share: &'a dyn Fn(u32, u32) -> f32) -> Pa
     }
 }
 
-fn positions(mesh: &Mesh) -> Vec<[f32; 3]> {
-    mesh.attribute(Mesh::ATTRIBUTE_POSITION)
-        .and_then(|positions| positions.as_float3())
-        .expect("positions")
-        .to_vec()
-}
-
-fn colors(mesh: &Mesh) -> Vec<[f32; 4]> {
-    match mesh.attribute(Mesh::ATTRIBUTE_COLOR).expect("colours") {
-        VertexAttributeValues::Float32x4(colors) => colors.clone(),
-        _ => panic!("colours are rgba"),
-    }
-}
-
-/// Whether `color` lies on the way from `from` to `to`, channel by channel.
-fn between(color: [f32; 4], from: LinearRgba, to: LinearRgba) -> bool {
-    let (from, to) = (from.to_f32_array(), to.to_f32_array());
-    (0..3).all(|channel| {
-        let (low, high) = (
-            from[channel].min(to[channel]),
-            from[channel].max(to[channel]),
-        );
-        color[channel] >= low - 1e-4 && color[channel] <= high + 1e-4
-    })
-}
-
-/// The one mesh `meshes` holds, as a patch this small makes.
-fn one(meshes: Vec<Mesh>) -> Mesh {
-    let [mesh] = <[Mesh; 1]>::try_from(meshes).expect("one mesh");
-    mesh
-}
-
-fn marks(mesh: &Mesh) -> Vec<Mark> {
-    match mesh.attribute(Mesh::ATTRIBUTE_UV_1).expect("marks") {
-        VertexAttributeValues::Float32x2(marks) => marks.iter().map(|uv| Mark::of(*uv)).collect(),
-        _ => panic!("marks are pairs"),
-    }
-}
-
 #[test]
-fn blades_grow_as_thick_as_their_ground_is_painted_rooted_on_the_terrain_each_its_own_size_colour_and_seed()
- {
-    let heights = slope();
-    let full = |_: u32, _: u32| 1.0;
-    let half = |_: u32, _: u32| 0.5;
-    let none = |_: u32, _: u32| 0.0;
-    let grow = |share: &dyn Fn(u32, u32) -> f32, spread: &Spread, seed: u64| {
-        let places = strew_places(&patch(&heights, share), spread, seed);
-        blades(&heights, &places, &BLADE, spread)
-    };
-    let count_of = |share: &dyn Fn(u32, u32) -> f32, spread: &Spread, seed: u64| {
-        grow(share, spread, seed)
-            .iter()
-            .map(|mesh| mesh.count_vertices() / 3)
-            .sum::<usize>()
-    };
-    let count = |share: &dyn Fn(u32, u32) -> f32, seed: u64| count_of(share, &SPREAD, seed);
-    let whole = (SIZE.width * SIZE.height) as f32 * SPREAD.per_square_meter;
-    assert!(
-        (count(&full, 7) as f32 - whole).abs() <= whole * 0.05,
-        "full weight grew {} blades, not about {whole}",
-        count(&full, 7)
-    );
-    assert!(
-        (count(&half, 7) as f32 - whole / 2.0).abs() <= whole * 0.05,
-        "half weight grew {} blades, not about {}",
-        count(&half, 7),
-        whole / 2.0
-    );
-    assert_eq!(count(&none, 7), 0, "unpainted ground grows nothing");
-    let dense = Spread {
-        per_square_meter: 400.0,
-        ..SPREAD
-    };
-    let meshes = grow(&full, &dense, 7);
-    assert!(
-        meshes.len() > 1
-            && meshes
-                .iter()
-                .all(|mesh| mesh.count_vertices() <= u16::MAX as usize),
-        "a dense cover comes as several meshes of a bounded size"
-    );
-    let dense_whole = whole * dense.per_square_meter / SPREAD.per_square_meter;
-    assert!(
-        (count_of(&full, &dense, 7) as f32 - dense_whole).abs() <= dense_whole * 0.05,
-        "a dense cover grows every blade over its meshes"
-    );
-    let grown = |seed| one(grow(&full, &SPREAD, seed));
-    assert_eq!(
-        positions(&grown(7)),
-        positions(&grown(7)),
-        "the same seed grows the same"
-    );
-    assert_ne!(
-        positions(&grown(7)),
-        positions(&grown(8)),
-        "another seed scatters anew"
-    );
-
-    let mesh = grown(7);
-    let seeds: std::collections::BTreeSet<u32> = marks(&mesh)
+fn water_tells_how_far_it_lies_from_the_nearest_dry_ground_up_to_the_shore_reach() {
+    let spacing = Meters(1.0 / SAMPLES_PER_METER as f32);
+    let (columns, rows) = (80, 4);
+    let lake: Vec<bool> = (0..columns * rows).map(|at| at % columns < 60).collect();
+    for (at, distance) in shore_distances(&lake, columns, spacing, SHORE_REACH)
         .iter()
-        .map(|mark| (mark.seed * 1000.0) as u32)
-        .collect();
-    assert!(
-        seeds.len() > 100,
-        "blades carry seeds of their own, not {seeds:?}"
-    );
-    for blade in marks(&mesh).chunks(3) {
-        assert!(
-            blade
-                .iter()
-                .all(|mark| mark.seed == blade[0].seed && mark.piece == SPREAD.piece),
-            "a blade's vertices share its seed and name their piece: {blade:?}"
-        );
-    }
-    let mut shades = std::collections::BTreeSet::new();
-    for blade in colors(&mesh).chunks(3) {
-        assert!(
-            blade
-                .iter()
-                .all(|color| *color == blade[0] && between(*color, DARK, LIGHT)),
-            "a blade is one colour drawn between the piece's two: {blade:?}"
-        );
-        shades.insert((blade[0][1] * 100.0) as u32);
-    }
-    assert!(shades.len() > 10, "blades differ in colour: {shades:?}");
-    for (position, mark) in positions(&mesh).iter().zip(marks(&mesh)) {
-        let ground = heights.height_at(Pos::new(position[0], position[2])).0;
-        assert!(mark.weight > 0.99, "a blade on full weight carries it");
-        if mark.measure == 0.0 {
-            assert!(
-                (position[1] - ground).abs() < 0.02,
-                "a root at {position:?} stands {ground} above the ground"
-            );
-        } else {
-            let height = position[1] - ground;
-            assert!(
-                (BLADE.height * SPREAD.size.0..=BLADE.height * SPREAD.size.1).contains(&height),
-                "a tip stands {height} m over the ground, outside the piece's sizes"
-            );
-        }
-    }
-}
-
-#[test]
-fn a_sheet_lies_on_the_terrain_or_on_the_water_weighted_as_the_cells_around_each_point_are_painted()
-{
-    let heights = slope();
-    let west = |column: u32, _: u32| if column < 8 { 1.0 } else { 0.0 };
-    let mesh = one(sheet(&patch(&heights, &west), SheetOn::Ground, DARK, 1));
-    assert!(
-        colors(&mesh)
-            .iter()
-            .all(|color| *color == DARK.to_f32_array()),
-        "a sheet is the ground's colour"
-    );
-    assert!(
-        mesh.attribute(ATTRIBUTE_WATER).is_none(),
-        "a sheet on the ground tells of no water"
-    );
-    for (position, mark) in positions(&mesh).iter().zip(marks(&mesh)) {
-        let at = Pos::new(position[0], position[2]);
-        let ground = heights.height_at(at).0;
-        assert!(
-            (position[1] - ground - 0.02).abs() < 0.01,
-            "{position:?} lies {} over the ground",
-            position[1] - ground
-        );
-        let column = ((at.x + 0.5) * SAMPLES_PER_METER as f32).round() as u32;
-        let wanted = match column {
-            0..=7 => 1.0,
-            8 => 0.5,
-            _ => 0.0,
-        };
-        assert!(
-            mark.measure == 0.0 && (mark.weight - wanted).abs() < 0.005,
-            "the mark at column {column}: {mark:?}, not a weight of {wanted}"
-        );
-    }
-    let full = |_: u32, _: u32| 1.0;
-    let level = 1.0;
-    let pond = WaterSurface::from_fn(SIZE, HEIGHTS, |_, _| Meters(level));
-    let pool = one(sheet(
-        &patch(&heights, &full),
-        SheetOn::Water(&pond),
-        DARK,
-        1,
-    ));
-    let shore_line = 4.0 - 0.5;
-    for ((position, mark), [shore, east, south]) in
-        positions(&pool).iter().zip(marks(&pool)).zip(waters(&pool))
+        .enumerate()
     {
-        let ground = heights.height_at(Pos::new(position[0], position[2])).0;
+        let column = at % columns;
+        let ashore = (60usize.saturating_sub(column)) as f32 * spacing.0;
         assert!(
-            (position[1] - level).abs() < 1e-3 || position[1] < ground - 0.5,
-            "a pond lies flat at its level, and sinks under the dry ground past its shore: {position:?} over ground at {ground}"
-        );
-        assert!(
-            (mark.measure - (level - ground).max(0.0)).abs() < 1e-3,
-            "{position:?} over ground at {ground} is marked {} m deep",
-            mark.measure
-        );
-        let ashore = (shore_line - position[0]).max(0.0);
-        assert!(
-            (shore - ashore).abs() <= 0.5 + ashore * 0.08,
-            "{position:?} lies {ashore} m from the shore, not {shore}"
-        );
-        assert!(
-            east.abs() < 1e-3 && south.abs() < 1e-3,
-            "a pond's water stands still"
+            (distance.0 - ashore.min(SHORE_REACH.0)).abs() < 1e-4,
+            "column {column} lies {ashore} m out, not {}",
+            distance.0
         );
     }
-    let stream = WaterSurface::from_fn(SIZE, HEIGHTS, |column, row| {
-        Meters(heights.sample(column, row).0 + 0.5)
-    });
-    let river = one(sheet(
-        &patch(&heights, &full),
-        SheetOn::Water(&stream),
-        DARK,
-        1,
-    ));
-    for ((position, mark), [shore, east, south]) in positions(&river)
+    let side = 41;
+    let rock: Vec<bool> = (0..side * side).map(|at| at != side * side / 2).collect();
+    for (at, distance) in shore_distances(&rock, side, spacing, SHORE_REACH)
         .iter()
-        .zip(marks(&river))
-        .zip(waters(&river))
+        .enumerate()
     {
-        let ground = heights.height_at(Pos::new(position[0], position[2])).0;
+        let (x, y) = ((at % side) as f32 - 20.0, (at / side) as f32 - 20.0);
+        let straight = x.hypot(y) * spacing.0;
         assert!(
-            (position[1] - ground - 0.5).abs() < 1e-3 && (mark.measure - 0.5).abs() < 1e-3,
-            "a river's sheet lies on its water, half a metre over the ground"
+            (distance.0 - straight).abs() <= straight * 0.083,
+            "{x}, {y} from a rock lies {straight} m from it, not {}",
+            distance.0
         );
-        assert!(
-            (east + 0.25).abs() < 1e-2 && south.abs() < 1e-3,
-            "a river falls a metre every four westward, not {east} east and {south} south"
-        );
-        assert_eq!(shore, SHORE_REACH.0, "no dry ground in reach");
     }
-    let none = |_: u32, _: u32| 0.0;
+    let open = shore_distances(&[true; 64], 8, spacing, SHORE_REACH);
     assert!(
-        sheet(&patch(&heights, &none), SheetOn::Ground, DARK, 1).is_empty(),
-        "nothing painted, no sheet"
+        open.iter().all(|distance| *distance == SHORE_REACH),
+        "no dry ground in reach"
     );
 }
 
-fn waters(mesh: &Mesh) -> Vec<[f32; 3]> {
-    mesh.attribute(ATTRIBUTE_WATER)
-        .and_then(|waters| waters.as_float3())
-        .expect("a sheet on water tells of its water")
-        .to_vec()
-}
-
 #[test]
-fn strewn_copies_of_a_prop_stand_where_the_paint_puts_them_marked_how_far_up_they_reach() {
+fn strewn_copies_of_a_prop_stand_on_the_ground_where_the_paint_puts_them() {
     let heights = slope();
     let full = |_: u32, _: u32| 1.0;
     let spread = Spread {
         piece: 1,
         per_square_meter: 1.0,
-        size: (1.0, 1.0),
+        size: (0.5, 2.0),
         color: (DARK, LIGHT),
     };
     let places = strew_places(&patch(&heights, &full), &spread, 3);
@@ -314,47 +86,20 @@ fn strewn_copies_of_a_prop_stand_where_the_paint_puts_them_marked_how_far_up_the
         "{} copies, not about {whole}",
         places.len()
     );
-    let stem = Piece {
-        mesh: Mesh::new(
-            bevy::mesh::PrimitiveTopology::TriangleList,
-            bevy::asset::RenderAssetUsages::default(),
-        )
-        .with_inserted_attribute(
-            Mesh::ATTRIBUTE_POSITION,
-            vec![[-0.1, 0.0, 0.0], [0.1, 0.0, 0.0], [0.0, 1.0, 0.0]],
-        )
-        .with_inserted_attribute(
-            Mesh::ATTRIBUTE_UV_0,
-            vec![[0.0, 0.0], [1.0, 0.0], [0.5, 1.0]],
-        )
-        .with_inserted_attribute(Mesh::ATTRIBUTE_COLOR, vec![[1.0, 0.5, 1.0, 1.0]; 3]),
-        transform: Transform::from_scale(Vec3::splat(0.5)),
-        material: None,
-    };
-    let (_, mesh) = copy_meshes(&[stem]).pop().expect("a mesh to copy");
-    assert!(
-        colors(&mesh)
-            .iter()
-            .all(|color| *color == [1.0, 0.5, 1.0, 1.0]),
-        "a copy keeps its prop's colours, for its tint to fall on"
-    );
     for place in &places {
-        let root = place.transform.translation;
+        let root = place.at;
         assert!(
             (root.y - heights.height_at(Pos::new(root.x, root.z)).0).abs() < 1e-4,
             "a copy at {root:?} stands on the ground"
         );
         assert_eq!(place.weight, 1.0);
-        assert!((0.0..=1.0).contains(&place.tint) && (0.0..=1.0).contains(&place.seed));
-        for (mark, position) in marks(&mesh).iter().zip(positions(&mesh)) {
-            let point = place.transform.transform_point(Vec3::from_array(position));
-            assert!(
-                (mark.measure - (point.y - root.y) / 0.5).abs() < 1e-4,
-                "a point {} m up its copy is marked {} of the way",
-                point.y - root.y,
-                mark.measure
-            );
-        }
+        assert!(
+            (spread.size.0..=spread.size.1).contains(&place.scale)
+                && (0.0..=1.0).contains(&place.tint)
+                && (0.0..=1.0).contains(&place.seed)
+                && (0.0..std::f32::consts::TAU).contains(&place.yaw.0),
+            "a copy's own draws stand within their ranges: {place:?}"
+        );
     }
     let seeds: std::collections::HashSet<u32> =
         places.iter().map(|place| place.seed.to_bits()).collect();
@@ -362,10 +107,24 @@ fn strewn_copies_of_a_prop_stand_where_the_paint_puts_them_marked_how_far_up_the
         seeds.len() > places.len() / 2,
         "each copy has a seed of its own"
     );
+    assert_eq!(
+        strew_places(&patch(&heights, &full), &spread, 3),
+        places,
+        "the same seed strews alike"
+    );
+    let half = |column: u32, _: u32| if column < 16 { 1.0 } else { 0.0 };
+    let painted = strew_places(&patch(&heights, &half), &spread, 3);
+    assert!(
+        !painted.is_empty()
+            && painted
+                .iter()
+                .all(|place| place.at.x < GROUND_ORIGIN.x + 8.0),
+        "copies stand only where the paint puts them"
+    );
 }
 
 #[test]
-fn a_crowd_seen_from_afar_keeps_all_it_tells_apart_as_it_is_and_grows_none_past_the_grain() {
+fn a_packed_crowd_seen_from_afar_thins_to_a_copy_a_grain_covering_as_much() {
     let heights = slope();
     let full = |_: u32, _: u32| 1.0;
     let spread = Spread {
@@ -376,34 +135,6 @@ fn a_crowd_seen_from_afar_keeps_all_it_tells_apart_as_it_is_and_grows_none_past_
     };
     let places = strew_places(&patch(&heights, &full), &spread, 3);
     let extent = 0.5;
-    let near = GRAIN_PIXELS / extent;
-    assert_eq!(
-        seen_at(&places, extent, near),
-        places,
-        "copies the view tells apart stay, each as it is"
-    );
-    let far = near / 4.0;
-    let kept = seen_at(&places, extent, far);
-    let share = kept.len() as f32 / places.len() as f32;
-    assert!(
-        (share - 1.0 / 16.0).abs() < 0.03,
-        "a quarter the size, a sixteenth stay to cover as much: {share}"
-    );
-    for copy in &kept {
-        let across = extent * copy.transform.scale.x * far;
-        assert!(
-            (across - GRAIN_PIXELS).abs() < 1e-3,
-            "a kept copy grows to the grain and no further: {across} px"
-        );
-    }
-    let farther = seen_at(&places, extent, far / 2.0);
-    assert!(
-        farther.iter().all(|copy| kept
-            .iter()
-            .any(|nearer| nearer.transform.translation == copy.transform.translation)),
-        "a farther view keeps fewer of the same copies"
-    );
-
     let packed = 1.5 * GRAIN_PIXELS / extent;
     let apart = packed / spread.per_square_meter.sqrt();
     assert!(
@@ -411,12 +142,8 @@ fn a_crowd_seen_from_afar_keeps_all_it_tells_apart_as_it_is_and_grows_none_past_
         "copies wide enough to tell apart but packed closer than the grain aren't told apart"
     );
     let thinned = strew_places(&patch(&heights, &full), &spread.grained(extent, packed), 3);
-    let covered = |places: &[Place]| -> f32 {
-        places
-            .iter()
-            .map(|place| place.transform.scale.x.powi(2))
-            .sum()
-    };
+    let covered =
+        |places: &[Place]| -> f32 { places.iter().map(|place| place.scale.powi(2)).sum() };
     let cover_share = covered(&thinned) / covered(&places);
     assert!(
         (cover_share - 1.0).abs() < 0.05,
@@ -428,61 +155,4 @@ fn a_crowd_seen_from_afar_keeps_all_it_tells_apart_as_it_is_and_grows_none_past_
         "a packed crowd thins to a copy a grain: {} copies over {grains} grains",
         thinned.len()
     );
-
-    let tuft: Vec<[f32; 3]> = (0..16)
-        .flat_map(|blade| {
-            let x = blade as f32 * 0.1;
-            [[x, 0.0, 0.0], [x + 0.02, 0.0, 0.0], [x + 0.01, 0.05, 0.0]]
-        })
-        .collect();
-    let count = tuft.len();
-    let tuft = Piece {
-        mesh: Mesh::new(
-            bevy::mesh::PrimitiveTopology::TriangleList,
-            bevy::asset::RenderAssetUsages::default(),
-        )
-        .with_inserted_attribute(Mesh::ATTRIBUTE_POSITION, tuft)
-        .with_inserted_attribute(Mesh::ATTRIBUTE_UV_0, vec![[0.5, 0.5]; count]),
-        transform: Transform::IDENTITY,
-        material: None,
-    };
-    let model = CopyModel::of(&[tuft]);
-    let one = [places[0]];
-    let blades_at = |pixels_per_meter: f32| -> Vec<f32> {
-        merged_copies(&one, &model, &spread, pixels_per_meter)
-            .iter()
-            .flat_map(|(_, mesh)| {
-                positions(mesh)
-                    .chunks(3)
-                    .map(|blade| {
-                        let low = blade[0][0].min(blade[1][0]).min(blade[2][0]);
-                        let high = blade[0][0].max(blade[1][0]).max(blade[2][0]);
-                        let top = blade.iter().map(|at| at[1]).fold(f32::MIN, f32::max);
-                        let root = blade.iter().map(|at| at[1]).fold(f32::MAX, f32::min);
-                        (high - low).max(top - root)
-                    })
-                    .collect::<Vec<_>>()
-            })
-            .collect()
-    };
-    let seen = GRAIN_PIXELS / 0.05;
-    let close = blades_at(seen);
-    assert!(
-        close.len() == 16 && close.iter().all(|across| (across - 0.05).abs() < 1e-4),
-        "every blade the view tells apart stands at its own size: {close:?}"
-    );
-    for pixels_per_meter in [seen / 2.0, seen / 8.0, seen / 32.0] {
-        let blades = blades_at(pixels_per_meter);
-        assert!(
-            !blades.is_empty() && blades.len() < 16,
-            "blades too small to tell apart thin: {} at {pixels_per_meter}",
-            blades.len()
-        );
-        assert!(
-            blades
-                .iter()
-                .all(|across| across * pixels_per_meter <= GRAIN_PIXELS + 1e-3),
-            "no blade grows past the grain: {blades:?} at {pixels_per_meter}"
-        );
-    }
 }

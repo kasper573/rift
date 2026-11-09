@@ -26,8 +26,9 @@ use rayon::prelude::*;
 use ui::egui::{Color32, Pos2, Rect as ERect, Stroke as EStroke, Vec2};
 
 use super::camera::AreaCanvas;
-use super::{AreaFrame, AreaTool, selected_parts, shapes};
+use super::{AreaFrame, AreaSnapshot, AreaTool, selected_parts, shapes};
 use crate::app::Editor;
+use crate::doc::DocModule;
 use crate::forms;
 
 const LABEL_GAP: f32 = 2.0;
@@ -249,27 +250,30 @@ impl Footing {
 const BENT_STEP: Meters = Meters(4.0);
 const MOST_PIECES: f32 = 32.0;
 
-/// The outlines of the modules the view draws on the ground, as lines the viewport draws in its
-/// picture, numbered so it lays them again only when they change.
+/// A set of outlines the viewport draws in its picture, numbered so it lays them again only when
+/// they change: around what stands of the modules at `standing`, wherever the picture shows it, in
+/// `color`, and along the ground as the lines `runs`.
 #[derive(Clone, Default)]
-pub struct GroundLines {
+pub struct OutlineSet {
     pub revision: u64,
+    pub standing: Arc<HashSet<String>>,
+    pub color: Color32,
     pub runs: Arc<[GroundLine]>,
 }
 
-/// The outlines the view draws over the ground, each kept with what it was laid for: the scene's as
-/// the view holds it, and the module the pointer is over where the scene's leave it out, kept apart
-/// so the pointer moving over the map lays only its own.
+/// The outlines the view draws, each set kept with what it was laid for: the scene's as
+/// the view holds it, and the modules hovered on the map or in the scene tree where the scene's
+/// leave them out, kept apart so hovering lays only its own.
 #[derive(Default)]
 pub struct Outlines {
-    pub scene: Option<(u64, GroundLines)>,
-    pub pointed: Option<(u64, GroundLines)>,
+    pub scene: Option<(u64, OutlineSet)>,
+    pub hovered: Option<(u64, OutlineSet)>,
 }
 
 impl Outlines {
-    /// Both sets of lines, the scene's first.
-    pub fn lines(&self) -> [GroundLines; 2] {
-        [&self.scene, &self.pointed].map(|kept| {
+    /// Both sets, the scene's first.
+    pub fn sets(&self) -> [OutlineSet; 2] {
+        [&self.scene, &self.hovered].map(|kept| {
             kept.as_ref()
                 .map(|(_, lines)| lines.clone())
                 .unwrap_or_default()
@@ -338,8 +342,8 @@ pub(super) fn overlay_modules(
             || row.as_deref().is_some_and(|row| holds(row, pointer)),
         part: !parts.is_empty() && parts.contains(pointer),
     };
-    let held_unpointed = |pointer: &str| Held {
-        hovered: row.as_deref().is_some_and(|row| holds(row, pointer)),
+    let held_still = |pointer: &str| Held {
+        hovered: false,
         ..held(pointer)
     };
     let wash = |kind: AreaModuleKind, pointer: &str, selected: bool| {
@@ -352,14 +356,14 @@ pub(super) fn overlay_modules(
         };
         ink::wash(module_color(kind), alpha)
     };
-    let key = |pointed: Option<&String>| {
+    let key = |hovered: Option<(&Option<String>, &Option<String>)>| {
         let mut hasher = std::hash::DefaultHasher::new();
         let mut asked: Vec<&String> = selected.iter().chain(&parts).collect();
         asked.sort_unstable();
-        (frame.made, pointed, &row, &editing, asked).hash(&mut hasher);
+        (frame.made, hovered, &editing, asked).hash(&mut hasher);
         hasher.finish()
     };
-    let (scene_key, pointed_key) = (key(None), key(pointed.as_ref()));
+    let (scene_key, hovered_key) = (key(None), key(Some((&pointed, &row))));
     let view = editor.views.area.view_mut(view_key);
     if view
         .outlines
@@ -367,35 +371,57 @@ pub(super) fn overlay_modules(
         .as_ref()
         .is_none_or(|(kept, _)| *kept != scene_key)
     {
-        let lines = ground_lines(frame, &|pointer| Some(held_unpointed(pointer)), &wash);
-        view.outlines.scene = Some((scene_key, lines));
+        let set = outline_set(
+            frame,
+            frame.doc.modules(),
+            &|pointer| Some(held_still(pointer)),
+            &wash,
+            module_color(AreaModuleKind::Prop),
+        );
+        view.outlines.scene = Some((scene_key, set));
     }
     if view
         .outlines
-        .pointed
+        .hovered
         .as_ref()
-        .is_none_or(|(kept, _)| *kept != pointed_key)
+        .is_none_or(|(kept, _)| *kept != hovered_key)
     {
-        let only_pointed = |pointer: &str| {
-            (pointed.as_deref() == Some(pointer) && !held_unpointed(pointer).asked())
-                .then(|| held(pointer))
+        let only_hovered = |pointer: &str| {
+            let held = held(pointer);
+            (held.hovered && !held_still(pointer).asked()).then_some(held)
         };
-        let lines = ground_lines(frame, &only_pointed, &wash);
-        view.outlines.pointed = Some((pointed_key, lines));
+        let hovered = hovered_modules(frame, pointed.as_deref(), row.as_deref());
+        let set = outline_set(
+            frame,
+            hovered.into_iter(),
+            &only_hovered,
+            &wash,
+            HOVERED_OUTLINE,
+        );
+        view.outlines.hovered = Some((hovered_key, set));
     }
     let mut dots = shapes::Dots::default();
     let mut footprints: HashMap<PropId, Option<&Footprint>> = HashMap::new();
-    let placed = frame
-        .modules
-        .iter()
-        .zip(frame.shown_modules.iter())
-        .zip(frame.footings.iter());
-    for ((node, &shown), footing) in placed {
-        let Some(footing) = footing.as_ref().filter(|_| shown) else {
+    let asked = hovered_modules(frame, pointed.as_deref(), row.as_deref())
+        .into_iter()
+        .chain(
+            selected
+                .iter()
+                .chain(&parts)
+                .filter_map(|pointer| frame.doc.module_at(pointer)),
+        );
+    let mut seen: Vec<DocModule> = frame
+        .drawn_unasked_within(frame.seen_ground())
+        .chain(asked)
+        .collect();
+    seen.sort_by_key(|module| module.id);
+    seen.dedup_by_key(|module| module.id);
+    for node in seen {
+        let Some(footing) = frame.footing(node).filter(|_| frame.shown(node)) else {
             continue;
         };
         let module = node.module();
-        let held = held(&node.pointer);
+        let held = held(node.pointer);
         let on_ground = outlined_on_ground(frame, module);
         if on_ground && !held.hovered && !held.part {
             continue;
@@ -410,7 +436,7 @@ pub(super) fn overlay_modules(
             continue;
         }
         let bounds = footing.bounds;
-        let color = wash(module.kind(), &node.pointer, held.selected);
+        let color = wash(module.kind(), node.pointer, held.selected);
         let width = if held.selected { 2.0 } else { 1.0 };
         if !loads(frame, module) {
             painter.add(egui::Shape::dashed_line(
@@ -456,7 +482,7 @@ pub(super) fn overlay_modules(
         if held.hovered {
             let anchor = footing.screen_box(canvas).min + Vec2::new(0.0, -4.0);
             let label = || shapes::label(module, frame.reader.as_ref());
-            if pointed.as_deref() == Some(node.pointer.as_str()) {
+            if pointed.as_deref() == Some(node.pointer) {
                 frame.labels.chip(anchor, label(), color);
             } else {
                 frame.labels.aside(anchor, label, color);
@@ -482,6 +508,12 @@ fn holds(row: &str, pointer: &str) -> bool {
         .is_some_and(|rest| rest.is_empty() || rest.starts_with('/'))
 }
 
+/// Whether the map draws `module` though nothing asks for it: one it doesn't outline on the
+/// ground, of a kind that shows unasked.
+pub(super) fn drawn_unasked(snapshot: &AreaSnapshot, module: &AreaModule) -> bool {
+    !outlined_on_ground(snapshot, module) && shown_unasked(module)
+}
+
 /// Whether a module shows on the map when nothing asks for it: a scatter or a blueprint placement,
 /// which can tile a whole area, only when selected or hovered.
 fn shown_unasked(module: &AreaModule) -> bool {
@@ -490,11 +522,11 @@ fn shown_unasked(module: &AreaModule) -> bool {
 
 /// Whether a module is outlined on the ground by the rectangle it takes, as a line the viewport
 /// draws: every module shaped as its rectangle, rather than as a point, a circle or a footprint.
-fn outlined_on_ground(frame: &AreaFrame, module: &AreaModule) -> bool {
+fn outlined_on_ground(snapshot: &AreaSnapshot, module: &AreaModule) -> bool {
     match module {
         AreaModule::Soundscape(_) => !shapes::is_ellipse(module),
         AreaModule::Object(_) => !shapes::is_point(module),
-        AreaModule::Blueprint(_) => loads(frame, module),
+        AreaModule::Blueprint(_) => loads(snapshot, module),
         AreaModule::SafeZone(_)
         | AreaModule::Fog(_)
         | AreaModule::Scatter(_)
@@ -507,41 +539,65 @@ fn outlined_on_ground(frame: &AreaFrame, module: &AreaModule) -> bool {
 }
 
 /// Whether a module loads: a blueprint placement whose blueprint does; every other module.
-fn loads(frame: &AreaFrame, module: &AreaModule) -> bool {
+fn loads(snapshot: &AreaSnapshot, module: &AreaModule) -> bool {
     match module {
-        AreaModule::Blueprint(placement) => frame
+        AreaModule::Blueprint(placement) => snapshot
             .reader
             .path_of(placement.blueprint)
-            .and_then(|path| frame.content.by_path::<BlueprintDef>(path))
+            .and_then(|path| snapshot.content.by_path::<BlueprintDef>(path))
             .is_some(),
         _ => true,
     }
 }
 
-/// The outlines on the ground of every module that shows as one and that `held` says how the view
-/// holds.
-fn ground_lines(
-    frame: &AreaFrame,
+/// The modules hovered on the map, at `pointed`, or under the scene tree's row `row`, "" the
+/// whole scene.
+fn hovered_modules<'a>(
+    frame: &'a AreaFrame,
+    pointed: Option<&str>,
+    row: Option<&str>,
+) -> Vec<DocModule<'a>> {
+    let doc = &frame.doc;
+    let mut hovered: Vec<DocModule> = pointed
+        .and_then(|pointer| doc.module_at(pointer))
+        .into_iter()
+        .collect();
+    match row {
+        Some("") => hovered.extend(doc.modules()),
+        Some(row) => hovered.extend(doc.id(row).into_iter().flat_map(|id| doc.modules_under(id))),
+        None => {}
+    }
+    hovered.sort_by_key(|module| module.id);
+    hovered.dedup_by_key(|module| module.id);
+    hovered
+}
+
+/// The outlines, in `color`, of every module among `modules` that `held` says how the view holds:
+/// what stands of those that stand props, and on the ground those that show as a line there.
+fn outline_set<'a>(
+    frame: &'a AreaFrame,
+    modules: impl Iterator<Item = DocModule<'a>>,
     held: &dyn Fn(&str) -> Option<Held>,
     wash: &dyn Fn(AreaModuleKind, &str, bool) -> Color32,
-) -> GroundLines {
+    color: Color32,
+) -> OutlineSet {
     static REVISION: AtomicU64 = AtomicU64::new(0);
     let area = frame.area();
-    let outlined: Vec<(&Footing, Color32, bool)> = frame
-        .modules
-        .iter()
-        .zip(frame.shown_modules.iter())
-        .zip(frame.footings.iter())
-        .filter_map(|((node, &shown), footing)| {
-            let footing = footing.as_ref().filter(|_| shown)?;
+    let mut standing = HashSet::new();
+    let outlined: Vec<(&Footing, Color32, bool)> = modules
+        .filter_map(|node| {
+            let footing = frame.footing(node).filter(|_| frame.shown(node))?;
             let module = node.module();
-            let held = held(&node.pointer)?;
+            let held = held(node.pointer)?;
+            if held.asked() && stands_props(module) {
+                standing.insert(node.pointer.to_owned());
+            }
             if !outlined_on_ground(frame, module) || !(held.asked() || shown_unasked(module)) {
                 return None;
             }
             Some((
                 footing,
-                wash(module.kind(), &node.pointer, held.selected),
+                wash(module.kind(), node.pointer, held.selected),
                 held.selected,
             ))
         })
@@ -554,10 +610,20 @@ fn ground_lines(
             bold,
         })
         .collect();
-    GroundLines {
+    OutlineSet {
         revision: REVISION.fetch_add(1, Ordering::Relaxed),
+        standing: Arc::new(standing),
+        color,
         runs: runs.into(),
     }
+}
+
+/// Whether a module stands props the picture shows: a prop, a scatter, or a blueprint placement.
+fn stands_props(module: &AreaModule) -> bool {
+    matches!(
+        module,
+        AreaModule::Prop(_) | AreaModule::Scatter(_) | AreaModule::Blueprint(_)
+    )
 }
 
 /// A module drawn over the picture by its own shape.
@@ -771,3 +837,6 @@ fn cells(rect: ERect) -> impl Iterator<Item = (i32, i32)> {
     (cell(rect.min.y)..=cell(rect.max.y))
         .flat_map(move |row| (cell(rect.min.x)..=cell(rect.max.x)).map(move |column| (column, row)))
 }
+
+/// The colour of the outline around what stands of a hovered module.
+const HOVERED_OUTLINE: Color32 = Color32::from_gray(235);

@@ -4,10 +4,12 @@ use ui::egui;
 
 use editor::app::Editor;
 use editor::busy::Progress;
+use editor::doc::SceneEdit;
 use editor::modal::{DeleteDialog, ModalDialog};
 use editor::project::{Project, ProjectFiles};
 use editor::schema::SchemaShapes;
 use editor::user::{EditorSettings, UserFolder};
+use editor::views::area::nodes::SceneTree;
 use engine::core::content::Content;
 use engine::core::math::Pos;
 use engine::core::units::Meters;
@@ -127,6 +129,41 @@ pub fn folder(label: &str, children: Vec<SceneNode>) -> SceneNode {
     })
 }
 
+/// How many folders the start area of [`large_game`] holds, and how many objects each.
+pub const LARGE_FOLDERS: usize = 8;
+pub const LARGE_PER_FOLDER: usize = 250;
+
+/// A game whose start area holds a scene too large to check on a frame: `LARGE_FOLDERS` folders
+/// of `LARGE_PER_FOLDER` objects each.
+pub fn large_game() -> Game {
+    let scene: Vec<SceneNode> = (0..LARGE_FOLDERS)
+        .map(|f| {
+            folder(
+                &format!("Folder {f}"),
+                (0..LARGE_PER_FOLDER)
+                    .map(|o| object(&format!("object {f}.{o}")))
+                    .collect(),
+            )
+        })
+        .collect();
+    let written =
+        engine::core::content::with_content(engine::core::content::ContentScope::new(), || {
+            engine::systems::area::scene::write_nodes(&scene)
+        })
+        .0
+        .expect("objects of no other file write anywhere");
+    Game::new()
+        .area(AREA, &Map::open(64, 64), written)
+        .hero(AREA, 1.0, 1.0)
+        .engine_rows()
+        .whole()
+}
+
+/// `scene` restructured by `change`, as an edit to it restructures it.
+pub fn restructured<R>(scene: &mut Vec<SceneNode>, change: impl FnOnce(&mut SceneTree) -> R) -> R {
+    change(&mut SceneTree::new(&mut SceneEdit::new(scene)))
+}
+
 /// What names each node of `nodes`, depth first: an object's name, a folder's label.
 pub fn names(nodes: &[SceneNode]) -> Vec<String> {
     let mut found = Vec::new();
@@ -144,6 +181,12 @@ pub fn names(nodes: &[SceneNode]) -> Vec<String> {
 }
 
 /// What the project open in `editor` loads once what it is loading settles.
+/// The scene of the area or blueprint at `bundle` as its files read now: empty when it doesn't.
+pub fn scene(editor: &Editor, bundle: &str) -> Vec<SceneNode> {
+    editor::views::area::nodes::bundle_of(editor, bundle)
+        .map_or_else(Vec::new, |read| read.nodes().to_vec())
+}
+
 pub fn content(editor: &mut Editor) -> &Content {
     settled(editor).content.as_ref().expect("the folder loads")
 }
@@ -161,7 +204,7 @@ pub fn files(editor: &mut Editor) -> &ProjectFiles {
 pub fn residents(editor: &mut Editor) -> Vec<String> {
     files(editor);
     let reader = editor.reader().expect("a reader");
-    editor::views::area::nodes::modules(&editor::views::area::nodes::scene_of(editor, &area()))
+    editor::views::area::nodes::modules(&scene(editor, &area()))
         .iter()
         .filter_map(|module| match module.module() {
             AreaModule::Resident(resident) => reader.path_of(resident.npc).map(str::to_owned),

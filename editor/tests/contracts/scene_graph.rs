@@ -27,7 +27,9 @@ fn folder_json(label: &str, children: Vec<Value>) -> Value {
 
 fn flagged(node: SceneNode, flag: NodeFlag) -> SceneNode {
     let mut nodes = vec![node];
-    SceneTree::new(&mut nodes).set_flag(&["/0".to_owned()], flag, true);
+    support::restructured(&mut nodes, |tree| {
+        tree.set_flag(&["/0".to_owned()], flag, true);
+    });
     nodes.remove(0)
 }
 
@@ -35,7 +37,9 @@ fn flagged(node: SceneNode, flag: NodeFlag) -> SceneNode {
 fn grouping_puts_the_rows_in_order_into_a_new_folder_where_the_first_was() {
     let mut scene = vec![object("a"), object("b"), object("c"), object("d")];
 
-    let made = SceneTree::new(&mut scene).group(&["/2".to_owned(), "/1".to_owned()], "Storage");
+    let made = support::restructured(&mut scene, |tree| {
+        tree.group(&["/2".to_owned(), "/1".to_owned()], "Storage")
+    });
 
     assert_eq!(made.as_deref(), Some("/1"));
     assert_eq!(names(&scene), ["a", "Storage", "b", "c", "d"]);
@@ -46,10 +50,12 @@ fn grouping_puts_the_rows_in_order_into_a_new_folder_where_the_first_was() {
         folder("Altar", vec![object("c")]),
         object("d"),
     ];
-    let made = SceneTree::new(&mut scene).group(
-        &["/0/children/1".to_owned(), "/1/children/0".to_owned()],
-        "Picked",
-    );
+    let made = support::restructured(&mut scene, |tree| {
+        tree.group(
+            &["/0/children/1".to_owned(), "/1/children/0".to_owned()],
+            "Picked",
+        )
+    });
     assert_eq!(
         made.as_deref(),
         Some("/0"),
@@ -68,7 +74,7 @@ fn ungrouping_puts_what_a_folder_held_in_its_place_in_order() {
         object("d"),
     ];
 
-    SceneTree::new(&mut scene).ungroup(&["/1".to_owned()]);
+    support::restructured(&mut scene, |tree| tree.ungroup(&["/1".to_owned()]));
 
     assert_eq!(names(&scene), ["a", "b", "c", "d"]);
 }
@@ -77,14 +83,15 @@ fn ungrouping_puts_what_a_folder_held_in_its_place_in_order() {
 fn moving_rows_into_a_folder_lands_them_where_asked() {
     let mut scene = vec![object("a"), object("b"), folder("Hall", vec![object("c")])];
 
-    let landed = SceneTree::new(&mut scene)
-        .move_nodes(&["/0".to_owned()], "/2", &Landing::First)
-        .expect("the move");
+    let landed = support::restructured(&mut scene, |tree| {
+        tree.move_nodes(&["/0".to_owned()], "/2", &Landing::First)
+    })
+    .expect("the move");
 
     assert_eq!(landed, ["/1/children/0"]);
     assert_eq!(names(&scene), ["b", "Hall", "a", "c"]);
 
-    SceneTree::new(&mut scene).reorder(&["/1".to_owned()], -1);
+    support::restructured(&mut scene, |tree| tree.reorder(&["/1".to_owned()], -1));
     assert_eq!(names(&scene), ["Hall", "a", "c", "b"]);
 }
 
@@ -93,8 +100,9 @@ fn a_folder_never_moves_into_itself() {
     let mut scene = vec![folder("Hall", vec![folder("Nave", vec![])])];
     let before = scene::write_nodes(&scene).expect("written");
 
-    let moved =
-        SceneTree::new(&mut scene).move_nodes(&["/0".to_owned()], "/0/children/0", &Landing::End);
+    let moved = support::restructured(&mut scene, |tree| {
+        tree.move_nodes(&["/0".to_owned()], "/0/children/0", &Landing::End)
+    });
 
     assert!(moved.is_none());
     assert_eq!(scene::write_nodes(&scene).expect("written"), before);
@@ -130,7 +138,9 @@ fn a_folders_hide_and_lock_reach_what_it_holds_and_each_row_keeps_its_own() {
     assert!(!flags.keep(&["/0/children/1"]));
     assert!(flags.keep(&["/2"]));
 
-    SceneTree::new(&mut scene).set_flag(&["/0".to_owned()], NodeFlag::Hidden, false);
+    support::restructured(&mut scene, |tree| {
+        tree.set_flag(&["/0".to_owned()], NodeFlag::Hidden, false);
+    });
     let flags = flags_of(&scene);
     assert!(
         flags.hidden("/0/children/0"),
@@ -163,7 +173,7 @@ fn hiding_a_row_shows_in_the_open_view_before_the_folder_loads_again() {
     support::settled(&mut editor);
     editor.views.area.ensure_view(&area());
     let shown = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
-    let rug = nodes::modules(shown.def.nodes())
+    let rug = nodes::modules(shown.nodes())
         .into_iter()
         .find(|module| module.node.label.as_deref() == Some("rug"))
         .expect("the rug's placement")
@@ -195,11 +205,11 @@ fn grouping_and_naming_the_folder_is_one_undo_step() {
     let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
     scene_tree::rename_grouped(&mut editor, &snapshot, &id, "Storage", &step);
 
-    let scene = nodes::scene_of(&editor, &area());
+    let scene = support::scene(&editor, &area());
     assert_eq!(scene[0].label(), Some("Storage"));
     assert_eq!(names(nodes::children_of(&scene[0])), ["a", "b"]);
     editor.undo();
-    assert_eq!(names(&nodes::scene_of(&editor, &area())), ["a", "b", "c"]);
+    assert_eq!(names(&support::scene(&editor, &area())), ["a", "b", "c"]);
 }
 
 #[test]
@@ -240,7 +250,7 @@ fn a_new_folder_lands_in_the_insertion_folder_and_never_shares_a_label() {
         inside.starts_with(&format!("{first}/children/")),
         "{inside}"
     );
-    let scene = nodes::scene_of(&editor, &area());
+    let scene = support::scene(&editor, &area());
     let label = |id: &str| nodes::node(&scene, id).and_then(SceneNode::label);
     assert_ne!(label(&first), label(&beside));
 }
@@ -256,10 +266,10 @@ fn deleting_a_folder_takes_all_it_holds_in_one_step() {
 
     scene_tree::delete_rows(&mut editor, &snapshot, &[id]);
 
-    assert_eq!(names(&nodes::scene_of(&editor, &area())), ["c"]);
+    assert_eq!(names(&support::scene(&editor, &area())), ["c"]);
     editor.undo();
     assert_eq!(
-        names(&nodes::scene_of(&editor, &area())),
+        names(&support::scene(&editor, &area())),
         ["New folder", "a", "b", "c"]
     );
 }
@@ -315,6 +325,7 @@ fn rows_never_drop_onto_a_placement_or_into_themselves() {
             view: &TreeView::default(),
             kept: &mut None,
         },
+        &mut None,
         false,
     );
     let into = |folder: &str| TreeDrop {
@@ -338,6 +349,81 @@ fn rows_never_drop_onto_a_placement_or_into_themselves() {
             .drop_tip(&["/0".to_owned()], &onto_a_placement)
             .is_err()
     );
+}
+
+/// A folder holding many scatters lists them under one row of their own, where the first of them
+/// was, which opens on them all, selects them all from its menu, and takes a drop as the folder.
+#[test]
+fn many_scatters_in_a_folder_fold_into_one_row() {
+    let scratch = tempfile::tempdir().expect("a scratch folder");
+    let scatter = |seed: u32| {
+        json!({
+            "type": "scatter",
+            "props": [path("prop", "tuft")],
+            "region": { "x": 5.0, "y": 5.0, "w": 2.0, "h": 2.0 },
+            "per_square_meter": 0.5,
+            "seed": seed
+        })
+    };
+    let game = support::game()
+        .prop("tuft", json!({ "type": "box", "width": 0.2, "depth": 0.2 }))
+        .edit_scene("area", support::AREA, |scene| {
+            let rows = scene.as_array_mut().expect("a scene");
+            let few = folder_json("Few", (0..3).map(scatter).collect());
+            let mut many: Vec<Value> = vec![object_json("well")];
+            many.extend((0..40).map(scatter));
+            many.push(object_json("gate"));
+            rows.extend([few, folder_json("Many", many)]);
+        });
+    let mut editor = open(game, &scratch);
+    let snapshot = AreaSnapshot::for_bundle(&mut editor, &area()).expect("the area is open");
+    let project = editor.project.as_ref().expect("a project");
+    let source = SceneSource::new(
+        project,
+        &snapshot,
+        &editor.selection,
+        SceneNarrowing {
+            filter: "",
+            view: &TreeView::default(),
+            kept: &mut None,
+        },
+        &mut None,
+        false,
+    );
+    let few = snapshot.nodes().len() - 2;
+    let (few, many) = (format!("/{few}"), format!("/{}", few + 1));
+
+    assert_eq!(
+        source.children(&few).len(),
+        3,
+        "a few scatters stay rows of their own"
+    );
+    let listed = source.children(&many);
+    assert_eq!(listed.len(), 3, "{listed:?}");
+    assert_eq!(listed[0], format!("{many}/children/0"));
+    assert_eq!(listed[2], format!("{many}/children/41"));
+    let folded = &listed[1];
+    let row = source.row(folded);
+    assert!(row.folder && source.is_folder(folded));
+    assert_eq!((row.name.as_str(), row.detail.as_str()), ("Scatters", "40"));
+    let members = source.children(folded);
+    assert_eq!(members.len(), 40);
+    assert_eq!(members[0], format!("{many}/children/1"));
+    assert!(
+        members
+            .iter()
+            .all(|member| source.parent(member) == *folded)
+    );
+    assert_eq!(source.parent(folded), many);
+    let into = TreeDrop {
+        folder: folded.clone(),
+        at: DropAt::End,
+        onto: None,
+    };
+    let tip = source
+        .drop_tip(&[format!("{few}/children/0")], &into)
+        .expect("a drop on the folded row lands in its folder");
+    assert!(tip.ends_with("into Many"), "{tip}");
 }
 
 #[test]

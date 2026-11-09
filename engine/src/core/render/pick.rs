@@ -1,6 +1,7 @@
 //! What the pointer is over: the ray through it and the ground it meets, and the hit tests the
 //! systems pick actors and things out of the world with.
 
+use bevy::diagnostic::FrameCount;
 use bevy::prelude::*;
 
 use super::camera::{self, GroundHeights};
@@ -14,13 +15,25 @@ pub struct Pointed {
     pub ground: Option<Pos<Meters>>,
 }
 
-/// Where the pointer points, while it is over the world rather than the interface.
+/// Where the pointer points, while it is over the world rather than the interface. The ground under
+/// it is found once a frame for everyone who asks, while the camera and the pointer stay put.
 pub fn pointed(world: &mut World) -> Option<Pointed> {
     let ray = camera::cursor_ray(world)?;
+    let frame = world.get_resource::<FrameCount>().map(|frame| frame.0);
+    if let Some(found) = world.get_resource::<PointedThisFrame>()
+        && Some(found.frame) == frame
+        && found.pointed.ray == ray
+    {
+        return Some(found.pointed);
+    }
     let ground = world
         .get_resource::<GroundHeights>()
         .and_then(|ground| ground.hit(ray));
-    Some(Pointed { ray, ground })
+    let pointed = Pointed { ray, ground };
+    if let Some(frame) = frame {
+        world.insert_resource(PointedThisFrame { frame, pointed });
+    }
+    Some(pointed)
 }
 
 /// How far along the ray a capsule `radius` wide and `height` tall standing on `foot` is hit, if
@@ -64,4 +77,11 @@ fn ray_segment(ray: Ray3d, a: Vec3, b: Vec3) -> (f32, f32) {
     let on_ray = ray.origin + d1 * along;
     let on_segment = a + d2 * u;
     (along, on_ray.distance(on_segment))
+}
+
+/// What the pointer pointed at, the frame it was found in.
+#[derive(Resource)]
+struct PointedThisFrame {
+    frame: u32,
+    pointed: Pointed,
 }

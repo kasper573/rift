@@ -2,7 +2,7 @@ use crate::core::content::SchemaMark;
 use std::ops::Range;
 use ui::egui;
 
-use bevy_ecs::prelude::Resource;
+use bevy_ecs::prelude::{Resource, World};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -42,6 +42,14 @@ impl Rng {
     /// run to run, without drawing from this one again.
     pub fn fork(&mut self) -> Rng {
         Rng::new((u64::from(self.0.rand_u32()) << 32) | u64::from(self.0.rand_u32()))
+    }
+
+    /// A generator forked from the world's own, so it plays out alike wherever the world's is
+    /// seeded; from the OS where the world has none.
+    pub fn fork_of(world: &mut World) -> Rng {
+        world
+            .get_resource_mut::<Rng>()
+            .map_or_else(Rng::from_entropy, |mut rng| rng.fork())
     }
 
     pub fn rand_float(&mut self) -> f32 {

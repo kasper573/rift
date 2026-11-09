@@ -15,7 +15,6 @@ use crate::core::content::version;
 use crate::core::net::auth::TokenClaims;
 use crate::core::time::{TimeCourse, UnixMillis, UtcHour};
 use crate::systems::player::SpawnPolicy;
-use crate::systems::probe::ProbeFrameQuestion;
 use crate::systems::script::Place;
 use crate::systems::staging::Staging;
 
@@ -159,6 +158,8 @@ pub struct ServerConfig {
     pub player_spawn_policy: SpawnPolicy,
     pub player_immortal: bool,
     pub daylight: ServerDaylight,
+    /// The hour of the day a fixed daylight holds at, 0 to 24.
+    pub hour: Option<f32>,
     pub weather: ServerWeather,
     pub rng_seed: Option<u64>,
     pub daily_reset_utc_hour: UtcHour,
@@ -168,6 +169,14 @@ pub struct ServerConfig {
 }
 
 impl ServerConfig {
+    /// How the server runs the game's day.
+    pub fn day(&self) -> ServerDay {
+        ServerDay {
+            daylight: self.daylight,
+            hour: self.hour,
+        }
+    }
+
     /// A server for a tool on this machine to play `content_dir` on alone: on any free ports of
     /// the loopback, signing players in without asking, handing out test characters and stopping
     /// with the tool that started it.
@@ -183,6 +192,7 @@ impl ServerConfig {
             player_spawn_policy: SpawnPolicy::Map,
             player_immortal: false,
             daylight: ServerDaylight::Turning,
+            hour: None,
             weather: ServerWeather::Turning,
             rng_seed: None,
             daily_reset_utc_hour: UtcHour::MIDNIGHT,
@@ -193,13 +203,28 @@ impl ServerConfig {
     }
 }
 
-/// Whether a game's day turns on the server, or holds at its start hour, as tests that compare how
-/// the world looks need it to.
+/// How a server runs the game's day: as its daylight says, held at `hour` where that is fixed.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ServerDay {
+    pub daylight: ServerDaylight,
+    pub hour: Option<f32>,
+}
+
+impl ServerDay {
+    pub const TURNING: ServerDay = ServerDay {
+        daylight: ServerDaylight::Turning,
+        hour: None,
+    };
+}
+
+/// Whether a game's day turns on the server, holds at its start hour, or holds at the hour the
+/// server is given, as tests that compare how the world looks need it to.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum ServerDaylight {
     Turning,
     Still,
+    Fixed,
 }
 
 /// Whether every area's weather turns from spell to spell on the server, or holds at its first, as
@@ -213,10 +238,10 @@ pub enum ServerWeather {
 
 impl ServerWeather {
     /// The course the weather runs on a server that started `at`.
-    pub fn course(self, at: UnixMillis) -> TimeCourse {
+    pub fn course(self, at: UnixMillis) -> TimeCourse<usize> {
         match self {
             ServerWeather::Turning => TimeCourse::Since(at),
-            ServerWeather::Still => TimeCourse::Still,
+            ServerWeather::Still => TimeCourse::Held(0),
         }
     }
 }
@@ -293,6 +318,9 @@ pub fn start_game_server(
 /// The driver of a desktop client's probe: asks it its frame questions and reads its answers.
 /// How often a driver looks again for a client's probe to connect.
 const PROBE_POLL: Duration = Duration::from_millis(100);
+/// How long an app may take to answer its probe before it counts as hung: far longer than any
+/// frame takes, loading included.
+const ANSWER_WITHIN: Duration = Duration::from_secs(120);
 
 pub struct ProbeDriver {
     questions: TcpStream,
@@ -300,11 +328,11 @@ pub struct ProbeDriver {
 }
 
 impl ProbeDriver {
-    /// Waits for the probe of the desktop client running as `client` to connect to `listener`:
-    /// refused once the client exits before it does, or `within` passes.
+    /// Waits for the probe of the app running as `app`, a desktop client or an editor, to connect
+    /// to `listener`: refused once the app exits before it does, or `within` passes.
     pub fn accept(
         listener: &TcpListener,
-        client: &mut Child,
+        app: &mut Child,
         within: Duration,
     ) -> Result<ProbeDriver, String> {
         listener
@@ -317,20 +345,21 @@ impl ProbeDriver {
                 Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
                 Err(error) => return Err(format!("the probe's port fails: {error}")),
             }
-            if let Ok(Some(status)) = client.try_wait() {
+            if let Ok(Some(status)) = app.try_wait() {
                 return Err(format!(
-                    "the desktop client exited ({status}) before its probe connected"
+                    "the app exited ({status}) before its probe connected"
                 ));
             }
             if std::time::Instant::now() >= deadline {
-                return Err(format!(
-                    "the desktop client's probe didn't connect within {within:?}"
-                ));
+                return Err(format!("the app's probe didn't connect within {within:?}"));
             }
             std::thread::sleep(PROBE_POLL);
         };
         let answer = |error: std::io::Error| format!("the probe's connection fails: {error}");
         stream.set_nonblocking(false).map_err(answer)?;
+        stream
+            .set_read_timeout(Some(ANSWER_WITHIN))
+            .map_err(answer)?;
         let answers = BufReader::new(stream.try_clone().map_err(answer)?);
         Ok(ProbeDriver {
             questions: stream,
@@ -339,15 +368,15 @@ impl ProbeDriver {
     }
 
     /// The probe's answer, one line of JSON, to `question`.
-    pub fn ask(&mut self, question: &ProbeFrameQuestion) -> Result<String, String> {
+    pub fn ask(&mut self, question: &impl Serialize) -> Result<String, String> {
         let question = serde_json::to_string(question).expect("a question serializes");
         writeln!(self.questions, "{question}")
-            .map_err(|error| format!("the client takes no question: {error}"))?;
+            .map_err(|error| format!("the app takes no question: {error}"))?;
         let mut answer = String::new();
         match self.answers.read_line(&mut answer) {
-            Ok(0) => Err("the client hung up".to_owned()),
+            Ok(0) => Err("the app hung up".to_owned()),
             Ok(_) => Ok(answer),
-            Err(error) => Err(format!("the client stopped answering: {error}")),
+            Err(error) => Err(format!("the app stopped answering: {error}")),
         }
     }
 }

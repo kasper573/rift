@@ -15,7 +15,7 @@ use engine::core::render::Look;
 use engine::core::render::camera::{self as world_camera, View};
 use engine::core::render::world::sky::Daylight;
 use engine::core::units::{MeterSize, Meters};
-use engine::systems::area::scenery::{self, Scenery};
+use engine::systems::area::scenery::{self, Eyes, Scenery, Sight};
 use engine::systems::area::{self, AreaDef};
 use ui::egui::{self, Color32, TextureId};
 
@@ -158,12 +158,21 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
                     let layers = RenderLayers::from_layers(&[LAYER]);
                     let stood = scenery::spawn(world, &content, &area, layers);
                     let bounds = area.size.bounds();
+                    let at = bounds.center();
                     scenery::view_from(
                         world,
                         stood,
-                        bounds.center(),
-                        Meters(bounds.size.width.hypot(bounds.size.height)),
-                        drawing.view,
+                        Sight {
+                            at,
+                            reach: Meters(bounds.size.width.hypot(bounds.size.height)),
+                            horizon: None,
+                            lens: drawing.view.lens(),
+                            eyes: Eyes::standing(
+                                drawing.view.eye(),
+                                at,
+                                area.heights.height_at(at),
+                            ),
+                        },
                     );
                     let weather = area.climate.first();
                     scenery::light(
@@ -294,6 +303,7 @@ pub fn sync(editor: &mut Editor, world: &mut World) {
                 RenderTarget::Image(target.clone().into()),
                 world_camera::lens(LENS, size[0], size[1]),
                 world_camera::picture(grade),
+                world_camera::CameraFocus(center),
                 RenderLayers::from_layers(&[LAYER]),
                 eye,
             ))

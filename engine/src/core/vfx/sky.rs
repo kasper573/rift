@@ -17,6 +17,9 @@ use crate::core::render::world::clouds::{self, CLOUD_TILE, CloudLook, SECOND_SHI
 
 use super::uniform::{ParamsUniform, SiteUniform, VfxShaderKey};
 
+/// A sort distance past any the view holds: a blended mesh biased by it draws before every other.
+const BEHIND_EVERYTHING: f32 = 1.0e9;
+
 /// A shader painting the sky's dome, with the parameters it is filled with, the weather it reads,
 /// the sky's lights, and the field of cloud drifting over the area.
 #[derive(Asset, TypePath, AsBindGroup, Clone, Debug)]
@@ -141,6 +144,13 @@ impl From<&SkyMaterial> for VfxShaderKey {
 impl Material for SkyMaterial {
     fn alpha_mode(&self) -> AlphaMode {
         AlphaMode::Blend
+    }
+
+    /// The dome and the rain's shells both stand round the eye, so by distance alone their order
+    /// is a toss-up, and the sky drawn second covers the rain wherever it shows. The sky lies
+    /// behind everything blended, and is sorted so.
+    fn depth_bias(&self) -> f32 {
+        BEHIND_EVERYTHING
     }
 
     fn enable_prepass() -> bool {

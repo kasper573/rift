@@ -1,0 +1,16 @@
+//! The draw path the world moves onto: what it draws lives on the GPU and is drawn indirectly,
+//! queued straight into bevy's opaque, prepass and shadow phases with pipelines built on the mesh
+//! pipeline's view layouts, so it is lit, shadowed, occluded and smoothed like every mesh.
+
+pub mod arena;
+pub mod atlas;
+pub mod clearing;
+pub mod cull;
+pub mod draw;
+pub mod grass;
+pub mod impostor;
+pub mod pick;
+pub mod prop_draw;
+pub mod residency;
+pub mod slab;
+pub mod upload;

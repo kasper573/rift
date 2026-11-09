@@ -1,117 +1,37 @@
-//! Coarser stand-ins for the meshes of the world, each with how far its shape strays from the
-//! mesh's own, so a mesh far off the eye draws with no more triangles than its pixels show.
+//! How far a coarser stand-in for a mesh may stray from its shape, and the stand-ins themselves:
+//! the triangles of a mesh, coarser and coarser, each with how far its shape strays, so a mesh far
+//! off the eye draws with no more triangles than its pixels show.
 
-use bevy::asset::RenderAssetUsages;
-use bevy::ecs::system::SystemParam;
-use bevy::mesh::{Indices, PrimitiveTopology, VertexAttributeValues};
-use bevy::platform::collections::HashMap;
-use bevy::prelude::*;
-use bevy::tasks::futures::check_ready;
-use bevy::tasks::{AsyncComputeTaskPool, Task};
-use meshopt::SimplifyOptions;
-
-use crate::core::render::camera::View;
 use crate::core::units::Meters;
-
-/// Simplifies the meshes of the world into their stand-ins, each once, off the frame.
-#[derive(SystemParam)]
-pub struct Simplifier<'w> {
-    levels: ResMut<'w, MeshLevels>,
-    meshes: Res<'w, Assets<Mesh>>,
-}
-
-impl Simplifier<'_> {
-    /// Starts simplifying `mesh` the first time it is asked for, once it has loaded.
-    pub fn simplify(&mut self, mesh: &Handle<Mesh>) {
-        if self.levels.0.contains_key(&mesh.id()) {
-            return;
-        }
-        let Some(full) = self.meshes.get(mesh) else {
-            return;
-        };
-        let full = full.clone();
-        let task = AsyncComputeTaskPool::get().spawn(async move { simplified(&full) });
-        self.levels
-            .bypass_change_detection()
-            .0
-            .insert(mesh.id(), Simplifying::Making(task));
-    }
-
-    pub fn levels(&self) -> &MeshLevels {
-        &self.levels
-    }
-}
-
-/// The levels of every mesh simplified so far, or being simplified, by the mesh they stand in
-/// for. It changes as each mesh's levels are made.
-#[derive(Resource, Default)]
-pub struct MeshLevels(HashMap<AssetId<Mesh>, Simplifying>);
-
-impl MeshLevels {
-    /// The levels of `mesh`, once they are made.
-    pub fn of(&self, mesh: &Handle<Mesh>) -> Option<&Levels> {
-        match self.0.get(&mesh.id())? {
-            Simplifying::Made(levels) => Some(levels),
-            Simplifying::Making(_) => None,
-        }
-    }
-}
-
-/// The stand-ins for a mesh, finest first, each with about half the triangles of the one before
-/// and how far its shape strays from the mesh's, in the mesh's own units.
-pub struct Levels(Vec<(Handle<Mesh>, f32)>);
-
-impl Levels {
-    /// The coarsest stand-in that strays from the mesh by less than [`STRAY_PIXELS`] of `view`,
-    /// drawn `scale` times its size `distance` off the eye; none where only the mesh itself does.
-    pub fn for_view(&self, view: &View, distance: Meters, scale: f32) -> Option<&Handle<Mesh>> {
-        let allowed = STRAY_PIXELS / (view.pixels_per_meter(distance) * scale);
-        self.0
-            .iter()
-            .rev()
-            .find(|(_, strays)| *strays <= allowed)
-            .map(|(level, _)| level)
-    }
-}
+use meshopt::SimplifyOptions;
 
 /// How many pixels across a thing among many alike must span for the view to tell it apart from
 /// its neighbours: smaller, some of them may be dropped and the rest grown to this size, and the
 /// crowd looks the same.
 pub const GRAIN_PIXELS: f32 = 2.0;
 
-/// Takes in the levels simplified since the last frame.
-pub(super) fn finish_simplifying(mut levels: ResMut<MeshLevels>, mut meshes: ResMut<Assets<Mesh>>) {
-    let mut finished = false;
-    for simplifying in levels.bypass_change_detection().0.values_mut() {
-        if let Simplifying::Making(task) = simplifying
-            && let Some(made) = check_ready(task)
-        {
-            *simplifying = Simplifying::Made(Levels(
-                made.into_iter()
-                    .map(|(level, strays)| (meshes.add(level), strays))
-                    .collect(),
-            ));
-            finished = true;
-        }
-    }
-    if finished {
-        levels.set_changed();
-    }
+/// The share of the horizon over which the far field thins out to nothing at it, by the props'
+/// seeds in the kernel and by the canopy over the ground.
+const HORIZON_BAND: f32 = 0.2;
+
+/// Where the far field begins to thin toward a horizon `horizon` off the eye, and the horizon,
+/// in metres: 0 and 0 for none.
+pub fn horizon_band(horizon: Option<Meters>) -> (f32, f32) {
+    horizon.map_or((0.0, 0.0), |horizon| {
+        (horizon.0 * (1.0 - HORIZON_BAND), horizon.0)
+    })
 }
 
-/// Forgets the levels of meshes that are gone, so their stand-ins go with them.
-pub(super) fn forget_dropped(
-    mut events: MessageReader<AssetEvent<Mesh>>,
-    mut levels: ResMut<MeshLevels>,
-) {
-    let gone = super::dropped(&mut events);
-    if !gone.is_empty() {
-        levels.0.retain(|mesh, _| !gone.contains(mesh));
-    }
-}
-
-/// How far a stand-in's shape may stray from its mesh's, in pixels of the view it is seen in.
+/// How far a stand-in's shape may stray from its mesh's, in pixels of the view it is seen in,
+/// where the stand-in is seen on its own: a model's impostor, baked from the levels within it.
 pub(super) const STRAY_PIXELS: f32 = 0.5;
+
+/// How far a level of a prop's model may stray from its mesh in the view that draws it: twice
+/// what a stand-in is held to on its own. A prop stands among its kind, in grass, scrub or wood,
+/// where the eye reads the crowd and not a blade's edge, and a level that strays less than this
+/// costs triangles that show no difference there, most of them in the nearest tufts; at two
+/// pixels the tufts' coarser levels drop blades the crowd does miss.
+pub(super) const DRAWN_STRAY_PIXELS: f32 = 1.0;
 
 /// The triangles of the mesh `indices` draw over `positions`, coarser and coarser: halved each
 /// time while the simplifier still can, collapsing across the seams of its texture coordinates and
@@ -174,56 +94,8 @@ pub(super) struct Surface<'a> {
     pub normals: Option<&'a [[f32; 3]]>,
 }
 
-enum Simplifying {
-    Making(Task<Vec<(Mesh, f32)>>),
-    Made(Levels),
-}
-
-/// The stand-ins for `mesh`, as [`simplify`] makes them; none for a mesh that isn't a list of
-/// triangles over positions, that morphs, or whose data only the GPU holds.
-fn simplified(mesh: &Mesh) -> Vec<(Mesh, f32)> {
-    let (Ok(Some(VertexAttributeValues::Float32x3(positions))), Ok(Some(indices)), Ok(false)) = (
-        mesh.try_attribute_option(Mesh::ATTRIBUTE_POSITION),
-        mesh.try_indices_option(),
-        mesh.try_has_morph_targets(),
-    ) else {
-        return Vec::new();
-    };
-    if mesh.primitive_topology() != PrimitiveTopology::TriangleList {
-        return Vec::new();
-    }
-    let indices: Vec<u32> = indices.iter().map(|index| index as u32).collect();
-    let surface = Surface {
-        uvs: match mesh.try_attribute_option(Mesh::ATTRIBUTE_UV_0) {
-            Ok(Some(VertexAttributeValues::Float32x2(uvs))) => Some(uvs.as_slice()),
-            _ => None,
-        },
-        normals: match mesh.try_attribute_option(Mesh::ATTRIBUTE_NORMAL) {
-            Ok(Some(VertexAttributeValues::Float32x3(normals))) => Some(normals.as_slice()),
-            _ => None,
-        },
-    };
-    simplify(&indices, positions, surface)
-        .into_iter()
-        .map(|(kept, strays)| (level(mesh, kept), strays))
-        .collect()
-}
-
 /// How much a slide of the texture coordinates and a turn of the normals weigh against the
 /// shape's own moves, within the range meshoptimizer recommends for attributes spanning 0 to 1.
 const UV_WEIGHT: f32 = 0.1;
 
 const NORMAL_WEIGHT: f32 = 0.05;
-
-/// `mesh` drawn by `indices` alone, holding only the vertices they use.
-fn level(mesh: &Mesh, indices: Vec<u32>) -> Mesh {
-    let mut level = mesh.clone();
-    level.asset_usage = RenderAssetUsages::RENDER_WORLD;
-    level.insert_indices(Indices::U32(indices));
-    level.duplicate_vertices();
-    level
-        .merge_duplicate_vertices()
-        .expect("a mesh just stripped of its indices");
-    level.compress_indices();
-    level
-}

@@ -10,7 +10,7 @@
 // moment and lightning's flash (`weather`); and the light the rain is lit by, as the sky's header
 // tells it (`light_way`, `light_color`, `sky_light`, `night`). A colour of 1 shines as a white
 // face square to the sun does.
-import bevy_pbr::render::mesh_view_bindings::view;
+import bevy_pbr::render::mesh_view_bindings::{globals, view};
 import bevy_pbr::render::view_transformations::{frag_coord_to_ndc, position_ndc_to_world, position_world_to_clip};
 @if(DEPTH_PREPASS)
 import bevy_pbr::prepass::utils::prepass_depth;

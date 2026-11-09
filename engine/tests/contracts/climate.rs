@@ -94,11 +94,16 @@ fn a_climate_turns_through_its_spells_alike_for_everyone_and_only_as_each_may_fo
     }
 
     let later = origin.after(Seconds(5_000.0));
-    let held = climate.course_at(TimeCourse::Still, later, None);
+    let held = climate.course_at(TimeCourse::Held(0), later, None);
     assert_eq!(
         climate.weather_at(held, later),
         climate.spells[0].weather,
         "a server holding the weather still keeps the first spell"
+    );
+    assert_eq!(
+        climate.held(climate.spell_named("storm").expect("the storm")),
+        climate.spells[2].weather,
+        "a server holding the weather at a named spell keeps that spell"
     );
 }
 
@@ -139,22 +144,22 @@ fn rain_falls_only_from_cloud_that_holds_water_carried_downwind_as_hard_as_the_s
         for x in 0..16 {
             for y in 0..16 {
                 let drift = Vec2::new(x as f32, y as f32) * CLOUD_TILE.0 / 16.0;
-                let fallen = sheet.height().0 - vale.heights.height_at(wet).0;
+                let fallen = sheet.reading().height().0 - vale.heights.height_at(wet).0;
                 let upwind = Vec2::new(wet.x, wet.y) - lean * fallen;
                 let under = (upwind - drift) / CLOUD_TILE.0;
-                let rain = rain_at(vale, &weather, &sheet, drift, lean, wet);
-                let water = sheet.water(under);
+                let rain = rain_at(vale, &weather, &sheet.reading(), drift, lean, wet);
+                let water = sheet.reading().water(under);
                 assert!(
                     (rain - pour * water).abs() < 1e-4,
                     "where the rain map lets all of it fall, it rains as hard as the spell pours under the water of the cloud it falls from, upwind by as far as the wind carries it down from the clouds: {rain} under {water} of a {pour} downpour leaning {lean}"
                 );
                 assert_eq!(
-                    rain_at(vale, &weather, &sheet, drift, lean, dry),
+                    rain_at(vale, &weather, &sheet.reading(), drift, lean, dry),
                     0.0,
                     "where the rain map lets none fall, it never rains"
                 );
                 rained |= rain > 0.2 * pour && pour > 0.0;
-                cloud_without_rain |= sheet.cloudiness(under) > 0.5 && rain == 0.0;
+                cloud_without_rain |= sheet.reading().cloudiness(under) > 0.5 && rain == 0.0;
             }
         }
         assert_eq!(

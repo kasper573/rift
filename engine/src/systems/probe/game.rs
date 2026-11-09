@@ -37,6 +37,9 @@ pub enum ProbeFrameQuestion {
     /// The window as drawn a frame after the question, written as a PNG at `path`. Answered with
     /// a boolean: whether it was written.
     Picture { path: std::path::PathBuf },
+    /// The frames drawn after frame `since`, as far as they have settled. Answered with
+    /// [`super::ProbeFrames`].
+    Frames { since: u32 },
 }
 
 /// A question for the probe about the game itself, which `rift ask` answers as well as a client,

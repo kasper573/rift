@@ -16,13 +16,16 @@
 // cover's pieces the point belongs to (0 on a sheet), `seed` a number of the blade's or the copy's
 // own, 0 on a sheet, and, as a vertex moves, `root`, where its blade or copy stands on the ground
 // (a sheet's vertex is its own root). Off water, `depth`, `shore` and `fall` are 0. The cover's colours come from
-// its vertices: a blade's own, a copy's tint over its prop's, a sheet's ground colour. A blade's
-// or a merged copy's vertex carries its root; an instanced copy stands at its instance's origin.
+// its vertices: a blade's own, a copy's tint over its prop's, a sheet's ground colour. A copy is
+// an instance of its prop's model the scenery's arena holds, standing at its instance's origin,
+// its tint and seed riding on the instance. A sheet is drawn over the ground's patches, its points
+// read from the ground as they are drawn, and blades from the blades the GPU laid out for the
+// ground; both are lit as a white, rough, blended face of their colour.
 @if(PREPASS_PIPELINE)
-import bevy_pbr::prepass::io::{Vertex, VertexOutput, FragmentOutput, decompress_vertex};
+import bevy_pbr::prepass::io::{VertexOutput, FragmentOutput};
 @else
-import bevy_pbr::render::forward_io::{Vertex, VertexOutput, FragmentOutput, decompress_vertex};
-import bevy_pbr::render::{mesh_functions, view_transformations::position_world_to_clip};
+import bevy_pbr::render::forward_io::{VertexOutput, FragmentOutput};
+import bevy_pbr::render::view_transformations::position_world_to_clip;
 @if(PREPASS_PIPELINE)
 import engine::core::render::world::prepass_write::prepass_output;
 @else
@@ -34,6 +37,33 @@ import bevy_pbr::render::pbr_types::PbrInput;
 import bevy_pbr::render::mesh_view_bindings::view;
 @if(!PREPASS_PIPELINE)
 import bevy_pbr::render::mesh_view_bindings::lights;
+@if(SHEET_PATCH)
+import engine::core::render::world::gpu::sheet::{drawn_sheet, sheet_point};
+@if(GRASS_BLADE)
+import engine::core::render::world::gpu::grass::blade_point;
+@if(!SHEET_PATCH && !GRASS_BLADE)
+import engine::core::render::world::gpu::instance::{placement, seed_of, turned, world_of};
+@if(SHEET_PATCH || GRASS_BLADE)
+import bevy_pbr::render::mesh_types::{MESH_FLAGS_SHADOW_RECEIVER_BIT, MESH_FLAGS_SIGN_DETERMINANT_MODEL_3X3_BIT};
+@if(SHEET_PATCH || GRASS_BLADE)
+import bevy_pbr::render::pbr_functions::calculate_view;
+@if(SHEET_PATCH || GRASS_BLADE)
+import bevy_pbr::render::pbr_lighting::perceptualRoughnessToRoughness;
+@if(SHEET_PATCH || GRASS_BLADE)
+import bevy_pbr::render::pbr_types::{pbr_input_new, STANDARD_MATERIAL_FLAGS_ALPHA_MODE_BLEND, STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT};
+@if(SCREEN_SPACE_AMBIENT_OCCLUSION)
+import bevy_pbr::render::mesh_view_bindings::screen_space_ambient_occlusion_texture;
+@if(SCREEN_SPACE_AMBIENT_OCCLUSION)
+import bevy_pbr::ssao::utils::ssao_multibounce;
+
+@if(PREPASS_PIPELINE)
+import bevy_render::globals::Globals;
+@else
+import bevy_pbr::render::mesh_view_bindings::globals;
+// The prepass binds the frame's globals right after the view, where the main pass binds them
+// among the lights.
+@if(PREPASS_PIPELINE)
+@group(0) @binding(1) var<uniform> globals: Globals;
 
 @group(3) @binding(100) var<uniform> site: Site;
 @group(3) @binding(101) var<uniform> params: Params;
@@ -43,7 +73,7 @@ struct Strewn {
     color_from: vec4<f32>,
     color_to: vec4<f32>,
     piece: u32,
-    on: u32,
+    height: f32,
 }
 
 var<private> lit: vec4<f32>;
@@ -172,32 +202,127 @@ fn mark(uv_b: vec2<f32>) {
     salt = (steps - f32(part) * 256.0) / 255.0;
 }
 
-// A strewn copy's marks as a sheet's or a blade's vertices carry them: how far up its prop it
-// stands from its mesh, its weight and seed from its tag, and its piece from its material.
-fn copy_marks(measure: f32, tag: u32) -> vec2<f32> {
-    let weight = min(f32(tag & 255u) / 255.0, 255.0 / 256.0);
-    let seed = f32((tag >> 8u) & 255u);
-    return vec2<f32>(measure, weight + seed + f32(strewn.piece) * 256.0);
+@if(SHEET_PATCH)
+@vertex
+fn vertex(@builtin(instance_index) instance: u32, @location(0) grid: vec3<f32>) -> Output {
+    let point = sheet_point(grid, instance);
+    ashore = point.shore;
+    falling = point.fall;
+    stem = point.world;
+    spot = point.world;
+    let marks = vec2<f32>(point.depth, min(point.weight, 255.0 / 256.0));
+    mark(marks);
+    read_weather();
+    var out: VertexOutput;
+    out.uv = point.uv;
+    out.uv_b = marks;
+    out.color = drawn_sheet.color;
+    out.world_normal = point.normal;
+    let world = vec4<f32>(sway(point.world, up), 1.0);
+    out.world_position = world;
+    out.position = position_world_to_clip(world.xyz);
+    @if(VERTEX_OUTPUT_INSTANCE_INDEX) {
+        out.instance_index = instance;
+    }
+    return handed_on(out);
 }
 
-@if(ROOTED)
+@if(GRASS_BLADE)
 @vertex
-fn vertex(vertex_in: Vertex, @location(14) rooted: vec3<f32>) -> Output {
-    return handed_on(stand(vertex_in, vec4<f32>(rooted, 1.0)));
+fn vertex(@builtin(vertex_index) index: u32) -> Output {
+    let point = blade_point(index);
+    ashore = 0.0;
+    falling = vec2<f32>(0.0);
+    stem = point.root;
+    spot = point.world;
+    let weight = clamp(point.weight, 0.0, 255.0 / 256.0);
+    let steps = floor(clamp(point.seed, 0.0, 1.0) * 255.0) + f32(point.piece) * 256.0;
+    let marks = vec2<f32>(point.measure, weight + steps);
+    mark(marks);
+    read_weather();
+    var out: VertexOutput;
+    out.uv = point.uv;
+    out.uv_b = marks;
+    out.color = point.color;
+    out.world_normal = point.normal;
+    let world = vec4<f32>(sway(point.world, up), 1.0);
+    out.world_position = world;
+    out.position = select(vec4<f32>(0.0), position_world_to_clip(world.xyz), point.shown);
+    @if(VERTEX_OUTPUT_INSTANCE_INDEX) {
+        out.instance_index = 0u;
+    }
+    return handed_on(out);
 }
 
-@if(WATERED)
-@vertex
-fn vertex(vertex_in: Vertex, @location(15) water: vec3<f32>) -> Output {
-    ashore = water.x;
-    falling = water.yz;
-    return handed_on(stand(vertex_in, vec4<f32>(0.0)));
+// A strewn copy, standing where the culling kernel drew its instance and swayed about its origin:
+// how far up its prop the vertex stands, its weight full, and its seed and tint from the
+// instance's seed, the seed in its upper bits as the kernel thins it by and the tint in its lowest
+// byte.
+// A strewn copy's vertex as the slab of models holds it, of the instance its command draws as its
+// `instance_index`th, at the locations bevy's prepass and main pass each lay a mesh out at. Not
+// bevy's own vertex, which under `VERTEX_UVS_B` (the marks the copies hand their pixels) would
+// read a second uv the slab doesn't hold.
+@if(!SHEET_PATCH && !GRASS_BLADE)
+struct CopyVertex {
+    @builtin(instance_index) instance_index: u32,
+    @location(0) position: vec3<f32>,
+    @if(PREPASS_PIPELINE && VERTEX_UVS_A)
+    @location(1) uv: vec2<f32>,
+    @if(!PREPASS_PIPELINE && VERTEX_UVS_A)
+    @location(2) uv: vec2<f32>,
+    @if(PREPASS_PIPELINE && NORMAL_PREPASS_OR_DEFERRED_PREPASS && VERTEX_NORMALS)
+    @location(3) normal: vec3<f32>,
+    @if(!PREPASS_PIPELINE && VERTEX_NORMALS)
+    @location(1) normal: vec3<f32>,
+    @if(PREPASS_PIPELINE && VERTEX_COLORS)
+    @location(7) color: vec4<f32>,
+    @if(!PREPASS_PIPELINE && VERTEX_COLORS)
+    @location(5) color: vec4<f32>,
 }
 
-@if(!ROOTED && !WATERED)
+@if(!SHEET_PATCH && !GRASS_BLADE)
 @vertex
-fn vertex(vertex_in: Vertex) -> Output {
-    return handed_on(stand(vertex_in, select(vec4<f32>(0.0), vec4<f32>(0.0, 0.0, 0.0, 1.0), strewn.on != 0u)));
+fn vertex(in: CopyVertex) -> Output {
+    let placed = placement(in.instance_index);
+    let drawn = seed_of(in.instance_index);
+    let at = world_of(placed, in.position);
+    ashore = 0.0;
+    falling = vec2<f32>(0.0);
+    stem = placed.at;
+    spot = at;
+    let measure = clamp(in.position.y / strewn.height, 0.0, 1.0);
+    let steps = floor(f32(drawn >> 8u) / 16777216.0 * 255.0) + f32(strewn.piece) * 256.0;
+    let marks = vec2<f32>(measure, 255.0 / 256.0 + steps);
+    mark(marks);
+    read_weather();
+    var out: VertexOutput;
+    @if(VERTEX_UVS_A) {
+        out.uv = in.uv;
+    }
+    @if(VERTEX_UVS_B) {
+        out.uv_b = marks;
+    }
+    @if(VERTEX_COLORS) {
+        let tint = mix(strewn.color_from, strewn.color_to, f32(drawn & 255u) / 255.0);
+        out.color = in.color * tint;
+    }
+    let world = vec4<f32>(sway(at, up), 1.0);
+    out.world_position = world;
+    out.position = position_world_to_clip(world.xyz);
+    @if(VERTEX_NORMALS && (!PREPASS_PIPELINE || NORMAL_PREPASS_OR_DEFERRED_PREPASS)) {
+        out.world_normal = normalize(turned(placed.turn, in.normal));
+    }
+    @if(PREPASS_PIPELINE && UNCLIPPED_DEPTH_ORTHO_EMULATION) {
+        out.unclipped_depth = out.position.z;
+        out.position.z = min(out.position.z, 1.0);
+    }
+    @if(PREPASS_PIPELINE && MOTION_VECTOR_PREPASS) {
+        out.previous_world_position = world;
+    }
+    @if(VERTEX_OUTPUT_INSTANCE_INDEX) {
+        out.instance_index = 0u;
+    }
+    return handed_on(out);
 }
 
 // The vertex's output as its pass takes it: in the main pass with the water it lies on.
@@ -233,6 +358,40 @@ fn handed_on(out: VertexOutput) -> VertexOutput {
     return out;
 }
 
+// What the fragment lights: a mesh's material as bevy's standard material reads it, or a sheet or
+// a blade lit as a white, rough face of its colour.
+@if(!PREPASS_PIPELINE && (SHEET_PATCH || GRASS_BLADE))
+fn material_input(in: VertexOutput, is_front: bool) -> PbrInput {
+    var input = pbr_input_new();
+    input.flags = MESH_FLAGS_SHADOW_RECEIVER_BIT | MESH_FLAGS_SIGN_DETERMINANT_MODEL_3X3_BIT;
+    input.material.flags =
+        STANDARD_MATERIAL_FLAGS_FOG_ENABLED_BIT | STANDARD_MATERIAL_FLAGS_ALPHA_MODE_BLEND;
+    input.material.base_color = in.color;
+    input.material.perceptual_roughness = 1.0;
+    input.material.metallic = 0.0;
+    input.material.reflectance = vec3<f32>(0.0);
+    input.frag_coord = in.position;
+    input.world_position = in.world_position;
+    input.world_normal = normalize(in.world_normal);
+    input.N = input.world_normal;
+    input.is_orthographic = view.clip_from_view[3].w == 1.0;
+    input.V = calculate_view(in.world_position, input.is_orthographic);
+    @if(SCREEN_SPACE_AMBIENT_OCCLUSION) {
+        let ssao_at = vec2<i32>(in.position.xy - view.viewport.xy);
+        let ssao = textureLoad(screen_space_ambient_occlusion_texture, ssao_at, 0i).r;
+        input.diffuse_occlusion = min(vec3<f32>(1.0), ssao_multibounce(ssao, in.color.rgb));
+        let n_dot_v = max(dot(input.N, input.V), 0.0001);
+        let roughness = perceptualRoughnessToRoughness(1.0);
+        input.specular_occlusion =
+            saturate(pow(n_dot_v + ssao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ssao);
+    }
+    return input;
+}
+@elif(!PREPASS_PIPELINE)
+fn material_input(in: VertexOutput, is_front: bool) -> PbrInput {
+    return pbr_input_from_standard_material(in, is_front);
+}
+
 // The fragment's input as bevy's lighting reads it.
 @if(!PREPASS_PIPELINE)
 fn taken_in(on: CoverOutput) -> VertexOutput {
@@ -261,66 +420,6 @@ fn taken_in(on: CoverOutput) -> VertexOutput {
     return out;
 }
 
-// The vertex standing in the world, swayed about its root: `rooted`, in the mesh's own space, or
-// the vertex itself where `rooted.w` is 0.
-fn stand(vertex_in: Vertex, rooted: vec4<f32>) -> VertexOutput {
-    var out: VertexOutput;
-    let vertex = decompress_vertex(vertex_in, vertex_in.instance_index);
-    let world_from_local = mesh_functions::get_world_from_local(vertex_in.instance_index);
-    let placed = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(vertex.position, 1.0));
-    stem = placed.xyz;
-    if rooted.w > 0.5 {
-        stem = mesh_functions::mesh_position_local_to_world(world_from_local, vec4<f32>(rooted.xyz, 1.0)).xyz;
-    }
-    painted = 1.0;
-    up = 0.0;
-    salt = 0.0;
-    part = 0u;
-    @if(VERTEX_UVS_A) {
-        out.uv = vertex.uv;
-    }
-    var tint = vec4<f32>(1.0);
-    @if(VERTEX_UVS_B) {
-        var marks = vertex.uv_b;
-        if strewn.on != 0u {
-            let tag = mesh_functions::get_tag(vertex_in.instance_index);
-            marks = copy_marks(vertex.uv_b.x, tag);
-            tint = mix(strewn.color_from, strewn.color_to, f32((tag >> 16u) & 255u) / 255.0);
-        }
-        mark(marks);
-        out.uv_b = marks;
-    }
-    spot = placed.xyz;
-    read_weather();
-    let world = vec4<f32>(sway(placed.xyz, up), 1.0);
-    out.world_position = world;
-    out.position = position_world_to_clip(world.xyz);
-    @if(PREPASS_PIPELINE) {
-        @if(UNCLIPPED_DEPTH_ORTHO_EMULATION) {
-            out.unclipped_depth = out.position.z;
-            out.position.z = min(out.position.z, 1.0);
-        }
-        @if(NORMAL_PREPASS_OR_DEFERRED_PREPASS && VERTEX_NORMALS) {
-            out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex_in.instance_index);
-        }
-        @if(MOTION_VECTOR_PREPASS) {
-            out.previous_world_position = world;
-        }
-    }
-    @else {
-        @if(VERTEX_NORMALS) {
-            out.world_normal = mesh_functions::mesh_normal_local_to_world(vertex.normal, vertex_in.instance_index);
-        }
-    }
-    @if(VERTEX_COLORS) {
-        out.color = vertex.color * tint;
-    }
-    @if(VERTEX_OUTPUT_INSTANCE_INDEX) {
-        out.instance_index = vertex_in.instance_index;
-    }
-    return out;
-}
-
 @if(PREPASS_PIPELINE && PREPASS_FRAGMENT)
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
@@ -335,7 +434,20 @@ fn fragment(on: CoverOutput, @builtin(front_facing) is_front: bool) -> FragmentO
     let in = taken_in(on);
     ashore = on.water.x;
     falling = on.water.yz;
-    var pbr_input = pbr_input_from_standard_material(in, is_front);
+    painted = 1.0;
+    up = 0.0;
+    salt = 0.0;
+    part = 0u;
+    @if(VERTEX_UVS_B) {
+        mark(in.uv_b);
+    }
+    // The lighting is most of what a pixel costs, and a sheet lies over every pixel of its
+    // patches, those its terrain isn't painted on included: where the paint gives the cover
+    // nothing, it has nothing to lay, and the pixel is dropped before the lighting is paid for.
+    if painted <= 0.0 {
+        discard;
+    }
+    var pbr_input = material_input(in, is_front);
     let base = alpha_discard(
         pbr_input.material.flags,
         pbr_input.material.alpha_cutoff,
@@ -350,16 +462,9 @@ fn fragment(on: CoverOutput, @builtin(front_facing) is_front: bool) -> FragmentO
     facing_input = pbr_input;
     shine = lighting(pbr_input).rgb;
     lit = vec4<f32>(shine * base.rgb, base.a);
-    painted = 1.0;
-    up = 0.0;
-    salt = 0.0;
-    part = 0u;
     var uv = vec2<f32>(0.5);
     @if(VERTEX_UVS_A) {
         uv = in.uv;
-    }
-    @if(VERTEX_UVS_B) {
-        mark(in.uv_b);
     }
     spot = in.world_position.xyz;
     read_weather();

@@ -654,6 +654,8 @@ const RAIN_CHECK_HEADER: &str = include_str!("rain_check.wgsl");
 const HEAVENS: &str = include_str!("heavens.wgsl");
 const SKY_LIGHT: &str = include_str!("sky_light.wesl");
 const WEATHER_HELPERS: &str = include_str!("weather.wgsl");
+/// The frame's globals as the validator sees them, where the runtime headers import bevy's.
+const CLOCK_CHECK: &str = "struct Globals {\n    time: f32,\n    delta_time: f32,\n    frame_count: u32,\n}\n@group(0) @binding(11) var<uniform> globals: Globals;";
 /// What a cover's blades bend by, on top of the weather.
 const TREAD_HELPERS: &str = include_str!("tread.wgsl");
 
@@ -709,10 +711,16 @@ impl Stage {
     /// what the runtime header declares and calls what the shader must define.
     fn check_header(self) -> String {
         match self {
-            Stage::Cover => format!("{COVER_CHECK_HEADER}\n{}", cover_helpers()),
-            Stage::Prop => format!("{PROP_CHECK_HEADER}\n{}", weather_helpers()),
-            Stage::Sky => format!("{SKY_CHECK_HEADER}\n{HEAVENS}\n{}", weather_helpers()),
-            Stage::Rain => format!("{RAIN_CHECK_HEADER}\n{HEAVENS}\n{}", weather_helpers()),
+            Stage::Cover => format!("{COVER_CHECK_HEADER}\n{CLOCK_CHECK}\n{}", cover_helpers()),
+            Stage::Prop => format!("{PROP_CHECK_HEADER}\n{CLOCK_CHECK}\n{}", weather_helpers()),
+            Stage::Sky => format!(
+                "{SKY_CHECK_HEADER}\n{HEAVENS}\n{CLOCK_CHECK}\n{}",
+                weather_helpers()
+            ),
+            Stage::Rain => format!(
+                "{RAIN_CHECK_HEADER}\n{HEAVENS}\n{CLOCK_CHECK}\n{}",
+                weather_helpers()
+            ),
             _ => quad_header(WORLD_GROUP),
         }
     }

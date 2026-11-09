@@ -341,27 +341,25 @@ impl Scatter {
     }
 
     /// The props the scatter strews, the same for the same seed on every machine.
-    pub fn expand(&self) -> Vec<PropPlacement> {
+    pub fn expand(&self) -> impl Iterator<Item = PropPlacement> + '_ {
         let mut rng = Rng::new(self.seed);
-        (0..self.count())
-            .filter_map(|_| {
-                let prop = *rng.choose(&self.props)?;
-                let at = self.region.origin
-                    + Offset::new(
-                        rng.rand_float() * self.region.size.width,
-                        rng.rand_float() * self.region.size.height,
-                    );
-                let yaw = Degrees(rng.rand_float() * 360.0);
-                let scale = self.scale.min + rng.rand_float() * (self.scale.max - self.scale.min);
-                Some(PropPlacement {
-                    prop,
-                    at,
-                    yaw,
-                    scale,
-                    sunk: Meters::default(),
-                })
+        (0..self.count()).filter_map(move |_| {
+            let prop = *rng.choose(&self.props)?;
+            let at = self.region.origin
+                + Offset::new(
+                    rng.rand_float() * self.region.size.width,
+                    rng.rand_float() * self.region.size.height,
+                );
+            let yaw = Degrees(rng.rand_float() * 360.0);
+            let scale = self.scale.min + rng.rand_float() * (self.scale.max - self.scale.min);
+            Some(PropPlacement {
+                prop,
+                at,
+                yaw,
+                scale,
+                sunk: Meters::default(),
             })
-            .collect()
+        })
     }
 }
 
