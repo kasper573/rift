@@ -1030,6 +1030,19 @@ impl PropPipeline {
         let mut descriptor = self.lit(view, kind, properties, true)?;
         descriptor.label = Some("prop_bake".into());
         descriptor.layout[INSTANCE_GROUP] = self.bake.layout.clone();
+        // Bevy's material shaders take a pixel's normal from the view's normal prepass where the
+        // view has one; the bake borrows a camera's view, whose prepass holds whatever that camera
+        // last drew there, never the model's own faces.
+        let from_prepass = ShaderDefVal::from("LOAD_PREPASS_NORMALS");
+        descriptor
+            .vertex
+            .shader_defs
+            .retain(|def| *def != from_prepass);
+        descriptor
+            .fragment
+            .as_mut()?
+            .shader_defs
+            .retain(|def| *def != from_prepass);
         let target = |format| {
             Some(ColorTargetState {
                 format,
