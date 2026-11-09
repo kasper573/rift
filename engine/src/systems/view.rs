@@ -3,6 +3,7 @@ use bevy::prelude::*;
 use crate::core::audio::playback::Listener;
 use crate::core::interpolate::{Jumps, RenderValueSystems};
 use crate::core::math::Pos;
+use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::{CameraRig, GroundHeights};
 use crate::core::units::{Meters, Seconds};
 use crate::systems::area::{AreaId, AreaTag};
@@ -25,6 +26,7 @@ impl Plugin for CameraFollowPlugin {
             Update,
             track_player
                 .after(RenderValueSystems)
+                .before(WorldViewSystems)
                 .run_if(in_state(ClientScreen::Area))
                 .run_if(resource_exists::<CameraRig>),
         );

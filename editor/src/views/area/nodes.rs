@@ -112,10 +112,9 @@ impl SceneBundle {
                 change(&mut scene, &mut variables);
                 let changes = scene.finish(reader.scope());
                 blueprint.variables = variables;
-                edit.write_content_in(reader, path, &blueprint)?;
-                edit.changes
-                    .retain(|change| change.file != crate::project::scene_file(path));
-                (SceneBundle::Blueprint(Arc::new(blueprint)), changes)
+                let blueprint = SceneBundle::Blueprint(Arc::new(blueprint));
+                edit.write_fields_in(reader, path, blueprint.clone())?;
+                (blueprint, changes)
             }
         };
         if !changes.is_empty() {

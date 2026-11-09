@@ -55,7 +55,6 @@ pub struct Allowance {
     pub mssim_loss: f64,
     pub tile_loss: f64,
     pub delta_e_share: f64,
-    #[serde(default = "Allowance::floor_pop_share")]
     pub pop_share: f64,
 }
 
@@ -67,10 +66,6 @@ impl Allowance {
         delta_e_share: 0.002,
         pop_share: 0.002,
     };
-
-    fn floor_pop_share() -> f64 {
-        Allowance::FLOOR.pop_share
-    }
 
     /// What `metrics` break of the allowance, if anything.
     pub fn failure(&self, metrics: &Metrics) -> Option<String> {

@@ -47,8 +47,7 @@ impl Plugin for PickPlugin {
         bevy::asset::embedded_asset!(app, "outline.wesl");
         let picks = Picks::default();
         app.insert_resource(picks.clone())
-            .add_plugins(ExtractComponentPlugin::<Picking>::default())
-            .add_systems(PostUpdate, let_depth_be_read);
+            .add_plugins(ExtractComponentPlugin::<Picking>::default());
         let Some(render_app) = app.get_sub_app_mut(RenderApp) else {
             return;
         };
@@ -393,19 +392,6 @@ struct PendingPick {
 
 /// The most ids on their way back at once: past them, the oldest are let go.
 const MOST_PENDING: usize = 8;
-
-/// A picking camera as it is made or changed, or as it takes up picking.
-type PickingCameraChanged = (With<Picking>, Or<(Changed<Camera3d>, Added<Picking>)>);
-
-/// Every picking camera's depth can be read once the world is drawn, as the pick pass reads it.
-fn let_depth_be_read(mut cameras: Query<&mut Camera3d, PickingCameraChanged>) {
-    for mut camera in &mut cameras {
-        let usages = TextureUsages::from(camera.depth_texture_usages);
-        if !usages.contains(TextureUsages::TEXTURE_BINDING) {
-            camera.depth_texture_usages = (usages | TextureUsages::TEXTURE_BINDING).into();
-        }
-    }
-}
 
 fn start(mut commands: Commands, device: Res<RenderDevice>, assets: Res<AssetServer>) {
     commands.insert_resource(PickPipelines {

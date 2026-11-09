@@ -5,7 +5,7 @@ use engine::core::render::world::cover::{CHUNK_CELLS, Spread};
 use engine::core::units::{MeterSize, Meters};
 use engine::systems::area::prop::{PropDef, ScaleRange, Scatter};
 use engine::systems::area::scenery::expand::{
-    PaintChunk, SceneryChunk, SourcesByChunk, StrewnCover, props_in, scattered_in, strewn_in,
+    PaintChunk, SceneryChunk, SourcesByChunk, StrewnCover, scattered_in, strewn_in,
 };
 use engine::systems::area::{self, AreaDef};
 use serde_json::json;
@@ -76,11 +76,6 @@ fn a_chunks_scenery_is_worked_out_from_the_chunk_alone() {
             .filter(|placed| chunk.holds(field_ground, placed.at))
             .cloned()
             .collect();
-        let worked_out = props_in(modules(), field_ground, chunk);
-        assert_eq!(
-            worked_out, held,
-            "the field stands the same props in chunk {chunk:?} (test seed {seed})"
-        );
         let from_filed: Vec<_> = filed
             .sourced_props_in(&field.prop_sources, field_ground, chunk)
             .into_iter()
@@ -99,7 +94,7 @@ fn a_chunks_scenery_is_worked_out_from_the_chunk_alone() {
             from_the_whole, held,
             "the whole ground worked out at once stands the same props in chunk {chunk:?} (test seed {seed})"
         );
-        found += worked_out.len();
+        found += from_filed.len();
     }
     assert_eq!(
         found,

@@ -87,6 +87,8 @@ fn a_bench_is_told_when_there_is_nothing_to_stage() {
 
     assert!(stage(&mut sim.world, conn, Staging::Fight).is_err());
     assert!(stage(&mut sim.world, conn, Staging::Talk).is_err());
+    let off_the_ground = Pos::new(100.0, 100.0);
+    assert!(stage(&mut sim.world, conn, Staging::Walk { to: off_the_ground }).is_err());
 }
 
 #[test]

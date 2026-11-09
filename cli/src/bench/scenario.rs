@@ -11,7 +11,7 @@ use engine::systems::script::Place;
 use engine::systems::staging::Staging;
 use serde::{Deserialize, Serialize};
 
-use super::frames::{Class, Criteria};
+use super::frames::Class;
 
 #[derive(Clone, Debug)]
 pub struct Scenario {
@@ -28,8 +28,6 @@ pub struct Scenario {
     /// passed.
     pub duration: Seconds,
     pub script: Vec<Step>,
-    /// Stricter criteria than every scenario's, where the scenario asks for them.
-    pub criteria: Option<Criteria>,
     /// Other players connected to the server while it plays, each standing where the game's
     /// characters start.
     pub players: u32,

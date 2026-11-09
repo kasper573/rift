@@ -576,7 +576,6 @@ fn near_stands(index: u32) -> bool {
     return (standing[word] & (1u << (index % 32u))) != 0u;
 }
 
-// An instance's seed as a share between 0 and 1.
 // Whether an instance standing at `center` is left out for lying toward the view's horizon: all
 // of them past it, and a share of them growing from none to all over the band before it, by
 // their seeds, so the far field thins out instead of ending on a line.
@@ -586,6 +585,7 @@ fn past_horizon(center: vec3<f32>, seed: u32) -> bool {
     return seed_share(seed) < thinned;
 }
 
+// An instance's seed as a share between 0 and 1.
 fn seed_share(seed: u32) -> f32 {
     return f32(seed >> 8u) / 16777216.0;
 }

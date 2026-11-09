@@ -60,8 +60,8 @@ impl Class {
     }
 }
 
-/// What a scenario's frames must meet: a scenario's own may only be stricter than the global
-/// ones of its video settings, but for an opening's, drawn while its view still fills.
+/// What a scenario's frames must meet at its video settings, and an opening's, drawn while its
+/// view still fills.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq)]
 pub struct Criteria {
     /// The frame rate the mean over the measured window must reach.
@@ -91,16 +91,6 @@ impl Criteria {
         Criteria {
             missing_frames: u32::MAX,
             ..Criteria::global(video)
-        }
-    }
-
-    /// These criteria, or `own` where it is stricter.
-    pub fn stricter(self, own: Criteria) -> Criteria {
-        Criteria {
-            floor: Fps(self.floor.0.max(own.floor.0)),
-            slow_share: self.slow_share.min(own.slow_share),
-            stall: Millis(self.stall.0.min(own.stall.0)),
-            missing_frames: self.missing_frames.min(own.missing_frames),
         }
     }
 
@@ -393,11 +383,9 @@ pub struct FrameStats {
     pub worst_frame: Option<ProbeSlowFrame>,
     /// Every frame of the window slower than the stall the criteria allow, in order, each with
     /// the GPU's passes and the systems it waited on, as far as the probe kept them.
-    #[serde(default)]
     pub stalled_frames: Vec<ProbeSlowFrame>,
     /// The GPU's passes over the window's slow frames, the costliest first: each pass's median
     /// and longest time, and how many of those frames timed it.
-    #[serde(default)]
     pub passes: Vec<PassSummary>,
     /// Every frame of the window in order, for the course of a scenario's frame times: where its
     /// slow frames fall, and what the main world, the render world and the GPU took on each.
@@ -467,11 +455,8 @@ pub struct FrameTrace {
     pub gpu: Option<Millis>,
     pub props_drawn: Option<u32>,
     /// What the view took in that stood coarser than wanted, or not yet.
-    #[serde(default)]
     pub missing: u32,
-    #[serde(default)]
     pub missing_parts: MissingParts,
     /// What the frame wrote to the GPU for the world.
-    #[serde(default)]
     pub upload_bytes: Bytes,
 }

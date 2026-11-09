@@ -4,7 +4,7 @@
 //! many as its paint asks for. A kernel lays every blade out of those alone, a row of the cell's
 //! paint a thread, the same blades for the same ground every time. Each view draws the blades of
 //! the cells in its frustum, farthest first, blended in its transparent pass with the cover's
-//! material, as a cover's blades always were: lit by the ground's normal, casting no shadow. The
+//! material, lit by the ground's normal, casting no shadow. The
 //! farther a blade, the fewer stand: below the grain they are thinned by their seeds and grown to
 //! make up for those dropped, as strewn copies are, and the player's grass setting thins them all.
 

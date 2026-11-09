@@ -260,6 +260,11 @@ pub fn halt(world: &mut World, entity: Entity) {
     }
 }
 
+/// Whether the actor has a way over the ground from where it stands to `goal`.
+pub fn reaches(world: &World, entity: Entity, goal: Pos<Meters>) -> bool {
+    plan(world, entity, goal).is_some()
+}
+
 pub fn moving(world: &World, entity: Entity) -> bool {
     world.get::<MoveTarget>(entity).is_some()
 }

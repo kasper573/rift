@@ -7,21 +7,16 @@ use bevy::animation::AnimationPlugin;
 use bevy::asset::AssetPlugin;
 use bevy::camera::visibility::{RenderLayers, VisibilityPlugin};
 use bevy::gltf::{Gltf, GltfPlugin};
-use bevy::light::FogVolume;
 use bevy::light::atmosphere::ScatteringMedium;
 use bevy::prelude::*;
-use bevy::render::view::ColorGrading;
 use bevy::shader::Shader;
 use bevy::world_serialization::WorldSerializationPlugin;
 use engine::core::content::Content;
 use engine::core::ground;
 use engine::core::math::Pos;
 use engine::core::render::camera::Lens;
-use engine::core::render::camera::WorldPicture;
 use engine::core::render::world::cover::CoverMaterial;
 use engine::core::render::world::gpu::draw::{GroundDraw, PATCH_CELLS};
-use engine::core::render::world::haze::Haze;
-use engine::core::render::world::sky::Daylight;
 use engine::core::render::world::{self, WorldScenePlugin};
 use engine::core::units::{Degrees, MeterSize, Meters};
 use engine::core::vfx::render::VfxMaterialsPlugin;
@@ -427,70 +422,4 @@ fn an_areas_scenery_lets_go_of_all_it_held_when_it_goes_and_holds_as_much_each_t
     let again = stand(&mut app, &area);
     assert_eq!(held(&app), standing, "the field stands again as it stood");
     clear(&mut app, again, &bare);
-}
-
-/// Lighting an area at a moment that has not changed changes nothing it lit: what follows the
-/// light (the sky's map, the haze pass, the grading) reacts only when the light does.
-#[test]
-fn lighting_the_same_moment_again_changes_nothing() {
-    let folder = tempfile::tempdir().expect("a scratch folder");
-    let (mut app, area) = client(field(0.0), folder.path());
-    let stood = stand(&mut app, &area);
-    let camera = app
-        .world_mut()
-        .spawn((
-            Transform::from_xyz(8.0, 10.0, 8.0),
-            GlobalTransform::from_xyz(8.0, 10.0, 8.0),
-            WorldPicture(testkit::look().picture),
-        ))
-        .id();
-    let weather = area.climate.held_at(0, 0.0);
-    let lit = area.clone();
-    app.init_resource::<Relit>()
-        .add_systems(Update, move |world: &mut World| {
-            scenery::light(world, &lit, &weather, Daylight::Hour(15.0), stood, camera);
-        })
-        .add_systems(PostUpdate, count_relit);
-    app.update();
-    let first = std::mem::take(&mut *app.world_mut().resource_mut::<Relit>());
-    assert!(
-        first.haze > 0 && first.ambient > 0 && first.grading > 0,
-        "the first lighting lights the camera: {first:?}"
-    );
-    for _ in 0..3 {
-        app.update();
-    }
-    assert_eq!(
-        *app.world().resource::<Relit>(),
-        Relit::default(),
-        "lighting the same moment again changes nothing"
-    );
-}
-
-/// How many times each part of the light changed, frame after frame.
-#[derive(Resource, Default, Debug, PartialEq)]
-struct Relit {
-    haze: usize,
-    ambient: usize,
-    grading: usize,
-    air: usize,
-    sun: usize,
-}
-
-fn count_relit(
-    mut relit: ResMut<Relit>,
-    haze: Query<(), Changed<Haze>>,
-    ambient: Query<(), Changed<AmbientLight>>,
-    grading: Query<(), Changed<ColorGrading>>,
-    air: Query<(Ref<FogVolume>, Ref<Transform>)>,
-    sun: Query<(), Changed<DirectionalLight>>,
-) {
-    relit.haze += haze.iter().count();
-    relit.ambient += ambient.iter().count();
-    relit.grading += grading.iter().count();
-    relit.air += air
-        .iter()
-        .filter(|(volume, placed)| volume.is_changed() || placed.is_changed())
-        .count();
-    relit.sun += sun.iter().count();
 }

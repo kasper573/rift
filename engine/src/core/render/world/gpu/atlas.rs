@@ -53,7 +53,6 @@ impl Plugin for TerrainAtlasPlugin {
         render_app
             .add_systems(ExtractSchedule, extract_writes)
             .add_systems(Render, write_atlas.in_set(RenderSystems::PrepareResources));
-        app.insert_resource(AtlasesDrawn);
     }
 }
 
@@ -221,11 +220,6 @@ impl TerrainAtlas {
         self.laid.as_ref().map(|laid| laid.layout)
     }
 
-    /// Whether the overview is on its way to the GPU, so the whole ground draws.
-    pub fn is_laid(&self) -> bool {
-        self.laid.as_ref().is_some_and(|laid| laid.overview_sent)
-    }
-
     /// The slot holding `tile` in detail.
     pub fn slot(&self, tile: TileAt) -> Option<u32> {
         self.laid.as_ref()?.residency.slot(tile)
@@ -345,11 +339,6 @@ impl GpuTerrainAtlas {
     }
 }
 
-/// Marks a world whose atlases go to a GPU. Without one (a world stepped in a test) nothing is
-/// read or written, and every tile wanted is loaded and counts as held at once.
-#[derive(Resource)]
-struct AtlasesDrawn;
-
 /// The largest side of a texture every GPU holds, as wgpu's default limits guarantee.
 const MAX_TEXTURE_SIDE: u32 = 8192;
 
@@ -457,27 +446,6 @@ impl Laid {
 /// A slot's heights, paint and surface, as the GPU takes them.
 type SlotBytes = [Vec<u8>; 3];
 
-impl Laid {
-    /// Holds what is wanted as a GPU would, loaded at once, with nothing read or written.
-    fn hold_unseen(&mut self, wanted: &[TileAt]) {
-        self.overview.clear();
-        self.overview_writes.clear();
-        self.overview_sent = true;
-        self.residency.next_frame();
-        for &tile in wanted.iter().take(self.layout.slots as usize) {
-            let round = AtlasGround::round(tile, self.layout.tiles);
-            for near in round.into_iter().flatten() {
-                self.ground.load(near);
-            }
-            let stamp = self.ground.stamp(&round);
-            self.residency.want(tile);
-            if !self.residency.is_current(tile, &stamp) {
-                self.residency.admit(tile, stamp);
-            }
-        }
-    }
-}
-
 /// The versions of the values of `tile` and of every tile round it, which its slot holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct TileStamp([[TileVersion; 3]; 9]);
@@ -554,7 +522,6 @@ impl AtlasGround {
         ]
     }
 
-    /// The writes of the overview's texels of `tiles`, or of all of it.
     /// The writes of the overview under each of `tiles`, a tile at a time so each fits a frame's
     /// budget.
     fn overview(&self, layout: AtlasLayout, tiles: &[TileAt]) -> Vec<AtlasWrite> {
@@ -794,7 +761,6 @@ fn keep_atlases(
     mut atlases: Query<&mut TerrainAtlas>,
     mut budget: UploadBudget,
     handoff: Option<Res<Handoff>>,
-    drawn: Option<Res<AtlasesDrawn>>,
 ) {
     let handoff = handoff.as_deref().copied().unwrap_or_default();
     for mut atlas in &mut atlases {
@@ -803,11 +769,6 @@ fn keep_atlases(
             continue;
         };
         let wanted = &atlas.wanted;
-        if drawn.is_none() {
-            laid.hold_unseen(wanted);
-            atlas.writes.clear();
-            continue;
-        }
         while let Some(job) = laid.overview.front_mut() {
             if !job.is_done(handoff) {
                 break;

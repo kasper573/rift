@@ -401,7 +401,7 @@ fn file_bound(file: &str) -> String {
 }
 
 /// The props standing in the area, each once.
-fn props_of(area: &Area) -> Vec<PropId> {
+pub(super) fn props_of(area: &Area) -> Vec<PropId> {
     let mut props: Vec<PropId> = area.props.iter().map(|placed| placed.prop).collect();
     props.sort_unstable();
     props.dedup();
@@ -458,12 +458,6 @@ pub fn sceneries_standing(world: &World) -> u32 {
 /// yet to stand at all.
 pub fn missing(world: &World) -> u32 {
     shortfalls(world).total().missing + missing_drawn(world)
-}
-
-/// How much of the ground, the props, the covers' copies and their blades the sights take in
-/// stands as it did before an edit, its new values on their way.
-pub fn stale(world: &World) -> u32 {
-    shortfalls(world).total().stale
 }
 
 /// How much of each part of what the sights take in has yet to stand as it is now, over every
@@ -922,10 +916,6 @@ fn patches_of(nodes: &[Node], samples: (u32, u32)) -> Vec<GroundPatch> {
         .collect()
 }
 
-/// The nodes of the quadtree over the ground's samples that stand for a view looking at ground
-/// within `off` of `at`: every node is cut in four while it may lie within `SPLIT_WITHIN` of its
-/// sides from that ground and is wider than a leaf; what remains covers the ground once over,
-/// finer the nearer the view.
 /// How many tiles of ground a view may want in detail at once, so every tile its plan wants has
 /// a slot as soon as it is wanted: the tiles under the nodes finer than the overview, which lie
 /// as far as the plan splits an overview node from wherever its eyes may stand, each at most
@@ -937,6 +927,10 @@ fn detail_slots() -> u32 {
     across * across
 }
 
+/// The nodes of the quadtree over the ground's samples that stand for a view looking at ground
+/// within `off` of `at`: every node is cut in four while it may lie within `SPLIT_WITHIN` of its
+/// sides from that ground and is wider than a leaf; what remains covers the ground once over,
+/// finer the nearer the view.
 fn nodes_for(heights: &Heightfield, at: Pos<Meters>, off: f32) -> Vec<Node> {
     let (columns, rows) = heights.samples();
     let cells = (columns.max(rows).saturating_sub(1)).max(1);

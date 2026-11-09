@@ -512,7 +512,6 @@ fn scenario(
         warm_up: Scenario::WARM_UP,
         duration,
         script,
-        criteria: None,
         players: 0,
     }
 }

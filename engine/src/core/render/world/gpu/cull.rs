@@ -1206,10 +1206,8 @@ pub(super) fn prepare_culls(
     }
 }
 
-/// Culls every scenery the view shows, and what each of the view's lights casts shadows of,
-/// before anything of the view or its shadows is drawn: the props the view itself draws counted
-/// among the render diagnostics.
-/// Every camera's depth can be read once its prepass is drawn, as the occlusion reads it.
+/// Every camera's depth can be read once its prepass is drawn, as the occlusion and the picking
+/// read it.
 fn let_depth_be_read(mut cameras: Query<&mut Camera3d, Changed<Camera3d>>) {
     for mut camera in &mut cameras {
         let usages = TextureUsages::from(camera.depth_texture_usages);
@@ -1351,6 +1349,9 @@ fn occlude_props(
     }
 }
 
+/// Culls every scenery the view shows, and what each of the view's lights casts shadows of,
+/// before anything of the view or its shadows is drawn: the props the view itself draws counted
+/// among the render diagnostics.
 fn cull_props(
     view: ViewQuery<(&ExtractedView, Option<&ViewLightEntities>)>,
     lights: Query<&ExtractedView, With<LightEntity>>,

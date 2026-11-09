@@ -162,8 +162,9 @@ impl SourcesByChunk {
         filed
     }
 
-    /// [`props_in`] of the sources filed as reaching `chunk`, each prop with the place among
-    /// `modules` of the module standing it.
+    /// The props the sources filed as reaching `chunk` stand there, placed and scattered: the
+    /// same, bit for bit and in the same order, as those of the area's props that stand there.
+    /// Each comes with the place among `modules` of the module standing it.
     pub fn sourced_props_in(
         &self,
         modules: &[AreaModule],
@@ -178,8 +179,9 @@ impl SourcesByChunk {
     }
 
     /// The props standing in every chunk of `span`, each with the place among `modules` of the
-    /// module standing it and the chunk it stands in: the same props as [`props_in`] of each
-    /// chunk, worked out with each source expanded once over the whole span.
+    /// module standing it and the chunk it stands in: the same props as
+    /// [`SourcesByChunk::sourced_props_in`] of each chunk, worked out with each source expanded
+    /// once over the whole span.
     pub fn sourced_props_within(
         &self,
         modules: &[AreaModule],
@@ -223,32 +225,6 @@ impl SourcesByChunk {
     fn file(&mut self, chunk: SceneryChunk, source: u32) {
         self.reaching[(chunk.row * self.across + chunk.column) as usize].push(source);
     }
-}
-
-/// The props an area of `modules` stands in `chunk` of its `ground`, placed and scattered: the
-/// same, bit for bit and in the same order, as those of the area's props that stand there.
-pub fn props_in<'a>(
-    modules: impl IntoIterator<Item = &'a AreaModule>,
-    ground: Rect<Meters>,
-    chunk: SceneryChunk,
-) -> Vec<PropPlacement> {
-    sourced_props_in(modules, ground, chunk)
-        .into_iter()
-        .map(|(_, placed)| placed)
-        .collect()
-}
-
-/// [`props_in`], each prop with the place among `modules` of the module standing it.
-pub fn sourced_props_in<'a>(
-    modules: impl IntoIterator<Item = &'a AreaModule>,
-    ground: Rect<Meters>,
-    chunk: SceneryChunk,
-) -> Vec<(u32, PropPlacement)> {
-    let sources = modules
-        .into_iter()
-        .enumerate()
-        .map(|(source, module)| (source as u32, module));
-    props_from(sources, ground, chunk)
 }
 
 /// The props `scatter` strews that stand in `chunk` of `ground`: the same, bit for bit and in the

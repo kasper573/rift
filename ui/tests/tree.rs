@@ -81,7 +81,7 @@ impl Tree {
                 .show(
                     ui,
                     &mut self.state,
-                    |ui, line, _| {
+                    |ui, line| {
                         ui.label(&line.id);
                     },
                     |ui, ids| {

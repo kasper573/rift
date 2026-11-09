@@ -41,7 +41,9 @@ fn the_ground_lies_in_the_shadow_of_the_cloud_up_the_suns_rays_as_the_clouds_dri
             for z in (0..128).step_by(8) {
                 let ground = Vec3::new(x as f32, 0.0, z as f32);
                 let up = ground + toward * sheet.look().height.0 / toward.y;
-                let cloud = sheet.cloudiness((Vec2::new(up.x, up.z) - drift) / CLOUD_TILE.0);
+                let cloud = sheet
+                    .reading()
+                    .cloudiness((Vec2::new(up.x, up.z) - drift) / CLOUD_TILE.0);
                 let local = from_light.transform_point3(ground);
                 let lit = texel(
                     shadows,
@@ -75,7 +77,8 @@ fn the_sky_never_shows_the_same_clouds_a_tile_over_whichever_way_one_looks() {
         for x in 0..32 {
             for y in 0..32 {
                 let at = Vec2::new(x as f32, y as f32) / 32.0 * 8.0;
-                differs += (sheet.cloudiness(at) - sheet.cloudiness(at + step)).abs();
+                differs +=
+                    (sheet.reading().cloudiness(at) - sheet.reading().cloudiness(at + step)).abs();
                 points += 1.0;
             }
         }

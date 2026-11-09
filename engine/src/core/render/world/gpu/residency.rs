@@ -97,11 +97,6 @@ impl<K: Copy + Eq + Hash, S: PartialEq> Residency<K, S> {
         self.by_key.contains_key(&key) || self.vacancy().is_some()
     }
 
-    /// Every key holding a slot, with its slot.
-    pub fn held(&self) -> impl Iterator<Item = (K, u32)> + '_ {
-        self.by_key.iter().map(|(&key, &slot)| (key, slot))
-    }
-
     /// A free slot, else the one wanted longest ago before this frame.
     fn vacancy(&self) -> Option<u32> {
         let free = self.slots.iter().position(Option::is_none);

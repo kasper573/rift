@@ -122,20 +122,15 @@ impl TreeState {
     pub fn scroll_to(&mut self, id: &str) {
         self.scroll_to = Some((id.to_owned(), Some(Align::Center)));
     }
-
-    /// Whether rows are being dragged.
-    pub fn dragging(&self) -> bool {
-        self.drag.is_some()
-    }
 }
 
 /// How a row is drawn this frame: selected, under the pointer, or where the keys move from while
 /// the tree has the keys.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct RowLook {
-    pub selected: bool,
-    pub hovered: bool,
-    pub cursor: bool,
+#[derive(Clone, Copy)]
+struct RowLook {
+    selected: bool,
+    hovered: bool,
+    cursor: bool,
 }
 
 /// What the user did to the tree this frame.
@@ -207,7 +202,7 @@ impl<'a> VirtualTree<'a> {
         self,
         ui: &mut Ui,
         state: &mut TreeState,
-        mut row: impl FnMut(&mut Ui, &TreeLine, RowLook),
+        mut row: impl FnMut(&mut Ui, &TreeLine),
         mut menu: impl FnMut(&mut Ui, &[String]),
     ) -> TreeOutput {
         let VirtualTree {
@@ -304,7 +299,7 @@ impl<'a> VirtualTree<'a> {
                                 ))
                                 .layout(Layout::left_to_right(Align::Center)),
                         );
-                        row(&mut inside, line, look);
+                        row(&mut inside, line);
                         let toggled = line.folder && caret_ui(ui, id, line, caret);
                         if toggled {
                             out.opened.push((line.id.clone(), !line.open));

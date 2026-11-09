@@ -714,7 +714,7 @@ impl PropQueue<'_, '_> {
                 continue;
             };
             let progress = &self.progress;
-            let parts: Vec<PartDraw> = table
+            let mut parts: Vec<PartDraw> = table
                 .table()
                 .buckets
                 .iter()
@@ -759,7 +759,6 @@ impl PropQueue<'_, '_> {
                     })
                 })
                 .collect();
-            let mut parts = parts;
             if let Some(atlas) = &self.bindings.atlas {
                 let table = table.table();
                 for (proxy, commands) in [(false, &table.impostors), (true, &table.proxies)] {

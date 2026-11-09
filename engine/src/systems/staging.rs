@@ -12,10 +12,10 @@ use crate::core::units::{MeterPos, Meters};
 use crate::systems::area;
 use crate::systems::combat::{self, AttackRequest, Relation};
 use crate::systems::interact::{self, InteractRequest, Verb};
-use crate::systems::movement::{MoveRequest, MoveSeq, Position};
+use crate::systems::movement::{self, MoveRequest, MoveSeq, Position};
 use crate::systems::notification::{self, NotificationId};
 use crate::systems::npc::Npc;
-use crate::systems::player::{conn_player, tell_clocks};
+use crate::systems::player::{conn_player, may_command, tell_clocks};
 use crate::systems::script::Place;
 use crate::systems::text::LineText;
 use crate::systems::{GameSettings, ServerClocks, WorldArea, from_client, start_clocks, stat};
@@ -57,14 +57,22 @@ pub enum Staging {
 pub fn stage(world: &mut World, conn: Entity, staging: Staging) -> Result<(), String> {
     let player = conn_player(world, conn).ok_or("the connection plays no character")?;
     match staging {
-        Staging::Walk { to } => from_client(
-            world,
-            conn,
-            MoveRequest {
-                pos: to,
-                seq: MoveSeq::default(),
-            },
-        ),
+        Staging::Walk { to } => {
+            if !may_command(world, player) {
+                return Err("the character may not be commanded".to_owned());
+            }
+            if !movement::reaches(world, player, to) {
+                return Err(format!("the character has no way to {to:?}"));
+            }
+            from_client(
+                world,
+                conn,
+                MoveRequest {
+                    pos: to,
+                    seq: MoveSeq::default(),
+                },
+            );
+        }
         Staging::Fight => {
             let foe = nearest(world, player, |world, npc| {
                 combat::relation(world, player, npc) == Relation::Enemy

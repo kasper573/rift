@@ -21,7 +21,6 @@ use std::time::Duration;
 
 use bevy::app::ScheduleRunnerPlugin;
 use bevy::camera::RenderTarget;
-use bevy::diagnostic::DiagnosticsStore;
 use bevy::diagnostic::FrameCount;
 use bevy::image::ImageSampler;
 use bevy::prelude::*;
@@ -37,7 +36,7 @@ use engine::core::jobs::Handoff;
 use engine::core::math::{Pos, Rng};
 use engine::core::os::Profile;
 use engine::core::render::camera::{self, Zoom, world_point};
-use engine::core::render::sample::{FrameSamplingPlugin, GpuReportsRead, gpu_reports};
+use engine::core::render::sample::FrameSamplingPlugin;
 use engine::core::render::video::{Quality, VideoPreferences};
 use engine::core::render::world::WorldScenePlugin;
 use engine::core::render::world::body;
@@ -76,18 +75,12 @@ const FRAME_STEP: f64 = 1.0 / 60.0;
 /// alike: less than the eye can tell.
 const ALIKE_WITHIN: f64 = 0.5;
 
-/// What a render says once it has drawn: where the picture is, and for a shot that arrives, how
-/// many frames after the jump the area stood whole.
+/// What a render says once it has drawn: the adapter it drew on, and for a shot that arrives,
+/// how many frames after the jump the area stood whole.
 #[derive(Serialize, Deserialize, Debug)]
 pub struct RenderOutcome {
-    pub out: PathBuf,
     pub adapter: String,
     pub stood_after_frames: Option<usize>,
-    /// How many props the scenery's arena held, how many of what its sight takes in had yet to
-    /// stand, and how many prop instances the views of the last frames measured drew.
-    pub props_standing: u32,
-    pub props_missing: u32,
-    pub props_drawn: Option<u32>,
 }
 
 /// A shot of an area, as its file holds it.
@@ -693,7 +686,7 @@ fn step(world: &mut World) {
                     let path = taking.out.join(format!("{frame:04}.png"));
                     save(pixels, taking.shot.width, taking.shot.height, &path);
                 }
-                done(world, &taking.out, *stood_after, taking.stood.as_ref());
+                done(world, *stood_after);
             }
             Stage::Settling(frames) => {
                 *frames += 1;
@@ -721,14 +714,14 @@ fn step(world: &mut World) {
                 let pixels = read.0.remove(index).1;
                 let Some(film) = taking.shot.film else {
                     save(pixels, taking.shot.width, taking.shot.height, &taking.out);
-                    done(world, &taking.out, None, taking.stood.as_ref());
+                    done(world, None);
                     return;
                 };
                 let path = taking.out.join(format!("{:04}.png", taking.frame));
                 save(pixels, taking.shot.width, taking.shot.height, &path);
                 taking.frame += 1;
                 if taking.frame >= film.frames {
-                    done(world, &taking.out, None, taking.stood.as_ref());
+                    done(world, None);
                     return;
                 }
                 let start = taking.shot.hour.expect("a filmed shot stands at an hour");
@@ -740,23 +733,13 @@ fn step(world: &mut World) {
     });
 }
 
-fn done(world: &mut World, out: &Path, stood_after_frames: Option<u32>, stood: Option<&Stood>) {
-    let props_drawn = world.resource_scope(|world, mut read: Mut<GpuReportsRead>| {
-        gpu_reports(world.resource::<DiagnosticsStore>(), &mut read)
-            .into_iter()
-            .filter_map(|report| report.props_drawn)
-            .max()
-    });
+fn done(world: &mut World, stood_after_frames: Option<u32>) {
     let outcome = RenderOutcome {
-        out: out.to_path_buf(),
         adapter: world
             .get_resource::<RenderAdapterInfo>()
             .map(|adapter| adapter.name.clone())
             .unwrap_or_default(),
         stood_after_frames: stood_after_frames.map(|frames| frames as usize),
-        props_standing: stood.map_or(0, |stood| scenery::arena_props(world, stood.scenery)),
-        props_missing: scenery::missing(world),
-        props_drawn,
     };
     println!(
         "{}",

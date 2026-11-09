@@ -14,7 +14,7 @@ use ui::egui::{
     UiBuilder, Vec2,
 };
 use ui::glyph::Mark;
-use ui::tree::{self as rows, DropSpot, RowLook, TreeLine, TreeList, VirtualTree};
+use ui::tree::{self as rows, DropSpot, TreeLine, TreeList, VirtualTree};
 
 use super::widgets::{self, KindMark};
 use crate::icons::{self, IconTone, KindIcon, PictureTexture};
@@ -323,7 +323,7 @@ pub fn show<S: TreeSource>(
     let said = tree.show(
         ui,
         rows,
-        |ui, line, look| row_ui(ui, &mut cx, source, line, look),
+        |ui, line| row_ui(ui, &mut cx, source, line),
         |ui, ids| {
             if let Some(action) = source.menu(ui, ids) {
                 picked = Some(action);
@@ -533,7 +533,7 @@ struct RowsCx<'a> {
 }
 
 /// Draws `line`'s row as `source` says it reads: its icon, then its name and marks.
-fn row_ui<S: TreeSource>(ui: &mut Ui, cx: &mut RowsCx, source: &S, line: &TreeLine, _: RowLook) {
+fn row_ui<S: TreeSource>(ui: &mut Ui, cx: &mut RowsCx, source: &S, line: &TreeLine) {
     let row = source.row(&line.id);
     let (icon, _) =
         ui.allocate_exact_size(Vec2::new(ICON, ui.available_height()), egui::Sense::hover());

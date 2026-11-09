@@ -20,7 +20,7 @@ use super::covers::CopyPiece;
 use super::expand::{self, ChunkSpan, PaintChunk, SceneryChunk, SourcesByChunk};
 use super::plan::{AHEAD, Detail, KEEP_SHARE, OFF_MIDDLE, Plan, Seen, Sight};
 use super::props;
-use super::{Shortfall, Shortfalls, Streaming, distance_to, ground_loaded};
+use super::{Shortfall, Shortfalls, Streaming, distance_to, ground_loaded, props_of};
 use crate::core::assets;
 use crate::core::content::Content;
 use crate::core::content::load::FileHashes;
@@ -88,7 +88,7 @@ impl Instances {
         Instances {
             arena: InstanceArena::default(),
             copies,
-            area_props: area_props_of(area),
+            area_props: props_of(area),
             filed: Arc::new(SourcesByChunk::of(&area.prop_sources, area.size.bounds())),
             sizes: HashMap::default(),
             looks: HashMap::default(),
@@ -156,7 +156,7 @@ impl Instances {
         touched: &[Rect<Meters>],
         moved: impl Fn(u32) -> Option<u32>,
     ) {
-        self.area_props = area_props_of(area);
+        self.area_props = props_of(area);
         self.filed = Arc::new(SourcesByChunk::of(&area.prop_sources, ground));
         let props = |lot: &Lot| matches!(lot, Lot::Props(_) | Lot::Far(..));
         self.expanding.retain(|_, (lot, _)| !props(lot));
@@ -206,22 +206,6 @@ impl Instances {
                 .map(|(key, _)| *key),
         );
     }
-}
-
-/// Every prop `area` stands, placed or scattered, each once.
-fn area_props_of(area: &Area) -> Vec<PropId> {
-    let mut props: Vec<PropId> = area
-        .prop_sources
-        .iter()
-        .flat_map(|module| match module {
-            AreaModule::Prop(placed) => vec![placed.prop],
-            AreaModule::Scatter(scatter) => scatter.props.clone(),
-            _ => Vec::new(),
-        })
-        .collect();
-    props.sort_unstable();
-    props.dedup();
-    props
 }
 
 /// What a chunk of the arena holds: the props standing in a chunk of the ground, the copies its
@@ -445,38 +429,22 @@ pub(super) fn stand(
                 .get(key)
                 .filter(|standing| standing.lot.same_place(lot))
         };
-        let (short, missing) = if !taken_in.is_none_or(|reaches| reaches.take(lot, ground)) {
-            (&mut shortfall.ahead, false)
+        let short = if !taken_in.is_none_or(|reaches| reaches.take(lot, ground)) {
+            &mut shortfall.ahead
         } else if keys.iter().filter_map(standing_as).any(dressed) {
-            (&mut shortfall.stale, false)
+            &mut shortfall.stale
         } else if keys.iter().filter_map(standing_there).any(dressed) {
-            (&mut shortfall.ahead, false)
+            &mut shortfall.ahead
         } else {
-            (&mut shortfall.missing, true)
+            &mut shortfall.missing
         };
         if let Some(standing) = fresh {
             if !dressed(standing) {
                 *short += 1;
-                if missing {
-                    debug!("{lot:?} missing: standing, not yet dressed");
-                }
             }
             continue;
         }
         *short += 1;
-        if missing {
-            let state = if keys.iter().any(|key| instances.expanding.contains_key(key)) {
-                "expanding"
-            } else if matches!(lot, Lot::Far(..)) && extents.is_none() {
-                "waiting for every model's size"
-            } else {
-                "not yet expanding"
-            };
-            debug!(
-                "{lot:?} missing: {state}, {} expanding",
-                instances.expanding.len()
-            );
-        }
         let waiting = keys.iter().any(|key| {
             instances.expanding.contains_key(key)
                 || instances.expanded.iter().any(|(held, ..)| held == key)

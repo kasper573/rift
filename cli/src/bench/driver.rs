@@ -193,37 +193,17 @@ impl Driver {
         }
     }
 
-    /// Stages a walk to `to` and waits for the player to set off, asking again when they don't:
-    /// the server drops a walk it finds no route for, as over ground it hasn't laid yet.
+    /// Stages a walk to `to` and waits for the player to set off.
     fn walk(&mut self, to: Pos<Meters>) -> Result<(), Failure> {
-        let since = Instant::now();
-        loop {
-            self.stage(&Staging::Walk { to })?;
-            let from = self.me_at()?;
-            if from.distance(to) <= STILL_WITHIN {
-                return Ok(());
-            }
-            let asked = Instant::now();
-            while asked.elapsed() < SET_OFF_WITHIN {
-                if self.me_at()?.distance(from) > STILL_WITHIN {
-                    return Ok(());
-                }
-                std::thread::sleep(IDLE_SLICE);
-            }
-            if since.elapsed() > BUDGET {
-                let me = self.snapshot()?.me;
-                return Err(Failure::Harness(format!(
-                    "the player never set off for {:?}, standing at {:?} doing {:?}{}",
-                    (to.x, to.y),
-                    me.as_ref().map(|me| (me.at.x, me.at.y)),
-                    me.as_ref().map(|me| me.action),
-                    me.as_ref()
-                        .and_then(|me| me.engaged)
-                        .map_or(String::new(), |foe| format!(", engaged with {foe:?}"))
-                )));
-            }
-            self.note("the player didn't set off: asking again");
+        self.stage(&Staging::Walk { to })?;
+        let from = self.me_at()?;
+        if from.distance(to) <= STILL_WITHIN {
+            return Ok(());
         }
+        hands::wait_for(self, "the player to set off", BUDGET, |snapshot| {
+            let me = snapshot.me.as_ref()?;
+            (me.at.distance(from) > STILL_WITHIN).then_some(())
+        })
     }
 
     fn me_at(&mut self) -> Result<Pos<Meters>, Failure> {
@@ -515,30 +495,10 @@ impl Driver {
                 Ok(())
             }
             Cond::Stood => {
-                let mut seen = hands::wait_for(self, "the scenery to stand", LONG, |snapshot| {
+                let seen = hands::wait_for(self, "the scenery to stand", LONG, |snapshot| {
                     (!snapshot.scenery_standing).then_some(snapshot.frame)
                 })
                 .map_err(|failure| self.explain_standing(failure))?;
-                loop {
-                    let settled = seen + STOOD_SETTLE;
-                    let later =
-                        hands::wait_for(self, "the scenery to stay stood", LONG, |snapshot| {
-                            (snapshot.frame >= settled || snapshot.scenery_standing)
-                                .then_some((snapshot.frame, snapshot.scenery_standing))
-                        })?;
-                    match later {
-                        (frame, false) => {
-                            seen = frame;
-                            break;
-                        }
-                        _ => {
-                            seen =
-                                hands::wait_for(self, "the scenery to stand", LONG, |snapshot| {
-                                    (!snapshot.scenery_standing).then_some(snapshot.frame)
-                                })?;
-                        }
-                    }
-                }
                 if let Some(measuring) = &mut self.measuring
                     && let Some(since) = measuring.arrival_since.take()
                 {
@@ -1053,10 +1013,6 @@ impl Measuring {
 }
 
 const LONG: Duration = Duration::from_secs(180);
-/// Frames the scenery must stay stood for after a move before the view counts as standing: the
-/// sight follows the camera, which follows the character a frame or two behind its arrival, so
-/// the scenery may stand for a frame where the character left before it stands where it arrived.
-const STOOD_SETTLE: u32 = 12;
 /// How often the probe's ring of frames is read while measuring: well within what it holds at
 /// any frame rate.
 const READ_EVERY: Duration = Duration::from_secs(2);
@@ -1079,8 +1035,6 @@ const STILL_WITHIN: Meters = Meters(0.05);
 const REST_FRAMES: u32 = 12;
 /// How long between asking the server again to stage what it couldn't yet.
 const STAGE_RETRY: Duration = Duration::from_millis(500);
-/// How long a player has to set off on a walk before it is asked for again.
-const SET_OFF_WITHIN: Duration = Duration::from_secs(3);
 /// Metres off the player, nearest first, where open ground is looked for when a window covers
 /// them.
 const OPEN_GROUND_OFFSETS: [(f32, f32); 13] = [

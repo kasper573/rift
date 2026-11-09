@@ -161,23 +161,6 @@ impl CloudSheet {
         self.field.clone()
     }
 
-    /// The height the field lies at.
-    pub fn height(&self) -> Meters {
-        self.reading.look.height
-    }
-
-    /// How cloudy the sky is at `at`, in tiles, under the cover last set, 0 clear to 1 thick, as
-    /// the sky reads the field.
-    pub fn cloudiness(&self, at: Vec2) -> f32 {
-        self.reading.cloudiness(at)
-    }
-
-    /// How much water the cloud at `at`, in tiles, holds under the weather last set, 0 none to 1 as
-    /// much as a storm cloud: none where there is no cloud.
-    pub fn water(&self, at: Vec2) -> f32 {
-        self.reading.water(at)
-    }
-
     /// Thickens or thins the field's shadows to cover `clouds` of the sky, 0 none and 1 all of
     /// it, with as much of it holding water as `water`, 0 none to 1 most of it.
     pub fn cover(&mut self, clouds: f32, water: f32) {

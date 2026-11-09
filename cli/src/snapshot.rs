@@ -50,7 +50,6 @@ pub struct TakenShot {
     pub frames: Option<usize>,
     pub stood_after_frames: Option<usize>,
     pub crashed: bool,
-    #[serde(default)]
     pub masks: Vec<PictureRect>,
 }
 

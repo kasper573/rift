@@ -492,9 +492,7 @@ fn measure(
     args: &BenchArgs,
     restart: &Restart,
 ) -> ScenarioResult {
-    let criteria = scenario.criteria.map_or(Criteria::global(video), |own| {
-        Criteria::global(video).stricter(own)
-    });
+    let criteria = Criteria::global(video);
     let mut results = Vec::new();
     for run in 0..args.repeat.max(1) {
         let started = Instant::now();

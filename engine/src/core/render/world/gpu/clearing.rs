@@ -1,6 +1,6 @@
 //! Where this frame's props clear away for hiding the camera's subject, as the culling kernel and
-//! the props' pixels read it: the way from the camera to whom it follows, how far a fade moves
-//! this frame, and the circle round the subject on the picture that a prop in the way clears.
+//! the props' pixels read it: whom the camera follows, how far a fade moves this frame, and the
+//! circle round the subject on the picture that a prop in the way clears.
 
 use bevy::prelude::*;
 use bevy::render::RenderApp;
@@ -32,7 +32,6 @@ pub struct ClearingLook {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ClearingAim {
     pub camera: Entity,
-    pub eye: Vec3,
     pub target: Vec3,
     /// How far a fade moves this frame, as a share of the way from whole to cleared.
     pub step: f32,
@@ -64,7 +63,6 @@ pub(crate) fn aim_clearing(
         let rim = view.project(target + rig.transform().right() * look.clearing.radius.0)?;
         Some(ClearingAim {
             camera,
-            eye: rig.eye(),
             target,
             step: time.delta_secs() / look.clearing.fades.0.max(f32::EPSILON),
             focus,
