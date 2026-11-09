@@ -424,13 +424,17 @@ impl EditorDriver {
         })
     }
 
-    /// Whether an edit came of the input just sent, once the editor has drawn a few frames after
-    /// it: `before` edits stood undoable before the input.
+    /// Whether an edit came of the input just sent and held, once the editor has drawn a few frames
+    /// after it and checked the folder loads with it: `before` edits stood undoable before the
+    /// input.
     pub fn edited_since(&mut self, before: usize) -> Result<bool, Failure> {
-        Ok(hands::frames(self, EDIT_SETTLE)?.undoable > before)
+        hands::frames(self, EDIT_SETTLE)?;
+        let undoable = hands::wait_for(self, "the editor to check the edit", BUDGET, |snapshot| {
+            (!snapshot.checking).then_some(snapshot.undoable)
+        })?;
+        Ok(undoable > before)
     }
 
-    /// How the editor exited, once it has.
     /// Ends the editor, as the driver ends it once dropped: before another starts, so the two
     /// never draw at once.
     pub fn end(&mut self) {
@@ -438,6 +442,7 @@ impl EditorDriver {
         let _ = self.editor.wait();
     }
 
+    /// How the editor exited, once it has.
     pub fn exited(&mut self) -> Option<ExitStatus> {
         self.editor.try_wait().ok().flatten()
     }

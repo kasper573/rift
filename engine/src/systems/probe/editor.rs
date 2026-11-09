@@ -53,6 +53,9 @@ pub struct EditorSnapshot {
     pub on_its_way: OnItsWay,
     /// Whether the editor is busy with work the interface waits on, such as opening a folder.
     pub busy: bool,
+    /// Whether the editor is still loading the folder to check the edits made since it last loaded:
+    /// an edit the folder doesn't load with is taken back then, with the edits after it.
+    pub checking: bool,
     /// The rows selected, as the scene tree names them.
     pub selected: Vec<String>,
     /// How many edits undo and redo would step through.

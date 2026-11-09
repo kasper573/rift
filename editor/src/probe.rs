@@ -103,6 +103,10 @@ fn snapshot(world: &mut World, ctx: &ui::egui::Context) -> EditorSnapshot {
         editor.selection.parts.clone()
     };
     let busy = editor.busy.is_busy();
+    let checking = editor
+        .project
+        .as_ref()
+        .is_some_and(|project| project.loading());
     let shown = shown::pass(ctx);
     let ui = world
         .resource::<DrawnUi>()
@@ -162,6 +166,7 @@ fn snapshot(world: &mut World, ctx: &ui::egui::Context) -> EditorSnapshot {
         sceneries_standing: latest.as_ref().map_or(0, |pass| pass.sceneries_standing),
         on_its_way: latest.as_ref().map_or_default(|pass| pass.on_its_way),
         busy,
+        checking,
         selected,
         undoable,
         redoable,
