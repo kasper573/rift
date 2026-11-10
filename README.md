@@ -49,56 +49,211 @@ binaries into such a folder, `target/dist/`, so an unreleased build runs exactly
 
 ## The rift tool
 
+`rift` is the command line tool a game is checked, measured and inspected with. It works on a game
+folder, and starts the other binaries from its own binaries folder when a command needs them.
+
+| Command | What it does |
+| --- | --- |
+| [`rift check <game>`](#checking-a-game) | Checks that the game loads whole and reads as the editor writes it. |
+| [`rift format <game>`](#checking-a-game) | Rewrites the files that don't. |
+| [`rift ask <game>`](#asking-about-a-game) | Answers the probe's questions about the game, without a client. |
+| [`rift render area <game> <shot> <out>`](#rendering-an-area) | Draws a picture of an area off screen. |
+| [`rift bench [game]`](#benching) | Measures the server's capacity, and on a game also the client's and the editor's frame rates and memory. |
+| [`rift loadtest --http <url> [count]`](#load-testing-a-server) | Connects simulated players to a running game server. |
+| [`rift profile --out <dir> [game]`](#profiling-the-server) | Samples the game server under load. |
+| [`rift schema <protocol>`](#schemas) | Prints the JSON Schema of a protocol the binaries speak. |
+
+`rift help <command>` lists every flag of a command.
+
+### Checking a game
+
 ```sh
-rift check <game>                    # the game loads whole, and every file reads as the editor writes it
-rift format <game>                   # rewrites every file that doesn't read as the editor writes it
-rift ask <game>                      # the probe's questions about the game itself, without a client
-rift render area <game> <shot> <out> # a picture of an area, drawn off screen through the world's own camera
-rift bench                           # the server's capacity, on a large game generated in code
-rift bench <game>                    # …on the game, then the client's and the editor's frame rates and memory (Linux)
-rift bench <game> --only memory      # …only the parts named: server, client, editor, memory
-rift bench <game> --scenario 'orbit*' --video both --repeat 3
-                                     # …only the scenarios named, at both presets, each run three times
-rift bench <game> --report out.json --compare before.json
-                                     # …the report written there, and held against an earlier run's
-rift loadtest --http <url> --ws <url> [count]
-rift profile --out <dir> [game]      # game-server-profiling under load, sampled by perf (Linux)
-rift schema probe                    # the JSON Schema of the desktop client's probe
-rift schema server                   # …of what a game server prints once ready, and its test routes
-rift schema bench                    # …of the report `rift bench` writes
+rift check <game>
+rift format <game>
 ```
 
-`rift bench <game>` starts `game-server` and `desktop-client` from its binaries folder; it plays a
-test character of the game, or a fresh one where the game has none, through a short catalogue of
-scenarios: each staged on the server, then played as a player would through the client's own
-bindings, its input confirmed through the probe. What the scenarios play with comes from the
-game's scenarios file, `bench/scenarios.json` in the game's folder unless `--scenarios` names
-another, every slot it leaves empty filled from the content: the `home` the scenarios play at and
-a `crowd_place` to fight at (each an `area`, `x` and `y`), the ground an `empty_view` looks
-toward, the `windows` to open by their actions, ground to `walk_to`, and the test `character`
-to play. The catalogue is the client's opening on a profile no client has run the game on, a
-still view, an orbit, a walk, warp crossings, combat, the interface stormed, and fifty other
-players in view; each plays for a few seconds, at the highest video preset unless `--video` says
-otherwise. Before them, the `desktop` check plays the emptiest view of the engine's own new game
-at the lowest settings, which must exceed 300 fps whatever the game benched costs to draw, or the
-desktop is holding the frames and the harness fails. Every scenario's frames are held to the same
-criteria: a mean at or over the floor of its video preset (60 fps at the highest, 90 at the
-lowest), at most 1% of frames slower than the floor's period, no frame past 48 ms, and nothing
-the view takes in missing. The client plays on a desktop of the bench's own: a headless `weston`
-screen it draws on through `Xwayland`, its window seated there by `xdotool`, and a silent sink on
-a PulseAudio-compatible sound server (`pactl`). Its frame rate is then its own, and nothing
-reaches the machine's display or speakers; a load average over half the cores is warned about and
-kept in the report. The editor plays on such a desktop too, worked as a designer works it, its
-input confirmed through its own probe: on the area the game starts in, its opening until the area
-stands, the stage turned, panned and flicked out and in, and its terrain sculpted; and on the
-scenarios' home area, the stage turned and panned once drawn back as far as it goes. Its frames
-are held to the client's criteria. The memory check then crosses a player back and forth between
-the spawn area and the area its first warp leads to, and stands them still: the server and the
-client must hold the memory level the first crossings reached. The run's report,
-`bench-report.json` unless `--report` says where, is described by `rift schema bench`; `--compare` holds it against an earlier run's and
-fails when a scenario that passed now fails, a mean fell by more than a tenth or a p99 rose by more
-than a fifth. The exit code says how the run went: 0 passed, 1 a scenario fell short of its
-criteria or the comparison got worse, 2 a scenario could not be played through, 3 a process died.
+`rift check` fails unless the game loads whole and every file reads exactly as the editor writes it,
+so that saving the game in the editor changes only what was edited. `rift format` rewrites the files
+that read otherwise: what each holds stays, only its layout changes.
+
+### Asking about a game
+
+```sh
+rift ask <game>
+```
+
+Reads the [probe](#protocols)'s questions from stdin, one JSON line each, and answers each on stdout as
+a desktop client playing the game would. It answers the questions about the game itself, such as
+where its things are and how its ground walks; a snapshot of what a client shows needs a client.
+
+### Rendering an area
+
+```sh
+rift render area <game> <shot> <out>
+```
+
+Draws the picture `<out>` of an area through the world's own camera and lights, to hold how the game
+looks against a reference picture. The shot is a JSON file that names the area, the lens, and the
+bodies standing in it. The same shot draws the same picture every time, and `--check-determinism`
+proves it: it draws the shot twice, each in a process of its own, and fails when the two pictures
+differ by more than the eye can tell.
+
+### Benching
+
+```sh
+rift bench                  # the server's capacity, on a large game generated in code
+rift bench <game>           # the whole bench on a game
+```
+
+Without a game, `rift bench` measures only the server. On a game it runs four parts in order, or only
+those `--only` names:
+
+| Part | What it measures | Needs |
+| --- | --- | --- |
+| `server` | How many copies of the game's spawn area, each full of players, the server ticks within its budget. | |
+| `client` | The desktop client's frame rate through a catalogue of scenarios. | Linux |
+| `editor` | The editor's frame rate through scenarios of its own. | Linux |
+| `memory` | Whether the server and the client hold their memory level as a player plays. | Linux |
+
+The server part runs inside `rift` itself. The other three start `game-server`, `desktop-client` and
+`editor` from the binaries folder, and play them on a desktop of the bench's own: a headless `weston`
+screen drawn on through `Xwayland`, the window seated there by `xdotool`, and a silent sink on a
+PulseAudio-compatible sound server (`pactl`). The frame rate is then the program's alone, and
+nothing reaches the machine's display or speakers.
+
+#### Scenarios
+
+A scenario is a few seconds of play: the server stages the scene, then the bench plays it as a person
+would, through the program's own bindings, confirming each input through the probe before the next.
+
+| Scenario | What plays |
+| --- | --- |
+| `desktop` | The emptiest view of the engine's own new game, at the lowest settings. It checks the bench's desktop rather than the game: see [below](#what-a-scenario-must-meet). |
+| `open` | The client's opening, from the player's entry into the world until the scenery stands, on a profile no client has run the game on. |
+| `still` | A still view of the game's home place. |
+| `orbit` | The camera turned a full circle there. |
+| `walk` | A walk from home across open ground, and back. |
+| `crossings` | A warp out of the home area crossed, and back. |
+| `combat` | Fights staged at the game's crowd place. |
+| `ui-storm` | Every window opened, swept, dragged, scrolled and typed into. |
+| `players` | Fifty other players in view at the game's spawn. |
+| `editor-open` | The editor's opening, until the area the game starts in stands in view. |
+| `editor-camera` | The stage of that area turned, panned, and flicked in and out. |
+| `editor-brush` | Its terrain sculpted. |
+| `editor-overview` | The stage of the home area turned and panned, drawn back as far as it goes. |
+
+A scenario the game has nothing to play with is left out: `walk` without open ground to walk to,
+`crossings` without a warp out of the home area, `combat` without a crowd place.
+
+These flags choose what runs:
+
+| Flag | What it does |
+| --- | --- |
+| `--only <part>` | Runs only the parts named: `server`, `client`, `editor`, `memory`. Repeat it to name several. |
+| `--scenario <pattern>` | Runs only the scenarios whose names match, `*` standing for anything: `--scenario 'editor-*'`. |
+| `--video <preset>` | The video presets the scenarios play at: `highest` (the default), `lowest` or `both`. |
+| `--repeat <n>` | Runs each scenario `n` times. The report keeps the median run, and how far the others strayed from it. |
+| `--spread` | Spreads the server part's players over the area, rather than crowding them on its spawn. |
+| `--adapter <name>` | Refuses to run unless the client draws on this graphics adapter. |
+| `--smoke` | Plays one short scenario per program, held to no criteria, to prove the harness alone. |
+
+#### The scenarios file
+
+What the scenarios play with comes from the game. Its scenarios file, `bench/scenarios.json` in the
+game folder unless `--scenarios` names another, may name any of these, and the file itself is
+optional:
+
+| Field | What it names | When left out |
+| --- | --- | --- |
+| `home` | The place the scenarios play at, and the area `editor-overview` opens: an `area`, `x` and `y`. | Where the game's characters start. |
+| `crowd_place` | A place where foes crowd, for `combat`. | `combat` is left out. |
+| `walk_to` | The ground the `walk` ends at. | Open ground some way from home, found in the content. |
+| `windows` | The input actions that open the windows `ui-storm` opens. | Every window of the game's interface. |
+| `character` | The test character the scenarios play. | The game's first, or a fresh one where it has none. |
+
+#### What a scenario must meet
+
+Every scenario's frames are held to the same criteria:
+
+- a mean frame rate at or over the floor of its video preset: 60 fps at the highest, 90 fps at the
+  lowest;
+- at most 1% of frames slower than the floor's period;
+- no frame longer than 48 ms;
+- nothing the view takes in missing. An opening is spared this one, as its view is still arriving.
+
+The `desktop` scenario guards the measurement itself. The engine's emptiest view must draw at over
+300 fps whatever the benched game costs to draw; when it doesn't, the desktop is holding the frames
+back, every scenario would measure the desktop rather than the engine, and the harness fails. A
+machine whose load average is over half its cores is warned about, as its frames measure that load
+too.
+
+The memory part has a rule of its own. It crosses a player back and forth between the spawn area and
+the area its first warp leads to, then stands them still: once the first crossings have filled the
+caches, the server and the client must hold the memory level those reached. A game with no warp out
+of its spawn area is not measured.
+
+#### The report
+
+A run writes its report to `bench-report.json`, or wherever `--report` says, in the shape
+`rift schema bench` describes. A log of every step the programs were put through is written beside
+it.
+
+`--compare <report>` holds the run against an earlier run's report, and fails when a scenario that
+passed now fails, a mean frame rate fell by more than a tenth, or a p99 frame time rose by more than
+a fifth:
+
+```sh
+rift bench <game> --report before.json    # before a change
+rift bench <game> --compare before.json   # after it
+```
+
+The exit code says how the run went:
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Everything passed. |
+| 1 | A scenario fell short of its criteria, or the comparison got worse. |
+| 2 | A scenario could not be played through. |
+| 3 | A process died. |
+
+### Load testing a server
+
+```sh
+rift loadtest --http <url> [count]
+```
+
+Connects simulated players to a game server that is already running, at its HTTP address, over the
+client's own transport. The server must take any account's sign-in (`AUTH` set to `fake`). With a
+count, that many players connect and stay until `rift` is stopped. Without one, `rift` searches for
+the highest player count the server holds within its tick budget.
+
+### Profiling the server
+
+```sh
+rift profile --out <dir> [game]
+```
+
+Starts `game-server-profiling` on the game, or on a large game generated in code, loads it with as
+many simulated players as it holds within its tick budget, and samples it with `perf` for twenty
+seconds. Linux only. It writes into `<dir>`:
+
+| File | What it holds |
+| --- | --- |
+| `perf.data` | The samples, for `perf` to read. |
+| `cpu-by-function.txt` | The CPU time by function. |
+| `cpu-by-system.txt` | The CPU time by engine system. |
+| `allocations.pb.gz` | What the server's heap holds, in pprof's format. |
+
+### Schemas
+
+```sh
+rift schema probe    # what a desktop client started with a probe address answers on it
+rift schema server   # what a game server prints once ready, and what its test routes take
+rift schema bench    # the report `rift bench` writes
+```
+
+Each prints the JSON Schema of one of the [protocols](#protocols) the binaries speak, for whatever
+drives them to read.
 
 ## A game is a folder
 
