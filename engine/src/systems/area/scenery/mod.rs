@@ -55,7 +55,7 @@ use crate::core::render::world::clouds::{CloudDrift, CloudSheet};
 use crate::core::render::world::gpu::arena::PropArena;
 use crate::core::render::world::gpu::atlas::TerrainAtlas;
 use crate::core::render::world::gpu::draw::{GroundDraw, GroundPatch, PATCH_CELLS};
-use crate::core::render::world::haze::Haze;
+use crate::core::render::world::haze::{Haze, HazeSight, MAX_HAZE_BOXES};
 use crate::core::render::world::lights::{self, Flicker};
 use crate::core::render::world::sky::{self, Daylight, SunLight};
 use crate::core::render::world::terrain::{self, GroundLayer};
@@ -1234,10 +1234,15 @@ pub fn light(
         let color = sky::haze(sun, lit, area.lighting.sky, moist, rains, &look.sky);
         let mut banks: Vec<&FogBank> = area.fogs.iter().collect();
         banks.sort_by(|a, b| a.distance(eye.xz()).total_cmp(&b.distance(eye.xz())));
+        let sight = sight_of(world, camera, area.heights.range().lowest);
         let haze = Haze::new(
             color,
             ground.0,
-            banks.into_iter().map(|bank| bank.seen(moist, rains)),
+            banks
+                .into_iter()
+                .take(MAX_HAZE_BOXES)
+                .map(|bank| bank.seen(moist, rains))
+                .filter(|lying| sight.is_none_or(|sight| sight.crosses(lying.low, lying.high))),
         );
         hold(world, camera, haze);
     }
@@ -1246,6 +1251,16 @@ pub fn light(
         hold(world, camera, camera::grading(tone, grade));
     }
     sky::show(world, camera, area.lighting.sky);
+}
+
+/// Where `camera`'s rays run over ground lying nowhere lower than `floor`, once it has a lens
+/// and a place.
+fn sight_of(world: &World, camera: Entity, floor: Meters) -> Option<HazeSight> {
+    Some(HazeSight::of(
+        world.get::<Camera>(camera)?.clip_from_view(),
+        world.get::<GlobalTransform>(camera)?,
+        floor.0,
+    ))
 }
 
 /// Reaches the sun's shadows as far as `camera` sees the ground of `area`.

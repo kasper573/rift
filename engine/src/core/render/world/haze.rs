@@ -7,6 +7,7 @@ use bevy::core_pipeline::{Core3d, Core3dSystems, FullscreenShader};
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::camera::ExtractedCamera;
+use bevy::render::diagnostic::RecordDiagnostics;
 use bevy::render::extract_component::{
     ComponentUniforms, DynamicUniformIndex, ExtractComponent, ExtractComponentPlugin,
     UniformComponentPlugin,
@@ -70,6 +71,88 @@ impl Haze {
     }
 }
 
+/// Where a camera's rays run over the ground before they meet it: from under its eye, between
+/// the two ways its outermost rays run, or every way when it looks straight down or up, and as
+/// far as a ray of its runs before it has sunk to the lowest the ground lies, or any distance
+/// when one runs level or upward. A box of haze none of them crosses hazes nothing the camera
+/// sees.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct HazeSight {
+    eye: Vec2,
+    between: Option<[Vec2; 2]>,
+    reach: f32,
+}
+
+impl HazeSight {
+    /// The sight of a camera of lens `clip_from_view` standing as `eye` does over ground that
+    /// lies nowhere lower than `floor`.
+    pub fn of(clip_from_view: Mat4, eye: &GlobalTransform, floor: f32) -> HazeSight {
+        let world_from_view = eye.affine();
+        let sees = |way: Vec3| {
+            let seen = world_from_view.inverse().transform_vector3(way);
+            let clip = clip_from_view * seen.extend(1.0);
+            clip.w > 0.0 && clip.x.abs() <= clip.w && clip.y.abs() <= clip.w
+        };
+        let view_from_clip = clip_from_view.inverse();
+        let rays = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)].map(|(x, y)| {
+            let widened = Vec3::new(x, y, 0.0) * (1.0 + SIGHT_MARGIN);
+            world_from_view
+                .transform_vector3(view_from_clip.project_point3(widened.with_z(0.5)))
+                .normalize_or_zero()
+        });
+        let ways = rays.map(|ray| ray.xz().normalize_or_zero());
+        let outermost = |side: f32| {
+            ways.into_iter().find(|way| {
+                ways.iter()
+                    .all(|other| way.perp_dot(*other) * side >= -1e-6)
+            })
+        };
+        let between = match (sees(Vec3::Y), sees(Vec3::NEG_Y), ways.contains(&Vec2::ZERO)) {
+            (false, false, false) => outermost(1.0).zip(outermost(-1.0)).map(|(a, b)| [a, b]),
+            _ => None,
+        };
+        let above = (eye.translation().y - floor).max(0.0);
+        let reach = rays
+            .into_iter()
+            .map(|ray| {
+                if ray.y < -1e-3 {
+                    above * ray.xz().length() / -ray.y
+                } else {
+                    f32::INFINITY
+                }
+            })
+            .fold(0.0, f32::max);
+        HazeSight {
+            eye: eye.translation().xz(),
+            between,
+            reach,
+        }
+    }
+
+    /// Whether any ray of the camera's runs over the rect from `low` to `high`.
+    pub fn crosses(&self, low: Vec2, high: Vec2) -> bool {
+        if self.eye.distance(self.eye.clamp(low, high)) > self.reach {
+            return false;
+        }
+        let Some([first, last]) = self.between else {
+            return true;
+        };
+        let corners = [
+            low,
+            Vec2::new(high.x, low.y),
+            high,
+            Vec2::new(low.x, high.y),
+        ]
+        .map(|corner| corner - self.eye);
+        corners.iter().any(|corner| first.perp_dot(*corner) >= 0.0)
+            && corners.iter().any(|corner| last.perp_dot(*corner) <= 0.0)
+    }
+}
+
+/// How much wider than the lens a camera's sight is taken to be, as a share of the lens, for
+/// the jitter its picture is drawn with from frame to frame.
+const SIGHT_MARGIN: f32 = 0.01;
+
 pub struct HazePlugin;
 
 /// Where the haze is laid over what a camera sees, for what is laid over the haze in turn.
@@ -114,6 +197,7 @@ type HazedView = (
     &'static ExtractedCamera,
     &'static ViewTarget,
     &'static ViewUniformOffset,
+    &'static Haze,
     &'static DynamicUniformIndex<Haze>,
     &'static HazePipelineId,
     &'static ViewDepthStencilTexture,
@@ -177,7 +261,10 @@ fn draw_haze(
     hazes: Res<ComponentUniforms<Haze>>,
     mut ctx: RenderContext,
 ) {
-    let (camera, target, view_offset, haze_index, pipeline_id, depth) = view.into_inner();
+    let (camera, target, view_offset, haze, haze_index, pipeline_id, depth) = view.into_inner();
+    if haze.count == 0 {
+        return;
+    }
     let (Some(pipeline), Some(view_binding), Some(haze_binding)) = (
         pipeline,
         view_uniforms.uniforms.binding(),
@@ -196,8 +283,11 @@ fn draw_haze(
         &cache.get_bind_group_layout(&pipeline.layout),
         &BindGroupEntries::sequential((view_binding, haze_binding, depth_view)),
     );
+    let recorder = ctx.diagnostic_recorder();
+    let recorder = recorder.as_deref();
+    let span = recorder.map(|recorder| recorder.time_span(ctx.command_encoder(), HAZE));
     let mut pass = ctx.begin_tracked_render_pass(RenderPassDescriptor {
-        label: Some("haze"),
+        label: Some(HAZE),
         color_attachments: &[Some(target.get_color_attachment())],
         depth_stencil_attachment: None,
         timestamp_writes: None,
@@ -210,4 +300,10 @@ fn draw_haze(
     pass.set_render_pipeline(render_pipeline);
     pass.set_bind_group(0, &bind_group, &[view_offset.offset, haze_index.index()]);
     pass.draw(0..3, 0..1);
+    drop(pass);
+    if let Some(span) = span {
+        span.end(ctx.command_encoder());
+    }
 }
+
+const HAZE: &str = "haze";

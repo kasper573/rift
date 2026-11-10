@@ -14,6 +14,7 @@ mod exchange;
 mod gestures;
 mod gpu;
 mod grass;
+mod haze;
 mod impostor;
 mod interaction;
 mod kill_credit;
