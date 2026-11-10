@@ -1,12 +1,15 @@
 //! What a view shows of the sceneries' arenas, instance by instance, for whoever asks: while a
-//! camera carries [`Picking`], every instance its views draw writes its id where it is the surface
-//! the view shows, after the world is drawn. The id under the pointer is read back without waiting
-//! on the GPU and handed to the main world a frame or two later ([`picked`]), and the instances of
-//! each outlined set are outlined in the set's colour over what the view shows.
+//! camera carries [`Picking`], the instance its view shows under the pointer writes its id there,
+//! after the world is drawn, through the stages that drew it there. The id is read back without
+//! waiting on the GPU and handed to the main world a frame or two later ([`picked`]). And the
+//! instances of each outlined set are outlined in the set's colour: a line round the whole shape
+//! of them, as their shaders stand it, laid over the finished picture whatever stands before them.
 
 use std::sync::{Arc, Mutex};
 
+use bevy::anti_alias::smaa::smaa;
 use bevy::core_pipeline::core_3d::main_transparent_pass_3d;
+use bevy::core_pipeline::tonemapping::tonemapping;
 use bevy::core_pipeline::{Core3d, Core3dSystems, FullscreenShader};
 use bevy::ecs::query::QueryItem;
 use bevy::platform::collections::HashMap;
@@ -14,32 +17,29 @@ use bevy::prelude::*;
 use bevy::render::camera::ExtractedCamera;
 use bevy::render::diagnostic::RecordDiagnostics;
 use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
-use bevy::render::render_resource::binding_types::{
-    storage_buffer_read_only, storage_buffer_read_only_sized, texture_2d, texture_depth_2d,
-    uniform_buffer,
-};
+use bevy::render::render_resource::binding_types::{sampler, texture_2d, uniform_buffer};
 use bevy::render::render_resource::{
-    BindGroupEntries, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntries,
-    BlendState, Buffer, BufferDescriptor, BufferInitDescriptor, BufferUsages,
-    CachedRenderPipelineId, ColorTargetState, ColorWrites, CommandEncoder, CompareFunction,
-    DepthStencilState, Extent3d, FragmentState, IndexFormat, LoadOp, MapMode, MultisampleState,
-    Operations, Origin3d, PipelineCache, PipelineCompilationOptions, PipelineLayoutDescriptor,
-    PrimitiveState, RawFragmentState, RawRenderPipelineDescriptor, RawVertexBufferLayout,
-    RawVertexState, RenderPassColorAttachment, RenderPassDepthStencilAttachment,
-    RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, ShaderModuleDescriptor,
-    ShaderSource, ShaderStages, ShaderType, StorageBuffer, StoreOp, TexelCopyBufferInfo,
-    TexelCopyBufferLayout, TexelCopyTextureInfo, TextureAspect, TextureDescriptor,
-    TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView, UniformBuffer,
-    VertexAttribute, VertexFormat, VertexStepMode, encase,
+    BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BlendState, Buffer,
+    BufferDescriptor, BufferUsages, CachedRenderPipelineId, ColorTargetState, ColorWrites,
+    Extent3d, FilterMode, FragmentState, LoadOp, MapMode, Operations, Origin3d, PipelineCache,
+    RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor,
+    RenderPipelineDescriptor, Sampler, SamplerBindingType, SamplerDescriptor, ShaderStages,
+    ShaderType, StoreOp, TexelCopyBufferInfo, TexelCopyBufferLayout, TexelCopyTextureInfo,
+    TextureAspect, TextureDescriptor, TextureDimension, TextureFormat, TextureSampleType,
+    TextureUsages, UniformBuffer,
 };
 use bevy::render::renderer::{RenderContext, RenderDevice, RenderQueue, ViewQuery};
 use bevy::render::sync_component::SyncComponent;
 use bevy::render::texture::{CachedTexture, TextureCache};
-use bevy::render::view::{ExtractedView, RetainedViewEntity, ViewDepthStencilTexture, ViewTarget};
+use bevy::render::view::{
+    ExtractedView, RetainedViewEntity, ViewDepthStencilTexture, ViewTarget, ViewUniformOffset,
+};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 
-use super::arena::{InstanceArenas, ModelArena, ModelVertex};
-use super::cull::{PropCulls, ViewCull};
+use super::cull::PropCulls;
+use super::prop_draw::{
+    IDS_FORMAT, MARK_SAMPLES, MARKS_FORMAT, PropQueue, QueueProps, SingledProps,
+};
 
 pub struct PickPlugin;
 
@@ -60,24 +60,29 @@ impl Plugin for PickPlugin {
                 Render,
                 (
                     prepare_targets.in_set(RenderSystems::PrepareResources),
-                    queue_outlines.in_set(RenderSystems::Queue),
+                    (queue_singled.in_set(QueueProps), queue_outlines).in_set(RenderSystems::Queue),
                     read_picks.in_set(RenderSystems::Cleanup),
                 ),
             )
             .add_systems(
                 Core3d,
-                (draw_picks, draw_outlines)
-                    .chain()
-                    .after(main_transparent_pass_3d)
-                    .after(super::super::haze::Hazing)
-                    .in_set(Core3dSystems::MainPass),
+                (
+                    draw_picks
+                        .after(main_transparent_pass_3d)
+                        .after(super::super::haze::Hazing)
+                        .in_set(Core3dSystems::MainPass),
+                    draw_outlines
+                        .after(tonemapping)
+                        .before(smaa)
+                        .in_set(Core3dSystems::PostProcess),
+                ),
             );
     }
 }
 
 /// A camera whose views something wants singled out: the pixel of its picture the pointer is over,
 /// whose instance [`picked`] tells, and the instances outlined, in two sets, the second over the
-/// first. Its views write their ids only while it points or outlines something.
+/// first.
 #[derive(Component, Clone, Debug, Default)]
 pub struct Picking {
     pub pointer: Option<UVec2>,
@@ -116,188 +121,11 @@ pub fn picked(world: &World, camera: Entity) -> Option<Pick> {
         .copied()
 }
 
-/// How the GPU writes each view's ids: a pass drawing the instances a view's commands draw into an
-/// id picture and a depth of its own, keeping only the surface the view's depth shows.
-pub struct PickPass {
-    layout: BindGroupLayout,
-    pipeline: RenderPipeline,
-}
-
-/// What a pick pass writes and reads: the ids and its own depth, which it clears, and the depth the
-/// view was drawn with.
-pub struct PickTargets<'a> {
-    pub ids: &'a TextureView,
-    pub depth: &'a TextureView,
-    pub view_depth: &'a TextureView,
-}
-
-/// A scenery a pick pass draws: its slot among those the view draws, the view's projection, its
-/// arena's instances, the models' vertices and indices, and the view's culled draws of it: the
-/// instances drawn and `commands` commands in `commands_buffer`.
-pub struct PickDraw<'a> {
-    pub slot: u8,
-    pub clip_from_world: Mat4,
-    pub instances: &'a Buffer,
-    pub vertices: &'a Buffer,
-    pub indices: &'a Buffer,
-    pub drawn: &'a Buffer,
-    pub commands_buffer: &'a Buffer,
-    pub commands: u32,
-}
-
-/// The format of the ids a pick pass writes.
-pub const PICK_IDS: TextureFormat = TextureFormat::R32Uint;
-
-/// The format of a pick pass's own depth.
-pub const PICK_DEPTH: TextureFormat = TextureFormat::Depth32Float;
-
-impl PickPass {
-    pub fn new(device: &RenderDevice) -> PickPass {
-        let layout = device.create_bind_group_layout(
-            "pick",
-            &BindGroupLayoutEntries::sequential(
-                ShaderStages::VERTEX_FRAGMENT,
-                (
-                    uniform_buffer::<PickViewUniform>(false),
-                    storage_buffer_read_only_sized(false, None),
-                    storage_buffer_read_only_sized(false, None),
-                    texture_depth_2d(),
-                ),
-            ),
-        );
-        let module = device.create_and_validate_shader_module(ShaderModuleDescriptor {
-            label: Some("pick"),
-            source: ShaderSource::Wgsl(include_str!("pick.wgsl").into()),
-        });
-        let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
-            label: Some("pick"),
-            bind_group_layouts: &[Some(&layout)],
-            ..default()
-        });
-        let pipeline = device.create_render_pipeline(&RawRenderPipelineDescriptor {
-            label: Some("pick"),
-            layout: Some(&pipeline_layout),
-            vertex: RawVertexState {
-                module: &module,
-                entry_point: Some("vertex"),
-                compilation_options: PipelineCompilationOptions::default(),
-                buffers: &[Some(RawVertexBufferLayout {
-                    array_stride: ModelVertex::BYTES,
-                    step_mode: VertexStepMode::Vertex,
-                    attributes: &[VertexAttribute {
-                        format: VertexFormat::Float32x3,
-                        offset: 0,
-                        shader_location: 0,
-                    }],
-                })],
-            },
-            primitive: PrimitiveState::default(),
-            depth_stencil: Some(DepthStencilState {
-                format: PICK_DEPTH,
-                depth_write_enabled: Some(true),
-                depth_compare: Some(CompareFunction::GreaterEqual),
-                stencil: default(),
-                bias: default(),
-            }),
-            multisample: MultisampleState::default(),
-            fragment: Some(RawFragmentState {
-                module: &module,
-                entry_point: Some("fragment"),
-                compilation_options: PipelineCompilationOptions::default(),
-                targets: &[Some(ColorTargetState {
-                    format: PICK_IDS,
-                    blend: None,
-                    write_mask: ColorWrites::ALL,
-                })],
-            }),
-            multiview_mask: None,
-            cache: None,
-        });
-        PickPass { layout, pipeline }
-    }
-
-    /// Writes the ids of what `draws` draw into `targets`, nearest first, nothing where the view's
-    /// depth shows something else.
-    pub fn encode(
-        &self,
-        device: &RenderDevice,
-        encoder: &mut CommandEncoder,
-        targets: &PickTargets,
-        draws: &[PickDraw],
-    ) {
-        let bound: Vec<_> = draws
-            .iter()
-            .map(|draw| {
-                let mut view = encase::UniformBuffer::new(Vec::<u8>::new());
-                view.write(&PickViewUniform {
-                    clip_from_world: draw.clip_from_world,
-                    slot: u32::from(draw.slot),
-                })
-                .expect("a pick view writes as a uniform");
-                let uniform = device.create_buffer_with_data(&BufferInitDescriptor {
-                    label: Some("pick view"),
-                    contents: view.as_ref(),
-                    usage: BufferUsages::UNIFORM,
-                });
-                device.create_bind_group(
-                    "pick",
-                    &self.layout,
-                    &BindGroupEntries::sequential((
-                        uniform.as_entire_binding(),
-                        draw.instances.as_entire_binding(),
-                        draw.drawn.as_entire_binding(),
-                        targets.view_depth,
-                    )),
-                )
-            })
-            .collect();
-        let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
-            label: Some("pick"),
-            color_attachments: &[Some(RenderPassColorAttachment {
-                view: targets.ids,
-                depth_slice: None,
-                resolve_target: None,
-                ops: Operations {
-                    load: LoadOp::Clear(default()),
-                    store: StoreOp::Store,
-                },
-            })],
-            depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
-                view: targets.depth,
-                depth_ops: Some(Operations {
-                    load: LoadOp::Clear(0.0),
-                    store: StoreOp::Discard,
-                }),
-                stencil_ops: None,
-            }),
-            timestamp_writes: None,
-            occlusion_query_set: None,
-            multiview_mask: None,
-        });
-        pass.set_pipeline(&self.pipeline);
-        for (draw, bound) in draws.iter().zip(&bound) {
-            pass.set_bind_group(0, Some(&**bound), &[]);
-            pass.set_vertex_buffer(0, Some((**draw.vertices).slice(..)));
-            pass.set_index_buffer((**draw.indices).slice(..), IndexFormat::Uint32);
-            pass.multi_draw_indexed_indirect(
-                draw.commands_buffer,
-                ViewCull::command_offset(0),
-                draw.commands,
-            );
-        }
-    }
-}
-
-/// The scenery slot and the place among its arena's instances an id written by a pick pass names,
-/// none for nothing.
-pub fn decode(id: u32) -> Option<(u8, u32)> {
+/// The scenery slot and the place among its arena's instances an id a view wrote names, none for
+/// nothing.
+fn decode(id: u32) -> Option<(u8, u32)> {
     let instance = id & INSTANCE_BITS;
     (instance > 0).then(|| ((id >> 24) as u8, instance - 1))
-}
-
-/// The id a pick pass writes for the instance at `instance` of the scenery in `slot`.
-pub fn encode(slot: u8, instance: u32) -> u32 {
-    u32::from(slot) << 24 | (instance + 1) & INSTANCE_BITS
 }
 
 const INSTANCE_BITS: u32 = (1 << 24) - 1;
@@ -305,23 +133,16 @@ const INSTANCE_BITS: u32 = (1 << 24) - 1;
 const PICK: &str = "pick";
 const OUTLINE: &str = "outline";
 
-/// How many pixels round an outlined instance its outline reaches.
-const OUTLINE_PIXELS: u32 = 2;
+/// How many pixels out from an outlined instance's shape its outline reaches.
+const OUTLINE_PIXELS: f32 = 2.0;
 
 /// The bytes a readback of one id takes, as a copy of a texture's row must.
 const READBACK_BYTES: u64 = 256;
 
-#[derive(ShaderType, Clone, Copy)]
-struct PickViewUniform {
-    clip_from_world: Mat4,
-    slot: u32,
-}
-
 #[derive(ShaderType, Clone, Copy, Default)]
 struct OutlineUniform {
     colors: [Vec4; 2],
-    counts: UVec2,
-    width: u32,
+    width: f32,
 }
 
 /// A camera's [`Picking`] as the render world reads it, with the camera it belongs to.
@@ -330,6 +151,15 @@ pub struct ExtractedPicking {
     camera: Entity,
     pointer: Option<UVec2>,
     outlines: [Outline; 2],
+}
+
+impl ExtractedPicking {
+    /// Whether it outlines anything.
+    fn outlining(&self) -> bool {
+        self.outlines
+            .iter()
+            .any(|outline| !outline.instances.is_empty())
+    }
 }
 
 impl SyncComponent<RenderApp> for Picking {
@@ -361,19 +191,22 @@ impl ExtractComponent<RenderApp> for Picking {
 #[derive(Resource, Clone, Default)]
 struct Picks(Arc<Mutex<HashMap<Entity, Pick>>>);
 
-/// The pick pass and how outlines are drawn.
+/// How outlines are drawn.
 #[derive(Resource)]
 struct PickPipelines {
-    pass: PickPass,
     outline_layout: BindGroupLayoutDescriptor,
     outline_shader: Handle<Shader>,
+    /// Reads the marks between their pixels, to tell at a few reads where none lies near.
+    between: Sampler,
 }
 
-/// A view's ids and the pick pass's own depth for them.
+/// A view's ids, and the marks of the instances it outlines: as they are written, on several
+/// samples a pixel, and with each pixel's samples settled into the share of it marked.
 #[derive(Component)]
 struct PickTextures {
     ids: CachedTexture,
-    depth: CachedTexture,
+    sampled_marks: CachedTexture,
+    marks: CachedTexture,
     size: UVec2,
 }
 
@@ -399,23 +232,28 @@ const MOST_PENDING: usize = 8;
 
 fn start(mut commands: Commands, device: Res<RenderDevice>, assets: Res<AssetServer>) {
     commands.insert_resource(PickPipelines {
-        pass: PickPass::new(&device),
         outline_layout: BindGroupLayoutDescriptor::new(
             "outline",
             &BindGroupLayoutEntries::sequential(
                 ShaderStages::FRAGMENT,
                 (
-                    texture_2d(TextureSampleType::Uint),
-                    storage_buffer_read_only::<Vec<u32>>(false),
+                    texture_2d(TextureSampleType::Float { filterable: true }),
+                    sampler(SamplerBindingType::Filtering),
                     uniform_buffer::<OutlineUniform>(false),
                 ),
             ),
         ),
         outline_shader: bevy::asset::load_embedded_asset!(assets.as_ref(), "outline.wesl"),
+        between: device.create_sampler(&SamplerDescriptor {
+            label: Some("outline marks"),
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            ..default()
+        }),
     });
 }
 
-/// Gives every picking view its ids and the pick pass's depth, the size of its picture.
+/// Gives every picking view its ids and its marks, the size of its picture.
 fn prepare_targets(
     mut commands: Commands,
     device: Res<RenderDevice>,
@@ -426,7 +264,7 @@ fn prepare_targets(
         let Some(size) = camera.physical_target_size else {
             continue;
         };
-        let mut texture = |label: &'static str, format: TextureFormat, usage: TextureUsages| {
+        let mut texture = |label: &'static str, format: TextureFormat, samples: u32, usage| {
             cache.get(
                 &device,
                 TextureDescriptor {
@@ -437,25 +275,45 @@ fn prepare_targets(
                         depth_or_array_layers: 1,
                     },
                     mip_level_count: 1,
-                    sample_count: 1,
+                    sample_count: samples,
                     dimension: TextureDimension::D2,
                     format,
-                    usage,
+                    usage: TextureUsages::RENDER_ATTACHMENT | usage,
                     view_formats: &[],
                 },
             )
         };
-        let ids = texture(
-            "pick ids",
-            PICK_IDS,
-            TextureUsages::RENDER_ATTACHMENT
-                | TextureUsages::TEXTURE_BINDING
-                | TextureUsages::COPY_SRC,
+        let ids = texture("pick ids", IDS_FORMAT, 1, TextureUsages::COPY_SRC);
+        let sampled_marks = texture(
+            "outline marks sampled",
+            MARKS_FORMAT,
+            MARK_SAMPLES,
+            TextureUsages::empty(),
         );
-        let depth = texture("pick depth", PICK_DEPTH, TextureUsages::RENDER_ATTACHMENT);
-        commands
-            .entity(entity)
-            .insert(PickTextures { ids, depth, size });
+        let marks = texture(
+            "outline marks",
+            MARKS_FORMAT,
+            1,
+            TextureUsages::TEXTURE_BINDING,
+        );
+        commands.entity(entity).insert(PickTextures {
+            ids,
+            sampled_marks,
+            marks,
+            size,
+        });
+    }
+}
+
+/// Has every picking view's props ready what they write its ids and its marks with.
+fn queue_singled(mut queue: PropQueue, views: Query<(&ExtractedView, &ExtractedPicking)>) {
+    for (view, picking) in &views {
+        if picking.pointer.is_some() {
+            queue.ids(view.retained_view_entity);
+        }
+        if picking.outlining() {
+            queue.marks(view.retained_view_entity);
+        }
     }
 }
 
@@ -471,11 +329,7 @@ fn queue_outlines(
         return;
     };
     for (entity, view, picking) in &views {
-        if picking
-            .outlines
-            .iter()
-            .all(|outline| outline.instances.is_empty())
-        {
+        if !picking.outlining() {
             continue;
         }
         let id = *queued.entry(view.target_format).or_insert_with(|| {
@@ -512,80 +366,76 @@ fn slots(culls: &PropCulls, view: RetainedViewEntity) -> Vec<Entity> {
     drawn
 }
 
-/// Writes the ids of what a picking view shows, and sends the one under its pointer back.
+/// Writes the id of what a picking view shows under its pointer, over the depth it was drawn
+/// with, and sends it back.
 fn draw_picks(
     view: ViewQuery<(
         &ExtractedView,
+        &ExtractedCamera,
         &ExtractedPicking,
         &PickTextures,
         &ViewDepthStencilTexture,
+        &ViewUniformOffset,
+        &Msaa,
     )>,
-    pipelines: Option<Res<PickPipelines>>,
+    props: SingledProps,
     culls: Res<PropCulls>,
-    arenas: Res<InstanceArenas>,
-    models: Res<ModelArena>,
     mut pending: ResMut<PendingPicks>,
     mut ctx: RenderContext,
 ) {
-    let (seen, picking, textures, view_depth) = view.into_inner();
-    let (Some(pipelines), Some(vertices), Some(indices)) =
-        (pipelines, models.vertices.buffer(), models.indices.buffer())
-    else {
-        return;
-    };
-    let Some(view_depth) = view_depth
-        .attachment
-        .depth_stencil_views()
-        .depth_only_view()
-    else {
-        return;
-    };
-    let clip_from_world = seen
-        .clip_from_world
-        .unwrap_or_else(|| seen.clip_from_view * seen.world_from_view.to_matrix().inverse());
-    let sceneries = slots(&culls, seen.retained_view_entity);
-    let draws: Vec<PickDraw> = sceneries
-        .iter()
-        .enumerate()
-        .filter_map(|(slot, scenery)| {
-            let cull = culls.0.get(scenery)?;
-            let culled = cull.views.get(&seen.retained_view_entity)?;
-            Some(PickDraw {
-                slot: slot as u8,
-                clip_from_world,
-                instances: arenas.0.get(scenery)?.slab.buffer()?,
-                vertices,
-                indices,
-                drawn: culled.drawn(),
-                commands_buffer: culled.commands(),
-                commands: cull.table.as_ref()?.table().impostors.start,
-            })
-        })
-        .collect();
-    let device = ctx.render_device().clone();
-    let recorder = ctx.diagnostic_recorder();
-    let recorder = recorder.as_deref();
-    let encoder = ctx.command_encoder();
-    let span = recorder.map(|recorder| recorder.time_span(encoder, PICK));
-    pipelines.pass.encode(
-        &device,
-        encoder,
-        &PickTargets {
-            ids: &textures.ids.default_view,
-            depth: &textures.depth.default_view,
-            view_depth,
-        },
-        &draws,
-    );
-    if let Some(span) = span {
-        span.end(encoder);
-    }
+    let (seen, camera, picking, textures, view_depth, offset, msaa) = view.into_inner();
     let Some(at) = picking
         .pointer
         .filter(|at| at.x < textures.size.x && at.y < textures.size.y)
     else {
         return;
     };
+    // The ids take one sample a pixel, so they are drawn only over a depth that takes one too.
+    if *msaa != Msaa::Off {
+        return;
+    }
+    let sceneries = slots(&culls, seen.retained_view_entity);
+    let device = ctx.render_device().clone();
+    let recorder = ctx.diagnostic_recorder();
+    let recorder = recorder.as_deref();
+    let encoder = ctx.command_encoder();
+    let span = recorder.map(|recorder| recorder.time_span(encoder, PICK));
+    let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+        label: Some(PICK),
+        color_attachments: &[Some(RenderPassColorAttachment {
+            view: &textures.ids.default_view,
+            depth_slice: None,
+            resolve_target: None,
+            ops: Operations {
+                load: LoadOp::Clear(default()),
+                store: StoreOp::Store,
+            },
+        })],
+        depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+            view: view_depth
+                .attachment
+                .depth_stencil_views()
+                .attachment_view(),
+            depth_ops: None,
+            stencil_ops: None,
+        }),
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    stand_in(&mut pass, camera);
+    pass.set_scissor_rect(at.x, at.y, 1, 1);
+    props.draw_ids(
+        &device,
+        &mut pass,
+        seen.retained_view_entity,
+        offset,
+        &sceneries,
+    );
+    drop(pass);
+    if let Some(span) = span {
+        span.end(encoder);
+    }
     let buffer = device.create_buffer(&BufferDescriptor {
         label: Some("pick readback"),
         size: READBACK_BYTES,
@@ -628,7 +478,8 @@ fn draw_picks(
     pending.0.drain(..over);
 }
 
-/// Outlines each set of a picking view's instances over what it shows.
+/// Marks the whole shape of every instance a picking view outlines, and lays each set's outline
+/// round its shapes over the view's finished picture.
 fn draw_outlines(
     view: ViewQuery<(
         &ExtractedView,
@@ -637,35 +488,21 @@ fn draw_outlines(
         &ExtractedPicking,
         &PickTextures,
         &OutlinePipelineId,
+        &ViewUniformOffset,
     )>,
     pipelines: Option<Res<PickPipelines>>,
     cache: Res<PipelineCache>,
-    culls: Res<PropCulls>,
+    props: SingledProps,
     queue: Res<RenderQueue>,
     mut ctx: RenderContext,
 ) {
-    let (seen, camera, target, picking, textures, pipeline_id) = view.into_inner();
+    let (seen, camera, target, picking, textures, pipeline_id, offset) = view.into_inner();
     let (Some(pipelines), Some(pipeline)) = (pipelines, cache.get_render_pipeline(pipeline_id.0))
     else {
         return;
     };
-    let sceneries = slots(&culls, seen.retained_view_entity);
-    let slot_of: HashMap<Entity, u8> = sceneries
-        .iter()
-        .enumerate()
-        .map(|(slot, scenery)| (*scenery, slot as u8))
-        .collect();
-    let sets = picking.outlines.clone().map(|outline| {
-        let mut ids: Vec<u32> = outline
-            .instances
-            .iter()
-            .filter_map(|(scenery, instance)| Some(encode(*slot_of.get(scenery)?, *instance)))
-            .collect();
-        ids.sort_unstable();
-        ids.dedup();
-        ids
-    });
-    if sets.iter().all(Vec::is_empty) {
+    let marked = marks(&picking.outlines);
+    if marked.is_empty() {
         return;
     }
     let device = ctx.render_device().clone();
@@ -674,32 +511,49 @@ fn draw_outlines(
             .outlines
             .clone()
             .map(|outline| outline.color.to_vec4()),
-        counts: UVec2::new(sets[0].len() as u32, sets[1].len() as u32),
         width: OUTLINE_PIXELS,
     });
     uniform.write_buffer(&device, &queue);
-    let mut outlined = StorageBuffer::from(
-        sets.iter()
-            .flatten()
-            .copied()
-            .chain([0])
-            .collect::<Vec<u32>>(),
-    );
-    outlined.write_buffer(&device, &queue);
-    let (Some(outlined), Some(uniform)) = (outlined.binding(), uniform.binding()) else {
+    let Some(uniform) = uniform.binding() else {
         return;
     };
     let bind_group = device.create_bind_group(
         "outline",
         &cache.get_bind_group_layout(&pipelines.outline_layout),
-        &BindGroupEntries::sequential((&textures.ids.default_view, outlined, uniform)),
+        &BindGroupEntries::sequential((&textures.marks.default_view, &pipelines.between, uniform)),
     );
     let recorder = ctx.diagnostic_recorder();
     let recorder = recorder.as_deref();
-    let span = recorder.map(|recorder| recorder.time_span(ctx.command_encoder(), OUTLINE));
+    let encoder = ctx.command_encoder();
+    let span = recorder.map(|recorder| recorder.time_span(encoder, OUTLINE));
+    let mut pass = encoder.begin_render_pass(&RenderPassDescriptor {
+        label: Some("outline marks"),
+        color_attachments: &[Some(RenderPassColorAttachment {
+            view: &textures.sampled_marks.default_view,
+            depth_slice: None,
+            resolve_target: Some(&textures.marks.default_view),
+            ops: Operations {
+                load: LoadOp::Clear(default()),
+                store: StoreOp::Discard,
+            },
+        })],
+        depth_stencil_attachment: None,
+        timestamp_writes: None,
+        occlusion_query_set: None,
+        multiview_mask: None,
+    });
+    stand_in(&mut pass, camera);
+    props.draw_marks(
+        &device,
+        &mut pass,
+        seen.retained_view_entity,
+        offset,
+        &marked,
+    );
+    drop(pass);
     let mut pass = ctx.begin_tracked_render_pass(RenderPassDescriptor {
         label: Some(OUTLINE),
-        color_attachments: &[Some(target.get_color_attachment())],
+        color_attachments: &[Some(target.get_unsampled_color_attachment())],
         depth_stencil_attachment: None,
         timestamp_writes: None,
         occlusion_query_set: None,
@@ -714,6 +568,37 @@ fn draw_outlines(
     drop(pass);
     if let Some(span) = span {
         span.end(ctx.command_encoder());
+    }
+}
+
+/// The marks of the instances `outlines` hold of each scenery: two bits an instance, the first
+/// set's lower, in as many words as reach the last instance held.
+fn marks(outlines: &[Outline; 2]) -> Vec<(Entity, Vec<u32>)> {
+    let mut marked: HashMap<Entity, Vec<u32>> = HashMap::default();
+    for (set, outline) in outlines.iter().enumerate() {
+        for &(scenery, instance) in outline.instances.iter() {
+            let marks = marked.entry(scenery).or_default();
+            let word = (instance / 16) as usize;
+            if marks.len() <= word {
+                marks.resize(word + 1, 0);
+            }
+            marks[word] |= 1 << (instance % 16 * 2 + set as u32);
+        }
+    }
+    marked.into_iter().collect()
+}
+
+/// Has `pass` draw where `camera` draws on its target.
+fn stand_in(pass: &mut wgpu::RenderPass, camera: &ExtractedCamera) {
+    if let Some(viewport) = camera.viewport.as_ref() {
+        pass.set_viewport(
+            viewport.physical_position.x as f32,
+            viewport.physical_position.y as f32,
+            viewport.physical_size.x as f32,
+            viewport.physical_size.y as f32,
+            viewport.depth.start,
+            viewport.depth.end,
+        );
     }
 }
 

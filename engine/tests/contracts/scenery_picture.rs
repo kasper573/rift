@@ -20,7 +20,7 @@ use engine::core::render::video::{
     GrassQuality, PropDetail, Quality, ShadowQuality, VideoPreferences,
 };
 use engine::core::render::world::clouds::CloudDrift;
-use engine::core::render::world::gpu::pick::{Outline, Picking};
+use engine::core::render::world::gpu::pick::{self, Outline, Picking};
 use engine::core::render::world::sky::Daylight;
 use engine::core::render::world::{self, WorldScenePlugin};
 use engine::core::units::{Degrees, Meters};
@@ -46,6 +46,10 @@ const FOV: Degrees = Degrees(50.0);
 /// the other.
 const BLOCK: Pos<Meters> = Pos::new(24.0, 10.0);
 const LANTERN: Pos<Meters> = Pos::new(24.0, 22.0);
+/// Where the vane's model stands on the bare half, and how far along x the shader of the game's
+/// that draws it stands every point of it instead.
+const VANE: Pos<Meters> = Pos::new(30.0, 16.0);
+const VANE_MOVED: f32 = -4.0;
 /// How high up each prop the picture is read.
 const PROP_HEIGHT: f32 = 2.0;
 /// Where the specks are strewn on the bare half, far enough off the eye to fall under the grain,
@@ -144,8 +148,9 @@ fn the_ground_under_props_the_view_thins_away_shows_their_colour_from_above() {
     );
 }
 
-/// Outlining props singles them out on the picture: every pixel within the outline's width of
-/// one, showing anything else, takes the outline's colour.
+/// Outlining props singles them out on the picture: a line in the outline's colour runs round
+/// each one's shape, outside it, where the picture shows the prop: round where a shader of the
+/// game's stands it, not where its model stands unmoved.
 #[test]
 fn an_outlined_prop_is_edged_in_the_outlines_colour() {
     let _gpu = crate::gpu::exclusive();
@@ -193,6 +198,33 @@ fn an_outlined_prop_is_edged_in_the_outlines_colour() {
         b > r && b > g,
         "the block itself still shows blue: {r} {g} {b}"
     );
+    let unmoved = Vec3::new(VANE.x, PROP_HEIGHT, VANE.y);
+    let moved = picture.counted_near(unmoved + Vec3::X * VANE_MOVED, 6, cyan);
+    let left = picture.counted_near(unmoved, 6, cyan);
+    assert!(
+        moved > 20 && left == 0,
+        "the vane is edged where it shows: {moved} cyan pixels about it, {left} about its model"
+    );
+}
+
+/// Pointing at a pixel of the picture names the prop the view shows there, by where the area
+/// wrote it: a prop a shader of the game's moves is named where the view shows it, not where its
+/// model stands unmoved, and the bare ground names nothing.
+#[test]
+fn pointing_at_the_picture_names_the_prop_it_shows_there() {
+    let _gpu = crate::gpu::exclusive();
+    let mut staged = stage();
+    let up = |at: Pos<Meters>| Vec3::new(at.x, PROP_HEIGHT, at.y);
+    let moved = up(VANE) + Vec3::X * VANE_MOVED;
+    for (what, at, named) in [
+        ("the block", up(BLOCK), Some("/0")),
+        ("the lantern", up(LANTERN), Some("/1")),
+        ("the vane where it shows", moved, Some("/2")),
+        ("where the vane's model stands", up(VANE), None),
+        ("the bare rock", Vec3::new(20.0, 0.0, 28.0), None),
+    ] {
+        assert_eq!(staged.pointed(at).as_deref(), named, "pointing at {what}");
+    }
 }
 
 /// The field standing whole before a camera whose picture is read back: the app, kept so what
@@ -206,6 +238,43 @@ struct Staged {
 }
 
 impl Staged {
+    /// Where the area wrote the prop its picture shows at `at`, pointed at until the view has
+    /// drawn whole what it points at.
+    fn pointed(&mut self, at: Vec3) -> Option<String> {
+        let camera = self.camera;
+        let world = self.app.world_mut();
+        let seen = world.entity(camera);
+        let pixel = seen
+            .get::<Camera>()
+            .expect("the picture's camera")
+            .world_to_viewport(
+                seen.get::<GlobalTransform>()
+                    .expect("the camera's transform"),
+                at,
+            )
+            .expect("a point within the picture")
+            .as_uvec2();
+        world.entity_mut(camera).insert(Picking {
+            pointer: Some(pixel),
+            ..default()
+        });
+        let mut whole = 0;
+        assert!(
+            settle(&mut self.app, Duration::from_secs(120), |app| {
+                whole += u32::from(!world::readying(app.world_mut()));
+                whole >= 8 && pick::picked(app.world(), camera).is_some_and(|pick| pick.at == pixel)
+            }),
+            "the view tells what shows at {pixel}"
+        );
+        let world = self.app.world();
+        let hit = pick::picked(world, camera)?.hit?;
+        assert_eq!(
+            hit.scenery, self.stood.root,
+            "the field's own prop is named"
+        );
+        scenery::origin_of(world, self.stood, hit.instance)
+    }
+
     /// Takes the camera's picture as the world stands now.
     fn shoot(&mut self) -> Picture<'_> {
         camera::forget_history(self.app.world_mut());
@@ -365,8 +434,8 @@ fn stage() -> Staged {
 }
 
 /// A field whose western half is turf strewn with white pebbles among magenta blades, and whose
-/// eastern half is bare rock, where a blue block stands in the world's own material and a
-/// lantern that a shader of the game's paints red.
+/// eastern half is bare rock, where a blue block stands in the world's own material, a lantern
+/// that a shader of the game's paints red, and a vane that another stands aside of its model.
 fn field() -> Game {
     let row = format!("{}{}", ".".repeat(16), "#".repeat(16));
     let rows: Vec<&str> = (0..32).map(|_| row.as_str()).collect();
@@ -382,7 +451,15 @@ fn field() -> Game {
             Stage::Prop,
             "fn vfx(uv: vec2<f32>) -> vec4<f32> {\n    return vec4<f32>(1.0, 0.0, 0.0, 1.0);\n}\nfn sway(world: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {\n    return world;\n}\n",
         )
+        .shader_of(
+            "aside",
+            Stage::Prop,
+            &format!(
+                "fn vfx(uv: vec2<f32>) -> vec4<f32> {{\n    return vec4<f32>(0.0, 1.0, 0.0, 1.0);\n}}\nfn sway(world: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {{\n    return world + vec3<f32>({VANE_MOVED:?}, 0.0, 0.0);\n}}\n"
+            ),
+        )
         .row("prop_material", "glow", json!({ "shader": path("vfx_shader", "lamp") }))
+        .row("prop_material", "drift", json!({ "shader": path("vfx_shader", "aside") }))
         .prop_of(
             "pebble",
             box_glb(Vec3::splat(1.0), "stone", white),
@@ -402,6 +479,14 @@ fn field() -> Game {
             }),
         )
         .prop_of(
+            "vane",
+            box_glb(Vec3::new(1.0, PROP_TALL, 1.0), "drift", white),
+            json!({
+                "footprint": { "type": "none" },
+                "materials": { "drift": path("prop_material", "drift") },
+            }),
+        )
+        .prop_of(
             "speck",
             box_glb(Vec3::splat(SPECK), "paint", [1.0, 0.0, 0.0, 1.0]),
             json!({ "footprint": { "type": "none" } }),
@@ -412,6 +497,7 @@ fn field() -> Game {
             json!([
                 { "type": "prop", "prop": path("prop", "block"), "at": { "x": BLOCK.x, "y": BLOCK.y } },
                 { "type": "prop", "prop": path("prop", "lantern"), "at": { "x": LANTERN.x, "y": LANTERN.y } },
+                { "type": "prop", "prop": path("prop", "vane"), "at": { "x": VANE.x, "y": VANE.y } },
                 {
                     "type": "scatter",
                     "props": [path("prop", "speck")],

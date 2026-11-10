@@ -6,7 +6,9 @@
 //! drawn by a shader of the game's draws through the shader's own instanced stage. A view draws
 //! each part's levels in one indirect multi-draw, then the props' impostors from the atlas and
 //! the boxes standing in for what the GPU lacks, each in one more. A model's impostor is baked
-//! by the same pipelines, each part's shaders drawing the atlas's cells as instances.
+//! by the same pipelines, each part's shaders drawing the atlas's cells as instances. And for a
+//! view that singles instances out ([`SingledProps`]), the same pipelines write each instance's
+//! id over what the view shows of it, and the whole shape of each instance it outlines.
 
 use std::any::TypeId;
 use std::sync::Arc;
@@ -18,8 +20,8 @@ use bevy::core_pipeline::prepass::{
     prepass_target_descriptors,
 };
 use bevy::ecs::query::ROQueryItem;
-use bevy::ecs::system::SystemParamItem;
 use bevy::ecs::system::lifetimeless::{Read, SRes};
+use bevy::ecs::system::{SystemParam, SystemParamItem};
 use bevy::material::MaterialProperties;
 use bevy::material::key::{ErasedMaterialKey, ErasedMaterialPipelineKey, ErasedMeshPipelineKey};
 use bevy::math::Affine3;
@@ -28,10 +30,11 @@ use bevy::pbr::{
     LightEntity, LightKeyCache, MATERIAL_BIND_GROUP_INDEX, MaterialFragmentShader,
     MaterialPipeline, MaterialVertexShader, MeshFlags, MeshPipeline, MeshPipelineKey,
     MeshTransforms, MeshUniform, MeshViewBindGroup, PreparedMaterial, PrepassFragmentShader,
-    PrepassPipeline, PrepassPipelineSpecializer, PrepassVertexShader, SetMeshViewBindGroup,
-    SetMeshViewBindingArrayBindGroup, SetPrepassViewBindGroup, SetPrepassViewEmptyBindGroup,
-    Shadow, ShadowBatchSetKey, ShadowBinKey, ViewKeyCache, ViewKeyPrepassCache,
-    alpha_mode_pipeline_key, init_prepass_pipeline, prepare_mesh_view_bind_groups,
+    PrepassPipeline, PrepassPipelineSpecializer, PrepassVertexShader, PrepassViewBindGroup,
+    SetMeshViewBindGroup, SetMeshViewBindingArrayBindGroup, SetPrepassViewBindGroup,
+    SetPrepassViewEmptyBindGroup, Shadow, ShadowBatchSetKey, ShadowBinKey, ViewKeyCache,
+    ViewKeyPrepassCache, alpha_mode_pipeline_key, init_prepass_pipeline,
+    prepare_mesh_view_bind_groups,
 };
 use bevy::platform::collections::{HashMap, HashSet};
 use bevy::prelude::*;
@@ -48,17 +51,17 @@ use bevy::render::render_resource::binding_types::{
     sampler, storage_buffer_read_only_sized, texture_2d_array, uniform_buffer,
 };
 use bevy::render::render_resource::{
-    BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, Buffer,
-    BufferInitDescriptor, BufferUsages, CachedRenderPipelineId, ColorTargetState, ColorWrites,
-    CompareFunction, DepthBiasState, DepthStencilState, FragmentState, IndexFormat,
-    MultisampleState, PipelineCache, PrimitiveState, PrimitiveTopology as RawTopology,
-    RenderPipeline, RenderPipelineDescriptor, SamplerBindingType, ShaderStages, ShaderType,
-    SpecializedMeshPipeline, StencilState, StorageBuffer, TextureSampleType, UniformBuffer,
-    VertexState, encase,
+    BindGroup, BindGroupEntries, BindGroupLayoutDescriptor, BindGroupLayoutEntries, BlendComponent,
+    BlendFactor, BlendOperation, BlendState, Buffer, BufferInitDescriptor, BufferUsages,
+    CachedRenderPipelineId, ColorTargetState, ColorWrites, CompareFunction, DepthBiasState,
+    DepthStencilState, FragmentState, IndexFormat, MultisampleState, PipelineCache, PrimitiveState,
+    PrimitiveTopology as RawTopology, RenderPipeline, RenderPipelineDescriptor, SamplerBindingType,
+    ShaderStages, ShaderType, SpecializedMeshPipeline, StencilState, StorageBuffer, TextureFormat,
+    TextureSampleType, UniformBuffer, VertexState, encase,
 };
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::sync_world::MainEntity;
-use bevy::render::view::{ExtractedView, RetainedViewEntity};
+use bevy::render::view::{ExtractedView, RetainedViewEntity, ViewUniformOffset};
 use bevy::render::{Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::shader::{Shader, ShaderDefVal};
 
@@ -101,14 +104,19 @@ impl Plugin for PropDrawPlugin {
                     )
                         .in_set(RenderSystems::PrepareBindGroups),
                     (
-                        forget_drawn,
-                        (queue_lit, queue_prepass, queue_shadows).after(forget_drawn),
+                        forget_drawn.before(QueueProps),
+                        (queue_lit, queue_prepass, queue_shadows).in_set(QueueProps),
                     )
                         .in_set(RenderSystems::Queue),
                 ),
             );
     }
 }
+
+/// The queues saying what each view draws of the props this frame, once what the views drew the
+/// frame before is forgotten.
+#[derive(SystemSet, Clone, Debug, PartialEq, Eq, Hash)]
+pub(super) struct QueueProps;
 
 /// Lights a view's props in its alpha-masked pass, with its lights, shadows, ambient occlusion
 /// and fog.
@@ -138,13 +146,27 @@ struct ClearingUniform {
 /// would be, and of a part's material after it.
 const INSTANCE_GROUP: usize = 2;
 
+/// The format of the ids a view's instances write.
+pub(super) const IDS_FORMAT: TextureFormat = TextureFormat::R32Uint;
+
+/// The format of the marks a view's outlined instances write: a channel for each set of them.
+pub(super) const MARKS_FORMAT: TextureFormat = TextureFormat::Rg8Unorm;
+
+/// How many samples of a pixel the marks are written on, for a shape's edge to cover the share
+/// of each pixel it does, and its outline to move with it by less than a pixel at a time.
+pub(super) const MARK_SAMPLES: u32 = 4;
+
 /// The passes a part's material is drawn in: lit in a view's alpha-masked pass, its depth in a
-/// view's prepass or a light's shadow map, and baked into its model's impostor atlas.
+/// view's prepass or a light's shadow map, baked into its model's impostor atlas, and for a view
+/// that singles instances out, its instances' ids over what the view shows and the marks of
+/// those it outlines.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 enum PropPass {
     Lit,
     Depth,
     Bake,
+    Ids,
+    Marks,
 }
 
 /// The bind groups each view's props are drawn with, by scenery and view, and the parts each
@@ -154,7 +176,7 @@ enum PropPass {
 struct PropBindings {
     /// Each view's instances of each scenery: for the depth passes, and for the lit ones.
     instances: HashMap<(Entity, RetainedViewEntity, bool), BindGroup>,
-    drawn: HashMap<(Entity, RetainedViewEntity, bool), Vec<PartDraw>>,
+    drawn: HashMap<(Entity, RetainedViewEntity, PropPass), Vec<PartDraw>>,
     /// The impostor atlas, bound where a part's material would be.
     atlas: Option<BindGroup>,
 }
@@ -176,6 +198,9 @@ struct PropPipeline {
     material: MaterialPipeline,
     prepass: PrepassPipeline,
     instances: BindGroupLayoutDescriptor,
+    /// The instances with their scenery's slot and its outlined instances' marks after them, as
+    /// the ids and the marks are written with.
+    singled: BindGroupLayoutDescriptor,
     layout: MeshVertexBufferLayoutRef,
     /// The instanced stages of the world's own material.
     shader: Handle<Shader>,
@@ -209,7 +234,7 @@ struct ImpostorPipeline {
     prepass_still: BindGroupLayoutDescriptor,
     empty: BindGroupLayoutDescriptor,
     depth_clip_control: bool,
-    built: HashMap<(bool, MeshPipelineKey, bool), CachedRenderPipelineId>,
+    built: HashMap<(PropPass, MeshPipelineKey, bool), CachedRenderPipelineId>,
 }
 
 fn start(
@@ -240,6 +265,22 @@ fn start(
                 (102, uniform_buffer::<ClearingUniform>(false)),
                 (103, storage_buffer_read_only_sized(false, None)),
                 (104, storage_buffer_read_only_sized(false, None)),
+            ),
+        ),
+    );
+    let singled = BindGroupLayoutDescriptor::new(
+        "prop_singled_instances",
+        &BindGroupLayoutEntries::with_indices(
+            ShaderStages::VERTEX_FRAGMENT,
+            (
+                (0, storage_buffer_read_only_sized(false, None)),
+                (100, storage_buffer_read_only_sized(false, None)),
+                (101, storage_buffer_read_only_sized(false, None)),
+                (102, uniform_buffer::<ClearingUniform>(false)),
+                (103, storage_buffer_read_only_sized(false, None)),
+                (104, storage_buffer_read_only_sized(false, None)),
+                (106, uniform_buffer::<u32>(false)),
+                (107, storage_buffer_read_only_sized(false, None)),
             ),
         ),
     );
@@ -325,6 +366,7 @@ fn start(
         },
         prepass: prepass.clone(),
         instances,
+        singled,
         layout: model.get_mesh_vertex_buffer_layout(&mut layouts),
         shader: bevy::asset::load_embedded_asset!(assets.as_ref(), "instanced.wesl"),
         clearing: UniformBuffer::default(),
@@ -532,7 +574,7 @@ fn draw_bakes(bakes: BakeQueue) {
 }
 
 /// What the bakes draw with.
-#[derive(bevy::ecs::system::SystemParam)]
+#[derive(SystemParam)]
 struct BakeQueue<'w, 's> {
     device: Res<'w, RenderDevice>,
     queue: Res<'w, RenderQueue>,
@@ -578,10 +620,10 @@ impl Warmth {
     fn warm_impostors(&self, pipeline: &mut PropPipeline, cache: &PipelineCache) {
         for proxy in [false, true] {
             for &view in &self.lit {
-                pipeline.specialize_impostors(cache, view, true, proxy);
+                pipeline.specialize_impostors(cache, view, PropPass::Lit, proxy);
             }
             for &view in &self.depth {
-                pipeline.specialize_impostors(cache, view, false, proxy);
+                pipeline.specialize_impostors(cache, view, PropPass::Depth, proxy);
             }
         }
     }
@@ -664,8 +706,8 @@ fn write_clearing(
 }
 
 /// What the props draw with that the queues read.
-#[derive(bevy::ecs::system::SystemParam)]
-struct PropQueue<'w, 's> {
+#[derive(SystemParam)]
+pub(super) struct PropQueue<'w, 's> {
     cache: Res<'w, PipelineCache>,
     pipeline: Option<ResMut<'w, PropPipeline>>,
     culls: Res<'w, PropCulls>,
@@ -678,15 +720,26 @@ struct PropQueue<'w, 's> {
 }
 
 impl PropQueue<'_, '_> {
-    /// The parts `view` draws of each scenery in the pass `lit` names, on the pipelines for the
-    /// view's key `view_key`, as each is queued: each scenery with its entity in the render world
-    /// and the main world, and the pipeline of the first part it draws. A light's view draws only
-    /// the parts that cast shadows.
+    /// Has `view` write the ids of the instances it shows this frame, for [`SingledProps`] to
+    /// draw.
+    pub(super) fn ids(&mut self, view: RetainedViewEntity) {
+        self.drawn(view, singled_view(1), PropPass::Ids, false);
+    }
+
+    /// Has `view` mark the instances it outlines this frame, for [`SingledProps`] to draw.
+    pub(super) fn marks(&mut self, view: RetainedViewEntity) {
+        self.drawn(view, singled_view(MARK_SAMPLES), PropPass::Marks, false);
+    }
+
+    /// The parts `view` draws of each scenery in `pass`, on the pipelines for the view's key
+    /// `view_key`, as each is queued: each scenery with its entity in the render world and the
+    /// main world, and the pipeline of the first part it draws. A light's view draws only the
+    /// parts that cast shadows, and no box standing in for a model is singled out.
     fn drawn(
         &mut self,
         view: RetainedViewEntity,
         view_key: MeshPipelineKey,
-        lit: bool,
+        pass: PropPass,
         light: bool,
     ) -> Vec<(Entity, MainEntity, CachedRenderPipelineId)> {
         let Some(pipeline) = self.pipeline.as_mut() else {
@@ -747,7 +800,7 @@ impl PropQueue<'_, '_> {
                     let id = pipeline.specialize(
                         &self.cache,
                         view_key,
-                        if lit { PropPass::Lit } else { PropPass::Depth },
+                        pass,
                         material.type_id(),
                         &prepared.properties,
                     )?;
@@ -761,11 +814,13 @@ impl PropQueue<'_, '_> {
                 .collect();
             if let Some(atlas) = &self.bindings.atlas {
                 let table = table.table();
+                let singled = matches!(pass, PropPass::Ids | PropPass::Marks);
                 for (proxy, commands) in [(false, &table.impostors), (true, &table.proxies)] {
-                    if commands.is_empty() {
+                    if commands.is_empty() || (proxy && singled) {
                         continue;
                     }
-                    let Some(id) = pipeline.specialize_impostors(&self.cache, view_key, lit, proxy)
+                    let Some(id) =
+                        pipeline.specialize_impostors(&self.cache, view_key, pass, proxy)
                     else {
                         progress.left_out();
                         continue;
@@ -783,7 +838,7 @@ impl PropQueue<'_, '_> {
             let Some(first) = parts.first().map(|part| part.pipeline) else {
                 continue;
             };
-            self.bindings.drawn.insert((scenery, view, lit), parts);
+            self.bindings.drawn.insert((scenery, view, pass), parts);
             queued.push((entity, main, first));
         }
         queued
@@ -808,7 +863,7 @@ fn queue_lit(
             queued.forget(view.retained_view_entity);
             continue;
         };
-        let drawn = queue.drawn(view.retained_view_entity, key, true, false);
+        let drawn = queue.drawn(view.retained_view_entity, key, PropPass::Lit, false);
         queued.queue(phase, view.retained_view_entity, &drawn, |pipeline| {
             (
                 OpaqueNoLightmap3dBatchSetKey {
@@ -843,7 +898,7 @@ fn queue_prepass(
             queued.forget(view.retained_view_entity);
             continue;
         };
-        let drawn = queue.drawn(view.retained_view_entity, key, false, false);
+        let drawn = queue.drawn(view.retained_view_entity, key, PropPass::Depth, false);
         queued.queue(phase, view.retained_view_entity, &drawn, |pipeline| {
             (
                 OpaqueNoLightmap3dBatchSetKey {
@@ -878,7 +933,7 @@ fn queue_shadows(
             queued.forget(view.retained_view_entity);
             continue;
         };
-        let drawn = queue.drawn(view.retained_view_entity, key, false, true);
+        let drawn = queue.drawn(view.retained_view_entity, key, PropPass::Depth, true);
         queued.queue(phase, view.retained_view_entity, &drawn, |pipeline| {
             (
                 ShadowBatchSetKey {
@@ -968,6 +1023,8 @@ impl PropPipeline {
             PropPass::Lit => self.lit(view, kind, properties, false),
             PropPass::Depth => self.depth(view, kind, properties),
             PropPass::Bake => self.bake(view, kind, properties),
+            PropPass::Ids => self.ids(view, kind, properties),
+            PropPass::Marks => self.marks(view, kind, properties),
         };
         let id = descriptor.map(|descriptor| cache.queue_render_pipeline(descriptor));
         self.built.insert(key, id);
@@ -1121,23 +1178,81 @@ impl PropPipeline {
         Some(self.instanced(descriptor, &self.prepass.default_prepass_shader))
     }
 
-    /// The pipeline drawing the impostors, or the proxies where `proxy`, in the pass `lit` names,
-    /// in a view of `view`'s key, queued the first time it is asked for.
+    /// The depth pipeline's stages writing each instance's id wherever its depth is the very one
+    /// the view holds there: the stages that stood the instance in the view stand it here, so
+    /// however a shader bends, sways or cuts its model, its id covers what the view shows of it
+    /// and nothing else.
+    fn ids(
+        &self,
+        view: MeshPipelineKey,
+        kind: TypeId,
+        properties: &Arc<MaterialProperties>,
+    ) -> Option<RenderPipelineDescriptor> {
+        let mut descriptor = self.singled(view, kind, properties, "PICK", id_target())?;
+        descriptor.label = Some("prop_ids".into());
+        shade_only_what_shows(&mut descriptor);
+        Some(descriptor)
+    }
+
+    /// The depth pipeline's stages marking the whole shape of each instance a view outlines,
+    /// as its shaders bend, sway and cut it, whatever stands before it: each set of instances in
+    /// a channel of its own, where the shapes of a set add up.
+    fn marks(
+        &self,
+        view: MeshPipelineKey,
+        kind: TypeId,
+        properties: &Arc<MaterialProperties>,
+    ) -> Option<RenderPipelineDescriptor> {
+        let mut descriptor = self.singled(view, kind, properties, "MARK", mark_target())?;
+        descriptor.label = Some("prop_marks".into());
+        descriptor.depth_stencil = None;
+        Some(descriptor)
+    }
+
+    /// The depth pipeline of a material with its stages built for `singling` and writing
+    /// `target`, the scenery's slot and its marks bound after the instances.
+    fn singled(
+        &self,
+        view: MeshPipelineKey,
+        kind: TypeId,
+        properties: &Arc<MaterialProperties>,
+        singling: &'static str,
+        target: ColorTargetState,
+    ) -> Option<RenderPipelineDescriptor> {
+        let mut descriptor = self.depth(view, kind, properties)?;
+        descriptor.layout[INSTANCE_GROUP] = self.singled.clone();
+        let stages = descriptor.vertex.shader.clone();
+        let defs = descriptor.vertex.shader_defs.clone();
+        let fragment = descriptor.fragment.get_or_insert_with(|| FragmentState {
+            shader: stages,
+            shader_defs: defs,
+            ..default()
+        });
+        fragment.targets = vec![Some(target)];
+        fragment.shader_defs.push(singling.into());
+        descriptor.vertex.shader_defs.push(singling.into());
+        Some(descriptor)
+    }
+
+    /// The pipeline drawing the impostors, or the proxies where `proxy`, in `pass`, in a view of
+    /// `view`'s key, queued the first time it is asked for. No impostor is baked by one.
     fn specialize_impostors(
         &mut self,
         cache: &PipelineCache,
         view: MeshPipelineKey,
-        lit: bool,
+        pass: PropPass,
         proxy: bool,
     ) -> Option<CachedRenderPipelineId> {
-        let key = (lit, view, proxy);
+        let key = (pass, view, proxy);
         if let Some(&id) = self.impostors.built.get(&key) {
             return Some(id);
         }
-        let descriptor = if lit {
-            self.impostors_lit(view, proxy)?
-        } else {
-            self.impostors_depth(view, proxy)
+        let descriptor = match pass {
+            PropPass::Lit => self.impostors_lit(view, proxy)?,
+            PropPass::Depth => self.impostors_depth(view, proxy),
+            PropPass::Ids => self.impostors_ids(view, proxy),
+            PropPass::Marks => self.impostors_marks(view, proxy),
+            PropPass::Bake => return None,
         };
         let id = cache.queue_render_pipeline(descriptor);
         self.impostors.built.insert(key, id);
@@ -1252,6 +1367,45 @@ impl PropPipeline {
         }
     }
 
+    /// The impostors' depth stages writing each instance's id where the depth its picture lies
+    /// at is the one the view holds there, or nearer: the view holds nothing nearer than what it
+    /// shows, so that is where it shows the picture.
+    fn impostors_ids(&self, view: MeshPipelineKey, proxy: bool) -> RenderPipelineDescriptor {
+        let mut descriptor = self.impostors_singled(view, proxy, "PICK", id_target());
+        descriptor.label = Some("impostor_ids".into());
+        if let Some(depth) = &mut descriptor.depth_stencil {
+            depth.depth_write_enabled = Some(false);
+        }
+        descriptor
+    }
+
+    /// The impostors' depth stages marking the whole picture of each instance a view outlines.
+    fn impostors_marks(&self, view: MeshPipelineKey, proxy: bool) -> RenderPipelineDescriptor {
+        let mut descriptor = self.impostors_singled(view, proxy, "MARK", mark_target());
+        descriptor.label = Some("impostor_marks".into());
+        descriptor.depth_stencil = None;
+        descriptor
+    }
+
+    /// The impostors' depth pipeline with its stages built for `singling` and writing `target`,
+    /// the scenery's slot and its marks bound after the instances.
+    fn impostors_singled(
+        &self,
+        view: MeshPipelineKey,
+        proxy: bool,
+        singling: &'static str,
+        target: ColorTargetState,
+    ) -> RenderPipelineDescriptor {
+        let mut descriptor = self.impostors_depth(view, proxy);
+        descriptor.layout[INSTANCE_GROUP] = self.singled.clone();
+        descriptor.vertex.shader_defs.push(singling.into());
+        if let Some(fragment) = &mut descriptor.fragment {
+            fragment.shader_defs.push(singling.into());
+            fragment.targets = vec![Some(target)];
+        }
+        descriptor
+    }
+
     /// `descriptor` drawing the instances its commands list: from the arenas' instances where a
     /// mesh's bindings would be, through the shader of the game's that draws the material, in
     /// its instanced stages, else through the instanced stages of the world's own material in
@@ -1272,8 +1426,8 @@ impl PropPipeline {
     }
 }
 
-/// Has a lit pipeline of a view whose prepass drew the same geometry shade only the pixels that
-/// show: the prepass left each pixel's depth, so a pixel of the lit pass shows only where its
+/// Has a pipeline of a view whose depth the same geometry was drawn into shade only the pixels
+/// that show: each pixel's depth is left there, so a pixel of this pass shows only where its
 /// depth is that very depth, and writes none. Testing for less, the GPU would run the whole
 /// lighting for every face under a pixel that passes on its way to the nearest, as a shader that
 /// drops pixels of its own keeps the depth test from running before it while it writes depth.
@@ -1281,6 +1435,37 @@ fn shade_only_what_shows(descriptor: &mut RenderPipelineDescriptor) {
     if let Some(depth) = &mut descriptor.depth_stencil {
         depth.depth_compare = Some(CompareFunction::Equal);
         depth.depth_write_enabled = Some(false);
+    }
+}
+
+/// The key the pipelines singling instances out are built for, whatever the view: depth alone,
+/// on `samples` samples a pixel.
+fn singled_view(samples: u32) -> MeshPipelineKey {
+    MeshPipelineKey::DEPTH_PREPASS | MeshPipelineKey::from_msaa_samples(samples)
+}
+
+fn id_target() -> ColorTargetState {
+    ColorTargetState {
+        format: IDS_FORMAT,
+        blend: None,
+        write_mask: ColorWrites::ALL,
+    }
+}
+
+/// Every shape marked in a set adds to the set's channel, which holds no more than whole.
+fn mark_target() -> ColorTargetState {
+    let adding = BlendComponent {
+        src_factor: BlendFactor::One,
+        dst_factor: BlendFactor::One,
+        operation: BlendOperation::Add,
+    };
+    ColorTargetState {
+        format: MARKS_FORMAT,
+        blend: Some(BlendState {
+            color: adding,
+            alpha: adding,
+        }),
+        write_mask: ColorWrites::ALL,
     }
 }
 
@@ -1329,8 +1514,9 @@ impl<P: PhaseItem, const LIT: bool> RenderCommand<P> for DrawProps<LIT> {
             return RenderCommandResult::Skip;
         };
         let view = view.retained_view_entity;
+        let drawn = if LIT { PropPass::Lit } else { PropPass::Depth };
         let (Some(parts), Some(instances), Some(culled), Some(vertices), Some(indices)) = (
-            bindings.drawn.get(&(scenery, view, LIT)),
+            bindings.drawn.get(&(scenery, view, drawn)),
             bindings.instances.get(&(scenery, view, LIT)),
             culls.0.get(&scenery).and_then(|cull| cull.views.get(&view)),
             models.vertices.buffer(),
@@ -1360,6 +1546,164 @@ impl<P: PhaseItem, const LIT: bool> RenderCommand<P> for DrawProps<LIT> {
             );
         }
         RenderCommandResult::Success
+    }
+}
+
+/// What a view that singles instances out draws them with: the ids of those it shows, for what
+/// it points at, and the marks of those it outlines.
+#[derive(SystemParam)]
+pub(super) struct SingledProps<'w> {
+    bindings: Res<'w, PropBindings>,
+    pipeline: Option<Res<'w, PropPipeline>>,
+    culls: Res<'w, PropCulls>,
+    arenas: Res<'w, InstanceArenas>,
+    models: Res<'w, ModelArena>,
+    cache: Res<'w, PipelineCache>,
+    view: Res<'w, PrepassViewBindGroup>,
+    progress: Res<'w, RenderProgress>,
+}
+
+impl SingledProps<'_> {
+    /// Draws into `pass` the id of every instance the view `view` shows, of each of `sceneries`
+    /// under its place among them as its slot: the parts [`PropQueue::ids`] readied, over the
+    /// depth the view was drawn with, its uniforms at `offset`.
+    pub(super) fn draw_ids(
+        &self,
+        device: &RenderDevice,
+        pass: &mut wgpu::RenderPass,
+        view: RetainedViewEntity,
+        offset: &ViewUniformOffset,
+        sceneries: &[Entity],
+    ) {
+        let none = [0u32];
+        for (slot, scenery) in sceneries.iter().enumerate() {
+            self.draw(
+                device,
+                pass,
+                PropPass::Ids,
+                view,
+                offset,
+                (*scenery, slot as u32, &none),
+            );
+        }
+    }
+
+    /// Draws into `pass` the whole shape of every instance the view `view` outlines of each
+    /// scenery: the parts [`PropQueue::marks`] readied, of the instances `marked` holds in a set,
+    /// two bits an instance, the first set's lower.
+    pub(super) fn draw_marks(
+        &self,
+        device: &RenderDevice,
+        pass: &mut wgpu::RenderPass,
+        view: RetainedViewEntity,
+        offset: &ViewUniformOffset,
+        marked: &[(Entity, Vec<u32>)],
+    ) {
+        for (scenery, marks) in marked {
+            self.draw(
+                device,
+                pass,
+                PropPass::Marks,
+                view,
+                offset,
+                (*scenery, 0, marks),
+            );
+        }
+    }
+
+    /// Draws a scenery's parts in `singling`, with its slot and its instances' marks bound: the
+    /// view's listings the prepass's depth leaves for the ids, which only what shows writes, and
+    /// all of them for the marks, which what is hidden writes too.
+    fn draw(
+        &self,
+        device: &RenderDevice,
+        pass: &mut wgpu::RenderPass,
+        singling: PropPass,
+        view: RetainedViewEntity,
+        offset: &ViewUniformOffset,
+        (scenery, slot, marks): (Entity, u32, &[u32]),
+    ) {
+        let (Some(pipeline), Some(vertices), Some(indices), Some(seen)) = (
+            self.pipeline.as_deref(),
+            self.models.vertices.buffer(),
+            self.models.indices.buffer(),
+            self.view.no_motion_vectors.as_ref(),
+        ) else {
+            return;
+        };
+        let (Some(mesh), Some(clearing), Some(parts)) = (
+            pipeline.mesh.binding(),
+            pipeline.clearing.binding(),
+            self.bindings.drawn.get(&(scenery, view, singling)),
+        ) else {
+            return;
+        };
+        let (Some(records), Some(cull)) = (
+            self.arenas
+                .0
+                .get(&scenery)
+                .and_then(|arena| arena.slab.buffer()),
+            self.culls.0.get(&scenery),
+        ) else {
+            return;
+        };
+        let (Some(culled), Some((props, layers))) = (
+            cull.views.get(&view),
+            cull.table.as_ref().and_then(|table| table.prop_bindings()),
+        ) else {
+            return;
+        };
+        let (drawn, commands) = if singling == PropPass::Ids {
+            (culled.lit_drawn(), culled.lit_commands())
+        } else {
+            (culled.drawn(), culled.commands())
+        };
+        let slot = device.create_buffer_with_data(&BufferInitDescriptor {
+            label: Some("prop_singled_slot"),
+            contents: &slot.to_le_bytes(),
+            usage: BufferUsages::UNIFORM,
+        });
+        let marks = device.create_buffer_with_data(&BufferInitDescriptor {
+            label: Some("prop_singled_marks"),
+            contents: &marks
+                .iter()
+                .flat_map(|word| word.to_le_bytes())
+                .collect::<Vec<u8>>(),
+            usage: BufferUsages::STORAGE,
+        });
+        let instances = device.create_bind_group(
+            "prop_singled_instances",
+            &self.cache.get_bind_group_layout(&pipeline.singled),
+            &BindGroupEntries::with_indices((
+                (0, mesh),
+                (100, records.as_entire_binding()),
+                (101, drawn.as_entire_binding()),
+                (102, clearing),
+                (103, props),
+                (104, layers),
+                (106, slot.as_entire_binding()),
+                (107, marks.as_entire_binding()),
+            )),
+        );
+        pass.set_vertex_buffer(0, *vertices.slice(..));
+        pass.set_index_buffer(*indices.slice(..), IndexFormat::Uint32);
+        pass.set_bind_group(0, Some(&**seen), &[offset.offset]);
+        pass.set_bind_group(1, Some(&*self.view.empty_bind_group), &[]);
+        pass.set_bind_group(INSTANCE_GROUP as u32, Some(&*instances), &[]);
+        for part in parts {
+            let Some(pipeline) = self.cache.get_render_pipeline(part.pipeline) else {
+                self.progress
+                    .awaiting(self.cache.get_render_pipeline_state(part.pipeline));
+                continue;
+            };
+            pass.set_pipeline(pipeline);
+            pass.set_bind_group(MATERIAL_BIND_GROUP_INDEX as u32, Some(&*part.material), &[]);
+            pass.multi_draw_indexed_indirect(
+                commands,
+                ViewCull::command_offset(part.first_command),
+                part.commands,
+            );
+        }
     }
 }
 

@@ -7,7 +7,9 @@
 // the model would. The square stands at the sphere's near side so that depth is never nearer
 // than the square's own, which lets the depth test run before the pixel is shaded.
 // Without the atlas, a box of the prop's bounds stands in its place, coloured by its seed. In the
-// prepass and the shadow maps the same shapes write depth alone.
+// prepass and the shadow maps the same shapes write depth alone. For a view that tells what it
+// points at, the pixel is the instance's id where the view shows the instance; and for one that
+// outlines instances, the sets holding it, wherever its picture lies, shown or hidden.
 
 @if(PREPASS_PIPELINE)
 import bevy_pbr::render::pbr_prepass_functions::calculate_motion_vector;
@@ -27,6 +29,10 @@ import engine::core::render::world::clearing::dither;
 import engine::core::render::world::gpu::instance::{
     Placement, clear_impostor, placement, prop_of, seed_of, shown_of, turned, world_of,
 };
+@if(PICK)
+import engine::core::render::world::gpu::instance::id_of;
+@if(MARK)
+import engine::core::render::world::gpu::instance::{mark_clip, marked, marks_of};
 
 // A prop as the kernel reads it, for the sphere round its model and the box within it.
 struct Prop {
@@ -75,7 +81,12 @@ const FACES: array<vec3<f32>, 6> = array<vec3<f32>, 6>(
 
 struct ImpostorOutput {
     @builtin(position) position: vec4<f32>,
+    @if(!MARK)
     @location(0) world_position: vec4<f32>,
+    // Read at each of a pixel's samples, so a marked picture's edge covers the share of the pixel
+    // it does.
+    @if(MARK)
+    @location(0) @interpolate(perspective, sample) world_position: vec4<f32>,
     // The eye's direction from the instance's middle, in the model's own frame.
     @location(2) @interpolate(flat) direction: vec3<f32>,
     @location(3) @interpolate(flat) middle: vec3<f32>,
@@ -87,6 +98,10 @@ struct ImpostorOutput {
     @if(PREPASS_PIPELINE && UNCLIPPED_DEPTH_ORTHO_EMULATION)
     @location(9) unclipped_depth: f32,
     @location(10) @interpolate(flat) translucency: f32,
+    @if(PICK)
+    @location(11) @interpolate(flat) id: u32,
+    @if(MARK)
+    @location(12) @interpolate(flat) marks: u32,
 }
 
 @vertex
@@ -128,6 +143,13 @@ fn vertex(@builtin(vertex_index) vertex: u32, @builtin(instance_index) instance:
     @if(PREPASS_PIPELINE && UNCLIPPED_DEPTH_ORTHO_EMULATION) {
         out.unclipped_depth = out.position.z;
         out.position.z = min(out.position.z, 1.0);
+    }
+    @if(PICK) {
+        out.id = id_of(instance);
+    }
+    @if(MARK) {
+        out.marks = marks_of(instance);
+        out.position = mark_clip(out.marks, out.world_position.xyz);
     }
     return out;
 }
@@ -287,7 +309,41 @@ struct DepthOutput {
     @builtin(frag_depth) depth: f32,
 }
 
-@if(PREPASS_PIPELINE)
+// The instance's id and the depth its surface lies at, a hair toward the eye: the view's depth
+// holds that very surface where the view shows it, as near as the same sums come out twice.
+@if(PICK)
+struct IdOutput {
+    @location(0) id: u32,
+    @builtin(frag_depth) depth: f32,
+}
+
+@if(PICK)
+const SAME_SURFACE: f32 = 1.0001;
+
+@if(PICK)
+@fragment
+fn fragment(in: ImpostorOutput) -> IdOutput {
+    let found = surface(in);
+    let clip = position_world_to_clip(found.world);
+    var out: IdOutput;
+    out.id = in.id;
+    out.depth = clip.z / clip.w * SAME_SURFACE;
+    return out;
+}
+
+// The share of the square's picture an outlined instance's shape takes in whole: where the atlas
+// holds the model covering this much of the pixel or more.
+@if(MARK)
+const SHAPE_COVERAGE: f32 = 0.3;
+
+@if(MARK)
+@fragment
+fn fragment(in: ImpostorOutput) -> @location(0) vec4<f32> {
+    _ = read_atlas(in, SHAPE_COVERAGE);
+    return marked(in.marks);
+}
+
+@if(PREPASS_PIPELINE && !PICK && !MARK)
 @early_depth_test(less_equal)
 @fragment
 fn fragment(in: ImpostorOutput) -> DepthOutput {

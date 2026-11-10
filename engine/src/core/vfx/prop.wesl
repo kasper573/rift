@@ -11,7 +11,9 @@
 // lies. What `vfx` paints is fogged and finished like every pixel of the world, and the prop
 // fades where it hides the camera's subject like everything else. Every prop is drawn from the
 // arenas, each vertex passing on to the pixel where its instance stands, how much it is grown and
-// how it is turned.
+// how it is turned. For a view that tells what it points at, the pixel is the instance's id,
+// drawn over the view's own depth, so it is written only where the view shows the instance; and
+// for one that outlines instances, the sets holding it, wherever its shape lies, shown or hidden.
 @if(PREPASS_PIPELINE)
 import bevy_pbr::prepass::io::{Vertex, UncompressedVertex, VertexOutput, FragmentOutput};
 @else
@@ -32,6 +34,10 @@ import bevy_pbr::render::pbr_types::PbrInput;
 import engine::core::render::world::gpu::impostor_bake::{BakeOutput, bake_clip, bake_right, bake_seen, bake_up, baked};
 
 import engine::core::render::world::gpu::instance::{clear_instance, placement, shown_of, turned, world_of};
+@if(PICK)
+import engine::core::render::world::gpu::instance::id_of;
+@if(MARK)
+import engine::core::render::world::gpu::instance::{mark_clip, marked, marks_of};
 
 @if(PREPASS_PIPELINE)
 import bevy_render::globals::Globals;
@@ -134,7 +140,12 @@ struct PropOutput {
     @builtin(position) @invariant position: vec4<f32>,
     @location(0) world_position: vec4<f32>,
     @location(1) world_normal: vec3<f32>,
+    @if(!MARK)
     @location(2) uv: vec2<f32>,
+    // Read at each of a pixel's samples, so a marked shape's cut-out edge covers the share of the
+    // pixel it does.
+    @if(MARK)
+    @location(2) @interpolate(perspective, sample) uv: vec2<f32>,
     @location(3) color: vec4<f32>,
     @location(5) @interpolate(flat) place: vec4<f32>,
     @location(6) @interpolate(flat) turn: vec4<f32>,
@@ -143,6 +154,10 @@ struct PropOutput {
     @location(8) @interpolate(flat) shown: vec3<f32>,
     @if(IMPOSTOR_BAKE)
     @location(9) @interpolate(flat) cell: u32,
+    @if(PICK)
+    @location(10) @interpolate(flat) id: u32,
+    @if(MARK)
+    @location(11) @interpolate(flat) marks: u32,
 }
 
 // The vertex of the instance the command draws as its `instance_index`th, its normal and tangent
@@ -175,7 +190,15 @@ fn vertex(vertex_in: Vertex) -> PropOutput {
     let world = world_of(placed, vertex_in.position);
     let place = vec4<f32>(placed.at, placed.scale);
     stand(place, placed.turn, world);
-    return prop_output(vertex_output(vertex, world), place, placed.turn, shown_of(vertex_in.instance_index));
+    var out = prop_output(vertex_output(vertex, world), place, placed.turn, shown_of(vertex_in.instance_index));
+    @if(PICK) {
+        out.id = id_of(vertex_in.instance_index);
+    }
+    @if(MARK) {
+        out.marks = marks_of(vertex_in.instance_index);
+        out.position = mark_clip(out.marks, out.world_position.xyz);
+    }
+    return out;
 }
 
 // The prop output of `out`, its instance standing at `place.xyz`, grown `place.w` times, turned
@@ -291,7 +314,18 @@ fn vertex_output(vertex: UncompressedVertex, placed: vec3<f32>) -> VertexOutput 
     return out;
 }
 
-@if(PREPASS_PIPELINE && PREPASS_FRAGMENT)
+@if(PICK)
+@fragment
+fn fragment(prop: PropOutput) -> @location(0) u32 {
+    return prop.id;
+}
+@elif(MARK)
+@fragment
+fn fragment(prop: PropOutput) -> @location(0) vec4<f32> {
+    pbr_prepass_functions::prepass_sample_color_and_alpha_discard(unpacked(prop));
+    return marked(prop.marks);
+}
+@elif(PREPASS_PIPELINE && PREPASS_FRAGMENT)
 @fragment
 fn fragment(prop: PropOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
     clear_instance(prop.position.xy, prop.shown);

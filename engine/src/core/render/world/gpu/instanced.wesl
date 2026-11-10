@@ -4,7 +4,9 @@
 // the instance says, then is lit, or written to the prepass, as bevy's material shaders do it,
 // reading bevy's mesh data at the first entry, which stands for every instance alike. Baking an
 // impostor, each instance is a cell of the atlas, and the pixel is written unlit as the far field
-// reads it.
+// reads it. For a view that tells what it points at, the pixel is the instance's id, drawn over
+// the view's own depth, so it is written only where the view shows the instance; and for one that
+// outlines instances, the sets holding it, wherever its shape lies, shown or hidden.
 
 @if(PREPASS_PIPELINE)
 import bevy_pbr::prepass::io::{Vertex, VertexOutput};
@@ -24,6 +26,10 @@ import bevy_pbr::render::{pbr_fragment::pbr_input_from_standard_material, pbr_fu
 import engine::core::render::world::gpu::impostor_bake::{BakeOutput, bake_clip, baked};
 import bevy_pbr::render::view_transformations::position_world_to_clip;
 import engine::core::render::world::gpu::instance::{clear_instance, placement, shown_of, turned, world_of};
+@if(PICK)
+import engine::core::render::world::gpu::instance::id_of;
+@if(MARK)
+import engine::core::render::world::gpu::instance::{mark_clip, marked, marks_of};
 
 // Bevy's vertex output, in the places bevy's own shaders read it from, and how far the instance
 // shows and fades in, which no shader of bevy's reads.
@@ -44,8 +50,12 @@ struct InstancedOutput {
 @if(PREPASS_PIPELINE)
 struct InstancedOutput {
     @builtin(position) @invariant position: vec4<f32>,
-    @if(VERTEX_UVS_A)
+    @if(VERTEX_UVS_A && !MARK)
     @location(0) uv: vec2<f32>,
+    // Read at each of a pixel's samples, so a marked shape's cut-out edge covers the share of the
+    // pixel it does.
+    @if(VERTEX_UVS_A && MARK)
+    @location(0) @interpolate(perspective, sample) uv: vec2<f32>,
     @if(NORMAL_PREPASS_OR_DEFERRED_PREPASS)
     @location(2) world_normal: vec3<f32>,
     @location(4) world_position: vec4<f32>,
@@ -58,6 +68,10 @@ struct InstancedOutput {
     @if(VERTEX_COLORS)
     @location(8) color: vec4<f32>,
     @location(10) @interpolate(flat) shown: vec3<f32>,
+    @if(PICK)
+    @location(11) @interpolate(flat) id: u32,
+    @if(MARK)
+    @location(12) @interpolate(flat) marks: u32,
 }
 
 @vertex
@@ -92,6 +106,13 @@ fn vertex(in: Vertex) -> InstancedOutput {
         out.previous_world_position = out.world_position;
     }
     out.shown = shown_of(in.instance_index);
+    @if(PICK) {
+        out.id = id_of(in.instance_index);
+    }
+    @if(MARK) {
+        out.marks = marks_of(in.instance_index);
+        out.position = mark_clip(out.marks, world);
+    }
     return out;
 }
 
@@ -123,8 +144,21 @@ fn fragment(in: InstancedOutput, @builtin(front_facing) is_front: bool) -> Fragm
     return prepass_output(bevy_output(in), is_front);
 }
 
+@if(PICK)
+@fragment
+fn fragment(in: InstancedOutput) -> @location(0) u32 {
+    return in.id;
+}
+
+@if(MARK)
+@fragment
+fn fragment(in: InstancedOutput) -> @location(0) vec4<f32> {
+    pbr_prepass_functions::prepass_sample_color_and_alpha_discard(bevy_output(in));
+    return marked(in.marks);
+}
+
 // Depth alone is a light's shadow map, which a cleared prop keeps whole.
-@if(PREPASS_PIPELINE && !PREPASS_FRAGMENT)
+@if(PREPASS_PIPELINE && !PREPASS_FRAGMENT && !PICK && !MARK)
 @fragment
 fn fragment(in: InstancedOutput) {
     pbr_prepass_functions::prepass_sample_color_and_alpha_discard(bevy_output(in));

@@ -5,6 +5,8 @@
 // are the slab's, in the model's own metres.
 
 import engine::core::render::world::clearing::{clear_at, dither};
+@if(MARK)
+import bevy_pbr::render::mesh_view_bindings::view;
 
 struct Instance {
     x: f32,
@@ -30,6 +32,52 @@ struct Clearing {
 }
 
 @group(2) @binding(102) var<uniform> clearing: Clearing;
+
+// The slot of the instances' scenery among those the view draws, while the instances write their
+// ids for a view that tells what it points at.
+@if(PICK)
+@group(2) @binding(106) var<uniform> slot: u32;
+
+// The sets of outlined instances each of the arena's instances is in, two bits an instance, the
+// first set's lower: while the instances of the sets draw their whole shapes for a view that
+// outlines them, on several samples a pixel. An instance past the end is in neither.
+@if(MARK)
+@group(2) @binding(107) var<storage, read> marks: array<u32>;
+
+// The sets holding the instance a command draws as its `index`th.
+@if(MARK)
+fn marks_of(index: u32) -> u32 {
+    let instance = drawn[index].x;
+    let word = instance >> 4u;
+    if word >= arrayLength(&marks) {
+        return 0u;
+    }
+    return (marks[word] >> ((instance & 15u) * 2u)) & 3u;
+}
+
+// Where a point at `world` of an instance the sets `held` hold shows on the picture: nowhere for
+// an instance in neither, and without the jitter the view is drawn with from frame to frame, as
+// the outline is laid over the picture the frames have settled into.
+@if(MARK)
+fn mark_clip(held: u32, world: vec3<f32>) -> vec4<f32> {
+    if held == 0u {
+        return vec4<f32>(0.0);
+    }
+    return view.unjittered_clip_from_world * vec4<f32>(world, 1.0);
+}
+
+// What a pixel of an instance the sets `held` hold writes: each set its own channel.
+@if(MARK)
+fn marked(held: u32) -> vec4<f32> {
+    return vec4<f32>(f32(held & 1u), f32((held >> 1u) & 1u), 0.0, 1.0);
+}
+
+// The id of the instance a command draws as its `index`th: its place among the arena's plus one,
+// under its scenery's slot, so 0 is nothing.
+@if(PICK)
+fn id_of(index: u32) -> u32 {
+    return (slot << 24u) | (drawn[index].x + 1u);
+}
 
 // Where an instance stands: its place, the quaternion it is turned by, and its size.
 struct Placement {

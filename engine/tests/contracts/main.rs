@@ -22,7 +22,6 @@ mod launch;
 mod looks;
 mod memory;
 mod notification;
-mod picking;
 mod poses;
 mod presence;
 mod probe;
