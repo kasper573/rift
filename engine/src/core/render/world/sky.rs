@@ -9,25 +9,42 @@ use std::f32::consts::PI;
 use bevy::color::Mix;
 use bevy::light::atmosphere::{PhaseFunction, ScatteringMedium};
 use bevy::light::{
-    Atmosphere, AtmosphereEnvironmentMapLight, FogVolume, GeneratedEnvironmentMapLight,
+    Atmosphere, AtmosphereEnvironmentMapLight, EnvironmentMapLight, FogVolume,
+    GeneratedEnvironmentMapLight,
 };
 use bevy::pbr::AtmosphereSettings;
 use bevy::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::clouds;
 use super::haze::HazeBox;
-use super::lights;
+use super::{DRAWN_FRAMES_AFTER, RenderProgress, clouds, lights};
 use crate::core::math::{Rect, Rgb, smoothstep};
 use crate::core::render::Look;
 use crate::core::units::{Degrees, Meters, Stops};
 
 /// How far into the air the haze is worked out, in metres of the world.
 const HAZE_REACH: f32 = 600.0;
+/// How many points of each slice of that reach the haze is summed over. The slices are a few
+/// metres deep, across which the air is all but the same, and each ray sums its points one after
+/// the other, so the GPU's time on the haze is the points' count however few the rays.
+const HAZE_SAMPLES: u32 = 2;
 /// How many pixels across each face of the map of the sky's light is: the sky is a smooth
 /// gradient, and the light it sheds on a matte face smoother still.
 const SKY_MAP: u32 = 32;
+/// How far a sun turns, how much of its strength it gains or loses, and how many metres of air
+/// the eye climbs, the air thinning by half a percent over them where it thins the fastest,
+/// before the sky's light is taken to have changed while they are still changing.
+const SUN_TURNED: Degrees = Degrees(0.1);
+const SUN_BRIGHTENED: f32 = 0.005;
+const AIR_CLIMBED: f32 = 6.0;
+/// How many frames a camera's sky light is worked out for before it may rest: the frames its
+/// pictures take to reach the GPU and be drawn into, once nothing is compiling.
+const SKY_LIGHT_WARMED: u8 = DRAWN_FRAMES_AFTER as u8 + 2;
+/// How many frames what sheds the sky's light must have held still before a light off by little
+/// is worked out again: an eye on the move climbs in the small steps its height is told in, and
+/// holds each for a few frames without having come to rest.
+const SKY_RESTED: u8 = 30;
 
 /// How the air over the world looks, and how it and the sun light it through the day.
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -103,6 +120,10 @@ pub fn show(world: &mut World, camera: Entity, sky: Sky) {
     let Some(sky_light) = world.get_resource::<Look>().map(|look| look.sky.sky_light) else {
         return;
     };
+    let intensity = match sky {
+        Sky::Air => sky_light,
+        Sky::Dark => 0.0,
+    };
     let Ok(mut camera) = world.get_entity_mut(camera) else {
         return;
     };
@@ -110,22 +131,86 @@ pub fn show(world: &mut World, camera: Entity, sky: Sky) {
         camera.insert((
             AtmosphereSettings {
                 aerial_view_lut_max_distance: HAZE_REACH,
+                aerial_view_lut_samples: HAZE_SAMPLES,
                 ..default()
             },
             AtmosphereEnvironmentMapLight {
                 size: UVec2::splat(SKY_MAP),
+                intensity,
                 ..default()
             },
+            SkyLight::default(),
         ));
     }
-    let intensity = match sky {
-        Sky::Air => sky_light,
-        Sky::Dark => 0.0,
-    };
-    if let Some(mut light) = camera.get_mut::<GeneratedEnvironmentMapLight>()
+    if let Some(mut light) = camera.get_mut::<EnvironmentMapLight>()
         && light.intensity != intensity
     {
         light.intensity = intensity;
+    }
+}
+
+/// Works the sky's light on each camera out anew only when what sheds it has changed. The light
+/// is the sky's picture filtered, the same work every frame for the same light while the suns
+/// and the airs stay as they are, and the filter reads the picture the frame before drew: so a
+/// frame filters when the sky it would read differs from the one last filtered, at once when it
+/// differs by much, and once it has come to rest when by little, so a sky at rest sheds exactly
+/// its own light.
+pub(super) fn rest_sky_light(
+    mut commands: Commands,
+    mut cameras: Query<SkyLit, With<EnvironmentMapLight>>,
+    suns: Query<(&DirectionalLight, &GlobalTransform)>,
+    airs: Query<(Entity, Ref<Atmosphere>, Ref<GlobalTransform>)>,
+    mut media: MessageReader<AssetEvent<ScatteringMedium>>,
+    progress: Option<Res<RenderProgress>>,
+) {
+    let Some(progress) = progress else {
+        return;
+    };
+    let drawing = progress.drawn() > 0 && progress.compiling() == 0;
+    let remade = media.read().count() > 0
+        || airs
+            .iter()
+            .any(|(_, air, placed)| air.is_changed() || placed.is_changed());
+    for (camera, mut light, eye, settings, filtering) in &mut cameras {
+        light.warmth = match drawing {
+            true => light.warmth.saturating_add(1),
+            false if light.warmth < SKY_LIGHT_WARMED => 0,
+            false => light.warmth,
+        };
+        let now = Shedding::seen_from(eye.translation(), &suns, &airs);
+        light.rested = if light.seen.as_ref() == Some(&now) {
+            light.rested.saturating_add(1)
+        } else {
+            0
+        };
+        let stale = light.warmth < SKY_LIGHT_WARMED
+            || match (&light.seen, &light.filtered) {
+                (Some(seen), Some(filtered)) => {
+                    seen.far_from(filtered) || (seen != filtered && light.rested >= SKY_RESTED)
+                }
+                (seen, _) => seen.is_some(),
+            };
+        let seen = light.seen.replace(now);
+        if stale {
+            light.filtered = seen;
+        }
+        if remade || settings.is_changed() {
+            light.filtered = None;
+        }
+        match (stale, filtering) {
+            (true, None) => {
+                if let Some(source) = light.source.clone() {
+                    commands.entity(camera).insert(source);
+                }
+            }
+            (false, Some(source)) => {
+                light.source.get_or_insert_with(|| source.clone());
+                commands
+                    .entity(camera)
+                    .remove::<GeneratedEnvironmentMapLight>();
+            }
+            _ => {}
+        }
     }
 }
 
@@ -459,4 +544,79 @@ fn daytime(daylight: Daylight, elevation: Option<Degrees>, look: &SkyLook) -> Op
 
 fn mix(from: Color, to: Color, by: f32) -> Color {
     Color::LinearRgba(from.to_linear().mix(&to.to_linear(), by))
+}
+
+/// A camera the sky lights: where its eye stands, how it sees the air, and whether its light is
+/// being filtered.
+type SkyLit = (
+    Entity,
+    &'static mut SkyLight,
+    &'static GlobalTransform,
+    Ref<'static, AtmosphereSettings>,
+    Option<&'static GeneratedEnvironmentMapLight>,
+);
+
+/// A camera's sky light as it is kept: how many frames it has been worked out for with nothing
+/// compiling, what shed the sky the frame before and for how many frames it has, what shed the
+/// one last filtered, none while that is not known to be whole, and the filter's source for the
+/// frames it rests.
+#[derive(Component, Default)]
+pub(super) struct SkyLight {
+    warmth: u8,
+    seen: Option<Shedding>,
+    rested: u8,
+    filtered: Option<Shedding>,
+    source: Option<GeneratedEnvironmentMapLight>,
+}
+
+/// What sheds a sky's light on an eye: every sun's way and radiance, and every air with how far
+/// from its middle the eye stands, in its own metres.
+#[derive(Clone, PartialEq)]
+struct Shedding {
+    suns: Vec<(Vec3, Vec3)>,
+    airs: Vec<(Entity, f32)>,
+}
+
+impl Shedding {
+    fn seen_from(
+        eye: Vec3,
+        suns: &Query<(&DirectionalLight, &GlobalTransform)>,
+        airs: &Query<(Entity, Ref<Atmosphere>, Ref<GlobalTransform>)>,
+    ) -> Self {
+        Self {
+            suns: suns
+                .iter()
+                .map(|(sun, placed)| {
+                    (
+                        placed.forward().as_vec3(),
+                        sun.color.to_linear().to_vec3() * sun.illuminance,
+                    )
+                })
+                .collect(),
+            airs: airs
+                .iter()
+                .map(|(air, _, placed)| {
+                    (
+                        air,
+                        placed.affine().inverse().transform_point3(eye).length(),
+                    )
+                })
+                .collect(),
+        }
+    }
+
+    fn far_from(&self, other: &Self) -> bool {
+        let turned = SUN_TURNED.radians().0.cos();
+        self.suns.len() != other.suns.len()
+            || self.airs.len() != other.airs.len()
+            || self.suns.iter().zip(&other.suns).any(|(a, b)| {
+                a.0.dot(b.0) < turned
+                    || (a.1 - b.1).abs().max_element() > SUN_BRIGHTENED * a.1.max(b.1).max_element()
+            })
+            || self
+                .airs
+                .iter()
+                .zip(&other.airs)
+                .any(|(a, b)| a.0 != b.0 || (a.1 - b.1).abs() > AIR_CLIMBED)
+    }
 }

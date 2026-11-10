@@ -138,7 +138,15 @@ impl Plugin for WorldScenePlugin {
                 .after(camera::place)
                 .before(bevy::transform::TransformSystems::Propagate),
         )
-        .add_systems(PostUpdate, let_depth_be_read);
+        .add_systems(
+            PostUpdate,
+            (
+                let_depth_be_read,
+                sky::rest_sky_light
+                    .after(bevy::transform::TransformSystems::Propagate)
+                    .after(bevy::asset::AssetEventSystems),
+            ),
+        );
     }
 }
 
@@ -183,6 +191,16 @@ struct Progress {
 }
 
 impl RenderProgress {
+    /// How many frames the render world has drawn.
+    pub(crate) fn drawn(&self) -> u64 {
+        self.0.frames.load(Ordering::Relaxed)
+    }
+
+    /// How many pipelines the GPU was still compiling at the end of the last frame drawn.
+    pub(crate) fn compiling(&self) -> usize {
+        self.0.compiling.load(Ordering::Relaxed)
+    }
+
     /// Notes that a draw of this frame was left out for want of something still on its way.
     pub(crate) fn left_out(&self) {
         self.0.left_out.store(true, Ordering::Relaxed);
@@ -225,7 +243,7 @@ fn count_progress(cache: Res<PipelineCache>, progress: Res<RenderProgress>) {
 pub fn frames_drawn(world: &World) -> Option<u64> {
     world
         .get_resource::<RenderProgress>()
-        .map(|progress| progress.0.frames.load(Ordering::Relaxed))
+        .map(|progress| progress.drawn())
 }
 
 pub const DRAWN_FRAMES_AFTER: u64 = 2;
@@ -311,7 +329,7 @@ pub fn on_its_way(world: &mut World) -> OnItsWay {
             .get_resource::<RenderProgress>()
             .map_or((0, false), |progress| {
                 (
-                    progress.0.compiling.load(Ordering::Relaxed) as u32,
+                    progress.compiling() as u32,
                     !progress.0.whole.load(Ordering::Relaxed),
                 )
             });
