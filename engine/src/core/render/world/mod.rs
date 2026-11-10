@@ -24,10 +24,11 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, AtomicUsize, Ordering};
 
-use bevy::app::HierarchyPropagatePlugin;
+use bevy::app::{HierarchyPropagatePlugin, PluginGroupBuilder};
 use bevy::camera::visibility::RenderLayers;
 use bevy::light::DirectionalLightShadowMap;
-use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin};
+use bevy::light::cluster::GlobalClusterSettings;
+use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin, PbrPlugin};
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 use bevy::render::render_resource::{CachedPipelineState, PipelineCache, TextureUsages};
@@ -43,9 +44,30 @@ use super::video::VideoPreferences;
 /// The width of each cascade of the sun's shadow map in texels.
 const SHADOW_MAP: usize = 2048;
 
+/// Bevy's plugins as the world is drawn with them. Everything that stands in numbers (the
+/// ground, what grows on it, the props) is culled and drawn by the engine's own kernels, which
+/// leaves bevy a handful of meshes: bodies, the sky, the rain, the marks. Their uniforms are
+/// built on the processor, as building them on the GPU costs every frame the same compute passes
+/// and bind groups however few the meshes are.
+pub fn bevy_plugins() -> PluginGroupBuilder {
+    DefaultPlugins.set(PbrPlugin {
+        use_gpu_instance_buffer_builder: false,
+        ..default()
+    })
+}
+
 pub struct WorldScenePlugin;
 
 impl Plugin for WorldScenePlugin {
+    /// The lights are clustered on the processor: an area holds few to a tile, which the main
+    /// world sorts in no time, where the GPU's clustering costs the render world a pass and its
+    /// bindings every frame.
+    fn finish(&self, app: &mut App) {
+        if let Some(mut settings) = app.world_mut().get_resource_mut::<GlobalClusterSettings>() {
+            settings.gpu_clustering = None;
+        }
+    }
+
     fn build(&self, app: &mut App) {
         bevy::shader::load_shader_library!(app, "shade.wesl");
         bevy::shader::load_shader_library!(app, "prepass_write.wesl");
