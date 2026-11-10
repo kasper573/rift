@@ -29,7 +29,7 @@ import engine::core::render::world::gpu::instance::{clear_instance, placement, s
 // shows and fades in, which no shader of bevy's reads.
 @if(!PREPASS_PIPELINE)
 struct InstancedOutput {
-    @builtin(position) position: vec4<f32>,
+    @builtin(position) @invariant position: vec4<f32>,
     @location(0) world_position: vec4<f32>,
     @location(1) world_normal: vec3<f32>,
     @if(VERTEX_UVS_A)
@@ -43,7 +43,7 @@ struct InstancedOutput {
 
 @if(PREPASS_PIPELINE)
 struct InstancedOutput {
-    @builtin(position) position: vec4<f32>,
+    @builtin(position) @invariant position: vec4<f32>,
     @if(VERTEX_UVS_A)
     @location(0) uv: vec2<f32>,
     @if(NORMAL_PREPASS_OR_DEFERRED_PREPASS)

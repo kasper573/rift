@@ -1035,6 +1035,9 @@ impl PropPipeline {
             .ok()?;
         }
         descriptor.label = Some("prop_lit".into());
+        if !bake && view.contains(MeshPipelineKey::DEPTH_PREPASS) {
+            shade_only_what_shows(&mut descriptor);
+        }
         Some(self.instanced(descriptor, &untouched))
     }
 
@@ -1266,6 +1269,18 @@ impl PropPipeline {
         }
         descriptor.layout[INSTANCE_GROUP] = self.instances.clone();
         descriptor
+    }
+}
+
+/// Has a lit pipeline of a view whose prepass drew the same geometry shade only the pixels that
+/// show: the prepass left each pixel's depth, so a pixel of the lit pass shows only where its
+/// depth is that very depth, and writes none. Testing for less, the GPU would run the whole
+/// lighting for every face under a pixel that passes on its way to the nearest, as a shader that
+/// drops pixels of its own keeps the depth test from running before it while it writes depth.
+fn shade_only_what_shows(descriptor: &mut RenderPipelineDescriptor) {
+    if let Some(depth) = &mut descriptor.depth_stencil {
+        depth.depth_compare = Some(CompareFunction::Equal);
+        depth.depth_write_enabled = Some(false);
     }
 }
 

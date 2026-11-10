@@ -131,7 +131,7 @@ fn stand(place: vec4<f32>, turn: vec4<f32>, world: vec3<f32>) {
 
 // The vertex output of a prop, with where its instance stands and how far it shows.
 struct PropOutput {
-    @builtin(position) position: vec4<f32>,
+    @builtin(position) @invariant position: vec4<f32>,
     @location(0) world_position: vec4<f32>,
     @location(1) world_normal: vec3<f32>,
     @location(2) uv: vec2<f32>,
