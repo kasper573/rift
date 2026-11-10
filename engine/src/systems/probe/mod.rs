@@ -10,8 +10,8 @@ pub use editor::{
 };
 
 pub use frames::{
-    FRAMES_KEPT, FrameSample, FrameSamples, HITCH, LONGEST_SYSTEMS, MissingParts, ProbeFrames,
-    ProbePass, ProbeSlowFrame, ProbeSystem, SETTLE_FRAMES, SLOW_KEPT,
+    FRAMES_KEPT, FrameSample, FrameSamples, HITCH, LONGEST_SYSTEMS, MissingParts, ProbeFramePasses,
+    ProbeFrames, ProbePass, ProbeSlowFrame, ProbeSystem, SETTLE_FRAMES, SLOW_KEPT,
 };
 pub use game::{
     ProbeArea, ProbeBinding, ProbeBindings, ProbeButton, ProbeFrameQuestion, ProbeGame,

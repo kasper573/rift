@@ -7,7 +7,7 @@ use std::collections::BTreeMap;
 
 use editor::app::DrawnPass;
 use engine::core::units::{Bytes, Millis};
-use engine::systems::probe::{FrameSample, MissingParts, ProbeSlowFrame};
+use engine::systems::probe::{FrameSample, MissingParts, ProbeFramePasses, ProbeSlowFrame};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -143,6 +143,8 @@ impl Criteria {
 pub struct Window {
     samples: Vec<FrameSample>,
     slow: Vec<ProbeSlowFrame>,
+    /// The GPU's time by pass over each frame it came back for.
+    timed: Vec<ProbeFramePasses>,
     /// What the editor drew over each frame, by frame, where the editor logged it.
     passes: Vec<(u32, DrawnPass)>,
     /// The frames from each move of the player to a new place until the area stood there: the
@@ -176,6 +178,11 @@ impl Window {
         }
     }
 
+    /// The GPU's time by pass over the frames it came back for.
+    pub fn note_timed(&mut self, timed: impl IntoIterator<Item = ProbeFramePasses>) {
+        self.timed.extend(timed);
+    }
+
     /// The editor's passes over its frames, as its frame log tells them.
     pub fn note_passes(&mut self, passes: impl IntoIterator<Item = (u32, DrawnPass)>) {
         self.passes.extend(passes);
@@ -199,6 +206,7 @@ impl Window {
         Window {
             samples: kept,
             slow: self.slow.clone(),
+            timed: self.timed.clone(),
             passes: self.passes.clone(),
             arrivals: self.arrivals.clone(),
         }
@@ -259,7 +267,11 @@ impl Window {
             .max_by(|a, b| a.dt_ms.0.total_cmp(&b.dt_ms.0))
             .map(|&frame| frame.clone());
         let mut by_pass: BTreeMap<&str, Vec<f32>> = BTreeMap::new();
-        for frame in &slow_frames {
+        for frame in self
+            .timed
+            .iter()
+            .filter(|timed| timed.frame >= first && timed.frame <= last)
+        {
             for pass in &frame.passes {
                 by_pass
                     .entry(pass.name.as_str())
@@ -384,16 +396,16 @@ pub struct FrameStats {
     /// Every frame of the window slower than the stall the criteria allow, in order, each with
     /// the GPU's passes and the systems it waited on, as far as the probe kept them.
     pub stalled_frames: Vec<ProbeSlowFrame>,
-    /// The GPU's passes over the window's slow frames, the costliest first: each pass's median
-    /// and longest time, and how many of those frames timed it.
+    /// The GPU's passes over the window's frames, the costliest first: each pass's median and
+    /// longest time, and how many of the frames timed it.
     pub passes: Vec<PassSummary>,
     /// Every frame of the window in order, for the course of a scenario's frame times: where its
     /// slow frames fall, and what the main world, the render world and the GPU took on each.
     pub trace: Vec<FrameTrace>,
 }
 
-/// A pass of the GPU over a window's slow frames: its median and longest time, and how many of
-/// those frames timed it.
+/// A pass of the GPU over a window's frames: its median and longest time, and how many of the
+/// frames timed it.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 pub struct PassSummary {
     pub name: String,

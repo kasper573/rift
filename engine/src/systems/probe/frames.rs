@@ -69,6 +69,15 @@ pub struct ProbeFrames {
     /// The frames after the one a driver last saw that took longer than [`HITCH`], each with the
     /// GPU's time by pass and the systems it waited on.
     pub slow: Vec<ProbeSlowFrame>,
+    /// The GPU's time by pass over each of `samples` it has come back for.
+    pub passes: Vec<ProbeFramePasses>,
+}
+
+/// The GPU's time over a frame, by pass.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
+pub struct ProbeFramePasses {
+    pub frame: u32,
+    pub passes: Vec<ProbePass>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
@@ -103,6 +112,8 @@ pub struct FrameSamples {
     /// How many frames a sample waits in the ring before it is read, for its late fields to land.
     settle: u32,
     slow: VecDeque<ProbeSlowFrame>,
+    /// The GPU's passes over the latest frames it has timed, in the order drawn.
+    passes: VecDeque<ProbeFramePasses>,
     /// The systems that ran longest over each of the latest [`WAITED_ON`] frames, the latest last.
     latest_systems: VecDeque<Vec<ProbeSystem>>,
 }
@@ -136,6 +147,7 @@ impl FrameSamples {
             capacity,
             settle,
             slow: VecDeque::new(),
+            passes: VecDeque::with_capacity(capacity),
             latest_systems: VecDeque::new(),
         }
     }
@@ -193,21 +205,29 @@ impl FrameSamples {
             sample.gpu_ms = Some(report.gpu_ms);
             sample.props_drawn = report.props_drawn;
         }
+        let passes: Vec<ProbePass> = report
+            .passes
+            .iter()
+            .map(|(name, gpu_ms)| ProbePass {
+                name: name.clone(),
+                gpu_ms: *gpu_ms,
+            })
+            .collect();
         if let Some(slow) = self
             .slow
             .iter_mut()
             .rev()
             .find(|slow| slow.frame == report.frame)
         {
-            slow.passes = report
-                .passes
-                .iter()
-                .map(|(name, gpu_ms)| ProbePass {
-                    name: name.clone(),
-                    gpu_ms: *gpu_ms,
-                })
-                .collect();
+            slow.passes = passes.clone();
         }
+        if self.passes.len() == self.capacity {
+            self.passes.pop_front();
+        }
+        self.passes.push_back(ProbeFramePasses {
+            frame: report.frame,
+            passes,
+        });
     }
 
     /// The settled frames after `since`, and how many frames after it the ring has let go.
@@ -233,6 +253,12 @@ impl FrameSamples {
                 .slow
                 .iter()
                 .filter(|slow| slow.frame > since && slow.frame <= readable)
+                .cloned()
+                .collect(),
+            passes: self
+                .passes
+                .iter()
+                .filter(|timed| timed.frame > since && timed.frame <= readable)
                 .cloned()
                 .collect(),
         }

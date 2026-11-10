@@ -570,6 +570,7 @@ impl Driver {
             self.frame = self.frame.max(last.frame);
         }
         measuring.window.note_slow(&frames.slow);
+        measuring.window.note_timed(frames.passes);
         measuring.window.extend(frames.samples);
         Ok(())
     }

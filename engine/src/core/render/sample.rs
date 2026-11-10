@@ -142,8 +142,10 @@ pub fn gpu_reports(store: &DiagnosticsStore, read: &mut GpuReportsRead) -> Vec<G
                     let name = &pass["render/".len()..pass.len() - "/elapsed_gpu".len()];
                     let measured = diagnostic
                         .measurements()
-                        .find(|measurement| measurement.time == time)?;
-                    Some((name.to_owned(), Millis(measured.value as f32)))
+                        .filter(|measurement| measurement.time == time)
+                        .map(|measurement| measurement.value as f32)
+                        .reduce(|all, pass| all + pass)?;
+                    Some((name.to_owned(), Millis(measured)))
                 })
                 .collect();
             let props_drawn = store.get(&props_drawn_path).and_then(|drawn| {

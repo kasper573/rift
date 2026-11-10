@@ -12,6 +12,7 @@ use bevy::ecs::query::QueryItem;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::render::camera::ExtractedCamera;
+use bevy::render::diagnostic::RecordDiagnostics;
 use bevy::render::extract_component::{ExtractComponent, ExtractComponentPlugin};
 use bevy::render::render_resource::binding_types::{
     storage_buffer_read_only, storage_buffer_read_only_sized, texture_2d, texture_depth_2d,
@@ -301,6 +302,9 @@ pub fn encode(slot: u8, instance: u32) -> u32 {
 
 const INSTANCE_BITS: u32 = (1 << 24) - 1;
 
+const PICK: &str = "pick";
+const OUTLINE: &str = "outline";
+
 /// How many pixels round an outlined instance its outline reaches.
 const OUTLINE_PIXELS: u32 = 2;
 
@@ -559,7 +563,10 @@ fn draw_picks(
         })
         .collect();
     let device = ctx.render_device().clone();
+    let recorder = ctx.diagnostic_recorder();
+    let recorder = recorder.as_deref();
     let encoder = ctx.command_encoder();
+    let span = recorder.map(|recorder| recorder.time_span(encoder, PICK));
     pipelines.pass.encode(
         &device,
         encoder,
@@ -570,6 +577,9 @@ fn draw_picks(
         },
         &draws,
     );
+    if let Some(span) = span {
+        span.end(encoder);
+    }
     let Some(at) = picking
         .pointer
         .filter(|at| at.x < textures.size.x && at.y < textures.size.y)
@@ -684,8 +694,11 @@ fn draw_outlines(
         &cache.get_bind_group_layout(&pipelines.outline_layout),
         &BindGroupEntries::sequential((&textures.ids.default_view, outlined, uniform)),
     );
+    let recorder = ctx.diagnostic_recorder();
+    let recorder = recorder.as_deref();
+    let span = recorder.map(|recorder| recorder.time_span(ctx.command_encoder(), OUTLINE));
     let mut pass = ctx.begin_tracked_render_pass(RenderPassDescriptor {
-        label: Some("outline"),
+        label: Some(OUTLINE),
         color_attachments: &[Some(target.get_color_attachment())],
         depth_stencil_attachment: None,
         timestamp_writes: None,
@@ -698,6 +711,10 @@ fn draw_outlines(
     pass.set_render_pipeline(pipeline);
     pass.set_bind_group(0, &bind_group, &[]);
     pass.draw(0..3, 0..1);
+    drop(pass);
+    if let Some(span) = span {
+        span.end(ctx.command_encoder());
+    }
 }
 
 /// Asks the GPU for each id under a pointer once the frame that wrote it is sent, and tells the

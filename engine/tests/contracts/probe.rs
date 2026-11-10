@@ -129,6 +129,22 @@ fn a_driver_reads_the_frames_on_from_the_last_it_saw_and_is_told_what_the_ring_l
     assert_eq!(read.samples[0].props_drawn, Some(120));
     assert_eq!(read.samples[1].cpu_render_ms, None);
     assert_eq!(read.samples[1].gpu_ms, None);
+    let timed: Vec<(u32, &str)> = read
+        .passes
+        .iter()
+        .flat_map(|frame| {
+            frame
+                .passes
+                .iter()
+                .map(|pass| (frame.frame, pass.name.as_str()))
+        })
+        .collect();
+    assert_eq!(
+        timed,
+        [(5, "main_opaque_pass_3d")],
+        "the GPU's passes are told for the frame they timed"
+    );
+    assert!(frames.since(5).passes.is_empty());
 }
 
 #[test]
