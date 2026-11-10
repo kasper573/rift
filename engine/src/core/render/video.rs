@@ -265,9 +265,9 @@ pub(super) fn show_window(
 )]
 pub enum ShadowQuality {
     Off,
-    /// Hard shadows from a single cascade.
+    /// Hard shadows from a single cascade, close to the camera.
     Low,
-    /// Soft shadows from two cascades, the finer near the camera.
+    /// Soft shadows as far as the camera sees the ground, in cascades the finer the nearer it.
     #[default]
     High,
 }

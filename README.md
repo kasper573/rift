@@ -132,6 +132,7 @@ would, through the program's own bindings, confirming each input through the pro
 | `open` | The client's opening, from the player's entry into the world until the scenery stands, on a profile no client has run the game on. |
 | `still` | A still view of the game's home place. |
 | `orbit` | The camera turned a full circle there. |
+| `horizon` | The camera tilted there to look out over the land, as far as it lies. |
 | `walk` | A walk from home across open ground, and back. |
 | `crossings` | A warp out of the home area crossed, and back. |
 | `combat` | Fights staged at the game's crowd place. |

@@ -5,14 +5,17 @@ use bevy::light::{
     CascadeShadowConfig, CascadeShadowConfigBuilder, DirectionalLight, PointLight, SunDisk,
     VolumetricLight,
 };
+use bevy::pbr::MAX_CASCADES_PER_LIGHT;
 use bevy::prelude::*;
 
 use super::clouds::{LOWEST_LIGHT, SHADOW_SPAN};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::render::Look;
+use crate::core::ground::Heightfield;
+use crate::core::math::Rect;
 use crate::core::render::video::{ShadowQuality, VideoPreferences};
+use crate::core::render::{Look, camera};
 use crate::core::units::{Degrees, Meters, Seconds};
 
 /// How strong the world's lights are, and how soft the sun's shadows.
@@ -32,11 +35,20 @@ pub struct LightLook {
 }
 /// Lumens per unit of a content light's intensity.
 const LUMENS_PER_UNIT: f32 = 4_000.0;
-/// How far the sun's shadows reach from the camera at the farthest.
-const SHADOW_REACH: Meters = Meters(70.0);
+/// How far the sun's shadows reach where no camera's view says how far it sees, and the farthest
+/// they reach in a single cascade, which spread any farther loses the shapes of what casts them.
+const CLOSE_REACH: Meters = Meters(70.0);
 
-/// The share of the shadows' reach the finer of two cascades takes, nearest the camera.
+/// The share of the shadows' reach the finest cascade takes, nearest the camera, and the farthest
+/// it reaches.
 const NEAR_SHARE: f32 = 25.0 / 70.0;
+const NEAR_REACH: Meters = Meters(25.0);
+
+/// How many times farther each cascade reaches than the one before it, at the most: a reach that
+/// asks for more takes another cascade. A cascade's texels are spread evenly over all it reaches,
+/// so where it begins they are this many times coarser beside the view's pixels than where it
+/// ends.
+const CASCADE_GROWTH: f32 = 4.3;
 
 /// How near the camera the shadows reach at the least.
 const LEAST_REACH: Meters = Meters(1.0);
@@ -49,7 +61,7 @@ const REACH_STEPS_A_DOUBLING: f32 = 4.0;
 const RIM_RAYS: u32 = 8;
 
 /// A sun shining from `elevation` above the horizon at `azimuth` clockwise from north: soft
-/// shadows from two cascades, and shafts of light through the air.
+/// shadows in cascades, and shafts of light through the air.
 pub fn sun(color: Color, illuminance: f32, elevation: Degrees, azimuth: Degrees) -> impl Bundle {
     (
         DirectionalLight {
@@ -58,8 +70,8 @@ pub fn sun(color: Color, illuminance: f32, elevation: Degrees, azimuth: Degrees)
             shadow_maps_enabled: true,
             ..default()
         },
-        shadow_cascades(ShadowQuality::High, ShadowReach::FARTHEST),
-        ShadowReach::FARTHEST,
+        shadow_cascades(ShadowQuality::High, ShadowReach::CLOSE),
+        ShadowReach::CLOSE,
         VolumetricLight,
         // The light stands a little over the horizon when its sun or moon has sunk to it, so the
         // sky draws them where they truly stand rather than leaving it to the light.
@@ -69,35 +81,46 @@ pub fn sun(color: Color, illuminance: f32, elevation: Degrees, azimuth: Degrees)
 }
 
 /// How far off its camera a sun's shadows reach: as far as the camera sees the ground, and no
-/// farther than [`SHADOW_REACH`]. The sun's shadow map spans what its cascades reach, so the nearer
-/// the farthest ground in view, the finer its texels: a camera looking down on the ground from
-/// near it spends them all on the ground it sees. The sun turns as the day goes, and each frame
+/// farther than its cascades hold the shapes of what casts them. The sun's shadow map spans what
+/// its cascades reach, so the nearer the farthest ground in view, the finer its texels: a camera
+/// looking down on the ground from near it spends them all on the ground it sees, and one looking
+/// out over the land spreads them to the horizon. The sun turns as the day goes, and each frame
 /// its shadows are drawn anew under it, so a texel coarse beside the screen's pixels would show
 /// the edges of every shadow shifting from frame to frame.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
 pub struct ShadowReach(pub Meters);
 
 impl ShadowReach {
-    pub const FARTHEST: ShadowReach = ShadowReach(SHADOW_REACH);
+    /// The reach of a sun no camera's view has reached yet.
+    pub const CLOSE: ShadowReach = ShadowReach(CLOSE_REACH);
 
-    /// The reach a camera with `clip_from_view` at `eye` needs, where `ground` says where a ray
-    /// first meets the ground, if it does: as far along the camera's gaze as the farthest ground on
-    /// the rim of its view. Over a field of heights, the higher up the view a point lies the
-    /// farther the ground it shows, so no ground in view lies farther than the rim's.
+    /// The farthest a sun's shadows reach: where the last of all the cascades a light casts
+    /// ends, each grown as far past the one before it as a cascade may.
+    pub fn farthest() -> ShadowReach {
+        let grown = CASCADE_GROWTH.powi(MAX_CASCADES_PER_LIGHT as i32 - 1);
+        ShadowReach(Meters(NEAR_REACH.0 * grown))
+    }
+
+    /// The reach a camera with `clip_from_view` at `eye` needs over ground of `heights` within
+    /// `bounds`: as far along the camera's gaze as the farthest ground the rim of its view can
+    /// show. Over a field of heights, the higher up the view a point lies the farther the ground
+    /// it shows, so no ground in view lies farther than the rim's.
     pub fn seen(
         clip_from_view: Mat4,
         eye: &GlobalTransform,
-        ground: impl Fn(Ray3d) -> Option<Vec3>,
+        heights: &Heightfield,
+        bounds: Rect<Meters>,
     ) -> ShadowReach {
         let forward = *eye.forward();
-        let mut farthest = 0.0f32;
-        for corner in rim() {
-            let Some(landed) = ray_through(clip_from_view, eye, corner).and_then(&ground) else {
-                return ShadowReach::FARTHEST;
-            };
-            farthest = farthest.max((landed - eye.translation()).dot(forward));
-        }
-        ShadowReach::stepped_to(Meters(farthest))
+        let farthest = ShadowReach::farthest().0;
+        let seen = rim()
+            .filter_map(|corner| {
+                let ray = ray_through(clip_from_view, eye, corner)?;
+                camera::ground_sight(heights, bounds, ray, farthest)
+            })
+            .map(|seen| (seen - eye.translation()).dot(forward))
+            .fold(0.0, f32::max);
+        ShadowReach::stepped_to(Meters(seen))
     }
 
     /// The reach that follows this one to `needed`: on up a step as soon as the view needs more,
@@ -114,7 +137,9 @@ impl ShadowReach {
     fn stepped_to(farthest: Meters) -> ShadowReach {
         let steps = (farthest.0.max(LEAST_REACH.0).log2() * REACH_STEPS_A_DOUBLING).ceil();
         ShadowReach(Meters(
-            (steps / REACH_STEPS_A_DOUBLING).exp2().min(SHADOW_REACH.0),
+            (steps / REACH_STEPS_A_DOUBLING)
+                .exp2()
+                .min(ShadowReach::farthest().0.0),
         ))
     }
 }
@@ -143,7 +168,7 @@ pub(super) fn cast_shadows(
             (video.shadows == ShadowQuality::High).then_some(look.light.sun_width);
         *cascades = shadow_cascades(
             video.shadows,
-            reach.map_or(ShadowReach::FARTHEST, |reach| *reach),
+            reach.map_or(ShadowReach::CLOSE, |reach| *reach),
         );
     }
 }
@@ -200,13 +225,20 @@ pub(super) fn flicker(time: Res<Time>, mut lights: Query<(&Flicker, &mut PointLi
     }
 }
 
-/// The cascades `quality` asks for out to `reach`: a fine one near the camera at the highest, and
-/// one otherwise.
+/// The cascades `quality` asks for out to `reach`: at the highest a fine one near the camera, and
+/// past it as many more as reach the rest without outgrowing one another; otherwise one alone,
+/// reaching no farther than close by.
 fn shadow_cascades(quality: ShadowQuality, reach: ShadowReach) -> CascadeShadowConfig {
+    let (reach, most) = match quality {
+        ShadowQuality::High => (reach.0.0, MAX_CASCADES_PER_LIGHT),
+        ShadowQuality::Low | ShadowQuality::Off => (reach.0.0.min(CLOSE_REACH.0), 1),
+    };
+    let near = (reach * NEAR_SHARE).min(NEAR_REACH.0);
+    let past_near = ((reach / near).ln() / CASCADE_GROWTH.ln()).ceil() as usize;
     CascadeShadowConfigBuilder {
-        num_cascades: if quality == ShadowQuality::High { 2 } else { 1 },
-        maximum_distance: reach.0.0,
-        first_cascade_far_bound: reach.0.0 * NEAR_SHARE,
+        num_cascades: (1 + past_near).clamp(most.min(2), most),
+        maximum_distance: reach,
+        first_cascade_far_bound: near,
         ..default()
     }
     .build()

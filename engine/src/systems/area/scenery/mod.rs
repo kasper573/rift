@@ -1271,11 +1271,12 @@ fn reach_shadows(world: &mut World, area: &Area, sun: Entity, camera: Entity) {
     ) else {
         return;
     };
-    let bounds = area.size.bounds();
-    let needed = lights::ShadowReach::seen(lens.clip_from_view(), eye, |ray| {
-        camera::ground_hit(&area.heights, bounds, ray)
-            .map(|at| world_point(at, area.heights.height_at(at)))
-    });
+    let needed = lights::ShadowReach::seen(
+        lens.clip_from_view(),
+        eye,
+        &area.heights,
+        area.size.bounds(),
+    );
     if let Some(mut reach) = world.get_mut::<lights::ShadowReach>(sun) {
         let next = reach.following(needed);
         reach.set_if_neq(next);

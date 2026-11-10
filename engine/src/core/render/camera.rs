@@ -741,29 +741,70 @@ impl GroundHeights {
 /// The ground point a ray lands on: where it first comes down to the ground within `bounds`, no
 /// further than [`REACH`] past where it could first meet it.
 pub fn ground_hit(heights: &Heightfield, bounds: Rect<Meters>, ray: Ray3d) -> Option<Pos<Meters>> {
+    let (from, to) = among_heights(heights, ray, over(bounds, ray));
+    let t = heights.first_under(ray.origin, *ray.direction, from, to.min(from + REACH))?;
+    Some(ground_pos(ray.origin + *ray.direction * t))
+}
+
+/// The farthest point along a ray under which it can show the ground within `bounds`, no farther
+/// than `reach` along it: where it comes down to the ground, or where a ray that never does
+/// passes out over the edge of the bounds. None for a ray that never runs over them.
+pub fn ground_sight(
+    heights: &Heightfield,
+    bounds: Rect<Meters>,
+    ray: Ray3d,
+    reach: Meters,
+) -> Option<Vec3> {
+    let (enters, leaves) = over(bounds, ray);
+    if enters.is_nan() || leaves.is_nan() || enters > leaves {
+        return None;
+    }
+    let (from, to) = among_heights(heights, ray, (enters, leaves));
+    let t = heights
+        .first_under(ray.origin, *ray.direction, from, to.min(reach.0))
+        .unwrap_or(leaves.min(reach.0));
+    Some(ray.origin + *ray.direction * t)
+}
+
+/// From where to where along a ray it runs over `bounds`. A ray that never does ends before it
+/// begins.
+fn over(bounds: Rect<Meters>, ray: Ray3d) -> (f32, f32) {
+    let (origin, direction) = (ray.origin, *ray.direction);
+    let span = (0.0, f32::INFINITY);
+    let span = between(span, bounds.min_x(), bounds.max_x(), origin.x, direction.x);
+    between(span, bounds.min_y(), bounds.max_y(), origin.z, direction.z)
+}
+
+/// The part of `span` along a ray in which it runs no higher than the highest ground, nor,
+/// heading down, lower than the lowest.
+fn among_heights(heights: &Heightfield, ray: Ray3d, span: (f32, f32)) -> (f32, f32) {
     let (origin, direction) = (ray.origin, *ray.direction);
     let range = heights.range();
-    let (mut from, mut to) = (0.0f32, f32::INFINITY);
-    let mut within = |low: f32, high: f32, start: f32, heading: f32| {
-        if heading == 0.0 {
-            if !(low..=high).contains(&start) {
-                to = f32::NEG_INFINITY;
-            }
-            return;
-        }
-        let (a, b) = ((low - start) / heading, (high - start) / heading);
-        from = from.max(a.min(b));
-        to = to.min(a.max(b));
-    };
-    within(bounds.min_x(), bounds.max_x(), origin.x, direction.x);
-    within(bounds.min_y(), bounds.max_y(), origin.z, direction.z);
-    within(f32::NEG_INFINITY, range.highest.0, origin.y, direction.y);
+    let (from, mut to) = between(
+        span,
+        f32::NEG_INFINITY,
+        range.highest.0,
+        origin.y,
+        direction.y,
+    );
     if direction.y < 0.0 {
         to = to.min((range.lowest.0 - origin.y) / direction.y);
     }
-    let to = to.min(from + REACH);
-    let t = heights.first_under(origin, direction, from, to)?;
-    Some(ground_pos(origin + direction * t))
+    (from, to)
+}
+
+/// The part of `span` along a ray in which what starts at `start` and moves `heading` a unit
+/// along it lies between `low` and `high`.
+fn between((from, to): (f32, f32), low: f32, high: f32, start: f32, heading: f32) -> (f32, f32) {
+    if heading == 0.0 {
+        return if (low..=high).contains(&start) {
+            (from, to)
+        } else {
+            (from, f32::NEG_INFINITY)
+        };
+    }
+    let (a, b) = ((low - start) / heading, (high - start) / heading);
+    (from.max(a.min(b)), to.min(a.max(b)))
 }
 
 /// A point of the ground `height` above it, in the world the camera sees: x east, y up, z south.

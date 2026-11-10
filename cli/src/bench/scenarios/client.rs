@@ -59,6 +59,18 @@ pub fn catalogue(slots: &ScenarioSlots, content: &Content, smoke: bool) -> Vec<S
             Scenario::LEAST,
             orbit(),
         ),
+        scenario(
+            "horizon",
+            Class::Busy,
+            at(home),
+            vec![
+                Step::Camera(CameraOp::Home),
+                Step::Camera(CameraOp::Tilt(Degrees(-90.0))),
+                Step::Wait(Cond::Stood),
+            ],
+            Scenario::LEAST,
+            vec![Step::Wait(Cond::Seconds(Scenario::LEAST))],
+        ),
     ];
     if let Some(to) = slots.walk_to {
         let mut script = Vec::new();

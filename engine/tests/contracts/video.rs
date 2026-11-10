@@ -8,14 +8,16 @@ use bevy::post_process::bloom::Bloom;
 use bevy::prelude::*;
 use bevy::shader::Shader;
 use bevy::world_serialization::WorldSerializationPlugin;
+use engine::core::ground::{GroundSize, Heightfield};
 use engine::core::render::camera;
 use engine::core::render::video::{AntiAliasingQuality, Quality, ShadowQuality, VideoPreferences};
 use engine::core::render::world::WorldScenePlugin;
-use engine::core::render::world::lights;
+use engine::core::render::world::lights::{self, ShadowReach};
 use engine::core::units::{Degrees, Meters};
 use engine::core::vfx::render::VfxMaterialsPlugin;
 use engine::systems::area;
 use strum::VariantArray;
+use testkit::HEIGHTS;
 
 /// How a picture and the sun over it are drawn, in the parts a player's video preferences choose.
 #[derive(Debug, PartialEq)]
@@ -160,6 +162,100 @@ fn a_preset_picks_every_part_at_once_and_a_part_picked_by_hand_leaves_the_rest_a
             "{quality:?}, then the bloom by hand: at no preset"
         );
     }
+}
+
+/// The sun's shadows fall as far as its camera sees the ground: no farther than the ground a
+/// camera looking down on it has in view, out to where the ground ends under one looking out
+/// over it, and over land that runs on, on past a kilometre, in more cascades the farther they
+/// reach. From a single cascade they fall only as near as under a sun no camera has reached.
+#[test]
+fn the_suns_shadows_reach_as_far_as_its_camera_sees_the_ground() {
+    let yard = GroundSize {
+        width: 128,
+        height: 128,
+    };
+    let land = GroundSize {
+        width: 4096,
+        height: 4096,
+    };
+    let lens = camera::lens(Degrees(50.0), 1280, 720).get_clip_from_view();
+    let eye = |size: GroundSize, down: f32| {
+        let middle = size.width as f32 / 2.0;
+        GlobalTransform::from(
+            Transform::from_xyz(middle, EYE_HEIGHT, middle)
+                .with_rotation(Quat::from_rotation_x(-down.to_radians())),
+        )
+    };
+    let mut app = client();
+    let (_, sun) = stand(&mut app);
+    let mut cascades = |size: GroundSize, down: f32, shadows: ShadowQuality| {
+        app.world_mut().resource_mut::<VideoPreferences>().shadows = shadows;
+        let reach = ShadowReach::seen(
+            lens,
+            &eye(size, down),
+            &Heightfield::flat(size, HEIGHTS),
+            size.bounds(),
+        );
+        app.world_mut().entity_mut(sun).insert(reach);
+        app.update();
+        app.world()
+            .entity(sun)
+            .get::<CascadeShadowConfig>()
+            .expect("the sun's cascades")
+            .bounds
+            .clone()
+    };
+
+    let down = cascades(land, 55.0, ShadowQuality::High);
+    let seen = farthest_ground(lens, &eye(land, 55.0));
+    let reach = *down.last().expect("a cascade");
+    assert!(
+        (seen..seen * A_STEP).contains(&reach),
+        "looking down, the shadows reach the farthest ground in view, {seen} m off, and little \
+         farther: {reach} m"
+    );
+
+    let over_yard = cascades(yard, 0.0, ShadowQuality::High);
+    let edge = yard.height as f32 / 2.0;
+    let reach = *over_yard.last().expect("a cascade");
+    assert!(
+        (edge..edge * A_STEP).contains(&reach),
+        "looking out over a yard, the shadows reach its edge, {edge} m off, and little farther: \
+         {reach} m"
+    );
+
+    let over_land = cascades(land, 0.0, ShadowQuality::High);
+    assert!(
+        over_land.last().is_some_and(|reach| *reach > 1000.0),
+        "looking out over the land, the shadows reach on past a kilometre: {over_land:?}"
+    );
+    assert!(
+        over_land.len() > over_yard.len() && over_land.is_sorted(),
+        "the farther the shadows reach, the more cascades they fall in: {over_land:?} over the \
+         land, {over_yard:?} over the yard"
+    );
+
+    let single = cascades(land, 0.0, ShadowQuality::Low);
+    assert_eq!(
+        single,
+        [ShadowReach::CLOSE.0.0],
+        "a single cascade reaches no farther than close by, whatever the camera sees"
+    );
+}
+
+/// How high the eye stands over the ground the shadows fall on.
+const EYE_HEIGHT: f32 = 10.0;
+/// How much farther than a camera sees a reach may lie: it moves in steps, four to a doubling.
+const A_STEP: f32 = 1.2;
+
+/// How far along its gaze a camera with `lens` at `eye` over level ground sees the ground at the
+/// farthest: where the rays through the top corners of its view land.
+fn farthest_ground(lens: Mat4, eye: &GlobalTransform) -> f32 {
+    let way = eye
+        .affine()
+        .transform_vector3(lens.inverse().project_point3(Vec3::new(1.0, 1.0, 0.5)))
+        .normalize();
+    EYE_HEIGHT / -way.y * way.dot(*eye.forward())
 }
 
 /// Everything at its highest quality.
