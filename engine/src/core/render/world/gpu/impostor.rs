@@ -26,12 +26,13 @@ use bevy::render::render_resource::{
 use bevy::render::renderer::{RenderDevice, RenderQueue};
 use bevy::render::{Extract, ExtractSchedule, Render, RenderApp, RenderStartup, RenderSystems};
 use bevy::tasks::futures::check_ready;
-use bevy::tasks::{IoTaskPool, Task};
+use bevy::tasks::{AsyncComputeTaskPool, IoTaskPool, Task};
 use serde::{Deserialize, Serialize};
 
 use super::arena::{self, InstanceArenas, LevelRange, ModelArena, PartRanges, PlacedModel};
 use super::residency::Residency;
 use super::upload::UploadBudget;
+use crate::core::jobs::Handoff;
 use crate::core::os::Profile;
 use crate::core::render::world::RenderProgress;
 use crate::core::render::world::lod::STRAY_PIXELS;
@@ -79,14 +80,17 @@ const BAKES_PER_FRAME: usize = 4;
 const IMPOSTORS: &str = "impostors";
 
 /// The impostors of every model the world draws, as far as each has come: its file being read,
-/// read and waiting for room in the frame's upload budget, waiting to be baked, or on the GPU,
-/// baked or read. Held only beside a render world, which takes what it sends.
+/// waiting to be baked, being baked, its texels waiting for room in the frame's upload budget, or
+/// on the GPU as they are kept. Held only beside a render world, which takes what it sends.
 #[derive(Resource)]
 pub struct ImpostorStore {
     atlases: HashMap<AtlasKey, ImpostorState>,
     looks: HashMap<AtlasKey, LookFromAbove>,
     outgoing: Vec<ImpostorOrder>,
     baked: Baked,
+    /// The baked atlases come back whose texels are being spread past their models' edges, off
+    /// the main thread: a spread walks every texel of an atlas a few times over.
+    spreading: Vec<(AtlasKey, Task<ImpostorTexels>)>,
 }
 
 /// What a model looks like from straight above, as its atlas's cells nearest that way show it:
@@ -99,8 +103,8 @@ pub struct LookFromAbove {
     pub cover: f32,
 }
 
-/// What the render world is told of an atlas: read from its file, to bake it from its model, or
-/// to let it go.
+/// What the render world is told of an atlas: its texels as they are kept, to write to its
+/// layer, to bake it from its model, or to let it go.
 #[derive(Clone)]
 pub enum ImpostorOrder {
     Read {
@@ -135,6 +139,10 @@ enum ImpostorState {
         materials: Arc<[UntypedHandle]>,
         overhang: Meters,
     },
+    /// Ordered baked, until its texels have come back and been spread.
+    Baking {
+        model: AssetId<Gltf>,
+    },
     Sent {
         model: AssetId<Gltf>,
     },
@@ -146,14 +154,22 @@ impl ImpostorState {
             ImpostorState::Reading { model, .. }
             | ImpostorState::Read { model, .. }
             | ImpostorState::ToBake { model, .. }
+            | ImpostorState::Baking { model }
             | ImpostorState::Sent { model } => *model,
         }
     }
 }
 
-/// The atlases the render world has baked and read back, for the files that keep them.
+/// The atlases the render world has baked and read back, for the main world to take.
 #[derive(Resource, Clone, Default)]
-struct Baked(Arc<Mutex<Vec<(AtlasKey, ImpostorTexels)>>>);
+struct Baked(Arc<Mutex<Vec<BakedAtlas>>>);
+
+/// An atlas come back from its bake: its texels as the GPU drew them, none if it lost them on
+/// the way.
+struct BakedAtlas {
+    key: AtlasKey,
+    texels: Option<ImpostorTexels>,
+}
 
 impl ImpostorStore {
     fn new(baked: Baked) -> ImpostorStore {
@@ -162,6 +178,7 @@ impl ImpostorStore {
             looks: HashMap::new(),
             outgoing: Vec::new(),
             baked,
+            spreading: Vec::new(),
         }
     }
 
@@ -214,14 +231,16 @@ impl ImpostorStore {
 }
 
 /// Moves every model's impostor along: files read taken in, atlases sent to the GPU within the
-/// upload budget, bakes ordered, baked atlases written to their files, and models whose asset
-/// went let go.
+/// upload budget, bakes ordered, baked atlases spread, sent back to the GPU as they are kept and
+/// written to their files, and models whose asset went let go.
 fn keep_impostors(
     mut store: ResMut<ImpostorStore>,
     profile: Res<Profile>,
     mut events: MessageReader<AssetEvent<Gltf>>,
     mut budget: UploadBudget,
+    handoff: Option<Res<Handoff>>,
 ) {
+    let handoff = handoff.as_deref().copied().unwrap_or_default();
     store.outgoing.clear();
     for event in events.read() {
         if let AssetEvent::Removed { id } | AssetEvent::Unused { id } = *event {
@@ -243,6 +262,7 @@ fn keep_impostors(
         looks,
         outgoing,
         baked,
+        spreading,
     } = &mut *store;
     for (&key, state) in atlases.iter_mut() {
         let model = state.model();
@@ -290,17 +310,47 @@ fn keep_impostors(
                     materials: materials.clone(),
                     overhang: *overhang,
                 });
-                *state = ImpostorState::Sent { model };
+                *state = ImpostorState::Baking { model };
             }
-            ImpostorState::Sent { .. } => {}
+            ImpostorState::Baking { .. } | ImpostorState::Sent { .. } => {}
         }
     }
-    let written: Vec<(AtlasKey, ImpostorTexels)> =
-        std::mem::take(&mut *baked.0.lock().expect("the baked atlases lock"));
+    for BakedAtlas { key, texels } in
+        std::mem::take(&mut *baked.0.lock().expect("the baked atlases lock"))
+    {
+        match texels {
+            Some(mut texels) => spreading.push((
+                key,
+                AsyncComputeTaskPool::get().spawn(async move {
+                    texels.spread();
+                    texels
+                }),
+            )),
+            // The atlas stays as the GPU drew it, and is baked anew at the next start.
+            None => {
+                if let Some(state @ ImpostorState::Baking { .. }) = atlases.get_mut(&key) {
+                    *state = ImpostorState::Sent {
+                        model: state.model(),
+                    };
+                }
+            }
+        }
+    }
     let dir = folder_under(&profile);
-    for (key, texels) in written {
-        if atlases.contains_key(&key) {
+    for (key, task) in std::mem::take(spreading) {
+        let texels = match handoff.take(task) {
+            Ok(texels) => Arc::new(texels),
+            Err(task) => {
+                spreading.push((key, task));
+                continue;
+            }
+        };
+        if let Some(state @ ImpostorState::Baking { .. }) = atlases.get_mut(&key) {
             looks.insert(key, LookFromAbove::of(&texels));
+            *state = ImpostorState::Read {
+                model: state.model(),
+                texels: texels.clone(),
+            };
         }
         let dir = dir.clone();
         IoTaskPool::get()
@@ -446,32 +496,23 @@ fn evicted(key: Option<AtlasKey>) -> String {
     key.map_or_else(|| "none".to_owned(), |key| key.to_string())
 }
 
-/// Takes in every baked atlas that has come back: its texels spread past the model's edges, written
-/// back to its layer, and handed to the main world for its file.
-fn read_bakes(
-    mut orders: ResMut<ImpostorOrders>,
-    baked: Res<Baked>,
-    atlas: Option<Res<ImpostorAtlas>>,
-    queue: Res<RenderQueue>,
-) {
-    orders
-        .readbacks
-        .retain_mut(|readback| match readback.poll() {
-            None => true,
-            Some(Ok(mut texels)) => {
-                texels.spread();
-                if let Some(atlas) = &atlas {
-                    atlas.write(&queue, readback.layer, &texels);
-                }
-                baked
-                    .0
-                    .lock()
-                    .expect("the baked atlases lock")
-                    .push((readback.key, texels));
-                false
-            }
-            Some(Err(())) => false,
-        });
+/// Hands every baked atlas that has come back to the main world, which spreads its texels, sends
+/// them back as they are kept and writes its file.
+fn read_bakes(mut orders: ResMut<ImpostorOrders>, baked: Res<Baked>) {
+    orders.readbacks.retain_mut(|readback| {
+        let Some(read) = readback.poll() else {
+            return true;
+        };
+        baked
+            .0
+            .lock()
+            .expect("the baked atlases lock")
+            .push(BakedAtlas {
+                key: readback.key,
+                texels: read.ok(),
+            });
+        false
+    });
 }
 
 /// How many cells the atlas has along each side: a direction every `1 / (CELLS - 1)` of the
@@ -1013,7 +1054,6 @@ pub(super) fn bake_level<'a>(
 /// A layer's texels on their way back from the GPU, to be spread and kept in a file.
 pub struct Readback {
     pub key: AtlasKey,
-    layer: u32,
     buffer: Buffer,
     mapped: Option<Arc<Mutex<Option<bool>>>>,
 }
@@ -1055,7 +1095,6 @@ impl Readback {
         }
         Readback {
             key,
-            layer,
             buffer,
             mapped: None,
         }
