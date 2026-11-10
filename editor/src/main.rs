@@ -69,7 +69,7 @@ fn main() {
         .insert_resource(Rng::from_entropy());
     AssetApp::register_asset_source(&mut app, AssetSourceId::Default, files.source())
         .add_plugins(
-            engine::core::render::world::bevy_plugins()
+            DefaultPlugins
                 .set(bevy::log::LogPlugin {
                     filter: format!("{},symphonia=warn", bevy::log::DEFAULT_FILTER),
                     custom_layer: engine::systems::probe::timing_layer,

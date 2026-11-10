@@ -429,7 +429,7 @@ pub fn area(folder: &Path, shot: &Path, out: &Path, profile: Option<&Path>) {
     let mut shot = Some(shot);
     App::new()
         .add_plugins(
-            engine::core::render::world::bevy_plugins()
+            DefaultPlugins
                 .set(WindowPlugin {
                     primary_window: None,
                     exit_condition: ExitCondition::DontExit,

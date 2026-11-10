@@ -33,7 +33,7 @@ pub struct UncompiledShader {
 pub fn uncompiled(content: &Content, look: Look) -> Vec<UncompiledShader> {
     let mut app = App::new();
     app.add_plugins(
-        crate::core::render::world::bevy_plugins()
+        DefaultPlugins
             .set(WindowPlugin {
                 primary_window: None,
                 exit_condition: ExitCondition::DontExit,

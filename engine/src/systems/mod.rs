@@ -488,7 +488,7 @@ pub fn client_app(
         files.source(),
     )
     .add_plugins(
-        crate::core::render::world::bevy_plugins()
+        DefaultPlugins
             .set(bevy::log::LogPlugin {
                 filter: format!("{},symphonia=warn", bevy::log::DEFAULT_FILTER),
                 custom_layer: probe::timing_layer,

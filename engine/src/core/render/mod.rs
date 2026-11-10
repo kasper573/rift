@@ -17,6 +17,7 @@ pub use pick::{Pointed, capsule_hit, pointed};
 use std::collections::HashMap;
 
 use bevy::prelude::*;
+use bevy::render::view::NoIndirectDrawing;
 use bevy::sprite_render::Material2dPlugin;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -35,6 +36,7 @@ pub struct WorldRenderPlugin;
 impl Plugin for WorldRenderPlugin {
     fn build(&self, app: &mut App) {
         bevy::asset::embedded_asset!(app, "present.wesl");
+        app.add_systems(PostUpdate, draw_directly);
         app.add_plugins((
             Material2dPlugin::<present::Present>::default(),
             world::WorldScenePlugin,
@@ -204,5 +206,15 @@ impl Animator {
 
     pub fn retain(&mut self, mut alive: impl FnMut(Entity) -> bool) {
         self.anchors.retain(|entity, _| alive(*entity));
+    }
+}
+
+/// Every camera draws each of bevy's meshes directly. Everything that stands in numbers (the
+/// ground, what grows on it, the props) is culled and drawn by the engine's own kernels, which
+/// leaves bevy a handful of meshes: bodies, the sky, the rain, the marks. Culling those on the
+/// GPU into indirect draws costs every view the same passes and bindings however few they are.
+fn draw_directly(mut commands: Commands, cameras: Query<Entity, Added<Camera3d>>) {
+    for camera in &cameras {
+        commands.entity(camera).insert(NoIndirectDrawing);
     }
 }
