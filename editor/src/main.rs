@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
 
+use bevy::app::{TaskPoolOptions, TaskPoolPlugin, TaskPoolThreadAssignmentPolicy};
 use bevy::asset::AssetApp;
 use bevy::asset::io::AssetSourceId;
 use bevy::prelude::*;
@@ -83,13 +84,28 @@ fn main() {
                     }),
                     ..default()
                 })
-                .set(ImagePlugin::default_nearest()),
+                .set(ImagePlugin::default_nearest())
+                .set(TaskPoolPlugin {
+                    task_pool_options: TaskPoolOptions {
+                        compute: TaskPoolThreadAssignmentPolicy {
+                            max_threads: FRAME_WORKERS,
+                            ..TaskPoolOptions::default().compute
+                        },
+                        ..default()
+                    },
+                }),
         )
         .add_plugins((SfxPlugin, StyledTextPlugin, BabblePlugin))
         .add_plugins((WorldScenePlugin, VfxMaterialsPlugin, SceneryPlugin))
         .add_plugins(EditorPlugin { launch })
         .run();
 }
+
+/// How many workers at most run a frame's systems side by side. The editor's frame is its
+/// interface and a view of a world at rest: hundreds of systems of a few microseconds each, where
+/// waking one more worker costs the frame more than the worker takes off it. What takes long is
+/// worked off the frame, on the pools kept for that.
+const FRAME_WORKERS: usize = 4;
 
 fn scene_help() -> String {
     format!(
