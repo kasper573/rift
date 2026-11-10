@@ -362,7 +362,7 @@ impl RenderedView {
         let ground = area.heights.height_at(request.camera.target);
         {
             let viewport = Vec2::new(request.size[0] as f32, request.size[1] as f32);
-            let view = request.camera.view(ground, viewport);
+            let view = request.camera.view(&area.heights, viewport);
             let at = request.camera.target;
             let near_eye = within_reach_of(
                 view.eye(),
@@ -389,7 +389,7 @@ impl RenderedView {
         }
         if let Ok(mut camera) = world.get_entity_mut(self.camera) {
             camera.insert((
-                request.camera.transform(ground),
+                request.camera.transform(&area.heights),
                 CameraFocus(world_point(request.camera.target, ground)),
             ));
         }

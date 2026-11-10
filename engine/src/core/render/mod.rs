@@ -9,8 +9,8 @@ pub mod world;
 
 pub use camera::{
     CameraFocus, CameraFraming, CameraPreferences, CameraRig, CameraRigSystems, GroundHeights,
-    PictureGrade, View, WorldCamera, Zoom, Zooms, cursor_ground, cursor_ray, facing_rotation,
-    ground_height, ground_pos, view_of, window_point, world_point,
+    Orbit, PictureGrade, View, WorldCamera, Zoom, Zooms, cursor_ground, cursor_ray,
+    facing_rotation, ground_height, ground_pos, view_of, window_point, world_point,
 };
 pub use pick::{Pointed, capsule_hit, pointed};
 
@@ -70,6 +70,9 @@ impl Plugin for WorldRenderPlugin {
                 present::fit,
                 icons::keep_icons_resident,
                 camera::ease.in_set(CameraRigSystems),
+                camera::stand_over_ground
+                    .after(CameraRigSystems)
+                    .before(transition::WorldViewSystems),
             ),
         )
         .add_systems(

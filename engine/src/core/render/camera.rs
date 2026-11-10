@@ -1,7 +1,9 @@
 //! The camera: a perspective view pitched down on a point of the ground, turned to any yaw, tilted
 //! between looking down and looking out toward the horizon, set to one of three distances, and the
 //! ray it casts through the pointer. The view is a pure projection of the rig, so the probe, the
-//! plates and the picking all project the way the camera draws.
+//! plates and the picking all project the way the camera draws. The camera never stands under
+//! the ground: where the ground rises between it and what it looks at, it tilts further down to
+//! pass over it.
 
 use bevy::anti_alias::smaa::Smaa;
 use bevy::anti_alias::taa::TemporalAntiAliasing;
@@ -36,6 +38,79 @@ const REACH: f32 = 200.0;
 const REST_ANGLE: Radians = Radians(0.001);
 /// How near the distance it eases to the camera comes to rest on it, too near to see.
 const REST_DISTANCE: Meters = Meters(0.01);
+
+/// How far over the ground an eye keeps, so the nearest it draws lies over the ground too
+/// whichever way it looks.
+const EYE_CLEARANCE: Meters = Meters(1.0);
+/// The furthest down an eye tilts to pass over the ground: a hair short of straight down, where
+/// it would have no way up.
+const STEEPEST: Degrees = Degrees(89.9);
+/// How far apart along the ground an eye's line of sight is held to the ground under it, and
+/// the most places it is held to: a line too long for that is held to them evenly.
+const SIGHT_STEP: Meters = Meters(0.5);
+const MOST_SIGHT_STEPS: f32 = 256.0;
+
+/// An eye looking at a point of the world from a yaw, a pitch down and a distance.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Orbit {
+    pub target: Vec3,
+    pub yaw: Radians,
+    pub pitch: Radians,
+    pub distance: Meters,
+}
+
+impl Orbit {
+    pub fn eye(&self) -> Vec3 {
+        let (sin, cos) = self.pitch.0.sin_cos();
+        let back = Vec3::new(0.0, self.distance.0 * sin, self.distance.0 * cos);
+        self.target + Quat::from_rotation_y(self.yaw.0) * back
+    }
+
+    pub fn transform(&self) -> Transform {
+        Transform::from_translation(self.eye()).looking_at(self.target, Vec3::Y)
+    }
+
+    /// The orbit tilted no further down than it takes for its line of sight to pass over the
+    /// ground of `heights`: clear of it by [`EYE_CLEARANCE`] at the eye, and by less the nearer
+    /// what it looks at, which may stand on the ground. A line of sight tilted further down lies
+    /// higher over less of the ground, so past the least tilt that clears it every tilt does, and
+    /// that tilt moves smoothly as the orbit does.
+    pub fn over(self, heights: &Heightfield) -> Orbit {
+        let tilted = |pitch: f32| Orbit {
+            pitch: Radians(pitch),
+            ..self
+        };
+        let steepest = STEEPEST.radians().0;
+        if self.pitch.0 >= steepest || tilted(self.pitch.0).clears(heights) {
+            return self;
+        }
+        let (mut under, mut over) = (self.pitch.0, steepest);
+        while over - under > REST_ANGLE.0 {
+            let middle = (under + over) / 2.0;
+            if tilted(middle).clears(heights) {
+                over = middle;
+            } else {
+                under = middle;
+            }
+        }
+        tilted(over)
+    }
+
+    /// Whether the line of sight passes over the ground of `heights` all the way from what it
+    /// looks at to the eye.
+    fn clears(&self, heights: &Heightfield) -> bool {
+        let along = self.eye() - self.target;
+        let clearance = EYE_CLEARANCE.0.min(self.distance.0 / 2.0);
+        let steps = (along.xz().length() / SIGHT_STEP.0)
+            .ceil()
+            .clamp(1.0, MOST_SIGHT_STEPS);
+        (1..=steps as u32).all(|step| {
+            let share = step as f32 / steps;
+            let point = self.target + along * share;
+            point.y >= heights.height_at(ground_pos(point)).0 + clearance * share
+        })
+    }
+}
 
 /// How the camera frames the world.
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
@@ -307,7 +382,8 @@ impl Zoom {
 pub struct CameraRigSystems;
 
 /// Where the camera looks from: at a point of the world, from a yaw and a distance that ease toward
-/// what the player last asked for, framed as the game frames it. A client resource, never
+/// what the player last asked for, framed as the game frames it, and tilted further down than
+/// asked where the ground would otherwise stand in its line of sight. A client resource, never
 /// replicated, there once the game's look is known.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct CameraRig {
@@ -317,6 +393,8 @@ pub struct CameraRig {
     wanted_yaw: Radians,
     pitch: Radians,
     wanted_pitch: Radians,
+    /// How much further down than `pitch` the ground has it tilt.
+    lift: Radians,
     distance: Meters,
     zoom: Zoom,
 }
@@ -339,6 +417,7 @@ impl CameraRig {
             wanted_yaw: Radians(0.0),
             pitch: framing.pitch.radians(),
             wanted_pitch: framing.pitch.radians(),
+            lift: Radians(0.0),
             distance: Zoom::default().distance(&framing.zooms),
             zoom: Zoom::default(),
         }
@@ -404,8 +483,9 @@ impl CameraRig {
         self.yaw
     }
 
+    /// How far down the camera looks: as it is tilted, and as much further as the ground has it.
     pub fn pitch(&self) -> Radians {
-        self.pitch
+        self.orbit().pitch
     }
 
     pub fn zoom(&self) -> Zoom {
@@ -428,13 +508,43 @@ impl CameraRig {
     }
 
     pub fn eye(&self) -> Vec3 {
-        let (sin, cos) = self.pitch.0.sin_cos();
-        let back = Vec3::new(0.0, self.distance.0 * sin, self.distance.0 * cos);
-        self.target + Quat::from_rotation_y(self.yaw.0) * back
+        self.orbit().eye()
     }
 
     pub fn transform(&self) -> Transform {
-        Transform::from_translation(self.eye()).looking_at(self.target, Vec3::Y)
+        self.orbit().transform()
+    }
+
+    /// Where the camera stands: as far down as it is tilted and the ground has it tilt further.
+    fn orbit(&self) -> Orbit {
+        Orbit {
+            pitch: Radians(self.pitch.0 + self.lift.0),
+            ..self.asked()
+        }
+    }
+
+    /// Where the camera would stand were the ground never in its way.
+    fn asked(&self) -> Orbit {
+        Orbit {
+            target: self.target,
+            yaw: self.yaw,
+            pitch: self.pitch,
+            distance: self.distance,
+        }
+    }
+
+    /// Keeps the camera's line of sight over the ground of `heights`, `dt` on: tilted further
+    /// down at once as far as the ground asks, and eased back as it asks for less, so the camera
+    /// rides over a rise and settles after it rather than bobbing with every bump.
+    pub fn stand_over(
+        &mut self,
+        heights: &Heightfield,
+        dt: Seconds,
+        preferences: &CameraPreferences,
+    ) {
+        let needed = self.asked().over(heights).pitch.0 - self.pitch.0;
+        let eased = caught(dt, preferences.turn_ease.unwrap_or(self.framing.turn_ease));
+        self.lift = Radians(approach(self.lift.0, needed, eased, REST_ANGLE.0).max(needed));
     }
 
     pub fn view(&self, viewport: Vec2) -> View {
@@ -725,6 +835,21 @@ pub(super) fn ease(
         && !rig.settled()
     {
         rig.ease(Seconds(time.delta_secs()), &preferences);
+    }
+}
+
+pub(super) fn stand_over_ground(
+    time: Res<Time>,
+    preferences: Res<CameraPreferences>,
+    ground: Option<Res<GroundHeights>>,
+    rig: Option<ResMut<CameraRig>>,
+) {
+    if let (Some(mut rig), Some(ground)) = (rig, ground) {
+        let mut standing = *rig;
+        standing.stand_over(&ground.heights, Seconds(time.delta_secs()), &preferences);
+        if standing != *rig {
+            *rig = standing;
+        }
     }
 }
 

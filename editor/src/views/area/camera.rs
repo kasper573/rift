@@ -5,8 +5,9 @@
 use std::sync::Arc;
 
 use bevy::prelude::{Ray3d, Transform, Vec2, Vec3};
+use engine::core::ground::Heightfield;
 use engine::core::math::{Pos, Rect};
-use engine::core::render::camera::{View, ground_hit, world_point};
+use engine::core::render::camera::{Orbit, View, ground_hit, world_point};
 use engine::core::units::{Degrees, MeterPos, MeterSize, Meters, Radians};
 use engine::systems::area::Area;
 use serde::{Deserialize, Serialize};
@@ -119,17 +120,21 @@ impl OrbitCamera {
         2.0 * self.distance.0 * (LENS.radians().0 / 2.0).tan() / height.max(1.0)
     }
 
-    /// Where the camera stands and looks, its target `ground` high.
-    pub fn transform(&self, ground: Meters) -> Transform {
-        let target = world_point(self.target, ground);
-        let (sin, cos) = self.pitch.0.sin_cos();
-        let back = Vec3::new(0.0, self.distance.0 * sin, self.distance.0 * cos);
-        let eye = target + bevy::prelude::Quat::from_rotation_y(self.yaw.0) * back;
-        Transform::from_translation(eye).looking_at(target, Vec3::Y)
+    /// Where the camera stands and looks over the ground of `heights`, at its target on it:
+    /// tilted further down than asked where the ground would stand in its line of sight.
+    pub fn transform(&self, heights: &Heightfield) -> Transform {
+        Orbit {
+            target: world_point(self.target, heights.height_at(self.target)),
+            yaw: self.yaw,
+            pitch: self.pitch,
+            distance: self.distance,
+        }
+        .over(heights)
+        .transform()
     }
 
-    pub fn view(&self, ground: Meters, viewport: Vec2) -> View {
-        View::new(self.transform(ground), viewport, LENS)
+    pub fn view(&self, heights: &Heightfield, viewport: Vec2) -> View {
+        View::new(self.transform(heights), viewport, LENS)
     }
 }
 
@@ -181,8 +186,7 @@ pub struct AreaCanvas {
 
 impl AreaCanvas {
     pub fn new(screen: ERect, camera: OrbitCamera, area: Arc<Area>) -> AreaCanvas {
-        let ground = area.heights.height_at(camera.target);
-        let view = camera.view(ground, Vec2::new(screen.width(), screen.height()));
+        let view = camera.view(&area.heights, Vec2::new(screen.width(), screen.height()));
         AreaCanvas {
             screen,
             camera,

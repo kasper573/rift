@@ -17,7 +17,7 @@ use engine::core::render::world::body::{Body, BodyPlugin};
 use engine::core::render::world::layers::JointLayersPlugin;
 use engine::core::render::world::material::WorldMaterial;
 use engine::core::render::{
-    Animator, CameraPreferences, CameraRig, capsule_hit, facing_rotation, world_point,
+    Animator, CameraPreferences, CameraRig, capsule_hit, facing_rotation, ground_pos, world_point,
 };
 use engine::core::text::Typewriter;
 use engine::core::units::{
@@ -107,6 +107,77 @@ fn the_camera_eases_toward_a_turn_and_comes_to_rest_on_it_at_any_frame_rate() {
         at_once.yaw().0 == wanted,
         "a player who turns smoothing off has the turn at once: {:?}",
         at_once.yaw()
+    );
+}
+
+/// The camera never stands under the ground. Where the ground rises between it and what it looks
+/// at, it tilts further down at once, until its line of sight passes over; over level ground it
+/// stands just as it was asked; and once the ground is out of its way it settles back as asked.
+#[test]
+fn the_camera_tilts_over_ground_that_would_stand_in_its_sight() {
+    let heights = hill();
+    let preferences = &CameraPreferences::default();
+    let beside = Pos::new(16.0, 6.0);
+    let over = |from: Vec3, to: Vec3| (1..=200).map(move |step| from.lerp(to, step as f32 / 200.0));
+    let cleared = |from: Vec3, to: Vec3| {
+        over(from, to).all(|point| point.y > heights.height_at(ground_pos(point)).0)
+    };
+    let level = |from: Vec3, to: Vec3| {
+        over(from, to).all(|point| heights.height_at(ground_pos(point)).0 == 0.0)
+    };
+    let asked_of = |at: Pos<Meters>, turned: f32, zoomed_out: bool| {
+        let mut rig = CameraRig::new(testkit::look().camera);
+        rig.look_at(at, heights.height_at(at) + Meters(1.0));
+        rig.turn(Degrees(turned));
+        rig.tilt(Degrees(-90.0));
+        if zoomed_out {
+            rig.zoom_out();
+        }
+        rig.ease(Seconds(60.0), preferences);
+        rig
+    };
+    let open = Pos::new(4.0, 4.0);
+    let away = 225.0;
+    let (mut tilted, mut kept) = (0, 0);
+    for turned in (0..360).step_by(15).map(|turned| turned as f32) {
+        for zoomed_out in [false, true] {
+            let mut rig = asked_of(beside, turned, zoomed_out);
+            let asked = rig.eye();
+            rig.stand_over(&heights, Seconds(1.0 / 60.0), preferences);
+            let eye = rig.eye();
+            assert!(
+                cleared(rig.target(), eye),
+                "turned {turned}°, the line of sight from {eye} passes over the ground"
+            );
+            if level(rig.target(), asked) {
+                assert_eq!(
+                    eye, asked,
+                    "turned {turned}°, level ground leaves the camera be"
+                );
+                kept += 1;
+            } else if !cleared(rig.target(), asked) {
+                assert!(
+                    eye.y > asked.y,
+                    "turned {turned}°, the camera tilts up over the hill: {eye} from {asked}"
+                );
+                tilted += 1;
+            }
+
+            rig.look_at(open, heights.height_at(open) + Meters(1.0));
+            rig.turn(Degrees(away - turned));
+            rig.ease(Seconds(60.0), preferences);
+            rig.stand_over(&heights, Seconds(60.0), preferences);
+            let asked = asked_of(open, away, zoomed_out).eye();
+            assert!(
+                rig.eye().abs_diff_eq(asked, 1e-3),
+                "away from the hill, the camera settles back as asked: {} for {asked}",
+                rig.eye()
+            );
+        }
+    }
+    assert!(
+        tilted > 0 && kept > 0,
+        "the hill stands in the camera's sight from some sides only: {tilted} tilted, {kept} kept"
     );
 }
 
