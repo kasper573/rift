@@ -206,8 +206,10 @@ struct FallingRain {
     laid: Option<f32>,
     laying: Option<Task<LaidRain>>,
     sheltered_round: Option<Vec2>,
-    shelters: Vec<Sheltering>,
-    shelter_index: SpatialIndex,
+    /// The area's sheltering props, found off the main thread: an area holds hundreds of
+    /// thousands of props, and the rain may not hold a frame up to file them.
+    shelters: Option<Shelters>,
+    finding: Option<Task<Shelters>>,
     strokes: Vec<Stroke>,
     thunder: Vec<Thunder>,
     rng: Rng,
@@ -276,6 +278,39 @@ impl RainJob {
     }
 }
 
+/// The props of an area that keep the rain off the ground, filed by the ground each covers.
+struct Shelters {
+    props: Vec<Sheltering>,
+    index: SpatialIndex,
+}
+
+impl Shelters {
+    fn of(content: &Content, area: &Area) -> Shelters {
+        let models = content.built::<GltfInfos>();
+        let props: Vec<Sheltering> = area
+            .props
+            .iter()
+            .filter_map(|placed| {
+                let def = placed.prop.get(content);
+                if !def.shelter {
+                    return None;
+                }
+                let bounds = models.0.get(&def.model.path())?.bounds;
+                let transform = prop_transform(&area.heights, placed);
+                Some(Sheltering {
+                    placed: transform,
+                    low: bounds.min.xz(),
+                    high: bounds.max.xz(),
+                    top: transform.transform_point(Vec3::Y * bounds.max.y).y,
+                })
+            })
+            .collect();
+        let mut index = SpatialIndex::new(Meters(SHELTER_CELL.0 * SHELTER_SIDE as f32 / 4.0));
+        index.refile(props.iter().map(Sheltering::ground));
+        Shelters { props, index }
+    }
+}
+
 /// A prop that keeps the rain off the ground under it: where its model's box lies, as the prop
 /// stands, and the height of its top.
 struct Sheltering {
@@ -299,30 +334,11 @@ struct Thunder {
 }
 
 impl FallingRain {
-    fn new(world: &mut World, area_id: AreaId, area: &Area) -> FallingRain {
-        let content = world.resource::<Content>();
-        let models = content.built::<GltfInfos>();
-        let shelters: Vec<Sheltering> = area
-            .props
-            .iter()
-            .filter_map(|placed| {
-                let def = placed.prop.get(content);
-                if !def.shelter {
-                    return None;
-                }
-                let bounds = models.0.get(&def.model.path())?.bounds;
-                let transform = prop_transform(&area.heights, placed);
-                Some(Sheltering {
-                    placed: transform,
-                    low: bounds.min.xz(),
-                    high: bounds.max.xz(),
-                    top: transform.transform_point(Vec3::Y * bounds.max.y).y,
-                })
-            })
-            .collect();
-        let mut shelter_index =
-            SpatialIndex::new(Meters(SHELTER_CELL.0 * SHELTER_SIDE as f32 / 4.0));
-        shelter_index.refile(shelters.iter().map(Sheltering::ground));
+    fn new(world: &mut World, area_id: AreaId, area: &Arc<Area>) -> FallingRain {
+        let (content, area) = (world.resource::<Content>().clone(), area.clone());
+        world
+            .resource_mut::<Shelter>()
+            .set_if_neq(Shelter::default());
         FallingRain {
             area: area_id,
             field: Arc::default(),
@@ -330,8 +346,11 @@ impl FallingRain {
             laid: None,
             laying: None,
             sheltered_round: None,
-            shelters,
-            shelter_index,
+            shelters: None,
+            finding: area.climate.rain.is_some().then(|| {
+                AsyncComputeTaskPool::get_or_init(TaskPool::default)
+                    .spawn(async move { Shelters::of(&content, &area) })
+            }),
             strokes: Vec::new(),
             thunder: Vec::new(),
             rng: Rng::fork_of(world),
@@ -382,8 +401,18 @@ impl FallingRain {
     }
 
     /// Lays the shelter round `subject` anew once it has slipped [`SHELTER_SLIP`] from where it
-    /// was laid round: each cell under a sheltering prop's box topped at the prop's top.
+    /// was laid round: each cell under a sheltering prop's box topped at the prop's top. None is
+    /// laid until the area's sheltering props are found.
     fn lay_shelter(&mut self, world: &mut World, subject: Vec2) {
+        if let Some(finding) = self.finding.take() {
+            match Handoff::of(world).take(finding) {
+                Ok(found) => self.shelters = Some(found),
+                Err(finding) => self.finding = Some(finding),
+            }
+        }
+        let Some(shelters) = &self.shelters else {
+            return;
+        };
         if self
             .sheltered_round
             .is_some_and(|round| round.distance(subject) < SHELTER_SLIP.0)
@@ -396,8 +425,8 @@ impl FallingRain {
         let span = SHELTER_CELL.0 * SHELTER_SIDE as f32;
         let window = Rect::new(Pos::new(corner.x, corner.y), Size::new(span, span));
         let mut tops = vec![OPEN_TOP; SHELTER_SIDE * SHELTER_SIDE];
-        for index in self.shelter_index.within(window) {
-            self.shelters[index].lay(&mut tops, corner);
+        for index in shelters.index.within(window) {
+            shelters.props[index].lay(&mut tops, corner);
         }
         world
             .resource_mut::<Shelter>()
