@@ -11,7 +11,9 @@ use crate::core::content::{
 };
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, ScriptFault, Value, ValueType};
 use crate::core::time::{UnixMillis, WallClock};
-use crate::core::units::{Percent, Seconds};
+use crate::core::units::{Percent, PlaybackRate, Seconds};
+use crate::systems::actor::playing::{self, Motion};
+use crate::systems::actor::skeleton::{self, Declared, MoveName};
 use crate::systems::attention::AttentionId;
 use crate::systems::item::{Inventory, ItemId, ItemStack};
 use crate::systems::notification;
@@ -38,6 +40,9 @@ pub fn register(app: &mut App) {
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 pub struct RecipeBookDef {
     pub mark: AttentionId,
+    /// The move a crafter makes over and over while a craft of the book is under way, unless its
+    /// recipe names one of its own.
+    pub work: MoveName,
     /// In the order a Recipes window lists them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recipes: Vec<Recipe>,
@@ -54,6 +59,9 @@ pub struct Recipe {
     pub from: Vec<ItemStack>,
     /// How long one craft takes at a crafting speed of 100%.
     pub takes: Seconds,
+    /// The move its crafter makes while it is under way, in place of the book's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub work: Option<MoveName>,
 }
 
 /// A recipe by the book that holds it and its place among the book's recipes.
@@ -75,6 +83,7 @@ impl ContentFile for RecipeBookDef {
     fn fresh(near: &Nearby) -> Result<RecipeBookDef, String> {
         Ok(RecipeBookDef {
             mark: near.file()?,
+            work: skeleton::nearest_move(near)?,
             recipes: Vec::new(),
             modules: Vec::new(),
         })
@@ -158,6 +167,13 @@ impl ScriptedRow for RecipeBookDef {
         match module {
             RecipeBookModule::Script(script) => Some(script),
         }
+    }
+}
+
+impl RecipeBookDef {
+    /// The move a crafter makes while a craft of `recipe` is under way.
+    pub fn work_of<'a>(&'a self, recipe: &'a Recipe) -> &'a MoveName {
+        recipe.work.as_ref().unwrap_or(&self.work)
     }
 }
 
@@ -414,6 +430,10 @@ pub struct CraftingSession {
     flow: FlowKey,
 }
 
+/// On a crafter, the move it makes over and over at the craft it has under way.
+#[derive(Component, Clone)]
+pub struct CraftingMove(MoveName);
+
 pub fn requests(world: &mut World) {
     player_requests::<CraftingRequest>(world, false, |world, player, request| {
         let Some(session) = world.get::<CraftingSession>(player) else {
@@ -497,6 +517,33 @@ pub fn work(world: &mut World, views: &mut QueryState<(Entity, &'static Crafting
     }
 }
 
+/// Has every crafter make the move of its craft again as the last ends. Run where moves end, ahead
+/// of the tick: the tick that tells clients a move is over then tells them of the next with it, and
+/// no body stands between two moves without one to show.
+pub fn moves(world: &mut World, crafters: &mut QueryState<(Entity, &'static CraftingMove)>) {
+    let crafting: Vec<(Entity, MoveName)> = crafters
+        .iter(world)
+        .map(|(crafter, work)| (crafter, work.0.clone()))
+        .collect();
+    for (crafter, work) in crafting {
+        if playing::playing(world, crafter) {
+            continue;
+        }
+        let motion = Motion::Move(work);
+        if playing::plays(world, crafter, &motion) {
+            let speed = stat::effective(world, crafter, StatKind::CraftingSpeed);
+            playing::play_at(
+                world,
+                crafter,
+                motion,
+                None,
+                PlaybackRate(speed / 100.0),
+                None,
+            );
+        }
+    }
+}
+
 /// Ends the crafting of whoever no longer has the prompt it was opened in.
 pub fn hold(world: &mut World, sessions: &mut QueryState<(Entity, &'static CraftingSession)>) {
     let over: Vec<Entity> = sessions
@@ -508,6 +555,7 @@ pub fn hold(world: &mut World, sessions: &mut QueryState<(Entity, &'static Craft
         .map(|(player, _)| player)
         .collect();
     for player in over {
+        rest(world, player);
         world
             .entity_mut(player)
             .remove::<(CraftingSession, CraftingView)>();
@@ -539,13 +587,30 @@ pub(crate) fn marks(
 
 /// What a book's recipes must hold between them, and what none may do at the shops: lead back to
 /// what it makes, make the same things twice from the same ingredients, or turn what the shops
-/// sell into what they pay more for.
+/// sell into what they pay more for. Every move a craft is made with is one some skeleton
+/// declares.
 pub fn check_all(loading: &mut Loading) {
     let content = loading.content();
     let shops: Vec<&ShopDef> = content.table::<ShopDef>().rows().collect();
+    let declared = content.built::<Declared>();
+    let undeclared = |work: &MoveName| {
+        (!declared.moves.contains(work)).then(|| {
+            ContentProblem::new(
+                "undeclared move",
+                work.as_str(),
+                "a move some skeleton's set declares",
+            )
+        })
+    };
     for (id, book) in loading.rows::<RecipeBookDef>(&content) {
+        if let Some(problem) = undeclared(&book.work) {
+            loading.row_error(id, "/work", problem);
+        }
         for (index, recipe) in book.recipes.iter().enumerate() {
             let at = format!("/recipes/{index}");
+            if let Some(problem) = recipe.work.as_ref().and_then(undeclared) {
+                loading.row_error(id, &format!("{at}/work"), problem);
+            }
             let twin = book.recipes[..index]
                 .iter()
                 .any(|earlier| same_recipe(earlier, recipe));
@@ -745,6 +810,7 @@ fn begin(
     let speed = Percent(stat::effective(world, player, StatKind::CraftingSpeed));
     let since = world.resource::<WallClock>().now;
     let until = since.after(craftable.recipe.takes_at(times, speed));
+    let work = recipe.book.get(&content).work_of(craftable.recipe).clone();
     if let Some(mut view) = world.get_mut::<CraftingView>(player) {
         view.making = Some(CraftUnderWay {
             recipe,
@@ -752,16 +818,25 @@ fn begin(
             since,
             until,
         });
+        world.entity_mut(player).insert(CraftingMove(work));
     }
     Ok(())
 }
 
 /// Ends the craft `player` has under way, made or not, and begins the next turn of their prompt.
 fn finish(world: &mut World, player: Entity) {
+    rest(world, player);
     if let Some(mut view) = world.get_mut::<CraftingView>(player) {
         view.making = None;
     }
     prompt::ask_again(world, player);
+}
+
+/// Ends the move `crafter` makes at the craft it had under way, if any.
+fn rest(world: &mut World, crafter: Entity) {
+    if let Some(CraftingMove(work)) = world.entity_mut(crafter).take::<CraftingMove>() {
+        playing::cut(world, crafter, &Motion::Move(work));
+    }
 }
 
 /// Crafts `recipe` from `offer` for `player` in one exchange, when their prompt makes it and the

@@ -1,19 +1,24 @@
 //! The recipe book view: a book's recipes as a plain list, a row each, saying everything it makes,
 //! everything it takes and how long a craft of it takes. What joins the recipes to each other is
-//! followed in the inspector: the other ways to make a thing, and the recipes it goes into. Every
+//! followed in the inspector: the other ways to make a thing, and the recipes it goes into. The
+//! inspector also holds the move a crafter makes at a craft: the book's, and a recipe's own. Every
 //! change is the whole file written again, so the loader's rules refuse a loop or an empty recipe
 //! as it is made.
 
 use engine::core::content::ContentFile;
 use engine::core::units::Seconds;
+use engine::systems::actor::skeleton::MoveName;
 use engine::systems::crafting::{Recipe, RecipeBookDef};
 use engine::systems::item::{ItemDef, ItemId, ItemStack};
+use schemars::JsonSchema;
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use ui::egui::{self, Align, Layout, Rangef, Rect, Sense, Ui, Vec2};
 use ui::face;
 use ui::{chip, controls, form, sheet, theme};
 
 use crate::app::Editor;
-use crate::forms::FormCx;
+use crate::forms::{self, FormChange, FormCx};
 use crate::icons::{self, IconTone};
 use crate::picker::{self, Dragged};
 use crate::project::{ContentEdit, RowSelection};
@@ -92,6 +97,7 @@ pub fn add_recipe(editor: &mut Editor, key: &str, makes: &str, from: &str) -> bo
             makes: vec![ItemStack::new(made, 1)],
             from: vec![ItemStack::new(taken, 1)],
             takes: FRESH_TAKES,
+            work: None,
         });
         Ok(())
     })
@@ -179,6 +185,29 @@ pub fn set_amount(
 pub fn set_takes(editor: &mut Editor, key: &str, recipe: usize, takes: Seconds) -> bool {
     let label = format!("Change how long {} takes", called(editor, key, recipe));
     change_recipe(editor, key, label, recipe, |recipe| recipe.takes = takes)
+}
+
+/// Sets the move a crafter makes at every craft of the book whose recipe names none of its own.
+pub fn set_work(editor: &mut Editor, key: &str, work: MoveName) -> bool {
+    let label = format!("Change the move {} is crafted with", shown_path(key));
+    editor.change(ContentEdit::new(label), key, |book: &mut RecipeBookDef| {
+        book.work = work;
+        Ok(())
+    })
+}
+
+/// Sets the move a crafter makes at a craft of the recipe at `recipe`: none for the book's.
+pub fn set_recipe_work(
+    editor: &mut Editor,
+    key: &str,
+    recipe: usize,
+    work: Option<MoveName>,
+) -> bool {
+    let label = format!(
+        "Change the move {} is crafted with",
+        called(editor, key, recipe)
+    );
+    change_recipe(editor, key, label, recipe, |recipe| recipe.work = work)
 }
 
 /// Makes the `nth` item of a `side` of the recipe at `recipe` the item at `item` instead.
@@ -269,7 +298,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
     editor.views.recipe_book.view_or_default(key);
     let rows = shown_rows(editor, &book);
     ui::panel::inspector(ui, editor, "recipe_book", |editor, ui| {
-        inspect(editor, ui, key, &rows);
+        inspect(editor, ui, key, &book, &rows);
     });
     egui::Frame::new()
         .inner_margin(crate::widgets::VIEW_PADDING)
@@ -302,6 +331,7 @@ struct ShownRecipe {
     makes: Vec<(ShownItem, u32)>,
     from: Vec<(ShownItem, u32)>,
     takes: Seconds,
+    work: Option<MoveName>,
 }
 
 impl ShownRecipe {
@@ -351,6 +381,7 @@ fn shown_rows(editor: &Editor, book: &RecipeBookDef) -> Vec<ShownRecipe> {
             makes: shown(&recipe.makes),
             from: shown(&recipe.from),
             takes: recipe.takes,
+            work: recipe.work.clone(),
         })
         .collect()
 }
@@ -839,18 +870,73 @@ fn dropped_item(editor: &mut Editor, ui: &mut Ui, key: &str, list: Rect) {
     }
 }
 
-fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, rows: &[ShownRecipe]) {
+fn inspect(
+    editor: &mut Editor,
+    ui: &mut Ui,
+    key: &str,
+    book: &RecipeBookDef,
+    rows: &[ShownRecipe],
+) {
     match selected(editor, key) {
         Some(Picked::Recipe(index)) => match rows.get(index) {
             Some(row) => inspect_recipe(editor, ui, key, index, row, rows),
             None => select(editor, key, None),
         },
         Some(Picked::Item(path)) => inspect_item(editor, ui, key, &path, rows),
-        None => form::nothing_selected(
-            ui,
-            "Select a recipe by its handle to change it, or an item to follow it through the book.",
-        ),
+        None => {
+            inspect_book(editor, ui, key, book);
+            ui.add_space(8.0);
+            form::nothing_selected(
+                ui,
+                "Select a recipe by its handle to change it, or an item to follow it through the book.",
+            );
+        }
     }
+}
+
+fn inspect_book(editor: &mut Editor, ui: &mut Ui, key: &str, book: &RecipeBookDef) {
+    sheet::section(ui, "book");
+    let mut work = book.work.clone();
+    if typed_field(editor, ui, key, "crafting move", &mut work, "/work") {
+        set_work(editor, key, work);
+    }
+    form::hint(
+        ui,
+        "The move a crafter makes while a craft is under way. A recipe may name its own.",
+    );
+}
+
+/// A field of the book at `key` edited as its type, under `label`: whether it changed.
+fn typed_field<T: JsonSchema + Serialize + DeserializeOwned + 'static>(
+    editor: &mut Editor,
+    ui: &mut Ui,
+    key: &str,
+    label: &str,
+    value: &mut T,
+    pointer: &str,
+) -> bool {
+    let mut actions = Vec::new();
+    let mut changed = FormChange::default();
+    {
+        let Editor {
+            project,
+            form,
+            shapes,
+            ..
+        } = editor;
+        let Some(project) = project.as_ref() else {
+            return false;
+        };
+        let mut cx = FormCx::schemaless(project, shapes, form, &mut actions)
+            .editing(RecipeBookDef::TABLE, Some(key));
+        form::kv(ui, label, |ui| {
+            changed |= forms::of_type(ui, &mut cx, value, pointer);
+        });
+    }
+    for action in actions {
+        row_form::act(editor, action, RecipeBookDef::TABLE, key);
+    }
+    changed.is_some()
 }
 
 fn inspect_recipe(
@@ -868,6 +954,13 @@ fn inspect_recipe(
         });
         ui.add_space(8.0);
     }
+    let mut work = row.work.clone();
+    let pointer = format!("/recipes/{index}/work");
+    if typed_field(editor, ui, key, "crafting move", &mut work, &pointer) {
+        set_recipe_work(editor, key, index, work);
+    }
+    form::hint(ui, "Its own move, in place of the book's.");
+    ui.add_space(8.0);
     form::hint(
         ui,
         &format!(

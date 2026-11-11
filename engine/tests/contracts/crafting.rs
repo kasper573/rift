@@ -1,6 +1,8 @@
 use bevy_ecs::prelude::*;
 use engine::core::content::LoadReport;
 use engine::core::units::Seconds;
+use engine::systems::actor::skeleton::MoveName;
+use engine::systems::actor::{self, Motion, Playing};
 use engine::systems::crafting::{self, CraftingRequest, CraftingView, RecipeBookDef, RecipeKey};
 use engine::systems::dialogue::{self, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
@@ -9,7 +11,7 @@ use engine::systems::prompt::{self, PromptRequest, PromptView};
 use engine::systems::stat::{StatKind, Stats};
 use engine::systems::{movement, region, script};
 use serde_json::{Value, json};
-use testkit::{Game, Map, Sim, path, said, sent};
+use testkit::{APEX, BODY, Game, Map, Sim, path, rig_clips, said, sent};
 
 const INGOT: (&str, usize) = ("smithing", 0);
 const PLANK: (&str, usize) = ("smithing", 1);
@@ -256,11 +258,65 @@ fn a_craft_takes_its_recipes_time_at_the_crafters_speed_and_nothing_until_it_is_
 }
 
 #[test]
+fn a_crafter_makes_the_books_move_or_the_recipes_own_for_as_long_as_the_craft_takes() {
+    let slow = game(|book| {
+        book["recipes"][0]["takes"] = json!(2.0);
+        book["recipes"][1]["takes"] = json!(2.0);
+    });
+    let mut sim = forge(slow);
+    let player = sim.join(1);
+    let conn = sim.conn(1);
+    sim.give(player, "ore", 4);
+    sim.give(player, "coal", 2);
+    sim.give(player, "log", 2);
+    let made = |sim: &Sim| sim.world.get::<Playing>(player).cloned();
+    let the_move = |name: &str| Motion::Move(MoveName::new(name));
+    open(&mut sim, 1, "smith");
+    assert_eq!(made(&sim), None, "an open prompt alone is no work");
+
+    craft(&mut sim, 1, &[("ore", 2), ("coal", 1)], INGOT);
+    let first = made(&sim).expect("a craft begins with its move");
+    assert_eq!(first.motion, the_move("forge"), "the book's move");
+    sim.run(1.0);
+    let later = made(&sim).expect("made over and over while the craft is under way");
+    assert!(later.started > first.started, "one move after another");
+    sim.run(1.0);
+    assert_eq!(sim.count(player, "ingot"), 1);
+    assert_eq!(made(&sim), None, "the move ends with the craft");
+
+    craft(&mut sim, 1, &[("log", 1)], PLANK);
+    assert_eq!(
+        made(&sim).map(|playing| playing.motion),
+        Some(the_move("whittle")),
+        "a recipe's own move in place of the book's"
+    );
+    sim.send(conn, CraftingRequest::Cancel);
+    sim.run(0.5);
+    assert_eq!(made(&sim), None, "a craft called off is worked no longer");
+
+    sim.world
+        .get_mut::<Stats>(player)
+        .expect("stats")
+        .0
+        .insert(StatKind::CraftingSpeed, 200.0);
+    craft(&mut sim, 1, &[("ore", 2), ("coal", 1)], INGOT);
+    let fast = made(&sim).expect("a move");
+    assert_eq!(
+        fast.ends.since(fast.started).0 * 2.0,
+        first.ends.since(first.started).0,
+        "the move is made as fast as the crafter crafts"
+    );
+    sim.leave(1);
+    sim.run(0.5);
+    assert_eq!(made(&sim), None, "leaving the prompt ends the work");
+}
+
+#[test]
 fn the_loader_refuses_recipes_that_loop_repeat_or_profit_and_books_no_script_opens() {
     let of = |item: &str, count: u32| json!({ "item": path("item", item), "count": count });
     let recipe =
         |makes: &str, from: Value| json!({ "makes": [of(makes, 1)], "from": from, "takes": 0.1 });
-    let cases: [(&str, Value); 9] = [
+    let cases: [(&str, Value); 10] = [
         ("recipe loop", recipe("ore", json!([of("sword", 1)]))),
         (
             "made twice",
@@ -288,6 +344,10 @@ fn the_loader_refuses_recipes_that_loop_repeat_or_profit_and_books_no_script_ope
             "crafting mints money",
             recipe("gem", json!([of("coal", 1)])),
         ),
+        (
+            "undeclared move",
+            json!({ "makes": [of("strap", 1)], "from": [of("blade", 1)], "takes": 0.1, "work": "knit" }),
+        ),
     ];
     for (rule, added) in cases {
         let report = refused(game(|book| {
@@ -302,7 +362,7 @@ fn the_loader_refuses_recipes_that_loop_repeat_or_profit_and_books_no_script_ope
     let unopened = game(|_| {}).whole().row(
         "recipe_book",
         "spare",
-        json!({ "mark": path("attention", "anvil"), "recipes": [] }),
+        json!({ "mark": path("attention", "anvil"), "work": "forge", "recipes": [] }),
     );
     let report = refused(unopened);
     assert!(
@@ -318,19 +378,23 @@ fn the_loader_refuses_recipes_that_loop_repeat_or_profit_and_books_no_script_ope
         script["nodes"]["craft"]["from"][0]["items"] = json!([path("item", "blade")]);
     }));
     assert_eq!(rules(&elsewhere), ["not in the book"]);
+
+    let unmoved = refused(game(|book| book["work"] = json!("knit")));
+    assert_eq!(rules(&unmoved), ["undeclared move"]);
 }
 
 /// A forge whose smith crafts from all of the smithing book, whose carpenter crafts only its
 /// planks, and whose salvager takes blades apart two ways, one of them into an ingot and straps
-/// together. Every craft takes a tenth of a second. The smithing book hands a token for every
-/// craft; leaving a prompt hands a slip.
+/// together. Every craft takes a tenth of a second, and is forged but for the planks, which are
+/// whittled. The smithing book hands a token for every craft; leaving a prompt hands a slip.
 fn game(change: impl FnOnce(&mut Value)) -> Game {
     let stack = |item: &str, count: u32| json!({ "item": path("item", item), "count": count });
     let mut smithing = json!({
         "mark": path("attention", "anvil"),
+        "work": "forge",
         "recipes": [
             { "makes": [stack("ingot", 1)], "from": [stack("ore", 2), stack("coal", 1)], "takes": 0.1 },
-            { "makes": [stack("plank", 2)], "from": [stack("log", 1)], "takes": 0.1 },
+            { "makes": [stack("plank", 2)], "from": [stack("log", 1)], "takes": 0.1, "work": "whittle" },
             { "makes": [stack("sword", 1)], "from": [stack("ingot", 2), stack("plank", 1)], "takes": 0.1 },
         ],
         "modules": [{ "type": "script", "script": path("script", "smithing_crafted") }],
@@ -351,7 +415,21 @@ fn game(change: impl FnOnce(&mut Value)) -> Game {
     };
     let talks = |name: &str| json!([{ "type": "script", "script": path("script", &format!("{name}_talk")) }]);
     let resident = |name: &str, x: f32| json!({ "type": "resident", "npc": path("npc", name), "at": { "x": x, "y": 4.0 } });
+    let mut clips = rig_clips();
+    clips.extend(["forge", "whittle"].map(|work| (work, Seconds(0.4))));
+    let lands = |clip: &str| json!({ "clip": testkit::clip(clip), "cues": [{ "at": APEX.0, "apex": true }] });
     let mut game = Game::new()
+        .skeleton_of(
+            BODY,
+            &clips,
+            json!({ "cues": [lands("attack"), lands("forge"), lands("whittle")] }),
+        )
+        .edit("skeleton", BODY, |body| {
+            body["base"]["moves"] = json!({
+                "forge": testkit::clip("forge"),
+                "whittle": testkit::clip("whittle"),
+            });
+        })
         .area(
             "forge",
             &Map::open(16, 12),
@@ -367,6 +445,7 @@ fn game(change: impl FnOnce(&mut Value)) -> Game {
             "salvage",
             json!({
                 "mark": path("attention", "anvil"),
+                "work": "forge",
                 "recipes": [
                     { "makes": [stack("ingot", 1), stack("strap", 2)], "from": [stack("blade", 1)], "takes": 0.1 },
                     { "makes": [stack("strap", 3)], "from": [stack("blade", 1)], "takes": 0.1 },
@@ -444,6 +523,8 @@ fn forge(game: Game) -> Sim {
             dialogue::requests,
             prompt::requests,
             crafting::requests,
+            actor::playing::progress,
+            crafting::moves,
         ))
         .plan((
             script::RunFlows::default(),

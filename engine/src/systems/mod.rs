@@ -424,7 +424,7 @@ pub fn server_app(
                     equipment::hold,
                     equipment::unequip,
                     skill::reset::expire,
-                    (actor::playing::progress, resource::swings).chain(),
+                    (actor::playing::progress, resource::swings, crafting::moves).chain(),
                     reach::mirror_engaged,
                     (rewards::grant, quest::credit, npc::defeated).chain(),
                 )

@@ -1,9 +1,10 @@
 use editor::views::recipe_book::{self, Picked, RecipeSide};
 use engine::core::units::Seconds;
+use engine::systems::actor::skeleton::MoveName;
 use engine::systems::crafting::RecipeBookDef;
 use engine::systems::item::{ItemDef, ItemStack};
 use serde_json::json;
-use testkit::{Game, Map, path, said};
+use testkit::{BODY, Game, Map, path, said};
 use ui::egui;
 
 use crate::support::{self, Frames};
@@ -136,6 +137,38 @@ fn a_recipe_book_is_a_list_edited_a_recipe_at_a_time_and_refuses_what_the_loader
         );
     }
 
+    let whittled = Some(MoveName::new("whittle"));
+    assert!(recipe_book::set_recipe_work(
+        &mut editor,
+        &key,
+        1,
+        whittled.clone()
+    ));
+    assert!(recipe_book::set_work(
+        &mut editor,
+        &key,
+        MoveName::new("whittle")
+    ));
+    support::files(&mut editor);
+    recipe_book::set_work(&mut editor, &key, MoveName::new("knit"));
+    support::files(&mut editor);
+    let refused = editor
+        .project
+        .as_mut()
+        .and_then(|project| project.take_refused())
+        .expect("a move no skeleton declares is refused as it is set");
+    assert_eq!(refused.refusal.problem.rule, "undeclared move");
+    let moved = book(&editor, &key);
+    assert_eq!(
+        (
+            moved.work.as_str(),
+            &moved.recipes[1].work,
+            &moved.recipes[0].work
+        ),
+        ("whittle", &whittled, &None),
+        "the book's move, and a recipe's own"
+    );
+
     let before = recipes(&editor, &key);
     recipe_book::add_recipe(&mut editor, &key, &item("ore"), &item("sword"));
     support::files(&mut editor);
@@ -171,6 +204,12 @@ fn a_recipe_book_is_a_list_edited_a_recipe_at_a_time_and_refuses_what_the_loader
 fn game() -> Game {
     let stack = |item: &str, count: u32| json!({ "item": path("item", item), "count": count });
     let mut game = support::game()
+        .edit("skeleton", BODY, |body| {
+            body["base"]["moves"] = json!({
+                "forge": testkit::clip("attack"),
+                "whittle": testkit::clip("attack"),
+            });
+        })
         .area(
             support::AREA,
             &Map::open(8, 8),
@@ -182,6 +221,7 @@ fn game() -> Game {
             "smithing",
             json!({
                 "mark": path("attention", "anvil"),
+                "work": "forge",
                 "recipes": [{ "makes": [stack("ingot", 1)], "from": [stack("ore", 2), stack("coal", 1)], "takes": 2.5 }],
             }),
         )
