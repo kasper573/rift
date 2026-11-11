@@ -209,6 +209,15 @@ impl Footprint {
         }
     }
 
+    /// How far the footprint reaches from the prop's origin; none for a prop taking no ground.
+    pub fn reach(&self) -> Option<Meters> {
+        self.outline(Pos::origin(), Degrees(0.0), 1.0)
+            .into_iter()
+            .map(|corner| corner.to_vector().length())
+            .reduce(f32::max)
+            .map(Meters)
+    }
+
     /// The box around the footprint as placed; none for a prop taking no ground.
     pub fn bounds(&self, at: Pos<Meters>, yaw: Degrees, scale: f32) -> Option<Rect<Meters>> {
         let outline = self.outline(at, yaw, scale);

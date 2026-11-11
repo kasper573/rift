@@ -1681,29 +1681,27 @@ fn objects(world: &mut World, area: Option<AreaId>) -> Vec<ProbeObject> {
         .collect()
 }
 
-/// The ground point to point at to take the body: where the ray from the eye through the middle of
-/// its capsule lands, when pointing there claims the body, else where it stands.
+/// The ground point to point at to take the body: where the ray from the eye through its capsule
+/// lands, at the height nearest its middle where pointing claims the body, else where it stands.
 fn aim(world: &mut World, entity: Entity, at: Pos<Meters>, capsule: Capsule) -> Pos<Meters> {
+    const HEIGHTS: [f32; 7] = [0.5, 0.375, 0.625, 0.25, 0.75, 0.125, 0.875];
     let Some(view) = render::view_of(world) else {
         return at;
     };
-    let middle = world_point(
-        at,
-        ground_height(world, at) + Meters(capsule.height.0 / 2.0),
-    );
     let eye = view.eye();
-    let Ok(direction) = Dir3::new(middle - eye) else {
-        return at;
-    };
-    let ray = Ray3d::new(eye, direction);
-    let ground = world
-        .get_resource::<GroundHeights>()
-        .and_then(|ground| ground.hit(ray));
-    let pointed = Pointed { ray, ground };
-    match (clicked(world, &pointed), ground) {
-        (Some(clicked), Some(ground)) if clicked == entity => ground,
-        _ => at,
-    }
+    let foot = ground_height(world, at);
+    HEIGHTS
+        .into_iter()
+        .find_map(|share| {
+            let point = world_point(at, foot + Meters(capsule.height.0 * share));
+            let ray = Ray3d::new(eye, Dir3::new(point - eye).ok()?);
+            let ground = world
+                .get_resource::<GroundHeights>()
+                .and_then(|ground| ground.hit(ray));
+            let pointed = Pointed { ray, ground };
+            ground.filter(|_| clicked(world, &pointed) == Some(entity))
+        })
+        .unwrap_or(at)
 }
 
 /// The ground point to point at to take the object: the middle of its shape, or the nearest point

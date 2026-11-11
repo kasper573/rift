@@ -307,31 +307,25 @@ pub fn spawn(world: &mut World, def: ResourceId, at: Pos<Meters>, area: AreaId) 
         .id()
 }
 
-/// The room a resource takes standing: as wide and as tall as the model of its look.
+/// The room a resource takes standing: as tall as the model of its look, and as wide as the ground
+/// that look takes up, so a tree is its trunk rather than its crown. A look taking no ground is as
+/// wide as its model.
 pub fn body(content: &Content, def: ResourceId) -> Capsule {
     let look = def.get(content).look.get(content);
-    let measured = content
+    let bounds = content
         .built::<GltfInfos>()
         .0
         .get(&look.model.path())
         .map(|model| model.bounds);
-    match measured {
-        Some(bounds) => Capsule {
-            radius: Meters(
-                bounds
-                    .min
-                    .x
-                    .abs()
-                    .max(bounds.max.x.abs())
-                    .max(bounds.min.z.abs())
-                    .max(bounds.max.z.abs()),
-            ),
-            height: Meters(bounds.max.y),
-        },
-        None => Capsule {
-            radius: Meters(0.0),
-            height: Meters(0.0),
-        },
+    let model_width = bounds.map_or(0.0, |bounds| {
+        [bounds.min.x, bounds.max.x, bounds.min.z, bounds.max.z]
+            .into_iter()
+            .map(f32::abs)
+            .fold(0.0, f32::max)
+    });
+    Capsule {
+        radius: look.footprint.reach().unwrap_or(Meters(model_width)),
+        height: Meters(bounds.map_or(0.0, |bounds| bounds.max.y)),
     }
 }
 

@@ -106,6 +106,20 @@ fn an_extraction_takes_one_rolls_once_and_pays_out_and_is_refused_without_the_to
     sim.run(1.0);
     assert_eq!(sim.errors(1), ["No room in your bag"]);
     assert!(sim.world.get::<Working>(miner).is_none());
+
+    let (mut sim, vein) = quarry(json!({}), |game| {
+        game.prop("rock", json!({ "type": "circle", "radius": 1.5 }))
+    });
+    let miner = sim.join(1);
+    sim.equip(miner, "pickaxe");
+    ask(&mut sim, 1, vein);
+    assert!(sim.run_until(WALK, |world| world.get::<Working>(miner).is_some()));
+    let stands = position(&sim.world, miner).expect("it stands");
+    let stood = position(&sim.world, vein).expect("it stands");
+    assert!(
+        stands.distance_to(stood) >= 1.5,
+        "work is done from the edge of the ground its look takes up"
+    );
 }
 
 #[test]
