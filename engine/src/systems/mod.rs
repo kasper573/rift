@@ -420,7 +420,7 @@ pub fn server_app(
                     equipment::hold,
                     equipment::unequip,
                     skill::reset::expire,
-                    actor::playing::progress,
+                    (actor::playing::progress, resource::swings).chain(),
                     reach::mirror_engaged,
                     (rewards::grant, quest::credit, npc::defeated).chain(),
                 )

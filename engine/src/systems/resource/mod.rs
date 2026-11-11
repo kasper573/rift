@@ -454,7 +454,6 @@ pub fn work(world: &mut World, workers: &mut Workers) {
             }
             continue;
         }
-        swing(world, worker);
         if working.until <= now {
             due.push((working.until, working.since, worker));
         }
@@ -478,8 +477,18 @@ pub fn stop(world: &mut World, worker: Entity) {
     }
 }
 
-/// Has a worker make the move of its work again once the last has ended, as fast as it gathers
-/// and landing with its kind of tool's sound, where its body has a clip for the move with what it
+/// Has every worker make the move of its work again as the last ends. Run where moves end, ahead
+/// of the tick: the tick that tells clients a swing is over then tells them of the next with it,
+/// and no body stands between two swings without a move to show.
+pub fn swings(world: &mut World, workers: &mut Workers) {
+    let working: Vec<Entity> = workers.iter(world).map(|(worker, _)| worker).collect();
+    for worker in working {
+        swing(world, worker);
+    }
+}
+
+/// Has a worker make the move of its work once the last has ended, as fast as it gathers and
+/// landing with its kind of tool's sound, where its body has a clip for the move with what it
 /// holds.
 fn swing(world: &mut World, worker: Entity) {
     if playing::playing(world, worker) {
@@ -523,6 +532,7 @@ fn start(world: &mut World, worker: Entity, resource: Entity) {
         .entity_mut(worker)
         .insert((Unhurt(blows), Swing(kind)));
     begin(world, worker, resource, tool, since);
+    swing(world, worker);
 }
 
 /// Begins an extraction of `resource` at `since`, due as soon as the worker's gathering speed makes

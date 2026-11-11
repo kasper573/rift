@@ -306,16 +306,11 @@ fn quarry(fields: Value, more: impl FnOnce(Game) -> Game) -> (Sim, Entity) {
             movement::move_request,
             movement::file_by_chunk,
             resource::gather_request,
+            actor::playing::progress,
+            resource::swings,
         ))
         .plan(movement::AdvanceWalks::default())
-        .add(
-            (
-                actor::playing::progress,
-                resource::gathering,
-                resource::work,
-            )
-                .chain(),
-        )
+        .add((resource::gathering, resource::work))
         .plan(stat::SettleHealth::default())
         .plan(actor::SettleActions::default());
     script::spawn_stateless(&mut sim.world);
