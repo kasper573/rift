@@ -213,7 +213,7 @@ fn show_resource(editor: &mut Editor, ui: &mut Ui, key: &str) {
         plate::draw_label(
             ui,
             turntable.rect.center_top() + Vec2::new(0.0, 28.0),
-            &PlateLabel::resource(&def.name, def.quantity, 0, def.max_occupants),
+            &PlateLabel::resource(&def.name, 0, def.max_occupants),
         );
         turntable.stand(editor, ui, Vec::new());
     }

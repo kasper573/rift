@@ -66,7 +66,7 @@ pub fn crown(world: &mut World, actor: Entity) -> Option<Vec2> {
 struct Plates(HashMap<Entity, egui::Rect>);
 
 /// What a plate says: a name in the colour of its wearer's standing, an npc's role under it, and
-/// under a resource's what is left of it.
+/// under a resource's who works it.
 #[derive(Clone, Debug, PartialEq)]
 pub struct PlateLabel {
     pub name: Option<String>,
@@ -85,11 +85,11 @@ impl PlateLabel {
         }
     }
 
-    pub fn resource(name: &str, left: u32, working: u32, room: u32) -> PlateLabel {
+    pub fn resource(name: &str, working: u32, room: u32) -> PlateLabel {
         PlateLabel {
             name: Some(name.to_owned()),
             role: None,
-            state: Some(resource::render::plate_line(left, working, room)),
+            state: resource::render::plate_line(working, room),
             color: Color32::WHITE,
         }
     }

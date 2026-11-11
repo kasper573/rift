@@ -1,11 +1,10 @@
-//! Resources as a client shows them: each standing as the prop it looks like under a plate saying
-//! what is left of it and who works it, a bar under every worker filling once an extraction, and
-//! the pointer over one answering whether a click would work it and why not.
+//! Resources as a client shows them: each standing as the prop it looks like under a plate naming
+//! it and counting who works it, and a bar under every worker filling once an extraction.
 
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
 use ui::egui;
-use ui::face::{self, TextRole};
+use ui::face::TextRole;
 use ui::{float, ink, paint, slip};
 
 use super::{Left, Resource, ResourceId, StopGathering, Working, workers};
@@ -16,23 +15,17 @@ use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::{ground_height, window_point, world_point};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::core::time;
-use crate::core::units::{Meters, Seconds};
+use crate::core::units::Meters;
 use crate::systems::actor::Hitbox;
 use crate::systems::actor::plate::PlateLabel;
-use crate::systems::equipment::{self, EquipmentPlace};
 use crate::systems::hud;
-use crate::systems::input::claims::{self, ClickClaim};
 use crate::systems::input::map::{InputAction, input};
-use crate::systems::item::{ExchangeRefusal, Inventory, ItemId, ToolTypeId};
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
-use crate::systems::stat::{self, StatKind};
 
 const BAR: egui::Vec2 = egui::Vec2::new(56.0, 5.0);
 const BAR_DROP: f32 = 10.0;
-const TIP_FROM_POINTER: egui::Vec2 = egui::Vec2::new(18.0, 18.0);
-const TIP_WIDTH: f32 = 240.0;
 const HINT_GAP: f32 = 8.0;
 
 pub struct ResourceRenderPlugin;
@@ -48,88 +41,11 @@ impl Plugin for ResourceRenderPlugin {
             )
             .add_systems(
                 EguiPrimaryContextPass,
-                (draw_bars, draw_outlook, draw_hint)
+                (draw_bars, draw_hint)
                     .in_set(Band::World)
                     .run_if(in_state(ClientScreen::Area)),
             );
     }
-}
-
-/// How working a resource looks to a character before it clicks: what is left, who works it, and
-/// what stands in the way.
-#[derive(Clone, Debug, PartialEq)]
-pub struct Outlook {
-    pub def: ResourceId,
-    pub left: u32,
-    pub working: u32,
-    pub room: u32,
-    pub tool: ToolOutlook,
-    /// How long one extraction would take the character.
-    pub takes: Seconds,
-    /// Why the bag could not take the most one extraction can drop.
-    pub bag: Option<ExchangeRefusal>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ToolOutlook {
-    ByHand,
-    Worn(ItemId),
-    Lacking {
-        kind: ToolTypeId,
-        holds: Option<ItemId>,
-    },
-}
-
-impl Outlook {
-    pub fn full(&self) -> bool {
-        self.working >= self.room
-    }
-
-    pub fn workable(&self) -> bool {
-        !self.full() && self.bag.is_none() && !matches!(self.tool, ToolOutlook::Lacking { .. })
-    }
-}
-
-/// How working `resource` looks to `character`, while it stands.
-pub fn outlook(world: &mut World, character: Entity, resource: Entity) -> Option<Outlook> {
-    let content = world.resource::<Content>().clone();
-    let def = world.get::<Resource>(resource)?.def;
-    let left = world.get::<Left>(resource)?.0;
-    let row = def.get(&content);
-    let mine = world
-        .get::<Working>(character)
-        .is_some_and(|working| working.resource == resource);
-    let working = workers(world, resource) - u32::from(mine);
-    let holds = equipment::in_slot(world, character, &EquipmentPlace::Tool);
-    let tool = match row.extraction.tool() {
-        None => ToolOutlook::ByHand,
-        Some(kind) => {
-            let fits = |item: &ItemId| {
-                item.get(&content).wear().and_then(|wear| wear.tool_type()) == Some(kind)
-            };
-            match holds.filter(fits) {
-                Some(worn) => ToolOutlook::Worn(worn),
-                None => ToolOutlook::Lacking { kind, holds },
-            }
-        }
-    };
-    let speed = stat::effective(world, character, StatKind::GatherSpeed);
-    let rate = stat::effective(world, character, StatKind::GatherDropRate);
-    let bag = world
-        .get::<Inventory>(character)
-        .cloned()
-        .unwrap_or_else(Inventory::empty)
-        .exchange(&content, &[], &row.most_at(rate))
-        .err();
-    Some(Outlook {
-        def,
-        left,
-        working,
-        room: row.max_occupants,
-        tool,
-        takes: row.takes_at(speed),
-        bag,
-    })
 }
 
 /// The resource the pointer picks, if it is on one.
@@ -159,31 +75,28 @@ pub fn progress(world: &World, working: &Working) -> Option<f32> {
     })
 }
 
-/// The plate over every standing resource: its name, what is left of it and who works it.
+/// The plate over every standing resource: its name and who works it.
 pub fn plates(world: &mut World) -> Vec<(Entity, PlateLabel, Pos<Meters>, Hitbox)> {
     let content = world.resource::<Content>().clone();
-    let standing: Vec<(Entity, ResourceId, u32, Pos<Meters>, Hitbox)> = world
-        .query::<(Entity, &Resource, &Left, &Position, &Hitbox)>()
+    let standing: Vec<(Entity, ResourceId, Pos<Meters>, Hitbox)> = world
+        .query_filtered::<(Entity, &Resource, &Position, &Hitbox), With<Left>>()
         .iter(world)
-        .map(|(entity, resource, left, at, hitbox)| (entity, resource.def, left.0, at.pos, *hitbox))
+        .map(|(entity, resource, at, hitbox)| (entity, resource.def, at.pos, *hitbox))
         .collect();
     standing
         .into_iter()
-        .map(|(entity, def, left, at, hitbox)| {
+        .map(|(entity, def, at, hitbox)| {
             let row = def.get(&content);
             let working = workers(world, entity);
-            let label = PlateLabel::resource(&row.name, left, working, row.max_occupants);
+            let label = PlateLabel::resource(&row.name, working, row.max_occupants);
             (entity, label, at, hitbox)
         })
         .collect()
 }
 
-/// What a plate says under a resource's name.
-pub fn plate_line(left: u32, working: u32, room: u32) -> String {
-    match working {
-        0 => format!("{left} left"),
-        _ => format!("{left} left · {working} of {room} working"),
-    }
+/// What a plate says under a resource's name while it is worked.
+pub fn plate_line(working: u32, room: u32) -> Option<String> {
+    (working > 0).then(|| format!("{working} of {room} working"))
 }
 
 fn dress(
@@ -243,123 +156,6 @@ fn draw_bars(world: &mut World) {
             .pivot(egui::Align2::CENTER_TOP)
             .fixed_pos(egui::pos2(feet.x, feet.y + BAR_DROP))
             .show(&gui, |ui| paint::progress_line(ui, BAR, share, ink::GOLD));
-    }
-}
-
-fn draw_outlook(world: &mut World) {
-    let Some(gui) = gui::context(world) else {
-        return;
-    };
-    let Some(me) = session::me(world) else {
-        return;
-    };
-    let ClickClaim::Gather(resource) = claims::claim(world) else {
-        return;
-    };
-    let Some(outlook) = outlook(world, me, resource) else {
-        return;
-    };
-    let content = world.resource::<Content>().clone();
-    let world: &World = world;
-    float::at_pointer(
-        &gui,
-        egui::Id::new("resource outlook"),
-        Band::Pointer.order(),
-        TIP_FROM_POINTER,
-        |ui| {
-            egui::Frame::popup(ui.style()).show(ui, |ui| {
-                ui.set_max_width(TIP_WIDTH);
-                ui.spacing_mut().item_spacing.y = 2.0;
-                let line = |ui: &mut egui::Ui, text: String, color: egui::Color32| {
-                    ui.label(
-                        egui::RichText::new(text)
-                            .size(TextRole::Tooltip.size())
-                            .color(color),
-                    );
-                };
-                ui.label(
-                    face::bold(outlook.def.get(&content).name.as_str())
-                        .size(TextRole::Tooltip.size()),
-                );
-                for (text, fine) in outlook_lines(&content, &outlook) {
-                    line(ui, text, if fine { ink::INK2 } else { ink::RUBRIC });
-                }
-                if outlook.workable() {
-                    let hint = StyledLine::new(vec![
-                        input(InputAction::Interact),
-                        TextPiece::text(" to work it"),
-                    ]);
-                    let look = TextLook::new(TextRole::Small.size(), ink::INK3);
-                    text::show(ui, world, &hint, look, None);
-                }
-            });
-        },
-    );
-}
-
-/// What the pointer over a resource says of it, line by line, each fine or in the way.
-pub fn outlook_lines(content: &Content, outlook: &Outlook) -> Vec<(String, bool)> {
-    let mut lines = Vec::new();
-    if outlook.full() {
-        lines.push((format!("{} left", outlook.left), true));
-        lines.push((
-            format!(
-                "{} · {} of {} working",
-                content
-                    .built::<crate::systems::GameSettings>()
-                    .words
-                    .no_room,
-                outlook.working,
-                outlook.room
-            ),
-            false,
-        ));
-    } else {
-        lines.push((
-            format!(
-                "{} left · room for {}",
-                outlook.left,
-                outlook.room - outlook.working
-            ),
-            true,
-        ));
-    }
-    let each = format!("{} each", seconds(outlook.takes));
-    match outlook.tool {
-        ToolOutlook::ByHand => lines.push((each, true)),
-        ToolOutlook::Worn(tool) => {
-            lines.push((
-                format!("{} equipped · {each}", tool.get(content).name),
-                true,
-            ));
-        }
-        ToolOutlook::Lacking { kind, holds } => {
-            let words = &content.built::<crate::systems::GameSettings>().words;
-            lines.push((
-                words.needs_tool.replace("{tool}", &kind.get(content).name),
-                false,
-            ));
-            lines.push((
-                match holds {
-                    Some(held) => format!("Your tool slot holds {}", held.get(content).name),
-                    None => "Your tool slot is empty".to_owned(),
-                },
-                true,
-            ));
-        }
-    }
-    if let Some(refusal) = outlook.bag {
-        lines.push((refusal.describe(content), false));
-    }
-    lines
-}
-
-fn seconds(span: Seconds) -> String {
-    let tenths = (span.0 * 10.0).round() / 10.0;
-    if tenths.fract() == 0.0 {
-        format!("{tenths:.0} s")
-    } else {
-        format!("{tenths:.1} s")
     }
 }
 

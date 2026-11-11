@@ -571,9 +571,6 @@ pub struct ProbeResource {
     /// Who works it.
     #[schemars(with = "Vec<u64>")]
     pub workers: Vec<Entity>,
-    /// Whether a click of the player's would work it, and what the pointer over it says.
-    pub workable: bool,
-    pub outlook: Vec<String>,
 }
 
 /// The work a character has under way at a resource.
@@ -1241,7 +1238,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         actors: actors(world, me, area),
         objects: objects(world, area),
         items: items(world, area),
-        resources: resources(world, me, area),
+        resources: resources(world, area),
         warps: warps(world, area),
         ui: ui(world),
         covered: covered(world),
@@ -1763,7 +1760,7 @@ fn items(world: &mut World, area: Option<AreaId>) -> Vec<ProbeGroundItem> {
         .collect()
 }
 
-fn resources(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Vec<ProbeResource> {
+fn resources(world: &mut World, area: Option<AreaId>) -> Vec<ProbeResource> {
     let content = world.resource::<Content>().clone();
     let standing: Vec<(Entity, ResourceId, u32, Pos<Meters>, Capsule)> = world
         .query::<(Entity, &Resource, &Left, &Position, &Hitbox, &AreaTag)>()
@@ -1780,29 +1777,19 @@ fn resources(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Vec
         .collect();
     standing
         .into_iter()
-        .map(|(entity, def, left, at, capsule)| {
-            let outlook = me.and_then(|me| resource::render::outlook(world, me, entity));
-            ProbeResource {
-                id: entity,
-                resource: def,
-                name: def.get(&content).name.clone(),
-                at,
-                aim: aim(world, entity, at, capsule),
-                left,
-                room: def.get(&content).max_occupants,
-                workers: working
-                    .iter()
-                    .filter(|(_, resource)| *resource == entity)
-                    .map(|(worker, _)| *worker)
-                    .collect(),
-                workable: outlook.as_ref().is_some_and(|outlook| outlook.workable()),
-                outlook: outlook.map_or_else(Vec::new, |outlook| {
-                    resource::render::outlook_lines(&content, &outlook)
-                        .into_iter()
-                        .map(|(line, _)| line)
-                        .collect()
-                }),
-            }
+        .map(|(entity, def, left, at, capsule)| ProbeResource {
+            id: entity,
+            resource: def,
+            name: def.get(&content).name.clone(),
+            at,
+            aim: aim(world, entity, at, capsule),
+            left,
+            room: def.get(&content).max_occupants,
+            workers: working
+                .iter()
+                .filter(|(_, resource)| *resource == entity)
+                .map(|(worker, _)| *worker)
+                .collect(),
         })
         .collect()
 }
