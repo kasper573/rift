@@ -257,8 +257,14 @@ pub fn grading(tone: Tone, grade: PictureGrade) -> ColorGrading {
 }
 
 /// A new picture is finished at once, before it draws a frame: what settles it over the frames,
-/// which the clearings' frame-stepped dither relies on to read as a translucency, and the rest as
-/// the player's video preferences ask. The sky it sees is the shown area's (`sky::show`).
+/// which the clearings' frame-stepped dither relies on to read as a translucency, how it softens
+/// the shadows' edges, and the rest as the player's video preferences ask. The sky it sees is the
+/// shown area's (`sky::show`).
+///
+/// The sun turns as the day goes, so each frame its shadows are drawn anew under it, each time
+/// elsewhere among their texels. Read through a filter a few texels wide and alike every frame
+/// they hold still all the same; a narrower one, or one that steps from frame to frame, shows
+/// every shadow's edge flickering.
 pub(super) fn finish_new_picture(
     add: On<Add<WorldPicture>>,
     video: Res<VideoPreferences>,
@@ -271,7 +277,7 @@ pub(super) fn finish_new_picture(
     let mut picture = commands.entity(add.entity);
     picture.insert((
         TemporalAntiAliasing::default(),
-        ShadowFilteringMethod::Temporal,
+        ShadowFilteringMethod::Gaussian,
     ));
     finish(&mut picture, *video, grade);
 }

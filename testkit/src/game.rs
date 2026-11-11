@@ -1003,7 +1003,6 @@ pub fn look() -> Look {
         light: LightLook {
             sun_lux: 2600.0,
             ambient_nits: 800.0,
-            sun_width: 1.5,
         },
         materials: SurfaceFinish {
             roughness: 0.8,

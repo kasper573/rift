@@ -22,8 +22,8 @@ use testkit::HEIGHTS;
 /// How a picture and the sun over it are drawn, in the parts a player's video preferences choose.
 #[derive(Debug, PartialEq)]
 struct Drawn {
-    /// How many cascades the sun's shadows fall in, and whether they're soft; none without shadows.
-    shadows: Option<(usize, bool)>,
+    /// How many cascades the sun's shadows fall in; none without shadows.
+    shadows: Option<usize>,
     occlusion: Option<ScreenSpaceAmbientOcclusionQualityLevel>,
     shafts: bool,
     /// The quality whose smoothing the picture is drawn with.
@@ -53,7 +53,7 @@ fn a_players_video_preferences_draw_the_world_as_picked_from_the_moment_they_are
             "the low preset",
             preset(Quality::Low),
             Drawn {
-                shadows: Some((1, false)),
+                shadows: Some(1),
                 occlusion: Some(ScreenSpaceAmbientOcclusionQualityLevel::Low),
                 shafts: false,
                 smoothing: Some(AntiAliasingQuality::Low),
@@ -65,7 +65,7 @@ fn a_players_video_preferences_draw_the_world_as_picked_from_the_moment_they_are
             "the medium preset",
             preset(Quality::Medium),
             Drawn {
-                shadows: Some((1, false)),
+                shadows: Some(1),
                 occlusion: Some(ScreenSpaceAmbientOcclusionQualityLevel::Medium),
                 shafts: false,
                 smoothing: Some(AntiAliasingQuality::Medium),
@@ -88,7 +88,7 @@ fn a_players_video_preferences_draw_the_world_as_picked_from_the_moment_they_are
                 ..preset(Quality::Lowest)
             },
             Drawn {
-                shadows: Some((1, false)),
+                shadows: Some(1),
                 occlusion: None,
                 shafts: false,
                 smoothing: None,
@@ -261,7 +261,7 @@ fn farthest_ground(lens: Mat4, eye: &GlobalTransform) -> f32 {
 /// Everything at its highest quality.
 fn best() -> Drawn {
     Drawn {
-        shadows: Some((2, true)),
+        shadows: Some(2),
         occlusion: Some(ScreenSpaceAmbientOcclusionQualityLevel::High),
         shafts: true,
         smoothing: Some(AntiAliasingQuality::Ultra),
@@ -325,9 +325,7 @@ fn drawn(app: &mut App, (picture, sun): (Entity, Entity)) -> Drawn {
         .get::<CascadeShadowConfig>()
         .expect("the sun's cascades");
     Drawn {
-        shadows: light
-            .shadow_maps_enabled
-            .then(|| (cascades.bounds.len(), light.soft_shadow_size.is_some())),
+        shadows: light.shadow_maps_enabled.then_some(cascades.bounds.len()),
         occlusion: picture
             .get::<ScreenSpaceAmbientOcclusion>()
             .map(|occlusion| occlusion.quality_level),

@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "711d5785",
+  "content_version": "ff208ce9",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -213,8 +213,7 @@
     },
     "light": {
       "sun_lux": 2600.0,
-      "ambient_nits": 800.0,
-      "sun_width": 1.5
+      "ambient_nits": 800.0
     },
     "materials": {
       "roughness": 0.8,

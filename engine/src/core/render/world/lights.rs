@@ -1,4 +1,4 @@
-//! The lights of the world: one sun with soft shadows, cloud shadows and shafts of light, an
+//! The lights of the world: one sun with its shadows, cloud shadows and shafts of light, an
 //! ambient glow, and up to a few point lights, some of which flicker.
 
 use bevy::light::{
@@ -14,11 +14,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::ground::Heightfield;
 use crate::core::math::Rect;
+use crate::core::render::camera;
 use crate::core::render::video::{ShadowQuality, VideoPreferences};
-use crate::core::render::{Look, camera};
 use crate::core::units::{Degrees, Meters, Seconds};
 
-/// How strong the world's lights are, and how soft the sun's shadows.
+/// How strong the world's lights are.
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
 pub struct LightLook {
@@ -29,9 +29,6 @@ pub struct LightLook {
     /// square metre: outside, the fill that keeps a shadow a few steps under the sun rather than
     /// black; inside, where no sky reaches, the whole of the light between the lamps.
     pub ambient_nits: f32,
-    /// How wide the sun is as a source of light, which is how far its shadows soften from what
-    /// casts them.
-    pub sun_width: f32,
 }
 /// Lumens per unit of a content light's intensity.
 const LUMENS_PER_UNIT: f32 = 4_000.0;
@@ -60,8 +57,8 @@ const REACH_STEPS_A_DOUBLING: f32 = 4.0;
 /// How many rays along each edge of a camera's view find how far it sees the ground.
 const RIM_RAYS: u32 = 8;
 
-/// A sun shining from `elevation` above the horizon at `azimuth` clockwise from north: soft
-/// shadows in cascades, and shafts of light through the air.
+/// A sun shining from `elevation` above the horizon at `azimuth` clockwise from north: shadows
+/// in cascades, and shafts of light through the air.
 pub fn sun(color: Color, illuminance: f32, elevation: Degrees, azimuth: Degrees) -> impl Bundle {
     (
         DirectionalLight {
@@ -148,24 +145,18 @@ impl ShadowReach {
 /// camera sees, anew whenever either changes.
 pub(super) fn cast_shadows(
     video: Res<VideoPreferences>,
-    look: Option<Res<Look>>,
     mut lights: Query<(
         &mut DirectionalLight,
         &mut CascadeShadowConfig,
         Option<Ref<ShadowReach>>,
     )>,
 ) {
-    let Some(look) = look else {
-        return;
-    };
     for (mut light, mut cascades, reach) in &mut lights {
         let reached = reach.as_ref().is_some_and(Ref::is_changed);
-        if !light.is_added() && !video.is_changed() && !look.is_changed() && !reached {
+        if !light.is_added() && !video.is_changed() && !reached {
             continue;
         }
         light.shadow_maps_enabled = video.shadows != ShadowQuality::Off;
-        light.soft_shadow_size =
-            (video.shadows == ShadowQuality::High).then_some(look.light.sun_width);
         *cascades = shadow_cascades(
             video.shadows,
             reach.map_or(ShadowReach::CLOSE, |reach| *reach),

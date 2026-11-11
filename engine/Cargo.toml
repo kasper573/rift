@@ -36,7 +36,6 @@ bevy = { workspace = true, features = [
     "tonemapping_luts",
     "ktx2",
     "zstd_rust",
-    "experimental_pbr_pcss",
     "pbr_light_textures",
     "bevy_gltf",
     "bevy_scene",
