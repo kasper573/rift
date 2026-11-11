@@ -2,11 +2,15 @@ use std::collections::{HashMap, HashSet};
 use std::hash::Hash;
 use ui::egui;
 
+use bevy::asset::RenderAssetUsages;
+use bevy::image::{ImageSampler, ImageSamplerDescriptor};
 use bevy::prelude::*;
+use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
 use bevy_egui::{
     EguiContext, EguiGlobalSettings, EguiOutput, EguiPlugin, EguiPostUpdateSet,
-    EguiPrimaryContextPass, PrimaryEguiContext,
+    EguiPrimaryContextPass, EguiTextureHandle, EguiUserTextures, PrimaryEguiContext,
 };
+use image::imageops::{self, FilterType};
 use strum::VariantArray;
 use ui::egui::load::SizedTexture;
 use ui::egui::{LayerId, Order};
@@ -182,22 +186,16 @@ pub fn image_file(world: &mut World, file: &str) -> Option<GuiImage> {
             .0
             .insert(file.to_owned(), GuiTexture::Loading(handle));
     }
-    let texture = match &world.resource::<GuiImages>().0[file] {
-        GuiTexture::Ready(texture) => texture.clone(),
-        GuiTexture::Loading(handle) => {
-            let texture = upload(world, file, handle)?;
-            world
-                .resource_mut::<GuiImages>()
-                .0
-                .insert(file.to_owned(), GuiTexture::Ready(texture.clone()));
-            texture
-        }
+    let loading = match &world.resource::<GuiImages>().0[file] {
+        GuiTexture::Ready(image) => return Some(image.clone()),
+        GuiTexture::Loading(handle) => handle.clone(),
     };
-    Some(GuiImage {
-        texture: texture.id(),
-        size: texture.size_vec2(),
-        path: file.to_owned(),
-    })
+    let image = upload(world, file, &loading)?;
+    world
+        .resource_mut::<GuiImages>()
+        .0
+        .insert(file.to_owned(), GuiTexture::Ready(image.clone()));
+    Some(image)
 }
 
 pub fn pointer_claimed(world: &World) -> bool {
@@ -223,8 +221,13 @@ struct GuiImages(HashMap<String, GuiTexture>);
 
 enum GuiTexture {
     Loading(Handle<Image>),
-    Ready(egui::TextureHandle),
+    Ready(GuiImage),
 }
+
+/// A picture smaller than this is pixel art. It is enlarged to it by whole pixels before it is
+/// smoothed, so that drawn larger than it is, its pixels keep their edges; and it is kept with no
+/// copy smaller than itself, which would only blur it where it is drawn a little smaller.
+const SHARP_SIDE: u32 = 128;
 
 #[derive(Resource, Default)]
 struct GuiCursor(egui::CursorIcon);
@@ -256,14 +259,64 @@ fn raise_tiers(gui: Option<Res<GuiContext>>) {
     }
 }
 
-/// bevy_egui blends every texture as premultiplied but samples a Bevy image as stored, which would
-/// show the color of each transparent pixel; egui premultiplies the pixels it is handed itself.
-fn upload(world: &World, file: &str, handle: &Handle<Image>) -> Option<egui::TextureHandle> {
-    let image = world.resource::<Assets<Image>>().get(handle)?;
-    let rgba = image.clone().try_into_dynamic().ok()?.to_rgba8();
-    let size = [rgba.width() as usize, rgba.height() as usize];
-    let pixels = egui::ColorImage::from_rgba_unmultiplied(size, rgba.as_raw());
-    Some(context(world)?.load_texture(file, pixels, egui::TextureOptions::NEAREST))
+/// The interface draws a picture at whatever size it likes, so it is kept with its smaller copies
+/// and sampled smoothly between them: drawn smaller, every pixel of it still shows. bevy_egui blends
+/// every texture as premultiplied but samples a Bevy image as stored, which would show the color of
+/// each transparent pixel, so the pixels are premultiplied here as egui does its own.
+fn upload(world: &mut World, file: &str, handle: &Handle<Image>) -> Option<GuiImage> {
+    let source = world.resource::<Assets<Image>>().get(handle)?;
+    let mut picture = source.clone().try_into_dynamic().ok()?.to_rgba8();
+    let size = egui::vec2(picture.width() as f32, picture.height() as f32);
+    for pixel in picture.pixels_mut() {
+        let [red, green, blue, alpha] = pixel.0;
+        pixel.0 = egui::Color32::from_rgba_unmultiplied(red, green, blue, alpha).to_array();
+    }
+    let longest = picture.width().max(picture.height()).max(1);
+    let enlarged = SHARP_SIDE.div_ceil(longest).next_power_of_two();
+    let levels = match enlarged {
+        1 => longest.ilog2() + 1,
+        _ => enlarged.ilog2() + 1,
+    };
+    let picture = imageops::resize(
+        &picture,
+        picture.width() * enlarged,
+        picture.height() * enlarged,
+        FilterType::Nearest,
+    );
+    let data = (0..levels)
+        .scan(picture.clone(), |level, _| {
+            let bytes = level.as_raw().clone();
+            *level = imageops::thumbnail(
+                level,
+                (level.width() / 2).max(1),
+                (level.height() / 2).max(1),
+            );
+            Some(bytes)
+        })
+        .flatten()
+        .collect();
+    let mut image = Image::new_uninit(
+        Extent3d {
+            width: picture.width(),
+            height: picture.height(),
+            depth_or_array_layers: 1,
+        },
+        TextureDimension::D2,
+        TextureFormat::Rgba8UnormSrgb,
+        RenderAssetUsages::RENDER_WORLD,
+    );
+    image.texture_descriptor.mip_level_count = levels;
+    image.data = Some(data);
+    image.sampler = ImageSampler::Descriptor(ImageSamplerDescriptor::linear());
+    let handle = world.resource_mut::<Assets<Image>>().add(image);
+    let texture = world
+        .resource_mut::<EguiUserTextures>()
+        .add_image(EguiTextureHandle::Strong(handle));
+    Some(GuiImage {
+        texture,
+        size,
+        path: file.to_owned(),
+    })
 }
 
 fn read_cursor(
