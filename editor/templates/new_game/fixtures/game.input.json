@@ -392,6 +392,15 @@
         }
       ]
     },
+    "toggle_recipes": {
+      "label": "Open or close the recipes of a crafting prompt",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "KeyR"
+        }
+      ]
+    },
     "hotbar1": {
       "label": "Use hotbar slot 1",
       "bindings": [

@@ -7,6 +7,7 @@ mod combat;
 mod commands;
 mod conversation;
 mod cover;
+mod crafting;
 mod daylight;
 mod effects;
 mod equipment;

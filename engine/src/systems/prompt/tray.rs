@@ -275,6 +275,12 @@ pub fn foot(ui: &mut Ui, world: &mut World, submit: impl FnOnce(&mut World)) {
     });
 }
 
+/// How tall the prompt's sheet stands: as tall as what it last drew, `guessed` before it has.
+pub fn fitted(world: &World, guessed: f32) -> f32 {
+    let measured = world.resource::<Placing>().height;
+    if measured > 0.0 { measured } else { guessed }
+}
+
 /// Keeps the prompt's sheet as tall as what it drew, `drawn` high, turned out to be.
 pub fn fit(ui: &Ui, world: &mut World, drawn: f32) {
     let needed = drawn + sheet::chrome(true).y;
@@ -306,7 +312,6 @@ fn open(world: &World) -> bool {
 fn head(world: &World) -> Option<PanelHead> {
     let view = view(world).filter(|view| view.kind == PromptKind::Offer)?;
     let chrome = sheet::chrome(true);
-    let measured = world.resource::<Placing>().height;
     let text = if view.text.is_some() { LINE + 6.0 } else { 0.0 };
     let guessed = chrome.y
         + 2.0 * PADDING
@@ -318,7 +323,7 @@ fn head(world: &World) -> Option<PanelHead> {
         width: TRAY_WIDTH,
         chrome: PanelChrome::Sheet {
             title: view.title.clone(),
-            height: if measured > 0.0 { measured } else { guessed },
+            height: fitted(world, guessed),
         },
     })
 }

@@ -18,6 +18,7 @@ use engine::core::vfx::{VfxDef, VfxShaderDef};
 use engine::systems::actor::skeleton::SkeletonDef;
 use engine::systems::actor::stance::StanceDef;
 use engine::systems::class::ClassDef;
+use engine::systems::crafting::RecipeBookDef;
 use engine::systems::item::ItemDef;
 use engine::systems::player::snapshot::CharacterSnapshot;
 use ui::controls::{self, Pill};
@@ -37,8 +38,8 @@ use crate::tabs::active_tab;
 use crate::tabs::{DockRequest, EditorTab};
 use crate::views::script::{self, keys::ScriptKeys};
 use crate::views::{
-    self, area, bust, character, class, item, model, model_part, prop, skeleton, spreadsheet,
-    stance, vfx, world,
+    self, area, bust, character, class, item, model, model_part, prop, recipe_book, skeleton,
+    spreadsheet, stance, vfx, world,
 };
 use crate::widgets::VIEW_PADDING;
 use crate::{content_tree, row_form, shown, widgets};
@@ -559,6 +560,9 @@ impl TabViewer for Viewer<'_> {
             EditorTab::Row { table, key } if table == StanceDef::TABLE => {
                 stance::show(self.editor, ui, key)
             }
+            EditorTab::Row { table, key } if table == RecipeBookDef::TABLE => {
+                recipe_book::show(self.editor, ui, key)
+            }
             EditorTab::Spreadsheet { table } => spreadsheet::show(self.editor, ui, table),
             EditorTab::Row { .. }
             | EditorTab::Rows { .. }
@@ -636,7 +640,8 @@ impl TabViewer for Viewer<'_> {
             EditorTab::Row { table, .. }
                 if table == ItemDef::TABLE
                     || table == SkeletonDef::TABLE
-                    || table == StanceDef::TABLE =>
+                    || table == StanceDef::TABLE
+                    || table == RecipeBookDef::TABLE =>
             {
                 [false, false]
             }

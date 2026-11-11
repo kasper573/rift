@@ -32,6 +32,7 @@ use crate::systems::WorldArea;
 use crate::systems::area::scene::scene_file;
 use crate::systems::area::{self, AreaDef, AreaId, AreaModule, AreaObject};
 use crate::systems::class::{ClassDef, ClassId};
+use crate::systems::crafting::{RecipeBookDef, RecipeBookId};
 use crate::systems::dialogue::bust::Expression;
 use crate::systems::dialogue::{self, ChoiceReveal};
 use crate::systems::item::{ItemDef, ItemId, ItemKind};
@@ -73,6 +74,7 @@ pub enum RunnerKind {
     Quest,
     Shop,
     Resource,
+    RecipeBook,
     Skill,
     StatusEffect,
     Blueprint,
@@ -89,6 +91,7 @@ impl RunnerKindDef for RunnerKind {
                 | RunnerKind::Quest
                 | RunnerKind::Shop
                 | RunnerKind::Resource
+                | RunnerKind::RecipeBook
                 | RunnerKind::Skill
                 | RunnerKind::StatusEffect
         )
@@ -287,6 +290,7 @@ pub enum EffectReach {
     Prompts,
     ReadsOffer,
     TakesOffer,
+    Crafts(RecipeBookId),
 }
 
 impl Vocabulary for RiftScripting {
@@ -440,6 +444,7 @@ pub fn build_all(loading: &mut Loading) {
     bind_table::<QuestDef>(loading, &mut bind);
     bind_table::<ShopDef>(loading, &mut bind);
     bind_table::<ResourceDef>(loading, &mut bind);
+    bind_table::<RecipeBookDef>(loading, &mut bind);
     bind_table::<SkillDef>(loading, &mut bind);
     bind_table::<StatusEffectDef>(loading, &mut bind);
     for (id, _) in loading.rows::<AreaDef>(&content) {
@@ -587,6 +592,7 @@ pub fn owner_site(content: &Content, row: OwnerRow) -> ScriptSite {
         RunnerKind::Quest => row.id::<QuestDef>().path(content),
         RunnerKind::Shop => row.id::<ShopDef>().path(content),
         RunnerKind::Resource => row.id::<ResourceDef>().path(content),
+        RunnerKind::RecipeBook => row.id::<RecipeBookDef>().path(content),
         RunnerKind::Skill => row.id::<SkillDef>().path(content),
         RunnerKind::StatusEffect => row.id::<StatusEffectDef>().path(content),
         RunnerKind::Any => "",
@@ -616,6 +622,7 @@ pub fn spawn_stateless(world: &mut World) {
             | RunnerKind::Quest
             | RunnerKind::Shop
             | RunnerKind::Resource
+            | RunnerKind::RecipeBook
             | RunnerKind::Skill
             | RunnerKind::StatusEffect => Owner::Row(row.kind, row.row),
             _ => continue,
@@ -795,6 +802,26 @@ pub fn check_reached(loading: &mut Loading) {
                     "never opened",
                     format!("shop/{}", id.path(&content)),
                     "a script that may reach open_shop for it",
+                ),
+            );
+        }
+    }
+    for (id, _) in loading.rows::<RecipeBookDef>(&content) {
+        let opened = scripts.owners().any(|(row, _)| {
+            scripts
+                .may_do(*row)
+                .reaches
+                .iter()
+                .any(|reach| matches!(reach, EffectReach::Crafts(book) if *book == id))
+        });
+        if !opened {
+            loading.row_error(
+                id,
+                "",
+                ContentProblem::new(
+                    "never opened",
+                    format!("recipe_book/{}", id.path(&content)),
+                    "a script that may reach open_crafting for it",
                 ),
             );
         }

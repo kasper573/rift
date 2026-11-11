@@ -18,6 +18,7 @@ use engine::systems::area::terrain::{SurfaceDef, TerrainDef};
 use engine::systems::area::world_map::WorldMapDef;
 use engine::systems::attention::AttentionDef;
 use engine::systems::class::ClassDef;
+use engine::systems::crafting::RecipeBookDef;
 use engine::systems::dialogue::bust::BustDef;
 use engine::systems::input::map::InputDef;
 use engine::systems::interface::{CursorDef, InterfaceIconDef};
@@ -171,9 +172,11 @@ impl KindFamily {
             | MaterialDef::TABLE
             | BustDef::TABLE
             | SkeletonDef::TABLE => KindFamily::Characters,
-            ItemDef::TABLE | ShopDef::TABLE | StanceDef::TABLE | ToolTypeDef::TABLE => {
-                KindFamily::Items
-            }
+            ItemDef::TABLE
+            | ShopDef::TABLE
+            | RecipeBookDef::TABLE
+            | StanceDef::TABLE
+            | ToolTypeDef::TABLE => KindFamily::Items,
             SkillDef::TABLE | StatusEffectDef::TABLE | VfxDef::TABLE | VfxShaderDef::TABLE => {
                 KindFamily::Abilities
             }
@@ -228,6 +231,7 @@ pub fn of_table(table: &str) -> KindIcon {
         StatusEffectDef::TABLE => KindIcon::plain(phosphor::HEARTBEAT),
         QuestDef::TABLE => KindIcon::plain(phosphor::SCROLL),
         ShopDef::TABLE => KindIcon::plain(phosphor::STOREFRONT),
+        RecipeBookDef::TABLE => KindIcon::plain(phosphor::BOOK_OPEN_TEXT),
         MemoryDef::TABLE => KindIcon::plain(phosphor::BRAIN),
         NotificationDef::TABLE => KindIcon::plain(phosphor::BELL_RINGING),
         ScriptDef::TABLE => KindIcon::plain(phosphor::TREE_STRUCTURE),

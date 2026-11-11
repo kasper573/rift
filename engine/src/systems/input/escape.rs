@@ -5,7 +5,7 @@ use ui::egui::LayerId;
 use super::map::{self, InputAction, InputMap};
 use crate::core::gui;
 use crate::systems::dialogue::stage;
-use crate::systems::{hud, item, resource, skill};
+use crate::systems::{crafting, hud, item, resource, skill};
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(
@@ -44,6 +44,7 @@ fn dismiss_topmost(world: &mut World) {
 enum Dismissal {
     Confirm,
     Window(&'static str),
+    Recipes,
     ItemCard,
     SkillCard,
     Conversation,
@@ -54,6 +55,7 @@ impl Dismissal {
         match self {
             Dismissal::Confirm => hud::dismiss_confirm(world),
             Dismissal::Window(title) => hud::close_window(world, title),
+            Dismissal::Recipes => crafting::panel::close_recipes(world),
             Dismissal::ItemCard => item::card::close(world),
             Dismissal::SkillCard => skill::card::close(world),
             Dismissal::Conversation => stage::leave(world),
@@ -65,6 +67,10 @@ fn dismissals(world: &World) -> Vec<(LayerId, Dismissal)> {
     let mut open: Vec<(LayerId, Dismissal)> = hud::open_windows(world)
         .map(|title| (hud::window_layer(title), Dismissal::Window(title)))
         .collect();
+    if crafting::panel::listing(world) {
+        let layer = hud::window_layer(crafting::panel::RECIPES);
+        open.push((layer, Dismissal::Recipes));
+    }
     if hud::confirming(world) {
         open.push((hud::confirm_layer(), Dismissal::Confirm));
     }

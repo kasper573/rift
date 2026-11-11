@@ -1,6 +1,7 @@
 use engine::core::content::{ContentFile, LoadError};
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::{AreaDef, AreaModuleKind};
+use engine::systems::crafting::RecipeBookDef;
 use engine::systems::item::ItemDef;
 use engine::systems::npc::NpcDef;
 use engine::systems::quest::QuestDef;
@@ -180,6 +181,7 @@ pub(crate) fn runner_mark(kind: RunnerKind) -> KindMark {
         RunnerKind::Quest => QuestDef::TABLE,
         RunnerKind::Shop => ShopDef::TABLE,
         RunnerKind::Resource => ResourceDef::TABLE,
+        RunnerKind::RecipeBook => RecipeBookDef::TABLE,
         RunnerKind::Skill => SkillDef::TABLE,
         RunnerKind::StatusEffect => StatusEffectDef::TABLE,
         RunnerKind::Blueprint => BlueprintDef::TABLE,

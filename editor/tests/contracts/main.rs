@@ -19,6 +19,7 @@ mod perf_scene;
 mod project_edits;
 mod project_history;
 mod prop_view;
+mod recipe_book;
 mod row_forms;
 mod scene_graph;
 mod scene_nodes;

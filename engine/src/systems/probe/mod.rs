@@ -74,6 +74,7 @@ use crate::systems::area::weather::ShownCourse;
 use crate::systems::area::{self, AreaId, AreaObject, AreaTag};
 use crate::systems::attention::{Attention, AttentionId, StatusBadges};
 use crate::systems::combat::Attitude;
+use crate::systems::crafting;
 use crate::systems::dialogue::stage;
 use crate::systems::equipment::{self, EquipmentPlace};
 use crate::systems::history::widget::{self as history, HistoryBook};
@@ -81,7 +82,7 @@ use crate::systems::history::{HistoryMark, HistoryRecord, HistoryTopic};
 use crate::systems::hud;
 use crate::systems::input::claims::{self, ClickClaim};
 use crate::systems::input::map::InputMap;
-use crate::systems::item::{self, DroppedItem, Inventory, ItemId};
+use crate::systems::item::{self, DroppedItem, Inventory, ItemId, ItemStack};
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::notification::{self, NotificationRows, bubble, error, feed, intro, pop};
 use crate::systems::npc::{Npc, NpcId};
@@ -334,6 +335,7 @@ pub struct ProbeSnapshot {
     pub history: ProbeHistory,
     pub shop: Option<ProbeShop>,
     pub prompt: Option<ProbePrompt>,
+    pub crafting: Option<ProbeCrafting>,
     pub item_card: Option<ProbeItemCard>,
     pub skill_card: Option<ProbeSkillCard>,
     pub bag: Vec<ProbeStack>,
@@ -681,6 +683,32 @@ pub struct ProbePrompt {
     pub placed: Vec<ProbePlaced>,
     /// Whether what is placed was submitted and the server has yet to answer.
     pub waiting: bool,
+}
+
+/// What the prompt before the player crafts: every recipe it was opened with, what the items
+/// placed make, and what its button says.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProbeCrafting {
+    pub recipes: Vec<ProbeRecipe>,
+    /// Whether the prompt has a window listing its recipes, and whether it is open.
+    pub shows_recipes: bool,
+    pub listing: bool,
+    /// What the items placed make, one result for each recipe they are a whole number of times.
+    pub results: Vec<ProbeStack>,
+    /// The result its button would make: the only one, or of several the one chosen.
+    pub picked: Option<ItemId>,
+    pub button: String,
+    /// Whether the button can be pressed.
+    pub ready: bool,
+}
+
+/// A recipe of a crafting prompt, as its window lists it.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProbeRecipe {
+    pub makes: ProbeStack,
+    pub from: Vec<ProbeStack>,
+    /// Whether the player's bag covers every ingredient.
+    pub can_make: bool,
 }
 
 /// A stack placed in a prompt's tray.
@@ -1113,6 +1141,32 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                 })
                 .collect(),
             waiting: prompt::tray::waiting(world),
+        }),
+        crafting: crafting::panel::view(world).map(|view| {
+            let (button, ready) = crafting::panel::verdict(world);
+            let stack = |stack: ItemStack| ProbeStack {
+                item: stack.item,
+                count: stack.count,
+            };
+            ProbeCrafting {
+                recipes: crafting::panel::listed(world)
+                    .into_iter()
+                    .map(|listed| ProbeRecipe {
+                        makes: stack(listed.recipe.makes),
+                        from: listed.recipe.from.iter().copied().map(stack).collect(),
+                        can_make: listed.can_make,
+                    })
+                    .collect(),
+                shows_recipes: view.show_recipes,
+                listing: crafting::panel::listing(world),
+                results: crafting::panel::results(world)
+                    .into_iter()
+                    .map(|result| stack(result.makes))
+                    .collect(),
+                picked: crafting::panel::picked(world).map(|result| result.makes.item),
+                button,
+                ready: ready.is_some(),
+            }
         }),
         shop: shop::counter::view(world).map(|shown| ProbeShop {
             shop: shown.shop,

@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "ce28d001",
+  "content_version": "3387a242",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -48,7 +48,11 @@
     "no_room": "No room",
     "bag_room": "Your bag has no room for what this can drop",
     "ran_out": "It ran out",
-    "confirm": "Confirm"
+    "confirm": "Confirm",
+    "craft": "Craft",
+    "recipes": "Recipes",
+    "no_recipe": "No recipe",
+    "choose_result": "Choose a result"
   },
   "typing": {
     "pace": 45.0,

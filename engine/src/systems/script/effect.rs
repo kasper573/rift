@@ -16,6 +16,7 @@ use crate::systems::area::warp::Warp;
 use crate::systems::chat::Say;
 use crate::systems::class::GrantXp;
 use crate::systems::combat::effects::{Damage, Heal};
+use crate::systems::crafting::OpenCrafting;
 use crate::systems::item::effects::{
     ClearGroundItems, DropItems, Equip, Items, MoveItems, SpawnGroundItems, Unequip, UseItem,
 };
@@ -105,6 +106,7 @@ effects! {
     OpenShop(OpenShop),
     ItemPrompt(ItemPrompt),
     TakeOffer(TakeOffer),
+    OpenCrafting(OpenCrafting),
     Notify(Notify),
     Say(Say),
     Wander(Wander),

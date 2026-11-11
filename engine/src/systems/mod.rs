@@ -6,6 +6,7 @@ pub mod belongings;
 pub mod chat;
 pub mod class;
 pub mod combat;
+pub mod crafting;
 pub mod dialogue;
 pub mod equipment;
 pub mod frame_rate;
@@ -107,6 +108,7 @@ pub fn protocol(app: &mut App) {
     npc::register(app);
     shop::register(app);
     prompt::register(app);
+    crafting::register(app);
     resource::register(app);
     quest::register(app);
     player::register(app);
@@ -128,6 +130,7 @@ pub fn plug_ins(world: &mut World) {
     attention::badge_source(world, dialogue::talking);
     attention::mark_source(world, interact::marks);
     attention::mark_source(world, shop::marks);
+    attention::mark_source(world, crafting::marks);
     attention::mark_source(world, quest::marks);
 }
 
@@ -279,6 +282,14 @@ pub struct GameWords {
     pub ran_out: String,
     /// The button submitting what a player placed in a prompt.
     pub confirm: String,
+    /// The button crafting what a player placed in a crafting prompt.
+    pub craft: String,
+    /// The button and the title of the window listing what a crafting prompt makes.
+    pub recipes: String,
+    /// What a crafting prompt says of items placed that are no recipe of its own.
+    pub no_recipe: String,
+    /// What a crafting prompt asks as the items placed are several recipes.
+    pub choose_result: String,
 }
 
 /// How long notices take to read: each stays a glance and a little longer for every word, and
@@ -404,7 +415,7 @@ pub fn server_app(
                     (item::pickup_request, resource::gather_request).chain(),
                     interact::interact_request,
                     dialogue::requests,
-                    (shop::requests, prompt::requests).chain(),
+                    (shop::requests, prompt::requests, crafting::requests).chain(),
                     quest::requests,
                     equipment::hold,
                     equipment::unequip,
@@ -421,7 +432,7 @@ pub fn server_app(
                     interact::interactions,
                     (dialogue::hold, dialogue::refresh.run_if(replication_tick)).chain(),
                     (shop::hold, shop::refresh.run_if(replication_tick)).chain(),
-                    prompt::hold,
+                    (prompt::hold, crafting::hold).chain(),
                     item::expire_drops,
                     player::join,
                     player::respawn,
@@ -566,6 +577,7 @@ pub fn client_app(
             history::widget::HistoryPlugin,
             shop::counter::ShopCounterPlugin,
             prompt::tray::PromptTrayPlugin,
+            crafting::panel::CraftingPanelPlugin,
             item::card::ItemCardPlugin,
             skill::client::SkillClientPlugin,
             quest::card::QuestCardPlugin,
@@ -713,6 +725,8 @@ pub fn tables() -> ContentRegistry {
         .modules::<player::PlayerDef>()
         .file::<player::snapshot::CharacterSnapshot>()
         .named::<player::snapshot::CharacterSnapshot>()
+        .file::<crafting::RecipeBookDef>()
+        .modules::<crafting::RecipeBookDef>()
         .file::<quest::QuestDef>()
         .named::<quest::QuestDef>()
         .modules::<quest::QuestDef>()
@@ -740,6 +754,7 @@ pub fn tables() -> ContentRegistry {
         .hook(LoadStep::Expand, script::build_all)
         .hook(LoadStep::Across, shop::check_all)
         .hook(LoadStep::Across, resource::check_all)
+        .hook(LoadStep::Across, crafting::check_all)
         .hook(LoadStep::Across, quest::check_all)
         .hook(LoadStep::Settings, quest::check_rewards)
         .hook(LoadStep::Across, notification::check_all)
@@ -801,6 +816,10 @@ fn check_settings(loading: &mut Loading) {
         ("bag_room", &settings.words.bag_room),
         ("ran_out", &settings.words.ran_out),
         ("confirm", &settings.words.confirm),
+        ("craft", &settings.words.craft),
+        ("recipes", &settings.words.recipes),
+        ("no_recipe", &settings.words.no_recipe),
+        ("choose_result", &settings.words.choose_result),
     ] {
         check.text(format!("/words/{field}"), said, 1, 80);
     }

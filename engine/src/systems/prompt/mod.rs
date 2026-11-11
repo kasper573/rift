@@ -143,10 +143,12 @@ pub struct PromptView {
     pub kind: PromptKind,
 }
 
-/// What submitting a prompt does: hands the offer to the script that asked, or crafts with it.
-#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+/// Whose prompt it is: the script's that asked, which is handed what is submitted, or a system's
+/// that opened it inside a panel of its own and takes what is placed itself.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PromptKind {
     Offer,
+    Hosted,
 }
 
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
@@ -269,6 +271,9 @@ pub fn submitted(
 pub fn requests(world: &mut World) {
     player_requests::<PromptRequest>(world, false, |world, player, request| {
         let PromptRequest::Submit { step, offer } = request;
+        if hosted(world, player) {
+            return Ok(());
+        }
         let flow = match submitted(world, player, step, &offer) {
             Ok(Some(flow)) => flow,
             Ok(None) => return Ok(()),
@@ -284,6 +289,13 @@ pub fn requests(world: &mut World) {
             .answer(flow, Answer::Output(SUBMITTED));
         Ok(())
     });
+}
+
+/// Whether the prompt before `player` is one a system opened inside a panel of its own.
+pub fn hosted(world: &World, player: Entity) -> bool {
+    world
+        .get::<PromptView>(player)
+        .is_some_and(|view| view.kind == PromptKind::Hosted)
 }
 
 /// Begins a new turn of `player`'s prompt, so whoever submitted knows the turn before was answered.

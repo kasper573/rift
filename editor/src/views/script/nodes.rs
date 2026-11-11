@@ -1149,7 +1149,10 @@ fn event_pieces(text: &NodeText, event: &RiftEvent) -> Vec<SummaryPiece> {
         RiftEvent::Interval { seconds } => {
             vec![muted("every "), strong(seconds.0.to_string()), muted(" s")]
         }
-        RiftEvent::Bought { item: Some(item) } | RiftEvent::Sold { item: Some(item) } => {
+        RiftEvent::Bought { item: Some(item) }
+        | RiftEvent::Sold { item: Some(item) }
+        | RiftEvent::Extracted { item: Some(item) }
+        | RiftEvent::Crafted { item: Some(item) } => {
             vec![strong(text.path_of(*item))]
         }
         RiftEvent::Started => vec![muted("the owner spawned")],

@@ -670,6 +670,7 @@ pub(crate) fn describe_reach(content: &Content, reach: &EffectReach) -> String {
         EffectReach::Prompts => "asks for items".to_owned(),
         EffectReach::ReadsOffer => "reads what was offered".to_owned(),
         EffectReach::TakesOffer => "takes what was offered".to_owned(),
+        EffectReach::Crafts(book) => format!("crafts from {}", shown_path(book.path(content))),
     }
 }
 

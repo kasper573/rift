@@ -8,6 +8,7 @@ pub mod model;
 pub mod model_part;
 pub mod navigation;
 pub mod prop;
+pub mod recipe_book;
 pub mod script;
 pub mod skeleton;
 pub mod skill;
@@ -74,6 +75,7 @@ pub struct EditorViews {
     pub character: character::CharacterView,
     pub class: class::ClassViews,
     pub item: ViewMap<item::ItemView>,
+    pub recipe_book: ViewMap<recipe_book::RecipeBookView>,
     pub vfx: vfx::VfxViews,
     pub preview: RowPreviewState,
     pub stage: Stages,
