@@ -10,6 +10,7 @@ use engine::systems::area::prop::Scatter;
 use engine::systems::area::scene::SceneNode;
 use engine::systems::area::{AreaModule, ObjectShape, sixteenth};
 use engine::systems::movement;
+use engine::systems::spawner::{Spawner, Spawns};
 use ui::egui;
 use ui::egui::Stroke as EStroke;
 
@@ -32,7 +33,7 @@ pub fn bounds(module: &AreaModule, placement_bounds: Option<Rect<Meters>>) -> Op
         AreaModule::Blueprint(placement) => {
             placement_bounds.or_else(|| Some(cell_rect(placement.at)))
         }
-        AreaModule::Population(population) => population.roams,
+        AreaModule::Spawner(spawner) => spawner.within,
         AreaModule::Resident(resident) => Some(cell_rect(resident.at)),
         AreaModule::Script(_) => None,
     }
@@ -72,7 +73,7 @@ pub(crate) fn has_size(module: &AreaModule) -> bool {
         | AreaModule::SafeZone(_)
         | AreaModule::Fog(_)
         | AreaModule::Scatter(_) => true,
-        AreaModule::Population(population) => population.roams.is_some(),
+        AreaModule::Spawner(spawner) => spawner.within.is_some(),
         _ => false,
     }
 }
@@ -101,11 +102,9 @@ pub fn label(module: &AreaModule, paths: &impl IdPaths) -> String {
         AreaModule::Blueprint(placement) => {
             format!("{} placement", named(paths.path_of(placement.blueprint)))
         }
-        AreaModule::Population(population) => format!(
-            "{} × {}",
-            named(paths.path_of(population.npc)),
-            population.count
-        ),
+        AreaModule::Spawner(spawner) => {
+            format!("{} × {}", spawned_names(spawner, paths), spawner.count)
+        }
         AreaModule::Resident(resident) => {
             format!("resident {}", named(paths.path_of(resident.npc)))
         }
@@ -130,7 +129,7 @@ pub(crate) fn node_label(node: &SceneNode, paths: &impl IdPaths) -> String {
     match module {
         AreaModule::Object(object) => object.name.clone().unwrap_or_else(|| "object".to_owned()),
         AreaModule::Resident(resident) => named(paths.path_of(resident.npc)),
-        AreaModule::Population(population) => named(paths.path_of(population.npc)),
+        AreaModule::Spawner(spawner) => spawned_names(spawner, paths),
         AreaModule::Prop(prop) => named(paths.path_of(prop.prop)),
         AreaModule::Scatter(scatter) => scatter_names(scatter, paths),
         AreaModule::Script(script) => named(paths.path_of(script.script)),
@@ -139,7 +138,7 @@ pub(crate) fn node_label(node: &SceneNode, paths: &impl IdPaths) -> String {
     }
 }
 
-/// What a module node's row says after its name: where a warp leads, how many a population keeps,
+/// What a module node's row says after its name: where a warp leads, how many a spawner keeps,
 /// where a point stands, or how big a shape is.
 pub(crate) fn node_detail(module: &AreaModule, paths: &impl IdPaths) -> String {
     if let AreaModule::Object(object) = module
@@ -164,7 +163,7 @@ pub(crate) fn node_detail(module: &AreaModule, paths: &impl IdPaths) -> String {
         )
     };
     match module {
-        AreaModule::Population(population) => format!("× {}", population.count),
+        AreaModule::Spawner(spawner) => format!("× {}", spawner.count),
         AreaModule::Resident(resident) => point(resident.at),
         AreaModule::Prop(prop) => point(prop.at),
         AreaModule::Light(light) => point(light.at),
@@ -173,6 +172,17 @@ pub(crate) fn node_detail(module: &AreaModule, paths: &impl IdPaths) -> String {
         AreaModule::Blueprint(_) | AreaModule::Script(_) => String::new(),
         _ => bounds(module, None).map(size).unwrap_or_default(),
     }
+}
+
+fn spawned_names(spawner: &Spawner, paths: &impl IdPaths) -> String {
+    let names: Vec<String> = spawner
+        .spawns
+        .iter()
+        .map(|share| match share.what {
+            Spawns::Npc { npc } => name_of(paths.path_of(npc).unwrap_or_default()).to_owned(),
+        })
+        .collect();
+    names.join(" · ")
 }
 
 fn scatter_names(scatter: &Scatter, paths: &impl IdPaths) -> String {
@@ -200,7 +210,7 @@ fn sized_rect(module: &mut AreaModule) -> Option<&mut Rect<Meters>> {
         AreaModule::SafeZone(zone) => Some(&mut zone.rect),
         AreaModule::Fog(bank) => Some(&mut bank.rect),
         AreaModule::Scatter(scatter) => Some(&mut scatter.region),
-        AreaModule::Population(population) => population.roams.as_mut(),
+        AreaModule::Spawner(spawner) => spawner.within.as_mut(),
         _ => None,
     }
 }

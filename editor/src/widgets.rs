@@ -146,7 +146,7 @@ impl Badge {
             AreaModuleKind::Prop | AreaModuleKind::Scatter => ('T', ink::INK2),
             AreaModuleKind::Light => ('L', ink::INK2),
             AreaModuleKind::Blueprint => ('B', ink::AZURE),
-            AreaModuleKind::Population | AreaModuleKind::Resident => ('N', ink::OCHRE),
+            AreaModuleKind::Spawner | AreaModuleKind::Resident => ('N', ink::OCHRE),
             AreaModuleKind::Script => ('S', ink::TYRIAN),
         };
         Badge { letter, color }

@@ -47,7 +47,6 @@ use crate::core::audio::soundscape::{
     SoundscapeChannel, SoundscapeLayer, SoundscapeShape, SoundscapeZone,
 };
 use crate::core::content::ErrorPlace;
-use crate::core::content::SchemaMark;
 use crate::core::content::{AssetKind, AudioRef};
 use crate::core::content::{
     Bundle, Content, ContentFile, ContentId, ContentProblem, ContentRegistry, FileShape,
@@ -60,12 +59,13 @@ use crate::core::ground::{
 };
 use crate::core::math::{Offset, Pos, Rect, Size};
 use crate::core::spatial::SpatialIndex;
-use crate::core::units::{Degrees, GridDims, MeterSize, Meters};
+use crate::core::units::{Degrees, GridDims, MeterSize, Meters, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::actor::Pose;
 use crate::systems::movement::{Bodies, NavMesh};
 use crate::systems::npc::NpcId;
 use crate::systems::script::{self, Condition, EffectReach, OwnerRow, RiftScripts, ScriptModule};
+use crate::systems::spawner::Spawner;
 use blueprint::{FlattenAt, FlattenError};
 use lighting::MAX_LIGHTS;
 use prop::MAX_PROPS;
@@ -503,7 +503,7 @@ pub enum AreaModule {
     Light(PointLightDef),
     Fog(FogBank),
     Blueprint(Placement),
-    Population(Population),
+    Spawner(Spawner),
     Resident(Resident),
     Script(ScriptModule),
 }
@@ -533,7 +533,7 @@ pub enum AreaModuleKind {
     Light,
     Fog,
     Blueprint,
-    Population,
+    Spawner,
     Resident,
     Script,
 }
@@ -555,7 +555,7 @@ impl AreaModule {
             AreaModule::Light(_) => AreaModuleKind::Light,
             AreaModule::Fog(_) => AreaModuleKind::Fog,
             AreaModule::Blueprint(_) => AreaModuleKind::Blueprint,
-            AreaModule::Population(_) => AreaModuleKind::Population,
+            AreaModule::Spawner(_) => AreaModuleKind::Spawner,
             AreaModule::Resident(_) => AreaModuleKind::Resident,
             AreaModule::Script(_) => AreaModuleKind::Script,
         }
@@ -585,9 +585,7 @@ impl AreaModule {
             AreaModule::Light(light) => light.at = moved(light.at),
             AreaModule::Blueprint(placement) => placement.at = moved(placement.at),
             AreaModule::Resident(resident) => resident.at = moved(resident.at),
-            AreaModule::Population(population) => {
-                population.roams = population.roams.map(moved_rect)
-            }
+            AreaModule::Spawner(spawner) => spawner.within = spawner.within.map(moved_rect),
             AreaModule::Script(_) => {}
         }
     }
@@ -595,21 +593,24 @@ impl AreaModule {
     /// Holds the module, at `pointer` of its scene file, to the rules it keeps alone.
     pub fn check(&self, pointer: &str, cx: &mut RowCheck) {
         match self {
-            AreaModule::Population(population) => {
-                cx.at_least(format!("{pointer}/count"), population.count, 1, "npcs")
-            }
+            AreaModule::Spawner(spawner) => spawner.check(pointer, cx),
             AreaModule::Soundscape(soundscape) => soundscape.check(pointer, cx),
             AreaModule::Prop(prop) => prop.check(pointer, cx),
             AreaModule::Scatter(scatter) => scatter.check(pointer, cx),
             AreaModule::Light(light) => light.check(pointer, cx),
             AreaModule::Fog(bank) => bank.check(pointer, cx),
-            AreaModule::Resident(resident) => cx.range(
-                format!("{pointer}/facing"),
-                resident.facing.0,
-                0.0,
-                360.0,
-                "degrees",
-            ),
+            AreaModule::Resident(resident) => {
+                cx.range(
+                    format!("{pointer}/facing"),
+                    resident.facing.0,
+                    0.0,
+                    360.0,
+                    "degrees",
+                );
+                if let Some(respawn) = resident.respawn {
+                    cx.at_least(format!("{pointer}/respawn"), respawn.0, 0.0, "seconds");
+                }
+            }
             _ => {}
         }
     }
@@ -714,22 +715,6 @@ impl SoundscapeDef {
     }
 }
 
-#[derive(JsonSchema, Clone, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Population {
-    pub npc: NpcId,
-    #[schemars(transform = SchemaMark::Count.with(true))]
-    pub count: u32,
-    #[schemars(with = "Option<serial::RectRow>")]
-    #[serde(
-        default,
-        serialize_with = "serial::opt_rect",
-        deserialize_with = "serial::opt_rect_from",
-        skip_serializing_if = "Option::is_none"
-    )]
-    pub roams: Option<Rect<Meters>>,
-}
-
 /// An npc living at a spot of the area, facing a way and holding a pose there.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -744,6 +729,9 @@ pub struct Resident {
     pub pose: Pose,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shown: Option<Condition>,
+    /// How long after its body goes it stands at its spot again. Without one it stays gone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub respawn: Option<Seconds>,
 }
 
 fn is_idle(pose: &Pose) -> bool {
@@ -798,11 +786,15 @@ pub fn objects(modules: &[Flattened]) -> impl Iterator<Item = (u32, &ObjectDef)>
 }
 
 pub fn npcs(modules: &[Flattened]) -> impl Iterator<Item = NpcId> + '_ {
-    modules.iter().filter_map(|placed| match &placed.module {
-        AreaModule::Resident(resident) => Some(resident.npc),
-        AreaModule::Population(population) => Some(population.npc),
-        _ => None,
-    })
+    modules
+        .iter()
+        .flat_map(|placed| -> Box<dyn Iterator<Item = NpcId> + '_> {
+            match &placed.module {
+                AreaModule::Resident(resident) => Box::new(std::iter::once(resident.npc)),
+                AreaModule::Spawner(spawner) => Box::new(spawner.npcs()),
+                _ => Box::new(std::iter::empty()),
+            }
+        })
 }
 
 pub fn residents(modules: &[Flattened]) -> impl Iterator<Item = NpcId> + '_ {
@@ -1302,9 +1294,7 @@ fn build_area(
         let anchor = match &placed.module {
             AreaModule::Object(object) => object.shape.center(),
             AreaModule::Resident(resident) => resident.at,
-            AreaModule::Population(population) => {
-                population.roams.map_or(center, |roams| roams.center())
-            }
+            AreaModule::Spawner(spawner) => spawner.within.map_or(center, |within| within.center()),
             _ => continue,
         };
         modules_by_tile
@@ -1447,9 +1437,10 @@ fn check_bounds(content: &Content, size: GroundSize, modules: &[Flattened], chec
             AreaModule::Fog(bank) => corner_outside(bank.rect),
             AreaModule::Light(light) => outside(light.at),
             AreaModule::Resident(resident) => outside(resident.at),
-            AreaModule::Population(Population {
-                roams: Some(roams), ..
-            }) => outside(roams.min()),
+            AreaModule::Spawner(Spawner {
+                within: Some(within),
+                ..
+            }) => outside(within.min()),
             _ => None,
         };
         if let Some(at) = lands {
@@ -1551,9 +1542,9 @@ fn check_footing(
             ObjectShape::Rect(_) => None,
         },
         AreaModule::Resident(resident) => Some(SurveyQuestion::Walkable(resident.at)),
-        AreaModule::Population(population) => Some(SurveyQuestion::Covers {
-            bounds: population.roams.unwrap_or(area.size.bounds()),
-            wild: true,
+        AreaModule::Spawner(spawner) => Some(SurveyQuestion::Covers {
+            bounds: spawner.within.unwrap_or(area.size.bounds()),
+            wild: spawner.keeps_wild(),
         }),
         _ => None,
     };
@@ -1617,12 +1608,16 @@ fn check_footing(
                     );
                 }
             }
-            AreaModule::Population(population) if !stands => {
+            AreaModule::Spawner(spawner) if !stands => {
                 check.error(
                     site(""),
-                    "no wild ground",
-                    format!("{} in {}", population.npc.path(content), id.path(content)),
-                    "walkable ground outside every safe zone to spawn on",
+                    "no ground to spawn on",
+                    format!("{} in {}", spawner.named(content), id.path(content)),
+                    if spawner.keeps_wild() {
+                        "walkable ground outside every safe zone to spawn on"
+                    } else {
+                        "walkable ground to spawn on"
+                    },
                 );
             }
             _ => {}
@@ -1649,7 +1644,7 @@ pub enum IslandSite {
     Spawn,
 }
 
-/// Every resident, population, warp and the spawn standing on ground that nothing reaches, in the
+/// Every resident, spawner, warp and the spawn standing on ground that nothing reaches, in the
 /// areas `rechecks` asks for: no warp into its area and not the spawn connects to it. An area
 /// nothing enters is left alone.
 pub fn check_islands(
@@ -1667,8 +1662,8 @@ pub fn check_islands(
         let modules = placed(content, id);
         let asked = |placed: &Flattened| match &placed.module {
             AreaModule::Resident(resident) => Some(SurveyQuestion::IslandAt(resident.at)),
-            AreaModule::Population(population) => Some(SurveyQuestion::Islands(
-                population.roams.unwrap_or(area.size.bounds()),
+            AreaModule::Spawner(spawner) => Some(SurveyQuestion::Islands(
+                spawner.within.unwrap_or(area.size.bounds()),
             )),
             AreaModule::Object(object) => Some(SurveyQuestion::Islands(object.shape.bounds())),
             _ => None,
@@ -1751,12 +1746,12 @@ pub fn check_islands(
                         );
                     }
                 }
-                AreaModule::Population(population) => {
-                    let region = population.roams.unwrap_or(area.size.bounds());
+                AreaModule::Spawner(spawner) => {
+                    let region = spawner.within.unwrap_or(area.size.bounds());
                     if unreached(islands, None)
                         && let Some(first) = first_ground(region)
                     {
-                        report(site(""), population.npc.path(content).to_owned(), first);
+                        report(site(""), spawner.named(content), first);
                     }
                 }
                 AreaModule::Object(object) if several => {

@@ -16,7 +16,6 @@ pub mod pick;
 pub mod pins;
 pub mod place;
 pub mod placement;
-pub mod population;
 pub mod problems;
 pub mod render_sync;
 pub mod resize;
@@ -25,6 +24,7 @@ pub mod scene_tree;
 pub mod select;
 pub mod shapes;
 pub mod soundscape;
+pub mod spawner;
 pub mod stamp;
 pub mod status;
 pub mod terrain;
@@ -64,6 +64,7 @@ use engine::systems::area::prop::PropDef;
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{self, AreaDef, AreaId, AreaModule, AreaModuleKind, Picture, Pictured};
 use engine::systems::npc::NpcDef;
+use engine::systems::spawner::{Spawner, Spawns};
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, VariantArray};
 use ui::egui::{Color32, Pos2, Rect as ERect, Sense, Ui, Vec2};
@@ -227,7 +228,7 @@ pub struct AreaViewState {
     pub blueprint_search: String,
     pub palette_search: String,
     pub menu: Option<modules::AreaMenuAnchor>,
-    pub population_previews: HashMap<String, PopulationPreview>,
+    pub spawner_previews: HashMap<String, SpawnerPreview>,
     pub skipped: Option<String>,
     /// The row shown alone for now, every other row's own flags kept as they are.
     pub show_only: Option<String>,
@@ -314,20 +315,18 @@ impl AreaViewState {
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub struct PopulationPreview {
+pub struct SpawnerPreview {
     pub hidden: bool,
     pub seed: u64,
 }
 
-/// Where a population's preview stands its bodies, kept until the content, the population's count
-/// or bounds, or the preview's seed change: placing them draws from the wild mesh, too slow to
-/// repeat every frame.
+/// What a spawner's preview stands and where, kept until the content, the spawner or the
+/// preview's seed change: placing them draws from the wild mesh, too slow to repeat every frame.
 struct PreviewPlaces {
     generation: u64,
-    count: u32,
-    roams: Option<Rect<Meters>>,
+    spawner: Spawner,
     seed: u64,
-    places: Vec<Pos<Meters>>,
+    places: Vec<(Spawns, Pos<Meters>)>,
 }
 
 /// Where a press on the stage was and what it found there. A drag starts only once the pointer has
@@ -917,7 +916,7 @@ fn ghost_moves(view: &AreaViewState) -> bool {
 }
 
 /// The rigs standing in the view: each resident at its spot in its pose, and the previewed places
-/// of each population, every one in its model's idle, those in sight. The rigs are made once for
+/// of each spawner, every one in its model's idle, those in sight. The rigs are made once for
 /// what the view holds and the content, and the list handed on stays the same while the same rigs
 /// are in sight.
 fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Arc<[StandingActor]> {
@@ -927,7 +926,7 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Arc<[Standing
         .map_or(0, |project| project.generation);
     let seen = *frame.canvas.view();
     let view = editor.views.area.view_mut(view_key);
-    let made_for = (frame.made, generation, view.population_previews.clone());
+    let made_for = (frame.made, generation, view.spawner_previews.clone());
     if view
         .cast
         .as_ref()
@@ -962,7 +961,7 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Arc<[Standing
 /// The rigs of a view's cast, made for what the view holds, the content and its previews, and
 /// those in sight last.
 struct Cast {
-    made_for: (u64, u64, HashMap<String, PopulationPreview>),
+    made_for: (u64, u64, HashMap<String, SpawnerPreview>),
     everyone: Vec<Standing>,
     in_sight: Vec<usize>,
     shown: Arc<[StandingActor]>,
@@ -976,7 +975,7 @@ struct Standing {
 }
 
 /// Every rig of the view's cast: each resident at its spot in its pose, and the previewed places of
-/// each population.
+/// each spawner.
 fn everyone_standing(
     view: &mut AreaViewState,
     frame: &AreaFrame,
@@ -1027,37 +1026,35 @@ fn everyone_standing(
             everyone.push(stand(npc, resident.at, resident.facing, resident.pose));
         }
     }
-    for node in frame.doc.of_kind(AreaModuleKind::Population) {
-        let AreaModule::Population(population) = node.module() else {
+    for node in frame.doc.of_kind(AreaModuleKind::Spawner) {
+        let AreaModule::Spawner(spawner) = node.module() else {
             continue;
         };
         if frame.flags.hidden(node.pointer) {
             continue;
         }
         let preview = view
-            .population_previews
+            .spawner_previews
             .get(node.pointer)
             .copied()
             .unwrap_or_default();
-        let Some(npc) = resolve(population.npc).filter(|_| !preview.hidden) else {
+        if preview.hidden {
             continue;
-        };
+        }
         let kept = view.preview_places.get(node.pointer).filter(|kept| {
-            (kept.generation, kept.count, kept.roams, kept.seed)
-                == (generation, population.count, population.roams, preview.seed)
+            (kept.generation, &kept.spawner, kept.seed) == (generation, spawner, preview.seed)
         });
-        let roams = population.roams.unwrap_or_else(|| area.size.bounds());
+        let within = spawner.within.unwrap_or_else(|| area.size.bounds());
         let places = match kept {
             Some(kept) => kept.places.clone(),
-            None if !area.holds(roams) => continue,
+            None if !area.holds(within) => continue,
             None => {
-                let places = population::population_places(area, population, preview.seed);
+                let places = spawner::preview_places(area, spawner, preview.seed);
                 view.preview_places.insert(
                     node.pointer.to_owned(),
                     PreviewPlaces {
                         generation,
-                        count: population.count,
-                        roams: population.roams,
+                        spawner: spawner.clone(),
                         seed: preview.seed,
                         places: places.clone(),
                     },
@@ -1065,13 +1062,19 @@ fn everyone_standing(
                 places
             }
         };
-        for at in places {
-            everyone.push(stand(
-                npc,
-                at,
-                Degrees(((at.x * 37.0 + at.y * 91.0) % 360.0).abs()),
-                engine::systems::actor::Pose::Idle,
-            ));
+        for (what, at) in places {
+            match what {
+                Spawns::Npc { npc } => {
+                    if let Some(npc) = resolve(npc) {
+                        everyone.push(stand(
+                            npc,
+                            at,
+                            Degrees(((at.x * 37.0 + at.y * 91.0) % 360.0).abs()),
+                            engine::systems::actor::Pose::Idle,
+                        ));
+                    }
+                }
+            }
         }
     }
     everyone
@@ -1851,7 +1854,7 @@ impl AreaFrame<'_> {
 }
 
 fn is_selectable(module: &AreaModule) -> bool {
-    !matches!(module, AreaModule::Population(population) if population.roams.is_none())
+    !matches!(module, AreaModule::Spawner(spawner) if spawner.within.is_none())
 }
 
 pub(crate) fn selected_parts(editor: &Editor, bundle: &str) -> HashSet<String> {

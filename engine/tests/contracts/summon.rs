@@ -7,6 +7,7 @@ use engine::systems::memory::{self, MemoryDef};
 use engine::systems::npc::{self, NpcDef, summon};
 use engine::systems::player::ClientId;
 use engine::systems::region;
+use engine::systems::spawner;
 use engine::systems::stat::{self, StatKind};
 use engine::systems::visibility;
 use engine::systems::{actor, movement, rewards, script, skill};
@@ -157,8 +158,14 @@ fn a_townsperson_turned_hostile_can_be_fought_until_they_return_friendly() {
     stat::apply_damage(&mut sim.world, baker, 10_000.0);
     sim.tick();
     assert!(stat::is_dead(&sim.world, baker));
-    assert!(sim.run_until(10.0, |world| !stat::is_dead(world, baker)));
-    assert!(!combat::attackable(&sim.world, player, baker));
+    sim.run(12.0);
+    let returned = sim.npcs("baker");
+    let [back] = returned.as_slice() else {
+        panic!("{} bakers stand in the harbour", returned.len());
+    };
+    assert_ne!(*back, baker);
+    assert!(!stat::is_dead(&sim.world, *back));
+    assert!(!combat::attackable(&sim.world, player, *back));
 }
 
 fn harbour() -> Sim {
@@ -182,7 +189,7 @@ fn harbour() -> Sim {
                         ],
                     },
                 },
-                { "type": "resident", "npc": "baker.npc.json", "at": { "x": 10.0, "y": 6.0 } },
+                { "type": "resident", "npc": "baker.npc.json", "at": { "x": 10.0, "y": 6.0 }, "respawn": 5.0 },
             ]),
         )
         .hero("harbour", 5.0, 4.0)
@@ -218,10 +225,7 @@ fn harbour() -> Sim {
         .npc(
             "baker",
             20.0,
-            json!([
-                { "type": "respawn", "after": 5.0 },
-                { "type": "script", "script": "baker_talk.script.json" },
-            ]),
+            json!([{ "type": "script", "script": "baker_talk.script.json" }]),
         )
         .script(
             "baker_talk",
@@ -271,7 +275,7 @@ fn harbour() -> Sim {
         .add((
             interact::interactions,
             (dialogue::hold, dialogue::refresh).chain(),
-            (npc::run_respawn, npc::dismiss).chain(),
+            (npc::clear_fallen, spawner::refill, npc::dismiss).chain(),
         ))
         .plan(stat::SettleHealth::default())
         .add((combat::defeats, skill::hotbar::settle_basic_attack))

@@ -524,8 +524,8 @@ fn ground_nothing_reaches_fails_the_load_pointing_at_what_stands_there() {
     ]);
     let stranded = json!([
         { "type": "resident", "npc": path("npc", "hermit"), "at": { "x": 9.0, "y": 4.0 } },
-        { "type": "population", "npc": path("npc", "hermit"), "count": 1, "roams": { "x": 8.0, "y": 1.0, "w": 3.0, "h": 3.0 } },
-        { "type": "population", "npc": path("npc", "hermit"), "count": 1, "roams": { "x": 1.0, "y": 1.0, "w": 10.0, "h": 3.0 } },
+        { "type": "spawner", "spawns": [{ "type": "npc", "npc": path("npc", "hermit") }], "count": 1, "within": { "x": 8.0, "y": 1.0, "w": 3.0, "h": 3.0 } },
+        { "type": "spawner", "spawns": [{ "type": "npc", "npc": path("npc", "hermit") }], "count": 1, "within": { "x": 1.0, "y": 1.0, "w": 10.0, "h": 3.0 } },
     ]);
     let report = Game::new()
         .npc("hermit", 10.0, json!([]))
@@ -549,7 +549,7 @@ fn ground_nothing_reaches_fails_the_load_pointing_at_what_stands_there() {
         .collect();
     let [
         (resident, hermit, near_resident),
-        (population, strays, near_population),
+        (spawner, strays, near_spawner),
     ] = unreachable.as_slice()
     else {
         panic!("{report}");
@@ -558,7 +558,7 @@ fn ground_nothing_reaches_fails_the_load_pointing_at_what_stands_there() {
         (*resident, *hermit),
         ("/0/at", "hermit.npc.json at 9.00, 4.00")
     );
-    assert_eq!(*population, "/1");
+    assert_eq!(*spawner, "/1");
     assert!(strays.starts_with("hermit.npc.json at "), "{strays}");
     let west_of_the_wall = |nearest: Option<&str>| {
         nearest
@@ -566,8 +566,8 @@ fn ground_nothing_reaches_fails_the_load_pointing_at_what_stands_there() {
             .is_some_and(|x| x < 5.5)
     };
     assert!(
-        west_of_the_wall(*near_resident) && west_of_the_wall(*near_population),
-        "{near_resident:?} {near_population:?}"
+        west_of_the_wall(*near_resident) && west_of_the_wall(*near_spawner),
+        "{near_resident:?} {near_spawner:?}"
     );
 }
 

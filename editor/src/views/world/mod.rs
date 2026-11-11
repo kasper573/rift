@@ -79,7 +79,7 @@ pub struct MapLook {
 pub struct MapLayers {
     pub warps: bool,
     pub residents: bool,
-    pub populations: bool,
+    pub spawners: bool,
     pub givers: bool,
     pub regions: bool,
 }
@@ -89,7 +89,7 @@ impl Default for MapLayers {
         MapLayers {
             warps: true,
             residents: false,
-            populations: false,
+            spawners: false,
             givers: false,
             regions: true,
         }

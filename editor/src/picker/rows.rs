@@ -292,8 +292,10 @@ fn npc_places(cx: &FormCx) -> Option<NpcPlaces> {
         for placed in area::placed(&content, area) {
             match &placed.module {
                 AreaModule::Resident(resident) => *counts.entry(resident.npc).or_default() += 1,
-                AreaModule::Population(population) => {
-                    *counts.entry(population.npc).or_default() += population.count
+                AreaModule::Spawner(spawner) => {
+                    for npc in spawner.npcs() {
+                        *counts.entry(npc).or_default() += spawner.count
+                    }
                 }
                 _ => {}
             }

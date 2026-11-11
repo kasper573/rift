@@ -23,8 +23,8 @@ pub fn crowd() -> Game {
             CROWD_AREA,
             &Map::open(SIDE, SIDE),
             json!([
-                { "type": "population", "npc": path("npc", "raider"), "count": RAIDERS },
-                { "type": "population", "npc": path("npc", "townsfolk"), "count": TOWNSFOLK },
+                { "type": "spawner", "spawns": [{ "type": "npc", "npc": path("npc", "raider") }], "count": RAIDERS },
+                { "type": "spawner", "spawns": [{ "type": "npc", "npc": path("npc", "townsfolk") }], "count": TOWNSFOLK },
             ]),
         )
         .hero(CROWD_AREA, middle, middle)

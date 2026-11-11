@@ -26,6 +26,7 @@ use super::{
 use crate::app::{Editor, PlacePick};
 use crate::clipboard::Clipboard;
 use crate::keymap::EditorKey;
+use crate::picker::Dragged;
 use crate::tabs::file_title;
 
 /// Metres a second the arrow keys pan at, scaled by how far the camera stands back.
@@ -168,6 +169,15 @@ pub fn input(
             &pick,
             EditorKey::Unsnapped.held_among(modifiers),
         );
+        return;
+    }
+    if let Some(ground) = frame.pointer_ground
+        && let Some(Dragged::Row { table, key }) = response
+            .dnd_release_payload::<Dragged>()
+            .map(|dragged| (*dragged).clone())
+        && super::spawner::spawns_table(&table)
+    {
+        super::spawner::drop_file(editor, frame, &key, ground);
         return;
     }
     let tool = editor.views.area.view(view_key).tool;
@@ -390,7 +400,7 @@ pub fn overlay(editor: &mut Editor, painter: &egui::Painter, view_key: &str, fra
                 ));
                 if matches!(
                     kind,
-                    AreaModuleKind::Population | AreaModuleKind::Resident | AreaModuleKind::Object
+                    AreaModuleKind::Spawner | AreaModuleKind::Resident | AreaModuleKind::Object
                 ) {
                     frame.labels.chip(
                         canvas.rect(bounds).min + Vec2::new(0.0, -4.0),

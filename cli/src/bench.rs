@@ -746,7 +746,7 @@ fn npcs_per_area(content: &Content) -> usize {
     let area = content.built::<GameSettings>().initial_spawn.area;
     area::modules(content, area)
         .map(|module| match module {
-            AreaModule::Population(population) => population.count as usize,
+            AreaModule::Spawner(spawner) => spawner.count as usize,
             AreaModule::Resident(_) => 1,
             _ => 0,
         })

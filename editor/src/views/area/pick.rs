@@ -18,7 +18,7 @@ use crate::views::sound;
 /// The type of file a module of `kind` names, picked when one is added: whose npc, which blueprint.
 pub(crate) fn named_table(kind: AreaModuleKind) -> Option<&'static str> {
     match kind {
-        AreaModuleKind::Population | AreaModuleKind::Resident => Some(NpcDef::TABLE),
+        AreaModuleKind::Spawner | AreaModuleKind::Resident => Some(NpcDef::TABLE),
         AreaModuleKind::Blueprint => Some(BlueprintDef::TABLE),
         AreaModuleKind::Script => Some(ScriptDef::TABLE),
         AreaModuleKind::Prop | AreaModuleKind::Scatter => Some(PropDef::TABLE),

@@ -187,7 +187,7 @@ pub(super) fn write_module(
         AreaModule::Light(fields) => serde_json::to_string(fields),
         AreaModule::Fog(fields) => serde_json::to_string(fields),
         AreaModule::Blueprint(fields) => serde_json::to_string(fields),
-        AreaModule::Population(fields) => serde_json::to_string(fields),
+        AreaModule::Spawner(fields) => serde_json::to_string(fields),
         AreaModule::Resident(fields) => serde_json::to_string(fields),
         AreaModule::Script(fields) => serde_json::to_string(fields),
     }?;
@@ -902,8 +902,8 @@ pub fn place(module: &mut AreaModule, at: Pos<Meters>, yaw: Degrees) {
         }
         AreaModule::Scatter(scatter) => scatter.region = rect(scatter.region),
         AreaModule::Light(light) => light.at = point(light.at),
-        AreaModule::Population(population) => {
-            population.roams = population.roams.map(rect);
+        AreaModule::Spawner(spawner) => {
+            spawner.within = spawner.within.map(rect);
         }
         AreaModule::Resident(resident) => {
             resident.at = point(resident.at);

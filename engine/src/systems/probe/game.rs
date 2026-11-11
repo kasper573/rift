@@ -12,7 +12,7 @@ use crate::core::content::{Content, ContentScope, Fixture, with_content};
 use crate::core::geometry::Shape;
 use crate::core::ground::TILE_SIDE;
 use crate::core::math::{Pos, PosSchema, Rect, RectSchema, Size, SizeSchema};
-use crate::core::units::Meters;
+use crate::core::units::{Meters, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::actor::ActorModel;
 use crate::systems::actor::skeleton::BuildName;
@@ -26,6 +26,7 @@ use crate::systems::npc::{NpcDef, NpcId};
 use crate::systems::player::snapshot::CharacterSnapshot;
 use crate::systems::script::Place;
 use crate::systems::skill::{SkillDef, SkillId};
+use crate::systems::spawner::SpawnShare;
 
 /// A question for the probe that only a frame of a running client answers, one JSON line each,
 /// answered with one JSON line before the next is asked.
@@ -189,8 +190,8 @@ pub struct ProbeArea {
     pub size: Size<Meters>,
     /// The townsfolk who live here, each where they stand at home.
     pub residents: Vec<ProbeResident>,
-    /// The monsters that roam here, each over its own corner of the area or all of it.
-    pub roamings: Vec<ProbeRoaming>,
+    /// What the area keeps standing, each spawner over its own corner of the area or all of it.
+    pub spawners: Vec<ProbeSpawner>,
     /// The objects that carry a name, each at its middle.
     pub objects: Vec<ProbeNamedObject>,
     pub props: Vec<ProbeProp>,
@@ -206,9 +207,12 @@ pub struct ProbeResident {
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
-pub struct ProbeRoaming {
-    pub npc: NpcId,
+pub struct ProbeSpawner {
+    /// What an entry may be, each as likely as its share of the weights.
+    pub spawns: Vec<SpawnShare>,
     pub count: u32,
+    /// How long a freed entry stays empty; never filled again without one.
+    pub respawn: Option<Seconds>,
     #[schemars(with = "RectSchema")]
     pub over: Rect<Meters>,
 }
@@ -454,14 +458,13 @@ fn area_of(content: &Content, id: AreaId) -> ProbeArea {
             _ => None,
         })
         .collect();
-    let roamings = area::modules(content, id)
+    let spawners = area::modules(content, id)
         .filter_map(|module| match module {
-            AreaModule::Population(population) => Some(ProbeRoaming {
-                npc: population.npc,
-                count: population.count,
-                over: population
-                    .roams
-                    .unwrap_or_else(|| Rect::from_size(area.size)),
+            AreaModule::Spawner(spawner) => Some(ProbeSpawner {
+                spawns: spawner.spawns.clone(),
+                count: spawner.count,
+                respawn: spawner.respawn,
+                over: spawner.within.unwrap_or_else(|| Rect::from_size(area.size)),
             }),
             _ => None,
         })
@@ -495,7 +498,7 @@ fn area_of(content: &Content, id: AreaId) -> ProbeArea {
         name: id.get(content).name.to_string(),
         size: area.size,
         residents,
-        roamings,
+        spawners,
         objects,
         props,
         lights: area.lights.iter().map(|light| light.at).collect(),

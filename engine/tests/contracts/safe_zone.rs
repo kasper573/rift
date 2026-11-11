@@ -16,7 +16,9 @@ const REFUGE: Pos<Meters> = Pos::new(9.5, 4.0);
 
 #[test]
 fn wild_monsters_never_set_foot_in_a_safe_zone() {
-    let mut sim = border(json!([{ "type": "population", "npc": "wanderer.npc.json", "count": 6 }]));
+    let mut sim = border(json!([
+        { "type": "spawner", "spawns": [{ "type": "npc", "npc": "wanderer.npc.json" }], "count": 6 },
+    ]));
     let monsters: Vec<Entity> = sim
         .world
         .query_filtered::<Entity, With<Wild>>()

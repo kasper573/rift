@@ -289,7 +289,7 @@ pub enum WorldLens {
 #[serde(rename_all = "snake_case")]
 pub enum WorldLayer {
     Residents,
-    Populations,
+    Spawners,
     Givers,
 }
 
@@ -780,7 +780,7 @@ fn world_step(editor: &mut Editor, step: &WorldStep) {
             let layers = &mut editor.views.world.layers;
             match layer {
                 WorldLayer::Residents => layers.residents = true,
-                WorldLayer::Populations => layers.populations = true,
+                WorldLayer::Spawners => layers.spawners = true,
                 WorldLayer::Givers => layers.givers = true,
             }
         }

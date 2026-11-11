@@ -83,7 +83,7 @@ pub struct Ghost {
     pub transform: Transform,
 }
 
-/// A rig standing in the area as the view shows it: a resident or one of a population's preview,
+/// A rig standing in the area as the view shows it: a resident or one of a spawner's preview,
 /// looping its clip, or a model held at one moment of a clip on a turntable.
 #[derive(Clone, PartialEq)]
 pub struct StandingActor {

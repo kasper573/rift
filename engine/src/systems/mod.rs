@@ -33,6 +33,7 @@ pub mod settings;
 pub mod shop;
 pub mod skill;
 pub mod sleep;
+pub mod spawner;
 pub mod staging;
 pub mod stat;
 pub mod status;
@@ -141,6 +142,7 @@ pub fn area_state(world: &mut World, content: &Content) {
     world.init_resource::<dialogue::StepCounter>();
     world.init_resource::<crate::core::chunk::ChunkIndex>();
     world.init_resource::<npc::Packs>();
+    world.init_resource::<spawner::SpawnerEntries>();
     world.insert_resource(sleep::Sleep::of(content));
     world.insert_resource(region::Region::of(content));
     MessageRegistry::register_message::<combat::Died>(world);
@@ -403,7 +405,7 @@ pub fn server_app(
                     item::expire_drops,
                     player::join,
                     player::respawn,
-                    (npc::run_respawn, npc::dismiss).chain(),
+                    (npc::clear_fallen, spawner::refill, npc::dismiss).chain(),
                     combat::defeats,
                     skill::hotbar::settle_basic_attack,
                     chat::hear,

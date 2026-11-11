@@ -91,9 +91,9 @@ fn layer_rows(editor: &mut Editor, ui: &mut Ui, map: &OpenWorldMap) {
             count(|info| info.residents.len()),
         ),
         (
-            &mut layers.populations,
-            "populations",
-            count(|info| info.populations.len()),
+            &mut layers.spawners,
+            "spawners",
+            count(|info| info.spawned.len()),
         ),
         (&mut layers.givers, "quest givers", givers),
         (

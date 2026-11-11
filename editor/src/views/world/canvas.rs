@@ -38,7 +38,7 @@ const ROUTE: Color32 = ink::AZURE;
 const WARP: Color32 = ink::INK3;
 const DIM: Color32 = Color32::from_rgb(120, 112, 96);
 const DOT: Color32 = ink::HONEY2;
-const POPULATION: Color32 = Color32::from_rgb(240, 140, 60);
+const SPAWNED: Color32 = Color32::from_rgb(240, 140, 60);
 const NO_VALUE: Color32 = Color32::from_rgb(110, 110, 120);
 const NOTE_PAPER: Color32 = ink::LIGHT;
 const NOTE_EDGE: Color32 = ink::HONEY2;
@@ -368,10 +368,10 @@ fn draw_card(editor: &mut Editor, painter: &Painter, drawing: &Drawing, card: &M
             );
         }
     }
-    if drawing.layers.populations {
-        for npc in &info.populations {
+    if drawing.layers.spawners {
+        for npc in &info.spawned {
             let at = on_art(npc.at);
-            painter.circle(at, 4.0, POPULATION, Stroke::new(1.0, Color32::BLACK));
+            painter.circle(at, 4.0, SPAWNED, Stroke::new(1.0, Color32::BLACK));
             if !card.compact {
                 painter.text(
                     at + Vec2::new(5.0, 0.0),
@@ -1247,13 +1247,9 @@ fn world_summary(atlas: &WorldAtlas) -> String {
         _ => format!("{unreached} areas unreached from the initial spawn"),
     };
     let residents: usize = atlas.areas.values().map(|info| info.residents.len()).sum();
-    let populations: usize = atlas
-        .areas
-        .values()
-        .map(|info| info.populations.len())
-        .sum();
+    let spawners: usize = atlas.areas.values().map(|info| info.spawned.len()).sum();
     format!(
-        "World · {} areas · {warps} · {reach} · {residents} residents · {populations} populations",
+        "World · {} areas · {warps} · {reach} · {residents} residents · {spawners} spawners",
         atlas.areas.len()
     )
 }
@@ -1279,7 +1275,7 @@ fn ground_facts(map: &OpenWorldMap, hit: &MapGroundHit) -> String {
     let nearest_npc = info
         .residents
         .iter()
-        .chain(&info.populations)
+        .chain(&info.spawned)
         .map(|npc| (npc.key.as_str(), npc.at.distance(cell).0))
         .min_by(|a, b| a.1.total_cmp(&b.1))
         .map_or_else(

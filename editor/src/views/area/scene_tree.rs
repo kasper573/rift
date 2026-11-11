@@ -330,7 +330,7 @@ impl<'a> SceneSource<'a> {
         let count = self.group_members(folder, kind).len();
         let name = match kind {
             AreaModuleKind::Scatter => "Scatters".to_owned(),
-            AreaModuleKind::Population => "Populations".to_owned(),
+            AreaModuleKind::Spawner => "Spawners".to_owned(),
             kind => format!("{} modules", kind.tag().replace('_', " ")),
         };
         TreeRow {
@@ -1026,7 +1026,7 @@ pub fn add_menu(ui: &mut Ui, folder: &str, snapshot: &AreaSnapshot) -> Option<Sc
 
 /// The kinds of module a folder holding many of folds into one row each, so they don't bury what
 /// else it holds.
-const GROUPED_KINDS: [AreaModuleKind; 2] = [AreaModuleKind::Scatter, AreaModuleKind::Population];
+const GROUPED_KINDS: [AreaModuleKind; 2] = [AreaModuleKind::Scatter, AreaModuleKind::Spawner];
 /// How many modules of a kind a folder holds before they fold into one row.
 const GROUPED_FROM: usize = 10;
 const GROUP: &str = "/folded/";
@@ -1470,8 +1470,7 @@ pub fn add(editor: &mut Editor, snapshot: &AreaSnapshot, folder: &str, kind: Are
     };
     nodes::select(editor, &bundle, parts);
     let view_key = super::view_key(&snapshot.bundle);
-    let needs_spot =
-        !matches!(kind, AreaModuleKind::Script) && !(kind == AreaModuleKind::Population);
+    let needs_spot = !matches!(kind, AreaModuleKind::Script) && !(kind == AreaModuleKind::Spawner);
     if needs_spot {
         let view = editor.views.area.view_mut(&view_key);
         view.set_tool(super::AreaTool::Module);

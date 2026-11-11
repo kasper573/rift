@@ -16,7 +16,7 @@ pub use frames::{
 pub use game::{
     ProbeArea, ProbeBinding, ProbeBindings, ProbeButton, ProbeFrameQuestion, ProbeGame,
     ProbeGameQuestion, ProbeGesture, ProbeInterfaceIcon, ProbeItem, ProbeNamedObject, ProbeNpc,
-    ProbeProp, ProbeResident, ProbeRoaming, ProbeSkill, ProbeWater, answer,
+    ProbeProp, ProbeResident, ProbeSkill, ProbeSpawner, ProbeWater, answer,
 };
 pub use hitches::{SystemTimes, timing_layer};
 

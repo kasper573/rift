@@ -28,13 +28,14 @@ use engine::systems::area::object::ObjectDef;
 use engine::systems::area::scene::{self, ModuleNode, SceneNode, scene_file};
 use engine::systems::area::{AreaDef, AreaModule, SoundscapeDef};
 use engine::systems::script::{RunnerKind, ScriptModule, VarValue, Variable};
+use engine::systems::spawner::{Spawner, Spawns};
 
 use super::clipboard::clipboard_panel;
 use super::nodes::SceneBundle;
 use super::pins::place_pick_panel;
 use super::placement::{self, placement_extras};
-use super::population::from_npc;
 use super::soundscape::soundscape_extras;
+use super::spawner::{from_npc, spawns_card};
 use super::{AreaTool, AreaViewState, nodes, scene_tree, stamp};
 use crate::app::Editor;
 use crate::forms::{self, FieldHole, FormAction, FormCx, FormHoles, HoleRequest};
@@ -743,16 +744,16 @@ fn module_inspector(
             }
         });
         ui.add_space(4.0);
-        let roamed = matches!(&module.module, AreaModule::Population(p) if p.roams.is_some());
+        let bounded = matches!(&module.module, AreaModule::Spawner(s) if s.within.is_some());
         changed |= module_fields(ui, cx, &mut module.module, &path);
-        if let AreaModule::Population(population) = &mut module.module
-            && !roamed
-            && let Some(roams) = &mut population.roams
+        if let AreaModule::Spawner(spawner) = &mut module.module
+            && !bounded
+            && let Some(within) = &mut spawner.within
         {
-            *roams = size.meters().bounds();
+            *within = size.meters().bounds();
         }
-        if let (AreaModule::Population(_), Some(view)) = (&mut module.module, view) {
-            let preview = view.population_previews.entry(path.clone()).or_default();
+        if let (AreaModule::Spawner(_), Some(view)) = (&mut module.module, view) {
+            let preview = view.spawner_previews.entry(path.clone()).or_default();
             form::kv(ui, "preview", |ui| {
                 let mut shown = !preview.hidden;
                 if ui.checkbox(&mut shown, "").changed() {
@@ -780,9 +781,15 @@ fn module_inspector(
             }
             placement_extras(ui, cx, placement, out, node);
         }
-        AreaModule::Population(population) => {
-            if let Some(npc) = reader.path_of(population.npc) {
-                from_npc(ui, cx, npc);
+        AreaModule::Spawner(spawner) => {
+            for share in &spawner.spawns {
+                match share.what {
+                    Spawns::Npc { npc } => {
+                        if let Some(npc) = reader.path_of(npc) {
+                            from_npc(ui, cx, npc);
+                        }
+                    }
+                }
             }
         }
         AreaModule::Resident(resident) => {
@@ -847,7 +854,11 @@ fn module_fields(ui: &mut Ui, cx: &mut FormCx, module: &mut AreaModule, path: &s
             path,
             &[field!(engine::systems::area::Placement, values)],
         ),
-        AreaModule::Population(population) => forms::of_type(ui, cx, population, path),
+        AreaModule::Spawner(spawner) => {
+            let spawns = spawns_card(ui, cx, spawner, path);
+            let rest = forms::of_type_without(ui, cx, spawner, path, &[field!(Spawner, spawns)]);
+            return spawns || rest.is_some();
+        }
         AreaModule::Resident(resident) => forms::of_type(ui, cx, resident, path),
         AreaModule::Script(script) => forms::of_type(ui, cx, script, path),
     }

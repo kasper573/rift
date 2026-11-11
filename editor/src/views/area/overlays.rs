@@ -169,7 +169,7 @@ pub(crate) fn module_color(kind: AreaModuleKind) -> Color32 {
         AreaModuleKind::Scatter => Color32::from_rgb(110, 190, 110),
         AreaModuleKind::Light => Color32::from_rgb(255, 240, 160),
         AreaModuleKind::Blueprint => Color32::from_rgb(90, 220, 220),
-        AreaModuleKind::Population => Color32::from_rgb(255, 120, 120),
+        AreaModuleKind::Spawner => Color32::from_rgb(255, 120, 120),
         AreaModuleKind::Resident => Color32::from_rgb(255, 160, 200),
         AreaModuleKind::Script => Color32::from_gray(200),
     }
@@ -530,7 +530,7 @@ fn outlined_on_ground(snapshot: &AreaSnapshot, module: &AreaModule) -> bool {
         AreaModule::SafeZone(_)
         | AreaModule::Fog(_)
         | AreaModule::Scatter(_)
-        | AreaModule::Population(_) => true,
+        | AreaModule::Spawner(_) => true,
         AreaModule::Prop(_)
         | AreaModule::Light(_)
         | AreaModule::Resident(_)

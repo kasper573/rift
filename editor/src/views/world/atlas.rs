@@ -44,7 +44,8 @@ pub struct AtlasArea {
     pub modules: HashSet<AreaModuleKind>,
     pub text: String,
     pub residents: Vec<PlacedNpc>,
-    pub populations: Vec<PlacedNpc>,
+    /// The npcs its spawners keep standing, each at the middle of where its spawner spawns.
+    pub spawned: Vec<PlacedNpc>,
     pub doors: Vec<AtlasDoor>,
     found: HashMap<RowName, Vec<AtlasSource>>,
 }
@@ -574,14 +575,15 @@ impl WorldAtlas {
             });
         }
         let mut seen: HashSet<NpcId> = HashSet::new();
-        for flattened in placed {
-            let (npc, at) = match &flattened.module {
-                AreaModule::Resident(resident) => (resident.npc, Some(resident.at)),
-                AreaModule::Population(population) => {
-                    (population.npc, population.roams.map(|roams| roams.center()))
-                }
-                _ => continue,
-            };
+        let stood = placed.iter().flat_map(|flattened| match &flattened.module {
+            AreaModule::Resident(resident) => vec![(resident.npc, Some(resident.at))],
+            AreaModule::Spawner(spawner) => spawner
+                .npcs()
+                .map(|npc| (npc, spawner.within.map(|within| within.center())))
+                .collect(),
+            _ => Vec::new(),
+        });
+        for (npc, at) in stood {
             if !seen.insert(npc) {
                 continue;
             }
@@ -646,7 +648,7 @@ impl WorldAtlas {
             source(AtlasSourceKind::Area, &info.key, &here),
         ));
         let mut placed: BTreeMap<NpcId, (String, u32)> = BTreeMap::new();
-        for npc in info.residents.iter().chain(&info.populations) {
+        for npc in info.residents.iter().chain(&info.spawned) {
             placed.entry(npc.npc).or_insert((npc.key.clone(), 0)).1 += npc.count;
         }
         for (npc, (key, count)) in &placed {
@@ -832,7 +834,7 @@ impl WorldAtlas {
                             .filter(|(_, info)| {
                                 info.residents
                                     .iter()
-                                    .chain(&info.populations)
+                                    .chain(&info.spawned)
                                     .any(|placed| placed.npc == *npc)
                             })
                             .map(|(area, _)| *area)
@@ -1048,7 +1050,7 @@ fn area_info(content: &Content, files: &ProjectFiles, id: AreaId) -> AtlasArea {
         }
     }
     let mut residents = Vec::new();
-    let mut populations = Vec::new();
+    let mut spawned = Vec::new();
     for flattened in placed {
         match &flattened.module {
             AreaModule::Resident(resident) => residents.push(PlacedNpc {
@@ -1057,14 +1059,16 @@ fn area_info(content: &Content, files: &ProjectFiles, id: AreaId) -> AtlasArea {
                 at: resident.at,
                 count: 1,
             }),
-            AreaModule::Population(population) => populations.push(PlacedNpc {
-                npc: population.npc,
-                key: population.npc.path(content).to_owned(),
-                at: population
-                    .roams
-                    .map_or_else(|| loaded.center(), |roams| roams.center()),
-                count: population.count,
-            }),
+            AreaModule::Spawner(spawner) => spawned.extend(spawner.npcs().map(|npc| {
+                PlacedNpc {
+                    npc,
+                    key: npc.path(content).to_owned(),
+                    at: spawner
+                        .within
+                        .map_or_else(|| loaded.center(), |within| within.center()),
+                    count: spawner.count,
+                }
+            })),
             _ => {}
         }
     }
@@ -1078,7 +1082,7 @@ fn area_info(content: &Content, files: &ProjectFiles, id: AreaId) -> AtlasArea {
             .collect(),
         text,
         residents,
-        populations,
+        spawned,
         doors: Vec::new(),
         found: HashMap::new(),
     }

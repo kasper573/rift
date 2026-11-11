@@ -490,14 +490,15 @@ fn carry(snapshot: &mut CharacterSnapshot, content: &Content, item: ItemId) {
     }
 }
 
-/// What an enemy looks like here: whatever the spawn area's populations are made of, else the
+/// What an enemy looks like here: whatever the spawn area's spawners keep standing, else the
 /// first npc there is.
 fn enemy_model(content: &Content, zone: AreaId) -> ModelId {
     area::modules(content, zone)
         .find_map(|module| match module {
-            AreaModule::Population(population) => {
-                Some(population.npc.get(content).appearance.model)
-            }
+            AreaModule::Spawner(spawner) => spawner
+                .npcs()
+                .next()
+                .map(|npc| npc.get(content).appearance.model),
             _ => None,
         })
         .or_else(|| {

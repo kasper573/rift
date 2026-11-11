@@ -9,7 +9,7 @@ use engine::core::audio::mix::AudioCategory;
 use engine::core::audio::soundscape::SoundscapeShape;
 use engine::core::content::{FolderReader, Nearby};
 use engine::core::math::{Pos, Rect, Rgb, Size};
-use engine::core::units::{Degrees, Meters};
+use engine::core::units::{Degrees, Meters, Seconds};
 use engine::systems::actor::Pose;
 use engine::systems::area::blueprint::Placement;
 use engine::systems::area::lighting::PointLightDef;
@@ -17,10 +17,10 @@ use engine::systems::area::object::{ObjectDef, ObjectShape};
 use engine::systems::area::prop::{PropPlacement, ScaleRange, Scatter};
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{
-    AreaModule, AreaModuleKind, FogBank, Population, Resident, SafeZone, SoundChannel,
-    SoundscapeDef,
+    AreaModule, AreaModuleKind, FogBank, Resident, SafeZone, SoundChannel, SoundscapeDef,
 };
 use engine::systems::script::{Place, ScriptModule};
+use engine::systems::spawner::{Spawner, Spawns};
 use ui::egui::{Pos2, RichText, Ui, Vec2};
 
 use super::select::start_paste;
@@ -341,9 +341,9 @@ pub(crate) const ADD_MENU: &[(&str, &[(AreaModuleKind, &str)])] = &[
         ],
     ),
     (
-        "People",
+        "Spawners",
         &[
-            (AreaModuleKind::Population, "npcs that roam a rect"),
+            (AreaModuleKind::Spawner, "npcs kept filled in a rect"),
             (AreaModuleKind::Resident, "one npc at one spot"),
         ],
     ),
@@ -371,7 +371,7 @@ pub(crate) fn template_bounds(kind: AreaModuleKind, at: Pos<Meters>) -> Rect<Met
         AreaModuleKind::SafeZone
         | AreaModuleKind::Fog
         | AreaModuleKind::Soundscape
-        | AreaModuleKind::Population
+        | AreaModuleKind::Spawner
         | AreaModuleKind::Scatter => spot_rect(at),
         _ => shapes::cell_rect(at),
     }
@@ -413,10 +413,14 @@ pub fn module_template(
                 category: AudioCategory::default(),
             }],
         }),
-        AreaModuleKind::Population => AreaModule::Population(Population {
-            npc: reader.id_of(named).ok_or_else(unnamed)?,
-            count: 1,
-            roams: at.map(spot_rect),
+        AreaModuleKind::Spawner => AreaModule::Spawner(Spawner {
+            respawn: Some(Seconds(60.0)),
+            ..Spawner::of(
+                Spawns::Npc {
+                    npc: reader.id_of(named).ok_or_else(unnamed)?,
+                },
+                at.map(spot_rect),
+            )
         }),
         AreaModuleKind::Resident => AreaModule::Resident(Resident {
             npc: reader.id_of(named).ok_or_else(unnamed)?,
@@ -424,6 +428,7 @@ pub fn module_template(
             facing: Degrees::default(),
             pose: Pose::Idle,
             shown: None,
+            respawn: None,
         }),
         AreaModuleKind::Blueprint => AreaModule::Blueprint(Placement {
             blueprint: reader.id_of(named).ok_or_else(unnamed)?,

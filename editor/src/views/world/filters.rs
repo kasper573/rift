@@ -325,7 +325,7 @@ fn range_in(
         ColorTable::Npc => info
             .residents
             .iter()
-            .chain(&info.populations)
+            .chain(&info.spawned)
             .filter(|placed| color.of == ColorOf::Placed || atlas.hostile(placed.npc))
             .map(|placed| placed.key.as_str())
             .collect(),

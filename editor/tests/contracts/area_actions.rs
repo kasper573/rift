@@ -250,9 +250,13 @@ fn an_object_given_a_script_runs_the_nearest_object_script_or_one_made_for_it() 
 }
 
 #[test]
-fn a_population_given_a_roam_rect_first_roams_the_whole_area_it_roamed_without_one() {
+fn a_spawner_given_a_rect_first_spawns_over_the_whole_area_it_spawned_over_without_one() {
     let scratch = tempfile::tempdir().expect("scratch");
-    let wolves = json!({ "type": "population", "npc": path("npc", "wolf"), "count": 2 });
+    let wolves = json!({
+        "type": "spawner",
+        "spawns": [{ "type": "npc", "npc": path("npc", "wolf") }],
+        "count": 2,
+    });
     let game = Game::new()
         .npc("wolf", 20.0, json!([]))
         .area(support::AREA, &Map::open(10, 8), json!([wolves]))
@@ -266,22 +270,22 @@ fn a_population_given_a_roam_rect_first_roams_the_whole_area_it_roamed_without_o
         frames.run(events, |ui| editor::views::area::show(editor, ui, &area()))
     };
     show(&mut editor, Vec::new());
-    let set_roams = show(&mut editor, Vec::new()).at("+ roams");
+    let set_within = show(&mut editor, Vec::new()).at("+ within");
 
-    for events in support::click(set_roams) {
+    for events in support::click(set_within) {
         show(&mut editor, events);
     }
     support::files(&mut editor);
 
-    let roams: Vec<_> = nodes::modules(&support::scene(&editor, &area()))
+    let within: Vec<_> = nodes::modules(&support::scene(&editor, &area()))
         .iter()
         .filter_map(|module| match module.module() {
-            AreaModule::Population(population) => Some(population.roams),
+            AreaModule::Spawner(spawner) => Some(spawner.within),
             _ => None,
         })
         .collect();
     let whole = Rect::new(Pos::new(-0.5, -0.5), Size::new(10.0, 8.0));
-    assert_eq!(roams, [Some(whole)]);
+    assert_eq!(within, [Some(whole)]);
 }
 
 #[test]

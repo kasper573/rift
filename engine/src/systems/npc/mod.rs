@@ -20,8 +20,7 @@ use crate::core::content::{
     Content, ContentFile, ContentId, ContentProblem, Loading, ModuleRule, ModuleSet, NamedContent,
     Nearby, RowCheck, SchemaMark, serial,
 };
-use crate::core::ground::TileAt;
-use crate::core::math::{Pos, Rect, Rng};
+use crate::core::math::{Pos, Rect};
 use crate::core::tick::Planner;
 use crate::core::time;
 use crate::core::units::{MeterPos, Meters, MetersPerSec, Percent, PlaybackRate, Radians, Seconds};
@@ -30,13 +29,13 @@ use crate::systems::actor::held::{self, Held};
 use crate::systems::actor::{
     self, Action, Actor, ActorModel, Appearance, Hitbox, Pose, appearance,
 };
-use crate::systems::area::{self, AreaId, AreaModule, AreaTag, Wild};
+use crate::systems::area::{Area, AreaId, AreaTag, Resident};
 use crate::systems::combat::{Attitude, Dead, Died};
 use crate::systems::dialogue::bust::BustId;
 use crate::systems::identity::{GlobalId, Names};
 use crate::systems::interact::Interactive;
-use crate::systems::item::{ItemId, Reservation, Wear};
-use crate::systems::movement::{self, NavMesh, Position, Spot, Spots, position};
+use crate::systems::item::{ItemId, Wear};
+use crate::systems::movement::{self, Position, Spot, position};
 use crate::systems::script::condition::CompiledCondition;
 use crate::systems::script::query::{Among, TickRoster};
 use crate::systems::script::{
@@ -45,9 +44,8 @@ use crate::systems::script::{
 };
 use crate::systems::skill::{self, Rank, SkillId};
 use crate::systems::stat::Stats;
-use crate::systems::status::Statuses;
 use crate::systems::visibility::{self, Presence};
-use crate::systems::{WorldArea, dialogue, stat};
+use crate::systems::{dialogue, stat};
 
 pub type NpcId = ContentId<NpcDef>;
 
@@ -331,7 +329,6 @@ impl ScriptedRow for NpcDef {
 pub enum NpcModule {
     Nameplate(Nameplate),
     Voice(Voice),
-    Respawn(Respawn),
     Loot(Loot),
     Script(ScriptModule),
 }
@@ -344,11 +341,6 @@ pub struct Nameplate {
 #[derive(JsonSchema, Clone, Copy, Serialize, Deserialize)]
 pub struct Voice {
     pub babble: BabbleId,
-}
-
-#[derive(JsonSchema, Clone, Copy, Serialize, Deserialize)]
-pub struct Respawn {
-    pub after: Seconds,
 }
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
@@ -385,13 +377,6 @@ impl NpcDef {
         })
     }
 
-    pub fn respawn(&self) -> Option<Seconds> {
-        self.modules.iter().find_map(|module| match module {
-            NpcModule::Respawn(respawn) => Some(respawn.after),
-            _ => None,
-        })
-    }
-
     pub fn loot(&self) -> Option<&Loot> {
         self.modules.iter().find_map(|module| match module {
             NpcModule::Loot(loot) => Some(loot),
@@ -404,68 +389,27 @@ pub fn next_pack(world: &mut World) -> Pack {
     Pack(world.resource_mut::<Names>().give())
 }
 
-/// Spawns the npcs placed on the tile at `tile`: a resident at its spot, a population where it
-/// roams.
-pub fn spawn_in(world: &mut World, tile: TileAt) {
-    let content = world.resource::<Content>().clone();
-    let area_id = world.resource::<WorldArea>().0;
-    let area = area::load(&content, area_id);
-    let placed = area::placed(&content, area_id);
-    for index in area.modules_in(tile) {
-        match &placed[*index as usize].module {
-            AreaModule::Population(population) => {
-                let pack = next_pack(world);
-                for _ in 0..population.count {
-                    spawn_wild(
-                        world,
-                        &content,
-                        area_id,
-                        population.npc,
-                        population.roams,
-                        pack,
-                    );
-                }
-            }
-            AreaModule::Resident(resident) => {
-                let pack = next_pack(world);
-                let mesh = area.mesh();
-                let at = movement::place_beside(world, area_id, &mesh, resident.at);
-                let entity = spawn(world, resident.npc, at, area_id, Some(pack));
-                world.entity_mut(entity).insert(Home(resident.at));
-                if let Some(mut actor) = world.get_mut::<Actor>(entity) {
-                    actor.facing = resident.facing.radians();
-                    actor.pose = resident.pose;
-                }
-                if let Some(shown) = &resident.shown {
-                    let shown = CompiledCondition::new(&content, shown);
-                    world.entity_mut(entity).insert(Presence::When(shown));
-                }
-            }
-            _ => {}
-        }
-    }
-}
-
-fn spawn_wild(
+/// Spawns a resident at its spot in the area, facing and posed as it lives there.
+pub fn settle(
     world: &mut World,
     content: &Content,
+    area: &Area,
     area_id: AreaId,
-    npc: NpcId,
-    roams: Option<Rect<Meters>>,
+    resident: &Resident,
     pack: Pack,
-) {
-    let mesh = area::load(content, area_id).mesh_for(true, false);
-    let at = world
-        .resource_scope(|world, mut rng: Mut<Rng>| {
-            let spots = world.resource::<Spots>();
-            roaming_spot(&mesh, &mut rng, spots, area_id, roams)
-        })
-        .expect("validated at startup: populations have ground outside the safe zones");
-    let entity = spawn(world, npc, at, area_id, Some(pack));
-    match roams {
-        Some(bounds) => world.entity_mut(entity).insert((Wild, Roams(bounds))),
-        None => world.entity_mut(entity).insert(Wild),
-    };
+) -> Entity {
+    let at = movement::place_beside(world, area_id, &area.mesh(), resident.at);
+    let entity = spawn(world, resident.npc, at, area_id, Some(pack));
+    world.entity_mut(entity).insert(Home(resident.at));
+    if let Some(mut actor) = world.get_mut::<Actor>(entity) {
+        actor.facing = resident.facing.radians();
+        actor.pose = resident.pose;
+    }
+    if let Some(shown) = &resident.shown {
+        let shown = CompiledCondition::new(content, shown);
+        world.entity_mut(entity).insert(Presence::When(shown));
+    }
+    entity
 }
 
 /// A bare actor of the definition, with none of an NPC's scripts or standing; `spawn` makes a
@@ -704,66 +648,20 @@ fn start_scripts(world: &mut World, entity: Entity, def: NpcId) {
     instances.raise(owner, EventKind::Started, None, Vec::new(), |_| true);
 }
 
-/// A walkable spot within `roams`, or anywhere without it, that nobody stands on if there is one.
-fn roaming_spot(
-    mesh: &NavMesh,
-    rng: &mut Rng,
-    spots: &Spots,
-    area: AreaId,
-    roams: Option<Rect<Meters>>,
-) -> Option<Pos<Meters>> {
-    let mut draw = |fits: &dyn Fn(Pos<Meters>) -> bool| match roams {
-        Some(bounds) => mesh.random_point_within(rng, bounds, fits),
-        None => mesh.random_point(rng, fits),
-    };
-    draw(&|at| spots.crowding(area, at, None) == 0).or_else(|| draw(&|_| true))
-}
-
 type FallenNpcs = QueryState<(Entity, &'static Dead), With<Npc>>;
 
-pub fn run_respawn(world: &mut World, fallen: &mut FallenNpcs) {
-    let content = world.resource::<Content>().clone();
+/// Ends the scripts of every fallen npc, and takes its body away once it has lain as long as
+/// corpses linger.
+pub fn clear_fallen(world: &mut World, fallen: &mut FallenNpcs) {
     let time = time::uptime(world);
     let linger = world.resource::<GameSettings>().corpses_linger;
     let ids: Vec<(Entity, Seconds)> = fallen.iter(world).map(|(id, dead)| (id, dead.at)).collect();
-    world.resource_scope(|world, mut rng: Mut<Rng>| {
-        for (id, since) in ids {
-            world
-                .resource_mut::<RiftInstances>()
-                .remove_owner(Owner::Entity(RunnerKind::Npc, id));
-            let Some(npc) = world.get::<Npc>(id).map(|npc| npc.def) else {
-                continue;
-            };
-            let def = npc.get(&content);
-            let Some(delay) = def.respawn() else {
-                if time - since >= linger {
-                    world.despawn(id);
-                }
-                continue;
-            };
-            if time - since < delay {
-                continue;
-            }
-            let (Some(region), Some(&AreaTag { area: area_id })) =
-                (area::of(world, id), world.get::<AreaTag>(id))
-            else {
-                continue;
-            };
-            let mesh = region.mesh_for(area::wild(world, id), false);
-            let roams = world.get::<Roams>(id).map(|roams| roams.0);
-            let spots = world.resource::<Spots>();
-            let at = match world.get::<Home>(id) {
-                Some(&Home(home)) => Some(home),
-                None => roaming_spot(&mesh, &mut rng, spots, area_id, roams),
-            }
-            .unwrap_or_else(|| region.fallback_spawn());
-            crate::systems::combat::revive(world, id, at);
-            world
-                .entity_mut(id)
-                .insert((def.attitude, body::Body::default(), Near::default()))
-                .remove::<Reservation>()
-                .insert(Statuses::default());
-            start_scripts(world, id, npc);
+    for (id, since) in ids {
+        world
+            .resource_mut::<RiftInstances>()
+            .remove_owner(Owner::Entity(RunnerKind::Npc, id));
+        if time - since >= linger {
+            world.despawn(id);
         }
-    });
+    }
 }
