@@ -14,6 +14,7 @@
 - Runtimes speak only protocols and know no infrastructure: sign-in is OpenID Connect with every endpoint configured, metrics are Prometheus exposition, profiles are pprof over HTTP, logs go to stdout. Nothing in the code, docs or configuration names an identity provider, a proxy, an observability product or a host.
 - The desktop client's probe is a public protocol, and `rift schema probe` its schema. When a consumer needs to see something the probe doesn't report, extend the probe (`engine/src/systems/probe/`), never another channel.
 - The engine targets native desktop: the server and the desktop client. There is no browser client and no platform adapter; code uses the operating system's facilities (threads, files, sockets) directly. What differs between desktop operating systems stays inside well established crates and bevy.
+- Avoid layout shifts, and keep the ones that remain small. A layout shifts only when its user finds the shift intuitive and justified, as when they add content that overflows. It never shifts in a way that annoys: hovering something must not make the list around it jump.
 
 ## Code style
 
