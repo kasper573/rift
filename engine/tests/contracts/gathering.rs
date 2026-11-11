@@ -32,8 +32,8 @@ fn an_extraction_takes_one_rolls_once_and_pays_out_and_is_refused_without_the_to
         "work goes on by itself"
     );
 
-    set(&mut sim, miner, StatKind::GatherSpeed, 2.0);
-    set(&mut sim, miner, StatKind::GatherDropRate, 2.0);
+    set(&mut sim, miner, StatKind::GatheringSpeed, 2.0);
+    set(&mut sim, miner, StatKind::GatheringEfficiency, 100.0);
     sim.run(TAKES + 0.2);
     assert_eq!(
         left(&sim, vein),
@@ -43,7 +43,7 @@ fn an_extraction_takes_one_rolls_once_and_pays_out_and_is_refused_without_the_to
     assert_eq!(
         sim.count(miner, "ore"),
         6,
-        "twice the drops at twice the rate"
+        "a full efficiency rolls the drops twice for the one taken"
     );
     sim.run(TAKES / 2.0 + 0.2);
     assert_eq!(
@@ -106,6 +106,19 @@ fn an_extraction_takes_one_rolls_once_and_pays_out_and_is_refused_without_the_to
     sim.run(1.0);
     assert_eq!(sim.errors(1), ["No room in your bag"]);
     assert!(sim.world.get::<Working>(miner).is_none());
+
+    let (mut sim, vein) = quarry(json!({ "quantity": 3 }), |game| game);
+    let miner = sim.join(1);
+    sim.equip(miner, "pickaxe");
+    set(&mut sim, miner, StatKind::GatheringEfficiency, 150.0);
+    ask(&mut sim, 1, vein);
+    assert!(sim.run_until(WALK, |world| world.get::<Working>(miner).is_some()));
+    sim.run(TAKES + 0.2);
+    assert_eq!(left(&sim, vein), Some(2));
+    assert!(
+        [4, 6].contains(&sim.count(miner, "ore")),
+        "half as much again rolls twice every time, and a third time half the times"
+    );
 
     let (mut sim, vein) = quarry(json!({}), |game| {
         game.prop("rock", json!({ "type": "circle", "radius": 1.5 }))

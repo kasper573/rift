@@ -874,8 +874,8 @@ pub fn stats(health: f32) -> Value {
         "attack_delay": 200.0,
         "movement_speed": 4.0,
         "range": 1.5,
-        "gather_speed": 1.0,
-        "gather_drop_rate": 1.0,
+        "gathering_speed": 1.0,
+        "gathering_efficiency": 0.0,
     })
 }
 

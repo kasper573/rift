@@ -65,15 +65,19 @@ fn stat_rows(world: &World) -> Vec<(String, String)> {
     .chain(
         stats
             .listed()
-            .map(|stat| (stat.label().to_owned(), shown_value(stat.value))),
+            .map(|stat| (stat.label().to_owned(), shown(stat))),
     )
     .collect()
 }
 
-fn shown_value(value: f32) -> String {
-    if (value - value.round()).abs() < 0.05 {
-        format!("{value:.0}")
+fn shown(stat: stat::Stat) -> String {
+    let value = if (stat.value - stat.value.round()).abs() < 0.05 {
+        format!("{:.0}", stat.value)
     } else {
-        format!("{value:.1}")
+        format!("{:.1}", stat.value)
+    };
+    match stat.kind.unit() {
+        Some(unit) => format!("{value} {unit}"),
+        None => value,
     }
 }

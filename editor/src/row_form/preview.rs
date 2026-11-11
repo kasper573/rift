@@ -222,8 +222,8 @@ fn show_resource(editor: &mut Editor, ui: &mut Ui, key: &str) {
         ui.label(line);
     }
     ui.label(theme::faint(
-        "At a gather speed and a gather drop rate of 1. A worker's speed divides the time, its \
-         drop rate multiplies the chances.",
+        "At a gathering speed of 1 and no gathering efficiency. A worker's speed divides the \
+         time, and its efficiency is the chance of rolling the drops again.",
     ));
 }
 

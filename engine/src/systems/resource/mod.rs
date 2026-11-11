@@ -17,7 +17,7 @@ use crate::core::geometry::Capsule;
 use crate::core::math::{Pos, Rng};
 use crate::core::script::Value;
 use crate::core::time::{UnixMillis, WallClock};
-use crate::core::units::{MeterPos, Meters, Seconds};
+use crate::core::units::{MeterPos, Meters, Percent, Seconds};
 use crate::systems::actor::{self, Hitbox, Hurt};
 use crate::systems::area::{AreaId, AreaModule, AreaTag, PropId};
 use crate::systems::equipment::{self, EquipmentPlace};
@@ -48,8 +48,9 @@ pub fn register(app: &mut App) {
 
 /// Something standing in the world that is worked until nothing is left of it: a prop to look at,
 /// how much it holds, how many may work it at once, what working it takes and what it gives. Its
-/// worker's gather speed is how many times faster than stated an extraction goes, and its gather
-/// drop rate how many times the stated chances the drops are rolled at.
+/// worker's gathering speed is how many times faster than stated an extraction goes, and its
+/// gathering efficiency the chance that an extraction rolls its drops again: every whole hundred
+/// percent is one more roll every time, and what is left over the chance of another.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 pub struct ResourceDef {
     pub name: String,
@@ -78,7 +79,7 @@ pub enum Extraction {
 }
 
 impl Extraction {
-    /// How long one extraction takes at a gather speed of one.
+    /// How long one extraction takes at a gathering speed of one.
     pub fn takes(self) -> Seconds {
         match self {
             Extraction::ByHand { takes } | Extraction::Tool { takes, .. } => takes,
@@ -180,14 +181,36 @@ impl ScriptedRow for ResourceDef {
 }
 
 impl ResourceDef {
-    /// How long one extraction takes a worker of gather speed `speed`.
+    /// How long one extraction takes a worker of gathering speed `speed`.
     pub fn takes_at(&self, speed: f32) -> Seconds {
         Seconds(self.extraction.takes().0 / speed.max(f32::EPSILON))
     }
 
-    /// The most one extraction can drop a worker of gather drop rate `rate`, row by row.
-    pub fn most_at(&self, rate: f32) -> Vec<ItemStack> {
-        self.drops.iter().map(|drop| drop.most_at(rate)).collect()
+    /// The most one extraction can drop a worker of gathering efficiency `efficiency`, row by row.
+    pub fn most_at(&self, efficiency: Percent) -> Vec<ItemStack> {
+        let rolls = 1 + (efficiency.0.max(0.0) / 100.0).ceil() as u32;
+        self.drops
+            .iter()
+            .map(|drop| ItemStack::new(drop.item, drop.amount.saturating_mul(rolls)))
+            .collect()
+    }
+
+    /// What one extraction drops a worker of gathering efficiency `efficiency` this time, an item
+    /// to a stack.
+    pub fn rolled_at(&self, efficiency: Percent, rng: &mut Rng) -> Vec<ItemStack> {
+        let whole = efficiency.0.max(0.0) / 100.0;
+        let again = Percent(whole.fract() * 100.0).rolled(rng);
+        let rolls = 1 + whole.floor() as u32 + u32::from(again);
+        let mut dropped: Vec<ItemStack> = Vec::new();
+        for _ in 0..rolls {
+            for stack in self.drops.iter().filter_map(|drop| drop.rolled(rng)) {
+                match dropped.iter_mut().find(|held| held.item == stack.item) {
+                    Some(held) => held.count += stack.count,
+                    None => dropped.push(stack),
+                }
+            }
+        }
+        dropped
     }
 }
 
@@ -374,12 +397,16 @@ pub fn workable(
     if !working_it && workers(world, resource) >= row.max_occupants {
         return Err(words.no_room.clone());
     }
-    let rate = stat::effective(world, worker, StatKind::GatherDropRate);
+    let efficiency = Percent(stat::effective(
+        world,
+        worker,
+        StatKind::GatheringEfficiency,
+    ));
     let fits = world
         .get::<Inventory>(worker)
         .cloned()
         .unwrap_or_else(Inventory::empty)
-        .exchange(&content, &[], &row.most_at(rate));
+        .exchange(&content, &[], &row.most_at(efficiency));
     match fits {
         Ok(()) => Ok(tool),
         Err(_) => Err(words.bag_room.clone()),
@@ -478,7 +505,8 @@ fn start(world: &mut World, worker: Entity, resource: Entity) {
     begin(world, worker, resource, tool, since);
 }
 
-/// Begins an extraction of `resource` at `since`, due as soon as the worker's gather speed makes it.
+/// Begins an extraction of `resource` at `since`, due as soon as the worker's gathering speed makes
+/// it.
 fn begin(
     world: &mut World,
     worker: Entity,
@@ -489,7 +517,7 @@ fn begin(
     let Some(def) = world.get::<Resource>(resource).map(|resource| resource.def) else {
         return;
     };
-    let speed = stat::effective(world, worker, StatKind::GatherSpeed);
+    let speed = stat::effective(world, worker, StatKind::GatheringSpeed);
     let takes = def.get(world.resource::<Content>()).takes_at(speed);
     world.entity_mut(worker).insert(Working {
         resource,
@@ -524,7 +552,7 @@ fn interrupted(world: &mut World, worker: Entity, working: &Working) -> Option<O
 }
 
 /// Completes the extraction `worker` has under way, which came due at `done`: takes one from the
-/// resource, rolls its drops into the worker's bag, and begins the next where the bag has room.
+/// resource, rolls its drops into the worker's bag as many times as its efficiency makes it, and begins the next where the bag has room.
 fn extract(world: &mut World, content: &Content, worker: Entity, done: UnixMillis) {
     let Some(working) = world.get::<Working>(worker).copied() else {
         return;
@@ -541,13 +569,12 @@ fn extract(world: &mut World, content: &Content, worker: Entity, done: UnixMilli
         return notification::error(world, worker, ran_out);
     };
     let row = def.get(content);
-    let rate = stat::effective(world, worker, StatKind::GatherDropRate);
-    let dropped: Vec<ItemStack> = world.resource_scope(|_, mut rng: Mut<Rng>| {
-        row.drops
-            .iter()
-            .filter_map(|drop| drop.rolled_at(rate, &mut rng))
-            .collect()
-    });
+    let efficiency = Percent(stat::effective(
+        world,
+        worker,
+        StatKind::GatheringEfficiency,
+    ));
+    let dropped = world.resource_scope(|_, mut rng: Mut<Rng>| row.rolled_at(efficiency, &mut rng));
     let paid = world
         .get_mut::<Inventory>(worker)
         .is_some_and(|mut bag| bag.exchange(content, &[], &dropped).is_ok());

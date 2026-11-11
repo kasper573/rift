@@ -739,28 +739,14 @@ impl DropRow {
 
     /// What the row drops this time: its whole amount or nothing.
     pub fn rolled(&self, rng: &mut Rng) -> Option<ItemStack> {
-        self.rolled_at(1.0, rng)
+        self.chance
+            .is_none_or(|chance| chance.rolled(rng))
+            .then_some(self.whole())
     }
 
-    /// What the row drops this time at `rate` times its chance. Past a sure thing the rate is how
-    /// many times over it drops: the whole part every time, once more the rest of the times.
-    pub fn rolled_at(&self, rate: f32, rng: &mut Rng) -> Option<ItemStack> {
-        let times = self.times(rate);
-        let sure = times.floor();
-        let rest = times - sure;
-        let once_more = rest > 0.0 && rng.rand_float() < rest;
-        let count = (sure as u32 + u32::from(once_more)).saturating_mul(self.amount);
-        (count > 0).then_some(ItemStack::new(self.item, count))
-    }
-
-    /// The most the row can drop at `rate` times its chance.
-    pub fn most_at(&self, rate: f32) -> ItemStack {
-        let count = (self.times(rate).ceil() as u32).saturating_mul(self.amount);
-        ItemStack::new(self.item, count)
-    }
-
-    fn times(&self, rate: f32) -> f32 {
-        (self.chance.map_or(1.0, |chance| chance.0 / 100.0) * rate).max(0.0)
+    /// What the row drops when it does.
+    pub fn whole(&self) -> ItemStack {
+        ItemStack::new(self.item, self.amount)
     }
 }
 
