@@ -567,6 +567,7 @@ pub struct ProbeResource {
     /// Where a click takes it rather than whatever stands in front of it.
     #[schemars(with = "PosSchema")]
     pub aim: Pos<Meters>,
+    pub capsule: Capsule,
     /// How many extractions it still holds.
     pub left: u32,
     /// How many may work it at once.
@@ -1798,6 +1799,7 @@ fn resources(world: &mut World, area: Option<AreaId>) -> Vec<ProbeResource> {
             name: def.get(&content).name.clone(),
             at,
             aim: aim(world, entity, at, capsule),
+            capsule,
             left,
             room: def.get(&content).max_occupants,
             workers: working
