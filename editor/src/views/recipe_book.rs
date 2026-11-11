@@ -6,7 +6,7 @@
 use engine::core::content::ContentFile;
 use engine::systems::crafting::{Recipe, RecipeBookDef};
 use engine::systems::item::{ItemDef, ItemId, ItemStack};
-use ui::egui::{self, Align, Layout, Rect, Sense, Ui, Vec2};
+use ui::egui::{self, Align, Layout, Rangef, Rect, Sense, Ui, Vec2};
 use ui::face;
 use ui::{chip, controls, form, sheet, theme};
 
@@ -19,11 +19,16 @@ use crate::row_form;
 use crate::tabs::shown_path;
 
 const ROW: f32 = 34.0;
-const NUMBER: f32 = 64.0;
-const MAKES: f32 = 330.0;
+const HANDLE: f32 = 30.0;
+/// The share of a row's room that what it makes takes, what it is made from taking the rest.
+const MAKES_SHARE: f32 = 0.4;
+const COLUMN_GAP: f32 = 16.0;
+const HEADING: f32 = 18.0;
 const ADD: f32 = 150.0;
 const ADD_MADE: f32 = 110.0;
 const FACE: f32 = 18.0;
+/// The room an item's amount and its cross take after its field in the inspector.
+const ITEM_TRAIL: f32 = 96.0;
 
 /// What a recipe book's window keeps besides its file: what the list is narrowed to, and the item
 /// a recipe being added makes until it has an ingredient.
@@ -131,10 +136,10 @@ pub fn add_stack(
         return false;
     };
     let label = format!(
-        "Recipe {} {} {}",
-        recipe + 1,
-        side.verb(),
-        name_of(editor, item)
+        "Add {} to what {} {}",
+        name_of(editor, item),
+        called(editor, key, recipe),
+        side.verb()
     );
     change_recipe(editor, key, label, recipe, |recipe| {
         let stacks = side.of(recipe);
@@ -153,7 +158,11 @@ pub fn set_amount(
     (side, nth): (RecipeSide, usize),
     amount: u32,
 ) -> bool {
-    let label = format!("Change an amount recipe {} {}", recipe + 1, side.verb());
+    let label = format!(
+        "Change an amount {} {}",
+        called(editor, key, recipe),
+        side.verb()
+    );
     change_recipe(editor, key, label, recipe, |recipe| {
         if let Some(stack) = side.of(recipe).get_mut(nth) {
             stack.count = amount;
@@ -173,8 +182,8 @@ pub fn set_item(
         return false;
     };
     let label = format!(
-        "Recipe {} {} {}",
-        recipe + 1,
+        "Change what {} {} to {}",
+        called(editor, key, recipe),
         side.verb(),
         name_of(editor, item)
     );
@@ -191,7 +200,11 @@ pub fn remove_stack(
     recipe: usize,
     (side, nth): (RecipeSide, usize),
 ) -> bool {
-    let label = format!("Remove what recipe {} {}", recipe + 1, side.verb());
+    let label = format!(
+        "Take an item out of what {} {}",
+        called(editor, key, recipe),
+        side.verb()
+    );
     change_recipe(editor, key, label, recipe, |recipe| {
         let stacks = side.of(recipe);
         if nth < stacks.len() {
@@ -201,31 +214,25 @@ pub fn remove_stack(
 }
 
 pub fn remove_recipe(editor: &mut Editor, key: &str, recipe: usize) -> bool {
-    editor.change(
-        ContentEdit::new(format!("Remove recipe {}", recipe + 1)),
-        key,
-        |book: &mut RecipeBookDef| {
-            if recipe < book.recipes.len() {
-                book.recipes.remove(recipe);
-            }
-            Ok(())
-        },
-    )
+    let label = format!("Remove {}", called(editor, key, recipe));
+    editor.change(ContentEdit::new(label), key, |book: &mut RecipeBookDef| {
+        if recipe < book.recipes.len() {
+            book.recipes.remove(recipe);
+        }
+        Ok(())
+    })
 }
 
 /// Moves the recipe at `from` to stand at `to` in the book, which is the order a prompt lists it.
 pub fn move_recipe(editor: &mut Editor, key: &str, from: usize, to: usize) -> bool {
-    editor.change(
-        ContentEdit::new(format!("Move recipe {}", from + 1)),
-        key,
-        |book: &mut RecipeBookDef| {
-            if from < book.recipes.len() && to < book.recipes.len() {
-                let moved = book.recipes.remove(from);
-                book.recipes.insert(to, moved);
-            }
-            Ok(())
-        },
-    )
+    let label = format!("Move {}", called(editor, key, from));
+    editor.change(ContentEdit::new(label), key, |book: &mut RecipeBookDef| {
+        if from < book.recipes.len() && to < book.recipes.len() {
+            let moved = book.recipes.remove(from);
+            book.recipes.insert(to, moved);
+        }
+        Ok(())
+    })
 }
 
 /// The items the recipes of `book` take and none of them makes, each once, in the order they are
@@ -358,6 +365,26 @@ fn name_of(editor: &Editor, path: &str) -> String {
         .map_or_else(|| shown_path(path).to_owned(), |item| item.name.clone())
 }
 
+/// What the history calls the recipe at `recipe` of the book at `key`: by what it makes.
+fn called(editor: &Editor, key: &str, recipe: usize) -> String {
+    let made = editor
+        .read::<RecipeBookDef>(key)
+        .and_then(Result::ok)
+        .and_then(|book| {
+            let recipe = book.recipes.get(recipe)?;
+            let names: Vec<String> = recipe
+                .makes
+                .iter()
+                .map(|stack| shown_item(editor, stack.item).name)
+                .collect();
+            Some(names.join(" + "))
+        });
+    match made {
+        Some(made) => format!("the {made} recipe"),
+        None => "a recipe".to_owned(),
+    }
+}
+
 fn change_recipe(
     editor: &mut Editor,
     key: &str,
@@ -373,7 +400,7 @@ fn change_recipe(
                 change(recipe);
                 Ok(())
             }
-            None => Err(format!("there is no recipe {}", recipe + 1)),
+            None => Err("the book has no such recipe".to_owned()),
         },
     )
 }
@@ -388,7 +415,8 @@ fn selected(editor: &Editor, key: &str) -> Option<Picked> {
         .and_then(|part| Picked::of_part(part))
 }
 
-/// A field picking an item file, `wide` across: the file picked, when one just was.
+/// A field picking an item file, `wide` across: the file picked, when one just was. One holding
+/// nothing adds what is picked to a list.
 fn pick_item(
     editor: &mut Editor,
     ui: &mut Ui,
@@ -415,7 +443,14 @@ fn pick_item(
             Layout::left_to_right(Align::Center),
             |ui| {
                 ui.set_width(wide);
-                changed = picker::row(ui, &mut cx, ItemDef::TABLE, &mut picked, pointer);
+                if held.is_empty() {
+                    if let Some(added) = picker::row_added(ui, &mut cx, ItemDef::TABLE, pointer) {
+                        picked = added;
+                        changed = true;
+                    }
+                } else {
+                    changed = picker::row(ui, &mut cx, ItemDef::TABLE, &mut picked, pointer);
+                }
             },
         );
     }
@@ -444,9 +479,7 @@ fn item_face(editor: &mut Editor, ui: &mut Ui, path: &str) {
 }
 
 fn bar(editor: &mut Editor, ui: &mut Ui, key: &str, book: &RecipeBookDef, rows: &[ShownRecipe]) {
-    ui.horizontal(|ui| {
-        ui.label(face::mono(shown_path(key)).color(theme::CODE));
-        ui.add_space(12.0);
+    ui.horizontal_wrapped(|ui| {
         ui.label(theme::muted("new recipe makes"));
         if let Some(makes) = pick_item(editor, ui, key, "", "/recipes/new", 190.0) {
             editor.views.recipe_book.view_mut(key).draft = Some(makes);
@@ -475,23 +508,73 @@ fn bar(editor: &mut Editor, ui: &mut Ui, key: &str, book: &RecipeBookDef, rows: 
     });
 }
 
-fn list(editor: &mut Editor, ui: &mut Ui, key: &str, rows: &[ShownRecipe]) {
-    ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 0.0;
-        for (title, wide) in [("", NUMBER), ("makes", MAKES)] {
-            ui.allocate_ui_with_layout(
-                Vec2::new(wide, 18.0),
-                Layout::left_to_right(Align::Center),
-                |ui| {
-                    ui.set_width(wide);
-                    ui.label(form::section_heading(title));
-                },
-            );
+/// Where the columns of the list stand, the same for every row: the handle, what a recipe makes,
+/// and what it is made from.
+#[derive(Clone, Copy)]
+struct Columns {
+    handle: Rangef,
+    makes: Rangef,
+    from: Rangef,
+}
+
+impl Columns {
+    fn across(ui: &Ui) -> Columns {
+        let (left, right) = (ui.max_rect().left(), ui.max_rect().right());
+        let makes = left + HANDLE;
+        let from = makes + ((right - makes) * MAKES_SHARE).round();
+        Columns {
+            handle: Rangef::new(left, makes),
+            makes: Rangef::new(makes, from - COLUMN_GAP),
+            from: Rangef::new(from, right),
         }
-        ui.label(form::section_heading("from"));
-    });
+    }
+
+    fn whole(self) -> Rangef {
+        Rangef::new(self.handle.min, self.from.max)
+    }
+}
+
+/// A cell of the row standing at `top`, `across` its column and at least `high`: its content goes
+/// left to right and on below where the column ends. How far down it reaches.
+fn cell(
+    ui: &mut Ui,
+    name: &str,
+    across: Rangef,
+    (top, high): (f32, f32),
+    content: impl FnOnce(&mut Ui),
+) -> f32 {
+    let room = Rect::from_x_y_ranges(across, top..=top + high);
+    let mut cell = ui.new_child(
+        egui::UiBuilder::new()
+            .id_salt(name)
+            .max_rect(room)
+            .layout(Layout::left_to_right(Align::Center).with_main_wrap(true)),
+    );
+    cell.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+    content(&mut cell);
+    cell.min_rect().bottom().max(room.bottom())
+}
+
+/// Takes the room of a row of cells standing at `top` and reaching down to `bottom`.
+fn row_of_cells(ui: &mut Ui, columns: Columns, top: f32, bottom: f32) -> Rect {
+    let rect = Rect::from_x_y_ranges(columns.whole(), top..=bottom);
+    ui.allocate_rect(rect, Sense::hover());
+    rect
+}
+
+fn list(editor: &mut Editor, ui: &mut Ui, key: &str, rows: &[ShownRecipe]) {
+    let columns = Columns::across(ui);
+    let top = ui.cursor().top();
+    let mut bottom = top + HEADING;
+    for (title, across) in [("makes", columns.makes), ("from", columns.from)] {
+        bottom = bottom.max(cell(ui, title, across, (top, HEADING), |ui| {
+            ui.label(form::section_heading(title));
+        }));
+    }
+    row_of_cells(ui, columns, top, bottom);
     let filter = editor.views.recipe_book.view(key).filter.clone();
     let chosen = selected(editor, key);
+    let mut drawn = Vec::new();
     for (index, row) in rows.iter().enumerate() {
         if !row.holds(&filter) {
             continue;
@@ -499,18 +582,24 @@ fn list(editor: &mut Editor, ui: &mut Ui, key: &str, rows: &[ShownRecipe]) {
         let on = chosen == Some(Picked::Recipe(index));
         let shown = ui
             .push_id(("recipe", index), |ui| {
-                recipe_row(editor, ui, key, index, rows.len(), row, &chosen)
+                recipe_row(editor, ui, key, columns, index, row, &chosen)
             })
-            .response;
+            .inner;
+        drawn.push((index, shown));
         if on {
             ui.painter().rect_stroke(
-                shown.rect.expand(1.0),
+                shown.expand(1.0),
                 3.0,
                 egui::Stroke::new(1.5, theme::ACCENT),
                 egui::StrokeKind::Outside,
             );
         }
         form::rule(ui);
+    }
+    if let Some((from, to)) = controls::dropped_row(ui, list_id(key), &drawn)
+        && move_recipe(editor, key, from, to)
+    {
+        select(editor, key, Some(Picked::Recipe(to)));
     }
     let hidden = rows.iter().filter(|row| !row.holds(&filter)).count();
     if hidden > 0 {
@@ -522,60 +611,47 @@ fn list(editor: &mut Editor, ui: &mut Ui, key: &str, rows: &[ShownRecipe]) {
     }
 }
 
+/// The list of the book at `key`, as its rows are carried through it.
+fn list_id(key: &str) -> egui::Id {
+    egui::Id::new(("recipes of", key))
+}
+
 fn recipe_row(
     editor: &mut Editor,
     ui: &mut Ui,
     key: &str,
+    columns: Columns,
     index: usize,
-    len: usize,
     row: &ShownRecipe,
     chosen: &Option<Picked>,
-) {
-    let on = chosen == &Some(Picked::Recipe(index));
-    ui.horizontal(|ui| {
-        ui.set_min_height(ROW);
-        ui.allocate_ui_with_layout(
-            Vec2::new(NUMBER, ROW),
-            Layout::left_to_right(Align::Center),
-            |ui| {
-                ui.set_width(NUMBER);
-                if ui
-                    .selectable_label(on, face::mono(format!("{}", index + 1)))
-                    .on_hover_text("Select this recipe")
-                    .clicked()
-                {
-                    select(editor, key, Some(Picked::Recipe(index)));
-                }
-                if let Some(to) = controls::reorder(ui, index, len)
-                    && move_recipe(editor, key, index, to)
-                {
-                    select(editor, key, Some(Picked::Recipe(to)));
-                }
-            },
-        );
-        ui.allocate_ui_with_layout(
-            Vec2::new(MAKES, ROW),
-            Layout::left_to_right(Align::Center).with_main_wrap(true),
-            |ui| {
-                ui.set_width(MAKES);
-                ui.spacing_mut().item_spacing.x = 4.0;
-                stack_chips(editor, ui, key, &row.makes, chosen);
-                let pointer = format!("/recipes/{index}/makes/{}", row.makes.len());
-                if let Some(item) = pick_item(editor, ui, key, "", &pointer, ADD_MADE) {
-                    add_stack(editor, key, index, RecipeSide::Makes, &item);
-                }
-            },
-        );
-        ui.spacing_mut().item_spacing.x = 4.0;
-        stack_chips(editor, ui, key, &row.from, chosen);
-        let pointer = format!("/recipes/{index}/from/{}", row.from.len());
-        if let Some(item) = pick_item(editor, ui, key, "", &pointer, ADD) {
-            add_stack(editor, key, index, RecipeSide::From, &item);
+) -> Rect {
+    let top = ui.cursor().top();
+    let mut bottom = cell(ui, "handle", columns.handle, (top, ROW), |ui| {
+        if controls::drag_handle(ui, list_id(key), index)
+            .on_hover_text("Drag to move this recipe · click to select it")
+            .clicked()
+        {
+            select(editor, key, Some(Picked::Recipe(index)));
         }
     });
+    for (side, across, add) in [
+        (RecipeSide::Makes, columns.makes, ADD_MADE),
+        (RecipeSide::From, columns.from, ADD),
+    ] {
+        bottom = bottom.max(cell(ui, side.field(), across, (top, ROW), |ui| {
+            let stacks = row.side(side);
+            stack_chips(editor, ui, key, stacks, chosen);
+            let pointer = format!("/recipes/{index}/{}/{}", side.field(), stacks.len());
+            if let Some(item) = pick_item(editor, ui, key, "", &pointer, add) {
+                add_stack(editor, key, index, side, &item);
+            }
+        }));
+    }
+    row_of_cells(ui, columns, top, bottom)
 }
 
-/// Each item of one side of a recipe as a chip saying its amount, which selects the item.
+/// Each item of one side of a recipe as a chip saying its amount, which selects the item. A chip
+/// stays with its picture where the row goes on below: it is placed as wide as it was last drawn.
 fn stack_chips(
     editor: &mut Editor,
     ui: &mut Ui,
@@ -584,16 +660,35 @@ fn stack_chips(
     chosen: &Option<Picked>,
 ) {
     for (item, amount) in stacks {
-        item_face(editor, ui, &item.path);
-        let picked = chosen == &Some(Picked::Item(item.path.clone()));
         let label = format!("{} ×{amount}", item.name);
-        if chip::toggle(ui, &label, picked)
-            .on_hover_text(shown_path(&item.path))
-            .clicked()
-        {
-            select(editor, key, Some(Picked::Item(item.path.clone())));
-        }
-        ui.add_space(4.0);
+        let id = ui.id().with(("stack", &item.path));
+        let wide = ui.data(|data| data.get_temp::<f32>(id)).unwrap_or_else(|| {
+            let text = egui::WidgetText::from(label.as_str()).into_galley(
+                ui,
+                Some(egui::TextWrapMode::Extend),
+                f32::INFINITY,
+                egui::TextStyle::Body,
+            );
+            FACE + text.size().x + ROW
+        });
+        let placed = ui
+            .allocate_ui_with_layout(
+                Vec2::new(wide, ROW - 8.0),
+                Layout::left_to_right(Align::Center),
+                |ui| {
+                    item_face(editor, ui, &item.path);
+                    let picked = chosen == &Some(Picked::Item(item.path.clone()));
+                    if chip::toggle(ui, &label, picked)
+                        .on_hover_text(shown_path(&item.path))
+                        .clicked()
+                    {
+                        select(editor, key, Some(Picked::Item(item.path.clone())));
+                    }
+                    ui.add_space(4.0);
+                },
+            )
+            .response;
+        ui.data_mut(|data| data.insert_temp(id, placed.rect.width()));
     }
 }
 
@@ -603,25 +698,13 @@ fn draft_row(editor: &mut Editor, ui: &mut Ui, key: &str, len: usize) {
         return;
     };
     let name = name_of(editor, &makes);
-    ui.horizontal(|ui| {
-        ui.set_min_height(ROW);
-        ui.allocate_ui_with_layout(
-            Vec2::new(NUMBER, ROW),
-            Layout::left_to_right(Align::Center),
-            |ui| {
-                ui.set_width(NUMBER);
-                ui.label(theme::faint(format!("{}", len + 1)));
-            },
-        );
-        ui.allocate_ui_with_layout(
-            Vec2::new(MAKES, ROW),
-            Layout::left_to_right(Align::Center),
-            |ui| {
-                ui.set_width(MAKES);
-                item_face(editor, ui, &makes);
-                ui.add(egui::Label::new(face::bold(format!("{name} ×1"))).truncate());
-            },
-        );
+    let columns = Columns::across(ui);
+    let top = ui.cursor().top();
+    let made = cell(ui, "draft makes", columns.makes, (top, ROW), |ui| {
+        item_face(editor, ui, &makes);
+        ui.add(egui::Label::new(face::bold(format!("{name} ×1"))).truncate());
+    });
+    let from = cell(ui, "draft from", columns.from, (top, ROW), |ui| {
         if let Some(from) = pick_item(editor, ui, key, "", "/recipes/draft/from", ADD)
             && add_recipe(editor, key, &makes, &from)
         {
@@ -632,10 +715,11 @@ fn draft_row(editor: &mut Editor, ui: &mut Ui, key: &str, len: usize) {
             editor.views.recipe_book.view_mut(key).draft = None;
         }
     });
+    row_of_cells(ui, columns, top, made.max(from));
     form::hint(
         ui,
         &format!(
-            "A recipe for {name} once it has something to be made from: pick its first ingredient."
+            "A recipe for {name} once it has something to be made from: add its first ingredient."
         ),
     );
     form::rule(ui);
@@ -650,7 +734,7 @@ fn foot(editor: &mut Editor, ui: &mut Ui, key: &str, book: &RecipeBookDef, rows:
     if rows.is_empty() {
         form::hint(
             ui,
-            "No recipes yet. Pick what a new recipe makes above, or drag an item file in.",
+            "No recipes yet. Add what a new recipe makes above, or drag an item file in.",
         );
         return;
     }
@@ -710,7 +794,7 @@ fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, rows: &[ShownRecipe]) {
         Some(Picked::Item(path)) => inspect_item(editor, ui, key, &path, rows),
         None => form::nothing_selected(
             ui,
-            "Select a recipe by its number to change it, or an item to follow it through the book.",
+            "Select a recipe by its handle to change it, or an item to follow it through the book.",
         ),
     }
 }
@@ -723,7 +807,7 @@ fn inspect_recipe(
     row: &ShownRecipe,
     rows: &[ShownRecipe],
 ) {
-    sheet::section(ui, &format!("recipe {}", index + 1));
+    sheet::section(ui, "recipe");
     for side in [RecipeSide::Makes, RecipeSide::From] {
         ui.push_id(side.field(), |ui| {
             inspect_side(editor, ui, key, index, side, row.side(side));
@@ -768,7 +852,7 @@ fn inspect_side(
         ui.push_id(nth, |ui| {
             ui.horizontal(|ui| {
                 let pointer = format!("/recipes/{index}/{field}/{nth}/item");
-                let wide = (ui.available_width() - 96.0).max(100.0);
+                let wide = (ui.available_width() - ITEM_TRAIL).max(100.0);
                 if let Some(picked) = pick_item(editor, ui, key, &item.path, &pointer, wide) {
                     set_item(editor, key, index, (side, nth), &picked);
                 }
@@ -786,13 +870,11 @@ fn inspect_side(
             });
         });
     }
-    let wide = (ui.available_width() - 90.0).max(120.0);
-    form::kv(ui, "+ item", |ui| {
-        let pointer = format!("/recipes/{index}/{field}/{}", stacks.len());
-        if let Some(item) = pick_item(editor, ui, key, "", &pointer, wide) {
-            add_stack(editor, key, index, side, &item);
-        }
-    });
+    let wide = (ui.available_width() - ITEM_TRAIL).max(100.0);
+    let pointer = format!("/recipes/{index}/{field}/{}", stacks.len());
+    if let Some(item) = pick_item(editor, ui, key, "", &pointer, wide) {
+        add_stack(editor, key, index, side, &item);
+    }
 }
 
 fn inspect_item(editor: &mut Editor, ui: &mut Ui, key: &str, path: &str, rows: &[ShownRecipe]) {
@@ -864,16 +946,9 @@ fn goes_into(editor: &mut Editor, ui: &mut Ui, key: &str, item: &ShownItem, rows
 
 /// A line naming the recipe at `index`, which selects it.
 fn jump(editor: &mut Editor, ui: &mut Ui, key: &str, index: usize, line: &str) {
-    ui.horizontal(|ui| {
-        ui.label(theme::muted(format!("{}", index + 1)));
-        if ui
-            .link(line)
-            .on_hover_text(format!("Go to recipe {}", index + 1))
-            .clicked()
-        {
-            select(editor, key, Some(Picked::Recipe(index)));
-        }
-    });
+    if ui.link(line).on_hover_text("Go to this recipe").clicked() {
+        select(editor, key, Some(Picked::Recipe(index)));
+    }
 }
 
 fn open_item(editor: &mut Editor, ui: &mut Ui, path: &str) {

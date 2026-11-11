@@ -8,6 +8,7 @@ use ui::egui;
 use crate::support::{self, Frames};
 
 const SCREEN: egui::Vec2 = egui::vec2(1600.0, 1000.0);
+const NARROW: egui::Vec2 = egui::vec2(760.0, 1000.0);
 
 #[test]
 fn a_recipe_book_is_a_list_edited_a_recipe_at_a_time_and_refuses_what_the_loader_would() {
@@ -52,7 +53,34 @@ fn a_recipe_book_is_a_list_edited_a_recipe_at_a_time_and_refuses_what_the_loader
         RecipeSide::Makes,
         &item("slag")
     ));
-    assert!(recipe_book::move_recipe(&mut editor, &key, 1, 0));
+    support::settled(&mut editor);
+    let listed = frames.run(Vec::new(), |ui| recipe_book::show(&mut editor, ui, &key));
+    let grip = ui::glyph::Mark::Grip.text(1.0).text().to_owned();
+    let handles: Vec<egui::Pos2> = listed
+        .0
+        .iter()
+        .filter(|(text, _)| *text == grip)
+        .map(|(_, drawn)| drawn.center())
+        .collect();
+    let [ingot, sword] = handles[..] else {
+        panic!("a handle a recipe: {handles:?}");
+    };
+    let above = ingot - egui::vec2(0.0, 12.0);
+    let button = |at, pressed| egui::Event::PointerButton {
+        pos: at,
+        button: egui::PointerButton::Primary,
+        pressed,
+        modifiers: egui::Modifiers::NONE,
+    };
+    for events in [
+        vec![egui::Event::PointerMoved(sword)],
+        vec![button(sword, true)],
+        vec![egui::Event::PointerMoved(sword - egui::vec2(0.0, 10.0))],
+        vec![egui::Event::PointerMoved(above)],
+        vec![button(above, false)],
+    ] {
+        frames.run(events, |ui| recipe_book::show(&mut editor, ui, &key));
+    }
     support::settled(&mut editor);
     assert_eq!(
         recipes(&editor, &key),
@@ -61,9 +89,25 @@ fn a_recipe_book_is_a_list_edited_a_recipe_at_a_time_and_refuses_what_the_loader
             "2 ingot + 1 slag from 2 ore + 1 coal"
         ],
         "an item added again adds to its amount, a recipe makes as many items as it is given, \
-         and the order kept is the order given"
+         and one dragged by its handle stands where it is let go"
     );
     assert_eq!(not_made(&editor, &key), ["plank", "ore", "coal"]);
+
+    let narrow = Frames::new(NARROW).run(Vec::new(), |ui| recipe_book::show(&mut editor, ui, &key));
+    let drawn = |text: &str| {
+        narrow
+            .rect(text)
+            .unwrap_or_else(|| panic!("{text} in {narrow:?}"))
+    };
+    let (ingot, ore, slag) = (drawn("ingot ×2"), drawn("ore ×2"), drawn("slag ×1"));
+    assert!(
+        (ingot.left() - ore.left()).abs() < 1.0,
+        "what each recipe is made from starts at one column: {ingot:?} {ore:?}"
+    );
+    assert!(
+        slag.top() > ore.bottom() && slag.right() < ore.left(),
+        "what a column has no room for goes on below in it: {slag:?} beside {ore:?}"
+    );
 
     recipe_book::select(&mut editor, &key, Some(Picked::Item(item("ingot"))));
     let followed = frames.run(Vec::new(), |ui| recipe_book::show(&mut editor, ui, &key));

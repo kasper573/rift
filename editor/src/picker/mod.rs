@@ -95,6 +95,10 @@ pub struct PickerCandidate {
 /// What a picker field lists, how it shows a pick, and what it takes by drop.
 pub(crate) trait PickSource {
     fn placeholder(&self) -> String;
+    /// What the field says while it holds nothing.
+    fn invites(&self) -> String {
+        format!("pick {}…", self.placeholder())
+    }
     /// The chips offered for quick filtering; none hides the chip row.
     fn categories(&self, cx: &FormCx) -> Vec<PickerCategory>;
     fn candidates(&self, cx: &FormCx) -> Vec<PickerCandidate>;
@@ -180,6 +184,25 @@ pub(crate) fn maybe_content<Row: ContentFile>(
     }
     *id = picked;
     true
+}
+
+/// A field that holds nothing itself, each pick from `table` being one more of a list: the file
+/// picked, when one just was.
+pub fn row_added(ui: &mut Ui, cx: &mut FormCx, table: &str, path: &str) -> Option<String> {
+    row_added_among(ui, cx, &[table], path).map(|(_, key)| key)
+}
+
+/// The same over several tables at once: the table the file picked is of, and the file.
+pub(crate) fn row_added_among(
+    ui: &mut Ui,
+    cx: &mut FormCx,
+    tables: &[&str],
+    path: &str,
+) -> Option<(String, String)> {
+    let mut pick = PickedKey::new(tables.first().copied().unwrap_or_default(), "");
+    let source = RowSource::tables(tables, path).adding();
+    (field(ui, cx, &source, &mut pick, path) && !pick.is_empty())
+        .then_some((pick.category, pick.key))
 }
 
 /// A field over several tables at once; the pick names which table its key came from.
@@ -301,7 +324,7 @@ fn chip(ui: &mut Ui, cx: &mut FormCx, source: &dyn PickSource, pick: &PickedKey)
                 ui.label(Mark::CaretDown.text(11.0).color(theme::MUTED));
                 ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
                     if empty {
-                        ui.label(theme::muted(format!("pick {}…", source.placeholder())));
+                        ui.label(theme::muted(source.invites()));
                         return;
                     }
                     let (rect, _) = ui.allocate_exact_size(Vec2::splat(18.0), Sense::hover());

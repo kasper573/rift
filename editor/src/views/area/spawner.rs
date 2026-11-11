@@ -251,10 +251,8 @@ pub(super) fn spawns_card(ui: &mut Ui, cx: &mut FormCx, spawner: &mut Spawner, p
         changed = true;
     }
     form::kv(ui, "+ spawn", |ui| {
-        let mut table = NpcDef::TABLE.to_owned();
-        let mut key = String::new();
         let new_path = format!("{path}{}/{}", field!(Spawner, spawns), spawner.spawns.len());
-        if picker::row_among(ui, cx, &SPAWNED_TABLES, &mut table, &mut key, &new_path)
+        if let Some((_, key)) = picker::row_added_among(ui, cx, &SPAWNED_TABLES, &new_path)
             && let Some(what) = spawned(&reader, &key)
         {
             spawner.spawns.push(SpawnShare { what, weight: 1 });

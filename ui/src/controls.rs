@@ -11,7 +11,7 @@ use egui::{
 
 use crate::face::{Face, TextRole};
 use crate::glyph::{self, Mark};
-use crate::{ink, paint, sheet};
+use crate::{drag, ink, paint, sheet};
 
 /// Every control stands this tall, so an icon-only button lines up with the text buttons beside it.
 pub const CONTROL_HEIGHT: f32 = 26.0;
@@ -323,6 +323,65 @@ pub fn reorder(ui: &mut Ui, index: usize, len: usize) -> Option<usize> {
         to = Some(index + 1);
     }
     to
+}
+
+/// A row of the list `list` carried by its handle to another place in it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct CarriedRow {
+    list: egui::Id,
+    index: usize,
+}
+
+/// The handle the row at `index` of the list `list` is dragged by to another place in it. A click
+/// on it is the response's to use.
+pub fn drag_handle(ui: &mut Ui, list: egui::Id, index: usize) -> Response {
+    let size = Vec2::new(18.0, ui.spacing().interact_size.y);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click_and_drag());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), "handle"));
+    if response.drag_started() {
+        drag::carry(ui.ctx(), CarriedRow { list, index });
+    }
+    let held = drag::carried::<CarriedRow>(ui.ctx()) == Some(CarriedRow { list, index });
+    if ui.is_rect_visible(rect) {
+        let color = if held || response.hovered() {
+            ink::INK2
+        } else {
+            ink::INK3
+        };
+        Mark::Grip.paint(ui.painter(), rect, color);
+    }
+    response.on_hover_cursor(if held {
+        egui::CursorIcon::Grabbing
+    } else {
+        egui::CursorIcon::Grab
+    })
+}
+
+/// Where the row carried by its handle through the list `list` would land among `rows`, each
+/// the place it holds in the list and where it is drawn, in the order drawn: a line is drawn
+/// there, and once the row is let go, the place it came from and the place it takes.
+pub fn dropped_row(ui: &Ui, list: egui::Id, rows: &[(usize, Rect)]) -> Option<(usize, usize)> {
+    let carried = drag::carried::<CarriedRow>(ui.ctx()).filter(|carried| carried.list == list)?;
+    let pointer = ui.ctx().pointer_interact_pos()?;
+    let (last, last_drawn) = *rows.last()?;
+    let gap = ui.spacing().item_spacing.y / 2.0;
+    let (before, line) = rows
+        .iter()
+        .find(|(_, drawn)| pointer.y < drawn.center().y)
+        .map_or((last + 1, last_drawn.bottom() + gap), |(index, drawn)| {
+            (*index, drawn.top() - gap)
+        });
+    let to = if carried.index < before {
+        before - 1
+    } else {
+        before
+    };
+    if to != carried.index {
+        ui.painter()
+            .hline(last_drawn.x_range(), line, Stroke::new(2.0, ink::RUBRIC));
+    }
+    let let_go = ui.input(|input| input.pointer.any_released());
+    (let_go && to != carried.index).then_some((carried.index, to))
 }
 
 /// A small cross that removes what it sits beside, saying `what` it does on hover.

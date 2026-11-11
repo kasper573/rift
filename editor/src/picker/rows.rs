@@ -36,6 +36,7 @@ const PICTURE_TABLES: [&str; 6] = [
 pub struct RowSource {
     tables: Vec<String>,
     path: String,
+    adds: bool,
 }
 
 impl RowSource {
@@ -47,7 +48,13 @@ impl RowSource {
         RowSource {
             tables: tables.iter().map(|table| (*table).to_string()).collect(),
             path: path.to_owned(),
+            adds: false,
         }
+    }
+
+    /// The source of a field that holds nothing itself, each pick being one more of a list.
+    pub fn adding(self) -> RowSource {
+        RowSource { adds: true, ..self }
     }
 
     fn several(&self) -> bool {
@@ -70,6 +77,11 @@ impl RowSource {
 impl PickSource for RowSource {
     fn placeholder(&self) -> String {
         self.spoken()
+    }
+
+    fn invites(&self) -> String {
+        let verb = if self.adds { "add" } else { "pick" };
+        format!("{verb} {}…", self.spoken())
     }
 
     fn categories(&self, cx: &FormCx) -> Vec<PickerCategory> {
