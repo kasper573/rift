@@ -7,9 +7,9 @@ use bevy::camera::visibility::RenderLayers;
 use bevy::prelude::*;
 
 use super::scenery::{self, Eyes, Scenery, SceneryPlugin, Sight};
-use super::{AreaId, AreaObject, AreaTag};
+use super::{AreaId, AreaObject, AreaTag, PropDef};
+use crate::core::assets;
 use crate::core::content::Content;
-use crate::core::math::{Pos, Rect};
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::video::VideoPreferences;
 use crate::core::render::world::sky::Daylight;
@@ -197,17 +197,27 @@ fn light_area(
     super::rain::fall(world, area_id, area, weather, stood.rain, camera)
 }
 
-/// Gives every object of the shown world a place on the ground and the extent of its shape, so
-/// what plays on it finds it where the area puts it.
+/// Gives every object of the shown world a place on the ground, the extent of its shape and the
+/// prop it looks like, so it stands and what plays on it finds it where the area puts it.
 fn place_objects(world: &mut World) {
-    let objects: Vec<(Entity, Pos<Meters>, Rect<Meters>)> = world
+    let objects: Vec<(Entity, AreaObject)> = world
         .query_filtered::<(Entity, &AreaObject), Without<SiteExtent>>()
         .iter(world)
-        .map(|(entity, object)| (entity, object.shape.center(), object.shape.bounds()))
+        .map(|(entity, object)| (entity, object.clone()))
         .collect();
-    for (entity, center, bounds) in objects {
+    for (entity, object) in objects {
+        let (center, bounds) = (object.shape.center(), object.shape.bounds());
         let ground = ground_height(world, center);
-        world.entity_mut(entity).insert((
+        let model = object.look.and_then(|look| {
+            let content = world.get_resource::<Content>()?;
+            let prop = content.by_path::<PropDef>(&look)?.get(content);
+            Some(assets::model_scene(
+                world.resource::<AssetServer>(),
+                prop.model.path(),
+            ))
+        });
+        let mut placed = world.entity_mut(entity);
+        placed.insert((
             Transform::from_translation(world_point(center, ground)),
             Visibility::default(),
             SiteExtent {
@@ -215,6 +225,9 @@ fn place_objects(world: &mut World) {
                 height: 1.0,
             },
         ));
+        if let Some(model) = model {
+            placed.insert(WorldAssetRoot(model));
+        }
     }
 }
 
