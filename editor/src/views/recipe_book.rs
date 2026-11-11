@@ -1,5 +1,5 @@
-//! The recipe book view: a book's recipes as a plain list, a row each, saying what it makes and
-//! what it takes. What joins the recipes to each other is followed in the inspector: the other
+//! The recipe book view: a book's recipes as a plain list, a row each, saying everything it makes
+//! and everything it takes. What joins the recipes to each other is followed in the inspector: the other
 //! ways to make a thing, and the recipes it goes into. Every change is the whole file written
 //! again, so the loader's rules refuse a loop or an empty recipe as it is made.
 
@@ -20,9 +20,9 @@ use crate::tabs::shown_path;
 
 const ROW: f32 = 34.0;
 const NUMBER: f32 = 64.0;
-const MAKES: f32 = 210.0;
-const COUNT: f32 = 60.0;
+const MAKES: f32 = 330.0;
 const ADD: f32 = 150.0;
+const ADD_MADE: f32 = 110.0;
 const FACE: f32 = 18.0;
 
 /// What a recipe book's window keeps besides its file: what the list is narrowed to, and the item
@@ -80,86 +80,122 @@ pub fn add_recipe(editor: &mut Editor, key: &str, makes: &str, from: &str) -> bo
     let label = format!("Add a recipe for {}", name_of(editor, makes));
     editor.change(ContentEdit::new(label), key, |book: &mut RecipeBookDef| {
         book.recipes.push(Recipe {
-            makes: ItemStack::new(made, 1),
+            makes: vec![ItemStack::new(made, 1)],
             from: vec![ItemStack::new(taken, 1)],
         });
         Ok(())
     })
 }
 
-/// Adds one of the item at `item` to what the recipe at `recipe` takes: to its amount when the
-/// recipe takes it already.
-pub fn add_ingredient(editor: &mut Editor, key: &str, recipe: usize, item: &str) -> bool {
+/// The two lists of a recipe: what one craft gives, and what it takes.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecipeSide {
+    Makes,
+    From,
+}
+
+impl RecipeSide {
+    fn of(self, recipe: &mut Recipe) -> &mut Vec<ItemStack> {
+        match self {
+            RecipeSide::Makes => &mut recipe.makes,
+            RecipeSide::From => &mut recipe.from,
+        }
+    }
+
+    fn verb(self) -> &'static str {
+        match self {
+            RecipeSide::Makes => "makes",
+            RecipeSide::From => "takes",
+        }
+    }
+
+    fn field(self) -> &'static str {
+        match self {
+            RecipeSide::Makes => "makes",
+            RecipeSide::From => "from",
+        }
+    }
+}
+
+/// Adds one of the item at `item` to a `side` of the recipe at `recipe`: to its amount when the
+/// side lists it already.
+pub fn add_stack(
+    editor: &mut Editor,
+    key: &str,
+    recipe: usize,
+    side: RecipeSide,
+    item: &str,
+) -> bool {
     let Some(id) = item_id(editor, item) else {
-        editor.toast("an ingredient is an item file");
+        editor.toast("a recipe lists item files");
         return false;
     };
-    let label = format!("Add {} to recipe {}", name_of(editor, item), recipe + 1);
+    let label = format!(
+        "Recipe {} {} {}",
+        recipe + 1,
+        side.verb(),
+        name_of(editor, item)
+    );
     change_recipe(editor, key, label, recipe, |recipe| {
-        match recipe.from.iter_mut().find(|stack| stack.item == id) {
+        let stacks = side.of(recipe);
+        match stacks.iter_mut().find(|stack| stack.item == id) {
             Some(stack) => stack.count = stack.count.saturating_add(1),
-            None => recipe.from.push(ItemStack::new(id, 1)),
+            None => stacks.push(ItemStack::new(id, 1)),
         }
     })
 }
 
-/// Sets how many of its `ingredient`th ingredient the recipe at `recipe` takes.
+/// Sets how many of the `nth` item of a `side` one craft of the recipe at `recipe` gives or takes.
 pub fn set_amount(
     editor: &mut Editor,
     key: &str,
     recipe: usize,
-    ingredient: usize,
+    (side, nth): (RecipeSide, usize),
     amount: u32,
 ) -> bool {
-    let label = format!("Change an amount of recipe {}", recipe + 1);
+    let label = format!("Change an amount recipe {} {}", recipe + 1, side.verb());
     change_recipe(editor, key, label, recipe, |recipe| {
-        if let Some(stack) = recipe.from.get_mut(ingredient) {
+        if let Some(stack) = side.of(recipe).get_mut(nth) {
             stack.count = amount;
         }
     })
 }
 
-/// Sets how many one craft of the recipe at `recipe` makes.
-pub fn set_count(editor: &mut Editor, key: &str, recipe: usize, count: u32) -> bool {
-    let label = format!("Change what recipe {} makes", recipe + 1);
-    change_recipe(editor, key, label, recipe, |recipe| {
-        recipe.makes.count = count;
-    })
-}
-
-/// Makes the recipe at `recipe` make the item at `item` instead.
-pub fn set_makes(editor: &mut Editor, key: &str, recipe: usize, item: &str) -> bool {
-    let Some(id) = item_id(editor, item) else {
-        return false;
-    };
-    let label = format!("Recipe {} makes {}", recipe + 1, name_of(editor, item));
-    change_recipe(editor, key, label, recipe, |recipe| recipe.makes.item = id)
-}
-
-/// Makes the `ingredient`th ingredient of the recipe at `recipe` the item at `item` instead.
-pub fn set_ingredient(
+/// Makes the `nth` item of a `side` of the recipe at `recipe` the item at `item` instead.
+pub fn set_item(
     editor: &mut Editor,
     key: &str,
     recipe: usize,
-    ingredient: usize,
+    (side, nth): (RecipeSide, usize),
     item: &str,
 ) -> bool {
     let Some(id) = item_id(editor, item) else {
         return false;
     };
-    let label = format!("Recipe {} takes {}", recipe + 1, name_of(editor, item));
+    let label = format!(
+        "Recipe {} {} {}",
+        recipe + 1,
+        side.verb(),
+        name_of(editor, item)
+    );
     change_recipe(editor, key, label, recipe, |recipe| {
-        if let Some(stack) = recipe.from.get_mut(ingredient) {
+        if let Some(stack) = side.of(recipe).get_mut(nth) {
             stack.item = id;
         }
     })
 }
 
-pub fn remove_ingredient(editor: &mut Editor, key: &str, recipe: usize, ingredient: usize) -> bool {
-    let label = format!("Remove an ingredient of recipe {}", recipe + 1);
+pub fn remove_stack(
+    editor: &mut Editor,
+    key: &str,
+    recipe: usize,
+    (side, nth): (RecipeSide, usize),
+) -> bool {
+    let label = format!("Remove what recipe {} {}", recipe + 1, side.verb());
     change_recipe(editor, key, label, recipe, |recipe| {
-        if ingredient < recipe.from.len() {
-            recipe.from.remove(ingredient);
+        let stacks = side.of(recipe);
+        if nth < stacks.len() {
+            stacks.remove(nth);
         }
     })
 }
@@ -200,7 +236,7 @@ pub fn not_made(book: &RecipeBookDef) -> Vec<ItemId> {
         let made = book
             .recipes
             .iter()
-            .any(|recipe| recipe.makes.item == stack.item);
+            .any(|recipe| recipe.makes_item(stack.item));
         if !made && !raw.contains(&stack.item) {
             raw.push(stack.item);
         }
@@ -245,14 +281,20 @@ struct ShownItem {
 
 /// A recipe as the list shows it.
 struct ShownRecipe {
-    makes: ShownItem,
-    count: u32,
+    makes: Vec<(ShownItem, u32)>,
     from: Vec<(ShownItem, u32)>,
 }
 
 impl ShownRecipe {
-    fn takes(&self, path: &str) -> Option<u32> {
-        self.from
+    fn side(&self, side: RecipeSide) -> &[(ShownItem, u32)] {
+        match side {
+            RecipeSide::Makes => &self.makes,
+            RecipeSide::From => &self.from,
+        }
+    }
+
+    fn amount_of(&self, side: RecipeSide, path: &str) -> Option<u32> {
+        self.side(side)
             .iter()
             .find(|(item, _)| item.path == path)
             .map(|(_, amount)| *amount)
@@ -261,13 +303,15 @@ impl ShownRecipe {
     fn holds(&self, filter: &str) -> bool {
         let filter = filter.trim().to_lowercase();
         filter.is_empty()
-            || std::iter::once(&self.makes)
-                .chain(self.from.iter().map(|(item, _)| item))
-                .any(|item| item.name.to_lowercase().contains(&filter))
+            || self
+                .makes
+                .iter()
+                .chain(&self.from)
+                .any(|(item, _)| item.name.to_lowercase().contains(&filter))
     }
 
-    fn ingredients(&self) -> String {
-        self.from
+    fn listed(&self, side: RecipeSide) -> String {
+        self.side(side)
             .iter()
             .map(|(item, amount)| format!("{amount} {}", item.name))
             .collect::<Vec<_>>()
@@ -276,16 +320,17 @@ impl ShownRecipe {
 }
 
 fn shown_rows(editor: &Editor, book: &RecipeBookDef) -> Vec<ShownRecipe> {
+    let shown = |stacks: &[ItemStack]| {
+        stacks
+            .iter()
+            .map(|stack| (shown_item(editor, stack.item), stack.count))
+            .collect()
+    };
     book.recipes
         .iter()
         .map(|recipe| ShownRecipe {
-            makes: shown_item(editor, recipe.makes.item),
-            count: recipe.makes.count,
-            from: recipe
-                .from
-                .iter()
-                .map(|stack| (shown_item(editor, stack.item), stack.count))
-                .collect(),
+            makes: shown(&recipe.makes),
+            from: shown(&recipe.from),
         })
         .collect()
 }
@@ -417,7 +462,8 @@ fn bar(editor: &mut Editor, ui: &mut Ui, key: &str, book: &RecipeBookDef, rows: 
         let mut made: Vec<ItemId> = book
             .recipes
             .iter()
-            .map(|recipe| recipe.makes.item)
+            .flat_map(|recipe| &recipe.makes)
+            .map(|stack| stack.item)
             .collect();
         made.sort_unstable();
         made.dedup();
@@ -432,7 +478,7 @@ fn bar(editor: &mut Editor, ui: &mut Ui, key: &str, book: &RecipeBookDef, rows: 
 fn list(editor: &mut Editor, ui: &mut Ui, key: &str, rows: &[ShownRecipe]) {
     ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 0.0;
-        for (title, wide) in [("", NUMBER), ("makes", MAKES), ("count", COUNT + 16.0)] {
+        for (title, wide) in [("", NUMBER), ("makes", MAKES)] {
             ui.allocate_ui_with_layout(
                 Vec2::new(wide, 18.0),
                 Layout::left_to_right(Align::Center),
@@ -509,52 +555,46 @@ fn recipe_row(
         );
         ui.allocate_ui_with_layout(
             Vec2::new(MAKES, ROW),
-            Layout::left_to_right(Align::Center),
+            Layout::left_to_right(Align::Center).with_main_wrap(true),
             |ui| {
                 ui.set_width(MAKES);
-                item_face(editor, ui, &row.makes.path);
-                let name = ui.add(
-                    egui::Label::new(face::bold(&row.makes.name))
-                        .truncate()
-                        .sense(Sense::click()),
-                );
-                if name.on_hover_text(shown_path(&row.makes.path)).clicked() {
-                    select(editor, key, Some(Picked::Recipe(index)));
-                }
-            },
-        );
-        ui.allocate_ui_with_layout(
-            Vec2::new(COUNT + 16.0, ROW),
-            Layout::left_to_right(Align::Center),
-            |ui| {
-                ui.set_width(COUNT + 16.0);
-                let mut count = row.count;
-                let field = ui
-                    .add(egui::DragValue::new(&mut count).range(1..=u32::MAX))
-                    .on_hover_text("How many one craft makes");
-                if field.changed() {
-                    set_count(editor, key, index, count);
+                ui.spacing_mut().item_spacing.x = 4.0;
+                stack_chips(editor, ui, key, &row.makes, chosen);
+                let pointer = format!("/recipes/{index}/makes/{}", row.makes.len());
+                if let Some(item) = pick_item(editor, ui, key, "", &pointer, ADD_MADE) {
+                    add_stack(editor, key, index, RecipeSide::Makes, &item);
                 }
             },
         );
         ui.spacing_mut().item_spacing.x = 4.0;
-        for (item, amount) in &row.from {
-            item_face(editor, ui, &item.path);
-            let picked = chosen == &Some(Picked::Item(item.path.clone()));
-            let label = format!("{} ×{amount}", item.name);
-            if chip::toggle(ui, &label, picked)
-                .on_hover_text(shown_path(&item.path))
-                .clicked()
-            {
-                select(editor, key, Some(Picked::Item(item.path.clone())));
-            }
-            ui.add_space(4.0);
-        }
+        stack_chips(editor, ui, key, &row.from, chosen);
         let pointer = format!("/recipes/{index}/from/{}", row.from.len());
         if let Some(item) = pick_item(editor, ui, key, "", &pointer, ADD) {
-            add_ingredient(editor, key, index, &item);
+            add_stack(editor, key, index, RecipeSide::From, &item);
         }
     });
+}
+
+/// Each item of one side of a recipe as a chip saying its amount, which selects the item.
+fn stack_chips(
+    editor: &mut Editor,
+    ui: &mut Ui,
+    key: &str,
+    stacks: &[(ShownItem, u32)],
+    chosen: &Option<Picked>,
+) {
+    for (item, amount) in stacks {
+        item_face(editor, ui, &item.path);
+        let picked = chosen == &Some(Picked::Item(item.path.clone()));
+        let label = format!("{} ×{amount}", item.name);
+        if chip::toggle(ui, &label, picked)
+            .on_hover_text(shown_path(&item.path))
+            .clicked()
+        {
+            select(editor, key, Some(Picked::Item(item.path.clone())));
+        }
+        ui.add_space(4.0);
+    }
 }
 
 /// The recipe being added, at the foot of the list until it has something to be made from.
@@ -579,15 +619,7 @@ fn draft_row(editor: &mut Editor, ui: &mut Ui, key: &str, len: usize) {
             |ui| {
                 ui.set_width(MAKES);
                 item_face(editor, ui, &makes);
-                ui.add(egui::Label::new(face::bold(&name)).truncate());
-            },
-        );
-        ui.allocate_ui_with_layout(
-            Vec2::new(COUNT + 16.0, ROW),
-            Layout::left_to_right(Align::Center),
-            |ui| {
-                ui.set_width(COUNT + 16.0);
-                ui.label(theme::faint("1"));
+                ui.add(egui::Label::new(face::bold(format!("{name} ×1"))).truncate());
             },
         );
         if let Some(from) = pick_item(editor, ui, key, "", "/recipes/draft/from", ADD)
@@ -692,60 +724,18 @@ fn inspect_recipe(
     rows: &[ShownRecipe],
 ) {
     sheet::section(ui, &format!("recipe {}", index + 1));
-    let wide = (ui.available_width() - 90.0).max(120.0);
-    form::kv(ui, "makes", |ui| {
-        let pointer = format!("/recipes/{index}/makes/item");
-        if let Some(item) = pick_item(editor, ui, key, &row.makes.path, &pointer, wide) {
-            set_makes(editor, key, index, &item);
-        }
-    });
-    form::kv(ui, "count", |ui| {
-        let mut count = row.count;
-        if ui
-            .add(egui::DragValue::new(&mut count).range(1..=u32::MAX))
-            .changed()
-        {
-            set_count(editor, key, index, count);
-        }
-    });
-    ui.add_space(8.0);
-    sheet::section(ui, "from");
-    for (nth, (item, amount)) in row.from.iter().enumerate() {
-        ui.push_id(("ingredient", nth), |ui| {
-            ui.horizontal(|ui| {
-                let pointer = format!("/recipes/{index}/from/{nth}/item");
-                let field = (ui.available_width() - 96.0).max(100.0);
-                if let Some(picked) = pick_item(editor, ui, key, &item.path, &pointer, field) {
-                    set_ingredient(editor, key, index, nth, &picked);
-                }
-                let mut count = *amount;
-                let changed = ui
-                    .add(egui::DragValue::new(&mut count).range(1..=u32::MAX))
-                    .on_hover_text("How many one craft takes")
-                    .changed();
-                if changed {
-                    set_amount(editor, key, index, nth, count);
-                }
-                if controls::remove(ui, "Take this ingredient out of the recipe").clicked() {
-                    remove_ingredient(editor, key, index, nth);
-                }
-            });
+    for side in [RecipeSide::Makes, RecipeSide::From] {
+        ui.push_id(side.field(), |ui| {
+            inspect_side(editor, ui, key, index, side, row.side(side));
         });
+        ui.add_space(8.0);
     }
-    form::kv(ui, "+ ingredient", |ui| {
-        let pointer = format!("/recipes/{index}/from/{}", row.from.len());
-        if let Some(item) = pick_item(editor, ui, key, "", &pointer, wide) {
-            add_ingredient(editor, key, index, &item);
-        }
-    });
-    ui.add_space(8.0);
     form::hint(
         ui,
         &format!(
-            "One craft takes {} and makes {} {}.",
-            row.ingredients(),
-            row.count,
-            row.makes.name
+            "One craft takes {} and makes {}.",
+            row.listed(RecipeSide::From),
+            row.listed(RecipeSide::Makes)
         ),
     );
     ui.add_space(4.0);
@@ -754,18 +744,55 @@ fn inspect_recipe(
         return;
     }
     ui.add_space(10.0);
-    let also: Vec<usize> = (0..rows.len())
-        .filter(|other| *other != index && rows[*other].makes.path == row.makes.path)
-        .collect();
-    if !also.is_empty() {
-        sheet::section(ui, &format!("also makes {}", row.makes.name));
-        for other in also {
-            jump(editor, ui, key, other, &rows[other].ingredients());
-        }
+    for (item, _) in &row.makes {
+        made_by(editor, ui, key, item, rows, Some(index));
+        goes_into(editor, ui, key, item, rows);
+        open_item(editor, ui, &item.path);
         ui.add_space(8.0);
     }
-    goes_into(editor, ui, key, &row.makes, rows);
-    open_item(editor, ui, &row.makes.path);
+}
+
+/// One side of the recipe at `index` as a form: each item with its amount, and a field adding
+/// another.
+fn inspect_side(
+    editor: &mut Editor,
+    ui: &mut Ui,
+    key: &str,
+    index: usize,
+    side: RecipeSide,
+    stacks: &[(ShownItem, u32)],
+) {
+    sheet::section(ui, side.field());
+    let field = side.field();
+    for (nth, (item, amount)) in stacks.iter().enumerate() {
+        ui.push_id(nth, |ui| {
+            ui.horizontal(|ui| {
+                let pointer = format!("/recipes/{index}/{field}/{nth}/item");
+                let wide = (ui.available_width() - 96.0).max(100.0);
+                if let Some(picked) = pick_item(editor, ui, key, &item.path, &pointer, wide) {
+                    set_item(editor, key, index, (side, nth), &picked);
+                }
+                let mut count = *amount;
+                let changed = ui
+                    .add(egui::DragValue::new(&mut count).range(1..=u32::MAX))
+                    .on_hover_text(format!("How many one craft {}", side.verb()))
+                    .changed();
+                if changed {
+                    set_amount(editor, key, index, (side, nth), count);
+                }
+                if controls::remove(ui, "Take this out of the recipe").clicked() {
+                    remove_stack(editor, key, index, (side, nth));
+                }
+            });
+        });
+    }
+    let wide = (ui.available_width() - 90.0).max(120.0);
+    form::kv(ui, "+ item", |ui| {
+        let pointer = format!("/recipes/{index}/{field}/{}", stacks.len());
+        if let Some(item) = pick_item(editor, ui, key, "", &pointer, wide) {
+            add_stack(editor, key, index, side, &item);
+        }
+    });
 }
 
 fn inspect_item(editor: &mut Editor, ui: &mut Ui, key: &str, path: &str, rows: &[ShownRecipe]) {
@@ -776,16 +803,45 @@ fn inspect_item(editor: &mut Editor, ui: &mut Ui, key: &str, path: &str, rows: &
     sheet::section(ui, &item.name);
     form::kv_code(ui, "item", shown_path(path));
     ui.add_space(8.0);
-    let made: Vec<usize> = (0..rows.len())
-        .filter(|index| rows[*index].makes.path == path)
-        .collect();
-    sheet::section(ui, &format!("made by · {} recipes here", made.len()));
-    for index in made {
-        jump(editor, ui, key, index, &rows[index].ingredients());
-    }
-    ui.add_space(8.0);
+    made_by(editor, ui, key, &item, rows, None);
     goes_into(editor, ui, key, &item, rows);
     open_item(editor, ui, path);
+}
+
+/// The recipes that make `item`, other than the one at `besides`, each a line that jumps to its
+/// row.
+fn made_by(
+    editor: &mut Editor,
+    ui: &mut Ui,
+    key: &str,
+    item: &ShownItem,
+    rows: &[ShownRecipe],
+    besides: Option<usize>,
+) {
+    let made: Vec<usize> = (0..rows.len())
+        .filter(|index| Some(*index) != besides)
+        .filter(|index| {
+            rows[*index]
+                .amount_of(RecipeSide::Makes, &item.path)
+                .is_some()
+        })
+        .collect();
+    let title = match besides {
+        Some(_) if made.is_empty() => return,
+        Some(_) => format!("{} is also made by", item.name),
+        None => format!("made by · {} recipes here", made.len()),
+    };
+    sheet::section(ui, &title);
+    for index in made {
+        jump(
+            editor,
+            ui,
+            key,
+            index,
+            &rows[index].listed(RecipeSide::From),
+        );
+    }
+    ui.add_space(8.0);
 }
 
 /// The recipes that take `item`, each a line that jumps to its row.
@@ -793,14 +849,14 @@ fn goes_into(editor: &mut Editor, ui: &mut Ui, key: &str, item: &ShownItem, rows
     let taken: Vec<(usize, u32)> = rows
         .iter()
         .enumerate()
-        .filter_map(|(index, row)| Some((index, row.takes(&item.path)?)))
+        .filter_map(|(index, row)| Some((index, row.amount_of(RecipeSide::From, &item.path)?)))
         .collect();
     sheet::section(
         ui,
         &format!("{} goes into · {} recipes here", item.name, taken.len()),
     );
     for (index, amount) in taken {
-        let line = format!("{} ×{amount}", rows[index].makes.name);
+        let line = format!("{amount} into {}", rows[index].listed(RecipeSide::Makes));
         jump(editor, ui, key, index, &line);
     }
     ui.add_space(8.0);

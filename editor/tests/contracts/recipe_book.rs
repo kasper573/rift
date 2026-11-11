@@ -1,6 +1,6 @@
-use editor::views::recipe_book::{self, Picked};
+use editor::views::recipe_book::{self, Picked, RecipeSide};
 use engine::systems::crafting::RecipeBookDef;
-use engine::systems::item::ItemDef;
+use engine::systems::item::{ItemDef, ItemStack};
 use serde_json::json;
 use testkit::{Game, Map, path, said};
 use ui::egui;
@@ -18,7 +18,7 @@ fn a_recipe_book_is_a_list_edited_a_recipe_at_a_time_and_refuses_what_the_loader
 
     let mut frames = Frames::new(SCREEN);
     let drawn = frames.run(Vec::new(), |ui| recipe_book::show(&mut editor, ui, &key));
-    for shown in ["ingot", "ore ×2", "coal ×1", "1 recipes · 1 items made"] {
+    for shown in ["ingot ×1", "ore ×2", "coal ×1", "1 recipes · 1 items made"] {
         assert!(drawn.any(|text| text == shown), "{shown} in {drawn:?}");
     }
     assert_eq!(not_made(&editor, &key), ["ore", "coal"]);
@@ -29,34 +29,45 @@ fn a_recipe_book_is_a_list_edited_a_recipe_at_a_time_and_refuses_what_the_loader
         &item("sword"),
         &item("ingot")
     ));
-    assert!(recipe_book::add_ingredient(
+    for added in ["plank", "ingot"] {
+        assert!(recipe_book::add_stack(
+            &mut editor,
+            &key,
+            1,
+            RecipeSide::From,
+            &item(added)
+        ));
+    }
+    assert!(recipe_book::set_amount(
         &mut editor,
         &key,
-        1,
-        &item("plank")
+        0,
+        (RecipeSide::Makes, 0),
+        2
     ));
-    assert!(recipe_book::add_ingredient(
+    assert!(recipe_book::add_stack(
         &mut editor,
         &key,
-        1,
-        &item("ingot")
+        0,
+        RecipeSide::Makes,
+        &item("slag")
     ));
-    assert!(recipe_book::set_count(&mut editor, &key, 0, 2));
     assert!(recipe_book::move_recipe(&mut editor, &key, 1, 0));
     support::settled(&mut editor);
     assert_eq!(
         recipes(&editor, &key),
         [
             "1 sword from 2 ingot + 1 plank",
-            "2 ingot from 2 ore + 1 coal"
+            "2 ingot + 1 slag from 2 ore + 1 coal"
         ],
-        "an item added again adds to its amount, and the order kept is the order given"
+        "an item added again adds to its amount, a recipe makes as many items as it is given, \
+         and the order kept is the order given"
     );
     assert_eq!(not_made(&editor, &key), ["plank", "ore", "coal"]);
 
     recipe_book::select(&mut editor, &key, Some(Picked::Item(item("ingot"))));
     let followed = frames.run(Vec::new(), |ui| recipe_book::show(&mut editor, ui, &key));
-    for shown in ["2 ore + 1 coal", "sword ×2"] {
+    for shown in ["2 ore + 1 coal", "2 into 1 sword"] {
         assert!(
             followed.any(|text| text == shown),
             "the inspector follows ingot to {shown}: {followed:?}"
@@ -74,19 +85,24 @@ fn a_recipe_book_is_a_list_edited_a_recipe_at_a_time_and_refuses_what_the_loader
     assert_eq!(refused.refusal.problem.rule, "recipe loop");
     assert_eq!(recipes(&editor, &key), before);
 
-    assert!(recipe_book::remove_ingredient(&mut editor, &key, 1, 0));
-    assert!(
-        !recipe_book::remove_ingredient(&mut editor, &key, 1, 0),
-        "a recipe is never left with nothing to make it from"
-    );
-    let emptied = editor.last_refusal.as_ref().expect("refused");
-    assert_eq!(emptied.problem.rule, "nothing to make it from");
+    for (side, rule) in [
+        (RecipeSide::From, "nothing to make it from"),
+        (RecipeSide::Makes, "nothing made"),
+    ] {
+        assert!(recipe_book::remove_stack(&mut editor, &key, 1, (side, 0)));
+        assert!(
+            !recipe_book::remove_stack(&mut editor, &key, 1, (side, 0)),
+            "a recipe is never left with {rule}"
+        );
+        let emptied = editor.last_refusal.as_ref().expect("refused");
+        assert_eq!(emptied.problem.rule, rule);
+    }
     support::settled(&mut editor);
-    assert_eq!(recipes(&editor, &key)[1], "2 ingot from 1 coal");
+    assert_eq!(recipes(&editor, &key)[1], "1 slag from 1 coal");
 
     assert!(recipe_book::remove_recipe(&mut editor, &key, 0));
     support::settled(&mut editor);
-    assert_eq!(recipes(&editor, &key), ["2 ingot from 1 coal"]);
+    assert_eq!(recipes(&editor, &key), ["1 slag from 1 coal"]);
 }
 
 /// A game whose smith opens a book that makes an ingot from ore and coal.
@@ -104,7 +120,7 @@ fn game() -> Game {
             "smithing",
             json!({
                 "mark": path("attention", "anvil"),
-                "recipes": [{ "makes": stack("ingot", 1), "from": [stack("ore", 2), stack("coal", 1)] }],
+                "recipes": [{ "makes": [stack("ingot", 1)], "from": [stack("ore", 2), stack("coal", 1)] }],
             }),
         )
         .npc(
@@ -125,7 +141,7 @@ fn game() -> Game {
                 },
             }),
         );
-    for item in ["ore", "coal", "ingot", "plank", "sword"] {
+    for item in ["ore", "coal", "ingot", "slag", "plank", "sword"] {
         game = game.resource(item, 100);
     }
     game
@@ -138,17 +154,14 @@ fn recipes(editor: &editor::app::Editor, key: &str) -> Vec<String> {
     book.recipes
         .iter()
         .map(|recipe| {
-            let from: Vec<String> = recipe
-                .from
-                .iter()
-                .map(|stack| format!("{} {}", stack.count, name(stack.item)))
-                .collect();
-            format!(
-                "{} {} from {}",
-                recipe.makes.count,
-                name(recipe.makes.item),
-                from.join(" + ")
-            )
+            let listed = |stacks: &[ItemStack]| {
+                stacks
+                    .iter()
+                    .map(|stack| format!("{} {}", stack.count, name(stack.item)))
+                    .collect::<Vec<_>>()
+                    .join(" + ")
+            };
+            format!("{} from {}", listed(&recipe.makes), listed(&recipe.from))
         })
         .collect()
 }

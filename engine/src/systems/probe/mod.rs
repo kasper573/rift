@@ -693,10 +693,11 @@ pub struct ProbeCrafting {
     /// Whether the prompt has a window listing its recipes, and whether it is open.
     pub shows_recipes: bool,
     pub listing: bool,
-    /// What the items placed make, one result for each recipe they are a whole number of times.
-    pub results: Vec<ProbeStack>,
-    /// The result its button would make: the only one, or of several the one chosen.
-    pub picked: Option<ItemId>,
+    /// What the items placed make, one result for each recipe they are a whole number of times:
+    /// everything that recipe would give for them.
+    pub results: Vec<Vec<ProbeStack>>,
+    /// Which of the results its button would make: the only one, or of several the one chosen.
+    pub picked: Option<usize>,
     pub button: String,
     /// Whether the button can be pressed.
     pub ready: bool,
@@ -705,7 +706,8 @@ pub struct ProbeCrafting {
 /// A recipe of a crafting prompt, as its window lists it.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeRecipe {
-    pub makes: ProbeStack,
+    /// Everything one craft gives.
+    pub makes: Vec<ProbeStack>,
     pub from: Vec<ProbeStack>,
     /// Whether the player's bag covers every ingredient.
     pub can_make: bool,
@@ -1144,6 +1146,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         }),
         crafting: crafting::panel::view(world).map(|view| {
             let (button, ready) = crafting::panel::verdict(world);
+            let results = crafting::panel::results(world);
             let stack = |stack: ItemStack| ProbeStack {
                 item: stack.item,
                 count: stack.count,
@@ -1152,18 +1155,22 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                 recipes: crafting::panel::listed(world)
                     .into_iter()
                     .map(|listed| ProbeRecipe {
-                        makes: stack(listed.recipe.makes),
+                        makes: listed.recipe.makes.iter().copied().map(stack).collect(),
                         from: listed.recipe.from.iter().copied().map(stack).collect(),
                         can_make: listed.can_make,
                     })
                     .collect(),
                 shows_recipes: view.show_recipes,
                 listing: crafting::panel::listing(world),
-                results: crafting::panel::results(world)
-                    .into_iter()
-                    .map(|result| stack(result.makes))
+                results: results
+                    .iter()
+                    .map(|result| result.makes.iter().copied().map(stack).collect())
                     .collect(),
-                picked: crafting::panel::picked(world).map(|result| result.makes.item),
+                picked: crafting::panel::picked(world).and_then(|picked| {
+                    results
+                        .iter()
+                        .position(|result| result.recipe == picked.recipe)
+                }),
                 button,
                 ready: ready.is_some(),
             }

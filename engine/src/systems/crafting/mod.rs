@@ -44,10 +44,17 @@ pub struct RecipeBookDef {
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Recipe {
-    /// What one craft gives.
-    pub makes: ItemStack,
+    /// What one craft gives, all of it together.
+    pub makes: Vec<ItemStack>,
     /// What one craft takes. Every one is spent.
     pub from: Vec<ItemStack>,
+}
+
+/// A recipe by the book that holds it and its place among the book's recipes.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RecipeKey {
+    pub book: RecipeBookId,
+    pub index: usize,
 }
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
@@ -70,38 +77,53 @@ impl ContentFile for RecipeBookDef {
     fn check(&self, check: &mut RowCheck) {
         for (index, recipe) in self.recipes.iter().enumerate() {
             let at = format!("/recipes/{index}");
-            check.at_least(format!("{at}/makes/count"), recipe.makes.count, 1, "items");
-            if recipe.from.is_empty() {
-                check.problem(
-                    format!("{at}/from"),
-                    ContentProblem::new(
-                        "nothing to make it from",
-                        "no ingredients",
-                        "at least one ingredient",
-                    ),
-                );
-            }
-            for (nth, ingredient) in recipe.from.iter().enumerate() {
-                check.at_least(
-                    format!("{at}/from/{nth}/count"),
-                    ingredient.count,
-                    1,
-                    "items",
-                );
-                let listed = recipe.from[..nth]
-                    .iter()
-                    .any(|earlier| earlier.item == ingredient.item);
-                if listed {
-                    check.problem(
-                        format!("{at}/from/{nth}"),
-                        ContentProblem::new(
-                            "ingredient listed twice",
-                            format!("ingredient {}", nth + 1),
-                            "each ingredient of a recipe once, with its whole amount",
-                        ),
-                    );
-                }
-            }
+            check_stacks(
+                check,
+                format!("{at}/makes"),
+                &recipe.makes,
+                ContentProblem::new("nothing made", "no items made", "at least one item made"),
+                "made item listed twice",
+            );
+            check_stacks(
+                check,
+                format!("{at}/from"),
+                &recipe.from,
+                ContentProblem::new(
+                    "nothing to make it from",
+                    "no ingredients",
+                    "at least one ingredient",
+                ),
+                "ingredient listed twice",
+            );
+        }
+    }
+}
+
+/// One side of a recipe: at least one stack, each of one item or more, and no item twice.
+fn check_stacks(
+    check: &mut RowCheck,
+    at: String,
+    stacks: &[ItemStack],
+    none: ContentProblem,
+    twice: &'static str,
+) {
+    if stacks.is_empty() {
+        check.problem(at.clone(), none);
+    }
+    for (nth, stack) in stacks.iter().enumerate() {
+        check.at_least(format!("{at}/{nth}/count"), stack.count, 1, "items");
+        if stacks[..nth]
+            .iter()
+            .any(|earlier| earlier.item == stack.item)
+        {
+            check.problem(
+                format!("{at}/{nth}"),
+                ContentProblem::new(
+                    twice,
+                    format!("entry {}", nth + 1),
+                    "each item once, with its whole amount",
+                ),
+            );
         }
     }
 }
@@ -155,17 +177,25 @@ impl Recipe {
     }
 
     /// What `times` crafts give.
-    pub fn product(&self, times: u32) -> ItemStack {
-        ItemStack::new(self.makes.item, self.makes.count.saturating_mul(times))
+    pub fn products(&self, times: u32) -> Vec<ItemStack> {
+        scaled(&self.makes, times)
     }
 
     /// What `times` crafts take.
     pub fn ingredients(&self, times: u32) -> Vec<ItemStack> {
-        self.from
-            .iter()
-            .map(|stack| ItemStack::new(stack.item, stack.count.saturating_mul(times)))
-            .collect()
+        scaled(&self.from, times)
     }
+
+    pub fn makes_item(&self, item: ItemId) -> bool {
+        self.makes.iter().any(|stack| stack.item == item)
+    }
+}
+
+fn scaled(stacks: &[ItemStack], times: u32) -> Vec<ItemStack> {
+    stacks
+        .iter()
+        .map(|stack| ItemStack::new(stack.item, stack.count.saturating_mul(times)))
+        .collect()
 }
 
 /// Where a crafting prompt reads the recipes it makes.
@@ -191,29 +221,28 @@ impl CraftSource {
     fn takes(&self, recipe: &Recipe) -> bool {
         match self {
             CraftSource::Book { .. } => true,
-            CraftSource::Subset { items, .. } => items.contains(&recipe.makes.item),
+            CraftSource::Subset { items, .. } => items.iter().any(|item| recipe.makes_item(*item)),
         }
     }
 }
 
-/// A recipe a crafting prompt makes, and the book that holds it.
+/// A recipe a crafting prompt makes, and where its book holds it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Craftable<'a> {
-    pub book: RecipeBookId,
+    pub key: RecipeKey,
     pub recipe: &'a Recipe,
 }
 
 /// The recipes a prompt opened from `from` makes: each source's, in the order the sources and
 /// their books hold them, a recipe two sources share once.
 pub fn recipes<'a>(content: &'a Content, from: &[CraftSource]) -> Vec<Craftable<'a>> {
-    let mut seen: Vec<(RecipeBookId, usize)> = Vec::new();
-    let mut found = Vec::new();
+    let mut found: Vec<Craftable> = Vec::new();
     for source in from {
         let book = source.book();
         for (index, recipe) in book.get(content).recipes.iter().enumerate() {
-            if source.takes(recipe) && !seen.contains(&(book, index)) {
-                seen.push((book, index));
-                found.push(Craftable { book, recipe });
+            let key = RecipeKey { book, index };
+            if source.takes(recipe) && found.iter().all(|craftable| craftable.key != key) {
+                found.push(Craftable { key, recipe });
             }
         }
     }
@@ -270,7 +299,7 @@ impl EffectDef<RiftScripting> for OpenCrafting {
             let made = &book.get(cx.content).recipes;
             if let Some(item) = items
                 .iter()
-                .find(|item| !made.iter().any(|recipe| recipe.makes.item == **item))
+                .find(|item| !made.iter().any(|recipe| recipe.makes_item(**item)))
             {
                 return Err(ScriptFault::new(
                     "not in the book",
@@ -337,12 +366,11 @@ pub struct CraftingView {
 
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum CraftingRequest {
-    /// Crafts `makes` from `offer`, which says which result is meant where what is placed is
-    /// several recipes.
+    /// Crafts `recipe` from `offer`: the one meant, where what is placed is several recipes.
     Craft {
         step: PromptStep,
         offer: Vec<ItemStack>,
-        makes: ItemId,
+        recipe: RecipeKey,
     },
 }
 
@@ -353,7 +381,11 @@ pub struct CraftingSession {
 
 pub fn requests(world: &mut World) {
     player_requests::<CraftingRequest>(world, false, |world, player, request| {
-        let CraftingRequest::Craft { step, offer, makes } = request;
+        let CraftingRequest::Craft {
+            step,
+            offer,
+            recipe,
+        } = request;
         let Some(session) = world.get::<CraftingSession>(player) else {
             return Ok(());
         };
@@ -366,25 +398,27 @@ pub fn requests(world: &mut World) {
                 return Err(reason);
             }
         }
-        let crafted = craft(world, player, &offer, makes);
+        let crafted = craft(world, player, &offer, recipe);
         prompt::ask_again(world, player);
-        let (book, made) = crafted?;
+        let made = crafted?;
         if let Some(mut view) = world.get_mut::<CraftingView>(player) {
             view.crafted = view.crafted.wrapping_add(1);
         }
-        world.resource_mut::<RiftInstances>().raise(
-            Owner::Row(RunnerKind::RecipeBook, book.raw()),
-            EventKind::Crafted,
-            Some(player),
-            vec![
-                Value::Int(i64::from(made.item.raw())),
-                Value::Int(i64::from(made.count)),
-            ],
-            move |event| match event {
-                RiftEvent::Crafted { item } => item.is_none_or(|item| item == made.item),
-                _ => false,
-            },
-        );
+        for made in made {
+            world.resource_mut::<RiftInstances>().raise(
+                Owner::Row(RunnerKind::RecipeBook, recipe.book.raw()),
+                EventKind::Crafted,
+                Some(player),
+                vec![
+                    Value::Int(i64::from(made.item.raw())),
+                    Value::Int(i64::from(made.count)),
+                ],
+                move |event| match event {
+                    RiftEvent::Crafted { item } => item.is_none_or(|item| item == made.item),
+                    _ => false,
+                },
+            );
+        }
         Ok(())
     });
 }
@@ -430,8 +464,8 @@ pub(crate) fn marks(
 }
 
 /// What a book's recipes must hold between them, and what none may do at the shops: lead back to
-/// what it makes, make one thing twice from the same ingredients, or turn what the shops sell
-/// into what they pay more for.
+/// what it makes, make the same things twice from the same ingredients, or turn what the shops
+/// sell into what they pay more for.
 pub fn check_all(loading: &mut Loading) {
     let content = loading.content();
     let shops: Vec<&ShopDef> = content.table::<ShopDef>().rows().collect();
@@ -447,8 +481,8 @@ pub fn check_all(loading: &mut Loading) {
                     &at,
                     ContentProblem::new(
                         "made twice",
-                        recipe.makes.item.path(&content),
-                        "one recipe making an item from the same ingredients",
+                        named(&content, &recipe.makes),
+                        "one recipe making the same items from the same ingredients",
                     ),
                 );
             }
@@ -492,34 +526,39 @@ pub fn check_all(loading: &mut Loading) {
 }
 
 fn same_recipe(one: &Recipe, other: &Recipe) -> bool {
-    one.makes.item == other.makes.item
-        && one.from.len() == other.from.len()
-        && one
-            .from
-            .iter()
-            .all(|stack| other.from.iter().any(|twin| twin.item == stack.item))
+    same_items(&one.makes, &other.makes) && same_items(&one.from, &other.from)
 }
 
-/// The items leading from what `recipe` makes back to it through the recipes of `book`, when its
-/// ingredients do.
-fn loop_from(book: &RecipeBookDef, recipe: &Recipe) -> Option<Vec<ItemId>> {
-    let goal = recipe.makes.item;
-    let mut trails: Vec<Vec<ItemId>> = recipe
-        .from
+fn same_items(one: &[ItemStack], other: &[ItemStack]) -> bool {
+    one.len() == other.len()
+        && one
+            .iter()
+            .all(|stack| other.iter().any(|twin| twin.item == stack.item))
+}
+
+fn named(content: &Content, stacks: &[ItemStack]) -> String {
+    let paths: Vec<&str> = stacks
         .iter()
-        .map(|stack| vec![goal, stack.item])
+        .map(|stack| stack.item.path(content))
         .collect();
+    paths.join(" + ")
+}
+
+/// The items leading from something `recipe` makes back to it through the recipes of `book`,
+/// when its ingredients do.
+fn loop_from(book: &RecipeBookDef, recipe: &Recipe) -> Option<Vec<ItemId>> {
+    let mut trails: Vec<Vec<ItemId>> = recipe.from.iter().map(|stack| vec![stack.item]).collect();
     let mut seen: Vec<ItemId> = Vec::new();
     while let Some(trail) = trails.pop() {
         let at = *trail.last()?;
-        if at == goal {
-            return Some(trail);
+        if recipe.makes_item(at) {
+            return Some(std::iter::once(at).chain(trail).collect());
         }
         if seen.contains(&at) {
             continue;
         }
         seen.push(at);
-        for made in book.recipes.iter().filter(|made| made.makes.item == at) {
+        for made in book.recipes.iter().filter(|made| made.makes_item(at)) {
             for stack in &made.from {
                 let mut longer = trail.clone();
                 longer.push(stack.item);
@@ -552,11 +591,18 @@ fn profit(content: &Content, shops: &[&ShopDef], recipe: &Recipe) -> Option<Stri
         }
     }
     shops.iter().find_map(|shop| {
-        let pays = shop.pays_for(content, recipe.makes.item, &[]).ok()?;
         let mut earned: Vec<(ItemId, f64)> = Vec::new();
-        for stack in pays {
-            let amount = f64::from(stack.count) * f64::from(recipe.makes.count);
-            add(&mut earned, stack.item, amount);
+        for made in &recipe.makes {
+            let Ok(pays) = shop.pays_for(content, made.item, &[]) else {
+                continue;
+            };
+            for stack in pays {
+                let amount = f64::from(stack.count) * f64::from(made.count);
+                add(&mut earned, stack.item, amount);
+            }
+        }
+        if earned.is_empty() {
+            return None;
         }
         let of = |amounts: &[(ItemId, f64)], item: ItemId| {
             amounts
@@ -573,8 +619,8 @@ fn profit(content: &Content, shops: &[&ShopDef], recipe: &Recipe) -> Option<Stri
             .any(|item| of(&earned, item) > of(&spent, item));
         (never_short && ahead).then(|| {
             format!(
-                "{} sells for {} and its ingredients cost {}",
-                recipe.makes.item.path(content),
+                "{} sold for {} from ingredients that cost {}",
+                named(content, &recipe.makes),
                 amounts_text(content, &earned),
                 amounts_text(content, &spent)
             )
@@ -605,27 +651,27 @@ fn amounts_text(content: &Content, amounts: &[(ItemId, f64)]) -> String {
     }
 }
 
-/// Makes `makes` from `offer` for `player` in one exchange, when their prompt has a recipe the
-/// offer is a whole number of times: the book it is from, and what was made.
+/// Crafts `recipe` from `offer` for `player` in one exchange, when their prompt makes it and the
+/// offer is a whole number of times it: everything that was made.
 fn craft(
     world: &mut World,
     player: Entity,
     offer: &[ItemStack],
-    makes: ItemId,
-) -> Result<(RecipeBookId, ItemStack), String> {
+    recipe: RecipeKey,
+) -> Result<Vec<ItemStack>, String> {
     let content = world.resource::<Content>().clone();
     let no_recipe = || content.built::<GameSettings>().words.no_recipe.clone();
     let view = world.get::<CraftingView>(player).ok_or_else(no_recipe)?;
     let known = recipes(&content, &view.from);
     let (craftable, times) = matches(&known, offer)
         .into_iter()
-        .find(|(craftable, _)| craftable.recipe.makes.item == makes)
+        .find(|(craftable, _)| craftable.key == recipe)
         .ok_or_else(no_recipe)?;
-    let made = craftable.recipe.product(times);
+    let made = craftable.recipe.products(times);
     world
         .get_mut::<Inventory>(player)
         .ok_or_else(no_recipe)?
-        .exchange(&content, offer, &[made])
+        .exchange(&content, offer, &made)
         .map_err(|refusal| refusal.describe(&content))?;
-    Ok((craftable.book, made))
+    Ok(made)
 }

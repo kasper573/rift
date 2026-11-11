@@ -12,7 +12,7 @@ use ui::face::{self, TextRole};
 use ui::glyph::Mark;
 use ui::{ink, sheet};
 
-use super::{CraftingRequest, CraftingView, Recipe, matches, recipes};
+use super::{CraftingRequest, CraftingView, Recipe, RecipeKey, matches, recipes};
 use crate::core::content::Content;
 use crate::core::gui::{self, Band};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
@@ -69,16 +69,16 @@ impl Plugin for CraftingPanelPlugin {
 #[derive(Resource, Default)]
 struct Crafting {
     listing: bool,
-    chosen: Option<ItemId>,
+    chosen: Option<RecipeKey>,
     crafted: u32,
 }
 
-/// What the items placed make: `times` crafts of a recipe giving `makes` between them.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// What the items placed make: `times` crafts of `recipe`, giving `makes` between them.
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CraftResult {
-    pub makes: ItemStack,
+    pub recipe: RecipeKey,
+    pub makes: Vec<ItemStack>,
     pub times: u32,
-    pub each: u32,
 }
 
 /// A recipe as the Recipes window lists it: which ingredients the bag lacks, and whether it
@@ -97,7 +97,7 @@ pub fn view(world: &World) -> Option<&CraftingView> {
 }
 
 /// What the items placed make, by every recipe of the prompt they are a whole number of times;
-/// one result for each thing made.
+/// one result for each, and one for recipes that make the same.
 pub fn results(world: &World) -> Vec<CraftResult> {
     let Some(view) = view(world) else {
         return Vec::new();
@@ -105,12 +105,12 @@ pub fn results(world: &World) -> Vec<CraftResult> {
     let known = recipes(world.resource::<Content>(), &view.from);
     let mut found: Vec<CraftResult> = Vec::new();
     for (craftable, times) in matches(&known, &tray::offer(world)) {
-        let makes = craftable.recipe.product(times);
-        if found.iter().all(|result| result.makes.item != makes.item) {
+        let makes = craftable.recipe.products(times);
+        if found.iter().all(|result| result.makes != makes) {
             found.push(CraftResult {
+                recipe: craftable.key,
                 makes,
                 times,
-                each: craftable.recipe.makes.count,
             });
         }
     }
@@ -119,19 +119,17 @@ pub fn results(world: &World) -> Vec<CraftResult> {
 
 /// The result Craft would make: the only one, or of several the one chosen.
 pub fn picked(world: &World) -> Option<CraftResult> {
-    let found = results(world);
-    match found.as_slice() {
-        [only] => Some(*only),
-        _ => {
-            let chosen = world.resource::<Crafting>().chosen?;
-            found.into_iter().find(|result| result.makes.item == chosen)
-        }
+    let mut found = results(world);
+    if found.len() == 1 {
+        return found.pop();
     }
+    let chosen = world.resource::<Crafting>().chosen?;
+    found.into_iter().find(|result| result.recipe == chosen)
 }
 
-/// Chooses `item` among several results.
-pub fn choose(world: &mut World, item: ItemId) {
-    world.resource_mut::<Crafting>().chosen = Some(item);
+/// Chooses the result of `recipe` among several.
+pub fn choose(world: &mut World, recipe: RecipeKey) {
+    world.resource_mut::<Crafting>().chosen = Some(recipe);
 }
 
 /// Whether the Recipes window is open.
@@ -192,7 +190,7 @@ pub fn verdict(world: &World) -> (String, Option<CraftResult>) {
         .and_then(|me| me.get::<Inventory>())
         .cloned()
         .unwrap_or_else(Inventory::empty)
-        .exchange(content, &offer, &[result.makes]);
+        .exchange(content, &offer, &result.makes);
     match fits {
         Ok(()) => (words.craft.clone(), Some(result)),
         Err(refusal) => (refusal.describe(content), None),
@@ -309,56 +307,73 @@ fn result(ui: &mut Ui, world: &mut World) {
     }
     let several = found.len() > 1;
     let chosen = world.resource::<Crafting>().chosen;
-    for (index, result) in found.iter().enumerate() {
-        if index > 0 {
-            sheet::label(ui, TextRole::Small, "or", ink::INK3);
-        }
-        let def = result.makes.item.get(&content);
-        let look = SlotLook {
-            icon: Some(&def.icon),
-            count: result.makes.count,
-            wanted: several && chosen == Some(result.makes.item),
-            ..SlotLook::EMPTY
-        };
-        let sense = if several {
-            Sense::click()
-        } else {
-            Sense::hover()
-        };
-        let response = slot(ui, world, look, sense);
-        response.widget_info(|| {
-            egui::WidgetInfo::labeled(
-                egui::WidgetType::Button,
-                true,
-                format!("Result: {} {}", result.makes.count, def.name),
-            )
-        });
-        if several && response.clicked() {
-            choose(world, result.makes.item);
-            InterfaceSound::UiMove.play(world);
-        }
-        let lines: Vec<String> = std::iter::once(item::card::overview(def))
-            .chain(crafts_note(result))
-            .collect();
-        hud::tooltip(&response, world, &def.name, &lines, None);
-        if !several {
-            ui.vertical(|ui| {
-                ui.spacing_mut().item_spacing.y = 1.0;
-                ui.add(egui::Label::new(face::body(&def.name)).wrap());
-                if let Some(note) = crafts_note(result) {
-                    sheet::label(ui, TextRole::Small, &note, ink::INK3);
+    ui.horizontal_wrapped(|ui| {
+        ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+        for (index, result) in found.iter().enumerate() {
+            if index > 0 {
+                sheet::label(ui, TextRole::Small, "or", ink::INK3);
+            }
+            let wanted = several && chosen == Some(result.recipe);
+            for made in &result.makes {
+                if made_slot(ui, world, &content, result, *made, several, wanted) {
+                    choose(world, result.recipe);
+                    InterfaceSound::UiMove.play(world);
                 }
-            });
+            }
+            if let ([only], false) = (result.makes.as_slice(), several) {
+                ui.vertical(|ui| {
+                    ui.spacing_mut().item_spacing.y = 1.0;
+                    ui.add(egui::Label::new(face::body(&only.item.get(&content).name)).wrap());
+                    if let Some(note) = crafts_note(result) {
+                        sheet::label(ui, TextRole::Small, &note, ink::INK3);
+                    }
+                });
+            } else if let (Some(note), false) = (crafts_note(result), several) {
+                sheet::label(ui, TextRole::Small, &note, ink::INK3);
+            }
         }
-    }
+    });
+}
+
+/// One stack of what `result` makes, as a slot; whether it was clicked to choose its result.
+fn made_slot(
+    ui: &mut Ui,
+    world: &mut World,
+    content: &Content,
+    result: &CraftResult,
+    made: ItemStack,
+    several: bool,
+    wanted: bool,
+) -> bool {
+    let def = made.item.get(content);
+    let look = SlotLook {
+        icon: Some(&def.icon),
+        count: made.count,
+        wanted,
+        ..SlotLook::EMPTY
+    };
+    let sense = if several {
+        Sense::click()
+    } else {
+        Sense::hover()
+    };
+    let response = slot(ui, world, look, sense);
+    response.widget_info(|| {
+        egui::WidgetInfo::labeled(
+            egui::WidgetType::Button,
+            true,
+            format!("Result: {} {}", made.count, def.name),
+        )
+    });
+    let lines: Vec<String> = std::iter::once(item::card::overview(def))
+        .chain(crafts_note(result))
+        .collect();
+    hud::tooltip(&response, world, &def.name, &lines, None);
+    several && response.clicked()
 }
 
 fn crafts_note(result: &CraftResult) -> Option<String> {
-    match (result.times, result.each) {
-        (1, _) => None,
-        (times, 1) => Some(format!("{times} crafts")),
-        (times, each) => Some(format!("{times} crafts, {each} each")),
-    }
+    (result.times > 1).then(|| format!("{} crafts", result.times))
 }
 
 fn foot(ui: &mut Ui, world: &mut World, prompt: &PromptView, crafting: &CraftingView) {
@@ -374,7 +389,7 @@ fn foot(ui: &mut Ui, world: &mut World, prompt: &PromptView, crafting: &Crafting
                     world.write_message(CraftingRequest::Craft {
                         step: prompt.step,
                         offer: tray::offer(world),
-                        makes: result.makes.item,
+                        recipe: result.recipe,
                     });
                     tray::sent(world, prompt.step);
                     InterfaceSound::UiPick.play(world);
@@ -481,12 +496,20 @@ fn list(ui: &mut Ui, world: &mut World) {
 
 fn recipe_row(ui: &mut Ui, world: &mut World, row: &ListedRecipe) -> egui::Response {
     let content = world.resource::<Content>().clone();
-    let def = row.recipe.makes.item.get(&content);
-    let name = if row.recipe.makes.count > 1 {
-        format!("{} ×{}", def.name, row.recipe.makes.count)
-    } else {
-        def.name.clone()
-    };
+    let made: Vec<String> = row
+        .recipe
+        .makes
+        .iter()
+        .map(|stack| {
+            let name = &stack.item.get(&content).name;
+            if stack.count > 1 {
+                format!("{name} ×{}", stack.count)
+            } else {
+                name.clone()
+            }
+        })
+        .collect();
+    let name = made.join(" + ");
     let status = if row.can_make { "can make" } else { "locked" };
     let look = RowLook {
         faint: !row.can_make,
@@ -494,7 +517,9 @@ fn recipe_row(ui: &mut Ui, world: &mut World, row: &ListedRecipe) -> egui::Respo
     };
     let response = controls::row(ui, look, |ui| {
         ui.horizontal(|ui| {
-            hud::icon(ui, world, &def.icon, ICON);
+            if let Some(first) = row.recipe.makes.first() {
+                hud::icon(ui, world, &first.item.get(&content).icon, ICON);
+            }
             ui.vertical(|ui| {
                 ui.spacing_mut().item_spacing.y = 1.0;
                 ui.horizontal(|ui| {
@@ -545,10 +570,7 @@ fn settle(world: &mut World) {
         world.resource_mut::<Crafting>().crafted = crafted;
         tray::clear(world);
     }
-    let made: Vec<ItemId> = results(world)
-        .iter()
-        .map(|result| result.makes.item)
-        .collect();
+    let made: Vec<RecipeKey> = results(world).iter().map(|result| result.recipe).collect();
     let mut crafting = world.resource_mut::<Crafting>();
     if crafting
         .chosen
