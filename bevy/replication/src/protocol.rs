@@ -53,6 +53,13 @@ pub trait Replicable:
 
 impl<C: Component<Mutability: Overwrite<C>> + Serialize + DeserializeOwned> Replicable for C {}
 
+/// `component` as a client receives it, through the encoding the wire carries it in: none for a
+/// component that does not come back, which a client would drop its connection over.
+pub fn over_the_wire<C: Replicable>(component: &C) -> Option<C> {
+    let bytes = postcard::to_allocvec(component).ok()?;
+    postcard::from_bytes(&bytes).ok()
+}
+
 /// How a client puts a received component on its entity: a mutable one changes in place, so only
 /// change detection sees an update; an immutable one is inserted anew.
 pub trait Overwrite<C: Component> {

@@ -249,6 +249,16 @@ pub fn recipes<'a>(content: &'a Content, from: &[CraftSource]) -> Vec<Craftable<
     found
 }
 
+/// The recipes `keys` name, in their order.
+pub fn craftables<'a>(content: &'a Content, keys: &[RecipeKey]) -> Vec<Craftable<'a>> {
+    keys.iter()
+        .filter_map(|&key| {
+            let recipe = key.book.get(content).recipes.get(key.index)?;
+            Some(Craftable { key, recipe })
+        })
+        .collect()
+}
+
 /// The recipes among `recipes` that `offer` is a whole number of times, with that number.
 pub fn matches<'a>(recipes: &[Craftable<'a>], offer: &[ItemStack]) -> Vec<(Craftable<'a>, u32)> {
     recipes
@@ -311,18 +321,20 @@ impl EffectDef<RiftScripting> for OpenCrafting {
                 ));
             }
         }
-        let slots = recipes(cx.content, &self.from)
+        let known = recipes(cx.content, &self.from);
+        let slots = known
             .iter()
             .map(|craftable| craftable.recipe.from.len() as u32)
             .max()
             .ok_or_else(|| ScriptFault::new("no recipes", "a book with a recipe to make"))?;
+        let made: Vec<RecipeKey> = known.iter().map(|craftable| craftable.key).collect();
         let who = effects::aim(cx, &self.who)?;
         let values = text::values(&self.text)
             .into_iter()
             .map(|value| cx.expr(value, ValueType::Text))
             .collect::<Result<Vec<_>, _>>()?;
         let (title, spans) = (self.title.clone(), self.text.clone());
-        let (from, show_recipes) = (self.from.clone(), self.show_recipes);
+        let show_recipes = self.show_recipes;
         Ok(Box::new(move |world, flow, cx| {
             let Some(player) = effects::aimed_character(world, cx, &who) else {
                 return EffectStep::Done;
@@ -339,7 +351,7 @@ impl EffectDef<RiftScripting> for OpenCrafting {
             world.entity_mut(player).insert((
                 CraftingSession { flow },
                 CraftingView {
-                    from: from.clone(),
+                    recipes: made.clone(),
                     show_recipes,
                     crafted: 0,
                 },
@@ -355,11 +367,11 @@ impl EffectDef<RiftScripting> for OpenCrafting {
     }
 }
 
-/// What a crafting prompt adds to the prompt its player sees: where its recipes come from,
-/// whether it lists them, and how many crafts it has made.
+/// What a crafting prompt adds to the prompt its player sees: the recipes it makes, whether it
+/// lists them, and how many crafts it has made.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct CraftingView {
-    pub from: Vec<CraftSource>,
+    pub recipes: Vec<RecipeKey>,
     pub show_recipes: bool,
     pub crafted: u32,
 }
@@ -662,7 +674,7 @@ fn craft(
     let content = world.resource::<Content>().clone();
     let no_recipe = || content.built::<GameSettings>().words.no_recipe.clone();
     let view = world.get::<CraftingView>(player).ok_or_else(no_recipe)?;
-    let known = recipes(&content, &view.from);
+    let known = craftables(&content, &view.recipes);
     let (craftable, times) = matches(&known, offer)
         .into_iter()
         .find(|(craftable, _)| craftable.key == recipe)

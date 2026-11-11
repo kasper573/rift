@@ -11,7 +11,7 @@ pub use client::{
 };
 pub use protocol::{
     AppMessageExt, AppReplicationExt, FromClient, MAX_COMPONENT_KINDS, Overwrite, Replicable,
-    ToClient,
+    ToClient, over_the_wire,
 };
 pub use server::{
     ClientLink, Interest, InterestInAll, Replicated, ReplicationInterest, Sender, Sending,

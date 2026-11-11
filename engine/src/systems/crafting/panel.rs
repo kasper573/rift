@@ -12,7 +12,7 @@ use ui::face::{self, TextRole};
 use ui::glyph::Mark;
 use ui::{ink, sheet};
 
-use super::{CraftingRequest, CraftingView, Recipe, RecipeKey, matches, recipes};
+use super::{CraftingRequest, CraftingView, Recipe, RecipeKey, craftables, matches};
 use crate::core::content::Content;
 use crate::core::gui::{self, Band};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
@@ -102,7 +102,7 @@ pub fn results(world: &World) -> Vec<CraftResult> {
     let Some(view) = view(world) else {
         return Vec::new();
     };
-    let known = recipes(world.resource::<Content>(), &view.from);
+    let known = craftables(world.resource::<Content>(), &view.recipes);
     let mut found: Vec<CraftResult> = Vec::new();
     for (craftable, times) in matches(&known, &tray::offer(world)) {
         let makes = craftable.recipe.products(times);
@@ -154,7 +154,7 @@ pub fn listed(world: &World) -> Vec<ListedRecipe> {
     };
     let bag = session::my_character(world).and_then(|me| me.get::<Inventory>());
     let held = |item: ItemId| bag.map_or(0, |bag| bag.count(item));
-    recipes(world.resource::<Content>(), &view.from)
+    craftables(world.resource::<Content>(), &view.recipes)
         .into_iter()
         .map(|craftable| {
             let lacking: Vec<bool> = craftable

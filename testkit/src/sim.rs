@@ -3,7 +3,7 @@ use bevy_ecs::message::{Message, MessageCursor, MessageRegistry, Messages, messa
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::{IntoScheduleConfigs, SingleThreadedExecutor, SystemSet};
 use bevy_ecs::system::ScheduleSystem;
-use bevy_replication::ToClient;
+use bevy_replication::{Replicable, ToClient};
 use bevy_time::Time;
 use engine::core::content::{Content, ContentFile, ContentId};
 use engine::core::jobs::Handoff;
@@ -20,6 +20,11 @@ use crate::notices::{self, Notified};
 /// besides, stepped tick by tick through only the systems a test adds, in the order it adds them,
 /// as the server's main schedule, so the server's own stepping of worlds steps it too. Messages
 /// last two ticks, as the server's do.
+/// A replicated component as the client it is shown to receives it.
+pub fn sent<C: Replicable>(shown: &C) -> C {
+    bevy_replication::over_the_wire(shown).expect("a component the wire carries whole")
+}
+
 pub struct Sim {
     pub world: World,
     steps: usize,

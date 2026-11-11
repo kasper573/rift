@@ -23,5 +23,5 @@ pub use game::{
     look, part_file, path, rig_clips, rig_file, speech, stats, typing,
 };
 pub use script::{dialogue, hunting, said};
-pub use sim::{Sim, drawn_seed};
+pub use sim::{Sim, drawn_seed, sent};
 pub use talk::{labels, lines, locked};

@@ -6,7 +6,7 @@ use engine::systems::item::{ItemDef, ItemStack};
 use engine::systems::prompt::{self, PromptRequest, PromptStep, PromptView};
 use engine::systems::{movement, region, script};
 use serde_json::{Value, json};
-use testkit::{Game, Map, Sim, dialogue as asks, lines, path, said};
+use testkit::{Game, Map, Sim, dialogue as asks, lines, path, said, sent};
 
 #[test]
 fn what_is_placed_reaches_the_script_as_offered_and_nothing_leaves_the_bag_until_it_is_taken() {
@@ -230,8 +230,9 @@ fn submit(sim: &mut Sim, client: u32, step: PromptStep, offer: &[(&str, u32)]) {
     sim.run(0.5);
 }
 
+/// The prompt as its player's client is shown it.
 fn shown(sim: &Sim, player: Entity) -> Option<PromptView> {
-    sim.world.get::<PromptView>(player).cloned()
+    sim.world.get::<PromptView>(player).map(sent)
 }
 
 fn heard(sim: &Sim, client: u32) -> Vec<String> {

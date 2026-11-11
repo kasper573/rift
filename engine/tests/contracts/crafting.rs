@@ -7,7 +7,7 @@ use engine::systems::item::{ItemDef, ItemStack};
 use engine::systems::prompt::{self, PromptRequest, PromptView};
 use engine::systems::{movement, region, script};
 use serde_json::{Value, json};
-use testkit::{Game, Map, Sim, path, said};
+use testkit::{Game, Map, Sim, path, said, sent};
 
 const INGOT: (&str, usize) = ("smithing", 0);
 const PLANK: (&str, usize) = ("smithing", 1);
@@ -409,17 +409,18 @@ fn open(sim: &mut Sim, client: u32, keeper: &str) -> (PromptView, CraftingView) 
     shown(sim, player).expect("the prompt is open")
 }
 
+/// The prompt as its player's client is shown it.
 fn shown(sim: &Sim, player: Entity) -> Option<(PromptView, CraftingView)> {
     Some((
-        sim.world.get::<PromptView>(player).cloned()?,
-        sim.world.get::<CraftingView>(player).cloned()?,
+        sent(sim.world.get::<PromptView>(player)?),
+        sent(sim.world.get::<CraftingView>(player)?),
     ))
 }
 
 /// What each of the prompt's recipes makes, in the order it lists them.
 fn made_by(sim: &Sim, crafting: &CraftingView) -> Vec<String> {
     let content = sim.world.resource::<engine::core::content::Content>();
-    crafting::recipes(content, &crafting.from)
+    crafting::craftables(content, &crafting.recipes)
         .iter()
         .map(|craftable| {
             let names: Vec<&str> = craftable

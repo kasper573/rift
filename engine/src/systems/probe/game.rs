@@ -26,7 +26,7 @@ use crate::systems::npc::{NpcDef, NpcId};
 use crate::systems::player::snapshot::CharacterSnapshot;
 use crate::systems::script::Place;
 use crate::systems::skill::{SkillDef, SkillId};
-use crate::systems::spawner::SpawnShare;
+use crate::systems::spawner::Spawns;
 
 /// A question for the probe that only a frame of a running client answers, one JSON line each,
 /// answered with one JSON line before the next is asked.
@@ -209,12 +209,19 @@ pub struct ProbeResident {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeSpawner {
     /// What an entry may be, each as likely as its share of the weights.
-    pub spawns: Vec<SpawnShare>,
+    pub spawns: Vec<ProbeSpawnShare>,
     pub count: u32,
     /// How long a freed entry stays empty; never filled again without one.
     pub respawn: Option<Seconds>,
     #[schemars(with = "RectSchema")]
     pub over: Rect<Meters>,
+}
+
+/// One thing a spawner's entries may be, and its weight beside the others.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProbeSpawnShare {
+    pub what: Spawns,
+    pub weight: u32,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -458,7 +465,14 @@ fn area_of(content: &Content, id: AreaId) -> ProbeArea {
     let spawners = area::modules(content, id)
         .filter_map(|module| match module {
             AreaModule::Spawner(spawner) => Some(ProbeSpawner {
-                spawns: spawner.spawns.clone(),
+                spawns: spawner
+                    .spawns
+                    .iter()
+                    .map(|share| ProbeSpawnShare {
+                        what: share.what,
+                        weight: share.weight,
+                    })
+                    .collect(),
                 count: spawner.count,
                 respawn: spawner.respawn,
                 over: spawner.within.unwrap_or_else(|| Rect::from_size(area.size)),
