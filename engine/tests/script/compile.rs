@@ -22,13 +22,14 @@ use serde_json::{Value, json};
 use crate::game::{content, game, module, parse, parse_in};
 use testkit::{Declared, path};
 
-const OWNERS: [RunnerKind; 6] = [
+const OWNERS: [RunnerKind; 7] = [
     RunnerKind::Object,
     RunnerKind::Npc,
     RunnerKind::Item,
     RunnerKind::Area,
     RunnerKind::Quest,
     RunnerKind::Shop,
+    RunnerKind::Resource,
 ];
 
 #[test]
@@ -292,6 +293,7 @@ fn entry(owner: RunnerKind, next: &str) -> Value {
         RunnerKind::Area => json!({ "type": "on", "event": "discovered", "next": next }),
         RunnerKind::Quest => json!({ "type": "on", "event": "accepted", "next": next }),
         RunnerKind::Shop => json!({ "type": "on", "event": "bought", "next": next }),
+        RunnerKind::Resource => json!({ "type": "on", "event": "extracted", "next": next }),
         RunnerKind::StatusEffect => json!({ "type": "on", "event": "activated", "next": next }),
         RunnerKind::Blueprint | RunnerKind::Any => unreachable!("no entry for {owner:?}"),
     }

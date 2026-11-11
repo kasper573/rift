@@ -1,9 +1,11 @@
-use engine::core::content::ContentFile;
+use engine::core::content::{ContentFile, FolderReader};
 use engine::core::math::{Pos, Rng};
 use engine::core::units::Meters;
 use engine::field;
 use engine::systems::area::{self, AreaModule, AreaModuleKind};
+use engine::systems::item::ToolTypeDef;
 use engine::systems::npc::{NpcDef, NpcModule};
+use engine::systems::resource::{Extraction, ResourceDef};
 use engine::systems::spawner::{SpawnShare, Spawner, Spawns};
 use engine::systems::stat::StatKind;
 use ui::chip;
@@ -19,6 +21,60 @@ use crate::app::Editor;
 use crate::forms::{FormAction, FormCx};
 use crate::picker;
 use crate::tabs::{file_title, shown_path};
+
+/// What `what` brings to the spawner spawning it, read from its file, and a way to open it.
+pub(super) fn from_spawned(ui: &mut Ui, cx: &mut FormCx, what: Spawns) {
+    let reader = cx.project.reader();
+    match what {
+        Spawns::Npc { npc } => {
+            if let Some(npc) = reader.path_of(npc) {
+                from_npc(ui, cx, npc);
+            }
+        }
+        Spawns::Resource { resource } => {
+            if let Some(resource) = reader.path_of(resource) {
+                from_resource(ui, cx, resource);
+            }
+        }
+    }
+}
+
+/// What the resource at `resource` brings to every spawner spawning it: how much it holds, how
+/// many work it at once and what working it takes.
+fn from_resource(ui: &mut Ui, cx: &mut FormCx, resource: &str) {
+    let Ok(row) = cx.project.read::<ResourceDef>(resource) else {
+        return;
+    };
+    let reader = cx.project.reader();
+    sheet::section(ui, &format!("From {}", shown_path(resource)));
+    form::kv_text(ui, "holds", row.quantity.to_string());
+    form::kv_text(ui, "room for", row.max_occupants.to_string());
+    let worked = match row.extraction {
+        Extraction::ByHand { takes } => format!("by hand · {} s", takes.0),
+        Extraction::Tool { tool, takes } => {
+            let kind = reader
+                .path_of(tool)
+                .and_then(|tool| cx.project.read::<ToolTypeDef>(tool).ok())
+                .map_or_else(|| "a tool".to_owned(), |tool| tool.name.clone());
+            format!("{kind} · {} s", takes.0)
+        }
+    };
+    form::kv_text(ui, "worked", worked);
+    ui.add_space(4.0);
+    if chip::colored(
+        ui,
+        format!("{} →", shown_path(resource)),
+        theme::INPUT,
+        theme::CODE,
+    )
+    .clicked()
+    {
+        cx.actions.push(FormAction::OpenRow {
+            table: ResourceDef::TABLE.to_owned(),
+            key: resource.to_owned(),
+        });
+    }
+}
 
 /// What the npc at `npc` brings to every module placing it: its scripts and its health, and a way
 /// to open it.
@@ -77,9 +133,31 @@ pub(super) fn from_npc(ui: &mut Ui, cx: &mut FormCx, npc: &str) {
     }
 }
 
+/// The tables of the files a spawner can spawn.
+pub(crate) const SPAWNED_TABLES: [&str; 2] = [NpcDef::TABLE, ResourceDef::TABLE];
+
 /// Whether a spawner can spawn the files of `table`.
 pub(super) fn spawns_table(table: &str) -> bool {
-    table == NpcDef::TABLE
+    SPAWNED_TABLES.contains(&table)
+}
+
+/// What a spawner spawns of the file at `key`, when it can spawn it.
+pub(crate) fn spawned(reader: &FolderReader, key: &str) -> Option<Spawns> {
+    reader
+        .id_of::<NpcDef>(key)
+        .map(|npc| Spawns::Npc { npc })
+        .or_else(|| {
+            reader
+                .id_of::<ResourceDef>(key)
+                .map(|resource| Spawns::Resource { resource })
+        })
+}
+
+fn table_of(what: Spawns) -> &'static str {
+    match what {
+        Spawns::Npc { .. } => NpcDef::TABLE,
+        Spawns::Resource { .. } => ResourceDef::TABLE,
+    }
 }
 
 /// A file a spawner can spawn, dragged from the content tree and let go of over the map at
@@ -88,10 +166,9 @@ pub(super) fn drop_file(editor: &mut Editor, frame: &AreaFrame, key: &str, groun
     let Some(reader) = editor.reader() else {
         return;
     };
-    let Some(npc) = reader.id_of::<NpcDef>(key) else {
+    let Some(what) = spawned(&reader, key) else {
         return;
     };
-    let what = Spawns::Npc { npc };
     let onto = frame
         .doc
         .of_kind(AreaModuleKind::Spawner)
@@ -151,25 +228,21 @@ pub(super) fn spawns_card(ui: &mut Ui, cx: &mut FormCx, spawner: &mut Spawner, p
                     .add(egui::DragValue::new(&mut share.weight).range(1..=u32::MAX))
                     .on_hover_text("Its share: how many entries in this many of all the shares")
                     .changed();
-                ui.with_layout(
-                    Layout::left_to_right(Align::Center),
-                    |ui| match &mut share.what {
-                        Spawns::Npc { npc } => {
-                            let mut key = reader.path_of(*npc).unwrap_or_default().to_owned();
-                            if picker::row(
-                                ui,
-                                cx,
-                                NpcDef::TABLE,
-                                &mut key,
-                                &format!("{share_path}/npc"),
-                            ) && let Some(picked) = reader.id_of(&key)
-                            {
-                                *npc = picked;
-                                changed = true;
-                            }
-                        }
-                    },
-                );
+                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
+                    let mut table = table_of(share.what).to_owned();
+                    let mut key = match share.what {
+                        Spawns::Npc { npc } => reader.path_of(npc),
+                        Spawns::Resource { resource } => reader.path_of(resource),
+                    }
+                    .unwrap_or_default()
+                    .to_owned();
+                    if picker::row_among(ui, cx, &SPAWNED_TABLES, &mut table, &mut key, &share_path)
+                        && let Some(picked) = spawned(&reader, &key)
+                    {
+                        share.what = picked;
+                        changed = true;
+                    }
+                });
             });
         });
     }
@@ -177,16 +250,14 @@ pub(super) fn spawns_card(ui: &mut Ui, cx: &mut FormCx, spawner: &mut Spawner, p
         spawner.spawns.remove(index);
         changed = true;
     }
-    form::kv(ui, "+ npc", |ui| {
+    form::kv(ui, "+ spawn", |ui| {
+        let mut table = NpcDef::TABLE.to_owned();
         let mut key = String::new();
         let new_path = format!("{path}{}/{}", field!(Spawner, spawns), spawner.spawns.len());
-        if picker::row(ui, cx, NpcDef::TABLE, &mut key, &new_path)
-            && let Some(npc) = reader.id_of(&key)
+        if picker::row_among(ui, cx, &SPAWNED_TABLES, &mut table, &mut key, &new_path)
+            && let Some(what) = spawned(&reader, &key)
         {
-            spawner.spawns.push(SpawnShare {
-                what: Spawns::Npc { npc },
-                weight: 1,
-            });
+            spawner.spawns.push(SpawnShare { what, weight: 1 });
             changed = true;
         }
     });
@@ -208,6 +279,7 @@ pub(crate) fn preview_places(
             let what = spawner.draw(&mut rng);
             let mesh = match what {
                 Spawns::Npc { .. } => area.mesh_for(true, false),
+                Spawns::Resource { .. } => area.mesh_for(false, false),
             };
             let at = match spawner.within {
                 Some(bounds) => mesh.random_point_within(&mut rng, bounds, |_| true),

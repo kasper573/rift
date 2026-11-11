@@ -28,14 +28,14 @@ use engine::systems::area::object::ObjectDef;
 use engine::systems::area::scene::{self, ModuleNode, SceneNode, scene_file};
 use engine::systems::area::{AreaDef, AreaModule, SoundscapeDef};
 use engine::systems::script::{RunnerKind, ScriptModule, VarValue, Variable};
-use engine::systems::spawner::{Spawner, Spawns};
+use engine::systems::spawner::Spawner;
 
 use super::clipboard::clipboard_panel;
 use super::nodes::SceneBundle;
 use super::pins::place_pick_panel;
 use super::placement::{self, placement_extras};
 use super::soundscape::soundscape_extras;
-use super::spawner::{from_npc, spawns_card};
+use super::spawner::{from_npc, from_spawned, spawns_card};
 use super::{AreaTool, AreaViewState, nodes, scene_tree, stamp};
 use crate::app::Editor;
 use crate::forms::{self, FieldHole, FormAction, FormCx, FormHoles, HoleRequest};
@@ -783,13 +783,7 @@ fn module_inspector(
         }
         AreaModule::Spawner(spawner) => {
             for share in &spawner.spawns {
-                match share.what {
-                    Spawns::Npc { npc } => {
-                        if let Some(npc) = reader.path_of(npc) {
-                            from_npc(ui, cx, npc);
-                        }
-                    }
-                }
+                from_spawned(ui, cx, share.what);
             }
         }
         AreaModule::Resident(resident) => {

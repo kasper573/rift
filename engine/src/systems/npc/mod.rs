@@ -18,12 +18,12 @@ use serde::{Deserialize, Serialize};
 use crate::core::babble::{BabbleId, Babbler};
 use crate::core::content::{
     Content, ContentFile, ContentId, ContentProblem, Loading, ModuleRule, ModuleSet, NamedContent,
-    Nearby, RowCheck, SchemaMark, serial,
+    Nearby, RowCheck, SchemaMark,
 };
 use crate::core::math::{Pos, Rect};
 use crate::core::tick::Planner;
 use crate::core::time;
-use crate::core::units::{MeterPos, Meters, MetersPerSec, Percent, PlaybackRate, Radians, Seconds};
+use crate::core::units::{MeterPos, Meters, MetersPerSec, PlaybackRate, Radians, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::actor::held::{self, Held};
 use crate::systems::actor::{
@@ -34,7 +34,7 @@ use crate::systems::combat::{Attitude, Dead, Died};
 use crate::systems::dialogue::bust::BustId;
 use crate::systems::identity::{GlobalId, Names};
 use crate::systems::interact::Interactive;
-use crate::systems::item::{ItemId, Wear};
+use crate::systems::item::{DropRow, ItemId, Wear};
 use crate::systems::movement::{self, Position, Spot, position};
 use crate::systems::script::condition::CompiledCondition;
 use crate::systems::script::query::{Among, TickRoster};
@@ -86,7 +86,7 @@ fn check_held(
     check: &mut RowCheck,
 ) {
     for (index, &item) in def.held.iter().enumerate() {
-        if !matches!(item.get(content).wear(), Some(Wear::Held { .. })) {
+        if item.get(content).wear().and_then(Wear::grasp).is_none() {
             check.error(
                 format!("/held/{index}"),
                 "not held",
@@ -347,19 +347,7 @@ pub struct Voice {
 pub struct Loot {
     pub xp: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub items: Vec<LootItem>,
-}
-
-#[derive(JsonSchema, Clone, Copy, Serialize, Deserialize)]
-pub struct LootItem {
-    pub item: ItemId,
-    #[schemars(transform = SchemaMark::Count.with(true))]
-    #[schemars(extend("default" = serial::one()))]
-    #[serde(default = "serial::one", skip_serializing_if = "serial::is_one")]
-    pub amount: u32,
-    #[schemars(transform = SchemaMark::Blank.with("always"))]
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub chance: Option<Percent>,
+    pub items: Vec<DropRow>,
 }
 
 impl NpcDef {

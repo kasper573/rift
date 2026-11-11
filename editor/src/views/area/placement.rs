@@ -518,7 +518,7 @@ pub(crate) fn overlay_in_place(
             continue;
         };
         let is_selected = selected.contains(&part.part);
-        let color = super::overlays::module_color(part.module.kind());
+        let color = super::overlays::color_of(&part.module);
         let width = if is_selected { 2.0 } else { 1.0 };
         painter.add(egui::Shape::closed_line(
             canvas.outline(bounds),

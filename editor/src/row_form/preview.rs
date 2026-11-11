@@ -1,9 +1,12 @@
 use engine::core::audio::playback::{SFX_CLIP, SfxDef};
 use engine::core::babble::{BABBLE_LETTERS, BabbleBankDef, BabbleDef, LETTERS};
 use engine::core::content::{Content, ContentFile, MODULES, NamedContent};
-use engine::core::units::Seconds;
+use engine::core::units::{Degrees, Meters, Seconds};
 use engine::systems::GameSettings;
-use engine::systems::area::Pictured;
+use engine::systems::area::prop::Footprint;
+use engine::systems::area::{AreaModuleKind, Pictured};
+use engine::systems::movement::Bodies;
+use engine::systems::resource::{self, ResourceDef};
 use std::collections::{BTreeMap, HashMap};
 
 use engine::systems::actor::MaterialDef;
@@ -28,6 +31,7 @@ use ui::card;
 use ui::egui::{self, Ui, Vec2};
 use ui::face;
 use ui::glyph::{self, Mark};
+use ui::sheet;
 use ui::theme;
 use ui::words;
 use ui::{chip, controls};
@@ -38,6 +42,8 @@ use crate::rows;
 use crate::stage::{self, Scenario, Scene};
 use crate::tabs::shown_path;
 use crate::thumbs::{FULL_UV, ProjectImages};
+use crate::views::area::overlays::module_color;
+use crate::views::area::shapes::draw_footprint;
 use crate::views::area::viewport::StageClip;
 use crate::views::character;
 use crate::views::script::panel;
@@ -92,6 +98,7 @@ pub(crate) fn preview_place(table: &str) -> Option<PreviewPlace> {
         | CharacterSnapshot::TABLE
         | StatusEffectDef::TABLE
         | SkillDef::TABLE
+        | ResourceDef::TABLE
         | MaterialDef::TABLE => Some(PreviewPlace::Beside),
         SfxDef::TABLE | BabbleDef::TABLE | BabbleBankDef::TABLE => Some(PreviewPlace::Below),
         _ => None,
@@ -108,6 +115,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str) {
         BabbleBankDef::TABLE => return show_babble_bank(editor, ui, key),
         BabbleDef::TABLE => return show_babble(editor, ui, key),
         MaterialDef::TABLE => return show_material(editor, ui, key),
+        ResourceDef::TABLE => return show_resource(editor, ui, key),
         _ => {}
     }
     let now = ui.input(|i| i.time);
@@ -151,6 +159,105 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, table: &str, key: &str) {
             ui.ctx().request_repaint();
         }
     }
+}
+
+/// A resource as it stands in the game: its prop under the plate a full one wears, ringed as far
+/// out as its workers stand, and what a full one comes to.
+fn show_resource(editor: &mut Editor, ui: &mut Ui, key: &str) {
+    let Some(content) = editor.loaded() else {
+        ui.label(theme::muted("the preview stands once the content loads"));
+        return;
+    };
+    let Some(id) = content.by_path::<ResourceDef>(key) else {
+        ui.label(theme::muted("the preview stands once the row loads"));
+        return;
+    };
+    let def = id.get(&content);
+    let body = resource::body(&content, id);
+    let reach = Bodies::of(&content).map(|bodies| Meters(body.radius.0 + bodies.spacing().0));
+    let view_key = format!("preview:{}/{key}", ResourceDef::TABLE);
+    let mut state = editor
+        .views
+        .preview
+        .stages
+        .remove(&view_key)
+        .unwrap_or_else(|| {
+            StageState::framing(
+                body.height
+                    .0
+                    .max(reach.map_or(body.radius.0, |reach| reach.0)),
+            )
+        });
+    let width = ui.available_width();
+    let turntable = view_stage::turntable(
+        editor,
+        ui,
+        &view_key,
+        Vec2::new(width, width * 0.8),
+        &mut state,
+        Pictured::Prop(def.look),
+    );
+    editor.views.preview.stages.insert(view_key, state);
+    if let Some(turntable) = turntable {
+        if let Some(radius) = reach {
+            draw_footprint(
+                &ui.painter_at(turntable.rect),
+                &turntable.canvas,
+                &Footprint::Circle { radius },
+                view_stage::center(),
+                Degrees(0.0),
+                1.0,
+                egui::Stroke::new(1.0, module_color(AreaModuleKind::SafeZone)),
+            );
+        }
+        plate::draw_label(
+            ui,
+            turntable.rect.center_top() + Vec2::new(0.0, 28.0),
+            &PlateLabel::resource(&def.name, def.quantity, 0, def.max_occupants),
+        );
+        turntable.stand(editor, ui, Vec::new());
+    }
+    sheet::section(ui, "a full one");
+    for line in resource_summary(&content, def) {
+        ui.label(line);
+    }
+    ui.label(theme::faint(
+        "At a gather speed and a gather drop rate of 1. A worker's speed divides the time, its \
+         drop rate multiplies the chances.",
+    ));
+}
+
+/// What a full resource comes to, worked out from its fields: what it gives, how long one worker
+/// takes to empty it, and the bag room work needs.
+fn resource_summary(content: &Content, def: &ResourceDef) -> Vec<String> {
+    let mut lines: Vec<String> = def
+        .drops
+        .iter()
+        .map(|drop| {
+            let name = &drop.item.get(content).name;
+            let all = def.quantity * drop.amount;
+            match drop.chance {
+                None => format!("Gives {all} {name}"),
+                Some(chance) => format!(
+                    "Gives about {:.1} {name}, {}% of the times",
+                    all as f32 * chance.0 / 100.0,
+                    chance.0
+                ),
+            }
+        })
+        .collect();
+    lines.push(format!(
+        "Empty after {} s of one worker's work",
+        def.quantity as f32 * def.extraction.takes().0
+    ));
+    let mut items: Vec<_> = def.drops.iter().map(|drop| drop.item).collect();
+    items.sort_unstable_by_key(|item| item.raw());
+    items.dedup();
+    lines.push(match items.len() {
+        1 => "Work needs room in the bag for 1 kind of item".to_owned(),
+        kinds => format!("Work needs room in the bag for {kinds} kinds of item"),
+    });
+    lines
 }
 
 /// A status effect on one actor of the designer's choosing, applied and removed at a press, in a

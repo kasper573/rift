@@ -1,5 +1,6 @@
 mod attack;
 mod default;
+mod gather;
 mod interact;
 mod interface;
 mod locked;
@@ -40,6 +41,7 @@ pub enum ClickClaim {
     Aim(#[schemars(with = "u64")] Entity),
     AimAt(#[schemars(with = "PosSchema")] Pos<Meters>),
     Pickup(#[schemars(with = "u64")] Entity),
+    Gather(#[schemars(with = "u64")] Entity),
     Interact(#[schemars(with = "u64")] Entity),
     Walk(#[schemars(with = "PosSchema")] Pos<Meters>),
     Nothing,
@@ -83,6 +85,7 @@ static CLAIMANTS: &[&dyn Claimant] = &[
     &AimClaimant,
     &attack::AttackClaimant,
     &pickup::PickupClaimant,
+    &gather::GatherClaimant,
     &interact::InteractClaimant,
     &walk::WalkClaimant,
     &default::DefaultClaimant,

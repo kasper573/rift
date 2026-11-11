@@ -24,9 +24,9 @@ use crate::core::content::{
     Content, ContentFile, ContentId, Loading, ModuleRule, ModuleSet, NamedContent, Nearby,
     RowCheck, serial,
 };
-use crate::core::math::{Offset, Pos};
+use crate::core::math::{Offset, Pos, Rng};
 use crate::core::time;
-use crate::core::units::{MeterPos, Meters, Seconds};
+use crate::core::units::{MeterPos, Meters, Percent, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::actor::part::ModelPartId;
 use crate::systems::actor::skeleton::{Colours, EquipmentSlot, LocalOffset, LocalTurn, SkeletonId};
@@ -600,9 +600,9 @@ pub enum ItemKind {
 }
 
 /// How an item is worn: held in a hand, putting its wearer in a stance and hanging from the hand by
-/// its grip, or worn in one of the body's slots, laying the parts of its look on the wearer's
-/// skeleton over the body. A worn item with no look on the wearer's skeleton counts all the same,
-/// and is never drawn.
+/// its grip, worn in one of the body's slots, laying the parts of its look on the wearer's
+/// skeleton over the body, or kept in the tool slot. A worn item with no look on the wearer's
+/// skeleton counts all the same, and is never drawn.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "wear", rename_all = "snake_case")]
 pub enum Wear {
@@ -615,6 +615,13 @@ pub enum Wear {
         slot: EquipmentSlot,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         looks: Vec<WornLook>,
+    },
+    /// Kept in the tool slot, and in the hand its stance names only while its wearer works with it.
+    Tool {
+        tool: ToolTypeId,
+        stance: StanceId,
+        #[serde(default, skip_serializing_if = "Grip::is_identity")]
+        grip: Grip,
     },
 }
 
@@ -673,6 +680,24 @@ impl Wear {
         match self {
             Wear::Held { .. } => "held",
             Wear::Worn { slot, .. } => slot.as_str(),
+            Wear::Tool { .. } => "tool",
+        }
+    }
+
+    /// The stance a hand showing the item puts its wearer in and how the item sits in that hand,
+    /// when a hand can show it.
+    pub fn grasp(&self) -> Option<(StanceId, &Grip)> {
+        match self {
+            Wear::Held { stance, grip } | Wear::Tool { stance, grip, .. } => Some((*stance, grip)),
+            Wear::Worn { .. } => None,
+        }
+    }
+
+    /// The kind of tool the item is, when it is one.
+    pub fn tool_type(&self) -> Option<ToolTypeId> {
+        match self {
+            Wear::Tool { tool, .. } => Some(*tool),
+            Wear::Held { .. } | Wear::Worn { .. } => None,
         }
     }
 }
@@ -686,6 +711,84 @@ impl Grip {
 impl PropAxis {
     pub fn is_z(&self) -> bool {
         *self == PropAxis::Z
+    }
+}
+
+/// One line of a drop table: `amount` of `item`, every time or `chance` of the times.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DropRow {
+    pub item: ItemId,
+    #[schemars(transform = SchemaMark::Count.with(true))]
+    #[schemars(extend("default" = serial::one()))]
+    #[serde(default = "serial::one", skip_serializing_if = "serial::is_one")]
+    pub amount: u32,
+    #[schemars(transform = SchemaMark::Blank.with("always"))]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub chance: Option<Percent>,
+}
+
+impl DropRow {
+    pub fn of(item: ItemId) -> DropRow {
+        DropRow {
+            item,
+            amount: 1,
+            chance: None,
+        }
+    }
+
+    /// What the row drops this time: its whole amount or nothing.
+    pub fn rolled(&self, rng: &mut Rng) -> Option<ItemStack> {
+        self.rolled_at(1.0, rng)
+    }
+
+    /// What the row drops this time at `rate` times its chance. Past a sure thing the rate is how
+    /// many times over it drops: the whole part every time, once more the rest of the times.
+    pub fn rolled_at(&self, rate: f32, rng: &mut Rng) -> Option<ItemStack> {
+        let times = self.times(rate);
+        let sure = times.floor();
+        let rest = times - sure;
+        let once_more = rest > 0.0 && rng.rand_float() < rest;
+        let count = (sure as u32 + u32::from(once_more)).saturating_mul(self.amount);
+        (count > 0).then_some(ItemStack::new(self.item, count))
+    }
+
+    /// The most the row can drop at `rate` times its chance.
+    pub fn most_at(&self, rate: f32) -> ItemStack {
+        let count = (self.times(rate).ceil() as u32).saturating_mul(self.amount);
+        ItemStack::new(self.item, count)
+    }
+
+    fn times(&self, rate: f32) -> f32 {
+        (self.chance.map_or(1.0, |chance| chance.0 / 100.0) * rate).max(0.0)
+    }
+}
+
+pub type ToolTypeId = ContentId<ToolTypeDef>;
+
+/// A kind of tool, by the name players are told: what the items worn in the tool slot are, and
+/// what a resource asks for there.
+#[derive(JsonSchema, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolTypeDef {
+    pub name: String,
+}
+
+impl ContentFile for ToolTypeDef {
+    const TABLE: &'static str = "tool_type";
+
+    fn fresh(near: &Nearby) -> Result<ToolTypeDef, String> {
+        Ok(ToolTypeDef { name: near.name() })
+    }
+
+    fn check(&self, check: &mut RowCheck) {
+        check.text("/name", &self.name, 1, 64);
+    }
+}
+
+impl NamedContent for ToolTypeDef {
+    fn shown_name(&self) -> &str {
+        &self.name
     }
 }
 

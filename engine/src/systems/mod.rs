@@ -26,6 +26,7 @@ pub mod probe;
 pub mod quest;
 pub mod reach;
 pub mod region;
+pub mod resource;
 pub mod rewards;
 pub mod screen;
 pub mod script;
@@ -104,6 +105,7 @@ pub fn protocol(app: &mut App) {
     interact::register(app);
     npc::register(app);
     shop::register(app);
+    resource::register(app);
     quest::register(app);
     player::register(app);
     reach::register(app);
@@ -150,6 +152,8 @@ pub fn area_state(world: &mut World, content: &Content) {
     world.add_observer(player::greet);
     world.add_observer(player::client_left);
     world.add_observer(equipment::reflect);
+    world.add_observer(resource::take_out);
+    world.add_observer(resource::put_away);
 }
 
 /// The content, its settings and the scripts and parties built from it, as every world playing it
@@ -261,6 +265,15 @@ pub struct GameWords {
     pub needs_a_slot: String,
     /// What a trade says that a player's bag has no room for, `{slots}` slots short.
     pub needs_slots: String,
+    /// What a player is told working a resource without a tool of the kind `{tool}` in their
+    /// tool slot.
+    pub needs_tool: String,
+    /// What a player is told working a resource as many already work as it has room for.
+    pub no_room: String,
+    /// What a player is told working a resource their bag has no room for the drops of.
+    pub bag_room: String,
+    /// What a player is told as the resource they work or set out for has nothing left.
+    pub ran_out: String,
 }
 
 /// How long notices take to read: each stays a glance and a little longer for every word, and
@@ -383,7 +396,7 @@ pub fn server_app(
                     skill::requests,
                     item::use_item,
                     item::drop_item,
-                    item::pickup_request,
+                    (item::pickup_request, resource::gather_request).chain(),
                     interact::interact_request,
                     dialogue::requests,
                     shop::requests,
@@ -399,6 +412,7 @@ pub fn server_app(
                 tick::run,
                 (
                     item::pickups,
+                    (resource::gathering, resource::work).chain(),
                     interact::interactions,
                     (dialogue::hold, dialogue::refresh.run_if(replication_tick)).chain(),
                     (shop::hold, shop::refresh.run_if(replication_tick)).chain(),
@@ -532,6 +546,7 @@ pub fn client_app(
             movement::MovementRenderPlugin,
             combat::render::CombatRenderPlugin,
             item::render::ItemRenderPlugin,
+            resource::render::ResourceRenderPlugin,
             view::CameraFollowPlugin,
             player::session::ClientSessionPlugin,
             input::PlayerInputPlugin,
@@ -677,6 +692,8 @@ pub fn tables() -> ContentRegistry {
         .file::<item::ItemDef>()
         .named::<item::ItemDef>()
         .modules::<item::ItemDef>()
+        .file::<item::ToolTypeDef>()
+        .named::<item::ToolTypeDef>()
         .file::<class::ClassDef>()
         .named::<class::ClassDef>()
         .file::<memory::MemoryDef>()
@@ -692,6 +709,9 @@ pub fn tables() -> ContentRegistry {
         .file::<quest::QuestDef>()
         .named::<quest::QuestDef>()
         .modules::<quest::QuestDef>()
+        .file::<resource::ResourceDef>()
+        .named::<resource::ResourceDef>()
+        .modules::<resource::ResourceDef>()
         .file::<script::ScriptDef>()
         .file::<shop::ShopDef>()
         .named::<shop::ShopDef>()
@@ -712,6 +732,7 @@ pub fn tables() -> ContentRegistry {
     registry
         .hook(LoadStep::Expand, script::build_all)
         .hook(LoadStep::Across, shop::check_all)
+        .hook(LoadStep::Across, resource::check_all)
         .hook(LoadStep::Across, quest::check_all)
         .hook(LoadStep::Settings, quest::check_rewards)
         .hook(LoadStep::Across, notification::check_all)
@@ -768,6 +789,10 @@ fn check_settings(loading: &mut Loading) {
         ("needs_more", &settings.words.needs_more),
         ("needs_a_slot", &settings.words.needs_a_slot),
         ("needs_slots", &settings.words.needs_slots),
+        ("needs_tool", &settings.words.needs_tool),
+        ("no_room", &settings.words.no_room),
+        ("bag_room", &settings.words.bag_room),
+        ("ran_out", &settings.words.ran_out),
     ] {
         check.text(format!("/words/{field}"), said, 1, 80);
     }

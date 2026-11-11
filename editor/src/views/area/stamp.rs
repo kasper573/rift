@@ -232,7 +232,7 @@ fn draw_blueprint_art(ui: &mut Ui, content: &Content, key: &str, into: ERect) {
         .iter()
         .filter_map(|placed| {
             let bounds = shapes::bounds(&placed.module, None)?;
-            Some((bounds, super::overlays::module_color(placed.module.kind())))
+            Some((bounds, super::overlays::color_of(&placed.module)))
         })
         .collect();
     let painter = ui.painter_at(into);

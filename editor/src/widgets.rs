@@ -4,6 +4,7 @@ use engine::systems::area::{AreaDef, AreaModuleKind};
 use engine::systems::item::ItemDef;
 use engine::systems::npc::NpcDef;
 use engine::systems::quest::QuestDef;
+use engine::systems::resource::ResourceDef;
 use engine::systems::script::RunnerKind;
 use engine::systems::shop::ShopDef;
 use engine::systems::skill::SkillDef;
@@ -178,6 +179,7 @@ pub(crate) fn runner_mark(kind: RunnerKind) -> KindMark {
         RunnerKind::Area => AreaDef::TABLE,
         RunnerKind::Quest => QuestDef::TABLE,
         RunnerKind::Shop => ShopDef::TABLE,
+        RunnerKind::Resource => ResourceDef::TABLE,
         RunnerKind::Skill => SkillDef::TABLE,
         RunnerKind::StatusEffect => StatusEffectDef::TABLE,
         RunnerKind::Blueprint => BlueprintDef::TABLE,

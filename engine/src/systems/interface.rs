@@ -45,6 +45,7 @@ pub enum CursorShape {
     Enter,
     Attack,
     PickUp,
+    Gather,
     Talk,
     Use,
     Open,

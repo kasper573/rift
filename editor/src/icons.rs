@@ -21,13 +21,14 @@ use engine::systems::class::ClassDef;
 use engine::systems::dialogue::bust::BustDef;
 use engine::systems::input::map::InputDef;
 use engine::systems::interface::{CursorDef, InterfaceIconDef};
-use engine::systems::item::ItemDef;
+use engine::systems::item::{ItemDef, ToolTypeDef};
 use engine::systems::memory::MemoryDef;
 use engine::systems::notification::NotificationDef;
 use engine::systems::npc::NpcDef;
 use engine::systems::player::PlayerDef;
 use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::quest::QuestDef;
+use engine::systems::resource::ResourceDef;
 use engine::systems::script::ScriptDef;
 use engine::systems::shop::ShopDef;
 use engine::systems::skill::SkillDef;
@@ -159,6 +160,7 @@ impl KindFamily {
             | PropMaterialDef::TABLE
             | TerrainDef::TABLE
             | SurfaceDef::TABLE
+            | ResourceDef::TABLE
             | WorldMapDef::TABLE => KindFamily::World,
             NpcDef::TABLE
             | PlayerDef::TABLE
@@ -169,7 +171,9 @@ impl KindFamily {
             | MaterialDef::TABLE
             | BustDef::TABLE
             | SkeletonDef::TABLE => KindFamily::Characters,
-            ItemDef::TABLE | ShopDef::TABLE | StanceDef::TABLE => KindFamily::Items,
+            ItemDef::TABLE | ShopDef::TABLE | StanceDef::TABLE | ToolTypeDef::TABLE => {
+                KindFamily::Items
+            }
             SkillDef::TABLE | StatusEffectDef::TABLE | VfxDef::TABLE | VfxShaderDef::TABLE => {
                 KindFamily::Abilities
             }
@@ -218,6 +222,8 @@ pub fn of_table(table: &str) -> KindIcon {
         SkeletonDef::TABLE => KindIcon::plain(phosphor::BONE).unpictured(),
         StanceDef::TABLE => KindIcon::plain(phosphor::HAND_FIST),
         ItemDef::TABLE => KindIcon::plain(phosphor::BACKPACK),
+        ToolTypeDef::TABLE => KindIcon::plain(phosphor::TOOLBOX),
+        ResourceDef::TABLE => KindIcon::plain(phosphor::DIAMOND).unpictured(),
         SkillDef::TABLE => KindIcon::plain(phosphor::LIGHTNING),
         StatusEffectDef::TABLE => KindIcon::plain(phosphor::HEARTBEAT),
         QuestDef::TABLE => KindIcon::plain(phosphor::SCROLL),
@@ -267,7 +273,7 @@ pub(crate) fn of_media(path: &str) -> KindIcon {
     match AssetKind::of(path) {
         Some(AssetKind::Image) => IMAGE,
         Some(AssetKind::Audio) => KindIcon::plain(phosphor::FILE_AUDIO),
-        Some(AssetKind::Model) => KindIcon::plain(phosphor::CUBE).unpictured(),
+        Some(AssetKind::Model) => KindIcon::plain(phosphor::DIAMOND).unpictured(),
         None => FILE,
     }
 }

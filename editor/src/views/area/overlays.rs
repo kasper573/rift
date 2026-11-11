@@ -159,6 +159,14 @@ pub(super) fn overlay_footprints(painter: &egui::Painter, frame: &AreaFrame) {
     }
 }
 
+/// The colour `module` is outlined in: its kind's, but a spawner of resources alone in its own.
+pub(crate) fn color_of(module: &AreaModule) -> Color32 {
+    match module {
+        AreaModule::Spawner(spawner) if !spawner.keeps_wild() => Color32::from_rgb(110, 170, 255),
+        _ => module_color(module.kind()),
+    }
+}
+
 pub(crate) fn module_color(kind: AreaModuleKind) -> Color32 {
     match kind {
         AreaModuleKind::Object => Color32::from_rgb(255, 200, 80),
@@ -346,7 +354,7 @@ pub(super) fn overlay_modules(
         hovered: false,
         ..held(pointer)
     };
-    let wash = |kind: AreaModuleKind, pointer: &str, selected: bool| {
+    let wash = |module: &AreaModule, pointer: &str, selected: bool| {
         let alpha = if editing.as_deref().is_some_and(|e| e != pointer) {
             0.24
         } else if selected {
@@ -354,7 +362,7 @@ pub(super) fn overlay_modules(
         } else {
             0.67
         };
-        ink::wash(module_color(kind), alpha)
+        ink::wash(color_of(module), alpha)
     };
     let key = |hovered: Option<(&Option<String>, &Option<String>)>| {
         let mut hasher = std::hash::DefaultHasher::new();
@@ -436,7 +444,7 @@ pub(super) fn overlay_modules(
             continue;
         }
         let bounds = footing.bounds;
-        let color = wash(module.kind(), node.pointer, held.selected);
+        let color = wash(module, node.pointer, held.selected);
         let width = if held.selected { 2.0 } else { 1.0 };
         if !loads(frame, module) {
             painter.add(egui::Shape::dashed_line(
@@ -578,7 +586,7 @@ fn outline_set<'a>(
     frame: &'a AreaFrame,
     modules: impl Iterator<Item = DocModule<'a>>,
     held: &dyn Fn(&str) -> Option<Held>,
-    wash: &dyn Fn(AreaModuleKind, &str, bool) -> Color32,
+    wash: &dyn Fn(&AreaModule, &str, bool) -> Color32,
     color: Color32,
 ) -> OutlineSet {
     static REVISION: AtomicU64 = AtomicU64::new(0);
@@ -597,7 +605,7 @@ fn outline_set<'a>(
             }
             Some((
                 footing,
-                wash(module.kind(), node.pointer, held.selected),
+                wash(module, node.pointer, held.selected),
                 held.selected,
             ))
         })

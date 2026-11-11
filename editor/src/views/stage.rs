@@ -374,6 +374,7 @@ pub fn request(
         content,
         stroke: None,
         ghost: None,
+        stood: Arc::new([]),
         cast: cast.into(),
         outlines: Default::default(),
         pointer: None,
@@ -397,9 +398,7 @@ pub fn props(
     render::hung(content, model, shown)
         .into_iter()
         .filter_map(|(at, item)| {
-            let Some(Wear::Held { grip, .. }) = item.get(content).wear() else {
-                return None;
-            };
+            let (_, grip) = item.get(content).wear().and_then(Wear::grasp)?;
             Some(prop_in_hand(
                 content,
                 model,

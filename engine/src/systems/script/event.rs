@@ -81,6 +81,12 @@ pub enum RiftEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         item: Option<ItemId>,
     },
+    /// Once for every stack an extraction drops into its worker's bag.
+    Extracted {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        item: Option<ItemId>,
+    },
+    RanOut,
 }
 
 pub(crate) const PLACED: &[RunnerKind] = &[
@@ -102,6 +108,7 @@ pub(crate) const ASPECT: &[RunnerKind] = &[
 ];
 pub(crate) const QUEST: &[RunnerKind] = &[RunnerKind::Quest];
 pub(crate) const SHOP: &[RunnerKind] = &[RunnerKind::Shop];
+pub(crate) const RESOURCE: &[RunnerKind] = &[RunnerKind::Resource];
 pub(crate) const ANY: &[RunnerKind] = &[RunnerKind::Any];
 
 const TRADE_FIELDS: &[(&str, ValueType)] =
@@ -148,6 +155,7 @@ impl EventDef<RiftScripting> for RiftEvent {
             RiftEvent::Activated | RiftEvent::Deactivated | RiftEvent::Interval { .. } => ASPECT,
             RiftEvent::Accepted | RiftEvent::Completed | RiftEvent::Failed => QUEST,
             RiftEvent::Bought { .. } | RiftEvent::Sold { .. } => SHOP,
+            RiftEvent::Extracted { .. } | RiftEvent::RanOut => RESOURCE,
         }
     }
 
@@ -161,7 +169,9 @@ impl EventDef<RiftScripting> for RiftEvent {
 
     fn fields(&self) -> &'static [(&'static str, ValueType)] {
         match self {
-            RiftEvent::Bought { .. } | RiftEvent::Sold { .. } => TRADE_FIELDS,
+            RiftEvent::Bought { .. } | RiftEvent::Sold { .. } | RiftEvent::Extracted { .. } => {
+                TRADE_FIELDS
+            }
             RiftEvent::Used => USED_FIELDS,
             _ => &[],
         }

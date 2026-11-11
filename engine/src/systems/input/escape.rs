@@ -5,7 +5,7 @@ use ui::egui::LayerId;
 use super::map::{self, InputAction, InputMap};
 use crate::core::gui;
 use crate::systems::dialogue::stage;
-use crate::systems::{hud, item, skill};
+use crate::systems::{hud, item, resource, skill};
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(
@@ -33,8 +33,11 @@ fn dismiss_topmost(world: &mut World) {
             .find(|(open_layer, _)| open_layer == layer)
             .map(|(_, dismissal)| dismissal)
     });
-    if let Some(dismissal) = topmost {
-        dismissal.run(world);
+    match topmost {
+        Some(dismissal) => {
+            dismissal.run(world);
+        }
+        None => resource::render::stop(world),
     }
 }
 

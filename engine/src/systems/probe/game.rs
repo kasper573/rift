@@ -16,11 +16,11 @@ use crate::core::units::{Meters, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::actor::ActorModel;
 use crate::systems::actor::skeleton::BuildName;
-use crate::systems::actor::stance::StanceId;
+use crate::systems::actor::stance::{self, StanceId};
 use crate::systems::area::{self, AreaDef, AreaId, AreaModule, PropId};
 use crate::systems::input::map::{InputAction, InputBinding, InputMap, KeyModifiers};
 use crate::systems::interface::InterfaceIcon;
-use crate::systems::item::{ItemDef, ItemId, Wear};
+use crate::systems::item::{ItemDef, ItemId};
 use crate::systems::movement::Bodies;
 use crate::systems::npc::{NpcDef, NpcId};
 use crate::systems::player::snapshot::CharacterSnapshot;
@@ -169,7 +169,7 @@ pub struct ProbeItem {
     pub name: String,
     /// The image the interface shows it by.
     pub icon: String,
-    /// The stance holding it in a hand puts its holder in, for an item held rather than worn.
+    /// The stance holding it in a hand puts its holder in, for an item a hand can show.
     pub stance: Option<StanceId>,
 }
 
@@ -407,10 +407,7 @@ fn game(content: &Content) -> ProbeGame {
                 item,
                 name: item.get(content).name.clone(),
                 icon: item.get(content).icon.path(),
-                stance: match item.get(content).wear() {
-                    Some(Wear::Held { stance, .. }) => Some(*stance),
-                    _ => None,
-                },
+                stance: stance::of_item(content, item),
             })
             .collect(),
         skills: content

@@ -246,6 +246,10 @@ impl Game {
                     "needs_more": "Needs {count} more {item}",
                     "needs_a_slot": "Needs 1 free slot",
                     "needs_slots": "Needs {slots} free slots",
+                    "needs_tool": "Needs a {tool}",
+                    "no_room": "No room",
+                    "bag_room": "No room in your bag",
+                    "ran_out": "It ran out",
                 },
                 "typing": typing(),
                 "lettering": lettering(),
@@ -855,7 +859,7 @@ impl Map {
 }
 
 /// A fighter's stats at full `health`: six damage a hit at 1.2 hits a second from a metre and a half
-/// away, walking four metres a second.
+/// away, walking four metres a second, working resources at their stated time and chances.
 pub fn stats(health: f32) -> Value {
     json!({
         "health": health,
@@ -865,6 +869,8 @@ pub fn stats(health: f32) -> Value {
         "attack_delay": 200.0,
         "movement_speed": 4.0,
         "range": 1.5,
+        "gather_speed": 1.0,
+        "gather_drop_rate": 1.0,
     })
 }
 

@@ -64,6 +64,7 @@ use engine::systems::area::prop::PropDef;
 use engine::systems::area::scene::{ModuleNode, SceneNode};
 use engine::systems::area::{self, AreaDef, AreaId, AreaModule, AreaModuleKind, Picture, Pictured};
 use engine::systems::npc::NpcDef;
+use engine::systems::resource::ResourceDef;
 use engine::systems::spawner::{Spawner, Spawns};
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, VariantArray};
@@ -79,7 +80,7 @@ use self::overlays::{
 };
 use self::render_sync::StagePick;
 use self::status::status_bar;
-use self::viewport::{Request, StageClip, StandingActor, StrokeTerrain, Viewports};
+use self::viewport::{Ghost, Request, StageClip, StandingActor, StrokeTerrain, Viewports};
 use crate::app::{BottomTab, Editor};
 use crate::doc::{Derived, DocModule, NodeGrid, NodeId, SceneDoc};
 use crate::keymap::EditorKey;
@@ -878,7 +879,7 @@ fn request_viewport(editor: &mut Editor, ui: &Ui, view_key: &str, frame: &AreaFr
         (rect.width() * pixels_per_point).round().max(1.0) as u32,
         (rect.height() * pixels_per_point).round().max(1.0) as u32,
     ];
-    let cast = cast(editor, view_key, frame);
+    let (cast, stood) = cast(editor, view_key, frame);
     let ghost = place::ghost(editor, view_key, frame);
     let view = editor.views.area.view(view_key);
     let stroke = view.stroke.as_ref().map(|stroke| StrokeTerrain {
@@ -903,6 +904,7 @@ fn request_viewport(editor: &mut Editor, ui: &Ui, view_key: &str, frame: &AreaFr
         stroke,
         ghost,
         cast,
+        stood,
         outlines,
         pointer: frame.pointer.and_then(|pointer| frame.pixel(pointer)),
     });
@@ -919,7 +921,11 @@ fn ghost_moves(view: &AreaViewState) -> bool {
 /// of each spawner, every one in its model's idle, those in sight. The rigs are made once for
 /// what the view holds and the content, and the list handed on stays the same while the same rigs
 /// are in sight.
-fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Arc<[StandingActor]> {
+fn cast(
+    editor: &mut Editor,
+    view_key: &str,
+    frame: &AreaFrame,
+) -> (Arc<[StandingActor]>, Arc<[Ghost]>) {
     let generation = editor
         .project
         .as_ref()
@@ -932,10 +938,11 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Arc<[Standing
         .as_ref()
         .is_none_or(|cast| cast.made_for != made_for)
     {
-        let everyone = everyone_standing(view, frame, generation);
+        let (everyone, stood) = everyone_standing(view, frame, generation);
         view.cast = Some(Cast {
             made_for,
             everyone,
+            stood: stood.into(),
             in_sight: Vec::new(),
             shown: Arc::new([]),
         });
@@ -955,7 +962,7 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Arc<[Standing
             .collect();
         cast.in_sight = in_sight;
     }
-    cast.shown.clone()
+    (cast.shown.clone(), cast.stood.clone())
 }
 
 /// The rigs of a view's cast, made for what the view holds, the content and its previews, and
@@ -963,6 +970,7 @@ fn cast(editor: &mut Editor, view_key: &str, frame: &AreaFrame) -> Arc<[Standing
 struct Cast {
     made_for: (u64, u64, HashMap<String, SpawnerPreview>),
     everyone: Vec<Standing>,
+    stood: Arc<[Ghost]>,
     in_sight: Vec<usize>,
     shown: Arc<[StandingActor]>,
 }
@@ -975,12 +983,12 @@ struct Standing {
 }
 
 /// Every rig of the view's cast: each resident at its spot in its pose, and the previewed places of
-/// each spawner.
+/// each spawner, with the resources those previews stand.
 fn everyone_standing(
     view: &mut AreaViewState,
     frame: &AreaFrame,
     generation: u64,
-) -> Vec<Standing> {
+) -> (Vec<Standing>, Vec<Ghost>) {
     let content = &frame.content;
     let area = frame.area();
     let resolve = |npc: engine::systems::npc::NpcId| {
@@ -1019,6 +1027,7 @@ fn everyone_standing(
         }
     };
     let mut everyone = Vec::new();
+    let mut stood = Vec::new();
     for placed in &frame.picture.placed {
         if let AreaModule::Resident(resident) = &placed.module
             && let Some(npc) = resolve(resident.npc)
@@ -1074,10 +1083,26 @@ fn everyone_standing(
                         ));
                     }
                 }
+                Spawns::Resource { resource } => {
+                    let look = frame
+                        .reader
+                        .path_of(resource)
+                        .and_then(|resource| content.by_path::<ResourceDef>(resource))
+                        .map(|resource| resource.get(content).look.get(content));
+                    if let Some(look) = look {
+                        stood.push(Ghost {
+                            model: look.model.path(),
+                            transform: Transform::from_translation(world_point(
+                                at,
+                                area.heights.height_at(at),
+                            )),
+                        });
+                    }
+                }
             }
         }
     }
-    everyone
+    (everyone, stood)
 }
 
 /// Whether a body `extent` across with its middle at `middle` shows in `view` tall enough to make

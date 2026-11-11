@@ -13,6 +13,7 @@ use crate::systems::actor::stance::HandIndex;
 use crate::systems::actor::{ActorModel, appearance};
 use crate::systems::item::{self, Inventory, ItemId, ItemKind, ItemStack, Wear};
 use crate::systems::player::player_requests;
+use crate::systems::resource::Working;
 use crate::systems::script::condition;
 
 pub fn register(app: &mut App) {
@@ -42,13 +43,14 @@ pub struct HoldRequest {
     pub hand: HandIndex,
 }
 
-/// A place a player wears an item: one of its body's hands, in the skeleton's order, or one of the
-/// slots its skeleton lists.
+/// A place a player wears an item: one of its body's hands, in the skeleton's order, one of the
+/// slots its skeleton lists, or the one place every body keeps a tool.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 #[serde(rename_all = "snake_case")]
 pub enum EquipmentPlace {
     Hand(HandIndex),
     Slot(EquipmentSlot),
+    Tool,
 }
 
 pub fn wears(world: &World, actor: Entity, item: ItemId) -> bool {
@@ -87,8 +89,8 @@ pub fn equip_from_bag(world: &mut World, player: Entity, item: ItemId) -> Result
 }
 
 /// Wears the item in the bag's slot `inv_slot` where it goes: a worn item in its slot, when the
-/// body has it, a held item in `hand` or else where its stance's hand says, in the same exchange
-/// returning to the bag what it displaces.
+/// body has it, a tool in the tool slot, a held item in `hand` or else where its stance's hand
+/// says, in the same exchange returning to the bag what it displaces.
 pub fn equip(
     world: &mut World,
     player: Entity,
@@ -117,6 +119,11 @@ pub fn equip(
             }
             let mut slots = worn.slots.clone();
             let returned = slots.insert(EquipmentPlace::Slot(slot.clone()), item);
+            (slots, returned.into_iter().collect())
+        }
+        Wear::Tool { .. } => {
+            let mut slots = worn.slots.clone();
+            let returned = slots.insert(EquipmentPlace::Tool, item);
             (slots, returned.into_iter().collect())
         }
         Wear::Held { .. } => {
@@ -176,6 +183,11 @@ pub fn put_on(content: &Content, body: &ActorModel, items: &[ItemId]) -> PutOn {
             Some(Wear::Worn { slot, .. }) if !body_slots.contains(slot) => put.unfit.push(item),
             Some(Wear::Worn { slot, .. }) => {
                 if let Some(there) = put.slots.insert(EquipmentPlace::Slot(slot.clone()), item) {
+                    put.displaced.push((there, item));
+                }
+            }
+            Some(Wear::Tool { .. }) => {
+                if let Some(there) = put.slots.insert(EquipmentPlace::Tool, item) {
                     put.displaced.push((there, item));
                 }
             }
@@ -248,7 +260,7 @@ pub fn check_put_on(
                 there.path(content)
             ),
             format!(
-                "items worn together, in at most {} hands and one a slot",
+                "items worn together, in at most {} hands, one a slot and one tool",
                 body.hands().len().max(1)
             ),
         );
@@ -292,19 +304,35 @@ pub fn unequip_item(world: &mut World, player: Entity, item: ItemId) -> Result<(
 
 /// Keeps what a player's body shows equal to its equipped hands, from the moment it is spawned
 /// equipped to every change of what it wears, each of which puts its equipment anew.
-pub fn reflect(
-    insert: On<Insert<Equipment>>,
-    players: Query<(&Equipment, Option<&Held>)>,
-    mut commands: Commands,
-) {
-    let Ok((equipment, wearing)) = players.get(insert.entity) else {
+pub fn reflect(insert: On<Insert<Equipment>>, world: &World, mut commands: Commands) {
+    let working = world.get::<Working>(insert.entity).is_some();
+    show(world, insert.entity, working, &mut commands);
+}
+
+/// Puts in the hands of `player` what they show: what they hold, and while it is `working` its
+/// tool too, in the hand the tool's stance names and in place of what that hand holds.
+pub fn show(world: &World, player: Entity, working: bool, commands: &mut Commands) {
+    let Some(equipment) = world.get::<Equipment>(player) else {
         return;
     };
-    let shown = Held {
-        hands: hands(equipment),
+    let held = hands(equipment);
+    let tool = equipment
+        .slots
+        .get(&EquipmentPlace::Tool)
+        .filter(|_| working);
+    let hands = match tool {
+        Some(&tool) => {
+            let content = world.resource::<Content>();
+            let mut shown =
+                held::place(content, hand_slots(world, player), &held, tool, None).hands;
+            shown.retain(|hand, item| *item == tool || held.get(hand) == Some(item));
+            shown
+        }
+        None => held,
     };
-    if wearing != Some(&shown) {
-        commands.entity(insert.entity).insert(shown);
+    let shown = Held { hands };
+    if world.get::<Held>(player) != Some(&shown) {
+        commands.entity(player).insert(shown);
     }
 }
 
@@ -315,7 +343,7 @@ pub fn worn_slots(equipment: &Equipment) -> impl Iterator<Item = (&EquipmentSlot
         .iter()
         .filter_map(|(place, item)| match place {
             EquipmentPlace::Slot(slot) => Some((slot, item)),
-            EquipmentPlace::Hand(_) => None,
+            EquipmentPlace::Hand(_) | EquipmentPlace::Tool => None,
         })
 }
 
@@ -326,7 +354,7 @@ pub fn hands(equipment: &Equipment) -> BTreeMap<HandIndex, ItemId> {
         .iter()
         .filter_map(|(slot, &item)| match slot {
             EquipmentPlace::Hand(hand) => Some((*hand, item)),
-            EquipmentPlace::Slot(_) => None,
+            EquipmentPlace::Slot(_) | EquipmentPlace::Tool => None,
         })
         .collect()
 }

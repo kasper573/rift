@@ -39,6 +39,7 @@ use crate::systems::memory::{MemoryDef, MemoryId};
 use crate::systems::notification::{NotificationDef, NotificationId};
 use crate::systems::npc::{Npc, NpcDef, NpcId};
 use crate::systems::quest::{Parties, QuestDef, QuestId};
+use crate::systems::resource::ResourceDef;
 use crate::systems::shop::{ShopDef, ShopId};
 use crate::systems::skill::{SkillDef, SkillId};
 use crate::systems::stat::StatKind;
@@ -71,6 +72,7 @@ pub enum RunnerKind {
     Area,
     Quest,
     Shop,
+    Resource,
     Skill,
     StatusEffect,
     Blueprint,
@@ -86,6 +88,7 @@ impl RunnerKindDef for RunnerKind {
             RunnerKind::Item
                 | RunnerKind::Quest
                 | RunnerKind::Shop
+                | RunnerKind::Resource
                 | RunnerKind::Skill
                 | RunnerKind::StatusEffect
         )
@@ -423,6 +426,7 @@ pub fn build_all(loading: &mut Loading) {
     bind_table::<ItemDef>(loading, &mut bind);
     bind_table::<QuestDef>(loading, &mut bind);
     bind_table::<ShopDef>(loading, &mut bind);
+    bind_table::<ResourceDef>(loading, &mut bind);
     bind_table::<SkillDef>(loading, &mut bind);
     bind_table::<StatusEffectDef>(loading, &mut bind);
     for (id, _) in loading.rows::<AreaDef>(&content) {
@@ -569,6 +573,7 @@ pub fn owner_site(content: &Content, row: OwnerRow) -> ScriptSite {
         RunnerKind::Item => row.id::<ItemDef>().path(content),
         RunnerKind::Quest => row.id::<QuestDef>().path(content),
         RunnerKind::Shop => row.id::<ShopDef>().path(content),
+        RunnerKind::Resource => row.id::<ResourceDef>().path(content),
         RunnerKind::Skill => row.id::<SkillDef>().path(content),
         RunnerKind::StatusEffect => row.id::<StatusEffectDef>().path(content),
         RunnerKind::Any => "",
@@ -597,6 +602,7 @@ pub fn spawn_stateless(world: &mut World) {
             RunnerKind::Item
             | RunnerKind::Quest
             | RunnerKind::Shop
+            | RunnerKind::Resource
             | RunnerKind::Skill
             | RunnerKind::StatusEffect => Owner::Row(row.kind, row.row),
             _ => continue,

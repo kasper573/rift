@@ -95,6 +95,7 @@ pub fn overview(def: &ItemDef) -> String {
 fn worn_as(wear: &Wear) -> String {
     match wear {
         Wear::Held { .. } => "Held in the hand".to_owned(),
+        Wear::Tool { .. } => "Kept in the tool slot".to_owned(),
         Wear::Worn { slot, .. } => format!("Worn on your {}", slot.as_str().replace('_', " ")),
     }
 }

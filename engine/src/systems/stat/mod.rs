@@ -39,6 +39,8 @@ pub enum StatKind {
     AttackDelay,
     MovementSpeed,
     Range,
+    GatherSpeed,
+    GatherDropRate,
 }
 
 impl StatKind {
@@ -55,9 +57,12 @@ impl StatKind {
             StatKind::AttackDelay => Some("ms"),
             StatKind::MovementSpeed => Some("m/s"),
             StatKind::Range => Some("m"),
-            StatKind::Health | StatKind::MaxHealth | StatKind::Damage | StatKind::AttackSpeed => {
-                None
-            }
+            StatKind::Health
+            | StatKind::MaxHealth
+            | StatKind::Damage
+            | StatKind::AttackSpeed
+            | StatKind::GatherSpeed
+            | StatKind::GatherDropRate => None,
         }
     }
 }

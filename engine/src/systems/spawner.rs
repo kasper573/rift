@@ -14,6 +14,7 @@ use crate::systems::WorldArea;
 use crate::systems::area::{self, Area, AreaId, AreaModule, Wild};
 use crate::systems::movement::{NavMesh, Spots};
 use crate::systems::npc::{self, NpcId, Pack, Roams};
+use crate::systems::resource::{self, ResourceId};
 
 /// Keeps `count` of what it spawns standing within a rect of the area.
 #[derive(JsonSchema, Clone, Serialize, Deserialize, PartialEq)]
@@ -51,12 +52,14 @@ pub struct SpawnShare {
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum Spawns {
     Npc { npc: NpcId },
+    Resource { resource: ResourceId },
 }
 
 impl Spawns {
     pub fn path(self, content: &Content) -> &str {
         match self {
             Spawns::Npc { npc } => npc.path(content),
+            Spawns::Resource { resource } => resource.path(content),
         }
     }
 }
@@ -72,8 +75,16 @@ impl Spawner {
     }
 
     pub fn npcs(&self) -> impl Iterator<Item = NpcId> + '_ {
-        self.spawns.iter().map(|share| match share.what {
-            Spawns::Npc { npc } => npc,
+        self.spawns.iter().filter_map(|share| match share.what {
+            Spawns::Npc { npc } => Some(npc),
+            Spawns::Resource { .. } => None,
+        })
+    }
+
+    pub fn resources(&self) -> impl Iterator<Item = ResourceId> + '_ {
+        self.spawns.iter().filter_map(|share| match share.what {
+            Spawns::Resource { resource } => Some(resource),
+            Spawns::Npc { .. } => None,
         })
     }
 
@@ -281,6 +292,12 @@ fn spawn_drawn(
                 None => world.entity_mut(entity).insert(Wild),
             };
             entity
+        }
+        Spawns::Resource { resource: def } => {
+            let mesh = area.mesh_for(false, false);
+            let at = free_point(world, &mesh, area_id, spawner.within)
+                .expect("checked at load: a spawner has ground to spawn on");
+            resource::spawn(world, def, at, area_id)
         }
     }
 }

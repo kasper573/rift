@@ -81,7 +81,9 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
         inspect(editor, ui, key, &row);
     });
     let pages: &[ItemPage] = match row.wear() {
-        Some(Wear::Held { .. }) => &[ItemPage::Card, ItemPage::Look, ItemPage::Wield],
+        Some(Wear::Held { .. } | Wear::Tool { .. }) => {
+            &[ItemPage::Card, ItemPage::Look, ItemPage::Wield]
+        }
         Some(Wear::Worn { .. }) => &[ItemPage::Card, ItemPage::Look, ItemPage::Worn],
         None => &[ItemPage::Card, ItemPage::Look],
     };
@@ -222,7 +224,7 @@ fn drop_strip(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef, size: 
 fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef) {
     let ctx = ui.ctx().clone();
     if editor.views.item.view_mut(key).page == ItemPage::Wield
-        && matches!(row.wear(), Some(Wear::Held { .. }))
+        && row.wear().and_then(Wear::grasp).is_some()
     {
         wield::inspect(editor, ui, key);
         ui.add_space(8.0);

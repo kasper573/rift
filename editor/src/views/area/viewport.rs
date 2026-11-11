@@ -62,6 +62,8 @@ pub struct Request {
     pub stroke: Option<StrokeTerrain>,
     pub ghost: Option<Ghost>,
     pub cast: Arc<[StandingActor]>,
+    /// The models standing beside the scenery: the resources of a spawner's preview.
+    pub stood: Arc<[Ghost]>,
     /// The sets of outlines drawn, each laid apart from the other.
     pub outlines: [OutlineSet; 2],
     /// The pixel of the picture the pointer is over, none while it is off it.
@@ -76,7 +78,8 @@ pub struct StrokeTerrain {
     pub paint: Arc<PaintMap>,
 }
 
-/// A prop following the pointer before it is placed.
+/// A model shown where nothing of the scene stands: a prop following the pointer before it is
+/// placed, or a resource of a spawner's preview.
 #[derive(Clone, PartialEq)]
 pub struct Ghost {
     pub model: String,
@@ -190,6 +193,7 @@ struct RenderedView {
     scene: StandingScene,
     stroke: Option<u64>,
     ghost: Option<(String, Entity)>,
+    stood: Option<(Arc<[Ghost]>, Vec<Entity>)>,
     cast: Option<(Arc<[StandingActor]>, Vec<Entity>)>,
     picked: Option<StagePick>,
 }
@@ -321,6 +325,7 @@ impl RenderedView {
             scene: StandingScene::new(root, layer, camera),
             stroke: None,
             ghost: None,
+            stood: None,
             cast: None,
             picked: None,
         }
@@ -396,6 +401,7 @@ impl RenderedView {
         self.rendered = request.camera;
         self.shape(world, &request);
         self.haunt(world, request.ghost);
+        self.stand(world, request.stood);
         sound(world, &area, &request.cast);
         self.people(world, request.cast);
         for (set, outlines) in request.outlines.iter().enumerate() {
@@ -451,6 +457,35 @@ impl RenderedView {
         if let Some(mut transform) = world.get_mut::<Transform>(entity) {
             *transform = ghost.transform;
         }
+    }
+
+    /// Stands the models asked for, anew whenever they change.
+    fn stand(&mut self, world: &mut World, stood: Arc<[Ghost]>) {
+        if self
+            .stood
+            .as_ref()
+            .is_some_and(|(standing, _)| Arc::ptr_eq(standing, &stood) || **standing == *stood)
+        {
+            return;
+        }
+        if let Some((_, entities)) = self.stood.take() {
+            for entity in entities {
+                world.despawn(entity);
+            }
+        }
+        let entities = stood
+            .iter()
+            .map(|model| {
+                let scene = engine::core::assets::model_scene(
+                    world.resource::<AssetServer>(),
+                    model.model.clone(),
+                );
+                world
+                    .spawn((WorldAssetRoot(scene), model.transform, ChildOf(self.root)))
+                    .id()
+            })
+            .collect();
+        self.stood = Some((stood, entities));
     }
 
     /// Stands the cast: a rig already standing in its clip is moved and held where it is asked

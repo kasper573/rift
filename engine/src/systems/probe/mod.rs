@@ -75,6 +75,7 @@ use crate::systems::area::{self, AreaId, AreaObject, AreaTag};
 use crate::systems::attention::{Attention, AttentionId, StatusBadges};
 use crate::systems::combat::Attitude;
 use crate::systems::dialogue::stage;
+use crate::systems::equipment::{self, EquipmentPlace};
 use crate::systems::history::widget::{self as history, HistoryBook};
 use crate::systems::history::{HistoryMark, HistoryRecord, HistoryTopic};
 use crate::systems::hud;
@@ -87,6 +88,7 @@ use crate::systems::npc::{Npc, NpcId};
 use crate::systems::player::{PlayedBy, commands_locked, session};
 use crate::systems::quest::{Parties, QuestId, QuestLog, QuestResult};
 use crate::systems::reach::Engaged;
+use crate::systems::resource::{self, Left, Resource, ResourceId, Working};
 use crate::systems::script::{EffectReach, OwnerRow, RiftScripts};
 use crate::systems::shop::{self, ShopId};
 use crate::systems::skill::{self, Rank, SkillId, bar::SlotReport};
@@ -316,6 +318,7 @@ pub struct ProbeSnapshot {
     pub actors: Vec<ProbeBody>,
     pub objects: Vec<ProbeObject>,
     pub items: Vec<ProbeGroundItem>,
+    pub resources: Vec<ProbeResource>,
     pub warps: Vec<ProbeWarp>,
     /// What the interface shows: text, icons, fields and sliders, less what is scrolled or clipped
     /// out of sight.
@@ -495,6 +498,10 @@ pub struct ProbeBody {
     pub hands: Vec<String>,
     /// What each hand of its body shows, as the server says.
     pub wearing: Vec<ProbeWorn>,
+    /// The item in its tool slot.
+    pub tool: Option<ItemId>,
+    /// The work it has under way at a resource.
+    pub gathering: Option<ProbeGathering>,
     /// The props its rig holds as drawn, each where it shows in the window.
     pub held: Vec<ProbeHeld>,
     /// Whether any layer moves its joints this frame.
@@ -539,6 +546,41 @@ pub struct ProbeGroundItem {
     pub count: u32,
     #[schemars(with = "PosSchema")]
     pub at: Pos<Meters>,
+}
+
+/// A resource standing in the world.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProbeResource {
+    #[schemars(with = "u64")]
+    pub id: Entity,
+    pub resource: ResourceId,
+    pub name: String,
+    #[schemars(with = "PosSchema")]
+    pub at: Pos<Meters>,
+    /// Where a click takes it rather than whatever stands in front of it.
+    #[schemars(with = "PosSchema")]
+    pub aim: Pos<Meters>,
+    /// How many extractions it still holds.
+    pub left: u32,
+    /// How many may work it at once.
+    pub room: u32,
+    /// Who works it.
+    #[schemars(with = "Vec<u64>")]
+    pub workers: Vec<Entity>,
+    /// Whether a click of the player's would work it, and what the pointer over it says.
+    pub workable: bool,
+    pub outlook: Vec<String>,
+}
+
+/// The work a character has under way at a resource.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProbeGathering {
+    #[schemars(with = "u64")]
+    pub resource: Entity,
+    /// The tool it works with, none by hand.
+    pub tool: Option<ItemId>,
+    /// How far through the extraction under way it is, from none to all of it.
+    pub progress: f32,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -1099,6 +1141,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         actors: actors(world, me, area),
         objects: objects(world, area),
         items: items(world, area),
+        resources: resources(world, me, area),
         warps: warps(world, area),
         ui: ui(world),
         covered: covered(world),
@@ -1470,6 +1513,12 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
                     .collect()
             })
             .unwrap_or_default(),
+        tool: equipment::in_slot(world, entity.id(), &EquipmentPlace::Tool),
+        gathering: entity.get::<Working>().map(|working| ProbeGathering {
+            resource: working.resource,
+            tool: working.tool,
+            progress: resource::render::progress(world, working).unwrap_or(0.0),
+        }),
         held,
         layered: entity.get::<Layered>().is_some_and(Layered::moving),
     })
@@ -1594,9 +1643,10 @@ fn pointed_at(world: &mut World, spot: Pos<Meters>) -> Option<Pointed> {
 
 fn clicked(world: &mut World, pointed: &Pointed) -> Option<Entity> {
     match claims::claim_at(world, Some(pointed)) {
-        ClickClaim::Attack(entity) | ClickClaim::Interact(entity) | ClickClaim::Aim(entity) => {
-            Some(entity)
-        }
+        ClickClaim::Attack(entity)
+        | ClickClaim::Interact(entity)
+        | ClickClaim::Aim(entity)
+        | ClickClaim::Gather(entity) => Some(entity),
         _ => None,
     }
 }
@@ -1611,6 +1661,50 @@ fn items(world: &mut World, area: Option<AreaId>) -> Vec<ProbeGroundItem> {
             item: dropped.item,
             count: dropped.count,
             at: at.pos,
+        })
+        .collect()
+}
+
+fn resources(world: &mut World, me: Option<Entity>, area: Option<AreaId>) -> Vec<ProbeResource> {
+    let content = world.resource::<Content>().clone();
+    let standing: Vec<(Entity, ResourceId, u32, Pos<Meters>, Capsule)> = world
+        .query::<(Entity, &Resource, &Left, &Position, &Hitbox, &AreaTag)>()
+        .iter(world)
+        .filter(|(.., tag)| area.is_none_or(|area| tag.area == area))
+        .map(|(entity, resource, left, at, hitbox, _)| {
+            (entity, resource.def, left.0, at.pos, hitbox.0)
+        })
+        .collect();
+    let working: Vec<(Entity, Entity)> = world
+        .query::<(Entity, &Working)>()
+        .iter(world)
+        .map(|(worker, working)| (worker, working.resource))
+        .collect();
+    standing
+        .into_iter()
+        .map(|(entity, def, left, at, capsule)| {
+            let outlook = me.and_then(|me| resource::render::outlook(world, me, entity));
+            ProbeResource {
+                id: entity,
+                resource: def,
+                name: def.get(&content).name.clone(),
+                at,
+                aim: aim(world, entity, at, capsule),
+                left,
+                room: def.get(&content).max_occupants,
+                workers: working
+                    .iter()
+                    .filter(|(_, resource)| *resource == entity)
+                    .map(|(worker, _)| *worker)
+                    .collect(),
+                workable: outlook.as_ref().is_some_and(|outlook| outlook.workable()),
+                outlook: outlook.map_or_else(Vec::new, |outlook| {
+                    resource::render::outlook_lines(&content, &outlook)
+                        .into_iter()
+                        .map(|(line, _)| line)
+                        .collect()
+                }),
+            }
         })
         .collect()
 }

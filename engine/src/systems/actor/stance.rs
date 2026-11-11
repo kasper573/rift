@@ -154,10 +154,10 @@ impl StanceDef {
 
 /// The stance of an item a hand can show, when it is one.
 pub fn of_item(content: &Content, item: ItemId) -> Option<StanceId> {
-    match item.get(content).wear()? {
-        Wear::Held { stance, .. } => Some(*stance),
-        Wear::Worn { .. } => None,
-    }
+    item.get(content)
+        .wear()
+        .and_then(Wear::grasp)
+        .map(|(stance, _)| stance)
 }
 
 /// The stance the hands put their wearer in: the main stance is the first hand's, in the body's

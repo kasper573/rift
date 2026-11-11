@@ -11,6 +11,7 @@ mod daylight;
 mod effects;
 mod equipment;
 mod exchange;
+mod gathering;
 mod gestures;
 mod gpu;
 mod grass;

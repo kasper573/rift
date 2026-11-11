@@ -20,7 +20,7 @@ use engine::systems::area::{
     AreaModule, AreaModuleKind, FogBank, Resident, SafeZone, SoundChannel, SoundscapeDef,
 };
 use engine::systems::script::{Place, ScriptModule};
-use engine::systems::spawner::{Spawner, Spawns};
+use engine::systems::spawner::Spawner;
 use ui::egui::{Pos2, RichText, Ui, Vec2};
 
 use super::select::start_paste;
@@ -343,7 +343,10 @@ pub(crate) const ADD_MENU: &[(&str, &[(AreaModuleKind, &str)])] = &[
     (
         "Spawners",
         &[
-            (AreaModuleKind::Spawner, "npcs kept filled in a rect"),
+            (
+                AreaModuleKind::Spawner,
+                "npcs or resources kept filled in a rect",
+            ),
             (AreaModuleKind::Resident, "one npc at one spot"),
         ],
     ),
@@ -416,9 +419,7 @@ pub fn module_template(
         AreaModuleKind::Spawner => AreaModule::Spawner(Spawner {
             respawn: Some(Seconds(60.0)),
             ..Spawner::of(
-                Spawns::Npc {
-                    npc: reader.id_of(named).ok_or_else(unnamed)?,
-                },
+                super::spawner::spawned(reader, named).ok_or_else(unnamed)?,
                 at.map(spot_rect),
             )
         }),

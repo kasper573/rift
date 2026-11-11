@@ -947,9 +947,7 @@ fn stand(world: &mut World, content: &Content, ground: &Heightfield, standing: &
     let props = render::hung(content, model, &held)
         .into_iter()
         .filter_map(|(hand, item)| {
-            let Some(Wear::Held { grip, .. }) = item.get(content).wear() else {
-                return None;
-            };
+            let (_, grip) = item.get(content).wear().and_then(Wear::grasp)?;
             let at = model.hands().get(hand.index())?;
             Some(Prop {
                 hand,

@@ -51,8 +51,8 @@ pub fn grant(world: &mut World, mut deaths: Local<MessageCursor<Died>>) {
             let drops: Vec<(ItemId, u32)> = loot
                 .items
                 .iter()
-                .filter(|drop| drop.chance.is_none_or(|chance| chance.rolled(&mut rng)))
-                .map(|drop| (drop.item, drop.amount))
+                .filter_map(|drop| drop.rolled(&mut rng))
+                .map(|stack| (stack.item, stack.count))
                 .collect();
             let presence = world.get::<Presence>(died.entity).cloned();
             scatter_drop(world, died.entity, &drops, reserved_by, presence);

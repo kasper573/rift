@@ -41,12 +41,23 @@ pub(crate) fn pick_then_add(
     let Some(table) = named_table(kind) else {
         return;
     };
+    let options = match (kind, editor.project.as_ref()) {
+        (AreaModuleKind::Spawner, Some(project)) => super::spawner::SPAWNED_TABLES
+            .iter()
+            .flat_map(|table| project.files.paths_of(table))
+            .collect(),
+        _ => Vec::new(),
+    };
+    let named = match kind {
+        AreaModuleKind::Spawner => "an npc or a resource".to_owned(),
+        _ => format!("a {table}"),
+    };
     editor.dialogs.push(ModalDialog::PickRow(PickRowDialog {
-        title: format!("Pick a {table} for the new {}", schema::title(kind.tag())),
+        title: format!("Pick {named} for the new {}", schema::title(kind.tag())),
         table: table.to_owned(),
         search: String::new(),
         picked: None,
-        options: Vec::new(),
+        options,
         then: PickRowThen::AddModule {
             area: bundle.to_owned(),
             kind,

@@ -180,6 +180,9 @@ fn spawned_names(spawner: &Spawner, paths: &impl IdPaths) -> String {
         .iter()
         .map(|share| match share.what {
             Spawns::Npc { npc } => name_of(paths.path_of(npc).unwrap_or_default()).to_owned(),
+            Spawns::Resource { resource } => {
+                name_of(paths.path_of(resource).unwrap_or_default()).to_owned()
+            }
         })
         .collect();
     names.join(" · ")

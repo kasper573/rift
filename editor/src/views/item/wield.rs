@@ -61,7 +61,11 @@ pub fn set_wield(editor: &mut Editor, key: &str, stance: &str, grip: Grip) -> bo
 }
 
 pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, row: &ItemDef) {
-    let Some(Wear::Held { stance, grip }) = row.wear().cloned() else {
+    let Some((stance, grip)) = row
+        .wear()
+        .and_then(Wear::grasp)
+        .map(|(stance, grip)| (stance, *grip))
+    else {
         return;
     };
     let Some(reader) = editor.reader() else {
@@ -330,7 +334,7 @@ pub fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str) {
     let Some(item) = content.by_path::<ItemDef>(key) else {
         return;
     };
-    let Some(Wear::Held { stance, .. }) = item.get(&content).wear() else {
+    let Some((stance, _)) = item.get(&content).wear().and_then(Wear::grasp) else {
         return;
     };
     let def = stance.get(&content);
@@ -352,7 +356,7 @@ pub fn inspect(editor: &mut Editor, ui: &mut Ui, key: &str) {
             } else {
                 format!("wears it unseen ({hands} hands)")
             };
-            let set = if built.def.set(*stance).is_some() {
+            let set = if built.def.set(stance).is_some() {
                 format!("a set for {}", def.shown_name())
             } else {
                 "no set · base".to_owned()
@@ -398,7 +402,19 @@ fn set_wield_as(
         let ItemKind::Equipment { wear, .. } = &mut item.kind else {
             return Ok(());
         };
-        *wear = Wear::Held { stance, grip };
+        if let Wear::Held {
+            stance: held,
+            grip: kept,
+        }
+        | Wear::Tool {
+            stance: held,
+            grip: kept,
+            ..
+        } = wear
+        {
+            *held = stance;
+            *kept = grip;
+        }
         Ok(())
     })
 }

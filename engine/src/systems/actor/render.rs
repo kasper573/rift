@@ -953,7 +953,7 @@ pub fn hang(world: &mut World) {
         }
         for (hand, item, joint) in new {
             let def = item.get(&content);
-            let Some(Wear::Held { grip, .. }) = def.wear() else {
+            let Some((_, grip)) = def.wear().and_then(Wear::grasp) else {
                 continue;
             };
             let look = def.look.get(&content);

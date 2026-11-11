@@ -291,7 +291,7 @@ fn skeleton_of(content: &Content, (table, key): (&str, &str), path: &str) -> Opt
                 .ok()?;
             match content.by_path::<ItemDef>(key)?.get(content).wear()? {
                 Wear::Worn { looks, .. } => Some(looks.get(index)?.skeleton),
-                Wear::Held { .. } => None,
+                Wear::Held { .. } | Wear::Tool { .. } => None,
             }
         }
         _ => None,

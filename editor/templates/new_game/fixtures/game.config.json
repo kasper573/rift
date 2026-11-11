@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "215e529d",
+  "content_version": "f90a40ae",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -43,7 +43,11 @@
     "quest_log_full": "Your quest log is full.",
     "needs_more": "Needs {count} more {item}",
     "needs_a_slot": "Needs 1 free slot",
-    "needs_slots": "Needs {slots} free slots"
+    "needs_slots": "Needs {slots} free slots",
+    "needs_tool": "Needs a {tool} in your tool slot",
+    "no_room": "No room",
+    "bag_room": "Your bag has no room for what this can drop",
+    "ran_out": "It ran out"
   },
   "typing": {
     "pace": 45.0,

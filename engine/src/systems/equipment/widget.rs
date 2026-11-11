@@ -72,8 +72,8 @@ impl HudWindow for EquipmentWindow {
     }
 }
 
-/// A place on the window: a hand of the body, two hands a two-hander spans, or a slot of its
-/// skeleton.
+/// A place on the window: a hand of the body, two hands a two-hander spans, a slot of its
+/// skeleton, or the tool slot.
 struct Place {
     slot: EquipmentPlace,
     names: Vec<String>,
@@ -95,6 +95,7 @@ impl Place {
     fn where_held(&self) -> String {
         match (&self.slot, self.names.len()) {
             (EquipmentPlace::Slot(slot), _) => format!("Worn on the {}", spoken(slot)),
+            (EquipmentPlace::Tool, _) => "Kept in the tool slot".to_owned(),
             (_, 2) => "Held in both hands".to_owned(),
             _ => format!(
                 "Held in the {}",
@@ -108,7 +109,7 @@ impl Place {
 }
 
 /// Every hand of the player's body in its skeleton's order, a two-hander spanning the hands it
-/// takes, and every slot of its skeleton.
+/// takes, every slot of its skeleton, and the tool slot.
 fn places(world: &World) -> Vec<Place> {
     let Some(me) = session::me(world) else {
         return Vec::new();
@@ -154,6 +155,12 @@ fn places(world: &World) -> Vec<Place> {
             unseen,
         });
     }
+    places.push(Place {
+        item: super::in_slot(world, me, &EquipmentPlace::Tool),
+        slot: EquipmentPlace::Tool,
+        names: vec!["Tool".to_owned()],
+        unseen: false,
+    });
     places
 }
 
@@ -172,6 +179,7 @@ fn empty_slot(ui: &mut Ui, world: &mut World, place: &Place) {
         EquipmentPlace::Slot(slot) => {
             format!("Empty · what is worn on the {} goes here", spoken(slot))
         }
+        EquipmentPlace::Tool => "Empty · a tool goes here, one at a time".to_owned(),
         EquipmentPlace::Hand(hand) => match landing(&content, *hand) {
             Some(lands) => {
                 format!(
@@ -230,6 +238,10 @@ fn worn_slot(ui: &mut Ui, world: &mut World, place: &Place, item: ItemId) {
     );
     let mut lines = vec![card::overview(def)];
     match stance::of_item(&content, item) {
+        Some(_) if place.slot == EquipmentPlace::Tool => lines.push(format!(
+            "{} · in hand only while it works",
+            place.where_held()
+        )),
         Some(stance) if place.unseen => lines.push(format!(
             "Worn in the hand · this body cannot show it · {} stance",
             stance.get(&content).name

@@ -68,6 +68,7 @@ pub enum ReachAct {
     },
     Pickup,
     Interact,
+    Gather,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -112,7 +113,7 @@ impl ReachIntent {
     pub fn cast(&self) -> Option<SkillId> {
         match self.act {
             ReachAct::Cast { skill, .. } => Some(skill),
-            ReachAct::Pickup | ReachAct::Interact => None,
+            ReachAct::Pickup | ReachAct::Interact | ReachAct::Gather => None,
         }
     }
 }
