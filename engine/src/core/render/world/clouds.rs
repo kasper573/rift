@@ -24,6 +24,7 @@ use crate::core::units::{Meters, MetersPerSec};
 /// How much ground one tile of the field covers, the field repeating past it.
 pub const CLOUD_TILE: Meters = Meters(640.0);
 /// How much ground the field's shadows reach over round where they are laid, repeating past it.
+/// Toward their rim they even out, so each repeat joins the next.
 pub const SHADOW_SPAN: Meters = Meters(512.0);
 /// The lowest a light stands over the horizon, in degrees, for the field to cast its shadows.
 pub const LOWEST_LIGHT: f32 = 2.0;
@@ -239,14 +240,19 @@ impl CloudReading {
         self.look.height
     }
 
-    /// The shadows' texels, laid along the rays of `light` with the field carried `drift`.
+    /// The shadows' texels, laid along the rays of `light` with the field carried `drift`. Toward
+    /// the rim they even out to the light all of them let through together, over the ground that
+    /// passes from one repeat to the next when they are laid anew and as much again before it: so
+    /// the repeats join, and no ground shows the shadows changing as they are laid.
     fn shadows(&self, light: Transform, drift: Vec2) -> Vec<u8> {
         let toward = light.back().as_vec3();
-        (0..SHADOWS * SHADOWS)
+        let uv_of = |texel: u32| {
+            (Vec2::new((texel % SHADOWS) as f32, (texel / SHADOWS) as f32) + 0.5) / SHADOWS as f32
+        };
+        let lit: Vec<f32> = (0..SHADOWS * SHADOWS)
             .into_par_iter()
-            .flat_map_iter(|texel| {
-                let uv = (Vec2::new((texel % SHADOWS) as f32, (texel / SHADOWS) as f32) + 0.5)
-                    / SHADOWS as f32;
+            .map(|texel| {
+                let uv = uv_of(texel);
                 let near =
                     light.transform_point(Vec3::new(1.0 - 2.0 * uv.x, 2.0 * uv.y - 1.0, 0.0));
                 let over = near + toward * (self.look.height.0 - near.y) / toward.y;
@@ -257,7 +263,17 @@ impl CloudReading {
                 } else {
                     0.0
                 };
-                let lit = 1.0 - shade(held, &self.look) * cloudy;
+                1.0 - shade(held, &self.look) * cloudy
+            })
+            .collect();
+        let even = lit.iter().sum::<f32>() / lit.len() as f32;
+        let relaid = RELAID_AFTER.0 / (SHADOW_SPAN.0 / 2.0);
+        (0..SHADOWS * SHADOWS)
+            .zip(lit)
+            .flat_map(|(texel, lit)| {
+                let out = (uv_of(texel) * 2.0 - 1.0).abs().max_element();
+                let evened = smoothstep(1.0 - 2.0 * relaid, 1.0 - relaid, out);
+                let lit = lit + (even - lit) * evened;
                 [lit, lit, lit, 1.0].map(|value| (value * 255.0) as u8)
             })
             .collect()

@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use engine::core::jobs::Handoff;
-use engine::core::render::world::clouds::{self, CLOUD_TILE, CloudDrift, CloudSheet};
+use engine::core::render::world::clouds::{self, CLOUD_TILE, CloudDrift, CloudSheet, SHADOW_SPAN};
 use engine::core::render::world::lights::sun_transform;
 use engine::core::units::Degrees;
 
@@ -16,17 +16,25 @@ fn the_ground_lies_in_the_shadow_of_the_cloud_up_the_suns_rays_as_the_clouds_dri
     let mut sheet = CloudSheet::new(&mut world, testkit::look().clouds);
     let mut images = world.resource_mut::<Assets<Image>>();
     sheet.cover(CLOUDS, WATER);
-    let over = Vec2::new(64.0, 64.0);
+    let near = Vec2::new(64.0, 64.0);
+    let far = Vec2::new(3000.0, 900.0);
     let mut drifting = CloudDrift::default();
     let suns = [
-        ("at noon", 52.0, 215.0, 0.0),
-        ("a moment of drift later", 52.0, 215.0, 1.5),
-        ("a little longer, laid shadows carried", 52.0, 215.0, 6.0),
-        ("long enough to be laid anew", 52.0, 215.0, 30.0),
-        ("the sun turned a hair", 52.05, 215.1, 30.5),
-        ("the sun low in the evening", 12.0, 290.0, 31.0),
+        ("at noon", near, 52.0, 215.0, 0.0),
+        ("a moment of drift later", near, 52.0, 215.0, 1.5),
+        (
+            "a little longer, laid shadows carried",
+            near,
+            52.0,
+            215.0,
+            6.0,
+        ),
+        ("long enough to be laid anew", near, 52.0, 215.0, 30.0),
+        ("the sun turned a hair", near, 52.05, 215.1, 30.5),
+        ("the sun low in the evening", near, 12.0, 290.0, 31.0),
+        ("seen from far across the land", far, 12.0, 290.0, 31.5),
     ];
-    for (when, elevation, azimuth, seconds) in suns {
+    for (when, over, elevation, azimuth, seconds) in suns {
         let light = sun_transform(Degrees(elevation), Degrees(azimuth), over);
         let drift = drifting.blown(WIND, seconds, sheet.look());
         sheet.lay(light, drift, &mut images, Handoff::NextFrame);
@@ -35,21 +43,23 @@ fn the_ground_lies_in_the_shadow_of_the_cloud_up_the_suns_rays_as_the_clouds_dri
         let shadows = images.get(&sheet.over_sun().image).expect("the shadows");
         let toward = cast.back().as_vec3();
         let from_light = cast.compute_affine().inverse();
+        let lit_at = |ground: Vec3| {
+            let local = from_light.transform_point3(ground);
+            texel(
+                shadows,
+                Vec2::new((1.0 - local.x) / 2.0, (local.y + 1.0) / 2.0),
+            )
+        };
         let mut off = 0.0;
         let mut points = 0.0;
-        for x in (0..128).step_by(8) {
-            for z in (0..128).step_by(8) {
-                let ground = Vec3::new(x as f32, 0.0, z as f32);
+        for x in (-64..64).step_by(8) {
+            for z in (-64..64).step_by(8) {
+                let ground = Vec3::new(over.x + x as f32, 0.0, over.y + z as f32);
                 let up = ground + toward * sheet.look().height.0 / toward.y;
                 let cloud = sheet
                     .reading()
                     .cloudiness((Vec2::new(up.x, up.z) - drift) / CLOUD_TILE.0);
-                let local = from_light.transform_point3(ground);
-                let lit = texel(
-                    shadows,
-                    Vec2::new((1.0 - local.x) / 2.0, (local.y + 1.0) / 2.0),
-                );
-                off += (lit - (1.0 - clouds::shade(WATER, sheet.look()) * cloud)).abs();
+                off += (lit_at(ground) - (1.0 - clouds::shade(WATER, sheet.look()) * cloud)).abs();
                 points += 1.0;
             }
         }
@@ -58,6 +68,14 @@ fn the_ground_lies_in_the_shadow_of_the_cloud_up_the_suns_rays_as_the_clouds_dri
             "{when} the shadows fall under the clouds: off by {} on average",
             off / points
         );
+        let rim = SHADOW_SPAN.0 / 2.0 - 1.0;
+        let across = cast.right().as_vec3() * rim;
+        let joined = (-4..=4).all(|along| {
+            let along = cast.up().as_vec3() * along as f32 * 50.0;
+            let middle = Vec3::new(over.x, 0.0, over.y);
+            (lit_at(middle + across + along) - lit_at(middle - across + along)).abs() < 0.01
+        });
+        assert!(joined, "{when} the shadows join where they repeat");
     }
 }
 

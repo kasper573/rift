@@ -1160,12 +1160,13 @@ pub fn light(
             now,
             &look.clouds,
         );
-        let center = area.size.bounds().center();
-        let placed = lights::sun_transform(
-            shining.elevation,
-            shining.azimuth,
-            Vec2::new(center.x, center.y),
-        );
+        // The clouds' shadows reach only so far and repeat past it, so they are laid round the
+        // eye, wherever in the area it is.
+        let middle = area.size.bounds().center();
+        let eye = world
+            .get::<GlobalTransform>(camera)
+            .map_or(Vec2::new(middle.x, middle.y), |eye| eye.translation().xz());
+        let placed = lights::sun_transform(shining.elevation, shining.azimuth, eye);
         let handoff = Handoff::of(world);
         let cast = world.resource_scope(|world, mut sheet: Mut<CloudSheet>| {
             sheet.lay(
