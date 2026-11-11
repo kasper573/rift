@@ -192,6 +192,13 @@ pub fn row_added(ui: &mut Ui, cx: &mut FormCx, table: &str, path: &str) -> Optio
     row_added_among(ui, cx, &[table], path).map(|(_, key)| key)
 }
 
+/// The same as a plus alone, for where a list has no room for a field's words.
+pub fn row_added_by_plus(ui: &mut Ui, cx: &mut FormCx, table: &str, path: &str) -> Option<String> {
+    let mut pick = PickedKey::new(table, "");
+    let source = RowSource::table(table, path).adding();
+    (opened(ui, cx, &source, &mut pick, path, Opener::Plus) && !pick.is_empty()).then_some(pick.key)
+}
+
 /// The same over several tables at once: the table the file picked is of, and the file.
 pub(crate) fn row_added_among(
     ui: &mut Ui,
@@ -246,6 +253,26 @@ pub fn field(
     pick: &mut PickedKey,
     path: &str,
 ) -> bool {
+    opened(ui, cx, source, pick, path, Opener::Chip)
+}
+
+/// What a picker's popover is opened by.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Opener {
+    /// A chip showing what is held.
+    Chip,
+    /// A plus saying what it adds on hover.
+    Plus,
+}
+
+fn opened(
+    ui: &mut Ui,
+    cx: &mut FormCx,
+    source: &dyn PickSource,
+    pick: &mut PickedKey,
+    path: &str,
+    opener: Opener,
+) -> bool {
     let id = ui.id().with(path).with("picker");
     let mut changed = false;
     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
@@ -257,7 +284,13 @@ pub fn field(
         {
             cx.actions.push(action);
         }
-        let response = chip(ui, cx, source, pick);
+        let response = match opener {
+            Opener::Chip => chip(ui, cx, source, pick),
+            Opener::Plus => {
+                let says = source.invites();
+                glyph::button(ui, Mark::Plus, 22.0, theme::MUTED, &says).on_hover_text(says)
+            }
+        };
         if let Some(dragged) = response.dnd_hover_payload::<Dragged>() {
             let verdict = source.accepts(cx, &dragged);
             let (ink, text) = match &verdict {

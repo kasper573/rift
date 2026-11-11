@@ -24,8 +24,7 @@ const HANDLE: f32 = 30.0;
 const MAKES_SHARE: f32 = 0.4;
 const COLUMN_GAP: f32 = 16.0;
 const HEADING: f32 = 18.0;
-const ADD: f32 = 150.0;
-const ADD_MADE: f32 = 110.0;
+const PLUS: f32 = 22.0;
 const FACE: f32 = 18.0;
 /// The room an item's amount and its cross take after its field in the inspector.
 const ITEM_TRAIL: f32 = 96.0;
@@ -415,19 +414,28 @@ fn selected(editor: &Editor, key: &str) -> Option<Picked> {
         .and_then(|part| Picked::of_part(part))
 }
 
-/// A field picking an item file, `wide` across: the file picked, when one just was. One holding
-/// nothing adds what is picked to a list.
+/// What a field picking an item file is for.
+#[derive(Clone, Copy)]
+enum ItemField<'a> {
+    /// The item at this path, to be changed for another.
+    Held(&'a str),
+    /// One more item of a list, asked for in words.
+    Added,
+    /// One more item of a list, asked for by a plus alone.
+    AddedByPlus,
+}
+
+/// A field picking an item file, `wide` across: the file picked, when one just was.
 fn pick_item(
     editor: &mut Editor,
     ui: &mut Ui,
     key: &str,
-    held: &str,
+    field: ItemField,
     pointer: &str,
     wide: f32,
 ) -> Option<String> {
     let mut actions = Vec::new();
-    let mut picked = held.to_owned();
-    let mut changed = false;
+    let mut picked = None;
     {
         let Editor {
             project,
@@ -443,21 +451,23 @@ fn pick_item(
             Layout::left_to_right(Align::Center),
             |ui| {
                 ui.set_width(wide);
-                if held.is_empty() {
-                    if let Some(added) = picker::row_added(ui, &mut cx, ItemDef::TABLE, pointer) {
-                        picked = added;
-                        changed = true;
+                picked = match field {
+                    ItemField::Held(held) => {
+                        let mut item = held.to_owned();
+                        picker::row(ui, &mut cx, ItemDef::TABLE, &mut item, pointer).then_some(item)
                     }
-                } else {
-                    changed = picker::row(ui, &mut cx, ItemDef::TABLE, &mut picked, pointer);
-                }
+                    ItemField::Added => picker::row_added(ui, &mut cx, ItemDef::TABLE, pointer),
+                    ItemField::AddedByPlus => {
+                        picker::row_added_by_plus(ui, &mut cx, ItemDef::TABLE, pointer)
+                    }
+                };
             },
         );
     }
     for action in actions {
         row_form::act(editor, action, RecipeBookDef::TABLE, key);
     }
-    (changed && !picked.is_empty()).then_some(picked)
+    picked.filter(|item| !item.is_empty())
 }
 
 /// The picture of the item at `path`, or the icon items have.
@@ -481,7 +491,7 @@ fn item_face(editor: &mut Editor, ui: &mut Ui, path: &str) {
 fn bar(editor: &mut Editor, ui: &mut Ui, key: &str, book: &RecipeBookDef, rows: &[ShownRecipe]) {
     ui.horizontal_wrapped(|ui| {
         ui.label(theme::muted("new recipe makes"));
-        if let Some(makes) = pick_item(editor, ui, key, "", "/recipes/new", 190.0) {
+        if let Some(makes) = pick_item(editor, ui, key, ItemField::Added, "/recipes/new", 190.0) {
             editor.views.recipe_book.view_mut(key).draft = Some(makes);
             select(editor, key, None);
         }
@@ -634,15 +644,15 @@ fn recipe_row(
             select(editor, key, Some(Picked::Recipe(index)));
         }
     });
-    for (side, across, add) in [
-        (RecipeSide::Makes, columns.makes, ADD_MADE),
-        (RecipeSide::From, columns.from, ADD),
+    for (side, across) in [
+        (RecipeSide::Makes, columns.makes),
+        (RecipeSide::From, columns.from),
     ] {
         bottom = bottom.max(cell(ui, side.field(), across, (top, ROW), |ui| {
             let stacks = row.side(side);
             stack_chips(editor, ui, key, stacks, chosen);
             let pointer = format!("/recipes/{index}/{}/{}", side.field(), stacks.len());
-            if let Some(item) = pick_item(editor, ui, key, "", &pointer, add) {
+            if let Some(item) = pick_item(editor, ui, key, ItemField::AddedByPlus, &pointer, PLUS) {
                 add_stack(editor, key, index, side, &item);
             }
         }));
@@ -705,7 +715,15 @@ fn draft_row(editor: &mut Editor, ui: &mut Ui, key: &str, len: usize) {
         ui.add(egui::Label::new(face::bold(format!("{name} ×1"))).truncate());
     });
     let from = cell(ui, "draft from", columns.from, (top, ROW), |ui| {
-        if let Some(from) = pick_item(editor, ui, key, "", "/recipes/draft/from", ADD)
+        let first = pick_item(
+            editor,
+            ui,
+            key,
+            ItemField::AddedByPlus,
+            "/recipes/draft/from",
+            PLUS,
+        );
+        if let Some(from) = first
             && add_recipe(editor, key, &makes, &from)
         {
             editor.views.recipe_book.view_mut(key).draft = None;
@@ -853,7 +871,8 @@ fn inspect_side(
             ui.horizontal(|ui| {
                 let pointer = format!("/recipes/{index}/{field}/{nth}/item");
                 let wide = (ui.available_width() - ITEM_TRAIL).max(100.0);
-                if let Some(picked) = pick_item(editor, ui, key, &item.path, &pointer, wide) {
+                let held = ItemField::Held(&item.path);
+                if let Some(picked) = pick_item(editor, ui, key, held, &pointer, wide) {
                     set_item(editor, key, index, (side, nth), &picked);
                 }
                 let mut count = *amount;
@@ -872,7 +891,7 @@ fn inspect_side(
     }
     let wide = (ui.available_width() - ITEM_TRAIL).max(100.0);
     let pointer = format!("/recipes/{index}/{field}/{}", stacks.len());
-    if let Some(item) = pick_item(editor, ui, key, "", &pointer, wide) {
+    if let Some(item) = pick_item(editor, ui, key, ItemField::Added, &pointer, wide) {
         add_stack(editor, key, index, side, &item);
     }
 }
