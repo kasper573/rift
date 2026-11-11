@@ -290,25 +290,29 @@ fn show(ui: &mut Ui, world: &mut World, _width: f32, _most: f32) {
     tray::fit(ui, world, drawn.height());
 }
 
+/// What the items placed make, a slot high whatever it holds so the panel stands as tall empty as
+/// filled: it grows only once more results than a line holds wrap below.
 fn result(ui: &mut Ui, world: &mut World) {
     let content = world.resource::<Content>().clone();
     let found = results(world);
-    if found.is_empty() {
-        slot(ui, world, SlotLook::EMPTY, Sense::hover()).widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Result: nothing")
-        });
-        let note = if tray::offer(world).is_empty() {
-            "nothing yet".to_owned()
-        } else {
-            content.built::<GameSettings>().words.no_recipe.clone()
-        };
-        sheet::label(ui, TextRole::Small, &note, ink::INK3);
-        return;
-    }
     let several = found.len() > 1;
     let chosen = world.resource::<Crafting>().chosen;
-    ui.horizontal_wrapped(|ui| {
+    let line = Layout::left_to_right(Align::Center).with_main_wrap(true);
+    let room = Vec2::new(ui.available_width(), SLOT);
+    ui.allocate_ui_with_layout(room, line, |ui| {
         ui.spacing_mut().item_spacing = Vec2::new(4.0, 4.0);
+        if found.is_empty() {
+            slot(ui, world, SlotLook::EMPTY, Sense::hover()).widget_info(|| {
+                egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "Result: nothing")
+            });
+            let note = if tray::offer(world).is_empty() {
+                "nothing yet".to_owned()
+            } else {
+                content.built::<GameSettings>().words.no_recipe.clone()
+            };
+            beside(ui, None, Some(&note));
+            return;
+        }
         for (index, result) in found.iter().enumerate() {
             if index > 0 {
                 sheet::label(ui, TextRole::Small, "or", ink::INK3);
@@ -320,19 +324,54 @@ fn result(ui: &mut Ui, world: &mut World) {
                     InterfaceSound::UiMove.play(world);
                 }
             }
-            if let ([only], false) = (result.makes.as_slice(), several) {
-                ui.vertical(|ui| {
-                    ui.spacing_mut().item_spacing.y = 1.0;
-                    ui.add(egui::Label::new(face::body(&only.item.get(&content).name)).wrap());
-                    if let Some(note) = crafts_note(result) {
-                        sheet::label(ui, TextRole::Small, &note, ink::INK3);
-                    }
-                });
-            } else if let (Some(note), false) = (crafts_note(result), several) {
-                sheet::label(ui, TextRole::Small, &note, ink::INK3);
-            }
+        }
+        if let [only] = found.as_slice() {
+            let name = match only.makes.as_slice() {
+                [made] => Some(made.item.get(&content).name.as_str()),
+                _ => None,
+            };
+            beside(ui, name, crafts_note(only).as_deref());
         }
     });
+}
+
+/// The words beside a result's slots, painted over the rest of their line: its name over a
+/// smaller note, each cut short where the line ends, taking a slot's height however many there
+/// are.
+fn beside(ui: &mut Ui, name: Option<&str>, note: Option<&str>) {
+    const BETWEEN: f32 = 1.0;
+    let across = ui.available_size_before_wrap().x;
+    if across <= 0.0 || (name.is_none() && note.is_none()) {
+        return;
+    }
+    let (rect, response) = ui.allocate_exact_size(Vec2::new(across, SLOT), Sense::hover());
+    let lines: Vec<_> = [
+        name.map(|name| (TextRole::Body, name, ink::INK)),
+        note.map(|note| (TextRole::Small, note, ink::INK3)),
+    ]
+    .into_iter()
+    .flatten()
+    .map(|(role, words, color)| {
+        let mut job = role.job(words, color);
+        job.wrap = egui::text::TextWrapping::truncate_at_width(across);
+        (ui.painter().layout_job(job), color)
+    })
+    .collect();
+    let tall: f32 = lines.iter().map(|(line, _)| line.size().y).sum::<f32>()
+        + BETWEEN * (lines.len() as f32 - 1.0);
+    let mut top = rect.center().y - tall / 2.0;
+    for (line, color) in lines {
+        let high = line.size().y;
+        ui.painter()
+            .galley(egui::pos2(rect.left(), top), line, color);
+        top += high + BETWEEN;
+    }
+    let said = [name, note]
+        .into_iter()
+        .flatten()
+        .collect::<Vec<_>>()
+        .join(", ");
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, &said));
 }
 
 /// One stack of what `result` makes, as a slot; whether it was clicked to choose its result.
