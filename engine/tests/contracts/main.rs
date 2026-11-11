@@ -26,6 +26,7 @@ mod notification;
 mod poses;
 mod presence;
 mod probe;
+mod prompt;
 mod prop_cull;
 mod quest;
 mod reach;

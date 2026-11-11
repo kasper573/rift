@@ -667,6 +667,9 @@ pub(crate) fn describe_reach(content: &Content, reach: &EffectReach) -> String {
         EffectReach::Says => "says".to_owned(),
         EffectReach::Plays(sfx) => format!("plays {}", shown_path(sfx.path(content))),
         EffectReach::Speaks(npc) => format!("speaks as {}", shown_path(npc.path(content))),
+        EffectReach::Prompts => "asks for items".to_owned(),
+        EffectReach::ReadsOffer => "reads what was offered".to_owned(),
+        EffectReach::TakesOffer => "takes what was offered".to_owned(),
     }
 }
 

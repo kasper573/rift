@@ -250,6 +250,7 @@ impl Game {
                     "no_room": "No room",
                     "bag_room": "No room in your bag",
                     "ran_out": "It ran out",
+                    "confirm": "Confirm",
                 },
                 "typing": typing(),
                 "lettering": lettering(),

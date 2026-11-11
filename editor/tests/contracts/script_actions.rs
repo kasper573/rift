@@ -599,7 +599,7 @@ fn a_query_picked_as_an_if_test_starts_filled_in_with_values_of_the_types_it_tak
         for events in click(chip) {
             inspect(&mut editor, events);
         }
-        let mut entry = inspect(&mut editor, Vec::new()).rect(query);
+        let mut entry = inspect(&mut editor, Vec::new()).seen(query);
         for _ in 0..20 {
             if entry.is_some() {
                 break;
@@ -615,7 +615,7 @@ fn a_query_picked_as_an_if_test_starts_filled_in_with_values_of_the_types_it_tak
             ];
             inspect(&mut editor, wheel);
             for _ in 0..20 {
-                entry = inspect(&mut editor, Vec::new()).rect(query);
+                entry = inspect(&mut editor, Vec::new()).seen(query);
             }
         }
         for events in click(entry.expect("the query is offered").center()) {

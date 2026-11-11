@@ -164,6 +164,10 @@ fn describe_query(content: &impl ContentNames, query: &RiftQuery) -> String {
         RiftQuery::StatusPower => "status power".to_owned(),
         RiftQuery::Holding { item, .. } => content.name_of(*item),
         RiftQuery::FreeSlots { .. } => "free slots".to_owned(),
+        RiftQuery::Offered { item, .. } => match item {
+            Some(item) => format!("{} offered", content.name_of(*item)),
+            None => "items offered".to_owned(),
+        },
         RiftQuery::Equipped { item, .. } => format!("{} worn", content.name_of(*item)),
         RiftQuery::Memory { memory, .. } => content.name_of(*memory),
         RiftQuery::SetWithin { memory, .. } => format!("{} lately", content.name_of(*memory)),

@@ -23,6 +23,7 @@ use crate::systems::memory::{Forget, Remember};
 use crate::systems::notification::{self, Notify};
 use crate::systems::npc::body::{Attack, FaceToward, Stop, WalkTo, Wander};
 use crate::systems::npc::summon::{Despawn, SetAttitude, SpawnNpcs};
+use crate::systems::prompt::{ItemPrompt, TakeOffer};
 use crate::systems::quest::effects::{
     AcceptQuest, CompleteTask, Decide, FailQuest, OfferQuest, TurnIn,
 };
@@ -102,6 +103,8 @@ effects! {
     CompleteTask(CompleteTask),
     Decide(Decide),
     OpenShop(OpenShop),
+    ItemPrompt(ItemPrompt),
+    TakeOffer(TakeOffer),
     Notify(Notify),
     Say(Say),
     Wander(Wander),

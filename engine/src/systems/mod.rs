@@ -23,6 +23,7 @@ pub mod notification;
 pub mod npc;
 pub mod player;
 pub mod probe;
+pub mod prompt;
 pub mod quest;
 pub mod reach;
 pub mod region;
@@ -105,6 +106,7 @@ pub fn protocol(app: &mut App) {
     interact::register(app);
     npc::register(app);
     shop::register(app);
+    prompt::register(app);
     resource::register(app);
     quest::register(app);
     player::register(app);
@@ -142,6 +144,7 @@ pub fn area_state(world: &mut World, content: &Content) {
     world.init_resource::<combat::RegenAt>();
     world.init_resource::<skill::reset::PendingResets>();
     world.init_resource::<dialogue::StepCounter>();
+    world.init_resource::<prompt::PromptSteps>();
     world.init_resource::<crate::core::chunk::ChunkIndex>();
     world.init_resource::<npc::Packs>();
     world.init_resource::<spawner::SpawnerEntries>();
@@ -274,6 +277,8 @@ pub struct GameWords {
     pub bag_room: String,
     /// What a player is told as the resource they work or set out for has nothing left.
     pub ran_out: String,
+    /// The button submitting what a player placed in a prompt.
+    pub confirm: String,
 }
 
 /// How long notices take to read: each stays a glance and a little longer for every word, and
@@ -399,7 +404,7 @@ pub fn server_app(
                     (item::pickup_request, resource::gather_request).chain(),
                     interact::interact_request,
                     dialogue::requests,
-                    shop::requests,
+                    (shop::requests, prompt::requests).chain(),
                     quest::requests,
                     equipment::hold,
                     equipment::unequip,
@@ -416,6 +421,7 @@ pub fn server_app(
                     interact::interactions,
                     (dialogue::hold, dialogue::refresh.run_if(replication_tick)).chain(),
                     (shop::hold, shop::refresh.run_if(replication_tick)).chain(),
+                    prompt::hold,
                     item::expire_drops,
                     player::join,
                     player::respawn,
@@ -559,6 +565,7 @@ pub fn client_app(
             notification::NotificationPlugin,
             history::widget::HistoryPlugin,
             shop::counter::ShopCounterPlugin,
+            prompt::tray::PromptTrayPlugin,
             item::card::ItemCardPlugin,
             skill::client::SkillClientPlugin,
             quest::card::QuestCardPlugin,
@@ -793,6 +800,7 @@ fn check_settings(loading: &mut Loading) {
         ("no_room", &settings.words.no_room),
         ("bag_room", &settings.words.bag_room),
         ("ran_out", &settings.words.ran_out),
+        ("confirm", &settings.words.confirm),
     ] {
         check.text(format!("/words/{field}"), said, 1, 80);
     }

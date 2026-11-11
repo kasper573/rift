@@ -36,6 +36,8 @@ pub enum InputAction {
     UseItem,
     DropItem,
     SellItem,
+    PlaceItem,
+    PlaceStack,
     CarryItem,
     ToggleInventory,
     ToggleEquipment,
@@ -146,6 +148,8 @@ impl InputAction {
             | InputAction::UseItem
             | InputAction::DropItem
             | InputAction::SellItem
+            | InputAction::PlaceItem
+            | InputAction::PlaceStack
             | InputAction::PinToHotbar
             | InputAction::RaiseRank
             | InputAction::LowerRank

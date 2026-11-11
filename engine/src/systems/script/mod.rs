@@ -24,8 +24,8 @@ use crate::core::content::{
 use crate::core::ground::TileAt;
 use crate::core::math::Pos;
 use crate::core::script::{
-    self, BoxEnding, DialogueView, Expr, Instances, LineDef, RunnerKindDef, ScriptError, Scripts,
-    TextDef, Vocabulary, compile::compile_row,
+    self, BoxEnding, DialogueView, Expr, Instances, LineDef, RunnerKindDef, ScriptError,
+    ScriptFault, Scripts, TextDef, Vocabulary, compile::compile_row,
 };
 use crate::core::units::Meters;
 use crate::systems::WorldArea;
@@ -284,6 +284,9 @@ pub enum EffectReach {
     Says,
     Plays(SfxId),
     Speaks(NpcId),
+    Prompts,
+    ReadsOffer,
+    TakesOffer,
 }
 
 impl Vocabulary for RiftScripting {
@@ -329,6 +332,16 @@ impl Vocabulary for RiftScripting {
 
     fn log_dropped_flow(_world: &World, owner: &Owner, why: &str) {
         bevy::log::warn!("{owner:?}: flow dropped: {why}");
+    }
+
+    fn unmet(reach: &EffectReach, all: &[EffectReach]) -> Option<ScriptFault> {
+        let uses_offer = matches!(reach, EffectReach::ReadsOffer | EffectReach::TakesOffer);
+        (uses_offer && !all.contains(&EffectReach::Prompts)).then(|| {
+            ScriptFault::new(
+                "offered without a prompt",
+                "a script that opens a prompt before it reads or takes what was offered to it",
+            )
+        })
     }
 }
 

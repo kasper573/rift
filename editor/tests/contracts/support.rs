@@ -243,16 +243,18 @@ impl Frames {
         let mut output = self.ctx.run_ui(input, show);
         output.textures_delta.clear();
         let mut texts = Vec::new();
+        let mut clips = Vec::new();
         for clipped in &output.shapes {
             texts_of(&clipped.shape, &mut texts);
+            clips.resize(texts.len(), clipped.clip_rect);
         }
-        Drawn(texts)
+        Drawn(texts, clips)
     }
 }
 
-/// The texts a frame drew, each where it was drawn.
+/// The texts a frame drew, each where it was drawn, and what each was clipped to.
 #[derive(Debug, Default)]
-pub struct Drawn(pub Vec<(String, egui::Rect)>);
+pub struct Drawn(pub Vec<(String, egui::Rect)>, Vec<egui::Rect>);
 
 impl Drawn {
     /// Where `text` is drawn, the first place when it is drawn more than once.
@@ -261,6 +263,16 @@ impl Drawn {
             .iter()
             .find(|(drawn, _)| drawn == text)
             .map(|(_, rect)| *rect)
+    }
+
+    /// Where `text` is drawn in view: the first place its middle is not clipped away, as a row
+    /// scrolled out of its list is.
+    pub fn seen(&self, text: &str) -> Option<egui::Rect> {
+        self.0
+            .iter()
+            .zip(&self.1)
+            .find(|((drawn, rect), clip)| drawn == text && clip.contains(rect.center()))
+            .map(|((_, rect), _)| *rect)
     }
 
     /// The middle of the last place `text` is drawn.

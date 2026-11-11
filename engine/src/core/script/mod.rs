@@ -138,6 +138,10 @@ pub trait Vocabulary:
     );
     fn close_dialogue(world: &mut World, flow: FlowKey<Self>, subject: Entity, ending: BoxEnding);
     fn log_dropped_flow(world: &World, owner: &Owner<Self>, why: &str);
+    /// What `reach` lacks among `all` its script reaches, when it only makes sense beside another.
+    fn unmet(_reach: &Self::Reach, _all: &[Self::Reach]) -> Option<ScriptFault> {
+        None
+    }
 }
 
 pub trait EventDef<V: Vocabulary>: Clone {

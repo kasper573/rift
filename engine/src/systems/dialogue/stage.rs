@@ -379,6 +379,12 @@ impl Shown {
             .or_else(|| self.lines.get(self.line).cloned())
     }
 
+    /// Whether the conversation has anything to say or to pick: one held open only for a panel
+    /// docked over it has not, and its panel stands alone.
+    fn speaks(&self) -> bool {
+        self.current().is_some() || !self.choices.is_empty()
+    }
+
     fn last_line(&self) -> bool {
         self.line + 1 >= self.lines.len()
     }
@@ -649,7 +655,11 @@ fn draw_stage(world: &mut World) {
         return;
     };
     let screen = gui.content_rect();
-    let talking = world.resource::<Stage>().shown.is_some();
+    let talking = world
+        .resource::<Stage>()
+        .shown
+        .as_ref()
+        .is_some_and(Shown::speaks);
     let dialogue = match hud::sheet_pose(world, &gui, DIALOGUE, talking) {
         Some(pose) if talking => Some(dialogue_sheet(world, &gui, screen, pose, &before)),
         Some(pose) => lift_off(world, &gui, DIALOGUE, pose),

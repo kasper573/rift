@@ -86,6 +86,7 @@ use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::notification::{self, NotificationRows, bubble, error, feed, intro, pop};
 use crate::systems::npc::{Npc, NpcId};
 use crate::systems::player::{PlayedBy, commands_locked, session};
+use crate::systems::prompt;
 use crate::systems::quest::{Parties, QuestId, QuestLog, QuestResult};
 use crate::systems::reach::Engaged;
 use crate::systems::resource::{self, Left, Resource, ResourceId, Working};
@@ -332,6 +333,7 @@ pub struct ProbeSnapshot {
     pub pops: Vec<pop::ShownPop>,
     pub history: ProbeHistory,
     pub shop: Option<ProbeShop>,
+    pub prompt: Option<ProbePrompt>,
     pub item_card: Option<ProbeItemCard>,
     pub skill_card: Option<ProbeSkillCard>,
     pub bag: Vec<ProbeStack>,
@@ -668,6 +670,26 @@ pub struct ProbeShop {
     pub shop: ShopId,
     pub offers: Vec<ProbeOffer>,
     pub buyback: Vec<ProbeStack>,
+}
+
+/// The prompt before the player and what they have placed in its tray.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProbePrompt {
+    pub title: String,
+    pub text: Option<String>,
+    pub slots: u32,
+    pub placed: Vec<ProbePlaced>,
+    /// Whether what is placed was submitted and the server has yet to answer.
+    pub waiting: bool,
+}
+
+/// A stack placed in a prompt's tray.
+#[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
+pub struct ProbePlaced {
+    pub item: ItemId,
+    pub count: u32,
+    /// Whether the bag no longer covers what was placed.
+    pub short: bool,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -1075,6 +1097,23 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                 skill,
                 rect: gui::window_rect(rect),
             }),
+        prompt: prompt::tray::view(world).map(|view| ProbePrompt {
+            title: view.title.clone(),
+            text: view
+                .text
+                .as_ref()
+                .map(|text| text.words(world.resource::<InputMap>())),
+            slots: view.slots,
+            placed: prompt::tray::placed(world)
+                .iter()
+                .map(|placed| ProbePlaced {
+                    item: placed.stack.item,
+                    count: placed.stack.count,
+                    short: placed.short,
+                })
+                .collect(),
+            waiting: prompt::tray::waiting(world),
+        }),
         shop: shop::counter::view(world).map(|shown| ProbeShop {
             shop: shown.shop,
             offers: shown

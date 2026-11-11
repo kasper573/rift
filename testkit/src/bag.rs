@@ -17,6 +17,17 @@ impl Sim {
             .expect("room in the bag");
     }
 
+    /// Takes `count` of the item under `key` out of `who`'s bag, the way a trade or a cost does.
+    pub fn take(&mut self, who: Entity, key: &str, count: u32) {
+        let item = self.id::<ItemDef>(key);
+        let content = self.world.resource::<Content>().clone();
+        self.world
+            .get_mut::<Inventory>(who)
+            .expect("a bag")
+            .exchange(&content, &[ItemStack::new(item, count)], &[])
+            .expect("that many in the bag");
+    }
+
     /// Puts the item under `key` in `who`'s bag and wears it from there, the way a player equips it,
     /// and lets a tick pass for what wearing it brings to settle.
     pub fn equip(&mut self, who: Entity, key: &str) {

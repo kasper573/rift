@@ -526,6 +526,7 @@ fn compile_source<'c, V: Vocabulary>(
         used_vars: HashSet::new(),
         stack: stack.to_vec(),
         subject_read: false,
+        reached: Vec::new(),
         event_fields: &[],
     };
     let mut steps = Vec::with_capacity(source.nodes.len());
@@ -848,7 +849,9 @@ fn compile_source<'c, V: Vocabulary>(
                     .look(&mut cx)
                     .map_err(|fault| node_fail(fault.rule, fault.expected))?;
                 needs_subject[index] |= effect.needs_subject() || cx.subject_read;
-                may_do.reaches.extend(effect.reach(&cx));
+                let reaches = effect.reach(&cx);
+                cx.reached
+                    .extend(reaches.into_iter().map(|reach| (Some(name), reach)));
                 let outputs = effect
                     .outputs()
                     .into_iter()
@@ -875,6 +878,14 @@ fn compile_source<'c, V: Vocabulary>(
         steps.push(step);
     }
     cx.node = None;
+    may_do
+        .reaches
+        .extend(cx.reached.iter().map(|(_, reach)| reach.clone()));
+    for (node, reach) in &cx.reached {
+        if let Some(fault) = V::unmet(reach, &may_do.reaches) {
+            return Err(fail(fault.rule, *node, fault.expected));
+        }
+    }
     if entries.is_empty() {
         return Err(fail("unreachable node", None, "no on node".to_owned()));
     }
@@ -1132,6 +1143,7 @@ pub struct Compiler<'c, V: Vocabulary> {
     used_vars: HashSet<&'c str>,
     stack: Vec<ScriptId<V>>,
     subject_read: bool,
+    reached: Vec<(Option<&'c str>, V::Reach)>,
     event_fields: &'static [(&'static str, ValueType)],
 }
 
@@ -1151,6 +1163,7 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
             used_vars: HashSet::new(),
             stack: Vec::new(),
             subject_read: false,
+            reached: Vec::new(),
             event_fields: &[],
         }
     }
@@ -1170,6 +1183,12 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
 
     pub fn node(&self) -> Option<&'c str> {
         self.node
+    }
+
+    /// Notes that what is being compiled reaches `reach`, for what only reads to tell the
+    /// loader's checks what its script depends on.
+    pub fn reaching(&mut self, reach: V::Reach) {
+        self.reached.push((self.node, reach));
     }
 
     pub fn expr(&mut self, expr: &'c Expr<V>, want: ValueType) -> Result<Eval, ScriptFault> {

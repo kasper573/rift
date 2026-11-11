@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "f90a40ae",
+  "content_version": "ce28d001",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -47,7 +47,8 @@
     "needs_tool": "Needs a {tool} in your tool slot",
     "no_room": "No room",
     "bag_room": "Your bag has no room for what this can drop",
-    "ran_out": "It ran out"
+    "ran_out": "It ran out",
+    "confirm": "Confirm"
   },
   "typing": {
     "pace": 45.0,

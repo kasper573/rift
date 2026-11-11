@@ -60,6 +60,27 @@
         }
       ]
     },
+    "place_item": {
+      "label": "Place one of an item in the open prompt",
+      "bindings": [
+        {
+          "type": "click",
+          "button": "Right",
+          "times": 1
+        }
+      ]
+    },
+    "place_stack": {
+      "label": "Place a whole stack in the open prompt",
+      "bindings": [
+        {
+          "type": "click",
+          "button": "Right",
+          "times": 1,
+          "shift": true
+        }
+      ]
+    },
     "carry_item": {
       "label": "Carry an item or a skill to where it goes",
       "bindings": [

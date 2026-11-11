@@ -36,6 +36,16 @@ pub fn slot_verdict_source(app: &mut App, source: SlotVerdictSource) {
         .push(source);
 }
 
+/// How many of the stack in a bag slot are set aside elsewhere, so the slot shows what is left.
+pub type SlotAsideSource = fn(&World, u32, ItemStack) -> u32;
+
+pub fn slot_aside_source(app: &mut App, source: SlotAsideSource) {
+    app.world_mut()
+        .get_resource_or_init::<SlotAsides>()
+        .0
+        .push(source);
+}
+
 pub type SlotNoteSource = fn(&World, ItemStack) -> Option<String>;
 
 pub fn slot_note_source(app: &mut App, source: SlotNoteSource) {
@@ -98,6 +108,7 @@ pub(crate) struct SlotLook<'a> {
     pub count: u32,
     pub wanted: bool,
     pub faded: bool,
+    pub refused: bool,
     pub quest: bool,
 }
 
@@ -107,6 +118,7 @@ impl SlotLook<'_> {
         count: 0,
         wanted: false,
         faded: false,
+        refused: false,
         quest: false,
     };
 }
@@ -145,7 +157,7 @@ pub(crate) fn slot(
         controls::SlotLook {
             filled: look.icon.is_some(),
             hovered,
-            refused: false,
+            refused: look.refused,
         },
     );
     if look.wanted {
@@ -182,6 +194,9 @@ struct SlotVerdicts(Vec<SlotVerdictSource>);
 struct SlotNotes(Vec<SlotNoteSource>);
 
 #[derive(Resource, Default)]
+struct SlotAsides(Vec<SlotAsideSource>);
+
+#[derive(Resource, Default)]
 struct SlotActions(Vec<SlotAction>);
 
 struct CellData {
@@ -191,6 +206,7 @@ struct CellData {
 
 struct Filled {
     stack: ItemStack,
+    aside: u32,
     hints: Vec<(InputAction, String)>,
     notes: Vec<String>,
     verdict: Option<SlotVerdict>,
@@ -215,11 +231,13 @@ fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData) {
         Some(SlotVerdict::Refused(reason)) => (false, true, Some(reason.clone())),
     };
     let carried = drag::carried::<Carried>(ui.ctx()) == Some(Carried::BagSlot(cell.slot));
+    let left = filled.stack.count.saturating_sub(filled.aside);
     let look = SlotLook {
         icon: Some(&def.icon),
-        count: filled.stack.count,
+        count: left,
         wanted,
-        faded: refused || carried,
+        faded: refused || carried || left == 0,
+        refused: false,
         quest: def.has(ItemModuleKind::QuestItem),
     };
     let response = slot(ui, world, look, Sense::click_and_drag());
@@ -259,6 +277,10 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
         .get_resource::<SlotNotes>()
         .map(|notes| notes.0.as_slice())
         .unwrap_or_default();
+    let asides = world
+        .get_resource::<SlotAsides>()
+        .map(|asides| asides.0.as_slice())
+        .unwrap_or_default();
     let takeovers = active_slot_actions(world);
     let map = world.resource::<InputMap>();
     (0..max)
@@ -270,6 +292,7 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
                     let def = stack.item.get(content);
                     Filled {
                         stack,
+                        aside: asides.iter().map(|source| source(world, slot, stack)).sum(),
                         hints: hints(map, &takeovers, def),
                         notes: bound_note(def)
                             .into_iter()

@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{EnumDiscriminants, EnumString, IntoStaticStr, VariantArray};
 
-use super::{Condition, RiftScripting};
+use super::{Condition, EffectReach, RiftScripting};
 use crate::core::content::Content;
 use crate::core::math::Pos;
 use crate::core::script::{Compiler, Eval, FlowCx, QueryDef, ScriptFault, Value, ValueType};
@@ -23,6 +23,7 @@ use crate::systems::memory::{self, MemoryId};
 use crate::systems::movement::{self, Position};
 use crate::systems::npc::{Npc, NpcId, Pack, Packs, body};
 use crate::systems::player::{ArrivalHold, PlayedBy};
+use crate::systems::prompt::Offer;
 use crate::systems::quest::{self, Objective, QuestId};
 use crate::systems::script::RunnerKind;
 use crate::systems::skill::{self, SkillDef, SkillId, SkillStat};
@@ -255,6 +256,14 @@ pub enum RiftQuery {
         #[schemars(extend("default" = {"type": "subject"}))]
         of: Option<Box<Condition>>,
     },
+    /// How many of `item` were last submitted to a prompt; how many items in all, without one.
+    Offered {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(extend("default" = {"type": "subject"}))]
+        of: Option<Box<Condition>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        item: Option<ItemId>,
+    },
     Equipped {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[schemars(extend("default" = {"type": "subject"}))]
@@ -389,6 +398,7 @@ impl RiftQueryKind {
             | RiftQueryKind::SpentSkillPoints
             | RiftQueryKind::Holding
             | RiftQueryKind::FreeSlots
+            | RiftQueryKind::Offered
             | RiftQueryKind::Count
             | RiftQueryKind::StatusCount
             | RiftQueryKind::GroundItems => ValueType::Integer,
@@ -447,6 +457,7 @@ impl QueryDef<RiftScripting> for RiftQuery {
             | RiftQuery::StatusCount { of, .. }
             | RiftQuery::Holding { of, .. }
             | RiftQuery::FreeSlots { of }
+            | RiftQuery::Offered { of, .. }
             | RiftQuery::Equipped { of, .. }
             | RiftQuery::Memory { of, .. }
             | RiftQuery::SetWithin { of, .. }
@@ -574,6 +585,18 @@ impl QueryDef<RiftScripting> for RiftQuery {
                         world
                             .get::<Inventory>(who)
                             .map_or(0, |bag| i64::from(bag.free_slots()))
+                    }))
+                })
+            }
+            RiftQuery::Offered { of, item } => {
+                let item = *item;
+                let of = cx.actor(of.as_deref())?;
+                cx.reaching(EffectReach::ReadsOffer);
+                Box::new(move |world, cx| {
+                    Value::Int(character(world, cx, &of).map_or(0, |who| {
+                        world
+                            .get::<Offer>(who)
+                            .map_or(0, |offer| i64::from(offer.count(item)))
                     }))
                 })
             }
