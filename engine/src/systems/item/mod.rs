@@ -773,13 +773,13 @@ pub struct ToolTypeDef {
     pub sfx: ToolTypeSfx,
 }
 
+/// The sounds of work of a kind. An extraction has none of its own: what it pays out sounds as any
+/// item gained does.
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ToolTypeSfx {
     /// Heard as each move of the work lands, in place of the sounds of the move's clip.
     pub swing: SfxId,
-    /// Heard as each extraction completes.
-    pub extract: SfxId,
     /// Heard as the last extraction is taken.
     pub ran_out: SfxId,
 }
@@ -796,7 +796,6 @@ impl ContentFile for ToolTypeDef {
             cursor: near.file()?,
             sfx: ToolTypeSfx {
                 swing: sound,
-                extract: sound,
                 ran_out: sound,
             },
         })

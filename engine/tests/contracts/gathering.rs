@@ -32,13 +32,15 @@ fn an_extraction_takes_one_rolls_once_and_pays_out_and_is_refused_without_the_to
     assert!(sim.run_until(WALK, |world| world.get::<Working>(miner).is_some()));
     assert_eq!(sim.count(miner, "ore"), 0);
     let mut sounds = MessageCursor::default();
-    let chip = sim.id::<SfxDef>("chip");
     let heard = hear(&mut sim, &mut sounds, TAKES - 0.2);
-    assert_eq!(heard, [], "nothing is taken yet");
     assert_eq!(left(&sim, vein), Some(3), "it gave before its time was up");
-    let heard = hear(&mut sim, &mut sounds, 0.4);
-    assert!(heard.contains(&chip), "an extraction sounds as it pays out");
+    let paid = hear(&mut sim, &mut sounds, 0.4);
     assert_eq!(left(&sim, vein), Some(2));
+    assert_eq!(
+        [heard, paid].concat(),
+        [],
+        "an extraction has no sound of its own: what it pays out sounds as any item gained does"
+    );
     assert_eq!(sim.count(miner, "ore"), 2, "one roll of two ore");
     assert!(
         sim.world.get::<Working>(miner).is_some(),
@@ -239,7 +241,6 @@ fn quarry(fields: Value, more: impl FnOnce(Game) -> Game) -> (Sim, Entity) {
             "cursor": path("cursor", "dig"),
             "sfx": {
                 "swing": path("sfx", "crack"),
-                "extract": path("sfx", "chip"),
                 "ran_out": path("sfx", "crumble"),
             },
         })
@@ -291,7 +292,6 @@ fn quarry(fields: Value, more: impl FnOnce(Game) -> Game) -> (Sim, Entity) {
         .item("buckler", held("guard"))
         .resource("ore", 20)
         .prop("rock", json!({ "type": "none" }))
-        .sfx("chip")
         .sfx("crack")
         .sfx("crumble")
         .sfx("ui_refuse")

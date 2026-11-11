@@ -602,13 +602,6 @@ fn extract(world: &mut World, content: &Content, worker: Entity, done: UnixMilli
         return stop(world, worker);
     }
     world.entity_mut(resource).insert(Left(left - 1));
-    notification::play_sound(
-        world,
-        Some(resource),
-        Some(worker),
-        row.tool.get(content).sfx.extract,
-        Audience::Everyone,
-    );
     for stack in &dropped {
         raise(world, def, EventKind::Extracted, worker, Some(*stack));
     }
