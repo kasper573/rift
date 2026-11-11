@@ -252,6 +252,7 @@ impl Game {
                     "ran_out": "It ran out",
                     "confirm": "Confirm",
                     "craft": "Craft",
+                    "cancel_craft": "Cancel",
                     "recipes": "Recipes",
                     "no_recipe": "No recipe",
                     "choose_result": "Choose a result",
@@ -887,6 +888,7 @@ pub fn stats(health: f32) -> Value {
         "range": 1.5,
         "gathering_speed": 1.0,
         "gathering_efficiency": 0.0,
+        "crafting_speed": 100.0,
     })
 }
 

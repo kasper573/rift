@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "6dc67ba6",
+  "content_version": "1e4ff0ab",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -50,6 +50,7 @@
     "ran_out": "It ran out",
     "confirm": "Confirm",
     "craft": "Craft",
+    "cancel_craft": "Cancel",
     "recipes": "Recipes",
     "no_recipe": "No recipe",
     "choose_result": "Choose a result"

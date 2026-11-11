@@ -7,11 +7,14 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::content::{
     Content, ContentFile, ContentId, ContentProblem, Loading, ModuleRule, ModuleSet, Nearby,
-    RowCheck, SchemaMark, serial,
+    RowCheck, SchemaMark,
 };
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, ScriptFault, Value, ValueType};
+use crate::core::time::{UnixMillis, WallClock};
+use crate::core::units::{Percent, Seconds};
 use crate::systems::attention::AttentionId;
 use crate::systems::item::{Inventory, ItemId, ItemStack};
+use crate::systems::notification;
 use crate::systems::player::player_requests;
 use crate::systems::prompt::{self, Asked, CLOSED, PromptKind, PromptStep};
 use crate::systems::script::{
@@ -19,6 +22,7 @@ use crate::systems::script::{
     RiftScripting, RunnerKind, ScriptModule, ScriptedRow, effect as effects,
 };
 use crate::systems::shop::ShopDef;
+use crate::systems::stat::{self, StatKind};
 use crate::systems::text::{self, LineText, Span};
 use crate::systems::{GameSettings, dialogue};
 
@@ -48,6 +52,8 @@ pub struct Recipe {
     pub makes: Vec<ItemStack>,
     /// What one craft takes. Every one is spent.
     pub from: Vec<ItemStack>,
+    /// How long one craft takes at a crafting speed of 100%.
+    pub takes: Seconds,
 }
 
 /// A recipe by the book that holds it and its place among the book's recipes.
@@ -95,6 +101,7 @@ impl ContentFile for RecipeBookDef {
                 ),
                 "ingredient listed twice",
             );
+            check.at_least(format!("{at}/takes"), recipe.takes.0, 0.0, "seconds");
         }
     }
 }
@@ -186,6 +193,12 @@ impl Recipe {
         scaled(&self.from, times)
     }
 
+    /// How long `times` crafts take a crafter of crafting speed `speed`.
+    pub fn takes_at(&self, times: u32, speed: Percent) -> Seconds {
+        let rate = (speed.0 / 100.0).max(f32::EPSILON);
+        Seconds(self.takes.0 * times as f32 / rate)
+    }
+
     pub fn makes_item(&self, item: ItemId) -> bool {
         self.makes.iter().any(|stack| stack.item == item)
     }
@@ -268,7 +281,8 @@ pub fn matches<'a>(recipes: &[Craftable<'a>], offer: &[ItemStack]) -> Vec<(Craft
 }
 
 /// Opens a crafting prompt until it closes: an item prompt whose slots are matched against the
-/// recipes of `from`, crafting what they make as often as its player likes.
+/// recipes of `from`, crafting what they make as often as its player likes, each craft in the time
+/// its recipe takes. Its Recipes window lists every recipe it makes.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[schemars(transform = SchemaMark::System.with("crafting"))]
 pub struct OpenCrafting {
@@ -279,10 +293,6 @@ pub struct OpenCrafting {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub text: Vec<Span>,
     pub from: Vec<CraftSource>,
-    /// Whether it has a Recipes window. True unless said.
-    #[schemars(extend("default" = true))]
-    #[serde(default = "serial::yes", skip_serializing_if = "serial::is_true")]
-    pub show_recipes: bool,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub closed: Arrow,
 }
@@ -334,7 +344,6 @@ impl EffectDef<RiftScripting> for OpenCrafting {
             .map(|value| cx.expr(value, ValueType::Text))
             .collect::<Result<Vec<_>, _>>()?;
         let (title, spans) = (self.title.clone(), self.text.clone());
-        let show_recipes = self.show_recipes;
         Ok(Box::new(move |world, flow, cx| {
             let Some(player) = effects::aimed_character(world, cx, &who) else {
                 return EffectStep::Done;
@@ -352,8 +361,8 @@ impl EffectDef<RiftScripting> for OpenCrafting {
                 CraftingSession { flow },
                 CraftingView {
                     recipes: made.clone(),
-                    show_recipes,
                     crafted: 0,
+                    making: None,
                 },
             ));
             EffectStep::Pause
@@ -367,23 +376,37 @@ impl EffectDef<RiftScripting> for OpenCrafting {
     }
 }
 
-/// What a crafting prompt adds to the prompt its player sees: the recipes it makes, whether it
-/// lists them, and how many crafts it has made.
+/// What a crafting prompt adds to the prompt its player sees: the recipes it makes, how many
+/// crafts it has made, and the craft under way.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct CraftingView {
     pub recipes: Vec<RecipeKey>,
-    pub show_recipes: bool,
     pub crafted: u32,
+    pub making: Option<CraftUnderWay>,
+}
+
+/// A craft begun and not yet made: `recipe` from `offer`, between two moments of the server's
+/// clock. Its ingredients stay in the bag until it is made, so calling it off, or leaving the
+/// prompt, costs nothing.
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct CraftUnderWay {
+    pub recipe: RecipeKey,
+    pub offer: Vec<ItemStack>,
+    pub since: UnixMillis,
+    pub until: UnixMillis,
 }
 
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum CraftingRequest {
-    /// Crafts `recipe` from `offer`: the one meant, where what is placed is several recipes.
+    /// Begins crafting `recipe` from `offer`: the one meant, where what is placed is several
+    /// recipes.
     Craft {
         step: PromptStep,
         offer: Vec<ItemStack>,
         recipe: RecipeKey,
     },
+    /// Calls off the craft under way.
+    Cancel,
 }
 
 #[derive(Component)]
@@ -393,15 +416,27 @@ pub struct CraftingSession {
 
 pub fn requests(world: &mut World) {
     player_requests::<CraftingRequest>(world, false, |world, player, request| {
-        let CraftingRequest::Craft {
-            step,
-            offer,
-            recipe,
-        } = request;
         let Some(session) = world.get::<CraftingSession>(player) else {
             return Ok(());
         };
         let flow = session.flow;
+        let making = world
+            .get::<CraftingView>(player)
+            .is_some_and(|view| view.making.is_some());
+        let (step, offer, recipe) = match request {
+            CraftingRequest::Cancel => {
+                if making {
+                    finish(world, player);
+                }
+                return Ok(());
+            }
+            CraftingRequest::Craft { .. } if making => return Ok(()),
+            CraftingRequest::Craft {
+                step,
+                offer,
+                recipe,
+            } => (step, offer, recipe),
+        };
         match prompt::submitted(world, player, step, &offer) {
             Ok(Some(asked)) if asked == flow => {}
             Ok(_) => return Ok(()),
@@ -410,12 +445,40 @@ pub fn requests(world: &mut World) {
                 return Err(reason);
             }
         }
-        let crafted = craft(world, player, &offer, recipe);
-        prompt::ask_again(world, player);
-        let made = crafted?;
+        let begun = begin(world, player, offer, recipe);
+        if begun.is_err() {
+            prompt::ask_again(world, player);
+        }
+        begun
+    });
+}
+
+/// Makes every craft that has taken its time, in the order they came due: the exchange happens
+/// here, whole or not at all, and the prompt's next turn begins.
+pub fn work(world: &mut World, views: &mut QueryState<(Entity, &'static CraftingView)>) {
+    let now = world.resource::<WallClock>().now;
+    let mut due: Vec<(UnixMillis, Entity, CraftUnderWay)> = views
+        .iter(world)
+        .filter_map(|(player, view)| {
+            let making = view.making.as_ref().filter(|making| making.until <= now)?;
+            Some((making.until, player, making.clone()))
+        })
+        .collect();
+    due.sort_unstable_by_key(|(until, player, _)| (*until, *player));
+    for (_, player, making) in due {
+        let crafted = craft(world, player, &making.offer, making.recipe);
+        finish(world, player);
+        let made = match crafted {
+            Ok(made) => made,
+            Err(why) => {
+                notification::error(world, player, why);
+                continue;
+            }
+        };
         if let Some(mut view) = world.get_mut::<CraftingView>(player) {
             view.crafted = view.crafted.wrapping_add(1);
         }
+        let recipe = making.recipe;
         for made in made {
             world.resource_mut::<RiftInstances>().raise(
                 Owner::Row(RunnerKind::RecipeBook, recipe.book.raw()),
@@ -431,8 +494,7 @@ pub fn requests(world: &mut World) {
                 },
             );
         }
-        Ok(())
-    });
+    }
 }
 
 /// Ends the crafting of whoever no longer has the prompt it was opened in.
@@ -663,6 +725,45 @@ fn amounts_text(content: &Content, amounts: &[(ItemId, f64)]) -> String {
     }
 }
 
+/// Begins crafting `recipe` from `offer` for `player`, when their prompt makes it, the offer is a
+/// whole number of times it and the bag has room for what it makes: due as soon as their crafting
+/// speed makes it.
+fn begin(
+    world: &mut World,
+    player: Entity,
+    offer: Vec<ItemStack>,
+    recipe: RecipeKey,
+) -> Result<(), String> {
+    let content = world.resource::<Content>().clone();
+    let (craftable, times) = meant(world, &content, player, &offer, recipe)?;
+    world
+        .get::<Inventory>(player)
+        .cloned()
+        .unwrap_or_else(Inventory::empty)
+        .exchange(&content, &offer, &craftable.recipe.products(times))
+        .map_err(|refusal| refusal.describe(&content))?;
+    let speed = Percent(stat::effective(world, player, StatKind::CraftingSpeed));
+    let since = world.resource::<WallClock>().now;
+    let until = since.after(craftable.recipe.takes_at(times, speed));
+    if let Some(mut view) = world.get_mut::<CraftingView>(player) {
+        view.making = Some(CraftUnderWay {
+            recipe,
+            offer,
+            since,
+            until,
+        });
+    }
+    Ok(())
+}
+
+/// Ends the craft `player` has under way, made or not, and begins the next turn of their prompt.
+fn finish(world: &mut World, player: Entity) {
+    if let Some(mut view) = world.get_mut::<CraftingView>(player) {
+        view.making = None;
+    }
+    prompt::ask_again(world, player);
+}
+
 /// Crafts `recipe` from `offer` for `player` in one exchange, when their prompt makes it and the
 /// offer is a whole number of times it: everything that was made.
 fn craft(
@@ -672,18 +773,29 @@ fn craft(
     recipe: RecipeKey,
 ) -> Result<Vec<ItemStack>, String> {
     let content = world.resource::<Content>().clone();
-    let no_recipe = || content.built::<GameSettings>().words.no_recipe.clone();
-    let view = world.get::<CraftingView>(player).ok_or_else(no_recipe)?;
-    let known = craftables(&content, &view.recipes);
-    let (craftable, times) = matches(&known, offer)
-        .into_iter()
-        .find(|(craftable, _)| craftable.key == recipe)
-        .ok_or_else(no_recipe)?;
+    let (craftable, times) = meant(world, &content, player, offer, recipe)?;
     let made = craftable.recipe.products(times);
+    let no_recipe = || content.built::<GameSettings>().words.no_recipe.clone();
     world
         .get_mut::<Inventory>(player)
         .ok_or_else(no_recipe)?
         .exchange(&content, offer, &made)
         .map_err(|refusal| refusal.describe(&content))?;
     Ok(made)
+}
+
+/// The recipe `recipe` of `player`'s prompt and how many times over `offer` is it.
+fn meant<'a>(
+    world: &World,
+    content: &'a Content,
+    player: Entity,
+    offer: &[ItemStack],
+    recipe: RecipeKey,
+) -> Result<(Craftable<'a>, u32), String> {
+    let no_recipe = || content.built::<GameSettings>().words.no_recipe.clone();
+    let view = world.get::<CraftingView>(player).ok_or_else(no_recipe)?;
+    matches(&craftables(content, &view.recipes), offer)
+        .into_iter()
+        .find(|(craftable, _)| craftable.key == recipe)
+        .ok_or_else(no_recipe)
 }

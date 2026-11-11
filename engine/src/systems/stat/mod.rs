@@ -41,6 +41,7 @@ pub enum StatKind {
     Range,
     GatheringSpeed,
     GatheringEfficiency,
+    CraftingSpeed,
 }
 
 impl StatKind {
@@ -57,7 +58,7 @@ impl StatKind {
             StatKind::AttackDelay => Some("ms"),
             StatKind::MovementSpeed => Some("m/s"),
             StatKind::Range => Some("m"),
-            StatKind::GatheringEfficiency => Some("%"),
+            StatKind::GatheringEfficiency | StatKind::CraftingSpeed => Some("%"),
             StatKind::Health
             | StatKind::MaxHealth
             | StatKind::Damage

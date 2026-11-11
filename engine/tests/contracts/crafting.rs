@@ -1,10 +1,12 @@
 use bevy_ecs::prelude::*;
 use engine::core::content::LoadReport;
+use engine::core::units::Seconds;
 use engine::systems::crafting::{self, CraftingRequest, CraftingView, RecipeBookDef, RecipeKey};
 use engine::systems::dialogue::{self, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::item::{ItemDef, ItemStack};
 use engine::systems::prompt::{self, PromptRequest, PromptView};
+use engine::systems::stat::{StatKind, Stats};
 use engine::systems::{movement, region, script};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, path, said, sent};
@@ -32,7 +34,6 @@ fn a_crafting_prompt_makes_what_its_books_and_subsets_allow_and_nothing_else() {
         asked.slots, 2,
         "as many slots as its biggest recipe has ingredients"
     );
-    assert!(crafting.show_recipes);
     assert_eq!(made_by(&sim, &crafting), ["ingot", "plank", "sword"]);
 
     craft(&mut sim, 1, &[("coal", 1), ("ore", 2)], INGOT);
@@ -58,7 +59,6 @@ fn a_crafting_prompt_makes_what_its_books_and_subsets_allow_and_nothing_else() {
     assert_eq!(sim.count(player, "slip"), 1, "leaving goes down closed");
 
     let (_, crafting) = open(&mut sim, 1, "carpenter");
-    assert!(!crafting.show_recipes);
     assert_eq!(made_by(&sim, &crafting), ["plank"], "a subset of the book");
     craft(&mut sim, 1, &[("ore", 2)], INGOT);
     assert_eq!(sim.count(player, "ingot"), 4, "not this prompt's to make");
@@ -106,6 +106,7 @@ fn a_craft_spends_every_ingredient_and_fits_or_does_not_happen() {
     let bundle = json!({
         "makes": [{ "item": path("item", "gem") }, { "item": path("item", "strap"), "count": 2 }],
         "from": [{ "item": path("item", "log"), "count": 2 }],
+        "takes": 0.1,
     });
     let whittling = game(|book| {
         book["recipes"]
@@ -184,10 +185,82 @@ fn a_craft_spends_every_ingredient_and_fits_or_does_not_happen() {
 }
 
 #[test]
+fn a_craft_takes_its_recipes_time_at_the_crafters_speed_and_nothing_until_it_is_made() {
+    let slow = game(|book| book["recipes"][0]["takes"] = json!(4.0));
+    let mut sim = forge(slow);
+    let player = sim.join(1);
+    let conn = sim.conn(1);
+    sim.give(player, "ore", 8);
+    sim.give(player, "coal", 4);
+    let held = |sim: &Sim| {
+        (
+            sim.count(player, "ore"),
+            sim.count(player, "coal"),
+            sim.count(player, "ingot"),
+        )
+    };
+    let (asked, _) = open(&mut sim, 1, "smith");
+
+    craft(&mut sim, 1, &[("ore", 4), ("coal", 2)], INGOT);
+    let (during, crafting) = shown(&sim, player).expect("open");
+    let making = crafting.making.expect("a craft under way");
+    assert_eq!(
+        making.until.since(making.since),
+        Seconds(8.0),
+        "two crafts of four seconds each"
+    );
+    assert_eq!(during.step, asked.step, "the turn waits for the craft");
+    assert_eq!(held(&sim), (8, 4, 0), "nothing leaves the bag yet");
+    craft(&mut sim, 1, &[("ore", 2), ("coal", 1)], INGOT);
+    sim.run(5.0);
+    assert_eq!(
+        held(&sim),
+        (8, 4, 0),
+        "one craft at a time, and not yet due"
+    );
+
+    sim.send(conn, CraftingRequest::Cancel);
+    sim.run(4.0);
+    let (after, crafting) = shown(&sim, player).expect("still open");
+    assert_eq!(crafting.making, None);
+    assert_ne!(after.step, asked.step, "called off, the next turn begins");
+    assert_eq!(held(&sim), (8, 4, 0), "a craft called off costs nothing");
+
+    sim.world
+        .get_mut::<Stats>(player)
+        .expect("stats")
+        .0
+        .insert(StatKind::CraftingSpeed, 200.0);
+    craft(&mut sim, 1, &[("ore", 2), ("coal", 1)], INGOT);
+    sim.run(1.0);
+    assert_eq!(held(&sim), (8, 4, 0), "twice as fast is still two seconds");
+    sim.run(1.0);
+    assert_eq!(held(&sim), (6, 3, 1));
+    assert_eq!(shown(&sim, player).expect("open").1.crafted, 1);
+
+    craft(&mut sim, 1, &[("ore", 2), ("coal", 1)], INGOT);
+    sim.take(player, "coal", 3);
+    sim.run(2.5);
+    assert_eq!(sim.errors(1), ["Needs 1 more coal"]);
+    assert_eq!(
+        held(&sim),
+        (6, 0, 1),
+        "ingredients gone by the time it is due make nothing"
+    );
+
+    sim.give(player, "coal", 1);
+    craft(&mut sim, 1, &[("ore", 2), ("coal", 1)], INGOT);
+    sim.leave(1);
+    sim.run(3.0);
+    assert_eq!(held(&sim), (6, 1, 1), "leaving the prompt ends the craft");
+}
+
+#[test]
 fn the_loader_refuses_recipes_that_loop_repeat_or_profit_and_books_no_script_opens() {
     let of = |item: &str, count: u32| json!({ "item": path("item", item), "count": count });
-    let recipe = |makes: &str, from: Value| json!({ "makes": [of(makes, 1)], "from": from });
-    let cases: [(&str, Value); 8] = [
+    let recipe =
+        |makes: &str, from: Value| json!({ "makes": [of(makes, 1)], "from": from, "takes": 0.1 });
+    let cases: [(&str, Value); 9] = [
         ("recipe loop", recipe("ore", json!([of("sword", 1)]))),
         (
             "made twice",
@@ -196,11 +269,15 @@ fn the_loader_refuses_recipes_that_loop_repeat_or_profit_and_books_no_script_ope
         ("nothing to make it from", recipe("strap", json!([]))),
         (
             "nothing made",
-            json!({ "makes": [], "from": [of("blade", 1)] }),
+            json!({ "makes": [], "from": [of("blade", 1)], "takes": 0.1 }),
         ),
         (
             "made item listed twice",
-            json!({ "makes": [of("strap", 1), of("strap", 2)], "from": [of("blade", 1)] }),
+            json!({ "makes": [of("strap", 1), of("strap", 2)], "from": [of("blade", 1)], "takes": 0.1 }),
+        ),
+        (
+            "out of range",
+            json!({ "makes": [of("strap", 4)], "from": [of("blade", 1)], "takes": -1.0 }),
         ),
         ("out of range", recipe("strap", json!([of("blade", 0)]))),
         (
@@ -244,22 +321,22 @@ fn the_loader_refuses_recipes_that_loop_repeat_or_profit_and_books_no_script_ope
 }
 
 /// A forge whose smith crafts from all of the smithing book, whose carpenter crafts only its
-/// planks and lists no recipes, and whose salvager takes blades apart two ways, one of them into
-/// an ingot and straps together. The smithing
-/// book hands a token for every craft; leaving a prompt hands a slip.
+/// planks, and whose salvager takes blades apart two ways, one of them into an ingot and straps
+/// together. Every craft takes a tenth of a second. The smithing book hands a token for every
+/// craft; leaving a prompt hands a slip.
 fn game(change: impl FnOnce(&mut Value)) -> Game {
     let stack = |item: &str, count: u32| json!({ "item": path("item", item), "count": count });
     let mut smithing = json!({
         "mark": path("attention", "anvil"),
         "recipes": [
-            { "makes": [stack("ingot", 1)], "from": [stack("ore", 2), stack("coal", 1)] },
-            { "makes": [stack("plank", 2)], "from": [stack("log", 1)] },
-            { "makes": [stack("sword", 1)], "from": [stack("ingot", 2), stack("plank", 1)] },
+            { "makes": [stack("ingot", 1)], "from": [stack("ore", 2), stack("coal", 1)], "takes": 0.1 },
+            { "makes": [stack("plank", 2)], "from": [stack("log", 1)], "takes": 0.1 },
+            { "makes": [stack("sword", 1)], "from": [stack("ingot", 2), stack("plank", 1)], "takes": 0.1 },
         ],
         "modules": [{ "type": "script", "script": path("script", "smithing_crafted") }],
     });
     change(&mut smithing);
-    let crafter = |title: &str, from: Value, show_recipes: bool| {
+    let crafter = |title: &str, from: Value| {
         json!({
             "interacted": { "type": "on", "event": "interacted", "verb": "talk", "reach": 2.0, "next": "hello" },
             "hello": said("Lay it down.", "craft"),
@@ -267,7 +344,6 @@ fn game(change: impl FnOnce(&mut Value)) -> Game {
                 "type": "open_crafting",
                 "title": title,
                 "from": from,
-                "show_recipes": show_recipes,
                 "closed": "left",
             },
             "left": { "type": "items", "give": [{ "item": path("item", "slip") }] },
@@ -292,8 +368,8 @@ fn game(change: impl FnOnce(&mut Value)) -> Game {
             json!({
                 "mark": path("attention", "anvil"),
                 "recipes": [
-                    { "makes": [stack("ingot", 1), stack("strap", 2)], "from": [stack("blade", 1)] },
-                    { "makes": [stack("strap", 3)], "from": [stack("blade", 1)] },
+                    { "makes": [stack("ingot", 1), stack("strap", 2)], "from": [stack("blade", 1)], "takes": 0.1 },
+                    { "makes": [stack("strap", 3)], "from": [stack("blade", 1)], "takes": 0.1 },
                 ],
             }),
         )
@@ -326,7 +402,7 @@ fn game(change: impl FnOnce(&mut Value)) -> Game {
         .script(
             "smith_talk",
             "npc",
-            crafter("Smithing", json!([{ "type": "book", "book": path("recipe_book", "smithing") }]), true),
+            crafter("Smithing", json!([{ "type": "book", "book": path("recipe_book", "smithing") }])),
         )
         .npc("carpenter", 40.0, talks("carpenter"))
         .script(
@@ -339,14 +415,13 @@ fn game(change: impl FnOnce(&mut Value)) -> Game {
                     "book": path("recipe_book", "smithing"),
                     "items": [path("item", "plank")],
                 }]),
-                false,
             ),
         )
         .npc("salvager", 40.0, talks("salvager"))
         .script(
             "salvager_talk",
             "npc",
-            crafter("Salvage", json!([{ "type": "book", "book": path("recipe_book", "salvage") }]), true),
+            crafter("Salvage", json!([{ "type": "book", "book": path("recipe_book", "salvage") }])),
         );
     for item in [
         "ore", "coal", "log", "ingot", "plank", "sword", "blade", "strap", "gem", "gold", "token",
@@ -380,6 +455,7 @@ fn forge(game: Game) -> Sim {
             dialogue::refresh,
             prompt::hold,
             crafting::hold,
+            crafting::work,
         ));
     script::spawn_stateless(&mut sim.world);
     region::hold_whole(&mut sim.world);
@@ -442,7 +518,7 @@ fn stacks(sim: &Sim, offer: &[(&str, u32)]) -> Vec<ItemStack> {
 }
 
 /// Asks the prompt open before the player to craft the recipe at `index` of `book` from `offer`,
-/// in its current turn.
+/// in its current turn, and gives it half a second.
 fn craft(sim: &mut Sim, client: u32, offer: &[(&str, u32)], (book, index): (&str, usize)) {
     let player = sim.player(client);
     let conn = sim.conn(client);

@@ -9,6 +9,7 @@
     "movement_speed": 4.0,
     "range": 1.5,
     "gathering_speed": 1.0,
-    "gathering_efficiency": 0.0
+    "gathering_efficiency": 0.0,
+    "crafting_speed": 100.0
   }
 }

@@ -110,11 +110,16 @@ pub fn sent(world: &mut World, step: PromptStep) {
 }
 
 /// Places one of the item in the bag's slot `slot` in the tray, or with `whole` all of that slot
-/// that is not placed yet: on the stack of it already there, else in the next empty slot.
+/// that is not placed yet: on the stack of it already there, else in the next empty slot. What
+/// was submitted stays as it is until the server answers.
 pub fn place(world: &mut World, slot: u32, whole: bool) {
     let Some(slots) = view(world).map(|view| view.slots as usize) else {
         return;
     };
+    if waiting(world) {
+        InterfaceSound::UiRefuse.play(world);
+        return;
+    }
     let Some(bag) = session::my_character(world).and_then(|me| me.get::<Inventory>()) else {
         return;
     };
@@ -223,8 +228,12 @@ pub fn slots(ui: &mut Ui, world: &mut World, count: u32) {
         })
         .response;
     if let Some(index) = taken {
-        take_back(world, index);
-        InterfaceSound::UiMove.play(world);
+        if waiting(world) {
+            InterfaceSound::UiRefuse.play(world);
+        } else {
+            take_back(world, index);
+            InterfaceSound::UiMove.play(world);
+        }
     }
     if let Some(Carried::BagSlot(slot)) = drag::dropped::<Carried>(&shown) {
         place(world, slot, true);

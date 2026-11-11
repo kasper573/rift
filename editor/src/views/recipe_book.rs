@@ -1,9 +1,11 @@
-//! The recipe book view: a book's recipes as a plain list, a row each, saying everything it makes
-//! and everything it takes. What joins the recipes to each other is followed in the inspector: the other
-//! ways to make a thing, and the recipes it goes into. Every change is the whole file written
-//! again, so the loader's rules refuse a loop or an empty recipe as it is made.
+//! The recipe book view: a book's recipes as a plain list, a row each, saying everything it makes,
+//! everything it takes and how long a craft of it takes. What joins the recipes to each other is
+//! followed in the inspector: the other ways to make a thing, and the recipes it goes into. Every
+//! change is the whole file written again, so the loader's rules refuse a loop or an empty recipe
+//! as it is made.
 
 use engine::core::content::ContentFile;
+use engine::core::units::Seconds;
 use engine::systems::crafting::{Recipe, RecipeBookDef};
 use engine::systems::item::{ItemDef, ItemId, ItemStack};
 use ui::egui::{self, Align, Layout, Rangef, Rect, Sense, Ui, Vec2};
@@ -25,6 +27,9 @@ const MAKES_SHARE: f32 = 0.4;
 const COLUMN_GAP: f32 = 16.0;
 const HEADING: f32 = 18.0;
 const PLUS: f32 = 22.0;
+const TAKES: f32 = 72.0;
+/// How long a craft of a recipe just added takes, until its designer says.
+const FRESH_TAKES: Seconds = Seconds(1.0);
 const FACE: f32 = 18.0;
 /// The room an item's amount and its cross take after its field in the inspector.
 const ITEM_TRAIL: f32 = 96.0;
@@ -86,6 +91,7 @@ pub fn add_recipe(editor: &mut Editor, key: &str, makes: &str, from: &str) -> bo
         book.recipes.push(Recipe {
             makes: vec![ItemStack::new(made, 1)],
             from: vec![ItemStack::new(taken, 1)],
+            takes: FRESH_TAKES,
         });
         Ok(())
     })
@@ -167,6 +173,12 @@ pub fn set_amount(
             stack.count = amount;
         }
     })
+}
+
+/// Sets how long one craft of the recipe at `recipe` takes at a crafting speed of 100%.
+pub fn set_takes(editor: &mut Editor, key: &str, recipe: usize, takes: Seconds) -> bool {
+    let label = format!("Change how long {} takes", called(editor, key, recipe));
+    change_recipe(editor, key, label, recipe, |recipe| recipe.takes = takes)
 }
 
 /// Makes the `nth` item of a `side` of the recipe at `recipe` the item at `item` instead.
@@ -289,6 +301,7 @@ struct ShownItem {
 struct ShownRecipe {
     makes: Vec<(ShownItem, u32)>,
     from: Vec<(ShownItem, u32)>,
+    takes: Seconds,
 }
 
 impl ShownRecipe {
@@ -337,6 +350,7 @@ fn shown_rows(editor: &Editor, book: &RecipeBookDef) -> Vec<ShownRecipe> {
         .map(|recipe| ShownRecipe {
             makes: shown(&recipe.makes),
             from: shown(&recipe.from),
+            takes: recipe.takes,
         })
         .collect()
 }
@@ -519,28 +533,31 @@ fn bar(editor: &mut Editor, ui: &mut Ui, key: &str, book: &RecipeBookDef, rows: 
 }
 
 /// Where the columns of the list stand, the same for every row: the handle, what a recipe makes,
-/// and what it is made from.
+/// what it is made from, and how long a craft of it takes.
 #[derive(Clone, Copy)]
 struct Columns {
     handle: Rangef,
     makes: Rangef,
     from: Rangef,
+    takes: Rangef,
 }
 
 impl Columns {
     fn across(ui: &Ui) -> Columns {
         let (left, right) = (ui.max_rect().left(), ui.max_rect().right());
         let makes = left + HANDLE;
-        let from = makes + ((right - makes) * MAKES_SHARE).round();
+        let takes = right - TAKES;
+        let from = makes + ((takes - COLUMN_GAP - makes) * MAKES_SHARE).round();
         Columns {
             handle: Rangef::new(left, makes),
             makes: Rangef::new(makes, from - COLUMN_GAP),
-            from: Rangef::new(from, right),
+            from: Rangef::new(from, takes - COLUMN_GAP),
+            takes: Rangef::new(takes, right),
         }
     }
 
     fn whole(self) -> Rangef {
-        Rangef::new(self.handle.min, self.from.max)
+        Rangef::new(self.handle.min, self.takes.max)
     }
 }
 
@@ -576,7 +593,11 @@ fn list(editor: &mut Editor, ui: &mut Ui, key: &str, rows: &[ShownRecipe]) {
     let columns = Columns::across(ui);
     let top = ui.cursor().top();
     let mut bottom = top + HEADING;
-    for (title, across) in [("makes", columns.makes), ("from", columns.from)] {
+    for (title, across) in [
+        ("makes", columns.makes),
+        ("from", columns.from),
+        ("takes", columns.takes),
+    ] {
         bottom = bottom.max(cell(ui, title, across, (top, HEADING), |ui| {
             ui.label(form::section_heading(title));
         }));
@@ -657,6 +678,21 @@ fn recipe_row(
             }
         }));
     }
+    bottom = bottom.max(cell(ui, "takes", columns.takes, (top, ROW), |ui| {
+        let mut seconds = row.takes.0;
+        let changed = ui
+            .add(
+                egui::DragValue::new(&mut seconds)
+                    .range(0.0..=f32::MAX)
+                    .speed(0.1)
+                    .suffix(" s"),
+            )
+            .on_hover_text("How long one craft takes at a crafting speed of 100%")
+            .changed();
+        if changed {
+            set_takes(editor, key, index, Seconds(seconds));
+        }
+    }));
     row_of_cells(ui, columns, top, bottom)
 }
 
@@ -835,8 +871,9 @@ fn inspect_recipe(
     form::hint(
         ui,
         &format!(
-            "One craft takes {} and makes {}.",
+            "One craft takes {} and {} s, and makes {}.",
             row.listed(RecipeSide::From),
+            row.takes.0,
             row.listed(RecipeSide::Makes)
         ),
     );

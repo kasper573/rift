@@ -1,7 +1,7 @@
 //! A crafting prompt as its player sees it: the item prompt's tray with what the placed items
-//! make beside it, one button that crafts it, and a window listing the recipes the prompt was
-//! opened from. Nothing here is typed out: every recipe, result and verdict is read off the
-//! recipe books the prompt names.
+//! make beside it, one button that crafts it, a bar and a way out while the craft takes its time,
+//! and a window listing the recipes the prompt was opened from. Nothing here is typed out: every
+//! recipe, result and verdict is read off the recipe books the prompt names.
 
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
@@ -10,12 +10,13 @@ use ui::controls::{self, RowLook};
 use ui::egui::{self, Align, Layout, Rect, Sense, Ui, Vec2};
 use ui::face::{self, TextRole};
 use ui::glyph::Mark;
-use ui::{ink, sheet};
+use ui::{ink, paint, sheet};
 
 use super::{CraftingRequest, CraftingView, Recipe, RecipeKey, craftables, matches};
 use crate::core::content::Content;
 use crate::core::gui::{self, Band};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
+use crate::core::time;
 use crate::systems::GameSettings;
 use crate::systems::dialogue::stage::{self, DockedPanel, PanelChrome, PanelHead};
 use crate::systems::hud::{self, WindowFrame};
@@ -39,6 +40,8 @@ const RECIPES_SIZE: Vec2 = Vec2::new(310.0, 440.0);
 const RECIPES_AT: Vec2 = Vec2::new(12.0, 148.0);
 const ICON: f32 = 24.0;
 const CROSS: f32 = 10.0;
+const BAR: f32 = 6.0;
+const MISSING_OPACITY: f32 = 0.45;
 
 pub struct CraftingPanelPlugin;
 
@@ -134,7 +137,19 @@ pub fn choose(world: &mut World, recipe: RecipeKey) {
 
 /// Whether the Recipes window is open.
 pub fn listing(world: &World) -> bool {
-    world.resource::<Crafting>().listing && view(world).is_some_and(|view| view.show_recipes)
+    world.resource::<Crafting>().listing && view(world).is_some()
+}
+
+/// How far through the craft under way the prompt is, from none to all of it.
+pub fn progress(world: &World) -> Option<f32> {
+    let making = view(world)?.making.as_ref()?;
+    let whole = making.until.since(making.since).0;
+    let done = time::server_now(world)?.since(making.since).0;
+    Some(if whole > 0.0 {
+        (done / whole).clamp(0.0, 1.0)
+    } else {
+        1.0
+    })
 }
 
 /// Closes the Recipes window, when it is open.
@@ -200,6 +215,10 @@ pub fn verdict(world: &World) -> (String, Option<CraftResult>) {
 /// Places the ingredients of `recipe` in the tray in place of what is there; once they are
 /// placed, another craft's worth while the bag covers it.
 pub fn lay_out(world: &mut World, recipe: &Recipe) {
+    if tray::waiting(world) {
+        InterfaceSound::UiRefuse.play(world);
+        return;
+    }
     let covers = |times: u32| {
         let bag = session::my_character(world).and_then(|me| me.get::<Inventory>());
         recipe
@@ -253,9 +272,9 @@ fn show(ui: &mut Ui, world: &mut World, _width: f32, _most: f32) {
     let Some(prompt) = tray::view(world).cloned() else {
         return;
     };
-    let Some(crafting) = view(world).cloned() else {
+    if view(world).is_none() {
         return;
-    };
+    }
     let drawn = egui::Frame::new()
         .inner_margin(PADDING)
         .show(ui, |ui| {
@@ -283,7 +302,7 @@ fn show(ui: &mut Ui, world: &mut World, _width: f32, _most: f32) {
                 },
             );
             ui.add_space(BUTTON_GAP);
-            foot(ui, world, &prompt, &crafting);
+            foot(ui, world, &prompt);
         })
         .response
         .rect;
@@ -415,7 +434,16 @@ fn crafts_note(result: &CraftResult) -> Option<String> {
     (result.times > 1).then(|| format!("{} crafts", result.times))
 }
 
-fn foot(ui: &mut Ui, world: &mut World, prompt: &PromptView, crafting: &CraftingView) {
+/// The Recipes button, how the tray is filled, and the Craft button at the far end. While a craft
+/// is under way its bar stands where the hint was and a way out beside the button, so nothing
+/// else moves.
+fn foot(ui: &mut Ui, world: &mut World, prompt: &PromptView) {
+    let words = world
+        .resource::<Content>()
+        .built::<GameSettings>()
+        .words
+        .clone();
+    let making = progress(world);
     let room = Vec2::new(ui.available_width(), controls::CONTROL_HEIGHT);
     ui.allocate_ui_with_layout(room, Layout::right_to_left(Align::Center), |ui| {
         let (word, ready) = verdict(world);
@@ -435,19 +463,19 @@ fn foot(ui: &mut Ui, world: &mut World, prompt: &PromptView, crafting: &Crafting
                 }
             }
         }
+        if making.is_some() && controls::button(ui, words.cancel_craft).clicked() {
+            world.write_message(CraftingRequest::Cancel);
+            InterfaceSound::UiClose.play(world);
+        }
         ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-            if crafting.show_recipes {
-                let word = world
-                    .resource::<Content>()
-                    .built::<GameSettings>()
-                    .words
-                    .recipes
-                    .clone();
-                if controls::button(ui, word).clicked() {
-                    toggle_recipes(world);
-                }
+            if controls::button(ui, words.recipes).clicked() {
+                toggle_recipes(world);
             }
-            if results(world).len() > 1 {
+            if let Some(share) = making {
+                let bar = Vec2::new(ui.available_width(), BAR);
+                paint::progress_line(ui, bar, share, ink::GOLD);
+                ui.ctx().request_repaint();
+            } else if results(world).len() > 1 {
                 let hint = StyledLine::new(vec![
                     input(InputAction::Select),
                     TextPiece::text(" a result to choose it"),
@@ -473,8 +501,7 @@ fn toggle_recipes(world: &mut World) {
 }
 
 fn recipes_key(world: &mut World) {
-    let shown = view(world).is_some_and(|view| view.show_recipes);
-    if shown && map::just_pressed(world, InputAction::ToggleRecipes) {
+    if view(world).is_some() && map::just_pressed(world, InputAction::ToggleRecipes) {
         toggle_recipes(world);
     }
 }
@@ -549,12 +576,15 @@ fn recipe_row(ui: &mut Ui, world: &mut World, row: &ListedRecipe) -> egui::Respo
         })
         .collect();
     let name = made.join(" + ");
-    let status = if row.can_make { "can make" } else { "locked" };
-    let look = RowLook {
-        faint: !row.can_make,
-        ..RowLook::default()
+    let (status, status_ink) = if row.can_make {
+        ("can make", ink::VERDIGRIS)
+    } else {
+        ("materials missing", ink::INK3)
     };
-    let response = controls::row(ui, look, |ui| {
+    let response = controls::row(ui, RowLook::default(), |ui| {
+        if !row.can_make {
+            ui.multiply_opacity(MISSING_OPACITY);
+        }
         ui.horizontal(|ui| {
             if let Some(first) = row.recipe.makes.first() {
                 hud::icon(ui, world, &first.item.get(&content).icon, ICON);
@@ -564,7 +594,7 @@ fn recipe_row(ui: &mut Ui, world: &mut World, row: &ListedRecipe) -> egui::Respo
                 ui.horizontal(|ui| {
                     ui.add(egui::Label::new(face::body(&name)).wrap());
                     ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                        sheet::label(ui, TextRole::Small, status, ink::INK3);
+                        sheet::label(ui, TextRole::Small, status, status_ink);
                     });
                 });
                 ui.horizontal_wrapped(|ui| {

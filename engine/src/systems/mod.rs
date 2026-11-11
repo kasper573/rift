@@ -285,6 +285,8 @@ pub struct GameWords {
     pub confirm: String,
     /// The button crafting what a player placed in a crafting prompt.
     pub craft: String,
+    /// The button calling off the craft a crafting prompt has under way.
+    pub cancel_craft: String,
     /// The button and the title of the window listing what a crafting prompt makes.
     pub recipes: String,
     /// What a crafting prompt says of items placed that are no recipe of its own.
@@ -434,7 +436,7 @@ pub fn server_app(
                     interact::interactions,
                     (dialogue::hold, dialogue::refresh.run_if(replication_tick)).chain(),
                     (shop::hold, shop::refresh.run_if(replication_tick)).chain(),
-                    (prompt::hold, crafting::hold).chain(),
+                    (prompt::hold, crafting::hold, crafting::work).chain(),
                     item::expire_drops,
                     player::join,
                     player::respawn,
@@ -819,6 +821,7 @@ fn check_settings(loading: &mut Loading) {
         ("ran_out", &settings.words.ran_out),
         ("confirm", &settings.words.confirm),
         ("craft", &settings.words.craft),
+        ("cancel_craft", &settings.words.cancel_craft),
         ("recipes", &settings.words.recipes),
         ("no_recipe", &settings.words.no_recipe),
         ("choose_result", &settings.words.choose_result),

@@ -691,8 +691,7 @@ pub struct ProbePrompt {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeCrafting {
     pub recipes: Vec<ProbeRecipe>,
-    /// Whether the prompt has a window listing its recipes, and whether it is open.
-    pub shows_recipes: bool,
+    /// Whether the window listing its recipes is open.
     pub listing: bool,
     /// What the items placed make, one result for each recipe they are a whole number of times:
     /// everything that recipe would give for them.
@@ -702,6 +701,8 @@ pub struct ProbeCrafting {
     pub button: String,
     /// Whether the button can be pressed.
     pub ready: bool,
+    /// How far through the craft under way it is, from none to all of it.
+    pub progress: Option<f32>,
 }
 
 /// A recipe of a crafting prompt, as its window lists it.
@@ -710,6 +711,8 @@ pub struct ProbeRecipe {
     /// Everything one craft gives.
     pub makes: Vec<ProbeStack>,
     pub from: Vec<ProbeStack>,
+    /// How long one craft takes at a crafting speed of 100%.
+    pub takes: Seconds,
     /// Whether the player's bag covers every ingredient.
     pub can_make: bool,
 }
@@ -1146,7 +1149,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                 .collect(),
             waiting: prompt::tray::waiting(world),
         }),
-        crafting: crafting::panel::view(world).map(|view| {
+        crafting: crafting::panel::view(world).map(|_| {
             let (button, ready) = crafting::panel::verdict(world);
             let results = crafting::panel::results(world);
             let stack = |stack: ItemStack| ProbeStack {
@@ -1159,10 +1162,10 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                     .map(|listed| ProbeRecipe {
                         makes: listed.recipe.makes.iter().copied().map(stack).collect(),
                         from: listed.recipe.from.iter().copied().map(stack).collect(),
+                        takes: listed.recipe.takes,
                         can_make: listed.can_make,
                     })
                     .collect(),
-                shows_recipes: view.show_recipes,
                 listing: crafting::panel::listing(world),
                 results: results
                     .iter()
@@ -1175,6 +1178,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                 }),
                 button,
                 ready: ready.is_some(),
+                progress: crafting::panel::progress(world),
             }
         }),
         shop: shop::counter::view(world).map(|shown| ProbeShop {

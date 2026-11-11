@@ -1,4 +1,5 @@
 use editor::views::recipe_book::{self, Picked, RecipeSide};
+use engine::core::units::Seconds;
 use engine::systems::crafting::RecipeBookDef;
 use engine::systems::item::{ItemDef, ItemStack};
 use serde_json::json;
@@ -19,7 +20,13 @@ fn a_recipe_book_is_a_list_edited_a_recipe_at_a_time_and_refuses_what_the_loader
 
     let mut frames = Frames::new(SCREEN);
     let drawn = frames.run(Vec::new(), |ui| recipe_book::show(&mut editor, ui, &key));
-    for shown in ["ingot ×1", "ore ×2", "coal ×1", "1 recipes · 1 items made"] {
+    for shown in [
+        "ingot ×1",
+        "ore ×2",
+        "coal ×1",
+        "2.5",
+        "1 recipes · 1 items made",
+    ] {
         assert!(drawn.any(|text| text == shown), "{shown} in {drawn:?}");
     }
     assert_eq!(not_made(&editor, &key), ["ore", "coal"]);
@@ -53,6 +60,7 @@ fn a_recipe_book_is_a_list_edited_a_recipe_at_a_time_and_refuses_what_the_loader
         RecipeSide::Makes,
         &item("slag")
     ));
+    assert!(recipe_book::set_takes(&mut editor, &key, 0, Seconds(4.0)));
     support::settled(&mut editor);
     let listed = frames.run(Vec::new(), |ui| recipe_book::show(&mut editor, ui, &key));
     let grip = ui::glyph::Mark::Grip.text(1.0).text().to_owned();
@@ -90,6 +98,16 @@ fn a_recipe_book_is_a_list_edited_a_recipe_at_a_time_and_refuses_what_the_loader
         ],
         "an item added again adds to its amount, a recipe makes as many items as it is given, \
          and one dragged by its handle stands where it is let go"
+    );
+    let takes: Vec<f32> = book(&editor, &key)
+        .recipes
+        .iter()
+        .map(|recipe| recipe.takes.0)
+        .collect();
+    assert_eq!(
+        takes,
+        [1.0, 4.0],
+        "a recipe takes the time it is given, a second until it is"
     );
     assert_eq!(not_made(&editor, &key), ["plank", "ore", "coal"]);
 
@@ -164,7 +182,7 @@ fn game() -> Game {
             "smithing",
             json!({
                 "mark": path("attention", "anvil"),
-                "recipes": [{ "makes": [stack("ingot", 1)], "from": [stack("ore", 2), stack("coal", 1)] }],
+                "recipes": [{ "makes": [stack("ingot", 1)], "from": [stack("ore", 2), stack("coal", 1)], "takes": 2.5 }],
             }),
         )
         .npc(
