@@ -330,8 +330,11 @@ pub struct ItemsDropped {
 
 pub type ItemId = ContentId<ItemDef>;
 
-/// The pixels of an item's icon, drawn in slots, the hotbar, equipment and shops.
-pub const ICON_SIZE: (u32, u32) = (32, 32);
+/// The pixels of an item's icon: as many as a slot draws it in, so it shows there pixel for pixel.
+pub const ICON_SIZE: (u32, u32) = (
+    ui::controls::SLOT_ICON as u32,
+    ui::controls::SLOT_ICON as u32,
+);
 /// The pixels of an item's card art, painted for the item alone.
 pub const CARD_SIZE: (u32, u32) = (256, 180);
 

@@ -17,8 +17,8 @@ use crate::{drag, ink, paint, sheet};
 pub const CONTROL_HEIGHT: f32 = 26.0;
 pub(crate) const BUTTON_PADDING: Vec2 = Vec2::new(12.0, 4.0);
 pub const RADIUS: f32 = 4.0;
-pub const SLOT: f32 = 36.0;
-pub const SLOT_ICON: f32 = 30.0;
+pub const SLOT: f32 = 38.0;
+pub const SLOT_ICON: f32 = 32.0;
 const PILL_HEIGHT: f32 = 20.0;
 const BEAD: f32 = 6.0;
 
