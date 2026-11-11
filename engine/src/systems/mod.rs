@@ -144,6 +144,7 @@ pub fn area_state(world: &mut World, content: &Content) {
     world.init_resource::<script::RiftInstances>();
     world.init_resource::<player::Players>();
     world.init_resource::<player::Connected>();
+    world.init_resource::<player::Unwelcomed>();
     world.init_resource::<combat::RegenAt>();
     world.init_resource::<skill::reset::PendingResets>();
     world.init_resource::<dialogue::StepCounter>();
@@ -394,6 +395,7 @@ pub fn server_app(
         .add_systems(
             First,
             (
+                player::welcome,
                 advance_replication_clock,
                 (sleep::settle, region::settle).chain(),
             ),

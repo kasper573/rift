@@ -273,42 +273,53 @@ pub(crate) fn conn_player(world: &World, conn: Entity) -> Option<Entity> {
     world.resource::<Players>().0.get(client).copied()
 }
 
-pub fn greet(add: On<Add<ClientId>>, clients: Query<&ClientId>, mut commands: Commands) {
-    let Ok(&id) = clients.get(add.entity) else {
-        return;
-    };
-    let conn = add.entity;
-    commands.queue(move |world: &mut World| welcome(world, conn, id));
+/// The connections owed a welcome. They are welcomed in the tick that follows rather than as they
+/// come, so the greeting carries that tick's clock: a world nobody was connected to stood still,
+/// and its own clock is as old as its last tick.
+#[derive(Resource, Default)]
+pub struct Unwelcomed(Vec<Entity>);
+
+pub fn greet(add: On<Add<ClientId>>, mut owed: ResMut<Unwelcomed>) {
+    owed.0.push(add.entity);
 }
 
-/// Tells every client in the world how its clocks run, as its greeting did, once they change.
+/// Has every client in the world told how its clocks run again, as its greeting did, once they
+/// change.
 pub fn tell_clocks(world: &mut World) {
-    let conns: Vec<(Entity, ClientId)> = world
-        .query::<(Entity, &ClientId)>()
+    let conns: Vec<Entity> = world
+        .query_filtered::<Entity, With<ClientId>>()
         .iter(world)
-        .map(|(conn, &id)| (conn, id))
         .collect();
-    for (conn, id) in conns {
-        welcome(world, conn, id);
-    }
+    world.resource_mut::<Unwelcomed>().0.extend(conns);
 }
 
-fn welcome(world: &mut World, conn: Entity, id: ClientId) {
+/// Welcomes every connection owed it: who it is to the server, the server's clock as this tick
+/// has it, and how the game's day and weather run.
+pub fn welcome(world: &mut World) {
+    let owed = std::mem::take(&mut world.resource_mut::<Unwelcomed>().0);
+    if owed.is_empty() {
+        return;
+    }
     let now = world.resource::<WallClock>().now;
     let day = world.get_resource::<DayClock>().and_then(|clock| clock.0);
     let weather = world
         .get_resource::<WeatherClock>()
         .and_then(|clock| clock.0);
-    visibility::send_to(
-        world,
-        conn,
-        Welcome {
-            id,
-            now,
-            day,
-            weather,
-        },
-    );
+    for conn in owed {
+        let Some(&id) = world.get::<ClientId>(conn) else {
+            continue;
+        };
+        visibility::send_to(
+            world,
+            conn,
+            Welcome {
+                id,
+                now,
+                day,
+                weather,
+            },
+        );
+    }
 }
 
 pub fn client_left(

@@ -2,7 +2,7 @@ use std::hash::Hash;
 use std::time::SystemTime;
 
 use bevy_ecs::prelude::{Resource, World};
-use bevy_time::Time;
+use bevy_time::{Real, Time};
 use serde::{Deserialize, Serialize};
 
 use crate::core::math::Rng;
@@ -136,8 +136,9 @@ impl Backoff {
     }
 }
 
-/// The server's wall clock as the welcome carried it, against the client's own uptime, so the
-/// client can tell how far along a server deadline is without a wall clock of its own.
+/// The server's wall clock as the welcome carried it, against how long the client had really run
+/// by then, so the client can tell how far along a server deadline is without a wall clock of its
+/// own.
 #[derive(Resource, Default)]
 pub struct ServerClock(Option<(UnixMillis, Seconds)>);
 
@@ -173,10 +174,18 @@ pub enum TimeCourse<Held> {
     Held(Held),
 }
 
-/// The server's wall clock as this client reckons it, once the server has told it the time.
+/// The server's wall clock as this client reckons it, once the server has told it the time. It
+/// is reckoned by the real time that has passed, which a slow frame does not hold back as it does
+/// the world's own clock.
 pub fn server_now(world: &World) -> Option<UnixMillis> {
-    let uptime = Seconds(world.get_resource::<Time>()?.elapsed_secs());
-    world.get_resource::<ServerClock>()?.now(uptime)
+    world
+        .get_resource::<ServerClock>()?
+        .now(real_uptime(world.get_resource::<Time<Real>>()?))
+}
+
+/// How long the program has really run.
+pub fn real_uptime(time: &Time<Real>) -> Seconds {
+    Seconds(time.elapsed_secs())
 }
 
 /// How long the world has run, by its own clock.

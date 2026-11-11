@@ -1,6 +1,9 @@
+use bevy_ecs::message::MessageCursor;
 use bevy_ecs::prelude::*;
+use bevy_replication::ToClient;
 use engine::core::math::Pos;
-use engine::core::units::{MeterPos, Meters};
+use engine::core::time::WallClock;
+use engine::core::units::{MeterPos, Meters, Seconds};
 use engine::systems::area::transition::Crossing;
 use engine::systems::area::warp::warp;
 use engine::systems::area::{self, AreaDef};
@@ -9,7 +12,7 @@ use engine::systems::interact::{self, InteractRequest};
 use engine::systems::memory::{self, MemoryDef};
 use engine::systems::movement::{self, MoveRequest, MoveSeq, Position, moving, position};
 use engine::systems::player::{
-    self, ARRIVAL_PATIENCE, AreaDrawn, JoinRequest, Xp, commands_locked,
+    self, ARRIVAL_PATIENCE, AreaDrawn, JoinRequest, Welcome, Xp, commands_locked,
 };
 use engine::systems::region;
 use engine::systems::script::{self, Place};
@@ -38,6 +41,28 @@ fn an_arrival_holds_until_the_client_reports_its_area_drawn_or_the_patience_runs
 
     sim.run(2.0);
     assert!(!commands_locked(&sim.world, player));
+}
+
+#[test]
+fn a_client_is_welcomed_by_the_clock_of_the_tick_that_greets_it() {
+    let mut sim = harbour();
+    sim.message::<ToClient<Welcome>>().add(player::welcome);
+    let mut heard = MessageCursor::default();
+    let stood_still = sim.world.resource::<WallClock>().now;
+
+    sim.connect(1);
+    let mut clock = sim.world.resource_mut::<WallClock>();
+    clock.now = clock.now.after(Seconds(3600.0));
+    sim.tick();
+
+    let welcomes = sim.read::<ToClient<Welcome>>(&mut heard);
+    let [welcome] = welcomes.as_slice() else {
+        panic!("one welcome for the one client: {welcomes:?}");
+    };
+    assert!(
+        welcome.message.now.since(stood_still) >= Seconds(3600.0),
+        "a world that stood still for an hour tells the time of the hour after: {welcome:?}"
+    );
 }
 
 #[test]

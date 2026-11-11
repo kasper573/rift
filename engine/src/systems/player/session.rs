@@ -2,12 +2,11 @@ use bevy_app::{App, Plugin, PreUpdate, Update};
 use bevy_ecs::prelude::*;
 use bevy_ecs::schedule::common_conditions::resource_removed;
 use bevy_replication::{ClientReplicationPlugin, ClientSystems, ServerLink};
-use bevy_time::Time;
+use bevy_time::{Real, Time};
 
 use super::{ClientId, PlayedBy, Welcome};
 use crate::core::render::transition::WorldViewSystems;
-use crate::core::time::{DayClock, ServerClock, WeatherClock};
-use crate::core::units::Seconds;
+use crate::core::time::{self, DayClock, ServerClock, WeatherClock};
 use crate::systems::{identity, stat};
 
 pub struct ClientSessionPlugin;
@@ -68,7 +67,7 @@ pub fn is_alive(world: &World) -> bool {
 
 fn record_welcome(
     mut welcomes: MessageReader<Welcome>,
-    time: Res<Time>,
+    time: Res<Time<Real>>,
     mut me: ResMut<MyClient>,
     mut clock: ResMut<ServerClock>,
     mut day: ResMut<DayClock>,
@@ -76,7 +75,7 @@ fn record_welcome(
 ) {
     for welcome in welcomes.read() {
         me.0 = Some(welcome.id);
-        clock.record(welcome.now, Seconds(time.elapsed_secs()));
+        clock.record(welcome.now, time::real_uptime(&time));
         day.0 = welcome.day;
         weather.0 = welcome.weather;
     }
