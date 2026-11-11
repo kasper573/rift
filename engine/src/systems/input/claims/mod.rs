@@ -15,7 +15,6 @@ use bevy::window::{
 use bevy_egui::EguiPrimaryContextPass;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
-use strum::VariantArray;
 use ui::egui;
 use ui::float;
 
@@ -28,7 +27,7 @@ use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::decal::GroundDecal;
 use crate::core::render::{self, Pointed};
 use crate::core::units::Meters;
-use crate::systems::interface::CursorShape;
+use crate::systems::interface::{CursorDef, CursorId, CursorShape};
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::skill::aim::AimClaimant;
@@ -62,8 +61,23 @@ pub fn claim_at(world: &mut World, pointed: Option<&Pointed>) -> ClickClaim {
 /// How the pointer looks: one of the game's own cursors, or the system's.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum Cursor {
-    Shaped(CursorShape),
+    Shaped(CursorId),
     System(SystemCursorIcon),
+}
+
+impl Cursor {
+    /// One of the cursors every game provides.
+    pub fn fixed(world: &World, shape: CursorShape) -> Cursor {
+        Cursor::Shaped(shape.id(world.resource::<Content>()))
+    }
+}
+
+/// The game's cursor the pointer shows in the area, none while it shows the system's own.
+pub fn game_cursor(world: &World) -> Option<CursorId> {
+    match world.resource::<ChosenCursor>().0 {
+        Some(Cursor::Shaped(cursor)) => Some(cursor),
+        Some(Cursor::System(_)) | None => None,
+    }
 }
 
 /// A claimant takes a click by claiming it from where the pointer points into the world, which is
@@ -131,18 +145,18 @@ struct ChosenCursor(Option<Cursor>);
 #[derive(Resource, Default, PartialEq, Clone)]
 struct ShownCursor {
     icon: Option<CursorIcon>,
-    in_frame: Option<CursorShape>,
+    in_frame: Option<CursorId>,
 }
 
 // Held for the whole session: a cursor loaded by path on each switch is unloaded as soon as the
 // shape changes, and the next switch back finds it missing again.
 #[derive(Resource)]
-struct CursorImages(Vec<(CursorShape, Handle<Image>)>);
+struct CursorImages(Vec<(CursorId, Handle<Image>)>);
 
 fn load_cursors(content: Res<Content>, assets: Res<AssetServer>, mut commands: Commands) {
-    let images = CursorShape::VARIANTS
-        .iter()
-        .map(|&shape| (shape, assets.load(shape.get(&content).image.path())))
+    let images = content
+        .ids::<CursorDef>()
+        .map(|cursor| (cursor, assets.load(cursor.get(&content).image.path())))
         .collect();
     commands.insert_resource(CursorImages(images));
 }
@@ -207,12 +221,12 @@ fn show_cursor(world: &mut World) {
             icon: Some(CursorIcon::System(SystemCursorIcon::Default)),
             in_frame: None,
         },
-        Some(Cursor::Shaped(shape)) if gui::dragging(world) => ShownCursor {
+        Some(Cursor::Shaped(cursor)) if gui::dragging(world) => ShownCursor {
             icon: None,
-            in_frame: Some(shape),
+            in_frame: Some(cursor),
         },
-        Some(Cursor::Shaped(shape)) => {
-            let icon = content_cursor(world, shape);
+        Some(Cursor::Shaped(cursor)) => {
+            let icon = content_cursor(world, cursor);
             if let CursorIcon::Custom(CustomCursor::Image(image)) = &icon
                 && !world.resource::<Assets<Image>>().contains(&image.handle)
             {
@@ -248,14 +262,14 @@ fn show_cursor(world: &mut World) {
 }
 
 fn draw_cursor(world: &mut World) {
-    let Some(shape) = world.resource::<ShownCursor>().in_frame else {
+    let Some(shown) = world.resource::<ShownCursor>().in_frame else {
         return;
     };
     let Some(gui) = gui::context(world) else {
         return;
     };
     let content = world.resource::<Content>().clone();
-    let cursor = shape.get(&content);
+    let cursor = shown.get(&content);
     let hotspot = egui::vec2(f32::from(cursor.hotspot.x), f32::from(cursor.hotspot.y));
     let Some(image) = gui::image(world, &cursor.image) else {
         return;
@@ -269,11 +283,11 @@ fn draw_cursor(world: &mut World) {
     );
 }
 
-fn content_cursor(world: &World, shape: CursorShape) -> CursorIcon {
-    let cursor = shape.get(world.resource::<Content>());
+fn content_cursor(world: &World, shown: CursorId) -> CursorIcon {
+    let cursor = shown.get(world.resource::<Content>());
     let handle = world
         .get_resource::<CursorImages>()
-        .and_then(|images| images.0.iter().find(|(known, _)| *known == shape))
+        .and_then(|images| images.0.iter().find(|(known, _)| *known == shown))
         .map(|(_, handle)| handle.clone())
         .unwrap_or_default();
     CursorIcon::Custom(CustomCursor::Image(CustomCursorImage {

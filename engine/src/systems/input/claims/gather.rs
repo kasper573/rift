@@ -1,13 +1,13 @@
 use bevy::prelude::*;
 
+use crate::core::content::Content;
 use crate::core::render::Pointed;
 use crate::core::render::world::decal::GroundDecal;
 use crate::systems::input::claims::{Claimant, ClickClaim, Cursor};
 use crate::systems::input::marks;
-use crate::systems::interface::CursorShape;
 use crate::systems::player::session;
-use crate::systems::resource::GatherRequest;
 use crate::systems::resource::render::pointed_at;
+use crate::systems::resource::{GatherRequest, Resource};
 
 pub struct GatherClaimant;
 
@@ -27,8 +27,13 @@ impl Claimant for GatherClaimant {
         }
     }
 
-    fn cursor(&self, _: &mut World, claim: ClickClaim) -> Option<Cursor> {
-        matches!(claim, ClickClaim::Gather(_)).then_some(Cursor::Shaped(CursorShape::Gather))
+    fn cursor(&self, world: &mut World, claim: ClickClaim) -> Option<Cursor> {
+        let ClickClaim::Gather(target) = claim else {
+            return None;
+        };
+        let content = world.resource::<Content>();
+        let kind = world.get::<Resource>(target)?.def.get(content).tool;
+        Some(Cursor::Shaped(kind.get(content).cursor))
     }
 
     fn mark(&self, world: &mut World, claim: ClickClaim) -> Option<GroundDecal> {

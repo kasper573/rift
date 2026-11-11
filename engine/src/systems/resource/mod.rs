@@ -7,7 +7,6 @@ use bevy_replication::Replicated;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::audio::playback::SfxId;
 use crate::core::content::media::GltfInfos;
 use crate::core::content::{
     Content, ContentFile, ContentId, ContentProblem, Loading, ModuleRule, ModuleSet, NamedContent,
@@ -17,7 +16,9 @@ use crate::core::geometry::Capsule;
 use crate::core::math::{Pos, Rng};
 use crate::core::script::Value;
 use crate::core::time::{UnixMillis, WallClock};
-use crate::core::units::{MeterPos, Meters, Percent, Seconds};
+use crate::core::units::{MeterPos, Meters, Percent, PlaybackRate, Seconds};
+use crate::systems::actor::playing::{self, Motion, Playing};
+use crate::systems::actor::skeleton::Declared;
 use crate::systems::actor::{self, Hitbox, Hurt};
 use crate::systems::area::{AreaId, AreaModule, AreaTag, PropId};
 use crate::systems::equipment::{self, EquipmentPlace};
@@ -47,10 +48,11 @@ pub fn register(app: &mut App) {
 }
 
 /// Something standing in the world that is worked until nothing is left of it: a prop to look at,
-/// how much it holds, how many may work it at once, what working it takes and what it gives. Its
-/// worker's gathering speed is how many times faster than stated an extraction goes, and its
-/// gathering efficiency the chance that an extraction rolls its drops again: every whole hundred
-/// percent is one more roll every time, and what is left over the chance of another.
+/// how much it holds, how many may work it at once, how long an extraction takes and what it gives.
+/// How it is worked is its kind of tool's to say: what must be worn, and how the work looks and
+/// sounds. Its worker's gathering speed is how many times faster than stated an extraction goes,
+/// and its gathering efficiency the chance that an extraction rolls its drops again: every whole
+/// hundred percent is one more roll every time, and what is left over the chance of another.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 pub struct ResourceDef {
     pub name: String,
@@ -61,47 +63,15 @@ pub struct ResourceDef {
     /// How many may work it at once.
     #[schemars(transform = SchemaMark::Count.with(true))]
     pub max_occupants: u32,
-    pub extraction: Extraction,
+    /// The kind of tool it is worked with, worn in the tool slot unless the kind is worked by hand.
+    pub tool: ToolTypeId,
+    /// How long one extraction takes at a gathering speed of one.
+    pub takes: Seconds,
     /// Rolled once per extraction, every row. Work needs room in the bag for the most every row
     /// can drop.
     pub drops: Vec<DropRow>,
-    pub sfx: ResourceSfx,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<ResourceModule>,
-}
-
-/// What one extraction takes: time alone, or a tool of a kind worn in the tool slot as well.
-#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(tag = "type", rename_all = "snake_case")]
-pub enum Extraction {
-    ByHand { takes: Seconds },
-    Tool { tool: ToolTypeId, takes: Seconds },
-}
-
-impl Extraction {
-    /// How long one extraction takes at a gathering speed of one.
-    pub fn takes(self) -> Seconds {
-        match self {
-            Extraction::ByHand { takes } | Extraction::Tool { takes, .. } => takes,
-        }
-    }
-
-    /// The kind of tool it takes, none when it is done by hand.
-    pub fn tool(self) -> Option<ToolTypeId> {
-        match self {
-            Extraction::ByHand { .. } => None,
-            Extraction::Tool { tool, .. } => Some(tool),
-        }
-    }
-}
-
-#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct ResourceSfx {
-    /// Heard as each extraction completes.
-    pub extract: SfxId,
-    /// Heard as the last extraction is taken.
-    pub ran_out: SfxId,
 }
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
@@ -114,20 +84,14 @@ impl ContentFile for ResourceDef {
     const TABLE: &'static str = "resource";
 
     fn fresh(near: &Nearby) -> Result<ResourceDef, String> {
-        let sound = near.file()?;
         Ok(ResourceDef {
             name: near.name(),
             look: near.file()?,
             quantity: 1,
             max_occupants: 1,
-            extraction: Extraction::ByHand {
-                takes: Seconds(1.0),
-            },
+            tool: near.file()?,
+            takes: Seconds(1.0),
             drops: vec![DropRow::of(near.file()?)],
-            sfx: ResourceSfx {
-                extract: sound,
-                ran_out: sound,
-            },
             modules: Vec::new(),
         })
     }
@@ -139,12 +103,7 @@ impl ContentFile for ResourceDef {
         for (index, drop) in self.drops.iter().enumerate() {
             check.at_least(format!("/drops/{index}/amount"), drop.amount, 1, "items");
         }
-        check.at_least(
-            "/extraction/takes",
-            self.extraction.takes().0,
-            0.0,
-            "seconds",
-        );
+        check.at_least("/takes", self.takes.0, 0.0, "seconds");
     }
 }
 
@@ -183,7 +142,7 @@ impl ScriptedRow for ResourceDef {
 impl ResourceDef {
     /// How long one extraction takes a worker of gathering speed `speed`.
     pub fn takes_at(&self, speed: f32) -> Seconds {
-        Seconds(self.extraction.takes().0 / speed.max(f32::EPSILON))
+        Seconds(self.takes.0 / speed.max(f32::EPSILON))
     }
 
     /// The most one extraction can drop a worker of gathering efficiency `efficiency`, row by row.
@@ -214,7 +173,8 @@ impl ResourceDef {
     }
 }
 
-/// Every resource is spawned somewhere and, where it takes a tool, there is a tool of the kind.
+/// Every resource is spawned somewhere, a kind of tool that is worn has an item of the kind and
+/// one worked by hand has none, and every kind's move is one some skeleton declares.
 pub fn check_all(loading: &mut Loading) {
     let content = loading.content();
     let spawned: Vec<ResourceId> = content
@@ -226,11 +186,24 @@ pub fn check_all(loading: &mut Loading) {
         })
         .flat_map(|spawner| spawner.resources())
         .collect();
-    let made: Vec<ToolTypeId> = content
-        .table::<ItemDef>()
-        .rows()
-        .filter_map(|item| item.wear()?.tool_type())
-        .collect();
+    let mut made: Vec<ToolTypeId> = Vec::new();
+    for (id, item) in loading.rows::<ItemDef>(&content) {
+        let Some(tool) = item.wear().and_then(|wear| wear.tool_type()) else {
+            continue;
+        };
+        made.push(tool);
+        if tool.get(&content).by_hand {
+            loading.row_error(
+                id,
+                "/kind/tool",
+                ContentProblem::new(
+                    "tool of no tool",
+                    tool.path(&content),
+                    "a kind of tool that is worn, not one worked by hand",
+                ),
+            );
+        }
+    }
     let mut needed: Vec<ToolTypeId> = Vec::new();
     for (id, def) in loading.rows::<ResourceDef>(&content) {
         if !spawned.contains(&id) {
@@ -244,23 +217,32 @@ pub fn check_all(loading: &mut Loading) {
                 ),
             );
         }
-        let Some(tool) = def.extraction.tool() else {
-            continue;
-        };
-        needed.push(tool);
-        if !made.contains(&tool) {
+        needed.push(def.tool);
+        if !def.tool.get(&content).by_hand && !made.contains(&def.tool) {
             loading.row_warning(
                 id,
-                "/extraction/tool",
+                "/tool",
                 ContentProblem::new(
                     "no such tool",
-                    tool.path(&content),
+                    def.tool.path(&content),
                     "a kind of tool some item is",
                 ),
             );
         }
     }
-    for (id, _) in loading.rows::<ToolTypeDef>(&content) {
+    let declared = content.built::<Declared>();
+    for (id, kind) in loading.rows::<ToolTypeDef>(&content) {
+        if !declared.moves.contains(&kind.work) {
+            loading.row_error(
+                id,
+                "/work",
+                ContentProblem::new(
+                    "undeclared move",
+                    kind.work.as_str(),
+                    "a move some skeleton's set declares",
+                ),
+            );
+        }
         if !needed.contains(&id) {
             loading.row_warning(
                 id,
@@ -300,6 +282,14 @@ pub struct Working {
 /// How many blows a worker had taken as work began; one more ends the work.
 #[derive(Component, Clone, Copy)]
 struct Unhurt(u32);
+
+/// On a worker, the kind of tool whose move it makes over and over at the work it began, and when
+/// the move under way lands, until it has.
+#[derive(Component, Clone, Copy)]
+struct Swing {
+    kind: ToolTypeId,
+    lands: Option<UnixMillis>,
+}
 
 #[derive(Message, Serialize, Deserialize, MapEntities, Clone, Copy, Debug, PartialEq)]
 pub struct GatherRequest {
@@ -379,17 +369,17 @@ pub fn workable(
         return Err(words.ran_out.clone());
     };
     let row = def.get(&content);
-    let tool = match row.extraction.tool() {
-        None => None,
-        Some(kind) => {
-            let worn = equipment::in_slot(world, worker, &EquipmentPlace::Tool).filter(|worn| {
-                worn.get(&content).wear().and_then(|wear| wear.tool_type()) == Some(kind)
-            });
-            let Some(worn) = worn else {
-                return Err(words.needs_tool.replace("{tool}", &kind.get(&content).name));
-            };
-            Some(worn)
-        }
+    let kind = row.tool.get(&content);
+    let tool = if kind.by_hand {
+        None
+    } else {
+        let worn = equipment::in_slot(world, worker, &EquipmentPlace::Tool).filter(|worn| {
+            worn.get(&content).wear().and_then(|wear| wear.tool_type()) == Some(row.tool)
+        });
+        let Some(worn) = worn else {
+            return Err(words.needs_tool.replace("{tool}", &kind.name));
+        };
+        Some(worn)
     };
     let working_it = world
         .get::<Working>(worker)
@@ -466,7 +456,10 @@ pub fn work(world: &mut World, workers: &mut Workers) {
             if let Some(why) = why {
                 notification::error(world, worker, why);
             }
-        } else if working.until <= now {
+            continue;
+        }
+        swing(world, worker, working.resource);
+        if working.until <= now {
             due.push((working.until, working.since, worker));
         }
     }
@@ -476,11 +469,52 @@ pub fn work(world: &mut World, workers: &mut Workers) {
     }
 }
 
-/// Ends the work `worker` has under way, if any; the extraction under way takes and gives nothing.
+/// Ends the work `worker` has under way, if any, and the move it makes at it; the extraction under
+/// way takes and gives nothing.
 pub fn stop(world: &mut World, worker: Entity) {
-    if let Ok(mut worker) = world.get_entity_mut(worker) {
-        worker.remove::<(Working, Unhurt)>();
+    let Ok(mut entity) = world.get_entity_mut(worker) else {
+        return;
+    };
+    entity.remove::<(Working, Unhurt)>();
+    if let Some(swing) = entity.take::<Swing>() {
+        let work = swing.kind.get(world.resource::<Content>()).work.clone();
+        playing::cut(world, worker, &Motion::Move(work));
     }
+}
+
+/// Sounds the move a worker makes at `resource` as it lands, and has it make the move again once
+/// the last has ended, as fast as it gathers, where its body has a clip for the move with what it
+/// holds.
+fn swing(world: &mut World, worker: Entity, resource: Entity) {
+    let Some(mut swing) = world.get::<Swing>(worker).copied() else {
+        return;
+    };
+    let content = world.resource::<Content>().clone();
+    let kind = swing.kind.get(&content);
+    let motion = Motion::Move(kind.work.clone());
+    let now = world.resource::<WallClock>().now;
+    let under_way = world
+        .get::<Playing>(worker)
+        .filter(|playing| playing.motion == motion)
+        .map(|playing| playing.apex);
+    if swing.lands.is_some_and(|lands| lands <= now) {
+        if under_way == swing.lands {
+            let swung = kind.sfx.swing;
+            notification::play_sound(
+                world,
+                Some(resource),
+                Some(worker),
+                swung,
+                Audience::Everyone,
+            );
+        }
+        swing.lands = None;
+    }
+    if !playing::playing(world, worker) && playing::plays(world, worker, &motion) {
+        let speed = PlaybackRate(stat::effective(world, worker, StatKind::GatheringSpeed));
+        swing.lands = playing::play_at(world, worker, motion, None, speed).map(|made| made.apex);
+    }
+    world.entity_mut(worker).insert(swing);
 }
 
 /// How near a resource its workers stand: against the body of its look.
@@ -499,9 +533,15 @@ fn start(world: &mut World, worker: Entity, resource: Entity) {
     if let Some(at) = position(world, resource) {
         actor::face_toward(world, worker, at);
     }
+    let Some(def) = world.get::<Resource>(resource).map(|resource| resource.def) else {
+        return;
+    };
+    let kind = def.get(world.resource::<Content>()).tool;
     let since = world.resource::<WallClock>().now;
     let blows = world.get::<Hurt>(worker).map_or(0, |hurt| hurt.0);
-    world.entity_mut(worker).insert(Unhurt(blows));
+    world
+        .entity_mut(worker)
+        .insert((Unhurt(blows), Swing { kind, lands: None }));
     begin(world, worker, resource, tool, since);
 }
 
@@ -586,7 +626,7 @@ fn extract(world: &mut World, content: &Content, worker: Entity, done: UnixMilli
         world,
         Some(resource),
         Some(worker),
-        row.sfx.extract,
+        row.tool.get(content).sfx.extract,
         Audience::Everyone,
     );
     for stack in &dropped {
@@ -597,7 +637,7 @@ fn extract(world: &mut World, content: &Content, worker: Entity, done: UnixMilli
             world,
             Some(resource),
             Some(worker),
-            row.sfx.ran_out,
+            row.tool.get(content).sfx.ran_out,
             Audience::Everyone,
         );
         raise(world, def, EventKind::RanOut, worker, None);

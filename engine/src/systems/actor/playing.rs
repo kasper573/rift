@@ -206,9 +206,20 @@ pub fn play(
     motion: Motion,
     toward: Option<Radians>,
 ) -> Option<Playing> {
+    let speed = PlaybackRate(stat::effective(world, actor, StatKind::AttackSpeed));
+    play_at(world, actor, motion, toward, speed)
+}
+
+/// [`play`], at a speed of the caller's choosing in place of the actor's attack speed.
+pub fn play_at(
+    world: &mut World,
+    actor: Entity,
+    motion: Motion,
+    toward: Option<Radians>,
+    speed: PlaybackRate,
+) -> Option<Playing> {
     let content = world.resource::<Content>().clone();
     let now = world.resource::<WallClock>().now;
-    let speed = PlaybackRate(stat::effective(world, actor, StatKind::AttackSpeed));
     let stance = held::stance_of(world, actor);
     let model = ActorModel::get(&content, world.get::<Appearance>(actor)?.model);
     let last = world
@@ -394,6 +405,18 @@ pub fn progress(world: &mut World, playing: &mut QueryState<Entity, With<Playing
                 .insert(LastAction { at: played.ends });
             settle_awaited(world, actor, NEXT);
         }
+    }
+}
+
+/// Cuts short what an actor plays where that is `motion`, which then never lands.
+pub fn cut(world: &mut World, actor: Entity, motion: &Motion) {
+    if world
+        .get::<Playing>(actor)
+        .is_some_and(|playing| playing.motion == *motion)
+    {
+        let now = world.resource::<WallClock>().now;
+        interrupt(world, actor);
+        world.entity_mut(actor).insert(LastAction { at: now });
     }
 }
 

@@ -498,6 +498,17 @@ impl Game {
         })
     }
 
+    /// A cursor of a plain image, pointing with its corner.
+    pub fn cursor(self, name: &str) -> Game {
+        let image = format!("icons/cursors/{name}.png");
+        self.row(
+            "cursor",
+            name,
+            json!({ "image": image, "hotspot": { "x": 0, "y": 0 } }),
+        )
+        .asset(&image, png(1, 1))
+    }
+
     /// An attention mark of a plain icon.
     pub fn mark(self, name: &str) -> Game {
         let icon = format!("icons/marks/{name}.png");

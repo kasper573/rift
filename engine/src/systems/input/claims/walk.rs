@@ -52,7 +52,7 @@ impl Claimant for WalkClaimant {
         } else {
             CursorShape::Walk
         };
-        Some(Cursor::Shaped(shape))
+        Some(Cursor::fixed(world, shape))
     }
 
     fn mark(&self, _world: &mut World, claim: ClickClaim) -> Option<GroundDecal> {

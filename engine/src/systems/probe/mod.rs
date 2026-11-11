@@ -82,6 +82,7 @@ use crate::systems::history::{HistoryMark, HistoryRecord, HistoryTopic};
 use crate::systems::hud;
 use crate::systems::input::claims::{self, ClickClaim};
 use crate::systems::input::map::InputMap;
+use crate::systems::interface::CursorId;
 use crate::systems::item::{self, DroppedItem, Inventory, ItemId, ItemStack};
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::notification::{self, NotificationRows, bubble, error, feed, intro, pop};
@@ -370,6 +371,8 @@ pub struct ProbeInput {
     pub cursor: Option<Pos<WindowPx>>,
     /// Whether the system draws the cursor, rather than the frame or nothing.
     pub system_cursor: bool,
+    /// The cursor of the game's the pointer shows in the area, none while it shows the system's.
+    pub game_cursor: Option<CursorId>,
     /// Whether a click now would still count on from the latest one, as a double or triple click.
     pub click_run_open: bool,
     #[serde(flatten)]
@@ -1072,6 +1075,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                 .and_then(Window::cursor_position)
                 .map(|at| Pos::new(at.x, at.y)),
             system_cursor,
+            game_cursor: claims::game_cursor(world),
             click_run_open: click_run_open(world),
             seen: *world.resource::<ProbeInputSeen>(),
         },
@@ -1680,6 +1684,8 @@ fn objects(world: &mut World, area: Option<AreaId>) -> Vec<ProbeObject> {
 
 /// The ground point to point at to take the body: where the ray from the eye through its capsule
 /// lands, at the height nearest its middle where pointing claims the body, else where it stands.
+/// A body is given up on at the first height where pointing takes nothing at all: nothing stands
+/// in its way there, so it is not for taking.
 fn aim(world: &mut World, entity: Entity, at: Pos<Meters>, capsule: Capsule) -> Pos<Meters> {
     const HEIGHTS: [f32; 7] = [0.5, 0.375, 0.625, 0.25, 0.75, 0.125, 0.875];
     let Some(view) = render::view_of(world) else {
@@ -1687,18 +1693,22 @@ fn aim(world: &mut World, entity: Entity, at: Pos<Meters>, capsule: Capsule) -> 
     };
     let eye = view.eye();
     let foot = ground_height(world, at);
-    HEIGHTS
-        .into_iter()
-        .find_map(|share| {
-            let point = world_point(at, foot + Meters(capsule.height.0 * share));
-            let ray = Ray3d::new(eye, Dir3::new(point - eye).ok()?);
-            let ground = world
-                .get_resource::<GroundHeights>()
-                .and_then(|ground| ground.hit(ray));
-            let pointed = Pointed { ray, ground };
-            ground.filter(|_| clicked(world, &pointed) == Some(entity))
-        })
-        .unwrap_or(at)
+    for share in HEIGHTS {
+        let point = world_point(at, foot + Meters(capsule.height.0 * share));
+        let Ok(direction) = Dir3::new(point - eye) else {
+            continue;
+        };
+        let ray = Ray3d::new(eye, direction);
+        let ground = world
+            .get_resource::<GroundHeights>()
+            .and_then(|ground| ground.hit(ray));
+        match (clicked(world, &Pointed { ray, ground }), ground) {
+            (Some(clicked), Some(ground)) if clicked == entity => return ground,
+            (Some(_), _) => {}
+            (None, _) => break,
+        }
+    }
+    at
 }
 
 /// The ground point to point at to take the object: the middle of its shape, or the nearest point
@@ -1741,8 +1751,13 @@ fn clicked(world: &mut World, pointed: &Pointed) -> Option<Entity> {
         ClickClaim::Attack(entity)
         | ClickClaim::Interact(entity)
         | ClickClaim::Aim(entity)
+        | ClickClaim::Pickup(entity)
         | ClickClaim::Gather(entity) => Some(entity),
-        _ => None,
+        ClickClaim::Interface
+        | ClickClaim::Locked
+        | ClickClaim::AimAt(_)
+        | ClickClaim::Walk(_)
+        | ClickClaim::Nothing => None,
     }
 }
 

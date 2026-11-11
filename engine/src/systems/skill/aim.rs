@@ -169,7 +169,7 @@ impl Claimant for AimClaimant {
     }
 
     fn cursor(&self, world: &mut World, _claim: ClickClaim) -> Option<Cursor> {
-        aiming(world).map(|_| Cursor::Shaped(CursorShape::Target))
+        aiming(world).map(|_| Cursor::fixed(world, CursorShape::Target))
     }
 }
 

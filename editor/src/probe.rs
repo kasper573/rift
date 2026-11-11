@@ -141,6 +141,7 @@ fn snapshot(world: &mut World, ctx: &ui::egui::Context) -> EditorSnapshot {
                 .and_then(Window::cursor_position)
                 .map(|at| Pos::new(at.x, at.y)),
             system_cursor,
+            game_cursor: None,
             click_run_open: probe::click_run_still_open(ctx),
             seen: *world.resource::<ProbeInputSeen>(),
         },

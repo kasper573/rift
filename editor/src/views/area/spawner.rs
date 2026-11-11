@@ -5,7 +5,7 @@ use engine::field;
 use engine::systems::area::{self, AreaModule, AreaModuleKind};
 use engine::systems::item::ToolTypeDef;
 use engine::systems::npc::{NpcDef, NpcModule};
-use engine::systems::resource::{Extraction, ResourceDef};
+use engine::systems::resource::ResourceDef;
 use engine::systems::spawner::{SpawnShare, Spawner, Spawns};
 use engine::systems::stat::StatKind;
 use ui::chip;
@@ -49,16 +49,11 @@ fn from_resource(ui: &mut Ui, cx: &mut FormCx, resource: &str) {
     sheet::section(ui, &format!("From {}", shown_path(resource)));
     form::kv_text(ui, "holds", row.quantity.to_string());
     form::kv_text(ui, "room for", row.max_occupants.to_string());
-    let worked = match row.extraction {
-        Extraction::ByHand { takes } => format!("by hand · {} s", takes.0),
-        Extraction::Tool { tool, takes } => {
-            let kind = reader
-                .path_of(tool)
-                .and_then(|tool| cx.project.read::<ToolTypeDef>(tool).ok())
-                .map_or_else(|| "a tool".to_owned(), |tool| tool.name.clone());
-            format!("{kind} · {} s", takes.0)
-        }
-    };
+    let kind = reader
+        .path_of(row.tool)
+        .and_then(|tool| cx.project.read::<ToolTypeDef>(tool).ok())
+        .map_or_else(|| "a tool".to_owned(), |tool| tool.name.clone());
+    let worked = format!("{kind} · {} s", row.takes.0);
     form::kv_text(ui, "worked", worked);
     ui.add_space(4.0);
     if chip::colored(

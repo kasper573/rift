@@ -248,7 +248,7 @@ fn resource_summary(content: &Content, def: &ResourceDef) -> Vec<String> {
         .collect();
     lines.push(format!(
         "Empty after {} s of one worker's work",
-        def.quantity as f32 * def.extraction.takes().0
+        def.quantity as f32 * def.takes.0
     ));
     let mut items: Vec<_> = def.drops.iter().map(|drop| drop.item).collect();
     items.sort_unstable_by_key(|item| item.raw());

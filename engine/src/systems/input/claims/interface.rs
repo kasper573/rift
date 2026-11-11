@@ -40,6 +40,6 @@ impl Claimant for InterfaceClaimant {
             }
             _ => CursorShape::Default,
         };
-        Some(Cursor::Shaped(shape))
+        Some(Cursor::fixed(world, shape))
     }
 }

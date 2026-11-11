@@ -26,8 +26,8 @@ impl Claimant for PickupClaimant {
         }
     }
 
-    fn cursor(&self, _world: &mut World, _claim: ClickClaim) -> Option<Cursor> {
-        Some(Cursor::Shaped(CursorShape::PickUp))
+    fn cursor(&self, world: &mut World, _claim: ClickClaim) -> Option<Cursor> {
+        Some(Cursor::fixed(world, CursorShape::PickUp))
     }
 
     fn mark(&self, world: &mut World, claim: ClickClaim) -> Option<GroundDecal> {

@@ -30,7 +30,7 @@ impl Claimant for InteractClaimant {
             return None;
         };
         let verb = interact::interaction_of(world, target)?.verb;
-        Some(Cursor::Shaped(verb.cursor()))
+        Some(Cursor::fixed(world, verb.cursor()))
     }
 
     fn mark(&self, world: &mut World, claim: ClickClaim) -> Option<GroundDecal> {

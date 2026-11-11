@@ -26,8 +26,8 @@ impl Claimant for AttackClaimant {
         }
     }
 
-    fn cursor(&self, _world: &mut World, _claim: ClickClaim) -> Option<Cursor> {
-        Some(Cursor::Shaped(CursorShape::Attack))
+    fn cursor(&self, world: &mut World, _claim: ClickClaim) -> Option<Cursor> {
+        Some(Cursor::fixed(world, CursorShape::Attack))
     }
 
     fn mark(&self, world: &mut World, claim: ClickClaim) -> Option<GroundDecal> {

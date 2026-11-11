@@ -5,7 +5,9 @@ use serde::{Deserialize, Serialize};
 use crate::core::audio::playback::{PlaySfx, SfxDef, SfxPlace};
 use crate::core::content::ImageRef;
 use crate::core::content::SchemaMark;
-use crate::core::content::{Content, ContentFile, Fixture, Nearby};
+use crate::core::content::{Content, ContentFile, ContentId, Fixture, Nearby};
+
+pub type CursorId = ContentId<CursorDef>;
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 pub struct CursorDef {
@@ -45,7 +47,6 @@ pub enum CursorShape {
     Enter,
     Attack,
     PickUp,
-    Gather,
     Talk,
     Use,
     Open,
@@ -56,7 +57,6 @@ pub enum CursorShape {
 impl Fixture for CursorShape {
     type Row = CursorDef;
     const FOLDER: Option<&'static str> = Some("interface");
-    const WHOLE_TABLE: bool = true;
 }
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]

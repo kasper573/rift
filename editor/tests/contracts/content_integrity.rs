@@ -37,6 +37,9 @@ fn orc_model(editor: &mut Editor) -> String {
 fn camp() -> Game {
     support::game()
         .npc("orc", 10.0, json!([]))
+        .edit("skeleton", testkit::BODY, |body| {
+            body["base"]["moves"] = json!({ "chop": testkit::clip("attack") });
+        })
         .prop(
             "plank",
             json!({ "type": "box", "width": 1.0, "depth": 1.0 }),

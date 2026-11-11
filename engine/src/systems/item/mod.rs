@@ -29,10 +29,13 @@ use crate::core::time;
 use crate::core::units::{MeterPos, Meters, Percent, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::actor::part::ModelPartId;
-use crate::systems::actor::skeleton::{Colours, EquipmentSlot, LocalOffset, LocalTurn, SkeletonId};
+use crate::systems::actor::skeleton::{
+    self, Colours, EquipmentSlot, LocalOffset, LocalTurn, MoveName, SkeletonId,
+};
 use crate::systems::actor::stance::StanceId;
 use crate::systems::area::{self, AreaId, AreaTag, PropId};
 use crate::systems::equipment;
+use crate::systems::interface::CursorId;
 use crate::systems::movement::{Position, position};
 use crate::systems::npc::Npc;
 use crate::systems::player::{ClientId, PlayedBy, Players, player_requests};
@@ -752,19 +755,51 @@ impl DropRow {
 
 pub type ToolTypeId = ContentId<ToolTypeDef>;
 
-/// A kind of tool, by the name players are told: what the items worn in the tool slot are, and
-/// what a resource asks for there.
+/// A way of working resources, by the name players are told: what a resource asks for, what the
+/// items worn in the tool slot are a kind of, and how the work looks and sounds whatever is worked,
+/// so many resources share few kinds.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ToolTypeDef {
     pub name: String,
+    /// Done with bare hands: no item is of the kind, and a resource asking for it asks for nothing
+    /// worn.
+    #[serde(default, skip_serializing_if = "serial::is_false")]
+    pub by_hand: bool,
+    /// The move its worker makes over and over at the work.
+    pub work: MoveName,
+    /// The cursor over a resource worked this way.
+    pub cursor: CursorId,
+    pub sfx: ToolTypeSfx,
+}
+
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolTypeSfx {
+    /// Heard as each move of the work lands.
+    pub swing: SfxId,
+    /// Heard as each extraction completes.
+    pub extract: SfxId,
+    /// Heard as the last extraction is taken.
+    pub ran_out: SfxId,
 }
 
 impl ContentFile for ToolTypeDef {
     const TABLE: &'static str = "tool_type";
 
     fn fresh(near: &Nearby) -> Result<ToolTypeDef, String> {
-        Ok(ToolTypeDef { name: near.name() })
+        let sound = near.file()?;
+        Ok(ToolTypeDef {
+            name: near.name(),
+            by_hand: false,
+            work: skeleton::nearest_move(near)?,
+            cursor: near.file()?,
+            sfx: ToolTypeSfx {
+                swing: sound,
+                extract: sound,
+                ran_out: sound,
+            },
+        })
     }
 
     fn check(&self, check: &mut RowCheck) {

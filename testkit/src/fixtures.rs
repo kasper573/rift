@@ -36,15 +36,7 @@ impl Game {
         });
         let game = each::<AttentionMark>(game, |game, key, _| game.mark(key));
         let game = each::<InterfaceSound>(game, |game, key, _| game.sfx(key));
-        let game = each::<CursorShape>(game, |game, key, _| {
-            let image = format!("icons/cursors/{key}.png");
-            game.row(
-                "cursor",
-                key,
-                json!({ "image": image, "hotspot": { "x": 0, "y": 0 } }),
-            )
-            .asset(&image, png(1, 1))
-        });
+        let game = each::<CursorShape>(game, |game, key, _| game.cursor(key));
         let game = each::<InterfaceIcon>(game, |game, key, _| {
             let image = format!("icons/interface/{key}.png");
             game.row("interface_icon", key, json!({ "image": image }))

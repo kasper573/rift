@@ -1,15 +1,22 @@
+use bevy_ecs::message::{MessageCursor, Messages};
 use bevy_ecs::prelude::*;
+use bevy_replication::ToClient;
+use engine::core::audio::playback::{SfxDef, SfxId};
 use engine::core::math::{Offset, Pos};
-use engine::core::units::Meters;
+use engine::core::units::{Meters, Seconds};
+use engine::systems::actor::skeleton::MoveName;
+use engine::systems::actor::{Motion, Playing};
 use engine::systems::area::AreaDef;
 use engine::systems::movement::{self, MoveRequest, position};
+use engine::systems::notification::SoundPlayed;
 use engine::systems::resource::{self, GatherRequest, Left, ResourceDef, StopGathering, Working};
 use engine::systems::stat::{self, StatKind, Stats};
 use engine::systems::{actor, script};
 use serde_json::{Value, json};
-use testkit::{Game, Map, Sim, path};
+use testkit::{APEX, BODY, Game, Map, Sim, path, rig_clips};
 
 const TAKES: f32 = 2.0;
+const SWING: f32 = 0.5;
 const AWAY: f32 = 4.0;
 const WALK: f32 = 3.0;
 
@@ -22,9 +29,16 @@ fn an_extraction_takes_one_rolls_once_and_pays_out_and_is_refused_without_the_to
     ask(&mut sim, 1, vein);
     assert!(sim.run_until(WALK, |world| world.get::<Working>(miner).is_some()));
     assert_eq!(sim.count(miner, "ore"), 0);
-    sim.run(TAKES - 0.2);
+    let mut sounds = MessageCursor::default();
+    let [crack, chip] = ["crack", "chip"].map(|sound| sim.id::<SfxDef>(sound));
+    let heard = hear(&mut sim, &mut sounds, TAKES - 0.2);
+    assert!(
+        heard.contains(&crack) && !heard.contains(&chip),
+        "each swing sounds as its kind of tool does while nothing is taken yet: {heard:?}"
+    );
     assert_eq!(left(&sim, vein), Some(3), "it gave before its time was up");
-    sim.run(0.4);
+    let heard = hear(&mut sim, &mut sounds, 0.4);
+    assert!(heard.contains(&chip), "an extraction sounds as it pays out");
     assert_eq!(left(&sim, vein), Some(2));
     assert_eq!(sim.count(miner, "ore"), 2, "one roll of two ore");
     assert!(
@@ -35,6 +49,11 @@ fn an_extraction_takes_one_rolls_once_and_pays_out_and_is_refused_without_the_to
     set(&mut sim, miner, StatKind::GatheringSpeed, 2.0);
     set(&mut sim, miner, StatKind::GatheringEfficiency, 100.0);
     sim.run(TAKES + 0.2);
+    let swing = swung(&sim, miner).expect("it swings on");
+    assert!(
+        (swing.ends.since(swing.started).0 - SWING / 2.0).abs() < 0.01,
+        "a swing takes half the time at twice the speed: {swing:?}"
+    );
     assert_eq!(
         left(&sim, vein),
         Some(1),
@@ -64,9 +83,19 @@ fn an_extraction_takes_one_rolls_once_and_pays_out_and_is_refused_without_the_to
     sim.equip(miner, "pickaxe");
     ask(&mut sim, 1, vein);
     assert!(sim.run_until(WALK, |world| world.get::<Working>(miner).is_some()));
+    let first = swung(&sim, miner).expect("work begins with a swing");
+    assert_eq!(
+        first.motion,
+        Motion::Move(MoveName::new("mine")),
+        "the move of the kind of tool worked with"
+    );
     sim.run(TAKES - 0.5);
+    let later = swung(&sim, miner).expect("it swings for as long as it works");
+    assert!(later.started > first.started, "one swing after another");
     let conn = sim.conn(1);
     sim.send(conn, StopGathering);
+    sim.tick();
+    assert_eq!(swung(&sim, miner), None, "the swing ends with the work");
     sim.run(1.0);
     assert_eq!(left(&sim, vein), Some(3), "work stopped under way took one");
     assert_eq!(sim.count(miner, "ore"), 0);
@@ -118,6 +147,17 @@ fn an_extraction_takes_one_rolls_once_and_pays_out_and_is_refused_without_the_to
     assert!(
         [4, 6].contains(&sim.count(miner, "ore")),
         "half as much again rolls twice every time, and a third time half the times"
+    );
+
+    let by_hand = json!({ "tool": path("tool_type", "hands") });
+    let (mut sim, bush) = quarry(by_hand, |game| game);
+    let picker = sim.join(1);
+    ask(&mut sim, 1, bush);
+    assert!(sim.run_until(WALK, |world| world.get::<Working>(picker).is_some()));
+    assert_eq!(
+        swung(&sim, picker).map(|swing| swing.motion),
+        Some(Motion::Move(MoveName::new("pluck"))),
+        "work by hand makes the move it names"
     );
 
     let (mut sim, vein) = quarry(json!({}), |game| {
@@ -172,13 +212,26 @@ fn quarry(fields: Value, more: impl FnOnce(Game) -> Game) -> (Sim, Entity) {
         "look": path("prop", "rock"),
         "quantity": 1,
         "max_occupants": 1,
-        "extraction": { "type": "tool", "tool": path("tool_type", "pick"), "takes": TAKES },
+        "tool": path("tool_type", "pick"),
+        "takes": TAKES,
         "drops": [{ "item": path("item", "ore"), "amount": 2 }],
-        "sfx": { "extract": path("sfx", "chip"), "ran_out": path("sfx", "chip") },
     });
     vein.as_object_mut()
         .expect("the vein")
         .extend(fields.as_object().expect("fields").clone());
+    let kind = |name: &str, work: &str, by_hand: bool| {
+        json!({
+            "name": name,
+            "by_hand": by_hand,
+            "work": work,
+            "cursor": path("cursor", "dig"),
+            "sfx": {
+                "swing": path("sfx", "crack"),
+                "extract": path("sfx", "chip"),
+                "ran_out": path("sfx", "crumble"),
+            },
+        })
+    };
     let tool = |kind: &str| {
         json!({ "kind": {
             "type": "equipment",
@@ -187,17 +240,38 @@ fn quarry(fields: Value, more: impl FnOnce(Game) -> Game) -> (Sim, Entity) {
             "stance": path("stance", "swing"),
         } })
     };
+    let mut clips = rig_clips();
+    clips.extend(["mine", "hew", "pluck"].map(|swing| (swing, Seconds(SWING))));
+    let lands = |clip: &str| json!({ "clip": testkit::clip(clip), "cues": [{ "at": APEX.0, "apex": true }] });
     let game = Game::new()
+        .skeleton_of(
+            BODY,
+            &clips,
+            json!({
+                "stances": [{
+                    "stance": path("stance", "swing"),
+                    "set": { "moves": { "mine": testkit::clip("mine"), "hew": testkit::clip("hew") } },
+                }],
+                "cues": [lands("attack"), lands("mine"), lands("hew"), lands("pluck")],
+            }),
+        )
+        .edit("skeleton", BODY, |body| {
+            body["base"]["moves"] = json!({ "pluck": testkit::clip("pluck") });
+        })
         .area("meadow", &Map::open(20, 10), json!([]))
         .hero("meadow", 2.0, 5.0)
         .stance("swing", 1, "main")
-        .row("tool_type", "pick", json!({ "name": "Pick" }))
-        .row("tool_type", "axe", json!({ "name": "Axe" }))
+        .row("tool_type", "pick", kind("Pick", "mine", false))
+        .row("tool_type", "axe", kind("Axe", "hew", false))
+        .row("tool_type", "hands", kind("Hands", "pluck", true))
+        .cursor("dig")
         .item("pickaxe", tool("pick"))
         .item("hatchet", tool("axe"))
         .resource("ore", 20)
         .prop("rock", json!({ "type": "none" }))
         .sfx("chip")
+        .sfx("crack")
+        .sfx("crumble")
         .sfx("ui_refuse")
         .row("resource", "vein", vein);
     let mut sim = Sim::new(more(game).load());
@@ -205,9 +279,21 @@ fn quarry(fields: Value, more: impl FnOnce(Game) -> Game) -> (Sim, Entity) {
         .accept::<MoveRequest>()
         .accept::<GatherRequest>()
         .accept::<StopGathering>()
-        .add((movement::move_request, resource::gather_request))
+        .message::<ToClient<SoundPlayed>>()
+        .add((
+            movement::move_request,
+            movement::file_by_chunk,
+            resource::gather_request,
+        ))
         .plan(movement::AdvanceWalks::default())
-        .add((resource::gathering, resource::work).chain())
+        .add(
+            (
+                actor::playing::progress,
+                resource::gathering,
+                resource::work,
+            )
+                .chain(),
+        )
         .plan(stat::SettleHealth::default())
         .plan(actor::SettleActions::default());
     script::spawn_stateless(&mut sim.world);
@@ -221,6 +307,26 @@ fn quarry(fields: Value, more: impl FnOnce(Game) -> Game) -> (Sim, Entity) {
 fn ask(sim: &mut Sim, client: u32, target: Entity) {
     let conn = sim.conn(client);
     sim.send(conn, GatherRequest { target });
+}
+
+/// Runs on for `seconds` and tells every sound sent to anyone meanwhile.
+fn hear(
+    sim: &mut Sim,
+    sounds: &mut MessageCursor<ToClient<SoundPlayed>>,
+    seconds: f32,
+) -> Vec<SfxId> {
+    let mut heard = Vec::new();
+    sim.run_until(seconds, |world| {
+        let sent = world.resource::<Messages<ToClient<SoundPlayed>>>();
+        heard.extend(sounds.read(sent).map(|sent| sent.message.sfx));
+        false
+    });
+    heard
+}
+
+/// The swing the worker is in the middle of, if any.
+fn swung(sim: &Sim, worker: Entity) -> Option<Playing> {
+    sim.world.get::<Playing>(worker).cloned()
 }
 
 /// How much the resource still holds, none once it is gone.

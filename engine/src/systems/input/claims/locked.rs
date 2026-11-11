@@ -14,7 +14,7 @@ impl Claimant for LockedClaimant {
 
     fn drive(&self, _world: &mut World, _claim: Option<ClickClaim>, _start: bool) {}
 
-    fn cursor(&self, _world: &mut World, _claim: ClickClaim) -> Option<Cursor> {
-        Some(Cursor::Shaped(CursorShape::Default))
+    fn cursor(&self, world: &mut World, _claim: ClickClaim) -> Option<Cursor> {
+        Some(Cursor::fixed(world, CursorShape::Default))
     }
 }

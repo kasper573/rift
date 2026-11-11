@@ -1508,6 +1508,16 @@ pub struct Declared {
     pub gestures: BTreeSet<GestureName>,
 }
 
+/// A move for a file made fresh to name: the first of the nearest skeleton that declares any.
+pub fn nearest_move(near: &Nearby) -> Result<MoveName, String> {
+    const MOVING: &str = "a skeleton whose sets declare a move";
+    let moving = near.file_where(MOVING, |skeleton: &SkeletonDef| {
+        skeleton.moves().next().is_some()
+    })?;
+    let first = near.read(moving)?.moves().next().cloned();
+    first.ok_or_else(|| format!("it needs {MOVING}: make one first"))
+}
+
 fn fallen_back((cell, naming): (&ClipCell, Naming)) -> (&ClipCell, Naming) {
     (
         cell,
