@@ -576,7 +576,7 @@ fn sound(world: &mut World, area: &Area, cast: &[StandingActor]) {
     for standing in cast {
         let crossed: Vec<&Cue> = standing.crossed.iter().collect();
         let at = camera::ground_pos(standing.transform.translation);
-        let (sounds, _) = render::cue_sounds(&crossed, Some(area), at);
+        let (sounds, _) = render::cue_sounds(&crossed, None, Some(area), at);
         for sound in sounds {
             playback::play(
                 world,

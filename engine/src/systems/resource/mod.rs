@@ -17,7 +17,7 @@ use crate::core::math::{Pos, Rng};
 use crate::core::script::Value;
 use crate::core::time::{UnixMillis, WallClock};
 use crate::core::units::{MeterPos, Meters, Percent, PlaybackRate, Seconds};
-use crate::systems::actor::playing::{self, Motion, Playing};
+use crate::systems::actor::playing::{self, Motion};
 use crate::systems::actor::skeleton::Declared;
 use crate::systems::actor::{self, Hitbox, Hurt};
 use crate::systems::area::{AreaId, AreaModule, AreaTag, PropId};
@@ -283,13 +283,9 @@ pub struct Working {
 #[derive(Component, Clone, Copy)]
 struct Unhurt(u32);
 
-/// On a worker, the kind of tool whose move it makes over and over at the work it began, and when
-/// the move under way lands, until it has.
+/// On a worker, the kind of tool whose move it makes over and over at the work it began.
 #[derive(Component, Clone, Copy)]
-struct Swing {
-    kind: ToolTypeId,
-    lands: Option<UnixMillis>,
-}
+struct Swing(ToolTypeId);
 
 #[derive(Message, Serialize, Deserialize, MapEntities, Clone, Copy, Debug, PartialEq)]
 pub struct GatherRequest {
@@ -458,7 +454,7 @@ pub fn work(world: &mut World, workers: &mut Workers) {
             }
             continue;
         }
-        swing(world, worker, working.resource);
+        swing(world, worker);
         if working.until <= now {
             due.push((working.until, working.since, worker));
         }
@@ -476,45 +472,29 @@ pub fn stop(world: &mut World, worker: Entity) {
         return;
     };
     entity.remove::<(Working, Unhurt)>();
-    if let Some(swing) = entity.take::<Swing>() {
-        let work = swing.kind.get(world.resource::<Content>()).work.clone();
+    if let Some(Swing(kind)) = entity.take::<Swing>() {
+        let work = kind.get(world.resource::<Content>()).work.clone();
         playing::cut(world, worker, &Motion::Move(work));
     }
 }
 
-/// Sounds the move a worker makes at `resource` as it lands, and has it make the move again once
-/// the last has ended, as fast as it gathers, where its body has a clip for the move with what it
+/// Has a worker make the move of its work again once the last has ended, as fast as it gathers
+/// and landing with its kind of tool's sound, where its body has a clip for the move with what it
 /// holds.
-fn swing(world: &mut World, worker: Entity, resource: Entity) {
-    let Some(mut swing) = world.get::<Swing>(worker).copied() else {
+fn swing(world: &mut World, worker: Entity) {
+    if playing::playing(world, worker) {
+        return;
+    }
+    let Some(Swing(kind)) = world.get::<Swing>(worker).copied() else {
         return;
     };
     let content = world.resource::<Content>().clone();
-    let kind = swing.kind.get(&content);
+    let kind = kind.get(&content);
     let motion = Motion::Move(kind.work.clone());
-    let now = world.resource::<WallClock>().now;
-    let under_way = world
-        .get::<Playing>(worker)
-        .filter(|playing| playing.motion == motion)
-        .map(|playing| playing.apex);
-    if swing.lands.is_some_and(|lands| lands <= now) {
-        if under_way == swing.lands {
-            let swung = kind.sfx.swing;
-            notification::play_sound(
-                world,
-                Some(resource),
-                Some(worker),
-                swung,
-                Audience::Everyone,
-            );
-        }
-        swing.lands = None;
-    }
-    if !playing::playing(world, worker) && playing::plays(world, worker, &motion) {
+    if playing::plays(world, worker, &motion) {
         let speed = PlaybackRate(stat::effective(world, worker, StatKind::GatheringSpeed));
-        swing.lands = playing::play_at(world, worker, motion, None, speed).map(|made| made.apex);
+        playing::play_at(world, worker, motion, None, speed, Some(kind.sfx.swing));
     }
-    world.entity_mut(worker).insert(swing);
 }
 
 /// How near a resource its workers stand: against the body of its look.
@@ -541,7 +521,7 @@ fn start(world: &mut World, worker: Entity, resource: Entity) {
     let blows = world.get::<Hurt>(worker).map_or(0, |hurt| hurt.0);
     world
         .entity_mut(worker)
-        .insert((Unhurt(blows), Swing { kind, lands: None }));
+        .insert((Unhurt(blows), Swing(kind)));
     begin(world, worker, resource, tool, since);
 }
 

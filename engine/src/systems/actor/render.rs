@@ -21,7 +21,7 @@ use super::skeleton::{EquipmentSlot, GestureName};
 use super::stance::{self, HandIndex, PropHand, StanceId};
 use super::{Action, Actor, ActorModel, Appearance, Hurt, ModelId, Motion, Playing, Pose};
 use crate::core::assets;
-use crate::core::audio::playback::{PlaySfx, SfxPlace};
+use crate::core::audio::playback::{PlaySfx, SfxId, SfxPlace};
 use crate::core::content::Content;
 use crate::core::content::gltf::NodeTree;
 use crate::core::interpolate::{Interpolate, InterpolatePlugin};
@@ -692,7 +692,10 @@ pub fn pose(world: &mut World) {
                 Previous::Unseen | Previous::Restarted => None,
             };
             let crossed = ActorModel::cues(&resolved, &motion, prev, playhead.elapsed, rate);
-            let (sfx, stepped) = cue_sounds(&crossed, area::of(world, entity), at.0);
+            let landing = given
+                .filter(|playing| playing.motion == motion)
+                .and_then(|playing| playing.sound);
+            let (sfx, stepped) = cue_sounds(&crossed, landing, area::of(world, entity), at.0);
             sounds.extend(sfx);
             stepped
         };
@@ -881,10 +884,12 @@ fn flinched(world: &mut World, entity: Entity, blows: u32, now: Seconds) -> Opti
 }
 
 /// What a body standing at `at` on `ground` sounds for the cues of its clip it just `crossed`: each
-/// cue's own sound, and the footstep of the ground under it when one puts a foot down, which it
+/// cue's own sound, or `landing` at its apex and nothing else where what it plays lands with a
+/// sound of its own, and the footstep of the ground under it when one puts a foot down, which it
 /// also says.
 pub fn cue_sounds(
     crossed: &[&Cue],
+    landing: Option<SfxId>,
     ground: Option<&Area>,
     at: Pos<Meters>,
 ) -> (Vec<PlaySfx>, bool) {
@@ -894,7 +899,10 @@ pub fn cue_sounds(
         .and_then(|ground| ground.footstep_at(at));
     let sounds = crossed
         .iter()
-        .filter_map(|cue| cue.sound.as_ref())
+        .filter_map(|cue| match &landing {
+            Some(landing) => cue.apex.then_some(landing),
+            None => cue.sound.as_ref(),
+        })
         .chain(footstep)
         .map(|id| PlaySfx {
             id: *id,

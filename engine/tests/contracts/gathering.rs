@@ -4,9 +4,11 @@ use bevy_replication::ToClient;
 use engine::core::audio::playback::{SfxDef, SfxId};
 use engine::core::math::{Offset, Pos};
 use engine::core::units::{Meters, Seconds};
+use engine::systems::actor::held::Held;
 use engine::systems::actor::skeleton::MoveName;
 use engine::systems::actor::{Motion, Playing};
 use engine::systems::area::AreaDef;
+use engine::systems::item::{ItemDef, ItemId};
 use engine::systems::movement::{self, MoveRequest, position};
 use engine::systems::notification::SoundPlayed;
 use engine::systems::resource::{self, GatherRequest, Left, ResourceDef, StopGathering, Working};
@@ -30,12 +32,9 @@ fn an_extraction_takes_one_rolls_once_and_pays_out_and_is_refused_without_the_to
     assert!(sim.run_until(WALK, |world| world.get::<Working>(miner).is_some()));
     assert_eq!(sim.count(miner, "ore"), 0);
     let mut sounds = MessageCursor::default();
-    let [crack, chip] = ["crack", "chip"].map(|sound| sim.id::<SfxDef>(sound));
+    let chip = sim.id::<SfxDef>("chip");
     let heard = hear(&mut sim, &mut sounds, TAKES - 0.2);
-    assert!(
-        heard.contains(&crack) && !heard.contains(&chip),
-        "each swing sounds as its kind of tool does while nothing is taken yet: {heard:?}"
-    );
+    assert_eq!(heard, [], "nothing is taken yet");
     assert_eq!(left(&sim, vein), Some(3), "it gave before its time was up");
     let heard = hear(&mut sim, &mut sounds, 0.4);
     assert!(heard.contains(&chip), "an extraction sounds as it pays out");
@@ -80,14 +79,26 @@ fn an_extraction_takes_one_rolls_once_and_pays_out_and_is_refused_without_the_to
 
     let (mut sim, vein) = quarry(json!({ "quantity": 3 }), |game| game);
     let miner = sim.join(1);
-    sim.equip(miner, "pickaxe");
+    for worn in ["pickaxe", "blade", "buckler"] {
+        sim.equip(miner, worn);
+    }
+    let armed = shown(&sim, miner);
+    assert_eq!(armed.len(), 2, "a blade and a buckler in hand: {armed:?}");
     ask(&mut sim, 1, vein);
     assert!(sim.run_until(WALK, |world| world.get::<Working>(miner).is_some()));
+    assert_eq!(
+        shown(&sim, miner),
+        [sim.id::<ItemDef>("pickaxe")],
+        "the tool alone is in hand at work, whatever was held"
+    );
     let first = swung(&sim, miner).expect("work begins with a swing");
     assert_eq!(
-        first.motion,
-        Motion::Move(MoveName::new("mine")),
-        "the move of the kind of tool worked with"
+        (first.motion, first.sound),
+        (
+            Motion::Move(MoveName::new("mine")),
+            Some(sim.id::<SfxDef>("crack"))
+        ),
+        "the move of the kind of tool worked with, landing with its sound"
     );
     sim.run(TAKES - 0.5);
     let later = swung(&sim, miner).expect("it swings for as long as it works");
@@ -96,6 +107,7 @@ fn an_extraction_takes_one_rolls_once_and_pays_out_and_is_refused_without_the_to
     sim.send(conn, StopGathering);
     sim.tick();
     assert_eq!(swung(&sim, miner), None, "the swing ends with the work");
+    assert_eq!(shown(&sim, miner), armed, "and what was held comes back");
     sim.run(1.0);
     assert_eq!(left(&sim, vein), Some(3), "work stopped under way took one");
     assert_eq!(sim.count(miner, "ore"), 0);
@@ -232,6 +244,13 @@ fn quarry(fields: Value, more: impl FnOnce(Game) -> Game) -> (Sim, Entity) {
             },
         })
     };
+    let held = |stance: &str| {
+        json!({ "kind": {
+            "type": "equipment",
+            "wear": "held",
+            "stance": path("stance", stance),
+        } })
+    };
     let tool = |kind: &str| {
         json!({ "kind": {
             "type": "equipment",
@@ -267,6 +286,9 @@ fn quarry(fields: Value, more: impl FnOnce(Game) -> Game) -> (Sim, Entity) {
         .cursor("dig")
         .item("pickaxe", tool("pick"))
         .item("hatchet", tool("axe"))
+        .stance("guard", 1, "off")
+        .item("blade", held("swing"))
+        .item("buckler", held("guard"))
         .resource("ore", 20)
         .prop("rock", json!({ "type": "none" }))
         .sfx("chip")
@@ -322,6 +344,14 @@ fn hear(
         false
     });
     heard
+}
+
+/// The items in the worker's hands, in hand order.
+fn shown(sim: &Sim, worker: Entity) -> Vec<ItemId> {
+    sim.world
+        .get::<Held>(worker)
+        .map(|held| held.hands.values().copied().collect())
+        .unwrap_or_default()
 }
 
 /// The swing the worker is in the middle of, if any.

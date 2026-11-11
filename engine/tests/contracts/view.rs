@@ -20,6 +20,7 @@ use engine::core::render::{
     Animator, CameraPreferences, CameraRig, capsule_hit, facing_rotation, ground_pos, world_point,
 };
 use engine::core::text::Typewriter;
+use engine::core::time::UnixMillis;
 use engine::core::units::{
     Degrees, MeterPos, Meters, MetersPerSec, PlaybackRate, Radians, Seconds,
 };
@@ -27,7 +28,7 @@ use engine::systems::actor::held::Held;
 use engine::systems::actor::render::{self, HeldProp, RenderActor};
 use engine::systems::actor::skeleton::GestureName;
 use engine::systems::actor::stance::HandIndex;
-use engine::systems::actor::{Action, Actor, Appearance, Hurt, ModelDef, Pose};
+use engine::systems::actor::{Action, Actor, Appearance, Hurt, ModelDef, Motion, Playing, Pose};
 use engine::systems::area::{self, AreaDef, AreaTag};
 use engine::systems::item::ItemDef;
 use engine::systems::movement::RenderPosition;
@@ -703,6 +704,7 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
     let game = Game::new()
         .area("field", &Map::open(5, 5), json!([]))
         .sfx("whoosh")
+        .sfx("thud")
         .skeleton_of(
             BODY,
             &testkit::rig_clips(),
@@ -729,12 +731,25 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
     let walker = Pos::new(1.5, 1.5);
     let hurrier = Pos::new(1.5, 3.5);
     let striker = Pos::new(3.5, 3.5);
+    let worker = Pos::new(3.5, 1.5);
+    let thud = content
+        .by_path::<SfxDef>(&path("sfx", "thud"))
+        .expect("the thud sound");
     for (at, action, speed) in [
         (walker, Action::Walk, WALK_PACE),
         (hurrier, Action::Walk, WALK_PACE * 2.0),
         (striker, Action::Attack, MetersPerSec::default()),
+        (worker, Action::Attack, MetersPerSec::default()),
     ] {
-        app.world_mut().spawn((
+        let stroke = (at == worker).then_some(Playing {
+            motion: Motion::Action(Action::Attack),
+            pick: 0,
+            started: UnixMillis(0),
+            apex: UnixMillis(0),
+            ends: UnixMillis(0),
+            sound: Some(thud),
+        });
+        let mut body = app.world_mut().spawn((
             Actor {
                 facing: Radians(0.0),
                 action,
@@ -750,6 +765,9 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
             RenderPosition(at),
             AreaTag { area: field },
         ));
+        if let Some(stroke) = stroke {
+            body.insert(stroke);
+        }
     }
 
     let mut heard: Vec<(Pos<Meters>, SfxId)> = Vec::new();
@@ -799,6 +817,11 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
         of(striker),
         vec![sfx("whoosh")],
         "a strike sounds its apex once, and puts no foot down"
+    );
+    assert_eq!(
+        of(worker),
+        vec![thud],
+        "a stroke that lands with a sound of its own sounds that in place of its clip's"
     );
 }
 

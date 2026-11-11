@@ -776,7 +776,7 @@ pub struct ToolTypeDef {
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ToolTypeSfx {
-    /// Heard as each move of the work lands.
+    /// Heard as each move of the work lands, in place of the sounds of the move's clip.
     pub swing: SfxId,
     /// Heard as each extraction completes.
     pub extract: SfxId,

@@ -78,6 +78,8 @@ pub struct Playing {
     pub started: UnixMillis,
     pub apex: UnixMillis,
     pub ends: UnixMillis,
+    /// What its landing sounds, in place of every sound its clip's cues would make.
+    pub sound: Option<SfxId>,
 }
 
 /// The motion an actor last played and which of its cell's clips played, which the next play
@@ -207,16 +209,18 @@ pub fn play(
     toward: Option<Radians>,
 ) -> Option<Playing> {
     let speed = PlaybackRate(stat::effective(world, actor, StatKind::AttackSpeed));
-    play_at(world, actor, motion, toward, speed)
+    play_at(world, actor, motion, toward, speed, None)
 }
 
-/// [`play`], at a speed of the caller's choosing in place of the actor's attack speed.
+/// [`play`], at a speed of the caller's choosing in place of the actor's attack speed, landing
+/// with `sound`, when given, in place of the sounds of its clip.
 pub fn play_at(
     world: &mut World,
     actor: Entity,
     motion: Motion,
     toward: Option<Radians>,
     speed: PlaybackRate,
+    sound: Option<SfxId>,
 ) -> Option<Playing> {
     let content = world.resource::<Content>().clone();
     let now = world.resource::<WallClock>().now;
@@ -240,6 +244,7 @@ pub fn play_at(
         started: now,
         apex: now.after(timing.apex),
         ends: now.after(timing.duration),
+        sound,
     };
     interrupt(world, actor);
     world.entity_mut(actor).insert((

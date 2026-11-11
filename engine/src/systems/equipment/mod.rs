@@ -309,13 +309,12 @@ pub fn reflect(insert: On<Insert<Equipment>>, world: &World, mut commands: Comma
     show(world, insert.entity, working, &mut commands);
 }
 
-/// Puts in the hands of `player` what they show: what they hold, and while it is `working` its
-/// tool too, in the hand the tool's stance names and in place of what that hand holds.
+/// Puts in the hands of `player` what they show: what they hold, or while it is `working` its tool
+/// alone, in the hand the tool's stance names, everything held put away for as long.
 pub fn show(world: &World, player: Entity, working: bool, commands: &mut Commands) {
     let Some(equipment) = world.get::<Equipment>(player) else {
         return;
     };
-    let held = hands(equipment);
     let tool = equipment
         .slots
         .get(&EquipmentPlace::Tool)
@@ -323,12 +322,10 @@ pub fn show(world: &World, player: Entity, working: bool, commands: &mut Command
     let hands = match tool {
         Some(&tool) => {
             let content = world.resource::<Content>();
-            let mut shown =
-                held::place(content, hand_slots(world, player), &held, tool, None).hands;
-            shown.retain(|hand, item| *item == tool || held.get(hand) == Some(item));
-            shown
+            let empty = BTreeMap::new();
+            held::place(content, hand_slots(world, player), &empty, tool, None).hands
         }
-        None => held,
+        None => hands(equipment),
     };
     let shown = Held { hands };
     if world.get::<Held>(player) != Some(&shown) {
