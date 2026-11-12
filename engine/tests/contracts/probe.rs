@@ -1,11 +1,14 @@
+use bevy::math::Vec3;
+use bevy::math::proj::perspective_infinite_reverse;
+use bevy::transform::components::Transform;
 use engine::core::content::{Content, ContentScope, with_content};
-use engine::core::math::Pos;
+use engine::core::math::{Pos, Rect, Size};
 use engine::core::render::sample::{GpuReport, RenderReport};
-use engine::core::units::{Bytes, Meters, Millis};
+use engine::core::units::{Bytes, Meters, Millis, Radians};
 use engine::systems::area::AreaDef;
 use engine::systems::probe::{
     FrameSample, FrameSamples, HITCH, MissingParts, ProbeFrames, ProbeGame, ProbeGameQuestion,
-    ProbeSystem, answer,
+    ProbeSystem, ProbeView, answer,
 };
 use serde::de::DeserializeOwned;
 use serde_json::json;
@@ -92,6 +95,34 @@ fn ask<Answer: DeserializeOwned>(content: &Content, question: &ProbeGameQuestion
     with_content(ContentScope::of(content), || serde_json::from_str(&line))
         .0
         .unwrap_or_else(|error| panic!("an unreadable answer {line}: {error}"))
+}
+
+#[test]
+fn a_driver_finds_in_the_window_only_what_lies_before_the_camera() {
+    let eye = Vec3::new(0.0, 2.0, 0.0);
+    let north = Vec3::new(0.0, 0.0, -10.0);
+    let window = Size::new(1280.0, 720.0);
+    let lens = perspective_infinite_reverse(1.0, window.width / window.height, 0.1);
+    let camera = Transform::from_translation(eye).looking_at(north, Vec3::Y);
+    let view = ProbeView {
+        view_proj: lens * camera.to_matrix().inverse(),
+        viewport: Rect::new(Pos::new(0.0, 0.0), window),
+        yaw: Radians(0.0),
+        pitch: Radians(0.0),
+        zoom: 0,
+        home: false,
+    };
+    let ahead = view
+        .window_point(Pos::new(0.0, -10.0), Meters(0.0))
+        .expect("the ground it looks at");
+    assert!((ahead.x - window.width / 2.0).abs() < 1.0, "{ahead:?}");
+    assert!((ahead.y - window.height / 2.0).abs() < 1.0, "{ahead:?}");
+    for (at, height, where_it_lies) in [
+        (Pos::new(0.0, 10.0), Meters(0.0), "behind the camera"),
+        (Pos::new(3.0, 0.0), Meters(2.0), "beside the camera"),
+    ] {
+        assert_eq!(view.window_point(at, height), None, "{where_it_lies}");
+    }
 }
 
 #[test]

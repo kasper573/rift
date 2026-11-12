@@ -116,18 +116,24 @@ fn the_camera_eases_toward_a_turn_and_comes_to_rest_on_it_at_any_frame_rate() {
 /// player keeps it is the same after as before.
 #[test]
 fn a_camera_put_on_a_shot_glides_there_and_back_to_where_the_player_kept_it() {
+    for (east, south) in [(10.0, 10.0), (1360.0, 7040.0), (52000.0, 97000.0)] {
+        glides_onto_a_shot_and_back(Pos::new(east, south));
+    }
+}
+
+fn glides_onto_a_shot_and_back(at: Pos<Meters>) {
     let smooth = CameraPreferences::default();
     let frame = Seconds(1.0 / 60.0);
     let mut rig = CameraRig::new(testkit::look().camera);
-    rig.look_at(Pos::new(10.0, 10.0), Meters(1.0));
+    rig.look_at(at, Meters(1.0));
     rig.turn(Degrees(40.0));
     for _ in 0..600 {
         rig.ease(frame, &smooth);
     }
     let kept = rig.transform();
     let shot = Shot {
-        eye: Vec3::new(12.0, 1.7, 8.0),
-        target: Vec3::new(10.0, 1.4, 10.0),
+        eye: Vec3::new(at.x + 2.0, 1.7, at.y - 2.0),
+        target: Vec3::new(at.x, 1.4, at.y),
     };
 
     rig.stage(Some(shot));
@@ -143,17 +149,17 @@ fn a_camera_put_on_a_shot_glides_there_and_back_to_where_the_player_kept_it() {
         .expect("a step");
     assert!(
         steps.iter().all(|step| *step >= 0.0) && fastest > 0 && fastest < steps.len() - 1,
-        "it sets off gently, never passes the shot, and slows onto it: {steps:?}"
+        "at {at:?} it sets off gently, never passes the shot, and slows onto it: {steps:?}"
     );
     assert!(
         rig.settled() && rig.staged() && rig.transform() == shot.transform(),
-        "two seconds are more than enough to be on the shot: {:?}",
+        "at {at:?} two seconds are more than enough to be on the shot: {:?}",
         rig.transform()
     );
     assert_eq!(
         rig.kept().transform(),
         kept,
-        "where the player keeps it stands as it was"
+        "at {at:?} where the player keeps it stands as it was"
     );
 
     rig.stage(None);
@@ -162,7 +168,7 @@ fn a_camera_put_on_a_shot_glides_there_and_back_to_where_the_player_kept_it() {
     }
     assert!(
         rig.settled() && !rig.staged() && rig.transform() == kept,
-        "off the shot it is back where the player kept it: {:?}",
+        "at {at:?} off the shot it is back where the player kept it: {:?}",
         rig.transform()
     );
 }

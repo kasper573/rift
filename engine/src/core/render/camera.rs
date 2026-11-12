@@ -143,21 +143,71 @@ impl Shot {
         let back = self.eye - self.target;
         Radians(back.y.atan2(back.xz().length()))
     }
-
-    fn distance(&self, other: Shot) -> f32 {
-        self.eye
-            .distance(other.eye)
-            .max(self.target.distance(other.target))
-    }
 }
 
-/// `to` is none while the camera glides back to where the player keeps it.
+/// A camera on a shot or on its way to one, or with `to` none on its way back to where the player
+/// keeps it. It is held by what is left of the way rather than by where it is: a place far from
+/// the world's origin is too coarse a number to close the last of the way in, and what is left
+/// is as fine a one wherever the camera glides.
 #[derive(Clone, Copy, Debug, PartialEq)]
 struct Staging {
-    at: Shot,
+    to: Option<Shot>,
+    /// Where it was going as of its last step.
+    goal: Shot,
+    eye_left: Vec3,
+    target_left: Vec3,
     eye_speed: Vec3,
     target_speed: Vec3,
-    to: Option<Shot>,
+}
+
+impl Staging {
+    fn resting_on(goal: Shot) -> Staging {
+        Staging {
+            to: None,
+            goal,
+            eye_left: Vec3::ZERO,
+            target_left: Vec3::ZERO,
+            eye_speed: Vec3::ZERO,
+            target_speed: Vec3::ZERO,
+        }
+    }
+
+    fn at(&self) -> Shot {
+        Shot {
+            eye: self.goal.eye + self.eye_left,
+            target: self.goal.target + self.target_left,
+        }
+    }
+
+    /// Makes `goal` where it goes, from where it is.
+    fn head_for(&mut self, goal: Shot) {
+        self.eye_left += self.goal.eye - goal.eye;
+        self.target_left += self.goal.target - goal.target;
+        self.goal = goal;
+    }
+
+    fn arrived(&self) -> bool {
+        self.eye_left == Vec3::ZERO && self.target_left == Vec3::ZERO
+    }
+
+    fn step(&mut self, ease: Seconds, dt: Seconds) {
+        self.eye_left = damped(self.eye_left, Vec3::ZERO, &mut self.eye_speed, ease, dt);
+        self.target_left = damped(
+            self.target_left,
+            Vec3::ZERO,
+            &mut self.target_speed,
+            ease,
+            dt,
+        );
+        let fastest = self.eye_speed.length().max(self.target_speed.length());
+        let furthest = self.eye_left.length().max(self.target_left.length());
+        if fastest < REST_DISTANCE.0 && furthest < REST_DISTANCE.0 {
+            *self = Staging {
+                to: self.to,
+                ..Staging::resting_on(self.goal)
+            };
+        }
+    }
 }
 
 /// How the camera frames the world.
@@ -505,18 +555,13 @@ impl CameraRig {
     /// Glides the camera onto `shot`, or with none back to where the player keeps it, which a
     /// shot never moves.
     pub fn stage(&mut self, shot: Option<Shot>) {
-        match (&mut self.staging, shot) {
-            (Some(staging), _) => staging.to = shot,
-            (None, Some(_)) => {
-                self.staging = Some(Staging {
-                    at: self.kept(),
-                    eye_speed: Vec3::ZERO,
-                    target_speed: Vec3::ZERO,
-                    to: shot,
-                });
-            }
-            (None, None) => {}
+        if shot.is_none() && self.staging.is_none() {
+            return;
         }
+        let kept = self.kept();
+        let staging = self.staging.get_or_insert(Staging::resting_on(kept));
+        staging.to = shot;
+        staging.head_for(shot.unwrap_or(kept));
     }
 
     /// Cuts back to where the player keeps the camera.
@@ -566,13 +611,13 @@ impl CameraRig {
     }
 
     pub fn yaw(&self) -> Radians {
-        self.staging.map_or(self.yaw, |staging| staging.at.yaw())
+        self.staging.map_or(self.yaw, |staging| staging.at().yaw())
     }
 
     /// How far down the camera looks: as it is tilted, and as much further as the ground has it.
     pub fn pitch(&self) -> Radians {
         self.staging
-            .map_or(self.orbit().pitch, |staging| staging.at.pitch())
+            .map_or(self.orbit().pitch, |staging| staging.at().pitch())
     }
 
     pub fn zoom(&self) -> Zoom {
@@ -586,7 +631,7 @@ impl CameraRig {
             && self.distance == self.zoom.distance(&self.framing.zooms)
             && self
                 .staging
-                .is_none_or(|staging| staging.to == Some(staging.at))
+                .is_none_or(|staging| staging.to.is_some() && staging.arrived())
     }
 
     /// Whether the camera rests where going home puts it.
@@ -608,7 +653,7 @@ impl CameraRig {
 
     fn shot(&self) -> Shot {
         self.staging
-            .map_or_else(|| self.kept(), |staging| staging.at)
+            .map_or_else(|| self.kept(), |staging| staging.at())
     }
 
     /// Where the player keeps the camera, whatever shot it is on.
@@ -682,32 +727,10 @@ impl CameraRig {
         let Some(staging) = &mut self.staging else {
             return;
         };
-        let to = staging.to.unwrap_or(kept);
-        let ease = self.framing.shot_ease;
-        staging.at = Shot {
-            eye: damped(staging.at.eye, to.eye, &mut staging.eye_speed, ease, dt),
-            target: damped(
-                staging.at.target,
-                to.target,
-                &mut staging.target_speed,
-                ease,
-                dt,
-            ),
-        };
-        let slow = staging
-            .eye_speed
-            .length()
-            .max(staging.target_speed.length())
-            < REST_DISTANCE.0;
-        if slow && staging.at.distance(to) < REST_DISTANCE.0 {
-            match staging.to {
-                Some(shot) => {
-                    staging.at = shot;
-                    staging.eye_speed = Vec3::ZERO;
-                    staging.target_speed = Vec3::ZERO;
-                }
-                None => self.staging = None,
-            }
+        staging.head_for(staging.to.unwrap_or(kept));
+        staging.step(self.framing.shot_ease, dt);
+        if staging.to.is_none() && staging.arrived() {
+            self.staging = None;
         }
     }
 }

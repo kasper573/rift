@@ -791,8 +791,13 @@ impl Driver {
                 .as_ref()
                 .map_or(Meters(0.0), |terrain| terrain.height_at(at))
         };
-        let from = view.window_point(me, height(me));
-        let ahead = view.window_point(to, height(to));
+        let from = view.window_point(me, height(me)).ok_or_else(|| {
+            Failure::Harness("the player is out of the camera's sight".to_owned())
+        })?;
+        // Ground behind the camera lies behind the player it looks at as well.
+        let Some(ahead) = view.window_point(to, height(to)) else {
+            return Ok(ABOUT_FACE);
+        };
         Ok((ahead.x - from.x).atan2(from.y - ahead.y).to_degrees())
     }
 
@@ -908,6 +913,8 @@ const WINDOW_DRAG: f32 = 120.0;
 /// Turns the camera may take to come to face a point, and how far off it may rest, in degrees.
 const FACE_TRIES: u32 = 12;
 const FACE_WITHIN: f32 = 4.0;
+/// How far round, in degrees, what lies straight behind is.
+const ABOUT_FACE: f32 = 180.0;
 /// How little a player may move and still count as standing where it was.
 const STILL_WITHIN: Meters = Meters(0.05);
 /// How many frames a player must have rested for, so a step's end isn't taken for rest.
@@ -981,7 +988,7 @@ pub fn clickable_point(snapshot: &ProbeSnapshot, at: Pos<Meters>) -> Option<Pos<
         .terrain
         .as_ref()
         .map_or(Meters(0.0), |terrain: &ProbeTerrain| terrain.height_at(at));
-    let point = view.window_point(at, height).round();
+    let point = view.window_point(at, height)?.round();
     let window = Rect::from_size(snapshot.screen?);
     let covered = snapshot.covered.iter().any(|cover| cover.contains(point));
     (window.contains(point) && !covered).then_some(point)

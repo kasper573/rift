@@ -410,14 +410,21 @@ pub struct ProbeView {
 }
 
 impl ProbeView {
-    pub fn window_point(&self, at: Pos<Meters>, height: Meters) -> Pos<WindowPx> {
+    /// Where a point `height` above the ground at `at` shows in the window, or beyond its edges.
+    /// A point beside or behind the camera shows nowhere.
+    pub fn window_point(&self, at: Pos<Meters>, height: Meters) -> Option<Pos<WindowPx>> {
         let clip = self.view_proj * Vec4::new(at.x, height.0, at.y, 1.0);
+        if clip.w <= f32::EPSILON {
+            return None;
+        }
         let ndc = clip.truncate() / clip.w;
-        self.viewport.origin
-            + Offset::new(
-                (ndc.x + 1.0) / 2.0 * self.viewport.size.width,
-                (1.0 - ndc.y) / 2.0 * self.viewport.size.height,
-            )
+        Some(
+            self.viewport.origin
+                + Offset::new(
+                    (ndc.x + 1.0) / 2.0 * self.viewport.size.width,
+                    (1.0 - ndc.y) / 2.0 * self.viewport.size.height,
+                ),
+        )
     }
 }
 
@@ -478,7 +485,8 @@ pub struct ProbeBody {
     /// The motion its body shows: what it does, or a move, a gesture, a flinch at a blow that
     /// just landed on it.
     pub shown: Motion,
-    /// Where its feet and the top of its head show in the window, as drawn.
+    /// Where its feet and the top of its head show in the window, as drawn: nowhere, behind the
+    /// camera.
     #[schemars(with = "Option<PosSchema>")]
     pub feet: Option<Pos<WindowPx>>,
     #[schemars(with = "Option<PosSchema>")]
@@ -1568,7 +1576,7 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
                     item,
                     at: world.get::<GlobalTransform>(prop).and_then(|placed| {
                         let at = placed.translation();
-                        view.map(|view| view.window_point(Pos::new(at.x, at.z), Meters(at.y)))
+                        view.and_then(|view| view.window_point(Pos::new(at.x, at.z), Meters(at.y)))
                     }),
                 })
                 .collect()
@@ -1591,8 +1599,8 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         action: actor.action,
         resting: !actor.action.moves(),
         shown: shown.clone(),
-        feet: view.map(|view| view.window_point(drawn, ground)),
-        head: view.map(|view| view.window_point(drawn, ground + capsule.height)),
+        feet: view.and_then(|view| view.window_point(drawn, ground)),
+        head: view.and_then(|view| view.window_point(drawn, ground + capsule.height)),
         health: stat(StatKind::Health),
         max_health: stat(StatKind::MaxHealth),
         npc,
