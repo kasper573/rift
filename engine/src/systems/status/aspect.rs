@@ -9,7 +9,6 @@ use crate::core::par;
 use crate::core::tick::{Cached, Planner};
 use crate::core::time::{UnixMillis, WallClock};
 use crate::core::units::Seconds;
-use crate::core::vfx::VfxSite;
 use crate::systems::actor::Actor;
 use crate::systems::equipment::Equipment;
 use crate::systems::item::{Inventory, ItemId, ItemKind};
@@ -20,8 +19,9 @@ use crate::systems::script::{EventKind, Owner, OwnerRow, RiftInstances, RiftScri
 use crate::systems::skill::{self, Learned, Rank, SkillId, SkillKind};
 use crate::systems::vfx::{self, VfxShaderFixture};
 
-/// Where an actor's aspects come from: a status it carries, an item it wears or carries as a
-/// resource, a passive skill it knows. Each is a scripted row, active while that holds.
+/// Where the aspects of an actor or an object come from: a status it carries, an item it wears or
+/// carries as a resource, a passive skill it knows. Each is a scripted row, active while that
+/// holds.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum AspectSource {
     Status(StatusEffectId),
@@ -255,7 +255,7 @@ fn activate(world: &mut World, actor: Entity, Wanted { source, since }: Wanted) 
         let content = world.resource::<Content>().clone();
         let def = effect.get(&content);
         if let Some(shown) = def.vfx.on_activate {
-            vfx::show(world, shown, VfxSite::Actor(actor));
+            vfx::show(world, shown, vfx::site_on(world, actor));
         }
         if let Some(heard) = def.sfx.on_activate {
             sound(world, actor, heard);
@@ -296,7 +296,7 @@ fn deactivate(world: &mut World, actor: Entity, source: AspectSource) {
         let content = world.resource::<Content>().clone();
         let def = effect.get(&content);
         if let Some(shown) = def.vfx.on_expire {
-            vfx::show(world, shown, VfxSite::Actor(actor));
+            vfx::show(world, shown, vfx::site_on(world, actor));
         }
         if let Some(heard) = def.sfx.on_expire {
             sound(world, actor, heard);
@@ -328,7 +328,7 @@ fn play_during(world: &mut World, actor: Entity, source: AspectSource, now: Unix
     }
     let shown = def.vfx.during.and_then(|shown| {
         let lasts = shown.get(&content).lasts();
-        let entity = vfx::show(world, shown, VfxSite::Actor(actor))?;
+        let entity = vfx::show(world, shown, vfx::site_on(world, actor))?;
         Some((entity, lasts))
     });
     if let Some(heard) = def.sfx.during {

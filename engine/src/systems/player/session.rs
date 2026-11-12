@@ -6,6 +6,7 @@ use bevy_time::{Real, Time};
 
 use super::{ClientId, PlayedBy, Welcome};
 use crate::core::render::transition::WorldViewSystems;
+use crate::core::render::world::clouds::CloudDrift;
 use crate::core::time::{self, DayClock, ServerClock, WeatherClock};
 use crate::systems::{identity, stat};
 
@@ -72,12 +73,16 @@ fn record_welcome(
     mut clock: ResMut<ServerClock>,
     mut day: ResMut<DayClock>,
     mut weather: ResMut<WeatherClock>,
+    mut clouds: Option<ResMut<CloudDrift>>,
 ) {
     for welcome in welcomes.read() {
         me.0 = Some(welcome.id);
         clock.record(welcome.now, time::real_uptime(&time));
         day.0 = welcome.day;
         weather.0 = welcome.weather;
+        if let Some(clouds) = clouds.as_mut() {
+            **clouds = CloudDrift::told(welcome.clouds.to_array().into());
+        }
     }
 }
 

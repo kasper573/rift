@@ -12,6 +12,7 @@ use crate::core::script::{
 use crate::systems::actor::appearance::SetAppearance;
 use crate::systems::actor::held::SetHeld;
 use crate::systems::actor::playing::{Animate, SetPose, SetStance};
+use crate::systems::area::spawnable::SpawnObject;
 use crate::systems::area::warp::Warp;
 use crate::systems::chat::Say;
 use crate::systems::class::GrantXp;
@@ -124,6 +125,7 @@ effects! {
     Vfx(PlayVfx),
     SetAttitude(SetAttitude),
     SpawnNpcs(SpawnNpcs),
+    SpawnObject(SpawnObject),
     Despawn(Despawn),
     PlaySound(PlaySound),
 }

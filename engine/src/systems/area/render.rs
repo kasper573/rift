@@ -10,16 +10,16 @@ use super::scenery::{self, Eyes, Scenery, SceneryPlugin, Sight};
 use super::{AreaId, AreaObject, AreaTag, PropDef};
 use crate::core::assets;
 use crate::core::content::Content;
+use crate::core::content::media::GltfInfos;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::video::VideoPreferences;
-use crate::core::render::world::clouds::CloudDrift;
 use crate::core::render::world::sky::Daylight;
 use crate::core::render::{CameraFraming, CameraRig, camera};
 use crate::core::render::{GroundHeights, WorldCamera, ground_height, world_point};
-use crate::core::time::{TimeCourse, WeatherClock};
 use crate::core::units::{MeterSize, Meters};
 use crate::core::vfx::cover::ShownWeather;
 use crate::core::vfx::render::SiteExtent;
+use crate::core::vfx::standing::StandingVfx;
 use crate::systems::movement::RenderPosition;
 use crate::systems::player::session::MyCharacter;
 use crate::systems::screen::ClientScreen;
@@ -39,6 +39,7 @@ impl Plugin for AreaRenderPlugin {
                     follow_view,
                     follow_daylight,
                     place_objects,
+                    play_prop_effects,
                 )
                     .chain()
                     .in_set(WorldViewSystems)
@@ -186,14 +187,6 @@ fn light_area(
     else {
         return 0.0;
     };
-    let course = match world
-        .get_resource::<WeatherClock>()
-        .and_then(|clock| clock.0)
-    {
-        Some(TimeCourse::Since(began)) => Some(began),
-        Some(TimeCourse::Held(_)) | None => None,
-    };
-    world.resource_mut::<CloudDrift>().follow(course);
     scenery::light(world, area, weather, daylight, stood, camera);
     if let Some(mut shown) = world.get_resource_mut::<ShownArea>()
         && shown
@@ -238,6 +231,43 @@ fn place_objects(world: &mut World) {
         if let Some(model) = model {
             placed.insert(WorldAssetRoot(model));
         }
+    }
+}
+
+/// A model whose prop's own vfx have been looked for.
+#[derive(Component)]
+struct EffectsSought;
+
+/// Has every model newly shown play the vfx of the prop it is the model of, wherever it is
+/// shown: as an object's look, lying on the ground or held in a hand. A model no one gave an
+/// extent takes that of its mesh.
+fn play_prop_effects(world: &mut World) {
+    let content = world.resource::<Content>().clone();
+    let fresh: Vec<(Entity, String)> = world
+        .query_filtered::<(Entity, &WorldAssetRoot), Without<EffectsSought>>()
+        .iter(world)
+        .filter_map(|(entity, root)| {
+            let model = root.0.path()?.path().to_str()?.to_owned();
+            Some((entity, model))
+        })
+        .collect();
+    for (entity, model) in fresh {
+        let mut shown = world.entity_mut(entity);
+        shown.insert(EffectsSought);
+        let prop = std::path::Path::new(&model)
+            .parent()
+            .and_then(|bundle| content.by_path::<PropDef>(bundle.to_str()?))
+            .map(|prop| prop.get(&content))
+            .filter(|prop| !prop.effects.is_empty());
+        let Some(prop) = prop else {
+            continue;
+        };
+        if !shown.contains::<SiteExtent>()
+            && let Some(info) = content.built::<GltfInfos>().0.get(&model)
+        {
+            shown.insert(scenery::extent_of(info, 1.0));
+        }
+        shown.insert(StandingVfx(prop.effects.clone()));
     }
 }
 

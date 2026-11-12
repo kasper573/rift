@@ -46,6 +46,7 @@ use crate::core::chunk::Chunk;
 use crate::core::content::{Content, ContentScope, with_content};
 use crate::core::geometry::Capsule;
 use crate::core::gui::{self, GuiContext, WorldLayers};
+use crate::core::interpolate::Jumps;
 use crate::core::math::{
     MatrixSchema, Offset, OffsetSchema, Pos, PosSchema, Rect, RectSchema, Size, SizeSchema,
 };
@@ -70,7 +71,9 @@ use crate::systems::actor::held::{self, Held};
 use crate::systems::actor::render::{Hung, Puppet, RenderActor};
 use crate::systems::actor::skeleton::{Clip, Naming, SkeletonId};
 use crate::systems::actor::stance::{HandIndex, StanceId};
-use crate::systems::actor::{self, Action, Actor, ActorModel, Appearance, Hitbox, Motion, Playing};
+use crate::systems::actor::{
+    self, Action, Actor, ActorModel, Appearance, Hitbox, Motion, Playing, Pose,
+};
 use crate::systems::area::weather::ShownCourse;
 use crate::systems::area::{self, AreaId, AreaObject, AreaTag, PropId};
 use crate::systems::attention::{Attention, AttentionId, StatusBadges};
@@ -480,11 +483,18 @@ pub struct ProbeBody {
     /// The way its body is turned on screen.
     pub facing: Radians,
     pub action: Action,
+    /// The pose it holds while it idles.
+    pub pose: Pose,
+    /// The statuses it carries.
+    pub statuses: Vec<StatusEffectId>,
     /// The actor it is casting at, a blow or a bolt alike.
     #[schemars(with = "Option<u64>")]
     pub engaged: Option<Entity>,
     /// Whether it stands still rather than walks.
     pub resting: bool,
+    /// How many times it was put where it stands rather than walked there: a warp, a respawn.
+    #[schemars(with = "u32")]
+    pub jumps: Jumps,
     /// The motion its body shows: what it does, or a move, a gesture, a flinch at a blow that
     /// just landed on it.
     pub shown: Motion,
@@ -558,6 +568,8 @@ pub struct ProbeObject {
     #[schemars(with = "RectSchema")]
     pub hitbox: Rect<Meters>,
     pub marks: Vec<AttentionId>,
+    /// The statuses it carries.
+    pub statuses: Vec<StatusEffectId>,
 }
 
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
@@ -1620,7 +1632,10 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
             .get::<RenderActor>()
             .map_or(actor.facing, |shown| shown.facing),
         action: actor.action,
+        pose: actor.pose,
+        statuses: carried(world, entity.id()),
         resting: !actor.action.moves(),
+        jumps: entity.get::<Position>()?.jumps,
         shown: shown.clone(),
         feet: view.and_then(|view| view.window_point(drawn, ground)),
         head: view.and_then(|view| view.window_point(drawn, ground + capsule.height)),
@@ -1709,6 +1724,7 @@ fn objects(world: &mut World, area: Option<AreaId>) -> Vec<ProbeObject> {
                     .as_ref()
                     .map(|attention| attention.of(entity).to_vec())
                     .unwrap_or_default(),
+                statuses: Vec::new(),
             };
             (entity, seen)
         })
@@ -1717,9 +1733,18 @@ fn objects(world: &mut World, area: Option<AreaId>) -> Vec<ProbeObject> {
         .into_iter()
         .map(|(entity, seen)| ProbeObject {
             aim: object_aim(world, entity, seen.hitbox),
+            statuses: carried(world, entity),
             ..seen
         })
         .collect()
+}
+
+/// The statuses a thing carries, in the order it took them.
+fn carried(world: &World, thing: Entity) -> Vec<StatusEffectId> {
+    world
+        .get::<status::Statuses>(thing)
+        .map(|statuses| statuses.0.iter().map(|held| held.effect).collect())
+        .unwrap_or_default()
 }
 
 /// The ground point to point at to take the body: where the ray from the eye through its capsule

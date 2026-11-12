@@ -1,5 +1,6 @@
 use engine::core::content::{ContentFile, LoadError};
 use engine::systems::area::blueprint::BlueprintDef;
+use engine::systems::area::spawnable::SpawnableDef;
 use engine::systems::area::{AreaDef, AreaModuleKind};
 use engine::systems::crafting::RecipeBookDef;
 use engine::systems::item::ItemDef;
@@ -185,6 +186,7 @@ pub(crate) fn runner_mark(kind: RunnerKind) -> KindMark {
         RunnerKind::Skill => SkillDef::TABLE,
         RunnerKind::StatusEffect => StatusEffectDef::TABLE,
         RunnerKind::Blueprint => BlueprintDef::TABLE,
+        RunnerKind::Spawnable => SpawnableDef::TABLE,
     };
     KindMark::Icon(icons::of_table(table))
 }

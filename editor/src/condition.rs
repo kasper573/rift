@@ -51,9 +51,10 @@ impl QueryGroup {
             | RiftQueryKind::TaskDone
             | RiftQueryKind::QuestResetsIn => QueryGroup::Quests,
             RiftQueryKind::Memory | RiftQueryKind::SetWithin => QueryGroup::Memories,
-            RiftQueryKind::Inside | RiftQueryKind::InArea | RiftQueryKind::KnowsArea => {
-                QueryGroup::Places
-            }
+            RiftQueryKind::Inside
+            | RiftQueryKind::InArea
+            | RiftQueryKind::KnowsArea
+            | RiftQueryKind::Rain => QueryGroup::Places,
             RiftQueryKind::Nearest
             | RiftQueryKind::Count
             | RiftQueryKind::Distance

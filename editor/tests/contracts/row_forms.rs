@@ -711,7 +711,7 @@ fn an_item_made_usable_answers_used_with_a_script_made_for_it_in_the_same_step()
         .read::<ItemDef>(&potion)
         .expect("a project")
         .expect("the item reads");
-    assert!(matches!(item.kind, ItemKind::Usable));
+    assert!(matches!(item.kind, ItemKind::Usable { .. }));
     let reader = editor.reader().expect("a project");
     let scripts: Vec<&str> = item
         .modules

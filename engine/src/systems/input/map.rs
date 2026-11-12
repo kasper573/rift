@@ -87,6 +87,8 @@ pub enum InputAction {
     InspectSkill,
     UseSlot,
     SlotOptions,
+    /// Held, to keep the wheel of emotes open round the player's character.
+    Emotes,
 }
 
 /// The one file that binds every action, a fixture every game provides.
@@ -453,11 +455,23 @@ pub struct KeyGesture {
 
 impl KeyGesture {
     pub fn just_pressed(&self, keys: &ButtonInput<KeyCode>) -> bool {
-        keys.just_pressed(self.key) && KeyModifiers::held(keys) == self.modifiers
+        keys.just_pressed(self.key) && self.beside(keys) == self.modifiers
     }
 
     pub fn pressed(&self, keys: &ButtonInput<KeyCode>) -> bool {
-        keys.pressed(self.key) && KeyModifiers::held(keys) == self.modifiers
+        keys.pressed(self.key) && self.beside(keys) == self.modifiers
+    }
+
+    /// The modifiers held beside the gesture's own key: a modifier bound as a key is itself, not
+    /// a modifier of itself.
+    fn beside(&self, keys: &ButtonInput<KeyCode>) -> KeyModifiers {
+        let held = KeyModifiers::held(keys);
+        KeyModifiers {
+            ctrl: held.ctrl && !CTRL.contains(&self.key),
+            shift: held.shift && !SHIFT.contains(&self.key),
+            alt: held.alt && !ALT.contains(&self.key),
+            super_key: held.super_key && !SUPER.contains(&self.key),
+        }
     }
 }
 

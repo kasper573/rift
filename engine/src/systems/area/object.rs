@@ -30,6 +30,7 @@ use crate::systems::script::{
     self, Condition, EventKind, Owner, OwnerRow, Place, RiftEvent, RiftInstances, RunnerKind,
     ScriptModule,
 };
+use crate::systems::status::{ActiveAspects, Statuses};
 use crate::systems::visibility::Presence;
 
 pub fn register(app: &mut App) {
@@ -216,9 +217,11 @@ impl ObjectShape {
     }
 }
 
+/// An object standing in an area. `index` is its place among the modules of the area's scene;
+/// one a script spawned has none.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct AreaObject {
-    pub index: u32,
+    pub index: Option<u32>,
     pub name: Option<String>,
     pub title: Option<String>,
     pub shape: ObjectShape,
@@ -236,59 +239,81 @@ pub struct ObjectContact {
 pub fn spawn_in(world: &mut World, tile: TileAt) {
     let zone = world.resource::<WorldArea>().0;
     let content = world.resource::<Content>().clone();
-    let scripts = world.resource::<script::RiftScripts>().clone();
     let placed = area::placed(&content, zone);
     for index in area::load(&content, zone).modules_in(tile) {
         let AreaModule::Object(object) = &placed[*index as usize].module else {
             continue;
         };
-        let index = *index as usize;
-        let owner_row = OwnerRow::of_object(zone, index as u32);
-        let procedures = scripts.of(owner_row).to_vec();
-        let may_do = scripts.may_do(owner_row);
-        let interactive = Interactive::of(&procedures);
-        let warp = may_do.reaches.iter().find_map(|reach| match reach {
+        let standing = AreaObject {
+            index: Some(*index),
+            name: object.name.clone(),
+            title: object.title.clone(),
+            shape: object.shape,
+            look: object.look.map(|look| look.path(&content).to_owned()),
+            warp: None,
+        };
+        let stood = stand(world, standing, OwnerRow::of_object(zone, *index));
+        if let Some(shown) = &object.shown {
+            world
+                .entity_mut(stood)
+                .insert(Presence::When(CompiledCondition::new(&content, shown)));
+        }
+    }
+}
+
+/// Stands an object in the area this world serves, running the scripts of `row`: one of the
+/// area's scene, or one a script spawned.
+pub fn stand(world: &mut World, object: AreaObject, row: OwnerRow) -> Entity {
+    let zone = world.resource::<WorldArea>().0;
+    let scripts = world.resource::<script::RiftScripts>().clone();
+    let procedures = scripts.of(row).to_vec();
+    let interactive = Interactive::of(&procedures);
+    let warp = scripts
+        .may_do(row)
+        .reaches
+        .iter()
+        .find_map(|reach| match reach {
             script::EffectReach::Warp(place) => Some(*place),
             _ => None,
         });
-        let mut entity = world.spawn((
-            Position::at(match object.shape {
-                ObjectShape::Point(point) => point,
-                ObjectShape::Rect(rect) => Pos::new(
-                    rect.origin.x + rect.size.width / 2.0 - 0.5,
-                    rect.origin.y + rect.size.height - 1.0,
-                ),
-            }),
-            AreaTag { area: zone },
-            AreaObject {
-                index: index as u32,
-                name: object.name.clone(),
-                title: object.title.clone(),
-                shape: object.shape,
-                look: object.look.map(|look| look.path(&content).to_owned()),
-                warp,
-            },
-        ));
-        if object.look.is_some() || object.title.is_some() || interactive.is_some() {
-            entity.insert(bevy_replication::Replicated);
-        }
-        if let Some(title) = &object.title {
-            entity.insert(ActorName {
-                name: title.clone(),
-            });
-        }
-        if let Some(interactive) = interactive {
-            entity.insert(interactive);
-        }
-        if let Some(shown) = &object.shown {
-            entity.insert(Presence::When(CompiledCondition::new(&content, shown)));
-        }
-        let id = entity.id();
-        let owner = Owner::Entity(RunnerKind::Object, id);
-        let mut instances = world.resource_mut::<RiftInstances>();
-        instances.spawn_owner(owner, procedures);
-        instances.raise(owner, EventKind::Started, None, Vec::new(), |_| true);
+    let seen = object.look.is_some() || object.title.is_some() || interactive.is_some();
+    let title = object.title.clone();
+    let mut entity = world.spawn((
+        Position::at(match object.shape {
+            ObjectShape::Point(point) => point,
+            ObjectShape::Rect(rect) => Pos::new(
+                rect.origin.x + rect.size.width / 2.0 - 0.5,
+                rect.origin.y + rect.size.height - 1.0,
+            ),
+        }),
+        AreaTag { area: zone },
+        AreaObject { warp, ..object },
+        Statuses::default(),
+        ActiveAspects::default(),
+    ));
+    if seen {
+        entity.insert(bevy_replication::Replicated);
     }
+    if let Some(title) = title {
+        entity.insert(ActorName { name: title });
+    }
+    if let Some(interactive) = interactive {
+        entity.insert(interactive);
+    }
+    let id = entity.id();
+    let owner = Owner::Entity(RunnerKind::Object, id);
+    let mut instances = world.resource_mut::<RiftInstances>();
+    instances.spawn_owner(owner, procedures);
+    instances.raise(owner, EventKind::Started, None, Vec::new(), |_| true);
+    id
+}
+
+/// Takes an object out of the world, its scripts with it.
+pub fn remove(world: &mut World, object: Entity) {
+    world
+        .resource_mut::<RiftInstances>()
+        .remove_owner(Owner::Entity(RunnerKind::Object, object));
+    world.despawn(object);
 }
 
 pub fn named(world: &World, area: AreaId, name: &str) -> Option<Entity> {

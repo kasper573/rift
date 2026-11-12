@@ -15,7 +15,7 @@ mod plan;
 mod props;
 
 pub use plan::{Eyes, Sight};
-pub use props::prop_transform;
+pub use props::{extent_of, prop_transform};
 
 use covers::Covers;
 use grass::Grass;
@@ -37,7 +37,7 @@ use bevy::tasks::futures::check_ready;
 use bevy::tasks::{AsyncComputeTaskPool, IoTaskPool, Task};
 
 use super::lighting::DomeLook;
-use super::prop::{PropDef, PropId};
+use super::prop::{PropDef, PropId, PropPlacement};
 use super::terrain::PieceShape;
 use super::{Area, AreaModule, FogBank, Lighting, PointLightDef, Rainfall, Weather};
 use crate::core::content::{Content, ContentFile, FileHash, FileHashes};
@@ -56,7 +56,7 @@ use crate::core::render::world::gpu::arena::PropArena;
 use crate::core::render::world::gpu::atlas::TerrainAtlas;
 use crate::core::render::world::gpu::draw::{GroundDraw, GroundPatch, PATCH_CELLS};
 use crate::core::render::world::haze::{Haze, HazeSight, MAX_HAZE_BOXES};
-use crate::core::render::world::lights::{self, Flicker};
+use crate::core::render::world::lights::{self, Lamp};
 use crate::core::render::world::sky::{self, Daylight, SunLight};
 use crate::core::render::world::terrain::{self, GroundLayer};
 use crate::core::render::world::{DRAWN_FRAMES_AFTER, frames_drawn, missing_drawn};
@@ -307,9 +307,20 @@ pub fn restand(world: &mut World, scenery: Scenery, content: &Content, area: &Ar
                     None
                 }
             });
-        if area.lights != before.lights {
-            for (_, light) in streaming.stood.lights.drain() {
-                world.despawn(light);
+        let playing = |area: &Area| -> Vec<PropPlacement> {
+            area.playing
+                .iter()
+                .map(|&index| area.props[index].clone())
+                .collect()
+        };
+        if area.lights != before.lights || playing(area) != playing(&before) {
+            for (_, stood) in streaming
+                .stood
+                .lights
+                .drain()
+                .chain(streaming.stood.playing.drain())
+            {
+                world.despawn(stood);
             }
             streaming.planner = planner_of(area);
             streaming.planning = None;
@@ -683,6 +694,8 @@ impl Streaming {
 #[derive(Default)]
 struct Stood {
     lights: HashMap<usize, Entity>,
+    /// What stands for each prop that plays vfx of its own, by its place among those.
+    playing: HashMap<usize, Entity>,
 }
 
 /// A chunk of the ground at a level of detail: the node of the quadtree over the samples it is,
@@ -774,6 +787,7 @@ fn stream_plan(world: &mut World, root: Entity, streaming: &mut Streaming) {
     shortfalls.grass = grass::grow(world, streaming, &plan.seen);
     streaming.shortfalls = shortfalls;
     stream_lights(world, streaming, &plan, root);
+    stream_playing(world, streaming, &plan, root);
     streaming.whole = !shortfalls.total().any();
     if streaming.whole {
         streaming.stood_at = frames_drawn(world);
@@ -1056,6 +1070,36 @@ fn stream_lights(world: &mut World, streaming: &mut Streaming, plan: &Plan, root
             root,
         );
         streaming.stood.lights.insert(index, entity);
+    }
+}
+
+/// Stands something for each prop `plan` stands that plays vfx of its own, for the vfx to play
+/// on, and takes down those it no longer keeps.
+fn stream_playing(world: &mut World, streaming: &mut Streaming, plan: &Plan, root: Entity) {
+    let playing = &plan.playing;
+    let gone: Vec<usize> = streaming
+        .stood
+        .playing
+        .keys()
+        .filter(|index| !playing.kept.contains(*index))
+        .copied()
+        .collect();
+    for index in gone {
+        if let Some(entity) = streaming.stood.playing.remove(&index) {
+            world.despawn(entity);
+        }
+    }
+    let near: Vec<usize> = playing
+        .near
+        .iter()
+        .filter(|index| !streaming.stood.playing.contains_key(*index))
+        .copied()
+        .collect();
+    for index in near {
+        let placed = &streaming.area.props[streaming.area.playing[index]];
+        let entity =
+            props::stand_playing(world, &streaming.content, &streaming.heights, placed, root);
+        streaming.stood.playing.insert(index, entity);
     }
 }
 
@@ -1481,9 +1525,8 @@ fn sun_at(area: &Area, weather: &Weather, daylight: Daylight, look: &Look) -> Op
 /// The wind, cloud and rain `weather` makes for what the client draws, lightning lighting the
 /// world `flash` of the way to a strike close by.
 pub fn shown_weather(weather: &Weather, flash: f32) -> ShownWeather {
-    let (sin, cos) = weather.wind.direction.radians().0.sin_cos();
     ShownWeather {
-        wind: Vec2::new(sin, -cos) * weather.wind.strength,
+        wind: weather.wind.blowing(),
         clouds: weather.clouds,
         water: weather.water,
         rain: weather.rain,
@@ -1602,21 +1645,19 @@ fn spawn_light(
     root: Entity,
 ) -> Entity {
     let ground = heights.height_at(light.at);
-    let point = lights::point(light.color.color(), light.intensity, light.radius.0);
-    let full = point.intensity;
-    let mut spawned = world.spawn((
-        point,
+    let lamp = Lamp {
+        color: light.color.color(),
+        intensity: light.intensity,
+        radius: light.radius,
+        flicker: light.flicker,
+        shadows: false,
+    }
+    .spawn(world, rng.rand_float() * std::f32::consts::TAU);
+    world.entity_mut(lamp).insert((
         Transform::from_translation(world_point(light.at, ground + light.height)),
         ChildOf(root),
     ));
-    if light.flicker > 0.0 {
-        spawned.insert(Flicker {
-            amount: light.flicker,
-            full,
-            phase: rng.rand_float() * std::f32::consts::TAU,
-        });
-    }
-    spawned.id()
+    lamp
 }
 
 /// Plans what an area's scenery stands for each sight, its lights filed off the frame.
@@ -1625,7 +1666,13 @@ fn planner_of(area: &Arc<Area>) -> Making<Arc<Planner>> {
     Making::Task(AsyncComputeTaskPool::get().spawn(async move {
         let mut lights = SpatialIndex::new(PLACEMENT_CELL);
         lights.refile_spots(area.lights.iter().map(|light| light.at));
-        Arc::new(Planner { lights, area })
+        let mut playing = SpatialIndex::new(PLACEMENT_CELL);
+        playing.refile_spots(area.playing.iter().map(|&index| area.props[index].at));
+        Arc::new(Planner {
+            lights,
+            playing,
+            area,
+        })
     }))
 }
 

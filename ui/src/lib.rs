@@ -28,6 +28,7 @@ pub mod sheet;
 pub mod slip;
 pub mod theme;
 pub mod tree;
+pub mod wheel;
 pub mod words;
 
 use egui::{Context, Margin, Stroke, Style, TextStyle};

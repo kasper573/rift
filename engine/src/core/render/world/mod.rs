@@ -109,6 +109,7 @@ impl Plugin for WorldScenePlugin {
                 camera::refinish_pictures,
                 super::video::show_window.run_if(resource_changed::<VideoPreferences>),
                 lights::cast_shadows,
+                lights::cast_lamp_shadows,
                 lights::flicker,
                 mannequin::hold,
                 terrain::stack_pictures,

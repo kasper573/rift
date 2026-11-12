@@ -43,7 +43,7 @@ use crate::systems::reach::{self, Pursuit, ReachAct, ReachTarget};
 use crate::systems::script::{
     Condition, EventKind, Owner, RiftInstances, RunnerKind, ScriptModule, ScriptedRow,
 };
-use crate::systems::skill::SkillId;
+use crate::systems::skill::{self, CastAim, SkillId};
 use crate::systems::visibility::{self, Presence, seen_by};
 
 pub fn register(app: &mut App) {
@@ -582,7 +582,7 @@ impl ItemDef {
             return ItemCategory::Currency;
         }
         match self.kind {
-            ItemKind::Usable => ItemCategory::Consumable,
+            ItemKind::Usable { .. } => ItemCategory::Consumable,
             ItemKind::Equipment { .. } => ItemCategory::Equipment,
             ItemKind::Resource => ItemCategory::Material,
         }
@@ -601,7 +601,13 @@ pub enum ItemKind {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         grants: Vec<SkillId>,
     },
-    Usable,
+    Usable {
+        /// The skill a use of it casts, aimed as the skill is, by whoever carries the item,
+        /// learned or not. What the cast takes is the skill's cost: the item itself, when it is
+        /// used up. Without one, a use raises `used` on the item's own script.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        casts: Option<SkillId>,
+    },
     Resource,
 }
 
@@ -855,7 +861,10 @@ fn use_slot(world: &mut World, actor: Entity, slot: usize) -> Result<(), String>
         .ok_or_else(|| "Nothing there".to_owned())?;
     match item.get(&content).kind {
         ItemKind::Equipment { .. } => equipment::equip(world, actor, slot, None),
-        ItemKind::Usable => {
+        ItemKind::Usable { casts: Some(skill) } => {
+            skill::cast(world, actor, skill, CastAim::None, false)
+        }
+        ItemKind::Usable { casts: None } => {
             announce_consumed(world, actor, item);
             raise(world, item, EventKind::Used, actor);
             Ok(())

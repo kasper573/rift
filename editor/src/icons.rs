@@ -14,11 +14,13 @@ use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::PropDef;
 use engine::systems::area::prop_material::PropMaterialDef;
+use engine::systems::area::spawnable::SpawnableDef;
 use engine::systems::area::terrain::{SurfaceDef, TerrainDef};
 use engine::systems::area::world_map::WorldMapDef;
 use engine::systems::attention::AttentionDef;
 use engine::systems::class::ClassDef;
 use engine::systems::crafting::RecipeBookDef;
+use engine::systems::emote::EmoteDef;
 use engine::systems::input::map::InputDef;
 use engine::systems::interface::{CursorDef, InterfaceIconDef};
 use engine::systems::item::{ItemDef, ToolTypeDef};
@@ -161,6 +163,7 @@ impl KindFamily {
             | TerrainDef::TABLE
             | SurfaceDef::TABLE
             | ResourceDef::TABLE
+            | SpawnableDef::TABLE
             | WorldMapDef::TABLE => KindFamily::World,
             NpcDef::TABLE
             | PlayerDef::TABLE
@@ -169,7 +172,8 @@ impl KindFamily {
             | ModelDef::TABLE
             | ModelPartDef::TABLE
             | MaterialDef::TABLE
-            | SkeletonDef::TABLE => KindFamily::Characters,
+            | SkeletonDef::TABLE
+            | EmoteDef::TABLE => KindFamily::Characters,
             ItemDef::TABLE
             | ShopDef::TABLE
             | RecipeBookDef::TABLE
@@ -221,9 +225,11 @@ pub fn of_table(table: &str) -> KindIcon {
         MaterialDef::TABLE => KindIcon::plain(phosphor::PALETTE).unpictured(),
         SkeletonDef::TABLE => KindIcon::plain(phosphor::BONE).unpictured(),
         StanceDef::TABLE => KindIcon::plain(phosphor::HAND_FIST),
+        EmoteDef::TABLE => KindIcon::plain(phosphor::HAND_WAVING),
         ItemDef::TABLE => KindIcon::plain(phosphor::BACKPACK),
         ToolTypeDef::TABLE => KindIcon::plain(phosphor::TOOLBOX),
         ResourceDef::TABLE => KindIcon::plain(phosphor::DIAMOND).unpictured(),
+        SpawnableDef::TABLE => KindIcon::plain(phosphor::TENT),
         SkillDef::TABLE => KindIcon::plain(phosphor::LIGHTNING),
         StatusEffectDef::TABLE => KindIcon::plain(phosphor::HEARTBEAT),
         QuestDef::TABLE => KindIcon::plain(phosphor::SCROLL),

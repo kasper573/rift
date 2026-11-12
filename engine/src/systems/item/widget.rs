@@ -13,9 +13,10 @@ use crate::systems::hud::{self, Carried, HudWindow};
 use crate::systems::input::map::{self, InputAction, InputMap, input};
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::{
-    DropItemRequest, Inventory, ItemDef, ItemId, ItemModuleKind, ItemStack, UseItemRequest, card,
+    DropItemRequest, Inventory, ItemDef, ItemId, ItemModuleKind, ItemStack, card,
 };
 use crate::systems::player::session;
+use crate::systems::skill::bar;
 
 pub(crate) const SLOT: f32 = controls::SLOT;
 const SLOT_GAP: f32 = 4.0;
@@ -323,7 +324,7 @@ fn act(world: &mut World, slot: u32, item: ItemId, matched: &[InputAction], at: 
             world.write_message(DropItemRequest { slot });
         }
         Some(InputAction::UseItem) => {
-            world.write_message(UseItemRequest { slot });
+            bar::use_bag_slot(world, slot);
         }
         Some(InputAction::InspectItem) => card::open(world, item, Some(at)),
         _ => {}

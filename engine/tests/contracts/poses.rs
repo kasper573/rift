@@ -1,7 +1,12 @@
+use bevy_ecs::schedule::IntoScheduleConfigs;
+use engine::core::math::Offset;
 use engine::core::units::{Millis, Seconds};
 use engine::systems::actor::held::Held;
 use engine::systems::actor::playing::Playing;
+use engine::systems::actor::skeleton::GestureName;
 use engine::systems::actor::{self, Actor, Motion, Pose};
+use engine::systems::emote::{self, EmoteDef, EmoteRequest};
+use engine::systems::movement::{self, MoveRequest, MoveSeq, position};
 use engine::systems::region;
 use engine::systems::script;
 use serde_json::{Value, json};
@@ -84,6 +89,115 @@ fn a_script_sits_a_body_down_and_stands_it_up_through_the_clips_its_skeleton_nam
     }
 }
 
+#[test]
+fn a_player_picks_an_emote_and_their_character_makes_the_gesture_or_holds_the_pose_until_it_does_anything_else()
+ {
+    let content = game("idle", "idle")
+        .asset("icons/emote.png", testkit::png(1, 1))
+        .row("emote", "wave", emote(json!({ "gesture": "wave" })))
+        .row("emote", "sit", emote(json!({ "pose": "sit" })))
+        .row("emote", "nap", emote(json!({ "pose": "sleep" })))
+        .sfx("ui_refuse")
+        .load();
+    let mut sim = Sim::new(content);
+    sim.serve("room")
+        .accept::<EmoteRequest>()
+        .accept::<MoveRequest>()
+        .add((
+            movement::move_request,
+            (emote::requests, emote::rise).chain(),
+            actor::playing::progress,
+        ))
+        .plan(movement::AdvanceWalks::default());
+    region::hold_whole(&mut sim.world);
+    let player = sim.join(1);
+    let conn = sim.conn(1);
+    let ask = |sim: &mut Sim, emote: &str| {
+        let emote = sim.id::<EmoteDef>(emote);
+        sim.send(conn, EmoteRequest { emote });
+        sim.tick();
+    };
+    let pose = |sim: &Sim| sim.world.get::<Actor>(player).map(|actor| actor.pose);
+    let shown = |sim: &Sim| {
+        sim.world
+            .get::<Playing>(player)
+            .map(|playing| playing.motion.clone())
+    };
+
+    ask(&mut sim, "wave");
+    assert_eq!(
+        shown(&sim),
+        Some(Motion::Gesture(GestureName("wave".to_owned()))),
+        "an emote that is a gesture is made at once"
+    );
+    assert!(
+        sim.run_until(1.0, |world| world.get::<Playing>(player).is_none()),
+        "and made once"
+    );
+
+    ask(&mut sim, "sit");
+    assert_eq!(
+        pose(&sim),
+        Some(Pose::Sit),
+        "an emote that is a pose is taken"
+    );
+    assert_eq!(shown(&sim), Some(Motion::Begin(Pose::Sit)));
+    sim.run(2.0);
+    assert_eq!(
+        pose(&sim),
+        Some(Pose::Sit),
+        "and held while nothing else is done"
+    );
+
+    ask(&mut sim, "wave");
+    assert_eq!(pose(&sim), Some(Pose::Idle), "a gesture is made standing");
+    sim.run(1.0);
+
+    ask(&mut sim, "sit");
+    ask(&mut sim, "sit");
+    assert_eq!(
+        pose(&sim),
+        Some(Pose::Idle),
+        "a pose picked while held is left"
+    );
+    assert_eq!(shown(&sim), Some(Motion::End(Pose::Sit)));
+    sim.run(1.0);
+
+    ask(&mut sim, "sit");
+    sim.run(1.0);
+    let ahead = position(&sim.world, player).expect("somewhere") + Offset::new(2.0, 0.0);
+    sim.send(
+        conn,
+        MoveRequest {
+            pos: ahead,
+            seq: MoveSeq(1),
+        },
+    );
+    sim.tick();
+    assert_eq!(pose(&sim), Some(Pose::Idle), "walking off leaves the pose");
+
+    sim.run(3.0);
+    ask(&mut sim, "nap");
+    assert_eq!(
+        pose(&sim),
+        Some(Pose::Idle),
+        "a pose the body has no clip for is not taken"
+    );
+    assert!(
+        sim.errors(1).iter().any(|error| error.contains("can't")),
+        "and its player is told so"
+    );
+}
+
+fn emote(does: Value) -> Value {
+    let mut emote = json!({ "name": "Emote", "icon": "icons/emote.png" });
+    emote
+        .as_object_mut()
+        .expect("an object")
+        .extend(does.as_object().expect("an object").clone());
+    emote
+}
+
 /// How long sitting down and standing up take.
 const SHIFT: Millis = Millis(400.0);
 
@@ -96,6 +210,7 @@ fn game(placed: &str, pose: &str) -> Game {
             ("sit_down", SHIFT.seconds()),
             ("sit", SHIFT.seconds()),
             ("stand_up", SHIFT.seconds()),
+            ("wave", SHIFT.seconds()),
         ])
         .collect();
     let base: serde_json::Map<String, Value> = actor::Action::VARIANTS
@@ -118,6 +233,7 @@ fn game(placed: &str, pose: &str) -> Game {
                     "poses": { "sit": clip("sit") },
                     "begins": { "sit": clip("sit_down") },
                     "ends": { "sit": clip("stand_up") },
+                    "gestures": { "wave": clip("wave") },
                 },
             }),
         )

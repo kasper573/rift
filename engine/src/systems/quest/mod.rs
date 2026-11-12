@@ -27,6 +27,7 @@ use crate::core::content::{
 use crate::core::math::Rng;
 use crate::core::time::{GameDay, UnixMillis, WallClock};
 use crate::systems::GameSettings;
+use crate::systems::area::spawnable::SpawnableDef;
 use crate::systems::area::{self, AreaDef, AreaId, AreaTag};
 use crate::systems::attention::{AttentionId, AttentionMark};
 use crate::systems::class;
@@ -591,6 +592,11 @@ fn party_name(content: &Content, owner: OwnerRow) -> Option<QuestParty> {
                 npc: None,
             }
         }
+        RunnerKind::Spawnable => QuestParty {
+            name: owner.id::<SpawnableDef>().get(content).title.clone(),
+            item: None,
+            npc: None,
+        },
         _ => return None,
     })
 }

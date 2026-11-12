@@ -196,6 +196,7 @@ fn describe_query(content: &impl ContentNames, query: &RiftQuery) -> String {
         RiftQuery::SkillTargets => "the skill's targets".to_owned(),
         RiftQuery::SkillArea => "the skill's area".to_owned(),
         RiftQuery::AimedPoint => "the aimed point".to_owned(),
+        RiftQuery::Rain { .. } => "rain".to_owned(),
     }
 }
 

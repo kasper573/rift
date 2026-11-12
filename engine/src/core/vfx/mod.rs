@@ -5,6 +5,7 @@ pub mod rain;
 pub mod render;
 pub mod shader;
 pub mod sky;
+pub mod standing;
 pub mod uniform;
 
 pub use play::{LayerTime, sprite_cell};
@@ -29,7 +30,7 @@ use crate::core::content::{
     RowCheck, serial,
 };
 use crate::core::geometry::PlacedShape;
-use crate::core::math::{FrameSize, Pos, Rgba};
+use crate::core::math::{FrameSize, Pos, Rgb, Rgba};
 use crate::core::time::UnixMillis;
 use crate::core::units::{Hertz, Meters, Radians, Seconds};
 
@@ -41,6 +42,10 @@ pub const MAX_LAYERS: usize = 16;
 /// The shortest a layer may run: long enough to be seen.
 // An f64 so the schema states the bound as written; an f32 widened would read 0.0500000007.
 const SHORTEST_RUN: f64 = 0.05;
+pub const MAX_LIGHT_INTENSITY: f32 = 100.0;
+// As f64 for the same reason: the bounds of a light's reach, in metres.
+const SHORTEST_REACH: f64 = 0.5;
+const LONGEST_REACH: f64 = 32.0;
 pub const MAX_FRAME_SIDE: u32 = 1024;
 pub const MAX_FRAMES: u32 = 256;
 pub const MAX_FPS: f32 = 120.0;
@@ -64,6 +69,12 @@ pub struct VfxDef {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub params: Vec<VfxParam>,
     pub layers: Vec<VfxLayer>,
+    /// The point of the thing the vfx plays on, by the name its model gives one of its nodes,
+    /// where its sprites and lights stand: the head of a torch in a hand, the wick of a candle.
+    /// What the thing holds counts as part of it. A thing with no such point takes them by their
+    /// anchors.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub socket: Option<String>,
     /// Played, with the same parameters, on each actor this vfx's area reaches when it plays on
     /// an area: the targets a cast struck in it, else everyone standing in it. It plays on each
     /// headed the area's way, so a blow lands from where it came: what a blast does to whoever
@@ -109,6 +120,27 @@ pub enum VfxLayer {
         #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
         #[schemars(transform = SchemaMark::ParamsOf.with("shader"))]
         params: BTreeMap<String, ParamFill>,
+        #[schemars(extend("minimum" = SHORTEST_RUN))]
+        duration: Seconds,
+        #[serde(default, skip_serializing_if = "Seconds::is_zero")]
+        delay: Seconds,
+    },
+    /// A light cast from the site for as long as the layer runs, on everything round it.
+    Light {
+        color: Rgb,
+        #[schemars(extend("minimum" = 0.0, "maximum" = MAX_LIGHT_INTENSITY))]
+        intensity: f32,
+        #[schemars(extend("minimum" = SHORTEST_REACH, "maximum" = LONGEST_REACH))]
+        radius: Meters,
+        /// How much of its brightness comes and goes, as a flame's does.
+        #[serde(default, skip_serializing_if = "serial::is_zero_f32")]
+        #[schemars(extend("minimum" = 0.0, "maximum" = 1.0))]
+        flicker: f32,
+        /// Whether what stands in the light casts a shadow away from it.
+        #[serde(default, skip_serializing_if = "serial::is_false")]
+        shadows: bool,
+        #[serde(default, skip_serializing_if = "SpriteAnchor::is_default")]
+        anchor: SpriteAnchor,
         #[schemars(extend("minimum" = SHORTEST_RUN))]
         duration: Seconds,
         #[serde(default, skip_serializing_if = "Seconds::is_zero")]
@@ -227,7 +259,9 @@ impl ParamFill {
 impl VfxLayer {
     pub fn delay(&self) -> Seconds {
         match self {
-            VfxLayer::Sprite { delay, .. } | VfxLayer::Shader { delay, .. } => *delay,
+            VfxLayer::Sprite { delay, .. }
+            | VfxLayer::Shader { delay, .. }
+            | VfxLayer::Light { delay, .. } => *delay,
         }
     }
 
@@ -239,7 +273,7 @@ impl VfxLayer {
                 SpritePlay::Once => Seconds(*frames as f32 / fps.0.max(0.001)),
                 SpritePlay::Loop { seconds } => *seconds,
             },
-            VfxLayer::Shader { duration, .. } => *duration,
+            VfxLayer::Shader { duration, .. } | VfxLayer::Light { duration, .. } => *duration,
         }
     }
 
@@ -294,6 +328,7 @@ impl ContentFile for VfxDef {
             name: near.name(),
             params: Vec::new(),
             layers: vec![layer],
+            socket: None,
             on_actors_inside: None,
         })
     }
@@ -315,6 +350,9 @@ impl ContentFile for VfxDef {
                     "each parameter once",
                 );
             }
+        }
+        if let Some(socket) = &self.socket {
+            check.text("/socket", socket, 1, 40);
         }
         for (index, layer) in self.layers.iter().enumerate() {
             let at = |field: &str| format!("/layers/{index}/{field}");
@@ -356,6 +394,20 @@ impl ContentFile for VfxDef {
                             );
                         }
                     }
+                }
+                VfxLayer::Light {
+                    intensity,
+                    radius,
+                    flicker,
+                    duration,
+                    ..
+                } => {
+                    check_run(check, at("duration"), *duration);
+                    let brightest = MAX_LIGHT_INTENSITY;
+                    check.range(at("intensity"), *intensity, 0.0, brightest, "brightness");
+                    let (nearest, farthest) = (SHORTEST_REACH as f32, LONGEST_REACH as f32);
+                    check.range(at("radius"), radius.0, nearest, farthest, "m");
+                    check.range(at("flicker"), *flicker, 0.0, 1.0, "flicker");
                 }
             }
         }
@@ -411,10 +463,11 @@ impl From<WireParams> for VfxParams {
 }
 
 impl VfxLayer {
-    /// The stage the layer plays on: a sprite is a billboard, a shader says.
+    /// The stage the layer plays on: a sprite is a billboard, a light stands where one would, a
+    /// shader says.
     pub fn stage(&self, content: &Content) -> Stage {
         match self {
-            VfxLayer::Sprite { .. } => Stage::Billboard,
+            VfxLayer::Sprite { .. } | VfxLayer::Light { .. } => Stage::Billboard,
             VfxLayer::Shader { shader, .. } => shader.get(content).stage,
         }
     }
@@ -497,6 +550,7 @@ fn check_all(loading: &mut Loading) {
                         );
                     }
                 }
+                VfxLayer::Light { .. } => {}
                 VfxLayer::Shader { shader, params, .. } => {
                     let shader = shader.get(&content);
                     for (name, fill) in params {

@@ -29,6 +29,8 @@ use crate::core::content::{
 use crate::core::geometry::Capsule;
 use crate::core::render::world::body::{Figure, Skin};
 use crate::core::units::{Meters, MetersPerSec, Millis, PlaybackRate, Seconds};
+use crate::core::vfx::VfxId;
+use crate::systems::area::prop::MAX_EFFECTS;
 
 pub type ModelId = ContentId<ModelDef>;
 
@@ -47,6 +49,10 @@ pub struct ModelDef {
     pub colours: Colours,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<ModelModule>,
+    /// The vfx whoever wears the body plays over and over wherever they are seen: the embers of
+    /// a thing of fire, the glow of a ghost.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<VfxId>,
 }
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
@@ -85,10 +91,12 @@ impl ContentFile for ModelDef {
             parts: vec![part],
             colours: Colours::default(),
             modules: Vec::new(),
+            effects: Vec::new(),
         })
     }
 
     fn check(&self, cx: &mut RowCheck) {
+        cx.count("/effects", self.effects.len(), 0, MAX_EFFECTS, "vfx");
         let radius = &HITBOX_RADII;
         let height = &HITBOX_HEIGHTS;
         cx.range(
@@ -599,6 +607,11 @@ impl ActorModel {
     /// where one is named.
     pub fn plays(&self, stance: Option<StanceId>, motion: &Motion) -> bool {
         self.skeleton.def.plays(self.build(), stance, motion)
+    }
+
+    /// Whether the model's sets name a clip for holding `pose` in `stance`.
+    pub fn holds(&self, stance: Option<StanceId>, pose: Pose) -> bool {
+        self.skeleton.def.holds(self.build(), stance, pose)
     }
 
     /// Whether the model's sets name a clip for `action` in `stance`.

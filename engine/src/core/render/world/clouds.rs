@@ -5,7 +5,7 @@
 //! of the field says, read where the cloud lies, and the more water the weather's clouds hold, the
 //! more of them do; the darker their shadows, and the rain falls from them.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
 use bevy::asset::RenderAssetUsages;
 use bevy::image::{ImageAddressMode, ImageFilterMode, ImageSampler, ImageSamplerDescriptor};
@@ -19,7 +19,6 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::jobs::Handoff;
 use crate::core::math::smoothstep;
-use crate::core::time::UnixMillis;
 use crate::core::units::{Meters, MetersPerSec};
 
 /// How much ground one tile of the field covers, the field repeating past it.
@@ -94,22 +93,14 @@ pub struct CloudReading {
 
 impl CloudSheet {
     pub fn new(world: &mut World, look: CloudLook) -> CloudSheet {
-        let texel_at =
-            |texel: u32| Vec2::new((texel % SHEET) as f32, (texel / SHEET) as f32) / SHEET as f32;
-        let noise: Vec<f32> = (0..SHEET * SHEET)
-            .into_par_iter()
-            .map(|texel| noise(texel_at(texel)))
-            .collect();
-        let wet: Vec<f32> = (0..SHEET * SHEET)
-            .into_par_iter()
-            .map(|texel| wet_noise(texel_at(texel)))
-            .collect();
+        let reading = CloudReading::clear(look);
         let mut images = world.resource_mut::<Assets<Image>>();
         let field = images.add(picture(
             SHEET,
-            noise
+            reading
+                .noise
                 .iter()
-                .zip(&wet)
+                .zip(reading.wet.iter())
                 .flat_map(|(&noise, &wet)| {
                     [noise, wet, 0.0, 1.0].map(|value| (value * 255.0) as u8)
                 })
@@ -122,12 +113,7 @@ impl CloudSheet {
         CloudSheet {
             field,
             shadows,
-            reading: CloudReading {
-                noise: noise.into(),
-                wet: wet.into(),
-                weather: (0.0, 0.0),
-                look,
-            },
+            reading,
             laid: None,
             stale: true,
             painting: None,
@@ -230,6 +216,43 @@ impl CloudSheet {
 }
 
 impl CloudReading {
+    /// The field under a clear sky, looking as `look` says. Its noises are the same for every
+    /// reader, so they are drawn once for the whole program and shared.
+    pub fn clear(look: CloudLook) -> CloudReading {
+        static NOISES: OnceLock<CloudNoises> = OnceLock::new();
+        let noises = NOISES.get_or_init(|| {
+            let texel_at = |texel: u32| {
+                Vec2::new((texel % SHEET) as f32, (texel / SHEET) as f32) / SHEET as f32
+            };
+            let drawn = |draw: fn(Vec2) -> f32| -> Arc<[f32]> {
+                (0..SHEET * SHEET)
+                    .into_par_iter()
+                    .map(|texel| draw(texel_at(texel)))
+                    .collect::<Vec<f32>>()
+                    .into()
+            };
+            CloudNoises {
+                noise: drawn(noise),
+                wet: drawn(wet_noise),
+            }
+        });
+        CloudReading {
+            noise: noises.noise.clone(),
+            wet: noises.wet.clone(),
+            weather: (0.0, 0.0),
+            look,
+        }
+    }
+
+    /// The field thickened to cover `clouds` of the sky, 0 none and 1 all of it, with as much of
+    /// it holding water as `water`, 0 none to 1 most of it.
+    pub fn covering(self, clouds: f32, water: f32) -> CloudReading {
+        CloudReading {
+            weather: (clouds, water),
+            ..self
+        }
+    }
+
     /// How cloudy the sky is at `at`, in tiles, 0 clear to 1 thick, as the sky reads the field.
     pub fn cloudiness(&self, at: Vec2) -> f32 {
         let edge = edge(self.weather.0, &self.look);
@@ -299,13 +322,13 @@ pub fn shade(water: f32, look: &CloudLook) -> f32 {
     look.fair_shade + (look.storm_shade - look.fair_shade) * water.clamp(0.0, 1.0)
 }
 
-/// How far the clouds have drifted along the ground, on whatever wind has blown, since the course
-/// their weather runs on began, or since the client started when that was later.
+/// How far the clouds over an area have drifted along the ground on whatever wind has blown. The
+/// server of the area carries them from where its weather's course began, and tells every client
+/// how far they have come as it welcomes it; each carries them on from there by its own clock.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct CloudDrift {
     drift: Vec2,
     at: Option<f32>,
-    course: Option<UnixMillis>,
 }
 
 impl CloudDrift {
@@ -317,18 +340,12 @@ impl CloudDrift {
         }
     }
 
-    /// Starts the clouds over, where the field has them undrifted, when the course their weather
-    /// runs on begins anew at `began`: a course begun again plays the same sky again.
-    pub fn follow(&mut self, began: Option<UnixMillis>) {
-        if self.course != began {
-            *self = CloudDrift {
-                course: began,
-                ..default()
-            };
-        }
+    /// Clouds that have drifted `drift` by now, to be carried on from here.
+    pub fn told(drift: Vec2) -> CloudDrift {
+        CloudDrift { drift, at: None }
     }
 
-    /// The drift at `seconds` into the client's run, the clouds carried on `wind` since it was
+    /// The drift at `seconds` into the program's run, the clouds carried on `wind` since it was
     /// last asked.
     pub fn blown(&mut self, wind: Vec2, seconds: f32, look: &CloudLook) -> Vec2 {
         let since = self.at.map_or(0.0, |at| (seconds - at).max(0.0));
@@ -481,4 +498,10 @@ fn hash(x: u32, y: u32, octave: u32) -> f32 {
         .wrapping_add(octave.wrapping_mul(2_246_822_519));
     state = (state ^ (state >> 13)).wrapping_mul(1_274_126_177);
     (state ^ (state >> 16)) as f32 / u32::MAX as f32
+}
+
+/// The two noises every reading of the field shares.
+struct CloudNoises {
+    noise: Arc<[f32]>,
+    wet: Arc<[f32]>,
 }

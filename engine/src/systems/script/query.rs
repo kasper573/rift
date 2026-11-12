@@ -386,6 +386,13 @@ pub enum RiftQuery {
     SkillTargets,
     SkillArea,
     AimedPoint,
+    /// How hard rain falls on where someone or something stands, 0 none to 1 a cloudburst; none
+    /// under what shelters from it.
+    Rain {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(extend("default" = {"type": "subject"}))]
+        of: Option<Box<Condition>>,
+    },
 }
 
 impl RiftQueryKind {
@@ -406,7 +413,8 @@ impl RiftQueryKind {
             | RiftQueryKind::SkillStat
             | RiftQueryKind::StatusPower
             | RiftQueryKind::Distance
-            | RiftQueryKind::Health => ValueType::Number,
+            | RiftQueryKind::Health
+            | RiftQueryKind::Rain => ValueType::Number,
             RiftQueryKind::QuestResetsIn => ValueType::Text,
             RiftQueryKind::Nearest
             | RiftQueryKind::Target
@@ -468,7 +476,8 @@ impl QueryDef<RiftScripting> for RiftQuery {
             | RiftQuery::QuestResetsIn { of, .. }
             | RiftQuery::Inside { of, .. }
             | RiftQuery::InArea { of, .. }
-            | RiftQuery::KnowsArea { of, .. } => of.is_none(),
+            | RiftQuery::KnowsArea { of, .. }
+            | RiftQuery::Rain { of } => of.is_none(),
             RiftQuery::SkillTargets
             | RiftQuery::SkillArea
             | RiftQuery::AimedPoint
@@ -867,6 +876,13 @@ impl QueryDef<RiftScripting> for RiftQuery {
             RiftQuery::AimedPoint => {
                 let skill = skill_of(cx)?;
                 Box::new(move |world, cx| Value::Point(skill::aimed_point(world, cx, skill)))
+            }
+            RiftQuery::Rain { of } => {
+                let of = cx.actor(of.as_deref())?;
+                Box::new(move |world, cx| {
+                    let at = actor(world, cx, &of).and_then(|who| movement::position(world, who));
+                    Value::Num(at.map_or(0.0, |at| f64::from(area::rain::falling_on(world, at))))
+                })
             }
         })
     }

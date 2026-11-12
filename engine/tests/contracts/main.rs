@@ -43,6 +43,7 @@ mod skills;
 mod sleep;
 mod snapshot;
 mod spacing;
+mod spawned;
 mod spawner;
 mod staging;
 mod stance;

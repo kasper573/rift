@@ -8,6 +8,7 @@ pub mod rain;
 pub mod render;
 pub mod scene;
 pub mod scenery;
+pub mod spawnable;
 pub mod terrain;
 pub mod transition;
 pub mod walk;
@@ -91,6 +92,9 @@ pub fn content(registry: &mut ContentRegistry) {
         .bundle::<AreaDef>()
         .named::<AreaDef>()
         .file::<world_map::WorldMapDef>()
+        .file::<spawnable::SpawnableDef>()
+        .named::<spawnable::SpawnableDef>()
+        .modules::<spawnable::SpawnableDef>()
         .json_part(scene::json_part(AreaDef::TABLE))
         .json_part(scene::json_part(BlueprintDef::TABLE))
         .hook(LoadStep::Files, prop::check_fitted)
@@ -866,6 +870,8 @@ pub struct Area {
     /// the module or brings it.
     pub prop_origins: Vec<String>,
     pub lights: Vec<PointLightDef>,
+    /// The props among `props` that play vfx of their own, by their place there.
+    pub playing: Vec<usize>,
     underfoot: Vec<walk::Underfoot>,
     footprints: Vec<Vec<Pos<Meters>>>,
     /// The footprints by the ground they cover, so a tile's mesh takes in only those reaching it.
@@ -1384,6 +1390,9 @@ fn build_area(
             .iter()
             .map(|outline| Rect::from_points(outline.iter().copied())),
     );
+    let playing = (0..props.len())
+        .filter(|&index| !props[index].prop.get(content).effects.is_empty())
+        .collect();
     let area = Area {
         size: ground.size.meters(),
         max_slope: ground.max_slope,
@@ -1412,6 +1421,7 @@ fn build_area(
         prop_sources,
         prop_origins,
         lights,
+        playing,
         meshes: walk::Meshes::empty(ground.size.bounds()),
         modules_by_tile,
         placements_by_tile,

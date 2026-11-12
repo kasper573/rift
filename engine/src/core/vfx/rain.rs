@@ -81,27 +81,9 @@ impl RainField {
 }
 
 impl Shelter {
-    /// Whether the rain is kept off `point`: something stands in the way the rain comes to it,
-    /// down its lean from upwind, more than [`SHELTER_DEPTH`] over where the rain passes.
+    /// Whether the rain is kept off `point` by what stands over the ground round the camera.
     pub fn covers(&self, point: Vec3) -> bool {
-        self.way_down_to(point.xz()).any(|(over, rise)| {
-            self.top_over(over)
-                .is_some_and(|top| point.y + rise < top - SHELTER_DEPTH)
-        })
-    }
-
-    /// Where the rain that lands on `ground` passes on its way down, nearest first: each point
-    /// it passes over, and how far above where it lands it passes there. It leans with the wind,
-    /// so it is followed from half a cell upwind, clear of the side it lands on.
-    fn way_down_to(&self, ground: Vec2) -> impl Iterator<Item = (Vec2, f32)> + '_ {
-        let leaning = self.lean.length();
-        let nudge =
-            self.lean.normalize_or_zero() * SHELTER_CELL.0 / 2.0 * (leaning / LEANING).min(1.0);
-        let step = (SHELTER_CELL.0 / leaning.max(f32::EPSILON)).min(SHELTER_STEP);
-        (0..SHELTER_STEPS).map(move |index| {
-            let rise = index as f32 * step;
-            (ground - nudge - self.lean * rise, rise)
-        })
+        kept_off(point, self.lean, |ground| self.top_over(ground))
     }
 
     fn top_over(&self, ground: Vec2) -> Option<f32> {
@@ -116,6 +98,28 @@ impl Shelter {
             })
             .flatten()
     }
+}
+
+/// Whether rain carried `lean` over the ground for every metre it falls is kept off `point`:
+/// something stands in the way the rain comes to it, down its lean from upwind, its top, as
+/// `top_over` tells it for each point of the ground, more than [`SHELTER_DEPTH`] over where the
+/// rain passes.
+pub fn kept_off(point: Vec3, lean: Vec2, top_over: impl Fn(Vec2) -> Option<f32>) -> bool {
+    way_down_to(point.xz(), lean)
+        .any(|(over, rise)| top_over(over).is_some_and(|top| point.y + rise < top - SHELTER_DEPTH))
+}
+
+/// Where the rain that lands on `ground` passes on its way down, nearest first: each point it
+/// passes over, and how far above where it lands it passes there. It leans with the wind, so it
+/// is followed from half a cell upwind, clear of the side it lands on.
+fn way_down_to(ground: Vec2, lean: Vec2) -> impl Iterator<Item = (Vec2, f32)> {
+    let leaning = lean.length();
+    let nudge = lean.normalize_or_zero() * SHELTER_CELL.0 / 2.0 * (leaning / LEANING).min(1.0);
+    let step = (SHELTER_CELL.0 / leaning.max(f32::EPSILON)).min(SHELTER_STEP);
+    (0..SHELTER_STEPS).map(move |index| {
+        let rise = index as f32 * step;
+        (ground - nudge - lean * rise, rise)
+    })
 }
 
 /// The rain over a cell: the share of the downpour the lie of the land gives it, how wet its

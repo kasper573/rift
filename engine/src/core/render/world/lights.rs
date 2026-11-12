@@ -186,15 +186,65 @@ pub fn toward(elevation: Degrees, azimuth: Degrees) -> Vec3 {
     Vec3::new(sin_a * cos_e, sin_e, -cos_a * cos_e)
 }
 
-/// A point light `intensity` units bright reaching `radius` metres.
-pub fn point(color: Color, intensity: f32, radius: f32) -> PointLight {
-    PointLight {
-        color,
-        intensity: intensity * LUMENS_PER_UNIT,
-        range: radius,
-        radius: 0.05,
-        shadow_maps_enabled: false,
-        ..default()
+/// A lamp: a point light `intensity` units bright that reaches `radius`, `flicker` of its
+/// brightness coming and going, and what stands in it casting shadows when `shadows`, where the
+/// player's video preferences draw any.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Lamp {
+    pub color: Color,
+    pub intensity: f32,
+    pub radius: Meters,
+    pub flicker: f32,
+    pub shadows: bool,
+}
+
+impl Lamp {
+    /// Lights the lamp where the world begins, to be stood where it shines from, its flicker
+    /// `phase` into its wave.
+    pub fn spawn(self, world: &mut World, phase: f32) -> Entity {
+        let light = PointLight {
+            color: self.color,
+            intensity: self.intensity * LUMENS_PER_UNIT,
+            range: self.radius.0,
+            radius: 0.05,
+            shadow_maps_enabled: false,
+            shadow_map_near_z: OWN_BODY.0,
+            ..default()
+        };
+        let full = light.intensity;
+        let mut lamp = world.spawn((light, Transform::default(), Visibility::default()));
+        if self.flicker > 0.0 {
+            lamp.insert(Flicker {
+                amount: self.flicker,
+                full,
+                phase,
+            });
+        }
+        if self.shadows {
+            lamp.insert(ShadowCasting);
+        }
+        lamp.id()
+    }
+}
+
+/// How near a lamp nothing casts a shadow from: a lamp shines from inside what carries it, the
+/// head of a torch or the glass of a lantern, which would otherwise shade all it lights.
+const OWN_BODY: Meters = Meters(0.3);
+
+/// A lamp whose light casts shadows.
+#[derive(Component)]
+pub struct ShadowCasting;
+
+/// Every lamp that casts shadows casts them while the player's video preferences draw shadows.
+pub(super) fn cast_lamp_shadows(
+    video: Res<VideoPreferences>,
+    mut lamps: Query<&mut PointLight, With<ShadowCasting>>,
+) {
+    let wanted = video.shadows != ShadowQuality::Off;
+    for mut lamp in &mut lamps {
+        if lamp.shadow_maps_enabled != wanted {
+            lamp.shadow_maps_enabled = wanted;
+        }
     }
 }
 

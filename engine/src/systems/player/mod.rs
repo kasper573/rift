@@ -14,12 +14,13 @@ use serde::{Deserialize, Serialize};
 use snapshot::{CharacterSnapshot, JoinAs};
 
 use crate::core::content::{Content, ContentFile, ContentId, ModuleRule, ModuleSet, Nearby};
-use crate::core::math::{Pos, Rect, Rng};
+use crate::core::math::{Offset, Pos, Rect, Rng};
 use crate::core::time::{self, DayClock, TimeCourse, UnixMillis, WallClock, WeatherClock};
 use crate::core::units::{Meters, MetersPerSec, PlaybackRate, Radians, Seconds};
 use crate::systems::account::AccountIdentity;
 use crate::systems::actor::{Action, Actor, ActorModel, Appearance, Hitbox, Name, Pose};
 use crate::systems::area::transition::{self, Discovered};
+use crate::systems::area::weather::ServerSky;
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::class::{Class, ClassId};
 use crate::systems::combat::{self, HealthRegen};
@@ -145,6 +146,7 @@ pub struct Welcome {
     pub now: UnixMillis,
     pub day: Option<TimeCourse<f32>>,
     pub weather: Option<TimeCourse<usize>>,
+    pub clouds: Offset<Meters>,
 }
 
 pub type PlayerDefId = ContentId<PlayerDef>;
@@ -311,7 +313,7 @@ pub fn tell_clocks(world: &mut World) {
 }
 
 /// Welcomes every connection owed it: who it is to the server, the server's clock as this tick
-/// has it, and how the game's day and weather run.
+/// has it, how the game's day and weather run, and how far the clouds have drifted over the area.
 pub fn welcome(world: &mut World) {
     let owed = std::mem::take(&mut world.resource_mut::<Unwelcomed>().0);
     if owed.is_empty() {
@@ -322,6 +324,8 @@ pub fn welcome(world: &mut World) {
     let weather = world
         .get_resource::<WeatherClock>()
         .and_then(|clock| clock.0);
+    let drift = world.resource::<ServerSky>().drift();
+    let clouds = Offset::new(drift.x, drift.y);
     for conn in owed {
         let Some(&id) = world.get::<ClientId>(conn) else {
             continue;
@@ -334,6 +338,7 @@ pub fn welcome(world: &mut World) {
                 now,
                 day,
                 weather,
+                clouds,
             },
         );
     }

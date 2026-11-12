@@ -485,7 +485,7 @@ fn required_items(def: &SkillDef) -> Vec<ItemId> {
 fn carry(snapshot: &mut CharacterSnapshot, content: &Content, item: ItemId) {
     match item.get(content).kind {
         ItemKind::Equipment { .. } => snapshot.equipped.push(item),
-        ItemKind::Usable | ItemKind::Resource => snapshot.bag.push(ItemStack::new(item, 1)),
+        ItemKind::Usable { .. } | ItemKind::Resource => snapshot.bag.push(ItemStack::new(item, 1)),
     }
 }
 

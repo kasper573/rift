@@ -95,12 +95,15 @@ pub enum RiftEvent {
 
 pub(crate) const PLACED: &[RunnerKind] = &[
     RunnerKind::Object,
+    RunnerKind::Spawnable,
     RunnerKind::Npc,
     RunnerKind::Area,
     RunnerKind::Blueprint,
 ];
-pub(crate) const OBJECT_OR_AREA: &[RunnerKind] = &[RunnerKind::Object, RunnerKind::Area];
-pub(crate) const OBJECT_OR_NPC: &[RunnerKind] = &[RunnerKind::Object, RunnerKind::Npc];
+pub(crate) const OBJECT_OR_AREA: &[RunnerKind] =
+    &[RunnerKind::Object, RunnerKind::Spawnable, RunnerKind::Area];
+pub(crate) const OBJECT_OR_NPC: &[RunnerKind] =
+    &[RunnerKind::Object, RunnerKind::Spawnable, RunnerKind::Npc];
 pub(crate) const AREA: &[RunnerKind] = &[RunnerKind::Area];
 pub(crate) const NPC: &[RunnerKind] = &[RunnerKind::Npc];
 pub(crate) const ITEM: &[RunnerKind] = &[RunnerKind::Item];

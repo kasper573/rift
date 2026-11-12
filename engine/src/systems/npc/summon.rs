@@ -8,7 +8,8 @@ use crate::core::content::SchemaMark;
 use crate::core::math::{Offset, Pos};
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, REFUSED, ScriptFault};
 use crate::core::units::Meters;
-use crate::systems::area::{self, AreaTag};
+use crate::systems::area::spawnable::SpawnedObject;
+use crate::systems::area::{self, AreaTag, object};
 use crate::systems::combat::Attitude;
 use crate::systems::movement::{self, position};
 use crate::systems::npc::NpcId;
@@ -59,7 +60,7 @@ pub enum ShownFor {
     Everyone,
 }
 
-/// Removes an npc that spawn_npcs made.
+/// Removes an npc that spawn_npcs made, or an object that spawn_object made.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[schemars(transform = SchemaMark::System.with("npc"))]
 pub struct Despawn {
@@ -170,13 +171,16 @@ impl EffectDef<RiftScripting> for Despawn {
         let who = effects::aim(cx, &self.who)?;
         let refused = self.refused.clone();
         Ok(Box::new(move |world, _, cx| {
-            let Some(npc) = effects::aimed(world, cx, &who) else {
+            let Some(spawned) = effects::aimed(world, cx, &who) else {
                 return effects::refuse(world, cx, &refused, "Nobody there to send away");
             };
-            if world.get::<Summoned>(npc).is_none() {
-                return effects::refuse(world, cx, &refused, "Only spawned npcs leave on command");
+            if world.get::<Summoned>(spawned).is_some() {
+                super::despawn(world, spawned);
+            } else if world.get::<SpawnedObject>(spawned).is_some() {
+                object::remove(world, spawned);
+            } else {
+                return effects::refuse(world, cx, &refused, "Only what was spawned is despawned");
             }
-            super::despawn(world, npc);
             EffectStep::Done
         }))
     }

@@ -11,6 +11,7 @@ use crate::core::content::{
 };
 use crate::core::math::{Offset, Pos, Rect, Rng};
 use crate::core::units::{Degrees, Meters};
+use crate::core::vfx::VfxId;
 use crate::systems::area::prop_material::PropMaterialId;
 
 pub type PropId = ContentId<PropDef>;
@@ -18,6 +19,8 @@ pub type PropId = ContentId<PropDef>;
 pub const MAX_PROP_BYTES: FileSize = FileSize::kib(4 * 1024);
 pub const MAX_PROP_TRIANGLES: usize = 16_000;
 pub const MAX_PROP_MATERIALS: usize = 2;
+/// How many vfx a prop or a body plays of its own accord at most.
+pub const MAX_EFFECTS: usize = 4;
 pub const MIN_POLYGON_POINTS: usize = 3;
 pub const MAX_POLYGON_POINTS: usize = 64;
 /// How many props an area stands at most on a square of its ground, scattered ones included: a
@@ -60,6 +63,10 @@ pub struct PropDef {
     /// Keyed by the name of a material of the model.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub materials: BTreeMap<String, PropMaterialId>,
+    /// The vfx it plays over and over wherever it is seen, standing in an area, lying on the
+    /// ground or held in a hand: the flame of a lantern, the glow of a crystal.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub effects: Vec<VfxId>,
 }
 
 /// The ground a prop takes up, in its own metres around its origin; nobody walks there.
@@ -134,10 +141,12 @@ impl ContentFile for PropDef {
             shadow: true,
             shelter: false,
             materials: BTreeMap::new(),
+            effects: Vec::new(),
         })
     }
 
     fn check(&self, cx: &mut RowCheck) {
+        cx.count("/effects", self.effects.len(), 0, MAX_EFFECTS, "vfx");
         match &self.footprint {
             Footprint::None => {}
             Footprint::Circle { radius } => {

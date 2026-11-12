@@ -1,5 +1,5 @@
-//! What the scenery stands for a sight, planned off the frame: the chunks of ground and the lights
-//! a view could take in from anywhere its eye may stand, so a
+//! What the scenery stands for a sight, planned off the frame: the chunks of ground, the lights
+//! and the props playing vfx of their own a view could take in from anywhere its eye may stand, so a
 //! view turning, tilting or zooming within its sight plans nothing anew, and one moving across
 //! the ground plans anew only as it crosses into another cell of it. An eye that may stand any
 //! way round the ground stands near everything at its distance from it, so a view whose eye keeps
@@ -338,10 +338,12 @@ impl Detail {
 /// detail.
 const NEAREST_GROUND: Meters = Meters(0.5);
 
-/// What a plan is made from that stays as long as the area stands: the area and its lights.
+/// What a plan is made from that stays as long as the area stands: the area, its lights and
+/// the props of it that play vfx of their own.
 pub(super) struct Planner {
     pub area: Arc<Area>,
     pub lights: SpatialIndex,
+    pub playing: SpatialIndex,
 }
 
 /// What the scenery stands for a sight: where it is seen from, the ground's chunks and the
@@ -350,11 +352,14 @@ pub(super) struct Plan {
     pub seen: Seen,
     /// The chunks of ground, finest first.
     pub ground: Vec<Node>,
-    pub lights: LightsPlan,
+    pub lights: NearPlan,
+    /// Of the area's props that play vfx of their own, by their place among those.
+    pub playing: NearPlan,
 }
 
-/// The lights the plan stands, nearest the view first, and those it keeps that stand already.
-pub(super) struct LightsPlan {
+/// The things of a kind the plan stands, nearest the view first, and those it keeps that stand
+/// already.
+pub(super) struct NearPlan {
     pub near: Vec<usize>,
     pub kept: HashSet<usize>,
 }
@@ -370,28 +375,30 @@ impl Planner {
         ground.sort_by_key(|node| node.level);
         Plan {
             ground,
-            lights: self.plan_lights(&seen),
+            lights: plan_near(&self.lights, &seen, |index| self.area.lights[index].at),
+            playing: plan_near(&self.playing, &seen, |index| {
+                self.area.props[self.area.playing[index]].at
+            }),
             seen,
         }
     }
+}
 
-    fn plan_lights(&self, seen: &Seen) -> LightsPlan {
-        let at = seen.at();
-        let apart = |index: usize| self.area.lights[index].at.distance_to(at);
-        let mut near: Vec<usize> = self
-            .lights
-            .near(at, seen.reach)
-            .filter(|&index| apart(index) <= seen.reach.0)
-            .collect();
-        near.sort_by(|&a, &b| apart(a).total_cmp(&apart(b)));
-        let keep = seen.reach.0 * KEEP_SHARE;
-        let kept = self
-            .lights
-            .near(at, Meters(keep))
-            .filter(|&index| apart(index) <= keep)
-            .collect();
-        LightsPlan { near, kept }
-    }
+/// The things filed in `filed`, each standing where `at` has it, that `seen` stands and keeps.
+fn plan_near(filed: &SpatialIndex, seen: &Seen, at: impl Fn(usize) -> Pos<Meters>) -> NearPlan {
+    let eye = seen.at();
+    let apart = |index: usize| at(index).distance_to(eye);
+    let mut near: Vec<usize> = filed
+        .near(eye, seen.reach)
+        .filter(|&index| apart(index) <= seen.reach.0)
+        .collect();
+    near.sort_by(|&a, &b| apart(a).total_cmp(&apart(b)));
+    let keep = seen.reach.0 * KEEP_SHARE;
+    let kept = filed
+        .near(eye, Meters(keep))
+        .filter(|&index| apart(index) <= keep)
+        .collect();
+    NearPlan { near, kept }
 }
 
 /// `distance` taken down to the half octave below it, and to nothing from under the nearest

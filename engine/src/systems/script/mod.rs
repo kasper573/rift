@@ -31,6 +31,7 @@ use crate::core::units::Meters;
 use crate::systems::WorldArea;
 use crate::systems::actor::skeleton::{Declared, GestureName};
 use crate::systems::area::scene::scene_file;
+use crate::systems::area::spawnable::{SpawnableDef, SpawnableId};
 use crate::systems::area::{self, AreaDef, AreaId, AreaModule, AreaObject};
 use crate::systems::class::{ClassDef, ClassId};
 use crate::systems::crafting::{RecipeBookDef, RecipeBookId};
@@ -79,6 +80,7 @@ pub enum RunnerKind {
     Skill,
     StatusEffect,
     Blueprint,
+    Spawnable,
     Any,
 }
 
@@ -297,6 +299,7 @@ pub enum EffectReach {
     Remembers(MemoryId),
     OpensShop(ShopId),
     Spawns(NpcId),
+    SpawnsObject(SpawnableId),
     Hostile,
     Friendly,
     Despawns,
@@ -477,6 +480,7 @@ pub fn build_all(loading: &mut Loading) {
     bind_table::<RecipeBookDef>(loading, &mut bind);
     bind_table::<SkillDef>(loading, &mut bind);
     bind_table::<StatusEffectDef>(loading, &mut bind);
+    bind_table::<SpawnableDef>(loading, &mut bind);
     for (id, _) in loading.rows::<AreaDef>(&content) {
         let key = id.path(&content);
         let placed = area::placed(&content, id);
@@ -625,6 +629,7 @@ pub fn owner_site(content: &Content, row: OwnerRow) -> ScriptSite {
         RunnerKind::RecipeBook => row.id::<RecipeBookDef>().path(content),
         RunnerKind::Skill => row.id::<SkillDef>().path(content),
         RunnerKind::StatusEffect => row.id::<StatusEffectDef>().path(content),
+        RunnerKind::Spawnable => row.id::<SpawnableDef>().path(content),
         RunnerKind::Any => "",
     };
     ScriptSite {
@@ -792,7 +797,7 @@ pub fn check_all(loading: &mut Loading) {
         }
     }
     for (id, def) in loading.rows::<ItemDef>(&content) {
-        let usable = matches!(def.kind, ItemKind::Usable);
+        let usable = matches!(def.kind, ItemKind::Usable { casts: None });
         let answers = scripts
             .may_do(OwnerRow::of_row(id))
             .answers(EventKind::Used);
@@ -803,7 +808,7 @@ pub fn check_all(loading: &mut Loading) {
                 ContentProblem::new(
                     "usable without used",
                     format!("item/{}", id.path(&content)),
-                    "a script answering used on every usable item",
+                    "a script answering used on every usable item that casts no skill",
                 ),
             );
         }

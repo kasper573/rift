@@ -20,7 +20,7 @@ use engine::core::script::{FlowSteering, Pause, Value as ScriptValue, ValueType}
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::core::units::Meters;
 use engine::systems::actor::Name;
-use engine::systems::area::{self, AreaId, AreaModule, AreaObject};
+use engine::systems::area::{self, AreaId, AreaModule, AreaObject, spawnable};
 use engine::systems::class::{self, Class, ClassDef, ClassId};
 use engine::systems::dialogue::{self, Conversation, ConversationRequest};
 use engine::systems::input::map::InputMap;
@@ -1172,7 +1172,7 @@ fn locate_owner(
             let entity = world
                 .query::<(Entity, &AreaObject)>()
                 .iter(world)
-                .find(|(_, object)| object.index == index)
+                .find(|(_, object)| object.index == Some(index))
                 .map(|(entity, _)| entity)
                 .ok_or("the object is not in its area")?;
             Owner::Entity(RunnerKind::Object, entity)
@@ -1192,6 +1192,11 @@ fn locate_owner(
         }
         RunnerKind::Blueprint => {
             Owner::Row(RunnerKind::Blueprint, owner.row.object.unwrap_or_default())
+        }
+        RunnerKind::Spawnable => {
+            let entity = spawnable::spawn(world, owner.row.id(), at)
+                .ok_or("nowhere near to stand the spawnable")?;
+            Owner::Entity(RunnerKind::Object, entity)
         }
         kind => Owner::Row(kind, owner.row.row),
     })

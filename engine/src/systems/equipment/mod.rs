@@ -71,6 +71,17 @@ pub fn worn(world: &World, actor: Entity) -> impl Iterator<Item = ItemId> + '_ {
         })
 }
 
+/// Where the actor wears the item, the first of its places when it takes several.
+pub fn place_of(world: &World, actor: Entity, item: ItemId) -> Option<EquipmentPlace> {
+    world.get::<Equipment>(actor).and_then(|equipment| {
+        equipment
+            .slots
+            .iter()
+            .find(|(_, worn)| **worn == item)
+            .map(|(place, _)| place.clone())
+    })
+}
+
 pub fn in_slot(world: &World, actor: Entity, slot: &EquipmentPlace) -> Option<ItemId> {
     world
         .get::<Equipment>(actor)

@@ -36,6 +36,7 @@ use crate::core::text::Typewriter;
 use crate::core::time::{self, UnixMillis};
 use crate::core::units::{Meters, MetersPerSec, PlaybackRate, Radians, Seconds};
 use crate::core::vfx::render::SiteExtent;
+use crate::core::vfx::standing::StandingVfx;
 use crate::systems::area::{self, Area, PropId};
 use crate::systems::equipment::{self, Equipment};
 use crate::systems::item::{Grip, ItemId, PropAxis, Wear};
@@ -380,6 +381,7 @@ pub fn dress(world: &mut World) {
                 footprint: Vec2::splat(hitbox.radius.0 * 2.0),
                 height: hitbox.height.0,
             },
+            StandingVfx(actor_model.def().effects.clone()),
             Puppet {
                 dressed,
                 clips,

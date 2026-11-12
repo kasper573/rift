@@ -132,7 +132,8 @@ impl Action {
 #[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Hurt(pub u32);
 
-/// How an actor holds itself while idle: standing, or sitting when its model has a clip for it.
+/// How an actor holds itself while idle: standing, or seated, resting on the ground or asleep when
+/// its model has a clip for it.
 #[derive(
     JsonSchema,
     Serialize,
@@ -155,7 +156,10 @@ pub struct Hurt(pub u32);
 pub enum Pose {
     #[default]
     Idle,
+    /// Seated on something: a chair, a bench.
     Sit,
+    /// Sat down on the ground.
+    Rest,
     Sleep,
 }
 

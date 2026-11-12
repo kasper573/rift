@@ -468,6 +468,9 @@ fn may_do_rows(content: &Content, doc: &ScriptDoc, may: &MayDo<RiftScripting>) -
     }
     let npcs = unique(may.reaches.iter().filter_map(|reach| match reach {
         EffectReach::Spawns(npc) => Some(format!("spawns {}", shown_path(npc.path(content)))),
+        EffectReach::SpawnsObject(spawnable) => {
+            Some(format!("spawns {}", shown_path(spawnable.path(content))))
+        }
         EffectReach::Hostile => Some("may turn hostile".to_owned()),
         EffectReach::Friendly => Some("may turn friendly".to_owned()),
         EffectReach::Despawns => Some("despawns".to_owned()),
@@ -646,6 +649,9 @@ pub(crate) fn describe_reach(content: &Content, reach: &EffectReach) -> String {
         EffectReach::Remembers(memory) => format!("remembers {}", shown_path(memory.path(content))),
         EffectReach::OpensShop(shop) => format!("opens shop {}", shown_path(shop.path(content))),
         EffectReach::Spawns(npc) => format!("spawns {}", shown_path(npc.path(content))),
+        EffectReach::SpawnsObject(spawnable) => {
+            format!("spawns {}", shown_path(spawnable.path(content)))
+        }
         EffectReach::Hostile => "may turn hostile".to_owned(),
         EffectReach::Friendly => "may turn friendly".to_owned(),
         EffectReach::Despawns => "despawns".to_owned(),

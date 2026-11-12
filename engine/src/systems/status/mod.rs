@@ -30,8 +30,9 @@ pub fn register(app: &mut App) {
     app.replicate::<Statuses>().replicate_private::<Boosts>();
 }
 
-/// A buff or debuff an actor carries for a while: the row says how it looks and sounds coming,
-/// staying and going, and its script says what it does while it holds.
+/// A state an actor or an object of an area carries for a while or until it is taken off: the row
+/// says how it looks and sounds coming, staying and going, and its script says what it does while
+/// it holds.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 pub struct StatusEffectDef {
     pub name: String,
@@ -87,7 +88,8 @@ pub enum StatusModule {
     Script(ScriptModule),
 }
 
-/// The statuses on an actor, one per effect: applying one it has refreshes its power and clock.
+/// The statuses a thing carries, one per effect: applying one it has refreshes its power and
+/// clock.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Statuses(pub Vec<StatusInstance>);
 

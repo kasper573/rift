@@ -2,7 +2,6 @@ use bevy::prelude::*;
 use engine::core::jobs::Handoff;
 use engine::core::render::world::clouds::{self, CLOUD_TILE, CloudDrift, CloudSheet, SHADOW_SPAN};
 use engine::core::render::world::lights::sun_transform;
-use engine::core::time::UnixMillis;
 use engine::core::units::Degrees;
 
 const CLOUDS: f32 = 0.5;
@@ -85,18 +84,18 @@ fn the_ground_lies_in_the_shadow_of_the_cloud_up_the_suns_rays_as_the_clouds_dri
         });
         assert!(joined, "{when} the shadows join where they repeat");
     }
-    let drifted = drifting.drift();
-    drifting.follow(None);
+    let told = drifting.drift();
+    let mut joining = CloudDrift::told(told);
     assert_eq!(
-        drifting.drift(),
-        drifted,
-        "the clouds drift on while their weather's course runs on"
+        joining.blown(WIND, 500.0, sheet.look()),
+        told,
+        "a client joining finds the clouds where its server tells it they have drifted to"
     );
-    drifting.follow(Some(UnixMillis(1)));
-    assert_eq!(
-        drifting.blown(WIND, 40.0, sheet.look()),
-        Vec2::ZERO,
-        "a course begun anew starts the clouds over where the field has them"
+    let since = joining.blown(WIND, 501.0, sheet.look()) - told;
+    let meanwhile = drifting.blown(WIND, 32.5, sheet.look()) - told;
+    assert!(
+        since.distance(meanwhile) < 1.0e-3,
+        "and carries them on from there as the server does: {since} against {meanwhile}"
     );
 }
 

@@ -8,14 +8,17 @@ use bevy::prelude::*;
 use crate::core::audio::playback::SfxId;
 use crate::core::content::{AudioRef, Content, RowCheck, SchemaMark, serial};
 use crate::core::math::Rng;
+use crate::core::render::world::clouds::CloudDrift;
 use crate::core::render::world::sky::Daylight;
-use crate::core::time::{DayClock, TimeCourse, UnixMillis, WeatherClock, server_now};
+use crate::core::time::{
+    self, DayClock, TimeCourse, UnixMillis, WallClock, WeatherClock, server_now,
+};
 use crate::core::units::{Degrees, Meters, Seconds};
 use crate::core::vfx::rain::NEAREST_SHELL;
 use crate::core::vfx::{ParamValue, VfxShaderId};
-use crate::systems::GameSettings;
 use crate::systems::area::AreaId;
 use crate::systems::launch::{ServerDay, ServerDaylight};
+use crate::systems::{GameSettings, WorldArea};
 
 /// How many shells rain is drawn on round the eye at most, each over the whole picture.
 pub const MAX_RAIN_SHELLS: usize = 6;
@@ -295,6 +298,61 @@ pub fn weather_now(world: &mut World, area: AreaId, climate: &Climate) -> Weathe
         TimeCourse::Held(spell) => climate.held(spell),
         TimeCourse::Since(_) => climate.weather_at(along, now),
     }
+}
+
+/// The sky over the area a world serves, as its server keeps it for everyone there: the weather
+/// its climate's course makes this tick, and how far the clouds have drifted on its winds. A
+/// course begun anew starts the clouds over, where the field has them undrifted, so the same
+/// course plays the same sky again.
+#[derive(Resource, Default)]
+pub struct ServerSky {
+    began: Option<UnixMillis>,
+    along: Option<SpellCourse>,
+    weather: Option<Weather>,
+    clouds: CloudDrift,
+}
+
+impl ServerSky {
+    /// The weather over the area this tick, once the sky has turned.
+    pub fn weather(&self) -> Option<&Weather> {
+        self.weather.as_ref()
+    }
+
+    /// How far the clouds have drifted.
+    pub fn drift(&self) -> Vec2 {
+        self.clouds.drift()
+    }
+}
+
+/// Turns the sky over the world's area on to this tick: the weather where the server's course
+/// stands, and the clouds carried along on its wind.
+pub fn turn_sky(world: &mut World) {
+    let content = world.resource::<Content>().clone();
+    let climate = &super::load(&content, world.resource::<WorldArea>().0).climate;
+    let look = content.built::<GameSettings>().look.clouds;
+    let now = world.resource::<WallClock>().now;
+    let seconds = time::uptime(world).0;
+    let course = world
+        .get_resource::<WeatherClock>()
+        .and_then(|clock| clock.0);
+    let began = match course {
+        Some(TimeCourse::Since(began)) => Some(began),
+        Some(TimeCourse::Held(_)) | None => None,
+    };
+    let mut sky = world.resource_mut::<ServerSky>();
+    if sky.began != began {
+        *sky = ServerSky { began, ..default() };
+    }
+    let weather = match course {
+        None => climate.first(),
+        Some(TimeCourse::Held(spell)) => climate.held(spell),
+        Some(course @ TimeCourse::Since(_)) => {
+            sky.along = climate.course_at(course, now, sky.along);
+            climate.weather_at(sky.along, now)
+        }
+    };
+    sky.clouds.blown(weather.wind.blowing(), seconds, &look);
+    sky.weather = Some(weather);
 }
 
 /// Wind blowing toward `direction` (degrees from north, clockwise) at `strength`, from calm at 0
@@ -669,6 +727,12 @@ impl SpellCourse {
 }
 
 impl Wind {
+    /// The way the wind blows over the ground (x east, y south), as long as it is strong.
+    pub fn blowing(&self) -> Vec2 {
+        let (sin, cos) = self.direction.radians().0.sin_cos();
+        Vec2::new(sin, -cos) * self.strength
+    }
+
     pub fn is_calm(&self) -> bool {
         self.strength <= 0.0
     }

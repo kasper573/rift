@@ -105,7 +105,7 @@ pub(crate) fn usable_without_used(
                 })
             })
     };
-    matches!(item.kind, ItemKind::Usable) && !item.modules.iter().any(answers_used)
+    matches!(item.kind, ItemKind::Usable { casts: None }) && !item.modules.iter().any(answers_used)
 }
 
 fn blank_parts(table: &str) -> Vec<(String, FileBytes)> {

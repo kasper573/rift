@@ -25,7 +25,8 @@ use crate::core::vfx::{
     ParamKind, ParamValue, SiteKind, VfxDef, VfxId, VfxInstance, VfxParams, VfxSite, WidgetName,
 };
 use crate::systems::WorldArea;
-use crate::systems::area::{AreaObject, AreaTag};
+use crate::systems::actor::model::ModelDef;
+use crate::systems::area::{AreaObject, AreaTag, PropDef};
 use crate::systems::movement::{Position, position};
 use crate::systems::player::PlayedBy;
 use crate::systems::script::effect::RiftEffect;
@@ -46,7 +47,8 @@ pub fn register(app: &mut App) {
 }
 
 /// Every vfx plays on sites its layers' stages take: a script names the site it plays a vfx on, the
-/// engine's fixtures and a status effect's vfx play on actors.
+/// engine's fixtures play on actors, a status effect's vfx on whoever carries the status, an
+/// actor or an object, and those a prop or a body plays of its own accord on it as on an object.
 pub fn check_sites(loading: &mut Loading) {
     let content = loading.content();
     let mut played: Vec<(VfxId, &[SiteKind], String)> = Vec::new();
@@ -73,7 +75,18 @@ pub fn check_sites(loading: &mut Loading) {
             status.vfx.on_expire,
         ];
         for vfx in phases.into_iter().flatten() {
-            played.push((vfx, &[SiteKind::Actor], id.path(&content).to_owned()));
+            let carriers = &[SiteKind::Actor, SiteKind::Object];
+            played.push((vfx, carriers, id.path(&content).to_owned()));
+        }
+    }
+    for (id, prop) in loading.rows::<PropDef>(&content) {
+        for vfx in &prop.effects {
+            played.push((*vfx, &[SiteKind::Object], id.path(&content).to_owned()));
+        }
+    }
+    for (id, model) in loading.rows::<ModelDef>(&content) {
+        for vfx in &model.effects {
+            played.push((*vfx, &[SiteKind::Object], id.path(&content).to_owned()));
         }
     }
     for (vfx, sites, by) in played {
@@ -91,6 +104,15 @@ pub fn check_sites(loading: &mut Loading) {
 pub struct Delivery {
     pub from: Option<Pos<Meters>>,
     pub struck: Option<Vec<Entity>>,
+}
+
+/// The site a thing is to a vfx played on it: an object of the area as one, anyone else as an
+/// actor.
+pub fn site_on(world: &World, thing: Entity) -> VfxSite {
+    match world.get::<AreaObject>(thing) {
+        Some(_) => VfxSite::Object(thing),
+        None => VfxSite::Actor(thing),
+    }
 }
 
 pub fn show(world: &mut World, vfx: VfxId, site: VfxSite) -> Option<Entity> {

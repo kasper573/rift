@@ -543,6 +543,15 @@
           "times": 1
         }
       ]
+    },
+    "emotes": {
+      "label": "Hold the wheel of emotes open",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "AltLeft"
+        }
+      ]
     }
   }
 }

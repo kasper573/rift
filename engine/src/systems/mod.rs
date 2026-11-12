@@ -8,6 +8,7 @@ pub mod class;
 pub mod combat;
 pub mod crafting;
 pub mod dialogue;
+pub mod emote;
 pub mod equipment;
 pub mod frame_rate;
 pub mod history;
@@ -115,6 +116,7 @@ pub fn protocol(app: &mut App) {
     reach::register(app);
     chat::register(app);
     vfx::register(app);
+    emote::register(app);
     plug_ins(app.world_mut());
 }
 
@@ -152,6 +154,8 @@ pub fn area_state(world: &mut World, content: &Content) {
     world.init_resource::<crate::core::chunk::ChunkIndex>();
     world.init_resource::<npc::Packs>();
     world.init_resource::<spawner::SpawnerEntries>();
+    world.init_resource::<area::weather::ServerSky>();
+    world.init_resource::<area::rain::ServerShelters>();
     world.insert_resource(sleep::Sleep::of(content));
     world.insert_resource(region::Region::of(content));
     MessageRegistry::register_message::<combat::Died>(world);
@@ -400,7 +404,7 @@ pub fn server_app(
         .add_systems(
             First,
             (
-                player::welcome,
+                (area::weather::turn_sky, player::welcome).chain(),
                 advance_replication_clock,
                 (sleep::settle, region::settle).chain(),
             ),
@@ -410,8 +414,7 @@ pub fn server_app(
             Update,
             (
                 (
-                    status::expire,
-                    vfx::expire,
+                    (status::expire, vfx::expire, area::spawnable::expire).chain(),
                     player::arrival_holds,
                     combat::regen,
                     movement::move_request,
@@ -424,6 +427,7 @@ pub fn server_app(
                     dialogue::requests,
                     (shop::requests, prompt::requests, crafting::requests).chain(),
                     quest::requests,
+                    (emote::requests, emote::rise).chain(),
                     equipment::hold,
                     equipment::unequip,
                     skill::reset::expire,
@@ -576,6 +580,7 @@ pub fn client_app(
             player::session::ClientSessionPlugin,
             input::PlayerInputPlugin,
             region::ClientRegionPlugin,
+            emote::wheel::EmoteWheelPlugin,
         ))
         .add_plugins((
             settings::plugin,
@@ -748,6 +753,8 @@ pub fn tables() -> ContentRegistry {
         .file::<skill::SkillDef>()
         .named::<skill::SkillDef>()
         .modules::<skill::SkillDef>()
+        .file::<emote::EmoteDef>()
+        .named::<emote::EmoteDef>()
         .file::<status::StatusEffectDef>()
         .named::<status::StatusEffectDef>()
         .modules::<status::StatusEffectDef>()
@@ -769,6 +776,7 @@ pub fn tables() -> ContentRegistry {
         .hook(LoadStep::Across, class::check_all)
         .hook(LoadStep::Across, npc::check_all)
         .hook(LoadStep::Across, skill::check_all)
+        .hook(LoadStep::Across, emote::check_all)
         .hook(LoadStep::Across, item::check_pictures)
         .hook(LoadStep::Across, item::check_looks)
         .hook(LoadStep::Across, vfx::check_sites)

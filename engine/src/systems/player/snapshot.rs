@@ -580,6 +580,7 @@ fn check_hotbar(
         Some(&class.tree),
         Some(&learned(snapshot)),
         snapshot.equipped.iter().copied(),
+        snapshot.bag.iter().map(|stack| stack.item),
         None,
     );
     let held = |item: ItemId| {

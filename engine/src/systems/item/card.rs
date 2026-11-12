@@ -109,7 +109,7 @@ pub fn inspect_hint() -> Vec<TextPiece> {
 
 pub fn use_verb(def: &ItemDef) -> Option<&'static str> {
     match def.kind {
-        ItemKind::Usable => Some("use"),
+        ItemKind::Usable { .. } => Some("use"),
         ItemKind::Equipment { .. } => Some("wear"),
         ItemKind::Resource => None,
     }
@@ -118,7 +118,7 @@ pub fn use_verb(def: &ItemDef) -> Option<&'static str> {
 pub fn kind(def: &ItemDef) -> CardKind {
     match def.kind {
         ItemKind::Equipment { .. } => CardKind::Equipment,
-        ItemKind::Usable => CardKind::Usable,
+        ItemKind::Usable { .. } => CardKind::Usable,
         ItemKind::Resource => CardKind::Resource,
     }
 }
@@ -347,7 +347,10 @@ fn facts(
                 }
             }
         }
-        ItemKind::Usable => card::fact(ui, "Can be used"),
+        ItemKind::Usable { casts: None } => card::fact(ui, "Can be used"),
+        ItemKind::Usable { casts: Some(skill) } => {
+            card::fact(ui, &format!("Casts {}", skill.get(content).name))
+        }
         ItemKind::Resource => {
             for boost in &boosts {
                 card::fact(ui, &format!("{} while carried", modifier(*boost)));

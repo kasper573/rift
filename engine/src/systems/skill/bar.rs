@@ -22,7 +22,7 @@ use crate::core::gui;
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::core::time;
 use crate::core::units::Seconds;
-use crate::systems::equipment::{self, EquipmentPlace};
+use crate::systems::equipment::{self, EquipmentPlace, UnequipRequest};
 use crate::systems::hud::{self, Carried, Confirm, HudWidget};
 use crate::systems::input::map::{
     self, InputAction, InputBinding, InputFixture, InputMap, KeyGesture, KeyModifiers, input,
@@ -920,6 +920,20 @@ fn aim_or_cast(world: &mut World, skill: SkillId, rank: Rank) -> bool {
     }
 }
 
+/// Asks to use what lies in the player's bag at `slot`: an item that casts a skill is aimed as
+/// the skill is, and any other is used at once.
+pub fn use_bag_slot(world: &mut World, slot: u32) -> bool {
+    let casts =
+        bag_item(world, slot).and_then(|item| super::cast_by(world.resource::<Content>(), item));
+    match casts {
+        Some(skill) => use_skill(world, skill),
+        None => {
+            world.write_message(UseItemRequest { slot });
+            true
+        }
+    }
+}
+
 /// Whether a use of the item was asked for.
 fn use_item(world: &mut World, item: ItemId) -> bool {
     let Some(me) = session::me(world) else {
@@ -934,18 +948,17 @@ fn use_item(world: &mut World, item: ItemId) -> bool {
         .get::<Inventory>(me)
         .and_then(|inventory| inventory.slot_of(item));
     match bag_slot {
-        Some(slot) => {
-            world.write_message(UseItemRequest { slot: slot as u32 });
-            true
-        }
-        None if equipment::wears(world, me, item) => {
-            notification::local_error(world, format!("{} is worn already", def.name));
-            false
-        }
-        None => {
-            notification::local_error(world, format!("No {} left", def.name));
-            false
-        }
+        Some(slot) => use_bag_slot(world, slot as u32),
+        None => match equipment::place_of(world, me, item) {
+            Some(slot) => {
+                world.write_message(UnequipRequest { slot });
+                true
+            }
+            None => {
+                notification::local_error(world, format!("No {} left", def.name));
+                false
+            }
+        },
     }
 }
 

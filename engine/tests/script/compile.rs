@@ -285,7 +285,7 @@ fn compile_in(
 
 fn entry(owner: RunnerKind, next: &str) -> Value {
     match owner {
-        RunnerKind::Object | RunnerKind::Npc => json!({
+        RunnerKind::Object | RunnerKind::Spawnable | RunnerKind::Npc => json!({
             "type": "on", "event": "interacted", "verb": "talk", "reach": 2.0, "next": next
         }),
         RunnerKind::Item | RunnerKind::Skill => {

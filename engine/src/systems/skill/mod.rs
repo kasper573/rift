@@ -38,7 +38,7 @@ use crate::core::units::{MeterPos, Meters, Seconds};
 use crate::systems::area::AreaTag;
 use crate::systems::class::{self, NodeKey, SkillPoints, SkillTree};
 use crate::systems::equipment;
-use crate::systems::item::{ItemId, ItemKind, ItemStack};
+use crate::systems::item::{Inventory, ItemId, ItemKind, ItemStack};
 use crate::systems::movement;
 use crate::systems::npc::{Npc, NpcDef};
 use crate::systems::script::event::{USED_POINT, USED_RANK, USED_TARGET};
@@ -601,17 +601,22 @@ pub fn check_rank(
 }
 
 /// Every skill an actor may use now, at the rank it has it: an npc's listed skills, the ranks
-/// learned in its class tree, and what its worn equipment or an npc's basic attack grants at rank
-/// one.
+/// learned in its class tree, and what its worn equipment, the usable items it carries or an
+/// npc's basic attack grant at rank one.
 pub fn known(world: &World, actor: Entity) -> BTreeMap<SkillId, Rank> {
     let content = world.resource::<Content>();
     let tree = class::of(world, actor).map(|class| &class.get(content).tree);
     let worn = equipment::worn(world, actor);
+    let carried = world
+        .get::<Inventory>(actor)
+        .into_iter()
+        .flat_map(|bag| bag.slots.iter().map(|stack| stack.item));
     known_from(
         content,
         tree,
         world.get::<Learned>(actor),
         worn,
+        carried,
         world.get::<Npc>(actor).map(|npc| npc.def.get(content)),
     )
 }
@@ -623,6 +628,7 @@ pub fn known_from(
     tree: Option<&SkillTree>,
     learned: Option<&Learned>,
     worn: impl Iterator<Item = ItemId>,
+    carried: impl Iterator<Item = ItemId>,
     npc: Option<&NpcDef>,
 ) -> BTreeMap<SkillId, Rank> {
     let mut known = BTreeMap::new();
@@ -631,6 +637,9 @@ pub fn known_from(
     }
     for skill in worn.flat_map(|item| grants_of(content, item)) {
         known.entry(*skill).or_insert(Rank::FIRST);
+    }
+    for skill in carried.filter_map(|item| cast_by(content, item)) {
+        known.entry(skill).or_insert(Rank::FIRST);
     }
     if let Some(npc) = npc {
         known.extend(npc.skills.iter().map(|listed| (listed.skill, listed.rank)));
@@ -677,6 +686,14 @@ pub fn grants_of(content: &Content, item: ItemId) -> &[SkillId] {
     match &item.get(content).kind {
         ItemKind::Equipment { grants, .. } => grants,
         _ => &[],
+    }
+}
+
+/// The skill a use of the item casts, for a usable item that casts one.
+pub fn cast_by(content: &Content, item: ItemId) -> Option<SkillId> {
+    match item.get(content).kind {
+        ItemKind::Usable { casts } => casts,
+        _ => None,
     }
 }
 

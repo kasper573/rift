@@ -1342,6 +1342,13 @@ impl SkeletonDef {
         self.ladder(build, stance).iter().any(|(set, _)| names(set))
     }
 
+    /// Whether a set names a clip for holding `pose`, so a body in it shows it rather than idles.
+    pub fn holds(&self, build: Option<&BuildName>, stance: Option<StanceId>, pose: Pose) -> bool {
+        self.ladder(build, stance)
+            .iter()
+            .any(|(set, _)| set.poses.contains_key(&pose))
+    }
+
     /// Whether any set of the ladder names a clip for the action.
     pub fn names(
         &self,

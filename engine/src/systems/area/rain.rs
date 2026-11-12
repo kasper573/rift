@@ -3,15 +3,17 @@
 //! and the lie of the land shares the downpour out; how wet the ground lies there, soaking through
 //! under the rain and drying after it; where the props that shelter keep it off the ground; the
 //! lightning striking under storm cloud, flashing over the world and its thunder rolling in after;
-//! and the rain the listener hears.
+//! and the rain the listener hears. Beside it, the rain as the server of the area knows it: how
+//! hard it falls on a spot, for the scripts that ask.
 
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 
+use bevy::math::Affine3A;
 use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, TaskPool};
 
-use super::weather::{RainSound, ThunderHeard};
+use super::weather::{RainSound, ServerSky, ThunderHeard};
 use super::{Area, AreaId, Rainfall, Weather};
 use crate::core::audio::mix::AudioCategory;
 use crate::core::audio::playback::{self, PlaySfx, SfxPlace};
@@ -28,9 +30,11 @@ use crate::core::render::{CameraRig, Look};
 use crate::core::spatial::SpatialIndex;
 use crate::core::units::Meters;
 use crate::core::vfx::rain::{
-    OPEN_TOP, RAIN_CELL, RAIN_SIDE, RainCell, RainField, SHELTER_CELL, SHELTER_SIDE, Shelter,
+    self as shelter, OPEN_TOP, RAIN_CELL, RAIN_SIDE, RainCell, RainField, SHELTER_CELL,
+    SHELTER_SIDE, Shelter,
 };
 use crate::systems::area::scenery::{prop_transform, shown_weather};
+use crate::systems::{GameSettings, WorldArea};
 
 /// How hard it rains at `at` in `area` under `weather`, 0 none to 1 a cloudburst, with the field
 /// of cloud `sheet` carried `drift` along and the rain carried `lean` sideways for every metre it
@@ -50,6 +54,53 @@ pub fn rain_at(
     let under = (source - drift) / CLOUD_TILE.0;
     weather.rain * sheet.water(under) * area.rain_share(at)
 }
+
+/// How hard rain falls on the ground at `at` in the area a server's world serves, 0 none to 1 a
+/// cloudburst, under the sky the server keeps: as hard as it rains over the stretch of ground
+/// `at` lies in, as every client's field of rain has it, and not at all where a prop that
+/// shelters keeps it off.
+pub fn falling_on(world: &World, at: Pos<Meters>) -> f32 {
+    let content = world.resource::<Content>();
+    let area = super::load(content, world.resource::<WorldArea>().0);
+    let sky = world.resource::<ServerSky>();
+    let (Some(weather), Some(rainfall)) = (sky.weather(), &area.climate.rain) else {
+        return 0.0;
+    };
+    if weather.rain <= 0.0 {
+        return 0.0;
+    }
+    let look = content.built::<GameSettings>().look.clouds;
+    let clouds = CloudReading::clear(look).covering(weather.clouds, weather.water);
+    let lean = rainfall.lean(weather.wind.blowing());
+    let cell = (Vec2::new(at.x, at.y) / RAIN_CELL.0).floor();
+    let middle = (cell + 0.5) * RAIN_CELL.0;
+    let rain = rain_at(
+        area,
+        weather,
+        &clouds,
+        sky.drift(),
+        lean,
+        Pos::new(middle.x, middle.y),
+    );
+    if rain <= 0.0 {
+        return 0.0;
+    }
+    let shelters = world
+        .resource::<ServerShelters>()
+        .0
+        .get_or_init(|| Shelters::of(content, area));
+    let stood = Vec3::new(at.x, area.heights.height_at(at).0, at.y);
+    if shelter::kept_off(stood, lean, |ground| shelters.top_over(ground)) {
+        0.0
+    } else {
+        rain
+    }
+}
+
+/// The props that shelter from the rain in the area a server's world serves, found when a script
+/// first asks about the rain there.
+#[derive(Resource, Default)]
+pub struct ServerShelters(OnceLock<Shelters>);
 
 /// How loud each of `sounds` plays where it rains `rain` hard, in their order: each loudest at its
 /// own rain, fading out toward the next sound's either way, the lightest fading out toward no rain
@@ -297,8 +348,10 @@ impl Shelters {
                     return None;
                 }
                 let model = models.0.get(&def.model.path())?;
+                let placed = prop_transform(&area.heights, placed);
                 Some(Sheltering {
-                    placed: prop_transform(&area.heights, placed),
+                    into: placed.compute_affine().inverse(),
+                    placed,
                     low: model.bounds.min.xz(),
                     high: model.bounds.max.xz(),
                     top: model.top.clone(),
@@ -309,12 +362,23 @@ impl Shelters {
         index.refile(props.iter().map(Sheltering::ground));
         Shelters { props, index }
     }
+
+    /// How high the tallest of the props stands over the ground point `ground`; none where none
+    /// stands over it.
+    fn top_over(&self, ground: Vec2) -> Option<f32> {
+        self.index
+            .within(Rect::new(Pos::new(ground.x, ground.y), Size::zero()))
+            .filter_map(|index| self.props[index].top_over(ground))
+            .max_by(f32::total_cmp)
+    }
 }
 
 /// A prop that keeps the rain off what lies under it: where its model's box lies, as the prop
-/// stands, and how high the model's top stands over the ground it covers.
+/// stands, the way from the world into the model, and how high the model's top stands over the
+/// ground it covers.
 struct Sheltering {
     placed: Transform,
+    into: Affine3A,
     low: Vec2,
     high: Vec2,
     top: Arc<ModelTop>,
@@ -560,23 +624,30 @@ impl Sheltering {
         );
         let right = cell(ground.origin.x + ground.size.width, corner.x);
         let bottom = cell(ground.origin.y + ground.size.height, corner.y);
-        let into = self.placed.compute_affine().inverse();
         for row in top.max(0)..=bottom.min(side - 1) {
             for column in left.max(0)..=right.min(side - 1) {
                 let middle = corner + (Vec2::new(column as f32, row as f32) + 0.5) * SHELTER_CELL.0;
-                let local = into
-                    .transform_point3(Vec3::new(middle.x, 0.0, middle.y))
-                    .xz();
-                if let Some(height) = self.top.over(local) {
-                    let top = self
-                        .placed
-                        .transform_point(Vec3::new(local.x, height, local.y))
-                        .y;
+                if let Some(top) = self.top_over(middle) {
                     let at = (row * side + column) as usize;
                     tops[at] = tops[at].max(top);
                 }
             }
         }
+    }
+
+    /// How high the prop's top stands over the ground point `ground`; none where it does not
+    /// stand over it.
+    fn top_over(&self, ground: Vec2) -> Option<f32> {
+        let local = self
+            .into
+            .transform_point3(Vec3::new(ground.x, 0.0, ground.y))
+            .xz();
+        let height = self.top.over(local)?;
+        Some(
+            self.placed
+                .transform_point(Vec3::new(local.x, height, local.y))
+                .y,
+        )
     }
 }
 

@@ -34,8 +34,8 @@ use ui::egui::load::SizedTexture;
 
 use super::uniform::{MAX_PATH_POINTS, ParamsUniform, SiteUniform, VfxShaderKey, WeatherImage};
 use super::{
-    BodyShape, CompiledVfxShaders, ParamValue, SiteKind, Stage, VfxDef, VfxInstance, VfxLayer,
-    VfxParams, VfxShaderDef, VfxShaderId, VfxSite, sprite_cell,
+    BodyShape, CompiledVfxShaders, ParamValue, SiteKind, SpriteAnchor, Stage, VfxDef, VfxInstance,
+    VfxLayer, VfxParams, VfxShaderDef, VfxShaderId, VfxSite, sprite_cell, standing,
 };
 use crate::core::content::Content;
 use crate::core::geometry::{PlacedShape, Shape};
@@ -47,6 +47,7 @@ use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::billboard::Billboard;
 use crate::core::render::world::cover::CoverMaterial;
 use crate::core::render::world::decal::LIFT;
+use crate::core::render::world::lights;
 use crate::core::render::world::material::WorldMaterial;
 use crate::core::render::world::terrain;
 use crate::core::render::{CameraRig, GroundHeights, ground_height, world_point};
@@ -107,7 +108,9 @@ impl Plugin for VfxRenderPlugin {
             .add_observer(unswap_removed)
             .add_systems(
                 PostUpdate,
-                sync.in_set(WorldViewSystems)
+                (standing::play, sync)
+                    .chain()
+                    .in_set(WorldViewSystems)
                     .before(bevy::transform::TransformSystems::Propagate),
             )
             .add_systems(EguiPrimaryContextPass, draw_overlays.in_set(Band::World));
@@ -410,9 +413,13 @@ impl SiteFrame {
         }
     }
 
-    /// The site a thing is: where it stands and how big it is, by its transform and extent.
+    /// The site a thing is: where it stands and how big it is, by its transform and extent. A
+    /// thing held by another stands where its holder had it as the last frame was drawn.
     fn thing(world: &World, entity: Entity, kind: SiteKind) -> Option<SiteFrame> {
-        let at = world.get::<Transform>(entity)?.translation;
+        let at = match world.get::<ChildOf>(entity) {
+            Some(_) => world.get::<GlobalTransform>(entity)?.translation(),
+            None => world.get::<Transform>(entity)?.translation,
+        };
         let extent = world.get::<SiteExtent>(entity)?;
         Some(SiteFrame {
             kind,
@@ -928,6 +935,10 @@ fn sync(world: &mut World) {
             None => attach(world, entity, def, &content),
         };
         let frame = SiteFrame::of(world, &instance.site, instance.heading);
+        let socket = def
+            .socket
+            .as_deref()
+            .and_then(|socket| socket_point(world, &instance.site, socket));
         let elapsed = now.since(instance.started);
         for (layer, &piece) in def.layers.iter().zip(&pieces) {
             let Some((frame, time)) = frame.as_ref().zip(layer.at(elapsed)) else {
@@ -936,7 +947,10 @@ fn sync(world: &mut World) {
             };
             match layer {
                 VfxLayer::Sprite { .. } => {
-                    present_sprite(world, piece, frame, layer, time.local);
+                    present_sprite(world, piece, frame, socket, layer, time.local);
+                }
+                VfxLayer::Light { anchor, .. } => {
+                    present_light(world, piece, frame, socket, *anchor);
                 }
                 VfxLayer::Shader {
                     shader: id, params, ..
@@ -993,18 +1007,38 @@ fn sync(world: &mut World) {
     }
 }
 
-/// A piece per layer, each on the stage its layer plays on, a sprite layer's with its sheet.
+/// A piece per layer: a sprite's and a shader's on the stage the layer plays on, a sprite's with
+/// its sheet, and a light's the light itself.
 fn attach(world: &mut World, entity: Entity, def: &VfxDef, content: &Content) -> Vec<Entity> {
     let assets = world.resource::<AssetServer>().clone();
     let pieces: Vec<Entity> = def
         .layers
         .iter()
-        .map(|layer| {
-            let sheet = match layer {
-                VfxLayer::Sprite { sheet, .. } => Some(assets.load(sheet.path())),
-                VfxLayer::Shader { .. } => None,
-            };
-            piece_for(world, layer.stage(content), sheet)
+        .map(|layer| match layer {
+            VfxLayer::Sprite { sheet, .. } => {
+                let sheet = assets.load(sheet.path());
+                piece_for(world, layer.stage(content), Some(sheet))
+            }
+            VfxLayer::Shader { .. } => piece_for(world, layer.stage(content), None),
+            VfxLayer::Light {
+                color,
+                intensity,
+                radius,
+                flicker,
+                shadows,
+                ..
+            } => {
+                let lamp = lights::Lamp {
+                    color: color.color(),
+                    intensity: *intensity,
+                    radius: *radius,
+                    flicker: *flicker,
+                    shadows: *shadows,
+                };
+                let piece = lamp.spawn(world, 0.0);
+                world.entity_mut(piece).insert(Visibility::Hidden);
+                piece
+            }
         })
         .collect();
     attach_pieces(world, entity, pieces.clone());
@@ -1090,6 +1124,7 @@ fn present_sprite(
     world: &mut World,
     piece: Entity,
     frame: &SiteFrame,
+    socket: Option<Vec3>,
     layer: &VfxLayer,
     local: Seconds,
 ) {
@@ -1105,7 +1140,7 @@ fn present_sprite(
     else {
         return;
     };
-    let SitePlace::World { at, height, .. } = frame.place else {
+    let Some((at, height)) = standing(frame, socket) else {
         hide(world, piece);
         return;
     };
@@ -1159,6 +1194,50 @@ fn present_sprite(
             ..default()
         },
     );
+}
+
+/// Stands a light layer's light on its site by its anchor, lit.
+fn present_light(
+    world: &mut World,
+    piece: Entity,
+    frame: &SiteFrame,
+    socket: Option<Vec3>,
+    anchor: SpriteAnchor,
+) {
+    let Some((at, height)) = standing(frame, socket) else {
+        hide(world, piece);
+        return;
+    };
+    let lift = anchor.place_y(height / 2.0, height, 0.0);
+    place(
+        world,
+        piece,
+        Transform::from_translation(at + Vec3::Y * lift),
+    );
+}
+
+/// Where the sprites and lights of a vfx stand on a world site, and how tall a stretch their
+/// anchors place them along: the site from its foot to its top, or its socket alone, a point.
+fn standing(frame: &SiteFrame, socket: Option<Vec3>) -> Option<(Vec3, f32)> {
+    match (frame.place, socket) {
+        (SitePlace::World { .. }, Some(point)) => Some((point, 0.0)),
+        (SitePlace::World { at, height, .. }, None) => Some((at, height)),
+        (SitePlace::Screen { .. }, _) => None,
+    }
+}
+
+/// Where the node named `socket` stands in the world, among those of the thing a site is and of
+/// whatever hangs from it.
+fn socket_point(world: &World, site: &VfxSite, socket: &str) -> Option<Vec3> {
+    let (VfxSite::Actor(thing) | VfxSite::Object(thing)) = site else {
+        return None;
+    };
+    let children = world.get::<Children>(*thing)?;
+    descendants(world, children).into_iter().find_map(|node| {
+        let named = world.get::<Name>(node)?.as_str() == socket;
+        let stands = world.get::<GlobalTransform>(node)?;
+        named.then(|| stands.translation())
+    })
 }
 
 fn paint_world(
@@ -1430,6 +1509,7 @@ fn draw_overlays(world: &mut World) {
                             );
                         });
                 }
+                VfxLayer::Light { .. } => {}
                 VfxLayer::Shader { shader, params, .. } => {
                     let color = shader_color(shader.get(&content), |name| {
                         params.get(name)?.resolve(&instance.params)
