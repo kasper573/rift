@@ -21,7 +21,8 @@ pub enum DialogueCamera {
     /// From behind whoever is spoken to, over their shoulder, onto whoever speaks.
     #[default]
     Shoulder,
-    /// Everyone in the conversation at once, from in front of the player.
+    /// Everyone in the conversation at once, from as far round the player as the game's shot
+    /// stands: in front of them, or beside them for a profile of everyone.
     Participants,
     /// Where the player keeps the camera.
     Gameplay,

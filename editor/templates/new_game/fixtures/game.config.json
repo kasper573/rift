@@ -246,8 +246,8 @@
       "aim": 0.75
     },
     "participants": {
-      "angle": 30.0,
-      "pitch": 12.0,
+      "angle": 75.0,
+      "pitch": 15.0,
       "cropped": 0.17,
       "margin": 0.08
     }
