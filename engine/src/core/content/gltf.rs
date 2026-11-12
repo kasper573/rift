@@ -774,21 +774,29 @@ pub fn triangles(bytes: &[u8]) -> Result<Vec<Triangle>, String> {
     Ok(out)
 }
 
-/// The ground a model stands on: the convex hull, on the ground plane, of every corner within
-/// `knee` of the model's lowest point, going round counter-clockwise. Empty for a model with no
-/// triangles.
-pub fn footing(triangles: &[Triangle], knee: Meters) -> Vec<Pos<Meters>> {
+/// The ground a model takes from whoever stands `tall`: the convex hull, on the ground plane, of
+/// all of it that stands within `tall` of its lowest point, going round counter-clockwise. What
+/// of it stands higher is passed under. Empty for a model with no triangles.
+pub fn footing(triangles: &[Triangle], tall: Meters) -> Vec<Pos<Meters>> {
     let lowest = triangles
         .iter()
         .flat_map(|triangle| triangle.corners)
         .map(|corner| corner.y)
         .fold(f32::INFINITY, f32::min);
-    let mut points: Vec<Pos<Meters>> = triangles
-        .iter()
-        .flat_map(|triangle| triangle.corners)
-        .filter(|corner| corner.y <= lowest + knee.0)
-        .map(|corner| Pos::new(corner.x, corner.z))
-        .collect();
+    let top = lowest + tall.0;
+    let mut points: Vec<Pos<Meters>> = Vec::new();
+    for triangle in triangles {
+        for (index, corner) in triangle.corners.iter().enumerate() {
+            if corner.y <= top {
+                points.push(Pos::new(corner.x, corner.z));
+            }
+            let next = triangle.corners[(index + 1) % 3];
+            if (corner.y <= top) != (next.y <= top) {
+                let crossing = corner.lerp(next, (top - corner.y) / (next.y - corner.y));
+                points.push(Pos::new(crossing.x, crossing.z));
+            }
+        }
+    }
     points.sort_by(|a, b| a.x.total_cmp(&b.x).then(a.y.total_cmp(&b.y)));
     points.dedup();
     if points.len() < 3 {

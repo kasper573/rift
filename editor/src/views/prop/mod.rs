@@ -12,12 +12,10 @@ use engine::core::content::Content;
 use engine::core::content::ContentFile;
 use engine::core::content::gltf::{self, Triangle};
 use engine::core::content::media::GltfInfos;
-use engine::core::math::Pos;
 use engine::core::units::{Meters, Radians};
-use engine::systems::area::prop::{
-    Footprint, MAX_POLYGON_POINTS, MIN_POLYGON_POINTS, ModelHash, PROP_TEXTURES, PropDef,
-};
+use engine::systems::area::prop::{Footprint, ModelHash, PROP_TEXTURES, PropDef};
 use engine::systems::area::{Picture, Pictured};
+use engine::systems::player;
 use ui::egui::{self, Ui};
 use ui::{chip, controls};
 
@@ -29,10 +27,6 @@ use crate::project::{ContentEdit, FileStamp};
 use crate::row_form;
 use crate::tabs::shown_path;
 use crate::views::ViewMap;
-
-/// How far above its lowest point a model's corners still count as standing on the ground; a
-/// model shorter than twice this is measured to half its height instead.
-const KNEE: Meters = Meters(0.5);
 
 #[derive(Default)]
 pub struct PropViews {
@@ -126,19 +120,21 @@ pub fn fit_to_mesh(editor: &mut Editor, key: &str) -> bool {
         editor.toast(format!("{} has no model to fit to", shown_path(key)));
         return false;
     };
-    let points = gltf::footing(&geometry.triangles, knee_of(&geometry.triangles));
-    if points.len() < MIN_POLYGON_POINTS {
+    let Some(tall) = walker(editor) else {
+        editor.toast("The game must load before a footprint is fitted to its player's height");
+        return false;
+    };
+    let Some(footprint) =
+        Footprint::fitted(&geometry.triangles, tall, ModelHash(geometry.hash.clone()))
+    else {
         editor.toast(format!(
             "{}'s model has no ground to stand on",
             shown_path(key)
         ));
         return false;
-    }
-    let mut prop = (*row).clone();
-    prop.footprint = Footprint::Polygon {
-        points: thinned(points, MAX_POLYGON_POINTS),
-        fitted_to: Some(ModelHash(geometry.hash.clone())),
     };
+    let mut prop = (*row).clone();
+    prop.footprint = footprint;
     editor.write_content(
         &format!("Fit {}'s footprint to its model", shown_path(key)),
         key,
@@ -178,30 +174,27 @@ pub fn replace_model(editor: &mut Editor, key: &str, bytes: Vec<u8>) -> bool {
         fitted_to: Some(_), ..
     } = &row.footprint
     {
-        let points = gltf::triangles(&taken.glb)
+        let fitted = gltf::triangles(&taken.glb)
             .ok()
-            .map(|triangles| gltf::footing(&triangles, knee_of(&triangles)))
-            .filter(|points| points.len() >= MIN_POLYGON_POINTS);
+            .zip(walker(editor))
+            .and_then(|(triangles, tall)| {
+                let model = ModelHash(crate::project::files::hash(&taken.glb));
+                Footprint::fitted(&triangles, tall, model)
+            });
         let mut prop = (*row).clone();
-        prop.footprint = match points {
-            Some(points) => Footprint::Polygon {
-                points: thinned(points, MAX_POLYGON_POINTS),
-                fitted_to: Some(ModelHash(crate::project::files::hash(&taken.glb))),
-            },
-            None => {
-                editor.toast(format!(
-                    "{}'s new model has no ground to stand on: its footprint is now shaped by hand",
-                    shown_path(key)
-                ));
-                let Footprint::Polygon { points, .. } = &row.footprint else {
-                    unreachable!("matched a polygon above")
-                };
-                Footprint::Polygon {
-                    points: points.clone(),
-                    fitted_to: None,
-                }
+        prop.footprint = fitted.unwrap_or_else(|| {
+            editor.toast(format!(
+                "{}'s new model has no ground to stand on: its footprint is now shaped by hand",
+                shown_path(key)
+            ));
+            let Footprint::Polygon { points, .. } = &row.footprint else {
+                unreachable!("matched a polygon above")
+            };
+            Footprint::Polygon {
+                points: points.clone(),
+                fitted_to: None,
             }
-        };
+        });
         refitted = Some(prop);
     }
     let Some(project) = editor.project.as_ref() else {
@@ -261,6 +254,13 @@ pub fn geometry(editor: &mut Editor, key: &str) -> Option<Arc<Geometry>> {
     });
     editor.views.prop.views.view_mut(key).geometry = Some(geometry.clone());
     Some(geometry)
+}
+
+/// How tall the game's player stands, once the game has loaded: what of a model a footprint is
+/// fitted round.
+fn walker(editor: &Editor) -> Option<Meters> {
+    let content = editor.project.as_ref()?.content.as_ref()?;
+    Some(player::stature(content))
 }
 
 /// The box the model of the prop at `key` fits in, as the loader measured it.
@@ -356,23 +356,4 @@ fn take_drops(editor: &mut Editor, key: &str) {
             Err(error) => editor.toast(format!("{}: {error}", path.display())),
         }
     }
-}
-
-fn knee_of(triangles: &[Triangle]) -> Meters {
-    let (lowest, highest) = triangles
-        .iter()
-        .flat_map(|triangle| triangle.corners)
-        .fold((f32::INFINITY, f32::NEG_INFINITY), |(low, high), corner| {
-            (low.min(corner.y), high.max(corner.y))
-        });
-    Meters(KNEE.0.min((highest - lowest) / 2.0).max(0.0))
-}
-
-/// At most `most` of `points`, evenly spread along them.
-fn thinned(points: Vec<Pos<Meters>>, most: usize) -> Vec<Pos<Meters>> {
-    if points.len() <= most {
-        return points;
-    }
-    let step = points.len().div_ceil(most);
-    points.into_iter().step_by(step).collect()
 }

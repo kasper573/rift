@@ -56,6 +56,7 @@ folder, and starts the other binaries from its own binaries folder when a comman
 | --- | --- |
 | [`rift check <game>`](#checking-a-game) | Checks that the game loads whole and reads as the editor writes it. |
 | [`rift format <game>`](#checking-a-game) | Rewrites the files that don't. |
+| [`rift fit <game> <prop>…`](#fitting-footprints) | Shapes props' footprints to their models. |
 | [`rift ask <game>`](#asking-about-a-game) | Answers the probe's questions about the game, without a client. |
 | [`rift render area <game> <shot> <out>`](#rendering-an-area) | Draws a picture of an area off screen. |
 | [`rift bench [game]`](#benching) | Measures the server's capacity, and on a game also the client's and the editor's frame rates and memory. |
@@ -75,6 +76,18 @@ rift format <game>
 `rift check` fails unless the game loads whole and every file reads exactly as the editor writes it,
 so that saving the game in the editor changes only what was edited. `rift format` rewrites the files
 that read otherwise: what each holds stays, only its layout changes.
+
+### Fitting footprints
+
+```sh
+rift fit <game> [--tall <meters>] <prop>…
+```
+
+Shapes the footprint of each prop named, by its path in the game folder, to the ground its model
+takes from whoever walks up to it, as the editor's fit does one prop at a time. The footprint goes
+round all of the model a walker would meet, not only what touches the ground: a boulder that bulges
+over a narrow foot blocks as far as it bulges, and a crown overhead is walked under. A walker is as
+tall as the game's player unless `--tall` says otherwise; a low height fits a tree to its trunk alone.
 
 ### Asking about a game
 

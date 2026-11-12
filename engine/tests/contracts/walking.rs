@@ -1,9 +1,12 @@
+use bevy::math::Vec3;
 use bevy_ecs::entity::Entity;
+use engine::core::content::gltf::Triangle;
 use engine::core::ground::{GroundSize, WaterSurface};
 use engine::core::math::{Offset, Pos};
-use engine::core::units::{MeterPos, Meters};
+use engine::core::units::{Degrees, MeterPos, Meters};
 use engine::systems::actor::{Action, Actor};
 use engine::systems::area;
+use engine::systems::area::prop::{Footprint, ModelHash};
 use engine::systems::movement::{self, Bodies, HeardMove, MoveRequest, MoveSeq, position};
 use engine::systems::player::CommandLock;
 use engine::systems::region;
@@ -329,6 +332,56 @@ fn distance_to_side(at: Pos<Meters>, a: Pos<Meters>, b: Pos<Meters>) -> f32 {
     let along = b - a;
     let t = ((at - a).dot(along) / along.square_length()).clamp(0.0, 1.0);
     (at - (a + along * t)).length()
+}
+
+#[test]
+fn a_footprint_fitted_to_a_model_takes_the_ground_under_all_of_it_a_walker_meets() {
+    // A boulder on a narrow foot that bulges at the waist, under a crown far overhead.
+    let boulder: Vec<Triangle> = [
+        walls((0.0, 0.2), (1.0, 1.5)),
+        walls((1.0, 1.5), (2.0, 0.2)),
+        walls((4.0, 3.0), (5.0, 3.0)),
+    ]
+    .concat();
+    let fitted = |tall: f32| {
+        Footprint::fitted(&boulder, Meters(tall), ModelHash("boulder".to_owned()))
+            .expect("a model standing on the ground has a footprint")
+    };
+    let takes = |footprint: &Footprint, x: f32| {
+        footprint.covers(Pos::origin(), Degrees(0.0), 1.0, Pos::new(x, 0.0))
+    };
+    let grown = fitted(1.8);
+    assert!(takes(&grown, 1.4), "the bulge at their waist is in the way");
+    assert!(!takes(&grown, 2.5), "the crown overhead is walked under");
+    let small = fitted(0.3);
+    assert!(
+        takes(&small, 0.5),
+        "as far as the boulder reaches at their height"
+    );
+    assert!(
+        !takes(&small, 1.4),
+        "the bulge is over a small walker's head"
+    );
+}
+
+/// The four walls of a square shaft that is `low.1` to each side at the height `low.0` and
+/// `high.1` to each side at `high.0`.
+fn walls(low: (f32, f32), high: (f32, f32)) -> Vec<Triangle> {
+    let corner = |(height, half): (f32, f32), turn: usize| {
+        let (x, z) = [(-1.0, -1.0), (1.0, -1.0), (1.0, 1.0), (-1.0, 1.0)][turn % 4];
+        Vec3::new(x * half, height, z * half)
+    };
+    (0..4)
+        .flat_map(|turn| {
+            let (a, b) = (corner(low, turn), corner(low, turn + 1));
+            let (c, d) = (corner(high, turn + 1), corner(high, turn));
+            [[a, b, c], [a, c, d]]
+        })
+        .map(|corners| Triangle {
+            corners,
+            normals: None,
+        })
+        .collect()
 }
 
 #[test]

@@ -206,6 +206,13 @@ pub fn def(content: &Content) -> &PlayerDef {
     content.built::<GameSettings>().player.get(content)
 }
 
+/// How tall the game's player stands: the height of the body they are hit in.
+pub fn stature(content: &Content) -> Meters {
+    ActorModel::get(content, def(content).class.get(content).model)
+        .hitbox()
+        .height
+}
+
 #[derive(Resource, Default)]
 pub struct Players(pub HashMap<ClientId, Entity>);
 

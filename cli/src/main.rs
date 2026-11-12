@@ -2,6 +2,7 @@ mod ask;
 mod bench;
 mod binaries;
 mod check;
+mod fit;
 mod folder;
 mod loadtest;
 mod profile;
@@ -12,6 +13,7 @@ mod server;
 use std::path::PathBuf;
 
 use clap::{Parser, Subcommand};
+use engine::core::units::Meters;
 
 // The server's own allocator setup, so the bench's ticks allocate exactly as production does.
 service::heap_profiling!();
@@ -31,6 +33,17 @@ enum Command {
     /// Rewrites every file of a game folder that doesn't read as the editor writes it, as the editor
     /// writes it.
     Format { game: PathBuf },
+    /// Shapes the footprint of each PROP of GAME, named by its path in the game folder, round all
+    /// of its model a walker would meet, as the editor fits it.
+    Fit {
+        game: PathBuf,
+        #[arg(required = true)]
+        props: Vec<String>,
+        /// How tall the walker stands, in metres: the game's player unless given. A height below
+        /// a tree's crown fits its trunk alone.
+        #[arg(long)]
+        tall: Option<f32>,
+    },
     /// Answers the probe's questions about GAME itself, one JSON line each from stdin to stdout, as
     /// a desktop client playing it would; a snapshot only a client answers.
     Ask { game: PathBuf },
@@ -129,6 +142,7 @@ fn main() {
     match Rift::parse().command {
         Command::Check { game } => check::run(&game),
         Command::Format { game } => check::format(&game),
+        Command::Fit { game, props, tall } => fit::run(&game, tall.map(Meters), &props),
         Command::Ask { game } => ask::run(&game),
         Command::Render(Render::Area {
             game,

@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::core::content::gltf::GltfInfo;
+use crate::core::content::gltf::{self, GltfInfo, Triangle};
 use crate::core::content::{AssetKind, FileSize, ModelRef};
 use crate::core::content::{
     Bundle, ContentFile, ContentId, FileHashes, FileShape, FileWriter, Loading, Nearby, PartSpec,
@@ -171,6 +171,21 @@ impl ContentFile for PropDef {
 impl Footprint {
     pub fn is_none(&self) -> bool {
         matches!(self, Footprint::None)
+    }
+
+    /// The ground a model of `triangles` takes from a walker who stands `tall`: a polygon round
+    /// all of it the walker would meet, however little of it touches the ground, that remembers
+    /// the model it was `fitted_to`. None for a model with no ground to stand on.
+    pub fn fitted(triangles: &[Triangle], tall: Meters, fitted_to: ModelHash) -> Option<Footprint> {
+        let points = gltf::footing(triangles, tall);
+        if points.len() < MIN_POLYGON_POINTS {
+            return None;
+        }
+        let step = points.len().div_ceil(MAX_POLYGON_POINTS);
+        Some(Footprint::Polygon {
+            points: points.into_iter().step_by(step).collect(),
+            fitted_to: Some(fitted_to),
+        })
     }
 
     /// Whether `point` lies on the footprint of a prop standing at `at`, turned by `yaw` and
