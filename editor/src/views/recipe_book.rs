@@ -6,7 +6,7 @@
 //! as it is made.
 
 use engine::core::content::ContentFile;
-use engine::core::units::Seconds;
+use engine::core::units::{Percent, Seconds};
 use engine::systems::actor::skeleton::MoveName;
 use engine::systems::crafting::{Recipe, RecipeBookDef};
 use engine::systems::item::{ItemDef, ItemId, ItemStack};
@@ -98,6 +98,7 @@ pub fn add_recipe(editor: &mut Editor, key: &str, makes: &str, from: &str) -> bo
             from: vec![ItemStack::new(taken, 1)],
             takes: FRESH_TAKES,
             work: None,
+            chance: Percent::WHOLE,
         });
         Ok(())
     })
@@ -185,6 +186,12 @@ pub fn set_amount(
 pub fn set_takes(editor: &mut Editor, key: &str, recipe: usize, takes: Seconds) -> bool {
     let label = format!("Change how long {} takes", called(editor, key, recipe));
     change_recipe(editor, key, label, recipe, |recipe| recipe.takes = takes)
+}
+
+/// Sets how often one craft of the recipe at `recipe` comes off.
+pub fn set_chance(editor: &mut Editor, key: &str, recipe: usize, chance: Percent) -> bool {
+    let label = format!("Change how often {} comes off", called(editor, key, recipe));
+    change_recipe(editor, key, label, recipe, |recipe| recipe.chance = chance)
 }
 
 /// Sets the move a crafter makes at every craft of the book whose recipe names none of its own.
@@ -332,6 +339,7 @@ struct ShownRecipe {
     from: Vec<(ShownItem, u32)>,
     takes: Seconds,
     work: Option<MoveName>,
+    chance: Percent,
 }
 
 impl ShownRecipe {
@@ -382,6 +390,7 @@ fn shown_rows(editor: &Editor, book: &RecipeBookDef) -> Vec<ShownRecipe> {
             from: shown(&recipe.from),
             takes: recipe.takes,
             work: recipe.work.clone(),
+            chance: recipe.chance,
         })
         .collect()
 }
@@ -960,11 +969,25 @@ fn inspect_recipe(
         set_recipe_work(editor, key, index, work);
     }
     form::hint(ui, "Its own move, in place of the book's.");
+    let mut chance = row.chance;
+    let pointer = format!("/recipes/{index}/chance");
+    if typed_field(editor, ui, key, "chance", &mut chance, &pointer) {
+        set_chance(editor, key, index, chance);
+    }
+    form::hint(
+        ui,
+        "How often a craft comes off. One that fails spends its ingredients and makes nothing.",
+    );
     ui.add_space(8.0);
+    let comes_off = if row.chance < Percent::WHOLE {
+        format!(", {}% of the time", row.chance.0)
+    } else {
+        String::new()
+    };
     form::hint(
         ui,
         &format!(
-            "One craft takes {} and {} s, and makes {}.",
+            "One craft takes {} and {} s, and makes {}{comes_off}.",
             row.listed(RecipeSide::From),
             row.takes.0,
             row.listed(RecipeSide::Makes)

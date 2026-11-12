@@ -41,6 +41,7 @@ pub enum VfxShaderFixture {
     HealPop,
     StatusPop,
     LevelPop,
+    FailurePop,
 }
 
 impl Fixture for VfxShaderFixture {
@@ -82,7 +83,8 @@ impl VfxShaderFixture {
             | VfxShaderFixture::DamagePop
             | VfxShaderFixture::HealPop
             | VfxShaderFixture::StatusPop
-            | VfxShaderFixture::LevelPop => Stage::Text,
+            | VfxShaderFixture::LevelPop
+            | VfxShaderFixture::FailurePop => Stage::Text,
         }
     }
 
@@ -94,7 +96,8 @@ impl VfxShaderFixture {
             | VfxShaderFixture::DamagePop
             | VfxShaderFixture::HealPop
             | VfxShaderFixture::StatusPop
-            | VfxShaderFixture::LevelPop => &[],
+            | VfxShaderFixture::LevelPop
+            | VfxShaderFixture::FailurePop => &[],
         };
         set.iter()
             .map(|&(name, kind)| ShaderParam {

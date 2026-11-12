@@ -54,6 +54,8 @@ pub(crate) struct UserSettings {
     camera: CameraSettings,
     #[serde(default)]
     video: VideoPreferences,
+    #[serde(default)]
+    crafting: CraftingSettings,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy)]
@@ -151,6 +153,14 @@ fn show_settings(
         .changed()
     {
         settings.toggle_quick_cast();
+    }
+    let mut confirms = settings.confirms_risky_crafts();
+    if ui
+        .checkbox(&mut confirms, "Confirm crafts that may fail")
+        .on_hover_text("A craft that may fail asks before it spends its ingredients")
+        .changed()
+    {
+        settings.toggle_risky_craft_confirm();
     }
     ui.add_space(4.0);
     controls::form(ui, ("settings", "interface"), |ui| {
@@ -301,6 +311,14 @@ impl UserSettings {
         self.screen.frame_rate = !self.screen.frame_rate;
     }
 
+    pub(crate) fn confirms_risky_crafts(&self) -> bool {
+        !self.crafting.unconfirmed
+    }
+
+    pub(crate) fn toggle_risky_craft_confirm(&mut self) {
+        self.crafting.unconfirmed = !self.crafting.unconfirmed;
+    }
+
     pub(crate) fn quick_cast(&self) -> bool {
         self.skills.quick_cast
     }
@@ -408,6 +426,13 @@ struct TextSettings {
     /// None keeps the game's own pace.
     #[serde(default)]
     letters_per_second: Option<LettersPerSecond>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct CraftingSettings {
+    /// Whether a craft that may fail goes ahead unasked.
+    #[serde(default)]
+    unconfirmed: bool,
 }
 
 #[derive(Serialize, Deserialize, Default)]

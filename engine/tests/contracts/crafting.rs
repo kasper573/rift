@@ -1,12 +1,14 @@
 use bevy_ecs::prelude::*;
 use engine::core::content::LoadReport;
 use engine::core::units::Seconds;
+use engine::core::vfx::{VfxShaderDef, VfxShaderId};
 use engine::systems::actor::skeleton::MoveName;
 use engine::systems::actor::{self, Motion, Playing};
 use engine::systems::crafting::{self, CraftingRequest, CraftingView, RecipeBookDef, RecipeKey};
 use engine::systems::dialogue::{self, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::item::{ItemDef, ItemStack};
+use engine::systems::notification::NotificationKind;
 use engine::systems::prompt::{self, PromptRequest, PromptView};
 use engine::systems::stat::{StatKind, Stats};
 use engine::systems::{movement, region, script};
@@ -258,6 +260,60 @@ fn a_craft_takes_its_recipes_time_at_the_crafters_speed_and_nothing_until_it_is_
 }
 
 #[test]
+fn a_craft_that_fails_spends_its_ingredients_makes_nothing_and_says_so() {
+    for (chance, comes_off) in [(0.0, false), (100.0, true)] {
+        let risky = game(|book| book["recipes"][0]["chance"] = json!(chance)).shader("failure_pop");
+        let mut sim = forge(risky);
+        let player = sim.join(1);
+        sim.give(player, "ore", 4);
+        sim.give(player, "coal", 2);
+        let (asked, _) = open(&mut sim, 1, "smith");
+        sim.forget_notified();
+
+        craft(&mut sim, 1, &[("ore", 4), ("coal", 2)], INGOT);
+
+        let made = if comes_off { 2 } else { 0 };
+        assert_eq!(
+            (
+                sim.count(player, "ore"),
+                sim.count(player, "coal"),
+                sim.count(player, "ingot")
+            ),
+            (0, 0, made),
+            "at {chance}%: every craft spends its ingredients, and only one that comes off makes"
+        );
+        assert_eq!(
+            sim.count(player, "token") > 0,
+            comes_off,
+            "at {chance}%: the book hears of a craft only where something was made"
+        );
+        let (after, _) = shown(&sim, player).expect("still open");
+        assert_ne!(after.step, asked.step, "at {chance}%: the next turn begins");
+        let failure_pop = sim.id::<VfxShaderDef>("failure_pop");
+        let said: Vec<(Option<Entity>, String, Option<VfxShaderId>)> = sim
+            .notified(1)
+            .into_iter()
+            .filter_map(|sent| match sent.notification.kind {
+                NotificationKind::Pop { shader, .. } => {
+                    Some((sent.actor, sent.notification.text.plain_words(), shader))
+                }
+                _ => None,
+            })
+            .collect();
+        let expected = if comes_off {
+            Vec::new()
+        } else {
+            vec![(
+                Some(player),
+                "Crafting failed".to_owned(),
+                Some(failure_pop),
+            )]
+        };
+        assert_eq!(said, expected, "at {chance}%");
+    }
+}
+
+#[test]
 fn a_crafter_makes_the_books_move_or_the_recipes_own_for_as_long_as_the_craft_takes() {
     let slow = game(|book| {
         book["recipes"][0]["takes"] = json!(2.0);
@@ -316,7 +372,7 @@ fn the_loader_refuses_recipes_that_loop_repeat_or_profit_and_books_no_script_ope
     let of = |item: &str, count: u32| json!({ "item": path("item", item), "count": count });
     let recipe =
         |makes: &str, from: Value| json!({ "makes": [of(makes, 1)], "from": from, "takes": 0.1 });
-    let cases: [(&str, Value); 10] = [
+    let cases: [(&str, Value); 11] = [
         ("recipe loop", recipe("ore", json!([of("sword", 1)]))),
         (
             "made twice",
@@ -336,6 +392,10 @@ fn the_loader_refuses_recipes_that_loop_repeat_or_profit_and_books_no_script_ope
             json!({ "makes": [of("strap", 4)], "from": [of("blade", 1)], "takes": -1.0 }),
         ),
         ("out of range", recipe("strap", json!([of("blade", 0)]))),
+        (
+            "out of range",
+            json!({ "makes": [of("strap", 4)], "from": [of("blade", 1)], "takes": 0.1, "chance": 101.0 }),
+        ),
         (
             "ingredient listed twice",
             recipe("strap", json!([of("blade", 1), of("blade", 2)])),
@@ -519,6 +579,7 @@ fn forge(game: Game) -> Sim {
         .accept::<PromptRequest>()
         .accept::<CraftingRequest>()
         .add((
+            movement::file_by_chunk,
             interact::interact_request,
             dialogue::requests,
             prompt::requests,

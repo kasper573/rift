@@ -60,7 +60,7 @@ use crate::core::render::world::{OnItsWay, missing_drawn};
 use crate::core::render::{self, CameraRig, GroundHeights, Pointed, ground_height, world_point};
 use crate::core::time;
 use crate::core::units::{
-    Bytes, MeterSize, Meters, Millis, PlaybackRate, Radians, Seconds, WindowPx,
+    Bytes, MeterSize, Meters, Millis, Percent, PlaybackRate, Radians, Seconds, WindowPx,
 };
 use crate::core::vfx::cover::ShownWeather;
 use crate::core::vfx::rain::{RainField, Shelter};
@@ -724,6 +724,8 @@ pub struct ProbeRecipe {
     pub from: Vec<ProbeStack>,
     /// How long one craft takes at a crafting speed of 100%.
     pub takes: Seconds,
+    /// How often one craft comes off: one that fails spends its ingredients and makes nothing.
+    pub chance: Percent,
     /// Whether the player's bag covers every ingredient.
     pub can_make: bool,
 }
@@ -1175,6 +1177,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                         makes: listed.recipe.makes.iter().copied().map(stack).collect(),
                         from: listed.recipe.from.iter().copied().map(stack).collect(),
                         takes: listed.recipe.takes,
+                        chance: listed.recipe.chance,
                         can_make: listed.can_make,
                     })
                     .collect(),

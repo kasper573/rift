@@ -294,6 +294,8 @@ pub struct GameWords {
     pub no_recipe: String,
     /// What a crafting prompt asks as the items placed are several recipes.
     pub choose_result: String,
+    /// What bursts out of a crafter as a craft of theirs fails.
+    pub craft_failed: String,
 }
 
 /// How long notices take to read: each stays a glance and a little longer for every word, and

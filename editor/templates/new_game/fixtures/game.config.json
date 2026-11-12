@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "20c26be4",
+  "content_version": "c5ebc98e",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -53,7 +53,8 @@
     "cancel_craft": "Cancel",
     "recipes": "Recipes",
     "no_recipe": "No recipe",
-    "choose_result": "Choose a result"
+    "choose_result": "Choose a result",
+    "craft_failed": "Crafting failed"
   },
   "typing": {
     "pace": 45.0,

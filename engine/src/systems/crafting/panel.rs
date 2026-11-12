@@ -17,17 +17,19 @@ use crate::core::content::Content;
 use crate::core::gui::{self, Band};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::core::time;
+use crate::core::units::Percent;
 use crate::systems::GameSettings;
 use crate::systems::dialogue::stage::{self, DockedPanel, PanelChrome, PanelHead};
-use crate::systems::hud::{self, WindowFrame};
+use crate::systems::hud::{self, Confirm, WindowFrame};
 use crate::systems::input::map::{self, InputAction, input};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::item::widget::{SLOT, SlotLook, slot};
 use crate::systems::item::{self, Inventory, ItemId, ItemStack};
 use crate::systems::player::session;
 use crate::systems::prompt::tray;
-use crate::systems::prompt::{PromptKind, PromptView};
+use crate::systems::prompt::{PromptKind, PromptStep, PromptView};
 use crate::systems::screen::ClientScreen;
+use crate::systems::settings::UserSettings;
 
 pub const RECIPES: &str = "recipes";
 const PANEL_WIDTH: f32 = 580.0;
@@ -76,12 +78,14 @@ struct Crafting {
     crafted: u32,
 }
 
-/// What the items placed make: `times` crafts of `recipe`, giving `makes` between them.
-#[derive(Clone, Debug, PartialEq, Eq)]
+/// What the items placed make: `times` crafts of `recipe`, giving `makes` between them where
+/// every one comes off, as each does `chance` of the time.
+#[derive(Clone, Debug, PartialEq)]
 pub struct CraftResult {
     pub recipe: RecipeKey,
     pub makes: Vec<ItemStack>,
     pub times: u32,
+    pub chance: Percent,
 }
 
 /// A recipe as the Recipes window lists it: which ingredients the bag lacks, and whether it
@@ -114,6 +118,7 @@ pub fn results(world: &World) -> Vec<CraftResult> {
                 recipe: craftable.key,
                 makes,
                 times,
+                chance: craftable.recipe.chance,
             });
         }
     }
@@ -430,8 +435,62 @@ fn made_slot(
     several && response.clicked()
 }
 
+/// What is said of a result besides what it is: how many crafts it is, and how often one of them
+/// comes off where it may fail.
 fn crafts_note(result: &CraftResult) -> Option<String> {
-    (result.times > 1).then(|| format!("{} crafts", result.times))
+    let crafts = (result.times > 1).then(|| format!("{} crafts", result.times));
+    let chance = (result.chance < Percent::WHOLE).then(|| chance_note(result.chance));
+    let notes: Vec<String> = crafts.into_iter().chain(chance).collect();
+    (!notes.is_empty()).then(|| notes.join(" · "))
+}
+
+/// How often a craft comes off, as the prompt says it.
+pub fn chance_note(chance: Percent) -> String {
+    format!("{}% chance", chance.0)
+}
+
+/// Asks the server for the craft the button stands for, in the prompt's turn `step`.
+fn craft(world: &mut World, step: PromptStep, recipe: RecipeKey) {
+    world.write_message(CraftingRequest::Craft {
+        step,
+        offer: tray::offer(world),
+        recipe,
+    });
+    tray::sent(world, step);
+    InterfaceSound::UiPick.play(world);
+}
+
+/// Asks the player whether to go through with a craft that may fail, and crafts it if so.
+fn confirm_risk(world: &mut World, step: PromptStep, result: &CraftResult) {
+    let content = world.resource::<Content>().clone();
+    let made: Vec<&str> = result
+        .makes
+        .iter()
+        .map(|stack| stack.item.get(&content).name.as_str())
+        .collect();
+    let each = if result.times > 1 {
+        format!("Each of the {} crafts", result.times)
+    } else {
+        "The craft".to_owned()
+    };
+    let recipe = result.recipe;
+    hud::confirm(
+        world,
+        Confirm {
+            title: format!("Craft {}?", made.join(" + ")),
+            body: vec![
+                format!("{each} has a {}.", chance_note(result.chance)),
+                "One that fails spends its ingredients and makes nothing.".to_owned(),
+            ],
+            confirm: "Craft anyway".to_owned(),
+            cancel: "Keep ingredients".to_owned(),
+            answer: Box::new(move |world, crafts| {
+                if crafts {
+                    craft(world, step, recipe);
+                }
+            }),
+        },
+    );
 }
 
 /// The Recipes button, how the tray is filled, and the Craft button at the far end. While a craft
@@ -453,13 +512,13 @@ fn foot(ui: &mut Ui, world: &mut World, prompt: &PromptView) {
             }
             Some(result) => {
                 if controls::primary(ui, word).clicked() {
-                    world.write_message(CraftingRequest::Craft {
-                        step: prompt.step,
-                        offer: tray::offer(world),
-                        recipe: result.recipe,
-                    });
-                    tray::sent(world, prompt.step);
-                    InterfaceSound::UiPick.play(world);
+                    let asks = result.chance < Percent::WHOLE
+                        && world.resource::<UserSettings>().confirms_risky_crafts();
+                    if asks {
+                        confirm_risk(world, prompt.step, &result);
+                    } else {
+                        craft(world, prompt.step, result.recipe);
+                    }
                 }
             }
         }
@@ -581,6 +640,10 @@ fn recipe_row(ui: &mut Ui, world: &mut World, row: &ListedRecipe) -> egui::Respo
     } else {
         ("materials missing", ink::INK3)
     };
+    let risk = row
+        .recipe
+        .may_fail()
+        .then(|| chance_note(row.recipe.chance));
     let response = controls::row(ui, RowLook::default(), |ui| {
         if !row.can_make {
             ui.multiply_opacity(MISSING_OPACITY);
@@ -599,6 +662,10 @@ fn recipe_row(ui: &mut Ui, world: &mut World, row: &ListedRecipe) -> egui::Respo
                 });
                 ui.horizontal_wrapped(|ui| {
                     ui.spacing_mut().item_spacing.x = 4.0;
+                    if let Some(risk) = &risk {
+                        sheet::label(ui, TextRole::Small, risk, ink::RUBRIC);
+                        ui.add_space(4.0);
+                    }
                     for (stack, lacking) in row.recipe.from.iter().zip(&row.lacking) {
                         if *lacking {
                             let (cross, _) =

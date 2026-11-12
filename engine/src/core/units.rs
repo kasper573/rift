@@ -437,6 +437,17 @@ pub struct WindowPx(pub f32);
 pub struct Percent(pub f32);
 
 impl Percent {
+    /// All of it: every time, of a chance.
+    pub const WHOLE: Percent = Percent(100.0);
+
+    pub fn whole() -> Percent {
+        Percent::WHOLE
+    }
+
+    pub fn is_whole(&self) -> bool {
+        *self == Percent::WHOLE
+    }
+
     pub fn plus(self, other: Percent) -> Percent {
         Percent(self.0 + other.0)
     }

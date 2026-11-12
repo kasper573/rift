@@ -255,6 +255,7 @@ impl Game {
                     "recipes": "Recipes",
                     "no_recipe": "No recipe",
                     "choose_result": "Choose a result",
+                    "craft_failed": "Crafting failed",
                 },
                 "typing": typing(),
                 "lettering": lettering(),

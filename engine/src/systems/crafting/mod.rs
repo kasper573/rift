@@ -9,6 +9,7 @@ use crate::core::content::{
     Content, ContentFile, ContentId, ContentProblem, Loading, ModuleRule, ModuleSet, Nearby,
     RowCheck, SchemaMark,
 };
+use crate::core::math::Rng;
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, ScriptFault, Value, ValueType};
 use crate::core::time::{UnixMillis, WallClock};
 use crate::core::units::{Percent, PlaybackRate, Seconds};
@@ -26,6 +27,7 @@ use crate::systems::script::{
 use crate::systems::shop::ShopDef;
 use crate::systems::stat::{self, StatKind};
 use crate::systems::text::{self, LineText, Span};
+use crate::systems::vfx::VfxShaderFixture;
 use crate::systems::{GameSettings, dialogue};
 
 pub type RecipeBookId = ContentId<RecipeBookDef>;
@@ -62,6 +64,11 @@ pub struct Recipe {
     /// The move its crafter makes while it is under way, in place of the book's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work: Option<MoveName>,
+    /// How often a craft of it comes off. One that fails spends its ingredients and makes
+    /// nothing.
+    #[schemars(extend("default" = 100))]
+    #[serde(default = "Percent::whole", skip_serializing_if = "Percent::is_whole")]
+    pub chance: Percent,
 }
 
 /// A recipe by the book that holds it and its place among the book's recipes.
@@ -111,6 +118,13 @@ impl ContentFile for RecipeBookDef {
                 "ingredient listed twice",
             );
             check.at_least(format!("{at}/takes"), recipe.takes.0, 0.0, "seconds");
+            check.range(
+                format!("{at}/chance"),
+                recipe.chance.0,
+                0.0,
+                100.0,
+                "percent",
+            );
         }
     }
 }
@@ -218,11 +232,23 @@ impl Recipe {
     pub fn makes_item(&self, item: ItemId) -> bool {
         self.makes.iter().any(|stack| stack.item == item)
     }
+
+    /// Whether a craft of it can fail.
+    pub fn may_fail(&self) -> bool {
+        self.chance < Percent::WHOLE
+    }
+
+    /// How many of `times` crafts come off, each on a draw of its own.
+    fn come_off(&self, times: u32, rng: &mut Rng) -> u32 {
+        (0..times).filter(|_| self.chance.rolled(rng)).count() as u32
+    }
 }
 
+/// `stacks` `times` over: nothing at all, no times over.
 fn scaled(stacks: &[ItemStack], times: u32) -> Vec<ItemStack> {
     stacks
         .iter()
+        .filter(|_| times > 0)
         .map(|stack| ItemStack::new(stack.item, stack.count.saturating_mul(times)))
         .collect()
 }
@@ -394,7 +420,7 @@ impl EffectDef<RiftScripting> for OpenCrafting {
 }
 
 /// What a crafting prompt adds to the prompt its player sees: the recipes it makes, how many
-/// crafts it has made, and the craft under way.
+/// crafts it has seen through, made or failed, and the craft under way.
 #[derive(Component, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct CraftingView {
     pub recipes: Vec<RecipeKey>,
@@ -489,8 +515,8 @@ pub fn work(world: &mut World, views: &mut QueryState<(Entity, &'static Crafting
     for (_, player, making) in due {
         let crafted = craft(world, player, &making.offer, making.recipe);
         finish(world, player);
-        let made = match crafted {
-            Ok(made) => made,
+        let crafted = match crafted {
+            Ok(crafted) => crafted,
             Err(why) => {
                 notification::error(world, player, why);
                 continue;
@@ -499,8 +525,17 @@ pub fn work(world: &mut World, views: &mut QueryState<(Entity, &'static Crafting
         if let Some(mut view) = world.get_mut::<CraftingView>(player) {
             view.crafted = view.crafted.wrapping_add(1);
         }
+        if crafted.failed > 0 {
+            let failed = world
+                .resource::<Content>()
+                .built::<GameSettings>()
+                .words
+                .craft_failed
+                .clone();
+            notification::pop_as(world, player, failed, VfxShaderFixture::FailurePop);
+        }
         let recipe = making.recipe;
-        for made in made {
+        for made in crafted.made {
             world.resource_mut::<RiftInstances>().raise(
                 Owner::Row(RunnerKind::RecipeBook, recipe.book.raw()),
                 EventKind::Crafted,
@@ -840,24 +875,38 @@ fn rest(world: &mut World, crafter: Entity) {
     }
 }
 
+/// What became of the crafts an offer was: everything those that came off made between them, and
+/// how many failed.
+struct Crafted {
+    made: Vec<ItemStack>,
+    failed: u32,
+}
+
 /// Crafts `recipe` from `offer` for `player` in one exchange, when their prompt makes it and the
-/// offer is a whole number of times it: everything that was made.
+/// offer is a whole number of times it. Every craft spends its ingredients, and those that come
+/// off give what they make.
 fn craft(
     world: &mut World,
     player: Entity,
     offer: &[ItemStack],
     recipe: RecipeKey,
-) -> Result<Vec<ItemStack>, String> {
+) -> Result<Crafted, String> {
     let content = world.resource::<Content>().clone();
     let (craftable, times) = meant(world, &content, player, offer, recipe)?;
-    let made = craftable.recipe.products(times);
+    let came_off = craftable
+        .recipe
+        .come_off(times, &mut world.resource_mut::<Rng>());
+    let made = craftable.recipe.products(came_off);
     let no_recipe = || content.built::<GameSettings>().words.no_recipe.clone();
     world
         .get_mut::<Inventory>(player)
         .ok_or_else(no_recipe)?
         .exchange(&content, offer, &made)
         .map_err(|refusal| refusal.describe(&content))?;
-    Ok(made)
+    Ok(Crafted {
+        made,
+        failed: times - came_off,
+    })
 }
 
 /// The recipe `recipe` of `player`'s prompt and how many times over `offer` is it.
