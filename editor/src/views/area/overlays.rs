@@ -126,12 +126,13 @@ pub(super) fn overlay_contours(
     }
 }
 
-/// Every prop the area stands, scattered ones too, as its footprint and the outline the navmesh
-/// keeps clear of it.
+/// Every prop the area stands, scattered ones and those its objects stand as too, as its footprint
+/// and the outline the navmesh keeps clear of it.
 pub(super) fn overlay_footprints(painter: &egui::Painter, frame: &AreaFrame) {
     let color = ink::wash(module_color(AreaModuleKind::Prop), 0.6);
     let mut dots = shapes::Dots::default();
-    for prop in &frame.area().props {
+    let area = frame.area();
+    for prop in area.props.iter().chain(&area.stood) {
         let def = prop.prop.get(&frame.content);
         let ground = def
             .footprint

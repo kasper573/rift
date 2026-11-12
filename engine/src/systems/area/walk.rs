@@ -170,7 +170,8 @@ pub(super) fn hold(
 
 /// The mesh `area`'s actors move on, over the tiles held. The ground blocks where it is painted
 /// mostly with a terrain that blocks, where it is steeper than the area's `max_slope`, and under
-/// every prop's footprint; a safe zone keeps the wild out of it. The air knows only the bounds
+/// every prop's footprint, an object's look standing as a prop does; a safe zone keeps the wild
+/// out of it. The air knows only the bounds
 /// and, for the wild, the safe zones.
 pub(super) fn mesh(area: &Area, wild: bool, flies: bool) -> HeldMesh {
     area.meshes.meshes[kind(wild, flies)].load()
@@ -704,9 +705,11 @@ pub(super) fn underfoot(content: &Content, terrains: &[TerrainId]) -> Vec<Underf
 }
 
 /// The outline of every prop's footprint, where one blocks the ground.
-pub(super) fn footprints(content: &Content, props: &[PropPlacement]) -> Vec<Vec<Pos<Meters>>> {
+pub(super) fn footprints<'a>(
+    content: &Content,
+    props: impl Iterator<Item = &'a PropPlacement>,
+) -> Vec<Vec<Pos<Meters>>> {
     props
-        .iter()
         .filter_map(|placed| {
             let def = placed.prop.get(content);
             (!def.footprint.is_none())

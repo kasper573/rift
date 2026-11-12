@@ -856,6 +856,9 @@ pub struct Area {
     pub soundscape: Vec<SoundscapeZone>,
     /// Every prop standing in the area, scattered ones expanded.
     pub props: Vec<PropPlacement>,
+    /// The props the area's objects stand as: each one's look where it stands, keeping the ground
+    /// under it as a placed prop does.
+    pub stood: Vec<PropPlacement>,
     /// The modules that stand the area's props, placed and scattered, in the order `props`
     /// expands them: what any chunk's props are worked out from alone.
     pub prop_sources: Vec<AreaModule>,
@@ -1371,7 +1374,10 @@ fn build_area(
             );
         }
     }
-    let footprints = walk::footprints(content, &props);
+    let stood: Vec<PropPlacement> = objects(modules)
+        .filter_map(|(_, object)| object.standing())
+        .collect();
+    let footprints = walk::footprints(content, props.iter().chain(&stood));
     let mut footprint_index = SpatialIndex::new(TILE_SIDE);
     footprint_index.refile(
         footprints
@@ -1402,6 +1408,7 @@ fn build_area(
         footprints,
         footprint_index,
         props,
+        stood,
         prop_sources,
         prop_origins,
         lights,
@@ -1536,9 +1543,25 @@ fn check_footing(
     };
     let survey = area.survey();
     let nearest_ground = |at: Pos<Meters>| survey.nearest(at).map(describe_point);
+    let beside = |object: &ObjectDef| {
+        let stood = object.standing()?;
+        let footprint = &stood.prop.get(content).footprint;
+        let room = area.bodies.spacing().0;
+        Some(
+            footprint
+                .bounds(stood.at, stood.yaw, stood.scale)?
+                .inflate(room, room),
+        )
+    };
     let footing = |placed: &Flattened| match &placed.module {
         AreaModule::Object(object) => match object.shape {
-            ObjectShape::Point(at) => Some(SurveyQuestion::Walkable(at)),
+            ObjectShape::Point(at) => Some(match beside(object) {
+                Some(bounds) => SurveyQuestion::Covers {
+                    bounds,
+                    wild: false,
+                },
+                None => SurveyQuestion::Walkable(at),
+            }),
             ObjectShape::Rect(_) => None,
         },
         AreaModule::Resident(resident) => Some(SurveyQuestion::Walkable(resident.at)),
@@ -1578,7 +1601,12 @@ fn check_footing(
                         ContentProblem::new(
                             "not walkable",
                             describe_point(at),
-                            "a point object on walkable ground",
+                            match beside(object) {
+                                Some(_) => {
+                                    "walkable ground beside the prop a point object stands as"
+                                }
+                                None => "a point object on walkable ground",
+                            },
                         )
                         .near(nearest_ground(at)),
                     );

@@ -14,11 +14,12 @@ use crate::core::math::{Offset, Pos, Rect, Size};
 use crate::core::par;
 use crate::core::spatial::SpatialIndex;
 use crate::core::tick::{Cached, Planner};
-use crate::core::units::Meters;
+use crate::core::units::{Degrees, Meters};
 use crate::systems::WorldArea;
 use crate::systems::actor::Name as ActorName;
 use crate::systems::area::AreaModule;
 use crate::systems::area::PropId;
+use crate::systems::area::prop::PropPlacement;
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::interact::Interactive;
 use crate::systems::movement::Position;
@@ -53,6 +54,20 @@ pub struct ObjectDef {
 }
 
 impl ObjectDef {
+    /// The object standing as the prop it looks like, which keeps the ground under it as that
+    /// prop placed at the object's middle would. An object shown only to some stands as none: the
+    /// ground is everyone's alike.
+    pub fn standing(&self) -> Option<PropPlacement> {
+        let look = self.look.filter(|_| self.shown.is_none())?;
+        Some(PropPlacement {
+            prop: look,
+            at: self.shape.center(),
+            yaw: Degrees(0.0),
+            scale: 1.0,
+            sunk: Meters(0.0),
+        })
+    }
+
     pub fn display_name(&self, index: u32) -> String {
         self.name
             .clone()

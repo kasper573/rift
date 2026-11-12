@@ -216,21 +216,37 @@ fn a_wide_ground_walks_as_one_wherever_a_boulder_or_a_rock_stands() {
 fn a_walk_goes_round_what_blocks_and_through_a_notch_a_body_fits() {
     let radius = radius();
     let give = radius / 10.0;
-    let boulder = Walk::among(
-        json!({ "type": "circle", "radius": 1.0 }),
-        json!([{ "type": "prop", "prop": path("prop", "block"), "at": { "x": 7.0, "y": 7.0 } }]),
-        Pos::new(2.0, 7.0),
-    )
-    .toward(Offset::new(10.0, 0.0))
-    .trail();
-    assert_arrives(&boulder, Offset::new(10.0, 0.0), "round the boulder");
-    let center = Pos::new(7.0, 7.0);
-    for at in &boulder {
-        let gap = (Pos::new(2.0, 7.0) + *at).distance(center);
-        assert!(
-            gap >= Meters(1.0 + radius - give),
-            "{at:?} is {gap:?} from the boulder's middle"
-        );
+    let stands = [
+        (
+            "a boulder",
+            json!({ "type": "prop", "prop": path("prop", "block"), "at": { "x": 7.0, "y": 7.0 } }),
+        ),
+        (
+            "an object that looks like a boulder",
+            json!({
+                "type": "object",
+                "shape": { "type": "point", "x": 7.0, "y": 7.0 },
+                "look": path("prop", "block"),
+            }),
+        ),
+    ];
+    for (what, standing) in stands {
+        let boulder = Walk::among(
+            json!({ "type": "circle", "radius": 1.0 }),
+            json!([standing]),
+            Pos::new(2.0, 7.0),
+        )
+        .toward(Offset::new(10.0, 0.0))
+        .trail();
+        assert_arrives(&boulder, Offset::new(10.0, 0.0), what);
+        let center = Pos::new(7.0, 7.0);
+        for at in &boulder {
+            let gap = (Pos::new(2.0, 7.0) + *at).distance(center);
+            assert!(
+                gap >= Meters(1.0 + radius - give),
+                "{at:?} is {gap:?} from the middle of {what}"
+            );
+        }
     }
 
     let edge = Offset::new(5.0 - 1.0 - radius + give, 0.0);
