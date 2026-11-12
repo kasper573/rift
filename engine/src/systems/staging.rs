@@ -42,6 +42,9 @@ pub enum Staging {
     /// Holds the weather of the character's area at the spell of its climate named `spell`, for
     /// everyone in the area, until staged again or restored.
     Weather { spell: String },
+    /// Starts the weather of the character's area on its climate's course anew, the first spell
+    /// beginning now, for everyone in the area, until staged again or restored.
+    WeatherCourse,
     /// Sets the day to `hour` o'clock for everyone on the server, turning on from there or held,
     /// until staged again or restored.
     Day { hour: f32, turning: bool },
@@ -96,6 +99,11 @@ pub fn stage(world: &mut World, conn: Entity, staging: Staging) -> Result<(), St
                 .spell_named(&spell)
                 .ok_or_else(|| format!("the area's climate has no spell named {spell}"))?;
             world.insert_resource(WeatherClock(Some(TimeCourse::Held(held))));
+            tell_clocks(world);
+        }
+        Staging::WeatherCourse => {
+            let now = world.resource::<WallClock>().now;
+            world.insert_resource(WeatherClock(Some(TimeCourse::Since(now))));
             tell_clocks(world);
         }
         Staging::Day { hour, turning } => {

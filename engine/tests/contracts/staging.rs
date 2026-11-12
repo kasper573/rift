@@ -92,7 +92,8 @@ fn a_bench_is_told_when_there_is_nothing_to_stage() {
 }
 
 #[test]
-fn a_bench_holds_an_areas_weather_at_a_named_spell_until_staged_again_or_restored() {
+fn a_bench_holds_an_areas_weather_at_a_named_spell_or_starts_its_course_anew_until_staged_again_or_restored()
+ {
     let mut sim = Sim::new(
         Game::new()
             .area("yard", &Map::open(20, 9), json!([]))
@@ -156,6 +157,15 @@ fn a_bench_holds_an_areas_weather_at_a_named_spell_until_staged_again_or_restore
         .is_err(),
         "a spell the climate lacks is refused"
     );
+
+    stage(&mut sim.world, conn, Staging::WeatherCourse).expect("a course of the climate");
+    let anew = sim.world.resource::<WallClock>().now;
+    assert_eq!(
+        sim.world.resource::<WeatherClock>().0,
+        Some(TimeCourse::Since(anew)),
+        "started anew, the weather runs its course from that moment"
+    );
+    assert_ne!(TimeCourse::Since(anew), served.weather);
 
     stage(&mut sim.world, conn, Staging::Restore).expect("a server's own weather");
     assert_eq!(
