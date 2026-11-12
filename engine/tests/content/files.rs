@@ -198,7 +198,6 @@ fn checking_any_files_of_a_game_that_loads_finds_nothing() {
     let orcs = || {
         game()
             .npc("orc", 10.0, json!([]))
-            .bust_of("orc")
             .sfx("hit")
             .file("icons/cap.png", png(8, 8))
             .file("notes/orcs.md", "Orcs live here.")

@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "e41d11c4",
+  "content_version": "20c26be4",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -137,7 +137,8 @@
         "wide": 40.0
       },
       "turn_ease": 0.1,
-      "zoom_ease": 0.2
+      "zoom_ease": 0.2,
+      "shot_ease": 0.2
     },
     "picture": {
       "bloom": 0.3,
@@ -234,6 +235,20 @@
     "clearing": {
       "fades": 0.2,
       "radius": 2.2
+    }
+  },
+  "dialogue_shots": {
+    "shoulder": {
+      "back": 1.0,
+      "aside": 1.0,
+      "up": 0.95,
+      "aim": 0.75
+    },
+    "participants": {
+      "angle": 30.0,
+      "pitch": 12.0,
+      "cropped": 0.17,
+      "margin": 0.08
     }
   },
   "relations": {

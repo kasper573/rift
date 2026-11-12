@@ -75,6 +75,7 @@ use crate::systems::area::{self, AreaId, AreaObject, AreaTag};
 use crate::systems::attention::{Attention, AttentionId, StatusBadges};
 use crate::systems::combat::Attitude;
 use crate::systems::crafting;
+use crate::systems::dialogue::camera::DialogueCamera;
 use crate::systems::dialogue::stage;
 use crate::systems::equipment::{self, EquipmentPlace};
 use crate::systems::history::widget::{self as history, HistoryBook};
@@ -624,6 +625,8 @@ pub struct ProbeStage {
     pub rect: Option<Rect<WindowPx>>,
     #[schemars(with = "Option<u64>")]
     pub with: Option<Entity>,
+    /// The camera the line on show is seen through.
+    pub camera: DialogueCamera,
     pub line: usize,
     pub lines: usize,
     pub speaker: Option<String>,
@@ -1091,6 +1094,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
             node: view.node,
             rect: stage::dialogue_rect(world).map(gui::window_rect),
             with: view.with,
+            camera: view.camera,
             line: view.line,
             lines: view.lines,
             speaker: view.speaker,

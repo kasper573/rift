@@ -126,6 +126,16 @@ pub trait Vocabulary:
     type Place: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static;
     type Row: Clone + Send + Sync + 'static;
     type Audio: Clone + Serialize + DeserializeOwned + JsonSchema + Send + Sync + 'static;
+    /// How a script's dialogue is seen.
+    type Camera: Copy
+        + Default
+        + PartialEq
+        + Serialize
+        + DeserializeOwned
+        + JsonSchema
+        + Send
+        + Sync
+        + 'static;
     type Reach: Clone + Send + Sync + 'static;
 
     fn row_value(content: &Content, table: &str, key: &str) -> Option<Self::Row>;
@@ -166,6 +176,10 @@ pub trait RevealDef: Copy + Eq + std::hash::Hash + fmt::Debug + Send + Sync + 's
 
 pub trait LineDef<V: Vocabulary> {
     fn values(&self) -> Vec<&Expr<V>>;
+    /// The rules the line keeps, beyond what the schema says.
+    fn check(&self, _content: &Content) -> Result<(), ScriptFault> {
+        Ok(())
+    }
 }
 
 pub trait TextDef<V: Vocabulary> {
@@ -206,6 +220,9 @@ pub trait EffectDef<V: Vocabulary> {
 #[schemars(bound = "")]
 pub struct ScriptDef<V: Vocabulary> {
     pub runs_on: V::RunnerKind,
+    /// How the script's dialogue is seen, unless a line says otherwise.
+    #[serde(default, skip_serializing_if = "is_default")]
+    pub camera: V::Camera,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub variables: BTreeMap<String, Variable<V>>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
@@ -213,6 +230,10 @@ pub struct ScriptDef<V: Vocabulary> {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub locals: BTreeMap<String, ValueType>,
     pub nodes: BTreeMap<String, Node<V>>,
+}
+
+fn is_default<T: Default + PartialEq>(value: &T) -> bool {
+    *value == T::default()
 }
 
 /// Whether `name` may name a node of a script: letters, digits and underscores, at least one.
@@ -228,6 +249,7 @@ impl<V: Vocabulary> ScriptDef<V> {
     pub fn running_on(kind: V::RunnerKind) -> ScriptDef<V> {
         ScriptDef {
             runs_on: kind,
+            camera: V::Camera::default(),
             variables: BTreeMap::new(),
             state: BTreeMap::new(),
             locals: BTreeMap::new(),

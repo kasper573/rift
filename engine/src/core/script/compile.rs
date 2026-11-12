@@ -78,6 +78,7 @@ pub struct Procedure<V: Vocabulary> {
     pub id: ProcedureId,
     pub owner: V::RunnerKind,
     pub label: String,
+    pub camera: V::Camera,
     pub names: Vec<String>,
     pub steps: Vec<Step<V>>,
     pub entries: Vec<(StepIndex, V::Event)>,
@@ -405,6 +406,7 @@ fn compile_source<'c, V: Vocabulary>(
                     locals: slots(&def.locals),
                     nodes: &def.nodes,
                     label: script.path(content).to_owned(),
+                    camera: def.camera,
                 },
                 Some(values),
                 Some(&def.variables),
@@ -528,6 +530,7 @@ fn compile_source<'c, V: Vocabulary>(
         subject_read: false,
         reached: Vec::new(),
         event_fields: &[],
+        camera: source.camera,
     };
     let mut steps = Vec::with_capacity(source.nodes.len());
     let mut entries = Vec::new();
@@ -779,6 +782,8 @@ fn compile_source<'c, V: Vocabulary>(
                 may_do.dialogue.push(name.to_owned());
                 let mut values = Vec::new();
                 for line in &dialogue.lines {
+                    line.check(content)
+                        .map_err(|fault| node_fail(fault.rule, fault.expected))?;
                     let mut evals = Vec::new();
                     for value in line.values() {
                         evals.push(
@@ -937,6 +942,7 @@ fn compile_source<'c, V: Vocabulary>(
         id: ProcedureId(NEXT_PROCEDURE.fetch_add(1, Ordering::Relaxed)),
         owner: binding.owner,
         label: source.label,
+        camera: source.camera,
         names: names.iter().map(|name| (*name).to_owned()).collect(),
         steps,
         entries,
@@ -955,6 +961,7 @@ struct Source<'c, V: Vocabulary> {
     locals: Vec<(&'c str, ValueType)>,
     nodes: &'c BTreeMap<String, Node<V>>,
     label: String,
+    camera: V::Camera,
 }
 
 fn owned_slots(slots: &[(&str, ValueType)]) -> Vec<(String, ValueType)> {
@@ -1145,6 +1152,7 @@ pub struct Compiler<'c, V: Vocabulary> {
     subject_read: bool,
     reached: Vec<(Option<&'c str>, V::Reach)>,
     event_fields: &'static [(&'static str, ValueType)],
+    camera: V::Camera,
 }
 
 type Arithmetic = (fn(i64, i64) -> i64, fn(f64, f64) -> f64);
@@ -1165,6 +1173,7 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
             subject_read: false,
             reached: Vec::new(),
             event_fields: &[],
+            camera: V::Camera::default(),
         }
     }
 
@@ -1179,6 +1188,11 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
 
     pub fn label(&self) -> &str {
         &self.label
+    }
+
+    /// How the dialogue of the script being compiled is seen.
+    pub fn camera(&self) -> V::Camera {
+        self.camera
     }
 
     pub fn node(&self) -> Option<&'c str> {

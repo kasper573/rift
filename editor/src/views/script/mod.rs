@@ -28,8 +28,8 @@ use ui::words;
 
 use engine::core::content::ContentFile;
 use engine::core::script::RunnerKindDef;
-use engine::systems::script::{Node, ScriptDef};
-use graph::{FaceImage, ScriptGraphAction, ScriptGraphLayout};
+use engine::systems::script::ScriptDef;
+use graph::{ScriptGraphAction, ScriptGraphLayout};
 use ui::egui::emath::TSTransform;
 use ui::egui::{Pos2, Rect, Ui, vec2};
 use ui::egui_snarl::ui::get_selected_nodes;
@@ -38,7 +38,6 @@ use crate::app::{BottomTab, Editor};
 use crate::keymap::EditorKey;
 use crate::project::RowSelection;
 use crate::tabs::{DockRequest, EditorTab};
-use crate::thumbs;
 
 pub(crate) fn content_generation(editor: &Editor) -> u64 {
     editor
@@ -223,7 +222,6 @@ pub(crate) fn canvas(
         }
         view.selected.clone()
     };
-    let faces = faces(editor, ui.ctx(), doc);
     let id = snarl_id(&at);
     let Some(project) = editor.project.as_ref() else {
         return;
@@ -239,7 +237,6 @@ pub(crate) fn canvas(
             lit: &lit,
             current: current.as_deref(),
             selected: &chosen,
-            faces: &faces,
             actions: Vec::new(),
             clicks: Vec::new(),
             to_global: TSTransform::IDENTITY,
@@ -321,42 +318,6 @@ pub(crate) fn canvas(
             select_nodes(editor, doc, &selected);
         }
     }
-}
-
-pub(crate) fn faces(
-    editor: &mut Editor,
-    ctx: &egui::Context,
-    doc: &ScriptDoc,
-) -> graph::SpeakerFaces {
-    let mut faces = graph::SpeakerFaces::new();
-    let Some(project) = editor.project.as_ref() else {
-        return faces;
-    };
-    let thumbnails = &mut editor.form.thumbnails;
-    let lines = doc.nodes().values().flat_map(|node| match node {
-        Node::Dialogue(dialogue) => dialogue.lines.as_slice(),
-        _ => &[],
-    });
-    for line in lines {
-        let speaker = (line.by, line.face.clone());
-        if faces.contains_key(&speaker) {
-            continue;
-        }
-        let Some(file) = nodes::bust_file(project, line.by, line.face.as_ref()) else {
-            continue;
-        };
-        let Some(thumb) = thumbnails.image(ctx, &project.files, &file) else {
-            continue;
-        };
-        faces.insert(
-            speaker,
-            FaceImage {
-                texture: thumb.texture.id(),
-                uv: thumbs::square_uv(thumb.size),
-            },
-        );
-    }
-    faces
 }
 
 pub(crate) fn header_chip(editor: &Editor, ui: &Ui, doc: &ScriptDoc) {

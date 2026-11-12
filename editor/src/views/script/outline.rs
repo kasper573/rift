@@ -337,8 +337,8 @@ fn dialogue_summary(editor: &Editor, dialogue: &DialogueNode) -> String {
                 .project
                 .as_ref()
                 .map_or_else(String::new, |project| project.name_of(npc));
-            match &line.face {
-                Some(face) => format!("{name}, {}", String::from(face.clone())),
+            match &line.gesture {
+                Some(gesture) => format!("{name}, {}", gesture.as_str()),
                 None => name,
             }
         }

@@ -112,7 +112,7 @@ pub enum Wait {
 }
 
 /// Plays an action, or a move the actor's stance turns into a clip, waiting for its apex or end
-/// when asked.
+/// when asked. An actor on its way somewhere stops where it is to play it.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[schemars(transform = SchemaMark::System.with("actor"))]
 pub struct Animate {
@@ -180,6 +180,7 @@ impl EffectDef<RiftScripting> for Animate {
             if play(world, actor, motion.clone(), None).is_none() {
                 return EffectStep::Output(INTERRUPTED);
             }
+            movement::halt(world, actor);
             if let Some(sfx) = sfx {
                 notification::play_sound(world, Some(actor), cx.subject, sfx, Audience::Everyone);
             }

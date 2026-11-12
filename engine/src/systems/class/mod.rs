@@ -19,7 +19,6 @@ use crate::core::content::{
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault, ValueType};
 use crate::core::vfx::VfxSite;
 use crate::systems::actor::ModelId;
-use crate::systems::dialogue::bust::BustId;
 use crate::systems::notification;
 use crate::systems::player::Xp;
 use crate::systems::script::{
@@ -45,9 +44,6 @@ pub struct ClassDef {
     pub flavour: String,
     /// What a new character of the class looks like.
     pub model: ModelId,
-    /// The portrait a conversation shows beside the player's lines, in a game that shows one.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub bust: Option<BustId>,
     pub levels: Vec<ClassLevel>,
     #[serde(default, skip_serializing_if = "SkillTree::is_empty")]
     pub tree: SkillTree,
@@ -100,7 +96,6 @@ impl ContentFile for ClassDef {
             icon: near.image()?,
             flavour: String::new(),
             model: near.file()?,
-            bust: None,
             levels: vec![first],
             tree: SkillTree::default(),
             backdrop: None,

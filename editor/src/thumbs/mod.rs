@@ -227,16 +227,6 @@ pub fn uv(size: [usize; 2], x: f32, y: f32, w: f32, h: f32) -> egui::Rect {
     )
 }
 
-pub(crate) fn square_uv(size: [usize; 2]) -> egui::Rect {
-    let (w, h) = (size[0] as f32, size[1] as f32);
-    if h >= w {
-        egui::Rect::from_min_max(egui::pos2(0.0, 0.0), egui::pos2(1.0, w / h))
-    } else {
-        let margin = (1.0 - h / w) / 2.0;
-        egui::Rect::from_min_max(egui::pos2(margin, 0.0), egui::pos2(1.0 - margin, 1.0))
-    }
-}
-
 fn decode(bytes: &[u8]) -> Option<RgbaImage> {
     image::load_from_memory(bytes)
         .ok()

@@ -41,7 +41,7 @@ use crate::row_form;
 use crate::tabs::file_title;
 use crate::tabs::shown_path;
 use crate::widgets;
-use crate::{condition, picker, rows, schema, spans, thumbs};
+use crate::{condition, picker, rows, schema, spans};
 
 pub fn show(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc, selection: &RowSelection) {
     super::sync_with_content(editor);
@@ -131,6 +131,10 @@ pub fn script_row(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
             form::kv(ui, "runs on", |ui| {
                 let path = field!(ScriptDef, runs_on);
                 changed |= forms::of_type(ui, &mut cx, &mut script.runs_on, path);
+            });
+            form::kv(ui, "camera", |ui| {
+                let path = field!(ScriptDef, camera);
+                changed |= forms::of_type(ui, &mut cx, &mut script.camera, path);
             });
             let variables = script.variables.len();
             form::kv_text(
@@ -1092,6 +1096,10 @@ fn dialogue_form(
                 panel::title(ui, &title);
             }
             changed |= speaker_rows(ui, cx, line, &format!("{line_path}/by"), doc);
+            form::kv(ui, "camera", |ui| {
+                let path = format!("{line_path}/camera");
+                changed |= forms::of_type(ui, cx, &mut line.camera, &path);
+            });
             changed |= spans::line_field(ui, cx, &mut line.text, &format!("{line_path}/text"));
         });
     }
@@ -1439,7 +1447,7 @@ fn speaker_rows(
         match by {
             Some(by) => {
                 line.by = by;
-                line.face = None;
+                line.gesture = None;
                 changed = FormChange::at(path);
             }
             None => {
@@ -1458,25 +1466,12 @@ fn speaker_rows(
             && let Some(picked) = reader.id_of::<NpcDef>(&npc_path)
         {
             line.by = Speaker::Npc(picked);
-            if nodes::bust_file(cx.project, line.by, line.face.as_ref()).is_none() {
-                line.face = None;
-            }
             changed = FormChange::at(path);
         }
     });
     cx.speaker = Some(npc_path);
-    form::kv(ui, "  face", |ui| {
-        let ctx = ui.ctx().clone();
-        if let Some(file) = nodes::bust_file(cx.project, line.by, line.face.as_ref())
-            && let Some(thumb) = cx.state.thumbnails.image(&ctx, cx.files, &file)
-        {
-            ui.add(
-                egui::Image::from_texture((thumb.texture.id(), egui::vec2(26.0, 26.0)))
-                    .uv(thumbs::square_uv(thumb.size))
-                    .corner_radius(4.0),
-            );
-        }
-        changed |= forms::of_type(ui, cx, &mut line.face, &format!("{path}/face"));
+    form::kv(ui, "  gesture", |ui| {
+        changed |= forms::of_type(ui, cx, &mut line.gesture, &format!("{path}/gesture"));
     });
     changed
 }

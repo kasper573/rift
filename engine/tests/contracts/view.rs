@@ -17,7 +17,8 @@ use engine::core::render::world::body::{Body, BodyPlugin};
 use engine::core::render::world::layers::JointLayersPlugin;
 use engine::core::render::world::material::WorldMaterial;
 use engine::core::render::{
-    Animator, CameraPreferences, CameraRig, capsule_hit, facing_rotation, ground_pos, world_point,
+    Animator, CameraPreferences, CameraRig, Shot, capsule_hit, facing_rotation, ground_pos,
+    world_point,
 };
 use engine::core::text::Typewriter;
 use engine::core::time::UnixMillis;
@@ -108,6 +109,61 @@ fn the_camera_eases_toward_a_turn_and_comes_to_rest_on_it_at_any_frame_rate() {
         at_once.yaw().0 == wanted,
         "a player who turns smoothing off has the turn at once: {:?}",
         at_once.yaw()
+    );
+}
+
+/// A shot is a place of the camera's own: it glides there and back without a jolt, and where the
+/// player keeps it is the same after as before.
+#[test]
+fn a_camera_put_on_a_shot_glides_there_and_back_to_where_the_player_kept_it() {
+    let smooth = CameraPreferences::default();
+    let frame = Seconds(1.0 / 60.0);
+    let mut rig = CameraRig::new(testkit::look().camera);
+    rig.look_at(Pos::new(10.0, 10.0), Meters(1.0));
+    rig.turn(Degrees(40.0));
+    for _ in 0..600 {
+        rig.ease(frame, &smooth);
+    }
+    let kept = rig.transform();
+    let shot = Shot {
+        eye: Vec3::new(12.0, 1.7, 8.0),
+        target: Vec3::new(10.0, 1.4, 10.0),
+    };
+
+    rig.stage(Some(shot));
+    let mut left = vec![rig.eye().distance(shot.eye)];
+    for _ in 0..120 {
+        rig.ease(frame, &smooth);
+        left.push(rig.eye().distance(shot.eye));
+    }
+    let steps: Vec<f32> = left.windows(2).map(|pair| pair[0] - pair[1]).collect();
+    let fastest = steps
+        .iter()
+        .position(|step| *step == steps.iter().copied().fold(0.0, f32::max))
+        .expect("a step");
+    assert!(
+        steps.iter().all(|step| *step >= 0.0) && fastest > 0 && fastest < steps.len() - 1,
+        "it sets off gently, never passes the shot, and slows onto it: {steps:?}"
+    );
+    assert!(
+        rig.settled() && rig.staged() && rig.transform() == shot.transform(),
+        "two seconds are more than enough to be on the shot: {:?}",
+        rig.transform()
+    );
+    assert_eq!(
+        rig.kept().transform(),
+        kept,
+        "where the player keeps it stands as it was"
+    );
+
+    rig.stage(None);
+    for _ in 0..120 {
+        rig.ease(frame, &smooth);
+    }
+    assert!(
+        rig.settled() && !rig.staged() && rig.transform() == kept,
+        "off the shot it is back where the player kept it: {:?}",
+        rig.transform()
     );
 }
 

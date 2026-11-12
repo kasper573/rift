@@ -40,7 +40,7 @@ pub enum PartSpec {
         name: &'static str,
         exts: &'static [&'static str],
     },
-    /// A folder of files each named by its key: `busts/<expression>.png`.
+    /// A folder of files each named by its key: `letters/<letter>.wav`.
     Keyed {
         folder: &'static str,
         exts: &'static [&'static str],

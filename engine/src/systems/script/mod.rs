@@ -29,11 +29,12 @@ use crate::core::script::{
 };
 use crate::core::units::Meters;
 use crate::systems::WorldArea;
+use crate::systems::actor::skeleton::{Declared, GestureName};
 use crate::systems::area::scene::scene_file;
 use crate::systems::area::{self, AreaDef, AreaId, AreaModule, AreaObject};
 use crate::systems::class::{ClassDef, ClassId};
 use crate::systems::crafting::{RecipeBookDef, RecipeBookId};
-use crate::systems::dialogue::bust::Expression;
+use crate::systems::dialogue::camera::DialogueCamera;
 use crate::systems::dialogue::{self, ChoiceReveal};
 use crate::systems::item::{ItemDef, ItemId, ItemKind};
 use crate::systems::memory::{MemoryDef, MemoryId};
@@ -176,7 +177,8 @@ pub enum RowRef {
 #[serde(from = "LineRow", into = "LineRow")]
 pub struct ScriptLine {
     pub by: Speaker,
-    pub face: Option<Expression>,
+    pub gesture: Option<GestureName>,
+    pub camera: Option<DialogueCamera>,
     pub text: Vec<Span>,
 }
 
@@ -184,6 +186,9 @@ pub struct ScriptLine {
 #[serde(deny_unknown_fields)]
 struct LineRow {
     by: SpeakerRow,
+    /// How the line is seen, when not as the rest of its script.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    camera: Option<DialogueCamera>,
     text: Vec<Span>,
 }
 
@@ -192,8 +197,9 @@ struct LineRow {
 enum SpeakerRow {
     Npc {
         npc: NpcId,
+        /// The gesture the npc makes as it says the line.
         #[serde(default, skip_serializing_if = "Option::is_none")]
-        face: Option<Expression>,
+        gesture: Option<GestureName>,
     },
     Object,
     Narrator,
@@ -202,15 +208,16 @@ enum SpeakerRow {
 
 impl From<LineRow> for ScriptLine {
     fn from(row: LineRow) -> ScriptLine {
-        let (by, face) = match row.by {
-            SpeakerRow::Npc { npc, face } => (Speaker::Npc(npc), face),
+        let (by, gesture) = match row.by {
+            SpeakerRow::Npc { npc, gesture } => (Speaker::Npc(npc), gesture),
             SpeakerRow::Object => (Speaker::Object, None),
             SpeakerRow::Narrator => (Speaker::Narrator, None),
             SpeakerRow::Player => (Speaker::Player, None),
         };
         ScriptLine {
             by,
-            face,
+            gesture,
+            camera: row.camera,
             text: row.text,
         }
     }
@@ -222,14 +229,32 @@ impl From<ScriptLine> for LineRow {
             by: match line.by {
                 Speaker::Npc(npc) => SpeakerRow::Npc {
                     npc,
-                    face: line.face,
+                    gesture: line.gesture,
                 },
                 Speaker::Object => SpeakerRow::Object,
                 Speaker::Narrator => SpeakerRow::Narrator,
                 Speaker::Player => SpeakerRow::Player,
             },
+            camera: line.camera,
             text: line.text,
         }
+    }
+}
+
+impl ScriptLine {
+    /// What refuses the line: a gesture no skeleton's set declares.
+    pub fn fault(&self, content: &Content) -> Option<ScriptFault> {
+        let gesture = self.gesture.as_ref()?;
+        let declared = content.built::<Declared>();
+        (!declared.gestures.contains(gesture)).then(|| {
+            ScriptFault::new(
+                "undeclared gesture",
+                format!(
+                    "a gesture some skeleton's set declares; a line is said with gesture {}, which no skeleton's set declares",
+                    gesture.as_str()
+                ),
+            )
+        })
     }
 }
 
@@ -244,6 +269,10 @@ pub enum Speaker {
 impl LineDef<RiftScripting> for ScriptLine {
     fn values(&self) -> Vec<&Expr<RiftScripting>> {
         self.text.values()
+    }
+
+    fn check(&self, content: &Content) -> Result<(), ScriptFault> {
+        self.fault(content).map_or(Ok(()), Err)
     }
 }
 
@@ -304,6 +333,7 @@ impl Vocabulary for RiftScripting {
     type Place = Place;
     type Row = RowRef;
     type Audio = SfxId;
+    type Camera = DialogueCamera;
     type Reach = EffectReach;
 
     fn row_value(content: &Content, table: &str, key: &str) -> Option<RowRef> {

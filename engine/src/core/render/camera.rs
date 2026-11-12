@@ -3,7 +3,8 @@
 //! ray it casts through the pointer. The view is a pure projection of the rig, so the probe, the
 //! plates and the picking all project the way the camera draws. The camera never stands under
 //! the ground: where the ground rises between it and what it looks at, it tilts further down to
-//! pass over it.
+//! pass over it. It can be put on a shot, a fixed place of its own, which it glides onto and back
+//! from while where the player keeps it stays as it was.
 
 use bevy::anti_alias::smaa::Smaa;
 use bevy::anti_alias::taa::TemporalAntiAliasing;
@@ -112,6 +113,53 @@ impl Orbit {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Shot {
+    pub eye: Vec3,
+    pub target: Vec3,
+}
+
+impl Shot {
+    pub fn transform(&self) -> Transform {
+        Transform::from_translation(self.eye).looking_at(self.target, Vec3::Y)
+    }
+
+    /// The shot with its eye raised clear of the ground of `heights`, so it never draws the
+    /// ground from under it.
+    pub fn over(self, heights: &Heightfield) -> Shot {
+        let ground = heights.height_at(ground_pos(self.eye)).0;
+        Shot {
+            eye: self.eye.with_y(self.eye.y.max(ground + EYE_CLEARANCE.0)),
+            ..self
+        }
+    }
+
+    fn yaw(&self) -> Radians {
+        let back = self.eye - self.target;
+        Radians(back.x.atan2(back.z))
+    }
+
+    fn pitch(&self) -> Radians {
+        let back = self.eye - self.target;
+        Radians(back.y.atan2(back.xz().length()))
+    }
+
+    fn distance(&self, other: Shot) -> f32 {
+        self.eye
+            .distance(other.eye)
+            .max(self.target.distance(other.target))
+    }
+}
+
+/// `to` is none while the camera glides back to where the player keeps it.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Staging {
+    at: Shot,
+    eye_speed: Vec3,
+    target_speed: Vec3,
+    to: Option<Shot>,
+}
+
 /// How the camera frames the world.
 #[derive(JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
 #[serde(deny_unknown_fields)]
@@ -134,6 +182,10 @@ pub struct CameraFraming {
     pub turn_ease: Seconds,
     /// How long it takes to catch up with a zoom step, in the same way.
     pub zoom_ease: Seconds,
+    /// How long it takes to glide onto a shot it is put on, from one shot to the next and back to
+    /// where the player keeps it: it sets off gently, is nearly there in twice this long, and
+    /// comes to rest as gently.
+    pub shot_ease: Seconds,
 }
 
 /// The camera's distances along its pitch line, nearest first; it is brought home to the middle.
@@ -403,6 +455,7 @@ pub struct CameraRig {
     lift: Radians,
     distance: Meters,
     zoom: Zoom,
+    staging: Option<Staging>,
 }
 
 /// How the player likes the camera to move.
@@ -426,6 +479,7 @@ impl CameraRig {
             lift: Radians(0.0),
             distance: Zoom::default().distance(&framing.zooms),
             zoom: Zoom::default(),
+            staging: None,
         }
     }
 
@@ -445,7 +499,33 @@ impl CameraRig {
     }
 
     pub fn target(&self) -> Vec3 {
-        self.target
+        self.shot().target
+    }
+
+    /// Glides the camera onto `shot`, or with none back to where the player keeps it, which a
+    /// shot never moves.
+    pub fn stage(&mut self, shot: Option<Shot>) {
+        match (&mut self.staging, shot) {
+            (Some(staging), _) => staging.to = shot,
+            (None, Some(_)) => {
+                self.staging = Some(Staging {
+                    at: self.kept(),
+                    eye_speed: Vec3::ZERO,
+                    target_speed: Vec3::ZERO,
+                    to: shot,
+                });
+            }
+            (None, None) => {}
+        }
+    }
+
+    /// Cuts back to where the player keeps the camera.
+    pub fn unstage(&mut self) {
+        self.staging = None;
+    }
+
+    pub fn staged(&self) -> bool {
+        self.staging.is_some_and(|staging| staging.to.is_some())
     }
 
     /// Puts the camera at `yaw`, `pitch` and `zoom` at once, at rest there, as a shot frames it.
@@ -486,12 +566,13 @@ impl CameraRig {
     }
 
     pub fn yaw(&self) -> Radians {
-        self.yaw
+        self.staging.map_or(self.yaw, |staging| staging.at.yaw())
     }
 
     /// How far down the camera looks: as it is tilted, and as much further as the ground has it.
     pub fn pitch(&self) -> Radians {
-        self.orbit().pitch
+        self.staging
+            .map_or(self.orbit().pitch, |staging| staging.at.pitch())
     }
 
     pub fn zoom(&self) -> Zoom {
@@ -503,22 +584,40 @@ impl CameraRig {
         self.yaw == self.wanted_yaw
             && self.pitch == self.wanted_pitch
             && self.distance == self.zoom.distance(&self.framing.zooms)
+            && self
+                .staging
+                .is_none_or(|staging| staging.to == Some(staging.at))
     }
 
     /// Whether the camera rests where going home puts it.
     pub fn at_home(&self) -> bool {
         self.settled()
+            && self.staging.is_none()
             && self.yaw == Radians(0.0)
             && self.pitch == self.framing.pitch.radians()
             && self.zoom == Zoom::default()
     }
 
     pub fn eye(&self) -> Vec3 {
-        self.orbit().eye()
+        self.shot().eye
     }
 
     pub fn transform(&self) -> Transform {
-        self.orbit().transform()
+        self.shot().transform()
+    }
+
+    fn shot(&self) -> Shot {
+        self.staging
+            .map_or_else(|| self.kept(), |staging| staging.at)
+    }
+
+    /// Where the player keeps the camera, whatever shot it is on.
+    pub fn kept(&self) -> Shot {
+        let orbit = self.orbit();
+        Shot {
+            eye: orbit.eye(),
+            target: orbit.target,
+        }
     }
 
     /// Where the camera stands: as far down as it is tilted and the ground has it tilt further.
@@ -575,7 +674,59 @@ impl CameraRig {
         let zoomed = caught(dt, self.framing.zoom_ease);
         let wanted = self.zoom.distance(&self.framing.zooms);
         self.distance = Meters(approach(self.distance.0, wanted.0, zoomed, REST_DISTANCE.0));
+        self.glide(dt);
     }
+
+    fn glide(&mut self, dt: Seconds) {
+        let kept = self.kept();
+        let Some(staging) = &mut self.staging else {
+            return;
+        };
+        let to = staging.to.unwrap_or(kept);
+        let ease = self.framing.shot_ease;
+        staging.at = Shot {
+            eye: damped(staging.at.eye, to.eye, &mut staging.eye_speed, ease, dt),
+            target: damped(
+                staging.at.target,
+                to.target,
+                &mut staging.target_speed,
+                ease,
+                dt,
+            ),
+        };
+        let slow = staging
+            .eye_speed
+            .length()
+            .max(staging.target_speed.length())
+            < REST_DISTANCE.0;
+        if slow && staging.at.distance(to) < REST_DISTANCE.0 {
+            match staging.to {
+                Some(shot) => {
+                    staging.at = shot;
+                    staging.eye_speed = Vec3::ZERO;
+                    staging.target_speed = Vec3::ZERO;
+                }
+                None => self.staging = None,
+            }
+        }
+    }
+}
+
+/// `from` moved `dt` further toward `to` as a critically damped spring would carry it, `speed`
+/// kept from step to step: gently off, and gently to rest, about `ease` behind a goal that moves,
+/// alike at any frame rate.
+fn damped(from: Vec3, to: Vec3, speed: &mut Vec3, ease: Seconds, dt: Seconds) -> Vec3 {
+    if ease.0 <= 0.0 {
+        *speed = Vec3::ZERO;
+        return to;
+    }
+    let stiffness = 2.0 / ease.0;
+    let step = stiffness * dt.0;
+    let decay = 1.0 / (1.0 + step + 0.48 * step * step + 0.235 * step * step * step);
+    let off = from - to;
+    let carried = (*speed + off * stiffness) * dt.0;
+    *speed = (*speed - carried * stiffness) * decay;
+    to + (off + carried) * decay
 }
 
 /// How much of what is left an ease of `ease` closes over `dt`: the same over one long frame as

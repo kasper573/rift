@@ -8,7 +8,6 @@ use engine::core::script::{
     Target, VarValue,
 };
 use engine::core::units::{Meters, Seconds};
-use engine::systems::dialogue::bust::Expression;
 use engine::systems::interact::Verb;
 use engine::systems::item::ItemStack;
 use engine::systems::script::{
@@ -115,7 +114,8 @@ impl SpeakerKind {
 pub(crate) fn blank_line(by: Speaker) -> ScriptLine {
     ScriptLine {
         by,
-        face: None,
+        gesture: None,
+        camera: None,
         text: vec![plain("")],
     }
 }
@@ -125,23 +125,6 @@ pub fn speaker_name(reader: &FolderReader, by: Speaker) -> String {
         Speaker::Npc(npc) => shown_path(reader.path_of(npc).unwrap_or("?")).to_owned(),
         other => SpeakerKind::of(other).name().to_owned(),
     }
-}
-
-/// The bust image `by` shows in `face`, when an npc speaks.
-pub(crate) fn bust_file(
-    project: &Project,
-    by: Speaker,
-    face: Option<&Expression>,
-) -> Option<String> {
-    let Speaker::Npc(npc) = by else {
-        return None;
-    };
-    let bust = project.read_id(project.read_id(npc)?.bust?)?;
-    let file = match face {
-        Some(face) => bust.face(face)?,
-        None => &bust.generic.neutral,
-    };
-    Some(file.as_str().to_owned())
 }
 
 #[derive(Clone, Debug, PartialEq)]

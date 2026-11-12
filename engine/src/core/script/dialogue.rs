@@ -52,6 +52,7 @@ pub fn check_reveals_unique<R: RevealDef>(reveal: &[R]) -> Result<(), ScriptFaul
 
 pub struct DialogueView<'a, V: Vocabulary> {
     pub script: &'a str,
+    pub camera: V::Camera,
     pub node: &'a str,
     pub lines: Vec<(&'a V::Line, Vec<Value>)>,
     pub choices: Vec<ChoiceOffer<'a, V>>,

@@ -279,12 +279,11 @@ fn sim() -> Sim {
                 "interacted": { "type": "on", "event": "interacted", "verb": "talk", "reach": 2.0, "next": "hello" },
                 "hello": {
                     "type": "dialogue",
-                    "lines": [{ "by": { "type": "npc", "npc": path("npc", "keeper"), "face": "neutral" }, "text": ["Welcome."] }],
+                    "lines": [{ "by": { "type": "npc", "npc": path("npc", "keeper") }, "text": ["Welcome."] }],
                     "choices": [{ "label": ["Goodbye."] }],
                 },
             }),
         )
-        .bust_of("keeper")
         .npc(
             "raider",
             1_000.0,

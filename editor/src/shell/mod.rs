@@ -38,7 +38,7 @@ use crate::tabs::active_tab;
 use crate::tabs::{DockRequest, EditorTab};
 use crate::views::script::{self, keys::ScriptKeys};
 use crate::views::{
-    self, area, bust, character, class, item, model, model_part, prop, recipe_book, skeleton,
+    self, area, character, class, item, model, model_part, prop, recipe_book, skeleton,
     spreadsheet, stance, vfx, world,
 };
 use crate::widgets::VIEW_PADDING;
@@ -546,7 +546,6 @@ impl TabViewer for Viewer<'_> {
             EditorTab::Script(owner) => script::show(self.editor, ui, owner),
             EditorTab::Model { key } => model::show(self.editor, ui, key),
             EditorTab::ModelPart { key } => model_part::show(self.editor, ui, key),
-            EditorTab::Bust { key } => bust::show(self.editor, ui, key),
             EditorTab::Prop { key } => prop::show(self.editor, ui, key),
             EditorTab::Row { table, key } if table == ClassDef::TABLE => {
                 class::show(self.editor, ui, key)
@@ -634,7 +633,6 @@ impl TabViewer for Viewer<'_> {
             | EditorTab::Script(_)
             | EditorTab::Model { .. }
             | EditorTab::ModelPart { .. }
-            | EditorTab::Bust { .. }
             | EditorTab::Prop { .. }
             | EditorTab::Spreadsheet { .. } => [false, false],
             EditorTab::Row { table, .. }
@@ -665,8 +663,8 @@ fn toast(editor: &mut Editor, ctx: &Context) {
     float::toast(ctx, text, since);
 }
 
-/// Files dropped onto the window go to the bust's or prop's tab in front, as its faces or model;
-/// anywhere else they are imported into the folder chosen in the content tree.
+/// Files dropped onto the window go to the prop's tab in front, as its model; anywhere else they
+/// are imported into the folder chosen in the content tree.
 fn dropped_files(editor: &mut Editor, ctx: &Context) {
     let dropped: Vec<std::path::PathBuf> = ctx.input(|i| {
         i.raw
@@ -679,7 +677,6 @@ fn dropped_files(editor: &mut Editor, ctx: &Context) {
         return;
     }
     match active_tab(editor) {
-        Some(EditorTab::Bust { .. }) => editor.views.bust.drops = dropped,
         Some(EditorTab::Prop { .. }) => editor.views.prop.drops = dropped,
         _ => {
             let folder = content_tree::current_folder(editor);

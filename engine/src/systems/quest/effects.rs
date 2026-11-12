@@ -126,7 +126,7 @@ impl EffectDef<RiftScripting> for OfferQuest {
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim(cx, &self.who)?;
-        let (quest, refused) = (self.quest, self.refused.clone());
+        let (quest, refused, camera) = (self.quest, self.refused.clone(), cx.camera());
         Ok(Box::new(move |world, flow, cx| {
             let Some(player) = effects::aimed_character(world, cx, &who) else {
                 return effects::refuse(world, cx, &refused, "Nobody to offer it to");
@@ -143,6 +143,7 @@ impl EffectDef<RiftScripting> for OfferQuest {
                 offers,
                 Answer::Output("declined"),
                 panel,
+                camera,
             ) {
                 EffectStep::Pause
             } else {
@@ -195,7 +196,7 @@ impl EffectDef<RiftScripting> for TurnIn {
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim(cx, &self.who)?;
-        let (quest, refused) = (self.quest, self.refused.clone());
+        let (quest, refused, camera) = (self.quest, self.refused.clone(), cx.camera());
         let decides = quest.get(cx.content).decision().is_some();
         Ok(Box::new(move |world, flow, cx| {
             let Some(player) = effects::aimed_character(world, cx, &who) else {
@@ -218,6 +219,7 @@ impl EffectDef<RiftScripting> for TurnIn {
                 offers,
                 Answer::Output("cancelled"),
                 panel,
+                camera,
             ) {
                 EffectStep::Pause
             } else {

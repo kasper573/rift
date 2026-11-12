@@ -1,5 +1,4 @@
 pub mod area;
-pub mod bust;
 pub mod character;
 pub mod class;
 pub mod cues;
@@ -67,7 +66,6 @@ pub struct EditorViews {
     pub script: script::ScriptViews,
     pub model: ViewMap<model::ModelView>,
     pub model_part: ViewMap<model_part::ModelPartView>,
-    pub bust: bust::BustViews,
     pub skeleton: skeleton::SkeletonViews,
     pub prop: prop::PropViews,
     pub spreadsheet: ViewMap<spreadsheet::SpreadsheetState>,

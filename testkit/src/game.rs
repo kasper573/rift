@@ -27,7 +27,6 @@ use engine::systems::actor::Action;
 use engine::systems::area;
 use engine::systems::area::prop::PROP_GLB;
 use engine::systems::area::scene::SCENE;
-use engine::systems::dialogue::bust::BUST_FACES;
 use engine::systems::item;
 use serde_json::{Value, json};
 use strum::VariantArray;
@@ -270,6 +269,10 @@ impl Game {
                 },
                 "history_merges_within": 10.0,
                 "look": look(),
+                "dialogue_shots": {
+                    "shoulder": { "back": 1.6, "aside": 0.7, "up": 0.95, "aim": 0.75 },
+                    "participants": { "angle": 30.0, "pitch": 12.0, "cropped": 0.17, "margin": 0.08 },
+                },
             }))
     }
 
@@ -448,29 +451,6 @@ impl Game {
                 "attitude": "friendly",
             }),
         )
-    }
-
-    /// A bust of a face for every generic expression.
-    pub fn bust(self, name: &str) -> Game {
-        const EXPRESSIONS: [&str; 6] =
-            ["neutral", "happy", "sad", "angry", "surprised", "thinking"];
-        EXPRESSIONS
-            .iter()
-            .fold(self.row("bust", name, json!({})), |game, expression| {
-                game.part(
-                    "bust",
-                    name,
-                    &BUST_FACES.named(expression, "png"),
-                    png(4, 4),
-                )
-            })
-    }
-
-    /// Shows the npc declared as `npc` in a bust of its own name, declared with it, so its lines
-    /// show a face.
-    pub fn bust_of(self, npc: &str) -> Game {
-        self.bust(npc)
-            .edit("npc", npc, |row| row["bust"] = json!(path("bust", npc)))
     }
 
     /// A sound of a moment's silence.
@@ -981,6 +961,7 @@ pub fn look() -> Look {
             },
             turn_ease: Seconds(0.1),
             zoom_ease: Seconds(0.2),
+            shot_ease: Seconds(0.2),
         },
         picture: PictureGrade {
             bloom: 0.3,

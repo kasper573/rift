@@ -6,6 +6,7 @@ use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::core::units::{MeterPos, Meters, Radians};
 use engine::systems::actor::{self, Action, Actor};
 use engine::systems::attention::{self, Attention, AttentionId, AttentionMark};
+use engine::systems::dialogue::camera::DialogueCamera;
 use engine::systems::dialogue::{self, Conversation, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::memory::{self, MemoryDef};
@@ -16,7 +17,7 @@ use engine::systems::script::{self, EventKind, RiftInstances};
 use engine::systems::stat::{self, Immortal, StatKind};
 use engine::systems::{combat, npc};
 use serde_json::{Value, json};
-use testkit::{Game, Map, Sim, lines};
+use testkit::{BODY, Game, Map, Sim, lines};
 
 #[test]
 fn a_conversation_reaches_the_client_as_the_world_holds_it() {
@@ -27,8 +28,73 @@ fn a_conversation_reaches_the_client_as_the_world_holds_it() {
     let wire = postcard::to_allocvec(&opened).expect("a conversation serializes");
     let received: Conversation = postcard::from_bytes(&wire).expect("a conversation deserializes");
 
-    assert!(opened.lines.iter().any(|line| line.face.is_some()));
+    assert!(
+        opened
+            .lines
+            .iter()
+            .any(|line| line.gesture.is_some() && line.camera.is_some())
+    );
     assert_eq!(received, opened);
+}
+
+#[test]
+fn a_conversation_is_seen_as_its_script_says_but_for_a_line_that_says_otherwise() {
+    let mut sim = inn();
+    sim.join(1);
+
+    let greeting = sim.talk(1, "keeper");
+    assert_eq!(
+        (greeting.camera, greeting.lines[0].camera),
+        (DialogueCamera::Participants, Some(DialogueCamera::Gameplay)),
+        "the keeper's script names a camera, and its greeting another"
+    );
+    let conn = sim.conn(1);
+    sim.send(
+        conn,
+        ConversationRequest::Leave {
+            step: greeting.step,
+        },
+    );
+    sim.tick();
+
+    let tipped = sim.talk(1, "crier");
+    assert_eq!(
+        (tipped.camera, tipped.lines[0].camera),
+        (DialogueCamera::Shoulder, None),
+        "a script that names none is seen over the shoulder"
+    );
+}
+
+#[test]
+fn whoever_else_says_a_line_turns_to_the_player_while_it_shows() {
+    let mut sim = inn();
+    let player = sim.join(1);
+    let crier = sim.npc("crier");
+    sim.give(player, "gold", 30);
+    let opened = sim.talk(1, "keeper");
+    assert_eq!(action(&sim.world, crier), Action::Idle);
+
+    let conn = sim.conn(1);
+    sim.send(
+        conn,
+        ConversationRequest::Pick {
+            step: opened.step,
+            choice: choice(&opened, "Buy a round for the room."),
+        },
+    );
+    sim.run(0.5);
+    let round = sim.conversation(1).expect("still talking");
+    let at = position(&sim.world, player).expect("position");
+    assert_eq!(action(&sim.world, crier), Action::Talk);
+    assert!(
+        faces(&sim.world, crier, at),
+        "the crier cheers facing {:?}",
+        facing(&sim.world, crier)
+    );
+
+    sim.send(conn, ConversationRequest::Leave { step: round.step });
+    sim.run(0.5);
+    assert_eq!(action(&sim.world, crier), Action::Idle);
 }
 
 #[test]
@@ -112,7 +178,10 @@ fn a_pick_answers_its_step_once() {
 
     assert_eq!(sim.count(player, "gold"), 20);
     let now = sim.conversation(1).expect("still talking");
-    assert_eq!(lines(&now), vec!["Cheers!".to_owned()]);
+    assert_eq!(
+        lines(&now),
+        vec!["Cheers!".to_owned(), "Hear, hear!".to_owned()]
+    );
     assert_eq!(favour(&sim, player), Recalled::Int(1));
 
     sim.send(conn, round);
@@ -297,7 +366,12 @@ fn inn() -> Sim {
             json!([{ "type": "script", "script": "keeper_talk.script.json" }]),
         )
         .script("keeper_talk", "npc", keeping())
-        .bust_of("keeper")
+        .edit("script", "keeper_talk", |script| {
+            script["camera"] = json!("participants")
+        })
+        .edit("skeleton", BODY, |body| {
+            body["base"]["gestures"] = json!({ "nod": testkit::clip("attack") })
+        })
         .npc(
             "crier",
             40.0,
@@ -361,7 +435,8 @@ fn keeping() -> Value {
             "hello": {
                 "type": "dialogue",
                 "lines": [{
-                    "by": { "type": "npc", "npc": "keeper.npc.json", "face": "neutral" },
+                    "by": { "type": "npc", "npc": "keeper.npc.json", "gesture": "nod" },
+                    "camera": "gameplay",
                     "text": ["Welcome in."],
                 }],
                 "choices": [
@@ -382,7 +457,10 @@ fn keeping() -> Value {
             },
             "round": {
                 "type": "dialogue",
-                "lines": [{ "by": { "type": "npc", "npc": "keeper.npc.json", "face": "happy" }, "text": ["Cheers!"] }],
+                "lines": [
+                    { "by": { "type": "npc", "npc": "keeper.npc.json" }, "text": ["Cheers!"] },
+                    { "by": { "type": "npc", "npc": "crier.npc.json" }, "text": ["Hear, hear!"] },
+                ],
                 "choices": [{ "label": ["Goodbye."] }],
             },
     })

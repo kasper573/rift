@@ -217,6 +217,7 @@ pub struct GameSettings {
     pub speech: Speech,
     pub hearing: Hearing,
     pub look: Look,
+    pub dialogue_shots: dialogue::camera::DialogueShots,
     pub relations: SideRelations,
     /// How soon after each other like entries of a player's history count as one, a run of loot
     /// or kills read as a tally.
@@ -569,6 +570,7 @@ pub fn client_app(
             item::render::ItemRenderPlugin,
             resource::render::ResourceRenderPlugin,
             view::CameraFollowPlugin,
+            dialogue::camera::DialogueCameraPlugin,
             player::session::ClientSessionPlugin,
             input::PlayerInputPlugin,
             region::ClientRegionPlugin,
@@ -751,7 +753,6 @@ pub fn tables() -> ContentRegistry {
         .hook(LoadStep::Files, crate::core::content::media::check_media);
     crate::core::babble::content(&mut registry);
     actor::content(&mut registry);
-    dialogue::bust::content(&mut registry);
     area::content(&mut registry);
     crate::core::vfx::content(&mut registry);
     registry
@@ -858,6 +859,7 @@ fn check_settings(loading: &mut Loading) {
         "seconds",
     );
     check_look(&mut check, &settings.look);
+    dialogue::camera::check(&mut check, &settings.dialogue_shots);
     for error in check.into_errors() {
         loading.json_error(SETTINGS_FILE, &error.pointer, error.problem);
     }
@@ -988,6 +990,7 @@ fn check_look(check: &mut RowCheck, look: &Look) {
     check.at_least("/look/camera/zooms/close", zooms.close.0, 0.1, "meters");
     check.at_least("/look/camera/turn_ease", camera.turn_ease.0, 0.0, "seconds");
     check.at_least("/look/camera/zoom_ease", camera.zoom_ease.0, 0.0, "seconds");
+    check.at_least("/look/camera/shot_ease", camera.shot_ease.0, 0.0, "seconds");
     check.at_least(
         "/look/clearing/fades",
         look.clearing.fades.0,

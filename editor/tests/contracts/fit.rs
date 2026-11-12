@@ -13,10 +13,10 @@ const WIDTH: f32 = 300.0;
 const GUARD: &str = "world/areas/island/npcs/a_rather_long_named_harbour_guard";
 
 fn open(scratch: &tempfile::TempDir) -> Editor {
-    let line = |face: &str, text: &str| json!({ "by": { "type": "npc", "npc": path("npc", GUARD), "face": face }, "text": [text] });
+    let line =
+        |text: &str| json!({ "by": { "type": "npc", "npc": path("npc", GUARD) }, "text": [text] });
     let game = support::game()
         .npc(GUARD, 10.0, json!([]))
-        .bust_of(GUARD)
         .script(
             "greeting",
             "npc",
@@ -25,8 +25,8 @@ fn open(scratch: &tempfile::TempDir) -> Editor {
                 "cold": {
                     "type": "dialogue",
                     "lines": [
-                        line("angry", "Short."),
-                        line("neutral", "A line long enough that it has to wrap to stay inside the card it is written in, twice over at least."),
+                        line("Short."),
+                        line("A line long enough that it has to wrap to stay inside the card it is written in, twice over at least."),
                     ],
                     "choices": [{ "label": ["A choice long enough that it has to wrap to stay inside its card as well."] }],
                 },

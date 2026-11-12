@@ -359,7 +359,7 @@ impl EffectDef<RiftScripting> for OpenCrafting {
             .into_iter()
             .map(|value| cx.expr(value, ValueType::Text))
             .collect::<Result<Vec<_>, _>>()?;
-        let (title, spans) = (self.title.clone(), self.text.clone());
+        let (title, spans, camera) = (self.title.clone(), self.text.clone(), cx.camera());
         Ok(Box::new(move |world, flow, cx| {
             let Some(player) = effects::aimed_character(world, cx, &who) else {
                 return EffectStep::Done;
@@ -369,6 +369,7 @@ impl EffectDef<RiftScripting> for OpenCrafting {
                 title: title.clone(),
                 text: (!spans.is_empty()).then(|| LineText::spoken(&spans, &spoken)),
                 slots,
+                camera,
             };
             if !prompt::open(world, player, flow, asked, PromptKind::Hosted) {
                 return EffectStep::Done;

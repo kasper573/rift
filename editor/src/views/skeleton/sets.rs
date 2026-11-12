@@ -15,7 +15,6 @@ use engine::systems::actor::skeleton::{
 };
 use engine::systems::actor::stance::{StanceDef, StanceId};
 use engine::systems::actor::{Action, Motion, Pose};
-use engine::systems::dialogue::bust::GenericExpression;
 use strum::VariantArray;
 use ui::egui::{self, RichText, Ui, Vec2};
 use ui::face;
@@ -600,9 +599,8 @@ fn fill_window(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, r
     }
 }
 
-/// The table's rows: the engine actions, the poses other than idling, every move a set names or
-/// the designer added, and the gestures of the generic expressions, every other a set names and
-/// those the designer added.
+/// The table's rows: the engine actions, the poses other than idling, and every move and gesture
+/// a set names or the designer added.
 fn rows(editor: &Editor, key: &str, def: &SkeletonDef) -> Vec<SetRow> {
     let added = &editor.views.skeleton.views.view(key).sets.added;
     let mut moves: Vec<MoveName> = def.moves().cloned().collect();
@@ -616,11 +614,6 @@ fn rows(editor: &Editor, key: &str, def: &SkeletonDef) -> Vec<SetRow> {
     }
     moves.sort();
     moves.dedup();
-    let generic: Vec<GestureName> = GenericExpression::VARIANTS
-        .iter()
-        .map(|expression| GestureName::new(expression.as_ref()))
-        .collect();
-    gestures.retain(|name| !generic.contains(name));
     gestures.sort();
     gestures.dedup();
     Action::VARIANTS
@@ -639,7 +632,7 @@ fn rows(editor: &Editor, key: &str, def: &SkeletonDef) -> Vec<SetRow> {
                 }),
         )
         .chain(moves.into_iter().map(SetRow::Move))
-        .chain(generic.into_iter().chain(gestures).map(SetRow::Gesture))
+        .chain(gestures.into_iter().map(SetRow::Gesture))
         .collect()
 }
 

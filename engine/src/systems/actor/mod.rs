@@ -242,8 +242,8 @@ pub fn set_facing(actor: &mut Mut<Actor>, facing: Radians, action: Action) {
 }
 
 /// Picks every actor's action from its state: dead, playing, walking, in conversation, or idle.
-/// Two in conversation face each other. Every actor's action is worked out on every core from
-/// the world as the tick found it, then set in the order the actors were found.
+/// Everyone in a conversation faces whom they talk to. Every actor's action is worked out on every
+/// core from the world as the tick found it, then set in the order the actors were found.
 #[derive(Default)]
 pub struct SettleActions {
     actors: Cached<ActorState, ()>,
@@ -269,20 +269,17 @@ impl Planner for SettleActions {
         let talking: HashSet<Entity> = dialogue::parties(self.sessions.query(world).iter())
             .into_iter()
             .collect();
-        let facing_partner: HashMap<Entity, Radians> = self
-            .sessions
-            .query(world)
-            .iter()
-            .filter_map(|(player, _)| Some((player, dialogue::counterpart_of(world, player)?)))
-            .flat_map(|(player, partner)| [(player, partner), (partner, player)])
-            .filter_map(|(me, partner)| {
-                let (at, there) = (
-                    movement::position(world, me)?,
-                    movement::position(world, partner)?,
-                );
-                (at.distance(there) > Meters(1e-3)).then(|| (me, Radians::of(there - at)))
-            })
-            .collect();
+        let facing_partner: HashMap<Entity, Radians> =
+            dialogue::turned(self.sessions.query(world).iter())
+                .into_iter()
+                .filter_map(|(me, partner)| {
+                    let (at, there) = (
+                        movement::position(world, me)?,
+                        movement::position(world, partner)?,
+                    );
+                    (at.distance(there) > Meters(1e-3)).then(|| (me, Radians::of(there - at)))
+                })
+                .collect();
         let situations: Vec<_> = self.actors.query(world).into_iter().collect();
         self.settled = situations
             .par_iter()

@@ -1152,6 +1152,7 @@ fn write_step<V: Vocabulary>(
                     subject,
                     DialogueView {
                         script: &procedure.label,
+                        camera: procedure.camera,
                         node: procedure.name(node),
                         lines,
                         choices: offers,

@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::time::Duration;
 use ui::egui;
 use ui::float;
@@ -17,7 +17,7 @@ use ui::motion::SheetPose;
 use ui::sheet::{self, Sheet};
 use ui::{ink, slip};
 
-use super::bust::{BustFigure, BustFigures, BustId, Expression, GenericExpression};
+use super::camera::DialogueCamera;
 use super::{
     ChoiceChip, ChoiceView, Conversation, ConversationRequest, ConversationStep, RefusedPick,
     Speaker, SpokenLine,
@@ -25,15 +25,12 @@ use super::{
 use crate::core::audio::playback::SfxPlace;
 use crate::core::babble::{BabbleRank, Babbler, Babbling};
 use crate::core::content::Content;
-use crate::core::content::ImageRef;
 use crate::core::gui::{self, Band, Tier};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece, Typewriter};
 use crate::core::time::{self};
 use crate::core::units::MeterPos;
 use crate::systems::actor::Name;
 use crate::systems::actor::render::Said;
-use crate::systems::actor::skeleton::GestureName;
-use crate::systems::class;
 use crate::systems::hud;
 use crate::systems::input::map::{self, InputAction, InputMap};
 use crate::systems::interface::InterfaceSound;
@@ -68,14 +65,6 @@ const PILL_ICON: f32 = 14.0;
 const REFUSED: Duration = Duration::from_millis(320);
 const DIALOGUE: &str = "stage";
 const DOCKED: &str = "docked";
-const BUST_TUCK: f32 = 50.0;
-const FRONT_HEIGHT: f32 = 0.64;
-const BACK_HEIGHT: f32 = 0.56;
-const BACK_LIFT: f32 = 0.08;
-const BACK_STEP: f32 = 0.12;
-const SLIDE: f32 = 70.0;
-const BUST_EASE: f32 = 0.3;
-const UNLIT: Color32 = Color32::from_rgb(128, 128, 143);
 
 pub struct DialogueStagePlugin;
 
@@ -107,6 +96,7 @@ impl Plugin for DialogueStagePlugin {
 pub struct StageView {
     pub node: String,
     pub with: Option<Entity>,
+    pub camera: DialogueCamera,
     pub line: usize,
     pub lines: usize,
     pub speaker: Option<String>,
@@ -150,6 +140,7 @@ pub fn view(world: &World) -> Option<StageView> {
     Some(StageView {
         node: shown.node.clone(),
         with: shown.with,
+        camera: shown.seen_through(),
         line: shown.line,
         lines: shown.lines.len(),
         speaker: shown
@@ -177,6 +168,40 @@ pub fn view(world: &World) -> Option<StageView> {
                 selected: index == shown.selected,
             })
             .collect(),
+    })
+}
+
+/// Who the conversation on show stages, for the camera it is seen through.
+pub(super) struct Cast {
+    pub camera: DialogueCamera,
+    pub with: Option<Entity>,
+    /// The body saying the line on show, when a body says it.
+    pub speaker: Option<Entity>,
+    /// The bodies saying any of the lines on show.
+    pub speakers: Vec<Entity>,
+}
+
+pub(super) fn cast(world: &mut World) -> Option<Cast> {
+    let shown = world.resource::<Stage>().shown.as_ref()?;
+    let (camera, with) = (shown.seen_through(), shown.with);
+    let current = shown.current().map(|line| line.by);
+    let said_by: Vec<Speaker> = shown
+        .lines
+        .iter()
+        .map(|line| line.by)
+        .chain(current)
+        .collect();
+    let mut speakers: Vec<Entity> = said_by
+        .into_iter()
+        .filter_map(|by| body_of(world, by, with))
+        .collect();
+    speakers.sort_unstable();
+    speakers.dedup();
+    Some(Cast {
+        camera,
+        with,
+        speaker: current.and_then(|by| body_of(world, by, with)),
+        speakers,
     })
 }
 
@@ -236,9 +261,9 @@ struct Shown {
     line: usize,
     lines: Vec<SpokenLine>,
     choices: Vec<ChoiceView>,
+    camera: DialogueCamera,
     picked: bool,
     typed_since: Option<Duration>,
-    faces: HashMap<Speaker, Expression>,
     remark: Option<SpokenLine>,
     remarks_seen: u32,
     refusals_seen: u32,
@@ -246,7 +271,6 @@ struct Shown {
     selected: usize,
     pointed: Option<usize>,
     refused: Option<(usize, Duration)>,
-    cast: Vec<CastMember>,
 }
 
 #[derive(Resource, Default, Clone)]
@@ -254,29 +278,6 @@ struct StageDrawn {
     dialogue: Option<Rect>,
     panels: Vec<Rect>,
     choices: HashMap<usize, Rect>,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Side {
-    Left,
-    Right,
-}
-
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Depth {
-    Front,
-    Back,
-}
-
-#[derive(Clone)]
-struct CastMember {
-    who: Speaker,
-    since: Duration,
-    face: ImageRef,
-    bust: BustId,
-    side: Side,
-    depth: Depth,
-    lit: bool,
 }
 
 fn forget_stage(world: &mut World) {
@@ -301,14 +302,13 @@ fn follow_conversation(world: &mut World) {
     let mut stage = world.resource_mut::<Stage>();
     match stage.shown.as_mut() {
         None => {
-            stage.shown = Some(Shown::of(now, HashMap::new()));
+            stage.shown = Some(Shown::of(now));
             InterfaceSound::UiOpen.play(world);
             show_line(world);
         }
         Some(shown) if shown.step != now.step && shown.lines != now.lines => {
-            let faces = std::mem::take(&mut shown.faces);
             let typing = shown.typing.take();
-            stage.shown = Some(Shown::of(now, faces));
+            stage.shown = Some(Shown::of(now));
             if let Some(line) = typing {
                 world.despawn(line);
             }
@@ -320,6 +320,7 @@ fn follow_conversation(world: &mut World) {
                 shown.node = now.node.clone();
                 shown.picked = false;
             }
+            shown.camera = now.camera;
             let remark = now
                 .remark
                 .clone()
@@ -351,7 +352,7 @@ fn follow_conversation(world: &mut World) {
 }
 
 impl Shown {
-    fn of(now: Conversation, faces: HashMap<Speaker, Expression>) -> Shown {
+    fn of(now: Conversation) -> Shown {
         Shown {
             step: now.step,
             node: now.node,
@@ -361,16 +362,21 @@ impl Shown {
             selected: first_open(&now.choices),
             pointed: None,
             choices: now.choices,
+            camera: now.camera,
             picked: false,
             typed_since: None,
-            faces,
             remarks_seen: now.remark.map_or(0, |remark| remark.nth),
             refusals_seen: now.refused.map_or(0, |refused| refused.nth),
             remark: None,
             typing: None,
             refused: None,
-            cast: Vec::new(),
         }
+    }
+
+    fn seen_through(&self) -> DialogueCamera {
+        self.current()
+            .and_then(|line| line.camera)
+            .unwrap_or(self.camera)
     }
 
     fn current(&self) -> Option<SpokenLine> {
@@ -426,10 +432,7 @@ fn show_line(world: &mut World) {
         let since = time::uptime(world);
         world.entity_mut(typing).insert(Said {
             by,
-            gesture: line
-                .face
-                .clone()
-                .map(|face| GestureName::new(String::from(face))),
+            gesture: line.gesture.clone(),
             since,
         });
     }
@@ -439,21 +442,8 @@ fn show_line(world: &mut World) {
     };
     let before = shown.typing.replace(typing);
     shown.typed_since = None;
-    if let Some(face) = line.face {
-        shown.faces.insert(line.by, face);
-    }
     if let Some(before) = before {
         world.despawn(before);
-    }
-    let now = world.resource::<Time>().elapsed();
-    let previous_cast = world
-        .resource::<Stage>()
-        .shown
-        .as_ref()
-        .map_or_else(Vec::new, |shown| shown.cast.clone());
-    let cast = cast_members(world, now, &previous_cast);
-    if let Some(shown) = world.resource_mut::<Stage>().shown.as_mut() {
-        shown.cast = cast;
     }
     babble_along(world, line.by, typing);
 }
@@ -677,14 +667,6 @@ fn draw_stage(world: &mut World) {
             lift_off(world, &gui, DOCKED, pose);
         }
         None => {}
-    }
-    if talking && let Some(dialogue) = dialogue {
-        let cast = egui::Area::new(Id::new("cast"))
-            .order(Band::Stage.order())
-            .fixed_pos(Pos2::ZERO)
-            .interactable(false)
-            .show(&gui, |ui| busts(ui, world, dialogue, screen));
-        gui::stack(&gui, Tier::Back, cast.response.layer_id);
     }
     for key in [DIALOGUE, DOCKED] {
         gui::stack(&gui, Tier::Front, sheet_layer(key));
@@ -1163,147 +1145,6 @@ fn player_hint() -> Vec<TextPiece> {
     ]
 }
 
-fn busts(ui: &mut Ui, world: &mut World, dialogue: Rect, screen: Rect) {
-    let Some(cast) = world
-        .resource::<Stage>()
-        .shown
-        .as_ref()
-        .map(|shown| shown.cast.clone())
-    else {
-        return;
-    };
-    let content = world.resource::<Content>().clone();
-    let now = world.resource::<Time>().elapsed();
-    let gui = ui.ctx().clone();
-    for depth in [Depth::Back, Depth::Front] {
-        for member in cast.iter().filter(|member| member.depth == depth) {
-            let Some(image) = gui::image(world, &member.face) else {
-                continue;
-            };
-            let figure = BustFigures::of(&content, member.bust);
-            let (share, lift) = match member.depth {
-                Depth::Front => (FRONT_HEIGHT, 0.0),
-                Depth::Back => (BACK_HEIGHT, BACK_LIFT),
-            };
-            let height = screen.height() * share;
-            let size = Vec2::new(height * image.size.x / image.size.y.max(1.0), height);
-            let rect = bust_rect(member, figure, size, dialogue, screen, lift);
-            let entered = (now.saturating_sub(member.since).as_secs_f32() / BUST_EASE).min(1.0);
-            let shown = egui::emath::easing::cubic_out(entered);
-            let lit =
-                gui.animate_bool_with_time(Id::new(("lit", member.who)), member.lit, BUST_EASE);
-            let away = match member.side {
-                Side::Left => -1.0,
-                Side::Right => 1.0,
-            };
-            let rect = rect.translate(Vec2::new(away * SLIDE * (1.0 - shown), 0.0));
-            let tint = UNLIT
-                .lerp_to_gamma(Color32::WHITE, lit)
-                .gamma_multiply(shown);
-            ui.put(rect, image.widget(size).tint(tint));
-        }
-    }
-}
-
-fn bust_rect(
-    member: &CastMember,
-    figure: BustFigure,
-    size: Vec2,
-    dialogue: Rect,
-    screen: Rect,
-    lift: f32,
-) -> Rect {
-    let figure_width = (figure.right - figure.left) * size.x;
-    let step = match member.depth {
-        Depth::Front => 0.0,
-        Depth::Back => screen.width() * BACK_STEP,
-    };
-    let left = match member.side {
-        Side::Right => {
-            let near = (dialogue.right() - BUST_TUCK).min(screen.right() - figure_width) - step;
-            near - figure.left * size.x
-        }
-        Side::Left => {
-            let near = (dialogue.left() + BUST_TUCK).max(screen.left() + figure_width) + step;
-            near - figure.right * size.x
-        }
-    };
-    let bottom = screen.bottom() - screen.height() * lift;
-    Rect::from_min_size(Pos2::new(left, bottom - size.y), size)
-}
-
-fn cast_members(world: &World, now: Duration, before: &[CastMember]) -> Vec<CastMember> {
-    let Some(shown) = world.resource::<Stage>().shown.as_ref() else {
-        return Vec::new();
-    };
-    let Some(current) = shown.current() else {
-        return Vec::new();
-    };
-    let mut speakers = vec![current.by];
-    if shown.remark.is_none() {
-        speakers.push(Speaker::Player);
-        if let Some(npc) = shown.with.and_then(|with| world.get::<Npc>(with)) {
-            speakers.push(Speaker::Npc(npc.def));
-        }
-        for line in shown.lines.iter().take(shown.line + 1) {
-            speakers.push(line.by);
-        }
-    }
-    let mut seen = HashSet::new();
-    speakers.retain(|who| seen.insert(*who));
-    let content = world.resource::<Content>();
-    speakers.retain(|&who| bust_of(world, who).is_some());
-    let fronts: Vec<Speaker> = [Side::Left, Side::Right]
-        .into_iter()
-        .filter_map(|side| {
-            let mut standing = speakers.iter().filter(|&&who| side_of(who) == side);
-            standing
-                .clone()
-                .find(|&&who| who == current.by)
-                .or_else(|| standing.next())
-                .copied()
-        })
-        .collect();
-    speakers
-        .into_iter()
-        .filter_map(|who| {
-            let bust = bust_of(world, who)?;
-            let face = shown
-                .faces
-                .get(&who)
-                .cloned()
-                .unwrap_or(Expression::Generic(GenericExpression::Neutral));
-            let face = bust.get(content).face_or_neutral(&face);
-            Some(CastMember {
-                who,
-                since: before
-                    .iter()
-                    .find(|member| member.who == who)
-                    .map_or(now, |member| member.since),
-                face: face.clone(),
-                bust,
-                side: side_of(who),
-                depth: if fronts.contains(&who) {
-                    Depth::Front
-                } else {
-                    Depth::Back
-                },
-                lit: who == current.by,
-            })
-        })
-        .collect()
-}
-
-/// The bust a speaker is shown in: an npc's own, the player's class's.
-fn bust_of(world: &World, who: Speaker) -> Option<BustId> {
-    let content = world.resource::<Content>();
-    match who {
-        Speaker::Npc(npc) => npc.get(content).bust,
-        Speaker::Player => class::of(world, session::me(world)?)?.get(content).bust,
-        Speaker::Object | Speaker::Narrator => None,
-    }
-}
-
 fn speaker_name(world: &World, who: Speaker) -> Option<String> {
     let content = world.resource::<Content>();
     match who {
@@ -1319,12 +1160,5 @@ fn speaker_name(world: &World, who: Speaker) -> Option<String> {
             .and_then(|seen| world.get::<Name>(seen))
             .map(|name| name.name.clone()),
         Speaker::Narrator => None,
-    }
-}
-
-fn side_of(who: Speaker) -> Side {
-    match who {
-        Speaker::Player => Side::Left,
-        Speaker::Npc(_) | Speaker::Object | Speaker::Narrator => Side::Right,
     }
 }

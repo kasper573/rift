@@ -236,49 +236,6 @@ fn unreadable_image(found: String) -> MediaProblem {
     }
 }
 
-pub struct VisiblePixelColumns {
-    pub first: u32,
-    pub last: u32,
-    pub image_width: u32,
-}
-
-pub fn visible_columns(bytes: &[u8]) -> Result<Option<VisiblePixelColumns>, String> {
-    let mut decoder = png::Decoder::new(Cursor::new(bytes));
-    decoder.set_transformations(
-        png::Transformations::normalize_to_color8() | png::Transformations::ALPHA,
-    );
-    let mut reader = decoder.read_info().map_err(|error| error.to_string())?;
-    let size = reader
-        .output_buffer_size()
-        .ok_or_else(|| "an image too large to decode".to_owned())?;
-    let mut pixels = vec![0; size];
-    let frame = reader
-        .next_frame(&mut pixels)
-        .map_err(|error| error.to_string())?;
-    let channels = frame.color_type.samples();
-    let alpha = channels - 1;
-    let mut covered: Option<(u32, u32)> = None;
-    for row in pixels[..frame.buffer_size()].chunks_exact(frame.line_size) {
-        let opaque = |(column, pixel): (usize, &[u8])| (pixel[alpha] > 0).then_some(column as u32);
-        let mut columns = row[..frame.width as usize * channels]
-            .chunks_exact(channels)
-            .enumerate()
-            .filter_map(opaque);
-        let Some(first) = columns.next() else {
-            continue;
-        };
-        let last = columns.next_back().unwrap_or(first);
-        covered = Some(covered.map_or((first, last), |(left, right)| {
-            (left.min(first), right.max(last))
-        }));
-    }
-    Ok(covered.map(|(first, last)| VisiblePixelColumns {
-        first,
-        last,
-        image_width: frame.width,
-    }))
-}
-
 /// How many bytes `bytes`, the file at `path`, take once decoded as a check reads them: an
 /// image's pixels, read off its header; any other file its own bytes.
 pub fn decoded_size(path: &str, bytes: &[u8]) -> usize {

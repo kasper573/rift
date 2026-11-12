@@ -11,7 +11,6 @@ use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::PropDef;
 use engine::systems::area::world_map::{MapRegion, Note};
 use engine::systems::class::ClassDef;
-use engine::systems::dialogue::bust::BustDef;
 use engine::systems::item::ItemDef;
 use engine::systems::script::ScriptDef;
 use serde::{Deserialize, Serialize};
@@ -25,7 +24,6 @@ use crate::tabs::EditorTab;
 use crate::user::SheetFilter;
 use crate::views::area::resize::ResizeDialog;
 use crate::views::area::{self as area_view, blueprint};
-use crate::views::bust;
 use crate::views::character::CharacterSection;
 use crate::views::class;
 use crate::views::item::{self, ItemPage};
@@ -123,7 +121,6 @@ pub enum SceneStep {
     },
     Bottom(BottomTab),
     Model(ModelStep),
-    Bust(BustStep),
     Skeleton(SkeletonStep),
     /// Opens the item at `key` on `page`.
     Item {
@@ -180,15 +177,6 @@ pub enum DialogName {
 pub enum ModelStep {
     Open(String),
     Bottom(BottomTab),
-}
-
-#[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum BustStep {
-    Open(String),
-    /// Picks the face of this name, none picking no face.
-    Face(Option<String>),
-    Drop(PathBuf),
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -508,7 +496,6 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
         ),
         SceneStep::Bottom(tab) => editor.bottom_tab = *tab,
         SceneStep::Model(step) => model_step(editor, step),
-        SceneStep::Bust(step) => bust_step(editor, step),
         SceneStep::Skeleton(step) => skeleton_step(editor, step),
         SceneStep::Item { key, page } => {
             editor.open_row(ItemDef::TABLE, key);
@@ -678,39 +665,6 @@ fn model_step(editor: &mut Editor, step: &ModelStep) {
     match step {
         ModelStep::Open(_) => {}
         ModelStep::Bottom(tab) => editor.bottom_tab = *tab,
-    }
-}
-
-fn bust_step(editor: &mut Editor, step: &BustStep) {
-    if let BustStep::Open(key) = step {
-        editor.select(RowSelection::row(BustDef::TABLE, key));
-        editor.open_tab(EditorTab::Bust { key: key.clone() });
-        return;
-    }
-    let Some(EditorTab::Bust { key }) = crate::tabs::active_tab(editor) else {
-        return;
-    };
-    bust::ensure_view(editor, &key);
-    match step {
-        BustStep::Open(_) => {}
-        BustStep::Face(None) => {
-            editor.views.bust.views.view_mut(&key).face = None;
-            editor.select(RowSelection::row(BustDef::TABLE, &key));
-        }
-        BustStep::Face(Some(face)) => {
-            let found = editor
-                .read::<BustDef>(&key)
-                .and_then(Result::ok)
-                .and_then(|row| {
-                    bust::faces::faces(&row)
-                        .into_iter()
-                        .find(|found| found.name == *face)
-                });
-            if let Some(found) = found {
-                bust::select_face(editor, &key, &found);
-            }
-        }
-        BustStep::Drop(path) => editor.views.bust.drops.push(path.clone()),
     }
 }
 

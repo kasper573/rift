@@ -19,7 +19,6 @@ use engine::systems::area::world_map::WorldMapDef;
 use engine::systems::attention::AttentionDef;
 use engine::systems::class::ClassDef;
 use engine::systems::crafting::RecipeBookDef;
-use engine::systems::dialogue::bust::BustDef;
 use engine::systems::input::map::InputDef;
 use engine::systems::interface::{CursorDef, InterfaceIconDef};
 use engine::systems::item::{ItemDef, ToolTypeDef};
@@ -170,7 +169,6 @@ impl KindFamily {
             | ModelDef::TABLE
             | ModelPartDef::TABLE
             | MaterialDef::TABLE
-            | BustDef::TABLE
             | SkeletonDef::TABLE => KindFamily::Characters,
             ItemDef::TABLE
             | ShopDef::TABLE
@@ -221,7 +219,6 @@ pub fn of_table(table: &str) -> KindIcon {
         ModelDef::TABLE => KindIcon::plain(phosphor::PERSON_ARMS_SPREAD).unpictured(),
         ModelPartDef::TABLE => KindIcon::plain(phosphor::PUZZLE_PIECE).unpictured(),
         MaterialDef::TABLE => KindIcon::plain(phosphor::PALETTE).unpictured(),
-        BustDef::TABLE => KindIcon::plain(phosphor::USER_SQUARE).unpictured(),
         SkeletonDef::TABLE => KindIcon::plain(phosphor::BONE).unpictured(),
         StanceDef::TABLE => KindIcon::plain(phosphor::HAND_FIST),
         ItemDef::TABLE => KindIcon::plain(phosphor::BACKPACK),

@@ -9,12 +9,10 @@ use engine::core::script::Arrow;
 use engine::core::vfx::VfxShaderDef;
 use engine::core::vfx::shader::SHADER_SOURCE;
 use engine::systems::area::prop::{PROP_GLB, PropDef};
-use engine::systems::dialogue::bust::{BUST_FACES, BustDef, GenericExpression};
 use engine::systems::item::{ItemDef, ItemKind, ItemModule};
 use engine::systems::script::{Node, RiftEvent, RunnerKind, ScriptDef, ScriptId, ScriptModule};
 use engine::systems::skill::{SkillDef, SkillModule};
 use include_dir::{Dir, include_dir};
-use strum::VariantArray;
 
 use crate::project::{ContentEdit, FileBytes, Project};
 use crate::rows;
@@ -117,15 +115,6 @@ fn blank_parts(table: &str) -> Vec<(String, FileBytes)> {
         BabbleBankDef::TABLE => LETTERS
             .chars()
             .map(|letter| (BABBLE_LETTERS.named(&letter.to_string(), "wav"), silence()))
-            .collect(),
-        BustDef::TABLE => GenericExpression::VARIANTS
-            .iter()
-            .map(|expression| {
-                (
-                    BUST_FACES.named(expression.as_ref(), "png"),
-                    default("blank.png"),
-                )
-            })
             .collect(),
         PropDef::TABLE => vec![(
             PROP_GLB.named("", "glb"),

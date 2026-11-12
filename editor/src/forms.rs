@@ -34,7 +34,6 @@ use crate::project::{Project, ProjectFiles};
 use crate::schema::{self, KeptValues, SchemaKind, SchemaShapes, SchemaVariant};
 use crate::tabs::{file_title, shown_path};
 use crate::usages::ContentUsages;
-use crate::views::bust::faces;
 use crate::views::script::nodes::NodeCatalogue;
 use crate::views::vfx;
 use crate::{audio, condition, picker, spans, thumbs};
@@ -537,7 +536,6 @@ fn plain(
             SchemaMark::Asset => return asset(ui, cx, schema, value, path),
             SchemaMark::Place => return place(ui, cx, schema, value, path),
             SchemaMark::Color => return color(ui, cx, schema, value, path),
-            SchemaMark::Face => return face(ui, cx, value, path),
             SchemaMark::Span => {
                 return as_type(ui, cx, value, path, |ui, cx, span| {
                     spans::edit(ui, cx, span, path)
@@ -2117,15 +2115,6 @@ fn asset(
         return FormChange::at(path);
     }
     FormChange::default()
-}
-
-fn face(ui: &mut Ui, cx: &mut FormCx, value: &mut Value, path: &str) -> FormChange {
-    let bust = cx
-        .speaker
-        .as_deref()
-        .and_then(|speaker| faces::bust_of_npc(cx.project, speaker));
-    let faces = faces::face_names(bust.as_deref());
-    enum_combo(ui, cx, &faces, value, path)
 }
 
 /// A name a body knows, picked from those there are: a move some skeleton declares, or a joint, a

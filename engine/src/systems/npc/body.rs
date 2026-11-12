@@ -243,14 +243,16 @@ impl Drive {
     /// Whether the act the drive was worked out for is still the npc's current one. Drives are
     /// worked out from the world as the tick found it, and an order made since in the same tick
     /// replaces the act: the drive is then left for the next tick to work out anew, so it never
-    /// ends or moves an act it wasn't worked out for.
+    /// ends or moves an act it wasn't worked out for. A wander isn't set out on while the body
+    /// plays a motion either, which the walk would cut short.
     fn still_current(&self, world: &World, npc: Entity) -> bool {
         match self {
-            Drive::Step(running)
-            | Drive::Walk(running, _)
-            | Drive::Wander(running, _)
-            | Drive::Done(running, _) => {
+            Drive::Step(running) | Drive::Walk(running, _) | Drive::Done(running, _) => {
                 world.get::<Body>(npc).and_then(|body| body.current) == Some(*running)
+            }
+            Drive::Wander(running, _) => {
+                world.get::<Body>(npc).and_then(|body| body.current) == Some(*running)
+                    && !actor::playing::playing(world, npc)
             }
             Drive::Halt | Drive::Drop | Drive::Start => true,
         }
@@ -275,6 +277,7 @@ fn drive_of(world: &World, npc: Entity, talking: &[Entity]) -> Option<Drive> {
             }
             Drive::Done(current, Outcome::Next)
         }
+        Act::Wander { .. } if actor::playing::playing(world, npc) => return None,
         Act::Wander { leash } => Drive::Wander(current, wander_ground(world, npc, leash)),
         Act::WalkTo { to, within } => Drive::Walk(
             current,

@@ -10,6 +10,7 @@ use crate::core::script::{
     Answer, Arrow, Compiler, EffectDef, EffectStep, REFUSED, ScriptFault, ValueType,
 };
 use crate::systems::dialogue;
+use crate::systems::dialogue::camera::DialogueCamera;
 use crate::systems::item::{ExchangeRefusal, Inventory, ItemStack};
 use crate::systems::player::player_requests;
 use crate::systems::script::{
@@ -68,6 +69,7 @@ impl EffectDef<RiftScripting> for ItemPrompt {
             .map(|value| cx.expr(value, ValueType::Text))
             .collect::<Result<Vec<_>, _>>()?;
         let (title, spans, slots) = (self.title.clone(), self.text.clone(), self.slots);
+        let camera = cx.camera();
         Ok(Box::new(move |world, flow, cx| {
             let Some(player) = effects::aimed_character(world, cx, &who) else {
                 return EffectStep::Done;
@@ -77,6 +79,7 @@ impl EffectDef<RiftScripting> for ItemPrompt {
                 title: title.clone(),
                 text: (!spans.is_empty()).then(|| LineText::spoken(&spans, &spoken)),
                 slots,
+                camera,
             };
             if open(world, player, flow, asked, PromptKind::Offer) {
                 EffectStep::Pause
@@ -178,6 +181,7 @@ pub struct Asked {
     pub title: String,
     pub text: Option<LineText>,
     pub slots: u32,
+    pub camera: DialogueCamera,
 }
 
 #[derive(Component)]
@@ -216,6 +220,7 @@ pub fn open(
         Vec::new(),
         Answer::Output(CLOSED),
         None,
+        asked.camera,
     ) {
         return false;
     }

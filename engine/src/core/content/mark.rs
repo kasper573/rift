@@ -36,8 +36,6 @@ pub enum SchemaMark {
     Condition,
     /// A whole number counting something.
     Count,
-    /// The name of one of a bust's faces.
-    Face,
     /// The arrow a flow takes when its step fails.
     Fails,
     /// A map whose keys are fixed: none is added, removed or renamed.

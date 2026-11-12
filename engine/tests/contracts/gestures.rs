@@ -1,7 +1,10 @@
+use engine::core::math::Pos;
 use engine::core::units::{Millis, Seconds};
 use engine::systems::actor::playing::Playing;
 use engine::systems::actor::skeleton::GestureName;
 use engine::systems::actor::{self, Appearance, ModelDef, Motion};
+use engine::systems::movement;
+use engine::systems::npc;
 use engine::systems::region;
 use engine::systems::script;
 use serde_json::{Value, json};
@@ -12,6 +15,8 @@ fn a_script_makes_an_npc_gesture_where_its_body_names_the_gesture() {
     struct Case {
         case: &'static str,
         nodes: Value,
+        walking: bool,
+        wanders: bool,
         waves: bool,
     }
     let cases = [
@@ -22,6 +27,31 @@ fn a_script_makes_an_npc_gesture_where_its_body_names_the_gesture() {
                 "wave": { "type": "animate", "who": { "type": "owner" }, "gesture": "wave", "wait": "end", "next": "dress" },
                 "dress": { "type": "set_appearance", "appearance": { "model": path("model", "giant") } },
             }),
+            walking: false,
+            wanders: false,
+            waves: true,
+        },
+        Case {
+            case: "a body on its way somewhere stops where it is to wave",
+            nodes: json!({
+                "started": { "type": "on", "event": "started", "next": "wave" },
+                "wave": { "type": "animate", "who": { "type": "owner" }, "gesture": "wave", "wait": "end", "next": "dress" },
+                "dress": { "type": "set_appearance", "appearance": { "model": path("model", "giant") } },
+            }),
+            walking: true,
+            wanders: false,
+            waves: true,
+        },
+        Case {
+            case: "a body sent wandering as it waves sets out once the wave is over",
+            nodes: json!({
+                "started": { "type": "on", "event": "started", "next": "wave" },
+                "wave": { "type": "animate", "who": { "type": "owner" }, "gesture": "wave", "next": "roam" },
+                "roam": { "type": "wander", "leash": 3, "priority": 1, "next": "dress" },
+                "dress": { "type": "set_appearance", "appearance": { "model": path("model", "giant") } },
+            }),
+            walking: false,
+            wanders: true,
             waves: true,
         },
         Case {
@@ -32,18 +62,26 @@ fn a_script_makes_an_npc_gesture_where_its_body_names_the_gesture() {
                 "wave": { "type": "animate", "who": { "type": "owner" }, "gesture": "wave", "wait": "end", "next": "dress" },
                 "dress": { "type": "set_appearance", "appearance": { "model": path("model", "giant") } },
             }),
+            walking: false,
+            wanders: false,
             waves: false,
         },
     ];
     for case in cases {
         let mut sim = Sim::new(game(case.nodes).load());
-        sim.serve("room")
-            .add(actor::playing::progress)
-            .plan(script::RunFlows::default());
+        sim.serve("room").add(actor::playing::progress).plan((
+            script::RunFlows::default(),
+            npc::body::DriveBodies::default(),
+            movement::AdvanceWalks::default(),
+        ));
         script::spawn_stateless(&mut sim.world);
         region::hold_whole(&mut sim.world);
         let guard = sim.npc("guard");
         let giant = sim.id::<ModelDef>("giant");
+        if case.walking {
+            movement::goto(&mut sim.world, guard, Pos::new(2.0, 6.0));
+        }
+        sim.tick();
         sim.tick();
 
         let dressed =
@@ -57,6 +95,11 @@ fn a_script_makes_an_npc_gesture_where_its_body_names_the_gesture() {
             case.case
         );
         if let Some(playing) = playing {
+            assert!(
+                !movement::moving(&sim.world, guard),
+                "{}: it walks no further",
+                case.case
+            );
             assert_eq!(
                 Millis((playing.ends.0 - playing.started.0) as f32),
                 WAVE,
@@ -64,37 +107,59 @@ fn a_script_makes_an_npc_gesture_where_its_body_names_the_gesture() {
                 case.case
             );
             assert!(
-                !dressed(&sim),
+                case.wanders || !dressed(&sim),
                 "{}: the script waits for the wave",
                 case.case
             );
             assert!(
-                sim.run_until(1.0, |world| world.get::<Playing>(guard).is_none()),
+                sim.run_until(1.0, |world| world.get::<Playing>(guard).is_none()
+                    || movement::moving(world, guard)),
                 "{}",
                 case.case
             );
-            sim.tick();
+            assert!(
+                sim.world.get::<Playing>(guard).is_none(),
+                "{}: nothing cuts the wave short",
+                case.case
+            );
+            assert!(
+                !case.wanders || sim.run_until(1.0, |world| movement::moving(world, guard)),
+                "{}: it sets out",
+                case.case
+            );
         }
-        assert!(dressed(&sim), "{}: the script goes on", case.case);
+        assert!(
+            sim.run_until(10.0, |world| world.get::<Appearance>(guard)
+                == Some(&Appearance::of(giant))),
+            "{}: the script goes on",
+            case.case
+        );
     }
 }
 
 #[test]
 fn a_script_asking_for_a_gesture_no_skeleton_declares_is_refused() {
-    let report = game(json!({
-        "started": { "type": "on", "event": "started", "next": "bow" },
-        "bow": { "type": "animate", "who": { "type": "owner" }, "gesture": "bow" },
-    }))
-    .try_load()
-    .err()
-    .expect("refused");
-    let rules: Vec<&str> = report
-        .errors
-        .iter()
-        .filter(|error| error.file == path("script", "guard_start"))
-        .map(|error| error.problem.rule)
-        .collect();
-    assert_eq!(rules, ["undeclared gesture"], "{report}");
+    let bowing = json!({ "type": "animate", "who": { "type": "owner" }, "gesture": "bow" });
+    let said_bowing = json!({
+        "type": "dialogue",
+        "lines": [{ "by": { "type": "npc", "npc": "guard.npc.json", "gesture": "bow" }, "text": ["Welcome."] }],
+    });
+    for (asks, bow) in [("an animation", bowing), ("a line", said_bowing)] {
+        let report = game(json!({
+            "started": { "type": "on", "event": "started", "next": "bow" },
+            "bow": bow,
+        }))
+        .try_load()
+        .err()
+        .expect("refused");
+        let rules: Vec<&str> = report
+            .errors
+            .iter()
+            .filter(|error| error.file == path("script", "guard_start"))
+            .map(|error| error.problem.rule)
+            .collect();
+        assert_eq!(rules, ["undeclared gesture"], "{asks}: {report}");
+    }
 }
 
 /// How long a wave takes.

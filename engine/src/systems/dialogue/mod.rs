@@ -1,4 +1,4 @@
-pub mod bust;
+pub mod camera;
 pub mod stage;
 
 use std::collections::HashSet;
@@ -15,15 +15,18 @@ use crate::core::content::{Content, Fixture};
 use crate::core::script::{
     self, Answer, BoxEnding, ChoiceOffer, ChoiceState, DialogueView, RevealDef, ScriptFault,
 };
-use crate::core::units::Meters;
+use crate::core::units::{MeterPos, Meters};
 use crate::systems::GameSettings;
 use crate::systems::actor::Name;
+use crate::systems::actor::skeleton::GestureName;
 use crate::systems::attention::{AttentionId, AttentionMark};
 use crate::systems::combat::Attitude;
 use crate::systems::history::{self, HistoryEntry, HistoryMark, HistoryTopic};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::item::{Inventory, ItemId, ItemStack};
+use crate::systems::movement::Position;
 use crate::systems::notification::{self, Notification, NotificationKind};
+use crate::systems::npc::Npc;
 use crate::systems::player::{CommandLock, player_requests};
 use crate::systems::quest::QuestId;
 use crate::systems::reach::{self, Tether};
@@ -34,7 +37,7 @@ use crate::systems::script::{
 use crate::systems::stat;
 use crate::systems::text::LineText;
 use crate::systems::visibility;
-use bust::Expression;
+use camera::DialogueCamera;
 
 pub fn register(app: &mut App) {
     use bevy_replication::AppMessageExt;
@@ -60,6 +63,8 @@ pub struct Conversation {
     pub node: String,
     #[entities]
     pub with: Option<Entity>,
+    /// How the conversation is seen, unless the line on show says otherwise.
+    pub camera: DialogueCamera,
     pub lines: Vec<SpokenLine>,
     pub choices: Vec<ChoiceView>,
     pub panel: Option<ConversationPanel>,
@@ -89,7 +94,8 @@ pub struct Remark {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct SpokenLine {
     pub by: Speaker,
-    pub face: Option<Expression>,
+    pub gesture: Option<GestureName>,
+    pub camera: Option<DialogueCamera>,
     pub text: LineText,
 }
 
@@ -230,10 +236,12 @@ pub fn show(world: &mut World, flow: FlowKey, subject: Entity, view: DialogueVie
         .iter()
         .map(|(line, values)| SpokenLine {
             by: line.by,
-            face: line.face.clone(),
+            gesture: line.gesture.clone(),
+            camera: line.camera,
             text: LineText::spoken(&line.text, values),
         })
         .collect();
+    let bystanders = bystanders(world, subject, &lines);
     for line in &lines {
         record_line(world, subject, line);
     }
@@ -261,6 +269,8 @@ pub fn show(world: &mut World, flow: FlowKey, subject: Entity, view: DialogueVie
     if let Some(mut session) = world.get_mut::<ConversationSession>(subject) {
         session.step = step;
         session.node = view.node.to_owned();
+        session.camera = view.camera;
+        session.bystanders = bystanders;
         session.lines = lines;
         session.offers = offers;
         session.panel = panel;
@@ -279,6 +289,7 @@ pub fn card(
     offers: Vec<CardOffer>,
     on_leave: Answer,
     panel: Option<ConversationPanel>,
+    camera: DialogueCamera,
 ) -> bool {
     if !begin(world, flow, subject) {
         return false;
@@ -286,6 +297,7 @@ pub fn card(
     let step = next_step(world);
     if let Some(mut session) = world.get_mut::<ConversationSession>(subject) {
         session.step = step;
+        session.camera = camera;
         session.panel = panel;
         session.offers = offers
             .into_iter()
@@ -332,7 +344,8 @@ pub fn remark(world: &mut World, player: Entity, to: Entity, line: &ScriptLine) 
     let nth = session.remark.as_ref().map_or(0, |remark| remark.nth) + 1;
     let line = SpokenLine {
         by: line.by,
-        face: line.face.clone(),
+        gesture: line.gesture.clone(),
+        camera: line.camera,
         text: condition::spoken(world, player, &line.text),
     };
     record_line(world, player, &line);
@@ -348,19 +361,44 @@ pub fn in_conversation(world: &World, player: Entity) -> bool {
 
 pub type Sessions = QueryState<(Entity, &'static ConversationSession)>;
 
+/// Everyone a player talks with: whoever the conversation is with, and whoever else says its
+/// lines.
 pub fn counterparts<'a>(
     sessions: impl Iterator<Item = (Entity, &'a ConversationSession)>,
 ) -> Vec<Entity> {
-    sessions.filter_map(|(_, session)| session.with).collect()
+    sessions
+        .flat_map(|(_, session)| session.with.into_iter().chain(session.bystanders.clone()))
+        .collect()
 }
 
-/// Everyone in a conversation: each player talking and whoever they talk with.
+/// Everyone in a conversation: each player talking and everyone they talk with.
 pub fn parties<'a>(
     sessions: impl Iterator<Item = (Entity, &'a ConversationSession)>,
 ) -> Vec<Entity> {
     sessions
-        .flat_map(|(player, session)| [Some(player), session.with])
-        .flatten()
+        .flat_map(|(player, session)| {
+            [player]
+                .into_iter()
+                .chain(session.with)
+                .chain(session.bystanders.clone())
+        })
+        .collect()
+}
+
+/// Who each one in a conversation turns to, as (who, to whom): a player and whoever they talk
+/// with to each other, and whoever else says its lines to the player.
+pub fn turned<'a>(
+    sessions: impl Iterator<Item = (Entity, &'a ConversationSession)>,
+) -> Vec<(Entity, Entity)> {
+    sessions
+        .flat_map(|(player, session)| {
+            session
+                .with
+                .map(|with| (player, with))
+                .into_iter()
+                .chain(session.with.map(|with| (with, player)))
+                .chain(session.bystanders.iter().map(move |&other| (other, player)))
+        })
         .collect()
 }
 
@@ -447,6 +485,9 @@ pub struct ConversationSession {
     flow: FlowKey,
     node: String,
     with: Option<Entity>,
+    /// Whoever says the lines on show beside the one the conversation is with.
+    bystanders: Vec<Entity>,
+    camera: DialogueCamera,
     tether: Option<Tether>,
     lines: Vec<SpokenLine>,
     offers: Vec<Offer>,
@@ -475,6 +516,47 @@ enum Pick {
 
 #[derive(Resource, Default)]
 pub(crate) struct StepCounter(u32);
+
+/// The npcs in sight of `player` that say `lines` beside the one the conversation is with: of each
+/// kind that speaks, the nearest.
+fn bystanders(world: &mut World, player: Entity, lines: &[SpokenLine]) -> Vec<Entity> {
+    let Some(at) = world.get::<Position>(player).map(|position| position.pos) else {
+        return Vec::new();
+    };
+    let with = counterpart_of(world, player);
+    let sight = visibility::sight(world);
+    let mut speakers: Vec<_> = lines
+        .iter()
+        .filter_map(|line| match line.by {
+            Speaker::Npc(npc) => Some(npc),
+            _ => None,
+        })
+        .filter(|&npc| {
+            with.and_then(|with| world.get::<Npc>(with))
+                .is_none_or(|with| with.def != npc)
+        })
+        .collect();
+    speakers.sort_unstable();
+    speakers.dedup();
+    let bodies: Vec<(Entity, &Npc, &Position)> = world
+        .query::<(Entity, &Npc, &Position)>()
+        .iter(world)
+        .collect();
+    speakers
+        .into_iter()
+        .filter_map(|npc| {
+            bodies
+                .iter()
+                .filter(|(body, seen, position)| {
+                    seen.def == npc
+                        && position.pos.distance(at) <= sight
+                        && !stat::is_dead(world, *body)
+                })
+                .min_by(|(.., a), (.., b)| a.pos.distance(at).0.total_cmp(&b.pos.distance(at).0))
+                .map(|(body, ..)| *body)
+        })
+        .collect()
+}
 
 fn heard_key(script: &str, node: &str) -> String {
     format!("{script}#{node}")
@@ -513,6 +595,8 @@ fn begin(world: &mut World, flow: FlowKey, subject: Entity) -> bool {
             flow,
             node: String::new(),
             with,
+            bystanders: Vec::new(),
+            camera: DialogueCamera::default(),
             tether,
             lines: Vec::new(),
             offers: Vec::new(),
@@ -641,6 +725,7 @@ fn refresh_view(world: &mut World, player: Entity) {
         step: session.step,
         node: session.node.clone(),
         with: session.with,
+        camera: session.camera,
         lines: session.lines.clone(),
         choices: session
             .offers

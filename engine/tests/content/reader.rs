@@ -7,7 +7,6 @@ use engine::systems::GameSettings;
 use engine::systems::actor::{ModelDef, ModelPartDef};
 use engine::systems::area::AreaDef;
 use engine::systems::area::SurfaceDef;
-use engine::systems::dialogue::bust::{BustDef, GenericExpression};
 use serde_json::json;
 use testkit::{Game, path};
 
@@ -19,18 +18,13 @@ fn reader(game: &Game) -> FolderReader {
 
 #[test]
 fn a_file_reads_with_the_parts_of_its_bundle_and_the_media_it_names() {
-    let game = game().model("hero", 1.0, json!([])).bust("hero");
+    let game = game().model("hero", 1.0, json!([]));
     let reader = reader(&game);
     let part: ModelPartDef = reader.read(&path("model_part", "hero")).expect("reads");
-    let bust: BustDef = reader.read(&path("bust", "hero")).expect("reads");
 
     assert_eq!(
         part.mesh.expect("a mesh for every build").as_str(),
         testkit::part_file("hero")
-    );
-    assert_eq!(
-        bust.generic.of(GenericExpression::Angry).as_str(),
-        format!("{}/faces/angry.png", path("bust", "hero"))
     );
 }
 
@@ -97,7 +91,7 @@ fn a_file_of_another_type_does_not_read() {
 
 #[test]
 fn a_file_writes_back_exactly_as_writing_the_whole_game_does() {
-    let game = || game().sfx("hit").model("hero", 1.0, json!([])).bust("hero");
+    let game = || game().sfx("hit").model("hero", 1.0, json!([]));
     let whole = tempfile::tempdir().expect("a folder");
     write(game().registry(), game().load(), whole.path()).expect("written");
     let game = game();
@@ -118,9 +112,9 @@ fn a_file_writes_back_exactly_as_writing_the_whole_game_does() {
     let hero = path("model", "hero");
     let model: ModelDef = reader.read(&hero).expect("reads");
     same_as_whole(reader.write(&hero, &model).expect("writes").files);
-    let hero = path("bust", "hero");
-    let bust: BustDef = reader.read(&hero).expect("reads");
-    same_as_whole(reader.write(&hero, &bust).expect("writes").files);
+    let hit = path("sfx", "hit");
+    let sfx: SfxDef = reader.read(&hit).expect("reads");
+    same_as_whole(reader.write(&hit, &sfx).expect("writes").files);
     let settings: GameSettings = reader.settings().expect("reads");
     same_as_whole(reader.write_settings(&settings).expect("writes"));
 }

@@ -280,24 +280,6 @@ fn grey(width: u32, height: u32, depth: png::BitDepth) -> Vec<u8> {
 }
 
 #[test]
-fn a_bust_missing_a_generic_face_is_refused_naming_it() {
-    let report = game()
-        .bust("hero")
-        .remove("hero.bust/faces/happy.png")
-        .try_load()
-        .err()
-        .expect("refused");
-
-    assert_eq!(
-        rules_in(&report, "hero.bust"),
-        vec![(
-            "missing file",
-            "a face for every generic expression, faces/<name>.png"
-        )]
-    );
-}
-
-#[test]
 fn a_model_over_the_style_budget_is_refused_at_its_row() {
     let rock = format!("{}/model.glb", path("prop", "rock"));
     let report = game()

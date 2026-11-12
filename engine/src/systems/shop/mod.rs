@@ -16,6 +16,7 @@ use crate::core::script::{Answer, Arrow, Compiler, EffectDef, EffectStep, Script
 use crate::core::time::{UnixMillis, WallClock};
 use crate::core::units::Seconds;
 use crate::systems::attention::AttentionId;
+use crate::systems::dialogue::camera::DialogueCamera;
 use crate::systems::item::{
     ExchangeRefusal, Inventory, ItemCategory, ItemId, ItemModuleKind, ItemStack,
 };
@@ -239,12 +240,12 @@ impl EffectDef<RiftScripting> for OpenShop {
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim(cx, &self.who)?;
-        let shop = self.shop;
+        let (shop, camera) = (self.shop, cx.camera());
         Ok(Box::new(move |world, flow, cx| {
             let Some(player) = effects::aimed_character(world, cx, &who) else {
                 return EffectStep::Done;
             };
-            if open(world, player, shop, flow) {
+            if open(world, player, shop, flow, camera) {
                 EffectStep::Pause
             } else {
                 EffectStep::Done
@@ -360,7 +361,13 @@ pub struct ShopVisit {
     reactions: u32,
 }
 
-fn open(world: &mut World, player: Entity, shop: ShopId, flow: FlowKey) -> bool {
+fn open(
+    world: &mut World,
+    player: Entity,
+    shop: ShopId,
+    flow: FlowKey,
+    camera: DialogueCamera,
+) -> bool {
     if !dialogue::card(
         world,
         flow,
@@ -368,6 +375,7 @@ fn open(world: &mut World, player: Entity, shop: ShopId, flow: FlowKey) -> bool 
         Vec::new(),
         Answer::Output("closed"),
         None,
+        camera,
     ) {
         return false;
     }
@@ -442,6 +450,25 @@ pub fn check_all(loading: &mut Loading) {
                     &format!("/modules/{index}/requires"),
                     ContentProblem::new(fault.rule, "the condition", fault.expected),
                 );
+            }
+            if let ShopModule::Reactions(reactions) = module {
+                for (to, lines) in [
+                    ("bought", &reactions.bought),
+                    ("sold", &reactions.sold),
+                    ("cant_afford", &reactions.cant_afford),
+                ] {
+                    for (line, fault) in lines
+                        .iter()
+                        .enumerate()
+                        .filter_map(|(line, said)| Some((line, said.fault(&content)?)))
+                    {
+                        loading.row_error(
+                            id,
+                            &format!("/modules/{index}/{to}/{line}/by/gesture"),
+                            ContentProblem::new(fault.rule, "the line", fault.expected),
+                        );
+                    }
+                }
             }
             let ShopModule::Sells(offer) = module else {
                 continue;

@@ -425,7 +425,6 @@ fn spawn_sturdy(
     let def = NpcDef {
         name: model.name(content).to_owned(),
         appearance: Appearance::of(model),
-        bust: None,
         stats: Stats(BTreeMap::from([
             (StatKind::MaxHealth, STURDY),
             (StatKind::Health, STURDY),

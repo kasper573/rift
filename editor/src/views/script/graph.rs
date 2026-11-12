@@ -5,7 +5,6 @@ use ui::theme;
 use ui::words;
 
 use engine::core::script::{Exit, NodeKind};
-use engine::systems::dialogue::bust::Expression;
 use engine::systems::script::{Node, ScriptLine, Speaker};
 use engine::systems::text::{Span, plain};
 use serde::{Deserialize, Serialize};
@@ -242,14 +241,6 @@ pub enum ScriptGraphAction {
     },
 }
 
-pub(crate) struct FaceImage {
-    pub texture: egui::TextureId,
-    pub uv: Rect,
-}
-
-/// The bust each speaker shows in each face their lines name.
-pub(crate) type SpeakerFaces = HashMap<(Speaker, Option<Expression>), FaceImage>;
-
 pub(crate) struct ScriptGraphViewer<'a> {
     pub doc: &'a ScriptDoc,
     pub text: NodeText<'a>,
@@ -257,7 +248,6 @@ pub(crate) struct ScriptGraphViewer<'a> {
     pub lit: &'a HashSet<String>,
     pub current: Option<&'a str>,
     pub selected: &'a HashSet<String>,
-    pub faces: &'a SpeakerFaces,
     pub actions: Vec<ScriptGraphAction>,
     pub clicks: Vec<NodeClick>,
     pub to_global: TSTransform,
@@ -317,7 +307,7 @@ impl ScriptGraphViewer<'_> {
         for (index, line) in lines.iter().take(shown).enumerate() {
             ui.horizontal_top(|ui| {
                 ui.spacing_mut().item_spacing.x = big(6.0);
-                self.face(ui, line);
+                self.speaker_mark(ui, line);
                 let width = big(CARD - FACE - 6.0);
                 ui.allocate_ui_with_layout(
                     Vec2::new(width, 0.0),
@@ -375,49 +365,23 @@ impl ScriptGraphViewer<'_> {
         }
     }
 
-    fn face(&self, ui: &mut Ui, line: &ScriptLine) {
+    fn speaker_mark(&self, ui: &mut Ui, line: &ScriptLine) {
         let (rect, _) = ui.allocate_exact_size(Vec2::splat(big(FACE)), egui::Sense::hover());
         let rect = rect.translate(Vec2::new(0.0, big(1.0)));
-        let image = self
-            .faces
-            .get(&(line.by, line.face.clone()))
-            .or_else(|| self.faces.get(&(line.by, None)));
-        match image {
-            Some(image) => {
-                ui.painter().add(egui::Shape::image(
-                    image.texture,
-                    rect,
-                    image.uv,
-                    Color32::WHITE,
-                ));
-                ui.painter().rect_stroke(
-                    rect,
-                    big(4.0),
-                    Stroke::new(big(1.0), theme::BORDER),
-                    egui::StrokeKind::Inside,
-                );
-            }
-            None => {
-                let glyph = match line.by {
-                    Speaker::Npc(_) => "N",
-                    Speaker::Object => "I",
-                    Speaker::Narrator | Speaker::Player => "–",
-                };
-                face_placeholder(ui.painter(), rect, glyph);
-            }
-        }
+        let glyph = match line.by {
+            Speaker::Npc(_) => "N",
+            Speaker::Object => "I",
+            Speaker::Narrator | Speaker::Player => "–",
+        };
+        ui.painter().rect_filled(rect, big(4.0), theme::RAISED);
+        ui.painter().text(
+            rect.center(),
+            Align2::CENTER_CENTER,
+            glyph,
+            FontId::monospace(big(11.0)),
+            theme::MUTED,
+        );
     }
-}
-
-fn face_placeholder(painter: &egui::Painter, rect: Rect, glyph: &str) {
-    painter.rect_filled(rect, big(4.0), theme::RAISED);
-    painter.text(
-        rect.center(),
-        Align2::CENTER_CENTER,
-        glyph,
-        FontId::monospace(big(11.0)),
-        theme::MUTED,
-    );
 }
 
 pub fn style() -> SnarlStyle {

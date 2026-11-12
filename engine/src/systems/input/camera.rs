@@ -1,6 +1,6 @@
 //! Steering the camera: keys turn it a step, tilt it a step and bring it home, the wheel zooms
 //! it, and moving the pointer while turning or tilting it is held turns or tilts it freely, the
-//! camera trailing the pointer as it eases.
+//! camera trailing the pointer as it eases. A camera put on a shot is not steered.
 
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
@@ -40,7 +40,10 @@ fn steer_by_keys(world: &mut World) {
     let up = map::just_pressed(world, InputAction::TiltUp);
     let down = map::just_pressed(world, InputAction::TiltDown);
     let home = map::just_pressed(world, InputAction::CameraHome);
-    let Some(mut rig) = world.get_resource_mut::<CameraRig>() else {
+    let Some(mut rig) = world
+        .get_resource_mut::<CameraRig>()
+        .filter(|rig| !rig.staged())
+    else {
         return;
     };
     let CameraFraming {
@@ -77,6 +80,13 @@ fn steer_by_pointer(world: &mut World) {
     let moved = world.resource::<AccumulatedMouseMotion>().delta;
     let turned = map::pressed(world, InputAction::TurnCamera).then_some(moved.x);
     let tilted = map::pressed(world, InputAction::TiltCamera).then_some(moved.y);
+    if world
+        .get_resource::<CameraRig>()
+        .is_none_or(|rig| rig.staged())
+    {
+        world.resource_mut::<Scrolled>().0 = 0.0;
+        return;
+    }
     let mut gathered = world.resource_mut::<Scrolled>();
     gathered.0 += steps;
     let zoom = gathered.0.trunc();

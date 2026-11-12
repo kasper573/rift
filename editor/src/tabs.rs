@@ -8,7 +8,6 @@ use engine::systems::area::AreaDef;
 use engine::systems::area::blueprint::BlueprintDef;
 use engine::systems::area::prop::PropDef;
 use engine::systems::area::world_map::{WorldMap, WorldMapDef};
-use engine::systems::dialogue::bust::BustDef;
 use engine::systems::input::map::InputDef;
 use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::script::ScriptDef;
@@ -31,7 +30,6 @@ pub enum EditorTab {
     Script(ScriptRow),
     Model { key: String },
     ModelPart { key: String },
-    Bust { key: String },
     Prop { key: String },
     Spreadsheet { table: String },
     Game,
@@ -67,7 +65,6 @@ impl EditorTab {
             | EditorTab::Blueprint { key }
             | EditorTab::Model { key }
             | EditorTab::ModelPart { key }
-            | EditorTab::Bust { key }
             | EditorTab::Prop { key } => file_title(key).to_owned(),
             EditorTab::Rows { table, keys } => format!("{} {table}s", keys.len()),
             EditorTab::Script(owner) => owner.title(),
@@ -103,7 +100,6 @@ impl EditorTab {
             EditorTab::Script(owner) => Some(owner.row()),
             EditorTab::Model { key } => Some((ModelDef::TABLE.to_owned(), key.clone())),
             EditorTab::ModelPart { key } => Some((ModelPartDef::TABLE.to_owned(), key.clone())),
-            EditorTab::Bust { key } => Some((BustDef::TABLE.to_owned(), key.clone())),
             EditorTab::Prop { key } => Some((PropDef::TABLE.to_owned(), key.clone())),
             EditorTab::Spreadsheet { .. } | EditorTab::Game | EditorTab::Asset { .. } => None,
         }
@@ -134,9 +130,6 @@ impl EditorTab {
                 key: key.to_owned(),
             },
             ModelPartDef::TABLE => EditorTab::ModelPart {
-                key: key.to_owned(),
-            },
-            BustDef::TABLE => EditorTab::Bust {
                 key: key.to_owned(),
             },
             PropDef::TABLE => EditorTab::Prop {
