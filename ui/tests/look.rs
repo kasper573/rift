@@ -1,6 +1,7 @@
 use egui::{Context, Pos2, Rect, Vec2};
 use strum::VariantArray;
 use ui::card::{self, Card};
+use ui::controls::{RowHover, RowLook};
 use ui::face::{self, Face};
 use ui::glyph::{CardKind, Icon, Mark, Weight};
 use ui::motion::{self, SheetClock};
@@ -271,6 +272,55 @@ fn a_sheet_lays_its_parts_out_and_shrinks_its_cross_when_small() {
         );
         assert!(small.cross.unwrap().width() < cross.width());
     });
+}
+
+#[test]
+fn a_row_under_the_pointer_is_lit_unless_its_list_lights_the_selection_alone() {
+    let lit_rows = |hover: RowHover| {
+        let ctx = context();
+        let mut lit = 0;
+        for _ in 0..3 {
+            let input = egui::RawInput {
+                screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::new(1280.0, 720.0))),
+                events: vec![egui::Event::PointerMoved(Pos2::new(100.0, 12.0))],
+                ..egui::RawInput::default()
+            };
+            let mut output = ctx.run_ui(input, |ui| {
+                for selected in [false, true] {
+                    let look = RowLook {
+                        selected,
+                        hover,
+                        ..RowLook::default()
+                    };
+                    controls::row(ui, look, |ui| ui.label("A choice"));
+                }
+            });
+            output.textures_delta.clear();
+            lit = washes(&output.shapes);
+        }
+        lit
+    };
+    assert_eq!(
+        lit_rows(RowHover::Lit),
+        2,
+        "the row under the pointer is lit beside the selected one"
+    );
+    assert_eq!(
+        lit_rows(RowHover::Unlit),
+        1,
+        "only the selected row is lit, whatever the pointer rests on"
+    );
+}
+
+fn washes(shapes: &[egui::epaint::ClippedShape]) -> usize {
+    fn count(shape: &egui::Shape) -> usize {
+        match shape {
+            egui::Shape::Vec(shapes) => shapes.iter().map(count).sum(),
+            egui::Shape::Rect(rect) => usize::from(rect.fill == ink::gold_wash(0.2)),
+            _ => 0,
+        }
+    }
+    shapes.iter().map(|clipped| count(&clipped.shape)).sum()
 }
 
 #[test]

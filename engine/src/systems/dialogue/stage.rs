@@ -6,7 +6,7 @@ use ui::float;
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
 use bevy_egui::input::egui_wants_any_keyboard_input;
-use ui::controls::{self, Pill, RowLook};
+use ui::controls::{self, Pill, RowHover, RowLook};
 use ui::egui::{
     Align, Align2, Color32, Id, LayerId, Layout, Pos2, Rect, Sense, Ui, UiBuilder, Vec2,
     WidgetInfo, WidgetType,
@@ -965,6 +965,7 @@ fn choices(ui: &mut Ui, world: &mut World, before: &StageDrawn) {
                 selected: selected == Some(index),
                 faint: choice.locked,
                 failed: refused,
+                hover: RowHover::Unlit,
             };
             let row = ui.push_id(("choice", index), |ui| {
                 controls::row(ui, look, |ui| choice_row(ui, world, &choice, index))

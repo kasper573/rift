@@ -260,6 +260,7 @@ fn row(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId, selected: bo
         selected,
         faint: tone == Tone::Done,
         failed: tone == Tone::Failed,
+        ..RowLook::default()
     };
     let shown = controls::row(ui, look, |ui| {
         ui.horizontal(|ui| {

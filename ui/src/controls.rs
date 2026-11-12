@@ -411,6 +411,17 @@ pub struct RowLook {
     pub selected: bool,
     pub faint: bool,
     pub failed: bool,
+    pub hover: RowHover,
+}
+
+/// Whether the pointer over a row lights it. A list whose selection the pointer moves lights its
+/// selection alone, so a pointer at rest on one row never lights a second beside the one the keys
+/// moved on to.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum RowHover {
+    #[default]
+    Lit,
+    Unlit,
 }
 
 pub fn row<R>(ui: &mut Ui, look: RowLook, add: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {
@@ -429,7 +440,8 @@ pub fn row<R>(ui: &mut Ui, look: RowLook, add: impl FnOnce(&mut Ui) -> R) -> Inn
             .inner
     });
     let rect = shown.response.rect;
-    let shapes = row_marks(rect, shown.response.hovered(), look.selected);
+    let hovered = look.hover == RowHover::Lit && shown.response.hovered();
+    let shapes = row_marks(rect, hovered, look.selected);
     ui.painter().set(under, shapes);
     if shown.response.has_focus() {
         focus_ring(ui.painter(), rect, 0.0);
