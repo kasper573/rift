@@ -1193,7 +1193,6 @@ pub fn light(
                 SkyWeather {
                     clouds,
                     water,
-                    rain: weather.rain,
                     rain_lean: area.climate.rain.as_ref().map_or(Vec2::ZERO, |rainfall| {
                         rainfall.lean(shown_weather(weather, 0.0).wind)
                     }),

@@ -19,7 +19,6 @@ struct Heavens {
     cloud_shift: vec2<f32>,
     cloud_second: mat2x2<f32>,
     water_edge: f32,
-    rain: f32,
     rain_lean: vec2<f32>,
 }
 
@@ -68,13 +67,12 @@ fn rain_lean() -> vec2<f32> {
     return heavens.rain_lean;
 }
 
-// How hard it rains at a point of the world, 0 none to 1 a cloudburst: as hard as the cloud it
-// falls from pours, upwind of the point by as far as the wind carries the rain on its way down
-// from the clouds' height, as the lie of the land shares the downpour out where it lands.
+// How hard it rains at a point of the world, 0 none to 1 a cloudburst: as hard as the rain field
+// tells of the ground under the point, which already falls from the cloud upwind of it as the lie
+// of the land shares the downpour out. The rain seen falling is so the rain that wets the ground,
+// rings the water and is heard, wherever the clouds' own edges lie between the field's cells.
 fn rain_under(point: vec3<f32>) -> f32 {
-    let fallen = max(heavens.cloud_base - point.y, 0.0);
-    let source = point.xz - heavens.rain_lean * fallen;
-    return heavens.rain * cloud_water_at(vec3<f32>(source.x, heavens.cloud_base, source.y)) * rain_field(point.xz).x;
+    return rain_field(point.xz).z;
 }
 
 // The noise the field is drawn from in `channel`, its cloud in 0 and its water in 1, read where
