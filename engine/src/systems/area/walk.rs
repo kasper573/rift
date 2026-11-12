@@ -33,6 +33,9 @@ pub struct Meshes {
     held: RwLock<Held>,
     patches: RwLock<BTreeMap<TileAt, Arc<[Rect<Meters>]>>>,
     meshes: [ArcSwap<NavMesh>; KINDS],
+    /// Which change of the tiles held the meshes were last joined over. One join runs at a time,
+    /// so whoever asks for one while another is under way waits for meshes that cover its tiles.
+    joined: Mutex<u64>,
 }
 
 /// A mesh as it is read: the one laid when the read began, kept whole until the read ends.
@@ -74,6 +77,7 @@ impl Meshes {
             meshes: std::array::from_fn(|_| {
                 ArcSwap::from_pointee(NavMesh::join(bounds, std::iter::empty()))
             }),
+            joined: Mutex::new(0),
         })
     }
 }
@@ -153,13 +157,11 @@ pub(super) fn hold(
     }
     match previous {
         Some(mut previous) if Arc::ptr_eq(&previous.meshes, &area.meshes) => {
-            changed |= release(&area.meshes, &std::mem::take(&mut previous.tiles));
+            release(&area.meshes, &std::mem::take(&mut previous.tiles));
         }
         other => drop(other),
     }
-    if changed {
-        join(&area.meshes);
-    }
+    join(&area.meshes);
     GroundHold {
         meshes: area.meshes.clone(),
         tiles: wanted,
@@ -646,10 +648,13 @@ fn release(meshes: &Meshes, tiles: &BTreeSet<TileAt>) -> bool {
     released
 }
 
-/// Joins the meshes anew over the tiles held, again if they change meanwhile.
+/// Joins the meshes anew over the tiles held unless they cover them already, and again if the
+/// tiles change meanwhile. Whoever holds a tile another hold is still laying the meshes over
+/// waits here until they cover it.
 fn join(meshes: &Meshes) {
-    let started = std::time::Instant::now();
+    let mut joined = meshes.joined.lock().expect("the join lock");
     loop {
+        let started = std::time::Instant::now();
         let (changes, tiles): (u64, Vec<Arc<[TileLayer; KINDS]>>) = {
             let held = meshes.held.read().expect("the held lock");
             (
@@ -660,7 +665,10 @@ fn join(meshes: &Meshes) {
                     .collect(),
             )
         };
-        let joined: Vec<Arc<NavMesh>> = (0..KINDS)
+        if *joined == changes {
+            return;
+        }
+        let laid: Vec<Arc<NavMesh>> = (0..KINDS)
             .into_par_iter()
             .map(|kind| {
                 Arc::new(NavMesh::join(
@@ -669,18 +677,15 @@ fn join(meshes: &Meshes) {
                 ))
             })
             .collect();
-        let held = meshes.held.read().expect("the held lock");
-        if held.changes == changes {
-            for (kind, mesh) in joined.into_iter().enumerate() {
-                meshes.meshes[kind].store(mesh);
-            }
-            bevy::log::debug!(
-                "meshes over {} ground tiles in {:?}",
-                tiles.len(),
-                started.elapsed()
-            );
-            return;
+        for (kind, mesh) in laid.into_iter().enumerate() {
+            meshes.meshes[kind].store(mesh);
         }
+        *joined = changes;
+        bevy::log::debug!(
+            "meshes over {} ground tiles in {:?}",
+            tiles.len(),
+            started.elapsed()
+        );
     }
 }
 

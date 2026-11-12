@@ -78,3 +78,36 @@ fn an_areas_ground_and_what_stands_on_it_come_to_life_as_a_player_comes_near_and
         "what came to life stays, once"
     );
 }
+
+/// Worlds of one area share its ground. Each has the ground it holds underfoot as soon as it
+/// holds it, whichever of them laid it.
+#[test]
+fn every_world_of_an_area_has_the_ground_it_holds_underfoot_at_once() {
+    let content = Game::new()
+        .area("field", &Map::open(600, 12), json!([]))
+        .hero("field", 4.0, 6.0)
+        .load_to_play();
+    let field = area::load(&content, Sim::new(content.clone()).id::<AreaDef>("field"));
+    let far = Pos::new(540.0, 6.0);
+    let tile = field.ground_size().tile_at(far);
+    for round in 0..20 {
+        let underfoot: Vec<bool> = std::thread::scope(|scope| {
+            let worlds: Vec<_> = (0..8)
+                .map(|_| {
+                    scope.spawn(|| {
+                        let _held = field.hold([tile]);
+                        field.mesh().walkable(far)
+                    })
+                })
+                .collect();
+            worlds
+                .into_iter()
+                .map(|world| world.join().expect("a world holds its ground"))
+                .collect()
+        });
+        assert!(
+            underfoot.iter().all(|&walks| walks),
+            "round {round}: {underfoot:?}"
+        );
+    }
+}
