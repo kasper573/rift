@@ -16,7 +16,7 @@ use super::appearance::look;
 use super::held::{self, HandsAtWork, Held, ToolInHand};
 use super::layering::{self, Layering};
 use super::rigging::BuiltSkeleton;
-use super::skeleton::{Cue, GroupName, Hand, LocalOffset, LocalTurn, SkeletonId};
+use super::skeleton::{Cue, GroupName, Hand, LocalOffset, LocalTurn, LoopStart, SkeletonId};
 use super::skeleton::{EquipmentSlot, GestureName};
 use super::stance::{self, HandIndex, PropHand, StanceId};
 use super::{Action, Actor, ActorModel, Appearance, Hurt, ModelId, Motion, Playing, Pose};
@@ -32,7 +32,9 @@ use crate::core::render::world::body::{self, Body, RigReady};
 use crate::core::render::world::layers::Layered;
 use crate::core::render::world::plumb::Plumb;
 use crate::core::render::world::rig_clip;
-use crate::core::render::{Animator, Previous, Turns, facing_rotation, ground_height, world_point};
+use crate::core::render::{
+    Animator, Loops, NextTurn, Previous, facing_rotation, ground_height, world_point,
+};
 use crate::core::text::Typewriter;
 use crate::core::time::{self, UnixMillis};
 use crate::core::units::{Meters, MetersPerSec, PlaybackRate, Radians, Seconds};
@@ -193,6 +195,7 @@ pub struct Puppet {
     graph: Handle<AnimationGraph>,
     slots: Vec<(AnimationNodeIndex, Part)>,
     playing: Option<Play>,
+    blend: Seconds,
     tracks: Vec<Track>,
     turn: Turn,
     held: BTreeMap<HandIndex, (Hung, Entity)>,
@@ -249,6 +252,18 @@ struct Play {
     pick: usize,
 }
 
+impl Play {
+    /// Whether `next` plays what this does, on another turn of its clips.
+    fn takes_turns_with(&self, next: &Play) -> bool {
+        self.pick != next.pick
+            && *next
+                == Play {
+                    pick: next.pick,
+                    ..self.clone()
+                }
+    }
+}
+
 /// The blows a body has seen land, and when it began to flinch at the newest. A blow that landed
 /// before the body came into view is never flinched at.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
@@ -266,7 +281,7 @@ pub struct Said {
     pub since: Seconds,
 }
 
-/// A node playing on the rig, fading toward its weight.
+/// A node playing on the rig, its weight easing toward its target.
 #[derive(Clone, Copy, Debug)]
 struct Track {
     node: AnimationNodeIndex,
@@ -389,6 +404,7 @@ pub fn dress(world: &mut World) {
                 graph,
                 slots: Vec::new(),
                 playing: None,
+                blend: Seconds(0.0),
                 tracks: Vec::new(),
                 turn: Turn {
                     from: facing,
@@ -685,11 +701,6 @@ pub fn pose(world: &mut World) {
             said: gesture.as_ref().map(|(line, ..)| *line),
             pick: 0,
         };
-        let repeat = if motion.once() {
-            RepeatAnimation::Never
-        } else {
-            RepeatAnimation::Forever
-        };
         let state = {
             let mut hasher = std::collections::hash_map::DefaultHasher::new();
             play.hash(&mut hasher);
@@ -700,15 +711,23 @@ pub fn pose(world: &mut World) {
             let resolved = model.resolve(stance, &motion, actor.pose, pick);
             resolved.length / model.rate(&motion, &resolved, actor.attack_rate, actor.speed)
         };
-        let mut next = |last, rng: &mut Rng| cell.after(last, rng);
+        let anywhere = |pick| {
+            model.skeleton().def.loop_start == LoopStart::Anywhere
+                && model
+                    .resolve(stance, &motion, actor.pose, pick)
+                    .cues
+                    .is_empty()
+        };
+        let mut next = |last, rng: &mut Rng| cell.turn_after(last, rng);
         let looping_turns = !motion.once() && cell.clips().len() > 1;
-        let turns = looping_turns.then_some(Turns {
+        let loops = (!motion.once()).then_some(Loops {
             length: &played_once,
-            next: &mut next,
+            anywhere: &anywhere,
+            turns: looping_turns.then_some(&mut next as &mut NextTurn),
         });
         let playhead = world
             .resource_mut::<Animator>()
-            .advance(entity, state, now, turns);
+            .advance(entity, state, now, loops);
         play.pick = match (given, &gesture) {
             _ if flinching => flinch_pick,
             (Some(playing), _) => playing.pick,
@@ -717,6 +736,14 @@ pub fn pose(world: &mut World) {
         };
         let resolved = model.resolve(stance, &motion, actor.pose, play.pick);
         let rate = model.rate(&motion, &resolved, actor.attack_rate, actor.speed);
+        let (repeat, begins) = if motion.once() {
+            (RepeatAnimation::Never, Seconds(0.0))
+        } else if cell.transits(play.pick) {
+            (RepeatAnimation::Never, playhead.elapsed * rate.0)
+        } else {
+            let into = (playhead.elapsed.0 * rate.0).rem_euclid(resolved.length.0.max(1e-3));
+            (RepeatAnimation::Forever, Seconds(into))
+        };
         let stepped = {
             let prev = match playhead.previous {
                 Previous::Continued(played) => Some(played),
@@ -773,8 +800,19 @@ pub fn pose(world: &mut World) {
         };
         let restart = puppet.playing.as_ref() != Some(&play);
         if restart {
+            let shifts = puppet.playing.as_ref().is_some_and(|last| {
+                last.takes_turns_with(&play)
+                    && !cell.transits(last.pick)
+                    && !cell.transits(play.pick)
+            });
+            puppet.blend = if shifts {
+                easing.shift
+            } else {
+                easing.crossfade
+            };
             puppet.playing = Some(play);
         }
+        let blend = puppet.blend;
         let player = world.get::<Body>(entity).and_then(Body::player);
         let scale = model.scale();
         if let Some(mut transform) = world.get_mut::<Transform>(entity) {
@@ -813,7 +851,10 @@ pub fn pose(world: &mut World) {
                 for &node in &wanted {
                     let fresh = !tracks.iter().any(|track| track.node == node);
                     let active = animation.start(node);
-                    active.set_repeat(repeat).set_speed(rate.0);
+                    active
+                        .set_repeat(repeat)
+                        .set_speed(rate.0)
+                        .seek_to(begins.0);
                     if fresh {
                         active.set_weight(0.0);
                         tracks.push(Track {
@@ -830,8 +871,8 @@ pub fn pose(world: &mut World) {
                 }
             }
             for track in &mut tracks {
-                let step = if easing.crossfade.0 > 0.0 {
-                    delta.0 / easing.crossfade.0
+                let step = if blend.0 > 0.0 {
+                    delta.0 / blend.0
                 } else {
                     1.0
                 };
@@ -841,7 +882,7 @@ pub fn pose(world: &mut World) {
                     (track.weight - step).max(track.target)
                 };
                 if let Some(active) = animation.animation_mut(track.node) {
-                    active.set_weight(track.weight);
+                    active.set_weight(easing.curve.at(track.weight));
                     if wanted.contains(&track.node) {
                         active.set_speed(rate.0);
                     }

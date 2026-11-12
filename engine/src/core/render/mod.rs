@@ -131,7 +131,7 @@ impl FromWorld for Animator {
 #[derive(Clone, Copy)]
 struct Anchor {
     state: u64,
-    turn: usize,
+    turn: ClipTurn,
     since: Seconds,
     played: Seconds,
 }
@@ -151,22 +151,35 @@ pub struct Playhead {
     pub turn: usize,
 }
 
-/// How a state's clips take turns as it plays on: how long each turn plays, and the turn that
-/// follows another, or the first for none.
-pub struct Turns<'a> {
-    pub length: &'a dyn Fn(usize) -> Seconds,
-    pub next: &'a mut dyn FnMut(Option<usize>, &mut Rng) -> usize,
+/// One turn of a state's clips: the clip picked, and how often it plays through.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ClipTurn {
+    pub pick: usize,
+    pub plays: u32,
 }
 
+/// How a state that loops plays on: how long the clip picked plays through once, whether the
+/// state begins anywhere in it rather than at its start, and, where the state's clips take turns,
+/// the turn that follows the clip picked before, or the first for none.
+pub struct Loops<'a> {
+    pub length: &'a dyn Fn(usize) -> Seconds,
+    pub anywhere: &'a dyn Fn(usize) -> bool,
+    pub turns: Option<&'a mut NextTurn<'a>>,
+}
+
+/// Picks the turn that follows the clip picked before, or the first for none.
+pub type NextTurn<'a> = dyn FnMut(Option<usize>, &mut Rng) -> ClipTurn + 'a;
+
 impl Animator {
-    /// Moves the entity's animation on to `time` in `state`, taking `turns` when its clips take
-    /// them, and keeping to one clip when they don't.
+    /// Moves the entity's animation on to `time` in `state`, as `loops` has it play on when it
+    /// loops: a state that begins anywhere begins a random way into its first turn, so no two
+    /// entities move in step.
     pub fn advance(
         &mut self,
         entity: Entity,
         state: u64,
         time: Seconds,
-        turns: Option<Turns>,
+        loops: Option<Loops>,
     ) -> Playhead {
         let (mut previous, mut anchor) = match self.anchors.get(&entity).copied() {
             Some(anchor) if anchor.state == state => (Previous::Continued(anchor.played), anchor),
@@ -177,24 +190,37 @@ impl Animator {
                 },
                 Anchor {
                     state,
-                    turn: 0,
+                    turn: ClipTurn { pick: 0, plays: 1 },
                     since: time,
                     played: Seconds(0.0),
                 },
             ),
         };
-        if let Some(Turns { length, next }) = turns {
+        if let Some(Loops {
+            length,
+            anywhere,
+            mut turns,
+        }) = loops
+        {
+            let lasts = |turn: ClipTurn| length(turn.pick) * turn.plays as f32;
             if previous != Previous::Continued(anchor.played) {
-                anchor.turn = next(None, &mut self.rng);
-            }
-            loop {
-                let played_once = length(anchor.turn);
-                if played_once.0 <= 0.0 || time - anchor.since < played_once {
-                    break;
+                if let Some(next) = turns.as_mut() {
+                    anchor.turn = next(None, &mut self.rng);
                 }
-                anchor.since += played_once;
-                anchor.turn = next(Some(anchor.turn), &mut self.rng);
-                previous = Previous::Restarted;
+                if anywhere(anchor.turn.pick) {
+                    anchor.since = time - lasts(anchor.turn) * self.rng.rand_float();
+                }
+            }
+            if let Some(next) = turns {
+                loop {
+                    let lasts = lasts(anchor.turn);
+                    if lasts.0 <= 0.0 || time - anchor.since < lasts {
+                        break;
+                    }
+                    anchor.since += lasts;
+                    anchor.turn = next(Some(anchor.turn.pick), &mut self.rng);
+                    previous = Previous::Restarted;
+                }
             }
         }
         let elapsed = time - anchor.since;
@@ -203,7 +229,7 @@ impl Animator {
         Playhead {
             elapsed,
             previous,
-            turn: anchor.turn,
+            turn: anchor.turn.pick,
         }
     }
 

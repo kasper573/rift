@@ -82,6 +82,9 @@
   "easing": {
     "turn": 0.12,
     "crossfade": 0.1,
-    "clasp": 0.15
-  }
+    "shift": 0.6,
+    "clasp": 0.15,
+    "curve": "eased"
+  },
+  "loop_start": "anywhere"
 }

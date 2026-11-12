@@ -639,15 +639,15 @@ impl ActorModel {
         pose: Pose,
         pick: usize,
     ) -> Resolved<'_> {
-        let clip = self.cell(stance, motion, pose).nth(pick);
+        let picked = self.cell(stance, motion, pose).nth(pick);
         let played = self
             .skeleton
-            .played(clip.clip())
+            .played(picked.clip)
             .expect("a skeleton that built plays every clip it names");
         let found = &self.skeleton.clips[played];
         Resolved {
             clip: &found.clip,
-            only: clip.only(),
+            only: picked.only,
             played,
             length: found.length,
             cues: &found.cues,

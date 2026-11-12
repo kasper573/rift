@@ -10,8 +10,8 @@
 use engine::core::content::{Content, NamedContent};
 use engine::core::units::{Meters, MetersPerSec};
 use engine::systems::actor::skeleton::{
-    BuildName, BuildSets, Clip, ClipCell, ClipCues, ClipOrder, ClipPace, ClipRef, ClipSet,
-    GestureName, GroupName, MoveName, Rung, SkeletonDef, StanceSet,
+    BuildName, BuildSets, Clip, ClipCell, ClipCues, ClipOrder, ClipPace, ClipPlays, ClipRef,
+    ClipSet, ClipTransition, GestureName, GroupName, MoveName, Rung, SkeletonDef, StanceSet,
 };
 use engine::systems::actor::stance::{StanceDef, StanceId};
 use engine::systems::actor::{Action, Motion, Pose};
@@ -110,6 +110,19 @@ impl SetRow {
     }
 }
 
+/// What a clip picked from the list does to the open cell: takes the place of its clips, joins
+/// them, or becomes the transition from one of them to another, by their places.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ClipPicked {
+    #[default]
+    Replaces,
+    Joins,
+    Transits {
+        from: usize,
+        to: usize,
+    },
+}
+
 #[derive(Default)]
 pub struct SetsState {
     /// The build whose cells the table shows; none for the first.
@@ -121,8 +134,7 @@ pub struct SetsState {
     pub new_move: String,
     pub new_gesture: String,
     pub filter: String,
-    /// Whether a clip picked joins the open cell's clips rather than taking its place.
-    pub adding: bool,
+    pub picked: ClipPicked,
     /// The replacements Fill from file names rewrites the first build's paths by, while it is open.
     pub fill: Option<Vec<(String, String)>>,
 }
@@ -283,7 +295,7 @@ fn fills(
                 filled.push(EmptyCellFill {
                     stance,
                     row,
-                    cell: cell_of(clips, cell.order()),
+                    cell: cell_of(clips, &CellTurns::of(Some(cell))),
                     rewritten,
                 });
             }
@@ -718,7 +730,9 @@ fn picker(editor: &mut Editor, ui: &mut Ui, cx: SetsCx, row: &SetRow, stance: Op
         }
     }
     let clips: Vec<ClipRef> = current.map_or(Vec::new(), |cell| cell.clips().to_vec());
-    let order = current.map_or(ClipOrder::Random, ClipCell::order);
+    let turns = CellTurns::of(current);
+    let (order, plays) = (turns.order, turns.plays);
+    let looping = !row.asked().0.once();
     let preview = &editor.views.skeleton.views.view(key).preview;
     let playing = preview
         .clip
@@ -749,6 +763,7 @@ fn picker(editor: &mut Editor, ui: &mut Ui, cx: SetsCx, row: &SetRow, stance: Op
             });
         }
         let mut picked = order;
+        let mut played = plays;
         if clips.len() > 1 {
             ui.horizontal(|ui| {
                 ui.label(theme::muted("taking turns"));
@@ -760,11 +775,25 @@ fn picker(editor: &mut Editor, ui: &mut Ui, cx: SetsCx, row: &SetRow, stance: Op
                         }
                     });
             });
+            if looping {
+                ui.horizontal(|ui| {
+                    ui.label(theme::muted("each playing through"));
+                    ui.add(egui::DragValue::new(&mut played.min).range(1..=played.max));
+                    ui.label(theme::muted("to"));
+                    ui.add(egui::DragValue::new(&mut played.max).range(played.min..=99));
+                    ui.label(theme::muted("times a turn"));
+                });
+            }
         }
         if removed && kept.is_empty() {
             chosen = Some(None);
-        } else if removed || picked != order {
-            chosen = Some(Some(cell_of(kept, picked)));
+        } else if removed || picked != order || played != plays {
+            let turns = CellTurns {
+                order: picked,
+                plays: played,
+                transitions: turns.transitions.clone(),
+            };
+            chosen = Some(Some(cell_of(kept, &turns)));
         }
     }
     let groups: Vec<GroupName> = def.groups.keys().cloned().collect();
@@ -789,14 +818,67 @@ fn picker(editor: &mut Editor, ui: &mut Ui, cx: SetsCx, row: &SetRow, stance: Op
                 .iter()
                 .map(|clip| clip_ref(clip.clip().clone(), only.clone()))
                 .collect();
-            chosen = Some(Some(cell_of(regrouped, order)));
+            chosen = Some(Some(cell_of(regrouped, &turns)));
         }
     }
-    if current.is_some() {
-        let adding = &mut editor.views.skeleton.views.view_mut(key).sets.adding;
-        ui.checkbox(adding, "a clip picked joins the cell's clips");
+    let joined = looping && clips.len() > 1;
+    if joined {
+        for (index, transition) in turns.transitions.iter().enumerate() {
+            ui.horizontal(|ui| {
+                let label = format!(
+                    "{} → {} · {}",
+                    transition.from.shown(),
+                    transition.to.shown(),
+                    transition.clip.shown()
+                );
+                let lit = playing.as_ref() == Some(&transition.clip);
+                if ui
+                    .add(egui::Button::selectable(lit, face::mono(label).size(12.5)))
+                    .on_hover_text("play it on the stage")
+                    .clicked()
+                {
+                    play = Some(transition.clip.clone());
+                }
+                if controls::remove(ui, "transition").clicked() {
+                    let mut fewer = CellTurns::of(current);
+                    fewer.transitions.remove(index);
+                    chosen = Some(Some(cell_of(clips.clone(), &fewer)));
+                }
+            });
+        }
     }
-    let adding = editor.views.skeleton.views.view(key).sets.adding && current.is_some();
+    let mut picking = editor.views.skeleton.views.view(key).sets.picked;
+    if current.is_none() || (!joined && matches!(picking, ClipPicked::Transits { .. })) {
+        picking = ClipPicked::Replaces;
+    }
+    if current.is_some() {
+        ui.horizontal(|ui| {
+            ui.label(theme::muted("a clip picked"));
+            ui.radio_value(&mut picking, ClipPicked::Replaces, "takes the cell");
+            ui.radio_value(&mut picking, ClipPicked::Joins, "joins its clips");
+            if joined {
+                let transits = matches!(picking, ClipPicked::Transits { .. });
+                if ui.radio(transits, "joins one to another").clicked() && !transits {
+                    picking = ClipPicked::Transits { from: 0, to: 1 };
+                }
+            }
+        });
+        if let ClipPicked::Transits { from, to } = &mut picking {
+            ui.horizontal(|ui| {
+                for (label, place) in [("from", from), ("to", to)] {
+                    ui.label(theme::muted(label));
+                    controls::combo(("set-transition", key, label))
+                        .selected_text(clip_label(clips.get(*place)))
+                        .show_ui(ui, |ui| {
+                            for (index, clip) in clips.iter().enumerate() {
+                                ui.selectable_value(place, index, clip_label(Some(clip)));
+                            }
+                        });
+                }
+            });
+        }
+    }
+    editor.views.skeleton.views.view_mut(key).sets.picked = picking;
     let filter = &mut editor.views.skeleton.views.view_mut(key).sets.filter;
     ui.add(
         egui::TextEdit::singleline(filter)
@@ -824,13 +906,29 @@ fn picker(editor: &mut Editor, ui: &mut Ui, cx: SetsCx, row: &SetRow, stance: Op
                         ))
                         .clicked()
                     {
-                        let picked = clip_ref(found.clip.clone(), only.clone());
-                        chosen = Some(Some(if adding {
-                            let mut grown = clips.clone();
-                            grown.push(picked);
-                            cell_of(grown, order)
-                        } else {
-                            ClipCell::One(picked)
+                        let own = clip_ref(found.clip.clone(), only.clone());
+                        chosen = Some(Some(match picking {
+                            ClipPicked::Replaces => ClipCell::One(own),
+                            ClipPicked::Joins => {
+                                let mut grown = clips.clone();
+                                grown.push(own);
+                                cell_of(grown, &turns)
+                            }
+                            ClipPicked::Transits { from, to } => {
+                                let mut joined = CellTurns::of(current);
+                                if let (Some(from), Some(to)) = (clips.get(from), clips.get(to)) {
+                                    let (from, to) = (from.clip().clone(), to.clip().clone());
+                                    joined
+                                        .transitions
+                                        .retain(|known| known.from != from || known.to != to);
+                                    joined.transitions.push(ClipTransition {
+                                        from,
+                                        to,
+                                        clip: found.clip.clone(),
+                                    });
+                                }
+                                cell_of(clips.clone(), &joined)
+                            }
                         }));
                         play = Some(found.clip.clone());
                     }
@@ -999,11 +1097,43 @@ fn clip_ref(clip: Clip, only: Option<GroupName>) -> ClipRef {
     }
 }
 
-/// A cell of `clips` taking turns in `order`, or the one clip when there is only one.
-fn cell_of(mut clips: Vec<ClipRef>, order: ClipOrder) -> ClipCell {
+/// A cell of `clips` taking turns as `turns` has them, keeping the transitions between those
+/// still among them, or the one clip when there is only one.
+fn cell_of(mut clips: Vec<ClipRef>, turns: &CellTurns) -> ClipCell {
     match clips.len() {
         1 => ClipCell::One(clips.remove(0)),
-        _ => ClipCell::Several { clips, order },
+        _ => {
+            let among = |clip: &Clip| clips.iter().any(|own| own.clip() == clip);
+            let transitions = turns
+                .transitions
+                .iter()
+                .filter(|transition| among(&transition.from) && among(&transition.to))
+                .cloned()
+                .collect();
+            ClipCell::Several {
+                clips,
+                order: turns.order,
+                plays: turns.plays,
+                transitions,
+            }
+        }
+    }
+}
+
+/// How a cell's clips take turns: all of a cell but its clips.
+struct CellTurns {
+    order: ClipOrder,
+    plays: ClipPlays,
+    transitions: Vec<ClipTransition>,
+}
+
+impl CellTurns {
+    fn of(cell: Option<&ClipCell>) -> CellTurns {
+        CellTurns {
+            order: cell.map_or(ClipOrder::Random, ClipCell::order),
+            plays: cell.map_or_else(ClipPlays::default, ClipCell::plays),
+            transitions: cell.map_or_else(Vec::new, |cell| cell.transitions().to_vec()),
+        }
     }
 }
 

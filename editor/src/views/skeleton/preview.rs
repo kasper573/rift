@@ -131,7 +131,7 @@ pub fn show(
                 &Motion::Action(action),
                 Pose::Idle,
             )
-            .map(|(cell, _)| cell.nth(0).clip().clone()),
+            .map(|(cell, _)| cell.nth(0).clip.clone()),
         None => preview.clip.clone(),
     };
     let playing = clip

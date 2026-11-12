@@ -81,7 +81,7 @@ pub(crate) fn rig_idle_clip(skeleton: &BuiltSkeleton) -> Option<StageClip> {
     let (cell, _) = skeleton
         .def
         .named(None, None, &Motion::Action(Action::Idle), Pose::Idle)?;
-    let played = skeleton.played(cell.nth(0).clip())?;
+    let played = skeleton.played(cell.nth(0).clip)?;
     Some(StageClip::played(skeleton, played))
 }
 

@@ -26,7 +26,7 @@ use engine::core::units::{
     Degrees, MeterPos, Meters, MetersPerSec, PlaybackRate, Radians, Seconds,
 };
 use engine::systems::actor::held::Held;
-use engine::systems::actor::render::{self, HeldProp, RenderActor};
+use engine::systems::actor::render::{self, HeldProp, Puppet, RenderActor};
 use engine::systems::actor::skeleton::GestureName;
 use engine::systems::actor::stance::HandIndex;
 use engine::systems::actor::{Action, Actor, Appearance, Hurt, ModelDef, Motion, Playing, Pose};
@@ -948,11 +948,13 @@ fn a_body_sounds_the_cues_its_clip_crosses_and_steps_on_the_ground_under_it() {
     );
 }
 
-#[test]
-fn a_looping_cells_clips_take_turns_each_as_the_one_before_plays_through() {
-    let clips: Vec<(&str, engine::core::units::Seconds)> = testkit::rig_clips()
+/// A hero whose idle is `idle`, a cell of the clips hum, tap and slide, each sounding the sound it
+/// is named after as it plays through, on a skeleton with `fields` over the usual.
+fn idler(idle: serde_json::Value, cued: bool, mut fields: serde_json::Value) -> Game {
+    const SOUNDS: [&str; 3] = ["hum", "tap", "slide"];
+    let clips: Vec<(&str, Seconds)> = testkit::rig_clips()
         .into_iter()
-        .chain([("hum", CLIP.seconds()), ("tap", CLIP.seconds())])
+        .chain(SOUNDS.map(|sound| (sound, CLIP.seconds())))
         .collect();
     let mut base: serde_json::Map<String, serde_json::Value> =
         <Action as strum::VariantArray>::VARIANTS
@@ -964,79 +966,154 @@ fn a_looping_cells_clips_take_turns_each_as_the_one_before_plays_through() {
                 )
             })
             .collect();
-    base.insert(
-        "idle".to_owned(),
-        json!({ "clips": [testkit::clip("hum"), testkit::clip("tap")], "order": "in_turn" }),
-    );
+    base.insert("idle".to_owned(), idle);
     let cue = |sound: &str| json!({ "clip": testkit::clip(sound), "cues": [{ "at": 100.0, "sound": path("sfx", sound) }] });
-    let game = Game::new()
+    let cues: Vec<serde_json::Value> = iter::once(attacked())
+        .chain(SOUNDS.iter().filter(|_| cued).map(|sound| cue(sound)))
+        .collect();
+    fields["base"] = json!({ "clips": base });
+    fields["cues"] = json!(cues);
+    SOUNDS
+        .iter()
+        .fold(Game::new(), |game, sound| game.sfx(sound))
         .area("field", &Map::open(5, 5), json!([]))
-        .sfx("hum")
-        .sfx("tap")
-        .skeleton_of(
-            BODY,
-            &clips,
-            json!({
-                "base": { "clips": base },
-                "cues": [attacked(), cue("hum"), cue("tap")],
-            }),
-        )
-        .hero("field", 2.0, 2.0);
-    let content = game.load();
-    let mut app = App::new();
-    app.add_plugins(MinimalPlugins)
-        .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
-            50,
-        )))
-        .init_resource::<Animator>()
-        .add_message::<PlaySfx>()
-        .insert_resource(content.clone());
-    let hero = testkit::Declared::declared::<ModelDef>(&content, "hero").expect("a hero");
-    let field = testkit::Declared::declared::<AreaDef>(&content, "field").expect("a field");
-    app.world_mut().spawn((
-        Actor {
-            facing: Radians(0.0),
-            action: Action::Idle,
-            pose: Pose::Idle,
-            attack_rate: PlaybackRate(1.0),
-            speed: MetersPerSec::default(),
-        },
-        Appearance::of(hero),
-        RenderActor {
-            facing: Radians(0.0),
-            action: Action::Idle,
-        },
-        RenderPosition(Pos::new(2.0, 2.0)),
-        AreaTag { area: field },
-    ));
+        .skeleton_of(BODY, &clips, fields)
+        .hero("field", 2.0, 2.0)
+}
 
-    let mut heard = Vec::new();
-    for _ in 0..30 {
-        app.update();
-        app.world_mut()
-            .run_system_cached(render::pose)
-            .expect("posed");
-        heard.extend(
+#[test]
+fn a_looping_cells_clips_take_turns_each_for_its_plays_by_way_of_the_transition_between_them() {
+    let (hum, tap, slide) = (
+        testkit::clip("hum"),
+        testkit::clip("tap"),
+        testkit::clip("slide"),
+    );
+    let cases = [
+        (
+            json!({ "clips": [hum, tap], "order": "in_turn" }),
+            vec!["hum", "tap"],
+            "a turn a loop",
+        ),
+        (
+            json!({ "clips": [hum, tap], "order": "in_turn", "plays": { "min": 2, "max": 2 } }),
+            vec!["hum", "hum", "tap", "tap"],
+            "each clip plays through twice on its turn",
+        ),
+        (
+            json!({
+                "clips": [hum, tap],
+                "order": "in_turn",
+                "transitions": [{ "from": hum, "to": tap, "clip": slide }],
+            }),
+            vec!["hum", "slide", "tap"],
+            "the transition plays once between the two clips it joins, and nothing between two it doesn't",
+        ),
+    ];
+    for (idle, turns, why) in cases {
+        let content = idler(idle, true, json!({})).load();
+        let mut app = App::new();
+        app.add_plugins(MinimalPlugins)
+            .insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+                50,
+            )))
+            .init_resource::<Animator>()
+            .add_message::<PlaySfx>()
+            .insert_resource(content.clone());
+        let hero = testkit::Declared::declared::<ModelDef>(&content, "hero").expect("a hero");
+        let field = testkit::Declared::declared::<AreaDef>(&content, "field").expect("a field");
+        app.world_mut().spawn((
+            Actor {
+                facing: Radians(0.0),
+                action: Action::Idle,
+                pose: Pose::Idle,
+                attack_rate: PlaybackRate(1.0),
+                speed: MetersPerSec::default(),
+            },
+            Appearance::of(hero),
+            RenderActor {
+                facing: Radians(0.0),
+                action: Action::Idle,
+            },
+            RenderPosition(Pos::new(2.0, 2.0)),
+            AreaTag { area: field },
+        ));
+
+        let mut heard = Vec::new();
+        for _ in 0..60 {
+            app.update();
             app.world_mut()
-                .resource_mut::<Messages<PlaySfx>>()
-                .drain()
-                .map(|sound| sound.id),
+                .run_system_cached(render::pose)
+                .expect("posed");
+            heard.extend(
+                app.world_mut()
+                    .resource_mut::<Messages<PlaySfx>>()
+                    .drain()
+                    .map(|sound| sound.id),
+            );
+        }
+        let sfx = |name: &str| {
+            content
+                .by_path::<SfxDef>(&path("sfx", name))
+                .unwrap_or_else(|| panic!("the {name} sound"))
+        };
+        let expected: Vec<SfxId> = turns
+            .iter()
+            .map(|name| sfx(name))
+            .cycle()
+            .take(heard.len())
+            .collect();
+        assert!(heard.len() >= turns.len() * 2, "{why}: {heard:?}");
+        assert_eq!(heard, expected, "{why}, round after round");
+    }
+}
+
+#[test]
+fn bodies_begin_a_loop_in_step_or_each_anywhere_in_it_as_their_skeleton_has_them() {
+    let idle = json!({ "clips": [testkit::clip("hum"), testkit::clip("tap")], "order": "in_turn" });
+    for (loop_start, in_step) in [("at_start", true), ("anywhere", false)] {
+        let game = idler(idle.clone(), false, json!({ "loop_start": loop_start }));
+        let folder = tempfile::tempdir().expect("a scratch folder");
+        let (mut app, content) = viewer(game, folder.path());
+        app.insert_resource(TimeUpdateStrategy::ManualDuration(Duration::from_millis(
+            10,
+        )));
+        let bodies: Vec<Entity> = (0..6)
+            .map(|_| spawn_hero(&mut app, &content, Action::Idle))
+            .collect();
+        let idling = Motion::Action(Action::Idle);
+        let frame = |app: &mut App| -> Option<Vec<usize>> {
+            app.update();
+            app.world_mut()
+                .run_system_cached(render::dress)
+                .expect("dressed");
+            app.world_mut()
+                .run_system_cached(render::pose)
+                .expect("posed");
+            bodies
+                .iter()
+                .map(|body| {
+                    let puppet = app.world().get::<Puppet>(*body)?;
+                    puppet.shown().map(|_| puppet.pick_of(&idling))
+                })
+                .collect()
+        };
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while frame(&mut app).is_none() {
+            assert!(Instant::now() < deadline, "every body shows its idle");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let frames = 2 * CLIP.0 as usize / 10;
+        let apart = (0..frames).any(|_| {
+            let picks = frame(&mut app).expect("every body shows its idle");
+            picks.iter().any(|pick| *pick != picks[0])
+        });
+        assert_eq!(
+            apart,
+            !in_step,
+            "bodies that begin {loop_start} take their turns {}",
+            if in_step { "together" } else { "apart" }
         );
     }
-    let sfx = |name: &str| {
-        content
-            .by_path::<SfxDef>(&path("sfx", name))
-            .unwrap_or_else(|| panic!("the {name} sound"))
-    };
-    let (hum, tap) = (sfx("hum"), sfx("tap"));
-    assert!(heard.len() >= 4, "a turn a loop: {heard:?}");
-    assert!(
-        heard
-            .iter()
-            .enumerate()
-            .all(|(turn, id)| *id == if turn % 2 == 0 { hum } else { tap }),
-        "the idle hums, then taps, then hums again: {heard:?}"
-    );
 }
 
 #[test]

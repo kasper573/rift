@@ -19,7 +19,8 @@ use crate::core::content::{
     ContentFile, ContentId, ContentProblem, ModuleRule, ModuleSet, NamedContent, Nearby, RowCheck,
     serial,
 };
-use crate::core::math::{Rgb, Rng};
+use crate::core::math::{Rgb, Rng, smoothstep};
+use crate::core::render::ClipTurn;
 use crate::core::render::world::layers::Gait;
 use crate::core::units::{Degrees, Hertz, Meters, MetersPerSec, Millis, Radians, Seconds};
 
@@ -253,11 +254,13 @@ pub struct SkeletonDef {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub layers: Vec<Layer>,
     pub easing: BodyEasing,
+    pub loop_start: LoopStart,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<SkeletonModule>,
 }
 
-/// How long a body takes to move from one way of standing to the next.
+/// How a body moves from one way of standing to the next: how long it takes, and how one clip
+/// blends into another.
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct BodyEasing {
@@ -265,8 +268,40 @@ pub struct BodyEasing {
     pub turn: Seconds,
     /// For one clip to blend into the next.
     pub crossfade: Seconds,
+    /// For a clip to give way to the next of its cell's turns, where no transition joins them.
+    pub shift: Seconds,
     /// For a hand to close on an item it takes up.
     pub clasp: Seconds,
+    pub curve: BlendCurve,
+}
+
+/// How a blend from one clip into another runs over its time: at one pace, or gathering and then
+/// settling.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlendCurve {
+    Even,
+    Eased,
+}
+
+impl BlendCurve {
+    /// How far a blend has come once `along` of its time, from 0 to 1, has passed.
+    pub fn at(self, along: f32) -> f32 {
+        match self {
+            BlendCurve::Even => along.clamp(0.0, 1.0),
+            BlendCurve::Eased => smoothstep(0.0, 1.0, along),
+        }
+    }
+}
+
+/// Where in its clip a motion that loops begins: at the clip's start, so bodies that begin
+/// together move in step, or anywhere in it, each body at a point of its own. A clip that marks
+/// cues always begins at its start, for them to keep time.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum LoopStart {
+    AtStart,
+    Anywhere,
 }
 
 /// Our rig: every joint, every node that draws no mesh, of the glTF files it is read from, each
@@ -463,7 +498,8 @@ pub struct ClipSet {
 }
 
 /// What a set plays for one action, pose or move: a clip, or several taking turns, a looping one
-/// moving on each time it plays through and one that plays once each time it is played.
+/// moving on once its clip has played through as often as its turn has it, and one that plays once
+/// each time it is played.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum ClipCell {
@@ -472,7 +508,24 @@ pub enum ClipCell {
         clips: Vec<ClipRef>,
         #[serde(default, skip_serializing_if = "ClipOrder::is_random")]
         order: ClipOrder,
+        /// How often a clip plays through on its turn while the cell loops.
+        #[serde(default, skip_serializing_if = "ClipPlays::is_once")]
+        plays: ClipPlays,
+        /// The clips made to join one of the cell's clips to another: a looping cell plays one
+        /// between the two each time the second follows the first, and blends where there is none.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        transitions: Vec<ClipTransition>,
     },
+}
+
+/// A clip that carries a body from where one of its cell's clips leaves it to where another takes
+/// it up.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClipTransition {
+    pub from: Clip,
+    pub to: Clip,
+    pub clip: Clip,
 }
 
 /// How a cell's clips take turns: any but the one just played, or each in the order listed.
@@ -482,6 +535,32 @@ pub enum ClipOrder {
     #[default]
     Random,
     InTurn,
+}
+
+/// How often a looping clip plays through on one turn: as many times as each turn draws between
+/// the two.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ClipPlays {
+    pub min: u32,
+    pub max: u32,
+}
+
+impl Default for ClipPlays {
+    fn default() -> ClipPlays {
+        ClipPlays { min: 1, max: 1 }
+    }
+}
+
+impl ClipPlays {
+    fn is_once(&self) -> bool {
+        *self == ClipPlays::default()
+    }
+
+    fn drawn(self, rng: &mut Rng) -> u32 {
+        let min = self.min.max(1);
+        rng.rand_range(min..self.max.max(min) + 1)
+    }
 }
 
 /// The cells a stance plays, over the base column.
@@ -500,6 +579,13 @@ pub enum ClipRef {
     Grouped { clip: Clip, only: GroupName },
 }
 
+/// A clip a cell plays at one of its picks, and the group it is kept to.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct PickedClip<'a> {
+    pub clip: &'a Clip,
+    pub only: Option<&'a GroupName>,
+}
+
 impl ClipCell {
     pub fn clips(&self) -> &[ClipRef] {
         match self {
@@ -515,10 +601,47 @@ impl ClipCell {
         }
     }
 
-    /// The clip picked at `pick`, or the first when there is none there.
-    pub fn nth(&self, pick: usize) -> &ClipRef {
+    pub fn plays(&self) -> ClipPlays {
+        match self {
+            ClipCell::One(_) => ClipPlays::default(),
+            ClipCell::Several { plays, .. } => *plays,
+        }
+    }
+
+    pub fn transitions(&self) -> &[ClipTransition] {
+        match self {
+            ClipCell::One(_) => &[],
+            ClipCell::Several { transitions, .. } => transitions,
+        }
+    }
+
+    /// The clip picked at `pick`: one of the cell's own, past them one of its transitions, kept
+    /// to the group of the clip it leads to, or the first when there is none there.
+    pub fn nth(&self, pick: usize) -> PickedClip<'_> {
         let clips = self.clips();
-        clips.get(pick).unwrap_or(&clips[0])
+        fn own(named: &ClipRef) -> PickedClip<'_> {
+            PickedClip {
+                clip: named.clip(),
+                only: named.only(),
+            }
+        }
+        match clips.get(pick) {
+            Some(named) => own(named),
+            None => self
+                .transitions()
+                .get(pick - clips.len())
+                .map(|transition| PickedClip {
+                    clip: &transition.clip,
+                    only: self
+                        .place_of(&transition.to)
+                        .and_then(|to| clips[to].only()),
+                })
+                .unwrap_or_else(|| own(&clips[0])),
+        }
+    }
+
+    fn place_of(&self, clip: &Clip) -> Option<usize> {
+        self.clips().iter().position(|own| own.clip() == clip)
     }
 
     /// The clip to pick after `last`, the one picked before it, if any.
@@ -534,6 +657,42 @@ impl ClipCell {
                 if other >= last { other + 1 } else { other }
             }
         }
+    }
+
+    /// The turn a looping cell takes after the one that played the clip picked at `last`, if any:
+    /// the next of its clips for as often as it plays through, by way of the transition from the
+    /// last to it, played through once, where the cell has one.
+    pub fn turn_after(&self, last: Option<usize>, rng: &mut Rng) -> ClipTurn {
+        let clips = self.clips();
+        let own = |pick: usize, rng: &mut Rng| ClipTurn {
+            pick,
+            plays: self.plays().drawn(rng),
+        };
+        let led = last
+            .and_then(|last| last.checked_sub(clips.len()))
+            .and_then(|led| self.transitions().get(led));
+        if let Some(transition) = led {
+            return own(self.place_of(&transition.to).unwrap_or(0), rng);
+        }
+        let pick = self.after(last, rng);
+        let between = last.and_then(|last| {
+            let (from, to) = (clips.get(last)?.clip(), clips[pick].clip());
+            self.transitions()
+                .iter()
+                .position(|transition| transition.from == *from && transition.to == *to)
+        });
+        match between {
+            Some(transition) => ClipTurn {
+                pick: clips.len() + transition,
+                plays: 1,
+            },
+            None => own(pick, rng),
+        }
+    }
+
+    /// Whether the clip picked at `pick` is a transition between two of the cell's own.
+    pub fn transits(&self, pick: usize) -> bool {
+        pick >= self.clips().len()
     }
 
     /// Each clip the cell names, with where in the cell it names it, below `pointer`.
@@ -787,8 +946,11 @@ impl ContentFile for SkeletonDef {
             easing: BodyEasing {
                 turn: Seconds(0.0),
                 crossfade: Seconds(0.0),
+                shift: Seconds(0.0),
                 clasp: Seconds(0.0),
+                curve: BlendCurve::Even,
             },
+            loop_start: LoopStart::AtStart,
             modules: Vec::new(),
         })
     }
@@ -887,6 +1049,56 @@ impl ContentFile for SkeletonDef {
                         "no clips",
                         "an empty list",
                         "at least one clip to play",
+                    );
+                }
+            }
+            for (entry, cell) in set.cells() {
+                let plays = cell.plays();
+                if plays.min == 0 || plays.max < plays.min {
+                    cx.error(
+                        format!("{pointer}{entry}/plays"),
+                        "no such number of plays",
+                        format!("{} to {}", plays.min, plays.max),
+                        "at least once, and at most no fewer times than at least",
+                    );
+                }
+                for (index, transition) in cell.transitions().iter().enumerate() {
+                    let ends = [("from", &transition.from), ("to", &transition.to)];
+                    for (end, clip) in ends {
+                        if cell.place_of(clip).is_none() {
+                            cx.error(
+                                format!("{pointer}{entry}/transitions/{index}/{end}"),
+                                "not a clip of the cell",
+                                format!("{clip}"),
+                                "one of the clips the cell plays",
+                            );
+                        }
+                    }
+                    if transition.from == transition.to {
+                        cx.error(
+                            format!("{pointer}{entry}/transitions/{index}/to"),
+                            "nothing to join",
+                            "a transition from a clip to itself",
+                            "another of the cell's clips",
+                        );
+                    }
+                }
+            }
+            for (entry, cell) in set.once() {
+                if !cell.plays().is_once() {
+                    cx.error(
+                        format!("{pointer}{entry}/plays"),
+                        "plays once",
+                        "how often a clip plays through on its turn, in a cell that plays once",
+                        "a cell that loops: an action a body keeps up, or a pose",
+                    );
+                }
+                if !cell.transitions().is_empty() {
+                    cx.error(
+                        format!("{pointer}{entry}/transitions"),
+                        "plays once",
+                        "transitions between the clips of a cell that plays once",
+                        "a cell that loops: an action a body keeps up, or a pose",
                     );
                 }
             }
@@ -1181,30 +1393,43 @@ impl ModuleSet for SkeletonDef {
 impl ClipSet {
     /// Every cell of the set, with where in the set it is.
     pub fn cells(&self) -> impl Iterator<Item = (String, &ClipCell)> {
-        let clips = self
-            .clips
-            .iter()
-            .map(|(action, cell)| (format!("/clips/{}", action.as_ref()), cell));
+        self.played().map(|(pointer, _, cell)| (pointer, cell))
+    }
+
+    /// The cells whose clip plays through once rather than loops, each with where in the set it is.
+    pub fn once(&self) -> impl Iterator<Item = (String, &ClipCell)> {
+        self.played()
+            .filter(|(_, once, _)| *once)
+            .map(|(pointer, _, cell)| (pointer, cell))
+    }
+
+    /// Every cell of the set, with where in the set it is and whether what it is played for plays
+    /// once.
+    fn played(&self) -> impl Iterator<Item = (String, bool, &ClipCell)> {
+        let clips = self.clips.iter().map(|(action, cell)| {
+            let once = Motion::Action(*action).once();
+            (format!("/clips/{}", action.as_ref()), once, cell)
+        });
         let poses = self
             .poses
             .iter()
-            .map(|(pose, cell)| (format!("/poses/{}", pose.as_ref()), cell));
+            .map(|(pose, cell)| (format!("/poses/{}", pose.as_ref()), false, cell));
         let begins = self
             .begins
             .iter()
-            .map(|(pose, cell)| (format!("/begins/{}", pose.as_ref()), cell));
+            .map(|(pose, cell)| (format!("/begins/{}", pose.as_ref()), true, cell));
         let ends = self
             .ends
             .iter()
-            .map(|(pose, cell)| (format!("/ends/{}", pose.as_ref()), cell));
+            .map(|(pose, cell)| (format!("/ends/{}", pose.as_ref()), true, cell));
         let moves = self
             .moves
             .iter()
-            .map(|(name, cell)| (format!("/moves/{}", name.0), cell));
+            .map(|(name, cell)| (format!("/moves/{}", name.0), true, cell));
         let gestures = self
             .gestures
             .iter()
-            .map(|(name, cell)| (format!("/gestures/{}", name.0), cell));
+            .map(|(name, cell)| (format!("/gestures/{}", name.0), true, cell));
         clips
             .chain(poses)
             .chain(begins)
@@ -1408,12 +1633,28 @@ impl SkeletonDef {
         let mut clips: Vec<(String, &Clip)> = self
             .sets()
             .flat_map(|(pointer, set)| {
-                set.entries().map(move |(entry, clip)| {
-                    (
-                        clip_pointer(&format!("{pointer}{entry}"), clip),
-                        clip.clip(),
-                    )
-                })
+                let own = set.entries().map({
+                    let pointer = pointer.clone();
+                    move |(entry, clip)| {
+                        (
+                            clip_pointer(&format!("{pointer}{entry}"), clip),
+                            clip.clip(),
+                        )
+                    }
+                });
+                let between = set.cells().flat_map(move |(entry, cell)| {
+                    let pointer = pointer.clone();
+                    cell.transitions()
+                        .iter()
+                        .enumerate()
+                        .map(move |(index, transition)| {
+                            (
+                                format!("{pointer}{entry}/transitions/{index}/clip"),
+                                &transition.clip,
+                            )
+                        })
+                });
+                own.chain(between)
             })
             .collect();
         for (index, hand) in self.hands.iter().enumerate() {

@@ -6,8 +6,8 @@ use engine::core::content::ModelRef;
 use engine::core::render::world::layers::Gait;
 use engine::core::units::{Degrees, Meters, MetersPerSec, Millis, Seconds};
 use engine::systems::actor::skeleton::{
-    BuildName, Clip, ClipCell, ClipOrder, ClipRef, Cue, Hand, JointName, Layer, Leg, LocalOffset,
-    LocalTurn, MoveName, SkeletonDef,
+    BuildName, Clip, ClipCell, ClipOrder, ClipPlays, ClipRef, Cue, Hand, JointName, Layer, Leg,
+    LocalOffset, LocalTurn, MoveName, SkeletonDef,
 };
 use engine::systems::actor::stance::StanceDef;
 use engine::systems::actor::{Action, Pose};
@@ -80,6 +80,8 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
             .map(|name| ClipRef::Whole(file_clip(&clip(name))))
             .to_vec(),
         order: ClipOrder::InTurn,
+        plays: ClipPlays::default(),
+        transitions: Vec::new(),
     };
     assert!(sets::set_cell(
         &mut editor,

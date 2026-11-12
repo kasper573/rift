@@ -704,7 +704,7 @@ fn gaits_of(def: &SkeletonDef, build: Option<&BuildName>, stance: Option<StanceI
         .filter(|&gait| gait.required() || def.names(build, stance, gait))
         .filter_map(|gait| {
             let (cell, _) = def.named(build, stance, &Motion::Action(gait), Pose::Idle)?;
-            let pace = def.pace(cell.nth(0).clip())?;
+            let pace = def.pace(cell.nth(0).clip)?;
             Some(Paced { gait, pace })
         })
         .collect()

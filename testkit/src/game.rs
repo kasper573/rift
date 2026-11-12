@@ -363,7 +363,8 @@ impl Game {
                 paced("walk", WALK_PACE),
                 paced("run", RUN_PACE),
             ],
-            "easing": { "turn": 0.12, "crossfade": 0.1, "clasp": 0.15 },
+            "easing": { "turn": 0.12, "crossfade": 0.1, "shift": 0.6, "clasp": 0.15, "curve": "eased" },
+            "loop_start": "at_start",
         });
         for (field, value) in fields.as_object().expect("a skeleton's fields") {
             row[field] = value.clone();

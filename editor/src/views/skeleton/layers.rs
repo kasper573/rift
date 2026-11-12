@@ -8,7 +8,9 @@ use std::collections::BTreeMap;
 use engine::core::content::gltf::NodeTree;
 use engine::core::render::world::layers::Gait;
 use engine::core::units::{Hertz, Meters, Radians, Seconds};
-use engine::systems::actor::skeleton::{GroupName, JointName, Layer, Leg, SkeletonDef};
+use engine::systems::actor::skeleton::{
+    BlendCurve, GroupName, JointName, Layer, Leg, LoopStart, SkeletonDef,
+};
 use engine::systems::actor::stance::StanceId;
 use engine::systems::actor::{Action, Motion, Pose};
 use strum::VariantArray;
@@ -204,23 +206,65 @@ fn groups(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rig: &
     }
 }
 
-/// How long the bodies take to turn, to blend from one clip into the next, and to close a hand.
+/// How long the bodies take to turn, to blend from one clip into the next, to shift from one turn
+/// of a cell's clips to the next and to close a hand, how their clips blend, and where their loops
+/// begin.
 fn easing(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
     sheet::section(ui, "Easing");
     let mut edited = def.easing;
+    let mut begins = def.loop_start;
     egui::Grid::new(("easing", key))
         .num_columns(2)
         .spacing(Vec2::new(10.0, 6.0))
         .show(ui, |ui| {
             number(ui, "turn · s", &mut edited.turn.0, 0.0..=2.0);
             number(ui, "crossfade · s", &mut edited.crossfade.0, 0.0..=2.0);
+            number(ui, "shift · s", &mut edited.shift.0, 0.0..=4.0);
             number(ui, "clasp · s", &mut edited.clasp.0, 0.0..=2.0);
+            ui.label(theme::muted("clips blend"));
+            controls::combo(("easing-curve", key))
+                .selected_text(curve_label(edited.curve))
+                .show_ui(ui, |ui| {
+                    for curve in [BlendCurve::Even, BlendCurve::Eased] {
+                        ui.selectable_value(&mut edited.curve, curve, curve_label(curve));
+                    }
+                });
+            ui.end_row();
+            ui.label(theme::muted("loops begin"));
+            controls::combo(("loop-start", key))
+                .selected_text(loop_start_label(begins))
+                .show_ui(ui, |ui| {
+                    for start in [LoopStart::AtStart, LoopStart::Anywhere] {
+                        ui.selectable_value(&mut begins, start, loop_start_label(start));
+                    }
+                });
+            ui.end_row();
         });
     if edited != def.easing {
         super::edits::change(editor, key, "Change the easing", |skeleton| {
             skeleton.easing = edited;
             Ok(())
         });
+    }
+    if begins != def.loop_start {
+        super::edits::change(editor, key, "Change where loops begin", |skeleton| {
+            skeleton.loop_start = begins;
+            Ok(())
+        });
+    }
+}
+
+fn curve_label(curve: BlendCurve) -> &'static str {
+    match curve {
+        BlendCurve::Even => "at an even pace",
+        BlendCurve::Eased => "eased in and out",
+    }
+}
+
+fn loop_start_label(start: LoopStart) -> &'static str {
+    match start {
+        LoopStart::AtStart => "at their start, in step",
+        LoopStart::Anywhere => "anywhere, each body its own",
     }
 }
 
@@ -367,7 +411,7 @@ fn fresh_layers(def: &SkeletonDef, rig: &NodeTree, from: &str) -> Vec<(&'static 
     let during = CALM.to_vec();
     let carry = def.stances.first().zip(
         def.named(None, None, &Motion::Action(Action::Idle), Pose::Idle)
-            .map(|(cell, _)| cell.nth(0).clip().clone()),
+            .map(|(cell, _)| cell.nth(0).clip.clone()),
     );
     let mut fresh = vec![
         (
