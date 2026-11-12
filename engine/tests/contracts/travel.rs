@@ -33,6 +33,20 @@ fn an_arrival_holds_until_the_client_reports_its_area_drawn_or_the_patience_runs
     sim.tick();
     assert!(!commands_locked(&sim.world, player));
 
+    let start = position(&sim.world, player).expect("placed");
+    let aside = Place {
+        area: sim.id::<AreaDef>("harbour"),
+        at: Pos::new(start.x - 2.0, start.y),
+    };
+    warp(&mut sim.world, player, aside).expect("a warp within the area");
+    assert!(
+        commands_locked(&sim.world, player),
+        "a warp within the area went unheld"
+    );
+    sim.send(conn, AreaDrawn);
+    sim.tick();
+    assert!(!commands_locked(&sim.world, player));
+
     let mut sim = harbour();
     let player = arriving(&mut sim);
 

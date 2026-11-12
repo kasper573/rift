@@ -255,6 +255,16 @@ pub(crate) fn player_requests<M: Message>(
     }
 }
 
+/// Holds a player's character as arriving where it now stands, until its client reports the view
+/// there drawn. Anyone else is left alone: only a player waits on a screen.
+pub fn hold_arrival(world: &mut World, actor: Entity) {
+    if world.get::<PlayedBy>(actor).is_none() {
+        return;
+    }
+    let until = time::uptime(world) + ARRIVAL_PATIENCE;
+    world.entity_mut(actor).insert(ArrivalHold { until });
+}
+
 pub fn arrival_holds(world: &mut World) {
     for request in drain_requests::<AreaDrawn>(world) {
         if let Some(player) = conn_player(world, request.client)
@@ -496,7 +506,6 @@ pub(crate) fn place(
 ) -> Entity {
     let content = world.resource::<Content>().clone();
     let hitbox = Hitbox(ActorModel::get(&content, state.appearance.model).hitbox());
-    let now = time::uptime(world);
     let entity = world
         .spawn((
             Replicated,
@@ -513,12 +522,10 @@ pub(crate) fn place(
             hitbox,
             PlayedBy { client },
             HeardMove::default(),
-            ArrivalHold {
-                until: now + ARRIVAL_PATIENCE,
-            },
             state,
         ))
         .id();
+    hold_arrival(world, entity);
     let belongings = belongings::of(world, entity);
     world.entity_mut(entity).insert(belongings);
     if world.resource::<SpawnRules>().immortal {

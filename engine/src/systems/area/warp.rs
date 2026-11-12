@@ -5,9 +5,11 @@ use serde::{Deserialize, Serialize};
 use super::AreaTag;
 use super::transition::Crossing;
 use crate::core::content::SchemaMark;
+use crate::core::math::Pos;
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
+use crate::core::units::Meters;
 use crate::systems::npc::Npc;
-use crate::systems::player::SpawnPoint;
+use crate::systems::player::{self, SpawnPoint};
 use crate::systems::script::{
     Condition, EffectCall, EffectReach, Fill, Place, RiftScripting, effect as effects,
 };
@@ -63,8 +65,7 @@ pub fn warp(world: &mut World, actor: Entity, to: Place) -> Result<(), String> {
     reach::forget(world, actor);
     world.entity_mut(actor).insert(SpawnPoint(to.at));
     if here == Some(to.area) {
-        region::hold_around(world, to.at);
-        movement::relocate_beside(world, actor, to.at);
+        land(world, actor, to.at);
     } else {
         world.entity_mut(actor).insert(Crossing {
             dest_area: to.area,
@@ -72,4 +73,13 @@ pub fn warp(world: &mut World, actor: Entity, to: Place) -> Result<(), String> {
         });
     }
     Ok(())
+}
+
+/// Puts an actor down at `at` in its own area, or beside it when someone else rests there. A
+/// player's character arrives there as it does in another area: held until its client has drawn
+/// what stands around it.
+pub fn land(world: &mut World, actor: Entity, at: Pos<Meters>) {
+    region::hold_around(world, at);
+    movement::relocate_beside(world, actor, at);
+    player::hold_arrival(world, actor);
 }

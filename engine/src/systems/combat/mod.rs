@@ -15,6 +15,7 @@ use crate::core::units::{Meters, Seconds};
 use crate::core::vfx::VfxSite;
 use crate::systems::GameSettings;
 use crate::systems::actor::{self, Actor};
+use crate::systems::area;
 use crate::systems::npc::Pack;
 use crate::systems::player::{self, PlayedBy, player_requests, session};
 use crate::systems::reach;
@@ -233,7 +234,7 @@ pub fn revive(world: &mut World, entity: Entity, at: Pos<Meters>) {
     reach::forget(world, entity);
     stat::revive(world, entity);
     world.entity_mut(entity).remove::<Dead>();
-    crate::systems::movement::relocate_beside(world, entity, at);
+    area::warp::land(world, entity, at);
 }
 
 fn add_attacker(world: &mut World, target: Entity, by: Entity) {

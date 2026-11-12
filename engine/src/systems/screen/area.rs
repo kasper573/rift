@@ -11,7 +11,7 @@ use super::ClientScreen;
 use crate::core::audio::soundscape::Soundscape;
 use crate::core::content::Content;
 use crate::core::gui::{self, Band};
-use crate::core::interpolate::RenderValueSystems;
+use crate::core::interpolate::{Jumps, RenderValueSystems};
 use crate::core::math::Pos;
 use crate::core::render::transition::{
     self, ActiveTransition, ScreenTransitionPhase, WorldViewSystems,
@@ -25,7 +25,7 @@ use crate::systems::area::rain::{self, RainHeard};
 use crate::systems::area::{self, AreaId, AreaTag, scenery};
 use crate::systems::identity::GlobalId;
 use crate::systems::input::map::{self, InputAction};
-use crate::systems::movement::RenderPosition;
+use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::player::session::{self, MyCharacter};
 use crate::systems::player::{ARRIVAL_PATIENCE, AreaDrawn};
 
@@ -67,6 +67,7 @@ struct Pose {
     at: Pos<Meters>,
     heading: Radians,
     area: AreaId,
+    jumps: Jumps,
 }
 
 #[derive(Clone, Copy)]
@@ -90,7 +91,7 @@ pub fn carry_view_across(world: &mut World) {
     let (last_seen, held) = match session::me(world) {
         Some(character) => match (pose_of(world, character), held, last_seen) {
             (None, _, _) => (last_seen, held),
-            (Some(pose), None, Some(seen)) if seen.area != pose.area => {
+            (Some(pose), None, Some(seen)) if seen.left_for(&pose) => {
                 transition::freeze(world, seen.at, seen.heading);
                 (Some(pose), Some(Held::new(now, seen)))
             }
@@ -105,7 +106,10 @@ pub fn carry_view_across(world: &mut World) {
                 (Some(pose), Some(Held::new(now, pose)))
             }
             (Some(pose), Some(held), _) => {
-                let drawable = area::render::shown(world) == Some(pose.area)
+                let covering =
+                    world.resource::<ActiveTransition>().phase() == ScreenTransitionPhase::Out;
+                let drawable = !covering
+                    && area::render::shown(world) == Some(pose.area)
                     && !scenery::standing(world)
                     && !readying(world);
                 if now - held.since > ARRIVAL_PATIENCE || (drawable && held.rendered) {
@@ -149,6 +153,15 @@ fn restart_patience(world: &mut World) {
     }
 }
 
+impl Pose {
+    /// Whether the character went from here to `next` other than on foot: into another area, or
+    /// by a jump within its own. The new surroundings then stand nowhere on the view, and are
+    /// first shown from under a transition.
+    fn left_for(&self, next: &Pose) -> bool {
+        self.area != next.area || (self.character == next.character && self.jumps != next.jumps)
+    }
+}
+
 impl Held {
     fn new(since: Seconds, pose: Pose) -> Held {
         Held {
@@ -166,6 +179,7 @@ fn pose_of(world: &World, character: Entity) -> Option<Pose> {
         at: entity.get::<RenderPosition>()?.0,
         heading: entity.get::<Actor>()?.facing,
         area: entity.get::<AreaTag>()?.area,
+        jumps: entity.get::<Position>()?.jumps,
     })
 }
 

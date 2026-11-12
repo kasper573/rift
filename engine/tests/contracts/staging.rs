@@ -8,6 +8,7 @@ use engine::systems::interact::{self, InteractRequest};
 use engine::systems::movement::{self, MoveRequest, position};
 use engine::systems::notification::NotificationDef;
 use engine::systems::npc::NpcDef;
+use engine::systems::player::{self, AreaDrawn};
 use engine::systems::region;
 use engine::systems::script::Place;
 use engine::systems::staging::{Staging, stage};
@@ -55,6 +56,8 @@ fn a_bench_stages_what_a_test_character_does_through_its_own_requests() {
     let placed = position(&sim.world, player).expect("a position");
     assert!(placed.distance(away) < Meters(1.5), "{placed:?}");
     assert!(sim.conversation(1).is_none());
+    sim.send(conn, AreaDrawn);
+    player::arrival_holds(&mut sim.world);
 
     stage(&mut sim.world, conn, Staging::Fight).expect("a foe");
     assert!(sim.run_until(10.0, |world| reach::attacking(world, player)
