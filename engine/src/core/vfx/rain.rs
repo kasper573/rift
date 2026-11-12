@@ -37,9 +37,18 @@ pub const SHELTER_CELL: Meters = Meters(1.0);
 /// The top of a cell of the shelter where nothing stands over the ground.
 pub const OPEN_TOP: f32 = -1.0e6;
 
-/// How far under a shelter's top a point lies sheltered, in metres: the top itself stands in the
-/// rain.
-pub const SHELTER_DEPTH: f32 = 0.3;
+/// How far under a shelter's top a point lies wholly sheltered, in metres: the top itself stands
+/// in the rain, and less of the rain reaches what lies deeper under it.
+pub const SHELTER_DEPTH: f32 = 1.5;
+
+/// How many points of the rain's way down a point is held against for shelter, and the most the
+/// rain falls from one to the next, in metres: a way that leans is followed a cell at a time.
+pub const SHELTER_STEPS: usize = 6;
+pub const SHELTER_STEP: f32 = 2.0;
+
+/// The lean from which the rain is followed from a full half cell upwind, in metres carried for
+/// every metre fallen: rain that falls straight lands on what stands under it alone.
+pub const LEANING: f32 = 0.2;
 
 /// The rain over the ground round the camera's subject: [`RAIN_SIDE`] cells each way from the
 /// north-west `corner` (x east, y south), [`RAIN_CELL`] wide, row by row from the north; none held
@@ -72,19 +81,40 @@ impl RainField {
 }
 
 impl Shelter {
-    /// Whether `point` lies under what stands over its cell, deeper than its top itself, which
-    /// stands in the rain.
+    /// Whether the rain is kept off `point`: something stands in the way the rain comes to it,
+    /// down its lean from upwind, more than [`SHELTER_DEPTH`] over where the rain passes.
     pub fn covers(&self, point: Vec3) -> bool {
-        let cell = ((point.xz() - self.corner) / SHELTER_CELL.0).floor();
+        self.way_down_to(point.xz()).any(|(over, rise)| {
+            self.top_over(over)
+                .is_some_and(|top| point.y + rise < top - SHELTER_DEPTH)
+        })
+    }
+
+    /// Where the rain that lands on `ground` passes on its way down, nearest first: each point
+    /// it passes over, and how far above where it lands it passes there. It leans with the wind,
+    /// so it is followed from half a cell upwind, clear of the side it lands on.
+    fn way_down_to(&self, ground: Vec2) -> impl Iterator<Item = (Vec2, f32)> + '_ {
+        let leaning = self.lean.length();
+        let nudge =
+            self.lean.normalize_or_zero() * SHELTER_CELL.0 / 2.0 * (leaning / LEANING).min(1.0);
+        let step = (SHELTER_CELL.0 / leaning.max(f32::EPSILON)).min(SHELTER_STEP);
+        (0..SHELTER_STEPS).map(move |index| {
+            let rise = index as f32 * step;
+            (ground - nudge - self.lean * rise, rise)
+        })
+    }
+
+    fn top_over(&self, ground: Vec2) -> Option<f32> {
+        let cell = ((ground - self.corner) / SHELTER_CELL.0).floor();
         let side = SHELTER_SIDE as f32;
         let inside = cell.cmpge(Vec2::ZERO).all() && cell.cmplt(Vec2::splat(side)).all();
         inside
             .then(|| {
                 self.tops
                     .get(cell.y as usize * SHELTER_SIDE + cell.x as usize)
+                    .copied()
             })
             .flatten()
-            .is_some_and(|top| point.y < top - SHELTER_DEPTH)
     }
 }
 
@@ -105,6 +135,8 @@ pub struct RainCell {
 pub struct Shelter {
     pub corner: Vec2,
     pub tops: Vec<f32>,
+    /// How far the rain is carried over the ground for every metre it falls.
+    pub lean: Vec2,
 }
 
 /// A shader drawing the rain on its shells, with the parameters it is filled with, the weather it

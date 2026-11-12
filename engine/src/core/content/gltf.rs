@@ -4,8 +4,9 @@
 //! on the client.
 
 use std::collections::BTreeMap;
+use std::sync::Arc;
 
-use bevy::math::{Mat4, Quat, Vec3};
+use bevy::math::{Mat4, Quat, Vec2, Vec3, Vec3Swizzles};
 use gltf::json;
 use gltf::json::validation::{Checked, USize64};
 
@@ -17,6 +18,7 @@ use crate::core::units::{Degrees, Meters, Seconds};
 #[derive(Clone, Debug, PartialEq)]
 pub struct GltfInfo {
     pub bounds: MeshBounds,
+    pub top: Arc<ModelTop>,
     pub triangles: usize,
     /// The name of each material, in the order the file lists them; unnamed ones are empty.
     pub materials: Vec<String>,
@@ -172,6 +174,92 @@ impl Rest {
 pub struct MeshBounds {
     pub min: Vec3,
     pub max: Vec3,
+}
+
+/// A model seen from straight above: how high the highest of it stands over each cell of a grid
+/// laid over the ground it covers, [`TOP_SIDE`] cells along its longer side, and nothing where
+/// none of it stands.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ModelTop {
+    low: Vec2,
+    cell: f32,
+    columns: usize,
+    heights: Vec<Option<f32>>,
+}
+
+/// How many cells a model's top is told apart by along its longer side.
+pub const TOP_SIDE: usize = 24;
+
+impl ModelTop {
+    pub fn of(triangles: &[Triangle]) -> ModelTop {
+        let corners = || triangles.iter().flat_map(|triangle| triangle.corners);
+        let low = corners().map(|corner| corner.xz()).reduce(Vec2::min);
+        let high = corners().map(|corner| corner.xz()).reduce(Vec2::max);
+        let (Some(low), Some(high)) = (low, high) else {
+            return ModelTop::default();
+        };
+        let cell = ((high - low).max_element() / TOP_SIDE as f32).max(f32::EPSILON);
+        let cells = ((high - low) / cell).ceil().max(Vec2::ONE);
+        let (columns, rows) = (cells.x as usize, cells.y as usize);
+        let mut top = ModelTop {
+            low,
+            cell,
+            columns,
+            heights: vec![None; columns * rows],
+        };
+        for triangle in triangles {
+            for corner in triangle.corners {
+                top.raise(top.cell_of(corner.xz()), corner.y);
+            }
+            let [a, b, c] = triangle.corners.map(|corner| corner.xz());
+            let area = (b - a).perp_dot(c - a);
+            if area.abs() < f32::EPSILON {
+                continue;
+            }
+            let from = top.cell_of(a.min(b).min(c));
+            let to = top.cell_of(a.max(b).max(c));
+            for row in from.1..=to.1 {
+                for column in from.0..=to.0 {
+                    let middle = low + (Vec2::new(column as f32, row as f32) + 0.5) * cell;
+                    let toward_b = (middle - a).perp_dot(c - a) / area;
+                    let toward_c = (b - a).perp_dot(middle - a) / area;
+                    if toward_b < 0.0 || toward_c < 0.0 || toward_b + toward_c > 1.0 {
+                        continue;
+                    }
+                    let [at_a, at_b, at_c] = triangle.corners.map(|corner| corner.y);
+                    let height = at_a + (at_b - at_a) * toward_b + (at_c - at_a) * toward_c;
+                    top.raise((column, row), height);
+                }
+            }
+        }
+        top
+    }
+
+    /// How high the model's top stands over `at` on its ground, or none where it covers none.
+    pub fn over(&self, at: Vec2) -> Option<f32> {
+        let cell = ((at - self.low) / self.cell).floor();
+        let rows = self.heights.len().checked_div(self.columns)?;
+        let inside = cell.cmpge(Vec2::ZERO).all()
+            && (cell.x as usize) < self.columns
+            && (cell.y as usize) < rows;
+        inside
+            .then(|| self.heights[cell.y as usize * self.columns + cell.x as usize])
+            .flatten()
+    }
+
+    fn cell_of(&self, at: Vec2) -> (usize, usize) {
+        let rows = self.heights.len() / self.columns;
+        let cell = ((at - self.low) / self.cell).floor();
+        (
+            (cell.x.max(0.0) as usize).min(self.columns - 1),
+            (cell.y.max(0.0) as usize).min(rows - 1),
+        )
+    }
+
+    fn raise(&mut self, (column, row): (usize, usize), height: f32) {
+        let top = &mut self.heights[row * self.columns + column];
+        *top = Some(top.map_or(height, |top| top.max(height)));
+    }
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -430,11 +518,18 @@ pub fn inspect(bytes: &[u8]) -> Result<GltfInfo, String> {
             }
         })
         .collect();
+    let mut faces = Vec::new();
+    for scene in document.scenes() {
+        for node in scene.nodes() {
+            gather_triangles(&node, Mat4::IDENTITY, blob, &mut faces);
+        }
+    }
     Ok(GltfInfo {
         bounds: bounds.unwrap_or(MeshBounds {
             min: Vec3::ZERO,
             max: Vec3::ZERO,
         }),
+        top: Arc::new(ModelTop::of(&faces)),
         triangles,
         materials: document
             .materials()

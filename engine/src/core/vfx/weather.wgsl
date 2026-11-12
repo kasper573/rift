@@ -34,6 +34,8 @@ var<private> rain_cells: vec4<f32>;
 var<private> shelter_cells: vec4<f32>;
 // The wettest ground and the hardest rain anywhere over the rain field, in x and y.
 var<private> rain_most: vec2<f32>;
+// How far the rain is carried over the ground for every metre it falls.
+var<private> rain_falls: vec2<f32>;
 
 fn weather_texel(index: u32) -> vec4<f32> {
     let width = textureDimensions(weather_picture).x;
@@ -55,7 +57,9 @@ fn read_weather() {
     weather_parts = vec3<u32>(u32(storm.y), u32(storm.z), u32(storm.w));
     rain_cells = weather_texel(3u);
     shelter_cells = weather_texel(4u);
-    rain_most = weather_texel(5u).xy;
+    let falling = weather_texel(5u);
+    rain_most = falling.xy;
+    rain_falls = falling.zw;
 }
 
 // How far a blade's tip leans in a gale, in metres.
@@ -91,18 +95,53 @@ fn rain_field(at: vec2<f32>) -> vec3<f32> {
     return mix(upper, lower, t.y);
 }
 
-// How far a point lies under shelter from the rain: 1 under a roof or a canopy, 0 under the open
-// sky, between the two at a shelter's edge.
+// How far a point lies under shelter from the rain: 1 where a roof, a canopy or anything else
+// that shelters stands in the way the rain comes to it, 0 under the open sky. The rain leans with
+// the wind, so its way down is followed from upwind: the top and the windward side of what
+// stands in it take the rain, and what lies in its lee stays dry. Shelter eases in at a
+// shelter's edge and through the first SHELTER_DEPTH under its top, where a crown's outer leaves
+// still take the rain.
 fn sheltered(point: vec3<f32>) -> f32 {
     if shelter_cells.w < 1.0 {
         return 0.0;
     }
-    let cell = (point.xz - shelter_cells.xy) / shelter_cells.z - 0.5;
+    let leaning = length(rain_falls);
+    var nudge = vec2<f32>(0.0);
+    if leaning > 0.0 {
+        nudge = rain_falls / leaning * shelter_cells.z * 0.5 * min(leaning / LEANING, 1.0);
+    }
+    let fall = min(shelter_cells.z / max(leaning, 1e-6), SHELTER_STEP);
+    var most = 0.0;
+    for (var index = 0; index < SHELTER_STEPS; index++) {
+        let rise = f32(index) * fall;
+        let over = shelter_over(point.xz - nudge - rain_falls * rise);
+        most = max(most, over.y * smoothstep(0.0, SHELTER_DEPTH, over.x - point.y - rise));
+        if leaning <= 0.0 {
+            break;
+        }
+    }
+    return most;
+}
+
+// The top of what stands over a ground point in x, as the cells round it slope to it, and how
+// much of the point they stand over in y: 1 well under a shelter, 0 under the open sky.
+fn shelter_over(ground: vec2<f32>) -> vec2<f32> {
+    let cell = (ground - shelter_cells.xy) / shelter_cells.z - 0.5;
     let corner = floor(cell);
     let t = cell - corner;
-    let upper = mix(covered(corner, point.y), covered(corner + vec2<f32>(1.0, 0.0), point.y), t.x);
-    let lower = mix(covered(corner + vec2<f32>(0.0, 1.0), point.y), covered(corner + vec2<f32>(1.0, 1.0), point.y), t.x);
-    return mix(upper, lower, t.y);
+    let tops = vec4<f32>(
+        shelter_top(corner),
+        shelter_top(corner + vec2<f32>(1.0, 0.0)),
+        shelter_top(corner + vec2<f32>(0.0, 1.0)),
+        shelter_top(corner + vec2<f32>(1.0, 1.0)),
+    );
+    let stands = step(vec4<f32>(OPEN_TOP * 0.5), tops)
+        * vec4<f32>((1.0 - t.x) * (1.0 - t.y), t.x * (1.0 - t.y), (1.0 - t.x) * t.y, t.x * t.y);
+    let under = stands.x + stands.y + stands.z + stands.w;
+    if under <= 0.0 {
+        return vec2<f32>(OPEN_TOP, 0.0);
+    }
+    return vec2<f32>(dot(stands, tops) / under, under);
 }
 
 // How hard the rain falls on a point, 0 none to 1 a cloudburst: none under shelter.
@@ -135,15 +174,14 @@ fn rain_cell(at: vec2<f32>) -> vec3<f32> {
     return weather_texel(weather_parts.x + u32(cell.y * side + cell.x)).xyz;
 }
 
-// Whether a point `height` up at the shelter's cell `at` lies under the top of what stands there:
-// 1 sheltered, 0 open.
-fn covered(at: vec2<f32>, height: f32) -> f32 {
+// The height of the top of what stands over the shelter's cell `at`, or OPEN_TOP under the open
+// sky.
+fn shelter_top(at: vec2<f32>) -> f32 {
     let side = i32(shelter_cells.w);
     let cell = vec2<i32>(at);
     if any(cell < vec2<i32>(0)) || any(cell >= vec2<i32>(side)) {
-        return 0.0;
+        return OPEN_TOP;
     }
     let index = u32(cell.y * side + cell.x);
-    let top = weather_texel(weather_parts.y + index / 4u)[index % 4u];
-    return select(0.0, 1.0, height < top - SHELTER_DEPTH);
+    return weather_texel(weather_parts.y + index / 4u)[index % 4u];
 }

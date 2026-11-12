@@ -1,5 +1,6 @@
 use bevy::prelude::*;
 use engine::core::audio::playback::SfxDef;
+use engine::core::content::gltf::{ModelTop, TOP_SIDE, Triangle};
 use engine::core::ground::ShareMap;
 use engine::core::math::Pos;
 use engine::core::render::world::clouds::{CLOUD_TILE, CloudSheet};
@@ -174,6 +175,50 @@ fn rain_falls_only_from_cloud_that_holds_water_carried_downwind_as_hard_as_the_s
             "under a {pour} downpour some cloud holds no water and drops none"
         );
     }
+}
+
+#[test]
+fn a_models_top_slopes_as_its_roof_does_and_ends_where_the_model_does() {
+    // A pitched roof on four posts: a ridge 4 m up along z, its eaves 2 m up and 3 m to each side.
+    let pitch = |side: f32| {
+        let (ridge, eave) = ((0.0, 4.0), (3.0 * side, 2.0));
+        let corner = |(x, y): (f32, f32), z: f32| Vec3::new(x, y, z);
+        [
+            [corner(ridge, -2.0), corner(eave, -2.0), corner(eave, 2.0)],
+            [corner(ridge, -2.0), corner(eave, 2.0), corner(ridge, 2.0)],
+        ]
+    };
+    let post = [
+        Vec3::new(2.5, 0.0, 1.5),
+        Vec3::new(2.6, 0.0, 1.5),
+        Vec3::new(2.5, 2.0, 1.5),
+    ];
+    let roof: Vec<Triangle> = pitch(-1.0)
+        .into_iter()
+        .chain(pitch(1.0))
+        .chain([post])
+        .map(|corners| Triangle {
+            corners,
+            normals: None,
+        })
+        .collect();
+    let top = ModelTop::of(&roof);
+    let cell = 6.0 / TOP_SIDE as f32;
+    for across in [-2.5_f32, -1.0, 0.5, 2.0] {
+        let slope = 4.0 - across.abs() * 2.0 / 3.0;
+        let over = top
+            .over(Vec2::new(across, 0.0))
+            .expect("the roof stands over its own ground");
+        assert!(
+            (over - slope).abs() <= cell,
+            "{across} m from the ridge the roof's top stands {slope} m up, as its slope does there, not {over}"
+        );
+    }
+    assert_eq!(
+        top.over(Vec2::new(4.0, 0.0)),
+        None,
+        "beside the roof nothing stands over the ground"
+    );
 }
 
 #[test]

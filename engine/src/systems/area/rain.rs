@@ -19,6 +19,7 @@ use crate::core::audio::soundscape::{
     SoundscapeChannel, SoundscapeLayer, SoundscapeShape, SoundscapeZone,
 };
 use crate::core::content::Content;
+use crate::core::content::gltf::ModelTop;
 use crate::core::content::media::GltfInfos;
 use crate::core::jobs::Handoff;
 use crate::core::math::{Pos, Rect, Rng, Size};
@@ -136,6 +137,11 @@ pub fn fall(
         Some(rainfall) => {
             falling.lay_field(world, area, weather, rainfall, subject, now);
             falling.lay_shelter(world, subject);
+            let lean = rainfall.lean(shown_weather(weather, 0.0).wind);
+            let mut shelter = world.resource_mut::<Shelter>();
+            if shelter.lean != lean {
+                shelter.lean = lean;
+            }
             let near = falling.near(subject);
             if let Some(mut shown) = shells.and_then(|shells| world.get_mut::<Visibility>(shells)) {
                 shown.set_if_neq(if near > 0.0 {
@@ -290,13 +296,12 @@ impl Shelters {
                 if !def.shelter {
                     return None;
                 }
-                let bounds = models.0.get(&def.model.path())?.bounds;
-                let transform = prop_transform(&area.heights, placed);
+                let model = models.0.get(&def.model.path())?;
                 Some(Sheltering {
-                    placed: transform,
-                    low: bounds.min.xz(),
-                    high: bounds.max.xz(),
-                    top: transform.transform_point(Vec3::Y * bounds.max.y).y,
+                    placed: prop_transform(&area.heights, placed),
+                    low: model.bounds.min.xz(),
+                    high: model.bounds.max.xz(),
+                    top: model.top.clone(),
                 })
             })
             .collect();
@@ -306,13 +311,13 @@ impl Shelters {
     }
 }
 
-/// A prop that keeps the rain off the ground under it: where its model's box lies, as the prop
-/// stands, and the height of its top.
+/// A prop that keeps the rain off what lies under it: where its model's box lies, as the prop
+/// stands, and how high the model's top stands over the ground it covers.
 struct Sheltering {
     placed: Transform,
     low: Vec2,
     high: Vec2,
-    top: f32,
+    top: Arc<ModelTop>,
 }
 
 /// A stroke of lightning flashing from `at` seconds on, `nearness` as bright as a strike close by.
@@ -397,8 +402,8 @@ impl FallingRain {
     }
 
     /// Lays the shelter round `subject` anew once it has slipped [`SHELTER_SLIP`] from where it
-    /// was laid round: each cell under a sheltering prop's box topped at the prop's top. None is
-    /// laid until the area's sheltering props are found.
+    /// was laid round: each cell a sheltering prop stands over topped as high as the prop's top
+    /// stands there. None is laid until the area's sheltering props are found.
     fn lay_shelter(&mut self, world: &mut World, subject: Vec2) {
         if let Some(finding) = self.finding.take() {
             match Handoff::of(world).take(finding) {
@@ -420,13 +425,14 @@ impl FallingRain {
         let corner = corner * SHELTER_CELL.0;
         let span = SHELTER_CELL.0 * SHELTER_SIDE as f32;
         let window = Rect::new(Pos::new(corner.x, corner.y), Size::new(span, span));
+        let lean = world.resource::<Shelter>().lean;
         let mut tops = vec![OPEN_TOP; SHELTER_SIDE * SHELTER_SIDE];
         for index in shelters.index.within(window) {
             shelters.props[index].lay(&mut tops, corner);
         }
         world
             .resource_mut::<Shelter>()
-            .set_if_neq(Shelter { corner, tops });
+            .set_if_neq(Shelter { corner, tops, lean });
     }
 
     /// The most it rains over the cells round `subject`'s.
@@ -542,8 +548,8 @@ impl Sheltering {
         Rect::from_points(corners.into_iter().map(|at| Pos::new(at.x, at.y)))
     }
 
-    /// Tops each cell of the shelter laid from `corner` whose middle the prop's box covers with
-    /// the prop's top, where nothing taller stands over it.
+    /// Tops each cell of the shelter laid from `corner` whose middle the prop stands over with
+    /// the height of the prop's top there, where nothing taller stands over it.
     fn lay(&self, tops: &mut [f32], corner: Vec2) {
         let ground = self.ground();
         let side = SHELTER_SIDE as i32;
@@ -559,11 +565,15 @@ impl Sheltering {
             for column in left.max(0)..=right.min(side - 1) {
                 let middle = corner + (Vec2::new(column as f32, row as f32) + 0.5) * SHELTER_CELL.0;
                 let local = into
-                    .transform_point3(Vec3::new(middle.x, self.top, middle.y))
+                    .transform_point3(Vec3::new(middle.x, 0.0, middle.y))
                     .xz();
-                if local.cmpge(self.low).all() && local.cmple(self.high).all() {
+                if let Some(height) = self.top.over(local) {
+                    let top = self
+                        .placed
+                        .transform_point(Vec3::new(local.x, height, local.y))
+                        .y;
                     let at = (row * side + column) as usize;
-                    tops[at] = tops[at].max(self.top);
+                    tops[at] = tops[at].max(top);
                 }
             }
         }

@@ -234,7 +234,8 @@ impl Weather {
     /// treads' first texels lie in the third; where the rain field and the shelter lie on the
     /// ground in the fourth and fifth, their north-west corner, a cell's side and the cells each
     /// way, or nothing for one not held; the wettest ground and the hardest rain over the field in
-    /// the sixth, so a shader skips reading the field where it lies dry; then a texel a tread, its ground point, its reach and its
+    /// the sixth, so a shader skips reading the field where it lies dry, and how far the rain
+    /// leans as it falls; then a texel a tread, its ground point, its reach and its
     /// count of limbs, and after every tread's, [`LIMBS_PER_TREAD`] places of two texels for each
     /// tread's limbs, a bone's start and girth, then its end, and after those [`TRAIL_POINTS`]
     /// texels for each tread's trail, a point's place, when it was laid and 1, or nothing past the
@@ -259,6 +260,8 @@ impl Weather {
                 *texel = Vec4::new(cell.share, cell.wetness, cell.rain, 0.0);
             }
         }
+        texels[5].z = shelter.lean.x;
+        texels[5].w = shelter.lean.y;
         if shelter.tops.len() == SHELTER_SIDE * SHELTER_SIDE {
             texels[4] = shelter
                 .corner

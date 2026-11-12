@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use strum::{IntoStaticStr, VariantArray};
 
 use super::ParamValue;
-use super::rain::SHELTER_DEPTH;
+use super::rain::{LEANING, OPEN_TOP, SHELTER_DEPTH, SHELTER_STEP, SHELTER_STEPS};
 use super::uniform::{LIMBS_PER_TREAD, MAX_PATH_POINTS, TRAIL_EVERY, TRAIL_POINTS, TREADS};
 use crate::core::content::{
     Bundle, ContentFile, ContentId, ContentProblem, ErrorPlace, FileShape, FileWriter, Loading,
@@ -662,8 +662,7 @@ const TREAD_HELPERS: &str = include_str!("tread.wgsl");
 /// The weather's helpers, as every shader that reads the weather is composed with them.
 pub(crate) fn weather_helpers() -> String {
     format!(
-        "{WEATHER_HELPERS}\n// How far under a roof's or a canopy's top a point lies sheltered, in metres.\nconst SHELTER_DEPTH: f32 = {:?};",
-        SHELTER_DEPTH
+        "{WEATHER_HELPERS}\n// How far under a roof's or a canopy's top a point lies wholly sheltered, in metres.\nconst SHELTER_DEPTH: f32 = {SHELTER_DEPTH:?};\n// The top of a cell of the shelter where nothing stands over the ground.\nconst OPEN_TOP: f32 = {OPEN_TOP:?};\n// How the rain's way down to a point is followed for what shelters it.\nconst SHELTER_STEPS: i32 = {SHELTER_STEPS};\nconst SHELTER_STEP: f32 = {SHELTER_STEP:?};\nconst LEANING: f32 = {LEANING:?};",
     )
 }
 
