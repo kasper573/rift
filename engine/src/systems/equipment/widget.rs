@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use ui::drag;
 use ui::egui;
-use ui::egui::{Color32, Rect, Sense, Ui, Vec2};
+use ui::egui::{Align, Color32, Layout, Rect, Sense, Ui, Vec2};
 use ui::face::TextRole;
 use ui::float;
 use ui::{controls, glyph, ink, sheet};
@@ -43,11 +43,15 @@ impl HudWindow for EquipmentWindow {
             .scope(|ui| {
                 sheet::scroll(ui, egui::ScrollArea::vertical().auto_shrink(false), |ui| {
                     ui.spacing_mut().item_spacing = Vec2::new(SLOT_GAP, 2.0);
-                    ui.horizontal_wrapped(|ui| {
+                    // A place stands taller than its slot by its name, so the row is laid from
+                    // its top: centred, each place would stand lower than the one before it.
+                    let row = Layout::left_to_right(Align::Min).with_main_wrap(true);
+                    let room = Vec2::new(ui.available_width(), SLOT);
+                    ui.allocate_ui_with_layout(room, row, |ui| {
                         for place in &places {
                             let span = place.span() as f32;
                             let width = NAMED_SLOT * span + SLOT_GAP * (span - 1.0);
-                            ui.allocate_ui(Vec2::new(width, NAMED_SLOT), |ui| {
+                            ui.allocate_ui(Vec2::new(width, SLOT), |ui| {
                                 ui.vertical_centered(|ui| {
                                     match place.item {
                                         Some(item) => worn_slot(ui, world, place, item),
