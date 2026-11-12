@@ -2,6 +2,7 @@ use bevy::prelude::*;
 use engine::core::jobs::Handoff;
 use engine::core::render::world::clouds::{self, CLOUD_TILE, CloudDrift, CloudSheet, SHADOW_SPAN};
 use engine::core::render::world::lights::sun_transform;
+use engine::core::time::UnixMillis;
 use engine::core::units::Degrees;
 
 const CLOUDS: f32 = 0.5;
@@ -51,6 +52,7 @@ fn the_ground_lies_in_the_shadow_of_the_cloud_up_the_suns_rays_as_the_clouds_dri
             )
         };
         let mut off = 0.0;
+        let mut mistold = 0.0;
         let mut points = 0.0;
         for x in (-64..64).step_by(8) {
             for z in (-64..64).step_by(8) {
@@ -60,6 +62,7 @@ fn the_ground_lies_in_the_shadow_of_the_cloud_up_the_suns_rays_as_the_clouds_dri
                     .reading()
                     .cloudiness((Vec2::new(up.x, up.z) - drift) / CLOUD_TILE.0);
                 off += (lit_at(ground) - (1.0 - clouds::shade(WATER, sheet.look()) * cloud)).abs();
+                mistold += (lit_at(ground) - (1.0 - sheet.shade_over(ground, drift))).abs();
                 points += 1.0;
             }
         }
@@ -67,6 +70,11 @@ fn the_ground_lies_in_the_shadow_of_the_cloud_up_the_suns_rays_as_the_clouds_dri
             off / points < 0.03,
             "{when} the shadows fall under the clouds: off by {} on average",
             off / points
+        );
+        assert!(
+            mistold / points < 0.03,
+            "{when} the shade told of a spot is the shadow it lies in: off by {} on average",
+            mistold / points
         );
         let rim = SHADOW_SPAN.0 / 2.0 - 1.0;
         let across = cast.right().as_vec3() * rim;
@@ -77,6 +85,19 @@ fn the_ground_lies_in_the_shadow_of_the_cloud_up_the_suns_rays_as_the_clouds_dri
         });
         assert!(joined, "{when} the shadows join where they repeat");
     }
+    let drifted = drifting.drift();
+    drifting.follow(None);
+    assert_eq!(
+        drifting.drift(),
+        drifted,
+        "the clouds drift on while their weather's course runs on"
+    );
+    drifting.follow(Some(UnixMillis(1)));
+    assert_eq!(
+        drifting.blown(WIND, 40.0, sheet.look()),
+        Vec2::ZERO,
+        "a course begun anew starts the clouds over where the field has them"
+    );
 }
 
 #[test]

@@ -12,9 +12,11 @@ use crate::core::assets;
 use crate::core::content::Content;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::video::VideoPreferences;
+use crate::core::render::world::clouds::CloudDrift;
 use crate::core::render::world::sky::Daylight;
 use crate::core::render::{CameraFraming, CameraRig, camera};
 use crate::core::render::{GroundHeights, WorldCamera, ground_height, world_point};
+use crate::core::time::{TimeCourse, WeatherClock};
 use crate::core::units::{MeterSize, Meters};
 use crate::core::vfx::cover::ShownWeather;
 use crate::core::vfx::render::SiteExtent;
@@ -184,6 +186,14 @@ fn light_area(
     else {
         return 0.0;
     };
+    let course = match world
+        .get_resource::<WeatherClock>()
+        .and_then(|clock| clock.0)
+    {
+        Some(TimeCourse::Since(began)) => Some(began),
+        Some(TimeCourse::Held(_)) | None => None,
+    };
+    world.resource_mut::<CloudDrift>().follow(course);
     scenery::light(world, area, weather, daylight, stood, camera);
     if let Some(mut shown) = world.get_resource_mut::<ShownArea>()
         && shown

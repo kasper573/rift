@@ -19,6 +19,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::jobs::Handoff;
 use crate::core::math::smoothstep;
+use crate::core::time::UnixMillis;
 use crate::core::units::{Meters, MetersPerSec};
 
 /// How much ground one tile of the field covers, the field repeating past it.
@@ -157,6 +158,14 @@ impl CloudSheet {
         }
     }
 
+    /// How much of the light the cloud up its rays takes from `at`, 0 none to 1 all of it, as the
+    /// shadows last laid show it with the field carried `drift`: none before any are laid.
+    pub fn shade_over(&self, at: Vec3, drift: Vec2) -> f32 {
+        self.laid.map_or(0.0, |laid| {
+            1.0 - self.reading.lit(at, laid.light.back().as_vec3(), drift)
+        })
+    }
+
     /// The field as the sky reads it.
     pub fn field(&self) -> Handle<Image> {
         self.field.clone()
@@ -240,6 +249,19 @@ impl CloudReading {
         self.look.height
     }
 
+    /// How much of a light shining from `toward` reaches `at` through the field carried `drift`.
+    fn lit(&self, at: Vec3, toward: Vec3, drift: Vec2) -> f32 {
+        let over = at + toward * (self.look.height.0 - at.y) / toward.y;
+        let under = (Vec2::new(over.x, over.z) - drift) / CLOUD_TILE.0;
+        let cloudy = self.cloudiness(under);
+        let held = if cloudy > 0.0 {
+            self.water(under) / cloudy
+        } else {
+            0.0
+        };
+        1.0 - shade(held, &self.look) * cloudy
+    }
+
     /// The shadows' texels, laid along the rays of `light` with the field carried `drift`. Toward
     /// the rim they even out to the light all of them let through together, over the ground that
     /// passes from one repeat to the next when they are laid anew and as much again before it: so
@@ -255,15 +277,7 @@ impl CloudReading {
                 let uv = uv_of(texel);
                 let near =
                     light.transform_point(Vec3::new(1.0 - 2.0 * uv.x, 2.0 * uv.y - 1.0, 0.0));
-                let over = near + toward * (self.look.height.0 - near.y) / toward.y;
-                let at = (Vec2::new(over.x, over.z) - drift) / CLOUD_TILE.0;
-                let cloudy = self.cloudiness(at);
-                let held = if cloudy > 0.0 {
-                    self.water(at) / cloudy
-                } else {
-                    0.0
-                };
-                1.0 - shade(held, &self.look) * cloudy
+                self.lit(near, toward, drift)
             })
             .collect();
         let even = lit.iter().sum::<f32>() / lit.len() as f32;
@@ -285,20 +299,32 @@ pub fn shade(water: f32, look: &CloudLook) -> f32 {
     look.fair_shade + (look.storm_shade - look.fair_shade) * water.clamp(0.0, 1.0)
 }
 
-/// How far the clouds have drifted along the ground, on whatever wind has blown, since the client
-/// started.
+/// How far the clouds have drifted along the ground, on whatever wind has blown, since the course
+/// their weather runs on began, or since the client started when that was later.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
 pub struct CloudDrift {
     drift: Vec2,
     at: Option<f32>,
+    course: Option<UnixMillis>,
 }
 
 impl CloudDrift {
     /// Clouds that have already drifted for `seconds` on whatever wind first blows them.
     pub fn carried_for(seconds: f32) -> CloudDrift {
         CloudDrift {
-            drift: Vec2::ZERO,
             at: Some(-seconds),
+            ..default()
+        }
+    }
+
+    /// Starts the clouds over, where the field has them undrifted, when the course their weather
+    /// runs on begins anew at `began`: a course begun again plays the same sky again.
+    pub fn follow(&mut self, began: Option<UnixMillis>) {
+        if self.course != began {
+            *self = CloudDrift {
+                course: began,
+                ..default()
+            };
         }
     }
 

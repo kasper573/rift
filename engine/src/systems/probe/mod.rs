@@ -54,6 +54,7 @@ use crate::core::render::sample::{
 };
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::render::video::VideoPreferences;
+use crate::core::render::world::clouds::{CloudDrift, CloudSheet};
 use crate::core::render::world::layers::Layered;
 use crate::core::render::world::sky::Daylight;
 use crate::core::render::world::{OnItsWay, missing_drawn};
@@ -849,8 +850,9 @@ pub struct ProbeFinishedQuest {
 /// The weather over the shown area as the client draws it: the spell under way by its name, or
 /// null before the course is known; how much cloud covers the sky, how much water it holds and how
 /// hard it rains under the wettest of it, each 0 to 1; and where the player stands, how hard it
-/// rains, how wet the ground lies, whether they stand sheltered from the rain, and how brightly
-/// lightning lights the world this moment.
+/// rains, how wet the ground lies, whether they stand sheltered from the rain, and how much of the
+/// sun's or the moon's light the cloud overhead takes from them, 0 none to 1 all of it; and how
+/// brightly lightning lights the world this moment.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeWeather {
     pub spell: Option<String>,
@@ -860,6 +862,7 @@ pub struct ProbeWeather {
     pub raining: f32,
     pub wetness: f32,
     pub sheltered: bool,
+    pub shaded: f32,
     pub flash: f32,
 }
 
@@ -1335,6 +1338,11 @@ fn weather(world: &World, area: AreaId, me: Option<Entity>) -> Option<ProbeWeath
         raining: cell.map_or(0.0, |cell| cell.rain) * open,
         wetness: cell.map_or(0.0, |cell| cell.wetness) * open,
         sheltered,
+        shaded: at
+            .zip(world.get_resource::<CloudSheet>())
+            .map_or(0.0, |(at, sheet)| {
+                sheet.shade_over(at, world.resource::<CloudDrift>().drift())
+            }),
         flash: shown.flash,
     })
 }
