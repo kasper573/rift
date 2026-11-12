@@ -66,7 +66,7 @@ use crate::core::vfx::cover::ShownWeather;
 use crate::core::vfx::rain::{RainField, Shelter};
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
 use crate::systems::actor::held::{self, Held};
-use crate::systems::actor::render::Puppet;
+use crate::systems::actor::render::{Puppet, RenderActor};
 use crate::systems::actor::skeleton::{Clip, Naming, SkeletonId};
 use crate::systems::actor::stance::{HandIndex, StanceId};
 use crate::systems::actor::{self, Action, Actor, ActorModel, Appearance, Hitbox, Motion, Playing};
@@ -475,6 +475,7 @@ pub struct ProbeBody {
     #[schemars(with = "PosSchema")]
     pub aim: Pos<Meters>,
     pub capsule: Capsule,
+    /// The way its body is turned on screen.
     pub facing: Radians,
     pub action: Action,
     /// The actor it is casting at, a blow or a bolt alike.
@@ -1598,7 +1599,9 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         drawn,
         aim: at,
         capsule,
-        facing: actor.facing,
+        facing: entity
+            .get::<RenderActor>()
+            .map_or(actor.facing, |shown| shown.facing),
         action: actor.action,
         resting: !actor.action.moves(),
         shown: shown.clone(),

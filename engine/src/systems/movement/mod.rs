@@ -8,7 +8,7 @@ pub use berth::{
     settle, vacant_near,
 };
 pub use navmesh::{Island, NavMesh, SEAM_SNAP, TileLayer, kept_clear};
-pub use predict::request_walk;
+pub use predict::{request_walk, walk_ahead};
 pub use spots::{Bodies, Spot, Spots, crowding};
 
 use bevy_app::{App, Plugin, Update};
@@ -95,7 +95,7 @@ pub struct MovementRenderPlugin;
 impl Plugin for MovementRenderPlugin {
     fn build(&self, app: &mut App) {
         app.add_plugins(InterpolatePlugin::<RenderPosition>::default())
-            .add_systems(Update, predict::walk_ahead.in_set(RenderValueSystems));
+            .add_systems(Update, walk_ahead.in_set(RenderValueSystems));
     }
 }
 

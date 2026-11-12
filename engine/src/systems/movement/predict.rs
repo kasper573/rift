@@ -54,7 +54,9 @@ pub(super) struct Stride {
     jumps: Jumps,
 }
 
-pub(super) fn walk_ahead(world: &mut World) {
+/// Shows the client's own character where its [`Stride`] has walked it, turned and posed as it
+/// walks or, standing, as the server has it stand.
+pub fn walk_ahead(world: &mut World) {
     let Some(me) = predicted_character(world) else {
         return;
     };
@@ -174,7 +176,9 @@ impl Stride {
     }
 
     /// The stride's own walking pose, unless the server shows the character doing something walking
-    /// can't: a swing or a death shows as soon as the server's word of it arrives.
+    /// can't: a swing or a death shows as soon as the server's word of it arrives. Standing, the
+    /// character is turned and posed as the server has it stand, so it faces whom it talks to; a
+    /// walk the server still shows is one the stride has already finished, and turns nothing.
     fn pose(
         &mut self,
         heading: Option<Offset<Meters>>,
@@ -193,12 +197,13 @@ impl Stride {
                 }
             }
             (None, shown) => {
-                if let Some((facing, Action::Idle)) = shown {
+                let standing = shown.filter(|(_, action)| !action.moves());
+                if let Some((facing, _)) = standing {
                     self.facing = facing;
                 }
                 RenderActor {
                     facing: self.facing,
-                    action: Action::Idle,
+                    action: standing.map_or(Action::Idle, |(_, action)| action),
                 }
             }
         }

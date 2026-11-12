@@ -4,6 +4,7 @@ use engine::core::math::{Offset, Pos};
 use engine::core::script::Value as Recalled;
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
 use engine::core::units::{MeterPos, Meters, Radians};
+use engine::systems::actor::render::RenderActor;
 use engine::systems::actor::{self, Action, Actor};
 use engine::systems::attention::{self, Attention, AttentionId, AttentionMark};
 use engine::systems::dialogue::camera::DialogueCamera;
@@ -12,6 +13,7 @@ use engine::systems::interact::{self, InteractRequest};
 use engine::systems::memory::{self, MemoryDef};
 use engine::systems::movement::{self, MoveRequest, MoveSeq, moving, position};
 use engine::systems::player::commands_locked;
+use engine::systems::player::session::MyCharacter;
 use engine::systems::region;
 use engine::systems::script::{self, EventKind, RiftInstances};
 use engine::systems::stat::{self, Immortal, StatKind};
@@ -102,6 +104,8 @@ fn talking_walks_into_reach_opens_the_greeting_and_locks_commands() {
     let mut sim = inn();
     let player = sim.join(1);
     let keeper = sim.npc("keeper");
+    sim.world.insert_resource(MyCharacter(Some(player)));
+    movement::walk_ahead(&mut sim.world);
 
     let opened = sim.talk(1, "keeper");
 
@@ -122,6 +126,19 @@ fn talking_walks_into_reach_opens_the_greeting_and_locks_commands() {
         "{:?} and {:?} talk without facing each other",
         facing(&sim.world, player),
         facing(&sim.world, keeper)
+    );
+    let seen = (0..200)
+        .find_map(|_| {
+            sim.tick();
+            movement::walk_ahead(&mut sim.world);
+            let seen = sim.world.get::<RenderActor>(player).copied()?;
+            (!seen.action.moves()).then_some(seen)
+        })
+        .expect("the player's own character comes to rest on their screen");
+    assert_eq!(
+        (seen.facing, seen.action),
+        (facing(&sim.world, player), Action::Talk),
+        "the player sees their own character turned to the keeper as everyone else does"
     );
 
     let conn = sim.conn(1);
