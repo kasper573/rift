@@ -206,9 +206,9 @@ fn groups(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rig: &
     }
 }
 
-/// How long the bodies take to turn, to blend from one clip into the next, to shift from one turn
-/// of a cell's clips to the next and to close a hand, how their clips blend, and where their loops
-/// begin.
+/// How long the bodies take to turn, to blend from one clip into the next, moving or at rest, to
+/// shift from one turn of a cell's clips to the next and to close a hand, how their clips blend,
+/// and where their loops begin.
 fn easing(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
     sheet::section(ui, "Easing");
     let mut edited = def.easing;
@@ -219,6 +219,7 @@ fn easing(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
         .show(ui, |ui| {
             number(ui, "turn · s", &mut edited.turn.0, 0.0..=2.0);
             number(ui, "crossfade · s", &mut edited.crossfade.0, 0.0..=2.0);
+            number(ui, "at rest · s", &mut edited.rest.0, 0.0..=4.0);
             number(ui, "shift · s", &mut edited.shift.0, 0.0..=4.0);
             number(ui, "clasp · s", &mut edited.clasp.0, 0.0..=2.0);
             ui.label(theme::muted("clips blend"));

@@ -56,6 +56,12 @@ impl Motion {
         }
     }
 
+    /// Whether the actor stands at rest while the motion plays: idling, talking, gesturing, and
+    /// taking or leaving a pose.
+    pub fn rests(&self) -> bool {
+        matches!(self.action(), Action::Idle | Action::Talk)
+    }
+
     /// Whether the motion is a hit, which plays at the actor's attack speed and lands at its apex.
     pub fn strikes(&self) -> bool {
         self.action() == Action::Attack

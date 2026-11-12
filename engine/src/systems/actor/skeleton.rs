@@ -268,6 +268,9 @@ pub struct BodyEasing {
     pub turn: Seconds,
     /// For one clip to blend into the next.
     pub crossfade: Seconds,
+    /// For one clip to blend into the next between two motions a body makes standing at rest:
+    /// idling, talking, gesturing, and taking or leaving a pose.
+    pub rest: Seconds,
     /// For a clip to give way to the next of its cell's turns, where no transition joins them.
     pub shift: Seconds,
     /// For a hand to close on an item it takes up.
@@ -946,6 +949,7 @@ impl ContentFile for SkeletonDef {
             easing: BodyEasing {
                 turn: Seconds(0.0),
                 crossfade: Seconds(0.0),
+                rest: Seconds(0.0),
                 shift: Seconds(0.0),
                 clasp: Seconds(0.0),
                 curve: BlendCurve::Even,

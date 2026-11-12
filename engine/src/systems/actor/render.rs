@@ -800,15 +800,16 @@ pub fn pose(world: &mut World) {
         };
         let restart = puppet.playing.as_ref() != Some(&play);
         if restart {
-            let shifts = puppet.playing.as_ref().is_some_and(|last| {
-                last.takes_turns_with(&play)
-                    && !cell.transits(last.pick)
-                    && !cell.transits(play.pick)
-            });
-            puppet.blend = if shifts {
-                easing.shift
-            } else {
-                easing.crossfade
+            puppet.blend = match puppet.playing.as_ref() {
+                Some(last) if last.takes_turns_with(&play) => {
+                    if cell.transits(last.pick) || cell.transits(play.pick) {
+                        easing.crossfade
+                    } else {
+                        easing.shift
+                    }
+                }
+                Some(last) if last.motion.rests() && play.motion.rests() => easing.rest,
+                _ => easing.crossfade,
             };
             puppet.playing = Some(play);
         }
