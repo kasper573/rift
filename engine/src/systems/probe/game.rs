@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::core::content::ContentId;
+use crate::core::content::media::GltfInfos;
 use crate::core::content::{Content, ContentScope, Fixture, with_content};
 use crate::core::geometry::Shape;
 use crate::core::ground::TILE_SIDE;
@@ -236,6 +237,8 @@ pub struct ProbeProp {
     pub prop: PropId,
     #[schemars(with = "PosSchema")]
     pub at: Pos<Meters>,
+    /// How tall it stands over the ground, as it is placed.
+    pub tall: Meters,
     /// Whether it fades out of the way of the camera's view of the player.
     pub fades: bool,
     /// Whether light shines through any of its materials.
@@ -488,14 +491,20 @@ fn area_of(content: &Content, id: AreaId) -> ProbeArea {
             })
         })
         .collect();
+    let models = content.built::<GltfInfos>();
     let props = area
         .props
         .iter()
         .map(|placement| {
             let prop = placement.prop.get(content);
+            let top = models
+                .0
+                .get(&prop.model.path())
+                .map_or(0.0, |model| model.bounds.max.y);
             ProbeProp {
                 prop: placement.prop,
                 at: placement.at,
+                tall: Meters((top * placement.scale - placement.sunk.0).max(0.0)),
                 fades: prop.fade,
                 translucent: prop
                     .materials
