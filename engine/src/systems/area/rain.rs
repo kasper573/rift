@@ -11,7 +11,7 @@ use bevy::platform::collections::HashMap;
 use bevy::prelude::*;
 use bevy::tasks::{AsyncComputeTaskPool, Task, TaskPool};
 
-use super::weather::RainSound;
+use super::weather::{RainSound, ThunderHeard};
 use super::{Area, AreaId, Rainfall, Weather};
 use crate::core::audio::mix::AudioCategory;
 use crate::core::audio::playback::{self, PlaySfx, SfxPlace};
@@ -182,11 +182,6 @@ const FIELD_EVERY: f32 = 0.25;
 const SHELTER_SLIP: Meters = Meters(8.0);
 /// How finely the rain heard is told, so its sounds follow it without a new soundscape a frame.
 const HEARD_STEPS: f32 = 50.0;
-/// How fast thunder travels, in metres a second.
-const SOUND_SPEED: f32 = 343.0;
-/// How near a strike lights the world fully and its thunder plays as loud as its clip: further
-/// off, its flash and its thunder fall away with the distance.
-const NEAR_STRIKE: Meters = Meters(500.0);
 /// How long a stroke of lightning takes to fade to a third, in seconds.
 const STROKE_FADE: f32 = 0.06;
 /// How many places lightning looks over for the wettest cloud to strike from.
@@ -211,7 +206,7 @@ struct FallingRain {
     shelters: Option<Shelters>,
     finding: Option<Task<Shelters>>,
     strokes: Vec<Stroke>,
-    thunder: Vec<Thunder>,
+    thunder: Vec<Rolling>,
     rng: Rng,
 }
 
@@ -326,11 +321,12 @@ struct Stroke {
     nearness: f32,
 }
 
-/// Thunder due to be heard at `due` from `toward`, as loud as `loudness`.
-struct Thunder {
+/// The thunder of a strike due to be heard at `due` from `toward`, its clap and its roll as loud
+/// as `heard` says.
+struct Rolling {
     due: f32,
     toward: Pos<Meters>,
-    loudness: f32,
+    heard: ThunderHeard,
 }
 
 impl FallingRain {
@@ -481,8 +477,9 @@ impl FallingRain {
                 })
                 .max_by(|a, b| a.1.total_cmp(&b.1));
             if let Some((at, _)) = wettest.filter(|(_, rain)| *rain >= STORM_RAIN) {
-                let away = at.distance(subject).max(1.0);
-                let nearness = (NEAR_STRIKE.0 / away).min(1.0);
+                let away = Meters(at.distance(subject));
+                let nearness = lightning.thunder.nearness(away);
+                let heard = lightning.thunder.heard(away);
                 let strokes = 2 + (self.rng.rand_float() * 3.0) as usize;
                 let mut stroke = now;
                 for _ in 0..strokes {
@@ -492,28 +489,34 @@ impl FallingRain {
                     });
                     stroke += 0.04 + 0.1 * self.rng.rand_float();
                 }
-                self.thunder.push(Thunder {
-                    due: now + away / SOUND_SPEED,
+                self.thunder.push(Rolling {
+                    due: now + heard.after.0,
                     toward: Pos::new(at.x, at.y),
-                    loudness: nearness,
+                    heard,
                 });
             }
         }
-        let (due, waiting): (Vec<Thunder>, Vec<Thunder>) = std::mem::take(&mut self.thunder)
+        let (due, waiting): (Vec<Rolling>, Vec<Rolling>) = std::mem::take(&mut self.thunder)
             .into_iter()
             .partition(|thunder| thunder.due <= now);
         self.thunder = waiting;
-        for thunder in due {
-            playback::play(
-                world,
-                PlaySfx {
-                    id: lightning.thunder,
-                    place: SfxPlace::Afar {
-                        toward: thunder.toward,
-                        loudness: thunder.loudness,
+        for rolling in due {
+            let sounds = [
+                (lightning.thunder.clap, rolling.heard.clap),
+                (lightning.thunder.roll, rolling.heard.roll),
+            ];
+            for (id, loudness) in sounds {
+                playback::play(
+                    world,
+                    PlaySfx {
+                        id,
+                        place: SfxPlace::Afar {
+                            toward: rolling.toward,
+                            loudness,
+                        },
                     },
-                },
-            );
+                );
+            }
         }
         self.strokes
             .retain(|stroke| now - stroke.at < STROKE_FADE * 12.0);

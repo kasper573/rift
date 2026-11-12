@@ -1,13 +1,15 @@
 use bevy::prelude::*;
+use engine::core::audio::playback::SfxDef;
 use engine::core::ground::ShareMap;
 use engine::core::math::Pos;
 use engine::core::render::world::clouds::{CLOUD_TILE, CloudSheet};
 use engine::core::time::{TimeCourse, UnixMillis};
-use engine::core::units::Seconds;
+use engine::core::units::{Meters, Seconds};
 use engine::systems::area::rain::rain_at;
+use engine::systems::area::weather::Thunder;
 use engine::systems::area::{self, AreaDef, Climate, RAIN, Weather};
 use serde_json::json;
-use testkit::{Game, Map, path};
+use testkit::{Declared, Game, Map, path};
 
 fn climate() -> Climate {
     serde_json::from_value(json!({
@@ -172,4 +174,48 @@ fn rain_falls_only_from_cloud_that_holds_water_carried_downwind_as_hard_as_the_s
             "under a {pour} downpour some cloud holds no water and drops none"
         );
     }
+}
+
+#[test]
+fn thunder_follows_a_strike_as_late_as_it_is_far_its_clap_soon_lost_and_its_roll_carrying_to_its_reach()
+ {
+    let content = Game::new()
+        .area("vale", &Map::open(16, 16), json!([]))
+        .hero("vale", 8.0, 8.0)
+        .sfx("clap")
+        .sfx("roll")
+        .load();
+    let sfx = |name: &str| content.declared::<SfxDef>(name).expect("an sfx");
+    let thunder = Thunder {
+        clap: sfx("clap"),
+        roll: sfx("roll"),
+        near: Meters(500.0),
+        reach: Meters(10_000.0),
+    };
+
+    let overhead = thunder.heard(Meters(200.0));
+    assert_eq!(
+        (overhead.clap, overhead.roll),
+        (1.0, 1.0),
+        "a strike within its near plays both as loud as their clips"
+    );
+    let off = thunder.heard(Meters(2_000.0));
+    assert!(
+        off.clap < 0.1 && off.roll > 0.4,
+        "two kilometres off the clap is all but lost and the roll carries: {off:?}"
+    );
+    assert!(
+        (off.after.0 - 2_000.0 / 343.0).abs() < 0.01,
+        "it follows at the speed of sound: {off:?}"
+    );
+    let far = thunder.heard(Meters(8_000.0));
+    assert!(
+        far.clap < 0.01 && far.roll > 0.0 && far.roll < off.roll,
+        "the roll fades on toward its reach: {far:?}"
+    );
+    assert_eq!(
+        thunder.heard(Meters(10_000.0)).roll,
+        0.0,
+        "and is heard no more at it"
+    );
 }

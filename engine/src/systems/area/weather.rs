@@ -83,13 +83,55 @@ pub struct Rainfall {
 }
 
 /// How lightning strikes: lighting the world, for a moment, `flash` times as brightly as the open
-/// sky lights it by day where it strikes nearest, and `thunder` rolling after at the speed of
-/// sound, quieter the further off it struck.
+/// sky lights it by day where it strikes within its thunder's `near`, fainter the further off, its
+/// thunder following.
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Lightning {
     pub flash: f32,
-    pub thunder: SfxId,
+    pub thunder: Thunder,
+}
+
+/// The thunder of a strike, following its flash at the speed of sound: the `clap` of a strike
+/// close by, sharp and soon lost to the air, and the `roll` that carries. Both play as loud as
+/// their clips for a strike within `near`. Further off the clap falls away with the square of the
+/// distance and the roll with its root, fading to nothing at `reach`.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Thunder {
+    pub clap: SfxId,
+    pub roll: SfxId,
+    pub near: Meters,
+    pub reach: Meters,
+}
+
+/// How the thunder of one strike is heard: how loud its clap and its roll, 0 silent to 1 as loud
+/// as their clips, and how long after the flash.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ThunderHeard {
+    pub clap: f32,
+    pub roll: f32,
+    pub after: Seconds,
+}
+
+impl Thunder {
+    /// How fast thunder travels, in metres a second.
+    const SPEED: f32 = 343.0;
+
+    /// How near a strike `away` is: 1 within `near`, falling away with the distance.
+    pub fn nearness(&self, away: Meters) -> f32 {
+        (self.near.0 / away.0.max(f32::EPSILON)).min(1.0)
+    }
+
+    pub fn heard(&self, away: Meters) -> ThunderHeard {
+        let nearness = self.nearness(away);
+        let carried = (1.0 - (away.0 - self.near.0) / (self.reach.0 - self.near.0)).clamp(0.0, 1.0);
+        ThunderHeard {
+            clap: nearness * nearness,
+            roll: nearness.sqrt() * carried,
+            after: Seconds(away.0 / Thunder::SPEED),
+        }
+    }
 }
 
 /// A spell of weather: what it is called, its weather, how long it lasts at the shortest and the
@@ -520,6 +562,22 @@ impl Climate {
                 16.0,
                 "times the open sky's light by day",
             );
+            let thunder = lightning.thunder;
+            cx.range(
+                format!("{pointer}/lightning/thunder/near"),
+                thunder.near.0,
+                1.0,
+                f32::MAX,
+                "metres",
+            );
+            if thunder.reach <= thunder.near {
+                cx.error(
+                    format!("{pointer}/lightning/thunder/reach"),
+                    "out of range",
+                    format!("{} m", thunder.reach.0),
+                    format!("further than its near of {} m", thunder.near.0),
+                );
+            }
         }
     }
 
