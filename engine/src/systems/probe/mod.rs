@@ -333,6 +333,7 @@ pub struct ProbeSnapshot {
     pub stage: Option<ProbeStage>,
     pub notifications: ProbeNotifications,
     pub feed: Vec<String>,
+    pub feed_place: feed::FeedPlace,
     pub pops: Vec<pop::ShownPop>,
     pub history: ProbeHistory,
     pub shop: Option<ProbeShop>,
@@ -1129,6 +1130,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
         }),
         notifications: notifications(world),
         feed: feed::rows(world),
+        feed_place: feed::place(world),
         pops: pop::shown(world),
         history: ProbeHistory {
             open: history_tab.is_some(),
