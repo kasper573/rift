@@ -13,7 +13,7 @@ use bevy::animation::{AnimationTargetId, RepeatAnimation};
 use bevy::prelude::*;
 
 use super::appearance::look;
-use super::held::{self, Held};
+use super::held::{self, HandsAtWork, Held, ToolInHand};
 use super::layering::{self, Layering};
 use super::rigging::BuiltSkeleton;
 use super::skeleton::{Cue, GroupName, Hand, LocalOffset, LocalTurn, SkeletonId};
@@ -36,7 +36,7 @@ use crate::core::text::Typewriter;
 use crate::core::time::{self, UnixMillis};
 use crate::core::units::{Meters, MetersPerSec, PlaybackRate, Radians, Seconds};
 use crate::core::vfx::render::SiteExtent;
-use crate::systems::area::{self, Area};
+use crate::systems::area::{self, Area, PropId};
 use crate::systems::equipment::{self, Equipment};
 use crate::systems::item::{Grip, ItemId, PropAxis, Wear};
 use crate::systems::movement::RenderPosition;
@@ -193,7 +193,7 @@ pub struct Puppet {
     playing: Option<Play>,
     tracks: Vec<Track>,
     turn: Turn,
-    held: BTreeMap<HandIndex, (ItemId, Entity)>,
+    held: BTreeMap<HandIndex, (Hung, Entity)>,
 }
 
 /// What a body was last dressed as: its appearance, and the items worn in its slots.
@@ -206,6 +206,34 @@ struct Dressed {
 /// A prop hanging from a hand of an actor's rig.
 #[derive(Component)]
 pub struct HeldProp;
+
+/// What hangs from a hand: an item the body holds, or the tool of the work its hands are at.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum Hung {
+    Item(ItemId),
+    Tool(ToolInHand),
+}
+
+impl Hung {
+    pub fn item(self) -> Option<ItemId> {
+        match self {
+            Hung::Item(item) => Some(item),
+            Hung::Tool(_) => None,
+        }
+    }
+
+    /// The prop that hangs, and how it sits in the hand: none for an item no hand holds.
+    fn look(self, content: &Content) -> Option<(PropId, Grip)> {
+        match self {
+            Hung::Item(item) => {
+                let def = item.get(content);
+                let (_, grip) = def.wear().and_then(Wear::grasp)?;
+                Some((def.look, *grip))
+            }
+            Hung::Tool(tool) => Some((tool.prop, tool.grip)),
+        }
+    }
+}
 
 /// What plays, from when: an attack struck again restarts the same clip.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -280,10 +308,10 @@ impl Puppet {
     }
 
     /// The props the hands hold, by hand.
-    pub fn held(&self) -> impl Iterator<Item = (HandIndex, ItemId, Entity)> + '_ {
+    pub fn held(&self) -> impl Iterator<Item = (HandIndex, Hung, Entity)> + '_ {
         self.held
             .iter()
-            .map(|(&hand, &(item, prop))| (hand, item, prop))
+            .map(|(&hand, &(hung, prop))| (hand, hung, prop))
     }
 }
 
@@ -912,27 +940,45 @@ pub fn cue_sounds(
     (sounds, stepped)
 }
 
-/// Hangs from each hand of a dressed rig the prop of the item it shows, moved by the hand's and the
-/// item's grip, and takes it down the frame the hand empties. A two-hander hangs from the first or
-/// the last hand it takes, as its stance holds it.
+/// Hangs from each hand of a dressed rig the prop of what it shows, moved by the hand's and the
+/// prop's grip, and takes it down the frame the hand empties. A two-hander hangs from the first or
+/// the last hand it takes, as its stance holds it. Hands at work show their tool alone, from the
+/// first of them.
 pub fn hang(world: &mut World) {
     let content = world.resource::<Content>().clone();
-    let dressed: Vec<(Entity, ModelId, BTreeMap<HandIndex, ItemId>)> = world
-        .query::<(Entity, &Appearance, &Body, Option<&Held>)>()
+    type Dressed<'a> = (
+        Entity,
+        &'a Appearance,
+        &'a Body,
+        Option<&'a Held>,
+        Option<&'a HandsAtWork>,
+    );
+    let dressed: Vec<(Entity, ModelId, BTreeMap<HandIndex, Hung>)> = world
+        .query::<Dressed>()
         .iter(world)
-        .filter(|(_, _, body, _)| body.player().is_some())
-        .map(|(entity, appearance, _, held)| {
-            (
-                entity,
-                appearance.model,
-                held.map(|held| held.hands.clone()).unwrap_or_default(),
-            )
+        .filter(|(_, _, body, ..)| body.player().is_some())
+        .map(|(entity, appearance, _, held, at_work)| {
+            let model = ActorModel::get(&content, appearance.model);
+            let shown = match at_work {
+                Some(at_work) => at_work
+                    .tool
+                    .filter(|_| !model.hands().is_empty())
+                    .map(|tool| (HandIndex(0), Hung::Tool(tool)))
+                    .into_iter()
+                    .collect(),
+                None => held
+                    .map(|held| hung(&content, model, &held.hands))
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|(hand, item)| (hand, Hung::Item(item)))
+                    .collect(),
+            };
+            (entity, appearance.model, shown)
         })
         .collect();
-    for (entity, model, shown) in dressed {
+    for (entity, model, wanted) in dressed {
         let model = ActorModel::get(&content, model);
         let hands = model.hands();
-        let wanted = hung(&content, model, &shown);
         let (Some(puppet), Some(body)) = (world.get::<Puppet>(entity), world.get::<Body>(entity))
         else {
             continue;
@@ -940,15 +986,15 @@ pub fn hang(world: &mut World) {
         let gone: Vec<(HandIndex, Entity)> = puppet
             .held
             .iter()
-            .filter(|(hand, (item, _))| wanted.get(hand) != Some(item))
+            .filter(|(hand, (hung, _))| wanted.get(hand) != Some(hung))
             .map(|(&hand, &(_, prop))| (hand, prop))
             .collect();
-        let new: Vec<(HandIndex, ItemId, Entity)> = wanted
+        let new: Vec<(HandIndex, Hung, Entity)> = wanted
             .iter()
-            .filter(|(hand, item)| puppet.held.get(hand).map(|(held, _)| held) != Some(item))
-            .filter_map(|(&hand, &item)| {
+            .filter(|(hand, hung)| puppet.held.get(hand).map(|(held, _)| held) != Some(hung))
+            .filter_map(|(&hand, &hung)| {
                 let joint = body.joint(&hands[hand.index()].joint.0)?;
-                Some((hand, item, joint))
+                Some((hand, hung, joint))
             })
             .collect();
         for (hand, prop) in gone {
@@ -959,14 +1005,15 @@ pub fn hang(world: &mut World) {
                 puppet.held.remove(&hand);
             }
         }
-        for (hand, item, joint) in new {
-            let def = item.get(&content);
-            let Some((_, grip)) = def.wear().and_then(Wear::grasp) else {
+        for (hand, hung, joint) in new {
+            let Some((look, grip)) = hung.look(&content) else {
                 continue;
             };
-            let look = def.look.get(&content);
-            let placed = held_at(model, &hands[hand.index()], grip);
-            let scene = assets::model_scene(world.resource::<AssetServer>(), look.model.path());
+            let placed = held_at(model, &hands[hand.index()], &grip);
+            let scene = assets::model_scene(
+                world.resource::<AssetServer>(),
+                look.get(&content).model.path(),
+            );
             let prop = world
                 .spawn((
                     HeldProp,
@@ -977,7 +1024,7 @@ pub fn hang(world: &mut World) {
                 ))
                 .id();
             if let Some(mut puppet) = world.get_mut::<Puppet>(entity) {
-                puppet.held.insert(hand, (item, prop));
+                puppet.held.insert(hand, (hung, prop));
             }
         }
     }

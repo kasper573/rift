@@ -9,12 +9,13 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
 use super::ActorModel;
-use super::skeleton::Hand;
+use super::skeleton::{Hand, LocalOffset, LocalTurn};
 use super::stance::{self, HandIndex, HandRole, StanceId};
 use crate::core::content::Content;
 use crate::core::content::SchemaMark;
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
-use crate::systems::item::ItemId;
+use crate::systems::area::PropId;
+use crate::systems::item::{Grip, ItemId, PropAxis};
 use crate::systems::script::event::NPC;
 use crate::systems::script::{EffectCall, EffectReach, RiftScripting, RunnerKind};
 
@@ -22,6 +23,23 @@ use crate::systems::script::{EffectCall, EffectReach, RiftScripting, RunnerKind}
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Held {
     pub hands: BTreeMap<HandIndex, ItemId>,
+}
+
+/// A prop a body holds in its first hand that is no item of its own, sitting there as its grip says.
+#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ToolInHand {
+    pub prop: PropId,
+    #[serde(default, skip_serializing_if = "Grip::is_identity")]
+    pub grip: Grip,
+}
+
+/// Hands busy at work no item of theirs shows: for as long as it is on a body, its hands show the
+/// tool alone, or nothing, and everything the body holds is put away.
+#[derive(Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq)]
+#[serde(from = "HandsOnTheWire", into = "HandsOnTheWire")]
+pub struct HandsAtWork {
+    pub tool: Option<ToolInHand>,
 }
 
 /// A stance a script put a body in with nothing in its hands: it holds until cleared, and gives way
@@ -69,11 +87,13 @@ impl EffectDef<RiftScripting> for SetHeld {
     }
 }
 
-/// The stance the actor stands in: the one its hands show, else the one a script put it in.
+/// The stance the actor stands in: the one the items its hands show put it in, else the one a
+/// script put it in.
 pub fn stance_of(world: &World, actor: Entity) -> Option<StanceId> {
     let content = world.resource::<Content>();
     world
         .get::<Held>(actor)
+        .filter(|_| world.get::<HandsAtWork>(actor).is_none())
         .and_then(|wearing| stance::of_hands(content, &wearing.hands))
         .or_else(|| {
             world
@@ -179,4 +199,34 @@ pub fn listed(content: &Content, slots: usize, items: &[ItemId]) -> Placement {
 
 fn hand_at(index: usize) -> HandIndex {
     HandIndex(index as u8)
+}
+
+// A file leaves out the parts of a grip that are none, which a binary format cannot tell from
+// missing ones, so the wire carries every part.
+#[derive(Serialize, Deserialize)]
+struct HandsOnTheWire(Option<(PropId, LocalOffset, LocalTurn, PropAxis)>);
+
+impl From<HandsAtWork> for HandsOnTheWire {
+    fn from(hands: HandsAtWork) -> HandsOnTheWire {
+        HandsOnTheWire(
+            hands
+                .tool
+                .map(|ToolInHand { prop, grip }| (prop, grip.offset, grip.turn, grip.symmetry)),
+        )
+    }
+}
+
+impl From<HandsOnTheWire> for HandsAtWork {
+    fn from(HandsOnTheWire(tool): HandsOnTheWire) -> HandsAtWork {
+        HandsAtWork {
+            tool: tool.map(|(prop, offset, turn, symmetry)| ToolInHand {
+                prop,
+                grip: Grip {
+                    offset,
+                    turn,
+                    symmetry,
+                },
+            }),
+        }
+    }
 }

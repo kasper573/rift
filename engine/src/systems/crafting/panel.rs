@@ -88,7 +88,7 @@ pub struct CraftResult {
     pub chance: Percent,
 }
 
-/// A recipe as the Recipes window lists it: which ingredients the bag lacks, and whether it
+/// A recipe as the Recipes window lists it: which materials the bag lacks, and whether it
 /// covers them all.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ListedRecipe {
@@ -217,7 +217,7 @@ pub fn verdict(world: &World) -> (String, Option<CraftResult>) {
     }
 }
 
-/// Places the ingredients of `recipe` in the tray in place of what is there; once they are
+/// Places the materials of `recipe` in the tray in place of what is there; once they are
 /// placed, another craft's worth while the bag covers it.
 pub fn lay_out(world: &mut World, recipe: &Recipe) {
     if tray::waiting(world) {
@@ -227,7 +227,7 @@ pub fn lay_out(world: &mut World, recipe: &Recipe) {
     let covers = |times: u32| {
         let bag = session::my_character(world).and_then(|me| me.get::<Inventory>());
         recipe
-            .ingredients(times)
+            .materials(times)
             .iter()
             .all(|stack| bag.is_some_and(|bag| bag.count(stack.item) >= stack.count))
     };
@@ -239,7 +239,7 @@ pub fn lay_out(world: &mut World, recipe: &Recipe) {
         return;
     }
     tray::clear(world);
-    for stack in recipe.ingredients(times) {
+    for stack in recipe.materials(times) {
         tray::put(world, stack);
     }
     InterfaceSound::UiMove.play(world);
@@ -480,10 +480,10 @@ fn confirm_risk(world: &mut World, step: PromptStep, result: &CraftResult) {
             title: format!("Craft {}?", made.join(" + ")),
             body: vec![
                 format!("{each} has a {}.", chance_note(result.chance)),
-                "One that fails spends its ingredients and makes nothing.".to_owned(),
+                "One that fails spends its materials and makes nothing.".to_owned(),
             ],
             confirm: "Craft anyway".to_owned(),
-            cancel: "Keep ingredients".to_owned(),
+            cancel: "Keep materials".to_owned(),
             answer: Box::new(move |world, crafts| {
                 if crafts {
                     craft(world, step, recipe);
@@ -612,7 +612,7 @@ fn list(ui: &mut Ui, world: &mut World) {
         ui.add_space(6.0);
         let hint = StyledLine::new(vec![
             input(InputAction::Select),
-            TextPiece::text(" a recipe to place its ingredients"),
+            TextPiece::text(" a recipe to place its materials"),
         ]);
         let look = TextLook::new(TextRole::Small.size(), ink::INK3);
         text::show(ui, world, &hint, look, None);
@@ -672,9 +672,8 @@ fn recipe_row(ui: &mut Ui, world: &mut World, row: &ListedRecipe) -> egui::Respo
                                 ui.allocate_exact_size(Vec2::splat(CROSS), Sense::hover());
                             Mark::Cross.paint(ui.painter(), cross, ink::RUBRIC);
                         }
-                        let ingredient =
-                            format!("{} {}", stack.count, stack.item.get(&content).name);
-                        sheet::label(ui, TextRole::Small, &ingredient, ink::INK2);
+                        let material = format!("{} {}", stack.count, stack.item.get(&content).name);
+                        sheet::label(ui, TextRole::Small, &material, ink::INK2);
                         ui.add_space(4.0);
                     }
                 });

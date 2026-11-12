@@ -14,7 +14,7 @@ pub mod skeleton;
 pub mod stance;
 
 pub use appearance::Appearance;
-pub use held::Held;
+pub use held::{HandsAtWork, Held};
 pub use material::{MaterialDef, MaterialId};
 pub use model::{ActorModel, ModelDef, ModelId, Timing};
 pub use part::{ModelPartDef, ModelPartId};
@@ -52,6 +52,7 @@ pub fn register(app: &mut App) {
         .replicate::<Appearance>()
         .replicate::<Playing>()
         .replicate::<Held>()
+        .replicate::<HandsAtWork>()
         .replicate::<held::ScriptedStance>()
         .replicate::<Hitbox>()
         .replicate::<Hurt>()

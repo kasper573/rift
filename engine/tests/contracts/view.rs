@@ -1273,7 +1273,7 @@ fn props(app: &mut App) -> Vec<(Entity, engine::systems::item::ItemId)> {
                         .collect::<Vec<_>>()
                 })
                 .find(|(_, at)| *at == prop)
-                .map(|(item, _)| item)
+                .and_then(|(hung, _)| hung.item())
                 .expect("a prop of a held item");
             (joint, item)
         })

@@ -7,6 +7,7 @@
 
 use engine::core::content::ContentFile;
 use engine::core::units::{Percent, Seconds};
+use engine::systems::actor::held::ToolInHand;
 use engine::systems::actor::skeleton::MoveName;
 use engine::systems::crafting::{Recipe, RecipeBookDef};
 use engine::systems::item::{ItemDef, ItemId, ItemStack};
@@ -40,7 +41,7 @@ const FACE: f32 = 18.0;
 const ITEM_TRAIL: f32 = 96.0;
 
 /// What a recipe book's window keeps besides its file: what the list is narrowed to, and the item
-/// a recipe being added makes until it has an ingredient.
+/// a recipe being added makes until it has a material.
 #[derive(Default)]
 pub struct RecipeBookView {
     pub filter: String,
@@ -98,6 +99,7 @@ pub fn add_recipe(editor: &mut Editor, key: &str, makes: &str, from: &str) -> bo
             from: vec![ItemStack::new(taken, 1)],
             takes: FRESH_TAKES,
             work: None,
+            tool: None,
             chance: Percent::WHOLE,
         });
         Ok(())
@@ -204,6 +206,31 @@ pub fn set_work(editor: &mut Editor, key: &str, work: MoveName) -> bool {
 }
 
 /// Sets the move a crafter makes at a craft of the recipe at `recipe`: none for the book's.
+/// Sets what a crafter holds at every craft of the book whose recipe names no tool of its own:
+/// with none, nothing.
+pub fn set_tool(editor: &mut Editor, key: &str, tool: Option<ToolInHand>) -> bool {
+    let label = format!("Change the tool {} is crafted with", shown_path(key));
+    editor.change(ContentEdit::new(label), key, |book: &mut RecipeBookDef| {
+        book.tool = tool;
+        Ok(())
+    })
+}
+
+/// Sets the tool the recipe at `recipe` is crafted with in place of the book's, or with none
+/// leaves it to the book.
+pub fn set_recipe_tool(
+    editor: &mut Editor,
+    key: &str,
+    recipe: usize,
+    tool: Option<ToolInHand>,
+) -> bool {
+    let label = format!(
+        "Change the tool {} is crafted with",
+        called(editor, key, recipe)
+    );
+    change_recipe(editor, key, label, recipe, |recipe| recipe.tool = tool)
+}
+
 pub fn set_recipe_work(
     editor: &mut Editor,
     key: &str,
@@ -339,6 +366,7 @@ struct ShownRecipe {
     from: Vec<(ShownItem, u32)>,
     takes: Seconds,
     work: Option<MoveName>,
+    tool: Option<ToolInHand>,
     chance: Percent,
 }
 
@@ -390,6 +418,7 @@ fn shown_rows(editor: &Editor, book: &RecipeBookDef) -> Vec<ShownRecipe> {
             from: shown(&recipe.from),
             takes: recipe.takes,
             work: recipe.work.clone(),
+            tool: recipe.tool,
             chance: recipe.chance,
         })
         .collect()
@@ -813,7 +842,7 @@ fn draft_row(editor: &mut Editor, ui: &mut Ui, key: &str, len: usize) {
     form::hint(
         ui,
         &format!(
-            "A recipe for {name} once it has something to be made from: add its first ingredient."
+            "A recipe for {name} once it has something to be made from: add its first material."
         ),
     );
     form::rule(ui);
@@ -913,6 +942,14 @@ fn inspect_book(editor: &mut Editor, ui: &mut Ui, key: &str, book: &RecipeBookDe
         ui,
         "The move a crafter makes while a craft is under way. A recipe may name its own.",
     );
+    let mut tool = book.tool;
+    if typed_field(editor, ui, key, "tool", &mut tool, "/tool") {
+        set_tool(editor, key, tool);
+    }
+    form::hint(
+        ui,
+        "What a crafter holds while a craft is under way: with none, nothing. A recipe may name its own.",
+    );
 }
 
 /// A field of the book at `key` edited as its type, under `label`: whether it changed.
@@ -969,6 +1006,12 @@ fn inspect_recipe(
         set_recipe_work(editor, key, index, work);
     }
     form::hint(ui, "Its own move, in place of the book's.");
+    let mut tool = row.tool;
+    let pointer = format!("/recipes/{index}/tool");
+    if typed_field(editor, ui, key, "tool", &mut tool, &pointer) {
+        set_recipe_tool(editor, key, index, tool);
+    }
+    form::hint(ui, "Its own tool, in place of the book's.");
     let mut chance = row.chance;
     let pointer = format!("/recipes/{index}/chance");
     if typed_field(editor, ui, key, "chance", &mut chance, &pointer) {
@@ -976,7 +1019,7 @@ fn inspect_recipe(
     }
     form::hint(
         ui,
-        "How often a craft comes off. One that fails spends its ingredients and makes nothing.",
+        "How often a craft comes off. One that fails spends its materials and makes nothing.",
     );
     ui.add_space(8.0);
     let comes_off = if row.chance < Percent::WHOLE {

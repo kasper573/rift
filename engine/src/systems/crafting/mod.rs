@@ -13,6 +13,8 @@ use crate::core::math::Rng;
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, ScriptFault, Value, ValueType};
 use crate::core::time::{UnixMillis, WallClock};
 use crate::core::units::{Percent, PlaybackRate, Seconds};
+use crate::systems::actor::HandsAtWork;
+use crate::systems::actor::held::ToolInHand;
 use crate::systems::actor::playing::{self, Motion};
 use crate::systems::actor::skeleton::{self, Declared, MoveName};
 use crate::systems::attention::AttentionId;
@@ -45,6 +47,10 @@ pub struct RecipeBookDef {
     /// The move a crafter makes over and over while a craft of the book is under way, unless its
     /// recipe names one of its own.
     pub work: MoveName,
+    /// What a crafter holds while a craft of the book is under way, unless its recipe names a tool
+    /// of its own: with none, nothing.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<ToolInHand>,
     /// In the order a Recipes window lists them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recipes: Vec<Recipe>,
@@ -64,7 +70,10 @@ pub struct Recipe {
     /// The move its crafter makes while it is under way, in place of the book's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub work: Option<MoveName>,
-    /// How often a craft of it comes off. One that fails spends its ingredients and makes
+    /// What its crafter holds while it is under way, in place of the book's tool.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tool: Option<ToolInHand>,
+    /// How often a craft of it comes off. One that fails spends its materials and makes
     /// nothing.
     #[schemars(extend("default" = 100))]
     #[serde(default = "Percent::whole", skip_serializing_if = "Percent::is_whole")]
@@ -91,6 +100,7 @@ impl ContentFile for RecipeBookDef {
         Ok(RecipeBookDef {
             mark: near.file()?,
             work: skeleton::nearest_move(near)?,
+            tool: None,
             recipes: Vec::new(),
             modules: Vec::new(),
         })
@@ -112,10 +122,10 @@ impl ContentFile for RecipeBookDef {
                 &recipe.from,
                 ContentProblem::new(
                     "nothing to make it from",
-                    "no ingredients",
-                    "at least one ingredient",
+                    "no materials",
+                    "at least one material",
                 ),
-                "ingredient listed twice",
+                "material listed twice",
             );
             check.at_least(format!("{at}/takes"), recipe.takes.0, 0.0, "seconds");
             check.range(
@@ -189,10 +199,15 @@ impl RecipeBookDef {
     pub fn work_of<'a>(&'a self, recipe: &'a Recipe) -> &'a MoveName {
         recipe.work.as_ref().unwrap_or(&self.work)
     }
+
+    /// What a crafter of `recipe` holds while it crafts: the recipe's tool, else the book's.
+    pub fn tool_of(&self, recipe: &Recipe) -> Option<ToolInHand> {
+        recipe.tool.or(self.tool)
+    }
 }
 
 impl Recipe {
-    /// How many times over `offer` is this recipe: every ingredient in the same whole multiple
+    /// How many times over `offer` is this recipe: every material in the same whole multiple
     /// of its amount, and nothing besides.
     pub fn times(&self, offer: &[ItemStack]) -> Option<u32> {
         let offered = |item: ItemId| {
@@ -201,15 +216,16 @@ impl Recipe {
                 .filter(|stack| stack.item == item)
                 .fold(0u32, |total, stack| total.saturating_add(stack.count))
         };
-        let wanted = |item: ItemId| self.from.iter().any(|ingredient| ingredient.item == item);
+        let wanted = |item: ItemId| self.from.iter().any(|material| material.item == item);
         if offer.iter().any(|stack| !wanted(stack.item)) {
             return None;
         }
         let first = self.from.first()?;
         let times = offered(first.item).checked_div(first.count)?;
-        let exact = self.from.iter().all(|ingredient| {
-            ingredient.count.checked_mul(times) == Some(offered(ingredient.item))
-        });
+        let exact = self
+            .from
+            .iter()
+            .all(|material| material.count.checked_mul(times) == Some(offered(material.item)));
         (times > 0 && exact).then_some(times)
     }
 
@@ -219,7 +235,7 @@ impl Recipe {
     }
 
     /// What `times` crafts take.
-    pub fn ingredients(&self, times: u32) -> Vec<ItemStack> {
+    pub fn materials(&self, times: u32) -> Vec<ItemStack> {
         scaled(&self.from, times)
     }
 
@@ -429,7 +445,7 @@ pub struct CraftingView {
 }
 
 /// A craft begun and not yet made: `recipe` from `offer`, between two moments of the server's
-/// clock. Its ingredients stay in the bag until it is made, so calling it off, or leaving the
+/// clock. Its materials stay in the bag until it is made, so calling it off, or leaving the
 /// prompt, costs nothing.
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct CraftUnderWay {
@@ -457,7 +473,8 @@ pub struct CraftingSession {
     flow: FlowKey,
 }
 
-/// On a crafter, the move it makes over and over at the craft it has under way.
+/// On a crafter, the move it makes over and over at the craft it has under way, its hands at that
+/// work for as long.
 #[derive(Component, Clone)]
 pub struct CraftingMove(MoveName);
 
@@ -622,7 +639,7 @@ pub(crate) fn marks(
 }
 
 /// What a book's recipes must hold between them, and what none may do at the shops: lead back to
-/// what it makes, make the same things twice from the same ingredients, or turn what the shops
+/// what it makes, make the same things twice from the same materials, or turn what the shops
 /// sell into what they pay more for. Every move a craft is made with is one some skeleton
 /// declares.
 pub fn check_all(loading: &mut Loading) {
@@ -657,7 +674,7 @@ pub fn check_all(loading: &mut Loading) {
                     ContentProblem::new(
                         "made twice",
                         named(&content, &recipe.makes),
-                        "one recipe making the same items from the same ingredients",
+                        "one recipe making the same items from the same materials",
                     ),
                 );
             }
@@ -668,7 +685,7 @@ pub fn check_all(loading: &mut Loading) {
                     ContentProblem::new(
                         "crafting mints money",
                         profit,
-                        "ingredients that cost at the shops at least what the shops pay for \
+                        "materials that cost at the shops at least what the shops pay for \
                          what they make",
                     ),
                 );
@@ -720,7 +737,7 @@ fn named(content: &Content, stacks: &[ItemStack]) -> String {
 }
 
 /// The items leading from something `recipe` makes back to it through the recipes of `book`,
-/// when its ingredients do.
+/// when its materials do.
 fn loop_from(book: &RecipeBookDef, recipe: &Recipe) -> Option<Vec<ItemId>> {
     let mut trails: Vec<Vec<ItemId>> = recipe.from.iter().map(|stack| vec![stack.item]).collect();
     let mut seen: Vec<ItemId> = Vec::new();
@@ -744,16 +761,16 @@ fn loop_from(book: &RecipeBookDef, recipe: &Recipe) -> Option<Vec<ItemId>> {
     None
 }
 
-/// How buying `recipe`'s ingredients at the shops and selling what they make pays, when it does.
+/// How buying `recipe`'s materials at the shops and selling what they make pays, when it does.
 fn profit(content: &Content, shops: &[&ShopDef], recipe: &Recipe) -> Option<String> {
     let mut spent: Vec<(ItemId, f64)> = Vec::new();
-    for ingredient in &recipe.from {
+    for material in &recipe.from {
         let price = shops
             .iter()
             .flat_map(|shop| shop.sells())
-            .filter(|offer| offer.item == ingredient.item && offer.count > 0)
+            .filter(|offer| offer.item == material.item && offer.count > 0)
             .map(|offer| {
-                let share = f64::from(ingredient.count) / f64::from(offer.count);
+                let share = f64::from(material.count) / f64::from(offer.count);
                 offer
                     .price
                     .iter()
@@ -794,7 +811,7 @@ fn profit(content: &Content, shops: &[&ShopDef], recipe: &Recipe) -> Option<Stri
             .any(|item| of(&earned, item) > of(&spent, item));
         (never_short && ahead).then(|| {
             format!(
-                "{} sold for {} from ingredients that cost {}",
+                "{} sold for {} from materials that cost {}",
                 named(content, &recipe.makes),
                 amounts_text(content, &earned),
                 amounts_text(content, &spent)
@@ -846,7 +863,9 @@ fn begin(
     let speed = Percent(stat::effective(world, player, StatKind::CraftingSpeed));
     let since = world.resource::<WallClock>().now;
     let until = since.after(craftable.recipe.takes_at(times, speed));
-    let work = recipe.book.get(&content).work_of(craftable.recipe).clone();
+    let book = recipe.book.get(&content);
+    let work = book.work_of(craftable.recipe).clone();
+    let tool = book.tool_of(craftable.recipe);
     if let Some(mut view) = world.get_mut::<CraftingView>(player) {
         view.making = Some(CraftUnderWay {
             recipe,
@@ -854,7 +873,9 @@ fn begin(
             since,
             until,
         });
-        world.entity_mut(player).insert(CraftingMove(work));
+        world
+            .entity_mut(player)
+            .insert((CraftingMove(work), HandsAtWork { tool }));
     }
     Ok(())
 }
@@ -868,10 +889,12 @@ fn finish(world: &mut World, player: Entity) {
     prompt::ask_again(world, player);
 }
 
-/// Ends the move `crafter` makes at the craft it had under way, if any.
+/// Ends the move `crafter` makes at the craft it had under way, if any, and gives its hands back
+/// what they held.
 fn rest(world: &mut World, crafter: Entity) {
     if let Some(CraftingMove(work)) = world.entity_mut(crafter).take::<CraftingMove>() {
         playing::cut(world, crafter, &Motion::Move(work));
+        world.entity_mut(crafter).remove::<HandsAtWork>();
     }
 }
 
@@ -883,7 +906,7 @@ struct Crafted {
 }
 
 /// Crafts `recipe` from `offer` for `player` in one exchange, when their prompt makes it and the
-/// offer is a whole number of times it. Every craft spends its ingredients, and those that come
+/// offer is a whole number of times it. Every craft spends its materials, and those that come
 /// off give what they make.
 fn craft(
     world: &mut World,

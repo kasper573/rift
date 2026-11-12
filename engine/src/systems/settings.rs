@@ -157,7 +157,7 @@ fn show_settings(
     let mut confirms = settings.confirms_risky_crafts();
     if ui
         .checkbox(&mut confirms, "Confirm crafts that may fail")
-        .on_hover_text("A craft that may fail asks before it spends its ingredients")
+        .on_hover_text("A craft that may fail asks before it spends its materials")
         .changed()
     {
         settings.toggle_risky_craft_confirm();

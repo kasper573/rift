@@ -66,12 +66,12 @@ use crate::core::vfx::cover::ShownWeather;
 use crate::core::vfx::rain::{RainField, Shelter};
 use crate::core::vfx::{VfxId, VfxInstance, VfxSite};
 use crate::systems::actor::held::{self, Held};
-use crate::systems::actor::render::{Puppet, RenderActor};
+use crate::systems::actor::render::{Hung, Puppet, RenderActor};
 use crate::systems::actor::skeleton::{Clip, Naming, SkeletonId};
 use crate::systems::actor::stance::{HandIndex, StanceId};
 use crate::systems::actor::{self, Action, Actor, ActorModel, Appearance, Hitbox, Motion, Playing};
 use crate::systems::area::weather::ShownCourse;
-use crate::systems::area::{self, AreaId, AreaObject, AreaTag};
+use crate::systems::area::{self, AreaId, AreaObject, AreaTag, PropId};
 use crate::systems::attention::{Attention, AttentionId, StatusBadges};
 use crate::systems::combat::Attitude;
 use crate::systems::crafting;
@@ -535,7 +535,10 @@ pub struct ProbeWorn {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeHeld {
     pub hand: HandIndex,
-    pub item: ItemId,
+    /// The item it is, when the body holds it as one.
+    pub item: Option<ItemId>,
+    /// The prop it is, when it is the tool of the work the body's hands are at.
+    pub tool: Option<PropId>,
     #[schemars(with = "Option<PosSchema>")]
     pub at: Option<Pos<WindowPx>>,
 }
@@ -725,9 +728,9 @@ pub struct ProbeRecipe {
     pub from: Vec<ProbeStack>,
     /// How long one craft takes at a crafting speed of 100%.
     pub takes: Seconds,
-    /// How often one craft comes off: one that fails spends its ingredients and makes nothing.
+    /// How often one craft comes off: one that fails spends its materials and makes nothing.
     pub chance: Percent,
-    /// Whether the player's bag covers every ingredient.
+    /// Whether the player's bag covers every material.
     pub can_make: bool,
 }
 
@@ -1575,9 +1578,13 @@ fn body(world: &World, entity: Entity, view: Option<&ProbeView>) -> Option<Probe
         .map(|puppet| {
             puppet
                 .held()
-                .map(|(hand, item, prop)| ProbeHeld {
+                .map(|(hand, hung, prop)| ProbeHeld {
                     hand,
-                    item,
+                    item: hung.item(),
+                    tool: match hung {
+                        Hung::Item(_) => None,
+                        Hung::Tool(tool) => Some(tool.prop),
+                    },
                     at: world.get::<GlobalTransform>(prop).and_then(|placed| {
                         let at = placed.translation();
                         view.and_then(|view| view.window_point(Pos::new(at.x, at.z), Meters(at.y)))

@@ -1,9 +1,9 @@
 use bevy_ecs::prelude::*;
-use engine::core::content::LoadReport;
+use engine::core::content::{Content, LoadReport};
 use engine::core::units::Seconds;
 use engine::core::vfx::{VfxShaderDef, VfxShaderId};
 use engine::systems::actor::skeleton::MoveName;
-use engine::systems::actor::{self, Motion, Playing};
+use engine::systems::actor::{self, HandsAtWork, Motion, Playing};
 use engine::systems::crafting::{self, CraftingRequest, CraftingView, RecipeBookDef, RecipeKey};
 use engine::systems::dialogue::{self, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
@@ -36,7 +36,7 @@ fn a_crafting_prompt_makes_what_its_books_and_subsets_allow_and_nothing_else() {
     assert_eq!(asked.title, "Smithing");
     assert_eq!(
         asked.slots, 2,
-        "as many slots as its biggest recipe has ingredients"
+        "as many slots as its biggest recipe has materials"
     );
     assert_eq!(made_by(&sim, &crafting), ["ingot", "plank", "sword"]);
 
@@ -106,7 +106,7 @@ fn with_several_recipes_the_one_chosen_is_made_with_everything_it_gives() {
 }
 
 #[test]
-fn a_craft_spends_every_ingredient_and_fits_or_does_not_happen() {
+fn a_craft_spends_every_material_and_fits_or_does_not_happen() {
     let bundle = json!({
         "makes": [{ "item": path("item", "gem") }, { "item": path("item", "strap"), "count": 2 }],
         "from": [{ "item": path("item", "log"), "count": 2 }],
@@ -151,7 +151,7 @@ fn a_craft_spends_every_ingredient_and_fits_or_does_not_happen() {
             sim.count(player, "ingot")
         ),
         (0, 0, 2),
-        "room the ingredients leave is room for what they make"
+        "room the materials leave is room for what they make"
     );
 
     for (offer, why) in [
@@ -249,7 +249,7 @@ fn a_craft_takes_its_recipes_time_at_the_crafters_speed_and_nothing_until_it_is_
     assert_eq!(
         held(&sim),
         (6, 0, 1),
-        "ingredients gone by the time it is due make nothing"
+        "materials gone by the time it is due make nothing"
     );
 
     sim.give(player, "coal", 1);
@@ -260,7 +260,7 @@ fn a_craft_takes_its_recipes_time_at_the_crafters_speed_and_nothing_until_it_is_
 }
 
 #[test]
-fn a_craft_that_fails_spends_its_ingredients_makes_nothing_and_says_so() {
+fn a_craft_that_fails_spends_its_materials_makes_nothing_and_says_so() {
     for (chance, comes_off) in [(0.0, false), (100.0, true)] {
         let risky = game(|book| book["recipes"][0]["chance"] = json!(chance)).shader("failure_pop");
         let mut sim = forge(risky);
@@ -280,7 +280,7 @@ fn a_craft_that_fails_spends_its_ingredients_makes_nothing_and_says_so() {
                 sim.count(player, "ingot")
             ),
             (0, 0, made),
-            "at {chance}%: every craft spends its ingredients, and only one that comes off makes"
+            "at {chance}%: every craft spends its materials, and only one that comes off makes"
         );
         assert_eq!(
             sim.count(player, "token") > 0,
@@ -314,11 +314,16 @@ fn a_craft_that_fails_spends_its_ingredients_makes_nothing_and_says_so() {
 }
 
 #[test]
-fn a_crafter_makes_the_books_move_or_the_recipes_own_for_as_long_as_the_craft_takes() {
+fn a_crafter_makes_the_books_move_with_its_tool_or_the_recipes_own_for_as_long_as_the_craft_takes()
+{
     let slow = game(|book| {
+        book["tool"] = json!({ "prop": path("prop", "hammer") });
         book["recipes"][0]["takes"] = json!(2.0);
         book["recipes"][1]["takes"] = json!(2.0);
-    });
+        book["recipes"][1]["tool"] = json!({ "prop": path("prop", "knife") });
+    })
+    .prop("hammer", json!({ "type": "none" }))
+    .prop("knife", json!({ "type": "none" }));
     let mut sim = forge(slow);
     let player = sim.join(1);
     let conn = sim.conn(1);
@@ -327,18 +332,33 @@ fn a_crafter_makes_the_books_move_or_the_recipes_own_for_as_long_as_the_craft_ta
     sim.give(player, "log", 2);
     let made = |sim: &Sim| sim.world.get::<Playing>(player).cloned();
     let the_move = |name: &str| Motion::Move(MoveName::new(name));
+    let holds = |sim: &Sim| {
+        sim.world.get::<HandsAtWork>(player).map(|hands| {
+            let content = sim.world.resource::<Content>();
+            sent(hands)
+                .tool
+                .map(|tool| tool.prop.path(content).to_owned())
+        })
+    };
     open(&mut sim, 1, "smith");
     assert_eq!(made(&sim), None, "an open prompt alone is no work");
+    assert_eq!(holds(&sim), None, "nor puts anything in a hand");
 
     craft(&mut sim, 1, &[("ore", 2), ("coal", 1)], INGOT);
     let first = made(&sim).expect("a craft begins with its move");
     assert_eq!(first.motion, the_move("forge"), "the book's move");
+    assert_eq!(
+        holds(&sim),
+        Some(Some(path("prop", "hammer"))),
+        "the book's tool in hand"
+    );
     sim.run(1.0);
     let later = made(&sim).expect("made over and over while the craft is under way");
     assert!(later.started > first.started, "one move after another");
     sim.run(1.0);
     assert_eq!(sim.count(player, "ingot"), 1);
     assert_eq!(made(&sim), None, "the move ends with the craft");
+    assert_eq!(holds(&sim), None, "and the tool is put away");
 
     craft(&mut sim, 1, &[("log", 1)], PLANK);
     assert_eq!(
@@ -346,9 +366,15 @@ fn a_crafter_makes_the_books_move_or_the_recipes_own_for_as_long_as_the_craft_ta
         Some(the_move("whittle")),
         "a recipe's own move in place of the book's"
     );
+    assert_eq!(
+        holds(&sim),
+        Some(Some(path("prop", "knife"))),
+        "a recipe's own tool in place of the book's"
+    );
     sim.send(conn, CraftingRequest::Cancel);
     sim.run(0.5);
     assert_eq!(made(&sim), None, "a craft called off is worked no longer");
+    assert_eq!(holds(&sim), None, "nor held a tool for");
 
     sim.world
         .get_mut::<Stats>(player)
@@ -397,7 +423,7 @@ fn the_loader_refuses_recipes_that_loop_repeat_or_profit_and_books_no_script_ope
             json!({ "makes": [of("strap", 4)], "from": [of("blade", 1)], "takes": 0.1, "chance": 101.0 }),
         ),
         (
-            "ingredient listed twice",
+            "material listed twice",
             recipe("strap", json!([of("blade", 1), of("blade", 2)])),
         ),
         (
