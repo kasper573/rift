@@ -204,27 +204,26 @@ fn hand_at(index: usize) -> HandIndex {
 // A file leaves out the parts of a grip that are none, which a binary format cannot tell from
 // missing ones, so the wire carries every part.
 #[derive(Serialize, Deserialize)]
-struct HandsOnTheWire(Option<(PropId, LocalOffset, LocalTurn, PropAxis)>);
+struct HandsOnTheWire(Option<(PropId, LocalOffset, LocalTurn, PropAxis, bool)>);
 
 impl From<HandsAtWork> for HandsOnTheWire {
     fn from(hands: HandsAtWork) -> HandsOnTheWire {
-        HandsOnTheWire(
-            hands
-                .tool
-                .map(|ToolInHand { prop, grip }| (prop, grip.offset, grip.turn, grip.symmetry)),
-        )
+        HandsOnTheWire(hands.tool.map(|ToolInHand { prop, grip }| {
+            (prop, grip.offset, grip.turn, grip.symmetry, grip.hangs)
+        }))
     }
 }
 
 impl From<HandsOnTheWire> for HandsAtWork {
     fn from(HandsOnTheWire(tool): HandsOnTheWire) -> HandsAtWork {
         HandsAtWork {
-            tool: tool.map(|(prop, offset, turn, symmetry)| ToolInHand {
+            tool: tool.map(|(prop, offset, turn, symmetry, hangs)| ToolInHand {
                 prop,
                 grip: Grip {
                     offset,
                     turn,
                     symmetry,
+                    hangs,
                 },
             }),
         }

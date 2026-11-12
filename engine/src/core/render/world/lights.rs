@@ -9,6 +9,7 @@ use bevy::pbr::MAX_CASCADES_PER_LIGHT;
 use bevy::prelude::*;
 
 use super::clouds::{LOWEST_LIGHT, SHADOW_SPAN};
+use super::opacity::Opacity;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -186,50 +187,92 @@ pub fn toward(elevation: Degrees, azimuth: Degrees) -> Vec3 {
     Vec3::new(sin_a * cos_e, sin_e, -cos_a * cos_e)
 }
 
-/// A lamp: a point light `intensity` units bright that reaches `radius`, `flicker` of its
-/// brightness coming and going, and what stands in it casting shadows when `shadows`, where the
-/// player's video preferences draw any.
+/// A lamp: a light `intensity` units bright that reaches `radius`, `flicker` of its brightness
+/// coming and going, and what stands `shadows_from` it or farther casting shadows, where the
+/// player's video preferences draw any. It shines from the point it stands on, or as an `aura`
+/// from every side of it.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Lamp {
     pub color: Color,
     pub intensity: f32,
     pub radius: Meters,
     pub flicker: f32,
-    pub shadows: bool,
+    pub shadows_from: Option<Meters>,
+    pub aura: Option<Meters>,
 }
 
 impl Lamp {
     /// Lights the lamp where the world begins, to be stood where it shines from, its flicker
     /// `phase` into its wave.
     pub fn spawn(self, world: &mut World, phase: f32) -> Entity {
+        let Some(aura) = self.aura else {
+            return self.point(world, phase, 1.0);
+        };
+        let lamp = world
+            .spawn((Transform::default(), Visibility::default()))
+            .id();
+        for from in AURA_SIDES {
+            let side = self.point(world, phase, AURA_SHARE);
+            world
+                .entity_mut(side)
+                .insert((Transform::from_translation(from * aura.0), ChildOf(lamp)));
+        }
+        lamp
+    }
+
+    /// One point light of the lamp, shining with `share` of its brightness.
+    fn point(self, world: &mut World, phase: f32, share: f32) -> Entity {
+        let casting = self.shadows_from.is_some()
+            && world
+                .get_resource::<VideoPreferences>()
+                .is_some_and(|video| video.shadows != ShadowQuality::Off);
+        let full = self.intensity * share * LUMENS_PER_UNIT;
         let light = PointLight {
             color: self.color,
-            intensity: self.intensity * LUMENS_PER_UNIT,
+            intensity: full,
             range: self.radius.0,
             radius: 0.05,
-            shadow_maps_enabled: false,
-            shadow_map_near_z: OWN_BODY.0,
+            shadow_maps_enabled: casting,
             ..default()
         };
-        let full = light.intensity;
-        let mut lamp = world.spawn((light, Transform::default(), Visibility::default()));
-        if self.flicker > 0.0 {
-            lamp.insert(Flicker {
-                amount: self.flicker,
+        let light = match self.shadows_from {
+            Some(from) => PointLight {
+                shadow_map_near_z: from.0,
+                ..light
+            },
+            None => light,
+        };
+        let mut lamp = world.spawn((
+            light,
+            Shine {
                 full,
+                flicker: self.flicker,
                 phase,
-            });
-        }
-        if self.shadows {
+            },
+            Transform::default(),
+            Visibility::default(),
+        ));
+        if self.shadows_from.is_some() {
             lamp.insert(ShadowCasting);
         }
         lamp.id()
     }
 }
 
-/// How near a lamp nothing casts a shadow from: a lamp shines from inside what carries it, the
-/// head of a torch or the glass of a lantern, which would otherwise shade all it lights.
-const OWN_BODY: Meters = Meters(0.3);
+/// Where an aura's lights stand round its middle, in auras: on four sides of it, and twice as far
+/// over it, clear of the head of whoever stands in its midst.
+const AURA_SIDES: [Vec3; 5] = [
+    Vec3::X,
+    Vec3::NEG_X,
+    Vec3::Z,
+    Vec3::NEG_Z,
+    Vec3::new(0.0, 2.0, 0.0),
+];
+
+/// How much of a lamp's brightness each light of its aura shines with: together they shed more
+/// than the lamp would from one point, and light what stands among them as brightly as that one
+/// point lights the ground beside it.
+const AURA_SHARE: f32 = 1.0 / 3.0;
 
 /// A lamp whose light casts shadows.
 #[derive(Component)]
@@ -248,21 +291,33 @@ pub(super) fn cast_lamp_shadows(
     }
 }
 
-/// A light that wavers between dark and full: `amount` of its intensity comes and goes.
+/// How brightly a lamp's light shines: `full` at its brightest, `flicker` of that coming and
+/// going, `phase` into its wave.
 #[derive(Component, Clone, Copy, Debug, PartialEq)]
-pub struct Flicker {
-    pub amount: f32,
+pub struct Shine {
     pub full: f32,
+    pub flicker: f32,
     pub phase: f32,
 }
 
-pub(super) fn flicker(time: Res<Time>, mut lights: Query<(&Flicker, &mut PointLight)>) {
+/// Every lamp shines as brightly as its flicker has it this moment, dimmed as far as it or what
+/// holds it has faded.
+pub(super) fn shine(
+    time: Res<Time>,
+    mut lights: Query<(Entity, &Shine, &mut PointLight)>,
+    opacities: Query<&Opacity>,
+    holders: Query<&ChildOf>,
+) {
     let now = Seconds(time.elapsed_secs());
-    for (flicker, mut light) in &mut lights {
-        let t = now.0 * 7.0 + flicker.phase;
+    for (entity, shine, mut light) in &mut lights {
+        let t = now.0 * 7.0 + shine.phase;
         let wave =
             (t.sin() * 0.5 + (t * 2.3 + 1.7).sin() * 0.3 + (t * 5.1).sin() * 0.2) * 0.5 + 0.5;
-        light.intensity = flicker.full * (1.0 - flicker.amount * wave);
+        let shown = Opacity::inherited(entity, &opacities, &holders);
+        let intensity = shine.full * (1.0 - shine.flicker * wave) * shown;
+        if light.intensity != intensity {
+            light.intensity = intensity;
+        }
     }
 }
 

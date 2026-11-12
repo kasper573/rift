@@ -80,7 +80,7 @@ use crate::core::render::world::RenderProgress;
 use crate::core::render::world::cover::{CoverMaterial, SHORE_REACH, SheetOn};
 use crate::core::render::world::lod::{GRAIN_PIXELS, horizon_band};
 use crate::core::units::{GROUND_ORIGIN, Meters};
-use crate::core::vfx::shader::weather_helpers;
+use crate::core::vfx::shader::{hash_helpers, weather_helpers};
 
 /// The cells along a patch's side: a patch is a grid of a point more than this each way.
 pub const PATCH_CELLS: u32 = 128;
@@ -160,12 +160,14 @@ pub const GROUND_LIT_SHADER: Handle<Shader> = Handle::Uuid(
     std::marker::PhantomData,
 );
 
-/// The ground's lit shader: its own text, then the weather's helpers it reads the rain by.
+/// The ground's lit shader: its own text, then the weather's helpers it reads the rain by and
+/// the hashes those draw on.
 pub fn ground_lit_shader() -> Shader {
     Shader::from_wesl(
         format!(
-            "{}\n{}",
+            "{}\n{}\n{}",
             include_str!("terrain_lit.wesl"),
+            hash_helpers(),
             weather_helpers()
         ),
         "engine/core/render/world/gpu/terrain_lit.wesl",

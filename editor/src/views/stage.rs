@@ -20,7 +20,7 @@ use std::collections::BTreeMap;
 use engine::systems::actor::model::{ActorModel, ModelId};
 use engine::systems::actor::render;
 use engine::systems::actor::skeleton::{Cue, Hand};
-use engine::systems::actor::stance::HandIndex;
+use engine::systems::actor::stance::{HandIndex, StanceId};
 use engine::systems::actor::{Action, Motion, Pose};
 use engine::systems::item::{Grip, ItemId, Wear};
 
@@ -287,12 +287,13 @@ pub(crate) fn model_idle_clip(model: &engine::systems::actor::model::ActorModel)
     StageClip::played(model.skeleton(), idle)
 }
 
-/// What the layers of a rig standing still and holding props are told: idling, so the clasps of
-/// the hands that hold a prop close as they do in the game.
-pub fn holding(model: ModelId) -> StageLayers {
+/// What the layers of a rig standing still and holding props in `stance` are told: idling, so the
+/// clasps of the hands that hold a prop close, and the stance carries, as they do in the game.
+pub fn holding(model: ModelId, stance: Option<StanceId>) -> StageLayers {
     StageLayers {
         model,
         action: Action::Idle,
+        stance,
         stepped: false,
     }
 }
@@ -426,5 +427,6 @@ pub(crate) fn prop_in_hand(
         joint: hand.joint.0.clone(),
         model: item.get(content).look.get(content).model.path(),
         transform: render::held_at(model, hand, grip),
+        plumb: render::plumb_from(model, hand, grip),
     }
 }

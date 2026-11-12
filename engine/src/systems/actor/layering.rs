@@ -1,13 +1,13 @@
 //! A body's layers as its skeleton lists them, over the joints of its rig as its scene spawned
-//! them, each let run while an action it lists plays; and each hand's clasp, held while the hand
-//! holds an item.
+//! them, each let run while an action it lists plays, one that carries only in its stance; and each
+//! hand's clasp, held while the hand holds an item.
 
 use std::collections::HashMap;
 
 use bevy::prelude::*;
 
 use super::skeleton::{JointName, Layer};
-use super::stance::HandIndex;
+use super::stance::{HandIndex, StanceId};
 use super::{Action, ActorModel};
 use crate::core::content::gltf::NodeTree;
 use crate::core::render::world::layers::{
@@ -22,6 +22,7 @@ pub struct Layering {
 
 enum Runs {
     During(Vec<Action>),
+    Carrying(StanceId, Vec<Action>),
     Holding(HandIndex),
 }
 
@@ -40,7 +41,19 @@ pub fn layered(
     let at = |joint: &JointName| index.get(joint.as_str()).copied();
     let mut layers = Vec::new();
     let mut runs = Vec::new();
-    for layer in &skeleton.def.layers {
+    let held = |turned: &[(usize, Quat)]| -> Option<Vec<(u16, glam::Quat)>> {
+        turned
+            .iter()
+            .map(|(joint, turn)| {
+                let at = index
+                    .get(skeleton.rig.nodes[*joint].name.as_str())
+                    .copied()?;
+                Some((at, glam::Quat::from_array(turn.to_array())))
+            })
+            .collect::<Option<Vec<_>>>()
+            .filter(|held| !held.is_empty())
+    };
+    for (place, layer) in skeleton.def.layers.iter().enumerate() {
         let built = match layer {
             Layer::Feet {
                 legs,
@@ -97,23 +110,22 @@ pub fn layered(
             } => at(joint).map(|joint| {
                 JointLayer::Squash(Squash::new(joint, *by_speed, *on_step, ease.0, *most))
             }),
+            Layer::Carry { ease, .. } => skeleton
+                .carries
+                .get(place)
+                .and_then(|carried| held(carried))
+                .map(|held| JointLayer::HeldPose(HeldPose::new(held, ease.0))),
         };
         if let Some(built) = built {
             layers.push(built);
-            runs.push(Runs::During(layer.during().to_vec()));
+            runs.push(match layer {
+                Layer::Carry { stance, during, .. } => Runs::Carrying(*stance, during.clone()),
+                _ => Runs::During(layer.during().to_vec()),
+            });
         }
     }
     for (hand, clasp) in skeleton.clasps.iter().enumerate() {
-        let held: Option<Vec<(u16, glam::Quat)>> = clasp
-            .iter()
-            .map(|(joint, turn)| {
-                let at = index
-                    .get(skeleton.rig.nodes[*joint].name.as_str())
-                    .copied()?;
-                Some((at, glam::Quat::from_array(turn.to_array())))
-            })
-            .collect();
-        if let Some(held) = held.filter(|held| !held.is_empty()) {
+        if let Some(held) = held(clasp) {
             layers.push(JointLayer::HeldPose(HeldPose::new(
                 held,
                 skeleton.def.easing.clasp.0,
@@ -124,18 +136,20 @@ pub fn layered(
     Some((Layered::new(rig, layers), Layering { runs }))
 }
 
-/// Lets each layer run while the action shown is one it lists, or the hand it clasps with holds an
-/// item, and tells them a foot came down.
+/// Lets each layer run while the action shown is one it lists, one that carries only while the body
+/// is in its stance, or the hand it clasps with holds an item, and tells them a foot came down.
 pub fn drive(
     layered: &mut Layered,
     layering: &Layering,
     action: Action,
+    stance: Option<StanceId>,
     holding: &[HandIndex],
     stepped: bool,
 ) {
     for (on, runs) in layered.on.iter_mut().zip(&layering.runs) {
         *on = match runs {
             Runs::During(during) => during.contains(&action),
+            Runs::Carrying(carried, during) => stance == Some(*carried) && during.contains(&action),
             Runs::Holding(hand) => holding.contains(hand),
         };
     }

@@ -8,8 +8,9 @@ use std::collections::BTreeMap;
 use engine::core::content::gltf::NodeTree;
 use engine::core::render::world::layers::Gait;
 use engine::core::units::{Hertz, Meters, Radians, Seconds};
-use engine::systems::actor::Action;
 use engine::systems::actor::skeleton::{GroupName, JointName, Layer, Leg, SkeletonDef};
+use engine::systems::actor::stance::StanceId;
+use engine::systems::actor::{Action, Motion, Pose};
 use strum::VariantArray;
 use ui::egui::{self, RichText, Ui, Vec2};
 use ui::face;
@@ -87,7 +88,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigg
                 ui.add_space(10.0);
                 easing(editor, ui, key, def);
                 ui.add_space(10.0);
-                layers(editor, ui, key, def, &rig);
+                layers(editor, ui, key, def, rigging, &rig);
             });
     });
     panel::body(ui, right, |ui| stage(editor, ui, key, def, rigging));
@@ -223,8 +224,21 @@ fn easing(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
     }
 }
 
-fn layers(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rig: &NodeTree) {
+fn layers(
+    editor: &mut Editor,
+    ui: &mut Ui,
+    key: &str,
+    def: &SkeletonDef,
+    rigging: &Rigging,
+    rig: &NodeTree,
+) {
     let layers = def.layers.clone();
+    let stances: Vec<(StanceId, String)> = editor.loaded().map_or_else(Vec::new, |content| {
+        def.stances
+            .iter()
+            .map(|set| (set.stance, set.stance.get(&content).name.clone()))
+            .collect()
+    });
     let chosen = editor
         .views
         .skeleton
@@ -261,7 +275,7 @@ fn layers(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rig: &
     let mut added = None;
     if let Some(from) = &from {
         ui.menu_button(format!("+ Add layer at {from}"), |ui| {
-            for (label, layer) in fresh_layers(rig, from) {
+            for (label, layer) in fresh_layers(def, rig, from) {
                 if ui.button(label).clicked() {
                     added = Some(layer);
                     ui.close();
@@ -288,14 +302,15 @@ fn layers(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rig: &
         form::hint(
             ui,
             "No layers: the bodies play their clips alone. Feet plant on the ground, a chain \
-             springs behind, a wave sways down a spine, a squash keeps a blob's volume.",
+             springs behind, a wave sways down a spine, a squash keeps a blob's volume, a carry \
+             holds an arm out through whatever a stance plays.",
         );
         return;
     };
     ui.add_space(8.0);
     form::rule(ui);
     let mut edited = layer.clone();
-    fields(ui, key, rig, &from, &mut edited);
+    fields(ui, key, rigging, rig, &stances, &from, &mut edited);
     for refusal in refusals(rig, std::slice::from_ref(&edited)) {
         ui.colored_label(theme::DANGER, refusal);
     }
@@ -341,14 +356,20 @@ fn summary(layer: &Layer) -> String {
         }
         Layer::Wave { from, .. } => format!("wave · {from}"),
         Layer::Squash { joint, .. } => format!("squash · {joint}"),
+        Layer::Carry { from, clip, .. } => format!("carry · {from} · {}", clip.shown()),
     }
 }
 
-/// A layer of each kind starting at `from`, as the add menu offers them.
-fn fresh_layers(rig: &NodeTree, from: &str) -> Vec<(&'static str, Layer)> {
+/// A layer of each kind starting at `from`, as the add menu offers them: a carry once the skeleton
+/// has a stance to carry in, posed by its idle until another clip is picked.
+fn fresh_layers(def: &SkeletonDef, rig: &NodeTree, from: &str) -> Vec<(&'static str, Layer)> {
     let joint = JointName::new(from);
     let during = CALM.to_vec();
-    vec![
+    let carry = def.stances.first().zip(
+        def.named(None, None, &Motion::Action(Action::Idle), Pose::Idle)
+            .map(|(cell, _)| cell.nth(0).clip().clone()),
+    );
+    let mut fresh = vec![
         (
             "feet · a leg ending here",
             Layer::Feet {
@@ -393,10 +414,23 @@ fn fresh_layers(rig: &NodeTree, from: &str) -> Vec<(&'static str, Layer)> {
                 on_step: 0.2,
                 ease: Seconds(0.15),
                 most: 0.6,
-                during,
+                during: during.clone(),
             },
         ),
-    ]
+    ];
+    if let Some((set, clip)) = carry {
+        fresh.push((
+            "carry · holding from here",
+            Layer::Carry {
+                from: JointName::new(from),
+                clip,
+                stance: set.stance,
+                ease: Seconds(0.25),
+                during,
+            },
+        ));
+    }
+    fresh
 }
 
 /// A leg ending at `foot`: the foot and the two joints above it, from the top down.
@@ -420,7 +454,15 @@ fn leg_to(rig: &NodeTree, foot: &str, name: &str) -> Leg {
 }
 
 /// The chosen layer's fields, edited in place.
-fn fields(ui: &mut Ui, key: &str, rig: &NodeTree, from: &Option<String>, layer: &mut Layer) {
+fn fields(
+    ui: &mut Ui,
+    key: &str,
+    rigging: &Rigging,
+    rig: &NodeTree,
+    stances: &[(StanceId, String)],
+    from: &Option<String>,
+    layer: &mut Layer,
+) {
     ui.label(RichText::new(summary(layer)).strong());
     let names = joint_names(rig);
     let joint_field = |ui: &mut Ui, id: &str, joint: &mut JointName| {
@@ -543,12 +585,53 @@ fn fields(ui: &mut Ui, key: &str, rig: &NodeTree, from: &Option<String>, layer: 
                 number(ui, "ease · s", &mut ease.0, 0.0..=2.0);
                 number(ui, "most · share", most, 0.0..=0.95);
             }
+            Layer::Carry {
+                from,
+                clip,
+                stance,
+                ease,
+                ..
+            } => {
+                ui.label(theme::muted("from"));
+                joint_field(ui, "carry-from", from);
+                ui.end_row();
+                ui.label(theme::muted("as posed by"));
+                let mut posed = Some(clip.clone());
+                super::pickers::clip_picker(
+                    ui,
+                    "",
+                    ("layer-carry", key),
+                    rigging,
+                    &mut posed,
+                    None,
+                );
+                if let Some(posed) = posed {
+                    *clip = posed;
+                }
+                ui.end_row();
+                ui.label(theme::muted("in stance"));
+                let named = stances
+                    .iter()
+                    .find(|(known, _)| known == stance)
+                    .map_or("", |(_, name)| name.as_str());
+                controls::combo(("layer-stance", key))
+                    .selected_text(named)
+                    .width(150.0)
+                    .show_ui(ui, |ui| {
+                        for (known, name) in stances {
+                            ui.selectable_value(stance, *known, name);
+                        }
+                    });
+                ui.end_row();
+                number(ui, "ease · s", &mut ease.0, 0.0..=2.0);
+            }
         });
     let during = match layer {
         Layer::Feet { during, .. }
         | Layer::Chain { during, .. }
         | Layer::Wave { during, .. }
-        | Layer::Squash { during, .. } => during,
+        | Layer::Squash { during, .. }
+        | Layer::Carry { during, .. } => during,
     };
     ui.horizontal(|ui| {
         ui.label(theme::muted("during"));

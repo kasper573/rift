@@ -139,6 +139,9 @@ fn fields(editor: &mut Editor, ui: &mut Ui, key: &str, stance_path: &str, grip: 
                     }
                 });
             ui.end_row();
+            ui.label(theme::muted("hangs plumb"));
+            ui.checkbox(&mut edited.hangs, "");
+            ui.end_row();
         });
     form::hint(
         ui,
@@ -146,7 +149,8 @@ fn fields(editor: &mut Editor, ui: &mut Ui, key: &str, stance_path: &str, grip: 
          out of the thumb's side and +Z out of the back of the hand, until its handle sits in the \
          fist and its face, if it has one, looks out of the back of the hand. A mirrored hand \
          holds it turned over the axis of its own it is alike across, so it is never held inside \
-         out.",
+         out. A prop that hangs plumb keeps its +Y up however the hand turns, swung from the \
+         point of it that sits in the fist.",
     );
     if picked != stance_path || edited != grip {
         let label = if picked != stance_path {
@@ -320,7 +324,7 @@ fn stage_side(editor: &mut Editor, ui: &mut Ui, key: &str, stance_path: &str, gr
             .as_deref()
             .and_then(|path| content.by_path::<ModelDef>(path))
             .filter(|_| holds)
-            .map(stage::holding);
+            .map(|model| stage::holding(model, stance_id));
         turntable.stand(editor, ui, vec![standing]);
     }
     form::hint(ui, cues::KEYS);

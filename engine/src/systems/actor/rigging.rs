@@ -8,7 +8,7 @@ use std::sync::Arc;
 use bevy::math::{Mat4, Quat};
 
 use super::skeleton::{
-    BuildName, Clasp, Clip, Cue, GroupName, JointName, Layer, MAX_CLIP, MAX_JOINTS, MIN_CLIP, Rig,
+    BuildName, Clip, Cue, GroupName, JointName, Layer, MAX_CLIP, MAX_JOINTS, MIN_CLIP, Rig,
     SkeletonDef, SourceRig, check_cue_times,
 };
 use super::stance::StanceId;
@@ -19,7 +19,7 @@ use crate::core::content::retarget;
 use crate::core::units::{MetersPerSec, Seconds};
 
 /// A skeleton put together: our rig, every clip it names as it plays, and what each hand's clasp
-/// turns.
+/// and each carrying layer turns.
 pub struct BuiltSkeleton {
     pub def: SkeletonDef,
     /// Our rig: every joint of the rig's files, with each top but the body's hung where it hangs.
@@ -31,6 +31,10 @@ pub struct BuiltSkeleton {
     /// the clasp's clip turns, by the joint's index in the rig, with the turn it opens on. Empty for
     /// a hand without a clasp, or whose clasp turns none of its fingers.
     pub clasps: Vec<Vec<(usize, Quat)>>,
+    /// What each layer that carries holds, by the layer's place among the layers: each joint under
+    /// the one it holds from that its clip turns, by the joint's index in the rig, with the turn
+    /// it opens on. Empty for every other layer.
+    pub carries: Vec<Vec<(usize, Quat)>>,
     gaits: HashMap<(Option<BuildName>, Option<StanceId>), Vec<Paced>>,
 }
 
@@ -88,17 +92,40 @@ impl BuiltSkeleton {
             clips,
             index,
             clasps: Vec::new(),
+            carries: Vec::new(),
             gaits: HashMap::new(),
         };
         built.clasps = def
             .hands
             .iter()
             .map(|hand| {
-                hand.clasp
-                    .as_ref()
-                    .map_or_else(Vec::new, |clasp| built.clasped(clasp, infos))
+                hand.clasp.as_ref().map_or_else(Vec::new, |clasp| {
+                    built.opening(&clasp.clip, &clasp.fingers, infos)
+                })
             })
             .collect();
+        built.carries = def
+            .layers
+            .iter()
+            .map(|layer| match layer {
+                Layer::Carry { from, clip, .. } => {
+                    built.opening(clip, std::slice::from_ref(from), infos)
+                }
+                _ => Vec::new(),
+            })
+            .collect();
+        for (index, layer) in def.layers.iter().enumerate() {
+            if let Layer::Carry { from, clip, .. } = layer
+                && built.carries[index].is_empty()
+            {
+                cx.error(
+                    format!("/layers/{index}/clip"),
+                    "carry holds no joints",
+                    format!("{clip} turns none of the joints under {from}"),
+                    "a clip turning the joints the layer holds",
+                );
+            }
+        }
         for (index, hand) in def.hands.iter().enumerate() {
             if let Some(clasp) = &hand.clasp
                 && !clasp.fingers.is_empty()
@@ -159,26 +186,30 @@ impl BuiltSkeleton {
             .collect()
     }
 
-    /// Each joint of the clasp's fingers its clip turns at its first moment, with that turn.
-    fn clasped(&self, clasp: &Clasp, infos: &HashMap<String, GltfInfo>) -> Vec<(usize, Quat)> {
-        let Some(played) = self.played(&clasp.clip).map(|at| &self.clips[at]) else {
+    /// Each joint from each of `roots` down that `clip` turns at its first moment, with that turn.
+    fn opening(
+        &self,
+        clip: &Clip,
+        roots: &[JointName],
+        infos: &HashMap<String, GltfInfo>,
+    ) -> Vec<(usize, Quat)> {
+        let Some(played) = self.played(clip).map(|at| &self.clips[at]) else {
             return Vec::new();
         };
         let Some(info) = infos.get(played.clip.file().as_str()) else {
             return Vec::new();
         };
         let opening = &info.clips[played.animation].opening;
-        let roots: Vec<usize> = clasp
-            .fingers
+        let roots: Vec<usize> = roots
             .iter()
-            .filter_map(|finger| self.rig.named(&finger.0))
+            .filter_map(|root| self.rig.named(&root.0))
             .collect();
-        let fingers = self
+        let held = self
             .rig
             .joints()
             .filter(|&joint| roots.iter().any(|&root| self.rig.descends(joint, root)));
         match played.source {
-            None => fingers
+            None => held
                 .filter_map(|joint| {
                     let name = &self.rig.nodes[joint].name;
                     opening
@@ -194,14 +225,13 @@ impl BuiltSkeleton {
                     pose[*node].rotation = *turn;
                 }
                 let ours = retarget::retargeted_pose(&self.rig, &info.tree, &pairs, &pose);
-                fingers
-                    .filter(|joint| {
-                        pairs.iter().any(|(ours, his)| {
-                            ours == joint && opening.iter().any(|(node, _)| node == his)
-                        })
+                held.filter(|joint| {
+                    pairs.iter().any(|(ours, his)| {
+                        ours == joint && opening.iter().any(|(node, _)| node == his)
                     })
-                    .map(|joint| (joint, ours[joint].rotation))
-                    .collect()
+                })
+                .map(|joint| (joint, ours[joint].rotation))
+                .collect()
             }
         }
     }

@@ -4,8 +4,7 @@
 use bevy::prelude::*;
 
 use super::{VfxId, VfxInstance, VfxParams, VfxSite};
-use crate::core::content::Content;
-use crate::core::time::{UnixMillis, server_now};
+use crate::core::time::server_now;
 use crate::core::units::Radians;
 
 /// The vfx a thing plays over and over for as long as it is drawn: the flame of a lantern, the
@@ -22,12 +21,9 @@ struct StandingPlayed(Vec<VfxId>);
 #[derive(Component)]
 struct StandsOn(Entity);
 
-/// Starts the vfx of every thing that newly stands or plays others than it did, plays each
-/// again as it ends, and ends those of a thing that is gone.
+/// Starts the vfx of every thing that newly stands or plays others than it did, each playing
+/// over and over, and ends those of a thing that is gone.
 pub(super) fn play(world: &mut World) {
-    let Some(content) = world.get_resource::<Content>().cloned() else {
-        return;
-    };
     let Some(now) = server_now(world) else {
         return;
     };
@@ -38,19 +34,14 @@ pub(super) fn play(world: &mut World) {
         .map(|(thing, standing, _)| (thing, standing.0.clone()))
         .collect();
     let restarted: Vec<Entity> = fresh.iter().map(|(thing, _)| *thing).collect();
-    let playing: Vec<(Entity, Entity, UnixMillis)> = world
-        .query::<(Entity, &StandsOn, &VfxInstance)>()
+    let playing: Vec<(Entity, Entity)> = world
+        .query::<(Entity, &StandsOn)>()
         .iter(world)
-        .map(|(instance, on, playing)| (instance, on.0, playing.until))
+        .map(|(instance, on)| (instance, on.0))
         .collect();
-    for (instance, thing, until) in playing {
+    for (instance, thing) in playing {
         if world.get::<StandingVfx>(thing).is_none() || restarted.contains(&thing) {
             world.despawn(instance);
-        } else if until <= now
-            && let Some(mut playing) = world.get_mut::<VfxInstance>(instance)
-        {
-            playing.started = now;
-            playing.until = now.after(playing.vfx.get(&content).lasts());
         }
     }
     for (thing, vfx) in fresh {
@@ -62,7 +53,7 @@ pub(super) fn play(world: &mut World) {
                     params: VfxParams::default(),
                     heading: Radians::default(),
                     started: now,
-                    until: now.after(vfx.get(&content).lasts()),
+                    until: None,
                 },
                 StandsOn(thing),
             ));

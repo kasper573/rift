@@ -226,7 +226,7 @@ impl LiveWorld {
                 for instance in query.iter(&self.world) {
                     if instance.started >= since {
                         *seen = true;
-                        playing |= instance.until > now;
+                        playing |= instance.until.is_none_or(|until| until > now);
                     }
                 }
                 let busy = self

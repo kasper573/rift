@@ -662,6 +662,10 @@ pub struct Grip {
     /// it turned over that way rather than inside out.
     #[serde(default, skip_serializing_if = "PropAxis::is_z")]
     pub symmetry: PropAxis,
+    /// Whether the prop hangs plumb from the hand, by the point of it the grip puts there, rather
+    /// than turning with the hand: a lantern from its bail.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub hangs: bool,
 }
 
 /// An axis of a prop's own frame.
@@ -716,7 +720,7 @@ impl Wear {
 
 impl Grip {
     pub fn is_identity(&self) -> bool {
-        self.offset.is_zero() && self.turn.is_zero() && self.symmetry.is_z()
+        self.offset.is_zero() && self.turn.is_zero() && self.symmetry.is_z() && !self.hangs
     }
 }
 

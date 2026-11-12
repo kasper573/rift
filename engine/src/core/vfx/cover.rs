@@ -60,12 +60,20 @@ pub(super) struct WeatherSources<'w, 's> {
 #[extract_app(RenderApp)]
 pub(super) struct WeatherWrites(Vec<(usize, Vec<Vec4>)>);
 
+/// How fast the gusts travel over the ground in the lightest wind, and how much faster in a gale,
+/// in metres a second.
+const GUST_SPEED: f32 = 1.5;
+const GALE_GUST_SPEED: f32 = 2.25;
+
 /// Every frame the covers learn the wind and who treads through them, and where each treading
-/// body stood lately: only what changed of it is written.
+/// body stood lately: only what changed of it is written. The gusts are carried on whatever wind
+/// blows this frame from where the last left them, so a wind that turns or rises carries them on
+/// its new way without moving them.
 pub(super) fn blow(
     sources: WeatherSources,
     mut writes: ResMut<WeatherWrites>,
     mut last: Local<Option<Vec<Vec4>>>,
+    mut gusts: Local<Vec2>,
     mut trails: Local<HashMap<Entity, Vec<(Vec2, f32)>>>,
 ) {
     let WeatherSources {
@@ -121,6 +129,11 @@ pub(super) fn blow(
         weather.rain = climate.rain;
         weather.flash = climate.flash;
     }
+    let strength = weather.wind.length();
+    *gusts += weather.wind.normalize_or_zero()
+        * (GUST_SPEED + GALE_GUST_SPEED * strength)
+        * time.delta_secs();
+    weather.gusts = *gusts;
     let texels = weather.texels(&rain, &shelter);
     let was = last.get_or_insert_with(Weather::still);
     let runs = changed_runs(was, &texels);

@@ -45,7 +45,7 @@ impl AspectSource {
 }
 
 /// The aspects active on an actor, with the clocks of their interval nodes and of a status's
-/// `during` vfx.
+/// `during` sound, and the `during` vfx it plays for as long as it holds.
 #[derive(Component, Default)]
 pub struct ActiveAspects(pub Vec<ActiveAspect>);
 
@@ -107,7 +107,7 @@ impl Planner for SettleAspects {
     }
 }
 
-/// Fires the interval nodes whose time came and replays a status's `during` vfx and sound.
+/// Fires the interval nodes whose time came and replays a status's `during` sound.
 #[derive(Default)]
 pub struct TickAspects {
     active: Cached<(Entity, &'static ActiveAspects), ()>,
@@ -153,7 +153,7 @@ impl Planner for TickAspects {
             );
         }
         for (actor, source) in self.replays.drain(..) {
-            play_during(world, actor, source, now);
+            sound_during(world, actor, source, now);
         }
     }
 }
@@ -260,9 +260,19 @@ fn activate(world: &mut World, actor: Entity, Wanted { source, since }: Wanted) 
         if let Some(heard) = def.sfx.on_activate {
             sound(world, actor, heard);
         }
-        let shown = def.name.clone();
-        notification::pop_as(world, actor, shown, VfxShaderFixture::StatusPop);
-        play_during(world, actor, source, now);
+        if def.pops {
+            notification::pop_as(world, actor, def.name.clone(), VfxShaderFixture::StatusPop);
+        }
+        let during = def
+            .vfx
+            .during
+            .and_then(|shown| vfx::show_lasting(world, shown, vfx::site_on(world, actor)));
+        if let Some(mut aspects) = world.get_mut::<ActiveAspects>(actor)
+            && let Some(aspect) = aspects.0.iter_mut().find(|aspect| aspect.source == source)
+        {
+            aspect.during = during;
+        }
+        sound_during(world, actor, source, now);
     }
     world.resource_mut::<RiftInstances>().raise(
         source.owner(),
@@ -311,39 +321,20 @@ fn deactivate(world: &mut World, actor: Entity, source: AspectSource) {
     );
 }
 
-fn play_during(world: &mut World, actor: Entity, source: AspectSource, now: UnixMillis) {
+/// Plays a status's `during` sound, to be played again as it ends.
+fn sound_during(world: &mut World, actor: Entity, source: AspectSource, now: UnixMillis) {
     let AspectSource::Status(effect) = source else {
         return;
     };
     let content = world.resource::<Content>().clone();
-    let def = effect.get(&content);
-    let previous = world
-        .get::<ActiveAspects>(actor)
-        .and_then(|aspects| aspects.0.iter().find(|aspect| aspect.source == source))
-        .and_then(|aspect| aspect.during);
-    if let Some(previous) = previous
-        && world.get_entity(previous).is_ok()
-    {
-        world.despawn(previous);
-    }
-    let shown = def.vfx.during.and_then(|shown| {
-        let lasts = shown.get(&content).lasts();
-        let entity = vfx::show(world, shown, vfx::site_on(world, actor))?;
-        Some((entity, lasts))
-    });
-    if let Some(heard) = def.sfx.during {
+    let heard = effect.get(&content).sfx.during;
+    if let Some(heard) = heard {
         sound(world, actor, heard);
     }
-    let next = match (shown, def.sfx.during) {
-        (Some((_, lasts)), _) => Some(now.after(lasts)),
-        (None, Some(heard)) => Some(now.after(heard.get(&content).lasts)),
-        (None, None) => None,
-    };
     if let Some(mut aspects) = world.get_mut::<ActiveAspects>(actor)
         && let Some(aspect) = aspects.0.iter_mut().find(|aspect| aspect.source == source)
     {
-        aspect.during = shown.map(|(entity, _)| entity);
-        aspect.during_next = next;
+        aspect.during_next = heard.map(|heard| now.after(heard.get(&content).lasts));
     }
 }
 

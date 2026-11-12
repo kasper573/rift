@@ -217,10 +217,15 @@ fn a_status_plays_its_vfx_coming_staying_and_going() {
     status::apply(&mut sim.world, player, warded, 10.0, Some(Seconds(3.0)));
     sim.run(0.5);
     assert!(playing(&mut sim, "ward_up", player));
-    assert!(playing(&mut sim, "ward_bubble", player));
+    let bubble = instance(&mut sim, "ward_bubble", player);
+    assert!(bubble.is_some());
 
     sim.later(1.6);
-    assert!(playing(&mut sim, "ward_bubble", player));
+    assert_eq!(
+        instance(&mut sim, "ward_bubble", player),
+        bubble,
+        "what a status shows while it holds plays on as the one instance, however often it loops"
+    );
     assert!(!playing(&mut sim, "ward_break", player));
 
     sim.later(1.5);
@@ -537,9 +542,14 @@ fn statuses(sim: &Sim, who: Entity) -> Statuses {
 }
 
 fn playing(sim: &mut Sim, vfx: &str, on: Entity) -> bool {
+    instance(sim, vfx, on).is_some()
+}
+
+fn instance(sim: &mut Sim, vfx: &str, on: Entity) -> Option<Entity> {
     let wanted = sim.id::<VfxDef>(vfx);
     sim.world
-        .query::<&VfxInstance>()
+        .query::<(Entity, &VfxInstance)>()
         .iter(&sim.world)
-        .any(|instance| instance.vfx == wanted && instance.site == VfxSite::Actor(on))
+        .find(|(_, instance)| instance.vfx == wanted && instance.site == VfxSite::Actor(on))
+        .map(|(entity, _)| entity)
 }

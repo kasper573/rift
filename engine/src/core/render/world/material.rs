@@ -1,5 +1,6 @@
 //! The material every mesh of the world is drawn with: bevy's standard lighting over the model's
 //! own colours, a rough dielectric with a faint sheen, and a face marked as glowing shining unlit.
+//! A material its model makes let light through is glass, and keeps the model's own finish.
 //! A prop may have the game's own shaders draw some of its materials in place of that look, each
 //! named by its material.
 
@@ -7,6 +8,7 @@ use bevy::asset::{AssetPath, embedded_path};
 use bevy::ecs::system::SystemParam;
 use bevy::ecs::system::SystemState;
 use bevy::gltf::{Gltf, GltfAssetLabel, GltfMaterial};
+use bevy::light::NotShadowCaster;
 use bevy::mesh::MeshVertexBufferLayoutRef;
 use bevy::pbr::{
     ExtendedMaterial, MaterialExtension, MaterialExtensionKey, MaterialExtensionPipeline,
@@ -136,18 +138,53 @@ pub struct SurfaceFinish {
     pub metallic: f32,
 }
 
+/// How glass is drawn.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Glass {
+    /// Seen through: what lies behind a pane shows through it, bent as the model's glass bends
+    /// light.
+    Clear,
+    /// A smooth face of the pane's own colour: how what stands in numbers draws it, in passes
+    /// that cut pixels and never read what lies behind them.
+    Solid,
+}
+
+/// Whether a model makes `material` let light through.
+pub fn is_glass(material: &StandardMaterial) -> bool {
+    material.specular_transmission > 0.0
+}
+
 /// The world material a mesh gets for the standard material it was loaded with, every surface
-/// alike a rough dielectric over the model's own colours. Nothing in the world is blended: a
+/// alike a rough dielectric over the model's own colours. Nothing else in the world is blended: a
 /// material cut out by its texture's alpha stays cut at its own cutoff, a blended one is cut
 /// where it is mostly clear, and any other is masked at a cutoff of zero, which drops nothing by
 /// itself: bevy lets a material's shaders drop pixels only when its alpha mode says they may, and
-/// a prop clearing from the camera's subject drops them in every pass.
-pub fn world_material(base: StandardMaterial, finish: &SurfaceFinish) -> WorldMaterial {
-    ExtendedMaterial {
-        base: StandardMaterial {
+/// a prop clearing from the camera's subject drops them in every pass. Glass keeps the finish its
+/// model gives it, and is drawn as `glass` says. Clear glass is blended, though it covers all
+/// that lies behind it, to leave the depth as it was: what is drawn after it, a flame behind its
+/// pane, is cut by the depth.
+pub fn world_material(
+    base: StandardMaterial,
+    finish: &SurfaceFinish,
+    glass: Glass,
+) -> WorldMaterial {
+    let base = match (is_glass(&base), glass) {
+        (true, Glass::Clear) => StandardMaterial {
+            alpha_mode: AlphaMode::Blend,
+            ..base
+        },
+        (true, Glass::Solid) => StandardMaterial {
+            alpha_mode: world_alpha(base.alpha_mode),
+            specular_transmission: 0.0,
+            ..base
+        },
+        (false, _) => StandardMaterial {
             alpha_mode: world_alpha(base.alpha_mode),
             ..dielectric(base, finish)
         },
+    };
+    ExtendedMaterial {
+        base,
         extension: WorldLook {
             params: ParamsUniform::default(),
             weather: Handle::default(),
@@ -177,7 +214,7 @@ pub fn looked_material(
     look: &MaterialLook,
     weather: Handle<Image>,
 ) -> WorldMaterial {
-    let mut material = world_material(base, finish);
+    let mut material = world_material(base, finish, Glass::Solid);
     material.base.double_sided = false;
     material.base.cull_mode = None;
     material.base.diffuse_transmission = look.translucency;
@@ -191,11 +228,11 @@ pub fn looked_material(
 /// bit.
 type LookKey = (AssetId<Shader>, [u32; PARAMS_BYTES / 4], u32);
 
-/// The world materials standing in for each standard material under each look, shared by every
-/// mesh loaded with it.
+/// The world materials standing in for each standard material under each look, its glass drawn
+/// one way or the other, shared by every mesh loaded with it and dressed alike.
 #[derive(Resource, Default)]
 pub(super) struct MaterialCache(
-    HashMap<(AssetId<StandardMaterial>, Option<LookKey>), Handle<WorldMaterial>>,
+    HashMap<(AssetId<StandardMaterial>, Option<LookKey>, Glass), Handle<WorldMaterial>>,
 );
 
 /// Forgets the world materials made for standard materials that are gone, so the pictures they
@@ -206,7 +243,7 @@ pub(super) fn forget_dropped(
 ) {
     let gone = super::dropped(&mut events);
     if !gone.is_empty() {
-        cache.0.retain(|(standard, _), _| !gone.contains(standard));
+        cache.0.retain(|(standard, ..), _| !gone.contains(standard));
     }
 }
 
@@ -221,12 +258,13 @@ pub(super) struct Wardrobe<'w> {
 }
 
 impl Wardrobe<'_> {
-    /// The world material standing in for `standard` under `look`, which every mesh with that
-    /// standard material and look shares.
+    /// The world material standing in for `standard` under `look`, its glass drawn as `glass`
+    /// where no look draws it, which every mesh with that standard material dressed alike shares.
     pub(super) fn material_for(
         &mut self,
         standard: &Handle<StandardMaterial>,
         look: Option<&MaterialLook>,
+        glass: Glass,
     ) -> Option<Handle<WorldMaterial>> {
         let base = self.standard.get(standard)?.clone();
         let finish = self.look.as_ref()?.materials;
@@ -237,18 +275,17 @@ impl Wardrobe<'_> {
             .unwrap_or_default();
         let make = |base: StandardMaterial| match look {
             Some(look) => looked_material(base, &finish, look, weather),
-            None => world_material(base, &finish),
+            None => world_material(base, &finish, glass),
         };
-        let key = (
-            standard.id(),
-            look.map(|look| {
-                (
-                    look.shader.id(),
-                    look.params.bits(),
-                    look.translucency.to_bits(),
-                )
-            }),
-        );
+        let looked = look.map(|look| {
+            (
+                look.shader.id(),
+                look.params.bits(),
+                look.translucency.to_bits(),
+            )
+        });
+        let glass = look.map_or(glass, |_| Glass::Solid);
+        let key = (standard.id(), looked, glass);
         Some(
             self.cache
                 .0
@@ -259,8 +296,9 @@ impl Wardrobe<'_> {
     }
 }
 
-/// The world material a part of `model` drawn in its glTF `material` gets under `look`, shared with
-/// every mesh loaded with that material and look: once the model has loaded.
+/// The world material a part of `model` drawn in its glTF `material` gets under `look`, its glass
+/// solid, shared with every mesh loaded with that material and dressed alike: once the model has
+/// loaded.
 pub fn part_material(
     world: &mut World,
     model: &Handle<Gltf>,
@@ -275,12 +313,16 @@ pub fn part_material(
         .resource::<AssetServer>()
         .get_handle::<StandardMaterial>(model.path()?.clone().with_label(label))?;
     let mut wardrobe = SystemState::<Wardrobe>::new(world);
-    let made = wardrobe.get_mut(world).ok()?.material_for(&standard, look);
+    let made = wardrobe
+        .get_mut(world)
+        .ok()?
+        .material_for(&standard, look, Glass::Solid);
     wardrobe.apply(world);
     made
 }
 
-/// Every scene that finishes spawning trades its standard materials for world ones.
+/// Every scene that finishes spawning trades its standard materials for world ones, its glass
+/// clear and casting no shadow: light passes through a pane.
 pub(super) fn dress_scenes(
     ready: On<WorldInstanceReady>,
     children: Query<&Children>,
@@ -292,12 +334,15 @@ pub(super) fn dress_scenes(
         let Ok(material) = meshes.get(entity) else {
             continue;
         };
-        let Some(dressed) = wardrobe.material_for(&material.0, None) else {
+        let Some(dressed) = wardrobe.material_for(&material.0, None, Glass::Clear) else {
             continue;
         };
-        commands
-            .entity(entity)
-            .remove::<MeshMaterial3d<StandardMaterial>>()
+        let glass = wardrobe.standard.get(&material.0).is_some_and(is_glass);
+        let mut mesh = commands.entity(entity);
+        mesh.remove::<MeshMaterial3d<StandardMaterial>>()
             .insert(MeshMaterial3d(dressed));
+        if glass {
+            mesh.insert(NotShadowCaster);
+        }
     }
 }

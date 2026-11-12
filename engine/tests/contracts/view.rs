@@ -660,27 +660,46 @@ fn a_body_moves_by_the_clip_its_skeleton_plays_for_what_it_does() {
 }
 
 #[test]
-fn a_hand_closes_its_fingers_as_its_clasp_poses_them_while_it_holds_an_item() {
+fn a_body_holding_an_item_closes_its_hand_as_the_clasp_poses_it_and_carries_it_as_its_stance_does()
+{
     let closed = Quat::from_rotation_z(1.0);
+    let raised = Quat::from_rotation_x(0.8);
     let game = Game::new()
         .area("field", &Map::open(5, 5), json!([]))
         .hero("field", 2.0, 2.0)
         .sword()
-        .edit(
-            "skeleton",
-            BODY,
-            |skeleton| {
-                skeleton["hands"][0]["clasp"] =
-                    json!({ "clip": testkit::clip("clasp"), "fingers": ["finger.r"] })
-            },
+        .stance("wand", 1, "main")
+        .item(
+            "wand",
+            json!({ "kind": {
+                "type": "equipment",
+                "wear": "held",
+                "stance": path("stance", "wand"),
+            } }),
         )
+        .edit("skeleton", BODY, |skeleton| {
+            skeleton["hands"][0]["clasp"] =
+                json!({ "clip": testkit::clip("clasp"), "fingers": ["finger.r"] });
+            skeleton["layers"] = json!([{
+                "type": "carry",
+                "from": "hand.l",
+                "clip": testkit::clip("carry"),
+                "stance": path("stance", "sword"),
+                "ease": 0.05,
+            }]);
+        })
         .asset(
             &testkit::clip("clasp"),
             testkit::pose_glb(&testkit::rig(), "clasp", &[("finger.r", closed)]),
+        )
+        .asset(
+            &testkit::clip("carry"),
+            testkit::pose_glb(&testkit::rig(), "carry", &[("hand.l", raised)]),
         );
     let folder = tempfile::tempdir().expect("a scratch folder");
     let (mut app, content) = viewer(game, folder.path());
     let sword = testkit::Declared::declared::<ItemDef>(&content, "sword").expect("a sword");
+    let wand = testkit::Declared::declared::<ItemDef>(&content, "wand").expect("a wand");
     let body = spawn_hero(&mut app, &content, Action::Idle);
     app.world_mut()
         .run_system_cached(render::dress)
@@ -691,7 +710,8 @@ fn a_hand_closes_its_fingers_as_its_clasp_poses_them_while_it_holds_an_item() {
         std::thread::sleep(Duration::from_millis(5));
     }
     let finger = joint(&mut app, "finger.r").expect("the rig stands");
-    let turned_to = |app: &mut App, held: Held, wanted: Quat| {
+    let arm = joint(&mut app, "hand.l").expect("the rig stands");
+    let held_as = |app: &mut App, held: Held, fingers: Quat, carried: Quat| {
         app.world_mut().entity_mut(body).insert(held);
         app.world_mut()
             .run_system_cached(render::hang)
@@ -702,33 +722,51 @@ fn a_hand_closes_its_fingers_as_its_clasp_poses_them_while_it_holds_an_item() {
                 .run_system_cached(render::pose)
                 .expect("posed");
             app.update();
-            let shown = app
-                .world()
-                .get::<Transform>(finger)
-                .map(|at| at.rotation)
-                .expect("a finger");
-            if shown.angle_between(wanted) < 0.01 || Instant::now() > deadline {
+            let turn = |joint| {
+                app.world()
+                    .get::<Transform>(joint)
+                    .map(|at| at.rotation)
+                    .expect("a joint")
+            };
+            let shown = (turn(finger), turn(arm));
+            let there =
+                shown.0.angle_between(fingers) < 0.01 && shown.1.angle_between(carried) < 0.01;
+            if there || Instant::now() > deadline {
                 return shown;
             }
             std::thread::sleep(Duration::from_millis(5));
         }
     };
+    let holding = |item| Held {
+        hands: BTreeMap::from([(HandIndex::MAIN, item)]),
+    };
 
-    let holding = turned_to(
-        &mut app,
-        Held {
-            hands: BTreeMap::from([(HandIndex::MAIN, sword)]),
-        },
-        closed,
+    let (fingers, carried) = held_as(&mut app, holding(sword), closed, raised);
+    assert!(
+        fingers.angle_between(closed) < 0.01,
+        "holding a sword, the finger closes as the clasp poses it: {fingers:?}"
     );
     assert!(
-        holding.angle_between(closed) < 0.01,
-        "holding a sword, the finger closes as the clasp poses it: {holding:?}"
+        carried.angle_between(raised) < 0.01,
+        "in the sword's stance, the arm is held as the stance's carry poses it: {carried:?}"
     );
-    let empty = turned_to(&mut app, Held::default(), Quat::IDENTITY);
+    let (fingers, carried) = held_as(&mut app, holding(wand), closed, Quat::IDENTITY);
     assert!(
-        empty.angle_between(Quat::IDENTITY) < 0.01,
-        "the empty hand opens again: {empty:?}"
+        fingers.angle_between(closed) < 0.01,
+        "holding a wand, the finger stays closed: {fingers:?}"
+    );
+    assert!(
+        carried.angle_between(Quat::IDENTITY) < 0.01,
+        "in another stance, the arm plays its clip alone: {carried:?}"
+    );
+    let (fingers, carried) = held_as(&mut app, Held::default(), Quat::IDENTITY, Quat::IDENTITY);
+    assert!(
+        fingers.angle_between(Quat::IDENTITY) < 0.01,
+        "the empty hand opens again: {fingers:?}"
+    );
+    assert!(
+        carried.angle_between(Quat::IDENTITY) < 0.01,
+        "with nothing held, the arm plays its clip alone: {carried:?}"
     );
 }
 

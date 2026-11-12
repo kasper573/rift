@@ -14,6 +14,7 @@ use crate::core::gui::{self, Band, GuiImage};
 use crate::core::math::Pos;
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::render::window_point;
+use crate::core::render::world::opacity::Opacity;
 use crate::core::text;
 use crate::core::units::Meters;
 use crate::systems::actor::{Action, Actor, Hitbox, Name};
@@ -126,6 +127,7 @@ pub fn draw_label(ui: &mut egui::Ui, top: egui::Pos2, label: &PlateLabel) {
             label: label.clone(),
             icons: Vec::new(),
             rect: plate_rect(ui.ctx(), top, size),
+            shown: 1.0,
         },
     );
 }
@@ -135,6 +137,8 @@ struct Plate {
     label: PlateLabel,
     icons: Vec<Option<GuiImage>>,
     rect: egui::Rect,
+    /// How much of the plate shows: as much as what it is over does.
+    shown: f32,
 }
 
 fn clear_plates(mut plates: ResMut<Plates>) {
@@ -200,6 +204,7 @@ pub fn draw_plates(world: &mut World) {
                 label,
                 icons,
                 rect,
+                shown: Opacity::of(world, actor),
             })
         })
         .collect();
@@ -223,6 +228,7 @@ fn draw_plate(ui: &mut egui::Ui, plate: &Plate) {
             .layout(Layout::top_down(Align::Center)),
     );
     column.spacing_mut().item_spacing = egui::Vec2::ZERO;
+    column.set_opacity(plate.shown);
     if !plate.icons.is_empty() {
         column.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = ICON_GAP;

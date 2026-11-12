@@ -145,7 +145,7 @@ pub(super) struct Frame<'a> {
 
 /// Runs every body's layers over the pose its clips gave it this frame.
 #[allow(clippy::type_complexity)]
-fn run(
+pub(super) fn run(
     time: Res<Time>,
     ground: Option<Res<GroundHeights>>,
     cameras: Query<(&GlobalTransform, &Frustum), With<WorldCamera>>,

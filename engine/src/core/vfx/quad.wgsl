@@ -22,5 +22,5 @@ fn sample(at: vec2<f32>) -> vec4<f32> {
 @fragment
 fn fragment(in: VertexOutput) -> @location(0) vec4<f32> {
     let painted = vfx(in.uv);
-    return vec4<f32>(painted.rgb, painted.a * quad_guard(in.uv));
+    return vec4<f32>(painted.rgb, painted.a * quad_guard(in.uv) * (1.0 - site.faded));
 }

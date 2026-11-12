@@ -586,6 +586,12 @@ fn check_hotbar(
     let held = |item: ItemId| {
         snapshot.bag.iter().any(|stack| stack.item == item) || snapshot.equipped.contains(&item)
     };
+    let waits_in_bag = |skill: SkillId| {
+        snapshot
+            .bag
+            .iter()
+            .any(|stack| skill::grants_of(content, stack.item).contains(&skill))
+    };
     let slots = settings.map(|settings| settings.slots.hotbar);
     for (index, slot) in snapshot.hotbar.iter().enumerate() {
         if let Some(slots) = slots
@@ -610,12 +616,14 @@ fn check_hotbar(
             );
         }
         match slot.entry {
-            HotbarEntry::Skill(skill) if !known.contains_key(&skill) => check.error(
-                format!("/hotbar/{index}/entry"),
-                "skill not known",
-                skill.path(content),
-                "a skill learned in the tree or granted by worn gear",
-            ),
+            HotbarEntry::Skill(skill) if !known.contains_key(&skill) && !waits_in_bag(skill) => {
+                check.error(
+                    format!("/hotbar/{index}/entry"),
+                    "skill not known",
+                    skill.path(content),
+                    "a skill learned in the tree, or granted by gear worn or in the bag",
+                )
+            }
             HotbarEntry::Item(item) if !held(item) => check.error(
                 format!("/hotbar/{index}/entry"),
                 "item not held",

@@ -171,7 +171,7 @@ fn an_instance_arrives_as_the_server_sent_it_whatever_its_parameters_and_site() 
         ]),
         heading: Radians(0.25),
         started: UnixMillis(1_000),
-        until: UnixMillis(2_500),
+        until: Some(UnixMillis(2_500)),
     };
     let on_an_area = VfxInstance {
         vfx: sim.id("swoosh"),

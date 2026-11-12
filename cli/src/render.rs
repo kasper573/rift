@@ -43,6 +43,7 @@ use engine::core::render::world::body;
 use engine::core::render::world::clouds::CloudDrift;
 use engine::core::render::world::layers::Layered;
 use engine::core::render::world::mannequin::mannequin;
+use engine::core::render::world::plumb::Plumb;
 use engine::core::render::world::rig_clip;
 use engine::core::render::world::sky::Daylight;
 use engine::core::render::{CameraFocus, CameraRig, Look};
@@ -53,7 +54,7 @@ use engine::systems::GameSettings;
 use engine::systems::actor::layering::{self, Layering};
 use engine::systems::actor::model::{ActorModel, ModelId};
 use engine::systems::actor::skeleton::Clip;
-use engine::systems::actor::stance::{self, HandIndex};
+use engine::systems::actor::stance::{self, HandIndex, StanceId};
 use engine::systems::actor::{Action, Appearance, ModelDef, Motion, Pose, appearance, render};
 use engine::systems::area::scenery::{self, Eyes, SceneryPlugin, Sight};
 use engine::systems::area::{self, Area, AreaDef, AreaId, Kept, Pictured, Weather, rain};
@@ -385,6 +386,7 @@ const TURNING: u32 = 2;
 struct Body {
     rig: Entity,
     model: ModelId,
+    stance: Option<StanceId>,
     props: Vec<Prop>,
     hung: bool,
 }
@@ -394,6 +396,7 @@ struct Prop {
     joint: String,
     scene: String,
     transform: Transform,
+    plumb: Option<Plumb>,
 }
 
 #[derive(Resource, Default)]
@@ -954,12 +957,14 @@ fn stand(world: &mut World, content: &Content, ground: &Heightfield, standing: &
                 joint: at.joint.0.clone(),
                 scene: item.get(content).look.get(content).model.path(),
                 transform: render::held_at(model, at, grip),
+                plumb: render::plumb_from(model, at, grip),
             })
         })
         .collect();
     Body {
         rig,
         model: model_id,
+        stance,
         props,
         hung: false,
     }
@@ -995,12 +1000,15 @@ fn hang(world: &mut World, model: &ActorModel, standing: &Body) -> bool {
         let scene = world
             .resource::<AssetServer>()
             .load(GltfAssetLabel::Scene(0).from_asset(prop.scene.clone()));
-        world.spawn((
+        let mut hung = world.spawn((
             WorldAssetRoot(scene),
             prop.transform,
             Visibility::default(),
             ChildOf(joint),
         ));
+        if let Some(plumb) = prop.plumb {
+            hung.insert(plumb);
+        }
     }
     if let Some((layered, layering)) = layering::layered(model, &joints) {
         world.entity_mut(standing.rig).insert((layered, layering));
@@ -1016,7 +1024,14 @@ fn drive(world: &mut World, bodies: &[Body]) {
             .query::<(&mut Layered, &Layering)>()
             .get_mut(world, standing.rig)
         {
-            layering::drive(&mut layered, layering, Action::Idle, &holding, false);
+            layering::drive(
+                &mut layered,
+                layering,
+                Action::Idle,
+                standing.stance,
+                &holding,
+                false,
+            );
         }
     }
 }

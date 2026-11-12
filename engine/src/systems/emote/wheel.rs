@@ -1,5 +1,5 @@
-//! The wheel of emotes, on the client: held open round the player's character, with a slot to
-//! click for each emote its body can do.
+//! The wheel of emotes, on the client: held open round the player's character, with a leaf to
+//! click for each emote its body can do, and folded away once let go.
 
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
@@ -29,12 +29,14 @@ impl Plugin for EmoteWheelPlugin {
 }
 
 fn draw(world: &mut World) {
-    if !map::pressed(world, InputAction::Emotes) || !session::is_alive(world) {
-        return;
-    }
     let (Some(gui), Some(me)) = (gui::context(world), session::me(world)) else {
         return;
     };
+    let held = map::pressed(world, InputAction::Emotes) && session::is_alive(world);
+    let opened = wheel::opened(&gui, held);
+    if opened <= 0.0 {
+        return;
+    }
     let content = world.resource::<Content>().clone();
     let offered: Vec<(EmoteId, &EmoteDef)> = content
         .ids::<EmoteDef>()
@@ -74,7 +76,7 @@ fn draw(world: &mut World) {
         .fixed_pos(egui::Pos2::ZERO)
         .constrain(false)
         .show(&gui, |ui| {
-            wheel::wheel(ui, egui::pos2(center.x, center.y), picks)
+            wheel::wheel(ui, egui::pos2(center.x, center.y), picks, opened)
         })
         .inner;
     if let Some(index) = picked {

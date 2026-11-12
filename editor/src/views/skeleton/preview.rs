@@ -122,11 +122,12 @@ pub fn show(
     let held = held_items(editor, key, &content, def.hands.len());
     let preview = &editor.views.skeleton.views.view(key).preview;
     let action = (preview.plays == PreviewPlays::Action).then_some(preview.action);
+    let stance = stance::of_hands(&content, &held);
     let clip = match action {
         Some(action) => def
             .named(
                 model.as_ref().and_then(|(_, model)| model.build()),
-                stance::of_hands(&content, &held),
+                stance,
                 &Motion::Action(action),
                 Pose::Idle,
             )
@@ -232,9 +233,10 @@ pub fn show(
             Some(action) => Some(StageLayers {
                 model: id,
                 action,
+                stance,
                 stepped,
             }),
-            None => holds.then(|| stage::holding(id)),
+            None => holds.then(|| stage::holding(id, stance)),
         };
         cast.push(standing);
     }

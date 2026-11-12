@@ -402,6 +402,7 @@ fn uv_of(in: VertexOutput) -> vec2<f32> {
 @if(IMPOSTOR_BAKE)
 fn still_weather() {
     weather.wind = vec2<f32>(0.0);
+    weather.gusts = vec2<f32>(0.0);
     weather.time = 0.0;
     weather.treads = 0u;
     weather.rain = 0.0;

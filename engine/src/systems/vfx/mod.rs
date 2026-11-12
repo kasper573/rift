@@ -119,6 +119,13 @@ pub fn show(world: &mut World, vfx: VfxId, site: VfxSite) -> Option<Entity> {
     spawn(world, vfx, site, VfxParams::default(), Delivery::default())
 }
 
+/// Plays a vfx on a site over and over, until whoever shows it removes it.
+pub fn show_lasting(world: &mut World, vfx: VfxId, site: VfxSite) -> Option<Entity> {
+    let shown = show(world, vfx, site)?;
+    world.get_mut::<VfxInstance>(shown)?.until = None;
+    Some(shown)
+}
+
 /// Plays a vfx on a site everyone nearby sees.
 pub fn spawn(
     world: &mut World,
@@ -204,11 +211,35 @@ pub fn expire(world: &mut World, instances: &mut QueryState<(Entity, &VfxInstanc
     let now = world.resource::<WallClock>().now;
     let done: Vec<Entity> = instances
         .iter(world)
-        .filter(|(_, instance)| instance.until.after(LINGER) <= now)
+        .filter(|(_, instance)| {
+            instance
+                .until
+                .is_some_and(|until| until.after(LINGER) <= now)
+        })
         .map(|(entity, _)| entity)
         .collect();
     for entity in done {
         world.despawn(entity);
+    }
+}
+
+/// Keeps every vfx that plays on a thing where the thing stands, so whoever comes within sight
+/// of the thing sees what plays on it.
+pub fn follow(world: &mut World, instances: &mut QueryState<(Entity, &VfxInstance, &Position)>) {
+    let moved: Vec<(Entity, Pos<Meters>)> = instances
+        .iter(world)
+        .filter_map(|(entity, instance, stood)| {
+            let (VfxSite::Actor(thing) | VfxSite::Object(thing)) = &instance.site else {
+                return None;
+            };
+            let at = position(world, *thing)?;
+            (at != stood.pos).then_some((entity, at))
+        })
+        .collect();
+    for (entity, at) in moved {
+        if let Some(mut stood) = world.get_mut::<Position>(entity) {
+            stood.pos = at;
+        }
     }
 }
 
@@ -462,7 +493,7 @@ fn spawn_at(
         params,
         heading,
         started: now,
-        until: now.after(vfx.get(&content).lasts()),
+        until: Some(now.after(vfx.get(&content).lasts())),
     };
     let entity = world
         .spawn((Replicated, Position::at(at), AreaTag { area }, instance))

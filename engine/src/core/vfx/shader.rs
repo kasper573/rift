@@ -405,6 +405,7 @@ pub fn prelude_names() -> Vec<String> {
         "seed".to_owned(),
         "piece".to_owned(),
         "mark".to_owned(),
+        "wind_gust".to_owned(),
         "wind_lean".to_owned(),
         "tread_push".to_owned(),
         "lean".to_owned(),
@@ -654,6 +655,8 @@ const RAIN_CHECK_HEADER: &str = include_str!("rain_check.wgsl");
 const HEAVENS: &str = include_str!("heavens.wgsl");
 const SKY_LIGHT: &str = include_str!("sky_light.wesl");
 const WEATHER_HELPERS: &str = include_str!("weather.wgsl");
+/// Numbers drawn from seeds, which the prelude and the weather's helpers both read.
+const HASH_HELPERS: &str = include_str!("hash.wgsl");
 /// The frame's globals as the validator sees them, where the runtime headers import bevy's.
 const CLOCK_CHECK: &str = "struct Globals {\n    time: f32,\n    delta_time: f32,\n    frame_count: u32,\n}\n@group(0) @binding(11) var<uniform> globals: Globals;";
 /// What a cover's blades bend by, on top of the weather.
@@ -666,8 +669,16 @@ pub(crate) fn weather_helpers() -> String {
     )
 }
 
+/// The hashes the weather's helpers draw on, for a shader composed with them and no prelude.
+pub(crate) fn hash_helpers() -> &'static str {
+    HASH_HELPERS
+}
+
 fn prelude() -> String {
-    PRELUDE.replace("PATH_POINTS", &format!("{MAX_PATH_POINTS}u"))
+    format!(
+        "{}\n{HASH_HELPERS}",
+        PRELUDE.replace("PATH_POINTS", &format!("{MAX_PATH_POINTS}u"))
+    )
 }
 
 fn cover_helpers() -> String {

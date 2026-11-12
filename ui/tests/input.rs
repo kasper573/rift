@@ -180,3 +180,53 @@ fn a_slider_keeps_a_value_outside_its_range_until_slid_then_takes_a_plain_one() 
     frame(vec![press(false)], &mut value);
     assert_eq!(value, 0.5);
 }
+
+#[test]
+fn a_wheel_takes_a_click_on_a_leaf_only_once_it_stands_wholly_open() {
+    use ui::wheel::{WheelPick, wheel};
+
+    let ctx = Context::default();
+    ui::apply(&ctx);
+    let center = Pos2::new(200.0, 200.0);
+    let frame = |events: Vec<Event>, opened: f32| {
+        let input = RawInput {
+            screen_rect: Some(Rect::from_min_size(Pos2::ZERO, Vec2::splat(400.0))),
+            events,
+            ..RawInput::default()
+        };
+        let mut picked = None;
+        let mut output = ctx.run_ui(input, |ui| {
+            let picks = ["wave", "nod", "cheer", "sit"]
+                .map(|name| WheelPick { name, image: None })
+                .into();
+            picked = wheel(ui, center, picks, opened);
+        });
+        output.textures_delta.clear();
+        picked
+    };
+    let button = |at: Pos2, pressed: bool| Event::PointerButton {
+        pos: at,
+        button: PointerButton::Primary,
+        pressed,
+        modifiers: Modifiers::NONE,
+    };
+    let click = |at: Pos2, opened: f32| {
+        frame(vec![Event::PointerMoved(at)], opened);
+        frame(vec![button(at, true)], opened);
+        frame(vec![button(at, false)], opened)
+    };
+    let second_leaf = center + Vec2::new(119.0, 0.0);
+
+    assert_eq!(
+        click(second_leaf, 0.5),
+        None,
+        "a fan still opening takes no click"
+    );
+    assert_eq!(
+        click(second_leaf, 1.0),
+        Some(1),
+        "the leaf under the pointer, the first at the top and the rest clockwise"
+    );
+    assert_eq!(click(center, 1.0), None, "the rivet is no leaf");
+    assert_eq!(click(second_leaf, 0.0), None, "a folded fan is not there");
+}

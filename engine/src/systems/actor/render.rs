@@ -30,6 +30,7 @@ use crate::core::render::sample::FrameWork;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::render::world::body::{self, Body, RigReady};
 use crate::core::render::world::layers::Layered;
+use crate::core::render::world::plumb::Plumb;
 use crate::core::render::world::rig_clip;
 use crate::core::render::{Animator, Previous, Turns, facing_rotation, ground_height, world_point};
 use crate::core::text::Typewriter;
@@ -733,7 +734,14 @@ pub fn pose(world: &mut World) {
             .query::<(&mut Layered, &Layering)>()
             .get_mut(world, entity)
         {
-            layering::drive(&mut layered, layering, shown.action, &holding, stepped);
+            layering::drive(
+                &mut layered,
+                layering,
+                shown.action,
+                stance,
+                &holding,
+                stepped,
+            );
         }
         let resting = resolved
             .only
@@ -1012,6 +1020,7 @@ pub fn hang(world: &mut World) {
                 continue;
             };
             let placed = held_at(model, &hands[hand.index()], &grip);
+            let plumb = plumb_from(model, &hands[hand.index()], &grip);
             let scene = assets::model_scene(
                 world.resource::<AssetServer>(),
                 look.get(&content).model.path(),
@@ -1025,6 +1034,9 @@ pub fn hang(world: &mut World) {
                     ChildOf(joint),
                 ))
                 .id();
+            if let Some(plumb) = plumb {
+                world.entity_mut(prop).insert(plumb);
+            }
             if let Some(mut puppet) = world.get_mut::<Puppet>(entity) {
                 puppet.held.insert(hand, (hung, prop));
             }
@@ -1089,6 +1101,15 @@ pub fn held_at(model: &ActorModel, hand: &Hand, grip: &Grip) -> Transform {
         });
     }
     Transform::from_scale(Vec3::splat(1.0 / rest)) * Transform::from_matrix(held)
+}
+
+/// How a prop held by `grip` hangs under the joint of `hand` on `model` when it hangs plumb: from
+/// where the hand grips, as `held_at` lays it there.
+pub fn plumb_from(model: &ActorModel, hand: &Hand, grip: &Grip) -> Option<Plumb> {
+    grip.hangs.then(|| Plumb {
+        rigid: held_at(model, hand, grip),
+        pivot: grip_frame(hand).w_axis.truncate() / rest_scale(model, hand),
+    })
 }
 
 /// The grip frame of `hand` in its joint's frame, its +Z out of the back of the hand whether or

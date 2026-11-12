@@ -448,7 +448,7 @@ const GRAIN: usize = 192;
 
 /// The grain multiplies the vignette's tones rather than lying over them, so vellum is one mesh on
 /// one texture, which egui draws in a single call.
-fn grain(ctx: &egui::Context) -> TextureHandle {
+pub(crate) fn grain(ctx: &egui::Context) -> TextureHandle {
     let id = Id::new("vellum grain");
     if let Some(texture) = ctx.data(|data| data.get_temp::<TextureHandle>(id)) {
         return texture;
@@ -537,14 +537,14 @@ fn vignette_grid() -> &'static VignetteGrid {
     })
 }
 
-fn tone(dx: f32, dy: f32) -> Color32 {
+pub(crate) fn tone(dx: f32, dy: f32) -> Color32 {
     let distance = (dx.powi(4) + dy.powi(4)).powf(0.25).min(1.0);
     let centre = ink::on(ink::LIGHT, ink::CREAM, smooth(0.0, 0.7, distance));
     let edge = ink::on(centre, ink::CREAM2, smooth(0.7, 1.0, distance));
     ink::on(edge, ink::HONEY, smooth(0.93, 1.0, distance) * 0.7)
 }
 
-fn smooth(from: f32, to: f32, at: f32) -> f32 {
+pub(crate) fn smooth(from: f32, to: f32, at: f32) -> f32 {
     let t = ((at - from) / (to - from)).clamp(0.0, 1.0);
     t * t * (3.0 - 2.0 * t)
 }

@@ -16,7 +16,7 @@ use strum::{IntoStaticStr, VariantArray};
 use crate::core::audio::playback::SfxId;
 use crate::core::content::ImageRef;
 use crate::core::content::{
-    Content, ContentFile, ContentId, ModuleRule, ModuleSet, NamedContent, Nearby, RowCheck,
+    Content, ContentFile, ContentId, ModuleRule, ModuleSet, NamedContent, Nearby, RowCheck, serial,
 };
 use crate::core::time::{UnixMillis, WallClock};
 use crate::core::units::Seconds;
@@ -44,6 +44,9 @@ pub struct StatusEffectDef {
     pub vfx: Phased<VfxId>,
     #[serde(default, skip_serializing_if = "Phased::is_empty")]
     pub sfx: Phased<SfxId>,
+    /// Whether its name pops over whoever gains it.
+    #[serde(default = "serial::yes", skip_serializing_if = "serial::is_true")]
+    pub pops: bool,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<StatusModule>,
 }
@@ -246,6 +249,7 @@ impl ContentFile for StatusEffectDef {
             description: String::new(),
             vfx: Phased::default(),
             sfx: Phased::default(),
+            pops: true,
             modules: Vec::new(),
         })
     }

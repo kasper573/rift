@@ -2057,7 +2057,20 @@ pub fn interface_covers(gui: &egui::Context) -> Vec<Rect<WindowPx>> {
 
 const VFX_MEMORY: Seconds = Seconds(3.0);
 #[derive(Resource, Default)]
-struct VfxSeen(Vec<VfxInstance>);
+struct VfxSeen(Vec<SeenVfx>);
+
+/// A vfx seen starting, and for one that plays until it is removed, when it was found gone.
+struct SeenVfx {
+    entity: Entity,
+    instance: VfxInstance,
+    gone: Option<time::UnixMillis>,
+}
+
+impl SeenVfx {
+    fn over(&self) -> Option<time::UnixMillis> {
+        self.instance.until.or(self.gone)
+    }
+}
 
 fn remember_vfx(
     add: On<Add<VfxInstance>>,
@@ -2065,23 +2078,38 @@ fn remember_vfx(
     mut seen: ResMut<VfxSeen>,
 ) {
     if let Ok(instance) = instances.get(add.entity) {
-        seen.0.push(instance.clone());
+        seen.0.push(SeenVfx {
+            entity: add.entity,
+            instance: instance.clone(),
+            gone: None,
+        });
     }
 }
 
 fn vfx_seen(world: &mut World) -> Vec<ProbeVfx> {
     let now = time::server_now(world);
+    let gone: Vec<bool> = world
+        .resource::<VfxSeen>()
+        .0
+        .iter()
+        .map(|seen| world.get::<VfxInstance>(seen.entity).is_none())
+        .collect();
     let mut seen = world.resource_mut::<VfxSeen>();
     if let Some(now) = now {
+        for (seen, gone) in seen.0.iter_mut().zip(gone) {
+            if gone && seen.gone.is_none() {
+                seen.gone = Some(now);
+            }
+        }
         seen.0
-            .retain(|instance| now < instance.until.after(VFX_MEMORY));
+            .retain(|seen| seen.over().is_none_or(|over| now < over.after(VFX_MEMORY)));
     }
     seen.0
         .iter()
-        .map(|instance| ProbeVfx {
-            vfx: instance.vfx,
-            site: instance.site.clone(),
-            over: now.is_some_and(|now| instance.until <= now),
+        .map(|seen| ProbeVfx {
+            vfx: seen.instance.vfx,
+            site: seen.instance.site.clone(),
+            over: now.zip(seen.over()).is_some_and(|(now, over)| over <= now),
         })
         .collect()
 }

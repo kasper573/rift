@@ -23,6 +23,7 @@ use engine::core::render::world::gpu::pick::Picking;
 use engine::core::render::world::layers::Layered;
 use engine::core::render::world::mannequin::Mannequin;
 use engine::core::render::world::mannequin::mannequin;
+use engine::core::render::world::plumb::Plumb;
 use engine::core::render::world::rig_clip;
 use engine::core::render::{CameraFocus, Look, camera, world_point};
 use engine::core::units::Meters;
@@ -33,7 +34,7 @@ use engine::systems::actor::model::{ActorModel, ModelId};
 use engine::systems::actor::render;
 use engine::systems::actor::rigging::BuiltSkeleton;
 use engine::systems::actor::skeleton::Cue;
-use engine::systems::actor::stance::HandIndex;
+use engine::systems::actor::stance::{HandIndex, StanceId};
 use engine::systems::area::render::view_reach;
 use engine::systems::area::scenery::{self, Eyes, Sight};
 use engine::systems::area::{Area, Picture, Weather};
@@ -126,11 +127,12 @@ impl StageClip {
 }
 
 /// What a stood rig's layers are told each frame, as the game tells a puppet's: the model whose
-/// skeleton lists them, the action shown, and whether a foot came down.
+/// skeleton lists them, the action shown, the stance it is shown in, and whether a foot came down.
 #[derive(Clone, Copy, PartialEq)]
 pub struct StageLayers {
     pub model: ModelId,
     pub action: Action,
+    pub stance: Option<StanceId>,
     pub stepped: bool,
 }
 
@@ -142,13 +144,14 @@ struct StageLayering {
 }
 
 /// A prop a standing rig holds in `hand`: the scene of `model` under the rig's joint `joint`, placed
-/// there by `transform`.
+/// there by `transform`, and hanging plumb from there by `plumb` if it does.
 #[derive(Clone, PartialEq)]
 pub struct StandingProp {
     pub hand: HandIndex,
     pub joint: String,
     pub model: String,
     pub transform: Transform,
+    pub plumb: Option<Plumb>,
 }
 
 /// The props a stood rig holds, and those hung so far.
@@ -603,16 +606,21 @@ fn rehang(world: &mut World, rig: Entity, props: &[StandingProp]) {
             .all(|(old, new)| old.joint == new.joint && old.model == new.model);
     if same {
         held.props = props.to_vec();
-        let moved: Vec<(Entity, Transform)> = held
+        let moved: Vec<(Entity, Transform, Option<Plumb>)> = held
             .hung
             .iter()
             .zip(props)
-            .map(|(&prop, standing)| (prop, standing.transform))
+            .map(|(&prop, standing)| (prop, standing.transform, standing.plumb))
             .collect();
-        for (prop, transform) in moved {
-            if let Some(mut at) = world.get_mut::<Transform>(prop) {
-                *at = transform;
-            }
+        for (prop, transform, plumb) in moved {
+            let Ok(mut prop) = world.get_entity_mut(prop) else {
+                continue;
+            };
+            prop.insert(transform);
+            match plumb {
+                Some(plumb) => prop.insert(plumb),
+                None => prop.remove::<Plumb>(),
+            };
         }
         return;
     }
@@ -653,14 +661,16 @@ fn hang_props(world: &mut World) {
                     world.resource::<AssetServer>(),
                     prop.model.clone(),
                 );
-                world
-                    .spawn((
-                        WorldAssetRoot(scene),
-                        prop.transform,
-                        Visibility::default(),
-                        ChildOf(joint),
-                    ))
-                    .id()
+                let mut hung = world.spawn((
+                    WorldAssetRoot(scene),
+                    prop.transform,
+                    Visibility::default(),
+                    ChildOf(joint),
+                ));
+                if let Some(plumb) = prop.plumb {
+                    hung.insert(plumb);
+                }
+                hung.id()
             })
             .collect();
         if let Some(mut held) = world.get_mut::<StageProps>(rig) {
@@ -737,6 +747,7 @@ fn run_layers(world: &mut World) {
             &mut layered,
             layering,
             stage.asked.action,
+            stage.asked.stance,
             &holding,
             stage.asked.stepped,
         );

@@ -126,6 +126,7 @@ fn a_mirrored_hand_holds_a_prop_as_the_mirror_image_of_the_hand_it_mirrors_turne
             offset: LocalOffset([Meters(0.02), Meters(-0.1), Meters(0.05)]),
             turn: LocalTurn([Degrees(20.0), Degrees(-35.0), Degrees(50.0)]),
             symmetry,
+            hangs: false,
         };
         let held = |hand: usize, joint: &str| {
             let placed = render::held_at(model, &model.hands()[hand], &grip);
@@ -144,6 +145,67 @@ fn a_mirrored_hand_holds_a_prop_as_the_mirror_image_of_the_hand_it_mirrors_turne
         assert!(
             held(1, "hand.l").abs_diff_eq(mirrored, 1.0e-5),
             "{symmetry:?}: the left hand holds the prop where the right's mirror image would"
+        );
+    }
+}
+
+#[test]
+fn a_prop_that_hangs_plumb_stays_upright_from_where_the_hand_grips_it_however_the_hand_turns() {
+    let content = Game::new()
+        .skeleton_of(
+            BODY,
+            &rig_clips(),
+            json!({ "hands": [
+                { "name": "right", "joint": "hand.r", "offset": [0.05, 0.02, 0.0], "turn": [90.0, 0.0, 0.0] },
+            ] }),
+        )
+        .model("hero", 1.8, json!([]))
+        .load();
+    let model = ActorModel::get(
+        &content,
+        content.declared::<ModelDef>("hero").expect("declared"),
+    );
+    let hand = &model.hands()[0];
+    let grip = |hangs| Grip {
+        offset: LocalOffset([Meters(0.4), Meters(0.0), Meters(0.0)]),
+        turn: LocalTurn([Degrees(0.0), Degrees(0.0), Degrees(90.0)]),
+        symmetry: PropAxis::Z,
+        hangs,
+    };
+    assert_eq!(
+        render::plumb_from(model, hand, &grip(false)),
+        None,
+        "a prop that does not hang turns with the hand"
+    );
+    let plumb = render::plumb_from(model, hand, &grip(true)).expect("a prop that hangs");
+    let gripped = plumb
+        .rigid
+        .to_matrix()
+        .inverse()
+        .transform_point3(plumb.pivot);
+    for (case, carried) in [
+        ("an arm hanging", Quat::IDENTITY),
+        ("a forearm raised", Quat::from_rotation_x(1.2)),
+        ("a hand turned over", Quat::from_rotation_z(2.6)),
+        (
+            "an arm swung out",
+            Quat::from_euler(bevy_math::EulerRot::XYZ, 0.7, -1.9, 0.4),
+        ),
+    ] {
+        let hung = plumb.hung(carried);
+        assert!(
+            (carried * hung.rotation * Vec3::Y).abs_diff_eq(Vec3::Y, 1.0e-4),
+            "{case}: the prop's +Y points up"
+        );
+        assert!(
+            hung.to_matrix()
+                .transform_point3(gripped)
+                .abs_diff_eq(plumb.pivot, 1.0e-4),
+            "{case}: the point of the prop the hand grips stays in the hand"
+        );
+        assert_eq!(
+            hung.scale, plumb.rigid.scale,
+            "{case}: the prop keeps its size"
         );
     }
 }

@@ -414,7 +414,13 @@ pub fn server_app(
             Update,
             (
                 (
-                    (status::expire, vfx::expire, area::spawnable::expire).chain(),
+                    (
+                        status::expire,
+                        vfx::expire,
+                        vfx::follow,
+                        area::spawnable::expire,
+                    )
+                        .chain(),
                     player::arrival_holds,
                     combat::regen,
                     movement::move_request,
@@ -576,6 +582,7 @@ pub fn client_app(
             item::render::ItemRenderPlugin,
             resource::render::ResourceRenderPlugin,
             view::CameraFollowPlugin,
+            visibility::SightEdgePlugin,
             dialogue::camera::DialogueCameraPlugin,
             player::session::ClientSessionPlugin,
             input::PlayerInputPlugin,

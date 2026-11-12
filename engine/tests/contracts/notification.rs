@@ -300,7 +300,7 @@ fn a_hit_pops_its_amount_out_of_the_one_struck_for_everyone_who_sees_it() {
 }
 
 #[test]
-fn healing_a_level_and_a_status_each_pop_with_their_own_look() {
+fn healing_a_level_and_a_status_each_pop_with_their_own_look_unless_the_status_keeps_quiet() {
     let mut sim = island(&game());
     let player = sim.join(1);
     stat::apply_damage(&mut sim.world, player, 6.0);
@@ -311,6 +311,8 @@ fn healing_a_level_and_a_status_each_pop_with_their_own_look() {
     class::grant_xp(&mut sim.world, player, 30);
     let guarded = sim.id::<StatusEffectDef>("guarded");
     status::apply(&mut sim.world, player, guarded, 10.0, None);
+    let kindled = sim.id::<StatusEffectDef>("kindled");
+    status::apply(&mut sim.world, player, kindled, 10.0, None);
     sim.run(0.5);
 
     let shader = |key: &str| Some(sim.id::<VfxShaderDef>(key));
@@ -430,6 +432,16 @@ fn game() -> Content {
                 "description": "Guarded.",
                 "vfx": {},
                 "modules": [],
+            }),
+        )
+        .row(
+            "status_effect",
+            "kindled",
+            json!({
+                "name": "Kindled",
+                "icon": "icons/status.png",
+                "category": "buff",
+                "pops": false,
             }),
         )
         .asset("icons/status.png", testkit::png(1, 1))

@@ -649,6 +649,17 @@ pub enum Layer {
         #[serde(default = "calm")]
         during: Vec<Action>,
     },
+    /// Holds the joints under `from` as `clip` turns them at its first moment, over whatever else
+    /// plays, while the body is in `stance`: an arm that carries a lantern through a walk.
+    Carry {
+        from: JointName,
+        clip: Clip,
+        stance: StanceId,
+        /// How quickly the joints come to the hold: the time it takes to go most of the way.
+        ease: Seconds,
+        #[serde(default = "calm")]
+        during: Vec<Action>,
+    },
 }
 
 /// A leg of a feet layer: its joints from the hip down to the foot, a chain down the tree.
@@ -680,7 +691,8 @@ impl Layer {
             Layer::Feet { during, .. }
             | Layer::Chain { during, .. }
             | Layer::Wave { during, .. }
-            | Layer::Squash { during, .. } => during,
+            | Layer::Squash { during, .. }
+            | Layer::Carry { during, .. } => during,
         }
     }
 
@@ -698,7 +710,7 @@ impl Layer {
                         .map(move |(at, joint)| (format!("/legs/{leg}/joints/{at}"), joint))
                 })
                 .collect(),
-            Layer::Chain { from, .. } | Layer::Wave { from, .. } => {
+            Layer::Chain { from, .. } | Layer::Wave { from, .. } | Layer::Carry { from, .. } => {
                 vec![("/from".to_owned(), from)]
             }
             Layer::Squash { joint, .. } => vec![("/joint".to_owned(), joint)],
@@ -1138,6 +1150,9 @@ fn check_layer(pointer: &str, layer: &Layer, cx: &mut RowCheck) {
             cx.range(format!("{pointer}/ease"), ease.0, 0.0, 2.0, "s");
             cx.range(format!("{pointer}/most"), *most, 0.0, 0.95, "a share");
         }
+        Layer::Carry { ease, .. } => {
+            cx.range(format!("{pointer}/ease"), ease.0, 0.0, 2.0, "s");
+        }
     }
 }
 
@@ -1387,6 +1402,7 @@ impl SkeletonDef {
     }
 
     /// Every clip the skeleton names, with where it names it: in its sets, its hands' clasps, its
+    /// carrying layers, its
     /// cues and its paces.
     pub fn clips(&self) -> Vec<(String, &Clip)> {
         let mut clips: Vec<(String, &Clip)> = self
@@ -1403,6 +1419,11 @@ impl SkeletonDef {
         for (index, hand) in self.hands.iter().enumerate() {
             if let Some(clasp) = &hand.clasp {
                 clips.push((format!("/hands/{index}/clasp/clip"), &clasp.clip));
+            }
+        }
+        for (index, layer) in self.layers.iter().enumerate() {
+            if let Layer::Carry { clip, .. } = layer {
+                clips.push((format!("/layers/{index}/clip"), clip));
             }
         }
         for (index, cues) in self.cues.iter().enumerate() {

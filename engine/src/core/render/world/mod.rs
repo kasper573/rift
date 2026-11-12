@@ -15,7 +15,9 @@ pub mod lod;
 pub mod mannequin;
 pub mod material;
 pub mod model;
+pub mod opacity;
 pub mod paint;
+pub mod plumb;
 pub mod rig_clip;
 pub mod sky;
 pub mod terrain;
@@ -28,7 +30,7 @@ use bevy::app::HierarchyPropagatePlugin;
 use bevy::camera::visibility::RenderLayers;
 use bevy::light::DirectionalLightShadowMap;
 use bevy::light::cluster::GlobalClusterSettings;
-use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin};
+use bevy::pbr::{ExtendedMaterial, MaterialExtension, MaterialPlugin, ScreenSpaceTransmission};
 use bevy::platform::collections::HashSet;
 use bevy::prelude::*;
 use bevy::render::render_resource::{CachedPipelineState, PipelineCache, TextureUsages};
@@ -60,6 +62,7 @@ impl Plugin for WorldScenePlugin {
         bevy::shader::load_shader_library!(app, "shade.wesl");
         bevy::shader::load_shader_library!(app, "prepass_write.wesl");
         bevy::shader::load_shader_library!(app, "clearing.wesl");
+        bevy::shader::load_shader_library!(app, "opacity.wesl");
         bevy::asset::embedded_asset!(app, "material.wesl");
         bevy::asset::embedded_asset!(app, "material_prepass.wesl");
         bevy::asset::embedded_asset!(app, "decal.wesl");
@@ -110,7 +113,7 @@ impl Plugin for WorldScenePlugin {
                 super::video::show_window.run_if(resource_changed::<VideoPreferences>),
                 lights::cast_shadows,
                 lights::cast_lamp_shadows,
-                lights::flicker,
+                lights::shine,
                 mannequin::hold,
                 terrain::stack_pictures,
                 material::forget_dropped,
@@ -131,11 +134,26 @@ impl Plugin for WorldScenePlugin {
             PostUpdate,
             (
                 let_depth_be_read,
+                show_through_glass,
+                opacity::thin,
+                plumb::hang
+                    .after(layers::run)
+                    .before(bevy::transform::TransformSystems::Propagate),
                 sky::rest_sky_light
                     .after(bevy::transform::TransformSystems::Propagate)
                     .after(bevy::asset::AssetEventSystems),
             ),
         );
+    }
+}
+
+/// Every camera draws clear glass over a copy of what it has drawn behind the pane, which the
+/// pane bends.
+fn show_through_glass(mut commands: Commands, cameras: Query<Entity, Added<Camera3d>>) {
+    for camera in &cameras {
+        commands
+            .entity(camera)
+            .insert(ScreenSpaceTransmission::default());
     }
 }
 

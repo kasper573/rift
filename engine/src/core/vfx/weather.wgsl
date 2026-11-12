@@ -1,10 +1,13 @@
 // The weather as the engine tells a shader of it: the wind as a direction scaled by its strength
-// (calm at 0, a gale at 1), the time, how far through its day the game is (0 midnight, 0.5 noon;
+// (calm at 0, a gale at 1), how far its gusts have travelled over the ground on it, in metres (a
+// pattern drawn at a ground point less this travels with the wind, and stays whole as the wind
+// turns), the time, how far through its day the game is (0 midnight, 0.5 noon;
 // noon when the game keeps no clock), how much cloud covers the sky (0 none, 1 clouded over), how
 // much water it holds (0 fair-weather cloud, 1 storm cloud), how hard it rains under the cloud
 // that holds the most (0 none, 1 a cloudburst), how brightly lightning lights the world this
-// moment (0 none, 1 a strike close by) and how many bodies tread through the cover. `wind_lean`
-// turns the wind into the metres a blade's tip shifts. Round the camera's subject the engine
+// moment (0 none, 1 a strike close by) and how many bodies tread through the cover. `wind_gust`
+// tells how hard the wind blows at a ground point, and `wind_lean` turns it into the metres a
+// blade's tip shifts. Round the camera's subject the engine
 // tells of the rain over each stretch of ground (`rain_field`), how hard it rains at a point and
 // how wet the ground lies there (`raining`, `wetness`), and where roofs and canopies shelter it
 // (`sheltered`). The engine paints the weather into a picture a texel per value, read in order
@@ -13,6 +16,7 @@
 
 struct Weather {
     wind: vec2<f32>,
+    gusts: vec2<f32>,
     time: f32,
     treads: u32,
     daylight: f32,
@@ -60,23 +64,40 @@ fn read_weather() {
     let falling = weather_texel(5u);
     rain_most = falling.xy;
     rain_falls = falling.zw;
+    weather.gusts = weather_texel(6u).xy;
 }
 
 // How far a blade's tip leans in a gale, in metres.
 const GALE_LEAN: f32 = 0.45;
 
-// The wind at a ground point, gusting in waves that travel along it.
+// How wide a gust lies over the ground, and the flurries within it, in metres.
+const GUST_SPAN: f32 = 4.0;
+const FLURRY_SPAN: f32 = 1.5;
+
+// How hard the wind blows at a ground point, as a share of its strength: gusts and the lulls
+// between them, carried over the ground on the wind.
+fn wind_gust(ground: vec2<f32>) -> f32 {
+    let carried = ground - weather.gusts;
+    return 0.1 + 0.7 * gust_field(carried / GUST_SPAN) + 0.2 * gust_field(carried / FLURRY_SPAN + 37.0);
+}
+
+// The wind at a ground point, leaning what it blows on further where it gusts.
 fn wind_lean(ground: vec2<f32>) -> vec2<f32> {
     let strength = length(weather.wind);
     if strength <= 0.0 {
         return vec2<f32>(0.0);
     }
-    let along = weather.wind / strength;
-    let across = vec2<f32>(-along.y, along.x);
-    let phase = dot(ground, along) * 0.8 - weather.time * (1.2 + 1.8 * strength);
-    let ripple = dot(ground, across) * 1.7 + weather.time * 0.7;
-    let gust = 0.55 + 0.35 * sin(phase) + 0.1 * sin(phase * 2.6 + ripple);
-    return along * GALE_LEAN * strength * gust;
+    return weather.wind * GALE_LEAN * wind_gust(ground);
+}
+
+// A field of 0 to 1 that rises and falls smoothly from one whole point to the next.
+fn gust_field(at: vec2<f32>) -> f32 {
+    let cell = floor(at);
+    let within = at - cell;
+    let eased = within * within * (3.0 - 2.0 * within);
+    let upper = mix(hash2(cell), hash2(cell + vec2<f32>(1.0, 0.0)), eased.x);
+    let lower = mix(hash2(cell + vec2<f32>(0.0, 1.0)), hash2(cell + vec2<f32>(1.0, 1.0)), eased.x);
+    return mix(upper, lower, eased.y);
 }
 
 // The rain over a ground point (x east, y south): the share of the downpour that falls there by

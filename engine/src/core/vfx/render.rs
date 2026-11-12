@@ -49,6 +49,7 @@ use crate::core::render::world::cover::CoverMaterial;
 use crate::core::render::world::decal::LIFT;
 use crate::core::render::world::lights;
 use crate::core::render::world::material::WorldMaterial;
+use crate::core::render::world::opacity::Opacity;
 use crate::core::render::world::terrain;
 use crate::core::render::{CameraRig, GroundHeights, ground_height, world_point};
 use crate::core::time::server_now;
@@ -162,6 +163,9 @@ pub struct SiteFrame {
     pub texture: Option<SiteTexture>,
     /// Which way the camera looks, so a board facing it shows headings as the screen has them.
     pub camera_yaw: Radians,
+    /// How far the thing the site is has faded from sight, 0 whole to 1 gone: what is drawn on it
+    /// pales with it.
+    pub faded: f32,
 }
 
 /// Where a site stands.
@@ -437,6 +441,7 @@ impl SiteFrame {
             path: SitePath::default(),
             texture: None,
             camera_yaw: Radians::default(),
+            faded: 1.0 - Opacity::of(world, entity).clamp(0.0, 1.0),
         })
     }
 
@@ -479,6 +484,7 @@ impl SiteFrame {
             path: SitePath::default(),
             texture: None,
             camera_yaw: Radians::default(),
+            faded: 0.0,
         }
     }
 
@@ -530,6 +536,7 @@ impl SiteFrame {
             path,
             texture: None,
             camera_yaw: Radians::default(),
+            faded: 0.0,
         }
     }
 
@@ -549,6 +556,7 @@ impl SiteFrame {
             path: SitePath::default(),
             texture,
             camera_yaw: Radians::default(),
+            faded: 0.0,
         }
     }
 
@@ -566,6 +574,7 @@ impl SiteFrame {
             path: SitePath::default(),
             texture: Some(texture),
             camera_yaw: Radians::default(),
+            faded: 0.0,
         }
     }
 
@@ -638,6 +647,7 @@ impl SiteFrame {
             shape: self.body.shape as u32,
             point_count: self.path.count,
             image: u32::from(image),
+            faded: self.faded,
             origin: self.body.origin,
             extent: self.body.extent,
             metres,
@@ -934,12 +944,21 @@ fn sync(world: &mut World) {
             Some(view) => view.pieces.clone(),
             None => attach(world, entity, def, &content),
         };
-        let frame = SiteFrame::of(world, &instance.site, instance.heading);
+        let frame = SiteFrame::of(world, &instance.site, instance.heading).map(|frame| SiteFrame {
+            faded: frame
+                .faded
+                .max(1.0 - Opacity::of(world, entity).clamp(0.0, 1.0)),
+            ..frame
+        });
         let socket = def
             .socket
             .as_deref()
             .and_then(|socket| socket_point(world, &instance.site, socket));
         let elapsed = now.since(instance.started);
+        let elapsed = match instance.until {
+            Some(_) => elapsed,
+            None => Seconds(elapsed.0 % def.lasts().0.max(f32::EPSILON)),
+        };
         for (layer, &piece) in def.layers.iter().zip(&pieces) {
             let Some((frame, time)) = frame.as_ref().zip(layer.at(elapsed)) else {
                 hide(world, piece);
@@ -1025,7 +1044,8 @@ fn attach(world: &mut World, entity: Entity, def: &VfxDef, content: &Content) ->
                 intensity,
                 radius,
                 flicker,
-                shadows,
+                shadows_from,
+                aura,
                 ..
             } => {
                 let lamp = lights::Lamp {
@@ -1033,7 +1053,8 @@ fn attach(world: &mut World, entity: Entity, def: &VfxDef, content: &Content) ->
                     intensity: *intensity,
                     radius: *radius,
                     flicker: *flicker,
-                    shadows: *shadows,
+                    shadows_from: *shadows_from,
+                    aura: *aura,
                 };
                 let piece = lamp.spawn(world, 0.0);
                 world.entity_mut(piece).insert(Visibility::Hidden);
@@ -1196,7 +1217,7 @@ fn present_sprite(
     );
 }
 
-/// Stands a light layer's light on its site by its anchor, lit.
+/// Stands a light layer's light on its site by its anchor, lit as far as the site shows.
 fn present_light(
     world: &mut World,
     piece: Entity,
@@ -1214,6 +1235,10 @@ fn present_light(
         piece,
         Transform::from_translation(at + Vec3::Y * lift),
     );
+    let shown = Opacity(1.0 - frame.faded);
+    if world.get::<Opacity>(piece) != Some(&shown) {
+        world.entity_mut(piece).insert(shown);
+    }
 }
 
 /// Where the sprites and lights of a vfx stand on a world site, and how tall a stretch their

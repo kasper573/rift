@@ -2,6 +2,7 @@
 // is the image `sample` gives, whatever uv is asked for, and what the shader paints is drawn in its
 // place.
 import bevy_pbr::render::forward_io::{VertexOutput, FragmentOutput};
+import engine::core::render::world::opacity::thin;
 import engine::core::render::world::shade::lit_color;
 
 @group(3) @binding(100) var<uniform> site: Site;
@@ -15,6 +16,7 @@ fn sample(at: vec2<f32>) -> vec4<f32> {
 
 @fragment
 fn fragment(in: VertexOutput, @builtin(front_facing) is_front: bool) -> FragmentOutput {
+    thin(in.position.xy, in.instance_index);
     lit = lit_color(in, is_front);
     var uv = vec2<f32>(0.5);
     @if(VERTEX_UVS_A) {

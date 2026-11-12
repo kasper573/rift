@@ -1,16 +1,21 @@
+use bevy::prelude::{IntoScheduleConfigs, Plugin, Update, in_state};
 use bevy_app::App;
 use bevy_ecs::message::Message;
 use bevy_ecs::prelude::*;
 use bevy_replication::{Interest, Replicated, ReplicationInterest, ToClient};
 
 use crate::core::chunk::{CHUNK_SIDE, Chunk, ChunkIndex};
+use crate::core::interpolate::RenderValueSystems;
 use crate::core::math::Pos;
+use crate::core::render::world::opacity::Opacity;
 use crate::core::tick::Planner;
 use crate::core::units::{MeterPos, Meters};
 use crate::systems::GameSettings;
 use crate::systems::area::{self, AreaId, AreaTag};
-use crate::systems::movement::{Position, position};
+use crate::systems::movement::{Position, RenderPosition, position};
+use crate::systems::player::session::MyCharacter;
 use crate::systems::player::{ClientId, Connected, PlayedBy, Players};
+use crate::systems::screen::ClientScreen;
 use crate::systems::script::condition::CompiledCondition;
 
 /// How far the game's players see.
@@ -20,6 +25,60 @@ pub fn sight(world: &World) -> Meters {
 
 pub fn register(app: &mut App) {
     app.insert_resource(ReplicationInterest(Box::new(ClientSight::default())));
+}
+
+/// Where toward the edge of its character's sight a client starts to fade what stands there, and
+/// where it has faded it whole, as shares of the sight: a little short of the edge, past which
+/// the server tells it of the thing no more.
+const FADES_FROM: f32 = 0.8;
+const FADED_BY: f32 = 0.95;
+
+/// Fades what a client's character sees at the edge of its sight, so a thing coming into sight
+/// or leaving it thins in or out, with all it sheds, rather than appearing or vanishing at once.
+pub struct SightEdgePlugin;
+
+impl Plugin for SightEdgePlugin {
+    fn build(&self, app: &mut App) {
+        app.add_systems(
+            Update,
+            fade_at_the_edge
+                .after(RenderValueSystems)
+                .run_if(in_state(ClientScreen::Area)),
+        );
+    }
+}
+
+/// How much of a thing `away` from a character that sees `sight` far shows.
+fn shown_at(away: Meters, sight: Meters) -> f32 {
+    let (from, by) = (sight.0 * FADES_FROM, sight.0 * FADED_BY);
+    let faded = ((away.0 - from) / (by - from).max(f32::EPSILON)).clamp(0.0, 1.0);
+    1.0 - faded * faded * (3.0 - 2.0 * faded)
+}
+
+fn fade_at_the_edge(
+    viewpoint: Res<MyCharacter>,
+    settings: Res<GameSettings>,
+    placed: Query<(Entity, &Position, Option<&RenderPosition>, Option<&Opacity>)>,
+    mut commands: Commands,
+) {
+    let Some(mine) = viewpoint.0 else {
+        return;
+    };
+    let stands =
+        |at: &Position, shown: Option<&RenderPosition>| shown.map_or(at.pos, |shown| shown.0);
+    let Ok(eye) = placed.get(mine).map(|(_, at, shown, _)| stands(at, shown)) else {
+        return;
+    };
+    for (entity, at, shown, opacity) in &placed {
+        let wanted = if entity == mine {
+            1.0
+        } else {
+            shown_at(eye.distance(stands(at, shown)), settings.sight)
+        };
+        if opacity.map_or(1.0, |opacity| opacity.0) != wanted {
+            commands.entity(entity).try_insert(Opacity(wanted));
+        }
+    }
 }
 
 #[derive(Component, Clone)]

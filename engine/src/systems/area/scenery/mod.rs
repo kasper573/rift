@@ -1650,7 +1650,8 @@ fn spawn_light(
         intensity: light.intensity,
         radius: light.radius,
         flicker: light.flicker,
-        shadows: false,
+        shadows_from: None,
+        aura: None,
     }
     .spawn(world, rng.rand_float() * std::f32::consts::TAU);
     world.entity_mut(lamp).insert((

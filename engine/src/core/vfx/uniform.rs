@@ -44,6 +44,7 @@ pub struct SiteUniform {
     pub(super) shape: u32,
     pub(super) point_count: u32,
     pub(super) image: u32,
+    pub(super) faded: f32,
     pub(super) origin: Vec2,
     pub(super) extent: Vec2,
     pub(super) metres: Vec2,
@@ -143,12 +144,13 @@ impl FromWorld for WeatherImage {
 }
 
 /// The weather as the headers' `weather` reads it: the wind as a direction scaled by its
-/// strength, how far through its day the game is, how clouded the sky, how much water
-/// the cloud holds, how hard it rains under the wettest and how brightly lightning lights the
-/// world, and the bodies treading through.
+/// strength, how far its gusts have travelled over the ground on it, how far through its day the
+/// game is, how clouded the sky, how much water the cloud holds, how hard it rains under the
+/// wettest and how brightly lightning lights the world, and the bodies treading through.
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct Weather {
     pub(super) wind: Vec2,
+    pub(super) gusts: Vec2,
     pub(super) daylight: f32,
     pub(super) clouds: f32,
     pub(super) water: f32,
@@ -182,6 +184,7 @@ impl Default for Weather {
     fn default() -> Weather {
         Weather {
             wind: Vec2::ZERO,
+            gusts: Vec2::ZERO,
             daylight: 0.5,
             clouds: 0.0,
             water: 0.0,
@@ -195,14 +198,14 @@ impl Default for Weather {
 /// How many texels a row of the weather's picture holds: it is read in order, row by row.
 pub(super) const PICTURE_WIDTH: usize = 256;
 /// Where the first tread's texel lies: after the climate's, the storm's, where the rain field and
-/// the shelter lie, and the most the field holds.
-const FIRST_TREAD: usize = 6;
+/// the shelter lie, the most the field holds, and the gusts'.
+const FIRST_TREAD: usize = 7;
 const FIRST_LIMB: usize = FIRST_TREAD + TREADS;
 const FIRST_TRAIL: usize = FIRST_LIMB + TREADS * LIMBS_PER_TREAD * 2;
 const FIRST_RAIN: usize = FIRST_TRAIL + TREADS * TRAIL_POINTS;
 const FIRST_SHELTER: usize = FIRST_RAIN + RAIN_SIDE * RAIN_SIDE;
 /// Texels the weather's picture holds: the climate's two, the storm's, where the rain field and
-/// the shelter lie, a texel a tread, two a limb, one a point of a tread's trail, one a cell of the
+/// the shelter lie, the field's most, the gusts', a texel a tread, two a limb, one a point of a tread's trail, one a cell of the
 /// rain field and one every four of the shelter's, filling out its last row.
 const WEATHER_TEXELS: usize =
     (FIRST_SHELTER + SHELTER_SIDE * SHELTER_SIDE / 4).div_ceil(PICTURE_WIDTH) * PICTURE_WIDTH;
@@ -235,7 +238,7 @@ impl Weather {
     /// ground in the fourth and fifth, their north-west corner, a cell's side and the cells each
     /// way, or nothing for one not held; the wettest ground and the hardest rain over the field in
     /// the sixth, so a shader skips reading the field where it lies dry, and how far the rain
-    /// leans as it falls; then a texel a tread, its ground point, its reach and its
+    /// leans as it falls; how far the gusts have travelled in the seventh; then a texel a tread, its ground point, its reach and its
     /// count of limbs, and after every tread's, [`LIMBS_PER_TREAD`] places of two texels for each
     /// tread's limbs, a bone's start and girth, then its end, and after those [`TRAIL_POINTS`]
     /// texels for each tread's trail, a point's place, when it was laid and 1, or nothing past the
@@ -262,6 +265,7 @@ impl Weather {
         }
         texels[5].z = shelter.lean.x;
         texels[5].w = shelter.lean.y;
+        texels[6] = self.gusts.extend(0.0).extend(0.0);
         if shelter.tops.len() == SHELTER_SIDE * SHELTER_SIDE {
             texels[4] = shelter
                 .corner

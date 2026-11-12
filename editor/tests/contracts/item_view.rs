@@ -57,6 +57,7 @@ fn a_held_items_stance_and_grip_land_in_its_file_and_its_pairs_in_the_stances() 
         offset: LocalOffset([Meters(0.0), Meters(-0.25), Meters(0.0)]),
         turn: LocalTurn([Degrees(0.0), Degrees(180.0), Degrees(0.0)]),
         symmetry: PropAxis::X,
+        hangs: false,
     };
 
     assert!(item::wield::set_wield(

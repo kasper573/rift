@@ -9,6 +9,8 @@ pub const SHEET_OPEN_SECS: f32 = 0.18;
 pub const SHEET_CLOSE_SECS: f32 = 0.12;
 pub const DEAL_SECS: f32 = 0.22;
 pub const FLICK_SECS: f32 = 0.15;
+pub const FAN_OPEN_SECS: f32 = 0.5;
+pub const FAN_CLOSE_SECS: f32 = 0.32;
 const LAND_AT: f32 = 0.19 / DEAL_SECS;
 
 pub fn ease_out(t: f32) -> f32 {

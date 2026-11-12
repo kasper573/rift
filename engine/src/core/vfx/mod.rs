@@ -45,6 +45,10 @@ const SHORTEST_RUN: f64 = 0.05;
 pub const MAX_LIGHT_INTENSITY: f32 = 100.0;
 // As f64 for the same reason: the bounds of a light's reach, in metres.
 const SHORTEST_REACH: f64 = 0.5;
+/// The nearest to a light that something may start casting its shadow, in metres.
+const NEAREST_SHADOW: f64 = 0.02;
+/// The narrowest an aura may be, in metres.
+const NARROWEST_AURA: f64 = 0.1;
 const LONGEST_REACH: f64 = 32.0;
 pub const MAX_FRAME_SIDE: u32 = 1024;
 pub const MAX_FRAMES: u32 = 256;
@@ -136,11 +140,21 @@ pub enum VfxLayer {
         #[serde(default, skip_serializing_if = "serial::is_zero_f32")]
         #[schemars(extend("minimum" = 0.0, "maximum" = 1.0))]
         flicker: f32,
-        /// Whether what stands in the light casts a shadow away from it.
-        #[serde(default, skip_serializing_if = "serial::is_false")]
-        shadows: bool,
+        /// How far from the light whatever stands in it starts casting a shadow away from it;
+        /// left out, nothing casts one. What carries the light stands nearer and is spared, as
+        /// the head of a torch is, which would shade all its flame lights; the frame of a lantern
+        /// stands farther, and throws its bars.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(extend("minimum" = NEAREST_SHADOW))]
+        shadows_from: Option<Meters>,
         #[serde(default, skip_serializing_if = "SpriteAnchor::is_default")]
         anchor: SpriteAnchor,
+        /// How far out the light shines in from on every side, and from twice as far above,
+        /// rather than from one point: an aura, lighting whatever stands in its midst as it lights
+        /// all that lies round it. Left out, the light shines from where its anchor puts it.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(extend("minimum" = NARROWEST_AURA))]
+        aura: Option<Meters>,
         #[schemars(extend("minimum" = SHORTEST_RUN))]
         duration: Seconds,
         #[serde(default, skip_serializing_if = "Seconds::is_zero")]
@@ -201,7 +215,8 @@ pub struct VfxInstance {
     /// the area it plays on, else east. A shader reads it through the prelude's `site_heading`.
     pub heading: Radians,
     pub started: UnixMillis,
-    pub until: UnixMillis,
+    /// When its last layer ends; none for one that plays over and over until it is removed.
+    pub until: Option<UnixMillis>,
 }
 
 /// Where a vfx plays: always one thing. A screen or widget site is the screen of whoever the
@@ -399,9 +414,19 @@ impl ContentFile for VfxDef {
                     intensity,
                     radius,
                     flicker,
+                    shadows_from,
+                    aura,
                     duration,
                     ..
                 } => {
+                    if let Some(aura) = aura {
+                        let narrowest = NARROWEST_AURA as f32;
+                        check.range(at("aura"), aura.0, narrowest, radius.0, "m");
+                    }
+                    if let Some(from) = shadows_from {
+                        let nearest = NEAREST_SHADOW as f32;
+                        check.range(at("shadows_from"), from.0, nearest, radius.0, "m");
+                    }
                     check_run(check, at("duration"), *duration);
                     let brightest = MAX_LIGHT_INTENSITY;
                     check.range(at("intensity"), *intensity, 0.0, brightest, "brightness");
