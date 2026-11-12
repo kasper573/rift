@@ -33,8 +33,6 @@ use crate::core::units::{Degrees, Meters, Radians, Seconds, Stops};
 pub const NEAR_PLANE: Meters = Meters(0.5);
 /// How many pixels a thing must span to be drawn: smaller, a view shows only what lies behind it.
 const FEWEST_PIXELS: f32 = 1.0;
-/// How far a ray is followed through the world before it is given up as hitting nothing.
-const REACH: f32 = 200.0;
 /// How near the angle it eases to the camera comes to rest on it, too near to see.
 const REST_ANGLE: Radians = Radians(0.001);
 /// How near the distance it eases to the camera comes to rest on it, too near to see.
@@ -918,11 +916,11 @@ impl GroundHeights {
     }
 }
 
-/// The ground point a ray lands on: where it first comes down to the ground within `bounds`, no
-/// further than [`REACH`] past where it could first meet it.
+/// The ground point a ray lands on: where it first comes down to the ground within `bounds`,
+/// however far along it that is.
 pub fn ground_hit(heights: &Heightfield, bounds: Rect<Meters>, ray: Ray3d) -> Option<Pos<Meters>> {
     let (from, to) = among_heights(heights, ray, over(bounds, ray));
-    let t = heights.first_under(ray.origin, *ray.direction, from, to.min(from + REACH))?;
+    let t = heights.first_under(ray.origin, *ray.direction, from, to)?;
     Some(ground_pos(ray.origin + *ray.direction * t))
 }
 

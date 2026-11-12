@@ -10,7 +10,7 @@ use bevy::time::TimeUpdateStrategy;
 use bevy::world_serialization::WorldSerializationPlugin;
 use engine::core::audio::playback::{PlaySfx, SfxDef, SfxId, SfxPlace};
 use engine::core::content::gltf::PLACEHOLDER_LIFT;
-use engine::core::ground::{GroundSize, Heightfield, SAMPLES_PER_METER, TileAt};
+use engine::core::ground::{GroundSize, HeightRange, Heightfield, SAMPLES_PER_METER, TileAt};
 use engine::core::math::{Pos, Rect};
 use engine::core::render::camera::ground_hit;
 use engine::core::render::world::body::{Body, BodyPlugin};
@@ -44,7 +44,12 @@ const WINDOW: Vec2 = Vec2::new(1280.0, 720.0);
 
 /// A hill four metres high in the middle of the ground, sloping down a metre every two.
 fn hill() -> Heightfield {
-    Heightfield::from_fn(SIZE, HEIGHTS, |column, row| {
+    hill_among(HEIGHTS)
+}
+
+/// The hill on ground declared to span `heights`.
+fn hill_among(heights: HeightRange) -> Heightfield {
+    Heightfield::from_fn(SIZE, heights, |column, row| {
         let x = column as f32 / SAMPLES_PER_METER as f32;
         let y = row as f32 / SAMPLES_PER_METER as f32;
         let out = ((x - 16.0).powi(2) + (y - 16.0).powi(2)).sqrt();
@@ -274,6 +279,24 @@ fn the_pointer_ray_lands_where_the_ground_shows() {
                 "pointing at {name} turned {turned}° landed {landed:?}, not {at:?}"
             );
         }
+    }
+
+    // An area may declare room for peaks far above the ground a view looks at, and a view may
+    // stand far off, as one drawn back over a whole area does.
+    let lowland = hill_among(HeightRange {
+        lowest: Meters(-20.0),
+        highest: Meters(500.0),
+    });
+    for (at, name) in spots {
+        let ground = world_point(at, lowland.height_at(at));
+        let eye = ground + Vec3::new(60.0, 2400.0, 40.0);
+        let ray = Ray3d::new(eye, Dir3::new(ground - eye).expect("a heading"));
+        let landed = ground_hit(&lowland, bounds, ray)
+            .unwrap_or_else(|| panic!("the ray from far above {name} lands"));
+        assert!(
+            landed.distance(at) < Meters(0.05),
+            "pointing at {name} from far above landed {landed:?}, not {at:?}"
+        );
     }
 }
 
