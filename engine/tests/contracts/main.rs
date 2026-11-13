@@ -50,6 +50,7 @@ mod staging;
 mod stance;
 mod summon;
 mod switching;
+mod terminal;
 mod travel;
 mod typewriter;
 mod vfx;

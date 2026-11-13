@@ -34,6 +34,7 @@ use crate::systems::area::scene::scene_file;
 use crate::systems::area::spawnable::{SpawnableDef, SpawnableId};
 use crate::systems::area::{self, AreaDef, AreaId, AreaModule, AreaObject};
 use crate::systems::class::{ClassDef, ClassId};
+use crate::systems::command::TerminalCommandDef;
 use crate::systems::crafting::{RecipeBookDef, RecipeBookId};
 use crate::systems::dialogue::camera::DialogueCamera;
 use crate::systems::dialogue::{self, ChoiceReveal};
@@ -41,6 +42,7 @@ use crate::systems::item::{ItemDef, ItemId, ItemKind};
 use crate::systems::memory::{MemoryDef, MemoryId};
 use crate::systems::notification::{NotificationDef, NotificationId};
 use crate::systems::npc::{Npc, NpcDef, NpcId};
+use crate::systems::player;
 use crate::systems::quest::{Parties, QuestDef, QuestId};
 use crate::systems::resource::ResourceDef;
 use crate::systems::shop::{ShopDef, ShopId};
@@ -81,6 +83,7 @@ pub enum RunnerKind {
     StatusEffect,
     Blueprint,
     Spawnable,
+    Command,
     Any,
 }
 
@@ -97,6 +100,7 @@ impl RunnerKindDef for RunnerKind {
                 | RunnerKind::RecipeBook
                 | RunnerKind::Skill
                 | RunnerKind::StatusEffect
+                | RunnerKind::Command
         )
     }
 
@@ -353,6 +357,10 @@ impl Vocabulary for RiftScripting {
             StatusEffectDef::TABLE => RowRef::StatusEffect(content.by_path(key)?),
             _ => return None,
         })
+    }
+
+    fn character_named(world: &World, name: &str) -> Option<Entity> {
+        player::named(world, name)
     }
 
     fn audio_value(content: &Content, key: &str) -> Option<SfxId> {
@@ -630,6 +638,7 @@ pub fn owner_site(content: &Content, row: OwnerRow) -> ScriptSite {
         RunnerKind::Skill => row.id::<SkillDef>().path(content),
         RunnerKind::StatusEffect => row.id::<StatusEffectDef>().path(content),
         RunnerKind::Spawnable => row.id::<SpawnableDef>().path(content),
+        RunnerKind::Command => row.id::<TerminalCommandDef>().path(content),
         RunnerKind::Any => "",
     };
     ScriptSite {

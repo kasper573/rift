@@ -100,6 +100,7 @@ fn main() {
             stages: stage_sender,
         }),
         served: Arc::new(served),
+        content: content.clone(),
         game: service::GameInfo {
             name: settings.name.clone(),
         },
@@ -597,6 +598,7 @@ struct Http {
     auth: Auth,
     test_characters: Option<TestCharacters>,
     served: Arc<ServedContent>,
+    content: Content,
     game: service::GameInfo,
 }
 
@@ -792,10 +794,7 @@ fn resolve(http: &Http, headers: &HeaderMap) -> Result<AccountIdentity, StatusCo
     }
     .filter(|claims| !claims.sub.is_empty())
     .ok_or(StatusCode::UNAUTHORIZED)?;
-    Ok(AccountIdentity {
-        name: claims.display_name(),
-        id: AccountId(claims.sub),
-    })
+    Ok(AccountIdentity::of(&http.content, claims))
 }
 
 async fn health(State(http): State<Http>) -> Response {

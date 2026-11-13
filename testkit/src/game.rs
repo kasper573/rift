@@ -256,6 +256,10 @@ impl Game {
                     "no_recipe": "No recipe",
                     "choose_result": "Choose a result",
                     "craft_failed": "Crafting failed",
+                    "unknown_command": "There is no command {command}",
+                    "command_needs": "{usage} needs its {input}",
+                    "command_refuses": "{value} is no {input}",
+                    "command_takes": "{usage} takes no more than that",
                 },
                 "typing": typing(),
                 "lettering": lettering(),
@@ -269,6 +273,7 @@ impl Game {
                     "npcs_apart": "enemy",
                 },
                 "history_merges_within": 10.0,
+                "suggestions": 10,
                 "look": look(),
                 "dialogue_shots": {
                     "shoulder": { "back": 1.6, "aside": 0.7, "up": 0.95, "aim": 0.75 },

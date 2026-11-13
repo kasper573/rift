@@ -563,8 +563,8 @@ fn stack_text(doc: &ScriptDoc, hands: Hands, item: &str) -> String {
             continue;
         };
         let stacks = match hands {
-            Hands::Take => &items.take,
-            Hands::Give => &items.give,
+            Hands::Take => items.named_take(),
+            Hands::Give => items.named_give(),
         };
         for stack in stacks {
             if doc.reader.path_of(stack.item) == Some(item) {

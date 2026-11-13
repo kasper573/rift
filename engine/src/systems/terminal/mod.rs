@@ -11,7 +11,7 @@ impl Plugin for TerminalPlugin {
     fn build(&self, app: &mut App) {
         app.init_resource::<TerminalLog>()
             .init_resource::<widget::TerminalView>()
-            .add_systems(Update, receive);
+            .add_systems(Update, (receive, widget::suggested));
     }
 }
 

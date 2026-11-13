@@ -162,6 +162,15 @@
         }
       ]
     },
+    "complete_text": {
+      "label": "Take the suggested way to go on typing",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "Tab"
+        }
+      ]
+    },
     "take_default": {
       "label": "Give a question its default answer",
       "bindings": [

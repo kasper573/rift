@@ -287,6 +287,20 @@ pub fn arrival_holds(world: &mut World) {
     }
 }
 
+/// The character called `name` among those playing in this world, whatever its case.
+pub fn named(world: &World, name: &str) -> Option<Entity> {
+    world
+        .resource::<Players>()
+        .0
+        .values()
+        .copied()
+        .find(|&character| {
+            world
+                .get::<Name>(character)
+                .is_some_and(|called| called.name.eq_ignore_ascii_case(name))
+        })
+}
+
 pub(crate) fn conn_player(world: &World, conn: Entity) -> Option<Entity> {
     let client = world.get::<ClientId>(conn)?;
     world.resource::<Players>().0.get(client).copied()

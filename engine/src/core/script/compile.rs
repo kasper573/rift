@@ -213,6 +213,8 @@ pub enum Bound<'c, V: Vocabulary> {
     Row(V::Row),
     Audio(V::Audio),
     Condition(&'c Expr<V>),
+    Character(&'c str),
+    Actor(&'c Expr<V>),
 }
 
 /// Why one of a row's script modules, the one at `module` among them, did not compile.
@@ -352,6 +354,8 @@ fn resolve_value<'c, V: Vocabulary>(
             })?)
         }
         (VariableType::Condition, VarValue::Condition(expr)) => Bound::Condition(expr),
+        (VariableType::Character, VarValue::Str(name)) => Bound::Character(name),
+        (VariableType::Character, VarValue::Condition(expr)) => Bound::Actor(expr),
         (VariableType::Condition, VarValue::Boolean(value)) => Bound::Boolean(*value),
         _ => return Err(mismatch()),
     })
@@ -1410,6 +1414,14 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
                     self.expr(condition, ValueType::Boolean)?,
                     ValueType::Boolean,
                 ),
+                Bound::Character(named) => {
+                    let named = named.to_owned();
+                    (
+                        Box::new(move |world, _| Value::Actor(V::character_named(world, &named))),
+                        ValueType::Actor,
+                    )
+                }
+                Bound::Actor(found) => (self.actor(Some(found))?, ValueType::Actor),
                 Bound::Name(_) | Bound::Place(_) | Bound::Row(_) | Bound::Audio(_) => {
                     return Err(ScriptFault::new(
                         "wrong type",

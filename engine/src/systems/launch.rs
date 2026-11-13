@@ -31,7 +31,7 @@ pub fn fake_token(account: &str) -> String {
     TokenClaims {
         sub: account.to_owned(),
         preferred_username: Some(account.to_owned()),
-        name: None,
+        ..TokenClaims::default()
     }
     .unsigned()
 }

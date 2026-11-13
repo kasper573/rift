@@ -17,6 +17,7 @@ pub struct InputField<'t> {
     width: Option<f32>,
     char_limit: Option<usize>,
     return_key: Option<Option<KeyboardShortcut>>,
+    holds_focus: bool,
 }
 
 impl<'t> InputField<'t> {
@@ -30,6 +31,7 @@ impl<'t> InputField<'t> {
             width: None,
             char_limit: None,
             return_key: None,
+            holds_focus: false,
         }
     }
 
@@ -70,6 +72,13 @@ impl<'t> InputField<'t> {
         self
     }
 
+    /// Keeps the field focused through the key that would move on to the next widget, for
+    /// whoever shows the field to read that key as its own.
+    pub fn holds_focus(mut self) -> Self {
+        self.holds_focus = true;
+        self
+    }
+
     pub fn show(self, ui: &mut Ui) -> Response {
         let Self {
             text,
@@ -80,6 +89,7 @@ impl<'t> InputField<'t> {
             width,
             char_limit,
             return_key,
+            holds_focus,
         } = self;
         within(ui, width, |ui| {
             boxed(ui, unit, |ui| {
@@ -100,10 +110,20 @@ impl<'t> InputField<'t> {
                 if let Some(return_key) = return_key {
                     edit = edit.return_key(return_key);
                 }
-                ui.add(edit)
+                ui.add(edit.lock_focus(holds_focus))
             })
         })
     }
+}
+
+/// Puts the caret of the field `id` after the last character of `text`, the text it holds.
+pub fn caret_to_end(ctx: &egui::Context, id: Id, text: &str) {
+    let mut state = TextEdit::load_state(ctx, id).unwrap_or_default();
+    let end = egui::text::CCursor::new(text.chars().count());
+    state
+        .cursor
+        .set_char_range(Some(egui::text::CCursorRange::one(end)));
+    state.store(ctx, id);
 }
 
 /// A number within `range` on a slider, beside the field it can be typed into exactly.

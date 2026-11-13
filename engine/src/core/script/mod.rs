@@ -139,6 +139,8 @@ pub trait Vocabulary:
     type Reach: Clone + Send + Sync + 'static;
 
     fn row_value(content: &Content, table: &str, key: &str) -> Option<Self::Row>;
+    /// The character called `name` in `world`, when one is there.
+    fn character_named(world: &World, name: &str) -> Option<Entity>;
     fn audio_value(content: &Content, key: &str) -> Option<Self::Audio>;
     fn show_dialogue(
         world: &mut World,
@@ -316,6 +318,8 @@ pub enum VariableType {
     Row,
     Audio,
     Condition,
+    /// A player's character: the one named, or the actor an expression finds.
+    Character,
 }
 
 impl VariableType {

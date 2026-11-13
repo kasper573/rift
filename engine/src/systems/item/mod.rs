@@ -57,6 +57,7 @@ pub fn register(app: &mut App) {
         .add_client_message::<UseItemRequest>()
         .add_client_message::<DropItemRequest>()
         .add_mapped_client_message::<PickupRequest>()
+        .add_server_message::<ItemShown>()
         .add_mapped_server_message::<ItemConsumed>()
         .add_mapped_server_message::<ItemsDropped>();
 }
@@ -301,6 +302,12 @@ pub struct DroppedItem {
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct UseItemRequest {
     pub slot: u32,
+}
+
+/// Tells a client to show its player the card of an item.
+#[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
+pub struct ItemShown {
+    pub item: ItemId,
 }
 
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]

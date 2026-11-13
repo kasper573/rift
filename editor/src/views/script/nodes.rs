@@ -942,9 +942,10 @@ fn effect_pieces(text: &NodeText, effect: &RiftEffect) -> Vec<Vec<SummaryPiece>>
         }
         RiftEffect::Items(items) => {
             let mut lines = Vec::new();
-            for (stacks, word) in [(&items.take, "take "), (&items.give, "give ")] {
+            let named = [(items.named_take(), "take "), (items.named_give(), "give ")];
+            for (stacks, word) in &named {
                 if !stacks.is_empty() {
-                    let mut line = vec![muted(word)];
+                    let mut line = vec![muted(*word)];
                     line.extend(stack_pieces(text, stacks));
                     lines.push(line);
                 }

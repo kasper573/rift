@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "791d72a4",
+  "content_version": "a7ba64c5",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -54,7 +54,11 @@
     "recipes": "Recipes",
     "no_recipe": "No recipe",
     "choose_result": "Choose a result",
-    "craft_failed": "Crafting failed"
+    "craft_failed": "Crafting failed",
+    "unknown_command": "There is no command {command}",
+    "command_needs": "{usage} needs its {input}",
+    "command_refuses": "{value} is no {input}",
+    "command_takes": "{usage} takes no more than that"
   },
   "typing": {
     "pace": 45.0,
@@ -259,5 +263,6 @@
     "friendly": "ally",
     "npcs_apart": "enemy"
   },
-  "history_merges_within": 10.0
+  "history_merges_within": 10.0,
+  "suggestions": 10
 }

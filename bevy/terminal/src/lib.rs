@@ -1,5 +1,8 @@
+mod complete;
 mod terminal;
 
+pub use complete::{TerminalCompletionRequest, TerminalCompletions, TerminalOption, best_matches};
 pub use terminal::{
-    DeliverTerminalLine, TerminalInput, TerminalLine, TerminalSaid, broadcast, hear, register,
+    COMMAND_PREFIX, DeliverTerminalLine, LineTone, TerminalCommanded, TerminalInput, TerminalLine,
+    TerminalSaid, broadcast, command_line, hear, register, reply, reply_failure, route,
 };

@@ -9,6 +9,7 @@ authors = ["kasper573"]
 [dependencies]
 bevy_app = { workspace = true }
 bevy_ecs = { workspace = true }
+nucleo-matcher = { workspace = true }
 serde = { workspace = true }
 
 [lints]

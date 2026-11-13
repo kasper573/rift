@@ -4,7 +4,9 @@ use bevy_app::App;
 use bevy_ecs::message::{MessageCursor, Messages};
 use bevy_ecs::prelude::*;
 use bevy_replication::{AppMessageExt, ClientLink, ToClient};
-use bevy_terminal::{TerminalInput, TerminalLine, TerminalSaid};
+use bevy_terminal::{
+    TerminalCompletionRequest, TerminalCompletions, TerminalInput, TerminalLine, TerminalSaid,
+};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -28,14 +30,23 @@ use crate::systems::text::{self, LineText, Span};
 use crate::systems::visibility;
 
 pub fn register(app: &mut App) {
-    bevy_terminal::register(app, |world, conn, line| {
-        world.write_message(ToClient {
-            client: conn,
-            message: line,
-        });
-    });
+    bevy_terminal::register(app, to_client);
     app.add_client_message::<TerminalInput>()
-        .add_server_message::<TerminalLine>();
+        .add_client_message::<TerminalCompletionRequest>()
+        .add_server_message::<TerminalLine>()
+        .add_server_message::<TerminalCompletions>();
+}
+
+/// Sends the terminal's lines to the clients they are for.
+pub fn route_lines(world: &mut World) {
+    bevy_terminal::route(world, to_client);
+}
+
+fn to_client(world: &mut World, conn: Entity, line: TerminalLine) {
+    world.write_message(ToClient {
+        client: conn,
+        message: line,
+    });
 }
 
 pub fn hear(world: &mut World) {

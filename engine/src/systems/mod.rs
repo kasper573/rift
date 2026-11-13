@@ -6,6 +6,7 @@ pub mod belongings;
 pub mod chat;
 pub mod class;
 pub mod combat;
+pub mod command;
 pub mod crafting;
 pub mod dialogue;
 pub mod emote;
@@ -226,6 +227,8 @@ pub struct GameSettings {
     /// How soon after each other like entries of a player's history count as one, a run of loot
     /// or kills read as a tally.
     pub history_merges_within: Seconds,
+    /// How many ways to go on the terminal offers at the most for a command being typed.
+    pub suggestions: u32,
 }
 
 /// How much a player keeps.
@@ -300,6 +303,16 @@ pub struct GameWords {
     pub choose_result: String,
     /// What bursts out of a crafter as a craft of theirs fails.
     pub craft_failed: String,
+    /// What a player is told sending `{command}`, which is no command of theirs.
+    pub unknown_command: String,
+    /// What a player is told sending a command without its input `{input}`: `{usage}` spells
+    /// the command out.
+    pub command_needs: String,
+    /// What a player is told typing `{value}` for the input `{input}` of a command, which it
+    /// can't be.
+    pub command_refuses: String,
+    /// What a player is told typing more than a command takes: `{usage}` spells it out.
+    pub command_takes: String,
 }
 
 /// How long notices take to read: each stays a glance and a little longer for every word, and
@@ -457,6 +470,7 @@ pub fn server_app(
                     combat::defeats,
                     skill::hotbar::settle_basic_attack,
                     chat::hear,
+                    (command::run, command::retire, command::complete::answer).chain(),
                     chat::overhear,
                     chat::rebroadcast,
                     belongings::notify_changes,
@@ -754,6 +768,9 @@ pub fn tables() -> ContentRegistry {
         .named::<resource::ResourceDef>()
         .modules::<resource::ResourceDef>()
         .file::<script::ScriptDef>()
+        .file::<account::RoleDef>()
+        .named::<account::RoleDef>()
+        .file::<command::TerminalCommandDef>()
         .file::<shop::ShopDef>()
         .named::<shop::ShopDef>()
         .modules::<shop::ShopDef>()
@@ -778,6 +795,7 @@ pub fn tables() -> ContentRegistry {
         .hook(LoadStep::Across, crafting::check_all)
         .hook(LoadStep::Across, quest::check_all)
         .hook(LoadStep::Settings, quest::check_rewards)
+        .hook(LoadStep::Settings, command::check_all)
         .hook(LoadStep::Across, notification::check_all)
         .hook(LoadStep::Across, script::check_all)
         .hook(LoadStep::Across, class::check_all)
@@ -843,6 +861,10 @@ fn check_settings(loading: &mut Loading) {
         ("recipes", &settings.words.recipes),
         ("no_recipe", &settings.words.no_recipe),
         ("choose_result", &settings.words.choose_result),
+        ("unknown_command", &settings.words.unknown_command),
+        ("command_needs", &settings.words.command_needs),
+        ("command_refuses", &settings.words.command_refuses),
+        ("command_takes", &settings.words.command_takes),
     ] {
         check.text(format!("/words/{field}"), said, 1, 80);
     }

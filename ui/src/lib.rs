@@ -26,6 +26,7 @@ pub mod panel;
 pub mod raster;
 pub mod sheet;
 pub mod slip;
+pub mod suggest;
 pub mod theme;
 pub mod tree;
 pub mod wheel;

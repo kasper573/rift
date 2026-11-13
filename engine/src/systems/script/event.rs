@@ -91,6 +91,8 @@ pub enum RiftEvent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         item: Option<ItemId>,
     },
+    /// A player sent the command, its inputs filling the script's variables.
+    Invoked,
 }
 
 pub(crate) const PLACED: &[RunnerKind] = &[
@@ -117,6 +119,7 @@ pub(crate) const QUEST: &[RunnerKind] = &[RunnerKind::Quest];
 pub(crate) const SHOP: &[RunnerKind] = &[RunnerKind::Shop];
 pub(crate) const RESOURCE: &[RunnerKind] = &[RunnerKind::Resource];
 pub(crate) const RECIPE_BOOK: &[RunnerKind] = &[RunnerKind::RecipeBook];
+pub(crate) const COMMAND: &[RunnerKind] = &[RunnerKind::Command];
 pub(crate) const ANY: &[RunnerKind] = &[RunnerKind::Any];
 
 const TRADE_FIELDS: &[(&str, ValueType)] =
@@ -165,6 +168,7 @@ impl EventDef<RiftScripting> for RiftEvent {
             RiftEvent::Bought { .. } | RiftEvent::Sold { .. } => SHOP,
             RiftEvent::Extracted { .. } | RiftEvent::RanOut => RESOURCE,
             RiftEvent::Crafted { .. } => RECIPE_BOOK,
+            RiftEvent::Invoked => COMMAND,
         }
     }
 

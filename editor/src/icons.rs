@@ -7,6 +7,7 @@ use engine::core::content::{AssetKind, ImageRef};
 use engine::core::content::{ContentFile, SETTINGS_FILE, table_of};
 use engine::core::vfx::VfxDef;
 use engine::core::vfx::shader::VfxShaderDef;
+use engine::systems::account::RoleDef;
 use engine::systems::actor::skeleton::SkeletonDef;
 use engine::systems::actor::stance::StanceDef;
 use engine::systems::actor::{MaterialDef, ModelDef, ModelPartDef};
@@ -19,6 +20,7 @@ use engine::systems::area::terrain::{SurfaceDef, TerrainDef};
 use engine::systems::area::world_map::WorldMapDef;
 use engine::systems::attention::AttentionDef;
 use engine::systems::class::ClassDef;
+use engine::systems::command::TerminalCommandDef;
 use engine::systems::crafting::RecipeBookDef;
 use engine::systems::emote::EmoteDef;
 use engine::systems::input::map::InputDef;
@@ -173,7 +175,8 @@ impl KindFamily {
             | ModelPartDef::TABLE
             | MaterialDef::TABLE
             | SkeletonDef::TABLE
-            | EmoteDef::TABLE => KindFamily::Characters,
+            | EmoteDef::TABLE
+            | RoleDef::TABLE => KindFamily::Characters,
             ItemDef::TABLE
             | ShopDef::TABLE
             | RecipeBookDef::TABLE
@@ -186,9 +189,11 @@ impl KindFamily {
                 KindFamily::Story
             }
             SfxDef::TABLE | BabbleDef::TABLE | BabbleBankDef::TABLE => KindFamily::Sound,
-            InputDef::TABLE | CursorDef::TABLE | InterfaceIconDef::TABLE | AttentionDef::TABLE => {
-                KindFamily::Interface
-            }
+            InputDef::TABLE
+            | CursorDef::TABLE
+            | InterfaceIconDef::TABLE
+            | AttentionDef::TABLE
+            | TerminalCommandDef::TABLE => KindFamily::Interface,
             _ => return None,
         })
     }
@@ -242,6 +247,8 @@ pub fn of_table(table: &str) -> KindIcon {
         CursorDef::TABLE => KindIcon::plain(phosphor::CURSOR),
         InterfaceIconDef::TABLE => KindIcon::plain(phosphor::APP_WINDOW),
         AttentionDef::TABLE => KindIcon::plain(phosphor::SEAL_WARNING),
+        TerminalCommandDef::TABLE => KindIcon::plain(phosphor::TERMINAL_WINDOW),
+        RoleDef::TABLE => KindIcon::plain(phosphor::CROWN),
         SfxDef::TABLE => KindIcon::plain(phosphor::SPEAKER_HIGH),
         BabbleDef::TABLE => KindIcon::plain(phosphor::WAVEFORM),
         BabbleBankDef::TABLE => KindIcon::plain(phosphor::CHATS),

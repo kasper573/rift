@@ -690,7 +690,7 @@ fn choice_view(world: &World, player: Entity, choice: &ChoiceOffer<RiftScripting
     });
     if let Some(items) = items {
         if choice.reveal.contains(&ChoiceReveal::Costs) {
-            for stack in &items.take {
+            for stack in items.named_take() {
                 chips.push(ChoiceChip::Pays {
                     item: stack.item,
                     count: stack.count,
@@ -699,7 +699,7 @@ fn choice_view(world: &World, player: Entity, choice: &ChoiceOffer<RiftScripting
             }
         }
         if choice.reveal.contains(&ChoiceReveal::Gains) {
-            for stack in &items.give {
+            for stack in items.named_give() {
                 chips.push(ChoiceChip::Gets {
                     item: stack.item,
                     count: stack.count,
@@ -794,7 +794,7 @@ fn revealed_costs(choice: &ChoiceOffer<RiftScripting>) -> Vec<ItemStack> {
         .leads
         .iter()
         .find_map(|effect| match effect {
-            RiftEffect::Items(items) => Some(items.take.to_vec()),
+            RiftEffect::Items(items) => Some(items.named_take()),
             _ => None,
         })
         .unwrap_or_default()

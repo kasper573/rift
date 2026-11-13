@@ -3,6 +3,9 @@ use bevy_ecs::message::Message;
 use bevy_ecs::prelude::*;
 use serde::{Deserialize, Serialize};
 
+/// What a line starts with to be a command rather than something said.
+pub const COMMAND_PREFIX: char = '/';
+
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct TerminalInput {
     pub text: String,
@@ -11,6 +14,13 @@ pub struct TerminalInput {
 #[derive(Message, Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub struct TerminalLine {
     pub text: String,
+    pub tone: LineTone,
+}
+
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+pub enum LineTone {
+    Said,
+    Failed,
 }
 
 #[derive(Message, Clone, Debug, PartialEq)]
@@ -19,36 +29,76 @@ pub struct TerminalSaid {
     pub text: String,
 }
 
+/// A command the connection `conn` sent: its line without the prefix, for the app to run.
+#[derive(Message, Clone, Debug, PartialEq)]
+pub struct TerminalCommanded {
+    pub conn: Entity,
+    pub line: String,
+}
+
 /// Carries a line to the connection `conn` names: the app's transport, whatever it is.
 pub type DeliverTerminalLine = fn(&mut World, Entity, TerminalLine);
 
 pub fn register(app: &mut App, deliver: DeliverTerminalLine) {
-    app.insert_resource(Outlet(deliver))
-        .add_message::<TerminalSaid>();
+    app.add_message::<TerminalSaid>()
+        .add_message::<TerminalCommanded>();
+    route(app.world_mut(), deliver);
+}
+
+/// Sends the lines of the terminal of `world` out through `deliver`.
+pub fn route(world: &mut World, deliver: DeliverTerminalLine) {
+    world.insert_resource(Outlet(deliver));
 }
 
 pub fn broadcast(world: &mut World, conns: &[Entity], text: impl Into<String>) {
     let text = text.into();
     for &conn in conns {
-        send(world, conn, &text);
+        send(world, conn, &text, LineTone::Said);
     }
 }
 
-/// Takes in what the connection `conn` typed, for the app to pass on as it sees fit.
+pub fn reply(world: &mut World, conn: Entity, text: impl Into<String>) {
+    send(world, conn, &text.into(), LineTone::Said);
+}
+
+pub fn reply_failure(world: &mut World, conn: Entity, text: impl Into<String>) {
+    send(world, conn, &text.into(), LineTone::Failed);
+}
+
+/// Takes in what the connection `conn` typed, for the app to pass on as it sees fit: a command
+/// to run, or anything else as said.
 pub fn hear(world: &mut World, conn: Entity, input: &TerminalInput) {
-    let text: String = input.text.trim().chars().take(MAX_INPUT_LEN).collect();
+    let text = typed(&input.text);
     if text.is_empty() {
         return;
     }
-    world.write_message(TerminalSaid { conn, text });
+    match command_line(&text) {
+        Some(line) => {
+            let line = line.to_owned();
+            world.write_message(TerminalCommanded { conn, line });
+        }
+        None => {
+            world.write_message(TerminalSaid { conn, text });
+        }
+    }
 }
 
-const MAX_INPUT_LEN: usize = 256;
+/// The command `text` holds, if it is one: what follows the prefix.
+pub fn command_line(text: &str) -> Option<&str> {
+    text.strip_prefix(COMMAND_PREFIX)
+}
+
+/// What a terminal takes of `text`: trimmed, and no longer than a line may be.
+fn typed(text: &str) -> String {
+    text.trim().chars().take(MAX_INPUT_LEN).collect()
+}
+
+pub(crate) const MAX_INPUT_LEN: usize = 256;
 
 #[derive(Resource)]
 struct Outlet(DeliverTerminalLine);
 
-fn send(world: &mut World, conn: Entity, text: &str) {
+fn send(world: &mut World, conn: Entity, text: &str, tone: LineTone) {
     let deliver = world.resource::<Outlet>().0;
     for line in text.lines() {
         deliver(
@@ -56,6 +106,7 @@ fn send(world: &mut World, conn: Entity, text: &str) {
             conn,
             TerminalLine {
                 text: line.to_owned(),
+                tone,
             },
         );
     }

@@ -2,18 +2,24 @@ use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::{DroppedItem, Inventory, ItemId, ItemStack};
+use bevy_replication::ToClient;
+
+use super::{DroppedItem, Inventory, ItemId, ItemShown, ItemStack};
 use crate::core::content::Content;
-use crate::core::content::SchemaMark;
+use crate::core::content::{SchemaMark, serial};
 use crate::core::math::Pos;
+use crate::core::script::compile::Bound;
 use crate::core::script::{
-    Arrow, Compiler, EffectDef, EffectStep, Eval, FlowCx, NEXT, REFUSED, ScriptFault, ValueType,
+    Arrow, Compiler, EffectDef, EffectStep, Eval, Fill, FlowCx, NEXT, REFUSED, ScriptFault,
+    ValueType, VariableType,
 };
 use crate::core::units::{MeterPos, Meters, Seconds};
 use crate::systems::area::{AreaId, AreaTag};
+use crate::systems::command;
 use crate::systems::equipment;
 use crate::systems::movement::{Position, position};
 use crate::systems::player::PlayedBy;
+use crate::systems::script::RowRef;
 use crate::systems::script::{
     Condition, EffectCall, EffectReach, Place, RiftScripting, effect as effects,
 };
@@ -27,14 +33,115 @@ pub struct Items {
     #[schemars(extend("default" = {"type": "subject"}))]
     pub who: Option<Condition>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub take: Vec<ItemStack>,
+    pub take: Vec<ItemStackFill>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
-    pub give: Vec<ItemStack>,
+    pub give: Vec<ItemStackFill>,
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub done: Arrow,
     #[schemars(transform = SchemaMark::Fails.with(true))]
     #[serde(default, skip_serializing_if = "Arrow::is_none")]
     pub refused: Arrow,
+}
+
+/// A stack of items a script names outright, or leaves to its variables to name.
+#[derive(JsonSchema, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct ItemStackFill {
+    pub item: Fill<ItemId>,
+    #[schemars(extend("default" = serial::one()))]
+    #[serde(default = "one", skip_serializing_if = "is_one")]
+    pub count: Fill<u32>,
+}
+
+fn one() -> Fill<u32> {
+    Fill::Const(1)
+}
+
+fn is_one(count: &Fill<u32>) -> bool {
+    matches!(count, Fill::Const(1))
+}
+
+impl ItemStackFill {
+    /// The stack, when the script names both its item and its count outright.
+    pub fn named(&self) -> Option<ItemStack> {
+        match (&self.item, &self.count) {
+            (Fill::Const(item), Fill::Const(count)) => Some(ItemStack::new(*item, *count)),
+            _ => None,
+        }
+    }
+
+    fn item(&self, cx: &Compiler<RiftScripting>) -> Option<ItemId> {
+        cx.peek(&self.item, item_bound)
+    }
+
+    fn filled(&self, cx: &mut Compiler<RiftScripting>) -> Result<ItemStack, ScriptFault> {
+        let item = cx.fill(&self.item, VariableType::Row, item_bound)?;
+        let count = cx.fill(&self.count, VariableType::Integer, |bound| match bound {
+            Bound::Integer(count) => u32::try_from(*count).ok(),
+            _ => None,
+        })?;
+        Ok(ItemStack::new(item, count))
+    }
+}
+
+fn item_bound(bound: &Bound<RiftScripting>) -> Option<ItemId> {
+    match bound {
+        Bound::Row(RowRef::Item(item)) => Some(*item),
+        _ => None,
+    }
+}
+
+impl Items {
+    /// The stacks taken that the script names outright.
+    pub fn named_take(&self) -> Vec<ItemStack> {
+        self.take.iter().filter_map(ItemStackFill::named).collect()
+    }
+
+    /// The stacks given that the script names outright.
+    pub fn named_give(&self) -> Vec<ItemStack> {
+        self.give.iter().filter_map(ItemStackFill::named).collect()
+    }
+}
+
+/// Shows an actor the card of an item, as inspecting it would.
+#[derive(JsonSchema, Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+#[schemars(transform = SchemaMark::System.with("item"))]
+pub struct ShowItem {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = {"type": "subject"}))]
+    pub who: Option<Condition>,
+    pub item: Fill<ItemId>,
+    #[serde(default, skip_serializing_if = "Arrow::is_none")]
+    pub next: Arrow,
+}
+
+impl EffectDef<RiftScripting> for ShowItem {
+    fn needs_subject(&self) -> bool {
+        self.who.is_none()
+    }
+    crate::outputs!(NEXT => next);
+    fn compile<'c>(
+        &'c self,
+        cx: &mut Compiler<'c, RiftScripting>,
+    ) -> Result<EffectCall, ScriptFault> {
+        let who = effects::aim(cx, &self.who)?;
+        let item = cx.fill(&self.item, VariableType::Row, item_bound)?;
+        Ok(Box::new(move |world, _, cx| {
+            let conn = effects::aimed_character(world, cx, &who)
+                .and_then(|character| command::connection(world, character));
+            if let Some(client) = conn {
+                world.write_message(ToClient {
+                    client,
+                    message: ItemShown { item },
+                });
+            }
+            EffectStep::Done
+        }))
+    }
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        Vec::new()
+    }
 }
 
 /// Uses an item as the player would.
@@ -171,7 +278,17 @@ impl EffectDef<RiftScripting> for Items {
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
         let who = effects::aim(cx, &self.who)?;
-        let (take, give, refused) = (self.take.clone(), self.give.clone(), self.refused.clone());
+        let take = self
+            .take
+            .iter()
+            .map(|stack| stack.filled(cx))
+            .collect::<Result<Vec<_>, _>>()?;
+        let give = self
+            .give
+            .iter()
+            .map(|stack| stack.filled(cx))
+            .collect::<Result<Vec<_>, _>>()?;
+        let refused = self.refused.clone();
         Ok(Box::new(move |world, _, cx| {
             let Some(actor) = effects::aimed_character(world, cx, &who) else {
                 return effects::refuse(world, cx, &refused, "Nobody to trade with");
@@ -180,11 +297,12 @@ impl EffectDef<RiftScripting> for Items {
             effects::settle(world, cx, &refused, outcome)
         }))
     }
-    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
-        self.take
-            .iter()
-            .map(|stack| EffectReach::Takes(stack.item))
-            .chain(self.give.iter().map(|stack| EffectReach::Gives(stack.item)))
+    fn reach(&self, cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        let takes = self.take.iter().filter_map(|stack| stack.item(cx));
+        let gives = self.give.iter().filter_map(|stack| stack.item(cx));
+        takes
+            .map(EffectReach::Takes)
+            .chain(gives.map(EffectReach::Gives))
             .collect()
     }
 }

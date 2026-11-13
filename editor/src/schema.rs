@@ -945,7 +945,9 @@ pub(crate) fn variable_schema(ty: VariableType, table: Option<&str>) -> Value {
         VariableType::Integer => json!({ "type": "integer" }),
         VariableType::Number => json!({ "type": "number" }),
         VariableType::Boolean => json!({ "type": "boolean" }),
-        VariableType::Text | VariableType::Name => json!({ "type": "string" }),
+        VariableType::Text | VariableType::Name | VariableType::Character => {
+            json!({ "type": "string" })
+        }
         VariableType::Row => marked(
             json!({ "type": "string" }),
             SchemaMark::Table,

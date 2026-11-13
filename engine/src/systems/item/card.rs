@@ -1,3 +1,4 @@
+use bevy::ecs::message::Messages;
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
 use ui::card::{self, Art, Card, CardResponse, Plate};
@@ -15,7 +16,7 @@ use crate::core::gui::{self, Band, ImageSource};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::systems::hud::{self, Carried};
 use crate::systems::input::map::{self, InputAction, input};
-use crate::systems::item::{Inventory, ItemDef, ItemId, ItemKind, ItemModuleKind, Wear};
+use crate::systems::item::{Inventory, ItemDef, ItemId, ItemKind, ItemModuleKind, ItemShown, Wear};
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::script::{Condition, condition};
@@ -32,7 +33,9 @@ impl Plugin for ItemCardPlugin {
         app.init_resource::<hud::Pinned<ItemId>>()
             .add_systems(
                 Update,
-                hud::raise_pinned::<ItemId>(WINDOW_KEY).run_if(in_state(ClientScreen::Area)),
+                (show_told, hud::raise_pinned::<ItemId>(WINDOW_KEY))
+                    .chain()
+                    .run_if(in_state(ClientScreen::Area)),
             )
             .add_systems(
                 EguiPrimaryContextPass,
@@ -41,6 +44,16 @@ impl Plugin for ItemCardPlugin {
                     .run_if(in_state(ClientScreen::Area)),
             )
             .add_systems(OnExit(ClientScreen::Area), hud::forget_pinned::<ItemId>);
+    }
+}
+
+fn show_told(world: &mut World) {
+    let told: Vec<ItemShown> = world
+        .resource_mut::<Messages<ItemShown>>()
+        .drain()
+        .collect();
+    for ItemShown { item } in told {
+        open(world, item, None);
     }
 }
 

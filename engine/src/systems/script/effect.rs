@@ -17,9 +17,11 @@ use crate::systems::area::warp::Warp;
 use crate::systems::chat::Say;
 use crate::systems::class::GrantXp;
 use crate::systems::combat::effects::{Damage, Heal};
+use crate::systems::command::ListCommands;
 use crate::systems::crafting::OpenCrafting;
 use crate::systems::item::effects::{
-    ClearGroundItems, DropItems, Equip, Items, MoveItems, SpawnGroundItems, Unequip, UseItem,
+    ClearGroundItems, DropItems, Equip, Items, MoveItems, ShowItem, SpawnGroundItems, Unequip,
+    UseItem,
 };
 use crate::systems::memory::{Forget, Remember};
 use crate::systems::notification::{self, Notify};
@@ -128,6 +130,8 @@ effects! {
     SpawnObject(SpawnObject),
     Despawn(Despawn),
     PlaySound(PlaySound),
+    ShowItem(ShowItem),
+    ListCommands(ListCommands),
 }
 
 impl RiftEffect {

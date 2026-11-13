@@ -47,6 +47,8 @@ pub enum InputAction {
     ToggleTerminal,
     Dismiss,
     SubmitText,
+    /// Takes the selected way to go on with what is being typed.
+    CompleteText,
     TakeDefault,
     Respawn,
     TurnLeft,
@@ -160,7 +162,9 @@ impl InputAction {
             | InputAction::UseSlot
             | InputAction::SlotOptions => &[ActionReading::Click],
             InputAction::CarryItem => &[ActionReading::Drag],
-            InputAction::SubmitText | InputAction::TakeDefault => &[ActionReading::Shortcut],
+            InputAction::SubmitText | InputAction::CompleteText | InputAction::TakeDefault => {
+                &[ActionReading::Shortcut]
+            }
             _ => &[ActionReading::Press],
         }
     }
