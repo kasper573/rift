@@ -1,4 +1,4 @@
-//! Plays a scenario's script on a desktop client as a player would: every input goes in through
+//! Plays a scenario's script on a game client as a player would: every input goes in through
 //! the X server and is confirmed through the probe's input counters before the next, targets in
 //! the interface come from the probe's `ui` rects, targets in the world are projected through the
 //! view the probe reports, and the camera is steered through the game's own bindings. The frames
@@ -29,7 +29,7 @@ use super::playtest::Playtest;
 use super::scenario::{Button, CameraOp, Cond, Scenario, Step};
 use crate::render::VideoPreset;
 
-/// A desktop client on a server, played through its window.
+/// A game client on a server, played through its window.
 pub struct Driver {
     play: Playtest,
     inputs: InputMap,

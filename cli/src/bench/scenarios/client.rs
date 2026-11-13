@@ -1,4 +1,4 @@
-//! The desktop client's scenarios: the scenes a player meets, each played through the client's
+//! The game client's scenarios: the scenes a player meets, each played through the client's
 //! own bindings at the places and windows the game lends them.
 
 use engine::core::content::Content;

@@ -174,7 +174,7 @@ fn poll(world: &mut World) {
             world.resource_mut::<Shown>().progress = syncing.status.latest();
             world.insert_resource(LoadingFailure {
                 reason: format!(
-                    "The server runs build {server}. Start a desktop client of that build to play."
+                    "The server runs build {server}. Start a game client of that build to play."
                 ),
                 retry: syncing.retry.held(),
             });

@@ -2,7 +2,7 @@ use std::path::PathBuf;
 
 pub const GAME_SERVER: &str = "game-server";
 pub const GAME_SERVER_PROFILING: &str = "game-server-profiling";
-pub const DESKTOP_CLIENT: &str = "desktop-client";
+pub const GAME_CLIENT: &str = "game-client";
 pub const EDITOR: &str = "editor";
 
 /// The binary of `name` in the folder `rift` itself is in, as a release extracts them side by side.

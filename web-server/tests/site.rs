@@ -66,16 +66,16 @@ async fn a_visitor_signs_in_as_their_account_and_signs_out() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
-async fn the_downloads_offer_the_desktop_client_of_the_release_with_a_rift_env_for_the_site() {
+async fn the_downloads_offer_the_game_client_of_the_release_with_a_rift_env_for_the_site() {
     let provider = start_provider().await;
     let site = site(&provider, None).await;
     let mut visitor = Visitor::default();
 
     let downloads = visitor.get(&site, "/downloads").await;
     for archive in [
-        "desktop-client-linux-x86_64.tar.gz",
-        "desktop-client-windows-x86_64.zip",
-        "desktop-client-macos-arm64.tar.gz",
+        "game-client-linux-x86_64.tar.gz",
+        "game-client-windows-x86_64.zip",
+        "game-client-macos-arm64.tar.gz",
     ] {
         let link = format!("https://releases.test/download/{RELEASE}/{archive}");
         assert!(downloads.body.contains(&link), "{link}");

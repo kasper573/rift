@@ -1,5 +1,5 @@
-//! The website, the game server and the desktop client smoke-tested together from a binaries
-//! folder: a player seeded in a stand-in identity provider starts the desktop client from a folder
+//! The website, the game server and the game client smoke-tested together from a binaries
+//! folder: a player seeded in a stand-in identity provider starts the game client from a folder
 //! holding the `rift.env` the site hands out, and the window must come to look like the trusted
 //! snapshot of the game's first view.
 
@@ -87,11 +87,8 @@ async fn main() {
 
     let folder = scratch.path().join("player");
     std::fs::create_dir_all(&folder).expect("the player's folder");
-    std::fs::copy(
-        binaries.join("desktop-client"),
-        folder.join("desktop-client"),
-    )
-    .expect("the desktop client in the player's folder");
+    std::fs::copy(binaries.join("game-client"), folder.join("game-client"))
+        .expect("the game client in the player's folder");
     let rift_env = ureq::get(format!("{site}/rift.env"))
         .call()
         .expect("the site hands out rift.env")
@@ -102,7 +99,7 @@ async fn main() {
 
     let display = Display::start();
     let driver = TcpListener::bind((LOCALHOST, 0)).expect("a port for the probe");
-    let mut client = desktop_client(
+    let mut client = game_client(
         &folder,
         &token,
         &display,
@@ -140,7 +137,7 @@ async fn main() {
         std::process::exit(1);
     }
     println!(
-        "the seeded player joined from the site's rift.env and the desktop client drew the game \
+        "the seeded player joined from the site's rift.env and the game client drew the game \
          (resemblance {resemblance:.2})"
     );
 }
@@ -164,7 +161,7 @@ const SCREEN: (u32, u32) = (1280, 720);
 /// The software rasterizer every machine has, so every machine draws the snapshot alike.
 const RASTERIZER: &str = "llvmpipe";
 
-/// The desktop client's probe, as its driver.
+/// The game client's probe, as its driver.
 struct Probe(ProbeDriver);
 
 impl Probe {
@@ -360,15 +357,15 @@ impl Drop for Running {
     }
 }
 
-/// The desktop client in `folder`, as its player starts it there, but signed in as `token`,
+/// The game client in `folder`, as its player starts it there, but signed in as `token`,
 /// drawing on `display` and answering the probe's driver at `driver`.
-fn desktop_client(
+fn game_client(
     folder: &Path,
     token: &str,
     display: &Display,
     driver: std::net::SocketAddr,
 ) -> Running {
-    let binary = folder.join("desktop-client");
+    let binary = folder.join("game-client");
     let probe = driver.to_string();
     Running(
         Command::new(&binary)

@@ -1,4 +1,4 @@
-//! The catalogues of scenarios the benches play: the desktop client's, and the editor's. What
+//! The catalogues of scenarios the benches play: the game client's, and the editor's. What
 //! each scenario plays with of a game comes from the game's own scenarios file, or from the
 //! content where the file leaves a slot empty.
 

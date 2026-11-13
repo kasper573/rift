@@ -12,14 +12,14 @@ alone.
 
 | Folder | What it is |
 | --- | --- |
-| [`engine/`](engine) | The engine: the simulation the server and client share, the game server, and the desktop client. |
+| [`engine/`](engine) | The engine: the simulation the server and client share, the game server, and the game client. |
 | [`editor/`](editor) | The editor: opens a game folder, edits it through the engine's own loader and writer, and play-tests it on the engine's binaries. New games start from its templates. |
 | [`cli/`](cli) | `rift`, the command line tool: checks, renders, benches, load tests and profiles a game. |
-| [`web-server/`](web-server) | A game's website: its pages, sign-in, and the desktop client's downloads. |
+| [`web-server/`](web-server) | A game's website: its pages, sign-in, and the game client's downloads. |
 | [`oidc/`](oidc), [`service/`](service) | Sign-in through any OpenID Connect provider, and what the HTTP services share: metrics and profiles. |
 | [`ui/`](ui) | The interface the editor and the game share: colors, shapes, text roles, fonts and every general-purpose egui component, so both look and behave alike. |
 | [`bevy/`](bevy) | Bevy plugins that know nothing of rift: entity replication and a server-authoritative terminal. |
-| [`smoke/`](smoke) | The website, the game server and the desktop client, smoke-tested together: a player of a stand-in identity provider starts the client from the `rift.env` the site hands out, and its window must come to look like `smoke/snapshot.png`. |
+| [`smoke/`](smoke) | The website, the game server and the game client, smoke-tested together: a player of a stand-in identity provider starts the client from the `rift.env` the site hands out, and its window must come to look like `smoke/snapshot.png`. |
 | [`testkit/`](testkit) | What the tests and the server bench stand on: small games declared in code, and a bare world of only the systems a test runs. |
 
 ## Releases
@@ -37,14 +37,14 @@ binary and platform, `<binary>-<platform>.tar.gz` (`.zip` on Windows), each hold
 | Binary | Platforms | What it is |
 | --- | --- | --- |
 | `game-server` | Linux, Windows, macOS | Runs a game folder for players to join. |
-| `desktop-client` | Linux, Windows, macOS | The game, for players. |
+| `game-client` | Linux, Windows, macOS | The game, for players. |
 | `editor` | Linux, Windows, macOS | Makes and changes games. |
 | `rift` | Linux, Windows, macOS | The command line tool. |
 | `web-server` | Linux, Windows, macOS | A game's website. |
 | `game-server-profiling` | Linux | `game-server` with the symbols and frame pointers a sampling profiler reads. |
 
 Archives extracted into one folder make a **binaries folder**: `editor` and `rift` find `game-server`,
-`desktop-client` and `game-server-profiling` beside themselves. `just dist` builds this machine's
+`game-client` and `game-server-profiling` beside themselves. `just dist` builds this machine's
 binaries into such a folder, `target/dist/`, so an unreleased build runs exactly as a release would.
 
 ## The rift tool
@@ -96,7 +96,7 @@ rift ask <game>
 ```
 
 Reads the [probe](#protocols)'s questions from stdin, one JSON line each, and answers each on stdout as
-a desktop client playing the game would. It answers the questions about the game itself, such as
+a game client playing the game would. It answers the questions about the game itself, such as
 where its things are and how its ground walks; a snapshot of what a client shows needs a client.
 
 ### Rendering an area
@@ -124,11 +124,11 @@ those `--only` names:
 | Part | What it measures | Needs |
 | --- | --- | --- |
 | `server` | How many copies of the game's spawn area, each full of players, the server ticks within its budget. | |
-| `client` | The desktop client's frame rate through a catalogue of scenarios. | Linux |
+| `client` | The game client's frame rate through a catalogue of scenarios. | Linux |
 | `editor` | The editor's frame rate through scenarios of its own. | Linux |
 | `memory` | Whether the server and the client hold their memory level as a player plays. | Linux |
 
-The server part runs inside `rift` itself. The other three start `game-server`, `desktop-client` and
+The server part runs inside `rift` itself. The other three start `game-server`, `game-client` and
 `editor` from the binaries folder, and play them on a desktop of the bench's own: a headless `weston`
 screen drawn on through `Xwayland`, the window seated there by `xdotool`, and a silent sink on a
 PulseAudio-compatible sound server (`pactl`). The frame rate is then the program's alone, and
@@ -261,7 +261,7 @@ seconds. Linux only. It writes into `<dir>`:
 ### Schemas
 
 ```sh
-rift schema probe    # what a desktop client started with a probe address answers on it
+rift schema probe    # what a game client started with a probe address answers on it
 rift schema server   # what a game server prints once ready, and what its test routes take
 rift schema bench    # the report `rift bench` writes
 ```
@@ -300,12 +300,12 @@ required unless it says otherwise, and a binary refuses to start without one.
   its signature, so an unsigned JWT signs in any account), `TEST_CHARACTERS`, `EXIT_ON_STDIN_EOF`
   and, optionally, `RNG_SEED`. Started on port 0 it picks free ports, and prints them on stdout
   once players can connect.
-- **`desktop-client`** reads `RIFT_CLIENT_*`: the game server (`GAME_SERVER_URL`),
+- **`game-client`** reads `RIFT_CLIENT_*`: the game server (`GAME_SERVER_URL`),
   `AUTH`, `PROFILE_DIR`, `EXIT_ON_STDIN_EOF` and, optionally, `ACCESS_TOKEN` and `PROBE`.
 - **`web-server`** reads `RIFT_WEB_SERVER_*`: `BIND`, `PORT`, `REDIRECT_URI`, the game server as
-  desktop clients reach it (`GAME_SERVER_URL`) and as it reaches it itself
-  (`GAME_SERVER_INTERNAL_URL`), and the release whose desktop client its downloads offer
-  (`DOWNLOADS_URL`, `RELEASE`). The `rift.env` it serves to desktop clients points them at its game
+  game clients reach it (`GAME_SERVER_URL`) and as it reaches it itself
+  (`GAME_SERVER_INTERNAL_URL`), and the release whose game client its downloads offer
+  (`DOWNLOADS_URL`, `RELEASE`). The `rift.env` it serves to game clients points them at its game
   server and at the sign-in pages in `RIFT_WEB_SERVER_DESKTOP_AUTH_*` (`CLIENT_ID`,
   `AUTHORIZATION_URI`, `SIGN_UP_URI`, `TOKEN_URI`). The site is named after the game its game server
   serves.
@@ -329,7 +329,7 @@ The runtimes know no infrastructure, only protocols:
   format at `/debug/pprof/profile?seconds=N` (CPU) and `/debug/pprof/heap`, on Linux and macOS. Both
   servers serve them beside their own routes.
 - **Logs** go to stdout.
-- **The probe.** A desktop client started with `RIFT_CLIENT_PROBE=<host:port>` connects there and
+- **The probe.** A game client started with `RIFT_CLIENT_PROBE=<host:port>` connects there and
   answers questions about what it shows, one JSON line each: a frame's snapshot, a picture of its
   window, or where the game's things are and how its ground walks. `rift ask <game>` answers the questions about the game
   itself the same way, without a client. The editor started with `--probe <host:port>` answers its
@@ -352,14 +352,14 @@ One-time setup:
 Then:
 
 ```sh
-just editor           # build editor, game-server and desktop-client, and open the editor
+just editor           # build editor, game-server and game-client, and open the editor
 just editor ~/my-game # …on a game folder
 just dist             # this machine's binaries, as a release lays them out, in target/dist
 just dist target/dist profiling # …and game-server-profiling, on Linux
 just bench            # the server bench on the generated game
 just lint             # rustfmt, clippy, the repo's own lints, and `rift check` on the editor's templates
 just test             # every crate's tests
-just smoke            # start the desktop client from the website's rift.env and see it draw the game
+just smoke            # start the game client from the website's rift.env and see it draw the game
 ```
 
 ## Tests

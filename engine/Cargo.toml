@@ -2,10 +2,10 @@
 name = "engine"
 version.workspace = true
 edition.workspace = true
-description = "The engine: the simulation library and its desktop client"
+description = "The engine: the simulation library and its game client"
 
 [[bin]]
-name = "desktop-client"
+name = "game-client"
 path = "src/main.rs"
 
 [dependencies]

@@ -42,7 +42,7 @@ use crate::widgets;
 use ui::input;
 
 const SERVER: &str = "game-server";
-const CLIENT: &str = "desktop-client";
+const CLIENT: &str = "game-client";
 const READY_WITHIN: Duration = Duration::from_secs(30);
 const LOCALHOST: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
 
@@ -898,7 +898,7 @@ pub(crate) fn binaries_body(editor: &mut Editor, ui: &mut Ui) -> bool {
     });
     if pick
         && let Some(folder) = rfd::FileDialog::new()
-            .set_title("The folder holding game-server and desktop-client")
+            .set_title("The folder holding game-server and game-client")
             .set_directory(&folder)
             .pick_folder()
     {

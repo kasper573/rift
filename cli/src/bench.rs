@@ -47,7 +47,7 @@ const MEASURE: usize = 200;
 pub enum BenchPart {
     /// The server's capacity.
     Server,
-    /// The desktop client's frame rate through its scenarios.
+    /// The game client's frame rate through its scenarios.
     Client,
     /// The editor's frame rate through its scenarios.
     Editor,

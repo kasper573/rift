@@ -21,7 +21,7 @@ use serde::de::DeserializeOwned;
 use tempfile::TempDir;
 
 use super::desktop::BenchDesktop;
-use crate::binaries::{self, DESKTOP_CLIENT, GAME_SERVER};
+use crate::binaries::{self, GAME_CLIENT, GAME_SERVER};
 use crate::server::{GameServer, LOCALHOST, bench_config, resident};
 
 const ACCOUNT: &str = "bench";
@@ -73,14 +73,14 @@ impl Playtest {
         };
         let desktop = BenchDesktop::open(folder.path());
         let log = File::create(folder.path().join(CLIENT_LOG)).expect("a client log");
-        let mut client = Command::new(binaries::beside(DESKTOP_CLIENT))
+        let mut client = Command::new(binaries::beside(GAME_CLIENT))
             .envs(launch::env_of(CLIENT_ENV_PREFIX, &config))
             .envs(desktop.env())
             .stdin(Stdio::piped())
             .stdout(log.try_clone().expect("a second handle on the client log"))
             .stderr(log)
             .spawn()
-            .map_err(|error| format!("the desktop client doesn't run: {error}"))?;
+            .map_err(|error| format!("the game client doesn't run: {error}"))?;
         let probe = match ProbeDriver::accept(&listener, &mut client, WAIT) {
             Ok(probe) => probe,
             Err(problem) => {

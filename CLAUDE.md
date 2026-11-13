@@ -10,10 +10,10 @@
 - Build once, run everywhere. The same binary (applies to all binaries in the repo) should be able to run in any environment. If assets or environment variables are changed the runtime should work anyway. (Note that runtimes may still panic or have degraded behavior if essential assets are missing)
 - No hardcoded environment defaults: Panic if an env var is missing or invalid. Makes mistakes loud and obvious and forces environments to be well and explicitly configured. Also aids with the "build once, run everywhere" principle.
 - The only constants embedded in the engine are truly generic ones. A constant that could ever conflict with a game designer's vision (how far an npc wanders, how long a fight lasts, how much something costs) is not an engine constant: it is game content, a field of a content type or a game setting, and the engine reads it from there. When a value can be derived from content, derive it rather than invent it.
-- The engine ships as binaries, and a game uses it through them alone: their settings, the desktop client's probe, and `rift`. A game needs no other interface, so anything a game must do with the engine goes through one of these.
+- The engine ships as binaries, and a game uses it through them alone: their settings, the game client's probe, and `rift`. A game needs no other interface, so anything a game must do with the engine goes through one of these.
 - Runtimes speak only protocols and know no infrastructure: sign-in is OpenID Connect with every endpoint configured, metrics are Prometheus exposition, profiles are pprof over HTTP, logs go to stdout. Nothing in the code, docs or configuration names an identity provider, a proxy, an observability product or a host.
-- The desktop client's probe is a public protocol, and `rift schema probe` its schema. When a consumer needs to see something the probe doesn't report, extend the probe (`engine/src/systems/probe/`), never another channel.
-- The engine targets native desktop: the server and the desktop client. There is no browser client and no platform adapter; code uses the operating system's facilities (threads, files, sockets) directly. What differs between desktop operating systems stays inside well established crates and bevy.
+- The game client's probe is a public protocol, and `rift schema probe` its schema. When a consumer needs to see something the probe doesn't report, extend the probe (`engine/src/systems/probe/`), never another channel.
+- The engine targets native desktop: the server and the game client. There is no browser client and no platform adapter; code uses the operating system's facilities (threads, files, sockets) directly. What differs between desktop operating systems stays inside well established crates and bevy.
 - Avoid layout shifts, and keep the ones that remain small. A layout shifts only when its user finds the shift intuitive and justified, as when they add content that overflows. It never shifts in a way that annoys: hovering something must not make the list around it jump.
 
 ## Code style
@@ -85,5 +85,5 @@ Before you start work on a task run benchmarks via `just bench` and save the res
 
 After you finish the task:
 
-- `cargo fmt` · `just lint` (clippy among it, no warnings) · `just test` · `just dist`, and `just smoke target/dist` when the change reaches the website or the desktop client.
+- `cargo fmt` · `just lint` (clippy among it, no warnings) · `just test` · `just dist`, and `just smoke target/dist` when the change reaches the website or the game client.
 - Run benchmarks again and compare the results to the previous run. If there is a significant regression, investigate and fix it.

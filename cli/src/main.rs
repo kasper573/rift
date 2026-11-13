@@ -45,13 +45,13 @@ enum Command {
         tall: Option<f32>,
     },
     /// Answers the probe's questions about GAME itself, one JSON line each from stdin to stdout, as
-    /// a desktop client playing it would; a snapshot only a client answers.
+    /// a game client playing it would; a snapshot only a client answers.
     Ask { game: PathBuf },
     /// Draws a piece of a game off screen.
     #[command(subcommand)]
     Render(Render),
     /// The game server's capacity, on a generated game, the crowd, or on GAME; with GAME, then the
-    /// desktop client's and the editor's frame rates, and whether the server and the client hold
+    /// game client's and the editor's frame rates, and whether the server and the client hold
     /// their memory level as a player plays it.
     Bench {
         game: Option<PathBuf>,
@@ -129,7 +129,7 @@ enum Render {
 
 #[derive(Subcommand)]
 enum Schema {
-    /// What a desktop client started with a probe address answers on it.
+    /// What a game client started with a probe address answers on it.
     Probe,
     /// What a game server prints once ready, and what its test routes take.
     Server,

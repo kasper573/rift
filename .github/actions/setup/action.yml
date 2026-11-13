@@ -27,7 +27,7 @@ runs:
       # The one system C library a `-sys` crate links that cargo can't supply: alsa, for kira's cpal
       # backend, found through pkg-config; the windowing and graphics libraries load at runtime. The
       # tests run the GPU's kernels on the software Vulkan rasterizer. A dist job also smoke-tests the
-      # desktop client, which draws with it on a virtual display and reads its keyboard through
+      # game client, which draws with it on a virtual display and reads its keyboard through
       # xkbcommon's X11 library, which the runner image doesn't promise. Drop the runner's
       # microsoft/azure apt sources first — unused, and they 403 intermittently.
       run: |

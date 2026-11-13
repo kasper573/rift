@@ -15,7 +15,7 @@ use service::GameInfo;
 
 pub const ENV_PREFIX: &str = "RIFT_WEB_SERVER_";
 
-/// The prefix of the sign-in settings the site hands desktop clients in their `rift.env`.
+/// The prefix of the sign-in settings the site hands game clients in their `rift.env`.
 pub const DESKTOP_SIGN_IN_ENV_PREFIX: &str = "RIFT_WEB_SERVER_DESKTOP_AUTH_";
 
 #[derive(Serialize, Deserialize)]
@@ -23,13 +23,13 @@ pub struct WebServerConfig {
     pub bind: IpAddr,
     pub port: u16,
     pub redirect_uri: RedirectUrl,
-    /// The game server as desktop clients reach it.
+    /// The game server as game clients reach it.
     pub game_server_url: String,
     /// The same game server as the web-server itself reaches it.
     pub game_server_internal_url: String,
     /// Where releases are downloaded from: a release's archives are at `<downloads_url>/<release>/`.
     pub downloads_url: String,
-    /// The engine release the site serves, whose desktop client it offers.
+    /// The engine release the site serves, whose game client it offers.
     pub release: String,
 }
 

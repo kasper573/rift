@@ -315,7 +315,7 @@ pub fn start_game_server(
     }
 }
 
-/// The driver of a desktop client's probe: asks it its frame questions and reads its answers.
+/// The driver of a game client's probe: asks it its frame questions and reads its answers.
 /// How often a driver looks again for a client's probe to connect.
 const PROBE_POLL: Duration = Duration::from_millis(100);
 /// How long an app may take to answer its probe before it counts as hung: far longer than any
@@ -328,7 +328,7 @@ pub struct ProbeDriver {
 }
 
 impl ProbeDriver {
-    /// Waits for the probe of the app running as `app`, a desktop client or an editor, to connect
+    /// Waits for the probe of the app running as `app`, a game client or an editor, to connect
     /// to `listener`: refused once the app exits before it does, or `within` passes.
     pub fn accept(
         listener: &TcpListener,

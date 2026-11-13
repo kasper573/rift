@@ -135,7 +135,7 @@ impl Platform {
     }
 }
 
-const CLIENT: &str = "desktop-client";
+const CLIENT: &str = "game-client";
 
 const PLATFORMS: [Platform; 3] = [
     Platform {
