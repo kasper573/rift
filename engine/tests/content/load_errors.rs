@@ -547,6 +547,32 @@ fn a_game_file_that_does_not_parse_is_refused_at_its_field() {
 }
 
 #[test]
+fn a_games_map_reaches_rise_from_the_closest() {
+    for (reaches, refused) in [
+        (json!([]), Some("no reach")),
+        (json!([16.0, 0.0]), Some("out of range")),
+        (json!([32.0, 16.0]), Some("out of order")),
+        (json!([16.0, 32.0, 64.0]), None),
+    ] {
+        let loaded = game()
+            .edit_settings(|settings| settings["minimap_reaches"] = reaches.clone())
+            .try_load();
+        let rules: Vec<&str> = loaded
+            .as_ref()
+            .err()
+            .map(|report| {
+                report
+                    .errors
+                    .iter()
+                    .map(|error| error.problem.rule)
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(rules, Vec::from_iter(refused), "reaches of {reaches}");
+    }
+}
+
+#[test]
 fn a_folder_without_a_game_file_is_refused() {
     let report = Game::new()
         .remove(SETTINGS_FILE)

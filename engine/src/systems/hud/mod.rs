@@ -1,5 +1,4 @@
 mod card;
-mod compass;
 pub mod menu;
 mod panel;
 
@@ -28,7 +27,7 @@ use crate::systems::item::Inventory;
 use crate::systems::player::{self, session};
 use crate::systems::screen::ClientScreen;
 use crate::systems::skill::{HotbarEntry, HotbarSlot, SkillId};
-use crate::systems::{equipment, quest};
+use crate::systems::{equipment, minimap, quest};
 use ui::dialog;
 
 pub(crate) const TOOLTIP_WIDTH: f32 = 260.0;
@@ -173,7 +172,7 @@ pub(crate) fn file_icon(ui: &mut Ui, world: &mut World, file: &str, size: f32) -
 }
 
 static WIDGETS: &[(&str, &dyn HudWidget)] = &[
-    ("compass", &compass::CompassWidget),
+    (minimap::MINIMAP, &minimap::MinimapWidget),
     ("quests", &quest::tracker::QuestTrackerWidget),
     (player::bar::PLAYER_BAR, &player::bar::PlayerBarWidget),
 ];

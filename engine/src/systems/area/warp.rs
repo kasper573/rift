@@ -2,18 +2,45 @@ use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use super::AreaTag;
 use super::transition::Crossing;
-use crate::core::content::SchemaMark;
+use super::{AreaId, AreaTag, ObjectShape};
+use crate::core::content::{Content, SchemaMark};
 use crate::core::math::Pos;
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
 use crate::core::units::Meters;
 use crate::systems::npc::Npc;
 use crate::systems::player::{self, SpawnPoint};
 use crate::systems::script::{
-    Condition, EffectCall, EffectReach, Fill, Place, RiftScripting, effect as effects,
+    Condition, EffectCall, EffectReach, Fill, OwnerRow, Place, RiftScripting, RiftScripts,
+    effect as effects,
 };
 use crate::systems::{dialogue, movement, reach, region};
+
+pub struct WarpObject {
+    pub name: String,
+    pub shape: ObjectShape,
+    pub to: Place,
+}
+
+pub fn warp_objects(content: &Content, scripts: &RiftScripts, area: AreaId) -> Vec<WarpObject> {
+    super::objects(super::placed(content, area))
+        .filter_map(|(index, object)| {
+            let to = scripts
+                .may_do(OwnerRow::of_object(area, index))
+                .reaches
+                .iter()
+                .find_map(|reach| match reach {
+                    EffectReach::Warp(place) => Some(*place),
+                    _ => None,
+                })?;
+            Some(WarpObject {
+                name: object.name.clone().unwrap_or_default(),
+                shape: object.shape,
+                to,
+            })
+        })
+        .collect()
+}
 
 /// Moves an actor to a place, setting its spawn point.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]

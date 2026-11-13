@@ -946,6 +946,13 @@ impl Area {
         Survey::of(self)
     }
 
+    /// Some may lie a little outside `rect`.
+    pub fn footprints_within(&self, rect: Rect<Meters>) -> impl Iterator<Item = &[Pos<Meters>]> {
+        self.footprint_index
+            .within(rect)
+            .map(|footprint| self.footprints[footprint].as_slice())
+    }
+
     /// The tiles holding any ground within `reach` of `at`.
     pub fn tiles_around(&self, at: Pos<Meters>, reach: Meters) -> impl Iterator<Item = TileAt> {
         let around = Rect::new(

@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "a87464e0",
+  "content_version": "557e8cc6",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -12,6 +12,11 @@
     "start": 10.0
   },
   "sight": 24.0,
+  "minimap_reaches": [
+    16.0,
+    32.0,
+    64.0
+  ],
   "chase_pace": 2.0,
   "corpses_linger": 5.0,
   "claims_last": 60.0,

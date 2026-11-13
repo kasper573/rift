@@ -20,6 +20,7 @@ use crate::core::units::{Percent, Seconds, WindowPx};
 use crate::systems::hud::menu::{MenuTab, MenuTabName};
 use crate::systems::input::map::{InputAction, KeyGesture};
 use crate::systems::interface::InterfaceIcon;
+use crate::systems::minimap::MinimapReachStep;
 use crate::systems::skill::HotbarSlot;
 
 const SLIDER_WIDTH: f32 = 150.0;
@@ -149,6 +150,14 @@ fn show_settings(
     let mut snapping = settings.snapping_enabled();
     if ui.checkbox(&mut snapping, "UI snapping").changed() {
         settings.toggle_snapping();
+    }
+    let mut turns = settings.minimap_turns();
+    if ui
+        .checkbox(&mut turns, "Minimap turns with the camera")
+        .on_hover_text("Up on the map is where the camera looks, and north rides its rim")
+        .changed()
+    {
+        settings.toggle_minimap_turning();
     }
     let mut frame_rate = settings.frame_rate_shown();
     if ui.checkbox(&mut frame_rate, "Show FPS").changed() {
@@ -428,6 +437,22 @@ impl UserSettings {
         self.ui.menu.opens_on
     }
 
+    pub(crate) fn minimap_turns(&self) -> bool {
+        self.ui.minimap.turns_with_camera
+    }
+
+    pub(crate) fn toggle_minimap_turning(&mut self) {
+        self.ui.minimap.turns_with_camera = !self.ui.minimap.turns_with_camera;
+    }
+
+    pub(crate) fn minimap_reach(&self) -> Option<MinimapReachStep> {
+        self.ui.minimap.reach
+    }
+
+    pub(crate) fn set_minimap_reach(&mut self, step: MinimapReachStep) {
+        self.ui.minimap.reach = Some(step);
+    }
+
     pub(crate) fn chat_shown(&self) -> bool {
         !self.ui.chat.hidden
     }
@@ -499,6 +524,8 @@ struct UiSettings {
     player_bar: PlayerBarSettings,
     #[serde(default)]
     chat: ChatSettings,
+    #[serde(default)]
+    minimap: MinimapSettings,
 }
 
 impl Default for UiSettings {
@@ -509,6 +536,7 @@ impl Default for UiSettings {
             menu: MenuSettings::default(),
             player_bar: PlayerBarSettings::default(),
             chat: ChatSettings::default(),
+            minimap: MinimapSettings::default(),
         }
     }
 }
@@ -520,6 +548,15 @@ struct MenuSettings {
     /// None opens on the tab last used this session.
     #[serde(default)]
     opens_on: Option<MenuTabName>,
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct MinimapSettings {
+    #[serde(default)]
+    turns_with_camera: bool,
+    /// None keeps the reach the game's sight gives.
+    #[serde(default)]
+    reach: Option<MinimapReachStep>,
 }
 
 #[derive(Serialize, Deserialize, Default)]

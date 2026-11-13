@@ -6,6 +6,8 @@
 //! pass over it. It can be put on a shot, a fixed place of its own, which it glides onto and back
 //! from while where the player keeps it stays as it was.
 
+use std::f32::consts::{PI, TAU};
+
 use bevy::anti_alias::smaa::Smaa;
 use bevy::anti_alias::taa::TemporalAntiAliasing;
 use bevy::camera::Hdr;
@@ -583,6 +585,11 @@ impl CameraRig {
 
     pub fn turn(&mut self, by: Degrees) {
         self.wanted_yaw = Radians(self.wanted_yaw.0 + by.radians().0);
+    }
+
+    pub fn face(&mut self, bearing: Radians) {
+        let turn = (bearing.0 - self.wanted_yaw.0 + PI).rem_euclid(TAU) - PI;
+        self.wanted_yaw = Radians(self.wanted_yaw.0 + turn);
     }
 
     /// Tilts the camera `by` degrees further down, or up toward the horizon when negative, within

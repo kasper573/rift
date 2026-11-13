@@ -10,9 +10,11 @@ use crate::core::content::ImageRef;
 use crate::core::content::{Content, Fixture};
 use crate::systems::hud::{self, HudWidget};
 use crate::systems::item::Inventory;
+use crate::systems::minimap;
 use crate::systems::player::session;
 
 const WIDTH: f32 = 244.0;
+const UNDER_THE_MAP: f32 = 6.0;
 const MARK: f32 = 16.0;
 const FLAG: f32 = 12.0;
 const FOLD: f32 = 16.0;
@@ -32,7 +34,7 @@ impl HudWidget for QuestTrackerWidget {
     fn fallback(&self, screen: Rect) -> Pos2 {
         Pos2::new(
             screen.right() - WIDTH - hud::MARGIN,
-            screen.top() + hud::MARGIN,
+            screen.top() + hud::MARGIN + minimap::RESTING_SIZE.y + UNDER_THE_MAP,
         )
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {

@@ -99,7 +99,7 @@ use crate::systems::prompt;
 use crate::systems::quest::{Parties, QuestId, QuestLog, QuestResult};
 use crate::systems::reach::Engaged;
 use crate::systems::resource::{self, Left, Resource, ResourceId, Working};
-use crate::systems::script::{EffectReach, OwnerRow, RiftScripts};
+use crate::systems::script::RiftScripts;
 use crate::systems::shop::{self, ShopId};
 use crate::systems::skill::{self, Rank, SkillId, bar::SlotReport};
 use crate::systems::stat::{StatKind, Stats};
@@ -1879,23 +1879,13 @@ fn warps(world: &World, area: Option<AreaId>) -> Vec<ProbeWarp> {
     };
     let content = world.resource::<Content>();
     let scripts = world.resource::<RiftScripts>();
-    let mut warps: Vec<ProbeWarp> = area::objects(area::placed(content, area))
-        .filter_map(|(index, object)| {
-            let owner = OwnerRow::of_object(area, index);
-            let warp = scripts
-                .may_do(owner)
-                .reaches
-                .iter()
-                .find_map(|reach| match reach {
-                    EffectReach::Warp(place) => Some(*place),
-                    _ => None,
-                })?;
-            Some(ProbeWarp {
-                name: object.name.clone().unwrap_or_default(),
-                to: warp.area,
-                at: object.shape.center(),
-                rect: object.shape.bounds(),
-            })
+    let mut warps: Vec<ProbeWarp> = area::warp::warp_objects(content, scripts, area)
+        .into_iter()
+        .map(|object| ProbeWarp {
+            name: object.name,
+            to: object.to.area,
+            at: object.shape.center(),
+            rect: object.shape.bounds(),
         })
         .collect();
     warps.sort_by(|a, b| a.name.cmp(&b.name));

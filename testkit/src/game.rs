@@ -228,6 +228,7 @@ impl Game {
                 "initial_spawn": { "area": path("area", area), "x": x, "y": y },
                 "player": path("player", "hero"),
                 "sight": 24.0,
+                "minimap_reaches": [16.0, 32.0, 64.0],
                 "chase_pace": 2.0,
                 "corpses_linger": 5.0,
                 "claims_last": 60.0,
