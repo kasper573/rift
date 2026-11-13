@@ -116,7 +116,13 @@ pub fn reshape_grip(ui: &mut Ui, world: &mut World, paper: Rect) {
     } else {
         GripCorner::BottomRight
     };
-    let grip = panel::grip(ui, ui.id().with("bar grip"), paper, corner);
+    let grip = panel::grip(
+        ui,
+        ui.id().with("bar grip"),
+        "Reshape the bar",
+        paper,
+        corner,
+    );
     resize(world, ui, &grip, paper, corner);
 }
 
@@ -268,7 +274,9 @@ pub fn drop_off_bar(world: &mut World) {
         world,
         Confirm {
             title: format!("Take {name} off the bar?"),
-            body: vec!["It stays in your tree or your bag; only the slot empties.".to_owned()],
+            body: vec![
+                "It stays in your tree or your inventory; only the slot empties.".to_owned(),
+            ],
             confirm: "Take off".to_owned(),
             cancel: "Keep".to_owned(),
             answer: Box::new(move |world, taken| {

@@ -24,7 +24,7 @@ use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 use crate::systems::text::duration;
 
-const COUNTER_WIDTH: f32 = 760.0;
+const COUNTER_WIDTH: f32 = 784.0;
 const COUNTER_HEIGHT: f32 = 440.0;
 const PANE_WIDTH: f32 = 326.0;
 const PAGE_GAP: f32 = 10.0;
@@ -156,7 +156,10 @@ fn show_counter(ui: &mut Ui, world: &mut World, _width: f32, _most: f32) {
     let Some(shelf) = shelf(world) else {
         return;
     };
-    let shown = ui.scope(|ui| counter(ui, world, &shelf)).response;
+    let page = UiBuilder::new().max_rect(sheet::page(ui.max_rect()));
+    let shown = ui
+        .scope_builder(page, |ui| counter(ui, world, &shelf))
+        .response;
     if let Some(Carried::BagSlot(slot)) = drag::dropped::<Carried>(&shown) {
         sell_stack(world, slot);
     }
@@ -198,7 +201,7 @@ fn counter(ui: &mut Ui, world: &mut World, shelf: &Shelf) {
             ),
         ];
         let mut tab = shelf.tab;
-        sheet::tabs(ui, TabSize::Sub, &tabs, &mut tab);
+        sheet::tabs(ui, TabSize::Sub, &tabs, &mut tab, ui.available_width());
         if tab != shelf.tab {
             let mut browse = world.resource_mut::<Browse>();
             browse.tab = tab;
@@ -212,15 +215,12 @@ fn counter(ui: &mut Ui, world: &mut World, shelf: &Shelf) {
     let room = ui.available_rect_before_wrap();
     let purse = Rect::from_min_max(Pos2::new(room.min.x, room.max.y - PURSE), room.max);
     let pages = Rect::from_min_max(room.min, Pos2::new(room.max.x, purse.min.y - PAGE_GAP));
-    let left = Rect::from_min_max(
-        pages.min,
-        Pos2::new(pages.max.x - PANE_WIDTH - PAGE_GAP, pages.max.y),
-    );
+    let beside = pages.width() - sheet::GUTTER - PANE_WIDTH;
+    let ([left], right) = sheet::columns(pages, [beside]);
     let pane = CardPane {
         size: Vec2::new(PANE_WIDTH, pages.height()),
         foot: controls::CONTROL_HEIGHT,
     };
-    let right = Rect::from_min_max(Pos2::new(pages.max.x - PANE_WIDTH, pages.min.y), pages.max);
     let wares = shelf.wares(&content);
     let ware = shelf.ware.min(wares.len().saturating_sub(1));
     let column = |rect| {
@@ -248,13 +248,13 @@ fn counter(ui: &mut Ui, world: &mut World, shelf: &Shelf) {
 fn wares_column(ui: &mut Ui, world: &mut World, shelf: &Shelf, wares: &[Ware], selected: usize) {
     let kept = shelf.tab == ShopTab::Buyback;
     let rows = ui.available_height() - if kept { NOTE_ROOM } else { 0.0 };
-    sheet::scroll(
-        ui,
-        egui::ScrollArea::vertical()
-            .max_height(rows.max(0.0))
-            .auto_shrink([false, false]),
-        |ui| wares_list(ui, world, shelf, wares, selected),
+    let pane = Rect::from_min_size(
+        ui.cursor().min,
+        Vec2::new(ui.available_width(), rows.max(0.0)),
     );
+    sheet::scroll_pane(ui, pane, egui::ScrollArea::vertical(), |ui| {
+        wares_list(ui, world, shelf, wares, selected)
+    });
     if kept {
         ui.add_space(4.0);
         sheet::label(
@@ -397,20 +397,17 @@ fn trade_button(ui: &mut Ui, content: &Content, ware: &Ware, waiting: bool) -> e
 fn inventory_column(ui: &mut Ui, world: &mut World, shelf: &Shelf) {
     let before = shelf.offered.map(|(offered, _)| offered.slot);
     let mut slot = before;
+    let room = ui.available_rect_before_wrap();
     let inventory = ui
         .scope(|ui| {
-            sheet::scroll(
-                ui,
-                egui::ScrollArea::vertical().auto_shrink([false, false]),
-                |ui| {
-                    let pane = InventoryPane {
-                        width: ui.available_width(),
-                        heading: None,
-                        selected: &mut slot,
-                    };
-                    inventory_pane(ui, world, pane);
-                },
-            );
+            sheet::scroll_pane(ui, room, egui::ScrollArea::vertical(), |ui| {
+                let pane = InventoryPane {
+                    width: ui.available_width(),
+                    heading: None,
+                    selected: &mut slot,
+                };
+                inventory_pane(ui, world, pane);
+            });
         })
         .response;
     // A slot let go of over the inventory it was taken from was put back, not handed to the shop:

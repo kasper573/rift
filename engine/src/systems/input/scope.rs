@@ -58,6 +58,7 @@ impl InputAction {
             InputAction::OpenCharacter
             | InputAction::OpenSkills
             | InputAction::OpenQuests
+            | InputAction::OpenMap
             | InputAction::OpenHistory
             | InputAction::OpenSettings
             | InputAction::BarSlot1

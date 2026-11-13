@@ -1,4 +1,6 @@
 mod ground;
+pub mod minimap;
+pub mod tab;
 
 use std::f32::consts::TAU;
 
@@ -7,9 +9,9 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use ui::egui::emath::TSTransform;
 use ui::egui::epaint::{Mesh, Vertex};
-use ui::egui::{self, Align2, Color32, CornerRadius, Pos2, Sense, Shape, Stroke, Ui, Vec2};
+use ui::egui::{self, Align2, Color32, Pos2, Sense, Shape, Stroke, Ui, Vec2};
 use ui::face::{Face, TextRole};
-use ui::{dusk, float, ink, slip};
+use ui::{dusk, float, ink};
 
 use crate::core::content::{Content, RowCheck};
 use crate::core::gui::{self, GuiImage};
@@ -21,32 +23,34 @@ use crate::systems::actor::{Action, Actor, Name};
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::attention::{self, AttentionId};
 use crate::systems::combat::Attitude;
-use crate::systems::hud::{self, HudWidget};
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::npc::Npc;
 use crate::systems::player::{PlayedBy, session};
 use crate::systems::screen::ClientScreen;
 use crate::systems::script::RiftScripts;
-use crate::systems::settings::UserSettings;
 use crate::systems::{GameSettings, visibility};
 
-pub struct MinimapPlugin;
+pub struct AreaMapPlugin;
 
-impl Plugin for MinimapPlugin {
+impl Plugin for AreaMapPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<ground::MinimapGround>().add_systems(
-            Update,
-            picture_the_ground.run_if(in_state(ClientScreen::Area)),
-        );
+        app.init_resource::<ground::MapGround>()
+            .init_resource::<tab::MapTabLook>()
+            .add_systems(
+                Update,
+                (tab::rest, picture_the_ground)
+                    .chain()
+                    .run_if(in_state(ClientScreen::Area)),
+            );
     }
 }
 
 /// How far a map reaches at each step, closest first.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(transparent)]
-pub struct MinimapReaches(pub Vec<Meters>);
+pub struct MapReaches(pub Vec<Meters>);
 
-impl MinimapReaches {
+impl MapReaches {
     pub fn check(&self, pointer: &str, check: &mut RowCheck) {
         if self.0.is_empty() {
             check.error(pointer, "no reach", "an empty list", "at least one reach");
@@ -64,20 +68,20 @@ impl MinimapReaches {
         }
     }
 
-    pub fn step_reaching(&self, sight: Meters) -> MinimapReachStep {
+    pub fn step_reaching(&self, sight: Meters) -> MapReachStep {
         let step = self
             .0
             .iter()
             .position(|reach| reach.0 >= sight.0)
             .unwrap_or(self.0.len().saturating_sub(1));
-        MinimapReachStep(step as u32)
+        MapReachStep(step as u32)
     }
 
-    fn last_step(&self) -> MinimapReachStep {
-        MinimapReachStep(self.0.len().saturating_sub(1) as u32)
+    fn last_step(&self) -> MapReachStep {
+        MapReachStep(self.0.len().saturating_sub(1) as u32)
     }
 
-    fn at(&self, step: MinimapReachStep) -> Meters {
+    fn at(&self, step: MapReachStep) -> Meters {
         let step = step.min(self.last_step());
         self.0.get(step.0 as usize).copied().unwrap_or(Meters(1.0))
     }
@@ -89,26 +93,26 @@ impl MinimapReaches {
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 #[serde(transparent)]
-pub struct MinimapReachStep(pub u32);
+pub struct MapReachStep(pub u32);
 
 /// Each kind is drawn as a shape of its own, so none is told from another by colour alone.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum MinimapMarkKind {
+pub enum MapMarkKind {
     Townsperson,
     Player,
     WayOut,
 }
 
 #[derive(Clone, Debug)]
-pub struct MinimapMark {
-    pub kind: MinimapMarkKind,
+pub struct MapMark {
+    pub kind: MapMarkKind,
     pub name: String,
     pub at: Pos<Meters>,
     pub attention: Vec<AttentionId>,
     pub opacity: f32,
 }
 
-pub fn marks(world: &mut World, viewer: Entity) -> Vec<MinimapMark> {
+pub fn marks(world: &mut World, viewer: Entity) -> Vec<MapMark> {
     let Some(area) = world.get::<AreaTag>(viewer).map(|tag| tag.area) else {
         return Vec::new();
     };
@@ -117,7 +121,7 @@ pub fn marks(world: &mut World, viewer: Entity) -> Vec<MinimapMark> {
     };
     let sight = visibility::sight(world);
     let content = world.resource::<Content>().clone();
-    let seen: Vec<(Entity, MinimapMark)> = world
+    let seen: Vec<(Entity, MapMark)> = world
         .query::<(
             Entity,
             &AreaTag,
@@ -135,17 +139,16 @@ pub fn marks(world: &mut World, viewer: Entity) -> Vec<MinimapMark> {
                 return None;
             }
             let (kind, name) = match side {
-                (Some(npc), Some(Attitude::Friendly), _) => (
-                    MinimapMarkKind::Townsperson,
-                    npc.def.get(&content).name.clone(),
-                ),
+                (Some(npc), Some(Attitude::Friendly), _) => {
+                    (MapMarkKind::Townsperson, npc.def.get(&content).name.clone())
+                }
                 (None, _, Some(_)) => (
-                    MinimapMarkKind::Player,
+                    MapMarkKind::Player,
                     name.map(|name| name.name.clone()).unwrap_or_default(),
                 ),
                 _ => return None,
             };
-            let mark = MinimapMark {
+            let mark = MapMark {
                 kind,
                 name,
                 at,
@@ -155,7 +158,7 @@ pub fn marks(world: &mut World, viewer: Entity) -> Vec<MinimapMark> {
             Some((entity, mark))
         })
         .collect();
-    let people = seen.into_iter().map(|(entity, mark)| MinimapMark {
+    let people = seen.into_iter().map(|(entity, mark)| MapMark {
         attention: attention::plate_marks(world, Some(viewer), entity),
         ..mark
     });
@@ -163,8 +166,8 @@ pub fn marks(world: &mut World, viewer: Entity) -> Vec<MinimapMark> {
     let ways = area::warp::warp_objects(&content, scripts, area)
         .into_iter()
         .filter(|object| object.to.area != area)
-        .map(|object| MinimapMark {
-            kind: MinimapMarkKind::WayOut,
+        .map(|object| MapMark {
+            kind: MapMarkKind::WayOut,
             name: object.to.area.get(&content).name.clone(),
             at: object.shape.center(),
             attention: Vec::new(),
@@ -173,157 +176,107 @@ pub fn marks(world: &mut World, viewer: Entity) -> Vec<MinimapMark> {
     people.chain(ways).collect()
 }
 
-pub const MINIMAP: &str = "minimap";
-pub const RESTING_SIZE: Vec2 = Vec2::new(
-    DISC + 2.0 * RIM_OVERHANG,
-    DISC + 2.0 * RIM_OVERHANG + NAME_ROOM,
-);
-
-pub struct MinimapWidget;
-
-impl HudWidget for MinimapWidget {
-    fn fallback(&self, screen: egui::Rect) -> Pos2 {
-        Pos2::new(
-            screen.right() - RESTING_SIZE.x - hud::MARGIN,
-            screen.top() + hud::MARGIN,
-        )
-    }
-
-    fn show(&self, ui: &mut Ui, world: &mut World) -> Option<egui::Rect> {
-        let (piece, _) = ui.allocate_exact_size(RESTING_SIZE, Sense::hover());
-        let center = piece.center_top() + Vec2::new(0.0, RIM_OVERHANG + DISC / 2.0);
-        let whole = egui::Rect::from_center_size(center, Vec2::splat(DISC));
-        ui.painter()
-            .add(slip::SHADOW.as_shape(whole, CornerRadius::same((DISC / 2.0) as u8)));
-        let Some(view) = MapView::of(world, center) else {
-            ui.painter().circle_filled(center, GROUND, BLANK);
-            rim(ui, center);
-            return None;
-        };
-        let content = world.resource::<Content>().clone();
-        let area_name = view.area.get(&content).name.clone();
-        let disc = ui.interact(whole, ui.id().with("disc"), Sense::hover());
-        let reach = view.reach.0;
-        disc.widget_info(|| {
-            let said = format!("Map of {area_name}, reaching {reach} m");
-            egui::WidgetInfo::labeled(egui::WidgetType::Label, true, said)
-        });
-        ground_under(ui, world, &view);
-        if !view.turning {
-            wedge(ui, &view);
-        }
-        sight_ring(ui, &view);
-        let marks = marks(world, view.me);
-        let under = marked(ui, world, &view, &marks);
-        myself(ui, &view);
-        rim(ui, center);
-        ways_beyond(ui, &view, &marks);
-        if north_bead(ui, &view).clicked()
-            && let Some(mut rig) = world.get_resource_mut::<CameraRig>()
-        {
-            rig.face(Radians(0.0));
-        }
-        let stepped = reach_buttons(ui, &view).or_else(|| wheeled(ui, &disc, &view));
-        if let Some(step) = stepped {
-            world.resource_mut::<UserSettings>().set_minimap_reach(step);
-        }
-        lettered(
-            ui,
-            &area_name,
-            center + Vec2::new(0.0, DISC / 2.0 + RIM_OVERHANG),
-        );
-        if !under.is_empty() {
-            float::tooltip(&disc, |ui| {
-                for name in &under {
-                    ui.label(TextRole::Tooltip.rich(name.as_str()));
-                }
-            });
-        }
-        None
-    }
-}
-
-const DISC: f32 = 164.0;
-const RIM: f32 = 6.0;
-const GROUND: f32 = DISC / 2.0 - RIM;
-const RIM_OVERHANG: f32 = 7.0;
-const NAME_ROOM: f32 = 22.0;
-const ROUND: usize = 72;
-const BEAD: f32 = 9.0;
-const BUTTON: f32 = 8.5;
-// Clockwise from the rim's right end.
-const CLOSER_AT: Radians = Radians(0.56);
-const WIDER_AT: Radians = Radians(0.84);
-const WEDGE_HALF: f32 = 0.5;
-const WEDGE_REACH: f32 = 0.62;
-const PERSON: f32 = 4.5;
-const DIAMOND: f32 = 5.5;
-const DOOR: Vec2 = Vec2::new(9.0, 10.0);
-const ATTENTION: f32 = 14.0;
-const HOVER_REACH: f32 = 9.0;
-const POINTS_PER_NOTCH: f32 = 50.0;
-
-const BLANK: Color32 = Color32::from_rgb(0xD9, 0xCB, 0xA3);
-const NO_GROUND: Color32 = Color32::from_rgb(0x4B, 0x43, 0x3A);
-const TOWNSPERSON: Color32 = Color32::from_rgb(0x6F, 0xB8, 0x74);
-const PLAYER: Color32 = Color32::from_rgb(0x5B, 0xA6, 0xE6);
-const EDGE: Color32 = ink::FRAME;
-
 struct MapView {
     me: Entity,
     area: AreaId,
     at: Pos<Meters>,
     facing: Radians,
     reach: Meters,
-    step: MinimapReachStep,
-    last_step: MinimapReachStep,
+    step: MapReachStep,
+    last_step: MapReachStep,
     sight: Meters,
     yaw: f32,
-    turning: bool,
-    center: Pos2,
+    window: MapWindow,
+}
+
+#[derive(Clone, Copy)]
+enum MapWindow {
+    Disc {
+        center: Pos2,
+        turning: bool,
+    },
+    Sheet {
+        rect: egui::Rect,
+        middle: Pos<Meters>,
+    },
 }
 
 impl MapView {
-    fn of(world: &World, center: Pos2) -> Option<MapView> {
+    fn of(
+        world: &World,
+        step: impl FnOnce(&MapReaches, Meters) -> MapReachStep,
+        window: impl FnOnce(Pos<Meters>) -> MapWindow,
+    ) -> Option<MapView> {
         let me = session::me(world)?;
         let settings = world.resource::<GameSettings>();
-        let reaches = &settings.minimap_reaches;
-        let user = world.resource::<UserSettings>();
-        let step = user
-            .minimap_reach()
-            .unwrap_or(reaches.step_reaching(settings.sight))
-            .min(reaches.last_step());
+        let reaches = &settings.map_reaches;
+        let step = step(reaches, settings.sight).min(reaches.last_step());
+        let at = stands_at(world, me)?;
         Some(MapView {
             me,
             area: world.get::<AreaTag>(me)?.area,
-            at: stands_at(world, me)?,
+            at,
             facing: world.get::<Actor>(me).map_or(Radians(0.0), |me| me.facing),
             reach: reaches.at(step),
             step,
             last_step: reaches.last_step(),
             sight: settings.sight,
             yaw: world.get_resource::<CameraRig>()?.yaw().0,
-            turning: user.minimap_turns(),
-            center,
+            window: window(at),
         })
     }
 
-    fn ground_turn(&self) -> f32 {
-        if self.turning { self.yaw } else { 0.0 }
+    fn title(&self) -> &'static str {
+        match self.window {
+            MapWindow::Disc { .. } => "Minimap",
+            MapWindow::Sheet { .. } => "Map",
+        }
     }
 
+    fn named(&self) -> &'static str {
+        match self.window {
+            MapWindow::Disc { .. } => "minimap",
+            MapWindow::Sheet { .. } => "map",
+        }
+    }
+
+    fn turns(&self) -> bool {
+        matches!(self.window, MapWindow::Disc { turning: true, .. })
+    }
+
+    fn ground_turn(&self) -> f32 {
+        if self.turns() { self.yaw } else { 0.0 }
+    }
+
+    fn center(&self) -> Pos2 {
+        match self.window {
+            MapWindow::Disc { center, .. } => center,
+            MapWindow::Sheet { rect, .. } => rect.center(),
+        }
+    }
+
+    fn middle(&self) -> Pos<Meters> {
+        match self.window {
+            MapWindow::Disc { .. } => self.at,
+            MapWindow::Sheet { middle, .. } => middle,
+        }
+    }
+
+    // Both maps draw the ground at one scale, so a reach is as far across either.
     fn per_meter(&self) -> f32 {
-        GROUND / self.reach.0
+        minimap::GROUND / self.reach.0
     }
 
     fn point(&self, at: Pos<Meters>) -> Pos2 {
-        let from_me = Vec2::new(at.x - self.at.x, at.y - self.at.y) * self.per_meter();
-        self.center + turned(from_me, self.ground_turn())
+        let middle = self.middle();
+        let from_middle = Vec2::new(at.x - middle.x, at.y - middle.y) * self.per_meter();
+        self.center() + turned(from_middle, self.ground_turn())
     }
 
     fn ground(&self, point: Pos2) -> Pos<Meters> {
-        let from_me = turned(point - self.center, -self.ground_turn()) / self.per_meter();
-        Pos::new(self.at.x + from_me.x, self.at.y + from_me.y)
+        let middle = self.middle();
+        let from_middle = turned(point - self.center(), -self.ground_turn()) / self.per_meter();
+        Pos::new(middle.x + from_middle.x, middle.y + from_middle.y)
     }
 
     fn north(&self) -> Vec2 {
@@ -339,7 +292,62 @@ impl MapView {
         let heading = self.facing.heading();
         turned(Vec2::new(heading.x, heading.y), self.ground_turn())
     }
+
+    fn outline(&self) -> Vec<Pos2> {
+        match self.window {
+            MapWindow::Disc { center, .. } => round(center, minimap::GROUND),
+            MapWindow::Sheet { rect, .. } => vec![
+                rect.left_top(),
+                rect.right_top(),
+                rect.right_bottom(),
+                rect.left_bottom(),
+            ],
+        }
+    }
+
+    fn holds(&self, point: Pos2) -> bool {
+        match self.window {
+            MapWindow::Disc { center, .. } => (point - center).length() <= minimap::GROUND - 2.0,
+            MapWindow::Sheet { rect, .. } => rect.shrink(PERSON).contains(point),
+        }
+    }
+
+    fn holds_ring(&self, radius: f32) -> bool {
+        match self.window {
+            MapWindow::Disc { .. } => radius <= minimap::GROUND - 2.0,
+            MapWindow::Sheet { .. } => true,
+        }
+    }
 }
+
+fn chart(ui: &mut Ui, world: &mut World, view: &MapView) {
+    ground_under(ui, world, view);
+    if !view.turns() {
+        wedge(ui, view);
+    }
+    sight_ring(ui, view);
+    let marks = marks(world, view.me);
+    marked(ui, world, view, &marks);
+    myself(ui, view);
+}
+
+const ROUND: usize = 72;
+const BEAD: f32 = 9.0;
+const BUTTON: f32 = 8.5;
+const WEDGE_HALF: f32 = 0.5;
+const WEDGE_REACH: f32 = 0.62;
+const PERSON: f32 = 4.5;
+const DIAMOND: f32 = 5.5;
+const DOOR: Vec2 = Vec2::new(9.0, 10.0);
+const ATTENTION: f32 = 14.0;
+const HOVER_REACH: f32 = 9.0;
+const POINTS_PER_NOTCH: f32 = 50.0;
+
+const BLANK: Color32 = Color32::from_rgb(0xD9, 0xCB, 0xA3);
+const NO_GROUND: Color32 = Color32::from_rgb(0x4B, 0x43, 0x3A);
+const TOWNSPERSON: Color32 = Color32::from_rgb(0x6F, 0xB8, 0x74);
+const PLAYER: Color32 = Color32::from_rgb(0x5B, 0xA6, 0xE6);
+const EDGE: Color32 = ink::FRAME;
 
 fn picture_the_ground(world: &mut World) {
     let Some(me) = session::me(world) else {
@@ -351,8 +359,11 @@ fn picture_the_ground(world: &mut World) {
     ) else {
         return;
     };
-    let widest = world.resource::<GameSettings>().minimap_reaches.widest();
-    ground::keep(world, area, at, widest);
+    let widest = world.resource::<GameSettings>().map_reaches.widest().0;
+    let about_me = Rect::new(at, default()).inflate(widest, widest);
+    let on_the_tab = world.resource::<tab::MapTabLook>().shows();
+    let shown: Vec<Rect<Meters>> = std::iter::once(about_me).chain(on_the_tab).collect();
+    ground::keep(world, area, &shown);
 }
 
 fn stands_at(world: &World, entity: Entity) -> Option<Pos<Meters>> {
@@ -419,7 +430,7 @@ fn within(shape: &[Pos2], quad: [Pos2; 4]) -> Vec<Pos2> {
 
 fn ground_under(ui: &Ui, world: &World, view: &MapView) {
     let painter = ui.painter();
-    let disc = round(view.center, GROUND);
+    let disc = view.outline();
     painter.add(Shape::convex_polygon(disc.clone(), NO_GROUND, Stroke::NONE));
     let content = world.resource::<Content>();
     if let Some(area) = area::loaded(content, view.area) {
@@ -428,10 +439,7 @@ fn ground_under(ui: &Ui, world: &World, view: &MapView) {
             painter.add(Shape::convex_polygon(held, BLANK, Stroke::NONE));
         }
     }
-    for picture in world
-        .resource::<ground::MinimapGround>()
-        .pictures(view.area)
-    {
+    for picture in world.resource::<ground::MapGround>().pictures(view.area) {
         let shown = within(&disc, corners(view, picture.rect));
         if shown.len() < 3 {
             continue;
@@ -457,13 +465,14 @@ fn ground_under(ui: &Ui, world: &World, view: &MapView) {
 
 fn wedge(ui: &Ui, view: &MapView) {
     let looks = view.looks().angle();
-    let reach = GROUND * WEDGE_REACH;
+    let reach = minimap::GROUND * WEDGE_REACH;
     let steps = 12;
+    let from = view.point(view.at);
     let arc = (0..=steps).map(|step| {
         let angle = looks - WEDGE_HALF + 2.0 * WEDGE_HALF * step as f32 / steps as f32;
-        view.center + Vec2::angled(angle) * reach
+        from + Vec2::angled(angle) * reach
     });
-    let shape: Vec<Pos2> = std::iter::once(view.center).chain(arc).collect();
+    let shape: Vec<Pos2> = std::iter::once(from).chain(arc).collect();
     ui.painter().add(Shape::convex_polygon(
         shape,
         Color32::from_white_alpha(56),
@@ -473,9 +482,10 @@ fn wedge(ui: &Ui, view: &MapView) {
 
 fn sight_ring(ui: &Ui, view: &MapView) {
     let radius = view.sight.0 * view.per_meter();
-    if radius > GROUND - 2.0 {
+    if !view.holds_ring(radius) {
         return;
     }
+    let center = view.point(view.at);
     let dashes = ((TAU * radius / 9.0).round() as usize).max(8);
     let stroke = Stroke::new(1.0, Color32::from_white_alpha(190));
     for dash in 0..dashes {
@@ -483,44 +493,45 @@ fn sight_ring(ui: &Ui, view: &MapView) {
         let to = from + TAU / dashes as f32 * 0.55;
         ui.painter().line_segment(
             [
-                view.center + Vec2::angled(from) * radius,
-                view.center + Vec2::angled(to) * radius,
+                center + Vec2::angled(from) * radius,
+                center + Vec2::angled(to) * radius,
             ],
             stroke,
         );
     }
 }
 
-fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MinimapMark]) -> Vec<String> {
+fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MapMark]) {
     let content = world.resource::<Content>().clone();
     let pointer = ui.input(|input| input.pointer.hover_pos());
-    let on_disc: Vec<(usize, &MinimapMark, Pos2)> = marks
+    let on_disc: Vec<(usize, &MapMark, Pos2)> = marks
         .iter()
         .enumerate()
         .map(|(index, mark)| (index, mark, view.point(mark.at)))
-        .filter(|(_, _, at)| (*at - view.center).length() <= GROUND - 2.0)
+        .filter(|(_, _, at)| view.holds(*at))
         .collect();
     let mut under = Vec::new();
+    let mut topmost = None;
     // The more telling a kind, the later it is drawn, so it lies on top.
     for kind in [
-        MinimapMarkKind::WayOut,
-        MinimapMarkKind::Townsperson,
-        MinimapMarkKind::Player,
+        MapMarkKind::WayOut,
+        MapMarkKind::Townsperson,
+        MapMarkKind::Player,
     ] {
         for &(index, mark, at) in on_disc.iter().filter(|(_, mark, _)| mark.kind == kind) {
             let fill = |color: Color32| color.gamma_multiply(mark.opacity);
             let edge = Stroke::new(1.5, fill(EDGE));
             let said = match kind {
-                MinimapMarkKind::WayOut => {
+                MapMarkKind::WayOut => {
                     ui.painter()
                         .add(Shape::convex_polygon(door(at), fill(ink::LIGHT), edge));
                     format!("Way to {}", mark.name)
                 }
-                MinimapMarkKind::Townsperson => {
+                MapMarkKind::Townsperson => {
                     ui.painter().circle(at, PERSON, fill(TOWNSPERSON), edge);
                     mark.name.clone()
                 }
-                MinimapMarkKind::Player => {
+                MapMarkKind::Player => {
                     let diamond = [Vec2::UP, Vec2::RIGHT, Vec2::DOWN, Vec2::LEFT]
                         .map(|corner| at + corner * DIAMOND)
                         .to_vec();
@@ -531,12 +542,13 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MinimapMark])
             };
             let spot = egui::Rect::from_center_size(at, Vec2::splat(2.0 * HOVER_REACH));
             let node = ui.interact(spot, ui.id().with(("mark", index)), Sense::hover());
-            let label = format!("On the map: {said}");
+            let label = format!("On the {}: {said}", view.named());
             node.widget_info(|| {
                 egui::WidgetInfo::labeled(egui::WidgetType::Label, true, label.clone())
             });
             if pointer.is_some_and(|pointer| spot.contains(pointer)) {
                 under.push(said);
+                topmost = Some(node);
             }
         }
     }
@@ -556,7 +568,13 @@ fn marked(ui: &mut Ui, world: &mut World, view: &MapView, marks: &[MinimapMark])
         }
     }
     under.reverse();
-    under
+    if let Some(topmost) = topmost {
+        float::tooltip(&topmost, |ui| {
+            for name in &under {
+                ui.label(TextRole::Tooltip.rich(name.as_str()));
+            }
+        });
+    }
 }
 
 fn door(at: Pos2) -> Vec<Pos2> {
@@ -592,46 +610,15 @@ fn arrow(ui: &Ui, at: Pos2, toward: Vec2, size: f32, fill: Color32) {
 }
 
 fn myself(ui: &mut Ui, view: &MapView) {
-    arrow(ui, view.center, view.faces(), 8.0, Color32::WHITE);
-    let spot = egui::Rect::from_center_size(view.center, Vec2::splat(16.0));
+    let at = view.point(view.at);
+    arrow(ui, at, view.faces(), 8.0, Color32::WHITE);
+    let spot = egui::Rect::from_center_size(at, Vec2::splat(16.0));
+    let said = format!("On the {}: you", view.named());
     ui.interact(spot, ui.id().with("me"), Sense::hover())
-        .widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Label, true, "On the map: you")
-        });
+        .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, said.clone()));
 }
 
-fn rim(ui: &Ui, center: Pos2) {
-    let painter = ui.painter();
-    painter.circle_stroke(center, GROUND + RIM / 2.0, Stroke::new(RIM, ink::FRAME));
-    painter.circle_stroke(center, GROUND, Stroke::new(1.0, ink::LIGHT));
-    painter.circle_stroke(center, DISC / 2.0, Stroke::new(1.5, ink::GOLD));
-}
-
-fn ways_beyond(ui: &mut Ui, view: &MapView, marks: &[MinimapMark]) {
-    let ways = marks
-        .iter()
-        .enumerate()
-        .filter(|(_, mark)| mark.kind == MinimapMarkKind::WayOut);
-    for (index, mark) in ways {
-        let toward = view.point(mark.at) - view.center;
-        if toward.length() <= GROUND - 2.0 {
-            continue;
-        }
-        let toward = toward.normalized();
-        let at = view.center + toward * (GROUND - 8.0);
-        arrow(ui, at, toward, 6.5, ink::LIGHT);
-        let spot = egui::Rect::from_center_size(at, Vec2::splat(14.0));
-        let said = format!("On the map's rim: way to {}", mark.name);
-        let node = ui.interact(spot, ui.id().with(("way", index)), Sense::hover());
-        node.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, said.clone()));
-        float::tooltip(&node, |ui| {
-            ui.label(TextRole::Tooltip.rich(format!("Way to {}", mark.name)));
-        });
-    }
-}
-
-fn north_bead(ui: &mut Ui, view: &MapView) -> egui::Response {
-    let at = view.center + view.north() * (GROUND + RIM / 2.0);
+fn north_bead(ui: &mut Ui, world: &mut World, at: Pos2) {
     let spot = egui::Rect::from_center_size(at, Vec2::splat(2.0 * BEAD));
     let bead = ui
         .interact(spot, ui.id().with("north"), Sense::click())
@@ -654,44 +641,56 @@ fn north_bead(ui: &mut Ui, view: &MapView) -> egui::Response {
     float::tooltip(&bead, |ui| {
         ui.label(TextRole::Tooltip.rich("North · click to face it"));
     });
-    bead
+    if bead.clicked()
+        && let Some(mut rig) = world.get_resource_mut::<CameraRig>()
+    {
+        rig.face(Radians(0.0));
+    }
 }
 
-fn reach_buttons(ui: &mut Ui, view: &MapView) -> Option<MinimapReachStep> {
-    let closer = (view.step.0 > 0).then(|| MinimapReachStep(view.step.0 - 1));
-    let wider = (view.step < view.last_step).then(|| MinimapReachStep(view.step.0 + 1));
-    let pressed = [
-        (CLOSER_AT, "+", "Map closer", closer),
-        (WIDER_AT, "−", "Map wider", wider),
-    ]
-    .map(|(angle, sign, said, step)| {
-        let at = view.center + Vec2::angled(angle.0) * (DISC / 2.0 - 1.0);
-        let spot = egui::Rect::from_center_size(at, Vec2::splat(2.0 * BUTTON));
-        let button = ui.interact(spot, ui.id().with(said), Sense::click());
-        button.widget_info(|| {
-            egui::WidgetInfo::labeled(egui::WidgetType::Button, step.is_some(), said)
-        });
-        let (fill, sign_ink) = match (step, button.hovered()) {
-            (None, _) => (ink::HONEY2, ink::INK3),
-            (Some(_), true) => (ink::LIGHT, ink::INK),
-            (Some(_), false) => (ink::CREAM, ink::INK),
-        };
-        ui.painter()
-            .circle(at, BUTTON, fill, Stroke::new(1.5, ink::FRAME));
-        ui.painter().text(
-            at,
-            Align2::CENTER_CENTER,
-            sign,
-            Face::BookBold.id(13.0),
-            sign_ink,
-        );
-        step.filter(|_| button.clicked())
-    });
+fn reach_buttons(ui: &mut Ui, view: &MapView, places: [Pos2; 2]) -> Option<MapReachStep> {
+    let closer = (view.step.0 > 0).then(|| MapReachStep(view.step.0 - 1));
+    let wider = (view.step < view.last_step).then(|| MapReachStep(view.step.0 + 1));
+    let pressed = [("+", "closer", closer), ("−", "wider", wider)]
+        .into_iter()
+        .zip(places)
+        .map(|((sign, steps, step), at)| {
+            let said = format!("{} {steps}", view.title());
+            let button = round_button(ui, at, &said, step.is_some());
+            ui.painter().text(
+                at,
+                Align2::CENTER_CENTER,
+                sign,
+                Face::BookBold.id(13.0),
+                button.ink,
+            );
+            step.filter(|_| button.response.clicked())
+        })
+        .collect::<Vec<_>>();
     pressed.into_iter().flatten().next()
 }
 
-fn wheeled(ui: &Ui, disc: &egui::Response, view: &MapView) -> Option<MinimapReachStep> {
-    if !disc.contains_pointer() {
+struct RoundButton {
+    response: egui::Response,
+    ink: Color32,
+}
+
+fn round_button(ui: &mut Ui, at: Pos2, said: &str, enabled: bool) -> RoundButton {
+    let spot = egui::Rect::from_center_size(at, Vec2::splat(2.0 * BUTTON));
+    let response = ui.interact(spot, ui.id().with(said), Sense::click());
+    response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, enabled, said));
+    let (fill, ink) = match (enabled, response.hovered()) {
+        (false, _) => (ink::HONEY2, ink::INK3),
+        (true, true) => (ink::LIGHT, ink::INK),
+        (true, false) => (ink::CREAM, ink::INK),
+    };
+    ui.painter()
+        .circle(at, BUTTON, fill, Stroke::new(1.5, ink::FRAME));
+    RoundButton { response, ink }
+}
+
+fn wheeled(ui: &Ui, map: &egui::Response, view: &MapView) -> Option<MapReachStep> {
+    if !map.contains_pointer() {
         return None;
     }
     let turned: f32 = ui.input(|input| {
@@ -707,15 +706,17 @@ fn wheeled(ui: &Ui, disc: &egui::Response, view: &MapView) -> Option<MinimapReac
             })
             .sum()
     });
+    // Whatever scrolls around the map stays put while the wheel steps its reach.
+    ui.input_mut(|input| input.smooth_scroll_delta = Vec2::ZERO);
     let notches = ui.data_mut(|data| {
-        let gathered = data.get_temp_mut_or_default::<f32>(disc.id);
+        let gathered = data.get_temp_mut_or_default::<f32>(map.id);
         *gathered += turned;
         let notches = gathered.trunc();
         *gathered -= notches;
         notches as i64
     });
     let step = (i64::from(view.step.0) - notches).clamp(0, i64::from(view.last_step.0));
-    (step != i64::from(view.step.0)).then_some(MinimapReachStep(step as u32))
+    (step != i64::from(view.step.0)).then_some(MapReachStep(step as u32))
 }
 
 fn lettered(ui: &mut Ui, name: &str, top: Pos2) {

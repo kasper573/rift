@@ -277,6 +277,14 @@ fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData, selected: &mut Opti
         selected: *selected == Some(cell.slot),
     };
     let response = slot(ui, world, look, Sense::click_and_drag());
+    response.widget_info(|| {
+        egui::WidgetInfo::selected(
+            egui::WidgetType::Button,
+            true,
+            *selected == Some(cell.slot),
+            format!("Inventory slot {}: {left} {}", cell.slot + 1, def.name),
+        )
+    });
     let candidates: Vec<InputAction> = world
         .get_resource::<SlotActions>()
         .into_iter()

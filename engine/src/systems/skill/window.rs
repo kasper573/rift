@@ -14,7 +14,7 @@ use ui::egui::{
 use ui::face::{self, TextRole};
 use ui::glyph::{self, Mark};
 use ui::ink;
-use ui::sheet::Depth;
+use ui::sheet::{self, Depth};
 
 use super::{LearnSkillsRequest, Learned, Rank, SkillId, SkillKind, card};
 use crate::core::content::Content;
@@ -36,7 +36,6 @@ const NODE_RADIUS: f32 = 24.0;
 const NODE_ICON: f32 = 28.0;
 const DOCK_HEIGHT: f32 = 34.0;
 const NAME_HALO: f32 = 1.0;
-const COLUMN_GAP: f32 = 16.0;
 
 pub struct SkillsMenuTab;
 
@@ -64,10 +63,8 @@ impl MenuTab for SkillsMenuTab {
             return;
         };
         let room = ui.available_rect_before_wrap();
-        let beside_card = Rect::from_min_max(
-            room.min,
-            Pos2::new(room.max.x - ui::card::WIDTH - COLUMN_GAP, room.max.y),
-        );
+        let beside = room.width() - sheet::GUTTER - ui::card::WIDTH;
+        let ([beside_card], card_room) = sheet::columns(room, [beside]);
         ui.scope_builder(UiBuilder::new().max_rect(beside_card), |ui| {
             header(ui, world, &sheet);
             let room = ui.available_rect_before_wrap();
@@ -77,10 +74,6 @@ impl MenuTab for SkillsMenuTab {
             *world.resource_mut::<TreeView>() = view;
             dock(ui, world, &sheet, room);
         });
-        let card_room = Rect::from_min_max(
-            Pos2::new(beside_card.max.x + COLUMN_GAP, room.min.y),
-            room.max,
-        );
         ui.scope_builder(UiBuilder::new().max_rect(card_room), |ui| {
             selected_pane(ui, world, &sheet);
         });

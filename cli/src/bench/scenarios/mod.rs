@@ -70,6 +70,7 @@ impl ScenarioSlots {
             self.tabs = vec![
                 InputAction::OpenSkills,
                 InputAction::OpenQuests,
+                InputAction::OpenMap,
                 InputAction::OpenHistory,
                 InputAction::OpenSettings,
                 InputAction::OpenCharacter,

@@ -1231,7 +1231,7 @@ fn array(ui: &mut Ui, cx: &mut FormCx, items: &Value, value: &mut Value, path: &
     let singular = path
         .rsplit('/')
         .next()
-        .map(|name| name.strip_suffix('s').unwrap_or(name).to_owned())
+        .map(ui::words::singular)
         .filter(|name| !name.is_empty() && name.parse::<usize>().is_err())
         .unwrap_or_else(|| "entry".to_owned());
     let boxed = !inline

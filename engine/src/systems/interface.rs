@@ -80,6 +80,7 @@ pub enum InterfaceIcon {
     Character,
     Skills,
     Quests,
+    Map,
     History,
     Settings,
 }

@@ -29,8 +29,6 @@ use crate::systems::screen::ClientScreen;
 
 const SLOT_GAP: f32 = 6.0;
 const SHEET: Vec2 = Vec2::new(680.0, 320.0);
-pub const PADDING: f32 = 12.0;
-pub const COLUMN_GAP: f32 = 16.0;
 pub const INVENTORY_WIDTH: f32 = 290.0;
 const BUTTON_GAP: f32 = 10.0;
 
@@ -272,18 +270,15 @@ pub fn heading(ui: &mut Ui, world: &World, view: &PromptView) {
 
 pub fn inventory(ui: &mut Ui, world: &mut World, locked: bool) {
     lockable(ui, locked, |ui| {
-        sheet::scroll(
-            ui,
-            egui::ScrollArea::vertical().auto_shrink([false, false]),
-            |ui| {
-                let pane = InventoryPane {
-                    width: ui.available_width(),
-                    heading: Some("Your inventory"),
-                    selected: &mut None,
-                };
-                inventory_pane(ui, world, pane);
-            },
-        );
+        let room = ui.available_rect_before_wrap();
+        sheet::scroll_pane(ui, room, egui::ScrollArea::vertical(), |ui| {
+            let pane = InventoryPane {
+                width: ui.available_width(),
+                heading: Some("Your inventory"),
+                selected: &mut None,
+            };
+            inventory_pane(ui, world, pane);
+        });
     });
 }
 
@@ -316,29 +311,31 @@ fn show(ui: &mut Ui, world: &mut World, _width: f32, _most: f32) {
     let Some(view) = view(world).cloned() else {
         return;
     };
-    egui::Frame::new().inner_margin(PADDING).show(ui, |ui| {
-        let room = ui.available_rect_before_wrap();
-        let inventory_at = Rect::from_min_max(
-            Pos2::new(room.max.x - INVENTORY_WIDTH, room.min.y),
-            room.max,
-        );
-        let tray = Rect::from_min_max(
-            room.min,
-            Pos2::new(inventory_at.min.x - COLUMN_GAP, room.max.y),
-        );
-        let column = |rect| {
-            UiBuilder::new()
-                .max_rect(rect)
-                .layout(Layout::top_down(Align::Min))
-        };
-        ui.scope_builder(column(tray), |ui| {
-            heading(ui, world, &view);
-            slots(ui, world, view.slots);
-            ui.with_layout(Layout::bottom_up(Align::Min), |ui| foot(ui, world, &view));
+    egui::Frame::new()
+        .inner_margin(sheet::PAGE_MARGIN)
+        .show(ui, |ui| {
+            let room = ui.available_rect_before_wrap();
+            let inventory_at = Rect::from_min_max(
+                Pos2::new(room.max.x - INVENTORY_WIDTH, room.min.y),
+                room.max,
+            );
+            let tray = Rect::from_min_max(
+                room.min,
+                Pos2::new(inventory_at.min.x - sheet::GUTTER, room.max.y),
+            );
+            let column = |rect| {
+                UiBuilder::new()
+                    .max_rect(rect)
+                    .layout(Layout::top_down(Align::Min))
+            };
+            ui.scope_builder(column(tray), |ui| {
+                heading(ui, world, &view);
+                slots(ui, world, view.slots);
+                ui.with_layout(Layout::bottom_up(Align::Min), |ui| foot(ui, world, &view));
+            });
+            ui.scope_builder(column(inventory_at), |ui| inventory(ui, world, false));
+            ui.advance_cursor_after_rect(room);
         });
-        ui.scope_builder(column(inventory_at), |ui| inventory(ui, world, false));
-        ui.advance_cursor_after_rect(room);
-    });
 }
 
 fn foot(ui: &mut Ui, world: &mut World, view: &PromptView) {

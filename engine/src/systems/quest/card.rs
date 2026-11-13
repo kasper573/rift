@@ -233,7 +233,7 @@ fn hand_in_row(ui: &mut Ui, images: &mut World, content: &Content, stack: ItemSt
             let color = if short { ink::RUBRIC } else { ink::INK3 };
             ui.label(
                 TextRole::Small
-                    .rich(format!("{held} in your bag"))
+                    .rich(format!("{held} in your inventory"))
                     .color(color),
             );
             ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
@@ -344,7 +344,7 @@ pub(super) fn caption(ui: &mut Ui, text: impl Into<String>) {
     ui.add(Label::new(face::small_faint(text.into())).wrap());
 }
 
-fn overview(def: &QuestDef) -> String {
+pub(super) fn overview(def: &QuestDef) -> String {
     let kinds = def.kinds();
     let mut letters = kinds.chars();
     let kinds = letters

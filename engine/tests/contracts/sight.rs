@@ -3,7 +3,7 @@ use bevy_replication::Interest;
 use engine::core::math::{Offset, Pos};
 use engine::core::units::Meters;
 use engine::systems::area::AreaDef;
-use engine::systems::minimap::{self, MinimapMarkKind};
+use engine::systems::area_map::{self, MapMarkKind};
 use engine::systems::movement::{self, Position, position};
 use engine::systems::npc::{self, NpcDef};
 use engine::systems::player::ClientId;
@@ -58,15 +58,15 @@ fn a_players_map_marks_the_townsfolk_and_players_in_sight_and_never_a_creature()
     npc::spawn(&mut sim.world, wolf, beside, area, None);
     sim.tick();
 
-    let mut marked: Vec<(MinimapMarkKind, String)> = minimap::marks(&mut sim.world, hero)
+    let mut marked: Vec<(MapMarkKind, String)> = area_map::marks(&mut sim.world, hero)
         .into_iter()
         .map(|mark| (mark.kind, mark.name))
         .collect();
-    marked.sort_by_key(|(kind, _)| *kind == MinimapMarkKind::Player);
-    let kinds: Vec<MinimapMarkKind> = marked.iter().map(|(kind, _)| *kind).collect();
+    marked.sort_by_key(|(kind, _)| *kind == MapMarkKind::Player);
+    let kinds: Vec<MapMarkKind> = marked.iter().map(|(kind, _)| *kind).collect();
     assert_eq!(
         kinds,
-        [MinimapMarkKind::Townsperson, MinimapMarkKind::Player],
+        [MapMarkKind::Townsperson, MapMarkKind::Player],
         "{marked:?}"
     );
     assert_eq!(marked[0].1, "crow", "the one in sight, by its name");

@@ -555,7 +555,7 @@ fn a_games_map_reaches_rise_from_the_closest() {
         (json!([16.0, 32.0, 64.0]), None),
     ] {
         let loaded = game()
-            .edit_settings(|settings| settings["minimap_reaches"] = reaches.clone())
+            .edit_settings(|settings| settings["map_reaches"] = reaches.clone())
             .try_load();
         let rules: Vec<&str> = loaded
             .as_ref()

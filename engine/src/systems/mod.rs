@@ -1,6 +1,7 @@
 pub mod account;
 pub mod actor;
 pub mod area;
+pub mod area_map;
 pub mod attention;
 pub mod belongings;
 pub mod chat;
@@ -21,7 +22,6 @@ pub mod interface;
 pub mod item;
 pub mod launch;
 pub mod memory;
-pub mod minimap;
 pub mod movement;
 pub mod notification;
 pub mod npc;
@@ -204,7 +204,7 @@ pub struct GameSettings {
     /// for or speak to.
     pub sight: Meters,
     /// How far a player's map of the ground around them reaches, at each step they may choose.
-    pub minimap_reaches: minimap::MinimapReaches,
+    pub map_reaches: area_map::MapReaches,
     /// How many times their pace an actor runs while reaching for a cast.
     pub chase_pace: f32,
     /// Without it, water slows no one who wades through it.
@@ -623,7 +623,7 @@ pub fn client_app(
             terminal::TerminalPlugin,
             frame_rate::FrameRatePlugin,
         ))
-        .add_plugins(minimap::MinimapPlugin);
+        .add_plugins(area_map::AreaMapPlugin);
     app
 }
 
@@ -827,9 +827,7 @@ fn check_settings(loading: &mut Loading) {
         cycle.check("/daylight", &mut check);
     }
     check.at_least("/sight", settings.sight.0, 0.0, "meters");
-    settings
-        .minimap_reaches
-        .check("/minimap_reaches", &mut check);
+    settings.map_reaches.check("/map_reaches", &mut check);
     check.at_least("/chase_pace", settings.chase_pace, 1.0, "times");
     if let Some(wading) = &settings.wading {
         wading.check("/wading", &mut check);

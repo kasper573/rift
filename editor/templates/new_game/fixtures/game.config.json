@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "557e8cc6",
+  "content_version": "2690e760",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -12,7 +12,7 @@
     "start": 10.0
   },
   "sight": 24.0,
-  "minimap_reaches": [
+  "map_reaches": [
     16.0,
     32.0,
     64.0
@@ -51,7 +51,7 @@
     "needs_slots": "Needs {slots} free slots",
     "needs_tool": "Needs a {tool} in your tool slot",
     "no_room": "No room",
-    "bag_room": "Your bag has no room for what this can drop",
+    "bag_room": "Your inventory has no room for what this can drop",
     "ran_out": "It ran out",
     "confirm": "Confirm",
     "craft": "Craft",

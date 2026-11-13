@@ -11,9 +11,9 @@ use super::{Parties, QuestId, QuestLog, QuestResult, ready_mark};
 use crate::core::content::ImageRef;
 use crate::core::content::{Content, Fixture};
 use crate::core::gui;
+use crate::systems::area_map::minimap;
 use crate::systems::hud::{self, HudWidget};
 use crate::systems::item::Inventory;
-use crate::systems::minimap;
 use crate::systems::player::session;
 use crate::systems::settings::UserSettings;
 
@@ -262,12 +262,8 @@ impl Line<'_> {
         job.append(self.text, lead, TextFormat::simple(self.font, self.color));
         let galley = ui.painter().layout_job(job);
         let rect = Rect::from_min_size(self.at, galley.size());
-        let said = match self.mark {
-            Some(mark) => format!("{}: {}", mark.word(), self.text),
-            None => self.text.to_owned(),
-        };
         ui.interact(rect, id, Sense::hover())
-            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, said.clone()));
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, self.text));
         dusk::lettering(
             ui.painter(),
             self.at,

@@ -12,6 +12,17 @@ pub fn counted<N: Display + PartialEq + From<u8>>(count: N, noun: &str) -> Strin
     format!("{shown} {noun}{}", plural(count))
 }
 
+pub fn singular(plural: &str) -> String {
+    if let Some(stem) = plural.strip_suffix("ies") {
+        return format!("{stem}y");
+    }
+    let hissed = ["ches", "shes", "sses", "xes"]
+        .iter()
+        .any(|ending| plural.ends_with(ending));
+    let ending = if hissed { "es" } else { "s" };
+    plural.strip_suffix(ending).unwrap_or(plural).to_owned()
+}
+
 pub fn article(word: &str) -> &'static str {
     if word.starts_with(['a', 'e', 'i', 'o', 'u']) {
         "an"

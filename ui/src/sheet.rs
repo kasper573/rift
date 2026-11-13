@@ -1,11 +1,11 @@
-use std::sync::OnceLock;
+use std::sync::{Arc, OnceLock};
 
 use egui::epaint::{Mesh, Shadow, Vertex};
 use egui::layers::ShapeIdx;
 use egui::{
-    Align2, Color32, ColorImage, CornerRadius, Id, InnerResponse, Margin, Painter, Pos2, Rect,
-    Response, Sense, Shape, Stroke, StrokeKind, TextureHandle, TextureId, TextureOptions, Ui, Vec2,
-    WidgetInfo, WidgetType,
+    Align2, Color32, ColorImage, CornerRadius, Galley, Id, InnerResponse, Margin, Painter, Pos2,
+    Rect, Response, Sense, Shape, Stroke, StrokeKind, TextureHandle, TextureId, TextureOptions, Ui,
+    Vec2, WidgetInfo, WidgetType,
 };
 
 use crate::face::TextRole;
@@ -98,7 +98,7 @@ impl Sheet<'_> {
 
 pub fn body(rect: Rect, titled: bool) -> Rect {
     let small = is_small(rect);
-    let margin = if small { SMALL_RULE_INSET } else { RULE_INSET } + 4.0;
+    let margin = if small { SMALL_RULE_INSET } else { RULE_INSET } + BODY_INSET;
     let top = if titled {
         rect.min.y + TITLE_BAND
     } else {
@@ -109,6 +109,79 @@ pub fn body(rect: Rect, titled: bool) -> Rect {
         rect.max - Vec2::splat(margin),
     )
     .intersect(rect)
+}
+
+/// Wide enough for a scrolling pane's bar to stand in, so a pane is as wide with a bar as without.
+pub const GUTTER: f32 = 16.0;
+const BODY_INSET: f32 = 4.0;
+pub const PAGE_MARGIN: f32 = GUTTER - BODY_INSET;
+const BAR_LANE: f32 = PAGE_MARGIN;
+
+pub fn page(body: Rect) -> Rect {
+    body.shrink2(Vec2::new(PAGE_MARGIN, 0.0))
+}
+
+pub fn columns<const N: usize>(room: Rect, widths: [f32; N]) -> ([Rect; N], Rect) {
+    let mut left = room.min.x;
+    let columns = widths.map(|width| {
+        let column = Rect::from_min_max(
+            Pos2::new(left, room.min.y),
+            Pos2::new((left + width).min(room.max.x), room.max.y),
+        );
+        left = column.max.x + GUTTER;
+        column
+    });
+    let rest = Rect::from_min_max(Pos2::new(left.min(room.max.x), room.min.y), room.max);
+    (columns, rest)
+}
+
+pub fn with_bar_lane(pane: Rect) -> Rect {
+    Rect::from_min_max(pane.min, pane.max + Vec2::new(BAR_LANE, 0.0))
+}
+
+pub fn scroll_page<R>(
+    ui: &mut Ui,
+    pane: Rect,
+    least: Vec2,
+    area: egui::ScrollArea,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    let bar = ui.spacing().scroll.bar_width + ui.spacing().scroll.bar_inner_margin;
+    let foot = if pane.width() < least.x { bar } else { 0.0 };
+    let view = Vec2::new(pane.width(), pane.height() - foot);
+    let outer = if view.y < least.y {
+        with_bar_lane(pane)
+    } else {
+        pane
+    };
+    ui.scope_builder(egui::UiBuilder::new().max_rect(outer), |ui| {
+        scroll(ui, area.auto_shrink(false), |ui| {
+            ui.shrink_clip_rect(pane);
+            let (rect, _) = ui.allocate_exact_size(view.max(least), Sense::hover());
+            ui.scope_builder(egui::UiBuilder::new().max_rect(rect), add)
+                .inner
+        })
+        .inner
+    })
+    .inner
+}
+
+pub fn scroll_pane<R>(
+    ui: &mut Ui,
+    pane: Rect,
+    area: egui::ScrollArea,
+    add: impl FnOnce(&mut Ui) -> R,
+) -> R {
+    let builder = egui::UiBuilder::new().max_rect(with_bar_lane(pane));
+    ui.scope_builder(builder, |ui| {
+        scroll(ui, area.auto_shrink(false), |ui| {
+            ui.shrink_clip_rect(pane);
+            ui.set_width(pane.width());
+            add(ui)
+        })
+        .inner
+    })
+    .inner
 }
 
 pub fn chrome(titled: bool) -> Vec2 {
@@ -335,14 +408,26 @@ pub fn tabs<T: PartialEq + Copy>(
     size: TabSize,
     tabs: &[Tab<T>],
     active: &mut T,
+    room: f32,
 ) -> Rect {
+    let wide = |fit: TabFit| {
+        let faces: f32 = tabs
+            .iter()
+            .map(|tab| TabFace::of(ui, size, tab, ink::INK, fit).size(size).x)
+            .sum();
+        faces + TAB_SPACING * tabs.len().saturating_sub(1) as f32
+    };
+    let fit = [TabFit::Whole, TabFit::NoKeys]
+        .into_iter()
+        .find(|&fit| wide(fit) <= room)
+        .unwrap_or(TabFit::IconsAlone);
     let baseline = ui.painter().add(Shape::Noop);
     let mut lip = None;
     let row = ui.horizontal(|ui| {
-        ui.spacing_mut().item_spacing.x = 4.0;
+        ui.spacing_mut().item_spacing.x = TAB_SPACING;
         for tab in tabs {
             let selected = tab.key == *active;
-            let response = tab_button(ui, size, tab, selected);
+            let response = tab_button(ui, size, tab, selected, fit);
             if selected {
                 lip = Some(response.rect);
             }
@@ -370,32 +455,83 @@ pub fn tabs<T: PartialEq + Copy>(
     row.response.rect
 }
 
-fn tab_button<T>(ui: &mut Ui, size: TabSize, tab: &Tab<T>, selected: bool) -> Response {
+const TAB_SPACING: f32 = 4.0;
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TabFit {
+    Whole,
+    NoKeys,
+    IconsAlone,
+}
+
+struct TabFace {
+    icon: Option<TextureId>,
+    label: Option<Arc<Galley>>,
+    cap: Option<Arc<Galley>>,
+}
+
+impl TabFace {
+    fn of<T>(ui: &Ui, size: TabSize, tab: &Tab<T>, color: Color32, fit: TabFit) -> TabFace {
+        let lettered = fit != TabFit::IconsAlone || tab.icon.is_none();
+        let label = lettered.then(|| ui.painter().layout_job(size.role().job(&tab.label, color)));
+        let keys = tab.keys.as_deref().filter(|_| fit == TabFit::Whole);
+        TabFace {
+            icon: tab.icon,
+            label,
+            cap: keys.map(|keys| controls::key_galley(ui, keys, ink::INK3)),
+        }
+    }
+
+    fn parts(&self) -> impl Iterator<Item = Vec2> {
+        let icon = self.icon.map(|_| Vec2::splat(TAB_ICON));
+        let label = self.label.as_ref().map(|label| label.size());
+        let cap = self.cap.as_ref().map(controls::key_cap_size);
+        [icon, label, cap].into_iter().flatten()
+    }
+
+    fn size(&self, size: TabSize) -> Vec2 {
+        let across: f32 = self.parts().map(|part| part.x).sum();
+        let gaps = TAB_GAP * self.parts().count().saturating_sub(1) as f32;
+        let tall = self.label.as_ref().map_or(TAB_ICON, |label| label.size().y);
+        let tall = self
+            .cap
+            .as_ref()
+            .map_or(tall, |cap| tall.max(controls::key_cap_size(cap).y));
+        Vec2::new(across + gaps, tall) + 2.0 * size.padding()
+    }
+}
+
+fn tab_button<T>(
+    ui: &mut Ui,
+    size: TabSize,
+    tab: &Tab<T>,
+    selected: bool,
+    fit: TabFit,
+) -> Response {
     let open = tab.shut_because.is_none();
     let color = match (selected, open) {
         (_, false) => ink::INK3,
         (true, true) => ink::RUBRIC,
         (false, true) => ink::INK2,
     };
-    let label = ui.painter().layout_job(size.role().job(&tab.label, color));
-    let cap = tab
-        .keys
-        .as_deref()
-        .map(|keys| controls::key_galley(ui, keys, ink::INK3));
-    let cap_size = cap.as_ref().map(controls::key_cap_size);
-    let icon = tab.icon.map(|_| TAB_ICON + TAB_GAP).unwrap_or(0.0);
+    let face = TabFace::of(ui, size, tab, color, fit);
     let padding = size.padding();
-    let inner = Vec2::new(
-        icon + label.size().x + cap_size.map_or(0.0, |cap| TAB_GAP + cap.x),
-        label.size().y.max(cap_size.map_or(0.0, |cap| cap.y)),
-    );
-    let (rect, response) = ui.allocate_exact_size(inner + 2.0 * padding, Sense::click());
+    let (rect, response) = ui.allocate_exact_size(face.size(size), Sense::click());
     response.widget_info(|| {
         WidgetInfo::selected(WidgetType::SelectableLabel, open, selected, &tab.label)
     });
     if let Some(why) = &tab.shut_because {
         float::tooltip(&response, |ui| {
             ui.label(TextRole::Tooltip.rich(why));
+        });
+    } else if fit != TabFit::Whole {
+        float::tooltip(&response, |ui| {
+            ui.horizontal(|ui| {
+                ui.label(TextRole::Tooltip.rich(&tab.label));
+                if let Some(keys) = &tab.keys {
+                    controls::key_hint(ui, keys);
+                }
+            });
         });
     }
     let radius = CornerRadius {
@@ -426,7 +562,7 @@ fn tab_button<T>(ui: &mut Ui, size: TabSize, tab: &Tab<T>, selected: bool) -> Re
     );
     let mut left = rect.min.x + padding.x;
     let middle = rect.center().y;
-    if let Some(texture) = tab.icon {
+    if let Some(texture) = face.icon {
         let at = Rect::from_min_size(
             Pos2::new(left, middle - TAB_ICON / 2.0),
             Vec2::splat(TAB_ICON),
@@ -444,10 +580,14 @@ fn tab_button<T>(ui: &mut Ui, size: TabSize, tab: &Tab<T>, selected: bool) -> Re
         );
         left += TAB_ICON + TAB_GAP;
     }
-    let label_width = label.size().x;
-    painter.galley(Pos2::new(left, middle - label.size().y / 2.0), label, color);
-    if let (Some(cap), Some(cap_size)) = (cap, cap_size) {
-        let at = Pos2::new(left + label_width + TAB_GAP, middle - cap_size.y / 2.0);
+    if let Some(label) = face.label {
+        let across = label.size().x;
+        painter.galley(Pos2::new(left, middle - label.size().y / 2.0), label, color);
+        left += across + TAB_GAP;
+    }
+    if let Some(cap) = face.cap {
+        let cap_size = controls::key_cap_size(&cap);
+        let at = Pos2::new(left, middle - cap_size.y / 2.0);
         controls::paint_key_cap(painter, Rect::from_min_size(at, cap_size), cap, ink::INK3);
     }
     if response.has_focus() {

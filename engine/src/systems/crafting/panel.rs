@@ -239,7 +239,7 @@ fn show(ui: &mut Ui, world: &mut World, _width: f32, _most: f32) {
     }
     let locked = progress(world).is_some();
     egui::Frame::new()
-        .inner_margin(tray::PADDING)
+        .inner_margin(sheet::PAGE_MARGIN)
         .show(ui, |ui| {
             let room = ui.available_rect_before_wrap();
             let recipes = Rect::from_min_size(room.min, Vec2::new(RECIPES_WIDTH, room.height()));
@@ -248,8 +248,8 @@ fn show(ui: &mut Ui, world: &mut World, _width: f32, _most: f32) {
                 room.max,
             );
             let bench = Rect::from_min_max(
-                Pos2::new(recipes.max.x + tray::COLUMN_GAP, room.min.y),
-                Pos2::new(inventory.min.x - tray::COLUMN_GAP, room.max.y),
+                Pos2::new(recipes.max.x + sheet::GUTTER, room.min.y),
+                Pos2::new(inventory.min.x - sheet::GUTTER, room.max.y),
             );
             let column = |rect| {
                 UiBuilder::new()
@@ -288,7 +288,8 @@ fn recipes_column(ui: &mut Ui, world: &mut World) {
 fn list(ui: &mut Ui, world: &mut World) {
     let rows = listed(world);
     let placed = tray::offer(world);
-    sheet::scroll(ui, egui::ScrollArea::vertical().auto_shrink(false), |ui| {
+    let room = ui.available_rect_before_wrap();
+    sheet::scroll_pane(ui, room, egui::ScrollArea::vertical(), |ui| {
         ui.spacing_mut().item_spacing.y = 0.0;
         for (index, row) in rows.iter().enumerate() {
             let laid_out = row.recipe.times(&placed).is_some();

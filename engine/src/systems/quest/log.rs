@@ -8,8 +8,7 @@ use ui::glyph::{self, Mark};
 use ui::{card, ink, sheet};
 
 use super::card::{
-    Countdown, QuestCardLook, Standing, caption, inspectable, objective_row, picks, reward_chips,
-    time_left,
+    Countdown, Standing, caption, inspectable, objective_row, picks, reward_chips, time_left,
 };
 use super::{ActiveQuest, FinishedQuest, Parties, QuestId, QuestLog, QuestRequest, QuestResult};
 use crate::core::content::Content;
@@ -26,12 +25,10 @@ use crate::systems::player::session;
 use crate::systems::quest::{Objective, QuestDef};
 use crate::systems::screen::ClientScreen;
 use ui::paint;
-use ui::panel::{self, Edge};
 
-const QUESTS_PAGE_WIDTH: f32 = 320.0;
 const LIST_WIDTH: f32 = 250.0;
 const ROW_ICON: f32 = 20.0;
-const DETAIL_PADDING: f32 = 10.0;
+const TITLE_ICON: f32 = 28.0;
 const FOOTER: f32 = 40.0;
 const TIMER_BAR: Vec2 = Vec2::new(90.0, 4.0);
 
@@ -198,27 +195,14 @@ fn page_ui(ui: &mut Ui, world: &mut World, page: &Page) {
     let listed = page.listed(&content);
     let shown = page.shown(&listed);
     let room = ui.available_rect_before_wrap();
-    let list_rect = Rect::from_min_size(room.min, Vec2::new(LIST_WIDTH, room.height()));
-    let detail_rect = Rect::from_min_max(
-        Pos2::new(list_rect.max.x + DETAIL_PADDING, room.min.y),
-        room.max,
-    );
-    let parted = Rect::from_min_max(
-        room.min,
-        Pos2::new(list_rect.max.x + DETAIL_PADDING / 2.0, room.max.y),
-    );
-    panel::divide(ui, parted, Edge::Right);
-    ui.scope_builder(egui::UiBuilder::new().max_rect(list_rect), |ui| {
-        let area = egui::ScrollArea::vertical()
-            .id_salt(("quest list", page.tab.title()))
-            .auto_shrink(false);
-        sheet::scroll(ui, area, |ui| list(ui, world, page, &listed, shown));
+    let ([list_rect], detail_rect) = sheet::columns(room, [LIST_WIDTH]);
+    let area = egui::ScrollArea::vertical().id_salt(("quest list", page.tab.title()));
+    sheet::scroll_pane(ui, list_rect, area, |ui| {
+        list(ui, world, page, &listed, shown)
     });
-    ui.scope_builder(egui::UiBuilder::new().max_rect(detail_rect), |ui| {
-        if let Some(quest) = shown {
-            detail(ui, world, page, quest);
-        }
-    });
+    if let Some(quest) = shown {
+        detail(ui, world, page, quest, detail_rect);
+    }
     ui.allocate_rect(room, Sense::hover());
 }
 
@@ -375,24 +359,27 @@ fn status(content: &Content, page: &Page, quest: QuestId) -> (String, Tone) {
     }
 }
 
-fn detail(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {
+fn detail(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId, pane: Rect) {
     let content = world.resource::<Content>().clone();
     let trackable = page.log.trackable(&content, quest);
-    let footer = if trackable { FOOTER } else { 0.0 };
-    let look = QuestCardLook {
-        width: QUESTS_PAGE_WIDTH.min(ui.available_width()),
-        max_height: (ui.available_height() - footer).max(card::KIND_BAND),
-        moment: None,
-    };
-    ui.vertical_centered(|ui| {
-        ui.set_width(look.width);
-        super::card::show(ui, world, &content, quest, look, |ui, world| {
-            plate(ui, world, page, quest)
+    let foot = if trackable { FOOTER } else { 0.0 };
+    let read = Rect::from_min_max(pane.min, Pos2::new(pane.max.x, pane.max.y - foot));
+    let area = egui::ScrollArea::vertical().id_salt(("quest", page.tab.title(), quest));
+    sheet::scroll_pane(ui, read, area, |ui| {
+        let def = quest.get(&content);
+        ui.horizontal(|ui| {
+            hud::icon(ui, world, def.icon(&content), TITLE_ICON);
+            ui.add(Label::new(face::bold(def.title.as_str())).wrap());
         });
-        if trackable {
-            footer_row(ui, world, page, quest);
-        }
+        card::overview(ui, &super::card::overview(def));
+        plate(ui, world, page, quest);
     });
+    if trackable {
+        let foot = Rect::from_min_max(Pos2::new(pane.min.x, read.max.y), pane.max);
+        ui.scope_builder(egui::UiBuilder::new().max_rect(foot), |ui| {
+            footer_row(ui, world, page, quest);
+        });
+    }
 }
 
 fn plate(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {
@@ -406,7 +393,7 @@ fn plate(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {
         timer(ui, &content, page, quest);
     }
     card::flavour(ui, &def.blurb);
-    card::heading(ui, "objectives");
+    sheet::section(ui, "Objectives");
     let fresh = ActiveQuest::fresh(&content, quest);
     let progress = def.progress(
         &content,
@@ -427,24 +414,24 @@ fn plate(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {
         });
     }
     if let Some(paths) = def.decision() {
-        card::heading(ui, "choices");
+        sheet::section(ui, "Choices");
         for path in paths {
             card::fact(ui, &format!("{}: {}", path.choice, path.means.join("; ")));
         }
     }
     let handed_in = finished.is_some_and(|finished| finished.result == QuestResult::Completed);
     if def.reveals(ChoiceReveal::Gains) || handed_in {
-        card::heading(ui, "rewards");
+        sheet::section(ui, "Rewards");
         let shown = reward_chips(ui, world, &content, def);
         inspectable(world, shown);
     }
     if def.reveals(ChoiceReveal::Gains) && !def.pick_one().is_empty() && finished.is_none() {
-        card::heading(ui, "pick one when you return");
+        sheet::section(ui, "Pick one when you return");
         let shown = picks(ui, world, &content, def);
         inspectable(world, shown);
     }
     if def.time_limit().is_some() {
-        card::heading(ui, "if time runs out");
+        sheet::section(ui, "If time runs out");
         card::fact(
             ui,
             &format!("The quest fails. {}.", def.retry_hint(&page.parties, quest)),
@@ -515,10 +502,12 @@ fn footer_row(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {
 fn confirm_abandon(world: &mut World, quest: QuestId) {
     let content = world.resource::<Content>().clone();
     let def = quest.get(&content);
-    let taken = def
-        .grants()
-        .iter()
-        .map(|stack| format!("{} is taken from your bag.", stack.item.get(&content).name));
+    let taken = def.grants().iter().map(|stack| {
+        format!(
+            "{} is taken from your inventory.",
+            stack.item.get(&content).name
+        )
+    });
     let again = match world.resource::<Parties>().giver(quest) {
         Some(party) if party.item.is_some() => {
             format!("Use the {} to start it again.", party.name)

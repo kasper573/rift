@@ -195,7 +195,7 @@ pub fn show_noted(
         if let Some(verb) = use_verb(def) {
             let hint = StyledLine::new(vec![
                 input(InputAction::UseItem),
-                TextPiece::text(format!(" in your bag to {verb}")),
+                TextPiece::text(format!(" in your inventory to {verb}")),
             ]);
             foot(ui, world, &hint);
         }

@@ -14,7 +14,7 @@ use crate::systems::interface::{InterfaceIcon, InterfaceSound};
 use crate::systems::player::{self, session};
 use crate::systems::screen::ClientScreen;
 use crate::systems::settings::{self, Placed, UserSettings};
-use crate::systems::{history, quest, skill};
+use crate::systems::{area_map, history, quest, skill};
 
 pub trait MenuTab: Send + Sync {
     fn name(&self) -> MenuTabName;
@@ -43,6 +43,7 @@ pub enum MenuTabName {
     Character,
     Skills,
     Quests,
+    Map,
     History,
     Settings,
 }
@@ -74,6 +75,14 @@ pub(crate) fn open_on(world: &mut World, tab: MenuTabName) {
         None => InterfaceSound::UiOpen.play(world),
         Some(was) if was != tab => InterfaceSound::UiPage.play(world),
         Some(_) => {}
+    }
+}
+
+pub(crate) fn toggle(world: &mut World, tab: MenuTabName) {
+    if showing(world) == Some(tab) {
+        close(world);
+    } else {
+        open_on(world, tab);
     }
 }
 
@@ -134,7 +143,7 @@ pub(super) fn draw(world: &mut World, gui: &egui::Context) {
 }
 
 const MENU: &str = "menu";
-const SIZE: Vec2 = Vec2::new(880.0, 510.0);
+const SIZE: Vec2 = Vec2::new(904.0, 510.0);
 const SMALLEST: Vec2 = Vec2::new(360.0, 240.0);
 const SMALLEST_PAGE: Vec2 = Vec2::new(800.0, 330.0);
 const PAGE_GAP: f32 = 6.0;
@@ -147,6 +156,7 @@ static TABS: &[&dyn MenuTab] = &[
     &player::sheet::CharacterMenuTab,
     &skill::window::SkillsMenuTab,
     &quest::log::QuestsMenuTab,
+    &area_map::tab::MapMenuTab,
     &history::widget::HistoryMenuTab,
     &settings::SettingsMenuTab,
 ];
@@ -161,13 +171,8 @@ fn tab_keys(world: &mut World) {
     let pressed = TABS
         .iter()
         .find(|tab| map::just_pressed(world, tab.opens()));
-    let Some(tab) = pressed else {
-        return;
-    };
-    if showing(world) == Some(tab.name()) {
-        close(world);
-    } else {
-        open_on(world, tab.name());
+    if let Some(tab) = pressed {
+        toggle(world, tab.name());
     }
 }
 
@@ -190,59 +195,59 @@ fn tab_of(name: MenuTabName) -> &'static dyn MenuTab {
 }
 
 fn page(ui: &mut Ui, world: &mut World, frame: WindowFrame, shown: MenuTabName) {
-    let mut chosen = shown;
-    let tabs = sheet::tabs(ui, TabSize::Main, &strip(world), &mut chosen);
-    let bare = Rect::from_min_max(
-        Pos2::new(tabs.max.x + BESIDE_HANDLE, tabs.min.y),
-        Pos2::new(ui.max_rect().max.x - CROSS_ROOM, tabs.max.y),
-    );
-    if bare.is_positive() {
-        panel::window_handle(ui, world, frame, "Menu", bare);
-    }
-    if chosen != shown {
-        open_on(world, chosen);
-    }
-    let tab = tab_of(shown);
-    if let Some(sub) = tab.sub_tabs(world) {
-        let tabs: Vec<Tab<usize>> = sub
-            .labels
-            .iter()
-            .enumerate()
-            .map(|(index, label)| Tab::new(index, label.as_str()))
-            .collect();
-        let mut chosen = sub.chosen;
-        sheet::tabs(ui, TabSize::Sub, &tabs, &mut chosen);
-        if chosen != sub.chosen {
-            tab.choose_sub_tab(world, chosen);
-            InterfaceSound::UiPage.play(world);
+    let body = ui.max_rect();
+    ui.scope_builder(UiBuilder::new().max_rect(sheet::page(body)), |ui| {
+        let page = ui.max_rect();
+        let mut chosen = shown;
+        let strip_room = body.max.x - CROSS_ROOM - page.min.x;
+        let tabs = sheet::tabs(ui, TabSize::Main, &strip(world), &mut chosen, strip_room);
+        let bare = Rect::from_min_max(
+            Pos2::new(tabs.max.x + BESIDE_HANDLE, tabs.min.y),
+            Pos2::new(body.max.x - CROSS_ROOM, tabs.max.y),
+        );
+        if bare.is_positive() {
+            panel::window_handle(ui, world, frame, "Menu", bare);
         }
-    }
-    let room = ui.available_rect_before_wrap();
-    let foot = Rect::from_min_max(
-        Pos2::new(room.min.x, room.max.y - controls::HINT_LINE_HEIGHT),
-        Pos2::new(room.max.x - CURL_ROOM, room.max.y),
-    );
-    let panes = Rect::from_min_max(room.min, Pos2::new(room.max.x, foot.min.y - PAGE_GAP));
-    let squeezed = panes.width() < SMALLEST_PAGE.x || panes.height() < SMALLEST_PAGE.y;
-    ui.scope_builder(UiBuilder::new().max_rect(panes), |ui| {
-        ui.shrink_clip_rect(panes);
-        if !squeezed {
-            tab.show(ui, world);
-            return;
+        if chosen != shown {
+            open_on(world, chosen);
         }
-        let area = egui::ScrollArea::both()
-            .id_salt(("menu page", shown.title()))
-            .auto_shrink(false);
-        sheet::scroll(ui, area, |ui| {
-            let size = panes.size().max(SMALLEST_PAGE);
-            let (rect, _) = ui.allocate_exact_size(size, Sense::hover());
-            ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| tab.show(ui, world));
+        let tab = tab_of(shown);
+        if let Some(sub) = tab.sub_tabs(world) {
+            let tabs: Vec<Tab<usize>> = sub
+                .labels
+                .iter()
+                .enumerate()
+                .map(|(index, label)| Tab::new(index, label.as_str()))
+                .collect();
+            let mut chosen = sub.chosen;
+            sheet::tabs(ui, TabSize::Sub, &tabs, &mut chosen, page.width());
+            if chosen != sub.chosen {
+                tab.choose_sub_tab(world, chosen);
+                InterfaceSound::UiPage.play(world);
+            }
+        }
+        // A strip wider than the page widens the room after it.
+        let room = Rect::from_x_y_ranges(page.x_range(), ui.available_rect_before_wrap().y_range());
+        let foot = Rect::from_min_max(
+            Pos2::new(room.min.x, room.max.y - controls::HINT_LINE_HEIGHT),
+            Pos2::new(room.max.x.min(body.max.x - CURL_ROOM), room.max.y),
+        );
+        let panes = Rect::from_min_max(room.min, Pos2::new(room.max.x, foot.min.y - PAGE_GAP));
+        let squeezed = panes.width() < SMALLEST_PAGE.x || panes.height() < SMALLEST_PAGE.y;
+        if squeezed {
+            let area = egui::ScrollArea::both().id_salt(("menu page", shown.title()));
+            sheet::scroll_page(ui, panes, SMALLEST_PAGE, area, |ui| tab.show(ui, world));
+        } else {
+            ui.scope_builder(UiBuilder::new().max_rect(panes), |ui| {
+                ui.shrink_clip_rect(sheet::with_bar_lane(panes));
+                tab.show(ui, world);
+            });
+        }
+        ui.scope_builder(UiBuilder::new().max_rect(foot), |ui| {
+            hints(ui, world, tab);
         });
+        ui.allocate_rect(room, Sense::hover());
     });
-    ui.scope_builder(UiBuilder::new().max_rect(foot), |ui| {
-        hints(ui, world, tab);
-    });
-    ui.allocate_rect(room, Sense::hover());
 }
 
 fn strip(world: &mut World) -> Vec<Tab<MenuTabName>> {

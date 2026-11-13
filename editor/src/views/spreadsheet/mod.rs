@@ -111,7 +111,11 @@ impl SheetRows {
                 place("#folder", "folder", ColumnSource::Folder),
             ],
             SheetRows::Fixed { field, .. } => {
-                vec![place("#entry", singular(field), ColumnSource::Entry)]
+                vec![place(
+                    "#entry",
+                    &words::singular(field),
+                    ColumnSource::Entry,
+                )]
             }
         }
     }
@@ -298,7 +302,7 @@ fn columns_of(editor: &Editor, table: &str, rows: &[SpreadsheetRow]) -> Vec<Spre
             columns.push(SpreadsheetColumn {
                 id: name.clone(),
                 title: name.clone(),
-                sub: singular(&field).to_owned(),
+                sub: words::singular(&field),
                 numeric: is_numeric(root, schema),
                 cell: CellKind::of(table, &path),
                 source: ColumnSource::First(path),
@@ -314,7 +318,7 @@ fn columns_of(editor: &Editor, table: &str, rows: &[SpreadsheetRow]) -> Vec<Spre
         }
         let sub = match path.len() {
             1 => "row".to_owned(),
-            _ => singular(&path[path.len() - 2]).to_owned(),
+            _ => words::singular(&path[path.len() - 2]),
         };
         columns.push(SpreadsheetColumn {
             id: path.join("."),
@@ -334,7 +338,7 @@ fn columns_of(editor: &Editor, table: &str, rows: &[SpreadsheetRow]) -> Vec<Spre
             }
             let sub = match path.len() {
                 1 => variant.tag.clone(),
-                _ => singular(&path[path.len() - 2]).to_owned(),
+                _ => words::singular(&path[path.len() - 2]),
             };
             columns.push(SpreadsheetColumn {
                 id: format!("{}.{}", variant.tag, path.join(".")),
@@ -374,7 +378,7 @@ fn columns_of(editor: &Editor, table: &str, rows: &[SpreadsheetRow]) -> Vec<Spre
             columns.push(SpreadsheetColumn {
                 id: format!("{}.{map_name}.{entry}", variant.tag),
                 title: entry.clone(),
-                sub: singular(&map_name).to_owned(),
+                sub: words::singular(&map_name),
                 cell: CellKind::Form,
                 source: ColumnSource::Module {
                     tag: variant.tag.clone(),
@@ -390,10 +394,6 @@ fn columns_of(editor: &Editor, table: &str, rows: &[SpreadsheetRow]) -> Vec<Spre
         }
     }
     columns
-}
-
-fn singular(plural: &str) -> &str {
-    plural.trim_end_matches('s')
 }
 
 fn is_numeric(root: &Value, schema: &Value) -> bool {

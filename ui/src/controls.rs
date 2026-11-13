@@ -174,9 +174,9 @@ pub fn toggle(ui: &mut Ui, name: &str, on: &mut bool) -> Response {
     row
 }
 
-// As wide as the longest label a form holds, so the fields of every form on a page line up.
-const FORM_LABELS: f32 = 196.0;
-const FORM_SPACING: Vec2 = Vec2::new(16.0, 8.0);
+/// As wide as the longest label a form holds, so the fields of every form on a page line up.
+pub const FORM_LABELS: f32 = 196.0;
+pub const FORM_SPACING: Vec2 = Vec2::new(16.0, 8.0);
 
 pub fn combo(id_salt: impl egui::AsIdSalt) -> egui::ComboBox {
     egui::ComboBox::from_id_salt(id_salt)

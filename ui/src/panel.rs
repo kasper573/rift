@@ -226,7 +226,7 @@ pub fn corner_grip(ui: &mut Ui, id: Id, curl: Rect) -> Response {
 }
 
 /// A grip in a slip's `at` corner that resizes it, hatched to show where to take hold.
-pub fn grip(ui: &mut Ui, id: Id, slip: Rect, at: GripCorner) -> Response {
+pub fn grip(ui: &mut Ui, id: Id, name: &str, slip: Rect, at: GripCorner) -> Response {
     let size = GRIP;
     let (corner, cursor) = match at {
         GripCorner::BottomRight => (
@@ -245,7 +245,7 @@ pub fn grip(ui: &mut Ui, id: Id, slip: Rect, at: GripCorner) -> Response {
         .interact(corner, id.with("grip"), Sense::drag())
         .on_hover_cursor(cursor);
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(egui::WidgetType::ResizeHandle, ui.is_enabled(), "Resize")
+        egui::WidgetInfo::labeled(egui::WidgetType::ResizeHandle, ui.is_enabled(), name)
     });
     let color = if response.hovered() || response.dragged() {
         ink::INK
@@ -319,6 +319,7 @@ pub fn inspector<S>(ui: &mut Ui, state: &mut S, id: &str, body: impl FnOnce(&mut
             sheet::TabSize::Sub,
             &[sheet::Tab::new((), "Inspector")],
             &mut (),
+            ui.available_width(),
         );
         scrolled(ui, |ui| body(state, ui));
     });

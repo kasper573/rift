@@ -20,7 +20,7 @@ use ui::suggest::{self, Suggestion};
 use ui::{dusk, input};
 
 use super::TerminalLog;
-use crate::core::gui::{self, Tier};
+use crate::core::gui::{self, Band, Tier};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::systems::hud::{self, SizedPiece};
 use crate::systems::input::map::{self, InputAction, InputMap};
@@ -136,8 +136,13 @@ pub(super) fn draw(world: &mut World) {
     let rect = hud::sized_rect(world, &gui, &piece);
     let mut view = std::mem::take(&mut *world.resource_mut::<ChatView>());
     let typing = view.typing;
+    let order = if typing {
+        Band::Hud.order()
+    } else {
+        Order::Background
+    };
     let shown = egui::Area::new(Id::new(("hud piece", CHAT)))
-        .order(Order::Background)
+        .order(order)
         .fixed_pos(rect.min)
         .constrain(false)
         .fade_in(false)
@@ -159,7 +164,12 @@ pub(super) fn draw(world: &mut World) {
             field_row(ui, world, &mut view, row, &look);
             handles
         });
-    gui::stack(&gui, Tier::Mid, shown.response.layer_id);
+    // While it is typed in, chat lies over every window, however lately one was clicked.
+    if typing {
+        gui.move_to_top(shown.response.layer_id);
+    } else {
+        gui::stack(&gui, Tier::Mid, shown.response.layer_id);
+    }
     if let Some((mover, sizer)) = shown.inner {
         hud::grab_sized(world, &piece, rect, &mover, &sizer);
     }

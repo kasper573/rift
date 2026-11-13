@@ -40,7 +40,7 @@
       ]
     },
     "drop_item": {
-      "label": "Drop an item from your bag",
+      "label": "Drop an item from your inventory",
       "bindings": [
         {
           "type": "click",
@@ -114,6 +114,15 @@
         {
           "type": "key",
           "key": "KeyL"
+        }
+      ]
+    },
+    "open_map": {
+      "label": "Open the Map tab",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "KeyM"
         }
       ]
     },

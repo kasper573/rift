@@ -740,7 +740,7 @@ fn trade(
     let content = world.resource::<Content>().clone();
     let mut inventory = world
         .get_mut::<Inventory>(player)
-        .ok_or_else(|| "You have no bag".to_owned())?;
+        .ok_or_else(|| "You have no inventory".to_owned())?;
     inventory
         .exchange(&content, takes, gives)
         .map_err(|refusal| refusal.describe(&content))

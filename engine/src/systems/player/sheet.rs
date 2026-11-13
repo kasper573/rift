@@ -1,6 +1,6 @@
 use bevy::prelude::*;
 use ui::card::CardPane;
-use ui::egui::{self, Align, Layout, Pos2, Rect, Ui, UiBuilder};
+use ui::egui::{self, Align, Layout, Rect, Ui, UiBuilder};
 use ui::face::TextRole;
 use ui::sheet::Depth;
 use ui::{card, controls, face, float, ink, sheet, words};
@@ -42,24 +42,8 @@ impl MenuTab for CharacterMenuTab {
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
         let room = ui.available_rect_before_wrap();
-        let worn_room = Rect::from_min_max(
-            room.min,
-            Pos2::new(
-                room.min.x + equipment::widget::PANE_WIDTH + SCROLL_BAR,
-                room.max.y,
-            ),
-        );
-        let carried_room = Rect::from_min_max(
-            Pos2::new(worn_room.max.x + COLUMN_GAP, room.min.y),
-            Pos2::new(
-                worn_room.max.x + COLUMN_GAP + pane_width(INVENTORY_COLUMNS),
-                room.max.y,
-            ),
-        );
-        let card_room = Rect::from_min_max(
-            Pos2::new(carried_room.max.x + COLUMN_GAP, room.min.y),
-            room.max,
-        );
+        let widths = [equipment::widget::PANE_WIDTH, pane_width(INVENTORY_COLUMNS)];
+        let ([worn_room, carried_room], card_room) = sheet::columns(room, widths);
         let was = world.get_resource_or_init::<CharacterSelection>().0.clone();
         let slot_was = match was {
             Some(Selected::Slot { slot, .. }) => Some(slot),
@@ -108,10 +92,8 @@ impl MenuTab for CharacterMenuTab {
     }
 }
 
-const COLUMN_GAP: f32 = 16.0;
 const SECTION_GAP: f32 = 10.0;
 const INVENTORY_COLUMNS: u32 = 6;
-const SCROLL_BAR: f32 = 14.0;
 
 #[derive(Resource, Default)]
 struct CharacterSelection(Option<Selected>);
@@ -132,12 +114,8 @@ enum Press {
 }
 
 fn column(ui: &mut Ui, id: &str, rect: Rect, add: impl FnOnce(&mut Ui)) {
-    ui.scope_builder(UiBuilder::new().max_rect(rect), |ui| {
-        let area = egui::ScrollArea::vertical()
-            .id_salt(("character", id))
-            .auto_shrink(false);
-        sheet::scroll(ui, area, add);
-    });
+    let area = egui::ScrollArea::vertical().id_salt(("character", id));
+    sheet::scroll_pane(ui, rect, area, add);
 }
 
 fn bag_stack(world: &World, slot: u32) -> Option<ItemStack> {

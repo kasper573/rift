@@ -35,7 +35,21 @@ pub fn tooltip(response: &Response, add: impl FnOnce(&mut Ui)) {
     });
     let follows_another = egui::Tooltip::seconds_since_last_tooltip(gui) < grace;
     if follows_another || now - since >= f64::from(delay) {
-        egui::Tooltip::for_widget(response).show(add);
+        let sheet = egui::Tooltip::next_tooltip_id(gui, response.id);
+        let before = gui.memory(|memory| memory.area_rect(sheet));
+        let shown = egui::Tooltip::for_widget(response).show(|ui| {
+            // egui lays a tooltip out within the size it opened at, which would wrap whatever it
+            // comes to say while it stays open.
+            let frame = egui::Frame::popup(ui.style()).total_margin().sum().x;
+            ui.set_max_width(ui.spacing().tooltip_width - frame);
+            add(ui);
+        });
+        let resized = before
+            .zip(shown)
+            .is_some_and(|(before, shown)| before.size() != shown.response.rect.size());
+        if resized {
+            gui.request_discard("a tooltip changed size");
+        }
     }
 }
 

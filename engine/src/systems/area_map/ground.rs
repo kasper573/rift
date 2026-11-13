@@ -14,7 +14,7 @@ use crate::core::units::Meters;
 use crate::systems::area::{self, Area, AreaId};
 
 #[derive(Resource, Default)]
-pub(super) struct MinimapGround {
+pub(super) struct MapGround {
     area: Option<AreaId>,
     tiles: HashMap<TileAt, TilePicture>,
     making: Option<Making>,
@@ -26,14 +26,14 @@ pub(super) struct TilePicture {
     of: Drawn,
 }
 
-impl MinimapGround {
+impl MapGround {
     // A map never shows the ground of the place just left.
     pub fn pictures(&self, area: AreaId) -> impl Iterator<Item = &TilePicture> {
         self.tiles.values().filter(move |_| self.area == Some(area))
     }
 }
 
-pub(super) fn keep(world: &mut World, area_id: AreaId, at: Pos<Meters>, reach: Meters) {
+pub(super) fn keep(world: &mut World, area_id: AreaId, shown: &[Rect<Meters>]) {
     let content = world.resource::<Content>().clone();
     let Some(area) = area::loaded(&content, area_id).cloned() else {
         return;
@@ -41,9 +41,9 @@ pub(super) fn keep(world: &mut World, area_id: AreaId, at: Pos<Meters>, reach: M
     let Some(gui) = gui::context(world) else {
         return;
     };
-    let mut ground = world.resource_mut::<MinimapGround>();
+    let mut ground = world.resource_mut::<MapGround>();
     if ground.area != Some(area_id) {
-        *ground = MinimapGround {
+        *ground = MapGround {
             area: Some(area_id),
             ..default()
         };
@@ -68,14 +68,20 @@ pub(super) fn keep(world: &mut World, area_id: AreaId, at: Pos<Meters>, reach: M
         );
     }
     // A picture is a quarter of a megabyte, and an area may hold thousands of tiles.
-    let kept = Rect::new(at, default()).inflate(reach.0 + TILE_SIDE.0, reach.0 + TILE_SIDE.0);
-    ground
-        .tiles
-        .retain(|_, picture| picture.rect.intersects(&kept));
+    ground.tiles.retain(|_, picture| {
+        shown.iter().any(|shown| {
+            picture
+                .rect
+                .intersects(&shown.inflate(TILE_SIDE.0, TILE_SIDE.0))
+        })
+    });
     if ground.making.is_some() {
         return;
     }
-    let stale = area.tiles_around(at, reach).find(|tile| {
+    let tiles = shown
+        .iter()
+        .flat_map(|shown| area.ground_size().tiles_within(*shown));
+    let stale = tiles.into_iter().find(|tile| {
         ground
             .tiles
             .get(tile)

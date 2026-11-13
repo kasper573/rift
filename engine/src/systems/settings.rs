@@ -17,17 +17,19 @@ use crate::core::render::video::{self, VideoPreferences};
 use crate::core::render::{CameraPreferences, CameraRig};
 use crate::core::text::{LettersPerSecond, Typing};
 use crate::core::units::{Percent, Seconds, WindowPx};
+use crate::systems::area_map::MapReachStep;
 use crate::systems::hud;
 use crate::systems::hud::menu::{MenuTab, MenuTabName};
 use crate::systems::input::map::{InputAction, KeyGesture};
 use crate::systems::interface::InterfaceIcon;
-use crate::systems::minimap::MinimapReachStep;
 use crate::systems::skill::HotbarSlot;
 
 const SLIDER_WIDTH: f32 = 120.0;
-const COLUMN_GAP: f32 = 16.0;
 const ROW_GAP: f32 = 8.0;
 const SECTION_GAP: f32 = 8.0;
+const VALUE_ROOM: f32 = 74.0;
+const COLUMN: f32 =
+    controls::FORM_LABELS + controls::FORM_SPACING.x + SLIDER_WIDTH + ROW_GAP + VALUE_ROOM;
 
 pub(crate) fn plugin(app: &mut App) {
     let settings = UserSettings::load(app.world().resource::<Profile>());
@@ -126,7 +128,8 @@ impl MenuTab for SettingsMenuTab {
         let turn_ease = world
             .get_resource::<CameraRig>()
             .map(|rig| rig.framing().turn_ease);
-        sheet::scroll(ui, egui::ScrollArea::vertical().auto_shrink(false), |ui| {
+        let pane = ui.available_rect_before_wrap();
+        sheet::scroll_pane(ui, pane, egui::ScrollArea::vertical(), |ui| {
             show_settings(
                 ui,
                 &mut world.resource_mut::<UserSettings>(),
@@ -144,46 +147,66 @@ fn show_settings(
     turn_ease: Option<Seconds>,
 ) {
     ui.spacing_mut().slider_width = SLIDER_WIDTH;
-    ui.spacing_mut().item_spacing.x = COLUMN_GAP;
+    if ui.available_width() < 2.0 * COLUMN + sheet::GUTTER {
+        ui.spacing_mut().item_spacing.x = ROW_GAP;
+        show_first_column(ui, settings, typing, turn_ease);
+        ui.add_space(SECTION_GAP);
+        show_second_column(ui, settings);
+        return;
+    }
+    ui.spacing_mut().item_spacing.x = sheet::GUTTER;
     ui.columns(2, |columns| {
         let [left, right] = columns else {
             return;
         };
         left.spacing_mut().item_spacing.x = ROW_GAP;
         right.spacing_mut().item_spacing.x = ROW_GAP;
-        sheet::section(left, "Interface");
-        show_interface(left, settings, typing);
-        left.add_space(SECTION_GAP);
-        sheet::section(left, "HUD");
-        show_hud(left, settings);
-        left.add_space(SECTION_GAP);
-        sheet::section(left, "Camera");
-        controls::form(left, ("settings", "camera"), |ui| {
-            if let Some(turn_ease) = turn_ease {
-                let label = ui.label("Camera smoothing");
-                smoothing_slider(ui, settings, turn_ease, label.id);
-                ui.end_row();
-            }
-        });
-        sheet::section(right, "Chat");
-        show_chat(right, settings);
-        right.add_space(SECTION_GAP);
-        sheet::section(right, "Video");
-        show_video(right, settings);
-        right.add_space(SECTION_GAP);
-        sheet::section(right, "Audio");
-        controls::form(right, ("settings", "audio"), |ui| {
-            for fader in iter::once(AudioFader::Master).chain(
-                AudioCategory::VARIANTS
-                    .iter()
-                    .copied()
-                    .map(AudioFader::Category),
-            ) {
-                let label = ui.label(fader_name(fader));
-                fader_slider(ui, settings, fader, label.id);
-                ui.end_row();
-            }
-        });
+        show_first_column(left, settings, typing, turn_ease);
+        show_second_column(right, settings);
+    });
+}
+
+fn show_first_column(
+    ui: &mut Ui,
+    settings: &mut Mut<UserSettings>,
+    typing: Option<Typing>,
+    turn_ease: Option<Seconds>,
+) {
+    sheet::section(ui, "Interface");
+    show_interface(ui, settings, typing);
+    ui.add_space(SECTION_GAP);
+    sheet::section(ui, "HUD");
+    show_hud(ui, settings);
+    ui.add_space(SECTION_GAP);
+    sheet::section(ui, "Camera");
+    controls::form(ui, ("settings", "camera"), |ui| {
+        if let Some(turn_ease) = turn_ease {
+            let label = ui.label("Camera smoothing");
+            smoothing_slider(ui, settings, turn_ease, label.id);
+            ui.end_row();
+        }
+    });
+}
+
+fn show_second_column(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
+    sheet::section(ui, "Chat");
+    show_chat(ui, settings);
+    ui.add_space(SECTION_GAP);
+    sheet::section(ui, "Video");
+    show_video(ui, settings);
+    ui.add_space(SECTION_GAP);
+    sheet::section(ui, "Audio");
+    controls::form(ui, ("settings", "audio"), |ui| {
+        for fader in iter::once(AudioFader::Master).chain(
+            AudioCategory::VARIANTS
+                .iter()
+                .copied()
+                .map(AudioFader::Category),
+        ) {
+            let label = ui.label(fader_name(fader));
+            fader_slider(ui, settings, fader, label.id);
+            ui.end_row();
+        }
     });
 }
 
@@ -321,7 +344,7 @@ fn text_speed_slider(
         {
             settings.text.letters_per_second = Some(LettersPerSecond(speed.round()));
         }
-        ui.label(theme::faint(format!("{:.0} letters/s", speed.round())));
+        slider_says(ui, format!("{:.0} letters/s", speed.round()));
     });
 }
 
@@ -339,7 +362,7 @@ fn smoothing_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, game: Seconds
         } else {
             "off".to_owned()
         };
-        ui.label(theme::faint(shown));
+        slider_says(ui, shown);
     });
 }
 
@@ -352,7 +375,7 @@ fn chat_background_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: 
         {
             settings.ui.chat.background = Some(Percent(background.round()));
         }
-        ui.label(theme::faint(format!("{:.0}%", background.round())));
+        slider_says(ui, format!("{:.0}%", background.round()));
     });
 }
 
@@ -370,7 +393,7 @@ fn tracker_backing_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: 
         } else {
             "None".to_owned()
         };
-        ui.label(theme::faint(shown));
+        slider_says(ui, shown);
     });
 }
 
@@ -384,7 +407,7 @@ fn chat_text_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: egui::
         {
             settings.ui.chat.text_size = Some(WindowPx(size.round()));
         }
-        ui.label(theme::faint(format!("{:.0} px", size.round())));
+        slider_says(ui, format!("{:.0} px", size.round()));
     });
 }
 
@@ -398,7 +421,17 @@ fn fader_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, fader: AudioFader
         {
             settings.set_volume(fader, AudioVolume((volume * 100.0).round() / 100.0));
         }
-        ui.label(theme::faint(format!("{:.0}%", volume * 100.0)));
+        slider_says(ui, format!("{:.0}%", volume * 100.0));
+    });
+}
+
+/// In room of its own, so a row is as wide whatever the slider says.
+fn slider_says(ui: &mut Ui, set_to: String) {
+    let room = egui::Vec2::new(VALUE_ROOM, ui.spacing().interact_size.y);
+    let row = egui::Layout::left_to_right(egui::Align::Center);
+    ui.allocate_ui_with_layout(room, row, |ui| {
+        ui.set_min_width(VALUE_ROOM);
+        ui.label(theme::faint(set_to));
     });
 }
 
@@ -505,11 +538,11 @@ impl UserSettings {
         self.ui.minimap.turns_with_camera = !self.ui.minimap.turns_with_camera;
     }
 
-    pub(crate) fn minimap_reach(&self) -> Option<MinimapReachStep> {
+    pub(crate) fn minimap_reach(&self) -> Option<MapReachStep> {
         self.ui.minimap.reach
     }
 
-    pub(crate) fn set_minimap_reach(&mut self, step: MinimapReachStep) {
+    pub(crate) fn set_minimap_reach(&mut self, step: MapReachStep) {
         self.ui.minimap.reach = Some(step);
     }
 
@@ -624,7 +657,7 @@ struct MinimapSettings {
     turns_with_camera: bool,
     /// None keeps the reach the game's sight gives.
     #[serde(default)]
-    reach: Option<MinimapReachStep>,
+    reach: Option<MapReachStep>,
 }
 
 #[derive(Serialize, Deserialize, Default)]

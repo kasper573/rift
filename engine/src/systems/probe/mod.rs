@@ -1948,6 +1948,7 @@ pub fn interface_elements(
             let text = (role != accesskit::Role::Image)
                 .then(|| {
                     node.label()
+                        .filter(|label| !label.is_empty())
                         .or(node.value())
                         .or_else(|| {
                             node.labelled_by()

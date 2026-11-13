@@ -858,7 +858,7 @@ pub fn bag_slot(world: &World, actor: Entity, item: ItemId) -> Result<usize, Str
         .and_then(|inventory| inventory.slot_of(item))
         .ok_or_else(|| {
             format!(
-                "{} is not in your bag",
+                "{} is not in your inventory",
                 item.get(world.resource::<Content>()).name
             )
         })

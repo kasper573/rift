@@ -43,6 +43,7 @@ pub enum InputAction {
     OpenCharacter,
     OpenSkills,
     OpenQuests,
+    OpenMap,
     OpenHistory,
     OpenSettings,
     Dismiss,

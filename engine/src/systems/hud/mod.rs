@@ -5,7 +5,7 @@ mod panel;
 pub(crate) use card::{
     Pinned, draw_pinned, forget_pinned, pin, pinned, pinned_rect, raise_pinned, unpin,
 };
-pub(crate) use panel::{SizedPiece, grab_sized, sheet_pose, sized_rect, widget};
+pub(crate) use panel::{SizedPiece, grab_sized, grab_spot, sheet_pose, sized_rect, widget};
 
 use std::collections::HashSet;
 use ui::dialog;
@@ -23,12 +23,13 @@ use crate::core::content::Content;
 use crate::core::content::ImageRef;
 use crate::core::gui::{self, Band, ImageSource, WidgetRects};
 use crate::core::text::{self, StyledLine, TextLook};
+use crate::systems::area_map::minimap;
 use crate::systems::input::map::{InputAction, InputMap};
 use crate::systems::item::Inventory;
 use crate::systems::player::{self, session};
 use crate::systems::screen::ClientScreen;
 use crate::systems::skill::{HotbarEntry, HotbarSlot, SkillId};
-use crate::systems::{equipment, item, minimap, quest, skill};
+use crate::systems::{equipment, item, quest, skill};
 
 pub(crate) const TOOLTIP_WIDTH: f32 = 260.0;
 pub(crate) const MARGIN: f32 = 8.0;
