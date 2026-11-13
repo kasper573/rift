@@ -51,7 +51,7 @@ pub struct RecipeBookDef {
     /// of its own: with none, nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tool: Option<ToolInHand>,
-    /// In the order a Recipes window lists them.
+    /// In the order the crafting window lists them.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub recipes: Vec<Recipe>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -340,7 +340,7 @@ pub fn matches<'a>(recipes: &[Craftable<'a>], offer: &[ItemStack]) -> Vec<(Craft
 
 /// Opens a crafting prompt until it closes: an item prompt whose slots are matched against the
 /// recipes of `from`, crafting what they make as often as its player likes, each craft in the time
-/// its recipe takes. Its Recipes window lists every recipe it makes.
+/// its recipe takes. Its window lists every recipe it makes.
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
 #[schemars(transform = SchemaMark::System.with("crafting"))]
 pub struct OpenCrafting {

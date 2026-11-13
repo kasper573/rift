@@ -3,7 +3,7 @@
 
 use std::hash::Hash;
 
-use egui::{Align, Id, Layout, Painter, Pos2, Rect, Response, Sense, Stroke, Ui, UiBuilder, Vec2};
+use egui::{Align, Id, Layout, Pos2, Rect, Response, Sense, Stroke, Ui, UiBuilder, Vec2};
 
 use crate::face;
 use crate::face::TextRole;
@@ -44,18 +44,6 @@ pub fn titled_tile<R>(
         ui.add_space(4.0);
         add(ui)
     })
-}
-
-/// A card's look painted on a rect laid out by hand.
-pub fn paint_tile(painter: &Painter, rect: Rect, selected: bool) {
-    let (fill, border) = card_ink(selected);
-    painter.rect(
-        rect,
-        RADIUS,
-        fill,
-        Stroke::new(1.0, border),
-        egui::StrokeKind::Inside,
-    );
 }
 
 /// A card's heading: its title, a subtitle at the right and a menu behind its more mark.

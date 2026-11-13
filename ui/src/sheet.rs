@@ -1,6 +1,6 @@
 use std::sync::OnceLock;
 
-use egui::epaint::{Mesh, Shadow, Vertex, WHITE_UV};
+use egui::epaint::{Mesh, Shadow, Vertex};
 use egui::layers::ShapeIdx;
 use egui::{
     Align2, Color32, ColorImage, CornerRadius, Id, InnerResponse, Margin, Painter, Pos2, Rect,
@@ -150,14 +150,6 @@ pub fn vellum_shape(ctx: &egui::Context, rect: Rect) -> Shape {
     Shape::mesh(vignette(rect, grain.id(), |offset| {
         (offset / tile).to_pos2()
     }))
-}
-
-/// Vellum without its grain, for a box too small to show it: the grain's texture would cost the box
-/// a draw call of its own.
-pub fn radial(painter: &Painter, rect: Rect) {
-    painter.add(Shape::mesh(vignette(rect, TextureId::default(), |_| {
-        WHITE_UV
-    })));
 }
 
 pub fn note<R>(ui: &mut Ui, padding: Margin, add: impl FnOnce(&mut Ui) -> R) -> InnerResponse<R> {

@@ -26,7 +26,7 @@ use ui::words::counted;
 
 pub(crate) const BASIC_ATTACK_MARK: &str = "basic attack";
 
-const WINDOW_KEY: &str = "Skill";
+pub(crate) const WINDOW_KEY: &str = "Skill";
 
 /// One skill as the player sees it: the row at the rank they hold, with the node that unlocks it
 /// when it sits in their tree, and the worn item that grants it when that is how they know it.

@@ -17,13 +17,17 @@ use crate::core::render::video::{self, VideoPreferences};
 use crate::core::render::{CameraPreferences, CameraRig};
 use crate::core::text::{LettersPerSecond, Typing};
 use crate::core::units::{Percent, Seconds, WindowPx};
+use crate::systems::hud;
 use crate::systems::hud::menu::{MenuTab, MenuTabName};
 use crate::systems::input::map::{InputAction, KeyGesture};
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::minimap::MinimapReachStep;
 use crate::systems::skill::HotbarSlot;
 
-const SLIDER_WIDTH: f32 = 150.0;
+const SLIDER_WIDTH: f32 = 120.0;
+const COLUMN_GAP: f32 = 16.0;
+const ROW_GAP: f32 = 8.0;
+const SECTION_GAP: f32 = 8.0;
 
 pub(crate) fn plugin(app: &mut App) {
     let settings = UserSettings::load(app.world().resource::<Profile>());
@@ -140,55 +144,85 @@ fn show_settings(
     turn_ease: Option<Seconds>,
 ) {
     ui.spacing_mut().slider_width = SLIDER_WIDTH;
-    sheet::section(ui, "Interface");
-    controls::form(ui, ("settings", "menu"), |ui| {
+    ui.spacing_mut().item_spacing.x = COLUMN_GAP;
+    ui.columns(2, |columns| {
+        let [left, right] = columns else {
+            return;
+        };
+        left.spacing_mut().item_spacing.x = ROW_GAP;
+        right.spacing_mut().item_spacing.x = ROW_GAP;
+        sheet::section(left, "Interface");
+        show_interface(left, settings, typing);
+        left.add_space(SECTION_GAP);
+        sheet::section(left, "HUD");
+        show_hud(left, settings);
+        left.add_space(SECTION_GAP);
+        sheet::section(left, "Camera");
+        controls::form(left, ("settings", "camera"), |ui| {
+            if let Some(turn_ease) = turn_ease {
+                let label = ui.label("Camera smoothing");
+                smoothing_slider(ui, settings, turn_ease, label.id);
+                ui.end_row();
+            }
+        });
+        sheet::section(right, "Chat");
+        show_chat(right, settings);
+        right.add_space(SECTION_GAP);
+        sheet::section(right, "Video");
+        show_video(right, settings);
+        right.add_space(SECTION_GAP);
+        sheet::section(right, "Audio");
+        controls::form(right, ("settings", "audio"), |ui| {
+            for fader in iter::once(AudioFader::Master).chain(
+                AudioCategory::VARIANTS
+                    .iter()
+                    .copied()
+                    .map(AudioFader::Category),
+            ) {
+                let label = ui.label(fader_name(fader));
+                fader_slider(ui, settings, fader, label.id);
+                ui.end_row();
+            }
+        });
+    });
+}
+
+fn show_interface(ui: &mut Ui, settings: &mut Mut<UserSettings>, typing: Option<Typing>) {
+    controls::form(ui, ("settings", "interface"), |ui| {
         let label = ui.label("Menu opens on");
         menu_tab_picker(ui, settings, label.id);
         ui.end_row();
-    });
-    ui.add_space(4.0);
-    let mut snapping = settings.snapping_enabled();
-    if ui.checkbox(&mut snapping, "UI snapping").changed() {
-        settings.toggle_snapping();
-    }
-    let mut turns = settings.minimap_turns();
-    if ui
-        .checkbox(&mut turns, "Minimap turns with the camera")
-        .on_hover_text("Up on the map is where the camera looks, and north rides its rim")
-        .changed()
-    {
-        settings.toggle_minimap_turning();
-    }
-    let mut frame_rate = settings.frame_rate_shown();
-    if ui.checkbox(&mut frame_rate, "Show FPS").changed() {
-        settings.toggle_frame_rate();
-    }
-    let mut quick_cast = settings.quick_cast();
-    if ui
-        .checkbox(&mut quick_cast, "Quick cast skills")
-        .on_hover_text("A skill is cast the moment it is used, at what the pointer rests on")
-        .changed()
-    {
-        settings.toggle_quick_cast();
-    }
-    let mut confirms = settings.confirms_risky_crafts();
-    if ui
-        .checkbox(&mut confirms, "Confirm crafts that may fail")
-        .on_hover_text("A craft that may fail asks before it spends its materials")
-        .changed()
-    {
-        settings.toggle_risky_craft_confirm();
-    }
-    ui.add_space(4.0);
-    controls::form(ui, ("settings", "interface"), |ui| {
+        let mut snapping = settings.snapping_enabled();
+        if controls::toggle(ui, "UI snapping", &mut snapping).changed() {
+            settings.toggle_snapping();
+        }
+        ui.end_row();
+        let mut frame_rate = settings.frame_rate_shown();
+        if controls::toggle(ui, "Show FPS", &mut frame_rate).changed() {
+            settings.toggle_frame_rate();
+        }
+        ui.end_row();
+        let mut quick_cast = settings.quick_cast();
+        if controls::toggle(ui, "Quick cast skills", &mut quick_cast)
+            .on_hover_text("A skill is cast the moment it is used, at what the pointer rests on")
+            .changed()
+        {
+            settings.toggle_quick_cast();
+        }
+        ui.end_row();
+        let mut confirms = settings.confirms_risky_crafts();
+        if controls::toggle(ui, "Confirm crafts that may fail", &mut confirms)
+            .on_hover_text("A craft that may fail asks before it spends its materials")
+            .changed()
+        {
+            settings.toggle_risky_craft_confirm();
+        }
+        ui.end_row();
         if let Some(typing) = typing {
             let label = ui.label("Text speed");
             text_speed_slider(ui, settings, typing, label.id);
             ui.end_row();
         }
-        let label = ui.label("Quest tracker backing");
-        tracker_backing_slider(ui, settings, label.id);
-        ui.end_row();
         let label = ui.label("Area transition");
         let current = settings.screen_transition();
         if let Some(transition) = controls::variant_picker(ui, "area transition", current, label.id)
@@ -197,50 +231,49 @@ fn show_settings(
         }
         ui.end_row();
     });
-    ui.add_space(8.0);
-    sheet::section(ui, "Camera");
-    controls::form(ui, ("settings", "camera"), |ui| {
-        if let Some(turn_ease) = turn_ease {
-            let label = ui.label("Camera smoothing");
-            smoothing_slider(ui, settings, turn_ease, label.id);
-            ui.end_row();
+}
+
+fn show_hud(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
+    controls::form(ui, ("settings", "hud"), |ui| {
+        let mut turns = settings.minimap_turns();
+        if controls::toggle(ui, "Minimap turns with the camera", &mut turns)
+            .on_hover_text("Up on the map is where the camera looks, and north rides its rim")
+            .changed()
+        {
+            settings.toggle_minimap_turning();
         }
+        ui.end_row();
+        let label = ui.label("Quest tracker backing");
+        tracker_backing_slider(ui, settings, label.id);
+        ui.end_row();
+        let label = ui.label("HUD places");
+        if controls::button(ui, "Reset")
+            .labelled_by(label.id)
+            .on_hover_text("Every piece of the HUD goes back to where it started, chat too")
+            .clicked()
+        {
+            settings.reset_hud();
+        }
+        ui.end_row();
     });
-    ui.add_space(8.0);
-    sheet::section(ui, "Chat");
-    let mut chat = settings.chat_shown();
-    if ui
-        .checkbox(&mut chat, "Show chat")
-        .on_hover_text("Off, chat leaves the screen and its key does nothing")
-        .changed()
-    {
-        settings.toggle_chat();
-    }
-    ui.add_space(4.0);
+}
+
+fn show_chat(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
     controls::form(ui, ("settings", "chat"), |ui| {
+        let mut chat = settings.chat_shown();
+        if controls::toggle(ui, "Show chat", &mut chat)
+            .on_hover_text("Off, chat leaves the screen and its key does nothing")
+            .changed()
+        {
+            settings.toggle_chat();
+        }
+        ui.end_row();
         let label = ui.label("Chat background");
         chat_background_slider(ui, settings, label.id);
         ui.end_row();
         let label = ui.label("Chat text size");
         chat_text_slider(ui, settings, label.id);
         ui.end_row();
-    });
-    ui.add_space(8.0);
-    sheet::section(ui, "Video");
-    show_video(ui, settings);
-    ui.add_space(8.0);
-    sheet::section(ui, "Audio");
-    controls::form(ui, ("settings", "audio"), |ui| {
-        for fader in iter::once(AudioFader::Master).chain(
-            AudioCategory::VARIANTS
-                .iter()
-                .copied()
-                .map(AudioFader::Category),
-        ) {
-            let label = ui.label(fader_name(fader));
-            fader_slider(ui, settings, fader, label.id);
-            ui.end_row();
-        }
     });
 }
 
@@ -330,9 +363,14 @@ fn tracker_backing_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: 
             .labelled_by(label)
             .changed()
         {
-            settings.ui.tracker_backing = Some(Percent(backing.round()));
+            settings.ui.tracker_backing = Percent(backing.round());
         }
-        ui.label(theme::faint(format!("{:.0}%", backing.round())));
+        let shown = if backing > 0.0 {
+            format!("{:.0}%", backing.round())
+        } else {
+            "None".to_owned()
+        };
+        ui.label(theme::faint(shown));
     });
 }
 
@@ -435,6 +473,12 @@ impl UserSettings {
         self.ui.widgets.insert(id.to_owned(), pos);
     }
 
+    pub(crate) fn reset_hud(&mut self) {
+        self.ui.widgets.retain(|name, _| !hud::is_piece(name));
+        self.ui.chat.placement = None;
+        self.ui.player_bar.shape = None;
+    }
+
     pub(crate) fn placement(&self, of: Placed) -> Option<Placement> {
         match of {
             Placed::Menu => self.ui.menu.placement,
@@ -470,7 +514,7 @@ impl UserSettings {
     }
 
     pub(crate) fn tracker_backing(&self) -> Percent {
-        self.ui.tracker_backing.unwrap_or(Percent(0.0))
+        self.ui.tracker_backing
     }
 
     pub(crate) fn chat_shown(&self) -> bool {
@@ -520,6 +564,7 @@ impl UserSettings {
             .and_then(|json| serde_json::from_str(&json).ok())
             .unwrap_or_default();
         settings.ui.snap = settings.ui.snap.filter(|snap| snap.0 > 0.0);
+        settings.ui.widgets.retain(|name, _| hud::keeps_place(name));
         settings
     }
 
@@ -546,9 +591,8 @@ struct UiSettings {
     chat: ChatSettings,
     #[serde(default)]
     minimap: MinimapSettings,
-    /// None leaves the tracker's text with nothing behind it.
     #[serde(default)]
-    tracker_backing: Option<Percent>,
+    tracker_backing: Percent,
 }
 
 impl Default for UiSettings {
@@ -560,7 +604,7 @@ impl Default for UiSettings {
             player_bar: PlayerBarSettings::default(),
             chat: ChatSettings::default(),
             minimap: MinimapSettings::default(),
-            tracker_backing: None,
+            tracker_backing: Percent::default(),
         }
     }
 }

@@ -24,7 +24,7 @@ use crate::systems::skill::{self, SkillDef, SkillId};
 use crate::systems::stat::StatKind;
 use crate::systems::status;
 
-const WINDOW_KEY: &str = "Item";
+pub(crate) const WINDOW_KEY: &str = "Item";
 
 pub struct ItemCardPlugin;
 

@@ -156,11 +156,26 @@ pub fn variant_picker<T: strum::VariantArray + AsRef<str> + Copy + PartialEq>(
 pub fn form(ui: &mut Ui, id_salt: impl egui::AsIdSalt, add: impl FnOnce(&mut Ui)) {
     egui::Grid::new(id_salt)
         .num_columns(2)
-        .min_col_width(crate::form::KEY_WIDTH)
+        .min_col_width(FORM_LABELS)
         .spacing(FORM_SPACING)
         .show(ui, add);
 }
 
+pub fn toggle(ui: &mut Ui, name: &str, on: &mut bool) -> Response {
+    let label = ui.add(egui::Label::new(name).sense(Sense::click()));
+    let tick = ui
+        .add(egui::Checkbox::without_text(on))
+        .labelled_by(label.id);
+    let mut row = tick.union(label.clone());
+    if label.clicked() {
+        *on = !*on;
+        row.mark_changed();
+    }
+    row
+}
+
+// As wide as the longest label a form holds, so the fields of every form on a page line up.
+const FORM_LABELS: f32 = 196.0;
 const FORM_SPACING: Vec2 = Vec2::new(16.0, 8.0);
 
 pub fn combo(id_salt: impl egui::AsIdSalt) -> egui::ComboBox {

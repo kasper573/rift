@@ -471,7 +471,7 @@ impl Cooldowns {
 #[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
 pub struct Hotbar(pub Vec<HotbarEntry>);
 
-/// A place on the hotbar, counted from zero; the player sees it numbered from one.
+/// A place on the bar, counted from zero; the player sees it numbered from one.
 #[derive(
     JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash,
 )]
@@ -662,7 +662,7 @@ pub fn unusable(world: &World, actor: Entity, skill: SkillId) -> Option<String> 
     }
 }
 
-/// Why a passive skill takes no hotbar slot.
+/// Why a passive skill takes no bar slot.
 pub fn unslotted(def: &SkillDef) -> String {
     format!("{} is passive: it holds without a slot", def.name)
 }

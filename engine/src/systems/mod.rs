@@ -240,7 +240,7 @@ pub struct GameSettings {
 pub struct SlotCounts {
     /// Stacks of items in a bag; the most rewards a quest may hand out at once.
     pub bag: u32,
-    /// Slots of a hotbar, however a player lays them out.
+    /// Slots of the player bar, however a player lays them out.
     pub hotbar: u32,
     /// Quests under way at once.
     pub quest_log: u32,

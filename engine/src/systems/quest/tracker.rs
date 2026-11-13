@@ -29,6 +29,8 @@ const ENTRY_GAP: f32 = 6.0;
 const PLATE_PADDING: f32 = 8.0;
 const MARK_GAP: f32 = 4.0;
 
+pub const QUEST_TRACKER: &str = "quest_tracker";
+
 pub struct QuestTrackerPlugin;
 
 impl Plugin for QuestTrackerPlugin {

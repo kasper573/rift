@@ -38,6 +38,7 @@ mod safe_zone;
 mod scenery;
 mod scenery_chunks;
 mod scenery_picture;
+mod settings;
 mod shop;
 mod sight;
 mod skills;

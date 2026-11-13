@@ -153,15 +153,9 @@ pub enum Quality {
 /// What the preset picker shows when the parts stand at no preset.
 pub const CUSTOM_QUALITY: &str = "Custom";
 
-/// What the settings' toggles read, as the interface shows them and a bench finds them by.
-pub const FULLSCREEN_TOGGLE: &str = "Fullscreen";
-pub const VSYNC_TOGGLE: &str = "VSync";
-pub const BLOOM_TOGGLE: &str = "Bloom";
-pub const LIGHT_SHAFTS_TOGGLE: &str = "Light shafts";
-
 /// The controls the player picks `video` with: its preset first, then every part on its own.
 pub fn controls(ui: &mut Ui, video: &mut VideoPreferences) {
-    controls::form(ui, "quality", |ui| {
+    controls::form(ui, "video", |ui| {
         let label = ui.label("Quality");
         let current = video.quality();
         let mut picked = current;
@@ -182,18 +176,18 @@ pub fn controls(ui: &mut Ui, video: &mut VideoPreferences) {
             *video = video.at(quality);
         }
         ui.end_row();
-    });
-    ui.add_space(4.0);
-    ui.checkbox(&mut video.fullscreen, FULLSCREEN_TOGGLE);
-    ui.checkbox(&mut video.vsync, VSYNC_TOGGLE).on_hover_text(
-        "Each frame waits for the display's refresh: less heat and power, a little more delay",
-    );
-    ui.checkbox(&mut video.bloom, BLOOM_TOGGLE)
-        .on_hover_text("What the light catches glows over its rim");
-    ui.checkbox(&mut video.light_shafts, LIGHT_SHAFTS_TOGGLE)
-        .on_hover_text("The sun's rays show in the air");
-    ui.add_space(4.0);
-    controls::form(ui, "video", |ui| {
+        controls::toggle(ui, "Fullscreen", &mut video.fullscreen);
+        ui.end_row();
+        controls::toggle(ui, "VSync", &mut video.vsync).on_hover_text(
+            "Each frame waits for the display's refresh: less heat and power, a little more delay",
+        );
+        ui.end_row();
+        controls::toggle(ui, "Bloom", &mut video.bloom)
+            .on_hover_text("What the light catches glows over its rim");
+        ui.end_row();
+        controls::toggle(ui, "Light shafts", &mut video.light_shafts)
+            .on_hover_text("The sun's rays show in the air");
+        ui.end_row();
         let label = ui.label("Shadows");
         if let Some(shadows) = controls::variant_picker(ui, "shadows", video.shadows, label.id) {
             video.shadows = shadows;

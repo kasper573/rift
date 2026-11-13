@@ -498,7 +498,7 @@
       ]
     },
     "use_slot": {
-      "label": "Use what a hotbar slot holds",
+      "label": "Use what a bar slot holds",
       "bindings": [
         {
           "type": "click",
@@ -508,7 +508,7 @@
       ]
     },
     "slot_options": {
-      "label": "Open a hotbar slot's options",
+      "label": "Open a bar slot's options",
       "bindings": [
         {
           "type": "click",

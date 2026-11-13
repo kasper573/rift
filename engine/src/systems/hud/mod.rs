@@ -8,6 +8,7 @@ pub(crate) use card::{
 pub(crate) use panel::{SizedPiece, grab_sized, sheet_pose, sized_rect, widget};
 
 use std::collections::HashSet;
+use ui::dialog;
 use ui::drag;
 use ui::egui;
 use ui::float;
@@ -27,8 +28,7 @@ use crate::systems::item::Inventory;
 use crate::systems::player::{self, session};
 use crate::systems::screen::ClientScreen;
 use crate::systems::skill::{HotbarEntry, HotbarSlot, SkillId};
-use crate::systems::{equipment, minimap, quest};
-use ui::dialog;
+use crate::systems::{equipment, item, minimap, quest, skill};
 
 pub(crate) const TOOLTIP_WIDTH: f32 = 260.0;
 pub(crate) const MARGIN: f32 = 8.0;
@@ -126,6 +126,14 @@ pub(crate) fn dismiss_confirm(world: &mut World) -> bool {
     }
 }
 
+pub(crate) fn is_piece(name: &str) -> bool {
+    WIDGETS.iter().any(|&(piece, _)| piece == name)
+}
+
+pub(crate) fn keeps_place(name: &str) -> bool {
+    is_piece(name) || [item::card::WINDOW_KEY, skill::card::WINDOW_KEY].contains(&name)
+}
+
 pub(crate) fn window_layer(key: &'static str) -> LayerId {
     panel::layer(key)
 }
@@ -175,7 +183,10 @@ pub(crate) fn file_icon(ui: &mut Ui, world: &mut World, file: &str, size: f32) -
 
 static WIDGETS: &[(&str, &dyn HudWidget)] = &[
     (minimap::MINIMAP, &minimap::MinimapWidget),
-    ("quests", &quest::tracker::QuestTrackerWidget),
+    (
+        quest::tracker::QUEST_TRACKER,
+        &quest::tracker::QuestTrackerWidget,
+    ),
     (player::bar::PLAYER_BAR, &player::bar::PlayerBarWidget),
 ];
 
