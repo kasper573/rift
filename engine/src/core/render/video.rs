@@ -13,6 +13,7 @@ use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, VariantArray};
 use ui::controls;
 use ui::egui::Ui;
+use ui::float::Hinted;
 
 use crate::core::units::Meters;
 
@@ -178,15 +179,15 @@ pub fn controls(ui: &mut Ui, video: &mut VideoPreferences) {
         ui.end_row();
         controls::toggle(ui, "Fullscreen", &mut video.fullscreen);
         ui.end_row();
-        controls::toggle(ui, "VSync", &mut video.vsync).on_hover_text(
+        controls::toggle(ui, "VSync", &mut video.vsync).hinted(
             "Each frame waits for the display's refresh: less heat and power, a little more delay",
         );
         ui.end_row();
         controls::toggle(ui, "Bloom", &mut video.bloom)
-            .on_hover_text("What the light catches glows over its rim");
+            .hinted("What the light catches glows over its rim");
         ui.end_row();
         controls::toggle(ui, "Light shafts", &mut video.light_shafts)
-            .on_hover_text("The sun's rays show in the air");
+            .hinted("The sun's rays show in the air");
         ui.end_row();
         let label = ui.label("Shadows");
         if let Some(shadows) = controls::variant_picker(ui, "shadows", video.shadows, label.id) {

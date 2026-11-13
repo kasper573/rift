@@ -5,16 +5,13 @@ use ui::float;
 use ui::theme;
 
 use bevy::prelude::*;
-use ui::card::CardPane;
 use ui::controls;
 use ui::egui::scroll_area::{DragScroll, ScrollBarVisibility, ScrollSource};
-use ui::egui::{
-    Align2, Color32, PointerButton, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2,
-};
-use ui::face::{self, TextRole};
+use ui::egui::{Align2, Color32, Pos2, Rect, Sense, Shape, Stroke, Ui, UiBuilder, Vec2};
+use ui::face::TextRole;
 use ui::glyph::{self, Mark};
 use ui::ink;
-use ui::sheet::{self, Depth};
+use ui::sheet::PANE_PAD;
 
 use super::{LearnSkillsRequest, Learned, Rank, SkillId, SkillKind, card};
 use crate::core::content::Content;
@@ -25,8 +22,6 @@ use crate::systems::hud::Carried;
 use crate::systems::hud::menu::{MenuTab, MenuTabName};
 use crate::systems::input::map::{self, InputAction, input};
 use crate::systems::interface::{InterfaceIcon, InterfaceSound};
-use crate::systems::item::card::CardLook;
-use crate::systems::item::widget::{SlotLook, slot};
 use crate::systems::notification;
 use crate::systems::player::session;
 use crate::systems::skill::bar;
@@ -34,7 +29,6 @@ use ui::words::counted;
 
 const NODE_RADIUS: f32 = 24.0;
 const NODE_ICON: f32 = 28.0;
-const DOCK_HEIGHT: f32 = 34.0;
 const NAME_HALO: f32 = 1.0;
 
 pub struct SkillsMenuTab;
@@ -54,29 +48,20 @@ impl MenuTab for SkillsMenuTab {
             (InputAction::RaiseRank, "raise"),
             (InputAction::LowerRank, "lower"),
             (InputAction::CarryItem, "to the bar"),
-            (InputAction::InspectSkill, "pin the card"),
+            (InputAction::InspectSkill, "open the card"),
         ]
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
+        let room = ui.available_rect_before_wrap();
         let Some(sheet) = Sheet::of(world) else {
-            ui.label(theme::faint("No class yet"));
+            ui.scope_builder(UiBuilder::new().max_rect(room.shrink2(PANE_PAD)), |ui| {
+                ui.label(theme::faint("No class yet"));
+            });
             return;
         };
-        let room = ui.available_rect_before_wrap();
-        let beside = room.width() - sheet::GUTTER - ui::card::WIDTH;
-        let ([beside_card], card_room) = sheet::columns(room, [beside]);
-        ui.scope_builder(UiBuilder::new().max_rect(beside_card), |ui| {
-            header(ui, world, &sheet);
-            let room = ui.available_rect_before_wrap();
-            let viewport =
-                Rect::from_min_max(room.min, Pos2::new(room.max.x, room.max.y - DOCK_HEIGHT));
-            let view = tree(ui, world, &sheet, viewport);
-            *world.resource_mut::<TreeView>() = view;
-            dock(ui, world, &sheet, room);
-        });
-        ui.scope_builder(UiBuilder::new().max_rect(card_room), |ui| {
-            selected_pane(ui, world, &sheet);
-        });
+        let view = tree(ui, world, &sheet, room);
+        *world.resource_mut::<TreeView>() = view;
+        dock(ui, world, &sheet, room.shrink2(PANE_PAD));
     }
 }
 
@@ -98,9 +83,6 @@ impl Default for TreeView {
         }
     }
 }
-
-#[derive(Resource, Default, Clone, Debug, PartialEq)]
-pub struct SelectedNode(pub Option<NodeKey>);
 
 /// The rank each node is picked up to in the tree, not yet confirmed.
 #[derive(Resource, Default, Clone, Debug, PartialEq)]
@@ -130,7 +112,6 @@ struct Sheet {
     me: Entity,
     class: class::ClassId,
     learned: Learned,
-    level: u32,
     to_spend: SkillPoints,
 }
 
@@ -142,7 +123,6 @@ impl Sheet {
             me,
             class,
             learned: world.get::<Learned>(me).cloned().unwrap_or_default(),
-            level: class::level(world, me),
             to_spend: class::points_to_spend(world, me),
         })
     }
@@ -189,61 +169,6 @@ impl NodeState {
     }
 }
 
-fn header(ui: &mut Ui, world: &mut World, sheet: &Sheet) {
-    let content = world.resource::<Content>().clone();
-    let def = sheet.class.get(&content);
-    ui.horizontal(|ui| {
-        ui.label(face::bold(format!("{} · level {}", def.name, sheet.level)));
-        let granted = super::granted(world, sheet.me);
-        if !granted.is_empty() {
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                for skill in granted.into_iter().rev() {
-                    granted_skill(ui, world, skill);
-                }
-                ui.label(face::secondary("From your gear"));
-            });
-        }
-    });
-    ui.add_space(4.0);
-}
-
-fn granted_skill(ui: &mut Ui, world: &mut World, skill: SkillId) {
-    let content = world.resource::<Content>().clone();
-    let def = skill.get(&content);
-    let look = SlotLook {
-        icon: Some(&def.icon),
-        ..SlotLook::EMPTY
-    };
-    let response = slot(ui, world, look, Sense::click_and_drag());
-    response.widget_info(|| {
-        egui::WidgetInfo::labeled(
-            egui::WidgetType::Button,
-            true,
-            format!("{} granted by gear", def.name),
-        )
-    });
-    let passive = def.kind == SkillKind::Passive;
-    if map::drag_started(world, InputAction::CarryItem, &response) {
-        if !passive {
-            drag::carry(ui.ctx(), Carried::Skill(skill));
-        }
-    } else if map::clicked(world, InputAction::PinToBar, &response) && !passive {
-        bar::pin(world, super::HotbarEntry::Skill(skill));
-    } else if map::clicked(world, InputAction::InspectSkill, &response) {
-        card::open(world, skill, Some(response.rect));
-    }
-    let hint = StyledLine::new(vec![
-        TextPiece::text("Known while the gear is worn · "),
-        input(InputAction::InspectSkill),
-        TextPiece::text(" shows its card · "),
-        input(InputAction::PinToBar),
-        TextPiece::text(" puts it on the bar · "),
-        input(InputAction::CarryItem),
-        TextPiece::text(" carries it to a slot"),
-    ]);
-    card::tooltip(&response, world, &card::of(world, skill), Some(&hint));
-}
-
 /// The designer's canvas at its own scale, panned by dragging its background, and never past
 /// its edges: the viewport is always full of canvas.
 fn tree(ui: &mut Ui, world: &mut World, sheet: &Sheet, viewport: Rect) -> TreeView {
@@ -285,12 +210,6 @@ fn tree(ui: &mut Ui, world: &mut World, sheet: &Sheet, viewport: Rect) -> TreeVi
             draw_canvas(ui, world, sheet, def, Placement { origin });
         })
     });
-    ui.painter().rect_stroke(
-        viewport.expand(1.0),
-        0.0,
-        Stroke::new(1.0, ink::GOLD2),
-        StrokeKind::Outside,
-    );
     TreeView {
         viewport,
         content: shown.inner.content_size,
@@ -320,7 +239,6 @@ fn draw_canvas(ui: &mut Ui, world: &mut World, sheet: &Sheet, def: &ClassDef, pl
         .keys()
         .filter_map(|key| Some((key, node_state(world, sheet, def, &plan, key)?)))
         .collect();
-    let selected = world.resource::<SelectedNode>().0.clone();
     let painter = ui.painter().clone();
     for arrow in tree.arrows() {
         let (Some(from), Some(to)) = (tree.node(arrow.from), tree.node(arrow.to)) else {
@@ -360,12 +278,14 @@ fn draw_canvas(ui: &mut Ui, world: &mut World, sheet: &Sheet, def: &ClassDef, pl
                 format!("{} node: {}", skill.name, state.label()),
             )
         });
-        let look = NodeLook {
+        draw_node(
+            ui,
+            world,
+            &response,
+            node.skill,
             state,
-            held: sheet.learned.rank(key),
-            selected: selected.as_ref() == Some(key),
-        };
-        draw_node(ui, world, &response, node.skill, look);
+            sheet.learned.rank(key),
+        );
         node_input(ui, world, sheet, key, node.skill, state, &response);
     }
 }
@@ -381,16 +301,6 @@ fn node_input(
 ) {
     let held = sheet.learned.rank(key);
     let passive = skill.get(world.resource::<Content>()).kind == SkillKind::Passive;
-    let clicked = [
-        PointerButton::Primary,
-        PointerButton::Secondary,
-        PointerButton::Middle,
-    ]
-    .into_iter()
-    .any(|button| response.clicked_by(button));
-    if clicked {
-        world.resource_mut::<SelectedNode>().0 = Some(key.clone());
-    }
     if map::drag_started(world, InputAction::CarryItem, response) {
         if held > Rank::NONE && !passive {
             drag::carry(ui.ctx(), Carried::Skill(skill));
@@ -478,73 +388,6 @@ fn raise(world: &mut World, sheet: &Sheet, key: &NodeKey, state: NodeState) {
     InterfaceSound::UiPick.play(world);
 }
 
-fn selected_pane(ui: &mut Ui, world: &mut World, sheet: &Sheet) {
-    let content = world.resource::<Content>().clone();
-    let def = sheet.class.get(&content);
-    let plan = world.resource::<SkillPlan>().clone();
-    let selected = world.resource::<SelectedNode>().0.clone().and_then(|key| {
-        let state = node_state(world, sheet, def, &plan, &key)?;
-        Some((def.tree.node(&key)?.skill, state, key))
-    });
-    if world.resource::<SelectedNode>().0.is_some() && selected.is_none() {
-        world.resource_mut::<SelectedNode>().0 = None;
-    }
-    ui::sheet::section(ui, "Selected");
-    let pane = CardPane {
-        size: ui.available_size(),
-        foot: controls::CONTROL_HEIGHT,
-    };
-    let can = selected.as_ref().map(|(_, state, key)| {
-        (
-            next_rank(world, sheet, key, *state).is_some(),
-            plan.0.contains_key(key),
-        )
-    });
-    let mut raised = false;
-    let mut lowered = false;
-    pane.show(
-        ui,
-        |ui| match &selected {
-            Some((skill, _, _)) => {
-                let look = CardLook {
-                    width: ui.available_width(),
-                    max_height: ui.available_height().min(ui::card::MAX_HEIGHT),
-                    art: ui::card::ART_SHORT,
-                    closable: false,
-                    depth: Depth::Front,
-                };
-                card::show(ui, world, &card::of(world, *skill), look);
-            }
-            None => {
-                ui.add_space(16.0);
-                ui::sheet::label(ui, TextRole::Small, "Select a skill on the tree", ink::INK3);
-            }
-        },
-        |ui| {
-            let Some((can_raise, can_lower)) = can else {
-                return;
-            };
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                raised = ui
-                    .add_enabled_ui(can_raise, |ui| controls::primary(ui, "Raise rank"))
-                    .inner
-                    .clicked();
-                lowered = ui
-                    .add_enabled_ui(can_lower, |ui| controls::button(ui, "Lower rank"))
-                    .inner
-                    .clicked();
-            });
-        },
-    );
-    if let Some((_, state, key)) = &selected {
-        if raised {
-            raise(world, sheet, key, *state);
-        } else if lowered {
-            lower(world, sheet, key);
-        }
-    }
-}
-
 /// The last rank picked on the node leaves the plan, and with it every pick that stood on it.
 fn lower(world: &mut World, sheet: &Sheet, key: &NodeKey) {
     let mut plan = world.resource::<SkillPlan>().clone();
@@ -585,20 +428,41 @@ fn lower(world: &mut World, sheet: &Sheet, key: &NodeKey) {
     InterfaceSound::UiMove.play(world);
 }
 
-// Drawn whether or not anything is picked, its buttons faded, so the tree above never moves.
+/// Over the foot of the tree, which keeps its nodes clear of it. Drawn whether or not anything is
+/// picked, its buttons faded, so nothing in it moves.
 fn dock(ui: &mut Ui, world: &mut World, sheet: &Sheet, room: Rect) {
     let plan = world.resource::<SkillPlan>().clone();
     let content = world.resource::<Content>().clone();
     let def = sheet.class.get(&content);
     let picked = sheet.picked_cost(&content, def, &plan);
     let left = SkillPoints(sheet.to_spend.0.saturating_sub(picked.0));
-    let dock = Rect::from_min_max(Pos2::new(room.min.x, room.max.y - DOCK_HEIGHT), room.max);
+    let dock = Rect::from_min_max(
+        Pos2::new(room.min.x, room.max.y - controls::CONTROL_HEIGHT),
+        room.max,
+    );
+    let mut text = format!("{} to spend", counted(left.0, "skill point"));
+    if picked.0 > 0 {
+        text.push_str(&format!(" · {} picked", counted(picked.0, "point")));
+    }
+    glyph::haloed(
+        ui.painter(),
+        dock.left_center(),
+        Align2::LEFT_CENTER,
+        &text,
+        TextRole::Body.font_id(),
+        ink::LIGHT,
+        glyph::Halo {
+            color: ink::INK,
+            width: NAME_HALO,
+        },
+    );
     ui.scope_builder(
         UiBuilder::new()
             .max_rect(dock)
             .layout(egui::Layout::right_to_left(egui::Align::Center)),
         |ui| {
             let planned = !plan.0.is_empty();
+            let paper = [(); 2].map(|()| ui.painter().add(Shape::Noop));
             let (learn, reset) = ui
                 .add_enabled_ui(planned, |ui| {
                     let learn = controls::primary(ui, "Learn");
@@ -612,13 +476,10 @@ fn dock(ui: &mut Ui, world: &mut World, sheet: &Sheet, room: Rect) {
                     (learn, reset)
                 })
                 .inner;
-            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-                let mut text = format!("{} to spend", counted(left.0, "skill point"));
-                if picked.0 > 0 {
-                    text.push_str(&format!(" · {} picked", counted(picked.0, "point")));
-                }
-                ui.add(egui::Label::new(face::body(text)).truncate());
-            });
+            for (under, button) in paper.into_iter().zip([&learn, &reset]) {
+                let fill = Shape::rect_filled(button.rect, controls::RADIUS, ink::CREAM);
+                ui.painter().set(under, fill);
+            }
             if learn.clicked() {
                 let ranks: Vec<(NodeKey, Rank)> = plan
                     .0
@@ -635,25 +496,14 @@ fn dock(ui: &mut Ui, world: &mut World, sheet: &Sheet, room: Rect) {
     );
 }
 
-#[derive(Clone, Copy)]
-struct NodeLook {
-    state: NodeState,
-    held: Rank,
-    selected: bool,
-}
-
 fn draw_node(
     ui: &mut Ui,
     world: &mut World,
     response: &egui::Response,
     skill: SkillId,
-    look: NodeLook,
+    state: NodeState,
+    held: Rank,
 ) {
-    let NodeLook {
-        state,
-        held,
-        selected,
-    } = look;
     let content = world.resource::<Content>().clone();
     let def = skill.get(&content);
     let center = response.rect.center();
@@ -678,9 +528,6 @@ fn draw_node(
     }
     if carded {
         painter.circle_stroke(center, NODE_RADIUS + 4.0, Stroke::new(3.0, ink::GOLD2));
-    }
-    if selected {
-        painter.circle_stroke(center, NODE_RADIUS + 7.0, Stroke::new(2.0, ink::LIGHT));
     }
     painter.circle_filled(center, NODE_RADIUS, fill);
     if state == NodeState::Locked {

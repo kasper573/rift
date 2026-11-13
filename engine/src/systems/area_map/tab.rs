@@ -1,7 +1,7 @@
 use bevy::prelude::*;
-use ui::egui::{self, CursorIcon, Sense, Stroke, Ui, UiBuilder, Vec2};
+use ui::egui::{self, CursorIcon, Sense, Ui, UiBuilder, Vec2};
 use ui::face::TextRole;
-use ui::{float, ink};
+use ui::float;
 
 use super::{BUTTON, MapReachStep, MapView, MapWindow};
 use crate::core::content::Content;
@@ -31,8 +31,6 @@ impl MenuTab for MapMenuTab {
             ui.shrink_clip_rect(sheet);
             map(ui, world, sheet);
         });
-        ui.painter()
-            .rect_stroke(sheet, 0.0, EDGE, egui::StrokeKind::Inside);
     }
 }
 
@@ -58,10 +56,6 @@ pub(super) fn rest(world: &mut World) {
     }
 }
 
-const EDGE: Stroke = Stroke {
-    width: 1.5,
-    color: ink::FRAME,
-};
 const INSET: f32 = 18.0;
 const BUTTON_GAP: f32 = 6.0;
 const NAME_ROOM: f32 = 30.0;

@@ -100,8 +100,7 @@ fn a_test_character_set_up_for_a_quest_moment_starts_beside_whom_it_is_with() {
                 40.0,
                 json!([{ "type": "script", "script": path("script", "taker_talk") }]),
             )
-            .row(
-                "quest",
+            .quest(
                 "letter",
                 json!({
                     "title": "A Letter",

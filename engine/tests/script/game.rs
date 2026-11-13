@@ -198,9 +198,7 @@ pub fn game() -> Game {
             }),
         )
         .asset("icons/status.png", testkit::png(1, 1))
-        .row(
-            "quest",
-            "x_marks",
+        .quest("x_marks",
             json!({
                 "title": "X Marks the Spot",
                 "category": "Mysteries",
@@ -212,9 +210,7 @@ pub fn game() -> Game {
                 ],
             }),
         )
-        .row(
-            "quest",
-            "plea",
+        .quest("plea",
             json!({
                 "title": "The Plea",
                 "category": "Errands",

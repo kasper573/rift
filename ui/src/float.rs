@@ -3,7 +3,9 @@
 
 use std::hash::{Hash, Hasher};
 
-use egui::{Align2, Area, Context, Id, InnerResponse, LayerId, Order, Pos2, Response, Ui, Vec2};
+use egui::{
+    Align2, Area, Context, Id, InnerResponse, LayerId, Order, Pos2, Rect, Response, Ui, Vec2,
+};
 
 use crate::slip;
 
@@ -37,7 +39,12 @@ pub fn tooltip(response: &Response, add: impl FnOnce(&mut Ui)) {
     if follows_another || now - since >= f64::from(delay) {
         let sheet = egui::Tooltip::next_tooltip_id(gui, response.id);
         let before = gui.memory(|memory| memory.area_rect(sheet));
-        let shown = egui::Tooltip::for_widget(response).show(|ui| {
+        let mut tooltip = egui::Tooltip::for_widget(response);
+        tooltip.popup = tooltip
+            .popup
+            .anchor(with_pointer(response))
+            .align(egui::RectAlign::TOP_START);
+        let shown = tooltip.show(|ui| {
             // egui lays a tooltip out within the size it opened at, which would wrap whatever it
             // comes to say while it stays open.
             let frame = egui::Frame::popup(ui.style()).total_margin().sum().x;
@@ -50,6 +57,50 @@ pub fn tooltip(response: &Response, add: impl FnOnce(&mut Ui)) {
         if resized {
             gui.request_discard("a tooltip changed size");
         }
+    }
+}
+
+pub trait Hinted {
+    fn hinted(self, text: &str) -> Self;
+}
+
+impl Hinted for Response {
+    fn hinted(self, text: &str) -> Response {
+        tooltip(&self, |ui| {
+            ui.label(text);
+        });
+        self
+    }
+}
+
+/// How far the pointer's picture reaches from the point it points with, for tooltips to stand
+/// clear of; `None` for the system's own arrow.
+pub fn set_pointer_body(gui: &Context, body: Option<Rect>) {
+    gui.data_mut(|data| match body {
+        Some(body) => {
+            data.insert_temp(Id::new(POINTER_BODY), body);
+        }
+        None => data.remove::<Rect>(Id::new(POINTER_BODY)),
+    });
+}
+
+const POINTER_BODY: &str = "pointer body";
+const SYSTEM_ARROW: Rect = Rect::from_min_max(Pos2::ZERO, Pos2::new(12.0, 20.0));
+
+/// A tooltip is placed about the widget and the pointer's picture together, so whichever side it
+/// takes, the pointer never lies over it.
+fn with_pointer(response: &Response) -> Rect {
+    let gui = &response.ctx;
+    let mut widget = response.interact_rect;
+    if let Some(to_global) = gui.layer_transform_to_global(response.layer_id) {
+        widget = to_global * widget;
+    }
+    let body = gui
+        .data(|data| data.get_temp::<Rect>(Id::new(POINTER_BODY)))
+        .unwrap_or(SYSTEM_ARROW);
+    match gui.pointer_latest_pos() {
+        Some(at) => widget.union(body.translate(at.to_vec2())),
+        None => widget,
     }
 }
 

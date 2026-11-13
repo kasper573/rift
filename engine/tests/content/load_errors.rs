@@ -528,9 +528,7 @@ fn a_layer_filling_a_parameter_its_shader_lacks_is_refused() {
 #[test]
 fn a_game_file_that_does_not_parse_is_refused_at_its_field() {
     let report = game()
-        .row(
-            "quest",
-            "errand",
+        .quest("errand",
             json!({ "title": "Errand", "category": "Errands", "blurb": "Errand", "xp": 10, "modules": [] }),
         )
         .edit_settings(|settings| settings["initial_spawn"] = json!(path("area", "start")))

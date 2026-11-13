@@ -169,9 +169,7 @@ fn returning_to(area: &str) -> Sim {
         .stance("shield", 1, "off")
         .item("shield", json!({ "kind": { "type": "equipment", "wear": "held", "stance": "shield.stance.json" } }))
         .npc("chief", 60.0, json!([]))
-        .row(
-            "quest",
-            "errand",
+        .quest("errand",
             json!({
                 "title": "An errand",
                 "category": "Errands",
@@ -184,9 +182,7 @@ fn returning_to(area: &str) -> Sim {
                 ],
             }),
         )
-        .row(
-            "quest",
-            "letter",
+        .quest("letter",
             json!({
                 "title": "A letter",
                 "category": "Errands",

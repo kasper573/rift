@@ -1,8 +1,10 @@
 //! Shapes painted straight onto a painter: dashes, hatching, washes and lines that measure.
 
 use egui::emath::GuiRounding;
-use egui::epaint::Mesh;
-use egui::{Align2, Color32, Context, FontId, Painter, Pos2, Rect, Shape, Stroke, Ui, Vec2};
+use egui::epaint::{Mesh, Vertex};
+use egui::{
+    Align2, Color32, Context, FontId, Painter, Pos2, Rect, Shape, Stroke, TextureId, Ui, Vec2,
+};
 
 use crate::{glyph, ink, theme};
 
@@ -84,6 +86,81 @@ pub fn dot_grid(painter: &Painter, rect: Rect, origin: Pos2, step: f32, color: C
 }
 
 /// The wash under a row the pointer is on or that is picked.
+/// Makes an ink print of a picture of four bytes a pixel, red, green, blue and how opaque: ink
+/// where it was dark and bare paper where it was light, whatever its colours. Its tones are
+/// stretched from its darkest to its lightest first, so a dim picture prints as firmly as a
+/// bright one.
+pub fn print(pixels: &mut [u8]) {
+    let shade = |pixel: &[u8; 4]| {
+        let lit = 0.2126 * f32::from(pixel[0])
+            + 0.7152 * f32::from(pixel[1])
+            + 0.0722 * f32::from(pixel[2]);
+        let opaque = f32::from(pixel[3]) / 255.0;
+        (255.0 - (255.0 - lit) * opaque).round() as u8
+    };
+    let pixels = pixels.as_chunks_mut::<4>().0;
+    let mut counts = [0usize; 256];
+    for pixel in pixels.iter() {
+        counts[usize::from(shade(pixel))] += 1;
+    }
+    let reached = |share: f32| {
+        let wanted = (pixels.len() as f32 * share) as usize;
+        let mut passed = 0;
+        counts
+            .iter()
+            .position(|count| {
+                passed += count;
+                passed > wanted
+            })
+            .unwrap_or(255) as f32
+    };
+    let (darkest, lightest) = (reached(PRINT_CLIPPED), reached(1.0 - PRINT_CLIPPED));
+    let range = (lightest - darkest).max(1.0);
+    let [red, green, blue, _] = ink::INK.to_array();
+    for pixel in pixels {
+        let dark = 1.0 - ((f32::from(shade(pixel)) - darkest) / range).clamp(0.0, 1.0);
+        let inked = dark * dark * (3.0 - 2.0 * dark) * PRINT_DEPTH;
+        *pixel = [red, green, blue, (inked * 255.0).round() as u8];
+    }
+}
+
+const PRINT_CLIPPED: f32 = 0.02;
+const PRINT_DEPTH: f32 = 0.9;
+
+const FADE_CELLS: usize = 24;
+
+/// The part `uv` of a picture drawn over `rect`, as opaque at each point as `opacity` says of
+/// where the point lies in the rect, from its top left at (0, 0) to its bottom right at (1, 1):
+/// a picture that fades into what lies under it.
+pub fn faded_image(
+    painter: &Painter,
+    texture: TextureId,
+    rect: Rect,
+    uv: Rect,
+    opacity: impl Fn(Vec2) -> f32,
+) {
+    let stride = FADE_CELLS + 1;
+    let mut mesh = Mesh::with_texture(texture);
+    for index in 0..stride * stride {
+        let at = Vec2::new(
+            (index % stride) as f32 / FADE_CELLS as f32,
+            (index / stride) as f32 / FADE_CELLS as f32,
+        );
+        mesh.vertices.push(Vertex {
+            pos: rect.min + rect.size() * at,
+            uv: uv.min + uv.size() * at,
+            color: Color32::WHITE.gamma_multiply(opacity(at).clamp(0.0, 1.0)),
+        });
+    }
+    let stride = stride as u32;
+    let cells = FADE_CELLS as u32;
+    mesh.indices = (0..cells)
+        .flat_map(|row| (0..cells).map(move |column| row * stride + column))
+        .flat_map(|a| [a, a + 1, a + stride, a + 1, a + stride + 1, a + stride])
+        .collect();
+    painter.add(Shape::mesh(mesh));
+}
+
 pub fn row_wash(painter: &Painter, rect: Rect) {
     painter.rect_filled(rect, 3.0, theme::ACCENT_SOFT);
 }

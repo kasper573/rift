@@ -12,6 +12,7 @@ use super::card::{
 };
 use super::{ActiveQuest, FinishedQuest, Parties, QuestId, QuestLog, QuestRequest, QuestResult};
 use crate::core::content::Content;
+use crate::core::gui;
 use crate::core::time::UnixMillis;
 use crate::systems::GameSettings;
 use crate::systems::dialogue::ChoiceReveal;
@@ -31,6 +32,13 @@ const ROW_ICON: f32 = 20.0;
 const TITLE_ICON: f32 = 28.0;
 const FOOTER: f32 = 40.0;
 const TIMER_BAR: Vec2 = Vec2::new(90.0, 4.0);
+/// As wide as a line of the quest's words reads well, and its counts stay beside what they count.
+const READ_WIDTH: f32 = 400.0;
+const ART_UNDER: f32 = 48.0;
+/// How wide the art stands for its height, whatever shape the picture is.
+const ART_ASPECT: f32 = 2.0 / 3.0;
+const ART_HEART: f32 = 0.35;
+const ART_WHOLE: f32 = 0.3;
 
 pub struct QuestLogPlugin;
 
@@ -195,7 +203,7 @@ fn page_ui(ui: &mut Ui, world: &mut World, page: &Page) {
     let listed = page.listed(&content);
     let shown = page.shown(&listed);
     let room = ui.available_rect_before_wrap();
-    let ([list_rect], detail_rect) = sheet::columns(room, [LIST_WIDTH]);
+    let ([list_rect], detail_rect) = sheet::columns(ui, room, [LIST_WIDTH]);
     let area = egui::ScrollArea::vertical().id_salt(("quest list", page.tab.title()));
     sheet::scroll_pane(ui, list_rect, area, |ui| {
         list(ui, world, page, &listed, shown)
@@ -359,14 +367,52 @@ fn status(content: &Content, page: &Page, quest: QuestId) -> (String, Tone) {
     }
 }
 
-fn detail(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId, pane: Rect) {
+fn detail(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId, pane: sheet::Pane) {
     let content = world.resource::<Content>().clone();
+    let def = quest.get(&content);
+    let column = Rect::from_min_max(
+        pane.inner.min,
+        Pos2::new(
+            pane.inner.max.x.min(pane.inner.min.x + READ_WIDTH),
+            pane.inner.max.y,
+        ),
+    );
+    let beside = Rect::from_min_max(
+        Pos2::new(column.max.x - ART_UNDER, pane.outer.min.y),
+        pane.outer.max,
+    );
+    if beside.width() > ART_UNDER
+        && let Some(image) = gui::print(world, &def.art)
+    {
+        let slot = Rect::from_min_max(
+            Pos2::new(
+                beside
+                    .min
+                    .x
+                    .max(beside.max.x - beside.height() * ART_ASPECT),
+                beside.min.y,
+            ),
+            beside.max,
+        );
+        let shape = slot.aspect_ratio() / image.size.x.max(1.0) * image.size.y;
+        let shown = Vec2::new(shape.min(1.0), (1.0 / shape).min(1.0));
+        paint::faded_image(
+            ui.painter(),
+            image.texture,
+            slot,
+            Rect::from_center_size(Pos2::new(0.5, 0.5), shown),
+            art_opacity,
+        );
+    }
     let trackable = page.log.trackable(&content, quest);
     let foot = if trackable { FOOTER } else { 0.0 };
-    let read = Rect::from_min_max(pane.min, Pos2::new(pane.max.x, pane.max.y - foot));
+    let read = sheet::Pane {
+        outer: pane.outer,
+        inner: column,
+    }
+    .above_foot(foot);
     let area = egui::ScrollArea::vertical().id_salt(("quest", page.tab.title(), quest));
     sheet::scroll_pane(ui, read, area, |ui| {
-        let def = quest.get(&content);
         ui.horizontal(|ui| {
             hud::icon(ui, world, def.icon(&content), TITLE_ICON);
             ui.add(Label::new(face::bold(def.title.as_str())).wrap());
@@ -375,11 +421,21 @@ fn detail(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId, pane: Rec
         plate(ui, world, page, quest);
     });
     if trackable {
-        let foot = Rect::from_min_max(Pos2::new(pane.min.x, read.max.y), pane.max);
+        let foot = Rect::from_min_max(Pos2::new(column.min.x, read.inner.max.y), column.max);
         ui.scope_builder(egui::UiBuilder::new().max_rect(foot), |ui| {
             footer_row(ui, world, page, quest);
         });
     }
+}
+
+/// Whole at the art's upper right, and gone before its left edge and its foot, so that it has no
+/// edge against the page.
+fn art_opacity(at: Vec2) -> f32 {
+    let below = (at.y - ART_HEART) / (1.0 - ART_HEART);
+    let above = (ART_HEART - at.y) / ART_HEART * 0.5;
+    let away = Vec2::new(1.0 - at.x, below.max(above)).length();
+    let t = ((away - ART_WHOLE) / (1.0 - ART_WHOLE)).clamp(0.0, 1.0);
+    1.0 - t * t * (3.0 - 2.0 * t)
 }
 
 fn plate(ui: &mut Ui, world: &mut World, page: &Page, quest: QuestId) {

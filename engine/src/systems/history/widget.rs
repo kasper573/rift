@@ -132,7 +132,7 @@ impl MenuTab for HistoryMenuTab {
         let area = egui::ScrollArea::vertical()
             .id_salt(("history", tab.title()))
             .stick_to_bottom(true);
-        let pane = ui.available_rect_before_wrap();
+        let ([], pane) = sheet::columns(ui, ui.available_rect_before_wrap(), []);
         sheet::scroll_pane(ui, pane, area, |ui| {
             egui::Frame::new()
                 .inner_margin(egui::Margin::symmetric(0, PADDING))

@@ -10,10 +10,12 @@ use ui::face::{self, TextRole};
 use ui::glyph::CardKind;
 use ui::ink;
 use ui::sheet::Depth;
+use ui::words;
 
 use crate::core::content::Content;
 use crate::core::gui::{self, Band, ImageSource};
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
+use crate::systems::equipment;
 use crate::systems::hud::{self, Carried};
 use crate::systems::input::map::{self, InputAction, input};
 use crate::systems::item::{Inventory, ItemDef, ItemId, ItemKind, ItemModuleKind, ItemShown, Wear};
@@ -172,7 +174,7 @@ pub fn show_noted(
     card.show(ui, |ui, plate| {
         summary(ui, &content, item, plate);
         // Ahead of the item's own lines, so a long card never cuts off what the view has to say.
-        for note in notes {
+        for note in comparison(world, item).iter().chain(notes) {
             let text = match note.tone {
                 CardNoteTone::Plain => TextRole::CardBody.rich(&note.text).color(ink::INK),
                 CardNoteTone::Strong => face::bold(&note.text).size(TextRole::CardBody.size()),
@@ -200,6 +202,64 @@ pub fn show_noted(
             foot(ui, world, &hint);
         }
     })
+}
+
+/// How wearing `item` would change the reader's stats, against what it would take the place of.
+fn comparison(world: &World, item: ItemId) -> Vec<ItemCardNote> {
+    let content = world.resource::<Content>();
+    let Some(me) = session::me(world) else {
+        return Vec::new();
+    };
+    if equipment::worn(world, me).any(|worn| worn == item) {
+        return Vec::new();
+    }
+    let displaced = equipment::displaced_by(world, me, item);
+    if displaced.is_empty() {
+        return Vec::new();
+    }
+    let names: Vec<String> = displaced
+        .iter()
+        .map(|worn| worn.get(content).name.clone())
+        .collect();
+    let than = words::join_and(&names);
+    let gives = status::boosts_of(content, item);
+    let gave: Vec<(StatKind, Option<f32>)> = displaced
+        .iter()
+        .flat_map(|worn| status::boosts_of(content, *worn))
+        .collect();
+    let mut stats: Vec<StatKind> = Vec::new();
+    for (stat, _) in gives.iter().chain(&gave) {
+        if !stats.contains(stat) {
+            stats.push(*stat);
+        }
+    }
+    stats
+        .into_iter()
+        .filter_map(|stat| {
+            let total = |boosts: &[(StatKind, Option<f32>)]| {
+                boosts
+                    .iter()
+                    .filter(|(boosted, _)| *boosted == stat)
+                    .map(|(_, by)| *by)
+                    .sum::<Option<f32>>()
+            };
+            let change = total(&gives)? - total(&gave)?;
+            let name: &'static str = stat.into();
+            if change > 0.0 {
+                Some(ItemCardNote {
+                    text: format!("{change} more {name} than {than}"),
+                    tone: CardNoteTone::Strong,
+                })
+            } else if change < 0.0 {
+                Some(ItemCardNote {
+                    text: format!("{} less {name} than {than}", -change),
+                    tone: CardNoteTone::Warning,
+                })
+            } else {
+                None
+            }
+        })
+        .collect()
 }
 
 pub fn face_of(def: &ItemDef, icon: Option<TextureId>, look: CardLook) -> Card<'_> {

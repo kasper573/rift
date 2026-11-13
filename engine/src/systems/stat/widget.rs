@@ -3,6 +3,7 @@ use ui::egui::{Align, Layout, Stroke, Ui};
 use ui::{face, ink};
 
 use crate::core::content::Content;
+use crate::systems::actor::Name;
 use crate::systems::player::session;
 use crate::systems::{class, stat};
 
@@ -39,7 +40,12 @@ fn stat_rows(world: &World) -> Vec<(String, String)> {
     let class = class::of(world, entity)
         .map(|class| class.get(content).name.clone())
         .unwrap_or_default();
+    let name = me
+        .get::<Name>()
+        .map(|name| name.name.clone())
+        .unwrap_or_default();
     [
+        ("Name".to_owned(), name),
         ("Class".to_owned(), class),
         ("Level".to_owned(), class::level(world, entity).to_string()),
     ]

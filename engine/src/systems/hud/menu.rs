@@ -143,12 +143,10 @@ pub(super) fn draw(world: &mut World, gui: &egui::Context) {
 }
 
 const MENU: &str = "menu";
-const SIZE: Vec2 = Vec2::new(904.0, 510.0);
+const SIZE: Vec2 = Vec2::new(960.0, 540.0);
 const SMALLEST: Vec2 = Vec2::new(360.0, 240.0);
 const SMALLEST_PAGE: Vec2 = Vec2::new(800.0, 330.0);
-const PAGE_GAP: f32 = 6.0;
 const BESIDE_HANDLE: f32 = 6.0;
-const CROSS_ROOM: f32 = 30.0;
 const CURL_ROOM: f32 = 18.0;
 
 // Their tabs line up in this order.
@@ -196,59 +194,84 @@ fn tab_of(name: MenuTabName) -> &'static dyn MenuTab {
 
 fn page(ui: &mut Ui, world: &mut World, frame: WindowFrame, shown: MenuTabName) {
     let body = ui.max_rect();
-    ui.scope_builder(UiBuilder::new().max_rect(sheet::page(body)), |ui| {
-        let page = ui.max_rect();
-        let mut chosen = shown;
-        let strip_room = body.max.x - CROSS_ROOM - page.min.x;
-        let tabs = sheet::tabs(ui, TabSize::Main, &strip(world), &mut chosen, strip_room);
-        let bare = Rect::from_min_max(
-            Pos2::new(tabs.max.x + BESIDE_HANDLE, tabs.min.y),
-            Pos2::new(body.max.x - CROSS_ROOM, tabs.max.y),
-        );
-        if bare.is_positive() {
-            panel::window_handle(ui, world, frame, "Menu", bare);
+    let pad = sheet::PANE_PAD;
+    let cross_room = sheet::CROSS + 2.0 * sheet::CROSS_MARGIN;
+    ui.add_space(STRIP_TOP);
+    let mut chosen = shown;
+    let strip_room = body.width() - pad.x - cross_room;
+    let tabs = sheet::tabs_inset(
+        ui,
+        TabSize::Main,
+        &strip(world),
+        &mut chosen,
+        strip_room,
+        pad.x,
+    );
+    let bare = Rect::from_min_max(
+        Pos2::new(tabs.max.x + BESIDE_HANDLE, body.min.y),
+        Pos2::new(body.max.x - cross_room, tabs.max.y),
+    );
+    if bare.is_positive() {
+        panel::window_handle(ui, world, frame, "Menu", bare);
+    }
+    if chosen != shown {
+        open_on(world, chosen);
+    }
+    let tab = tab_of(shown);
+    let mut top = tabs.max.y;
+    if let Some(sub) = tab.sub_tabs(world) {
+        let tabs: Vec<Tab<usize>> = sub
+            .labels
+            .iter()
+            .enumerate()
+            .map(|(index, label)| Tab::new(index, label.as_str()))
+            .collect();
+        let mut chosen = sub.chosen;
+        let row = Rect::from_min_max(Pos2::new(body.min.x, top + SUB_STRIP_TOP), body.max);
+        let strip = ui
+            .scope_builder(UiBuilder::new().max_rect(row), |ui| {
+                let room = row.width() - 2.0 * pad.x;
+                sheet::tabs_inset(ui, TabSize::Sub, &tabs, &mut chosen, room, pad.x)
+            })
+            .inner;
+        top = strip.max.y;
+        if chosen != sub.chosen {
+            tab.choose_sub_tab(world, chosen);
+            InterfaceSound::UiPage.play(world);
         }
-        if chosen != shown {
-            open_on(world, chosen);
-        }
-        let tab = tab_of(shown);
-        if let Some(sub) = tab.sub_tabs(world) {
-            let tabs: Vec<Tab<usize>> = sub
-                .labels
-                .iter()
-                .enumerate()
-                .map(|(index, label)| Tab::new(index, label.as_str()))
-                .collect();
-            let mut chosen = sub.chosen;
-            sheet::tabs(ui, TabSize::Sub, &tabs, &mut chosen, page.width());
-            if chosen != sub.chosen {
-                tab.choose_sub_tab(world, chosen);
-                InterfaceSound::UiPage.play(world);
-            }
-        }
-        // A strip wider than the page widens the room after it.
-        let room = Rect::from_x_y_ranges(page.x_range(), ui.available_rect_before_wrap().y_range());
-        let foot = Rect::from_min_max(
-            Pos2::new(room.min.x, room.max.y - controls::HINT_LINE_HEIGHT),
-            Pos2::new(room.max.x.min(body.max.x - CURL_ROOM), room.max.y),
-        );
-        let panes = Rect::from_min_max(room.min, Pos2::new(room.max.x, foot.min.y - PAGE_GAP));
-        let squeezed = panes.width() < SMALLEST_PAGE.x || panes.height() < SMALLEST_PAGE.y;
-        if squeezed {
-            let area = egui::ScrollArea::both().id_salt(("menu page", shown.title()));
-            sheet::scroll_page(ui, panes, SMALLEST_PAGE, area, |ui| tab.show(ui, world));
-        } else {
-            ui.scope_builder(UiBuilder::new().max_rect(panes), |ui| {
-                ui.shrink_clip_rect(sheet::with_bar_lane(panes));
-                tab.show(ui, world);
-            });
-        }
-        ui.scope_builder(UiBuilder::new().max_rect(foot), |ui| {
-            hints(ui, world, tab);
+    }
+    let room = Rect::from_min_max(Pos2::new(body.min.x, top), body.max);
+    let foot_height = controls::HINT_LINE_HEIGHT + 2.0 * FOOT_PAD;
+    let foot = Rect::from_min_max(Pos2::new(room.min.x, room.max.y - foot_height), room.max);
+    let panes = Rect::from_min_max(room.min, Pos2::new(room.max.x, foot.min.y));
+    ui.painter()
+        .hline(body.x_range(), foot.min.y, sheet::rule_stroke());
+    let squeezed = panes.width() < SMALLEST_PAGE.x || panes.height() < SMALLEST_PAGE.y;
+    if squeezed {
+        let area = egui::ScrollArea::both().id_salt(("menu page", shown.title()));
+        sheet::scroll_page(ui, panes, SMALLEST_PAGE, area, |ui| tab.show(ui, world));
+    } else {
+        ui.scope_builder(UiBuilder::new().max_rect(panes), |ui| {
+            ui.shrink_clip_rect(panes);
+            tab.show(ui, world);
         });
-        ui.allocate_rect(room, Sense::hover());
+    }
+    let hint_room = Rect::from_min_max(
+        foot.min + Vec2::new(pad.x, FOOT_PAD),
+        Pos2::new(
+            (foot.max.x - pad.x).min(body.max.x - CURL_ROOM),
+            foot.max.y - FOOT_PAD,
+        ),
+    );
+    ui.scope_builder(UiBuilder::new().max_rect(hint_room), |ui| {
+        hints(ui, world, tab);
     });
+    ui.allocate_rect(room, Sense::hover());
 }
+
+const STRIP_TOP: f32 = 4.0;
+const SUB_STRIP_TOP: f32 = 8.0;
+const FOOT_PAD: f32 = 6.0;
 
 fn strip(world: &mut World) -> Vec<Tab<MenuTabName>> {
     TABS.iter()

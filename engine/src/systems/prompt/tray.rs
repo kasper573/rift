@@ -271,14 +271,19 @@ pub fn heading(ui: &mut Ui, world: &World, view: &PromptView) {
 pub fn inventory(ui: &mut Ui, world: &mut World, locked: bool) {
     lockable(ui, locked, |ui| {
         let room = ui.available_rect_before_wrap();
-        sheet::scroll_pane(ui, room, egui::ScrollArea::vertical(), |ui| {
-            let pane = InventoryPane {
-                width: ui.available_width(),
-                heading: Some("Your inventory"),
-                selected: &mut None,
-            };
-            inventory_pane(ui, world, pane);
-        });
+        sheet::scroll_pane(
+            ui,
+            sheet::Pane::bare(room),
+            egui::ScrollArea::vertical(),
+            |ui| {
+                let pane = InventoryPane {
+                    width: ui.available_width(),
+                    heading: Some("Your inventory"),
+                    selected: None,
+                };
+                inventory_pane(ui, world, pane);
+            },
+        );
     });
 }
 

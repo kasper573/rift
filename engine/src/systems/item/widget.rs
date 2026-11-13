@@ -77,7 +77,8 @@ pub struct InventoryPane<'a> {
     pub width: f32,
     /// A window that says how full the inventory is elsewhere leaves the heading out.
     pub heading: Option<&'a str>,
-    pub selected: &'a mut Option<u32>,
+    /// The slot a view lets its reader choose, where it has something to say about the choice.
+    pub selected: Option<&'a mut Option<u32>>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -92,7 +93,7 @@ impl InventoryRoom {
     }
 }
 
-pub fn inventory_pane(ui: &mut Ui, world: &mut World, pane: InventoryPane) {
+pub fn inventory_pane(ui: &mut Ui, world: &mut World, mut pane: InventoryPane) {
     let cells = inventory_cells(world);
     ui.allocate_ui_with_layout(
         Vec2::new(pane.width, 0.0),
@@ -106,7 +107,7 @@ pub fn inventory_pane(ui: &mut Ui, world: &mut World, pane: InventoryPane) {
             ui.spacing_mut().item_spacing = Vec2::splat(SLOT_GAP);
             ui.horizontal_wrapped(|ui| {
                 for cell in &cells {
-                    bag_slot(ui, world, cell, pane.selected);
+                    bag_slot(ui, world, cell, pane.selected.as_deref_mut());
                 }
             });
         },
@@ -253,7 +254,7 @@ const BUILT_IN: [InputAction; 3] = [
     InputAction::InspectItem,
 ];
 
-fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData, selected: &mut Option<u32>) {
+fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData, selected: Option<&mut Option<u32>>) {
     let Some(filled) = &cell.filled else {
         slot(ui, world, SlotLook::EMPTY, Sense::hover());
         return;
@@ -267,6 +268,7 @@ fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData, selected: &mut Opti
     };
     let carried = drag::carried::<Carried>(ui.ctx()) == Some(Carried::BagSlot(cell.slot));
     let left = filled.stack.count.saturating_sub(filled.aside);
+    let is_selected = selected.as_deref() == Some(&Some(cell.slot));
     let look = SlotLook {
         icon: Some(&def.icon),
         count: left,
@@ -274,14 +276,14 @@ fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData, selected: &mut Opti
         faded: refused || carried || left == 0,
         refused: false,
         quest: def.has(ItemModuleKind::QuestItem),
-        selected: *selected == Some(cell.slot),
+        selected: is_selected,
     };
     let response = slot(ui, world, look, Sense::click_and_drag());
     response.widget_info(|| {
         egui::WidgetInfo::selected(
             egui::WidgetType::Button,
             true,
-            *selected == Some(cell.slot),
+            is_selected,
             format!("Inventory slot {}: {left} {}", cell.slot + 1, def.name),
         )
     });
@@ -307,7 +309,9 @@ fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData, selected: &mut Opti
         .collect();
     let hint = StyledLine::new(hint_pieces(&filled.hints));
     hud::tooltip(&response, world, &def.name, &lines, Some(&hint));
-    if map::clicked(world, InputAction::Select, &response) {
+    if let Some(selected) = selected
+        && map::clicked(world, InputAction::Select, &response)
+    {
         *selected = Some(cell.slot);
     }
 }

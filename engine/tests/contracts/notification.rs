@@ -407,9 +407,7 @@ fn game() -> Content {
         )
         .npc("dummy", 40.0, json!([]))
         .item("tusk", json!({ "kind": { "type": "resource" }, "modules": [{ "type": "stack", "max": 50 }] }))
-        .row(
-            "quest",
-            "tusks",
+        .quest("tusks",
             json!({
                 "title": "Tusks",
                 "category": "Errands",

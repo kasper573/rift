@@ -216,6 +216,7 @@ fn show_cursor(world: &mut World) {
     let chosen = in_area
         .then(|| world.resource::<ChosenCursor>().0)
         .flatten();
+    say_pointer_body(world, chosen);
     let shown = match chosen {
         None => ShownCursor {
             icon: Some(CursorIcon::System(SystemCursorIcon::Default)),
@@ -259,6 +260,23 @@ fn show_cursor(world: &mut World) {
     if let Some(mut options) = window.get_mut::<CursorOptions>() {
         options.visible = shown.in_frame.is_none();
     }
+}
+
+fn say_pointer_body(world: &mut World, chosen: Option<Cursor>) {
+    let Some(gui) = gui::context(world) else {
+        return;
+    };
+    let body = match chosen {
+        Some(Cursor::Shaped(cursor)) => {
+            let content = world.resource::<Content>().clone();
+            let cursor = cursor.get(&content);
+            let hotspot = egui::vec2(f32::from(cursor.hotspot.x), f32::from(cursor.hotspot.y));
+            gui::image(world, &cursor.image)
+                .map(|image| egui::Rect::from_min_size(egui::Pos2::ZERO - hotspot, image.size))
+        }
+        Some(Cursor::System(_)) | None => None,
+    };
+    float::set_pointer_body(&gui, body);
 }
 
 fn draw_cursor(world: &mut World) {

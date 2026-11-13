@@ -169,6 +169,9 @@ pub fn listed(world: &World) -> Vec<ListedRecipe> {
 pub fn verdict(world: &World) -> (String, Option<CraftResult>) {
     let content = world.resource::<Content>();
     let words = &content.built::<GameSettings>().words;
+    if progress(world).is_some() {
+        return (words.cancel_craft.clone(), None);
+    }
     let offer = tray::offer(world);
     if offer.is_empty() || tray::waiting(world) {
         return (words.craft.clone(), None);
@@ -289,18 +292,23 @@ fn list(ui: &mut Ui, world: &mut World) {
     let rows = listed(world);
     let placed = tray::offer(world);
     let room = ui.available_rect_before_wrap();
-    sheet::scroll_pane(ui, room, egui::ScrollArea::vertical(), |ui| {
-        ui.spacing_mut().item_spacing.y = 0.0;
-        for (index, row) in rows.iter().enumerate() {
-            let laid_out = row.recipe.times(&placed).is_some();
-            let response = ui
-                .push_id(("recipe", index), |ui| recipe_row(ui, world, row, laid_out))
-                .inner;
-            if map::clicked(world, InputAction::Select, &response) {
-                lay_out(world, &row.recipe);
+    sheet::scroll_pane(
+        ui,
+        sheet::Pane::bare(room),
+        egui::ScrollArea::vertical(),
+        |ui| {
+            ui.spacing_mut().item_spacing.y = 0.0;
+            for (index, row) in rows.iter().enumerate() {
+                let laid_out = row.recipe.times(&placed).is_some();
+                let response = ui
+                    .push_id(("recipe", index), |ui| recipe_row(ui, world, row, laid_out))
+                    .inner;
+                if map::clicked(world, InputAction::Select, &response) {
+                    lay_out(world, &row.recipe);
+                }
             }
-        }
-    });
+        },
+    );
 }
 
 fn recipe_row(

@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
 use std::iter;
 use ui::egui;
+use ui::float::Hinted;
 use ui::theme;
 
 use bevy::prelude::*;
@@ -128,7 +129,7 @@ impl MenuTab for SettingsMenuTab {
         let turn_ease = world
             .get_resource::<CameraRig>()
             .map(|rig| rig.framing().turn_ease);
-        let pane = ui.available_rect_before_wrap();
+        let ([], pane) = sheet::columns(ui, ui.available_rect_before_wrap(), []);
         sheet::scroll_pane(ui, pane, egui::ScrollArea::vertical(), |ui| {
             show_settings(
                 ui,
@@ -227,7 +228,7 @@ fn show_interface(ui: &mut Ui, settings: &mut Mut<UserSettings>, typing: Option<
         ui.end_row();
         let mut quick_cast = settings.quick_cast();
         if controls::toggle(ui, "Quick cast skills", &mut quick_cast)
-            .on_hover_text("A skill is cast the moment it is used, at what the pointer rests on")
+            .hinted("A skill is cast the moment it is used, at what the pointer rests on")
             .changed()
         {
             settings.toggle_quick_cast();
@@ -235,7 +236,7 @@ fn show_interface(ui: &mut Ui, settings: &mut Mut<UserSettings>, typing: Option<
         ui.end_row();
         let mut confirms = settings.confirms_risky_crafts();
         if controls::toggle(ui, "Confirm crafts that may fail", &mut confirms)
-            .on_hover_text("A craft that may fail asks before it spends its materials")
+            .hinted("A craft that may fail asks before it spends its materials")
             .changed()
         {
             settings.toggle_risky_craft_confirm();
@@ -260,7 +261,7 @@ fn show_hud(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
     controls::form(ui, ("settings", "hud"), |ui| {
         let mut turns = settings.minimap_turns();
         if controls::toggle(ui, "Minimap turns with the camera", &mut turns)
-            .on_hover_text("Up on the map is where the camera looks, and north rides its rim")
+            .hinted("Up on the map is where the camera looks, and north rides its rim")
             .changed()
         {
             settings.toggle_minimap_turning();
@@ -272,7 +273,7 @@ fn show_hud(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
         let label = ui.label("HUD places");
         if controls::button(ui, "Reset")
             .labelled_by(label.id)
-            .on_hover_text("Every piece of the HUD goes back to where it started, chat too")
+            .hinted("Every piece of the HUD goes back to where it started, chat too")
             .clicked()
         {
             settings.reset_hud();
@@ -285,7 +286,7 @@ fn show_chat(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
     controls::form(ui, ("settings", "chat"), |ui| {
         let mut chat = settings.chat_shown();
         if controls::toggle(ui, "Show chat", &mut chat)
-            .on_hover_text("Off, chat leaves the screen and its key does nothing")
+            .hinted("Off, chat leaves the screen and its key does nothing")
             .changed()
         {
             settings.toggle_chat();

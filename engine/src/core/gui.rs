@@ -179,22 +179,33 @@ pub fn image(world: &mut World, asset: &ImageRef) -> Option<GuiImage> {
 }
 
 pub fn image_file(world: &mut World, file: &str) -> Option<GuiImage> {
-    if !world.resource::<GuiImages>().0.contains_key(file) {
+    finished(world, file, Finish::Plain)
+}
+
+/// The picture as an ink print of itself on the paper it is drawn over, whatever it was painted
+/// in: any picture a game brings sits on a sheet as though it were printed there.
+pub fn print(world: &mut World, asset: &ImageRef) -> Option<GuiImage> {
+    finished(world, &asset.path(), Finish::Print)
+}
+
+fn finished(world: &mut World, file: &str, finish: Finish) -> Option<GuiImage> {
+    let key = (file.to_owned(), finish);
+    if !world.resource::<GuiImages>().0.contains_key(&key) {
         let handle = world.resource::<AssetServer>().load(file.to_owned());
         world
             .resource_mut::<GuiImages>()
             .0
-            .insert(file.to_owned(), GuiTexture::Loading(handle));
+            .insert(key.clone(), GuiTexture::Loading(handle));
     }
-    let loading = match &world.resource::<GuiImages>().0[file] {
+    let loading = match &world.resource::<GuiImages>().0[&key] {
         GuiTexture::Ready(image) => return Some(image.clone()),
         GuiTexture::Loading(handle) => handle.clone(),
     };
-    let image = upload(world, file, &loading)?;
+    let image = upload(world, file, &loading, finish)?;
     world
         .resource_mut::<GuiImages>()
         .0
-        .insert(file.to_owned(), GuiTexture::Ready(image.clone()));
+        .insert(key, GuiTexture::Ready(image.clone()));
     Some(image)
 }
 
@@ -217,7 +228,13 @@ pub fn cursor(world: &World) -> egui::CursorIcon {
 }
 
 #[derive(Resource, Default)]
-struct GuiImages(HashMap<String, GuiTexture>);
+struct GuiImages(HashMap<(String, Finish), GuiTexture>);
+
+#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+enum Finish {
+    Plain,
+    Print,
+}
 
 enum GuiTexture {
     Loading(Handle<Image>),
@@ -263,10 +280,18 @@ fn raise_tiers(gui: Option<Res<GuiContext>>) {
 /// and sampled smoothly between them: drawn smaller, every pixel of it still shows. bevy_egui blends
 /// every texture as premultiplied but samples a Bevy image as stored, which would show the color of
 /// each transparent pixel, so the pixels are premultiplied here as egui does its own.
-fn upload(world: &mut World, file: &str, handle: &Handle<Image>) -> Option<GuiImage> {
+fn upload(
+    world: &mut World,
+    file: &str,
+    handle: &Handle<Image>,
+    finish: Finish,
+) -> Option<GuiImage> {
     let source = world.resource::<Assets<Image>>().get(handle)?;
     let mut picture = source.clone().try_into_dynamic().ok()?.to_rgba8();
     let size = egui::vec2(picture.width() as f32, picture.height() as f32);
+    if finish == Finish::Print {
+        ui::paint::print(&mut picture);
+    }
     for pixel in picture.pixels_mut() {
         let [red, green, blue, alpha] = pixel.0;
         pixel.0 = egui::Color32::from_rgba_unmultiplied(red, green, blue, alpha).to_array();

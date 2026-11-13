@@ -1212,7 +1212,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                         .position(|result| result.recipe == picked.recipe)
                 }),
                 button,
-                ready: ready.is_some(),
+                ready: ready.is_some() || crafting::panel::progress(world).is_some(),
                 progress: crafting::panel::progress(world),
             }
         }),

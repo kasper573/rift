@@ -62,6 +62,9 @@ pub struct QuestDef {
     pub title: String,
     pub category: String,
     pub blurb: String,
+    /// A picture of the quest, of any size and in any colours: the log prints it in ink beside
+    /// what it says of the quest, and reads best of one taller than it is wide.
+    pub art: ImageRef,
     pub xp: u32,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub reveal: Vec<ChoiceReveal>,
@@ -77,6 +80,7 @@ impl ContentFile for QuestDef {
             title: near.name(),
             category: String::new(),
             blurb: String::new(),
+            art: near.image()?,
             xp: 0,
             reveal: Vec::new(),
             modules: vec![

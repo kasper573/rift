@@ -524,9 +524,7 @@ fn harbour() -> Sim {
         .mark("repeatable_offered")
         .mark("quest_in_progress")
         .mark("quest_locked")
-        .row(
-            "quest",
-            "letter",
+        .quest("letter",
             quest(
                 "A Letter",
                 json!([
@@ -538,9 +536,7 @@ fn harbour() -> Sim {
                 ]),
             ),
         )
-        .row(
-            "quest",
-            "bats",
+        .quest("bats",
             quest(
                 "Bats",
                 json!([
@@ -554,9 +550,7 @@ fn harbour() -> Sim {
                 ]),
             ),
         )
-        .row(
-            "quest",
-            "tusks",
+        .quest("tusks",
             quest(
                 "Tusks",
                 json!([
@@ -568,9 +562,7 @@ fn harbour() -> Sim {
                 ]),
             ),
         )
-        .row(
-            "quest",
-            "tithe",
+        .quest("tithe",
             quest(
                 "Tithe",
                 json!([
@@ -582,9 +574,7 @@ fn harbour() -> Sim {
                 ]),
             ),
         )
-        .row(
-            "quest",
-            "low_tide",
+        .quest("low_tide",
             quest(
                 "Low Tide",
                 json!([
@@ -596,9 +586,7 @@ fn harbour() -> Sim {
                 ]),
             ),
         )
-        .row(
-            "quest",
-            "x_marks",
+        .quest("x_marks",
             quest(
                 "X Marks the Spot",
                 json!([
@@ -609,9 +597,7 @@ fn harbour() -> Sim {
                 ]),
             ),
         )
-        .row(
-            "quest",
-            "plea",
+        .quest("plea",
             quest(
                 "The Plea",
                 json!([

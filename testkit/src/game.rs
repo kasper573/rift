@@ -434,6 +434,16 @@ impl Game {
             .asset(&card, png(item::CARD_SIZE.0, item::CARD_SIZE.1))
     }
 
+    /// A quest of `fields`, named after its file, with a picture for its art.
+    pub fn quest(self, name: &str, fields: Value) -> Game {
+        let art = format!("quests/{name}.png");
+        let mut row = json!({ "art": art });
+        for (field, value) in fields.as_object().expect("a quest's fields") {
+            row[field] = value.clone();
+        }
+        self.row("quest", name, row).asset(&art, png(1, 1))
+    }
+
     /// Changes the fields of a file declared before.
     pub fn edit(mut self, table: &str, name: &str, change: impl FnOnce(&mut Value)) -> Game {
         let file = fields_path(table, name);

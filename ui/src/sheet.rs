@@ -15,7 +15,8 @@ const RULE_INSET: f32 = 7.0;
 const RULE_GAP: f32 = 8.0;
 const SMALL_RULE_INSET: f32 = 4.0;
 const TITLE_BAND: f32 = 36.0;
-pub(crate) const CROSS: f32 = 24.0;
+pub const CROSS: f32 = 24.0;
+pub const CROSS_MARGIN: f32 = 8.0;
 const SMALL_CROSS: f32 = 16.0;
 pub(crate) const CURL: f32 = 24.0;
 const FILLER: f32 = 34.0;
@@ -60,11 +61,15 @@ impl Sheet<'_> {
         rule(painter, rect, inset);
         let band = Rect::from_min_size(rect.min, Vec2::new(rect.width(), TITLE_BAND));
         let cross_size = if small { SMALL_CROSS } else { CROSS };
+        let bleeds = self.title.is_none() && !small;
         let cross = self.closable.then(|| {
-            Rect::from_min_size(
-                Pos2::new(rect.max.x - 10.0 - cross_size, rect.min.y + 6.0),
-                Vec2::splat(cross_size),
-            )
+            let at = if bleeds {
+                let from_rule = inset + CROSS_MARGIN;
+                Pos2::new(rect.max.x - from_rule - cross_size, rect.min.y + from_rule)
+            } else {
+                Pos2::new(rect.max.x - 10.0 - cross_size, rect.min.y + 6.0)
+            };
+            Rect::from_min_size(at, Vec2::splat(cross_size))
         });
         if let Some(title) = self.title {
             title_band(painter, title_room(band, small), title, !small);
@@ -80,10 +85,14 @@ impl Sheet<'_> {
         } else {
             rect.min.y + inset + 4.0
         };
-        let body = Rect::from_min_max(
-            Pos2::new(rect.min.x + inset + 4.0, top),
-            rect.max - Vec2::splat(inset + 4.0),
-        );
+        let body = if bleeds {
+            rect.shrink(inset)
+        } else {
+            Rect::from_min_max(
+                Pos2::new(rect.min.x + inset + 4.0, top),
+                rect.max - Vec2::splat(inset + 4.0),
+            )
+        };
         if tint != Color32::WHITE {
             painter.rect_filled(rect, CornerRadius::ZERO, tint);
         }
@@ -96,32 +105,53 @@ impl Sheet<'_> {
     }
 }
 
-pub fn body(rect: Rect, titled: bool) -> Rect {
-    let small = is_small(rect);
-    let margin = if small { SMALL_RULE_INSET } else { RULE_INSET } + BODY_INSET;
-    let top = if titled {
-        rect.min.y + TITLE_BAND
-    } else {
-        rect.min.y + margin
-    };
-    Rect::from_min_max(
-        Pos2::new(rect.min.x + margin, top),
-        rect.max - Vec2::splat(margin),
-    )
-    .intersect(rect)
-}
-
-/// Wide enough for a scrolling pane's bar to stand in, so a pane is as wide with a bar as without.
 pub const GUTTER: f32 = 16.0;
 const BODY_INSET: f32 = 4.0;
 pub const PAGE_MARGIN: f32 = GUTTER - BODY_INSET;
-const BAR_LANE: f32 = PAGE_MARGIN;
 
 pub fn page(body: Rect) -> Rect {
     body.shrink2(Vec2::new(PAGE_MARGIN, 0.0))
 }
 
-pub fn columns<const N: usize>(room: Rect, widths: [f32; N]) -> ([Rect; N], Rect) {
+pub fn rule_stroke() -> Stroke {
+    Stroke::new(1.0, ink::ink_wash(0.35))
+}
+
+/// The room a pane keeps clear around its content.
+pub const PANE_PAD: Vec2 = Vec2::new(20.0, 16.0);
+
+/// One of the panes a sheet's body parts into: all of it, rule to rule, and the room its
+/// content keeps within its padding.
+#[derive(Clone, Copy, Debug)]
+pub struct Pane {
+    pub outer: Rect,
+    pub inner: Rect,
+}
+
+impl Pane {
+    /// A pane that is only its content, its bar standing just beside it.
+    pub fn bare(rect: Rect) -> Pane {
+        Pane {
+            outer: Rect::from_min_max(rect.min, rect.max + Vec2::new(BAR_LANE, 0.0)),
+            inner: rect,
+        }
+    }
+
+    /// The pane above a row `foot` tall kept at its bottom.
+    pub fn above_foot(self, foot: f32) -> Pane {
+        let bottom = self.inner.max.y - foot;
+        Pane {
+            outer: Rect::from_min_max(self.outer.min, Pos2::new(self.outer.max.x, bottom)),
+            inner: Rect::from_min_max(self.inner.min, Pos2::new(self.inner.max.x, bottom)),
+        }
+    }
+}
+
+const BAR: f32 = 6.0;
+const BAR_INSET: f32 = 2.0;
+const BAR_LANE: f32 = BAR + BAR_INSET;
+
+pub fn spaced_columns<const N: usize>(room: Rect, widths: [f32; N]) -> ([Rect; N], Rect) {
     let mut left = room.min.x;
     let columns = widths.map(|width| {
         let column = Rect::from_min_max(
@@ -135,28 +165,55 @@ pub fn columns<const N: usize>(room: Rect, widths: [f32; N]) -> ([Rect; N], Rect
     (columns, rest)
 }
 
-pub fn with_bar_lane(pane: Rect) -> Rect {
-    Rect::from_min_max(pane.min, pane.max + Vec2::new(BAR_LANE, 0.0))
+/// `room` parted from its left into panes that hold `widths` of content, and the pane left
+/// beside them, a rule between each two running the whole height of the room.
+pub fn columns<const N: usize>(ui: &Ui, room: Rect, widths: [f32; N]) -> ([Pane; N], Pane) {
+    let pad = PANE_PAD;
+    let mut left = room.min.x;
+    let columns = widths.map(|width| {
+        let outer = Rect::from_min_max(
+            Pos2::new(left, room.min.y),
+            Pos2::new((left + width + 2.0 * pad.x).min(room.max.x), room.max.y),
+        );
+        left = outer.max.x;
+        ui.painter().vline(left, room.y_range(), rule_stroke());
+        Pane {
+            outer,
+            inner: outer.shrink2(pad),
+        }
+    });
+    let rest = Rect::from_min_max(Pos2::new(left.min(room.max.x), room.min.y), room.max);
+    (
+        columns,
+        Pane {
+            outer: rest,
+            inner: rest.shrink2(pad),
+        },
+    )
+}
+
+fn bars(ui: &mut Ui) {
+    let scroll = &mut ui.spacing_mut().scroll;
+    scroll.bar_width = BAR;
+    scroll.bar_inner_margin = 0.0;
+    scroll.bar_outer_margin = BAR_INSET;
 }
 
 pub fn scroll_page<R>(
     ui: &mut Ui,
-    pane: Rect,
+    page: Rect,
     least: Vec2,
     area: egui::ScrollArea,
     add: impl FnOnce(&mut Ui) -> R,
 ) -> R {
-    let bar = ui.spacing().scroll.bar_width + ui.spacing().scroll.bar_inner_margin;
-    let foot = if pane.width() < least.x { bar } else { 0.0 };
-    let view = Vec2::new(pane.width(), pane.height() - foot);
-    let outer = if view.y < least.y {
-        with_bar_lane(pane)
-    } else {
-        pane
-    };
-    ui.scope_builder(egui::UiBuilder::new().max_rect(outer), |ui| {
+    let lane = |needed: bool| if needed { BAR_LANE } else { 0.0 };
+    let view = Vec2::new(
+        page.width() - lane(page.height() < least.y),
+        page.height() - lane(page.width() < least.x),
+    );
+    ui.scope_builder(egui::UiBuilder::new().max_rect(page), |ui| {
+        bars(ui);
         scroll(ui, area.auto_shrink(false), |ui| {
-            ui.shrink_clip_rect(pane);
             let (rect, _) = ui.allocate_exact_size(view.max(least), Sense::hover());
             ui.scope_builder(egui::UiBuilder::new().max_rect(rect), add)
                 .inner
@@ -166,27 +223,36 @@ pub fn scroll_page<R>(
     .inner
 }
 
+/// What `pane` holds, scrolled up and down by `area` when it outgrows the pane: it scrolls from
+/// rule to rule, its padding scrolling with it, and its bar stands at the pane's edge.
 pub fn scroll_pane<R>(
     ui: &mut Ui,
-    pane: Rect,
+    pane: Pane,
     area: egui::ScrollArea,
     add: impl FnOnce(&mut Ui) -> R,
 ) -> R {
-    let builder = egui::UiBuilder::new().max_rect(with_bar_lane(pane));
-    ui.scope_builder(builder, |ui| {
+    let Pane { outer, inner } = pane;
+    ui.scope_builder(egui::UiBuilder::new().max_rect(outer), |ui| {
+        bars(ui);
         scroll(ui, area.auto_shrink(false), |ui| {
-            ui.shrink_clip_rect(pane);
-            ui.set_width(pane.width());
-            add(ui)
+            ui.add_space(inner.min.y - outer.min.y);
+            let top = ui.cursor().min.y;
+            let room = Rect::from_min_max(
+                Pos2::new(inner.min.x, top),
+                Pos2::new(inner.max.x, f32::INFINITY),
+            );
+            let made = ui
+                .scope_builder(egui::UiBuilder::new().max_rect(room), |ui| {
+                    ui.set_width(inner.width());
+                    add(ui)
+                })
+                .inner;
+            ui.add_space(outer.max.y - inner.max.y);
+            made
         })
         .inner
     })
     .inner
-}
-
-pub fn chrome(titled: bool) -> Vec2 {
-    let rect = Rect::from_min_size(Pos2::ZERO, Vec2::splat(4.0 * SMALL_SHEET));
-    rect.size() - body(rect, titled).size()
 }
 
 pub const fn shadow(depth: Depth) -> Shadow {
@@ -410,6 +476,20 @@ pub fn tabs<T: PartialEq + Copy>(
     active: &mut T,
     room: f32,
 ) -> Rect {
+    let strip = tabs_inset(ui, size, tabs, active, room, 0.0);
+    ui.add_space(6.0);
+    strip
+}
+
+/// A strip of tabs that begins `inset` in from the left, over a rule the whole width of the room.
+pub fn tabs_inset<T: PartialEq + Copy>(
+    ui: &mut Ui,
+    size: TabSize,
+    tabs: &[Tab<T>],
+    active: &mut T,
+    room: f32,
+    inset: f32,
+) -> Rect {
     let wide = |fit: TabFit| {
         let faces: f32 = tabs
             .iter()
@@ -424,6 +504,8 @@ pub fn tabs<T: PartialEq + Copy>(
     let baseline = ui.painter().add(Shape::Noop);
     let mut lip = None;
     let row = ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = 0.0;
+        ui.add_space(inset);
         ui.spacing_mut().item_spacing.x = TAB_SPACING;
         for tab in tabs {
             let selected = tab.key == *active;
@@ -451,7 +533,6 @@ pub fn tabs<T: PartialEq + Copy>(
             Stroke::new(1.0, ink::LIGHT),
         );
     }
-    ui.add_space(6.0);
     row.response.rect
 }
 
@@ -661,9 +742,9 @@ pub fn scroll<R>(
         &mut visuals.widgets.hovered,
         &mut visuals.widgets.active,
     ] {
-        widget.bg_fill = ink::wash(ink::RUBRIC, 0.85);
+        widget.bg_fill = ink::ink_wash(0.38);
     }
-    visuals.extreme_bg_color = ink::ink_wash(0.1);
+    visuals.extreme_bg_color = ink::ink_wash(0.05);
     let shown = area.show(ui, |ui| {
         *ui.visuals_mut() = kept.clone();
         add(ui)
