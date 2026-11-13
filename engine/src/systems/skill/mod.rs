@@ -37,6 +37,7 @@ use crate::core::time::UnixMillis;
 use crate::core::units::{MeterPos, Meters, Seconds};
 use crate::systems::area::AreaTag;
 use crate::systems::class::{self, NodeKey, SkillPoints, SkillTree};
+use crate::systems::crafting::{self, RecipeKey};
 use crate::systems::equipment;
 use crate::systems::item::{Inventory, ItemId, ItemKind, ItemStack};
 use crate::systems::movement;
@@ -101,6 +102,9 @@ pub struct SkillDef {
     #[serde(default, skip_serializing_if = "serial::is_false")]
     pub basic_attack: bool,
     pub levels: Vec<SkillLevel>,
+    /// The recipes whoever knows the skill masters, for as long as they know it.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub masteries: Vec<RecipeKey>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub modules: Vec<SkillModule>,
 }
@@ -127,6 +131,7 @@ impl ContentFile for SkillDef {
             cost: Vec::new(),
             basic_attack: false,
             levels: vec![first],
+            masteries: Vec::new(),
             modules: Vec::new(),
         })
     }
@@ -794,6 +799,11 @@ pub fn check_all(loading: &mut Loading) {
     let content = loading.content();
     let scripts = content.built::<RiftScripts>();
     for (id, def) in loading.rows::<SkillDef>(&content) {
+        for (index, mastery) in def.masteries.iter().enumerate() {
+            if let Some(problem) = crafting::mastery_problem(&content, mastery) {
+                loading.row_error(id, &format!("/masteries/{index}"), problem);
+            }
+        }
         let may_do = scripts.may_do(OwnerRow::of_row(id));
         let aspect_events = [
             EventKind::Activated,

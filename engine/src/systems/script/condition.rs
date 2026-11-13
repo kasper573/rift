@@ -163,6 +163,7 @@ fn describe_query(content: &impl ContentNames, query: &RiftQuery) -> String {
         },
         RiftQuery::StatusPower => "status power".to_owned(),
         RiftQuery::Holding { item, .. } => content.name_of(*item),
+        RiftQuery::MastersRecipe { recipe, .. } => format!("{} mastery", recipe.recipe.0),
         RiftQuery::FreeSlots { .. } => "free slots".to_owned(),
         RiftQuery::Offered { item, .. } => match item {
             Some(item) => format!("{} offered", content.name_of(*item)),

@@ -198,6 +198,25 @@ fn a_recipe_book_is_a_list_edited_a_recipe_at_a_time_and_refuses_what_the_loader
     assert!(recipe_book::remove_recipe(&mut editor, &key, 0));
     support::settled(&mut editor);
     assert_eq!(recipes(&editor, &key), ["1 slag from 1 coal"]);
+
+    assert!(recipe_book::add_recipe(
+        &mut editor,
+        &key,
+        &item("ingot"),
+        &item("ore")
+    ));
+    assert!(recipe_book::set_mastery(&mut editor, &key, 1, true));
+    support::settled(&mut editor);
+    let named: Vec<(String, bool)> = book(&editor, &key)
+        .recipes
+        .iter()
+        .map(|recipe| (recipe.id.0.clone(), recipe.mastery))
+        .collect();
+    assert_eq!(
+        named,
+        [("ingot".to_owned(), false), ("ingot_2".to_owned(), true)],
+        "a recipe is named after what it makes, apart from every other, and may require mastery"
+    );
 }
 
 /// A game whose smith opens a book that makes an ingot from ore and coal.
@@ -222,7 +241,7 @@ fn game() -> Game {
             json!({
                 "mark": path("attention", "anvil"),
                 "work": "forge",
-                "recipes": [{ "makes": [stack("ingot", 1)], "from": [stack("ore", 2), stack("coal", 1)], "takes": 2.5 }],
+                "recipes": [{ "id": "ingot", "makes": [stack("ingot", 1)], "from": [stack("ore", 2), stack("coal", 1)], "takes": 2.5 }],
             }),
         )
         .npc(

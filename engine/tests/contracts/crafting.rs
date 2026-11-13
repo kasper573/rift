@@ -4,23 +4,29 @@ use engine::core::units::Seconds;
 use engine::core::vfx::{VfxShaderDef, VfxShaderId};
 use engine::systems::actor::skeleton::MoveName;
 use engine::systems::actor::{self, HandsAtWork, Motion, Playing};
-use engine::systems::crafting::{self, CraftingRequest, CraftingView, RecipeBookDef, RecipeKey};
+use engine::systems::class::NodeKey;
+use engine::systems::crafting::{
+    self, CraftingRequest, CraftingView, RecipeBookDef, RecipeId, RecipeKey,
+};
 use engine::systems::dialogue::{self, ConversationRequest};
 use engine::systems::interact::{self, InteractRequest};
 use engine::systems::item::{ItemDef, ItemStack};
 use engine::systems::notification::NotificationKind;
+use engine::systems::player::snapshot::{CharacterSnapshot, JoinAs};
 use engine::systems::prompt::{self, PromptRequest, PromptView};
+use engine::systems::skill::{self, Rank};
 use engine::systems::stat::{StatKind, Stats};
-use engine::systems::{movement, region, script};
+use engine::systems::{GameSettings, movement, player, region, script};
 use serde_json::{Value, json};
 use testkit::{APEX, BODY, Game, Map, Sim, path, rig_clips, said, sent};
 
-const INGOT: (&str, usize) = ("smithing", 0);
-const PLANK: (&str, usize) = ("smithing", 1);
-const SWORD: (&str, usize) = ("smithing", 2);
-const WHITTLED: (&str, usize) = ("smithing", 3);
-const PARTS: (&str, usize) = ("salvage", 0);
-const STRAPS: (&str, usize) = ("salvage", 1);
+const INGOT: (&str, &str) = ("smithing", "ingot");
+const PLANK: (&str, &str) = ("smithing", "plank");
+const SWORD: (&str, &str) = ("smithing", "sword");
+const WHITTLED: (&str, &str) = ("smithing", "whittled");
+const DAGGER: (&str, &str) = ("smithing", "dagger");
+const PARTS: (&str, &str) = ("salvage", "parts");
+const STRAPS: (&str, &str) = ("salvage", "straps");
 
 #[test]
 fn a_crafting_prompt_makes_what_its_books_and_subsets_allow_and_nothing_else() {
@@ -38,7 +44,10 @@ fn a_crafting_prompt_makes_what_its_books_and_subsets_allow_and_nothing_else() {
         asked.slots, 2,
         "as many slots as its biggest recipe has materials"
     );
-    assert_eq!(made_by(&sim, &crafting), ["ingot", "plank", "sword"]);
+    assert_eq!(
+        made_by(&sim, &crafting),
+        ["ingot", "plank", "sword", "dagger"]
+    );
 
     craft(&mut sim, 1, &[("coal", 1), ("ore", 2)], INGOT);
     assert_eq!(sim.count(player, "ingot"), 4, "whichever slot holds what");
@@ -108,6 +117,7 @@ fn with_several_recipes_the_one_chosen_is_made_with_everything_it_gives() {
 #[test]
 fn a_craft_spends_every_material_and_fits_or_does_not_happen() {
     let bundle = json!({
+        "id": "whittled",
         "makes": [{ "item": path("item", "gem") }, { "item": path("item", "strap"), "count": 2 }],
         "from": [{ "item": path("item", "log"), "count": 2 }],
         "takes": 0.1,
@@ -394,11 +404,83 @@ fn a_crafter_makes_the_books_move_with_its_tool_or_the_recipes_own_for_as_long_a
 }
 
 #[test]
-fn the_loader_refuses_recipes_that_loop_repeat_or_profit_and_books_no_script_opens() {
+fn a_recipe_that_requires_mastery_is_listed_to_all_and_made_only_by_one_who_masters_it() {
+    let mut sim = forge(game(|_| {}));
+    let player = sim.join(1);
+    sim.give(player, "ingot", 4);
+    let held = |sim: &Sim| (sim.count(player, "ingot"), sim.count(player, "dagger"));
+
+    let (_, crafting) = open(&mut sim, 1, "smith");
+    assert_eq!(
+        made_by(&sim, &crafting),
+        ["ingot", "plank", "sword", "dagger"],
+        "listed to one who can't make it"
+    );
+    craft(&mut sim, 1, &[("ingot", 1)], DAGGER);
+    assert_eq!(sim.errors(1), ["Requires mastery"]);
+    assert_eq!(held(&sim), (4, 0), "refused, it spends nothing");
+
+    skill::learn::learn(
+        &mut sim.world,
+        player,
+        &[(NodeKey::from("bladework"), Rank(1))],
+    )
+    .expect("bladework is learned");
+    craft(&mut sim, 1, &[("ingot", 1)], DAGGER);
+    assert_eq!(held(&sim), (3, 1), "mastered by a skill that is known");
+    sim.leave(1);
+    see_the_scribe(&mut sim, 1);
+    assert_eq!(sim.count(player, "gem"), 1, "a script sees the mastery");
+
+    skill::reset::reset(&mut sim.world, player);
+    sim.forget_notified();
+    open(&mut sim, 1, "smith");
+    craft(&mut sim, 1, &[("ingot", 1)], DAGGER);
+    assert_eq!(sim.errors(1), ["Requires mastery"]);
+    assert_eq!(held(&sim), (3, 1), "the mastery goes with the skill");
+
+    sim.leave(1);
+    see_the_scribe(&mut sim, 1);
+    assert_eq!(
+        (sim.count(player, "gem"), sim.count(player, "strap")),
+        (1, 1),
+        "taught, not praised"
+    );
+    open(&mut sim, 1, "smith");
+    craft(&mut sim, 1, &[("ingot", 1)], DAGGER);
+    assert_eq!(held(&sim), (2, 2), "mastered for good, with no skill");
+
+    sim.leave(1);
+    see_the_scribe(&mut sim, 1);
+    assert_eq!(sim.count(player, "gem"), 2, "and seen by the script since");
+
+    let content = sim.world.resource::<Content>().clone();
+    let journeyman = sim.join_as(
+        2,
+        JoinAs {
+            snapshot: CharacterSnapshot {
+                recipe_masteries: vec![key(&sim, DAGGER)],
+                ..CharacterSnapshot::of_player(&content, "Journeyman", player::def(&content))
+            },
+            start: content.built::<GameSettings>().initial_spawn,
+        },
+    );
+    sim.give(journeyman, "ingot", 1);
+    open(&mut sim, 2, "smith");
+    craft(&mut sim, 2, &[("ingot", 1)], DAGGER);
+    assert_eq!(
+        sim.count(journeyman, "dagger"),
+        1,
+        "a character who arrives with the mastery"
+    );
+}
+
+#[test]
+fn the_loader_refuses_recipes_that_loop_repeat_or_profit_books_no_script_opens_and_masteries_no_recipe_asks()
+ {
     let of = |item: &str, count: u32| json!({ "item": path("item", item), "count": count });
-    let recipe =
-        |makes: &str, from: Value| json!({ "makes": [of(makes, 1)], "from": from, "takes": 0.1 });
-    let cases: [(&str, Value); 11] = [
+    let recipe = |makes: &str, from: Value| json!({ "id": "added", "makes": [of(makes, 1)], "from": from, "takes": 0.1 });
+    let cases: [(&str, Value); 12] = [
         ("recipe loop", recipe("ore", json!([of("sword", 1)]))),
         (
             "made twice",
@@ -407,20 +489,20 @@ fn the_loader_refuses_recipes_that_loop_repeat_or_profit_and_books_no_script_ope
         ("nothing to make it from", recipe("strap", json!([]))),
         (
             "nothing made",
-            json!({ "makes": [], "from": [of("blade", 1)], "takes": 0.1 }),
+            json!({ "id": "added", "makes": [], "from": [of("blade", 1)], "takes": 0.1 }),
         ),
         (
             "made item listed twice",
-            json!({ "makes": [of("strap", 1), of("strap", 2)], "from": [of("blade", 1)], "takes": 0.1 }),
+            json!({ "id": "added", "makes": [of("strap", 1), of("strap", 2)], "from": [of("blade", 1)], "takes": 0.1 }),
         ),
         (
             "out of range",
-            json!({ "makes": [of("strap", 4)], "from": [of("blade", 1)], "takes": -1.0 }),
+            json!({ "id": "added", "makes": [of("strap", 4)], "from": [of("blade", 1)], "takes": -1.0 }),
         ),
         ("out of range", recipe("strap", json!([of("blade", 0)]))),
         (
             "out of range",
-            json!({ "makes": [of("strap", 4)], "from": [of("blade", 1)], "takes": 0.1, "chance": 101.0 }),
+            json!({ "id": "added", "makes": [of("strap", 4)], "from": [of("blade", 1)], "takes": 0.1, "chance": 101.0 }),
         ),
         (
             "material listed twice",
@@ -432,7 +514,11 @@ fn the_loader_refuses_recipes_that_loop_repeat_or_profit_and_books_no_script_ope
         ),
         (
             "undeclared move",
-            json!({ "makes": [of("strap", 1)], "from": [of("blade", 1)], "takes": 0.1, "work": "knit" }),
+            json!({ "id": "added", "makes": [of("strap", 1)], "from": [of("blade", 1)], "takes": 0.1, "work": "knit" }),
+        ),
+        (
+            "id listed twice",
+            json!({ "id": "ingot", "makes": [of("strap", 4)], "from": [of("blade", 1)], "takes": 0.1 }),
         ),
     ];
     for (rule, added) in cases {
@@ -467,21 +553,55 @@ fn the_loader_refuses_recipes_that_loop_repeat_or_profit_and_books_no_script_ope
 
     let unmoved = refused(game(|book| book["work"] = json!("knit")));
     assert_eq!(rules(&unmoved), ["undeclared move"]);
+
+    for (rule, recipe) in [
+        ("unknown recipe", "daggr"),
+        ("not a mastery recipe", "sword"),
+    ] {
+        let by_skill = refused(game(|_| {}).edit("skill", "bladework", |skill| {
+            skill["masteries"][0]["recipe"] = json!(recipe);
+        }));
+        assert_eq!(rules(&by_skill), [rule], "a skill's mastery of {recipe}");
+        let by_script = refused(game(|_| {}).edit("script", "scribe_talk", |script| {
+            script["nodes"]["teach"]["recipe"]["recipe"] = json!(recipe);
+        }));
+        assert_eq!(rules(&by_script), [rule], "a script's mastery of {recipe}");
+        let by_character = refused(game(|_| {}).row(
+            "test_character",
+            "journeyman",
+            json!({
+                "name": "Journeyman",
+                "class": path("class", "hero"),
+                "appearance": { "model": path("model", "hero") },
+                "recipe_masteries": [{ "book": path("recipe_book", "smithing"), "recipe": recipe }],
+                "start": "initial_spawn",
+            }),
+        ));
+        assert_eq!(
+            rules(&by_character),
+            [rule],
+            "a character's mastery of {recipe}"
+        );
+    }
 }
 
 /// A forge whose smith crafts from all of the smithing book, whose carpenter crafts only its
 /// planks, and whose salvager takes blades apart two ways, one of them into an ingot and straps
 /// together. Every craft takes a tenth of a second, and is forged but for the planks, which are
-/// whittled. The smithing book hands a token for every craft; leaving a prompt hands a slip.
+/// whittled. The smithing book hands a token for every craft; leaving a prompt hands a slip. Its
+/// dagger requires mastery: a bladework skill in the hero's tree masters it, and a scribe hands a
+/// gem to one who masters it, and teaches it for good to one who doesn't, with a strap.
 fn game(change: impl FnOnce(&mut Value)) -> Game {
     let stack = |item: &str, count: u32| json!({ "item": path("item", item), "count": count });
+    let dagger = json!({ "book": path("recipe_book", "smithing"), "recipe": "dagger" });
     let mut smithing = json!({
         "mark": path("attention", "anvil"),
         "work": "forge",
         "recipes": [
-            { "makes": [stack("ingot", 1)], "from": [stack("ore", 2), stack("coal", 1)], "takes": 0.1 },
-            { "makes": [stack("plank", 2)], "from": [stack("log", 1)], "takes": 0.1, "work": "whittle" },
-            { "makes": [stack("sword", 1)], "from": [stack("ingot", 2), stack("plank", 1)], "takes": 0.1 },
+            { "id": "ingot", "makes": [stack("ingot", 1)], "from": [stack("ore", 2), stack("coal", 1)], "takes": 0.1 },
+            { "id": "plank", "makes": [stack("plank", 2)], "from": [stack("log", 1)], "takes": 0.1, "work": "whittle" },
+            { "id": "sword", "makes": [stack("sword", 1)], "from": [stack("ingot", 2), stack("plank", 1)], "takes": 0.1 },
+            { "id": "dagger", "makes": [stack("dagger", 1)], "from": [stack("ingot", 1)], "takes": 0.1, "mastery": true },
         ],
         "modules": [{ "type": "script", "script": path("script", "smithing_crafted") }],
     });
@@ -519,9 +639,48 @@ fn game(change: impl FnOnce(&mut Value)) -> Game {
         .area(
             "forge",
             &Map::open(16, 12),
-            json!([resident("smith", 3.0), resident("carpenter", 8.0), resident("salvager", 13.0)]),
+            json!([
+                resident("smith", 3.0),
+                resident("scribe", 5.5),
+                resident("carpenter", 8.0),
+                resident("salvager", 13.0),
+            ]),
         )
         .hero("forge", 8.0, 6.0)
+        .edit("class", "hero", |hero| {
+            hero["tree"] = json!({
+                "bladework": { "skill": path("skill", "bladework"), "at": { "x": 0.0, "y": 0.0 } },
+            });
+        })
+        .row(
+            "skill",
+            "bladework",
+            json!({
+                "name": "Bladework",
+                "icon": "icons/hero.png",
+                "kind": "passive",
+                "target": "self",
+                "levels": [{ "cost": 1 }],
+                "masteries": [dagger],
+            }),
+        )
+        .npc("scribe", 40.0, talks("scribe"))
+        .script(
+            "scribe_talk",
+            "npc",
+            json!({
+                "interacted": { "type": "on", "event": "interacted", "verb": "talk", "reach": 2.0, "next": "check" },
+                "check": {
+                    "type": "if",
+                    "test": { "type": "masters_recipe", "recipe": dagger },
+                    "yes": "praise",
+                    "no": "teach",
+                },
+                "praise": { "type": "items", "give": [{ "item": path("item", "gem") }] },
+                "teach": { "type": "master_recipe", "recipe": dagger, "next": "send_off" },
+                "send_off": { "type": "items", "give": [{ "item": path("item", "strap") }] },
+            }),
+        )
         .mark("anvil")
         .sfx("ui_refuse")
         .sfx("ui_close")
@@ -533,8 +692,8 @@ fn game(change: impl FnOnce(&mut Value)) -> Game {
                 "mark": path("attention", "anvil"),
                 "work": "forge",
                 "recipes": [
-                    { "makes": [stack("ingot", 1), stack("strap", 2)], "from": [stack("blade", 1)], "takes": 0.1 },
-                    { "makes": [stack("strap", 3)], "from": [stack("blade", 1)], "takes": 0.1 },
+                    { "id": "parts", "makes": [stack("ingot", 1), stack("strap", 2)], "from": [stack("blade", 1)], "takes": 0.1 },
+                    { "id": "straps", "makes": [stack("strap", 3)], "from": [stack("blade", 1)], "takes": 0.1 },
                 ],
             }),
         )
@@ -589,8 +748,8 @@ fn game(change: impl FnOnce(&mut Value)) -> Game {
             crafter("Salvage", json!([{ "type": "book", "book": path("recipe_book", "salvage") }])),
         );
     for item in [
-        "ore", "coal", "log", "ingot", "plank", "sword", "blade", "strap", "gem", "gold", "token",
-        "slip",
+        "ore", "coal", "log", "ingot", "plank", "sword", "dagger", "blade", "strap", "gem", "gold",
+        "token", "slip",
     ] {
         game = game.resource(item, 100);
     }
@@ -685,20 +844,36 @@ fn stacks(sim: &Sim, offer: &[(&str, u32)]) -> Vec<ItemStack> {
         .collect()
 }
 
-/// Asks the prompt open before the player to craft the recipe at `index` of `book` from `offer`,
-/// in its current turn, and gives it half a second.
-fn craft(sim: &mut Sim, client: u32, offer: &[(&str, u32)], (book, index): (&str, usize)) {
+/// Has the player see the scribe, who hands them one thing a visit.
+fn see_the_scribe(sim: &mut Sim, client: u32) {
+    let player = sim.player(client);
+    let scribe = sim.npc("scribe");
+    let conn = sim.conn(client);
+    let handed = |sim: &Sim| sim.count(player, "gem") + sim.count(player, "strap");
+    let had = handed(sim);
+    sim.send(conn, InteractRequest { target: scribe });
+    sim.run(5.0);
+    assert_eq!(handed(sim), had + 1, "the scribe never answered");
+}
+
+/// Asks the prompt open before the player to craft the recipe `recipe` of `book` from `offer`, in
+/// its current turn, and gives it half a second.
+fn craft(sim: &mut Sim, client: u32, offer: &[(&str, u32)], recipe: (&str, &str)) {
     let player = sim.player(client);
     let conn = sim.conn(client);
     let step = shown(sim, player).expect("a crafting prompt").0.step;
     let request = CraftingRequest::Craft {
         step,
         offer: stacks(sim, offer),
-        recipe: RecipeKey {
-            book: sim.id::<RecipeBookDef>(book),
-            index,
-        },
+        recipe: key(sim, recipe),
     };
     sim.send(conn, request);
     sim.run(0.5);
+}
+
+fn key(sim: &Sim, (book, recipe): (&str, &str)) -> RecipeKey {
+    RecipeKey {
+        book: sim.id::<RecipeBookDef>(book),
+        recipe: RecipeId(recipe.to_owned()),
+    }
 }

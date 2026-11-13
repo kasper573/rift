@@ -19,7 +19,7 @@ use crate::systems::chat::Say;
 use crate::systems::class::GrantXp;
 use crate::systems::combat::effects::{Damage, Heal};
 use crate::systems::command::ListCommands;
-use crate::systems::crafting::OpenCrafting;
+use crate::systems::crafting::{MasterRecipe, OpenCrafting};
 use crate::systems::item::effects::{
     ClearGroundItems, DropItems, Equip, Items, MoveItems, ShowItem, SpawnGroundItems, Unequip,
     UseItem,
@@ -115,6 +115,7 @@ effects! {
     ItemPrompt(ItemPrompt),
     TakeOffer(TakeOffer),
     OpenCrafting(OpenCrafting),
+    MasterRecipe(MasterRecipe),
     Notify(Notify),
     Say(Say),
     Wander(Wander),

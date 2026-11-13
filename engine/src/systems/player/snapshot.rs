@@ -13,6 +13,7 @@ use crate::systems::GameSettings;
 use crate::systems::actor::{ActorModel, Appearance, Name, appearance};
 use crate::systems::area::{self, AreaId, transition::Discovered};
 use crate::systems::class::{Class, ClassId, NodeKey};
+use crate::systems::crafting::{self, RecipeKey, RecipeMasteries};
 use crate::systems::dialogue::Heard;
 use crate::systems::equipment::{self, Equipment};
 use crate::systems::history::{History, HistoryEntry};
@@ -39,6 +40,9 @@ pub struct CharacterSnapshot {
     #[schemars(transform = SchemaMark::Usage.with("learned ranks, by node of the class tree"))]
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub skills: Vec<SnapshotSkill>,
+    /// The recipes mastered for good, besides those the skills give.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub recipe_masteries: Vec<RecipeKey>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub hotbar: Vec<SnapshotSlot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -83,6 +87,7 @@ impl ContentFile for CharacterSnapshot {
             appearance: Appearance::of(near.file()?),
             xp: 0,
             skills: Vec::new(),
+            recipe_masteries: Vec::new(),
             hotbar: Vec::new(),
             basic_attack: None,
             stats: Stats::default(),
@@ -109,6 +114,7 @@ impl CharacterSnapshot {
             appearance: Appearance::of(def.class.get(content).model),
             xp: 0,
             skills: Vec::new(),
+            recipe_masteries: Vec::new(),
             hotbar: Vec::new(),
             basic_attack: None,
             stats: Stats::default(),
@@ -308,6 +314,7 @@ pub fn materialize(
             def: snapshot.class,
         },
         learned: learned(snapshot),
+        masteries: RecipeMasteries(snapshot.recipe_masteries.iter().cloned().collect()),
         hotbar: hotbar(snapshot),
         basic_attack: BasicAttack(snapshot.basic_attack),
         memory,
@@ -335,6 +342,7 @@ pub fn check_all(loading: &mut Loading) {
         check_bag(&content, settings, snapshot, &mut check);
         check_equipment(&content, snapshot, &mut check);
         check_skills(&content, snapshot, &mut check);
+        check_masteries(&content, snapshot, &mut check);
         check_hotbar(&content, settings, snapshot, &mut check);
         check_quests(&content, snapshot, &mut check);
         check_memories(&content, snapshot, &mut check);
@@ -695,6 +703,22 @@ fn check_quests(content: &Content, snapshot: &CharacterSnapshot, check: &mut Row
                     format!("0 to {}", progress.need),
                 );
             }
+        }
+    }
+}
+
+fn check_masteries(content: &Content, snapshot: &CharacterSnapshot, check: &mut RowCheck) {
+    for (index, mastery) in snapshot.recipe_masteries.iter().enumerate() {
+        let at = format!("/recipe_masteries/{index}");
+        if snapshot.recipe_masteries[..index].contains(mastery) {
+            check.error(
+                at,
+                "mastery listed twice",
+                &mastery.recipe.0,
+                "each recipe once",
+            );
+        } else if let Some(problem) = crafting::mastery_problem(content, mastery) {
+            check.problem(at, problem);
         }
     }
 }

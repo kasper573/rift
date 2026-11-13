@@ -76,6 +76,9 @@ pub enum CharacterSection {
     Equipment,
     Skills,
     Hotbar,
+    #[serde(rename = "masteries")]
+    #[strum(serialize = "Recipe masteries")]
+    RecipeMasteries,
     Start,
     #[serde(rename = "areas")]
     #[strum(serialize = "Areas known")]
@@ -107,9 +110,12 @@ impl CharacterSection {
             CharacterSection::Stats | CharacterSection::AreasKnown => {
                 (&[CharacterSection::Stats], &[CharacterSection::AreasKnown])
             }
-            CharacterSection::Skills | CharacterSection::Hotbar => {
-                (&[CharacterSection::Skills], &[CharacterSection::Hotbar])
-            }
+            CharacterSection::Skills
+            | CharacterSection::Hotbar
+            | CharacterSection::RecipeMasteries => (
+                &[CharacterSection::Skills],
+                &[CharacterSection::Hotbar, CharacterSection::RecipeMasteries],
+            ),
             CharacterSection::Quests | CharacterSection::Memories => {
                 (&[CharacterSection::Quests], &[CharacterSection::Memories])
             }
@@ -298,6 +304,13 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str) {
                                         &sheet,
                                         character,
                                         &mut views.character,
+                                    ),
+                                    CharacterSection::RecipeMasteries => section_of(
+                                        ui,
+                                        &mut cx,
+                                        "Recipe masteries",
+                                        &mut character.recipe_masteries,
+                                        field!(CharacterSnapshot, recipe_masteries),
                                     ),
                                     CharacterSection::LinesHeard => section_of(
                                         ui,

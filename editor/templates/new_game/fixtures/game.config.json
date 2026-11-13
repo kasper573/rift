@@ -1,6 +1,6 @@
 {
   "name": "New Game",
-  "content_version": "de2ee56c",
+  "content_version": "a9e7e0af",
   "initial_spawn": {
     "area": "start.area",
     "x": 8.0,
@@ -60,6 +60,7 @@
     "no_recipe": "No recipe",
     "choose_result": "Choose a result",
     "craft_failed": "Crafting failed",
+    "requires_mastery": "Requires mastery",
     "unknown_command": "There is no command {command}",
     "command_needs": "{usage} needs its {input}",
     "command_refuses": "{value} is no {input}",

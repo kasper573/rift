@@ -5,11 +5,14 @@
 //! change is the whole file written again, so the loader's rules refuse a loop or an empty recipe
 //! as it is made.
 
+use std::collections::HashSet;
+
 use engine::core::content::ContentFile;
+use engine::core::content::files::name_of as name_of_file;
 use engine::core::units::{Percent, Seconds};
 use engine::systems::actor::held::ToolInHand;
 use engine::systems::actor::skeleton::MoveName;
-use engine::systems::crafting::{Recipe, RecipeBookDef};
+use engine::systems::crafting::{Recipe, RecipeBookDef, RecipeId};
 use engine::systems::item::{ItemDef, ItemId, ItemStack};
 use schemars::JsonSchema;
 use serde::Serialize;
@@ -24,6 +27,7 @@ use crate::icons::{self, IconTone};
 use crate::picker::{self, Dragged};
 use crate::project::{ContentEdit, RowSelection};
 use crate::row_form;
+use crate::rows;
 use crate::tabs::shown_path;
 
 const ROW: f32 = 34.0;
@@ -94,13 +98,20 @@ pub fn add_recipe(editor: &mut Editor, key: &str, makes: &str, from: &str) -> bo
     };
     let label = format!("Add a recipe for {}", name_of(editor, makes));
     editor.change(ContentEdit::new(label), key, |book: &mut RecipeBookDef| {
+        let ids: HashSet<String> = book
+            .recipes
+            .iter()
+            .map(|recipe| recipe.id.0.clone())
+            .collect();
         book.recipes.push(Recipe {
+            id: RecipeId(rows::free_name(name_of_file(makes), &ids)),
             makes: vec![ItemStack::new(made, 1)],
             from: vec![ItemStack::new(taken, 1)],
             takes: FRESH_TAKES,
             work: None,
             tool: None,
             chance: Percent::WHOLE,
+            mastery: false,
         });
         Ok(())
     })
@@ -194,6 +205,21 @@ pub fn set_takes(editor: &mut Editor, key: &str, recipe: usize, takes: Seconds) 
 pub fn set_chance(editor: &mut Editor, key: &str, recipe: usize, chance: Percent) -> bool {
     let label = format!("Change how often {} comes off", called(editor, key, recipe));
     change_recipe(editor, key, label, recipe, |recipe| recipe.chance = chance)
+}
+
+pub fn set_recipe_id(editor: &mut Editor, key: &str, recipe: usize, id: RecipeId) -> bool {
+    let label = format!("Rename {}", called(editor, key, recipe));
+    change_recipe(editor, key, label, recipe, |recipe| recipe.id = id)
+}
+
+pub fn set_mastery(editor: &mut Editor, key: &str, recipe: usize, mastery: bool) -> bool {
+    let label = format!(
+        "Change whether {} requires mastery",
+        called(editor, key, recipe)
+    );
+    change_recipe(editor, key, label, recipe, |recipe| {
+        recipe.mastery = mastery
+    })
 }
 
 /// Sets the move a crafter makes at every craft of the book whose recipe names none of its own.
@@ -362,6 +388,8 @@ struct ShownItem {
 
 /// A recipe as the list shows it.
 struct ShownRecipe {
+    id: RecipeId,
+    mastery: bool,
     makes: Vec<(ShownItem, u32)>,
     from: Vec<(ShownItem, u32)>,
     takes: Seconds,
@@ -414,6 +442,8 @@ fn shown_rows(editor: &Editor, book: &RecipeBookDef) -> Vec<ShownRecipe> {
     book.recipes
         .iter()
         .map(|recipe| ShownRecipe {
+            id: recipe.id.clone(),
+            mastery: recipe.mastery,
             makes: shown(&recipe.makes),
             from: shown(&recipe.from),
             takes: recipe.takes,
@@ -994,6 +1024,13 @@ fn inspect_recipe(
     rows: &[ShownRecipe],
 ) {
     sheet::section(ui, "recipe");
+    let mut id = row.id.clone();
+    let pointer = format!("/recipes/{index}/id");
+    if typed_field(editor, ui, key, "id", &mut id, &pointer) {
+        set_recipe_id(editor, key, index, id);
+    }
+    form::hint(ui, "Its name within the book, by which a mastery names it.");
+    ui.add_space(8.0);
     for side in [RecipeSide::Makes, RecipeSide::From] {
         ui.push_id(side.field(), |ui| {
             inspect_side(editor, ui, key, index, side, row.side(side));
@@ -1020,6 +1057,15 @@ fn inspect_recipe(
     form::hint(
         ui,
         "How often a craft comes off. One that fails spends its materials and makes nothing.",
+    );
+    let mut mastery = row.mastery;
+    let pointer = format!("/recipes/{index}/mastery");
+    if typed_field(editor, ui, key, "requires mastery", &mut mastery, &pointer) {
+        set_mastery(editor, key, index, mastery);
+    }
+    form::hint(
+        ui,
+        "Whether only a crafter who masters it makes it. Every crafter is shown it all the same.",
     );
     ui.add_space(8.0);
     let comes_off = if row.chance < Percent::WHOLE {

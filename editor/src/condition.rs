@@ -40,7 +40,8 @@ impl QueryGroup {
             | RiftQueryKind::StatusPower
             | RiftQueryKind::SkillRank
             | RiftQueryKind::SkillStat
-            | RiftQueryKind::SpentSkillPoints => QueryGroup::Character,
+            | RiftQueryKind::SpentSkillPoints
+            | RiftQueryKind::MastersRecipe => QueryGroup::Character,
             RiftQueryKind::Holding
             | RiftQueryKind::FreeSlots
             | RiftQueryKind::Offered

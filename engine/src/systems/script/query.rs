@@ -17,6 +17,7 @@ use crate::systems::area::transition::Discovered;
 use crate::systems::area::{self, Area, AreaId, AreaTag, object};
 use crate::systems::class::{self, ClassId};
 use crate::systems::combat::{Attackers, Attitude};
+use crate::systems::crafting::{self, RecipeKey};
 use crate::systems::equipment;
 use crate::systems::item::{DroppedItem, Inventory, ItemId};
 use crate::systems::memory::{self, MemoryId};
@@ -251,6 +252,13 @@ pub enum RiftQuery {
         of: Option<Box<Condition>>,
         item: ItemId,
     },
+    /// Whether the character masters `recipe`: for good, or by a skill it knows.
+    MastersRecipe {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        #[schemars(extend("default" = {"type": "subject"}))]
+        of: Option<Box<Condition>>,
+        recipe: RecipeKey,
+    },
     FreeSlots {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         #[schemars(extend("default" = {"type": "subject"}))]
@@ -426,6 +434,7 @@ impl RiftQueryKind {
             RiftQueryKind::IsClass
             | RiftQueryKind::HasStatus
             | RiftQueryKind::Equipped
+            | RiftQueryKind::MastersRecipe
             | RiftQueryKind::SetWithin
             | RiftQueryKind::OnQuest
             | RiftQueryKind::QuestDone
@@ -464,6 +473,7 @@ impl QueryDef<RiftScripting> for RiftQuery {
             | RiftQuery::HasStatus { of, .. }
             | RiftQuery::StatusCount { of, .. }
             | RiftQuery::Holding { of, .. }
+            | RiftQuery::MastersRecipe { of, .. }
             | RiftQuery::FreeSlots { of }
             | RiftQuery::Offered { of, .. }
             | RiftQuery::Equipped { of, .. }
@@ -585,6 +595,17 @@ impl QueryDef<RiftScripting> for RiftQuery {
                             .get::<Inventory>(who)
                             .map_or(0, |bag| i64::from(bag.count(item)))
                     }))
+                })
+            }
+            RiftQuery::MastersRecipe { of, recipe } => {
+                crafting::mastery_fault(cx.content, recipe)?;
+                let recipe = recipe.clone();
+                let of = cx.actor(of.as_deref())?;
+                Box::new(move |world, cx| {
+                    Value::Bool(
+                        character(world, cx, &of)
+                            .is_some_and(|who| crafting::masters(world, who, &recipe)),
+                    )
                 })
             }
             RiftQuery::FreeSlots { of } => {

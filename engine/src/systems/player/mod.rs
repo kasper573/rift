@@ -27,6 +27,7 @@ use crate::systems::area::weather::ServerSky;
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::class::{Class, ClassId};
 use crate::systems::combat::{self, HealthRegen};
+use crate::systems::crafting::RecipeMasteries;
 use crate::systems::dialogue::Heard;
 use crate::systems::equipment::Equipment;
 use crate::systems::history::History;
@@ -483,6 +484,7 @@ pub struct CharacterState {
     pub equipment: Equipment,
     pub class: Class,
     pub learned: Learned,
+    pub masteries: RecipeMasteries,
     pub hotbar: Hotbar,
     pub basic_attack: BasicAttack,
     pub memory: Memory,
@@ -505,6 +507,10 @@ impl CharacterState {
             equipment: world.get::<Equipment>(entity)?.clone(),
             class: *world.get::<Class>(entity)?,
             learned: world.get::<Learned>(entity).cloned().unwrap_or_default(),
+            masteries: world
+                .get::<RecipeMasteries>(entity)
+                .cloned()
+                .unwrap_or_default(),
             hotbar: world.get::<Hotbar>(entity).cloned().unwrap_or_default(),
             basic_attack: world
                 .get::<BasicAttack>(entity)

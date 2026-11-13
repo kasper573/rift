@@ -310,6 +310,8 @@ pub struct GameWords {
     pub choose_result: String,
     /// What bursts out of a crafter as a craft of theirs fails.
     pub craft_failed: String,
+    /// What a crafting prompt says of a recipe that requires a mastery its player lacks.
+    pub requires_mastery: String,
     /// What a player is told sending `{command}`, which is no command of theirs.
     pub unknown_command: String,
     /// What a player is told sending a command without its input `{input}`: `{usage}` spells
@@ -870,6 +872,7 @@ fn check_settings(loading: &mut Loading) {
         ("recipes", &settings.words.recipes),
         ("no_recipe", &settings.words.no_recipe),
         ("choose_result", &settings.words.choose_result),
+        ("requires_mastery", &settings.words.requires_mastery),
         ("unknown_command", &settings.words.unknown_command),
         ("command_needs", &settings.words.command_needs),
         ("command_refuses", &settings.words.command_refuses),

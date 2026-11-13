@@ -4,13 +4,16 @@
 //! the recipe books the prompt names.
 
 use bevy::prelude::*;
-use ui::controls::{self, RowLook};
+use ui::controls::{self, RowHover, RowLook};
 use ui::egui::{self, Align, Layout, Pos2, Rect, Sense, Stroke, Ui, UiBuilder, Vec2};
 use ui::face::{self, TextRole};
 use ui::glyph::Mark;
 use ui::{ink, paint, sheet};
 
-use super::{CraftingRequest, CraftingView, Recipe, RecipeKey, craftables, matches};
+use super::{
+    Craftable, CraftingRequest, CraftingView, Recipe, RecipeKey, craftables, locked, matches,
+    stacks_named,
+};
 use crate::core::content::Content;
 use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::core::time;
@@ -58,22 +61,25 @@ struct Crafting {
 }
 
 /// What the items placed make: `times` crafts of `recipe`, giving `makes` between them where
-/// every one comes off, as each does `chance` of the time.
+/// every one comes off, as each does `chance` of the time. `locked` where it requires a mastery
+/// the player lacks.
 #[derive(Clone, Debug, PartialEq)]
 pub struct CraftResult {
     pub recipe: RecipeKey,
     pub makes: Vec<ItemStack>,
     pub times: u32,
     pub chance: Percent,
+    pub locked: bool,
 }
 
-/// A recipe as the prompt lists it: which materials the bag lacks, and whether it covers them
-/// all.
+/// A recipe as the prompt lists it: which materials the bag lacks, whether it covers them all,
+/// and whether the recipe requires a mastery the player lacks.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ListedRecipe {
     pub recipe: Recipe,
     pub lacking: Vec<bool>,
     pub can_make: bool,
+    pub locked: bool,
 }
 
 /// The crafting prompt before the player, if one is open.
@@ -94,6 +100,7 @@ pub fn results(world: &World) -> Vec<CraftResult> {
         let makes = craftable.recipe.products(times);
         if found.iter().all(|result| result.makes != makes) {
             found.push(CraftResult {
+                locked: lacks_mastery(world, &craftable),
                 recipe: craftable.key,
                 makes,
                 times,
@@ -110,8 +117,8 @@ pub fn picked(world: &World) -> Option<CraftResult> {
     if found.len() == 1 {
         return found.pop();
     }
-    let chosen = world.resource::<Crafting>().chosen?;
-    found.into_iter().find(|result| result.recipe == chosen)
+    let chosen = world.resource::<Crafting>().chosen.as_ref()?;
+    found.into_iter().find(|result| result.recipe == *chosen)
 }
 
 /// Chooses the result of `recipe` among several.
@@ -160,6 +167,7 @@ pub fn listed(world: &World) -> Vec<ListedRecipe> {
                 recipe: craftable.recipe.clone(),
                 can_make: !lacking.contains(&true),
                 lacking,
+                locked: lacks_mastery(world, &craftable),
             }
         })
         .collect()
@@ -182,6 +190,9 @@ pub fn verdict(world: &World) -> (String, Option<CraftResult>) {
     let Some(result) = picked(world) else {
         return (words.choose_result.clone(), None);
     };
+    if result.locked {
+        return (words.requires_mastery.clone(), None);
+    }
     let fits = session::my_character(world)
         .and_then(|me| me.get::<Inventory>())
         .cloned()
@@ -304,7 +315,11 @@ fn list(ui: &mut Ui, world: &mut World) {
                     .push_id(("recipe", index), |ui| recipe_row(ui, world, row, laid_out))
                     .inner;
                 if map::clicked(world, InputAction::Select, &response) {
-                    lay_out(world, &row.recipe);
+                    if row.locked {
+                        InterfaceSound::UiRefuse.play(world);
+                    } else {
+                        lay_out(world, &row.recipe);
+                    }
                 }
             }
         },
@@ -319,7 +334,10 @@ fn recipe_row(
 ) -> egui::Response {
     let content = world.resource::<Content>().clone();
     let name = stacks_named(&content, &row.recipe.makes);
-    let (status, status_ink) = if row.can_make {
+    let requires_mastery = &content.built::<GameSettings>().words.requires_mastery;
+    let (status, status_ink) = if row.locked {
+        (requires_mastery.as_str(), ink::INK3)
+    } else if row.can_make {
         ("can make", ink::VERDIGRIS)
     } else {
         ("materials missing", ink::INK3)
@@ -330,10 +348,16 @@ fn recipe_row(
         .then(|| chance_note(row.recipe.chance));
     let look = RowLook {
         selected: laid_out,
+        faint: row.locked,
+        hover: if row.locked {
+            RowHover::Unlit
+        } else {
+            RowHover::Lit
+        },
         ..RowLook::default()
     };
     let response = controls::row(ui, look, |ui| {
-        if !row.can_make {
+        if !row.can_make || row.locked {
             ui.multiply_opacity(MISSING_OPACITY);
         }
         ui.horizontal(|ui| {
@@ -377,7 +401,7 @@ fn recipe_row(
     response.widget_info(|| {
         egui::WidgetInfo::labeled(
             egui::WidgetType::Button,
-            true,
+            !row.locked,
             format!("Recipe: {name}, {status}"),
         )
     });
@@ -492,10 +516,10 @@ fn one_result(ui: &mut Ui, world: &mut World, result: &CraftResult) {
 
 fn choices(ui: &mut Ui, world: &mut World, found: &[CraftResult]) {
     let content = world.resource::<Content>().clone();
-    let chosen = world.resource::<Crafting>().chosen;
+    let chosen = world.resource::<Crafting>().chosen.clone();
     ui.spacing_mut().item_spacing.y = 0.0;
     for (index, result) in found.iter().enumerate() {
-        let wanted = chosen == Some(result.recipe);
+        let wanted = chosen.as_ref() == Some(&result.recipe);
         let name = stacks_named(&content, &result.makes);
         let look = RowLook {
             selected: wanted,
@@ -545,25 +569,14 @@ fn choices(ui: &mut Ui, world: &mut World, found: &[CraftResult]) {
             )
         });
         if map::clicked(world, InputAction::Select, &response) {
-            choose(world, result.recipe);
+            choose(world, result.recipe.clone());
             InterfaceSound::UiMove.play(world);
         }
     }
 }
 
-fn stacks_named(content: &Content, stacks: &[ItemStack]) -> String {
-    stacks
-        .iter()
-        .map(|stack| {
-            let name = &stack.item.get(content).name;
-            if stack.count > 1 {
-                format!("{name} ×{}", stack.count)
-            } else {
-                name.clone()
-            }
-        })
-        .collect::<Vec<_>>()
-        .join(" + ")
+fn lacks_mastery(world: &World, craftable: &Craftable) -> bool {
+    session::me(world).is_some_and(|me| locked(world, me, craftable))
 }
 
 /// The words beside a result's slots, painted over the rest of their line: its name over a
@@ -643,7 +656,7 @@ fn confirm_risk(world: &mut World, step: PromptStep, result: &CraftResult) {
     } else {
         "The craft".to_owned()
     };
-    let recipe = result.recipe;
+    let recipe = result.recipe.clone();
     hud::confirm(
         world,
         Confirm {
@@ -723,7 +736,7 @@ fn craft_button(ui: &mut Ui, world: &mut World, prompt: &PromptView) {
         if asks {
             confirm_risk(world, prompt.step, &result);
         } else {
-            craft(world, prompt.step, result.recipe);
+            craft(world, prompt.step, result.recipe.clone());
         }
     }
 }
@@ -742,11 +755,15 @@ fn settle(world: &mut World) {
         world.resource_mut::<Crafting>().crafted = crafted;
         tray::clear(world);
     }
-    let made: Vec<RecipeKey> = results(world).iter().map(|result| result.recipe).collect();
+    let made: Vec<RecipeKey> = results(world)
+        .into_iter()
+        .map(|result| result.recipe)
+        .collect();
     let mut crafting = world.resource_mut::<Crafting>();
     if crafting
         .chosen
-        .is_some_and(|chosen| !made.contains(&chosen))
+        .as_ref()
+        .is_some_and(|chosen| !made.contains(chosen))
     {
         crafting.chosen = None;
     }

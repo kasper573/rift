@@ -13,6 +13,7 @@ use crate::core::content::Content;
 use crate::core::gui::{self, Band};
 use crate::core::text::{self, StyledLine, TextLook};
 use crate::systems::class::{self, ClassId, NodeKey};
+use crate::systems::crafting;
 use crate::systems::equipment::Equipment;
 use crate::systems::hud;
 use crate::systems::item::card::CardLook;
@@ -188,6 +189,12 @@ pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) ->
                 )
                 .wrap(),
             );
+        }
+        if !def.masteries.is_empty() {
+            card::heading(ui, "masters");
+            for recipe in def.masteries.iter().filter_map(|key| key.get(&content)) {
+                card::fact(ui, &crafting::stacks_named(&content, &recipe.makes));
+            }
         }
         if let Some(access) = &card.node {
             let lines = access_lines(world, &content, access);

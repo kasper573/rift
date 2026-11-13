@@ -78,7 +78,7 @@ use crate::systems::area::weather::ShownCourse;
 use crate::systems::area::{self, AreaId, AreaObject, AreaTag, PropId};
 use crate::systems::attention::{Attention, AttentionId, StatusBadges};
 use crate::systems::combat::Attitude;
-use crate::systems::crafting;
+use crate::systems::crafting::{self, RecipeId};
 use crate::systems::dialogue::camera::DialogueCamera;
 use crate::systems::dialogue::stage;
 use crate::systems::equipment::{self, EquipmentPlace};
@@ -740,6 +740,8 @@ pub struct ProbeCrafting {
 /// A recipe of a crafting prompt, as its window lists it.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeRecipe {
+    /// Its name within its book.
+    pub id: RecipeId,
     /// Everything one craft gives.
     pub makes: Vec<ProbeStack>,
     pub from: Vec<ProbeStack>,
@@ -749,6 +751,10 @@ pub struct ProbeRecipe {
     pub chance: Percent,
     /// Whether the player's bag covers every material.
     pub can_make: bool,
+    /// Whether only a crafter who masters it makes it.
+    pub mastery: bool,
+    /// Whether it requires a mastery the player lacks, so the window lists it disabled.
+    pub locked: bool,
 }
 
 /// A stack placed in a prompt's tray.
@@ -1195,6 +1201,9 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                 recipes: crafting::panel::listed(world)
                     .into_iter()
                     .map(|listed| ProbeRecipe {
+                        id: listed.recipe.id.clone(),
+                        mastery: listed.recipe.mastery,
+                        locked: listed.locked,
                         makes: listed.recipe.makes.iter().copied().map(stack).collect(),
                         from: listed.recipe.from.iter().copied().map(stack).collect(),
                         takes: listed.recipe.takes,

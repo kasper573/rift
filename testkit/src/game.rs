@@ -257,6 +257,7 @@ impl Game {
                     "no_recipe": "No recipe",
                     "choose_result": "Choose a result",
                     "craft_failed": "Crafting failed",
+                    "requires_mastery": "Requires mastery",
                     "unknown_command": "There is no command {command}",
                     "command_needs": "{usage} needs its {input}",
                     "command_refuses": "{value} is no {input}",

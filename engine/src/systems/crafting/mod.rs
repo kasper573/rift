@@ -1,5 +1,7 @@
 pub mod panel;
 
+use std::collections::BTreeSet;
+
 use bevy_app::App;
 use bevy_ecs::prelude::*;
 use schemars::JsonSchema;
@@ -7,10 +9,12 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::content::{
     Content, ContentFile, ContentId, ContentProblem, Loading, ModuleRule, ModuleSet, Nearby,
-    RowCheck, SchemaMark,
+    RowCheck, SchemaMark, id, serial,
 };
 use crate::core::math::Rng;
-use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, ScriptFault, Value, ValueType};
+use crate::core::script::{
+    Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault, Value, ValueType,
+};
 use crate::core::time::{UnixMillis, WallClock};
 use crate::core::units::{Percent, PlaybackRate, Seconds};
 use crate::systems::actor::HandsAtWork;
@@ -22,11 +26,13 @@ use crate::systems::item::{Inventory, ItemId, ItemStack};
 use crate::systems::notification;
 use crate::systems::player::player_requests;
 use crate::systems::prompt::{self, Asked, CLOSED, PromptKind, PromptStep};
+use crate::systems::script::effect::Reaching;
 use crate::systems::script::{
     self, Condition, EffectCall, EffectReach, EventKind, FlowKey, Owner, RiftEvent, RiftInstances,
     RiftScripting, RunnerKind, ScriptModule, ScriptedRow, effect as effects,
 };
 use crate::systems::shop::ShopDef;
+use crate::systems::skill;
 use crate::systems::stat::{self, StatKind};
 use crate::systems::text::{self, LineText, Span};
 use crate::systems::vfx::VfxShaderFixture;
@@ -37,6 +43,7 @@ pub type RecipeBookId = ContentId<RecipeBookDef>;
 pub fn register(app: &mut App) {
     use bevy_replication::{AppMessageExt, AppReplicationExt};
     app.replicate_private::<CraftingView>()
+        .replicate_private::<RecipeMasteries>()
         .add_client_message::<CraftingRequest>();
 }
 
@@ -61,6 +68,8 @@ pub struct RecipeBookDef {
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Recipe {
+    /// Its name within the book, by which a mastery names it.
+    pub id: RecipeId,
     /// What one craft gives, all of it together.
     pub makes: Vec<ItemStack>,
     /// What one craft takes. Every one is spent.
@@ -78,13 +87,36 @@ pub struct Recipe {
     #[schemars(extend("default" = 100))]
     #[serde(default = "Percent::whole", skip_serializing_if = "Percent::is_whole")]
     pub chance: Percent,
+    /// Whether only a crafter who masters it makes it. Every crafter is shown it all the same.
+    #[serde(default, skip_serializing_if = "serial::is_false")]
+    pub mastery: bool,
 }
 
-/// A recipe by the book that holds it and its place among the book's recipes.
-#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
+/// The name of a recipe within its book.
+#[derive(
+    JsonSchema, Clone, Debug, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize,
+)]
+#[serde(transparent)]
+pub struct RecipeId(pub String);
+
+/// A recipe by the book that holds it and its name within the book.
+#[derive(
+    JsonSchema, Serialize, Deserialize, Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash,
+)]
+#[serde(deny_unknown_fields)]
 pub struct RecipeKey {
     pub book: RecipeBookId,
-    pub index: usize,
+    pub recipe: RecipeId,
+}
+
+impl RecipeKey {
+    pub fn get<'a>(&self, content: &'a Content) -> Option<&'a Recipe> {
+        self.book
+            .get(content)
+            .recipes
+            .iter()
+            .find(|recipe| recipe.id == self.recipe)
+    }
 }
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]
@@ -109,6 +141,18 @@ impl ContentFile for RecipeBookDef {
     fn check(&self, check: &mut RowCheck) {
         for (index, recipe) in self.recipes.iter().enumerate() {
             let at = format!("/recipes/{index}");
+            check.text(format!("{at}/id"), &recipe.id.0, 1, 40);
+            if self.recipes[..index]
+                .iter()
+                .any(|earlier| earlier.id == recipe.id)
+            {
+                check.error(
+                    format!("{at}/id"),
+                    "id listed twice",
+                    &recipe.id.0,
+                    "an id no other recipe of the book has",
+                );
+            }
             check_stacks(
                 check,
                 format!("{at}/makes"),
@@ -269,6 +313,22 @@ fn scaled(stacks: &[ItemStack], times: u32) -> Vec<ItemStack> {
         .collect()
 }
 
+/// `stacks` as a player reads them: each item by its name, with its count where more than one.
+pub fn stacks_named(content: &Content, stacks: &[ItemStack]) -> String {
+    stacks
+        .iter()
+        .map(|stack| {
+            let name = &stack.item.get(content).name;
+            if stack.count > 1 {
+                format!("{name} ×{}", stack.count)
+            } else {
+                name.clone()
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" + ")
+}
+
 /// Where a crafting prompt reads the recipes it makes.
 #[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
@@ -298,7 +358,7 @@ impl CraftSource {
 }
 
 /// A recipe a crafting prompt makes, and where its book holds it.
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct Craftable<'a> {
     pub key: RecipeKey,
     pub recipe: &'a Recipe,
@@ -310,8 +370,11 @@ pub fn recipes<'a>(content: &'a Content, from: &[CraftSource]) -> Vec<Craftable<
     let mut found: Vec<Craftable> = Vec::new();
     for source in from {
         let book = source.book();
-        for (index, recipe) in book.get(content).recipes.iter().enumerate() {
-            let key = RecipeKey { book, index };
+        for recipe in &book.get(content).recipes {
+            let key = RecipeKey {
+                book,
+                recipe: recipe.id.clone(),
+            };
             if source.takes(recipe) && found.iter().all(|craftable| craftable.key != key) {
                 found.push(Craftable { key, recipe });
             }
@@ -323,9 +386,12 @@ pub fn recipes<'a>(content: &'a Content, from: &[CraftSource]) -> Vec<Craftable<
 /// The recipes `keys` name, in their order.
 pub fn craftables<'a>(content: &'a Content, keys: &[RecipeKey]) -> Vec<Craftable<'a>> {
     keys.iter()
-        .filter_map(|&key| {
-            let recipe = key.book.get(content).recipes.get(key.index)?;
-            Some(Craftable { key, recipe })
+        .filter_map(|key| {
+            let recipe = key.get(content)?;
+            Some(Craftable {
+                key: key.clone(),
+                recipe,
+            })
         })
         .collect()
 }
@@ -334,8 +400,115 @@ pub fn craftables<'a>(content: &'a Content, keys: &[RecipeKey]) -> Vec<Craftable
 pub fn matches<'a>(recipes: &[Craftable<'a>], offer: &[ItemStack]) -> Vec<(Craftable<'a>, u32)> {
     recipes
         .iter()
-        .filter_map(|craftable| Some((*craftable, craftable.recipe.times(offer)?)))
+        .filter_map(|craftable| Some((craftable.clone(), craftable.recipe.times(offer)?)))
         .collect()
+}
+
+/// The recipes a character masters for good, whatever skills it knows.
+#[derive(Component, Serialize, Deserialize, Clone, Debug, Default, PartialEq)]
+pub struct RecipeMasteries(pub BTreeSet<RecipeKey>);
+
+/// Whether `who` masters `recipe`: for good, or by a skill it knows.
+pub fn masters(world: &World, who: Entity, recipe: &RecipeKey) -> bool {
+    let content = world.resource::<Content>();
+    world
+        .get::<RecipeMasteries>(who)
+        .is_some_and(|held| held.0.contains(recipe))
+        || skill::known(world, who)
+            .keys()
+            .any(|skill| skill.get(content).masteries.contains(recipe))
+}
+
+/// Whether `craftable` requires a mastery `who` lacks.
+pub fn locked(world: &World, who: Entity, craftable: &Craftable) -> bool {
+    craftable.recipe.mastery && !masters(world, who, &craftable.key)
+}
+
+/// What is wrong with naming `key` as a mastery, if anything.
+pub fn mastery_problem(content: &Content, key: &RecipeKey) -> Option<ContentProblem> {
+    let book = key.book.get(content);
+    match key.get(content) {
+        None => Some(
+            ContentProblem::new(
+                "unknown recipe",
+                &key.recipe.0,
+                format!("the id of a recipe of {}", key.book.path(content)),
+            )
+            .near(id::nearest(
+                book.recipes.iter().map(|recipe| &recipe.id.0),
+                &key.recipe.0,
+            )),
+        ),
+        Some(recipe) if !recipe.mastery => Some(ContentProblem::new(
+            "not a mastery recipe",
+            &key.recipe.0,
+            "a recipe that requires mastery",
+        )),
+        Some(_) => None,
+    }
+}
+
+/// `mastery_problem`, as a script reports it.
+pub fn mastery_fault(content: &Content, key: &RecipeKey) -> Result<(), ScriptFault> {
+    match mastery_problem(content, key) {
+        Some(problem) => Err(ScriptFault::new(
+            problem.rule,
+            format!("{}, got {}", problem.expected, problem.found),
+        )),
+        None => Ok(()),
+    }
+}
+
+/// Has a character master a recipe for good: one that requires mastery, which they then make
+/// wherever its book is opened.
+#[derive(JsonSchema, Clone, Serialize, Deserialize)]
+#[schemars(transform = SchemaMark::System.with("crafting"))]
+pub struct MasterRecipe {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("default" = {"type": "subject"}))]
+    pub who: Option<Condition>,
+    pub recipe: RecipeKey,
+    #[serde(default, skip_serializing_if = "Arrow::is_none")]
+    pub next: Arrow,
+}
+
+impl EffectDef<RiftScripting> for MasterRecipe {
+    fn needs_subject(&self) -> bool {
+        self.who.is_none()
+    }
+    crate::outputs!(NEXT => next);
+    fn compile<'c>(
+        &'c self,
+        cx: &mut Compiler<'c, RiftScripting>,
+    ) -> Result<EffectCall, ScriptFault> {
+        mastery_fault(cx.content, &self.recipe)?;
+        let who = effects::aim_anywhere(cx, &self.who)?;
+        let recipe = self.recipe.clone();
+        Ok(Box::new(move |world, flow, cx| {
+            let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            let recipe = recipe.clone();
+            effects::reach(
+                world,
+                flow,
+                cx,
+                aimed,
+                Reaching::quietly(NEXT),
+                move |world, player| {
+                    let mut held = world
+                        .get::<RecipeMasteries>(player)
+                        .cloned()
+                        .unwrap_or_default();
+                    if held.0.insert(recipe) {
+                        world.entity_mut(player).insert(held);
+                    }
+                    Ok(())
+                },
+            )
+        }))
+    }
+    fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
+        Vec::new()
+    }
 }
 
 /// Opens a crafting prompt until it closes: an item prompt whose slots are matched against the
@@ -395,7 +568,7 @@ impl EffectDef<RiftScripting> for OpenCrafting {
             .map(|craftable| craftable.recipe.from.len() as u32)
             .max()
             .ok_or_else(|| ScriptFault::new("no recipes", "a book with a recipe to make"))?;
-        let made: Vec<RecipeKey> = known.iter().map(|craftable| craftable.key).collect();
+        let made: Vec<RecipeKey> = known.into_iter().map(|craftable| craftable.key).collect();
         let who = effects::aim(cx, &self.who)?;
         let values = text::values(&self.text)
             .into_iter()
@@ -530,7 +703,7 @@ pub fn work(world: &mut World, views: &mut QueryState<(Entity, &'static Crafting
         .collect();
     due.sort_unstable_by_key(|(until, player, _)| (*until, *player));
     for (_, player, making) in due {
-        let crafted = craft(world, player, &making.offer, making.recipe);
+        let crafted = craft(world, player, &making.offer, &making.recipe);
         finish(world, player);
         let crafted = match crafted {
             Ok(crafted) => crafted,
@@ -551,10 +724,10 @@ pub fn work(world: &mut World, views: &mut QueryState<(Entity, &'static Crafting
                 .clone();
             notification::pop_as(world, player, failed, VfxShaderFixture::FailurePop);
         }
-        let recipe = making.recipe;
+        let book = making.recipe.book;
         for made in crafted.made {
             world.resource_mut::<RiftInstances>().raise(
-                Owner::Row(RunnerKind::RecipeBook, recipe.book.raw()),
+                Owner::Row(RunnerKind::RecipeBook, book.raw()),
                 EventKind::Crafted,
                 Some(player),
                 vec![
@@ -853,7 +1026,7 @@ fn begin(
     recipe: RecipeKey,
 ) -> Result<(), String> {
     let content = world.resource::<Content>().clone();
-    let (craftable, times) = meant(world, &content, player, &offer, recipe)?;
+    let (craftable, times) = meant(world, &content, player, &offer, &recipe)?;
     world
         .get::<Inventory>(player)
         .cloned()
@@ -912,7 +1085,7 @@ fn craft(
     world: &mut World,
     player: Entity,
     offer: &[ItemStack],
-    recipe: RecipeKey,
+    recipe: &RecipeKey,
 ) -> Result<Crafted, String> {
     let content = world.resource::<Content>().clone();
     let (craftable, times) = meant(world, &content, player, offer, recipe)?;
@@ -932,18 +1105,24 @@ fn craft(
     })
 }
 
-/// The recipe `recipe` of `player`'s prompt and how many times over `offer` is it.
+/// The recipe `recipe` of `player`'s prompt and how many times over `offer` is it, when they
+/// master it or it asks no mastery.
 fn meant<'a>(
     world: &World,
     content: &'a Content,
     player: Entity,
     offer: &[ItemStack],
-    recipe: RecipeKey,
+    recipe: &RecipeKey,
 ) -> Result<(Craftable<'a>, u32), String> {
-    let no_recipe = || content.built::<GameSettings>().words.no_recipe.clone();
+    let words = &content.built::<GameSettings>().words;
+    let no_recipe = || words.no_recipe.clone();
     let view = world.get::<CraftingView>(player).ok_or_else(no_recipe)?;
-    matches(&craftables(content, &view.recipes), offer)
+    let meant = matches(&craftables(content, &view.recipes), offer)
         .into_iter()
-        .find(|(craftable, _)| craftable.key == recipe)
-        .ok_or_else(no_recipe)
+        .find(|(craftable, _)| craftable.key == *recipe)
+        .ok_or_else(no_recipe)?;
+    if locked(world, player, &meant.0) {
+        return Err(words.requires_mastery.clone());
+    }
+    Ok(meant)
 }

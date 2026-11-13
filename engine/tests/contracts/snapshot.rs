@@ -231,6 +231,7 @@ fn tess(content: &Content, start: Place) -> CharacterSnapshot {
         appearance: Appearance::of(id(content, "hero")),
         xp: 60,
         skills: Vec::new(),
+        recipe_masteries: Vec::new(),
         hotbar: Vec::new(),
         basic_attack: None,
         stats: Stats(BTreeMap::from([(StatKind::Damage, 9.0)])),
