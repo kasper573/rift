@@ -15,9 +15,8 @@ use crate::systems::dialogue::{
     self, CardOffer, ChoiceChip, ChoiceReveal, ChoiceTag, ConversationPanel,
 };
 use crate::systems::item::{Inventory, ItemStack};
-use crate::systems::script::{
-    Condition, EffectCall, EffectReach, RiftScripting, condition, effect as effects,
-};
+use crate::systems::script::effect::{self as effects, Reaching};
+use crate::systems::script::{Condition, EffectCall, EffectReach, RiftScripting, condition};
 use crate::systems::text::LineText;
 
 /// Shows the offer card and pauses.
@@ -165,14 +164,22 @@ impl EffectDef<RiftScripting> for AcceptQuest {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim(cx, &self.who)?;
+        let who = effects::aim_anywhere(cx, &self.who)?;
         let (quest, refused) = (self.quest, self.refused.clone());
-        Ok(Box::new(move |world, _, cx| {
-            let Some(player) = effects::aimed_character(world, cx, &who) else {
-                return effects::refuse(world, cx, &refused, "Nobody to accept it");
-            };
-            let accepted = super::accept(world, player, quest);
-            effects::settle(world, cx, &refused, accepted)
+        Ok(Box::new(move |world, flow, cx| {
+            let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            effects::reach(
+                world,
+                flow,
+                cx,
+                aimed,
+                Reaching {
+                    done: "done",
+                    refused: Some(&refused),
+                    nobody: Some("Nobody to accept it"),
+                },
+                move |world, player| super::accept(world, player, quest),
+            )
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
@@ -241,13 +248,21 @@ impl EffectDef<RiftScripting> for FailQuest {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim(cx, &self.who)?;
+        let who = effects::aim_anywhere(cx, &self.who)?;
         let quest = self.quest;
-        Ok(Box::new(move |world, _, cx| {
-            if let Some(player) = effects::aimed_character(world, cx, &who) {
-                super::fail(world, player, quest);
-            }
-            EffectStep::Done
+        Ok(Box::new(move |world, flow, cx| {
+            let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            effects::reach(
+                world,
+                flow,
+                cx,
+                aimed,
+                Reaching::quietly(NEXT),
+                move |world, player| {
+                    super::fail(world, player, quest);
+                    Ok(())
+                },
+            )
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
@@ -264,7 +279,7 @@ impl EffectDef<RiftScripting> for CompleteTask {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim(cx, &self.who)?;
+        let who = effects::aim_anywhere(cx, &self.who)?;
         let quest = self.quest;
         let task = self.task.as_str();
         let index = quest
@@ -277,11 +292,19 @@ impl EffectDef<RiftScripting> for CompleteTask {
                     format!("{} has no task {task}", quest.path(cx.content)),
                 )
             })?;
-        Ok(Box::new(move |world, _, cx| {
-            if let Some(player) = effects::aimed_character(world, cx, &who) {
-                super::complete_task(world, player, quest, index);
-            }
-            EffectStep::Done
+        Ok(Box::new(move |world, flow, cx| {
+            let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            effects::reach(
+                world,
+                flow,
+                cx,
+                aimed,
+                Reaching::quietly(NEXT),
+                move |world, player| {
+                    super::complete_task(world, player, quest, index);
+                    Ok(())
+                },
+            )
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
@@ -298,7 +321,7 @@ impl EffectDef<RiftScripting> for Decide {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim(cx, &self.who)?;
+        let who = effects::aim_anywhere(cx, &self.who)?;
         let (quest, path) = (self.quest, self.path.clone());
         let known = quest
             .get(cx.content)
@@ -310,11 +333,20 @@ impl EffectDef<RiftScripting> for Decide {
                 format!("{} has no path {path:?}", quest.path(cx.content)),
             ));
         }
-        Ok(Box::new(move |world, _, cx| {
-            if let Some(player) = effects::aimed_character(world, cx, &who) {
-                super::decide(world, player, quest, &path);
-            }
-            EffectStep::Done
+        Ok(Box::new(move |world, flow, cx| {
+            let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            let path = path.clone();
+            effects::reach(
+                world,
+                flow,
+                cx,
+                aimed,
+                Reaching::quietly(NEXT),
+                move |world, player| {
+                    super::decide(world, player, quest, &path);
+                    Ok(())
+                },
+            )
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {

@@ -149,6 +149,10 @@ pub fn area_state(world: &mut World, content: &Content) {
     world.init_resource::<player::Players>();
     world.init_resource::<player::Connected>();
     world.init_resource::<player::Unwelcomed>();
+    world.init_resource::<player::errand::Errands>();
+    if player::roster::wanted(content) {
+        world.init_resource::<player::roster::ServerRoster>();
+    }
     world.init_resource::<combat::RegenAt>();
     world.init_resource::<skill::reset::PendingResets>();
     world.init_resource::<dialogue::StepCounter>();

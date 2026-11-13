@@ -213,8 +213,10 @@ pub enum Bound<'c, V: Vocabulary> {
     Row(V::Row),
     Audio(V::Audio),
     Condition(&'c Expr<V>),
-    Character(&'c str),
+    LocalPlayer(&'c str),
     Actor(&'c Expr<V>),
+    GlobalPlayer(&'c str),
+    GlobalActor(&'c Expr<V>),
 }
 
 /// Why one of a row's script modules, the one at `module` among them, did not compile.
@@ -354,8 +356,10 @@ fn resolve_value<'c, V: Vocabulary>(
             })?)
         }
         (VariableType::Condition, VarValue::Condition(expr)) => Bound::Condition(expr),
-        (VariableType::Character, VarValue::Str(name)) => Bound::Character(name),
-        (VariableType::Character, VarValue::Condition(expr)) => Bound::Actor(expr),
+        (VariableType::LocalPlayer, VarValue::Str(name)) => Bound::LocalPlayer(name),
+        (VariableType::LocalPlayer, VarValue::Condition(expr)) => Bound::Actor(expr),
+        (VariableType::GlobalPlayer, VarValue::Str(name)) => Bound::GlobalPlayer(name),
+        (VariableType::GlobalPlayer, VarValue::Condition(expr)) => Bound::GlobalActor(expr),
         (VariableType::Condition, VarValue::Boolean(value)) => Bound::Boolean(*value),
         _ => return Err(mismatch()),
     })
@@ -1211,22 +1215,7 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
 
     pub fn expr(&mut self, expr: &'c Expr<V>, want: ValueType) -> Result<Eval, ScriptFault> {
         let (eval, ty) = self.typed(expr)?;
-        if !want.accepts(ty) {
-            return Err(ScriptFault::new(
-                "wrong type",
-                format!(
-                    "{} is {}, expected {}",
-                    expr.kind().name(),
-                    ty.name(),
-                    want.name()
-                ),
-            ));
-        }
-        Ok(if ty == want {
-            eval
-        } else {
-            Box::new(move |world, cx| eval(world, cx).widened(want))
-        })
+        fitted(expr, eval, ty, want)
     }
 
     pub fn opt_expr(
@@ -1257,6 +1246,31 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
                     Value::Actors(cx.subject.into_iter().collect())
                 }))
             }
+        }
+    }
+
+    /// An actor here or a player wherever they play; the subject when nothing is named.
+    pub fn actor_anywhere(&mut self, expr: Option<&'c Expr<V>>) -> Result<Eval, ScriptFault> {
+        match expr {
+            Some(expr) => self.anywhere(expr, ValueType::Actor),
+            None => self.actor(None),
+        }
+    }
+
+    /// Actors here or a player wherever they play; the subject alone when nothing is named.
+    pub fn actors_anywhere(&mut self, expr: Option<&'c Expr<V>>) -> Result<Eval, ScriptFault> {
+        match expr {
+            Some(expr) => self.anywhere(expr, ValueType::Actors),
+            None => self.actors(None),
+        }
+    }
+
+    fn anywhere(&mut self, expr: &'c Expr<V>, here: ValueType) -> Result<Eval, ScriptFault> {
+        let (eval, ty) = self.typed(expr)?;
+        if ty == ValueType::GlobalPlayer {
+            Ok(eval)
+        } else {
+            fitted(expr, eval, ty, here)
         }
     }
 
@@ -1414,14 +1428,36 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
                     self.expr(condition, ValueType::Boolean)?,
                     ValueType::Boolean,
                 ),
-                Bound::Character(named) => {
+                Bound::LocalPlayer(named) => {
                     let named = named.to_owned();
                     (
-                        Box::new(move |world, _| Value::Actor(V::character_named(world, &named))),
+                        Box::new(move |world, _| Value::Actor(V::local_player(world, &named))),
                         ValueType::Actor,
                     )
                 }
                 Bound::Actor(found) => (self.actor(Some(found))?, ValueType::Actor),
+                Bound::GlobalPlayer(named) => {
+                    let named = named.to_owned();
+                    (
+                        Box::new(move |world, _| {
+                            Value::GlobalPlayer(V::global_player(world, &named))
+                        }),
+                        ValueType::GlobalPlayer,
+                    )
+                }
+                Bound::GlobalActor(found) => {
+                    let found = self.actor(Some(found))?;
+                    (
+                        Box::new(move |world, cx| {
+                            Value::GlobalPlayer(
+                                found(world, cx)
+                                    .as_actor()
+                                    .and_then(|actor| V::global_player_of(world, actor)),
+                            )
+                        }),
+                        ValueType::GlobalPlayer,
+                    )
+                }
                 Bound::Name(_) | Bound::Place(_) | Bound::Row(_) | Bound::Audio(_) => {
                     return Err(ScriptFault::new(
                         "wrong type",
@@ -1502,6 +1538,7 @@ impl<'c, V: Vocabulary> Compiler<'c, V> {
                             (Value::Text(a), Value::Text(b)) => a == b,
                             (Value::Bool(a), Value::Bool(b)) => a == b,
                             (Value::Actor(a), Value::Actor(b)) => a == b,
+                            (Value::GlobalPlayer(a), Value::GlobalPlayer(b)) => a == b,
                             (Value::Point(a), Value::Point(b)) => a == b,
                             _ => a.as_num() == b.as_num(),
                         };
@@ -1637,4 +1674,29 @@ fn nearest_note<'a>(wanted: &str, known: impl Iterator<Item = &'a str>) -> Strin
     nearest(&known, wanted)
         .map(|near| format!(" · nearest {near:?}"))
         .unwrap_or_default()
+}
+
+/// `eval` as a value of the type `want`, when what `expr` gives can stand for one.
+fn fitted<V: Vocabulary>(
+    expr: &Expr<V>,
+    eval: Eval,
+    ty: ValueType,
+    want: ValueType,
+) -> Result<Eval, ScriptFault> {
+    if !want.accepts(ty) {
+        return Err(ScriptFault::new(
+            "wrong type",
+            format!(
+                "{} is {}, expected {}",
+                expr.kind().name(),
+                ty.name(),
+                want.name()
+            ),
+        ));
+    }
+    Ok(if ty == want {
+        eval
+    } else {
+        Box::new(move |world, cx| eval(world, cx).widened(want))
+    })
 }

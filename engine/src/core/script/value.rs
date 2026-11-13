@@ -7,6 +7,11 @@ use crate::core::geometry::PlacedShape;
 use crate::core::math::Pos;
 use crate::core::units::Meters;
 
+/// Someone playing on the server, in whichever of its worlds, by the number their vocabulary
+/// knows them by.
+#[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct GlobalPlayerId(pub u32);
+
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum Value {
     Bool(bool),
@@ -15,6 +20,7 @@ pub enum Value {
     Text(String),
     Actor(Option<Entity>),
     Actors(Vec<Entity>),
+    GlobalPlayer(Option<GlobalPlayerId>),
     Point(Option<Pos<Meters>>),
     Area(Option<PlacedShape>),
 }
@@ -31,6 +37,8 @@ pub enum ValueType {
     Text,
     Actor,
     Actors,
+    /// A player wherever on the server they play, where an actor stands in the script's own world.
+    GlobalPlayer,
     Point,
     Area,
 }
@@ -51,6 +59,7 @@ impl ValueType {
             ValueType::Text => Value::Text(String::new()),
             ValueType::Actor => Value::Actor(None),
             ValueType::Actors => Value::Actors(Vec::new()),
+            ValueType::GlobalPlayer => Value::GlobalPlayer(None),
             ValueType::Point => Value::Point(None),
             ValueType::Area => Value::Area(None),
         }
@@ -70,6 +79,7 @@ impl Value {
             Value::Text(_) => ValueType::Text,
             Value::Actor(_) => ValueType::Actor,
             Value::Actors(_) => ValueType::Actors,
+            Value::GlobalPlayer(_) => ValueType::GlobalPlayer,
             Value::Point(_) => ValueType::Point,
             Value::Area(_) => ValueType::Area,
         }
@@ -83,6 +93,7 @@ impl Value {
             Value::Text(t) => !t.is_empty(),
             Value::Actor(a) => a.is_some(),
             Value::Actors(all) => !all.is_empty(),
+            Value::GlobalPlayer(player) => player.is_some(),
             Value::Point(p) => p.is_some(),
             Value::Area(a) => a.is_some(),
         }
@@ -94,7 +105,11 @@ impl Value {
             Value::Int(i) => *i,
             Value::Num(n) => *n as i64,
             Value::Actors(all) => all.len() as i64,
-            Value::Text(_) | Value::Actor(_) | Value::Point(_) | Value::Area(_) => 0,
+            Value::Text(_)
+            | Value::Actor(_)
+            | Value::GlobalPlayer(_)
+            | Value::Point(_)
+            | Value::Area(_) => 0,
         }
     }
 
@@ -104,7 +119,11 @@ impl Value {
             Value::Int(i) => *i as f64,
             Value::Num(n) => *n,
             Value::Actors(all) => all.len() as f64,
-            Value::Text(_) | Value::Actor(_) | Value::Point(_) | Value::Area(_) => 0.0,
+            Value::Text(_)
+            | Value::Actor(_)
+            | Value::GlobalPlayer(_)
+            | Value::Point(_)
+            | Value::Area(_) => 0.0,
         }
     }
 
@@ -112,6 +131,13 @@ impl Value {
         match self {
             Value::Actor(actor) => *actor,
             Value::Actors(all) => all.first().copied(),
+            _ => None,
+        }
+    }
+
+    pub fn as_global_player(&self) -> Option<GlobalPlayerId> {
+        match self {
+            Value::GlobalPlayer(player) => *player,
             _ => None,
         }
     }
@@ -155,6 +181,7 @@ impl Value {
             Value::Text(t) => t.clone(),
             Value::Actor(a) => a.map(|a| format!("{a:?}")).unwrap_or_default(),
             Value::Actors(all) => all.len().to_string(),
+            Value::GlobalPlayer(_) => String::new(),
             Value::Point(p) => p.map(|p| format!("{}, {}", p.x, p.y)).unwrap_or_default(),
             Value::Area(a) => a.map(|a| a.shape.describe()).unwrap_or_default(),
         }

@@ -5,9 +5,8 @@ use serde::{Deserialize, Serialize};
 use crate::core::content::SchemaMark;
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, FlowCx, NEXT, ScriptFault};
 use crate::systems::npc::Npc;
-use crate::systems::script::{
-    Condition, EffectCall, EffectReach, RiftScripting, effect as effects,
-};
+use crate::systems::script::effect::{self as effects, AimedAll, Reaching};
+use crate::systems::script::{Condition, EffectCall, EffectReach, RiftScripting};
 use crate::systems::{combat, stat};
 
 /// Restores health up to the maximum.
@@ -58,22 +57,36 @@ impl EffectDef<RiftScripting> for Heal {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim_all(cx, &self.who)?;
+        let who = effects::aim_all_anywhere(cx, &self.who)?;
         let by = match &self.by {
             HealBy::Amount(amount) => Some(effects::number(cx, amount)?),
             HealBy::Full(_) => None,
         };
-        Ok(Box::new(move |world, _, cx| {
-            for actor in effects::aimed_all(world, cx, &who) {
-                match &by {
-                    Some(by) => {
-                        let amount = by(world, cx).as_num() as f32;
-                        stat::heal(world, actor, amount);
+        Ok(Box::new(move |world, flow, cx| {
+            let amount = |world: &World| by.as_ref().map(|by| by(world, cx).as_num() as f32);
+            match effects::aimed_all_anywhere(world, cx, &who) {
+                AimedAll::Here(actors) => {
+                    for actor in actors {
+                        let amount = amount(world);
+                        mend(world, actor, amount);
                     }
-                    None => stat::refill(world, actor),
+                    EffectStep::Done
+                }
+                AimedAll::Elsewhere(client) => {
+                    let amount = amount(world);
+                    effects::carry(
+                        world,
+                        flow,
+                        cx,
+                        client,
+                        Reaching::quietly(NEXT),
+                        move |world, actor| {
+                            mend(world, actor, amount);
+                            Ok(())
+                        },
+                    )
                 }
             }
-            EffectStep::Done
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
@@ -90,19 +103,47 @@ impl EffectDef<RiftScripting> for Damage {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim_all(cx, &self.who)?;
+        let who = effects::aim_all_anywhere(cx, &self.who)?;
         let by = effects::number(cx, &self.by)?;
-        Ok(Box::new(move |world, _, cx| {
-            for actor in effects::aimed_all(world, cx, &who) {
-                let amount = by(world, cx).as_num() as f32;
-                let attacker = attacker(world, cx, actor);
-                combat::inflict(world, actor, attacker, amount);
+        Ok(Box::new(move |world, flow, cx| {
+            match effects::aimed_all_anywhere(world, cx, &who) {
+                AimedAll::Here(actors) => {
+                    for actor in actors {
+                        let amount = by(world, cx).as_num() as f32;
+                        let attacker = attacker(world, cx, actor);
+                        combat::inflict(world, actor, attacker, amount);
+                    }
+                    EffectStep::Done
+                }
+                // Whoever is to blame is an entity of this world: hurt carried to another has
+                // no attacker there.
+                AimedAll::Elsewhere(client) => {
+                    let amount = by(world, cx).as_num() as f32;
+                    effects::carry(
+                        world,
+                        flow,
+                        cx,
+                        client,
+                        Reaching::quietly(NEXT),
+                        move |world, actor| {
+                            combat::inflict(world, actor, None, amount);
+                            Ok(())
+                        },
+                    )
+                }
             }
-            EffectStep::Done
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
         vec![EffectReach::Damages]
+    }
+}
+
+/// Heals `actor` by `amount`, or in full when none is given.
+fn mend(world: &mut World, actor: Entity, amount: Option<f32>) {
+    match amount {
+        Some(amount) => stat::heal(world, actor, amount),
+        None => stat::refill(world, actor),
     }
 }
 

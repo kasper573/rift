@@ -15,7 +15,8 @@ use testkit::{Game, Map, Sim, path};
 
 #[test]
 fn a_command_runs_its_script_on_what_was_typed_and_says_why_it_cannot() {
-    let mut sim = camp(game().load());
+    let content = game().load();
+    let mut sim = serving(content.clone(), "camp");
     let (me, friend) = (sim.join(1), sim.join(2));
 
     send(&mut sim, 1, "/give potion");
@@ -71,14 +72,83 @@ fn a_command_runs_its_script_on_what_was_typed_and_says_why_it_cannot() {
     sim.tick();
     let told = lines(&mut sim, 2);
     assert_eq!(
-        told[told.len() - 4..],
+        told[told.len() - 5..],
         [
             "/commands",
             "/give <item>, [amount], [player]",
             "/join <player>",
+            "/visit <player>",
             "/warp <to>, [x], [y]"
         ]
         .map(|usage| (usage.to_owned(), LineKind::Notice))
+    );
+
+    let mut wood = serving(content, "wood");
+    let away = wood.join(3);
+    testkit::confer(&mut [&mut sim, &mut wood]);
+    send(&mut sim, 1, "/give potion, 2, player 3");
+    testkit::confer(&mut [&mut sim, &mut wood]);
+    assert_eq!(
+        wood.count(away, "potion"),
+        2,
+        "a global player is reached in whichever area they play"
+    );
+
+    send(&mut wood, 3, "/give potion, 100000");
+    wood.tick();
+    let refusal = wood.errors(3);
+    assert_eq!(refusal.len(), 1, "more than a bag holds is refused");
+    sim.forget_notified();
+    send(&mut sim, 1, "/give potion, 100000, player 3");
+    testkit::confer(&mut [&mut sim, &mut wood]);
+    sim.tick();
+    assert_eq!(
+        (sim.errors(1), wood.count(away, "potion")),
+        (refusal, 2),
+        "what refuses it there is told to whoever sent it"
+    );
+
+    send(&mut sim, 1, "/visit player 3");
+    assert_eq!(
+        lines(&mut sim, 1).last(),
+        Some(&("player 3 is no player".to_owned(), LineKind::Failed)),
+        "a local player is one of this area alone"
+    );
+
+    send(&mut sim, 1, "/join player 3");
+    let arrived = sim.hand_over(&mut wood);
+    let (at, theirs) = (
+        movement::position(&wood.world, arrived).expect("somewhere"),
+        movement::position(&wood.world, away).expect("somewhere"),
+    );
+    assert!(
+        at.distance(theirs).0 < 1.5,
+        "and joined across areas: {at:?} by {theirs:?}"
+    );
+}
+
+#[test]
+fn a_global_player_is_handed_only_to_what_reaches_a_player_anywhere() {
+    let refused = game()
+        .edit("script", "join", |script| {
+            script["nodes"]["go"] = json!({
+                "type": "move_items",
+                "from": { "var": "player" },
+                "to": { "type": "subject" },
+            });
+        })
+        .try_load()
+        .err()
+        .expect("refused");
+    let rules: Vec<(&str, &str)> = refused
+        .errors
+        .iter()
+        .map(|error| (error.file.as_str(), error.problem.rule))
+        .collect();
+    assert_eq!(
+        rules,
+        [(path("command", "join").as_str(), "wrong type")],
+        "{refused}"
     );
 }
 
@@ -105,7 +175,7 @@ fn what_is_said_aloud_reaches_every_terminal_with_who_said_it_and_whether_they_t
         )
         .load();
     let inputs = InputMap::new(&content);
-    let mut sim = camp(content);
+    let mut sim = serving(content, "camp");
     sim.world.insert_resource(inputs);
     region::hold_whole(&mut sim.world);
     sim.join(1);
@@ -172,7 +242,7 @@ fn a_command_is_for_the_roles_it_names_which_an_account_holds_by_what_its_token_
         );
     }
 
-    let mut sim = camp(content.clone());
+    let mut sim = serving(content.clone(), "camp");
     sim.join(1);
     sim.join(2);
     let (keeper, player) = (sim.conn(1), sim.conn(2));
@@ -187,10 +257,12 @@ fn a_command_is_for_the_roles_it_names_which_an_account_holds_by_what_its_token_
     assert_eq!(
         (offered(&mut sim, 1, "/"), offered(&mut sim, 2, "/")),
         (
-            ["commands", "give ", "join ", "warp "]
+            ["commands", "give ", "join ", "visit ", "warp "]
                 .map(str::to_owned)
                 .to_vec(),
-            ["commands", "give ", "join "].map(str::to_owned).to_vec()
+            ["commands", "give ", "join ", "visit "]
+                .map(str::to_owned)
+                .to_vec()
         ),
         "a command is only offered to those who may send it"
     );
@@ -211,7 +283,7 @@ fn a_command_being_typed_goes_on_by_name_and_then_by_what_the_input_at_hand_take
         .item("pickaxe", json!({ "kind": { "type": "resource" } }))
         .edit_settings(|settings| settings["suggestions"] = json!(2))
         .load();
-    let mut sim = camp(content);
+    let mut sim = serving(content.clone(), "camp");
     let (me, near, far) = (sim.join(1), sim.join(2), sim.join(3));
     for (who, x) in [(me, 1.0), (near, 2.0), (far, 4.0)] {
         movement::relocate(&mut sim.world, who, engine::core::math::Pos::new(x, 1.0));
@@ -267,6 +339,22 @@ fn a_command_being_typed_goes_on_by_name_and_then_by_what_the_input_at_hand_take
         ["player 3"],
         "and to whoever is called as typed, however far"
     );
+    let mut wood = serving(content, "wood");
+    wood.join(4);
+    testkit::confer(&mut [&mut sim, &mut wood]);
+    assert_eq!(
+        suggested(&mut sim, 1, "/give plank, 2, 4").options,
+        [option("player 4", "wood")],
+        "a global player goes on to those of other areas too, each with the area they are in"
+    );
+    assert_eq!(
+        (
+            offered(&mut sim, 1, "/visit 4"),
+            offered(&mut sim, 1, "/visit 3")
+        ),
+        (Vec::new(), vec!["player 3".to_owned()]),
+        "a local player only to those of this area"
+    );
     assert_eq!(offered(&mut sim, 1, "/warp ca"), ["camp"]);
     assert_eq!(
         suggested(&mut sim, 1, "/warp camp, 3, ").usage,
@@ -281,12 +369,15 @@ fn option(text: &str, detail: &str) -> bevy_terminal::TerminalOption {
     }
 }
 
-/// A camp with a potion, and four commands: one giving an item, one warping to a place, one
-/// warping to a player, one listing the commands.
+/// A camp and a wood, a potion, and five commands: one giving an item to a player anywhere, one
+/// warping to a place, one warping to a player anywhere, one warping to a player of the same
+/// area, one listing the commands.
 fn game() -> Game {
     Game::new()
         .area("camp", &Map::open(6, 6), json!([]))
+        .area("wood", &Map::open(6, 6), json!([]))
         .hero("camp", 2.0, 2.0)
+        .sfx("ui_refuse")
         .item("potion", json!({ "kind": { "type": "resource" } }))
         .row(
             "script",
@@ -296,7 +387,7 @@ fn game() -> Game {
                 "variables": {
                     "item": { "type": "row", "table": "item" },
                     "amount": { "type": "integer", "default": 1 },
-                    "player": { "type": "character", "default": { "type": "subject" } },
+                    "player": { "type": "global_player", "default": { "type": "subject" } },
                 },
                 "nodes": {
                     "sent": { "type": "on", "event": "invoked", "next": "hand" },
@@ -335,7 +426,7 @@ fn game() -> Game {
             "join",
             json!({
                 "runs_on": "command",
-                "variables": { "player": { "type": "character" } },
+                "variables": { "player": { "type": "global_player" } },
                 "nodes": {
                     "sent": { "type": "on", "event": "invoked", "next": "go" },
                     "go": { "type": "warp_to_actor", "to": { "var": "player" } },
@@ -346,6 +437,23 @@ fn game() -> Game {
             "command",
             "join",
             json!({ "script": path("script", "join"), "inputs": ["player"] }),
+        )
+        .row(
+            "script",
+            "visit",
+            json!({
+                "runs_on": "command",
+                "variables": { "player": { "type": "local_player" } },
+                "nodes": {
+                    "sent": { "type": "on", "event": "invoked", "next": "go" },
+                    "go": { "type": "warp_to_actor", "to": { "var": "player" } },
+                },
+            }),
+        )
+        .row(
+            "command",
+            "visit",
+            json!({ "script": path("script", "visit"), "inputs": ["player"] }),
         )
         .script(
             "commands",
@@ -362,10 +470,11 @@ fn game() -> Game {
         )
 }
 
-/// The server of the camp, running what takes a terminal's lines and runs its commands.
-fn camp(content: Content) -> Sim {
+/// The server of one of the game's areas, running what takes a terminal's lines and runs its
+/// commands.
+fn serving(content: Content, area: &str) -> Sim {
     let mut sim = Sim::new(content);
-    sim.serve("camp")
+    sim.serve(area)
         .accept::<TerminalInput>()
         .accept::<TerminalCompletionRequest>()
         .message::<bevy_terminal::TerminalSaid>()

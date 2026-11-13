@@ -21,6 +21,7 @@ use crate::systems::movement::position;
 use crate::systems::notification::NotificationDef;
 use crate::systems::npc::NpcDef;
 use crate::systems::player::Players;
+use crate::systems::player::roster::ServerRoster;
 use crate::systems::quest::QuestDef;
 use crate::systems::script::{Place, VarValue, Variable};
 use crate::systems::shop::ShopDef;
@@ -74,8 +75,10 @@ pub enum InputKind<'c> {
     Row(&'c str),
     /// An area by its name, then where in it: an x and a y, or neither.
     Place,
-    /// A character playing here, by name.
-    Character,
+    /// A player whose character stands in the sender's world, by name.
+    LocalPlayer,
+    /// A player wherever on the server they play, by name.
+    GlobalPlayer,
 }
 
 impl<'c> InputKind<'c> {
@@ -88,7 +91,8 @@ impl<'c> InputKind<'c> {
             VariableType::Text | VariableType::Name => InputKind::Text,
             VariableType::Row => InputKind::Row(variable.table.as_deref()?),
             VariableType::Place => InputKind::Place,
-            VariableType::Character => InputKind::Character,
+            VariableType::LocalPlayer => InputKind::LocalPlayer,
+            VariableType::GlobalPlayer => InputKind::GlobalPlayer,
             VariableType::Audio | VariableType::Condition => return None,
         })
     }
@@ -231,7 +235,7 @@ pub fn bind(
                     .ok_or_else(|| refuses(whole))
                     .inspect(|_| debug_assert!(!table.is_empty()))?,
             ),
-            InputKind::Character => VarValue::Str(
+            InputKind::LocalPlayer | InputKind::GlobalPlayer => VarValue::Str(
                 options(world, caller, input.kind, SlotPart::Whole)
                     .into_iter()
                     .find(|option| option.text.eq_ignore_ascii_case(whole))
@@ -273,7 +277,9 @@ pub fn stand_ins(content: &Content, inputs: &[CommandInput]) -> Option<BTreeMap<
                 InputKind::Integer => VarValue::Integer(0),
                 InputKind::Number => VarValue::Number(0.0),
                 InputKind::Boolean => VarValue::Boolean(false),
-                InputKind::Text | InputKind::Character => VarValue::Str(String::new()),
+                InputKind::Text | InputKind::LocalPlayer | InputKind::GlobalPlayer => {
+                    VarValue::Str(String::new())
+                }
                 InputKind::Row(table) => {
                     VarValue::Str(rows(content, table).into_iter().next()?.key)
                 }
@@ -310,7 +316,12 @@ pub fn options(world: &World, caller: Entity, kind: InputKind, part: SlotPart) -
                 key: String::new(),
             })
             .to_vec(),
-        (InputKind::Character, SlotPart::Whole) => characters(world, caller),
+        (InputKind::LocalPlayer, SlotPart::Whole) => players_here(world, caller),
+        (InputKind::GlobalPlayer, SlotPart::Whole) => {
+            let mut players = players_here(world, caller);
+            players.extend(players_elsewhere(world));
+            players
+        }
         _ => Vec::new(),
     }
 }
@@ -325,8 +336,8 @@ fn landing(content: &Content, area: AreaId) -> Pos<Meters> {
     }
 }
 
-/// The characters playing in this world, the nearest to `caller` first.
-fn characters(world: &World, caller: Entity) -> Vec<InputOption> {
+/// The players whose characters stand in this world, the nearest to `caller` first.
+fn players_here(world: &World, caller: Entity) -> Vec<InputOption> {
     let from = position(world, caller);
     let mut near: Vec<(f32, InputOption)> = world
         .resource::<Players>()
@@ -354,6 +365,27 @@ fn characters(world: &World, caller: Entity) -> Vec<InputOption> {
         .collect();
     near.sort_by(|a, b| a.0.total_cmp(&b.0).then_with(|| a.1.text.cmp(&b.1.text)));
     near.into_iter().map(|(_, option)| option).collect()
+}
+
+/// The players whose characters stand in the server's other worlds, by name, each with the area
+/// they are in.
+fn players_elsewhere(world: &World) -> Vec<InputOption> {
+    let Some(roster) = world.get_resource::<ServerRoster>() else {
+        return Vec::new();
+    };
+    let content = world.resource::<Content>();
+    let here = world.resource::<Players>();
+    let mut elsewhere: Vec<InputOption> = roster
+        .iter()
+        .filter(|enrolled| !here.0.contains_key(&enrolled.client))
+        .map(|enrolled| InputOption {
+            text: enrolled.name.clone(),
+            detail: enrolled.place.area.get(content).shown_name().to_owned(),
+            key: String::new(),
+        })
+        .collect();
+    elsewhere.sort_by(|a, b| a.text.cmp(&b.text));
+    elsewhere
 }
 
 /// The files of `table` a script variable may name, each by the name it shows.

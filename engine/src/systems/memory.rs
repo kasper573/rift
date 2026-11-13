@@ -6,14 +6,11 @@ use serde::{Deserialize, Serialize};
 
 use crate::core::content::SchemaMark;
 use crate::core::content::{Content, ContentFile, ContentId, NamedContent, Nearby};
-use crate::core::script::{
-    Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault, Value, ValueType,
-};
+use crate::core::script::{Arrow, Compiler, EffectDef, NEXT, ScriptFault, Value, ValueType};
 use crate::core::time::{GameDay, UnixMillis, WallClock};
 use crate::core::units::Seconds;
-use crate::systems::script::{
-    Condition, EffectCall, EffectReach, RiftScripting, effect as effects,
-};
+use crate::systems::script::effect::{self as effects, Reaching};
+use crate::systems::script::{Condition, EffectCall, EffectReach, RiftScripting};
 
 pub type MemoryId = ContentId<MemoryDef>;
 
@@ -187,19 +184,31 @@ impl EffectDef<RiftScripting> for Remember {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim(cx, &self.who)?;
         let ty = self.memory.get(cx.content).ty;
+        // An actor is an entity of the world the script runs in, and means nothing in another.
+        let who = match ty {
+            ValueType::Actor | ValueType::Actors => effects::aim(cx, &self.who)?,
+            _ => effects::aim_anywhere(cx, &self.who)?,
+        };
         let to = cx.opt_expr(self.to.as_ref(), ty)?;
         let memory = self.memory;
-        Ok(Box::new(move |world, _, cx| {
-            if let Some(player) = effects::aimed_character(world, cx, &who) {
-                let value = match &to {
-                    Some(to) => to(world, cx),
-                    None => Value::Bool(true).widened(ty),
-                };
-                set(world, player, memory, value);
-            }
-            EffectStep::Done
+        Ok(Box::new(move |world, flow, cx| {
+            let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            let value = match &to {
+                Some(to) => to(world, cx),
+                None => Value::Bool(true).widened(ty),
+            };
+            effects::reach(
+                world,
+                flow,
+                cx,
+                aimed,
+                Reaching::quietly(NEXT),
+                move |world, player| {
+                    set(world, player, memory, value);
+                    Ok(())
+                },
+            )
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
@@ -216,15 +225,24 @@ impl EffectDef<RiftScripting> for Forget {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim(cx, &self.who)?;
+        let who = effects::aim_anywhere(cx, &self.who)?;
         let memories = self.memories.clone();
-        Ok(Box::new(move |world, _, cx| {
-            if let Some(player) = effects::aimed_character(world, cx, &who) {
-                for &memory in &memories {
-                    forget(world, player, memory);
-                }
-            }
-            EffectStep::Done
+        Ok(Box::new(move |world, flow, cx| {
+            let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            let memories = memories.clone();
+            effects::reach(
+                world,
+                flow,
+                cx,
+                aimed,
+                Reaching::quietly(NEXT),
+                move |world, player| {
+                    for memory in memories {
+                        forget(world, player, memory);
+                    }
+                    Ok(())
+                },
+            )
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {

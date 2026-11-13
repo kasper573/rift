@@ -12,15 +12,23 @@ use engine::systems::memory::{self, MemoryDef};
 use engine::systems::npc::{self, Pack};
 use engine::systems::player::snapshot::JoinAs;
 use engine::systems::player::{
-    self, AreaDrawn, ClientId, JoinRequest, PlayedBy, Players, SpawnPolicy, SpawnRules,
+    self, AreaDrawn, ClientId, JoinRequest, Players, SpawnPolicy, SpawnRules,
 };
-use engine::systems::{GameSettings, WorldArea, from_client};
+use engine::systems::{GameSettings, WorldArea, from_client, worlds};
 use engine::systems::{identity, region};
 
 use crate::Sim;
 
 #[derive(Resource, Default)]
 struct Packs(HashMap<u32, Pack>);
+
+/// Has the servers of several areas confer, as a game server's worlds do between ticks: each
+/// learns who plays in the others, and what one asked be done to a player of another is done.
+pub fn confer(sims: &mut [&mut Sim]) {
+    let mut views: Vec<Option<&mut World>> =
+        sims.iter_mut().map(|sim| Some(&mut sim.world)).collect();
+    worlds::confer(&mut views);
+}
 
 impl Sim {
     /// Makes this world the server of the area under `key`, ready for players of the game's
@@ -88,16 +96,27 @@ impl Sim {
     /// Hands `player` over from this area's server to `to`'s, the way a crossing does, landing at
     /// `at` and drawing the area there: the character as it arrived.
     pub fn cross(&mut self, player: Entity, to: &mut Sim, at: Pos<Meters>) -> Entity {
-        let client = self.world.get::<PlayedBy>(player).expect("a player").client;
         let dest_area = to.world.resource::<WorldArea>().0;
-        to.connect(client.0);
         self.world.entity_mut(player).insert(Crossing {
             dest_area,
             dest: at,
         });
+        self.hand_over(to)
+    }
+
+    /// Hands the player on their way out of this area over to `to`'s server, the area they are
+    /// bound for, where they draw what they arrive to: the character as it arrived.
+    pub fn hand_over(&mut self, to: &mut Sim) -> Entity {
         let traveler = transition::departing(&mut self.world)
             .pop()
             .expect("a traveler");
+        assert_eq!(
+            traveler.dest_area,
+            to.world.resource::<WorldArea>().0,
+            "the traveler is bound for the area they are handed to"
+        );
+        let client = traveler.client;
+        to.connect(client.0);
         let arrived = transition::arrive(&mut to.world, traveler);
         let conn = to.conn(client.0);
         to.send(conn, AreaDrawn);

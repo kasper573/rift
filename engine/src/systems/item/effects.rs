@@ -20,9 +20,8 @@ use crate::systems::equipment;
 use crate::systems::movement::{Position, position};
 use crate::systems::player::PlayedBy;
 use crate::systems::script::RowRef;
-use crate::systems::script::{
-    Condition, EffectCall, EffectReach, Place, RiftScripting, effect as effects,
-};
+use crate::systems::script::effect::{self as effects, Reaching};
+use crate::systems::script::{Condition, EffectCall, EffectReach, Place, RiftScripting};
 use crate::systems::visibility::Presence;
 
 /// Takes and gives items in one exchange, all or nothing.
@@ -125,18 +124,26 @@ impl EffectDef<RiftScripting> for ShowItem {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim(cx, &self.who)?;
+        let who = effects::aim_anywhere(cx, &self.who)?;
         let item = cx.fill(&self.item, VariableType::Row, item_bound)?;
-        Ok(Box::new(move |world, _, cx| {
-            let conn = effects::aimed_character(world, cx, &who)
-                .and_then(|character| command::connection(world, character));
-            if let Some(client) = conn {
-                world.write_message(ToClient {
-                    client,
-                    message: ItemShown { item },
-                });
-            }
-            EffectStep::Done
+        Ok(Box::new(move |world, flow, cx| {
+            let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            effects::reach(
+                world,
+                flow,
+                cx,
+                aimed,
+                Reaching::quietly(NEXT),
+                move |world, character| {
+                    if let Some(client) = command::connection(world, character) {
+                        world.write_message(ToClient {
+                            client,
+                            message: ItemShown { item },
+                        });
+                    }
+                    Ok(())
+                },
+            )
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
@@ -277,7 +284,7 @@ impl EffectDef<RiftScripting> for Items {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim(cx, &self.who)?;
+        let who = effects::aim_anywhere(cx, &self.who)?;
         let take = self
             .take
             .iter()
@@ -289,12 +296,21 @@ impl EffectDef<RiftScripting> for Items {
             .map(|stack| stack.filled(cx))
             .collect::<Result<Vec<_>, _>>()?;
         let refused = self.refused.clone();
-        Ok(Box::new(move |world, _, cx| {
-            let Some(actor) = effects::aimed_character(world, cx, &who) else {
-                return effects::refuse(world, cx, &refused, "Nobody to trade with");
-            };
-            let outcome = exchange(world, actor, &take, &give);
-            effects::settle(world, cx, &refused, outcome)
+        Ok(Box::new(move |world, flow, cx| {
+            let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            let (take, give) = (take.clone(), give.clone());
+            effects::reach(
+                world,
+                flow,
+                cx,
+                aimed,
+                Reaching {
+                    done: "done",
+                    refused: Some(&refused),
+                    nobody: Some("Nobody to trade with"),
+                },
+                move |world, actor| exchange(world, actor, &take, &give),
+            )
         }))
     }
     fn reach(&self, cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
@@ -316,14 +332,22 @@ impl EffectDef<RiftScripting> for UseItem {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim(cx, &self.who)?;
+        let who = effects::aim_anywhere(cx, &self.who)?;
         let (item, refused) = (self.item, self.refused.clone());
-        Ok(Box::new(move |world, _, cx| {
-            let Some(actor) = effects::aimed_character(world, cx, &who) else {
-                return effects::refuse(world, cx, &refused, "Nobody to use it");
-            };
-            let outcome = super::use_held(world, actor, item);
-            effects::settle(world, cx, &refused, outcome)
+        Ok(Box::new(move |world, flow, cx| {
+            let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            effects::reach(
+                world,
+                flow,
+                cx,
+                aimed,
+                Reaching {
+                    done: "used",
+                    refused: Some(&refused),
+                    nobody: Some("Nobody to use it"),
+                },
+                move |world, actor| super::use_held(world, actor, item),
+            )
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
@@ -340,14 +364,22 @@ impl EffectDef<RiftScripting> for Equip {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim(cx, &self.who)?;
+        let who = effects::aim_anywhere(cx, &self.who)?;
         let (item, refused) = (self.item, self.refused.clone());
-        Ok(Box::new(move |world, _, cx| {
-            let Some(actor) = effects::aimed_character(world, cx, &who) else {
-                return effects::refuse(world, cx, &refused, "Nobody to equip");
-            };
-            let outcome = equipment::equip_from_bag(world, actor, item);
-            effects::settle(world, cx, &refused, outcome)
+        Ok(Box::new(move |world, flow, cx| {
+            let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            effects::reach(
+                world,
+                flow,
+                cx,
+                aimed,
+                Reaching {
+                    done: "done",
+                    refused: Some(&refused),
+                    nobody: Some("Nobody to equip"),
+                },
+                move |world, actor| equipment::equip_from_bag(world, actor, item),
+            )
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
@@ -364,14 +396,22 @@ impl EffectDef<RiftScripting> for Unequip {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim(cx, &self.who)?;
+        let who = effects::aim_anywhere(cx, &self.who)?;
         let (item, refused) = (self.item, self.refused.clone());
-        Ok(Box::new(move |world, _, cx| {
-            let Some(actor) = effects::aimed_character(world, cx, &who) else {
-                return effects::refuse(world, cx, &refused, "Nobody to unequip");
-            };
-            let outcome = equipment::unequip_item(world, actor, item);
-            effects::settle(world, cx, &refused, outcome)
+        Ok(Box::new(move |world, flow, cx| {
+            let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            effects::reach(
+                world,
+                flow,
+                cx,
+                aimed,
+                Reaching {
+                    done: "done",
+                    refused: Some(&refused),
+                    nobody: Some("Nobody to unequip"),
+                },
+                move |world, actor| equipment::unequip_item(world, actor, item),
+            )
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
@@ -388,16 +428,24 @@ impl EffectDef<RiftScripting> for DropItems {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim(cx, &self.who)?;
+        let who = effects::aim_anywhere(cx, &self.who)?;
         let count = cx.expr(&self.count, ValueType::Integer)?;
         let (item, refused) = (self.item, self.refused.clone());
-        Ok(Box::new(move |world, _, cx| {
-            let Some(actor) = effects::aimed_character(world, cx, &who) else {
-                return effects::refuse(world, cx, &refused, "Nobody to drop them");
-            };
+        Ok(Box::new(move |world, flow, cx| {
+            let aimed = effects::aimed_character_anywhere(world, cx, &who);
             let count = count(world, cx).as_int().clamp(0, i64::from(u32::MAX)) as u32;
-            let outcome = drop_held(world, actor, ItemStack::new(item, count));
-            effects::settle(world, cx, &refused, outcome)
+            effects::reach(
+                world,
+                flow,
+                cx,
+                aimed,
+                Reaching {
+                    done: "done",
+                    refused: Some(&refused),
+                    nobody: Some("Nobody to drop them"),
+                },
+                move |world, actor| drop_held(world, actor, ItemStack::new(item, count)),
+            )
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {

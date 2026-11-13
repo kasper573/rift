@@ -17,7 +17,7 @@ pub use run::{
     Answer, BoxEnding, ChoiceState, FlowCx, FlowKey, FlowSteering, FlowTrace, Instances, Locals,
     Owner, Pause, TraceStep,
 };
-pub use value::{Value, ValueType};
+pub use value::{GlobalPlayerId, Value, ValueType};
 
 use std::collections::BTreeMap;
 use std::fmt;
@@ -139,8 +139,12 @@ pub trait Vocabulary:
     type Reach: Clone + Send + Sync + 'static;
 
     fn row_value(content: &Content, table: &str, key: &str) -> Option<Self::Row>;
-    /// The character called `name` in `world`, when one is there.
-    fn character_named(world: &World, name: &str) -> Option<Entity>;
+    /// The player called `name` whose character stands in `world`.
+    fn local_player(world: &World, name: &str) -> Option<Entity>;
+    /// The player called `name`, in whichever of the server's worlds they play.
+    fn global_player(world: &World, name: &str) -> Option<GlobalPlayerId>;
+    /// The player whose character `actor` is.
+    fn global_player_of(world: &World, actor: Entity) -> Option<GlobalPlayerId>;
     fn audio_value(content: &Content, key: &str) -> Option<Self::Audio>;
     fn show_dialogue(
         world: &mut World,
@@ -318,8 +322,11 @@ pub enum VariableType {
     Row,
     Audio,
     Condition,
-    /// A player's character: the one named, or the actor an expression finds.
-    Character,
+    /// A player in the script's own world: the one named, or the actor an expression finds.
+    LocalPlayer,
+    /// A player wherever on the server they play: the one named, or the one whose character an
+    /// expression finds.
+    GlobalPlayer,
 }
 
 impl VariableType {

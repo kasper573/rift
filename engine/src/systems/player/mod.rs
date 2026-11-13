@@ -1,4 +1,6 @@
 pub mod bar;
+pub mod errand;
+pub mod roster;
 pub mod session;
 pub mod sheet;
 pub mod snapshot;

@@ -796,14 +796,16 @@ impl<'a> Nearby<'a> {
             ValueType::Number => Condition::Num(0.0),
             ValueType::Text => Condition::Text(String::new()),
             ValueType::Actor => Condition::Query(RiftQuery::Subject),
-            ValueType::Actors | ValueType::Point | ValueType::Area => match &target {
-                Target::Local(name) => Condition::Local {
-                    local: name.clone(),
-                },
-                Target::State(name) => Condition::State {
-                    state: name.clone(),
-                },
-            },
+            ValueType::Actors | ValueType::GlobalPlayer | ValueType::Point | ValueType::Area => {
+                match &target {
+                    Target::Local(name) => Condition::Local {
+                        local: name.clone(),
+                    },
+                    Target::State(name) => Condition::State {
+                        state: name.clone(),
+                    },
+                }
+            }
         };
         serde_json::to_value(Assignment { target, to }).ok()
     }
@@ -945,7 +947,10 @@ pub(crate) fn variable_schema(ty: VariableType, table: Option<&str>) -> Value {
         VariableType::Integer => json!({ "type": "integer" }),
         VariableType::Number => json!({ "type": "number" }),
         VariableType::Boolean => json!({ "type": "boolean" }),
-        VariableType::Text | VariableType::Name | VariableType::Character => {
+        VariableType::Text
+        | VariableType::Name
+        | VariableType::LocalPlayer
+        | VariableType::GlobalPlayer => {
             json!({ "type": "string" })
         }
         VariableType::Row => marked(

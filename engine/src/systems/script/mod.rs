@@ -24,8 +24,8 @@ use crate::core::content::{
 use crate::core::ground::TileAt;
 use crate::core::math::Pos;
 use crate::core::script::{
-    self, BoxEnding, DialogueView, Expr, Instances, LineDef, RunnerKindDef, ScriptError,
-    ScriptFault, Scripts, TextDef, Vocabulary, compile::compile_row,
+    self, BoxEnding, DialogueView, Expr, GlobalPlayerId, Instances, LineDef, RunnerKindDef,
+    ScriptError, ScriptFault, Scripts, TextDef, Vocabulary, compile::compile_row,
 };
 use crate::core::units::Meters;
 use crate::systems::WorldArea;
@@ -42,7 +42,8 @@ use crate::systems::item::{ItemDef, ItemId, ItemKind};
 use crate::systems::memory::{MemoryDef, MemoryId};
 use crate::systems::notification::{NotificationDef, NotificationId};
 use crate::systems::npc::{Npc, NpcDef, NpcId};
-use crate::systems::player;
+use crate::systems::player::roster::ServerRoster;
+use crate::systems::player::{self, PlayedBy};
 use crate::systems::quest::{Parties, QuestDef, QuestId};
 use crate::systems::resource::ResourceDef;
 use crate::systems::shop::{ShopDef, ShopId};
@@ -359,8 +360,21 @@ impl Vocabulary for RiftScripting {
         })
     }
 
-    fn character_named(world: &World, name: &str) -> Option<Entity> {
+    fn local_player(world: &World, name: &str) -> Option<Entity> {
         player::named(world, name)
+    }
+
+    fn global_player(world: &World, name: &str) -> Option<GlobalPlayerId> {
+        let client = match player::named(world, name) {
+            Some(character) => world.get::<PlayedBy>(character)?.client,
+            None => world.get_resource::<ServerRoster>()?.named(name)?.client,
+        };
+        Some(GlobalPlayerId(client.0))
+    }
+
+    fn global_player_of(world: &World, actor: Entity) -> Option<GlobalPlayerId> {
+        let client = world.get::<PlayedBy>(actor)?.client;
+        Some(GlobalPlayerId(client.0))
     }
 
     fn audio_value(content: &Content, key: &str) -> Option<SfxId> {

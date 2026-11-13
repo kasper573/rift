@@ -275,9 +275,11 @@ fn stand_in(variable: &Variable<RiftScripting>) -> Option<Value> {
         VariableType::Integer | VariableType::Number => Some(Value::from(0)),
         VariableType::Boolean => Some(Value::Bool(false)),
         VariableType::Condition => Some(Value::Bool(true)),
-        VariableType::Text | VariableType::Name | VariableType::Audio | VariableType::Character => {
-            Some(Value::String(String::new()))
-        }
+        VariableType::Text
+        | VariableType::Name
+        | VariableType::Audio
+        | VariableType::LocalPlayer
+        | VariableType::GlobalPlayer => Some(Value::String(String::new())),
         VariableType::Place => serde_json::to_value(Place {
             area: AreaId::new(0),
             at: Pos::new(0.0, 0.0),
@@ -848,7 +850,10 @@ fn typed_value(
         | (VariableType::Number, VarValue::Integer(_) | VarValue::Number(_))
         | (VariableType::Boolean, VarValue::Boolean(_))
         | (VariableType::Text | VariableType::Name | VariableType::Audio, VarValue::Str(_))
-        | (VariableType::Character, VarValue::Str(_) | VarValue::Condition(_))
+        | (
+            VariableType::LocalPlayer | VariableType::GlobalPlayer,
+            VarValue::Str(_) | VarValue::Condition(_),
+        )
         | (VariableType::Place, VarValue::Place(_))
         | (VariableType::Condition, VarValue::Condition(_) | VarValue::Boolean(_)) => json(value),
         (VariableType::Row, VarValue::Str(key)) => {

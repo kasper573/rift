@@ -10,9 +10,9 @@ use crate::core::script::{
 };
 use crate::core::units::Seconds;
 use crate::systems::item::ItemId;
+use crate::systems::script::effect::{self as effects, AimedAll, Reaching};
 use crate::systems::script::{
     Condition, EffectCall, EffectReach, OwnerRow, RiftScripting, RiftScripts, RunnerKind,
-    effect as effects,
 };
 use crate::systems::skill::{SkillId, SkillKind};
 use crate::systems::stat::{Stat, StatKind};
@@ -71,21 +71,43 @@ impl EffectDef<RiftScripting> for ApplyStatus {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim_all(cx, &self.who)?;
+        let who = effects::aim_all_anywhere(cx, &self.who)?;
         let power = cx.opt_expr(self.power.as_ref(), ValueType::Number)?;
         let seconds = cx.opt_expr(self.seconds.as_ref(), ValueType::Number)?;
         let effect = self.effect;
-        Ok(Box::new(move |world, _, cx| {
-            for actor in effects::aimed_all(world, cx, &who) {
+        Ok(Box::new(move |world, flow, cx| {
+            let strength = |world: &World| {
                 let power = power
                     .as_ref()
                     .map_or(1.0, |power| power(world, cx).as_num() as f32);
                 let lasts = seconds
                     .as_ref()
                     .map(|seconds| Seconds(seconds(world, cx).as_num() as f32));
-                super::apply(world, actor, effect, power, lasts);
+                (power, lasts)
+            };
+            match effects::aimed_all_anywhere(world, cx, &who) {
+                AimedAll::Here(actors) => {
+                    for actor in actors {
+                        let (power, lasts) = strength(world);
+                        super::apply(world, actor, effect, power, lasts);
+                    }
+                    EffectStep::Done
+                }
+                AimedAll::Elsewhere(client) => {
+                    let (power, lasts) = strength(world);
+                    effects::carry(
+                        world,
+                        flow,
+                        cx,
+                        client,
+                        Reaching::quietly(NEXT),
+                        move |world, actor| {
+                            super::apply(world, actor, effect, power, lasts);
+                            Ok(())
+                        },
+                    )
+                }
             }
-            EffectStep::Done
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
@@ -102,20 +124,36 @@ impl EffectDef<RiftScripting> for RemoveStatus {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim_all(cx, &self.who)?;
+        let who = effects::aim_all_anywhere(cx, &self.who)?;
         let (effect, category) = (self.effect, self.category);
-        Ok(Box::new(move |world, _, cx| {
-            for actor in effects::aimed_all(world, cx, &who) {
-                match effect {
-                    Some(effect) => {
-                        super::remove(world, actor, effect);
-                    }
-                    None => {
-                        super::cleanse(world, actor, category);
-                    }
+        Ok(Box::new(move |world, flow, cx| {
+            let lift = move |world: &mut World, actor: Entity| match effect {
+                Some(effect) => {
+                    super::remove(world, actor, effect);
                 }
+                None => {
+                    super::cleanse(world, actor, category);
+                }
+            };
+            match effects::aimed_all_anywhere(world, cx, &who) {
+                AimedAll::Here(actors) => {
+                    for actor in actors {
+                        lift(world, actor);
+                    }
+                    EffectStep::Done
+                }
+                AimedAll::Elsewhere(client) => effects::carry(
+                    world,
+                    flow,
+                    cx,
+                    client,
+                    Reaching::quietly(NEXT),
+                    move |world, actor| {
+                        lift(world, actor);
+                        Ok(())
+                    },
+                ),
             }
-            EffectStep::Done
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {

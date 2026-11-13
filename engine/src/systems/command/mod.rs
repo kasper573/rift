@@ -18,13 +18,14 @@ use crate::core::content::{
     Content, ContentFile, ContentId, ContentProblem, Loading, Nearby, SchemaMark,
 };
 use crate::core::script::compile::compile_row;
-use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
+use crate::core::script::{Arrow, Compiler, EffectDef, NEXT, ScriptFault};
 use crate::systems::GameSettings;
 use crate::systems::account::{AccountIdentity, RoleId};
 use crate::systems::player::{self, Connected, PlayedBy};
+use crate::systems::script::effect::{self as effects, Reaching};
 use crate::systems::script::{
     Condition, EffectCall, EffectReach, EventKind, Owner, OwnerRow, RiftInstances, RiftScripting,
-    RunnerKind, ScriptDef, ScriptId, ScriptModule, effect as effects,
+    RunnerKind, ScriptDef, ScriptId, ScriptModule,
 };
 use input::{CommandInput, InputRefusal};
 
@@ -231,19 +232,27 @@ impl EffectDef<RiftScripting> for ListCommands {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim(cx, &self.who)?;
-        Ok(Box::new(move |world, _, cx| {
-            let conn = effects::aimed_character(world, cx, &who)
-                .and_then(|character| connection(world, character));
-            if let Some(conn) = conn {
-                let content = world.resource::<Content>().clone();
-                let lines: Vec<String> = allowed(world, conn)
-                    .into_iter()
-                    .map(|command| command.usage(&content))
-                    .collect();
-                bevy_terminal::reply(world, conn, lines.join("\n"));
-            }
-            EffectStep::Done
+        let who = effects::aim_anywhere(cx, &self.who)?;
+        Ok(Box::new(move |world, flow, cx| {
+            let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            effects::reach(
+                world,
+                flow,
+                cx,
+                aimed,
+                Reaching::quietly(NEXT),
+                |world, character| {
+                    if let Some(conn) = connection(world, character) {
+                        let content = world.resource::<Content>().clone();
+                        let lines: Vec<String> = allowed(world, conn)
+                            .into_iter()
+                            .map(|command| command.usage(&content))
+                            .collect();
+                        bevy_terminal::reply(world, conn, lines.join("\n"));
+                    }
+                    Ok(())
+                },
+            )
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {

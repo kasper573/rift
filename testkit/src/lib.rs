@@ -22,6 +22,7 @@ pub use game::{
     APEX, BODY, CLIP, Declared, Game, HEIGHTS, Map, ROCK, RUN_PACE, TURF, WALK_PACE, clip, clip_on,
     look, part_file, path, rig_clips, rig_file, speech, stats, typing,
 };
+pub use players::confer;
 pub use script::{dialogue, hunting, said};
 pub use sim::{Sim, drawn_seed, sent};
 pub use talk::{labels, lines, locked};

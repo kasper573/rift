@@ -196,6 +196,7 @@ fn type_word(yields: Option<ValueType>) -> &'static str {
         Some(ValueType::Text) => "text",
         Some(ValueType::Actor) => "actor",
         Some(ValueType::Actors) => "actors",
+        Some(ValueType::GlobalPlayer) => "global player",
         Some(ValueType::Point) => "point",
         Some(ValueType::Area) => "area",
         None => "its type",

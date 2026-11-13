@@ -26,7 +26,7 @@ use crate::core::content::SchemaMark;
 use crate::core::content::{Content, ContentFile, ContentId, Fixture, Loading, Nearby, RowCheck};
 use crate::core::gui::{self, Band};
 use crate::core::math::{Pos, Rgba};
-use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault, ValueType};
+use crate::core::script::{Arrow, Compiler, EffectDef, NEXT, ScriptFault, ValueType};
 use crate::core::text::TextMotion;
 use crate::core::time::WallClock;
 use crate::core::units::{Meters, Seconds};
@@ -36,7 +36,7 @@ use crate::systems::interface::InterfaceSound;
 use crate::systems::movement::position;
 use crate::systems::npc::{Npc, NpcId};
 use crate::systems::screen::ClientScreen;
-use crate::systems::script::effect::{self as effects, Audience};
+use crate::systems::script::effect::{self as effects, Aimed, Audience, Reaching};
 use crate::systems::script::{Condition, EffectCall, EffectReach, RiftScripting, condition};
 use crate::systems::text::{self, LineText, Span};
 use crate::systems::{GameSettings, visibility};
@@ -412,20 +412,33 @@ impl EffectDef<RiftScripting> for Notify {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim(cx, &self.who)?;
+        let who = effects::aim_anywhere(cx, &self.who)?;
         let row = self.notification.get(cx.content);
         let values = text::values(&row.text)
             .into_iter()
             .map(|value| cx.expr(value, ValueType::Text))
             .collect::<Result<Vec<_>, _>>()?;
         let def = row.clone();
-        Ok(Box::new(move |world, _, cx| {
-            if let Some(player) = effects::aimed_character(world, cx, &who) {
-                let spoken: Vec<_> = values.iter().map(|value| value(world, cx)).collect();
-                let notification = def.notification(LineText::spoken(&def.text, &spoken));
-                notify(world, player, cx.owner, notification);
-            }
-            EffectStep::Done
+        Ok(Box::new(move |world, flow, cx| {
+            let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            let spoken: Vec<_> = values.iter().map(|value| value(world, cx)).collect();
+            let notification = def.notification(LineText::spoken(&def.text, &spoken));
+            // Whoever speaks it is an entity of this world, and stays behind when it is carried.
+            let speaker = match aimed {
+                Aimed::Here(_) => cx.owner,
+                _ => None,
+            };
+            effects::reach(
+                world,
+                flow,
+                cx,
+                aimed,
+                Reaching::quietly(NEXT),
+                move |world, player| {
+                    notify(world, player, speaker, notification);
+                    Ok(())
+                },
+            )
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {

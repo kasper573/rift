@@ -16,14 +16,14 @@ use crate::core::content::SchemaMark;
 use crate::core::content::{
     Content, ContentFile, ContentId, Loading, NamedContent, Nearby, RowCheck,
 };
-use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault, ValueType};
+use crate::core::script::{Arrow, Compiler, EffectDef, NEXT, ScriptFault, ValueType};
 use crate::core::vfx::VfxSite;
 use crate::systems::actor::ModelId;
 use crate::systems::notification;
 use crate::systems::player::Xp;
+use crate::systems::script::effect::{self as effects, Reaching};
 use crate::systems::script::{
     Condition, EffectCall, EffectReach, EventKind, RiftInstances, RiftScripting, area_owner,
-    effect as effects,
 };
 use crate::systems::skill::{self, Learned};
 use crate::systems::stat::{Stat, Stats};
@@ -291,14 +291,22 @@ impl EffectDef<RiftScripting> for GrantXp {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim(cx, &self.who)?;
+        let who = effects::aim_anywhere(cx, &self.who)?;
         let xp = cx.expr(&self.xp, ValueType::Integer)?;
-        Ok(Box::new(move |world, _, cx| {
-            if let Some(player) = effects::aimed_character(world, cx, &who) {
-                let amount = u32::try_from(xp(world, cx).as_int()).unwrap_or(0);
-                grant_xp(world, player, amount);
-            }
-            EffectStep::Done
+        Ok(Box::new(move |world, flow, cx| {
+            let aimed = effects::aimed_character_anywhere(world, cx, &who);
+            let amount = u32::try_from(xp(world, cx).as_int()).unwrap_or(0);
+            effects::reach(
+                world,
+                flow,
+                cx,
+                aimed,
+                Reaching::quietly(NEXT),
+                move |world, player| {
+                    grant_xp(world, player, amount);
+                    Ok(())
+                },
+            )
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {

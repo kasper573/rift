@@ -6,13 +6,14 @@ use super::transition::Crossing;
 use super::{AreaId, AreaTag, ObjectShape};
 use crate::core::content::{Content, SchemaMark};
 use crate::core::math::Pos;
-use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
+use crate::core::script::{Arrow, Compiler, EffectDef, NEXT, ScriptFault};
 use crate::core::units::Meters;
 use crate::systems::npc::Npc;
+use crate::systems::player::roster::ServerRoster;
 use crate::systems::player::{self, SpawnPoint};
+use crate::systems::script::effect::{self as effects, Aimed, Reaching};
 use crate::systems::script::{
     Condition, EffectCall, EffectReach, Fill, OwnerRow, Place, RiftScripting, RiftScripts,
-    effect as effects,
 };
 use crate::systems::{dialogue, movement, reach, region};
 
@@ -63,16 +64,22 @@ impl EffectDef<RiftScripting> for Warp {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim(cx, &self.who)?;
+        let who = effects::aim_anywhere(cx, &self.who)?;
         let to = cx.place(&self.to)?;
-        Ok(Box::new(move |world, _, cx| {
-            let warped = effects::aimed(world, cx, &who)
-                .ok_or_else(|| "Nobody to warp".to_owned())
-                .and_then(|actor| warp(world, actor, to));
-            if let Err(reason) = warped {
-                effects::show_error(world, cx, reason);
-            }
-            EffectStep::Done
+        Ok(Box::new(move |world, flow, cx| {
+            let aimed = effects::aimed_anywhere(world, cx, &who);
+            effects::reach(
+                world,
+                flow,
+                cx,
+                aimed,
+                Reaching {
+                    done: NEXT,
+                    refused: None,
+                    nobody: Some("Nobody to warp"),
+                },
+                move |world, actor| warp(world, actor, to),
+            )
         }))
     }
     fn reach(&self, cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
@@ -105,21 +112,30 @@ impl EffectDef<RiftScripting> for WarpToActor {
         &'c self,
         cx: &mut Compiler<'c, RiftScripting>,
     ) -> Result<EffectCall, ScriptFault> {
-        let who = effects::aim(cx, &self.who)?;
-        let to = cx.actor(Some(&self.to))?;
-        Ok(Box::new(move |world, _, cx| {
-            let warped = effects::aimed(world, cx, &who)
-                .ok_or_else(|| "Nobody to warp".to_owned())
-                .and_then(|actor| {
-                    let stands = effects::aimed(world, cx, &to)
-                        .and_then(|other| standing(world, other))
-                        .ok_or_else(|| "Nobody to warp to".to_owned())?;
-                    warp(world, actor, stands)
-                });
-            if let Err(reason) = warped {
-                effects::show_error(world, cx, reason);
-            }
-            EffectStep::Done
+        let who = effects::aim_anywhere(cx, &self.who)?;
+        let to = cx.actor_anywhere(Some(&self.to))?;
+        Ok(Box::new(move |world, flow, cx| {
+            let aimed = effects::aimed_anywhere(world, cx, &who);
+            let stands = match effects::aimed_anywhere(world, cx, &to) {
+                Aimed::Here(other) => standing(world, other),
+                Aimed::Elsewhere(client) => world
+                    .get_resource::<ServerRoster>()
+                    .and_then(|roster| roster.player(client))
+                    .map(|enrolled| enrolled.place),
+                Aimed::Nobody => None,
+            };
+            effects::reach(
+                world,
+                flow,
+                cx,
+                aimed,
+                Reaching {
+                    done: NEXT,
+                    refused: None,
+                    nobody: Some("Nobody to warp"),
+                },
+                move |world, actor| warp(world, actor, stands.ok_or("Nobody to warp to")?),
+            )
         }))
     }
     fn reach(&self, _cx: &Compiler<RiftScripting>) -> Vec<EffectReach> {
