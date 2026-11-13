@@ -295,7 +295,7 @@ pub struct GameWords {
     pub craft: String,
     /// The button calling off the craft a crafting prompt has under way.
     pub cancel_craft: String,
-    /// The button and the title of the window listing what a crafting prompt makes.
+    /// The heading over the recipes a crafting prompt lists.
     pub recipes: String,
     /// What a crafting prompt says of items placed that are no recipe of its own.
     pub no_recipe: String,

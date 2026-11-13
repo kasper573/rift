@@ -720,8 +720,6 @@ pub struct ProbePrompt {
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug)]
 pub struct ProbeCrafting {
     pub recipes: Vec<ProbeRecipe>,
-    /// Whether the window listing its recipes is open.
-    pub listing: bool,
     /// What the items placed make, one result for each recipe they are a whole number of times:
     /// everything that recipe would give for them.
     pub results: Vec<Vec<ProbeStack>>,
@@ -1202,7 +1200,6 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
                         can_make: listed.can_make,
                     })
                     .collect(),
-                listing: crafting::panel::listing(world),
                 results: results
                     .iter()
                     .map(|result| result.makes.iter().copied().map(stack).collect())

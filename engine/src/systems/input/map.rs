@@ -73,7 +73,6 @@ pub enum InputAction {
     Choice9,
     ToggleHistory,
     ToggleSkills,
-    ToggleRecipes,
     Hotbar1,
     Hotbar2,
     Hotbar3,

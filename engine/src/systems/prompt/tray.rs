@@ -1,11 +1,12 @@
-//! A prompt as its player sees it: a panel docked where a shop's counter docks, with the script's
-//! words, a tray of slots that say nothing of what belongs in them, and one button. What is
-//! placed in the tray stays in the bag and is known to this client alone until it is submitted.
+//! A prompt as its player sees it: a sheet docked where a shop's counter docks, with the script's
+//! words, a tray of slots that say nothing of what belongs in them, and the inventory to fill
+//! them from. What is placed in the tray stays in the bag and is known to this client alone until
+//! it is submitted.
 
 use bevy::prelude::*;
 use ui::controls;
 use ui::drag;
-use ui::egui::{self, Sense, Ui, Vec2};
+use ui::egui::{self, Align, Layout, Pos2, Rect, Sense, Ui, UiBuilder, Vec2};
 use ui::face::TextRole;
 use ui::{ink, sheet};
 
@@ -19,16 +20,18 @@ use crate::systems::hud::{self, Carried};
 use crate::systems::input::map::{InputAction, InputMap, input};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::item::widget::{
-    SLOT, SlotAction, SlotLook, slot, slot_action, slot_aside_source, slot_note_source,
+    InventoryPane, SLOT, SlotAction, SlotLook, inventory_pane, slot, slot_action,
+    slot_aside_source, slot_note_source,
 };
 use crate::systems::item::{Inventory, ItemId, ItemStack};
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
 
 const SLOT_GAP: f32 = 6.0;
-pub const TRAY_WIDTH: f32 = 320.0;
-const PADDING: f32 = 12.0;
-const LINE: f32 = 22.0;
+const SHEET: Vec2 = Vec2::new(680.0, 320.0);
+pub const PADDING: f32 = 12.0;
+pub const COLUMN_GAP: f32 = 16.0;
+pub const INVENTORY_WIDTH: f32 = 290.0;
 const BUTTON_GAP: f32 = 10.0;
 
 pub struct PromptTrayPlugin;
@@ -69,7 +72,6 @@ pub struct Placing {
     /// The turn the placed items were submitted for, until the server answers it.
     sent: Option<PromptStep>,
     seen: Option<PromptStep>,
-    height: f32,
 }
 
 /// A stack placed in a slot of the tray; `short` once the bag no longer covers what was placed.
@@ -259,59 +261,40 @@ pub fn words(ui: &mut Ui, world: &World, view: &PromptView) {
     }
 }
 
-/// The foot of a prompt: how its tray is filled and left, and the button that submits what is
-/// placed, faded while nothing is or the server has yet to answer.
-pub fn foot(ui: &mut Ui, world: &mut World, submit: impl FnOnce(&mut World)) {
-    let room = Vec2::new(ui.available_width(), controls::CONTROL_HEIGHT);
-    let across = egui::Layout::right_to_left(egui::Align::Center);
-    ui.allocate_ui_with_layout(room, across, |ui| {
-        let word = world
-            .resource::<Content>()
-            .built::<GameSettings>()
-            .words
-            .confirm
-            .clone();
-        let ready = !offer(world).is_empty() && !waiting(world);
-        if !ready {
-            controls::faded(ui, word);
-        } else if controls::primary(ui, word).clicked() {
-            submit(world);
-            InterfaceSound::UiPick.play(world);
-        }
-        ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
-            place_hint(ui, world);
-        });
+pub fn slots_width(across: u32) -> f32 {
+    across as f32 * SLOT + across.saturating_sub(1) as f32 * SLOT_GAP
+}
+
+pub fn heading(ui: &mut Ui, world: &World, view: &PromptView) {
+    sheet::section(ui, "Placed");
+    words(ui, world, view);
+}
+
+pub fn inventory(ui: &mut Ui, world: &mut World, locked: bool) {
+    lockable(ui, locked, |ui| {
+        sheet::scroll(
+            ui,
+            egui::ScrollArea::vertical().auto_shrink([false, false]),
+            |ui| {
+                let pane = InventoryPane {
+                    width: ui.available_width(),
+                    heading: Some("Your inventory"),
+                    selected: &mut None,
+                };
+                inventory_pane(ui, world, pane);
+            },
+        );
     });
 }
 
-/// How tall the prompt's sheet stands: as tall as what it last drew, `guessed` before it has.
-pub fn fitted(world: &World, guessed: f32) -> f32 {
-    let measured = world.resource::<Placing>().height;
-    if measured > 0.0 { measured } else { guessed }
+pub fn lockable(ui: &mut Ui, locked: bool, add: impl FnOnce(&mut Ui)) {
+    ui.add_enabled_ui(!locked, add);
 }
 
-/// Keeps the prompt's sheet as tall as what it drew, `drawn` high, turned out to be.
-pub fn fit(ui: &Ui, world: &mut World, drawn: f32) {
-    let needed = drawn + sheet::chrome(true).y;
-    let mut placing = world.resource_mut::<Placing>();
-    if (needed - placing.height).abs() > 0.5 {
-        placing.height = needed;
-        ui.ctx().request_discard("the prompt grew or shrank");
+pub fn leave_button(ui: &mut Ui, world: &mut World) {
+    if controls::button(ui, "Leave").clicked() {
+        stage::leave(world);
     }
-}
-
-/// How a prompt's tray is filled and left, for whoever has not done it before.
-pub fn place_hint(ui: &mut Ui, world: &mut World) {
-    let hint = StyledLine::new(vec![
-        input(InputAction::PlaceItem),
-        TextPiece::text(" or "),
-        input(InputAction::CarryItem),
-        TextPiece::text(" to place · "),
-        input(InputAction::Dismiss),
-        TextPiece::text(" leave"),
-    ]);
-    let look = TextLook::new(TextRole::Small.size(), ink::INK3);
-    text::show(ui, world, &hint, look, None);
 }
 
 fn open(world: &World) -> bool {
@@ -320,19 +303,11 @@ fn open(world: &World) -> bool {
 
 fn head(world: &World) -> Option<PanelHead> {
     let view = view(world).filter(|view| view.kind == PromptKind::Offer)?;
-    let chrome = sheet::chrome(true);
-    let text = if view.text.is_some() { LINE + 6.0 } else { 0.0 };
-    let guessed = chrome.y
-        + 2.0 * PADDING
-        + text
-        + slots_height(view.slots, TRAY_WIDTH - chrome.x - 2.0 * PADDING)
-        + BUTTON_GAP
-        + controls::CONTROL_HEIGHT;
     Some(PanelHead {
-        width: TRAY_WIDTH,
+        width: SHEET.x,
         chrome: PanelChrome::Sheet {
             title: view.title.clone(),
-            height: fitted(world, guessed),
+            height: SHEET.y,
         },
     })
 }
@@ -341,23 +316,65 @@ fn show(ui: &mut Ui, world: &mut World, _width: f32, _most: f32) {
     let Some(view) = view(world).cloned() else {
         return;
     };
-    let drawn = egui::Frame::new()
-        .inner_margin(PADDING)
-        .show(ui, |ui| {
-            words(ui, world, &view);
+    egui::Frame::new().inner_margin(PADDING).show(ui, |ui| {
+        let room = ui.available_rect_before_wrap();
+        let inventory_at = Rect::from_min_max(
+            Pos2::new(room.max.x - INVENTORY_WIDTH, room.min.y),
+            room.max,
+        );
+        let tray = Rect::from_min_max(
+            room.min,
+            Pos2::new(inventory_at.min.x - COLUMN_GAP, room.max.y),
+        );
+        let column = |rect| {
+            UiBuilder::new()
+                .max_rect(rect)
+                .layout(Layout::top_down(Align::Min))
+        };
+        ui.scope_builder(column(tray), |ui| {
+            heading(ui, world, &view);
             slots(ui, world, view.slots);
-            ui.add_space(BUTTON_GAP);
-            foot(ui, world, |world| {
-                world.write_message(PromptRequest::Submit {
-                    step: view.step,
-                    offer: offer(world),
-                });
-                sent(world, view.step);
+            ui.with_layout(Layout::bottom_up(Align::Min), |ui| foot(ui, world, &view));
+        });
+        ui.scope_builder(column(inventory_at), |ui| inventory(ui, world, false));
+        ui.advance_cursor_after_rect(room);
+    });
+}
+
+fn foot(ui: &mut Ui, world: &mut World, view: &PromptView) {
+    let room = Vec2::new(ui.available_width(), controls::CONTROL_HEIGHT);
+    ui.allocate_ui_with_layout(room, Layout::right_to_left(Align::Center), |ui| {
+        let word = world
+            .resource::<Content>()
+            .built::<GameSettings>()
+            .words
+            .confirm
+            .clone();
+        if waiting(world) {
+            controls::waiting(ui, word);
+        } else if offer(world).is_empty() {
+            controls::faded(ui, word);
+        } else if controls::primary(ui, word).clicked() {
+            world.write_message(PromptRequest::Submit {
+                step: view.step,
+                offer: offer(world),
             });
-        })
-        .response
-        .rect;
-    fit(ui, world, drawn.height());
+            sent(world, view.step);
+            InterfaceSound::UiPick.play(world);
+        }
+        leave_button(ui, world);
+    });
+    ui.add_space(BUTTON_GAP);
+    let hint = StyledLine::new(vec![
+        input(InputAction::PlaceItem),
+        TextPiece::text(" places one · "),
+        input(InputAction::PlaceStack),
+        TextPiece::text(" the stack · "),
+        input(InputAction::CarryItem),
+        TextPiece::text(" works too"),
+    ]);
+    let look = TextLook::new(TextRole::Small.size(), ink::INK3);
+    text::show(ui, world, &hint, look, None);
 }
 
 /// How many of the stack in the bag's slot `slot` are placed in the tray: what is placed of an

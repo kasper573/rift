@@ -41,8 +41,7 @@ impl InputAction {
             | InputAction::Choice6
             | InputAction::Choice7
             | InputAction::Choice8
-            | InputAction::Choice9
-            | InputAction::ToggleRecipes => &[Conversation],
+            | InputAction::Choice9 => &[Conversation],
             InputAction::ToggleInventory
             | InputAction::ToggleEquipment
             | InputAction::ToggleStats
