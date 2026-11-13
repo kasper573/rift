@@ -371,6 +371,7 @@ pub fn request(
         size,
         camera,
         weather: picture.area.climate.first(),
+        hour: None,
         picture,
         content,
         stroke: None,

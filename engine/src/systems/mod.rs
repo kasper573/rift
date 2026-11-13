@@ -77,7 +77,7 @@ use crate::core::render::WorldRenderPlugin;
 use crate::core::text::{Lettering, StyledTextPlugin, Typing};
 use crate::core::tick::{self, Tick};
 use crate::core::time::{DayClock, TimeCourse, WallClock, WeatherClock};
-use crate::core::units::{Hertz, Meters, Seconds};
+use crate::core::units::{Hertz, HourOfDay, Meters, Seconds};
 use crate::core::vfx::render::VfxRenderPlugin;
 use crate::systems::area::AreaId;
 use crate::systems::player::PlayerDefId;
@@ -161,6 +161,9 @@ pub fn area_state(world: &mut World, content: &Content) {
     world.init_resource::<npc::Packs>();
     world.init_resource::<spawner::SpawnerEntries>();
     world.init_resource::<area::weather::ServerSky>();
+    world.init_resource::<script::Sky>();
+    world.init_resource::<script::SkyNow>();
+    world.init_resource::<script::sky::DayWatch>();
     world.init_resource::<area::rain::ServerShelters>();
     world.insert_resource(sleep::Sleep::of(content));
     world.insert_resource(region::Region::of(content));
@@ -204,6 +207,11 @@ pub struct GameSettings {
     /// Without one the game has no clock: every area's light stands as authored.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub daylight: Option<area::DayCycle>,
+    /// What stands where an npc lives while its absence leaves a notice that names no sign of
+    /// its own, and from how far a sign is read. Without it, every notice names its sign, and is
+    /// read from as far as its npc is talked to.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub absence_sign: Option<npc::AbsenceSign>,
     /// How far a player sees: what their client is told of, and so all they may aim at, reach
     /// for or speak to.
     pub sight: Meters,
@@ -369,7 +377,7 @@ pub struct DroppedItems {
 /// world to once a bench is done holding either.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct ServerClocks {
-    pub day: Option<TimeCourse<f32>>,
+    pub day: Option<TimeCourse<HourOfDay>>,
     pub weather: TimeCourse<usize>,
 }
 
@@ -400,7 +408,10 @@ pub fn server_app(
     start_clocks(
         app.world_mut(),
         ServerClocks {
-            day: settings.daylight.map(|cycle| cycle.course(day, clock.now)),
+            day: settings
+                .daylight
+                .as_ref()
+                .map(|cycle| cycle.course(day, clock.now)),
             weather,
         },
     );
@@ -426,7 +437,13 @@ pub fn server_app(
         .add_systems(
             First,
             (
-                (area::weather::turn_sky, player::welcome).chain(),
+                (
+                    area::weather::turn_sky,
+                    area::weather::read_sky,
+                    script::sky::raise_turns,
+                    player::welcome,
+                )
+                    .chain(),
                 advance_replication_clock,
                 (sleep::settle, region::settle).chain(),
             ),
@@ -475,7 +492,13 @@ pub fn server_app(
                     item::expire_drops,
                     player::join,
                     player::respawn,
-                    (npc::clear_fallen, spawner::refill, npc::dismiss).chain(),
+                    (
+                        npc::clear_fallen,
+                        spawner::retire,
+                        spawner::refill,
+                        npc::dismiss,
+                    )
+                        .chain(),
                     combat::defeats,
                     skill::hotbar::settle_basic_attack,
                     chat::hear,

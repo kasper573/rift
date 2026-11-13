@@ -890,7 +890,7 @@ impl WorldAtlas {
             let requires: Vec<String> = [def.shown(), def.requires()]
                 .into_iter()
                 .flatten()
-                .map(|condition| condition::describe(content, condition))
+                .map(|condition| condition::describe(content, condition).to_string())
                 .collect();
             quests.push(AtlasQuest {
                 key,

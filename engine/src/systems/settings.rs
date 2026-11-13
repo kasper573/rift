@@ -226,6 +226,11 @@ fn show_interface(ui: &mut Ui, settings: &mut Mut<UserSettings>, typing: Option<
             settings.toggle_frame_rate();
         }
         ui.end_row();
+        let mut day_dial = settings.day_dial_shown();
+        if controls::toggle(ui, "Show the time of day", &mut day_dial).changed() {
+            settings.toggle_day_dial();
+        }
+        ui.end_row();
         let mut quick_cast = settings.quick_cast();
         if controls::toggle(ui, "Quick cast skills", &mut quick_cast)
             .hinted("A skill is cast the moment it is used, at what the pointer rests on")
@@ -483,6 +488,14 @@ impl UserSettings {
         self.screen.frame_rate = !self.screen.frame_rate;
     }
 
+    pub(crate) fn day_dial_shown(&self) -> bool {
+        !self.screen.day_dial_hidden
+    }
+
+    pub(crate) fn toggle_day_dial(&mut self) {
+        self.screen.day_dial_hidden = !self.screen.day_dial_hidden;
+    }
+
     pub(crate) fn confirms_risky_crafts(&self) -> bool {
         !self.crafting.unconfirmed
     }
@@ -736,6 +749,8 @@ struct ScreenSettings {
     transition: ScreenTransition,
     #[serde(default)]
     frame_rate: bool,
+    #[serde(default)]
+    day_dial_hidden: bool,
 }
 
 /// Saved on change rather than at each place that changes a setting. The initial load counts as a

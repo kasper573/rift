@@ -6,7 +6,7 @@ use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 use strum::{EnumDiscriminants, EnumString, IntoStaticStr, VariantArray};
 
-use super::{Condition, EffectReach, RiftScripting};
+use super::{Condition, EffectReach, RiftScripting, sky};
 use crate::core::content::Content;
 use crate::core::math::Pos;
 use crate::core::script::{Compiler, Eval, FlowCx, QueryDef, ScriptFault, Value, ValueType};
@@ -14,7 +14,7 @@ use crate::core::spatial::SpatialIndex;
 use crate::core::time::WallClock;
 use crate::core::units::{MeterPos, Meters, Seconds};
 use crate::systems::area::transition::Discovered;
-use crate::systems::area::{self, Area, AreaId, AreaTag, object};
+use crate::systems::area::{self, Area, AreaId, AreaTag, TimeOfDayName, object};
 use crate::systems::class::{self, ClassId};
 use crate::systems::combat::{Attackers, Attitude};
 use crate::systems::crafting::{self, RecipeKey};
@@ -401,6 +401,20 @@ pub enum RiftQuery {
         #[schemars(extend("default" = {"type": "subject"}))]
         of: Option<Box<Condition>>,
     },
+    /// The hour of the game's day, 0 to 24; noon in a game without a day.
+    Hour,
+    /// Whether the time of day holds.
+    During {
+        time: TimeOfDayName,
+    },
+    /// How much of the time of day has come, 0 outside it to 1 within, easing between.
+    TimeShare {
+        time: TimeOfDayName,
+    },
+    /// How strongly the wind blows over the area, from calm at 0 to a gale at 1.
+    Wind,
+    /// How much of the area's sky is clouded over, 0 to 1.
+    Clouds,
 }
 
 impl RiftQueryKind {
@@ -422,7 +436,11 @@ impl RiftQueryKind {
             | RiftQueryKind::StatusPower
             | RiftQueryKind::Distance
             | RiftQueryKind::Health
-            | RiftQueryKind::Rain => ValueType::Number,
+            | RiftQueryKind::Rain
+            | RiftQueryKind::Hour
+            | RiftQueryKind::TimeShare
+            | RiftQueryKind::Wind
+            | RiftQueryKind::Clouds => ValueType::Number,
             RiftQueryKind::QuestResetsIn => ValueType::Text,
             RiftQueryKind::Nearest
             | RiftQueryKind::Target
@@ -446,7 +464,8 @@ impl RiftQueryKind {
             | RiftQueryKind::Present
             | RiftQueryKind::IsNpc
             | RiftQueryKind::Walking
-            | RiftQueryKind::Hostile => ValueType::Boolean,
+            | RiftQueryKind::Hostile
+            | RiftQueryKind::During => ValueType::Boolean,
             RiftQueryKind::Memory => return None,
         })
     }
@@ -494,6 +513,18 @@ impl QueryDef<RiftScripting> for RiftQuery {
             | RiftQuery::StatusPower => true,
             _ => false,
         }
+    }
+
+    fn is_shared(&self) -> bool {
+        matches!(
+            self,
+            RiftQuery::Rain { of: None }
+                | RiftQuery::Hour
+                | RiftQuery::During { .. }
+                | RiftQuery::TimeShare { .. }
+                | RiftQuery::Wind
+                | RiftQuery::Clouds
+        )
     }
 
     fn compile<'c>(&'c self, cx: &mut Compiler<'c, RiftScripting>) -> Result<Eval, ScriptFault> {
@@ -899,11 +930,33 @@ impl QueryDef<RiftScripting> for RiftQuery {
                 Box::new(move |world, cx| Value::Point(skill::aimed_point(world, cx, skill)))
             }
             RiftQuery::Rain { of } => {
+                let named = of.is_some();
                 let of = cx.actor(of.as_deref())?;
                 Box::new(move |world, cx| {
-                    let at = actor(world, cx, &of).and_then(|who| movement::position(world, who));
-                    Value::Num(at.map_or(0.0, |at| f64::from(area::rain::falling_on(world, at))))
+                    let rain = if named || cx.subject.is_some() {
+                        actor(world, cx, &of)
+                            .and_then(|who| movement::position(world, who))
+                            .map_or(0.0, |at| area::rain::falling_on(world, at))
+                    } else {
+                        sky::now(world).rain
+                    };
+                    Value::Num(f64::from(rain))
                 })
+            }
+            RiftQuery::Hour => Box::new(|world, _| Value::Num(f64::from(sky::hour(world).0))),
+            RiftQuery::During { time } => {
+                let time = sky::known_time(cx.content, time)?;
+                Box::new(move |world, _| Value::Bool(sky::during(world, &time)))
+            }
+            RiftQuery::TimeShare { time } => {
+                let time = sky::known_time(cx.content, time)?;
+                Box::new(move |world, _| Value::Num(f64::from(sky::time_share(world, &time))))
+            }
+            RiftQuery::Wind => {
+                Box::new(|world, _| Value::Num(f64::from(sky::now(world).weather.wind.strength)))
+            }
+            RiftQuery::Clouds => {
+                Box::new(|world, _| Value::Num(f64::from(sky::now(world).weather.clouds)))
             }
         })
     }

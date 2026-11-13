@@ -10,10 +10,11 @@ use crate::core::math::Rect;
 use crate::core::render::world::haze::HazeBox;
 use crate::core::render::world::sky::Fog;
 use crate::core::units::Meters;
+use crate::systems::script::SkyCondition;
 
 /// A bank of fog lying over the ground: over `rect`, standing `height` deep over the ground under
 /// it, hazing what is seen through it as `haze` says.
-#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct FogBank {
     #[schemars(with = "serial::RectRow")]
@@ -24,6 +25,9 @@ pub struct FogBank {
     pub rect: Rect<Meters>,
     pub height: Meters,
     pub haze: Fog,
+    /// How thick it lies under the sky, of how thick it gets; as thick as it gets without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<SkyCondition>,
 }
 
 impl FogBank {
@@ -42,21 +46,26 @@ impl FogBank {
                 dry_air: 0.006,
                 moist_air: 0.04,
             },
+            when: None,
         }
     }
 
     /// The bank as it hazes what is seen through it in air as moist as `humidity` while it
-    /// `rains` round the eye.
-    pub fn seen(&self, humidity: f32, rains: f32) -> HazeBox {
+    /// `rains` round the eye, lying `share` as thick as it gets.
+    pub fn seen(&self, humidity: f32, rains: f32, share: f32) -> HazeBox {
         let low = self.rect.min();
         let high = self.rect.max();
-        self.haze.lying(
+        let lying = self.haze.lying(
             Vec2::new(low.x, low.y),
             Vec2::new(high.x, high.y),
             self.height,
             humidity,
             rains,
-        )
+        );
+        HazeBox {
+            thickest: lying.thickest * share,
+            ..lying
+        }
     }
 
     /// How far from `at` (x east, y south) the bank lies over the ground, none inside it.

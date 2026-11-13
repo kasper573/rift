@@ -88,6 +88,17 @@ pub struct FlowCx {
 }
 
 impl FlowCx {
+    /// A reading of the world with nobody as its subject.
+    pub fn nobody() -> FlowCx {
+        FlowCx {
+            owner: None,
+            subject: None,
+            locals: Locals::new(),
+            state: Vec::new(),
+            event: Vec::new(),
+        }
+    }
+
     pub fn standalone(subject: Entity) -> FlowCx {
         FlowCx {
             owner: None,

@@ -57,6 +57,7 @@ use crate::core::render::world::gpu::atlas::TerrainAtlas;
 use crate::core::render::world::gpu::draw::{GroundDraw, GroundPatch, PATCH_CELLS};
 use crate::core::render::world::haze::{Haze, HazeSight, MAX_HAZE_BOXES};
 use crate::core::render::world::lights::{self, Lamp};
+use crate::core::render::world::opacity::Opacity;
 use crate::core::render::world::sky::{self, Daylight, SunLight};
 use crate::core::render::world::terrain::{self, GroundLayer};
 use crate::core::render::world::{DRAWN_FRAMES_AFTER, frames_drawn, missing_drawn};
@@ -68,6 +69,7 @@ use crate::core::vfx::rain::{self as rain_vfx, RainField, RainMaterial};
 use crate::core::vfx::render as vfx_render;
 use crate::core::vfx::sky::{self as sky_vfx, Heavens, SkyMaterial, SkyWeather};
 use crate::core::vfx::uniform::{ParamsUniform, SiteUniform, WeatherImage};
+use crate::systems::script::{self, SkyCondition, SkyNow};
 
 /// An area's scenery as it stands in a world: everything hangs under `root`, the terrain mesh is
 /// `terrain`, `sun` is the directional light when the area has one, the sun by day and the full
@@ -97,6 +99,7 @@ impl Plugin for SceneryPlugin {
                     regrow_grass.run_if(resource_changed::<VideoPreferences>),
                     take_down,
                     stream,
+                    light_by_sky.run_if(resource_exists::<SkyNow>),
                 )
                     .chain(),
             );
@@ -1276,8 +1279,13 @@ pub fn light(
             hold(world, air, placed);
         }
         let color = sky::haze(sun, lit, area.lighting.sky, moist, rains, &look.sky);
-        let mut banks: Vec<&FogBank> = area.fogs.iter().collect();
-        banks.sort_by(|a, b| a.distance(eye.xz()).total_cmp(&b.distance(eye.xz())));
+        let mut banks: Vec<(&FogBank, f32)> = area
+            .fogs
+            .iter()
+            .map(|bank| (bank, script::sky::share(world, bank.when.as_ref())))
+            .filter(|(_, share)| *share > 0.0)
+            .collect();
+        banks.sort_by(|(a, _), (b, _)| a.distance(eye.xz()).total_cmp(&b.distance(eye.xz())));
         let sight = sight_of(world, camera, area.heights.range().lowest);
         let haze = Haze::new(
             color,
@@ -1285,7 +1293,7 @@ pub fn light(
             banks
                 .into_iter()
                 .take(MAX_HAZE_BOXES)
-                .map(|bank| bank.seen(moist, rains))
+                .map(|(bank, share)| bank.seen(moist, rains, share))
                 .filter(|lying| sight.is_none_or(|sight| sight.crosses(lying.low, lying.high))),
         );
         hold(world, camera, haze);
@@ -1658,7 +1666,31 @@ fn spawn_light(
         Transform::from_translation(world_point(light.at, ground + light.height)),
         ChildOf(root),
     ));
+    if let Some(when) = &light.when {
+        world
+            .entity_mut(lamp)
+            .insert((SkyLit(when.clone()), Opacity(0.0), Visibility::Hidden));
+    }
     lamp
+}
+
+/// A stood light that shines as much as its condition of the sky says.
+#[derive(Component)]
+struct SkyLit(SkyCondition);
+
+/// Lets every light that follows the sky shine as much as the sky has it now. One with none of
+/// it is not drawn at all.
+fn light_by_sky(now: Res<SkyNow>, mut lights: Query<(&SkyLit, &mut Opacity, &mut Visibility)>) {
+    for (lit, mut opacity, mut visibility) in &mut lights {
+        let share = now.share(Some(&lit.0));
+        opacity.set_if_neq(Opacity(share));
+        let shown = if share > 0.0 {
+            Visibility::Inherited
+        } else {
+            Visibility::Hidden
+        };
+        visibility.set_if_neq(shown);
+    }
 }
 
 /// Plans what an area's scenery stands for each sight, its lights filed off the frame.

@@ -1,7 +1,7 @@
 use std::path::PathBuf;
 
 use engine::core::content::ContentFile;
-use engine::core::units::{Degrees, Meters};
+use engine::core::units::{Degrees, HourOfDay, Meters};
 use engine::systems::actor::Action;
 use engine::systems::actor::model::ModelDef;
 use engine::systems::actor::skeleton::{BuildName, Clip, SkeletonDef};
@@ -60,6 +60,9 @@ pub enum SceneStep {
     Spell {
         index: usize,
     },
+    /// Shows every area at this hour of the game's day, each time-driven thing as a player
+    /// finds it then.
+    Hour(HourOfDay),
     /// Looks at the middle of the open area or blueprint from `distance` off, turned to `yaw` and
     /// tilted to `pitch` where given.
     Camera {
@@ -385,6 +388,7 @@ fn open_one(editor: &mut Editor, step: &SceneStep) {
                 view.climate.pick_spell(*index);
             }
         }
+        SceneStep::Hour(hour) => editor.views.area.day.show_at(*hour),
         SceneStep::Camera {
             distance,
             yaw,

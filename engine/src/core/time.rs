@@ -6,7 +6,7 @@ use bevy_time::{Real, Time};
 use serde::{Deserialize, Serialize};
 
 use crate::core::math::Rng;
-use crate::core::units::{Millis, Seconds};
+use crate::core::units::{HourOfDay, Millis, Seconds};
 
 #[derive(Resource, Clone, Copy, Debug)]
 pub struct WallClock {
@@ -157,7 +157,7 @@ impl ServerClock {
 /// turning, or held at an hour of the day. The server sets it as it starts and tells every client
 /// on joining, so all of them read the same hour off their reckoning of the server's clock.
 #[derive(Resource, Clone, Copy, Debug, Default, PartialEq)]
-pub struct DayClock(pub Option<TimeCourse<f32>>);
+pub struct DayClock(pub Option<TimeCourse<HourOfDay>>);
 
 /// How the weather's course runs on the server the client plays on: since the server started, or
 /// held at one of each area's spells, by its place among them; none before the server has told it.

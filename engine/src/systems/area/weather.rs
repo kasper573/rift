@@ -6,18 +6,21 @@ use serde::{Deserialize, Serialize};
 use bevy::prelude::*;
 
 use crate::core::audio::playback::SfxId;
-use crate::core::content::{AudioRef, Content, RowCheck, SchemaMark, serial};
-use crate::core::math::Rng;
+use crate::core::content::{
+    AudioRef, Content, ContentProblem, ImageRef, RowCheck, SchemaMark, nearest, serial,
+};
+use crate::core::math::{Rgb, Rng};
 use crate::core::render::world::clouds::CloudDrift;
 use crate::core::render::world::sky::Daylight;
 use crate::core::time::{
     self, DayClock, TimeCourse, UnixMillis, WallClock, WeatherClock, server_now,
 };
-use crate::core::units::{Degrees, Meters, Seconds};
+use crate::core::units::{DayHours, Degrees, HourOfDay, Meters, Seconds};
 use crate::core::vfx::rain::NEAREST_SHELL;
 use crate::core::vfx::{ParamValue, VfxShaderId};
 use crate::systems::area::AreaId;
 use crate::systems::launch::{ServerDay, ServerDaylight};
+use crate::systems::script::sky::{self, Sky};
 use crate::systems::{GameSettings, WorldArea};
 
 /// How many shells rain is drawn on round the eye at most, each over the whole picture.
@@ -192,17 +195,42 @@ pub struct SpellCourse {
 }
 
 /// A game's day and night: a world starts at `start` o'clock and the whole cycle turns once every
-/// `day_length` of real time from then on.
-#[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+/// `day_length` of real time from then on, through its `times` in their order.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct DayCycle {
     pub day_length: Seconds,
-    pub start: f32,
+    pub start: HourOfDay,
+    /// The times the day is divided into, in the order they come. Without any the day has its
+    /// clock and nothing can follow a time of it.
+    #[schemars(transform = SchemaMark::DayTimes.with(true))]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub times: Vec<TimeOfDay>,
 }
+
+/// A time of the game's day: it begins `from` o'clock and holds until the next of the day's times
+/// begins, the last past midnight into the first. It comes over `eases`, half before `from` and
+/// half after, as the one before it goes. Its `color` and `icon` are how the game shows it.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TimeOfDay {
+    pub name: TimeOfDayName,
+    pub from: HourOfDay,
+    #[serde(default, skip_serializing_if = "DayHours::is_zero")]
+    pub eases: DayHours,
+    pub color: Rgb,
+    pub icon: ImageRef,
+}
+
+/// One of the game's times of day, by its name.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+#[schemars(transform = SchemaMark::TimeOfDay.with(true))]
+pub struct TimeOfDayName(pub String);
 
 impl DayCycle {
     /// How the day runs for a world starting `now` on a server running it as `day` says.
-    pub fn course(&self, day: ServerDay, now: UnixMillis) -> TimeCourse<f32> {
+    pub fn course(&self, day: ServerDay, now: UnixMillis) -> TimeCourse<HourOfDay> {
         match day.daylight {
             ServerDaylight::Turning => self.turning_from(self.start, now),
             ServerDaylight::Still => TimeCourse::Held(self.start),
@@ -213,17 +241,53 @@ impl DayCycle {
     }
 
     /// The day turning on from `hour` o'clock at `now`.
-    pub fn turning_from(&self, hour: f32, now: UnixMillis) -> TimeCourse<f32> {
-        TimeCourse::Since(now.before(Seconds(hour / 24.0 * self.day_length.0)))
+    pub fn turning_from(&self, hour: HourOfDay, now: UnixMillis) -> TimeCourse<HourOfDay> {
+        TimeCourse::Since(now.before(Seconds(hour.share() * self.day_length.0)))
     }
 
-    /// The hour of the day, 0 to 24, at `now` on a day running its `course`.
-    pub fn hour(&self, course: TimeCourse<f32>, now: UnixMillis) -> f32 {
+    /// The hour of the day at `now` on a day running its `course`.
+    pub fn hour(&self, course: TimeCourse<HourOfDay>, now: UnixMillis) -> HourOfDay {
         match course {
-            TimeCourse::Since(origin) => {
-                now.since(origin).0.rem_euclid(self.day_length.0) / self.day_length.0 * 24.0
-            }
+            TimeCourse::Since(origin) => HourOfDay(
+                now.since(origin).0.rem_euclid(self.day_length.0) / self.day_length.0 * 24.0,
+            ),
             TimeCourse::Held(hour) => hour,
+        }
+    }
+
+    /// The time of day that holds at `hour`, when the game names any.
+    pub fn time_at(&self, hour: HourOfDay) -> Option<&TimeOfDay> {
+        self.holding(hour).map(|at| &self.times[at])
+    }
+
+    /// How much of the time named `time` has come at `hour`, 0 to 1; the shares of all the day's
+    /// times add up to 1.
+    pub fn share(&self, time: &TimeOfDayName, hour: HourOfDay) -> f32 {
+        let Some(at) = self.holding(hour) else {
+            return 0.0;
+        };
+        let count = self.times.len();
+        let (before, after) = ((at + count - 1) % count, (at + 1) % count);
+        let (holds, next) = (&self.times[at], &self.times[after]);
+        let named = |index: usize| self.times[index].name == *time;
+        if count == 1 {
+            return if named(at) { 1.0 } else { 0.0 };
+        }
+        let come = HourOfDay::wrapped(hour.0).since(holds.from).0;
+        let left = next.from.since(HourOfDay::wrapped(hour.0)).0;
+        let (held, other) = if come < holds.eases.0 / 2.0 {
+            (0.5 + come / holds.eases.0, before)
+        } else if left < next.eases.0 / 2.0 {
+            (0.5 + left / next.eases.0, after)
+        } else {
+            (1.0, at)
+        };
+        if named(at) {
+            held
+        } else if named(other) {
+            1.0 - held
+        } else {
+            0.0
         }
     }
 
@@ -235,8 +299,142 @@ impl DayCycle {
             86_400.0,
             "real seconds a day lasts",
         );
-        cx.range(format!("{pointer}/start"), self.start, 0.0, 24.0, "o'clock");
+        cx.range(
+            format!("{pointer}/start"),
+            self.start.0,
+            0.0,
+            24.0,
+            "o'clock",
+        );
+        for (index, time) in self.times.iter().enumerate() {
+            let at = format!("{pointer}/times/{index}");
+            cx.text(format!("{at}/name"), &time.name.0, 1, 40);
+            if !(0.0..24.0).contains(&time.from.0) {
+                cx.error(
+                    format!("{at}/from"),
+                    "out of range",
+                    time.from.0,
+                    "o'clock 0 up to 24",
+                );
+            }
+            if self.times[..index]
+                .iter()
+                .any(|other| other.name == time.name)
+            {
+                cx.error(
+                    format!("{at}/name"),
+                    "duplicate name",
+                    &time.name.0,
+                    "each time of day to have a name of its own",
+                );
+            }
+            let earlier = &self.times[(index + self.times.len() - 1) % self.times.len()];
+            if index > 0 && time.from == earlier.from {
+                cx.error(
+                    format!("{at}/from"),
+                    "same hour",
+                    format!(
+                        "{} and {} both begin at {}",
+                        earlier.name.0, time.name.0, time.from.0
+                    ),
+                    "each time of day to begin at its own hour",
+                );
+            } else if index > 0 && time.from < earlier.from {
+                cx.error(
+                    format!("{at}/from"),
+                    "out of order",
+                    format!(
+                        "{} from {} after {} from {}",
+                        time.name.0, time.from.0, earlier.name.0, earlier.from.0
+                    ),
+                    "the times of day in the order of their hours",
+                );
+            }
+            cx.range(
+                format!("{at}/eases"),
+                time.eases.0,
+                0.0,
+                self.lasts(index).0.min(self.lasts_before(index).0),
+                "hours, at most what the time and the one before it last",
+            );
+        }
     }
+
+    /// Refuses a `name` that is none of the day's times, saying the nearest of them.
+    pub fn check_named(
+        daylight: Option<&DayCycle>,
+        pointer: impl Into<String>,
+        name: &TimeOfDayName,
+        cx: &mut RowCheck,
+    ) {
+        if let Some(problem) = DayCycle::unknown_time(daylight, name) {
+            cx.problem(pointer, problem);
+        }
+    }
+
+    /// What is wrong with `name` when it is none of the day's times.
+    pub fn unknown_time(
+        daylight: Option<&DayCycle>,
+        name: &TimeOfDayName,
+    ) -> Option<ContentProblem> {
+        let names: Vec<&String> = daylight
+            .iter()
+            .flat_map(|cycle| &cycle.times)
+            .map(|time| &time.name.0)
+            .collect();
+        (!names.contains(&&name.0)).then(|| {
+            ContentProblem::new(
+                "unknown time of day",
+                &name.0,
+                "the name of one of the game's times of day",
+            )
+            .near(nearest(names, &name.0))
+        })
+    }
+
+    fn holding(&self, hour: HourOfDay) -> Option<usize> {
+        let hour = HourOfDay::wrapped(hour.0);
+        self.times
+            .iter()
+            .rposition(|time| time.from <= hour)
+            .or(self.times.len().checked_sub(1))
+    }
+
+    fn lasts(&self, index: usize) -> DayHours {
+        let next = &self.times[(index + 1) % self.times.len()];
+        match self.times.len() {
+            1 => DayHours(24.0),
+            _ => next.from.since(self.times[index].from),
+        }
+    }
+
+    fn lasts_before(&self, index: usize) -> DayHours {
+        self.lasts((index + self.times.len() - 1) % self.times.len())
+    }
+}
+
+/// Tells a server's world its sky this tick: the hour of its day, and the weather over its area,
+/// the rain as hard as it falls under the cloud that holds the most water.
+pub fn read_sky(world: &mut World) {
+    let hour = world
+        .resource::<Content>()
+        .try_built::<GameSettings>()
+        .and_then(|settings| settings.daylight.as_ref())
+        .zip(world.get_resource::<DayClock>().and_then(|clock| clock.0))
+        .map(|(cycle, course)| cycle.hour(course, world.resource::<WallClock>().now));
+    let weather = world
+        .resource::<ServerSky>()
+        .weather()
+        .copied()
+        .unwrap_or_default();
+    sky::turn(
+        world,
+        Sky {
+            hour,
+            weather,
+            rain: weather.rain,
+        },
+    );
 }
 
 /// Keeps the client's daylight at the game's hour, or fixed for a game without a day cycle or
@@ -246,7 +444,8 @@ pub fn tell_time(world: &mut World) {
         let cycle = world
             .resource::<Content>()
             .built::<GameSettings>()
-            .daylight?;
+            .daylight
+            .as_ref()?;
         let course = world.resource::<DayClock>().0?;
         Some(cycle.hour(course, server_now(world)?))
     };

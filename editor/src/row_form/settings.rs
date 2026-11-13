@@ -1,8 +1,10 @@
 use engine::core::content::SETTINGS_FILE;
+use engine::systems::GameSettings;
 use ui::egui::Ui;
 use ui::theme;
 
 use crate::app::Editor;
+use crate::day;
 use crate::forms::{self, FormCx};
 use crate::project::ContentEdit;
 
@@ -42,6 +44,23 @@ pub(crate) fn show_game(editor: &mut Editor, ui: &mut Ui) {
     if changed.is_some() {
         let mut edit = ContentEdit::new("Edit the game");
         edit.write_json(SETTINGS_FILE, &value);
+        if let Some(project) = editor.project.as_ref()
+            && let Ok(before) = project.settings()
+            && let Ok(after) = project.reader().from_json::<GameSettings>(&value)
+        {
+            let times = |settings: &GameSettings| {
+                settings
+                    .daylight
+                    .as_ref()
+                    .map_or_else(Vec::new, |cycle| cycle.times.clone())
+            };
+            let places = day::carry_names(project, &mut edit, &times(&before), &times(&after));
+            if places > 0 {
+                editor.form.status = vec![format!(
+                    "The time of day was changed in {places} places that name it"
+                )];
+            }
+        }
         editor.apply(edit);
     }
     for action in actions {

@@ -21,7 +21,7 @@ use super::haze::HazeBox;
 use super::{DRAWN_FRAMES_AFTER, RenderProgress, clouds, lights};
 use crate::core::math::{Rect, Rgb, smoothstep};
 use crate::core::render::Look;
-use crate::core::units::{Degrees, Meters, Stops};
+use crate::core::units::{Degrees, HourOfDay, Meters, Stops};
 
 /// How far into the air the haze is worked out, in metres of the world.
 const HAZE_REACH: f32 = 600.0;
@@ -220,7 +220,7 @@ pub(super) fn rest_sky_light(
 pub enum Daylight {
     #[default]
     Fixed,
-    Hour(f32),
+    Hour(HourOfDay),
 }
 
 impl Daylight {
@@ -228,7 +228,7 @@ impl Daylight {
     pub fn share(self) -> f32 {
         match self {
             Daylight::Fixed => 0.5,
-            Daylight::Hour(hour) => hour / 24.0,
+            Daylight::Hour(hour) => hour.share(),
         }
     }
 }
@@ -439,10 +439,10 @@ pub fn sun_at(
 /// great circle through its noon place that rises due a quarter turn before its noon bearing and
 /// sets a quarter turn after it, turned a twenty-fourth of the way round it each hour, as a sky
 /// turns round the world.
-fn orbit(noon_elevation: Degrees, noon_azimuth: Degrees, hour: f32) -> (Degrees, Degrees) {
+fn orbit(noon_elevation: Degrees, noon_azimuth: Degrees, hour: HourOfDay) -> (Degrees, Degrees) {
     let noon = lights::toward(noon_elevation, noon_azimuth);
     let setting = lights::toward(Degrees(0.0), Degrees(noon_azimuth.0 + 90.0));
-    let (along, across) = ((hour - 12.0) / 12.0 * PI).sin_cos();
+    let (along, across) = ((hour.0 - 12.0) / 12.0 * PI).sin_cos();
     let way = noon * across + setting * along;
     let elevation = way.y.clamp(-1.0, 1.0).asin();
     let azimuth = way.x.atan2(-way.z);

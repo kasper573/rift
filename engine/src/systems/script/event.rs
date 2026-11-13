@@ -7,6 +7,7 @@ use crate::core::content::serial;
 use crate::core::math::Pos;
 use crate::core::script::{EventDef, ScriptFault, Value, ValueType};
 use crate::core::units::{Meters, Seconds};
+use crate::systems::area::TimeOfDayName;
 use crate::systems::attention::AttentionId;
 use crate::systems::interact::Verb;
 use crate::systems::item::ItemId;
@@ -93,6 +94,14 @@ pub enum RiftEvent {
     },
     /// A player sent the command, its inputs filling the script's variables.
     Invoked,
+    /// The game's day turned into the time of day. A world that starts within it hears nothing.
+    TimeBegan {
+        time: TimeOfDayName,
+    },
+    /// The game's day turned out of the time of day.
+    TimeEnded {
+        time: TimeOfDayName,
+    },
 }
 
 pub(crate) const PLACED: &[RunnerKind] = &[
@@ -154,7 +163,9 @@ impl EventDef<RiftScripting> for RiftEvent {
 
     fn owners(&self) -> &'static [RunnerKind] {
         match self {
-            RiftEvent::Started => PLACED,
+            RiftEvent::Started | RiftEvent::TimeBegan { .. } | RiftEvent::TimeEnded { .. } => {
+                PLACED
+            }
             RiftEvent::Run => ANY,
             RiftEvent::Entered { .. } | RiftEvent::Left { .. } => OBJECT_OR_AREA,
             RiftEvent::StoodOn { .. } => NPC,
@@ -173,7 +184,10 @@ impl EventDef<RiftScripting> for RiftEvent {
     }
 
     fn has_subject(&self) -> bool {
-        !matches!(self, RiftEvent::Started)
+        !matches!(
+            self,
+            RiftEvent::Started | RiftEvent::TimeBegan { .. } | RiftEvent::TimeEnded { .. }
+        )
     }
 
     fn is_run(&self) -> bool {

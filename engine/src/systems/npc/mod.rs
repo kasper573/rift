@@ -1,6 +1,8 @@
+pub mod absence;
 pub mod body;
 pub mod summon;
 
+pub use absence::{Absence, AbsenceNotice, AbsenceSign, AbsenceSpan, AbsenceSpanAt};
 pub use summon::{Despawn, SetAttitude, ShownFor, SpawnNear, SpawnNpcs, Summoned, dismiss, summon};
 
 use bevy_app::App;
@@ -56,6 +58,7 @@ pub fn register(app: &mut App) {
 /// The ranks an npc holds its skills at lie within those skills' ranks.
 pub fn check_all(loading: &mut Loading) {
     let content = loading.content();
+    let scripts = content.built::<RiftScripts>().clone();
     for (id, def) in loading.rows::<NpcDef>(&content) {
         let mut check = RowCheck::default();
         for (index, listed) in def.skills.iter().enumerate() {
@@ -71,6 +74,18 @@ pub fn check_all(loading: &mut Loading) {
             appearance::check(&content, &def.appearance, "/appearance", &mut check);
         }
         check_held(&content, loading, id, def, &mut check);
+        let settings = content.try_built::<GameSettings>();
+        for (index, module) in def.modules.iter().enumerate() {
+            if let NpcModule::Absence(absence) = module {
+                absence.check(
+                    &format!("/modules/{index}"),
+                    settings.and_then(|settings| settings.daylight.as_ref()),
+                    settings.and_then(|settings| settings.absence_sign),
+                    Interactive::of(scripts.of(OwnerRow::of_row(id))).is_some(),
+                    &mut check,
+                );
+            }
+        }
         loading.row_errors(id, check);
     }
 }
@@ -326,6 +341,7 @@ pub enum NpcModule {
     Voice(Voice),
     Loot(Loot),
     Script(ScriptModule),
+    Absence(Absence),
 }
 
 #[derive(JsonSchema, Clone, Serialize, Deserialize)]

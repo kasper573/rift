@@ -13,6 +13,7 @@ use engine::systems::area::blueprint::{BlueprintDef, Placement};
 use engine::systems::area::scene::{MAX_FOLDER_DEPTH, SceneNode, scene_file};
 use engine::systems::area::{AreaModule, AreaModuleKind, Pictured};
 use ui::egui::Ui;
+use ui::glyph::Mark;
 
 use super::flags::Flag;
 use super::modules::ADD_MENU;
@@ -93,6 +94,8 @@ pub struct SceneSource<'a> {
     needle: String,
     holding: HashSet<String>,
     problems: Arc<HashMap<String, String>>,
+    /// What the sky the view is shown under makes of each module that follows it.
+    pub by_sky: Arc<super::SkyMarks>,
     pub lit: Option<String>,
     /// The folder row a module waiting for its spot on the map lands in, and its kind: shown as a
     /// faded row at the end of the folder.
@@ -173,6 +176,7 @@ impl<'a> SceneSource<'a> {
             needle: filter.trim().to_lowercase(),
             holding: HashSet::new(),
             problems,
+            by_sky: Arc::default(),
             lit: None,
             placing: None,
             read_only: project.read_only.clone(),
@@ -885,6 +889,19 @@ impl TreeSource for SceneSource<'_> {
         }
         if folder && !nodes::is_folder(node) {
             row.icon = None;
+        }
+        if let Some(following) = self.by_sky.get(id) {
+            row.mark = Some((Mark::Clock, theme::MUTED));
+            row.dim |= following.away;
+            let said = if following.away {
+                format!("Not there at the hour shown: {}", following.words)
+            } else {
+                format!("Follows the sky: {}", following.words)
+            };
+            row.tip = Some(match row.tip.take() {
+                Some(tip) => format!("{tip}\n\n{said}"),
+                None => said,
+            });
         }
         if let Some(reason) = &self.read_only {
             row.tip = Some(reason.clone());

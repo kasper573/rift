@@ -446,6 +446,7 @@ fn scene_graph(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &Area
     };
     let key = scene_tree::tree_key(project, &snapshot.bundle);
     let lit = lit_row(editor, snapshot);
+    let by_sky = super::sky_marks(editor, snapshot);
     let selected = scene_tree::selected_ids(snapshot, &editor.selection);
     let placing = editor.views.area.view(view_key).placing;
     let Editor {
@@ -480,6 +481,7 @@ fn scene_graph(editor: &mut Editor, ui: &mut Ui, view_key: &str, snapshot: &Area
         clipboard.is_some() || !panel.cut.is_empty(),
     );
     source.lit = lit;
+    source.by_sky = by_sky;
     source.placing = placing.map(|kind| (insertion_of(&selected, &source, snapshot), kind));
     if let Some((hits, total)) = source.hit_count() {
         ui.label(theme::faint(format!("{hits} of {total}")).size(12.0));

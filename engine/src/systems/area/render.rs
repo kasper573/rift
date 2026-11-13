@@ -20,9 +20,11 @@ use crate::core::units::{MeterSize, Meters};
 use crate::core::vfx::cover::ShownWeather;
 use crate::core::vfx::render::SiteExtent;
 use crate::core::vfx::standing::StandingVfx;
+use crate::systems::area::rain::RainHeard;
 use crate::systems::movement::RenderPosition;
 use crate::systems::player::session::MyCharacter;
 use crate::systems::screen::ClientScreen;
+use crate::systems::script::sky::{self, Sky};
 
 pub struct AreaRenderPlugin;
 
@@ -154,6 +156,21 @@ fn follow_daylight(world: &mut World) {
     let content = world.resource::<Content>().clone();
     let area = super::shared(&content, area_id).clone();
     let weather = super::weather::weather_now(world, area_id, &area.climate);
+    let hour = match *world.resource::<Daylight>() {
+        Daylight::Hour(hour) => Some(hour),
+        Daylight::Fixed => None,
+    };
+    let rain = world
+        .get_resource::<RainHeard>()
+        .map_or(0.0, |heard| heard.0);
+    sky::turn(
+        world,
+        Sky {
+            hour,
+            weather,
+            rain,
+        },
+    );
     let flash = light_area(world, area_id, &area, &weather);
     let shown = scenery::shown_weather(&weather, flash);
     match world.get_resource_mut::<ShownWeather>() {
@@ -221,7 +238,8 @@ fn place_objects(world: &mut World) {
         });
         let mut placed = world.entity_mut(entity);
         placed.insert((
-            Transform::from_translation(world_point(center, ground)),
+            Transform::from_translation(world_point(center, ground))
+                .with_rotation(Quat::from_rotation_y(-object.yaw.radians().0)),
             Visibility::default(),
             SiteExtent {
                 footprint: Vec2::new(bounds.size.width.max(1.0), bounds.size.height.max(1.0)),

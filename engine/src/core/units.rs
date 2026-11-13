@@ -204,6 +204,45 @@ pub struct Seconds(pub f32);
 #[schemars(transform = SchemaMark::Unit.with("ms"))]
 pub struct Millis(pub f32);
 
+/// An hour on the clock of a game's day, 0 to 24.
+#[derive(
+    JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd,
+)]
+#[schemars(transform = SchemaMark::Unit.with("o'clock"))]
+pub struct HourOfDay(pub f32);
+
+impl HourOfDay {
+    pub const NOON: HourOfDay = HourOfDay(12.0);
+
+    /// The hour the clock shows `hours` after midnight, however many days that is.
+    pub fn wrapped(hours: f32) -> HourOfDay {
+        HourOfDay(hours.rem_euclid(24.0))
+    }
+
+    /// The hour as a share of the day.
+    pub fn share(self) -> f32 {
+        self.0 / 24.0
+    }
+
+    /// How long it has been `self` o'clock since it last was `earlier` o'clock.
+    pub fn since(self, earlier: HourOfDay) -> DayHours {
+        DayHours((self.0 - earlier.0).rem_euclid(24.0))
+    }
+}
+
+/// A stretch of a game's day, in its hours.
+#[derive(
+    JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd,
+)]
+#[schemars(transform = SchemaMark::Unit.with("h"))]
+pub struct DayHours(pub f32);
+
+impl DayHours {
+    pub fn is_zero(&self) -> bool {
+        self.0 == 0.0
+    }
+}
+
 #[derive(
     JsonSchema, Serialize, Deserialize, Clone, Copy, Debug, Default, PartialEq, PartialOrd,
 )]

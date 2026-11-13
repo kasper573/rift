@@ -102,6 +102,7 @@ pub fn listen(editor: &mut Editor, frame: &AreaFrame, ground: Pos<Meters>) {
     let Some(area) = frame.area_id() else {
         return;
     };
-    sound::listen(editor, &frame.content, area, ground);
+    let sky = super::shown_sky(editor, frame);
+    sound::listen(editor, &frame.content, area, ground, &sky);
     editor.bottom_tab = BottomTab::Listen;
 }

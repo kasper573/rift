@@ -42,6 +42,7 @@ mod settings;
 mod shop;
 mod sight;
 mod skills;
+mod sky;
 mod sleep;
 mod snapshot;
 mod spacing;

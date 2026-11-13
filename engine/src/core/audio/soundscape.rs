@@ -43,7 +43,7 @@ pub struct SoundscapeZone {
     pub shape: SoundscapeShape,
     /// How far from its shape it is heard, fading out as it goes.
     pub reach: Meters,
-    pub channels: BTreeMap<SoundscapeChannel, SoundscapeLayer>,
+    pub layers: Vec<SoundscapeLayer>,
 }
 
 #[derive(JsonSchema, Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
@@ -70,8 +70,13 @@ pub enum SoundscapeShape {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct SoundscapeChannel(pub u32);
 
+/// A track a zone plays on a channel. Tracks on one channel share its power among them.
 #[derive(Clone, Debug, PartialEq)]
 pub struct SoundscapeLayer {
+    pub channel: SoundscapeChannel,
+    /// How much of the track is there, 0 none to 1 all of it: the share of the power its zone
+    /// gives it that it takes. A track with none is not played.
+    pub share: f32,
     pub src: AudioRef,
     pub volume: f32,
     pub pan: f32,
@@ -198,11 +203,17 @@ fn load_sources(
     assets: Res<AssetServer>,
     mut mixer: ResMut<SoundscapeMixer>,
 ) {
+    let layers = || soundscape.0.iter().flat_map(|zone| &zone.layers);
+    let same = layers().all(|layer| mixer.sources.contains_key(&layer.src))
+        && mixer
+            .sources
+            .keys()
+            .all(|src| layers().any(|layer| layer.src == *src));
+    if same {
+        return;
+    }
     mixer.clock_start = time.elapsed();
-    mixer.sources = soundscape
-        .0
-        .iter()
-        .flat_map(|zone| zone.channels.values())
+    mixer.sources = layers()
         .map(|layer| (layer.src.clone(), assets.load(layer.src.path())))
         .collect();
 }
@@ -303,8 +314,12 @@ fn wanted_layers(soundscape: &Soundscape, at: Pos<Meters>, hearing: &Hearing) ->
         let Some(heard) = zone.heard_from(at, hearing) else {
             continue;
         };
-        let power = heard.proximity * heard.proximity;
-        for (&channel, layer) in &zone.channels {
+        for layer in &zone.layers {
+            let power = heard.proximity * heard.proximity * layer.share;
+            if power <= 0.0 {
+                continue;
+            }
+            let channel = layer.channel;
             let pan = (layer.pan + heard.pan).clamp(-1.0, 1.0);
             match wanted
                 .iter_mut()

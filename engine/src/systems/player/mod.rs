@@ -19,7 +19,7 @@ use snapshot::{CharacterSnapshot, JoinAs};
 use crate::core::content::{Content, ContentFile, ContentId, ModuleRule, ModuleSet, Nearby};
 use crate::core::math::{Offset, Pos, Rect, Rng};
 use crate::core::time::{self, DayClock, TimeCourse, UnixMillis, WallClock, WeatherClock};
-use crate::core::units::{Meters, MetersPerSec, PlaybackRate, Radians, Seconds};
+use crate::core::units::{HourOfDay, Meters, MetersPerSec, PlaybackRate, Radians, Seconds};
 use crate::systems::account::AccountIdentity;
 use crate::systems::actor::{Action, Actor, ActorModel, Appearance, Hitbox, Name, Pose};
 use crate::systems::area::transition::{self, Discovered};
@@ -148,7 +148,7 @@ pub struct RespawnRequest;
 pub struct Welcome {
     pub id: ClientId,
     pub now: UnixMillis,
-    pub day: Option<TimeCourse<f32>>,
+    pub day: Option<TimeCourse<HourOfDay>>,
     pub weather: Option<TimeCourse<usize>>,
     pub clouds: Offset<Meters>,
 }

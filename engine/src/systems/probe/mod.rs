@@ -75,7 +75,7 @@ use crate::systems::actor::{
     self, Action, Actor, ActorModel, Appearance, Hitbox, Motion, Playing, Pose,
 };
 use crate::systems::area::weather::ShownCourse;
-use crate::systems::area::{self, AreaId, AreaObject, AreaTag, PropId};
+use crate::systems::area::{self, AreaId, AreaObject, AreaTag, PropId, TimeOfDayName};
 use crate::systems::attention::{Attention, AttentionId, StatusBadges};
 use crate::systems::combat::Attitude;
 use crate::systems::crafting::{self, RecipeId};
@@ -99,7 +99,7 @@ use crate::systems::prompt;
 use crate::systems::quest::{Parties, QuestId, QuestLog, QuestResult};
 use crate::systems::reach::Engaged;
 use crate::systems::resource::{self, Left, Resource, ResourceId, Working};
-use crate::systems::script::RiftScripts;
+use crate::systems::script::{RiftScripts, sky};
 use crate::systems::shop::{self, ShopId};
 use crate::systems::skill::{self, Rank, SkillId, bar::SlotReport};
 use crate::systems::stat::{StatKind, Stats};
@@ -360,6 +360,9 @@ pub struct ProbeSnapshot {
     pub weather: Option<ProbeWeather>,
     pub transition: ScreenTransitionPhase,
     pub daylight: Daylight,
+    /// The time of day that holds, in a game that names its times and once the client has been
+    /// told the hour.
+    pub time_of_day: Option<TimeOfDayName>,
     /// What the GPU holds in buffers and textures for the client.
     pub gpu_memory: Bytes,
     /// How long each frame took since the previous snapshot, the latest `FRAMES_KEPT` of them.
@@ -1302,6 +1305,10 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
             .get_resource::<Daylight>()
             .copied()
             .unwrap_or_default(),
+        time_of_day: sky::now(world)
+            .hour
+            .and_then(|_| sky::time_of_day(world))
+            .map(|time| time.name.clone()),
         gpu_memory: gpu_memory(world),
         frame_times: world.resource_mut::<FrameTimes>().0.drain(..).collect(),
         scenery_standing: sceneries_standing > 0 || on_its_way.any(),
@@ -1384,10 +1391,10 @@ fn soundscape(world: &World) -> ProbeSoundscape {
                     .and_then(|(at, hearing)| zone.heard_from(at, hearing))
                     .map_or(0.0, |heard| heard.proximity),
                 tracks: zone
-                    .channels
+                    .layers
                     .iter()
-                    .map(|(channel, layer)| ProbeTrack {
-                        channel: channel.0,
+                    .map(|layer| ProbeTrack {
+                        channel: layer.channel.0,
                         src: layer.src.as_str().to_owned(),
                     })
                     .collect(),

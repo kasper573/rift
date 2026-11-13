@@ -88,7 +88,7 @@ impl LiveWorld {
             now: SystemTime::now().into(),
             reset: UtcHour::MIDNIGHT,
         };
-        let mut world = sandbox(content, spawn.area, SEED, clock);
+        let mut world = sandbox(content, spawn.area, SEED, clock, ServerDay::TURNING);
         let setup = match scenario {
             Scenario::Status { model, effect, .. } => Setup::Status {
                 actor: spawn_sturdy(&mut world, content, *model, spawn.at, spawn.area),
@@ -244,14 +244,21 @@ impl LiveWorld {
     }
 }
 
-/// A server world over `content` opened on `area`, where nobody dies and nobody has joined yet.
-pub(crate) fn sandbox(content: &Content, area: AreaId, seed: u64, clock: WallClock) -> World {
+/// A server world over `content` opened on `area` as its day runs by `day`, where nobody dies
+/// and nobody has joined yet.
+pub(crate) fn sandbox(
+    content: &Content,
+    area: AreaId,
+    seed: u64,
+    clock: WallClock,
+    day: ServerDay,
+) -> World {
     let mut app = server_app(
         area,
         0,
         seed,
         clock,
-        ServerDay::TURNING,
+        day,
         ServerWeather::Turning.course(clock.now),
         content,
     );

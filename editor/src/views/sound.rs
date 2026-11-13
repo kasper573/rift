@@ -18,17 +18,21 @@ use engine::core::text::{StyledLine, Typewriter};
 use engine::core::units::Meters;
 use engine::systems::GameSettings;
 use engine::systems::area::{self, AreaId};
+use engine::systems::script::Sky;
 use ui::egui::Ui;
 
 use crate::app::Editor;
 use crate::keymap::EditorKey;
 use crate::project::ProjectFiles;
+use crate::views::area::hour::ShownSky;
 
 const BABBLE_SAMPLE: &str = "The quick brown fox jumps over the lazy dog";
 
 pub struct ListeningPoint {
     pub area: String,
     pub at: Pos<Meters>,
+    /// The sky the point was heard under.
+    pub sky: Sky,
     pub heard: Vec<HeardZone>,
 }
 
@@ -40,19 +44,26 @@ pub struct HeardZone {
     pub zone: SoundscapeZone,
 }
 
-pub fn listen(editor: &mut Editor, content: &Content, area_id: AreaId, at: Pos<Meters>) {
+/// Hears the area `area_id` from `at` under the sky `sky` shows it under.
+pub fn listen(
+    editor: &mut Editor,
+    content: &Content,
+    area_id: AreaId,
+    at: Pos<Meters>,
+    sky: &ShownSky,
+) {
     let area = area::load(content, area_id);
     let hearing = content.built::<GameSettings>().hearing;
     let heard = area
-        .soundscape
+        .soundscapes
         .iter()
+        .map(|soundscape| soundscape.zone(|when| sky.share(when)))
         .enumerate()
         .filter_map(|(index, zone)| {
             let positional = zone.heard_from(at, &hearing)?;
             let stem = zone
-                .channels
-                .values()
-                .next()
+                .layers
+                .first()
                 .and_then(|layer| Path::new(layer.src.as_str()).file_stem())
                 .map(|stem| stem.to_string_lossy().into_owned())
                 .unwrap_or_default();
@@ -60,13 +71,14 @@ pub fn listen(editor: &mut Editor, content: &Content, area_id: AreaId, at: Pos<M
                 name: format!("soundscape {} · {stem}", index + 1),
                 gain: positional.proximity,
                 outside: Meters((at - zone.shape.nearest(at)).length()),
-                zone: zone.clone(),
+                zone,
             })
         })
         .collect();
     editor.views.sound.listening = Some(ListeningPoint {
         area: area_id.path(content).to_owned(),
         at,
+        sky: sky.sky(),
         heard,
     });
 }
@@ -226,9 +238,9 @@ pub fn panel(editor: &Editor, ui: &mut Ui) {
         .flat_map(|heard| {
             heard
                 .zone
-                .channels
+                .layers
                 .iter()
-                .map(move |(channel, layer)| (*channel, layer, heard))
+                .map(move |layer| (layer.channel, layer, heard))
         })
         .collect();
     rows.sort_by_key(|(channel, ..)| *channel);
@@ -248,8 +260,13 @@ pub fn panel(editor: &Editor, ui: &mut Ui) {
                     format!("{:.1} m out · {:.0}%", heard.outside.0, heard.gain * 100.0)
                 };
                 ui.label(face::mono(channel.0.to_string()));
+                let now = match layer.share {
+                    share if share <= 0.0 => " · silent at the hour shown".to_owned(),
+                    share if share < 1.0 => format!(" · {:.0}% of it now", share * 100.0),
+                    _ => String::new(),
+                };
                 ui.label(face::mono(format!(
-                    "{} · {:.2}",
+                    "{} · {:.2}{now}",
                     layer.src.as_str(),
                     layer.volume
                 )));

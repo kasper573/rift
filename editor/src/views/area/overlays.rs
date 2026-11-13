@@ -311,6 +311,36 @@ impl Held {
     }
 }
 
+/// Outlines each module that is away under the sky the view is shown under where it will be,
+/// so it can still be found, picked and moved.
+pub(super) fn overlay_away(painter: &egui::Painter, frame: &AreaFrame, marks: &super::SkyMarks) {
+    for (pointer, following) in marks {
+        if !following.away {
+            continue;
+        }
+        let Some(node) = frame
+            .doc
+            .module_at(pointer)
+            .filter(|node| frame.shown(*node))
+        else {
+            continue;
+        };
+        let Some(footing) = frame.footing(node) else {
+            continue;
+        };
+        let room = footing.bounds.inflate(0.4, 0.4);
+        if !frame.canvas.sees(room) {
+            continue;
+        }
+        painter.add(egui::Shape::dashed_line(
+            &frame.canvas.outline(room),
+            EStroke::new(1.0, theme::MUTED),
+            4.0,
+            3.0,
+        ));
+    }
+}
+
 /// Every module of the view's scene shown on the map: those outlined on the ground as lines the
 /// viewport draws, laid again only when what is outlined changes, the rest drawn over the picture,
 /// and each hovered module, on the map or in the scene tree, named.

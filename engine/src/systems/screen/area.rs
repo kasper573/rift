@@ -8,7 +8,7 @@ use ui::face::TextRole;
 use ui::ink::Ground;
 
 use super::ClientScreen;
-use crate::core::audio::soundscape::Soundscape;
+use crate::core::audio::soundscape::{Soundscape, SoundscapeZone};
 use crate::core::content::Content;
 use crate::core::gui::{self, Band};
 use crate::core::interpolate::{Jumps, RenderValueSystems};
@@ -28,6 +28,7 @@ use crate::systems::input::map::{self, InputAction};
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::player::session::{self, MyCharacter};
 use crate::systems::player::{ARRIVAL_PATIENCE, AreaDrawn};
+use crate::systems::script::{SkyCondition, SkyNow};
 
 pub struct AreaScreenPlugin;
 
@@ -213,6 +214,7 @@ fn play_area_soundscape(
     areas: Query<&AreaTag>,
     content: Res<Content>,
     heard: Option<Res<RainHeard>>,
+    sky: Option<Res<SkyNow>>,
     mut soundscape: ResMut<Soundscape>,
 ) {
     let Some(area_id) = viewpoint
@@ -223,7 +225,12 @@ fn play_area_soundscape(
         return;
     };
     let area = area::load(&content, area_id);
-    let mut zones = area.soundscape.clone();
+    let share = |when: Option<&SkyCondition>| sky.as_ref().map_or(1.0, |now| now.share(when));
+    let mut zones: Vec<SoundscapeZone> = area
+        .soundscapes
+        .iter()
+        .map(|soundscape| soundscape.zone(share))
+        .collect();
     zones.extend(rain::rain_zone(
         area,
         heard.map_or(RainHeard::default(), |heard| *heard),

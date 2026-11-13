@@ -18,6 +18,7 @@ use engine::core::content::{Content, ContentFile, ContentScope, FolderReader};
 use engine::core::math::Pos;
 use engine::core::script::{FlowSteering, Pause, Value as ScriptValue, ValueType};
 use engine::core::time::{UnixMillis, UtcHour, WallClock};
+use engine::core::units::HourOfDay;
 use engine::core::units::Meters;
 use engine::systems::actor::Name;
 use engine::systems::area::{self, AreaId, AreaModule, AreaObject, spawnable};
@@ -25,6 +26,7 @@ use engine::systems::class::{self, Class, ClassDef, ClassId};
 use engine::systems::dialogue::{self, Conversation, ConversationRequest};
 use engine::systems::input::map::InputMap;
 use engine::systems::item::{Inventory, ItemDef, ItemStack};
+use engine::systems::launch::{ServerDay, ServerDaylight};
 use engine::systems::memory::{self, Memory, MemoryDef};
 use engine::systems::notification::NotificationSent;
 use engine::systems::npc::{self, Npc, NpcId};
@@ -69,6 +71,8 @@ pub(crate) struct RunSetup {
     pub owner: usize,
     pub character: Option<String>,
     pub hour: f32,
+    /// The hour of the game's day the script runs at.
+    pub game_hour: HourOfDay,
     pub random: BTreeMap<String, usize>,
     pub step: bool,
 }
@@ -80,6 +84,7 @@ impl Default for RunSetup {
             owner: 0,
             character: None,
             hour: 12.0,
+            game_hour: HourOfDay::NOON,
             random: BTreeMap::new(),
             step: false,
         }
@@ -288,6 +293,13 @@ pub fn panel(editor: &mut Editor, ui: &mut Ui, doc: &ScriptDoc) {
                 NumberField::new(&mut setup.hour)
                     .range(0.0..=23.99)
                     .unit("h UTC")
+                    .show(ui);
+            });
+            ui.horizontal(|ui| {
+                ui.label(theme::muted("the game's day"));
+                NumberField::new(&mut setup.game_hour.0)
+                    .range(0.0..=23.99)
+                    .unit("h")
                     .show(ui);
             });
             ui.checkbox(&mut setup.step, "pause at every node");
@@ -1072,7 +1084,11 @@ fn start_run(
         now: UnixMillis((setup.hour * 3600.0) as u64 * 1000),
         reset: UtcHour::MIDNIGHT,
     };
-    let mut world = live::sandbox(&content, area_id, RUN_SEED, clock);
+    let day = ServerDay {
+        daylight: ServerDaylight::Fixed,
+        hour: Some(setup.game_hour),
+    };
+    let mut world = live::sandbox(&content, area_id, RUN_SEED, clock, day);
     world.insert_resource(FlowTrace::default());
     world.insert_resource(FlowSteering::default());
     let snapshot = snapshot_for(&content, setup.character.as_deref(), &project.reader())?;

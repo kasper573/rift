@@ -1041,5 +1041,6 @@ pub fn look() -> Look {
             fades: Seconds(0.2),
             radius: Meters(2.2),
         },
+        presence_fades: Seconds(0.0),
     }
 }

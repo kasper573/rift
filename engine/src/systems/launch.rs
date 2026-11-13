@@ -14,6 +14,7 @@ use serde_json::Value;
 use crate::core::content::version;
 use crate::core::net::auth::TokenClaims;
 use crate::core::time::{TimeCourse, UnixMillis, UtcHour};
+use crate::core::units::HourOfDay;
 use crate::systems::player::SpawnPolicy;
 use crate::systems::script::Place;
 use crate::systems::staging::Staging;
@@ -159,7 +160,7 @@ pub struct ServerConfig {
     pub player_immortal: bool,
     pub daylight: ServerDaylight,
     /// The hour of the day a fixed daylight holds at, 0 to 24.
-    pub hour: Option<f32>,
+    pub hour: Option<HourOfDay>,
     pub weather: ServerWeather,
     pub rng_seed: Option<u64>,
     pub daily_reset_utc_hour: UtcHour,
@@ -207,7 +208,7 @@ impl ServerConfig {
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct ServerDay {
     pub daylight: ServerDaylight,
-    pub hour: Option<f32>,
+    pub hour: Option<HourOfDay>,
 }
 
 impl ServerDay {

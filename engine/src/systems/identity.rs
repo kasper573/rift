@@ -13,11 +13,14 @@ use bevy_replication::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::core::render::Look;
 use crate::core::render::transition::WorldViewSystems;
 use crate::core::time;
 use crate::core::units::Seconds;
+use crate::systems::movement::Position;
 use crate::systems::player::session;
 use crate::systems::player::{ARRIVAL_PATIENCE, PlayedBy};
+use crate::systems::visibility::PresenceFade;
 
 #[derive(
     Component, Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash,
@@ -173,7 +176,27 @@ fn settle(
     };
     if over {
         world.resource_mut::<Switching>().0 = None;
-        forget_lingering(world);
+        let_go(world);
+    }
+}
+
+/// Lets every stand-in go that no entity came back for: at once, or fading out where it stood
+/// when the world is drawn with a look that gives what leaves it a fade.
+fn let_go(world: &mut World) {
+    let fades = world
+        .get_resource::<Look>()
+        .is_some_and(|look| !look.presence_fades.is_zero());
+    let now = time::uptime(world);
+    let gone: Vec<(Entity, bool)> = world
+        .query_filtered::<(Entity, Has<Position>), (With<Lingering>, Without<PresenceFade>)>()
+        .iter(world)
+        .collect();
+    for (entity, placed) in gone {
+        if fades && placed {
+            world.entity_mut(entity).insert(PresenceFade::Out(now));
+        } else {
+            world.despawn(entity);
+        }
     }
 }
 
@@ -190,7 +213,7 @@ fn adopt(world: &mut World, stand_in: Entity, entity: Entity) {
         .clone_with_opt_out(entity, move |builder| {
             builder
                 .move_components(true)
-                .deny::<(Lingering, Children, ChildOf)>()
+                .deny::<(Lingering, PresenceFade, Children, ChildOf)>()
                 .deny_by_ids(own);
         });
     for child in children {

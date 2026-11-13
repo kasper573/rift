@@ -571,6 +571,237 @@ fn a_games_map_reaches_rise_from_the_closest() {
 }
 
 #[test]
+fn a_days_times_begin_in_the_order_of_their_hours_each_under_its_own_name() {
+    let time = |name: &str, from: f32, eases: f32| json!({ "name": name, "from": from, "eases": eases, "color": [0, 0, 0], "icon": "icons/time.png" });
+    for (times, refused) in [
+        (json!([]), None),
+        (
+            json!([
+                time("Dawn", 5.0, 1.0),
+                time("Day", 8.0, 1.0),
+                time("Night", 21.0, 1.0)
+            ]),
+            None,
+        ),
+        (json!([time("Always", 9.0, 24.0)]), None),
+        (
+            json!([time("Day", 8.0, 0.0), time("Noon", 8.0, 0.0)]),
+            Some("same hour"),
+        ),
+        (
+            json!([time("Night", 21.0, 0.0), time("Day", 8.0, 0.0)]),
+            Some("out of order"),
+        ),
+        (
+            json!([time("Night", 2.0, 0.0), time("Night", 21.0, 0.0)]),
+            Some("duplicate name"),
+        ),
+        (
+            json!([time("Dawn", 5.0, 4.0), time("Day", 8.0, 0.0)]),
+            Some("out of range"),
+        ),
+        (
+            json!([
+                time("Day", 8.0, 0.0),
+                time("Dusk", 18.0, 4.0),
+                time("Night", 21.0, 0.0)
+            ]),
+            Some("out of range"),
+        ),
+        (json!([time("Late", 24.0, 0.0)]), Some("out of range")),
+    ] {
+        let loaded = game()
+            .asset("icons/time.png", png(1, 1))
+            .edit_settings(|settings| {
+                settings["daylight"] =
+                    json!({ "day_length": 1200.0, "start": 10.0, "times": times.clone() });
+            })
+            .try_load();
+        let rules: Vec<&str> = loaded
+            .as_ref()
+            .err()
+            .map(|report| {
+                report
+                    .errors
+                    .iter()
+                    .map(|error| error.problem.rule)
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(rules, Vec::from_iter(refused), "times of {times}");
+    }
+}
+
+#[test]
+fn what_follows_the_sky_or_is_away_by_it_reads_the_sky_alone_by_times_of_day_the_game_names() {
+    let night = json!({ "type": "time_share", "time": "Night" });
+    let light = |when: Value| {
+        json!([{
+            "type": "light", "at": { "x": 2.0, "y": 2.0 }, "color": [255, 200, 120],
+            "intensity": 4.0, "radius": 3.0, "height": 2.0, "when": when,
+        }])
+    };
+    let sound = |when: Value| {
+        json!([{
+            "type": "soundscape",
+            "shape": { "type": "rect", "x": -0.5, "y": -0.5, "w": 8.0, "h": 8.0 },
+            "reach": 4.0,
+            "channels": [
+                { "channel": 1, "file": "audio/owls.wav", "when": when },
+                { "channel": 1, "file": "audio/larks.wav" },
+            ],
+        }])
+    };
+    let pack = |more: Value| {
+        let mut spawner = json!({
+            "type": "spawner",
+            "count": 2,
+            "spawns": [{ "type": "npc", "npc": path("npc", "wolf"), "when": night.clone() }],
+        });
+        spawner
+            .as_object_mut()
+            .expect("the spawner")
+            .extend(more.as_object().expect("fields").clone());
+        json!([spawner])
+    };
+    for (modules, refused) in [
+        (light(night.clone()), None),
+        (
+            sound(json!({ "type": "not", "of": { "type": "during", "time": "Night" } })),
+            None,
+        ),
+        (pack(json!({ "respawn": 30.0 })), None),
+        (
+            light(json!({ "type": "at_least", "a": { "type": "level" }, "b": 3 })),
+            Some("reads a player"),
+        ),
+        (
+            sound(json!({ "type": "during", "time": "Nite" })),
+            Some("unknown time of day"),
+        ),
+        (pack(json!({})), Some("needs a respawn")),
+    ] {
+        let loaded = game()
+            .asset("icons/time.png", png(1, 1))
+            .file("audio/owls.wav", testkit::wav())
+            .file("audio/larks.wav", testkit::wav())
+            .npc("wolf", 20.0, json!([]))
+            .edit_settings(|settings| {
+                settings["daylight"] = json!({
+                    "day_length": 1200.0,
+                    "start": 10.0,
+                    "times": [
+                        { "name": "Day", "from": 6.0, "eases": 1.0, "color": [0, 0, 0], "icon": "icons/time.png" },
+                        { "name": "Night", "from": 21.0, "eases": 1.0, "color": [0, 0, 0], "icon": "icons/time.png" },
+                    ],
+                });
+            })
+            .area("meadow", &Map::open(16, 16), modules.clone())
+            .try_load();
+        let rules: Vec<&str> = loaded
+            .as_ref()
+            .err()
+            .map(|report| {
+                report
+                    .errors
+                    .iter()
+                    .map(|error| error.problem.rule)
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(rules, Vec::from_iter(refused), "modules of {modules}");
+    }
+
+    let notice = |sign: Value| {
+        let mut notice = json!({ "text": ["Gone home."] });
+        notice
+            .as_object_mut()
+            .expect("the notice")
+            .extend(sign.as_object().expect("fields").clone());
+        notice
+    };
+    let own_sign = json!({ "sign": path("prop", "board") });
+    let talks = json!({ "type": "script", "script": path("script", "wolf_talk") });
+    for (modules, sign, refused) in [
+        (json!([{ "type": "absence" }]), false, None),
+        (
+            json!([{ "type": "absence", "spans": [{ "time": "Night" }, { "time": "Day" }] }]),
+            false,
+            None,
+        ),
+        (
+            json!([{ "type": "absence", "spans": [{ "time": "Night", "notice": notice(json!({})) }] }]),
+            true,
+            None,
+        ),
+        (
+            json!([talks, { "type": "absence", "spans": [{ "time": "Night", "notice": notice(own_sign.clone()) }] }]),
+            false,
+            None,
+        ),
+        (
+            json!([{ "type": "absence", "spans": [{ "time": "Nite" }] }]),
+            false,
+            Some("unknown time of day"),
+        ),
+        (
+            json!([{ "type": "absence", "spans": [{ "time": "Night" }, { "time": "Night" }] }]),
+            false,
+            Some("listed twice"),
+        ),
+        (
+            json!([talks, { "type": "absence", "spans": [{ "time": "Night", "notice": notice(json!({})) }] }]),
+            false,
+            Some("no sign"),
+        ),
+        (
+            json!([{ "type": "absence", "spans": [{ "time": "Night", "notice": notice(own_sign.clone()) }] }]),
+            false,
+            Some("no reach"),
+        ),
+    ] {
+        let loaded = game()
+            .asset("icons/time.png", png(1, 1))
+            .prop("board", json!({ "type": "none" }))
+            .npc("wolf", 20.0, modules.clone())
+            .script(
+                "wolf_talk",
+                "npc",
+                json!({
+                    "interacted": { "type": "on", "event": "interacted", "verb": "talk", "reach": 2.0, "next": "growl" },
+                    "growl": testkit::dialogue("Grr.", json!([])),
+                }),
+            )
+            .edit_settings(|settings| {
+                settings["daylight"] = json!({
+                    "day_length": 1200.0,
+                    "start": 10.0,
+                    "times": [
+                        { "name": "Day", "from": 6.0, "eases": 1.0, "color": [0, 0, 0], "icon": "icons/time.png" },
+                        { "name": "Night", "from": 21.0, "eases": 1.0, "color": [0, 0, 0], "icon": "icons/time.png" },
+                    ],
+                });
+                if sign {
+                    settings["absence_sign"] = json!({ "prop": path("prop", "board"), "reach": 2.5 });
+                }
+            })
+            .try_load();
+        let rules: Vec<&str> = loaded
+            .as_ref()
+            .err()
+            .map(|report| {
+                report
+                    .errors
+                    .iter()
+                    .map(|error| error.problem.rule)
+                    .collect()
+            })
+            .unwrap_or_default();
+        assert_eq!(rules, Vec::from_iter(refused), "an absence of {modules}");
+    }
+}
+
+#[test]
 fn a_folder_without_a_game_file_is_refused() {
     let report = Game::new()
         .remove(SETTINGS_FILE)

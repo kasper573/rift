@@ -43,8 +43,8 @@ pub struct StandingScene {
 struct Stood {
     scenery: Scenery,
     area: Arc<Area>,
-    /// The weather the scenery was last lit under.
-    lit: Option<Weather>,
+    /// The weather and the daylight the scenery was last lit under.
+    lit: Option<(Weather, Daylight)>,
 }
 
 impl StandingScene {
@@ -104,23 +104,22 @@ impl StandingScene {
         true
     }
 
-    /// Lights what stands under `weather`, as seen by `camera`.
-    pub fn light(&mut self, world: &mut World, weather: &Weather, camera: Entity) {
+    /// Lights what stands under `weather` in `daylight`, as seen by `camera`.
+    pub fn light(
+        &mut self,
+        world: &mut World,
+        weather: &Weather,
+        daylight: Daylight,
+        camera: Entity,
+    ) {
         let Some(stood) = self.stood.as_mut() else {
             return;
         };
-        if stood.lit.as_ref() == Some(weather) {
+        if stood.lit == Some((*weather, daylight)) {
             return;
         }
-        scenery::light(
-            world,
-            &stood.area,
-            weather,
-            Daylight::Fixed,
-            stood.scenery,
-            camera,
-        );
-        stood.lit = Some(*weather);
+        scenery::light(world, &stood.area, weather, daylight, stood.scenery, camera);
+        stood.lit = Some((*weather, daylight));
     }
 
     /// Stands what stands for `sight`.

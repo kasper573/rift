@@ -127,6 +127,7 @@ pub enum Mark {
     Arrow,
     Raise,
     Hourglass,
+    Clock,
 }
 
 impl Mark {
@@ -178,6 +179,7 @@ impl Mark {
             Mark::Arrow => "arrow",
             Mark::Raise => "above",
             Mark::Hourglass => "time left",
+            Mark::Clock => "time of day",
         }
     }
 }
@@ -239,6 +241,7 @@ impl Mark {
             Mark::Arrow => phosphor::ARROW_RIGHT,
             Mark::Raise => phosphor::ARROW_LINE_UP,
             Mark::Hourglass => phosphor::HOURGLASS,
+            Mark::Clock => phosphor::CLOCK,
         })
     }
 }

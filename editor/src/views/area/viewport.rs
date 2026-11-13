@@ -25,9 +25,9 @@ use engine::core::render::world::mannequin::Mannequin;
 use engine::core::render::world::mannequin::mannequin;
 use engine::core::render::world::plumb::Plumb;
 use engine::core::render::world::rig_clip;
+use engine::core::render::world::sky::Daylight;
 use engine::core::render::{CameraFocus, Look, camera, world_point};
-use engine::core::units::Meters;
-use engine::core::units::Seconds;
+use engine::core::units::{HourOfDay, Meters, Seconds};
 use engine::systems::actor::Action;
 use engine::systems::actor::layering::{self, Layering};
 use engine::systems::actor::model::{ActorModel, ModelId};
@@ -39,6 +39,7 @@ use engine::systems::area::render::view_reach;
 use engine::systems::area::scenery::{self, Eyes, Sight};
 use engine::systems::area::{Area, Picture, Weather};
 use engine::systems::item::PropHold;
+use engine::systems::script::{Sky, sky};
 use ui::egui;
 
 use super::camera::OrbitCamera;
@@ -57,8 +58,10 @@ pub struct Request {
     pub camera: OrbitCamera,
     /// What the view shows: a new picture stands the scenery again.
     pub picture: Arc<Picture>,
-    /// The weather the area is shown under.
+    /// The weather the area is shown under, and the hour of the game's day: none in the light
+    /// it is authored in.
     pub weather: Weather,
+    pub hour: Option<HourOfDay>,
     pub content: Content,
     /// The terrain as a brush stroke is shaping it, shown in place of the picture's.
     pub stroke: Option<StrokeTerrain>,
@@ -368,7 +371,19 @@ impl RenderedView {
         if self.scene.stand(world, &area, &request.content) && anew {
             self.stroke = None;
         }
-        self.scene.light(world, &request.weather, self.camera);
+        let daylight = request.hour.map_or(Daylight::Fixed, Daylight::Hour);
+        self.scene
+            .light(world, &request.weather, daylight, self.camera);
+        if world.contains_resource::<Content>() {
+            sky::turn(
+                world,
+                Sky {
+                    hour: request.hour,
+                    weather: request.weather,
+                    rain: 0.0,
+                },
+            );
+        }
         world.insert_resource(scenery::shown_weather(&request.weather, 0.0));
         let ground = area.heights.height_at(request.camera.target);
         {

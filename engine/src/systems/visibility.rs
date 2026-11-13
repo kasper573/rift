@@ -1,15 +1,17 @@
-use bevy::prelude::{IntoScheduleConfigs, Plugin, Update, in_state};
+use bevy::prelude::{IntoScheduleConfigs, Plugin, Time, Update, in_state};
 use bevy_app::App;
 use bevy_ecs::message::Message;
 use bevy_ecs::prelude::*;
-use bevy_replication::{Interest, Replicated, ReplicationInterest, ToClient};
+use bevy_replication::{Interest, Remote, Replicated, ReplicationInterest, ToClient};
 
 use crate::core::chunk::{CHUNK_SIDE, Chunk, ChunkIndex};
 use crate::core::interpolate::RenderValueSystems;
 use crate::core::math::Pos;
+use crate::core::render::Look;
+use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::render::world::opacity::Opacity;
 use crate::core::tick::Planner;
-use crate::core::units::{MeterPos, Meters};
+use crate::core::units::{MeterPos, Meters, Seconds};
 use crate::systems::GameSettings;
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::movement::{Position, RenderPosition, position};
@@ -41,7 +43,8 @@ impl Plugin for SightEdgePlugin {
     fn build(&self, app: &mut App) {
         app.add_systems(
             Update,
-            fade_at_the_edge
+            (fade_arrivals, fade_at_the_edge)
+                .chain()
                 .after(RenderValueSystems)
                 .run_if(in_state(ClientScreen::Area)),
         );
@@ -55,10 +58,68 @@ fn shown_at(away: Meters, sight: Meters) -> f32 {
     1.0 - faded * faded * (3.0 - 2.0 * faded)
 }
 
+/// Since when a thing has been coming into the world a client is shown, or going out of it:
+/// what does so within its character's sight fades as the game's look says, rather than
+/// appearing or vanishing at once.
+#[derive(Component, Clone, Copy, Debug, PartialEq)]
+pub enum PresenceFade {
+    In(Seconds),
+    Out(Seconds),
+}
+
+impl PresenceFade {
+    /// How much of the thing shows `now`, when its fade takes `fades`.
+    fn shown(self, now: Seconds, fades: Seconds) -> f32 {
+        let along = |since: Seconds| ((now - since).0 / fades.0.max(f32::EPSILON)).clamp(0.0, 1.0);
+        match self {
+            PresenceFade::In(since) => along(since),
+            PresenceFade::Out(since) => 1.0 - along(since),
+        }
+    }
+}
+
+/// What the server has just begun to show a client.
+type Arrived = (Added<Position>, With<Remote>, Without<PresenceFade>);
+
+/// Where something stands and is drawn, and how much of it shows.
+type Placed = (
+    Entity,
+    &'static Position,
+    Option<&'static RenderPosition>,
+    Option<&'static Opacity>,
+    Option<&'static PresenceFade>,
+);
+
+/// Starts fading in whatever the server begins to show a client whose character already stands
+/// in a world on view: what joins a world it is looking at, not the world it arrives in.
+fn fade_arrivals(
+    viewpoint: Res<MyCharacter>,
+    transition: Res<ActiveTransition>,
+    look: Res<Look>,
+    time: Res<Time>,
+    arrived: Query<Entity, Arrived>,
+    mut commands: Commands,
+) {
+    let looking = viewpoint.0.is_some()
+        && !viewpoint.is_changed()
+        && transition.phase() == ScreenTransitionPhase::Idle;
+    if !looking || look.presence_fades.is_zero() {
+        return;
+    }
+    let now = Seconds(time.elapsed_secs());
+    for entity in &arrived {
+        commands
+            .entity(entity)
+            .try_insert((PresenceFade::In(now), Opacity(0.0)));
+    }
+}
+
 fn fade_at_the_edge(
     viewpoint: Res<MyCharacter>,
     settings: Res<GameSettings>,
-    placed: Query<(Entity, &Position, Option<&RenderPosition>, Option<&Opacity>)>,
+    look: Res<Look>,
+    time: Res<Time>,
+    placed: Query<Placed>,
     mut commands: Commands,
 ) {
     let Some(mine) = viewpoint.0 else {
@@ -66,14 +127,26 @@ fn fade_at_the_edge(
     };
     let stands =
         |at: &Position, shown: Option<&RenderPosition>| shown.map_or(at.pos, |shown| shown.0);
-    let Ok(eye) = placed.get(mine).map(|(_, at, shown, _)| stands(at, shown)) else {
+    let Ok(eye) = placed.get(mine).map(|(_, at, shown, ..)| stands(at, shown)) else {
         return;
     };
-    for (entity, at, shown, opacity) in &placed {
+    let now = Seconds(time.elapsed_secs());
+    for (entity, at, shown, opacity, fade) in &placed {
+        let present = fade.map_or(1.0, |fade| fade.shown(now, look.presence_fades));
+        match fade {
+            Some(PresenceFade::Out(_)) if present <= 0.0 => {
+                commands.entity(entity).try_despawn();
+                continue;
+            }
+            Some(PresenceFade::In(_)) if present >= 1.0 => {
+                commands.entity(entity).try_remove::<PresenceFade>();
+            }
+            _ => {}
+        }
         let wanted = if entity == mine {
             1.0
         } else {
-            shown_at(eye.distance(stands(at, shown)), settings.sight)
+            shown_at(eye.distance(stands(at, shown)), settings.sight) * present
         };
         if opacity.map_or(1.0, |opacity| opacity.0) != wanted {
             commands.entity(entity).try_insert(Opacity(wanted));
@@ -87,7 +160,26 @@ pub enum Presence {
     When(CompiledCondition),
 }
 
+/// The only characters something is still there for: an npc that is away stays for whoever is
+/// in the middle of something with it.
+#[derive(Component, Clone, Debug, PartialEq)]
+pub struct StaysFor(pub Vec<Entity>);
+
+/// The characters something is not there for yet: what an npc leaves behind is not seen by
+/// those it stays for.
+#[derive(Component, Clone, Debug, PartialEq)]
+pub struct HiddenFrom(pub Vec<Entity>);
+
 pub fn present(world: &World, subject: Entity, viewer: Entity) -> bool {
+    if world
+        .get::<StaysFor>(subject)
+        .is_some_and(|stays| !stays.0.contains(&viewer))
+        || world
+            .get::<HiddenFrom>(subject)
+            .is_some_and(|hidden| hidden.0.contains(&viewer))
+    {
+        return false;
+    }
     match world.get::<Presence>(subject) {
         None => true,
         Some(Presence::For(client)) => world
@@ -138,6 +230,7 @@ struct Standing {
 enum Shown {
     ToAll,
     To(ClientId),
+    ToNone,
     /// On a condition of the viewer, asked of the world.
     When,
 }
@@ -151,19 +244,28 @@ impl Interest for ClientSight {
             .collect();
         self.standing.clear();
         self.standing.resize(world.entities().len() as usize, None);
-        let mut placed = world.query_filtered::<
-            (Entity, &Position, Option<&AreaTag>, Option<&Presence>),
-            With<Replicated>,
-        >();
-        for (entity, position, tag, presence) in placed.iter(world) {
+        let mut placed = world.query_filtered::<(
+            Entity,
+            &Position,
+            Option<&AreaTag>,
+            Option<&Presence>,
+            Has<StaysFor>,
+            Has<HiddenFrom>,
+        ), With<Replicated>>();
+        for (entity, position, tag, presence, stays, hidden) in placed.iter(world) {
             self.standing[entity.index_u32() as usize] = Some(Standing {
                 entity,
                 at: position.pos,
                 area: tag.map(|tag| tag.area),
                 shown: match presence {
+                    _ if stays || hidden => Shown::When,
                     None => Shown::ToAll,
                     Some(Presence::For(client)) => Shown::To(*client),
-                    Some(Presence::When(_)) => Shown::When,
+                    Some(Presence::When(shown)) => match shown.shared(world) {
+                        Some(true) => Shown::ToAll,
+                        Some(false) => Shown::ToNone,
+                        None => Shown::When,
+                    },
                 },
             });
         }
@@ -204,6 +306,7 @@ impl Interest for ClientSight {
                                     && match standing.shown {
                                         Shown::ToAll => true,
                                         Shown::To(client) => view.client == client,
+                                        Shown::ToNone => false,
                                         Shown::When => present(world, subject, view.focus),
                                     }
                             }

@@ -10,8 +10,9 @@ use ui::{card, ink};
 
 use super::{OfferView, SaleQuote, SaleVerdict, ShopId, ShopRequest, ShopView, WareRefusal};
 use crate::core::content::Content;
+use crate::systems::area::TimeOfDayName;
 use crate::systems::dialogue::stage::{self, DockedPanel, PanelChrome, PanelHead};
-use crate::systems::hud::{self, Carried, Confirm};
+use crate::systems::hud::{self, Carried, Confirm, day_dial};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::interface::InterfaceSound;
 use crate::systems::item::card::{CardLook, CardNoteTone, ItemCardNote};
@@ -22,6 +23,7 @@ use crate::systems::item::widget::{
 use crate::systems::item::{self, Inventory, ItemCategory, ItemId, ItemStack};
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
+use crate::systems::script::condition::Wording;
 use crate::systems::text::duration;
 
 const COUNTER_WIDTH: f32 = 784.0;
@@ -107,6 +109,8 @@ struct Ware {
     stock: Option<String>,
     restocks_in: Option<String>,
     refusal: Option<WareRefusal>,
+    /// The times of day it is on offer by.
+    times: Vec<TimeOfDayName>,
     verb: &'static str,
     request: ShopRequest,
 }
@@ -299,7 +303,7 @@ fn ware_row(ui: &mut Ui, world: &mut World, ware: &Ware, selected: bool) -> egui
     let note = ware
         .unavailable()
         .map(|reason| (reason, ink::RUBRIC))
-        .or_else(|| ware.stock.clone().map(|stock| (stock, ink::INK3)));
+        .or_else(|| ware.stock.clone().map(|stock| (stock.into(), ink::INK3)));
     let look = RowLook {
         selected,
         faint: ware.unavailable().is_some(),
@@ -320,7 +324,19 @@ fn ware_row(ui: &mut Ui, world: &mut World, ware: &Ware, selected: bool) -> egui
                         ui.spacing_mut().item_spacing.y = 1.0;
                         ui.add(egui::Label::new(face::body(&name)).wrap());
                         if let Some((note, color)) = &note {
-                            sheet::label(ui, TextRole::Small, note, *color);
+                            day_dial::wording(ui, world, note, TextRole::Small, *color);
+                        } else {
+                            ui.horizontal(|ui| {
+                                for time in &ware.times {
+                                    day_dial::time_mark(
+                                        ui,
+                                        world,
+                                        time,
+                                        TextRole::Small,
+                                        ink::INK3,
+                                    );
+                                }
+                            });
                         }
                     });
                 });
@@ -628,6 +644,7 @@ impl Shelf {
                     stock: stock_note(view),
                     restocks_in: view.restocks_in.map(duration),
                     refusal: view.refusal.clone(),
+                    times: view.times.clone(),
                     verb: "Buy",
                     request: ShopRequest::Buy { offer: index },
                 })
@@ -642,6 +659,7 @@ impl Shelf {
                     stock: None,
                     restocks_in: None,
                     refusal: buyback.refusal.clone(),
+                    times: Vec::new(),
                     verb: "Buy back",
                     request: ShopRequest::Buyback { sale: index },
                 })
@@ -652,11 +670,11 @@ impl Shelf {
 }
 
 impl Ware {
-    fn unavailable(&self) -> Option<String> {
+    fn unavailable(&self) -> Option<Wording> {
         match &self.refusal {
             Some(WareRefusal::SoldOut) => Some(match &self.restocks_in {
-                Some(restocks) => format!("Sold out · back in {restocks}"),
-                None => "Sold out".to_owned(),
+                Some(restocks) => format!("Sold out · back in {restocks}").into(),
+                None => "Sold out".into(),
             }),
             Some(WareRefusal::Unavailable(reason)) => Some(reason.clone()),
             Some(WareRefusal::Unaffordable(_) | WareRefusal::NoRoom { .. }) | None => None,
@@ -677,7 +695,7 @@ impl Ware {
             ),
             Some(refusal @ WareRefusal::NoRoom { .. }) => refusal.describe(content),
             Some(WareRefusal::SoldOut | WareRefusal::Unavailable(_)) => match self.unavailable() {
-                Some(out) => out,
+                Some(out) => out.to_string(),
                 None => return Vec::new(),
             },
             None => return Vec::new(),

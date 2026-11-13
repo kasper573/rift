@@ -13,7 +13,7 @@ use crate::core::script::{
     Arrow, Compiler, EffectDef, EffectStep, NEXT, REFUSED, ScriptFault, ValueType,
 };
 use crate::core::time::{UnixMillis, WallClock};
-use crate::core::units::{Meters, Seconds};
+use crate::core::units::{Degrees, Meters, Seconds};
 use crate::systems::WorldArea;
 use crate::systems::movement;
 use crate::systems::script::{
@@ -82,6 +82,7 @@ pub fn spawn(world: &mut World, spawnable: SpawnableId, at: Pos<Meters>) -> Opti
         title: Some(def.title.clone()),
         shape: ObjectShape::Point(at),
         look: Some(def.look.path(&content).to_owned()),
+        yaw: Degrees(0.0),
         warp: None,
     };
     let stood = object::stand(world, standing, OwnerRow::of_row(spawnable));

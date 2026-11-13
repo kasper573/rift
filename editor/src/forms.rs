@@ -36,7 +36,7 @@ use crate::tabs::{file_title, shown_path};
 use crate::usages::ContentUsages;
 use crate::views::script::nodes::NodeCatalogue;
 use crate::views::vfx;
-use crate::{audio, condition, picker, spans, thumbs};
+use crate::{audio, condition, day, picker, spans, thumbs};
 use ui::draft::{self, Typed, drafted, typed};
 use ui::input::{self, InputField};
 
@@ -525,6 +525,21 @@ fn plain(
         }
     }
     let schema = schema::non_null(cx.root, schema);
+    if SchemaMark::SkyCondition.is_on(schema) {
+        return as_type(ui, cx, value, path, |ui, cx, when| {
+            condition::edit_sky(ui, cx, when, path)
+        });
+    }
+    if SchemaMark::TimeOfDay.is_on(schema) {
+        return as_type(ui, cx, value, path, |ui, cx, time| {
+            day::pick_time(ui, cx, time, path)
+        });
+    }
+    if SchemaMark::DayTimes.is_on(schema) {
+        return as_type(ui, cx, value, path, |ui, cx, times| {
+            day::track(ui, cx, times, path)
+        });
+    }
     if let Some(marker) = schema::marker(schema) {
         if let Some(kind) = NameKind::of_mark(marker) {
             return named(ui, cx, kind, value, path);

@@ -27,7 +27,7 @@ pub use terrain::{SurfaceDef, SurfaceId, TerrainDef, TerrainId, Walk};
 pub use walk::{GroundHold, HeldMesh, Survey, SurveyAnswer, SurveyIsland, SurveyQuestion};
 pub use weather::{
     Climate, DayCycle, Lightning, MAX_RAIN_SHELLS, NextSpell, RainSound, Rainfall, Spell,
-    SpellCourse, SpellLength, Weather, Wind,
+    SpellCourse, SpellLength, TimeOfDay, TimeOfDayName, Weather, Wind,
 };
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -65,7 +65,9 @@ use crate::systems::GameSettings;
 use crate::systems::actor::Pose;
 use crate::systems::movement::{Bodies, NavMesh};
 use crate::systems::npc::NpcId;
-use crate::systems::script::{self, Condition, EffectReach, OwnerRow, RiftScripts, ScriptModule};
+use crate::systems::script::{
+    self, Condition, EffectReach, OwnerRow, RiftScripts, ScriptModule, SkyCondition, SkyTable,
+};
 use crate::systems::spawner::Spawner;
 use blueprint::{FlattenAt, FlattenError};
 use lighting::MAX_LIGHTS;
@@ -594,6 +596,39 @@ impl AreaModule {
         }
     }
 
+    /// Every condition of the sky the module follows, with where in the module it is written.
+    pub fn whens(&self) -> Vec<(String, &SkyCondition)> {
+        match self {
+            AreaModule::Soundscape(soundscape) => soundscape
+                .channels
+                .iter()
+                .enumerate()
+                .filter_map(|(index, channel)| {
+                    Some((format!("/channels/{index}/when"), channel.when.as_ref()?))
+                })
+                .collect(),
+            AreaModule::Light(light) => light
+                .when
+                .iter()
+                .map(|when| ("/when".to_owned(), when))
+                .collect(),
+            AreaModule::Fog(bank) => bank
+                .when
+                .iter()
+                .map(|when| ("/when".to_owned(), when))
+                .collect(),
+            AreaModule::Spawner(spawner) => spawner
+                .spawns
+                .iter()
+                .enumerate()
+                .filter_map(|(index, share)| {
+                    Some((format!("/spawns/{index}/when"), share.when.as_ref()?))
+                })
+                .collect(),
+            _ => Vec::new(),
+        }
+    }
+
     /// Holds the module, at `pointer` of its scene file, to the rules it keeps alone.
     pub fn check(&self, pointer: &str, cx: &mut RowCheck) {
         match self {
@@ -655,6 +690,10 @@ pub struct SoundChannel {
     pub pan: f32,
     #[serde(default, skip_serializing_if = "is_ambience")]
     pub category: AudioCategory,
+    /// How much of the sound is there under the sky, taking that share of its channel's power;
+    /// all of it without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<SkyCondition>,
 }
 
 fn is_ambience(category: &AudioCategory) -> bool {
@@ -668,7 +707,7 @@ impl SoundscapeDef {
             format!("{pointer}/channels"),
             self.channels.len(),
             1,
-            8,
+            16,
             "channels",
         );
         for (index, channel) in self.channels.iter().enumerate() {
@@ -684,37 +723,39 @@ impl SoundscapeDef {
             cx.range(format!("{at}/pan"), channel.pan, -1.0, 1.0, "pan");
             if self.channels[..index]
                 .iter()
-                .any(|other| other.channel == channel.channel)
+                .any(|other| other.channel == channel.channel && other.file == channel.file)
             {
                 cx.error(
-                    format!("{at}/channel"),
+                    format!("{at}/file"),
                     "duplicate name",
-                    format!("channel {} twice", channel.channel),
-                    "each channel number once per soundscape",
+                    format!(
+                        "{} twice on channel {}",
+                        channel.file.as_str(),
+                        channel.channel
+                    ),
+                    "each sound once per channel of a soundscape",
                 );
             }
         }
     }
 
-    pub fn zone(&self) -> SoundscapeZone {
+    /// The zone it sounds in, each of its sounds as much there as `share` says of its `when`.
+    pub fn zone(&self, share: impl Fn(Option<&SkyCondition>) -> f32) -> SoundscapeZone {
         SoundscapeZone {
             shape: self.shape,
             reach: self.reach,
-            channels: self
+            layers: self
                 .channels
                 .iter()
-                .map(|channel| {
-                    (
-                        SoundscapeChannel(channel.channel),
-                        SoundscapeLayer {
-                            src: channel.file.clone(),
-                            volume: channel.volume,
-                            pan: channel.pan,
-                            category: channel.category,
-                        },
-                    )
+                .map(|channel| SoundscapeLayer {
+                    channel: SoundscapeChannel(channel.channel),
+                    share: share(channel.when.as_ref()),
+                    src: channel.file.clone(),
+                    volume: channel.volume,
+                    pan: channel.pan,
+                    category: channel.category,
                 })
-                .collect::<BTreeMap<_, _>>(),
+                .collect(),
         }
     }
 }
@@ -857,7 +898,7 @@ pub struct Area {
     pub climate: Climate,
     pub safe_zones: Vec<Rect<Meters>>,
     pub fogs: Vec<FogBank>,
-    pub soundscape: Vec<SoundscapeZone>,
+    pub soundscapes: Vec<SoundscapeDef>,
     /// Every prop standing in the area, scattered ones expanded.
     pub props: Vec<PropPlacement>,
     /// The props the area's objects stand as: each one's look where it stands, keeping the ground
@@ -1226,12 +1267,23 @@ fn build_all(loading: &mut Loading) {
     let mut areas: Vec<Option<Arc<Area>>> = content.ids::<AreaDef>().map(|_| None).collect();
     let mut reported: BTreeSet<(String, String)> = BTreeSet::new();
     let bodies = Bodies::of(&content);
+    let mut sky = SkyTable::default();
     for (id, def) in loading.rows::<AreaDef>(&content) {
         let modules = placed(&content, id);
         for module in modules {
             let (file, pointer) = module.site(&content, id);
             let mut check = RowCheck::default();
             module.module.check(&pointer, &mut check);
+            for (field, when) in module.module.whens() {
+                if let Err(fault) = sky.follow(&content, when) {
+                    check.error(
+                        format!("{pointer}{field}"),
+                        fault.rule,
+                        format!("{when:?}"),
+                        fault.expected,
+                    );
+                }
+            }
             for error in check.into_errors() {
                 if reported.insert((file.clone(), error.pointer.clone())) {
                     loading.json_error(&file, &error.pointer, error.problem);
@@ -1259,6 +1311,7 @@ fn build_all(loading: &mut Loading) {
         areas[id.index()] = Some(Arc::new(area));
     }
     loading.built(Areas(areas));
+    loading.built(sky);
 }
 
 /// Every terrain the paint names must be listed: a check over every tile of the paint.
@@ -1335,7 +1388,7 @@ fn build_area(
     let fogs: Vec<FogBank> = modules
         .iter()
         .filter_map(|placed| match &placed.module {
-            AreaModule::Fog(bank) => Some(*bank),
+            AreaModule::Fog(bank) => Some(bank.clone()),
             _ => None,
         })
         .collect();
@@ -1413,10 +1466,10 @@ fn build_area(
         climate: ground.climate.clone(),
         safe_zones,
         fogs,
-        soundscape: modules
+        soundscapes: modules
             .iter()
             .filter_map(|placed| match &placed.module {
-                AreaModule::Soundscape(soundscape) => Some(soundscape.zone()),
+                AreaModule::Soundscape(soundscape) => Some(soundscape.clone()),
                 _ => None,
             })
             .collect(),

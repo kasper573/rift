@@ -49,6 +49,27 @@ pub fn dashed_rect(painter: &Painter, rect: Rect, stroke: Stroke, dash: f32, gap
     painter.add(Shape::mesh(mesh));
 }
 
+/// `rect` filled with the colours `color_at` gives its width, 0 at its left to 1 at its right.
+pub fn band(painter: &Painter, rect: Rect, color_at: impl Fn(f32) -> Color32) {
+    let columns = (rect.width() / BAND_COLUMN).ceil().max(1.0) as u32;
+    let mut mesh = Mesh::default();
+    for column in 0..=columns {
+        let along = column as f32 / columns as f32;
+        let x = rect.left() + rect.width() * along;
+        let color = color_at(along);
+        mesh.colored_vertex(Pos2::new(x, rect.top()), color);
+        mesh.colored_vertex(Pos2::new(x, rect.bottom()), color);
+        if column > 0 {
+            let at = (column - 1) * 2;
+            mesh.add_triangle(at, at + 1, at + 2);
+            mesh.add_triangle(at + 1, at + 2, at + 3);
+        }
+    }
+    painter.add(Shape::mesh(mesh));
+}
+
+const BAND_COLUMN: f32 = 2.0;
+
 /// `rect` washed in `color` and hatched over in it, the lines further apart the larger `scale`.
 pub fn hatched(painter: &Painter, rect: Rect, color: Color32, scale: f32) {
     painter.rect_filled(

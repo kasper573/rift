@@ -346,7 +346,9 @@ impl AccessRequirement {
                 format!("{name} rank {}", rank.0)
             }
             AccessRequirement::Level { level } => format!("Level {level}"),
-            AccessRequirement::Condition { condition } => condition::describe(content, condition),
+            AccessRequirement::Condition { condition } => {
+                condition::describe(content, condition).to_string()
+            }
         }
     }
 }

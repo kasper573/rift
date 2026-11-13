@@ -1,7 +1,7 @@
 use engine::core::content::Content;
 use engine::core::math::Pos;
 use engine::core::time::{DayClock, TimeCourse, WallClock, WeatherClock};
-use engine::core::units::{MeterPos, Meters};
+use engine::core::units::{HourOfDay, MeterPos, Meters};
 use engine::systems::area::AreaDef;
 use engine::systems::combat::{self, AttackRequest};
 use engine::systems::interact::{self, InteractRequest};
@@ -193,7 +193,7 @@ fn a_bench_sets_the_servers_day_to_an_hour_held_or_turning_on_from_it_until_rest
     start_clocks(
         &mut sim.world,
         ServerClocks {
-            day: Some(TimeCourse::Held(10.0)),
+            day: Some(TimeCourse::Held(HourOfDay(10.0))),
             weather: TimeCourse::Held(0),
         },
     );
@@ -204,18 +204,19 @@ fn a_bench_sets_the_servers_day_to_an_hour_held_or_turning_on_from_it_until_rest
         .resource::<Content>()
         .built::<GameSettings>()
         .daylight
+        .clone()
         .expect("a day cycle");
     sim.later(cycle.day_length.0);
     let hour_now = |sim: &Sim| {
         let course = sim.world.resource::<DayClock>().0.expect("a day course");
-        cycle.hour(course, sim.world.resource::<WallClock>().now)
+        cycle.hour(course, sim.world.resource::<WallClock>().now).0
     };
 
     stage(
         &mut sim.world,
         conn,
         Staging::Day {
-            hour: 18.0,
+            hour: HourOfDay(18.0),
             turning: false,
         },
     )
@@ -230,7 +231,7 @@ fn a_bench_sets_the_servers_day_to_an_hour_held_or_turning_on_from_it_until_rest
         &mut sim.world,
         conn,
         Staging::Day {
-            hour: 18.0,
+            hour: HourOfDay(18.0),
             turning: true,
         },
     )
@@ -252,7 +253,7 @@ fn a_bench_sets_the_servers_day_to_an_hour_held_or_turning_on_from_it_until_rest
             &mut sim.world,
             conn,
             Staging::Day {
-                hour: 25.0,
+                hour: HourOfDay(25.0),
                 turning: false,
             },
         )

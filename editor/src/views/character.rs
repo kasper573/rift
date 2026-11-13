@@ -1114,7 +1114,7 @@ fn quests(
                 let requires = sheet.read(cx, quest).and_then(|def| {
                     def.modules.iter().find_map(|module| match module {
                         QuestModule::Requires { condition } => {
-                            Some(script_condition::describe(cx.project, condition))
+                            Some(script_condition::describe(cx.project, condition).to_string())
                         }
                         _ => None,
                     })

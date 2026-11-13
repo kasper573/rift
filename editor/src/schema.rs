@@ -1062,6 +1062,89 @@ fn schema_of<T: schemars::JsonSchema>() -> Value {
     serde_json::to_value(schema).expect("a schema is json")
 }
 
+/// Where `value`, a value of the type whose schema is `root`, holds a field whose schema carries
+/// `mark`, as pointers into it.
+pub fn marked_fields(root: &Value, value: &Value, mark: SchemaMark) -> Vec<String> {
+    let mut found = Vec::new();
+    collect_marked(root, root, value, mark, "", &mut found);
+    found.sort();
+    found.dedup();
+    found
+}
+
+fn collect_marked(
+    root: &Value,
+    schema: &Value,
+    value: &Value,
+    mark: SchemaMark,
+    pointer: &str,
+    found: &mut Vec<String>,
+) {
+    let schema = resolve(root, schema);
+    if mark.is_on(schema) {
+        found.push(pointer.to_owned());
+        return;
+    }
+    for (key, all) in [("oneOf", false), ("anyOf", false), ("allOf", true)] {
+        for alternative in schema
+            .get(key)
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+        {
+            let alternative = resolve(root, alternative);
+            let taken = match tag_of(alternative) {
+                Some((field, tag)) => {
+                    value.get(&field).and_then(Value::as_str) == Some(tag.as_str())
+                }
+                None => all || fits(root, alternative, value),
+            };
+            if taken {
+                collect_marked(root, alternative, value, mark, pointer, found);
+            }
+        }
+    }
+    match value {
+        Value::Object(fields) => {
+            for (name, child) in fields {
+                let field = schema
+                    .get("properties")
+                    .and_then(|properties| properties.get(name))
+                    .or_else(|| {
+                        schema
+                            .get("additionalProperties")
+                            .filter(|all| all.is_object())
+                    })
+                    .or_else(|| {
+                        schema
+                            .get("patternProperties")
+                            .and_then(Value::as_object)
+                            .and_then(|patterns| patterns.values().next())
+                    });
+                if let Some(field) = field {
+                    let at = format!("{pointer}/{}", locate::escape(name));
+                    collect_marked(root, field, child, mark, &at, found);
+                }
+            }
+        }
+        Value::Array(items) => {
+            if let Some(item) = schema.get("items") {
+                for (index, child) in items.iter().enumerate() {
+                    collect_marked(
+                        root,
+                        item,
+                        child,
+                        mark,
+                        &format!("{pointer}/{index}"),
+                        found,
+                    );
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
 /// A field of a value a blueprint can leave to a variable: where it is in the value, the type of
 /// variable that fills it, and the table it names when it names a file.
 pub struct HoleableField {

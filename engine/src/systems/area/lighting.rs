@@ -12,6 +12,7 @@ use crate::core::units::{Degrees, Meters, Stops};
 use crate::core::vfx::shader::Stage;
 use crate::core::vfx::{ParamValue, VfxShaderId};
 use crate::systems::area::AreaDef;
+use crate::systems::script::SkyCondition;
 
 /// How many point lights a tile of ground holds at most: the view takes in a few tiles, and the
 /// renderer lights every fragment by all the lights clustered over it, so a scene stays cheap while
@@ -241,6 +242,9 @@ pub struct PointLightDef {
     pub height: Meters,
     #[serde(default, skip_serializing_if = "serial::is_zero_f32")]
     pub flicker: f32,
+    /// How much of its brightness it shines with under the sky; all of it without one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub when: Option<SkyCondition>,
 }
 
 impl PointLightDef {

@@ -3,6 +3,7 @@ mod area_climate;
 mod busy;
 mod content_integrity;
 mod content_tree;
+mod day;
 mod fit;
 mod fixtures;
 mod icons;

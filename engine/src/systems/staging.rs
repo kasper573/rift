@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use crate::core::content::Content;
 use crate::core::math::{Pos, PosSchema};
 use crate::core::time::{DayClock, TimeCourse, WallClock, WeatherClock};
-use crate::core::units::{MeterPos, Meters};
+use crate::core::units::{HourOfDay, MeterPos, Meters};
 use crate::systems::area;
 use crate::systems::combat::{self, AttackRequest, Relation};
 use crate::systems::interact::{self, InteractRequest, Verb};
@@ -47,7 +47,7 @@ pub enum Staging {
     WeatherCourse,
     /// Sets the day to `hour` o'clock for everyone on the server, turning on from there or held,
     /// until staged again or restored.
-    Day { hour: f32, turning: bool },
+    Day { hour: HourOfDay, turning: bool },
     /// Returns the day and the weather of the character's area to how the server runs them, as
     /// it started them.
     Restore,
@@ -111,9 +111,10 @@ pub fn stage(world: &mut World, conn: Entity, staging: Staging) -> Result<(), St
                 .resource::<Content>()
                 .built::<GameSettings>()
                 .daylight
+                .clone()
                 .ok_or("the game has no day cycle")?;
-            if !(0.0..=24.0).contains(&hour) {
-                return Err(format!("{hour} is no hour of the day"));
+            if !(0.0..=24.0).contains(&hour.0) {
+                return Err(format!("{} is no hour of the day", hour.0));
             }
             let course = if turning {
                 cycle.turning_from(hour, world.resource::<WallClock>().now)

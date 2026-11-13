@@ -98,6 +98,10 @@ pub struct Look {
     pub light: LightLook,
     pub materials: SurfaceFinish,
     pub clearing: ClearingLook,
+    /// How long a thing takes to fade in or out as it comes into the world or leaves it within
+    /// a player's sight; at once without it.
+    #[serde(default, skip_serializing_if = "Seconds::is_zero")]
+    pub presence_fades: Seconds,
 }
 
 /// Frames the camera and finishes the world's picture as the game's look says, once it is known

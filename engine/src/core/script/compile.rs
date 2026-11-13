@@ -371,14 +371,6 @@ fn compile_source<'c, V: Vocabulary>(
     stack: &[ScriptId<V>],
 ) -> Result<Arc<Procedure<V>>, ScriptError> {
     let Call { script, values } = binding.call;
-    let shared = Some(script.path(content).to_owned());
-    let fail = |rule: &'static str, node: Option<&str>, expected: String| ScriptError {
-        rule,
-        owner: binding.label.clone(),
-        node: node.map(str::to_owned),
-        expected,
-        script: shared.clone(),
-    };
     let at_call = |rule: &'static str, expected: String| ScriptError {
         rule,
         owner: binding.label.clone(),
@@ -386,40 +378,111 @@ fn compile_source<'c, V: Vocabulary>(
         expected,
         script: None,
     };
-    let (source, values, declared) = {
-        {
-            let def = script.get(content);
-            let called = !stack.is_empty();
-            if called {
-                if def.runs_on != V::RunnerKind::ANY && def.runs_on != binding.owner {
-                    return Err(at_call(
-                        "run by another kind",
-                        format!(
-                            "{} is {}'s, run by {}",
-                            script.path(content),
-                            def.runs_on.name(),
-                            binding.owner.name()
-                        ),
-                    ));
-                }
-            } else if def.runs_on != binding.owner {
-                return Err(at_call(
-                    "run by another kind",
-                    format!("{} is {}'s", script.path(content), def.runs_on.name()),
-                ));
-            }
-            (
-                Source {
-                    state: slots(&def.state),
-                    locals: slots(&def.locals),
-                    nodes: &def.nodes,
-                    label: script.path(content).to_owned(),
-                    camera: def.camera,
-                },
-                Some(values),
-                Some(&def.variables),
-            )
+    let def = script.get(content);
+    if !stack.is_empty() {
+        if def.runs_on != V::RunnerKind::ANY && def.runs_on != binding.owner {
+            return Err(at_call(
+                "run by another kind",
+                format!(
+                    "{} is {}'s, run by {}",
+                    script.path(content),
+                    def.runs_on.name(),
+                    binding.owner.name()
+                ),
+            ));
         }
+    } else if def.runs_on != binding.owner {
+        return Err(at_call(
+            "run by another kind",
+            format!("{} is {}'s", script.path(content), def.runs_on.name()),
+        ));
+    }
+    compile_written(
+        content,
+        binding.owner,
+        binding.row,
+        &binding.label,
+        Written {
+            source: Source {
+                state: slots(&def.state),
+                locals: slots(&def.locals),
+                nodes: &def.nodes,
+                label: script.path(content).to_owned(),
+                camera: def.camera,
+            },
+            file: Some(script.path(content).to_owned()),
+            values: Some(values),
+            declared: Some(&def.variables),
+        },
+        stack,
+    )
+}
+
+/// Compiles `nodes` the engine wrote itself for `row`, as it compiles a script file's: what a
+/// row says through the scripting it would otherwise need a file for.
+pub fn compile_nodes<'c, V: Vocabulary>(
+    content: &'c Content,
+    row: OwnerRow<V>,
+    label: &str,
+    nodes: &'c BTreeMap<String, Node<V>>,
+) -> Result<Arc<Procedure<V>>, ScriptError> {
+    compile_written(
+        content,
+        row.kind,
+        Some(row),
+        label,
+        Written {
+            source: Source {
+                state: Vec::new(),
+                locals: Vec::new(),
+                nodes,
+                label: label.to_owned(),
+                camera: V::Camera::default(),
+            },
+            file: None,
+            values: None,
+            declared: None,
+        },
+        &[],
+    )
+}
+
+/// Nodes to compile, with the file they were written in and the variables it declares and is
+/// called with, when they come from one.
+struct Written<'c, V: Vocabulary> {
+    source: Source<'c, V>,
+    file: Option<String>,
+    values: Option<&'c BTreeMap<String, VarValue<V>>>,
+    declared: Option<&'c BTreeMap<String, Variable<V>>>,
+}
+
+fn compile_written<'c, V: Vocabulary>(
+    content: &'c Content,
+    owner: V::RunnerKind,
+    row: Option<OwnerRow<V>>,
+    label: &str,
+    written: Written<'c, V>,
+    stack: &[ScriptId<V>],
+) -> Result<Arc<Procedure<V>>, ScriptError> {
+    let Written {
+        source,
+        file,
+        values,
+        declared,
+    } = written;
+    let fail = |rule: &'static str, node: Option<&str>, expected: String| ScriptError {
+        rule,
+        owner: label.to_owned(),
+        node: node.map(str::to_owned),
+        expected,
+        script: file.clone(),
+    };
+    let at_call = |rule: &'static str, expected: String| ScriptError {
+        rule,
+        owner: label.to_owned(),
+        node: None,
+        expected,
+        script: None,
     };
     if source.nodes.len() > MAX_NODES {
         return Err(fail(
@@ -441,13 +504,13 @@ fn compile_source<'c, V: Vocabulary>(
             ));
         }
     }
-    if !source.state.is_empty() && !binding.owner.keeps_state() {
+    if !source.state.is_empty() && !owner.keeps_state() {
         return Err(fail(
             "state kept nowhere",
             None,
             format!(
                 "{} scripts keep no state; found {}",
-                binding.owner.name(),
+                owner.name(),
                 source.state[0].0
             ),
         ));
@@ -526,8 +589,8 @@ fn compile_source<'c, V: Vocabulary>(
     };
     let mut cx = Compiler {
         content,
-        owner: binding.owner,
-        row: binding.row,
+        owner,
+        row,
         label: source.label.clone(),
         variables,
         state: source.state.clone(),
@@ -554,21 +617,17 @@ fn compile_source<'c, V: Vocabulary>(
         let step = match node {
             Node::On { event, next } => {
                 let function =
-                    event.is_run() && (binding.owner == V::RunnerKind::ANY || !cx.stack.is_empty());
-                if !event.owners().contains(&binding.owner) && !function {
+                    event.is_run() && (owner == V::RunnerKind::ANY || !cx.stack.is_empty());
+                if !event.owners().contains(&owner) && !function {
                     return Err(node_fail(
                         "event not raised here",
-                        format!(
-                            "{:?} is never raised for {}",
-                            event.kind(),
-                            binding.owner.name()
-                        ),
+                        format!("{:?} is never raised for {}", event.kind(), owner.name()),
                     ));
                 }
                 if let Err(fault) = event.check() {
                     return Err(node_fail(fault.rule, fault.expected));
                 }
-                if cx.stack.is_empty() && event.is_run() && binding.owner != V::RunnerKind::ANY {
+                if cx.stack.is_empty() && event.is_run() && owner != V::RunnerKind::ANY {
                     return Err(node_fail(
                         "event not raised here",
                         "run starts only a script another runs".to_owned(),
@@ -702,8 +761,8 @@ fn compile_source<'c, V: Vocabulary>(
                 let callee = compile_source(
                     content,
                     &Binding {
-                        owner: binding.owner,
-                        row: binding.row,
+                        owner,
+                        row,
                         label: format!("{} › script/{}", source.label, script.path(content)),
                         call: Call {
                             script: *script,
@@ -847,11 +906,10 @@ fn compile_source<'c, V: Vocabulary>(
                 }
             }
             Node::Effect(effect) => {
-                if !effect.owners().contains(&binding.owner) && binding.owner != V::RunnerKind::ANY
-                {
+                if !effect.owners().contains(&owner) && owner != V::RunnerKind::ANY {
                     return Err(node_fail(
                         "not for this owner",
-                        format!("not for {} owners", binding.owner.name()),
+                        format!("not for {} owners", owner.name()),
                     ));
                 }
                 cx.subject_read = false;
@@ -948,7 +1006,7 @@ fn compile_source<'c, V: Vocabulary>(
     let any_needs_subject = needs_subject.iter().any(|needs| *needs);
     Ok(Arc::new(Procedure {
         id: ProcedureId(NEXT_PROCEDURE.fetch_add(1, Ordering::Relaxed)),
-        owner: binding.owner,
+        owner,
         label: source.label,
         camera: source.camera,
         names: names.iter().map(|name| (*name).to_owned()).collect(),

@@ -206,7 +206,7 @@ pub(super) fn short_value(value: &VarValue, project: &Project) -> String {
         VarValue::Integer(number) => number.to_string(),
         VarValue::Number(number) => number.to_string(),
         VarValue::Boolean(on) => on.to_string(),
-        VarValue::Condition(held) => condition::describe(project, held),
+        VarValue::Condition(held) => condition::describe(project, held).to_string(),
     };
     if text.chars().count() > 40 {
         format!("{}…", text.chars().take(40).collect::<String>())

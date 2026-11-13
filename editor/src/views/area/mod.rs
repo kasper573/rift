@@ -5,6 +5,7 @@ pub mod climate;
 pub mod clipboard;
 pub mod contours;
 pub mod flags;
+pub mod hour;
 pub mod inspect;
 pub mod lighting;
 pub mod modules;
@@ -60,11 +61,15 @@ use engine::systems::actor::held;
 use engine::systems::actor::stance;
 use engine::systems::actor::{Action, ActorModel, Motion};
 use engine::systems::area::blueprint::BlueprintDef;
-use engine::systems::area::prop::PropDef;
+use engine::systems::area::prop::{PropDef, PropId, PropPlacement};
 use engine::systems::area::scene::{ModuleNode, SceneNode};
-use engine::systems::area::{self, AreaDef, AreaId, AreaModule, AreaModuleKind, Picture, Pictured};
-use engine::systems::npc::NpcDef;
+use engine::systems::area::scenery::prop_transform;
+use engine::systems::area::{
+    self, AreaDef, AreaId, AreaModule, AreaModuleKind, Picture, Pictured, Weather,
+};
+use engine::systems::npc::{NpcDef, absence};
 use engine::systems::resource::ResourceDef;
+use engine::systems::script::Sky;
 use engine::systems::spawner::{Spawner, Spawns};
 use serde::{Deserialize, Serialize};
 use strum::{AsRefStr, VariantArray};
@@ -74,6 +79,7 @@ use ui::glyph::{self, Mark};
 use self::brush::{Brush, SculptMode, Stroke};
 use self::camera::{AreaCanvas, OrbitCamera, StandingBox};
 use self::flags::{SceneFlags, SceneLevel};
+use self::hour::{DayPreview, ShownSky, SkyFollowing};
 use self::overlays::{
     AreaLabels, Footing, overlay_bounds, overlay_contours, overlay_footprints, overlay_modules,
     overlay_navmesh, overlay_soundscape_reach,
@@ -111,7 +117,13 @@ pub struct AreaViews {
     pub viewports: Viewports,
     pub hover: Option<AreaHover>,
     pub active: Option<String>,
+    /// The hour every area view is shown at.
+    pub day: DayPreview,
 }
+
+/// What the sky a view is shown under makes of each module of its scene that follows the sky,
+/// by the module's pointer.
+pub(crate) type SkyMarks = HashMap<String, SkyFollowing>;
 
 #[derive(Clone, Debug)]
 pub struct AreaHover {
@@ -249,6 +261,8 @@ pub struct AreaViewState {
     cache: Option<SnapshotCache>,
     preview_places: HashMap<String, PreviewPlaces>,
     cast: Option<Cast>,
+    /// The view's sky marks, kept for the scene, the content and the sky they were found under.
+    by_sky: Option<((u64, u64, Sky), Arc<SkyMarks>)>,
     fitted: bool,
     /// How the camera looks at the middle once it is fitted, when asked for.
     looks_from: Option<CameraLook>,
@@ -269,6 +283,15 @@ impl AreaViewState {
             bundle: bundle.to_owned(),
             overlays: HashSet::from([AreaOverlay::Modules]),
             ..AreaViewState::default()
+        }
+    }
+
+    /// The weather the view shows `area` under: on its climate page the spell picked there,
+    /// else its first.
+    fn weather(&self, area: &area::Area) -> Weather {
+        match self.page {
+            AreaPage::Climate => self.climate.weather(&area.climate),
+            _ => area.climate.first(),
         }
     }
 
@@ -321,12 +344,15 @@ pub struct SpawnerPreview {
     pub seed: u64,
 }
 
-/// What a spawner's preview stands and where, kept until the content, the spawner or the
-/// preview's seed change: placing them draws from the wild mesh, too slow to repeat every frame.
+/// What a spawner's preview stands and where, kept until the content, the spawner, the
+/// preview's seed or which of its shares hold change: placing them draws from the wild mesh, too
+/// slow to repeat every frame.
 struct PreviewPlaces {
     generation: u64,
     spawner: Spawner,
     seed: u64,
+    /// Which of the spawner's shares held under the sky, when it follows the sky.
+    holds: Option<Vec<bool>>,
     places: Vec<(Spawns, Pos<Meters>)>,
 }
 
@@ -556,6 +582,7 @@ fn show_canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str, page: AreaPage)
     if page != AreaPage::Scene {
         let mut canvas_ui = ui.new_child(egui::UiBuilder::new().max_rect(full));
         canvas(editor, &mut canvas_ui, view_key, snapshot, page);
+        hour::bar(editor, ui, full);
         return;
     }
     let rail_width = 44.0;
@@ -564,6 +591,7 @@ fn show_canvas(editor: &mut Editor, ui: &mut Ui, view_key: &str, page: AreaPage)
     let mut canvas_ui = ui.new_child(egui::UiBuilder::new().max_rect(canvas_rect));
     canvas(editor, &mut canvas_ui, view_key, snapshot, page);
     banners(editor, ui, view_key, canvas_rect);
+    hour::bar(editor, ui, canvas_rect);
     let mut rail_ui = ui.new_child(
         egui::UiBuilder::new()
             .max_rect(rail)
@@ -790,6 +818,10 @@ fn canvas(
     if contours {
         overlay_contours(editor, &painter, view_key, &frame);
     }
+    if modules {
+        let marks = sky_marks(editor, &frame);
+        overlays::overlay_away(&painter, &frame, &marks);
+    }
     if modules || !editor.selection.parts.is_empty() {
         overlay_modules(editor, &painter, view_key, &frame);
     } else {
@@ -805,9 +837,11 @@ fn canvas(
     frame.labels.draw(&painter);
     shown::overlays(ui.ctx(), overlays_began.elapsed());
     status_bar(editor, &painter, view_key, &frame);
-    if response.hovered() && !ui.ctx().text_edit_focused() {
+    if response.hovered() && !ui.ctx().text_edit_focused() && !editor.views.area.day.pointed() {
         tools::keys(editor, ui, view_key, &frame);
+        ui.input(|input| hour::keys(editor, input));
     }
+    hear_again(editor, &frame);
     request_viewport(editor, ui, view_key, &frame, rect);
     remember_camera(editor, view_key);
 }
@@ -888,10 +922,8 @@ fn request_viewport(editor: &mut Editor, ui: &Ui, view_key: &str, frame: &AreaFr
         paint: stroke.paint.clone(),
     });
     let camera = view.camera;
-    let weather = match view.page {
-        AreaPage::Climate => view.climate.weather(&frame.area().climate),
-        _ => frame.area().climate.first(),
-    };
+    let weather = view.weather(frame.area());
+    let hour = editor.views.area.day.hour();
     let outlines = view.outlines.sets();
     let repaint = view.stroke.is_some() || ghost_moves(view);
     editor.views.area.viewports.request(Request {
@@ -900,6 +932,7 @@ fn request_viewport(editor: &mut Editor, ui: &Ui, view_key: &str, frame: &AreaFr
         camera,
         picture: frame.picture.clone(),
         weather,
+        hour,
         content: frame.content.clone(),
         stroke,
         ghost,
@@ -910,6 +943,79 @@ fn request_viewport(editor: &mut Editor, ui: &Ui, view_key: &str, frame: &AreaFr
     });
     if repaint {
         ui.ctx().request_repaint();
+    }
+}
+
+/// The sky the view of `snapshot`'s bundle is shown under.
+pub(crate) fn shown_sky(editor: &mut Editor, snapshot: &AreaSnapshot) -> ShownSky {
+    let generation = editor
+        .project
+        .as_ref()
+        .map_or(0, |project| project.generation);
+    let area = snapshot.area();
+    let weather = editor
+        .views
+        .area
+        .views
+        .get(&view_key(&snapshot.bundle))
+        .map_or_else(|| area.climate.first(), |view| view.weather(area));
+    editor
+        .views
+        .area
+        .day
+        .shown(&snapshot.content, generation, weather)
+}
+
+/// What the sky the view of `snapshot`'s bundle is shown under makes of each module of its own
+/// scene that follows the sky.
+pub(crate) fn sky_marks(editor: &mut Editor, snapshot: &AreaSnapshot) -> Arc<SkyMarks> {
+    let sky = shown_sky(editor, snapshot);
+    let generation = editor
+        .project
+        .as_ref()
+        .map_or(0, |project| project.generation);
+    let found_under = (snapshot.made, generation, sky.sky());
+    let key = view_key(&snapshot.bundle);
+    let kept = editor.views.area.views.get(&key).and_then(|view| {
+        view.by_sky
+            .as_ref()
+            .filter(|(under, _)| *under == found_under)
+            .map(|(_, marks)| marks.clone())
+    });
+    if let Some(marks) = kept {
+        return marks;
+    }
+    let marks: Arc<SkyMarks> = Arc::new(
+        snapshot
+            .doc
+            .modules()
+            .filter_map(|module| {
+                let following = sky.following(&snapshot.reader, module.module())?;
+                Some((module.pointer.to_owned(), following))
+            })
+            .collect(),
+    );
+    if editor.views.area.views.contains(&key) {
+        editor.views.area.view_mut(&key).by_sky = Some((found_under, marks.clone()));
+    }
+    marks
+}
+
+/// Hears the listening point of the area again once the sky it was heard under has moved on.
+fn hear_again(editor: &mut Editor, frame: &AreaFrame) {
+    let Some(area) = frame.area_id() else {
+        return;
+    };
+    let sky = shown_sky(editor, frame);
+    let stale = editor
+        .views
+        .sound
+        .listening
+        .as_ref()
+        .filter(|listening| listening.area == frame.bundle && listening.sky != sky.sky())
+        .map(|listening| listening.at);
+    if let Some(at) = stale {
+        crate::views::sound::listen(editor, &frame.content, area, at, &sky);
     }
 }
 
@@ -931,14 +1037,21 @@ fn cast(
         .as_ref()
         .map_or(0, |project| project.generation);
     let seen = *frame.canvas.view();
+    let sky = shown_sky(editor, frame);
+    let by_sky = BySky::of(&sky, frame);
     let view = editor.views.area.view_mut(view_key);
-    let made_for = (frame.made, generation, view.spawner_previews.clone());
+    let made_for = (
+        frame.made,
+        generation,
+        view.spawner_previews.clone(),
+        by_sky.clone(),
+    );
     if view
         .cast
         .as_ref()
         .is_none_or(|cast| cast.made_for != made_for)
     {
-        let (everyone, stood) = everyone_standing(view, frame, generation);
+        let (everyone, stood) = everyone_standing(view, frame, generation, &sky, &by_sky);
         view.cast = Some(Cast {
             made_for,
             everyone,
@@ -968,11 +1081,58 @@ fn cast(
 /// The rigs of a view's cast, made for what the view holds, the content and its previews, and
 /// those in sight last.
 struct Cast {
-    made_for: (u64, u64, HashMap<String, SpawnerPreview>),
+    made_for: (u64, u64, HashMap<String, SpawnerPreview>, BySky),
     everyone: Vec<Standing>,
     stood: Arc<[Ghost]>,
     in_sight: Vec<usize>,
     shown: Arc<[StandingActor]>,
+}
+
+/// What of a view's cast the sky it is shown under decides: which of the placed modules that
+/// follow the sky are away, each by its place among them with the sign standing for it, and
+/// which shares of each spawner hold.
+#[derive(Clone, Default, PartialEq)]
+struct BySky {
+    placed: Vec<(usize, bool, Option<PropId>)>,
+    spawns: HashMap<String, Vec<bool>>,
+}
+
+impl BySky {
+    fn of(sky: &ShownSky, frame: &AreaFrame) -> BySky {
+        BySky {
+            placed: frame
+                .picture
+                .placed
+                .iter()
+                .enumerate()
+                .filter(|(_, placed)| {
+                    matches!(
+                        placed.module,
+                        AreaModule::Resident(_) | AreaModule::Object(_)
+                    )
+                })
+                .filter_map(|(index, placed)| {
+                    let following = sky.following(&frame.reader, &placed.module)?;
+                    Some((index, following.away, following.sign))
+                })
+                .collect(),
+            spawns: frame
+                .doc
+                .of_kind(AreaModuleKind::Spawner)
+                .filter_map(|node| match node.module() {
+                    AreaModule::Spawner(spawner) if spawner.follows_sky() => Some((
+                        node.pointer.to_owned(),
+                        spawner
+                            .spawns
+                            .iter()
+                            .map(|share| sky.spawns(&frame.reader, share))
+                            .collect(),
+                    )),
+                    _ => None,
+                })
+                .collect(),
+        }
+    }
 }
 
 /// A rig of the cast, with the middle of its body and how far across it is.
@@ -982,12 +1142,16 @@ struct Standing {
     extent: Meters,
 }
 
-/// Every rig of the view's cast: each resident at its spot in its pose, and the previewed places of
-/// each spawner, with the resources those previews stand.
+/// Every rig of the view's cast under the sky it is shown under: each resident that is there at
+/// its spot in its pose, and the previewed places of each spawner; with the models standing
+/// beside them: the resources those previews stand, the sign of each resident that is away, and
+/// each object the sky shows.
 fn everyone_standing(
     view: &mut AreaViewState,
     frame: &AreaFrame,
     generation: u64,
+    sky: &ShownSky,
+    by_sky: &BySky,
 ) -> (Vec<Standing>, Vec<Ghost>) {
     let content = &frame.content;
     let area = frame.area();
@@ -1028,11 +1192,45 @@ fn everyone_standing(
     };
     let mut everyone = Vec::new();
     let mut stood = Vec::new();
-    for placed in &frame.picture.placed {
-        if let AreaModule::Resident(resident) = &placed.module
-            && let Some(npc) = resolve(resident.npc)
-        {
-            everyone.push(stand(npc, resident.at, resident.facing, resident.pose));
+    let stand_prop = |prop: PropId, at: Pos<Meters>, yaw: Degrees| Ghost {
+        model: prop.get(content).model.path(),
+        transform: prop_transform(
+            &area.heights,
+            &PropPlacement {
+                prop,
+                at,
+                yaw,
+                scale: 1.0,
+                sunk: Meters::default(),
+            },
+        ),
+    };
+    for (index, placed) in frame.picture.placed.iter().enumerate() {
+        let followed = by_sky.placed.iter().find(|(at, ..)| *at == index);
+        match (&placed.module, followed) {
+            (AreaModule::Resident(resident), Some((_, true, Some(sign)))) => {
+                stood.push(stand_prop(
+                    *sign,
+                    resident.at,
+                    absence::sign_yaw(resident.facing),
+                ));
+            }
+            (AreaModule::Resident(_), Some((_, true, None))) => {}
+            (AreaModule::Resident(resident), _) => {
+                if let Some(npc) = resolve(resident.npc) {
+                    everyone.push(stand(npc, resident.at, resident.facing, resident.pose));
+                }
+            }
+            (AreaModule::Object(object), Some((_, false, _))) => {
+                let look = object
+                    .look
+                    .and_then(|look| frame.reader.path_of(look))
+                    .and_then(|look| content.by_path::<PropDef>(look));
+                if let Some(look) = look {
+                    stood.push(stand_prop(look, object.shape.center(), Degrees(0.0)));
+                }
+            }
+            _ => {}
         }
     }
     for node in frame.doc.of_kind(AreaModuleKind::Spawner) {
@@ -1050,21 +1248,30 @@ fn everyone_standing(
         if preview.hidden {
             continue;
         }
+        let holds = by_sky.spawns.get(node.pointer);
         let kept = view.preview_places.get(node.pointer).filter(|kept| {
-            (kept.generation, &kept.spawner, kept.seed) == (generation, spawner, preview.seed)
+            (
+                kept.generation,
+                &kept.spawner,
+                kept.seed,
+                kept.holds.as_ref(),
+            ) == (generation, spawner, preview.seed, holds)
         });
         let within = spawner.within.unwrap_or_else(|| area.size.bounds());
         let places = match kept {
             Some(kept) => kept.places.clone(),
             None if !area.holds(within) => continue,
             None => {
-                let places = spawner::preview_places(area, spawner, preview.seed);
+                let places = spawner::preview_places(area, spawner, preview.seed, |share| {
+                    sky.spawns(&frame.reader, share)
+                });
                 view.preview_places.insert(
                     node.pointer.to_owned(),
                     PreviewPlaces {
                         generation,
                         spawner: spawner.clone(),
                         seed: preview.seed,
+                        holds: holds.cloned(),
                         places: places.clone(),
                     },
                 );

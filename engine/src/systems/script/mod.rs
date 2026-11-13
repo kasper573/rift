@@ -2,11 +2,13 @@ pub mod condition;
 pub mod effect;
 pub mod event;
 pub mod query;
+pub mod sky;
 
 pub use crate::core::script::Fill;
 pub use effect::{RiftEffect, RiftEffectKind};
 pub use event::{EventKind, RiftEvent, Who};
 pub use query::{RiftQuery, RiftQueryKind};
+pub use sky::{Sky, SkyCondition, SkyNow, SkyTable};
 
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -25,10 +27,10 @@ use crate::core::ground::TileAt;
 use crate::core::math::Pos;
 use crate::core::script::{
     self, BoxEnding, DialogueView, Expr, GlobalPlayerId, Instances, LineDef, RunnerKindDef,
-    ScriptError, ScriptFault, Scripts, TextDef, Vocabulary, compile::compile_row,
+    ScriptError, ScriptFault, Scripts, TextDef, Vocabulary,
+    compile::{compile_nodes, compile_row},
 };
 use crate::core::units::Meters;
-use crate::systems::WorldArea;
 use crate::systems::actor::skeleton::{Declared, GestureName};
 use crate::systems::area::scene::scene_file;
 use crate::systems::area::spawnable::{SpawnableDef, SpawnableId};
@@ -41,7 +43,7 @@ use crate::systems::dialogue::{self, ChoiceReveal};
 use crate::systems::item::{ItemDef, ItemId, ItemKind};
 use crate::systems::memory::{MemoryDef, MemoryId};
 use crate::systems::notification::{NotificationDef, NotificationId};
-use crate::systems::npc::{Npc, NpcDef, NpcId};
+use crate::systems::npc::{self, AbsenceSpanAt, Npc, NpcDef, NpcId};
 use crate::systems::player::roster::ServerRoster;
 use crate::systems::player::{self, PlayedBy};
 use crate::systems::quest::{Parties, QuestDef, QuestId};
@@ -51,6 +53,7 @@ use crate::systems::skill::{SkillDef, SkillId};
 use crate::systems::stat::StatKind;
 use crate::systems::status::{StatusEffectDef, StatusEffectId};
 use crate::systems::text::{self, Span};
+use crate::systems::{GameSettings, WorldArea};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct RiftScripting;
@@ -455,6 +458,15 @@ impl OwnerRow {
         }
     }
 
+    /// The sign an npc leaves for the span `span` of its absence.
+    pub fn of_notice(npc: NpcId, span: AbsenceSpanAt) -> OwnerRow {
+        OwnerRow {
+            kind: RunnerKind::Npc,
+            row: npc.raw(),
+            object: Some(span.0),
+        }
+    }
+
     pub fn of_placement(area: AreaId, ordinal: u32) -> OwnerRow {
         OwnerRow {
             kind: RunnerKind::Blueprint,
@@ -568,6 +580,29 @@ pub fn build_all(loading: &mut Loading) {
                 owner_label(blueprint, Some(&format!("{key} {ordinal}"))),
                 modules,
             );
+        }
+    }
+    let settings = content.try_built::<GameSettings>();
+    for (id, def) in loading.rows::<NpcDef>(&content) {
+        let key = id.path(&content);
+        let own = all
+            .get(&OwnerRow::of_row(id))
+            .map_or(&[][..], Vec::as_slice);
+        let notices = npc::absence::notice_scripts(id, def, own, settings);
+        for (span, nodes) in &notices {
+            let row = OwnerRow::of_notice(id, *span);
+            match compile_nodes(&content, row, &owner_label(key, Some("notice")), nodes) {
+                Ok(procedure) => {
+                    all.insert(row, vec![procedure]);
+                }
+                Err(error) => errors.push((
+                    ScriptSite {
+                        file: fields_file(key),
+                        pointer: npc::absence::notice_pointer(def, *span),
+                    },
+                    error,
+                )),
+            }
         }
     }
     for (site, error) in errors {
@@ -800,6 +835,21 @@ pub fn check_all(loading: &mut Loading) {
                         ),
                     );
                 }
+            }
+        }
+        let turns = [EventKind::TimeBegan, EventKind::TimeEnded]
+            .into_iter()
+            .flat_map(|kind| procedures.iter().flat_map(move |all| all.entry(kind)));
+        for (_, event) in turns {
+            let (RiftEvent::TimeBegan { time } | RiftEvent::TimeEnded { time }) = event else {
+                continue;
+            };
+            if let Err(fault) = sky::known_time(&content, time) {
+                loading.json_error(
+                    &site.file,
+                    &site.pointer,
+                    ContentProblem::new(fault.rule, label.clone(), fault.expected),
+                );
             }
         }
         if row.kind == RunnerKind::Object && may_do.answers(EventKind::Interacted) {

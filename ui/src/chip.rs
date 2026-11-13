@@ -1,7 +1,8 @@
 //! Chips: small framed labels that pick, filter or say a mode, set in a row of controls.
 
 use egui::{
-    Align2, Color32, FontId, Painter, Pos2, Rect, Response, RichText, Sense, Stroke, Ui, Vec2,
+    Align2, Color32, FontId, Painter, Pos2, Rect, Response, RichText, Sense, Stroke, TextureId, Ui,
+    Vec2,
 };
 
 use crate::controls::{self, Pill};
@@ -42,6 +43,30 @@ pub fn swatch(ui: &mut Ui, text: impl Into<RichText>, colour: Color32) -> Respon
             Stroke::new(1.0, theme::BORDER),
             egui::StrokeKind::Inside,
         );
+        ui.label(text.into())
+    })
+    .inner
+}
+
+/// A colour and an icon before a name.
+pub fn emblem(
+    ui: &mut Ui,
+    text: impl Into<RichText>,
+    colour: Color32,
+    icon: TextureId,
+) -> Response {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = GAP;
+        let (rect, _) = ui.allocate_exact_size(Vec2::splat(EMBLEM), Sense::hover());
+        ui.painter().rect(
+            rect,
+            RADIUS,
+            colour,
+            Stroke::new(1.0, theme::BORDER),
+            egui::StrokeKind::Inside,
+        );
+        let within = rect.shrink(1.0);
+        egui::Image::new((icon, within.size())).paint_at(ui, within);
         ui.label(text.into())
     })
     .inner
@@ -109,6 +134,7 @@ pub fn floating(
 }
 
 const HEIGHT: f32 = 20.0;
+const EMBLEM: f32 = 16.0;
 const RADIUS: f32 = 3.0;
 const PADDING: f32 = 8.0;
 const GAP: f32 = 4.0;

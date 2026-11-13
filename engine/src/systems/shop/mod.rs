@@ -15,12 +15,14 @@ use crate::core::content::{
 use crate::core::script::{Answer, Arrow, Compiler, EffectDef, EffectStep, ScriptFault, Value};
 use crate::core::time::{UnixMillis, WallClock};
 use crate::core::units::Seconds;
+use crate::systems::area::TimeOfDayName;
 use crate::systems::attention::AttentionId;
 use crate::systems::dialogue::camera::DialogueCamera;
 use crate::systems::item::{
     ExchangeRefusal, Inventory, ItemCategory, ItemId, ItemModuleKind, ItemStack,
 };
 use crate::systems::player::conn_player;
+use crate::systems::script::condition::Wording;
 use crate::systems::script::{
     self, Condition, EffectCall, EffectReach, EventKind, FlowKey, Owner, RiftEvent, RiftInstances,
     RiftScripting, RunnerKind, ScriptLine, ScriptModule, ScriptedRow, condition, effect as effects,
@@ -298,6 +300,8 @@ pub struct OfferView {
     pub restocks_in: Option<Seconds>,
     pub refusal: Option<WareRefusal>,
     pub held: Vec<u32>,
+    /// The times of day the offer is made by, for a player to see why it comes and goes.
+    pub times: Vec<TimeOfDayName>,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Hash)]
@@ -312,7 +316,7 @@ pub enum WareRefusal {
     Unaffordable(ItemStack),
     NoRoom { slots: u32 },
     SoldOut,
-    Unavailable(String),
+    Unavailable(Wording),
 }
 
 impl WareRefusal {
@@ -323,7 +327,7 @@ impl WareRefusal {
                 ExchangeRefusal::NoRoom { slots: *slots }.describe(content)
             }
             WareRefusal::SoldOut => "Sold out for now".to_owned(),
-            WareRefusal::Unavailable(reason) => reason.clone(),
+            WareRefusal::Unavailable(reason) => reason.to_string(),
         }
     }
 
@@ -776,7 +780,9 @@ fn offer_refusal(
     let content = world.resource::<Content>();
     let offer = shop.get(content).sells().nth(index as usize)?;
     if let Some(unmet) = condition::first_unmet(world, player, &offer.requires) {
-        return Some(WareRefusal::Unavailable(format!("Needs {unmet}")));
+        return Some(WareRefusal::Unavailable(
+            Wording::words("Needs ").then(unmet),
+        ));
     }
     if stock(world, player, shop, index, now).is_some_and(|(left, _)| left == 0) {
         return Some(WareRefusal::SoldOut);
@@ -837,6 +843,10 @@ fn refresh_view(world: &mut World, player: Entity) {
                 restocks_in: stock.and_then(|(_, restocks_in)| restocks_in),
                 refusal: offer_refusal(world, player, shop, index, now),
                 held: held(&inventory, &offer.price),
+                times: offer
+                    .requires
+                    .as_ref()
+                    .map_or_else(Vec::new, condition::times),
             }
         })
         .collect();

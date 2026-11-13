@@ -226,6 +226,8 @@ pub struct AreaObject {
     pub title: Option<String>,
     pub shape: ObjectShape,
     pub look: Option<String>,
+    /// How far its look is turned, as a placed prop's is.
+    pub yaw: Degrees,
     pub warp: Option<Place>,
 }
 
@@ -250,6 +252,7 @@ pub fn spawn_in(world: &mut World, tile: TileAt) {
             title: object.title.clone(),
             shape: object.shape,
             look: object.look.map(|look| look.path(&content).to_owned()),
+            yaw: Degrees(0.0),
             warp: None,
         };
         let stood = stand(world, standing, OwnerRow::of_object(zone, *index));

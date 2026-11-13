@@ -318,7 +318,7 @@ fn use_lines(world: &World, content: &Content, def: &SkillDef) -> Vec<(String, b
         .flat_map(condition::parts)
         .map(|part| {
             let met = me.is_some_and(|me| condition::holds(world, me, part));
-            (condition::describe(content, part), met)
+            (condition::describe(content, part).to_string(), met)
         })
         .collect();
     let bag = me.and_then(|me| world.get::<Inventory>(me));

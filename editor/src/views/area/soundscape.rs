@@ -56,6 +56,7 @@ pub(super) fn soundscape_extras(
                 volume: 1.0,
                 pan: 0.0,
                 category: AudioCategory::Ambience,
+                when: None,
             });
             changed = true;
         }

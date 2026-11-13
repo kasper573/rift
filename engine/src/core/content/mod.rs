@@ -30,7 +30,7 @@ pub use files::{
 };
 pub use fixture::Fixture;
 pub use fresh::Nearby;
-pub use id::{ContentId, ContentScope, rescoped, with_content};
+pub use id::{ContentId, ContentScope, nearest, rescoped, with_content};
 pub use load::{
     CheckedFiles, ContentFolder, ContentRegistry, FileHash, FileHashes, FileWriter,
     FilesystemFolder, FolderEntry, JsonPart, LoadPurpose, LoadStep, LoadWarnings, Loading,

@@ -414,6 +414,7 @@ pub fn module_template(
                 volume: 1.0,
                 pan: 0.0,
                 category: AudioCategory::default(),
+                when: None,
             }],
         }),
         AreaModuleKind::Spawner => AreaModule::Spawner(Spawner {
@@ -458,6 +459,7 @@ pub fn module_template(
             radius: Meters(6.0),
             height: Meters(2.0),
             flicker: 0.0,
+            when: None,
         }),
         AreaModuleKind::Script => AreaModule::Script(ScriptModule {
             script: reader.id_of(named).ok_or_else(unnamed)?,

@@ -1,22 +1,109 @@
+use std::fmt;
 use std::sync::Arc;
 
 use bevy_ecs::prelude::*;
+use serde::{Deserialize, Serialize};
 
-use super::{Condition, RiftQuery, RiftScripting};
+use super::{Condition, RiftQuery, RiftScripting, sky};
 use crate::core::content::{Content, ContentNames};
-use crate::core::script::{Compiler, Eval, Expr, FlowCx, ScriptFault, Value, ValueType};
+use crate::core::script::{Compiler, Eval, Expr, FlowCx, QueryDef, ScriptFault, Value, ValueType};
+use crate::systems::area::TimeOfDayName;
 use crate::systems::text::{self, LineText, Span};
 
 #[derive(Clone)]
-pub struct CompiledCondition(Arc<Eval>);
+pub struct CompiledCondition {
+    eval: Arc<Eval>,
+    /// Whether it holds alike whoever it is asked about.
+    shared: bool,
+}
+
+/// What a condition asks for, as a player reads it: words, with the times of day among them kept
+/// as times, so they can be shown as the game shows its times. Written out it is plain words, a
+/// time of day by its name.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct Wording(pub Vec<WordingPart>);
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum WordingPart {
+    Words { words: String },
+    Time { time: TimeOfDayName },
+}
+
+impl Wording {
+    pub fn words(words: impl Into<String>) -> Wording {
+        Wording(vec![WordingPart::Words {
+            words: words.into(),
+        }])
+    }
+
+    pub fn time(time: TimeOfDayName) -> Wording {
+        Wording(vec![WordingPart::Time { time }])
+    }
+
+    /// This wording with `more` after it.
+    pub fn then(mut self, more: impl Into<Wording>) -> Wording {
+        for part in more.into().0 {
+            match (self.0.last_mut(), part) {
+                (Some(WordingPart::Words { words }), WordingPart::Words { words: more }) => {
+                    words.push_str(&more);
+                }
+                (_, part) => self.0.push(part),
+            }
+        }
+        self
+    }
+
+    fn joined(parts: impl IntoIterator<Item = Wording>, between: &str) -> Wording {
+        parts
+            .into_iter()
+            .reduce(|all, part| all.then(between).then(part))
+            .unwrap_or_default()
+    }
+}
+
+impl From<String> for Wording {
+    fn from(words: String) -> Wording {
+        Wording::words(words)
+    }
+}
+
+impl From<&str> for Wording {
+    fn from(words: &str) -> Wording {
+        Wording::words(words)
+    }
+}
+
+impl fmt::Display for Wording {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        self.0.iter().try_for_each(|part| match part {
+            WordingPart::Words { words } => f.write_str(words),
+            WordingPart::Time { time } => f.write_str(&time.0),
+        })
+    }
+}
 
 impl CompiledCondition {
     pub fn new(content: &Content, condition: &Condition) -> CompiledCondition {
-        CompiledCondition(Arc::new(compiled(content, condition, ValueType::Boolean)))
+        let mut reads_someone = sky::unshared_read(condition).is_some();
+        condition.visit(&mut |expr| {
+            if let Expr::Query(query) = expr {
+                reads_someone |= query.reads_subject();
+            }
+        });
+        CompiledCondition {
+            eval: Arc::new(compiled(content, condition, ValueType::Boolean)),
+            shared: !reads_someone,
+        }
     }
 
     pub fn holds(&self, world: &World, subject: Entity) -> bool {
-        run(world, subject, &self.0).truthy()
+        run(world, subject, &self.eval).truthy()
+    }
+
+    /// Whether it holds for everyone, when it holds alike whoever it is asked about.
+    pub fn shared(&self, world: &World) -> Option<bool> {
+        self.shared
+            .then(|| (self.eval)(world, &FlowCx::nobody()).truthy())
     }
 }
 
@@ -28,7 +115,7 @@ pub fn first_unmet<'a>(
     world: &World,
     subject: Entity,
     conditions: impl IntoIterator<Item = &'a Condition>,
-) -> Option<String> {
+) -> Option<Wording> {
     conditions
         .into_iter()
         .flat_map(parts)
@@ -91,6 +178,19 @@ pub fn standing(world: &World, subject: Entity, condition: &Condition) -> Option
     }
 }
 
+/// The times of day `condition` names, each once, in the order it names them.
+pub fn times(condition: &Condition) -> Vec<TimeOfDayName> {
+    let mut times: Vec<TimeOfDayName> = Vec::new();
+    condition.visit(&mut |expr| {
+        if let Expr::Query(RiftQuery::During { time } | RiftQuery::TimeShare { time }) = expr
+            && !times.contains(time)
+        {
+            times.push(time.clone());
+        }
+    });
+    times
+}
+
 pub fn parts(condition: &Condition) -> Vec<&Condition> {
     match condition {
         Expr::All { of: parts } => parts.iter().collect(),
@@ -98,56 +198,59 @@ pub fn parts(condition: &Condition) -> Vec<&Condition> {
     }
 }
 
-pub fn describe(content: &impl ContentNames, condition: &Condition) -> String {
+pub fn describe(content: &impl ContentNames, condition: &Condition) -> Wording {
+    let between = |a: &Condition, sign: &str, b: &Condition| {
+        describe(content, a).then(sign).then(describe(content, b))
+    };
     match condition {
-        Expr::Not { of } => format!("not {}", describe(content, of)),
-        Expr::All { of: parts } => parts
-            .iter()
-            .map(|part| describe(content, part))
-            .collect::<Vec<_>>()
-            .join(" and "),
-        Expr::Any { of: parts } => parts
-            .iter()
-            .map(|part| describe(content, part))
-            .collect::<Vec<_>>()
-            .join(" or "),
+        Expr::Not { of } => Wording::words("not ").then(describe(content, of)),
+        Expr::All { of: parts } => {
+            Wording::joined(parts.iter().map(|part| describe(content, part)), " and ")
+        }
+        Expr::Any { of: parts } => {
+            Wording::joined(parts.iter().map(|part| describe(content, part)), " or ")
+        }
         Expr::AtLeast { a, b } | Expr::More { a, b } => match (&**a, &**b) {
-            (Expr::Query(RiftQuery::Level { .. }), Expr::Int(level)) => format!("Level {level}"),
+            (Expr::Query(RiftQuery::Level { .. }), Expr::Int(level)) => {
+                format!("Level {level}").into()
+            }
             (Expr::Query(RiftQuery::Holding { item, .. }), Expr::Int(count)) => {
-                format!("{count} {}", content.name_of(*item))
+                format!("{count} {}", content.name_of(*item)).into()
             }
             (Expr::Query(RiftQuery::Stat { stat, .. }), Expr::Num(min)) => {
-                format!("{min} {}", stat.label())
+                format!("{min} {}", stat.label()).into()
             }
             (Expr::Query(RiftQuery::Stat { stat, .. }), Expr::Int(min)) => {
-                format!("{min} {}", stat.label())
+                format!("{min} {}", stat.label()).into()
             }
             (Expr::Query(RiftQuery::Memory { memory, .. }), Expr::Int(count)) => {
-                format!("{} {count}", content.name_of(*memory))
+                format!("{} {count}", content.name_of(*memory)).into()
             }
-            (Expr::Query(RiftQuery::FreeSlots { .. }), Expr::Int(1)) => "1 free slot".to_owned(),
+            (Expr::Query(RiftQuery::FreeSlots { .. }), Expr::Int(1)) => "1 free slot".into(),
             (Expr::Query(RiftQuery::FreeSlots { .. }), Expr::Int(slots)) => {
-                format!("{slots} free slots")
+                format!("{slots} free slots").into()
             }
-            _ => format!("{} ≥ {}", describe(content, a), describe(content, b)),
+            _ => between(a, " ≥ ", b),
         },
         Expr::Query(query) => describe_query(content, query),
-        Expr::Bool(value) => value.to_string(),
-        Expr::Int(value) => value.to_string(),
-        Expr::Num(value) => value.to_string(),
-        Expr::Text(value) => (*value).to_owned(),
-        Expr::Equal { a, b } => format!("{} is {}", describe(content, a), describe(content, b)),
-        Expr::NotEqual { a, b } => {
-            format!("{} is not {}", describe(content, a), describe(content, b))
-        }
-        Expr::Less { a, b } => format!("{} < {}", describe(content, a), describe(content, b)),
-        Expr::AtMost { a, b } => format!("{} ≤ {}", describe(content, a), describe(content, b)),
-        other => other.kind().name().to_owned(),
+        Expr::Bool(value) => value.to_string().into(),
+        Expr::Int(value) => value.to_string().into(),
+        Expr::Num(value) => value.to_string().into(),
+        Expr::Text(value) => value.as_str().into(),
+        Expr::Equal { a, b } => between(a, " is ", b),
+        Expr::NotEqual { a, b } => between(a, " is not ", b),
+        Expr::Less { a, b } => between(a, " < ", b),
+        Expr::AtMost { a, b } => between(a, " ≤ ", b),
+        other => other.kind().name().into(),
     }
 }
 
-fn describe_query(content: &impl ContentNames, query: &RiftQuery) -> String {
-    match query {
+fn describe_query(content: &impl ContentNames, query: &RiftQuery) -> Wording {
+    let words = match query {
+        RiftQuery::During { time } => return Wording::time(time.clone()),
+        RiftQuery::TimeShare { time } => {
+            return Wording::words("share of ").then(Wording::time(time.clone()));
+        }
         RiftQuery::Level { .. } => "Level".to_owned(),
         RiftQuery::IsClass { class, .. } => format!("a {}", content.name_of(*class)),
         RiftQuery::SkillRank { skill, .. } => format!("{} rank", content.name_of(*skill)),
@@ -198,7 +301,11 @@ fn describe_query(content: &impl ContentNames, query: &RiftQuery) -> String {
         RiftQuery::SkillArea => "the skill's area".to_owned(),
         RiftQuery::AimedPoint => "the aimed point".to_owned(),
         RiftQuery::Rain { .. } => "rain".to_owned(),
-    }
+        RiftQuery::Hour => "the hour".to_owned(),
+        RiftQuery::Wind => "wind".to_owned(),
+        RiftQuery::Clouds => "clouds".to_owned(),
+    };
+    words.into()
 }
 
 fn compiled(content: &Content, condition: &Condition, want: ValueType) -> Eval {

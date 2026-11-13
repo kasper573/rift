@@ -136,27 +136,24 @@ pub struct RainHeard(pub f32);
 pub fn rain_zone(area: &Area, heard: RainHeard) -> Option<SoundscapeZone> {
     let rainfall = area.climate.rain.as_ref()?;
     let levels = rain_sound_levels(&rainfall.sounds, heard.0);
-    let channels: std::collections::BTreeMap<SoundscapeChannel, SoundscapeLayer> = rainfall
+    let layers: Vec<SoundscapeLayer> = rainfall
         .sounds
         .iter()
         .zip(levels)
         .filter(|(_, level)| *level > 0.0)
-        .map(|(sound, level)| {
-            (
-                SoundscapeChannel(sound.channel),
-                SoundscapeLayer {
-                    src: sound.file.clone(),
-                    volume: sound.volume * level,
-                    pan: 0.0,
-                    category: AudioCategory::Ambience,
-                },
-            )
+        .map(|(sound, level)| SoundscapeLayer {
+            channel: SoundscapeChannel(sound.channel),
+            share: 1.0,
+            src: sound.file.clone(),
+            volume: sound.volume * level,
+            pan: 0.0,
+            category: AudioCategory::Ambience,
         })
         .collect();
-    (!channels.is_empty()).then(|| SoundscapeZone {
+    (!layers.is_empty()).then(|| SoundscapeZone {
         shape: SoundscapeShape::Rect(Rect::from_size(area.size)),
         reach: Meters(1.0),
-        channels,
+        layers,
     })
 }
 

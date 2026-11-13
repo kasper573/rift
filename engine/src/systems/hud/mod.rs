@@ -1,4 +1,5 @@
 mod card;
+pub mod day_dial;
 pub mod menu;
 mod panel;
 
@@ -184,6 +185,7 @@ pub(crate) fn file_icon(ui: &mut Ui, world: &mut World, file: &str, size: f32) -
 
 static WIDGETS: &[(&str, &dyn HudWidget)] = &[
     (minimap::MINIMAP, &minimap::MinimapWidget),
+    (day_dial::DAY_DIAL, &day_dial::DayDialWidget),
     (
         quest::tracker::QUEST_TRACKER,
         &quest::tracker::QuestTrackerWidget,

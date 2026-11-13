@@ -9,6 +9,7 @@ use engine::systems::resource::ResourceDef;
 use engine::systems::spawner::{SpawnShare, Spawner, Spawns};
 use engine::systems::stat::StatKind;
 use ui::chip;
+use ui::controls;
 use ui::egui::{self, Align, Layout, Ui};
 use ui::form;
 use ui::glyph::{self, Mark};
@@ -18,6 +19,7 @@ use ui::theme;
 use super::placement::short_value;
 use super::{AreaFrame, nodes, pick};
 use crate::app::Editor;
+use crate::condition;
 use crate::forms::{FormAction, FormCx};
 use crate::picker;
 use crate::tabs::{file_title, shown_path};
@@ -182,7 +184,7 @@ pub(super) fn drop_file(editor: &mut Editor, frame: &AreaFrame, key: &str, groun
                 let AreaModule::Spawner(spawner) = &mut scene.module_mut(&pointer)?.module else {
                     return None;
                 };
-                spawner.spawns.push(SpawnShare { what, weight: 1 });
+                spawner.spawns.push(SpawnShare::of(what));
                 Some(format!(
                     "Add {} to spawner · {}",
                     shown_path(key),
@@ -240,6 +242,35 @@ pub(super) fn spawns_card(ui: &mut Ui, cx: &mut FormCx, spawner: &mut Spawner, p
                 });
             });
         });
+        let when_path = format!("{share_path}{}", field!(SpawnShare, when));
+        match &mut share.when {
+            Some(when) => {
+                let mut unset = false;
+                form::kv(ui, "when", |ui| {
+                    ui.vertical(|ui| {
+                        changed |= condition::edit_sky(ui, cx, when, &when_path).is_some();
+                    });
+                    unset = controls::remove(ui, "Spawn it whatever the sky").clicked();
+                });
+                if unset {
+                    share.when = None;
+                    changed = true;
+                }
+            }
+            None => {
+                let set = ui
+                    .add(
+                        egui::Label::new(theme::faint("+ when").monospace().size(13.0))
+                            .sense(egui::Sense::click()),
+                    )
+                    .on_hover_text("Spawn it only as the sky has it: by the hour or the weather")
+                    .clicked();
+                if set {
+                    share.when = Some(condition::fresh_sky(cx));
+                    changed = true;
+                }
+            }
+        }
     }
     if let Some(index) = remove {
         spawner.spawns.remove(index);
@@ -250,18 +281,20 @@ pub(super) fn spawns_card(ui: &mut Ui, cx: &mut FormCx, spawner: &mut Spawner, p
         if let Some((_, key)) = picker::row_added_among(ui, cx, &SPAWNED_TABLES, &new_path)
             && let Some(what) = spawned(&reader, &key)
         {
-            spawner.spawns.push(SpawnShare { what, weight: 1 });
+            spawner.spawns.push(SpawnShare::of(what));
             changed = true;
         }
     });
     changed
 }
 
-/// What a preview of `spawner` stands in `area` and where, rolled from `seed`.
+/// What a preview of `spawner` stands in `area` and where, rolled from `seed` among the shares
+/// `holds` says the sky has now, each as likely as its weight.
 pub(crate) fn preview_places(
     area: &area::Area,
     spawner: &Spawner,
     seed: u64,
+    holds: impl Fn(&SpawnShare) -> bool,
 ) -> Vec<(Spawns, Pos<Meters>)> {
     let mut rng = Rng::new(
         seed.wrapping_mul(0x9E37_79B9_7F4A_7C15)
@@ -269,7 +302,10 @@ pub(crate) fn preview_places(
     );
     (0..spawner.count)
         .filter_map(|_| {
-            let what = spawner.draw(&mut rng);
+            let what = spawner
+                .draw(&mut rng, |share| f32::from(u8::from(holds(share))))?
+                .of(spawner)
+                .what;
             let mesh = match what {
                 Spawns::Npc { .. } => area.mesh_for(true, false),
                 Spawns::Resource { .. } => area.mesh_for(false, false),

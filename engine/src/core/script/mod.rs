@@ -195,6 +195,9 @@ pub trait TextDef<V: Vocabulary> {
 pub trait QueryDef<V: Vocabulary> {
     fn value_type(&self, cx: &Compiler<V>) -> ValueType;
     fn reads_subject(&self) -> bool;
+    /// Whether every world of the game answers the query alike: it reads no actor, and nothing
+    /// a server knows that its clients don't.
+    fn is_shared(&self) -> bool;
     fn compile<'c>(&'c self, cx: &mut Compiler<'c, V>) -> Result<Eval, ScriptFault>;
 }
 

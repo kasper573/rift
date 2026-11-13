@@ -1,6 +1,9 @@
 use engine::core::content::ContentNames;
 use engine::core::script::{Expr, ExprKind, ValueType};
-use engine::systems::script::{Condition, RiftQueryKind, condition as script_condition};
+use engine::systems::GameSettings;
+use engine::systems::script::{
+    Condition, RiftQuery, RiftQueryKind, SkyCondition, condition as script_condition,
+};
 use serde_json::Value;
 use strum::VariantArray;
 use ui::chip;
@@ -13,6 +16,7 @@ use ui::paint;
 use ui::sheet;
 use ui::theme;
 
+use crate::day;
 use crate::forms::{self, FormChange, FormCx};
 use crate::schema::{self, SchemaVariant};
 use ui::input::InputField;
@@ -27,6 +31,7 @@ enum QueryGroup {
     Actors,
     Ground,
     Skill,
+    Sky,
 }
 
 impl QueryGroup {
@@ -52,10 +57,9 @@ impl QueryGroup {
             | RiftQueryKind::TaskDone
             | RiftQueryKind::QuestResetsIn => QueryGroup::Quests,
             RiftQueryKind::Memory | RiftQueryKind::SetWithin => QueryGroup::Memories,
-            RiftQueryKind::Inside
-            | RiftQueryKind::InArea
-            | RiftQueryKind::KnowsArea
-            | RiftQueryKind::Rain => QueryGroup::Places,
+            RiftQueryKind::Inside | RiftQueryKind::InArea | RiftQueryKind::KnowsArea => {
+                QueryGroup::Places
+            }
             RiftQueryKind::Nearest
             | RiftQueryKind::Count
             | RiftQueryKind::Distance
@@ -71,6 +75,12 @@ impl QueryGroup {
             RiftQueryKind::SkillTargets | RiftQueryKind::SkillArea | RiftQueryKind::AimedPoint => {
                 QueryGroup::Skill
             }
+            RiftQueryKind::Hour
+            | RiftQueryKind::During
+            | RiftQueryKind::TimeShare
+            | RiftQueryKind::Rain
+            | RiftQueryKind::Wind
+            | RiftQueryKind::Clouds => QueryGroup::Sky,
         }
     }
 
@@ -84,6 +94,7 @@ impl QueryGroup {
             QueryGroup::Actors => "Actors",
             QueryGroup::Ground => "Ground",
             QueryGroup::Skill => "The skill",
+            QueryGroup::Sky => "The sky",
         }
     }
 }
@@ -219,6 +230,43 @@ pub fn edit(ui: &mut Ui, cx: &mut FormCx, condition: &mut Condition, path: &str)
     changed
 }
 
+/// A condition of the sky alone, clicked together from the queries every world answers alike,
+/// over a strip of how much it holds through a day.
+pub fn edit_sky(ui: &mut Ui, cx: &mut FormCx, when: &mut SkyCondition, path: &str) -> FormChange {
+    let palette = Palette::of(|query| QueryGroup::of(query) == QueryGroup::Sky);
+    let mut condition = when.condition().clone();
+    let mut changed = FormChange::default();
+    ui.vertical(|ui| {
+        ui.set_width(ui.available_width());
+        ui.spacing_mut().item_spacing = egui::vec2(4.0, 4.0);
+        ui.horizontal_wrapped(|ui| {
+            changed = block(ui, cx, &palette, &mut condition, path, Slot::Any);
+        });
+        if changed.is_some() {
+            *when = SkyCondition::from(condition);
+        }
+        day::strip(ui, cx, when);
+    });
+    changed
+}
+
+/// A condition of the sky to begin a `when` from: during the first of the game's times of day,
+/// or one that always holds in a game without any.
+pub fn fresh_sky(cx: &FormCx) -> SkyCondition {
+    let first = cx
+        .content
+        .as_ref()
+        .and_then(|content| content.try_built::<GameSettings>())
+        .and_then(|settings| settings.daylight.as_ref())
+        .and_then(|cycle| cycle.times.first());
+    SkyCondition::from(match first {
+        Some(time) => Expr::Query(RiftQuery::During {
+            time: time.name.clone(),
+        }),
+        None => Expr::Bool(true),
+    })
+}
+
 /// The queries a block may be, as the schema of a condition states them.
 struct Palette {
     root: &'static Value,
@@ -227,12 +275,17 @@ struct Palette {
 
 impl Palette {
     fn new() -> Palette {
+        Palette::of(|_| true)
+    }
+
+    /// The queries `offered` lets a block be.
+    fn of(offered: impl Fn(RiftQueryKind) -> bool) -> Palette {
         let root = schema::of_type::<Condition>();
         Palette {
             root,
             queries: schema::tagged_variants(root, root)
                 .into_iter()
-                .filter(|variant| variant.tag.parse::<RiftQueryKind>().is_ok())
+                .filter(|variant| variant.tag.parse::<RiftQueryKind>().is_ok_and(&offered))
                 .collect(),
         }
     }
@@ -794,7 +847,9 @@ pub fn summary(names: &impl ContentNames, condition: &Condition) -> String {
             Expr::Int(number) => out.push_str(&number.to_string()),
             Expr::Num(number) => out.push_str(&number.to_string()),
             Expr::Text(text) => out.push_str(&format!("{text:?}")),
-            Expr::Query(_) => out.push_str(&script_condition::describe(names, condition)),
+            Expr::Query(_) => {
+                out.push_str(&script_condition::describe(names, condition).to_string());
+            }
             binary => {
                 let shown = sign(binary.kind()).unwrap_or("?");
                 let children = binary.children();

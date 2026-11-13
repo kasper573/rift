@@ -111,7 +111,7 @@ pub struct ChoiceView {
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 pub enum ChoiceChip {
-    Needs { what: String, met: bool },
+    Needs { what: condition::Wording, met: bool },
     Pays { item: ItemId, count: u32, have: u32 },
     Gets { item: ItemId, count: u32 },
 }
@@ -368,6 +368,17 @@ pub fn counterparts<'a>(
 ) -> Vec<Entity> {
     sessions
         .flat_map(|(_, session)| session.with.into_iter().chain(session.bystanders.clone()))
+        .collect()
+}
+
+/// The players whose conversation is with `whom`.
+pub fn talking_with<'a>(
+    sessions: impl Iterator<Item = (Entity, &'a ConversationSession)>,
+    whom: Entity,
+) -> Vec<Entity> {
+    sessions
+        .filter(|(_, session)| session.with == Some(whom))
+        .map(|(player, _)| player)
         .collect()
 }
 

@@ -61,6 +61,8 @@ pub struct TreeRow {
     pub name: String,
     /// Read after the name in its own colour, such as a content file's type.
     pub suffix: Option<(String, Color32)>,
+    /// A mark after the name in its own colour, such as the clock of what follows the hour.
+    pub mark: Option<(Mark, Color32)>,
     /// Read at the right end, such as a folder's count.
     pub detail: String,
     /// Greyed: a folder only shown for what it holds, or a row that isn't there yet.
@@ -671,6 +673,14 @@ fn name_label(ui: &mut Ui, row: &TreeRow, width: f32) {
             suffix,
             0.0,
             egui::TextFormat::simple(FontId::monospace(13.0), color),
+        );
+    }
+    if let Some((mark, color)) = row.mark {
+        let icon = mark.icon();
+        job.append(
+            icon.glyph,
+            6.0,
+            egui::TextFormat::simple(FontId::new(12.0, icon.weight.family()), color),
         );
     }
     let spoken = row.spoken.clone().unwrap_or_else(|| row.name.clone());

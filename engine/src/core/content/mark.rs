@@ -36,6 +36,8 @@ pub enum SchemaMark {
     Condition,
     /// A whole number counting something.
     Count,
+    /// The times a day is divided into, which begin and end at one another.
+    DayTimes,
     /// The arrow a flow takes when its step fails.
     Fails,
     /// A map whose keys are fixed: none is added, removed or renamed.
@@ -62,6 +64,8 @@ pub enum SchemaMark {
     Rect,
     /// The name of one of a skeleton's regions.
     Region,
+    /// A script's condition that reads the sky alone.
+    SkyCondition,
     /// The name of one of a skeleton's slots.
     Slot,
     /// A run of styled text.
@@ -70,6 +74,8 @@ pub enum SchemaMark {
     System,
     /// A reference to a file of the table it holds.
     Table,
+    /// The name of one of the game's times of day.
+    TimeOfDay,
     /// The name of one of a skeleton's tints.
     Tint,
     /// The unit of a number, as it holds it.

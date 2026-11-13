@@ -47,7 +47,7 @@ use engine::core::render::world::plumb::Plumb;
 use engine::core::render::world::rig_clip;
 use engine::core::render::world::sky::Daylight;
 use engine::core::render::{CameraFocus, CameraRig, Look};
-use engine::core::units::{Degrees, Meters, Radians, Seconds};
+use engine::core::units::{DayHours, Degrees, HourOfDay, Meters, Radians, Seconds};
 use engine::core::vfx::rain::{RainField, Shelter};
 use engine::core::vfx::render::VfxMaterialsPlugin;
 use engine::systems::GameSettings;
@@ -95,7 +95,7 @@ pub struct Shot {
     pub view: ViewSpec,
     /// The hour the area stands at, its light as authored when unset.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub hour: Option<f32>,
+    pub hour: Option<HourOfDay>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub film: Option<Film>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
@@ -147,7 +147,7 @@ pub struct CameraShot {
 #[derive(Serialize, Deserialize, Clone, Copy)]
 #[serde(deny_unknown_fields)]
 pub struct Film {
-    pub hours: f32,
+    pub hours: DayHours,
     pub frames: u32,
 }
 
@@ -729,8 +729,8 @@ fn step(world: &mut World) {
                     return;
                 }
                 let start = taking.shot.hour.expect("a filmed shot stands at an hour");
-                let hour = start + film.hours * taking.frame as f32 / film.frames as f32;
-                world.insert_resource(Daylight::Hour(hour.rem_euclid(24.0)));
+                let turned = film.hours.0 * taking.frame as f32 / film.frames as f32;
+                world.insert_resource(Daylight::Hour(HourOfDay::wrapped(start.0 + turned)));
                 taking.stage = Stage::Settling(SETTLE - TURNING);
             }
         }
