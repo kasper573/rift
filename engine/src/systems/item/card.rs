@@ -316,14 +316,14 @@ fn grants(ui: &mut Ui, world: &mut World, content: &Content, item: ItemId) {
         let response = response.interact(egui::Sense::click_and_drag());
         if map::drag_started(world, InputAction::CarryItem, &response) {
             drag::carry(ui.ctx(), Carried::Skill(granted));
-        } else if map::clicked(world, InputAction::PinToHotbar, &response) {
+        } else if map::clicked(world, InputAction::PinToBar, &response) {
             skill::bar::pin(world, skill::HotbarEntry::Skill(granted));
         }
         let hint = StyledLine::new(vec![
             input(InputAction::CarryItem),
             TextPiece::text(" carries it to a slot · "),
-            input(InputAction::PinToHotbar),
-            TextPiece::text(" puts it on the hotbar"),
+            input(InputAction::PinToBar),
+            TextPiece::text(" puts it on the bar"),
         ]);
         skill::card::tooltip(
             &response,

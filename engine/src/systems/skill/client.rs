@@ -7,7 +7,7 @@ use crate::systems::input::map::InputAction;
 use crate::systems::item::widget::{SlotAction, slot_action};
 use crate::systems::screen::ClientScreen;
 
-/// The client's side of skills: the tree window's plan, the hotbar's keys and drops, aiming, the
+/// The client's side of skills: the tree window's plan, the bar's keys and drops, aiming, the
 /// pinned card and the reset question.
 pub struct SkillClientPlugin;
 
@@ -52,10 +52,10 @@ impl Plugin for SkillClientPlugin {
         slot_action(
             app,
             SlotAction {
-                action: InputAction::PinToHotbar,
+                action: InputAction::PinToBar,
                 active: |_| true,
                 act: bar::pin_bag_slot,
-                verb: "put it on the hotbar",
+                verb: "put it on the bar",
             },
         );
     }

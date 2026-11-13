@@ -20,6 +20,7 @@ pub const RADIUS: f32 = 4.0;
 pub const SLOT: f32 = 38.0;
 pub const SLOT_ICON: f32 = 32.0;
 const PILL_HEIGHT: f32 = 20.0;
+const NOTICE_PADDING: f32 = 12.0;
 const BEAD: f32 = 6.0;
 
 pub fn button(ui: &mut Ui, text: impl Into<WidgetText>) -> Response {
@@ -250,6 +251,39 @@ pub fn pill_with<R>(ui: &mut Ui, pill: Pill, add: impl FnOnce(&mut Ui) -> R) -> 
             })
             .inner
         })
+}
+
+pub fn notice(ui: &mut Ui, text: &str) -> Response {
+    let font = TextRole::Section.font_id();
+    let galley = ui
+        .painter()
+        .layout_no_wrap(text.to_owned(), font, ink::OCHRE);
+    let size = Vec2::new(galley.size().x + 2.0 * NOTICE_PADDING, PILL_HEIGHT);
+    let (rect, response) = ui.allocate_exact_size(size, Sense::click());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), text));
+    let radius = CornerRadius::same((PILL_HEIGHT / 2.0) as u8);
+    let fill = if response.hovered() {
+        ink::LIGHT
+    } else {
+        ink::CREAM
+    };
+    let painter = ui.painter();
+    painter.add(crate::slip::SHADOW.as_shape(rect, radius));
+    painter.rect(
+        rect,
+        radius,
+        fill,
+        Stroke::new(1.5, ink::OCHRE),
+        StrokeKind::Inside,
+    );
+    painter.galley(
+        Align2::CENTER_CENTER
+            .anchor_size(rect.center(), galley.size())
+            .min,
+        galley,
+        ink::OCHRE,
+    );
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
 
 pub fn key_hint(ui: &mut Ui, keys: &str) -> Response {

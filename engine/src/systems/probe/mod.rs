@@ -351,7 +351,7 @@ pub struct ProbeSnapshot {
     pub skill_card: Option<ProbeSkillCard>,
     pub bag: Vec<ProbeStack>,
     pub quests: ProbeQuests,
-    pub hotbar: Vec<SlotReport>,
+    pub bar_slots: Vec<SlotReport>,
     pub statuses: Vec<ProbeStatus>,
     pub vfx: Vec<ProbeVfx>,
     pub basic_attack: Option<SkillId>,
@@ -1272,7 +1272,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
             })
             .unwrap_or_default(),
         vfx: vfx_seen(world),
-        hotbar: skill::bar::report(world),
+        bar_slots: skill::bar::report(world),
         basic_attack: me
             .and_then(|me| world.get::<skill::BasicAttack>(me))
             .and_then(|slot| slot.0),

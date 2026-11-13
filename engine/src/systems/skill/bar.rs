@@ -23,7 +23,7 @@ use crate::core::text::{self, StyledLine, TextLook, TextPiece};
 use crate::core::time;
 use crate::core::units::Seconds;
 use crate::systems::equipment::{self, EquipmentPlace, UnequipRequest};
-use crate::systems::hud::{self, Carried, Confirm, HudWidget};
+use crate::systems::hud::{self, Carried, Confirm};
 use crate::systems::input::map::{
     self, InputAction, InputBinding, InputFixture, InputMap, KeyGesture, KeyModifiers, input,
 };
@@ -34,83 +34,112 @@ use crate::systems::item::{Inventory, ItemId, ItemKind, UseItemRequest, card as 
 use crate::systems::player::session;
 use crate::systems::reach::Engaged;
 use crate::systems::script::condition;
-use crate::systems::settings::{HotbarKey, HotbarShape, UserSettings};
+use crate::systems::settings::{BarKey, BarShape, UserSettings};
 use crate::systems::skill::{CastAim, aim};
 use crate::systems::{GameSettings, notification, stat};
 use ui::paint;
 use ui::panel::{self, GripCorner};
 
-pub const HOTBAR_KEYS: [InputAction; 9] = [
-    InputAction::Hotbar1,
-    InputAction::Hotbar2,
-    InputAction::Hotbar3,
-    InputAction::Hotbar4,
-    InputAction::Hotbar5,
-    InputAction::Hotbar6,
-    InputAction::Hotbar7,
-    InputAction::Hotbar8,
-    InputAction::Hotbar9,
+pub const SLOT_KEYS: [InputAction; 9] = [
+    InputAction::BarSlot1,
+    InputAction::BarSlot2,
+    InputAction::BarSlot3,
+    InputAction::BarSlot4,
+    InputAction::BarSlot5,
+    InputAction::BarSlot6,
+    InputAction::BarSlot7,
+    InputAction::BarSlot8,
+    InputAction::BarSlot9,
 ];
 
-pub const HOTBAR: &str = "hotbar";
 const GAP: f32 = 4.0;
 const PITCH: f32 = SLOT + GAP;
 const BASIC_ATTACK_GAP: f32 = 10.0;
 const GROOVE_INSET: f32 = 4.0;
-const BOTTOM: f32 = 8.0;
 const PRESS_MARK_SECONDS: f32 = 0.6;
+const NOTICE_GAP: f32 = 6.0;
 
-pub struct HotbarWidget;
+pub struct BarSlots {
+    shape: BarShape,
+}
 
-impl HudWidget for HotbarWidget {
-    fn fallback(&self, screen: Rect) -> Pos2 {
-        let width = SLOT + BASIC_ATTACK_GAP + HotbarShape::DEFAULT.columns as f32 * PITCH - GAP
-            + slip::PADDING.sum().x;
-        Pos2::new(
-            screen.center().x - width / 2.0,
-            screen.bottom() - (SLOT + slip::PADDING.sum().y) - BOTTOM,
-        )
+impl BarSlots {
+    pub fn shown(world: &mut World, gui: &egui::Context) -> BarSlots {
+        BarSlots {
+            shape: shown_shape(world, gui),
+        }
     }
-    fn show(&self, ui: &mut Ui, world: &mut World) {
-        let shape = shown_shape(world, ui.ctx());
+
+    pub fn resting_size() -> Vec2 {
+        size_of(BarShape::DEFAULT)
+    }
+
+    pub fn size(&self) -> Vec2 {
+        size_of(self.shape)
+    }
+
+    pub fn show(&self, ui: &mut Ui, world: &mut World) {
         let slots = slots(world);
-        let framed = slip::show(ui, |ui| {
-            ui.horizontal_top(|ui| {
-                ui.spacing_mut().item_spacing = Vec2::splat(GAP);
-                basic_attack_slot(ui, world);
-                let (between, _) =
-                    ui.allocate_exact_size(Vec2::new(BASIC_ATTACK_GAP - GAP, SLOT), Sense::hover());
-                let inset = Vec2::new(0.0, GROOVE_INSET);
-                sheet::groove(
-                    ui.painter(),
-                    between.center_top() + inset,
-                    between.center_bottom() - inset,
-                );
-                egui::Grid::new("hotbar grid")
-                    .spacing(Vec2::splat(GAP))
-                    .show(ui, |ui| {
-                        for row in 0..shape.rows {
-                            for column in 0..shape.columns {
-                                let slot = row * shape.columns + column;
-                                if slot < slots {
-                                    hotbar_slot(ui, world, HotbarSlot(slot));
-                                }
+        ui.horizontal_top(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::splat(GAP);
+            basic_attack_slot(ui, world);
+            let (between, _) =
+                ui.allocate_exact_size(Vec2::new(BASIC_ATTACK_GAP - GAP, SLOT), Sense::hover());
+            let inset = Vec2::new(0.0, GROOVE_INSET);
+            sheet::groove(
+                ui.painter(),
+                between.center_top() + inset,
+                between.center_bottom() - inset,
+            );
+            egui::Grid::new("bar slots")
+                .spacing(Vec2::splat(GAP))
+                .min_col_width(SLOT)
+                .min_row_height(SLOT)
+                .show(ui, |ui| {
+                    for row in 0..self.shape.rows {
+                        for column in 0..self.shape.columns {
+                            let slot = row * self.shape.columns + column;
+                            if slot < slots {
+                                bar_slot(ui, world, HotbarSlot(slot));
                             }
-                            ui.end_row();
                         }
-                    });
-            });
+                        ui.end_row();
+                    }
+                });
         });
-        let outer = framed.response.rect;
-        let corner = if outer.max.y + PITCH > ui.ctx().content_rect().bottom() {
-            GripCorner::TopRight
-        } else {
-            GripCorner::BottomRight
-        };
-        let grip = panel::grip(ui, ui.id().with("hotbar grip"), outer, corner);
-        resize(world, ui, &grip, outer, corner);
-        rebind_panel(ui, world, outer);
     }
+}
+
+pub fn reshape_grip(ui: &mut Ui, world: &mut World, paper: Rect) {
+    let corner = if paper.max.y + PITCH > ui.ctx().content_rect().bottom() {
+        GripCorner::TopRight
+    } else {
+        GripCorner::BottomRight
+    };
+    let grip = panel::grip(ui, ui.id().with("bar grip"), paper, corner);
+    resize(world, ui, &grip, paper, corner);
+}
+
+pub fn rebind_notice(ui: &mut Ui, world: &World, foot: Pos2) {
+    let Some(slot) = world.resource::<BarState>().rebinding else {
+        return;
+    };
+    let line = StyledLine::new(vec![
+        TextPiece::text(format!("Press a key for slot {} · ", slot.number())),
+        input(InputAction::Dismiss),
+        TextPiece::text(" cancels"),
+    ]);
+    let look = TextLook::new(TextRole::Small.size(), ink::INK);
+    let size = text::measure(ui.ctx(), world, &line, look, f32::INFINITY) + slip::PADDING.sum();
+    let rect = Rect::from_min_size(
+        Pos2::new(foot.x - size.x / 2.0, foot.y - size.y - NOTICE_GAP),
+        size,
+    );
+    slip::paint(ui.painter(), rect);
+    let inner = rect - slip::PADDING;
+    ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
+        text::show(ui, world, &line, look, None);
+    });
 }
 
 #[derive(Resource, Default)]
@@ -124,7 +153,7 @@ pub struct BarState {
 /// How a press on a slot went: what it held was used, or the press was refused, by the slot's own
 /// state or by what the use ran into.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Copy, Debug, PartialEq, Eq)]
-pub enum HotbarPress {
+pub enum SlotPress {
     Used,
     Denied,
 }
@@ -140,7 +169,7 @@ pub struct SlotReport {
     /// Waiting for the next key pressed to become its key.
     pub rebinding: bool,
     /// How the last press on the slot went, if it was ever pressed.
-    pub pressed: Option<HotbarPress>,
+    pub pressed: Option<SlotPress>,
     /// Its skill is armed and waits on a target.
     pub primed: bool,
 }
@@ -159,7 +188,7 @@ pub fn pin(world: &mut World, entry: HotbarEntry) {
             world.write_message(AssignHotbarRequest { slot, entry });
             InterfaceSound::UiPick.play(world);
         }
-        None => notification::local_error(world, "No free slot on the hotbar"),
+        None => notification::local_error(world, "No free slot on the bar"),
     }
 }
 
@@ -207,7 +236,7 @@ pub fn cancel_rebind(world: &mut World) -> bool {
 
 /// Uses what a slot holds: a skill is cast or aimed, an item is used from the bag. A slot drawn as
 /// cooling or blocked counts its press as denied whatever the use comes to.
-pub fn fire(world: &mut World, entry: HotbarEntry) -> HotbarPress {
+pub fn fire(world: &mut World, entry: HotbarEntry) -> SlotPress {
     let ready = matches!(SlotView::of(world, entry).fill, SlotFill::Ready);
     let used = match entry {
         HotbarEntry::Empty => false,
@@ -215,9 +244,9 @@ pub fn fire(world: &mut World, entry: HotbarEntry) -> HotbarPress {
         HotbarEntry::Item(item) => use_item(world, item),
     };
     if used && ready {
-        HotbarPress::Used
+        SlotPress::Used
     } else {
-        HotbarPress::Denied
+        SlotPress::Denied
     }
 }
 
@@ -227,7 +256,7 @@ pub fn drop_off_bar(world: &mut World) {
     let Some(gui) = gui::context(world) else {
         return;
     };
-    let Some(Carried::HotbarEntry { from, entry }) = drag::carried::<Carried>(&gui) else {
+    let Some(Carried::BarEntry { from, entry }) = drag::carried::<Carried>(&gui) else {
         return;
     };
     if !gui.input(|input| input.pointer.any_released()) {
@@ -238,7 +267,7 @@ pub fn drop_off_bar(world: &mut World) {
     hud::confirm(
         world,
         Confirm {
-            title: format!("Take {name} off the hotbar?"),
+            title: format!("Take {name} off the bar?"),
             body: vec!["It stays in your tree or your bag; only the slot empties.".to_owned()],
             confirm: "Take off".to_owned(),
             cancel: "Keep".to_owned(),
@@ -293,13 +322,13 @@ pub fn entry_name(content: &Content, entry: HotbarEntry) -> String {
 
 #[derive(Clone, Copy)]
 struct Press {
-    outcome: HotbarPress,
+    outcome: SlotPress,
     since: Seconds,
 }
 
 #[derive(Clone, Copy)]
 struct Resizing {
-    from: HotbarShape,
+    from: BarShape,
     grab: Pos2,
     corner: GripCorner,
 }
@@ -427,7 +456,7 @@ fn skill_fill(world: &World, me: Entity, skill: SkillId, rank: Rank) -> SlotFill
     SlotFill::Ready
 }
 
-fn hotbar_slot(ui: &mut Ui, world: &mut World, index: HotbarSlot) {
+fn bar_slot(ui: &mut Ui, world: &mut World, index: HotbarSlot) {
     let content = world.resource::<Content>().clone();
     let entry = session::my_character(world)
         .and_then(|me| me.get::<Hotbar>())
@@ -435,7 +464,7 @@ fn hotbar_slot(ui: &mut Ui, world: &mut World, index: HotbarSlot) {
     let view = SlotView::of(world, entry);
     let rebinding = world.resource::<BarState>().rebinding == Some(index);
     let carried = drag::carried::<Carried>(ui.ctx());
-    let ghost = matches!(carried, Some(Carried::HotbarEntry { from, .. }) if from == index);
+    let ghost = matches!(carried, Some(Carried::BarEntry { from, .. }) if from == index);
     let look = SlotLook {
         icon: view.icon.as_ref(),
         count: view.count,
@@ -453,7 +482,7 @@ fn hotbar_slot(ui: &mut Ui, world: &mut World, index: HotbarSlot) {
         egui::WidgetInfo::labeled(
             egui::WidgetType::Button,
             true,
-            format!("Hotbar slot {}: {}", index.number(), view.name),
+            format!("Bar slot {}: {}", index.number(), view.name),
         )
     });
     overlay(ui, response.rect, view.fill);
@@ -480,7 +509,7 @@ fn hotbar_slot(ui: &mut Ui, world: &mut World, index: HotbarSlot) {
         );
     }
     take_drop(world, &response, index, entry);
-    if map::clicked(world, InputAction::PinToHotbar, &response) {
+    if map::clicked(world, InputAction::PinToBar, &response) {
         if entry != HotbarEntry::Empty {
             world.write_message(AssignHotbarRequest {
                 slot: index,
@@ -492,7 +521,7 @@ fn hotbar_slot(ui: &mut Ui, world: &mut World, index: HotbarSlot) {
     } else if map::drag_started(world, InputAction::CarryItem, &response)
         && entry != HotbarEntry::Empty
     {
-        drag::carry(ui.ctx(), Carried::HotbarEntry { from: index, entry });
+        drag::carry(ui.ctx(), Carried::BarEntry { from: index, entry });
     }
     let options = map::clicked(world, InputAction::SlotOptions, &response);
     menu::at_pointer(&response, options, |ui| {
@@ -573,7 +602,7 @@ fn basic_attack_slot(ui: &mut Ui, world: &mut World) {
             Some(refusal) => notification::local_error(world, refusal),
         }
     }
-    if map::clicked(world, InputAction::PinToHotbar, &response) {
+    if map::clicked(world, InputAction::PinToBar, &response) {
         if held.is_some() {
             world.write_message(AssignBasicAttackRequest {
                 pick: BasicAttackPick::Empty,
@@ -603,7 +632,7 @@ fn basic_attack_slot(ui: &mut Ui, world: &mut World) {
                 TextPiece::text(" on an enemy uses it · "),
                 input(InputAction::CarryItem),
                 TextPiece::text(" another basic attack here to swap it · "),
-                input(InputAction::PinToHotbar),
+                input(InputAction::PinToBar),
                 TextPiece::text(" or "),
                 input(InputAction::SlotOptions),
                 TextPiece::text(" clears it"),
@@ -622,13 +651,13 @@ fn basic_attack_slot(ui: &mut Ui, world: &mut World) {
 }
 
 /// What a drag over the basic attack slot would put there: a skill carried as itself or on a
-/// hotbar entry, or a carried item as the weapon whose attack it is.
+/// bar entry, or a carried item as the weapon whose attack it is.
 fn carried_pick(world: &World, carried: Carried) -> Option<BasicAttackPick> {
     match carried {
         Carried::Skill(skill) => Some(BasicAttackPick::Skill(skill)),
         Carried::BagSlot(slot) => bag_item(world, slot).map(BasicAttackPick::Weapon),
         Carried::Worn(slot) => worn_item(world, &slot).map(BasicAttackPick::Weapon),
-        Carried::HotbarEntry { entry, .. } => match entry {
+        Carried::BarEntry { entry, .. } => match entry {
             HotbarEntry::Skill(skill) => Some(BasicAttackPick::Skill(skill)),
             HotbarEntry::Item(item) => Some(BasicAttackPick::Weapon(item)),
             HotbarEntry::Empty => None,
@@ -680,7 +709,7 @@ fn take_drop(world: &mut World, response: &egui::Response, index: HotbarSlot, he
                 entry: HotbarEntry::Item(item),
             });
         }
-        Carried::HotbarEntry { from, entry } => {
+        Carried::BarEntry { from, entry } => {
             if from == index {
                 return;
             }
@@ -722,7 +751,7 @@ fn slot_tooltip(
     });
     let take_off = [
         TextPiece::text(" · "),
-        input(InputAction::PinToHotbar),
+        input(InputAction::PinToBar),
         TextPiece::text(" takes it off the bar"),
     ];
     match entry {
@@ -813,8 +842,8 @@ fn press_mark(ui: &Ui, world: &World, slot: HotbarSlot, rect: Rect) {
         return;
     }
     let color = match press.outcome {
-        HotbarPress::Used => ink::GOLD,
-        HotbarPress::Denied => ink::RUBRIC,
+        SlotPress::Used => ink::GOLD,
+        SlotPress::Denied => ink::RUBRIC,
     };
     ui.painter()
         .rect_stroke(rect, 3.0, Stroke::new(2.0, color), StrokeKind::Outside);
@@ -972,10 +1001,10 @@ enum SlotKey {
 }
 
 fn slot_key(settings: &UserSettings, slot: HotbarSlot) -> Option<SlotKey> {
-    match settings.hotbar_key(slot) {
-        HotbarKey::Default => HOTBAR_KEYS.get(slot.index()).copied().map(SlotKey::Action),
-        HotbarKey::Unbound => None,
-        HotbarKey::Custom(gesture) => Some(SlotKey::Gesture(gesture)),
+    match settings.bar_key(slot) {
+        BarKey::Default => SLOT_KEYS.get(slot.index()).copied().map(SlotKey::Action),
+        BarKey::Unbound => None,
+        BarKey::Custom(gesture) => Some(SlotKey::Gesture(gesture)),
     }
 }
 
@@ -997,7 +1026,7 @@ fn key_pressed(world: &World, slot: HotbarSlot) -> bool {
     match slot_key(world.resource::<UserSettings>(), slot) {
         Some(SlotKey::Action(action)) => map::just_pressed(world, action),
         Some(SlotKey::Gesture(gesture)) => {
-            scope::reads(world, HOTBAR_KEYS[0])
+            scope::reads(world, SLOT_KEYS[0])
                 && gesture.just_pressed(world.resource::<ButtonInput<KeyCode>>())
         }
         None => false,
@@ -1028,7 +1057,7 @@ fn capture(world: &mut World, slot: HotbarSlot) {
     let taken = InputAction::VARIANTS
         .iter()
         .copied()
-        .filter(|action| !HOTBAR_KEYS.contains(action))
+        .filter(|action| !SLOT_KEYS.contains(action))
         .find(|action| map.bindings(*action).contains(&InputBinding::Key(gesture)));
     if let Some(action) = taken {
         let input = InputFixture::Game.get(&content);
@@ -1057,9 +1086,9 @@ fn capture(world: &mut World, slot: HotbarSlot) {
         );
     let mut settings = world.resource_mut::<UserSettings>();
     if let Some(other) = holder {
-        settings.set_hotbar_key(other, HotbarKey::Unbound);
+        settings.set_bar_key(other, BarKey::Unbound);
     }
-    settings.set_hotbar_key(slot, HotbarKey::Custom(gesture));
+    settings.set_bar_key(slot, BarKey::Custom(gesture));
     if let Some(other) = holder {
         notification::local_error(
             world,
@@ -1075,30 +1104,8 @@ fn capture(world: &mut World, slot: HotbarSlot) {
     }
 }
 
-fn rebind_panel(ui: &mut Ui, world: &World, bar: Rect) {
-    let Some(slot) = world.resource::<BarState>().rebinding else {
-        return;
-    };
-    let line = StyledLine::new(vec![
-        TextPiece::text(format!("Press a key for slot {} · ", slot.number())),
-        input(InputAction::Dismiss),
-        TextPiece::text(" cancels"),
-    ]);
-    let look = TextLook::new(TextRole::Small.size(), ink::INK);
-    let size = text::measure(ui.ctx(), world, &line, look, f32::INFINITY) + slip::PADDING.sum();
-    let rect = Rect::from_min_size(
-        Pos2::new(bar.center().x - size.x / 2.0, bar.min.y - size.y - 6.0),
-        size,
-    );
-    slip::paint(ui.painter(), rect);
-    let inner = rect - slip::PADDING;
-    ui.scope_builder(egui::UiBuilder::new().max_rect(inner), |ui| {
-        text::show(ui, world, &line, look, None);
-    });
-}
-
 /// The shape drawn now: the saved one, or the one the grip is being dragged toward, in whole slots.
-fn shown_shape(world: &mut World, gui: &egui::Context) -> HotbarShape {
+fn shown_shape(world: &mut World, gui: &egui::Context) -> BarShape {
     let saved = shape(world);
     let Some(resizing) = world.resource::<BarState>().resizing else {
         return saved;
@@ -1110,7 +1117,7 @@ fn shown_shape(world: &mut World, gui: &egui::Context) -> HotbarShape {
             GripCorner::BottomRight => moved.y,
             GripCorner::TopRight => -moved.y,
         };
-        HotbarShape {
+        BarShape {
             columns: ((resizing.from.columns as f32 * PITCH + moved.x) / PITCH)
                 .round()
                 .max(1.0) as u32,
@@ -1123,7 +1130,7 @@ fn shown_shape(world: &mut World, gui: &egui::Context) -> HotbarShape {
     if !down {
         world.resource_mut::<BarState>().resizing = None;
         if shape != saved {
-            world.resource_mut::<UserSettings>().set_hotbar_shape(shape);
+            world.resource_mut::<UserSettings>().set_bar_shape(shape);
         }
     }
     shape
@@ -1144,6 +1151,13 @@ fn resize(world: &mut World, ui: &Ui, grip: &egui::Response, outer: Rect, corner
     }
 }
 
+fn size_of(shape: BarShape) -> Vec2 {
+    Vec2::new(
+        SLOT + BASIC_ATTACK_GAP + shape.columns as f32 * PITCH,
+        shape.rows as f32 * PITCH - GAP,
+    )
+}
+
 /// How many slots the game's hotbar has.
 fn slots(world: &World) -> u32 {
     world
@@ -1154,10 +1168,10 @@ fn slots(world: &World) -> u32 {
 }
 
 /// The bar as the player shaped it, as far as the game's hotbar fills it.
-fn shape(world: &World) -> HotbarShape {
+fn shape(world: &World) -> BarShape {
     world
         .resource::<UserSettings>()
-        .hotbar_shape()
+        .bar_shape()
         .within(slots(world))
 }
 

@@ -27,7 +27,7 @@ use crate::systems::input::map::{InputAction, InputMap};
 use crate::systems::item::Inventory;
 use crate::systems::player::{self, session};
 use crate::systems::screen::ClientScreen;
-use crate::systems::skill::{self, HotbarEntry, HotbarSlot, SkillId};
+use crate::systems::skill::{HotbarEntry, HotbarSlot, SkillId};
 use crate::systems::{equipment, quest};
 use ui::dialog;
 
@@ -65,6 +65,9 @@ impl Plugin for HudPlugin {
 
 pub trait HudWidget: Send + Sync {
     fn fallback(&self, screen: Rect) -> Pos2;
+    fn hidden(&self, _world: &World) -> bool {
+        false
+    }
     fn show(&self, ui: &mut Ui, world: &mut World);
 }
 
@@ -86,7 +89,7 @@ pub(crate) enum Carried {
     Skill(SkillId),
     BagSlot(u32),
     Worn(equipment::EquipmentPlace),
-    HotbarEntry {
+    BarEntry {
         from: HotbarSlot,
         entry: HotbarEntry,
     },
@@ -170,10 +173,9 @@ pub(crate) fn file_icon(ui: &mut Ui, world: &mut World, file: &str, size: f32) -
 }
 
 static WIDGETS: &[(&str, &dyn HudWidget)] = &[
-    ("character", &player::widget::CharacterWidget),
     ("compass", &compass::CompassWidget),
     ("quests", &quest::tracker::QuestTrackerWidget),
-    (skill::bar::HOTBAR, &skill::bar::HotbarWidget),
+    (player::bar::PLAYER_BAR, &player::bar::PlayerBarWidget),
 ];
 
 #[derive(Resource, Default)]
@@ -224,6 +226,9 @@ fn draw_hud(world: &mut World) {
     };
     let screen = gui.content_rect();
     for &(name, shown) in WIDGETS {
+        if shown.hidden(world) {
+            continue;
+        }
         widget(world, &gui, name, shown.fallback(screen), |ui, world| {
             shown.show(ui, world);
         });
@@ -333,7 +338,7 @@ fn draw_carried(world: &mut World) {
             };
             item.get(&content).icon.clone()
         }
-        Carried::HotbarEntry { entry, .. } => match entry {
+        Carried::BarEntry { entry, .. } => match entry {
             HotbarEntry::Skill(skill) => skill.get(&content).icon.clone(),
             HotbarEntry::Item(item) => item.get(&content).icon.clone(),
             HotbarEntry::Empty => return,

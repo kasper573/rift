@@ -237,7 +237,7 @@ fn worn_slot(
                 input(InputAction::UseItem),
                 TextPiece::text(" to take it off · "),
                 input(InputAction::CarryItem),
-                TextPiece::text(" onto the hotbar"),
+                TextPiece::text(" onto the bar"),
             ])
             .collect(),
     );

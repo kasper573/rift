@@ -71,16 +71,16 @@ pub enum InputAction {
     Choice7,
     Choice8,
     Choice9,
-    Hotbar1,
-    Hotbar2,
-    Hotbar3,
-    Hotbar4,
-    Hotbar5,
-    Hotbar6,
-    Hotbar7,
-    Hotbar8,
-    Hotbar9,
-    PinToHotbar,
+    BarSlot1,
+    BarSlot2,
+    BarSlot3,
+    BarSlot4,
+    BarSlot5,
+    BarSlot6,
+    BarSlot7,
+    BarSlot8,
+    BarSlot9,
+    PinToBar,
     RaiseRank,
     LowerRank,
     InspectSkill,
@@ -153,7 +153,7 @@ impl InputAction {
             | InputAction::SellItem
             | InputAction::PlaceItem
             | InputAction::PlaceStack
-            | InputAction::PinToHotbar
+            | InputAction::PinToBar
             | InputAction::RaiseRank
             | InputAction::LowerRank
             | InputAction::InspectSkill

@@ -234,7 +234,7 @@ fn granted_skill(ui: &mut Ui, world: &mut World, skill: SkillId) {
         if !passive {
             drag::carry(ui.ctx(), Carried::Skill(skill));
         }
-    } else if map::clicked(world, InputAction::PinToHotbar, &response) && !passive {
+    } else if map::clicked(world, InputAction::PinToBar, &response) && !passive {
         bar::pin(world, super::HotbarEntry::Skill(skill));
     } else if map::clicked(world, InputAction::InspectSkill, &response) {
         card::open(world, skill, Some(response.rect));
@@ -243,8 +243,8 @@ fn granted_skill(ui: &mut Ui, world: &mut World, skill: SkillId) {
         TextPiece::text("Known while the gear is worn · "),
         input(InputAction::InspectSkill),
         TextPiece::text(" shows its card · "),
-        input(InputAction::PinToHotbar),
-        TextPiece::text(" puts it on the hotbar · "),
+        input(InputAction::PinToBar),
+        TextPiece::text(" puts it on the bar · "),
         input(InputAction::CarryItem),
         TextPiece::text(" carries it to a slot"),
     ]);
@@ -402,7 +402,7 @@ fn node_input(
         if held > Rank::NONE && !passive {
             drag::carry(ui.ctx(), Carried::Skill(skill));
         }
-    } else if map::clicked(world, InputAction::PinToHotbar, response) {
+    } else if map::clicked(world, InputAction::PinToBar, response) {
         if passive {
             let refusal = super::unslotted(skill.get(world.resource::<Content>()));
             notification::local_error(world, refusal);
@@ -425,8 +425,8 @@ fn node_input(
         TextPiece::text(" takes one back · "),
         input(InputAction::InspectSkill),
         TextPiece::text(" shows its card · "),
-        input(InputAction::PinToHotbar),
-        TextPiece::text(" puts it on the hotbar · "),
+        input(InputAction::PinToBar),
+        TextPiece::text(" puts it on the bar · "),
         input(InputAction::CarryItem),
         TextPiece::text(" carries it to a slot"),
     ]);

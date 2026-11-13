@@ -60,15 +60,15 @@ impl InputAction {
             | InputAction::OpenQuests
             | InputAction::OpenHistory
             | InputAction::OpenSettings
-            | InputAction::Hotbar1
-            | InputAction::Hotbar2
-            | InputAction::Hotbar3
-            | InputAction::Hotbar4
-            | InputAction::Hotbar5
-            | InputAction::Hotbar6
-            | InputAction::Hotbar7
-            | InputAction::Hotbar8
-            | InputAction::Hotbar9
+            | InputAction::BarSlot1
+            | InputAction::BarSlot2
+            | InputAction::BarSlot3
+            | InputAction::BarSlot4
+            | InputAction::BarSlot5
+            | InputAction::BarSlot6
+            | InputAction::BarSlot7
+            | InputAction::BarSlot8
+            | InputAction::BarSlot9
             | InputAction::FocusChat => &[Menu, World],
             InputAction::Dismiss
             | InputAction::Interact
@@ -82,7 +82,7 @@ impl InputAction {
             | InputAction::PlaceItem
             | InputAction::PlaceStack
             | InputAction::CarryItem
-            | InputAction::PinToHotbar
+            | InputAction::PinToBar
             | InputAction::RaiseRank
             | InputAction::LowerRank
             | InputAction::InspectSkill

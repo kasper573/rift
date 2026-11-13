@@ -29,6 +29,7 @@ pub mod slip;
 pub mod suggest;
 pub mod theme;
 pub mod tree;
+pub mod vial;
 pub mod wheel;
 pub mod words;
 

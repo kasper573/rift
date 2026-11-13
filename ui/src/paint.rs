@@ -102,6 +102,28 @@ pub fn progress_line(ui: &mut Ui, size: Vec2, share: f32, color: Color32) {
     );
 }
 
+pub fn ticked_bar(painter: &Painter, rect: Rect, share: f32, color: Color32, parts: u32) {
+    painter.rect_filled(rect, 2.0, ink::ink_wash(0.2));
+    let filled = Rect::from_min_max(
+        rect.min,
+        Pos2::new(
+            rect.min.x + rect.width() * share.clamp(0.0, 1.0),
+            rect.max.y,
+        ),
+    );
+    painter.rect_filled(filled, 2.0, color);
+    for part in 1..parts {
+        let x = rect.min.x + rect.width() * part as f32 / parts as f32;
+        painter.vline(x, rect.y_range(), Stroke::new(1.0, ink::ink_wash(0.5)));
+    }
+    painter.rect_stroke(
+        rect,
+        2.0,
+        Stroke::new(1.0, ink::INK2),
+        egui::StrokeKind::Inside,
+    );
+}
+
 /// The size `text` lays out to on one line in `font`.
 pub fn text_size(gui: &Context, text: &str, font: FontId) -> Vec2 {
     gui.fonts_mut(|fonts| {

@@ -37,8 +37,7 @@ pub fn ask(world: &mut World) {
             title: "Reset your skills?".to_owned(),
             body: vec![
                 asked.describe(),
-                "Hotbar slots that held them stay, dimmed, until they are learned again."
-                    .to_owned(),
+                "Bar slots that held them stay, dimmed, until they are learned again.".to_owned(),
             ],
             confirm: "Reset".to_owned(),
             cancel: "Keep".to_owned(),

@@ -70,22 +70,22 @@ pub(crate) enum Placed {
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct HotbarShape {
+pub(crate) struct BarShape {
     pub columns: u32,
     pub rows: u32,
 }
 
-impl HotbarShape {
-    pub(crate) const DEFAULT: HotbarShape = HotbarShape {
+impl BarShape {
+    pub(crate) const DEFAULT: BarShape = BarShape {
         columns: 9,
         rows: 1,
     };
 
     /// The shape as far as a bar of `slots` fills it: no wider than it has slots, and no more rows
     /// than they fill.
-    pub(crate) fn within(self, slots: u32) -> HotbarShape {
+    pub(crate) fn within(self, slots: u32) -> BarShape {
         let columns = self.columns.clamp(1, slots.max(1));
-        HotbarShape {
+        BarShape {
             columns,
             rows: self.rows.clamp(1, slots.max(1).div_ceil(columns)),
         }
@@ -96,9 +96,9 @@ impl HotbarShape {
     }
 }
 
-/// What key a hotbar slot answers to: the game's own for the slot, none, or one the player chose.
+/// What key a bar slot answers to: the game's own for the slot, none, or one the player chose.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum HotbarKey {
+pub(crate) enum BarKey {
     Default,
     Unbound,
     Custom(KeyGesture),
@@ -445,27 +445,27 @@ impl UserSettings {
         WindowPx(size.0.clamp(CHAT_TEXT_SIZES.1.0, CHAT_TEXT_SIZES.2.0))
     }
 
-    pub(crate) fn hotbar_shape(&self) -> HotbarShape {
-        self.ui.hotbar.shape.unwrap_or(HotbarShape::DEFAULT)
+    pub(crate) fn bar_shape(&self) -> BarShape {
+        self.ui.player_bar.shape.unwrap_or(BarShape::DEFAULT)
     }
 
-    pub(crate) fn set_hotbar_shape(&mut self, shape: HotbarShape) {
-        self.ui.hotbar.shape = Some(shape);
+    pub(crate) fn set_bar_shape(&mut self, shape: BarShape) {
+        self.ui.player_bar.shape = Some(shape);
     }
 
-    pub(crate) fn hotbar_key(&self, slot: HotbarSlot) -> HotbarKey {
-        match self.ui.hotbar.keys.get(&slot) {
-            None => HotbarKey::Default,
-            Some(None) => HotbarKey::Unbound,
-            Some(Some(gesture)) => HotbarKey::Custom(*gesture),
+    pub(crate) fn bar_key(&self, slot: HotbarSlot) -> BarKey {
+        match self.ui.player_bar.keys.get(&slot) {
+            None => BarKey::Default,
+            Some(None) => BarKey::Unbound,
+            Some(Some(gesture)) => BarKey::Custom(*gesture),
         }
     }
 
-    pub(crate) fn set_hotbar_key(&mut self, slot: HotbarSlot, key: HotbarKey) {
+    pub(crate) fn set_bar_key(&mut self, slot: HotbarSlot, key: BarKey) {
         match key {
-            HotbarKey::Default => self.ui.hotbar.keys.remove(&slot),
-            HotbarKey::Unbound => self.ui.hotbar.keys.insert(slot, None),
-            HotbarKey::Custom(gesture) => self.ui.hotbar.keys.insert(slot, Some(gesture)),
+            BarKey::Default => self.ui.player_bar.keys.remove(&slot),
+            BarKey::Unbound => self.ui.player_bar.keys.insert(slot, None),
+            BarKey::Custom(gesture) => self.ui.player_bar.keys.insert(slot, Some(gesture)),
         };
     }
 
@@ -496,7 +496,7 @@ struct UiSettings {
     #[serde(default)]
     menu: MenuSettings,
     #[serde(default)]
-    hotbar: HotbarSettings,
+    player_bar: PlayerBarSettings,
     #[serde(default)]
     chat: ChatSettings,
 }
@@ -507,7 +507,7 @@ impl Default for UiSettings {
             snap: default_snap(),
             widgets: BTreeMap::new(),
             menu: MenuSettings::default(),
-            hotbar: HotbarSettings::default(),
+            player_bar: PlayerBarSettings::default(),
             chat: ChatSettings::default(),
         }
     }
@@ -539,9 +539,9 @@ const CHAT_TEXT_SIZES: (WindowPx, WindowPx, WindowPx) =
     (WindowPx(15.0), WindowPx(12.0), WindowPx(22.0));
 
 #[derive(Serialize, Deserialize, Default)]
-struct HotbarSettings {
+struct PlayerBarSettings {
     #[serde(default)]
-    shape: Option<HotbarShape>,
+    shape: Option<BarShape>,
     #[serde(default)]
     /// A slot absent keeps the game's key; one listed with no gesture has none.
     keys: BTreeMap<HotbarSlot, Option<KeyGesture>>,
