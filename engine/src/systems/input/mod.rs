@@ -3,9 +3,9 @@ pub mod claims;
 mod escape;
 pub mod map;
 pub mod marks;
+pub mod scope;
 
 use bevy::prelude::*;
-use bevy_egui::input::egui_wants_any_keyboard_input;
 
 use crate::systems::player::RespawnRequest;
 use crate::systems::player::session;
@@ -16,15 +16,14 @@ pub struct PlayerInputPlugin;
 impl Plugin for PlayerInputPlugin {
     fn build(&self, app: &mut App) {
         map::plugin(app);
+        scope::plugin(app);
         claims::plugin(app);
         marks::plugin(app);
         camera::plugin(app);
         escape::plugin(app);
         app.add_systems(
             Update,
-            respawn_when_dead
-                .run_if(not(egui_wants_any_keyboard_input))
-                .run_if(in_state(ClientScreen::Area)),
+            respawn_when_dead.run_if(in_state(ClientScreen::Area)),
         );
     }
 }

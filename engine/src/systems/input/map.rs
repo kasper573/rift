@@ -7,6 +7,7 @@ use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
 use serde::{Deserialize, Serialize};
 use strum::{EnumDiscriminants, IntoStaticStr, VariantArray};
 
+use super::scope;
 use crate::core::content::SchemaMark;
 use crate::core::content::fixture::FixtureLock;
 use crate::core::content::{Content, ContentFile, Fixture, Nearby, RowCheck, serial};
@@ -384,17 +385,19 @@ impl InputMap {
     }
 }
 
+/// Whether `action` was pressed this frame, in a place that reads it.
 pub fn just_pressed(world: &World, action: InputAction) -> bool {
     let keys = world.resource::<ButtonInput<KeyCode>>();
     let mouse = world.resource::<ButtonInput<MouseButton>>();
-    bindings(world, action).any(|binding| match *binding {
-        InputBinding::Key(gesture) => gesture.just_pressed(keys),
-        InputBinding::AnyKey => keys.get_just_pressed().next().is_some(),
-        InputBinding::Mouse { button, modifiers } => {
-            mouse.just_pressed(button) && KeyModifiers::held(keys) == modifiers
-        }
-        InputBinding::Click(_) | InputBinding::Drag(_) => false,
-    })
+    scope::reads(world, action)
+        && bindings(world, action).any(|binding| match *binding {
+            InputBinding::Key(gesture) => gesture.just_pressed(keys),
+            InputBinding::AnyKey => keys.get_just_pressed().next().is_some(),
+            InputBinding::Mouse { button, modifiers } => {
+                mouse.just_pressed(button) && KeyModifiers::held(keys) == modifiers
+            }
+            InputBinding::Click(_) | InputBinding::Drag(_) => false,
+        })
 }
 
 pub fn just_pressed_index(world: &World, actions: &[InputAction]) -> Option<usize> {
@@ -406,14 +409,15 @@ pub fn just_pressed_index(world: &World, actions: &[InputAction]) -> Option<usiz
 pub fn pressed(world: &World, action: InputAction) -> bool {
     let keys = world.resource::<ButtonInput<KeyCode>>();
     let mouse = world.resource::<ButtonInput<MouseButton>>();
-    bindings(world, action).any(|binding| match *binding {
-        InputBinding::Key(gesture) => gesture.pressed(keys),
-        InputBinding::AnyKey => keys.get_pressed().next().is_some(),
-        InputBinding::Mouse { button, modifiers } => {
-            mouse.pressed(button) && KeyModifiers::held(keys) == modifiers
-        }
-        InputBinding::Click(_) | InputBinding::Drag(_) => false,
-    })
+    scope::reads(world, action)
+        && bindings(world, action).any(|binding| match *binding {
+            InputBinding::Key(gesture) => gesture.pressed(keys),
+            InputBinding::AnyKey => keys.get_pressed().next().is_some(),
+            InputBinding::Mouse { button, modifiers } => {
+                mouse.pressed(button) && KeyModifiers::held(keys) == modifiers
+            }
+            InputBinding::Click(_) | InputBinding::Drag(_) => false,
+        })
 }
 
 pub fn clicked(world: &World, action: InputAction, response: &egui::Response) -> bool {

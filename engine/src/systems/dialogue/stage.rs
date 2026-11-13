@@ -5,7 +5,6 @@ use ui::float;
 
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
-use bevy_egui::input::egui_wants_any_keyboard_input;
 use ui::controls::{self, Pill, RowHover, RowLook};
 use ui::egui::{
     Align, Align2, Color32, Id, LayerId, Layout, Pos2, Rect, Sense, Ui, UiBuilder, Vec2,
@@ -76,11 +75,7 @@ impl Plugin for DialogueStagePlugin {
             .add_systems(OnExit(ClientScreen::Area), forget_stage)
             .add_systems(
                 Update,
-                (
-                    follow_conversation,
-                    stage_keys.run_if(not(egui_wants_any_keyboard_input)),
-                    track_typing,
-                )
+                (follow_conversation, stage_keys, track_typing)
                     .chain()
                     .run_if(in_state(ClientScreen::Area)),
             )
@@ -474,7 +469,7 @@ fn press_advance(world: &mut World) {
 }
 
 fn stage_keys(world: &mut World) {
-    if world.resource::<Stage>().shown.is_none() || hud::confirming(world) {
+    if world.resource::<Stage>().shown.is_none() {
         return;
     }
     let choosing = typing_line(world).is_none()

@@ -1,23 +1,21 @@
 use bevy::prelude::*;
-use bevy_egui::input::egui_wants_any_keyboard_input;
 use ui::egui::LayerId;
 
 use super::map::{self, InputAction, InputMap};
+use super::scope::InputScope;
 use crate::core::gui;
 use crate::systems::dialogue::stage;
 use crate::systems::{crafting, hud, item, resource, skill};
 
 pub(super) fn plugin(app: &mut App) {
-    app.add_systems(
-        Update,
-        dismiss_topmost
-            .run_if(not(egui_wants_any_keyboard_input))
-            .run_if(resource_exists::<InputMap>),
-    );
+    app.add_systems(Update, dismiss_topmost.run_if(resource_exists::<InputMap>));
 }
 
 fn dismiss_topmost(world: &mut World) {
-    if !map::just_pressed(world, InputAction::Dismiss) {
+    // A field or an open list gives the keyboard back on the press itself.
+    if !map::just_pressed(world, InputAction::Dismiss)
+        || *world.resource::<InputScope>() == InputScope::Typing
+    {
         return;
     }
     if skill::bar::cancel_rebind(world) || skill::aim::disarm(world) {

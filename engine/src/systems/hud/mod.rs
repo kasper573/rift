@@ -14,7 +14,6 @@ use ui::float;
 
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
-use bevy_egui::input::egui_wants_any_keyboard_input;
 use ui::egui::{Align2, Color32, Id, LayerId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
 use ui::face::{self, TextRole};
 use ui::{controls, ink, sheet, slip};
@@ -56,12 +55,7 @@ impl Plugin for HudPlugin {
             .init_resource::<WindowsDrawn>()
             .init_resource::<Confirming>()
             .init_resource::<Lifting>()
-            .add_systems(
-                Update,
-                toggle_keys
-                    .run_if(not(egui_wants_any_keyboard_input))
-                    .run_if(in_state(ClientScreen::Area)),
-            )
+            .add_systems(Update, toggle_keys.run_if(in_state(ClientScreen::Area)))
             .add_systems(
                 EguiPrimaryContextPass,
                 (

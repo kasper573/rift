@@ -4,7 +4,6 @@
 
 use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
-use bevy_egui::input::egui_wants_any_keyboard_input;
 
 use super::map::{self, InputAction};
 use crate::core::gui;
@@ -21,10 +20,7 @@ const PIXELS_PER_STEP: f32 = 60.0;
 pub fn plugin(app: &mut App) {
     app.init_resource::<Scrolled>().add_systems(
         Update,
-        (
-            steer_by_keys.run_if(not(egui_wants_any_keyboard_input)),
-            steer_by_pointer,
-        )
+        (steer_by_keys, steer_by_pointer)
             .in_set(CameraRigSystems)
             .run_if(in_state(ClientScreen::Area)),
     );

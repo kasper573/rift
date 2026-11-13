@@ -1,6 +1,5 @@
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
-use bevy_egui::input::egui_wants_any_keyboard_input;
 
 use super::{aim, bar, card, prompt, window};
 use crate::core::gui::Band;
@@ -24,7 +23,7 @@ impl Plugin for SkillClientPlugin {
                 Update,
                 (
                     bar::capture_key,
-                    bar::keys.run_if(not(egui_wants_any_keyboard_input)),
+                    bar::keys,
                     window::settle_plan,
                     aim::settle,
                     aim::surface,

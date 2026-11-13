@@ -5,7 +5,6 @@
 
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
-use bevy_egui::input::egui_wants_any_keyboard_input;
 use ui::controls::{self, RowLook};
 use ui::egui::{self, Align, Layout, Rect, Sense, Ui, Vec2};
 use ui::face::{self, TextRole};
@@ -53,10 +52,7 @@ impl Plugin for CraftingPanelPlugin {
         app.init_resource::<Crafting>()
             .add_systems(
                 Update,
-                (
-                    settle,
-                    recipes_key.run_if(not(egui_wants_any_keyboard_input)),
-                )
+                (settle, recipes_key)
                     .chain()
                     .run_if(in_state(ClientScreen::Area)),
             )

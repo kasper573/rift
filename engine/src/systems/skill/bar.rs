@@ -27,6 +27,7 @@ use crate::systems::hud::{self, Carried, Confirm, HudWidget};
 use crate::systems::input::map::{
     self, InputAction, InputBinding, InputFixture, InputMap, KeyGesture, KeyModifiers, input,
 };
+use crate::systems::input::scope;
 use crate::systems::interface::InterfaceSound;
 use crate::systems::item::widget::{SLOT, SlotLook, slot};
 use crate::systems::item::{Inventory, ItemId, ItemKind, UseItemRequest, card as item_card};
@@ -182,7 +183,7 @@ pub fn keys(world: &mut World) {
     if world.resource::<BarState>().rebinding.is_some() {
         return;
     }
-    if session::is_locked(world) || !session::is_alive(world) || hud::confirming(world) {
+    if session::is_locked(world) || !session::is_alive(world) {
         return;
     }
     let Some(me) = session::me(world) else {
@@ -996,7 +997,8 @@ fn key_pressed(world: &World, slot: HotbarSlot) -> bool {
     match slot_key(world.resource::<UserSettings>(), slot) {
         Some(SlotKey::Action(action)) => map::just_pressed(world, action),
         Some(SlotKey::Gesture(gesture)) => {
-            gesture.just_pressed(world.resource::<ButtonInput<KeyCode>>())
+            scope::reads(world, HOTBAR_KEYS[0])
+                && gesture.just_pressed(world.resource::<ButtonInput<KeyCode>>())
         }
         None => false,
     }
