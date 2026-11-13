@@ -38,6 +38,7 @@ use engine::systems::actor::stance::{HandIndex, StanceId};
 use engine::systems::area::render::view_reach;
 use engine::systems::area::scenery::{self, Eyes, Sight};
 use engine::systems::area::{Area, Picture, Weather};
+use engine::systems::item::PropHold;
 use ui::egui;
 
 use super::camera::OrbitCamera;
@@ -143,8 +144,9 @@ struct StageLayering {
     put: bool,
 }
 
-/// A prop a standing rig holds in `hand`: the scene of `model` under the rig's joint `joint`, placed
-/// there by `transform`, and hanging plumb from there by `plumb` if it does.
+/// A prop a standing rig holds in `hand`, as `hold` has the hand carry it: the scene of `model` under
+/// the rig's joint `joint`, placed there by `transform`, and hanging plumb from there by `plumb` if
+/// it does.
 #[derive(Clone, PartialEq)]
 pub struct StandingProp {
     pub hand: HandIndex,
@@ -152,6 +154,7 @@ pub struct StandingProp {
     pub model: String,
     pub transform: Transform,
     pub plumb: Option<Plumb>,
+    pub hold: PropHold,
 }
 
 /// The props a stood rig holds, and those hung so far.
@@ -738,10 +741,10 @@ fn run_layers(world: &mut World) {
         .query::<(&mut Layered, &Layering, &StageLayering, Option<&StageProps>)>()
         .iter_mut(world)
     {
-        let holding: Vec<HandIndex> = props
+        let holding: Vec<(HandIndex, PropHold)> = props
             .map_or(&[][..], |props| props.props.as_slice())
             .iter()
-            .map(|prop| prop.hand)
+            .map(|prop| (prop.hand, prop.hold))
             .collect();
         layering::drive(
             &mut layered,

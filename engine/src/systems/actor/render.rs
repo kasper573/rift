@@ -42,7 +42,7 @@ use crate::core::vfx::render::SiteExtent;
 use crate::core::vfx::standing::StandingVfx;
 use crate::systems::area::{self, Area, PropId};
 use crate::systems::equipment::{self, Equipment};
-use crate::systems::item::{Grip, ItemId, PropAxis, Wear};
+use crate::systems::item::{Grip, ItemId, PropAxis, PropHold, Wear};
 use crate::systems::movement::RenderPosition;
 use crate::systems::screen::ClientScreen;
 
@@ -237,6 +237,12 @@ impl Hung {
             }
             Hung::Tool(tool) => Some((tool.prop, tool.grip)),
         }
+    }
+
+    /// How the hand it hangs from carries it.
+    fn hold(self, content: &Content) -> PropHold {
+        self.look(content)
+            .map_or(PropHold::Gripped, |(_, grip)| grip.hold)
     }
 }
 
@@ -585,7 +591,7 @@ struct PoseInputs {
     saying: Option<Saying>,
     stance: Option<StanceId>,
     ground: Meters,
-    holding: Vec<HandIndex>,
+    holding: Vec<(HandIndex, PropHold)>,
 }
 
 /// Places every rig where its actor shows, turned the way it faces, playing the clip its stance
@@ -633,9 +639,13 @@ pub fn pose(world: &mut World) {
             .as_ref()
             .filter(|playing| playing.motion.shows_over(shown.action));
         let blows = world.get::<Hurt>(entity).map_or(0, |hurt| hurt.0);
-        let holding: Vec<HandIndex> = world.get::<Puppet>(entity).map_or_else(Vec::new, |puppet| {
-            puppet.held().map(|(hand, ..)| hand).collect()
-        });
+        let holding: Vec<(HandIndex, PropHold)> =
+            world.get::<Puppet>(entity).map_or_else(Vec::new, |puppet| {
+                puppet
+                    .held()
+                    .map(|(hand, hung, _)| (hand, hung.hold(&content)))
+                    .collect()
+            });
         let inputs = PoseInputs {
             shown,
             at,
@@ -1148,7 +1158,7 @@ pub fn held_at(model: &ActorModel, hand: &Hand, grip: &Grip) -> Transform {
 /// How a prop held by `grip` hangs under the joint of `hand` on `model` when it hangs plumb: from
 /// where the hand grips, as `held_at` lays it there.
 pub fn plumb_from(model: &ActorModel, hand: &Hand, grip: &Grip) -> Option<Plumb> {
-    grip.hangs.then(|| Plumb {
+    (grip.hold == PropHold::Plumb).then(|| Plumb {
         rigid: held_at(model, hand, grip),
         pivot: grip_frame(hand).w_axis.truncate() / rest_scale(model, hand),
     })

@@ -144,6 +144,7 @@ fn each_edit_of_the_skeleton_view_lands_in_its_config() {
         offset: Default::default(),
         turn: Default::default(),
         mirrored: false,
+        strap: None,
         clasp: None,
     });
     hands.swap(0, 2);

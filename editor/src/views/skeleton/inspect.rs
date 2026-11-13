@@ -305,6 +305,10 @@ fn hand(editor: &Editor, ui: &mut Ui, key: &str, def: &SkeletonDef) {
     };
     panel::title(ui, &format!("Hand · {}", hand.name));
     form::kv_code(ui, "joint", hand.joint.as_str());
+    if let Some(strap) = &hand.strap {
+        form::kv_text(ui, "strap", strap.clip.shown());
+        form::kv_code(ui, "arm", strap.arm.as_str());
+    }
     form::kv_text(
         ui,
         "role",

@@ -12,7 +12,7 @@ use engine::systems::actor::appearance::look;
 use engine::systems::actor::render;
 use engine::systems::actor::skeleton::{Colours, EquipmentSlot, LocalOffset, LocalTurn, TintName};
 use engine::systems::actor::{ActorModel, Appearance, ModelDef};
-use engine::systems::item::{Grip, ItemDef, PropAxis};
+use engine::systems::item::{Grip, ItemDef, PropAxis, PropHold};
 use serde_json::{Value, json};
 use strum::VariantArray;
 use testkit::{BODY, Declared, Game, part_file, path, png, rig, rig_clips, skin_glb};
@@ -126,7 +126,7 @@ fn a_mirrored_hand_holds_a_prop_as_the_mirror_image_of_the_hand_it_mirrors_turne
             offset: LocalOffset([Meters(0.02), Meters(-0.1), Meters(0.05)]),
             turn: LocalTurn([Degrees(20.0), Degrees(-35.0), Degrees(50.0)]),
             symmetry,
-            hangs: false,
+            hold: PropHold::Gripped,
         };
         let held = |hand: usize, joint: &str| {
             let placed = render::held_at(model, &model.hands()[hand], &grip);
@@ -166,18 +166,20 @@ fn a_prop_that_hangs_plumb_stays_upright_from_where_the_hand_grips_it_however_th
         content.declared::<ModelDef>("hero").expect("declared"),
     );
     let hand = &model.hands()[0];
-    let grip = |hangs| Grip {
+    let grip = |hold| Grip {
         offset: LocalOffset([Meters(0.4), Meters(0.0), Meters(0.0)]),
         turn: LocalTurn([Degrees(0.0), Degrees(0.0), Degrees(90.0)]),
         symmetry: PropAxis::Z,
-        hangs,
+        hold,
     };
-    assert_eq!(
-        render::plumb_from(model, hand, &grip(false)),
-        None,
-        "a prop that does not hang turns with the hand"
-    );
-    let plumb = render::plumb_from(model, hand, &grip(true)).expect("a prop that hangs");
+    for hold in [PropHold::Gripped, PropHold::Strapped] {
+        assert_eq!(
+            render::plumb_from(model, hand, &grip(hold)),
+            None,
+            "{hold:?}: a prop that does not hang turns with what holds it"
+        );
+    }
+    let plumb = render::plumb_from(model, hand, &grip(PropHold::Plumb)).expect("a prop that hangs");
     let gripped = plumb
         .rigid
         .to_matrix()

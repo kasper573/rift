@@ -2,7 +2,7 @@ use editor::views::{item, stance};
 use engine::core::units::{Degrees, Meters};
 use engine::systems::actor::skeleton::{LocalOffset, LocalTurn};
 use engine::systems::actor::stance::StanceDef;
-use engine::systems::item::{CARD_SIZE, Grip, ICON_SIZE, ItemDef, PropAxis, Wear};
+use engine::systems::item::{CARD_SIZE, Grip, ICON_SIZE, ItemDef, PropAxis, PropHold, Wear};
 use serde_json::json;
 use testkit::path;
 
@@ -57,7 +57,7 @@ fn a_held_items_stance_and_grip_land_in_its_file_and_its_pairs_in_the_stances() 
         offset: LocalOffset([Meters(0.0), Meters(-0.25), Meters(0.0)]),
         turn: LocalTurn([Degrees(0.0), Degrees(180.0), Degrees(0.0)]),
         symmetry: PropAxis::X,
-        hangs: false,
+        hold: PropHold::Strapped,
     };
 
     assert!(item::wield::set_wield(

@@ -428,5 +428,6 @@ pub(crate) fn prop_in_hand(
         model: item.get(content).look.get(content).model.path(),
         transform: render::held_at(model, hand, grip),
         plumb: render::plumb_from(model, hand, grip),
+        hold: grip.hold,
     }
 }

@@ -770,6 +770,158 @@ fn a_body_holding_an_item_closes_its_hand_as_the_clasp_poses_it_and_carries_it_a
     );
 }
 
+#[test]
+fn a_prop_strapped_to_the_arm_turns_with_the_arm_and_the_hand_holding_it_as_its_strap_poses_it() {
+    let bent = Quat::from_rotation_z(0.9);
+    let strapped = Quat::from_rotation_x(0.4);
+    let raised = Quat::from_rotation_y(0.7);
+    let rig = testkit::rig();
+    let cases = [
+        (
+            "a hand without a strap",
+            json!({ "name": "right", "joint": "hand.r" }),
+            None,
+            vec![("hand.r", bent)],
+        ),
+        (
+            "a hand right under its arm",
+            json!({
+                "name": "right",
+                "joint": "hand.r",
+                "strap": { "arm": "body", "clip": testkit::clip("strap") },
+            }),
+            None,
+            vec![("hand.r", strapped)],
+        ),
+        (
+            "a hand two joints under its arm",
+            json!({
+                "name": "right",
+                "joint": "finger.r",
+                "strap": { "arm": "body", "clip": testkit::clip("strap") },
+            }),
+            None,
+            vec![("hand.r", strapped), ("finger.r", strapped)],
+        ),
+        (
+            "a hand its stance carries as well",
+            json!({
+                "name": "right",
+                "joint": "hand.r",
+                "strap": { "arm": "body", "clip": testkit::clip("strap") },
+            }),
+            Some(raised),
+            vec![("hand.r", strapped)],
+        ),
+    ];
+    for (case, hand, carried, held) in cases {
+        let on_the_arm = |turns: &[(&str, Quat)]| {
+            turns.iter().fold(Mat4::IDENTITY, |above, (name, turn)| {
+                let node = rig.named(name).expect("a joint of the rig");
+                above * Mat4::from_rotation_translation(*turn, rig.nodes[node].rest.translation)
+            })
+        };
+        let gripped: Vec<(&str, Quat)> = held
+            .iter()
+            .map(|&(name, _)| (name, carried.unwrap_or(bent)))
+            .collect();
+        let game = Game::new()
+            .area("field", &Map::open(5, 5), json!([]))
+            .hero("field", 2.0, 2.0)
+            .sword()
+            .item(
+                "shield",
+                json!({ "kind": {
+                    "type": "equipment",
+                    "wear": "held",
+                    "stance": path("stance", "sword"),
+                    "grip": { "hold": "strapped" },
+                } }),
+            )
+            .edit("skeleton", BODY, move |skeleton| {
+                skeleton["hands"][0] = hand;
+                if carried.is_some() {
+                    skeleton["layers"] = json!([{
+                        "type": "carry",
+                        "from": "hand.r",
+                        "clip": testkit::clip("carry"),
+                        "stance": path("stance", "sword"),
+                        "ease": 0.05,
+                    }]);
+                }
+            })
+            .asset(
+                &testkit::clip("idle"),
+                testkit::pose_glb(&rig, "idle", &[("hand.r", bent), ("finger.r", bent)]),
+            )
+            .asset(
+                &testkit::clip("strap"),
+                testkit::pose_glb(
+                    &rig,
+                    "strap",
+                    &[("hand.r", strapped), ("finger.r", strapped)],
+                ),
+            )
+            .asset(
+                &testkit::clip("carry"),
+                testkit::pose_glb(&rig, "carry", &[("hand.r", raised)]),
+            );
+        let folder = tempfile::tempdir().expect("a scratch folder");
+        let (mut app, content) = viewer(game, folder.path());
+        let sword = testkit::Declared::declared::<ItemDef>(&content, "sword").expect("a sword");
+        let shield = testkit::Declared::declared::<ItemDef>(&content, "shield").expect("a shield");
+        let body = spawn_hero(&mut app, &content, Action::Idle);
+        app.world_mut()
+            .run_system_cached(render::dress)
+            .expect("dressed");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while joint(&mut app, "body").is_none() && Instant::now() < deadline {
+            app.update();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        let arm = joint(&mut app, "body").expect("the rig stands");
+        let mut held_as = |item, on_the_arm: Mat4| {
+            app.world_mut().entity_mut(body).insert(Held {
+                hands: BTreeMap::from([(HandIndex::MAIN, item)]),
+            });
+            app.world_mut()
+                .run_system_cached(render::hang)
+                .expect("hung");
+            let deadline = Instant::now() + Duration::from_secs(3);
+            loop {
+                app.world_mut()
+                    .run_system_cached(render::pose)
+                    .expect("posed");
+                app.update();
+                let (placed, in_hand) = prop_under(&mut app, arm).expect("a prop in the hand");
+                let wanted = on_the_arm * in_hand;
+                if placed.abs_diff_eq(wanted, 1.0e-2) || Instant::now() > deadline {
+                    return (placed, wanted);
+                }
+                std::thread::sleep(Duration::from_millis(5));
+            }
+        };
+
+        let (placed, wanted) = held_as(sword, on_the_arm(&gripped));
+        assert!(
+            placed.abs_diff_eq(wanted, 1.0e-2),
+            "{case}: a gripped prop turns as its clip or its carry turns the hand: \
+             {placed:?}, not {wanted:?}"
+        );
+        let (placed, wanted) = held_as(shield, on_the_arm(&held));
+        assert!(
+            placed.abs_diff_eq(wanted, 1.0e-2),
+            "{case}: a strapped prop lies on the arm as the strap holds the hand: \
+             {placed:?}, not {wanted:?}"
+        );
+        let (placed, wanted) = held_as(sword, on_the_arm(&gripped));
+        assert!(
+            placed.abs_diff_eq(wanted, 1.0e-2),
+            "{case}: the hand turns as it did once it grips again: {placed:?}, not {wanted:?}"
+        );
+    }
+}
+
 /// A client's world drawing `game`, written to `folder`: its bodies stand their rigs and skins,
 /// and play their skeletons' clips and layers.
 fn viewer(game: Game, folder: &std::path::Path) -> (App, engine::core::content::Content) {
@@ -1364,6 +1516,23 @@ fn joint(app: &mut App, name: &str) -> Option<Entity> {
         .query::<&Body>()
         .iter(app.world())
         .find_map(|body| body.joint(name))
+}
+
+/// Where the prop a hand holds lies in the frame of the joint `above` it, and in the frame of the
+/// joint it hangs from.
+fn prop_under(app: &mut App, above: Entity) -> Option<(Mat4, Mat4)> {
+    let world = app.world_mut();
+    let (in_hand, mut at) = world
+        .query_filtered::<(&Transform, &ChildOf), With<HeldProp>>()
+        .iter(world)
+        .next()
+        .map(|(placed, hand)| (placed.to_matrix(), hand.parent()))?;
+    let mut placed = in_hand;
+    while at != above {
+        placed = world.get::<Transform>(at)?.to_matrix() * placed;
+        at = world.get::<ChildOf>(at)?.parent();
+    }
+    Some((placed, in_hand))
 }
 
 /// Every prop hanging from a hand, by the joint it hangs from and the item it shows.

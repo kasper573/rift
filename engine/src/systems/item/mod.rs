@@ -669,10 +669,36 @@ pub struct Grip {
     /// it turned over that way rather than inside out.
     #[serde(default, skip_serializing_if = "PropAxis::is_z")]
     pub symmetry: PropAxis,
-    /// Whether the prop hangs plumb from the hand, by the point of it the grip puts there, rather
-    /// than turning with the hand: a lantern from its bail.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub hangs: bool,
+    #[serde(default, skip_serializing_if = "PropHold::is_gripped")]
+    pub hold: PropHold,
+}
+
+/// How the hand that holds a prop carries it.
+#[derive(
+    JsonSchema,
+    Clone,
+    Copy,
+    Debug,
+    Default,
+    PartialEq,
+    Eq,
+    Serialize,
+    Deserialize,
+    VariantArray,
+    IntoStaticStr,
+)]
+#[serde(rename_all = "snake_case")]
+#[strum(serialize_all = "snake_case")]
+pub enum PropHold {
+    /// In the fist, turning with the hand: a sword.
+    #[default]
+    Gripped,
+    /// Hanging plumb from the hand, by the point of it the grip puts there: a lantern from its
+    /// bail.
+    Plumb,
+    /// Strapped to the arm the hand is on, the hand held as its strap poses it, so the prop turns
+    /// with the arm alone: a shield. In the fist of a hand that has no strap.
+    Strapped,
 }
 
 /// An axis of a prop's own frame.
@@ -727,13 +753,22 @@ impl Wear {
 
 impl Grip {
     pub fn is_identity(&self) -> bool {
-        self.offset.is_zero() && self.turn.is_zero() && self.symmetry.is_z() && !self.hangs
+        self.offset.is_zero()
+            && self.turn.is_zero()
+            && self.symmetry.is_z()
+            && self.hold.is_gripped()
     }
 }
 
 impl PropAxis {
     pub fn is_z(&self) -> bool {
         *self == PropAxis::Z
+    }
+}
+
+impl PropHold {
+    pub fn is_gripped(&self) -> bool {
+        *self == PropHold::Gripped
     }
 }
 

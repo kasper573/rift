@@ -11,7 +11,7 @@ use engine::systems::actor::skeleton::SkeletonDef;
 use engine::systems::actor::stance::{HandRole, PropHand, StanceDef};
 use engine::systems::actor::{Action, ModelDef, Motion, Pose, held};
 use engine::systems::area::Pictured;
-use engine::systems::item::{Grip, ItemDef, ItemKind, PropAxis, Wear};
+use engine::systems::item::{Grip, ItemDef, ItemKind, PropAxis, PropHold, Wear};
 use strum::VariantArray;
 use ui::egui::{self, RichText, Ui, Vec2};
 use ui::{controls, form, panel, theme};
@@ -139,8 +139,15 @@ fn fields(editor: &mut Editor, ui: &mut Ui, key: &str, stance_path: &str, grip: 
                     }
                 });
             ui.end_row();
-            ui.label(theme::muted("hangs plumb"));
-            ui.checkbox(&mut edited.hangs, "");
+            ui.label(theme::muted("held"));
+            controls::combo(("wield-hold", key))
+                .selected_text(<&str>::from(edited.hold))
+                .width(180.0)
+                .show_ui(ui, |ui| {
+                    for &hold in PropHold::VARIANTS {
+                        ui.selectable_value(&mut edited.hold, hold, <&str>::from(hold));
+                    }
+                });
             ui.end_row();
         });
     form::hint(
@@ -149,8 +156,10 @@ fn fields(editor: &mut Editor, ui: &mut Ui, key: &str, stance_path: &str, grip: 
          out of the thumb's side and +Z out of the back of the hand, until its handle sits in the \
          fist and its face, if it has one, looks out of the back of the hand. A mirrored hand \
          holds it turned over the axis of its own it is alike across, so it is never held inside \
-         out. A prop that hangs plumb keeps its +Y up however the hand turns, swung from the \
-         point of it that sits in the fist.",
+         out. A plumb prop keeps its +Y up however the hand turns, swung from the point of it \
+         that sits in the fist. A strapped prop rides the arm the hand is on: the hand is held \
+         as its skeleton's strap poses it, so the prop turns with the arm alone, as a shield \
+         does. A hand without a strap holds it in the fist.",
     );
     if picked != stance_path || edited != grip {
         let label = if picked != stance_path {

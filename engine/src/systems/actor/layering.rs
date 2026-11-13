@@ -1,6 +1,7 @@
 //! A body's layers as its skeleton lists them, over the joints of its rig as its scene spawned
-//! them, each let run while an action it lists plays, one that carries only in its stance; and each
-//! hand's clasp, held while the hand holds an item.
+//! them, each let run while an action it lists plays, one that carries only in its stance; each
+//! hand's clasp, held while the hand holds an item; and each hand's strap, held while what it holds
+//! is strapped to its arm.
 
 use std::collections::HashMap;
 
@@ -13,6 +14,7 @@ use crate::core::content::gltf::NodeTree;
 use crate::core::render::world::layers::{
     Chain, Feet, HeldPose, JointLayer, Layered, Rig, Squash, Stepping, Wave,
 };
+use crate::systems::item::PropHold;
 
 /// When each of a body's layers runs, in the order of its layers.
 #[derive(Component)]
@@ -24,17 +26,19 @@ enum Runs {
     During(Vec<Action>),
     Carrying(StanceId, Vec<Action>),
     Holding(HandIndex),
+    Strapped(HandIndex),
 }
 
 /// The layers of `model`'s skeleton over the joints of its spawned scene, found by name, and the
-/// clasps of its hands, if it has any. A layer naming a joint the scene lacks is left out; the
+/// clasps and straps of its hands, if it has any. A layer naming a joint the scene lacks is left out; the
 /// loader refuses such a skeleton.
 pub fn layered(
     model: &ActorModel,
     joints: &HashMap<String, Entity>,
 ) -> Option<(Layered, Layering)> {
     let skeleton = model.skeleton();
-    if skeleton.def.layers.is_empty() && skeleton.clasps.iter().all(Vec::is_empty) {
+    let mut of_hands = skeleton.clasps.iter().chain(&skeleton.straps);
+    if skeleton.def.layers.is_empty() && of_hands.all(Vec::is_empty) {
         return None;
     }
     let (rig, index) = rig(&skeleton.rig, joints)?;
@@ -133,24 +137,35 @@ pub fn layered(
             runs.push(Runs::Holding(HandIndex(hand as u8)));
         }
     }
+    for (hand, strap) in skeleton.straps.iter().enumerate() {
+        if let Some(held) = held(strap) {
+            layers.push(JointLayer::HeldPose(HeldPose::new(
+                held,
+                skeleton.def.easing.clasp.0,
+            )));
+            runs.push(Runs::Strapped(HandIndex(hand as u8)));
+        }
+    }
     Some((Layered::new(rig, layers), Layering { runs }))
 }
 
 /// Lets each layer run while the action shown is one it lists, one that carries only while the body
-/// is in its stance, or the hand it clasps with holds an item, and tells them a foot came down.
+/// is in its stance, the hand it clasps with holds an item as `holding` has each hand hold its own,
+/// or the hand it straps holds one strapped to its arm, and tells them a foot came down.
 pub fn drive(
     layered: &mut Layered,
     layering: &Layering,
     action: Action,
     stance: Option<StanceId>,
-    holding: &[HandIndex],
+    holding: &[(HandIndex, PropHold)],
     stepped: bool,
 ) {
     for (on, runs) in layered.on.iter_mut().zip(&layering.runs) {
         *on = match runs {
             Runs::During(during) => during.contains(&action),
             Runs::Carrying(carried, during) => stance == Some(*carried) && during.contains(&action),
-            Runs::Holding(hand) => holding.contains(hand),
+            Runs::Holding(hand) => holding.iter().any(|(held, _)| held == hand),
+            Runs::Strapped(hand) => holding.contains(&(*hand, PropHold::Strapped)),
         };
     }
     layered.stepped |= stepped;

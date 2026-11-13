@@ -1,11 +1,12 @@
 //! The hands page: the joints an item hangs from, in order (the first the main hand, the second the
 //! off hand). Each has a grip frame (set on the stage, see `grips`), may mirror the hand that grips
-//! are fitted to, and has a clasp closing its fingers as a clip's first moment poses them. A hand's
-//! joint and its clasp's fingers are clicked on the view's preview, whose hands hold the items
-//! picked there, so the palm is judged with a real handle in it.
+//! are fitted to, and has a strap holding it on its arm and a clasp closing its fingers, each as a
+//! clip's first moment poses them. A hand's joint, its strap's arm and its clasp's fingers are
+//! clicked on the view's preview, whose hands hold the items picked there, so the palm is judged
+//! with a real handle in it.
 
 use engine::systems::actor::skeleton::{
-    Clasp, Clip, Hand, JointName, LocalOffset, LocalTurn, SkeletonDef,
+    Clasp, Clip, Hand, HandStrap, JointName, LocalOffset, LocalTurn, SkeletonDef,
 };
 use ui::egui::{self, RichText, Ui, Vec2};
 use ui::face;
@@ -24,6 +25,7 @@ pub struct HandsState {
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Picking {
     Joint,
+    Arm,
     Fingers,
 }
 
@@ -61,6 +63,7 @@ pub fn show(editor: &mut Editor, ui: &mut Ui, key: &str, def: &SkeletonDef, rigg
         let mut lit: Vec<&str> = Vec::new();
         if let Some(hand) = hand {
             lit.push(hand.joint.as_str());
+            lit.extend(hand.strap.iter().map(|strap| strap.arm.as_str()));
             lit.extend(
                 hand.clasp
                     .iter()
@@ -126,6 +129,7 @@ fn list(
             offset: LocalOffset::default(),
             turn: LocalTurn::default(),
             mirrored: hands.len() == 1,
+            strap: None,
             clasp: None,
         });
         if super::edits::set_hands(editor, key, more) {
@@ -198,6 +202,40 @@ fn fields(
                 edited.mirrored = !edited.mirrored;
             }
             ui.end_row();
+            let mut held: Option<Clip> = edited.strap.as_ref().map(|strap| strap.clip.clone());
+            ui.label(theme::muted("strap"));
+            super::pickers::clip_picker(
+                ui,
+                "",
+                ("hand-strap", key),
+                rigging,
+                &mut held,
+                Some("none"),
+            );
+            ui.end_row();
+            if let Some(clip) = held {
+                let arm = edited
+                    .strap
+                    .as_ref()
+                    .map(|strap| strap.arm.clone())
+                    .or_else(|| joint_above(rigging, &edited.joint))
+                    .unwrap_or_else(|| edited.joint.clone());
+                ui.label(theme::muted("arm"));
+                ui.horizontal(|ui| {
+                    ui.label(face::mono(arm.as_str()));
+                    let on = picking == Some(Picking::Arm);
+                    if ui
+                        .toggle_value(&mut on.clone(), "click it on the stage")
+                        .clicked()
+                    {
+                        asked = (!on).then_some(Picking::Arm);
+                    }
+                });
+                ui.end_row();
+                edited.strap = Some(HandStrap { arm, clip });
+            } else {
+                edited.strap = None;
+            }
             let mut clip: Option<Clip> = edited.clasp.as_ref().map(|clasp| clasp.clip.clone());
             ui.label(theme::muted("clasp"));
             super::pickers::clip_picker(
@@ -236,7 +274,9 @@ fn fields(
     form::hint(
         ui,
         "A clasp closes each finger from its root down as its clip turns them at its first moment, \
-         while the hand holds an item.",
+         while the hand holds an item. A strap holds every joint from the one under its arm down \
+         to the hand's as its clip turns them at its first moment, while the hand holds a prop \
+         strapped to the arm, as a shield is, so the prop turns with the arm alone.",
     );
     editor.views.skeleton.views.view_mut(key).hands.picking = asked;
     if edited != *hand {
@@ -244,14 +284,20 @@ fn fields(
     }
 }
 
-/// The joint `clicked` on the stage: the hand's joint, or a finger's root toggled in its clasp;
-/// either keeps the hand's grip frame picked for the inspector.
+/// The joint `clicked` on the stage: the hand's joint, its strap's arm, or a finger's root toggled
+/// in its clasp; each keeps the hand's grip frame picked for the inspector.
 fn pick(editor: &mut Editor, key: &str, chosen: usize, hand: &Hand, clicked: String) {
     let picking = editor.views.skeleton.views.view(key).hands.picking;
     let mut edited = hand.clone();
     match picking {
         Some(Picking::Joint) => {
             edited.joint = JointName::new(clicked);
+            editor.views.skeleton.views.view_mut(key).hands.picking = None;
+        }
+        Some(Picking::Arm) => {
+            if let Some(strap) = &mut edited.strap {
+                strap.arm = JointName::new(clicked);
+            }
             editor.views.skeleton.views.view_mut(key).hands.picking = None;
         }
         Some(Picking::Fingers) => {
@@ -269,4 +315,11 @@ fn pick(editor: &mut Editor, key: &str, chosen: usize, hand: &Hand, clicked: Str
     }
     editor.views.skeleton.views.view_mut(key).chosen = Some(super::Chosen::Grip(chosen));
     super::edits::set_hand(editor, key, chosen, edited);
+}
+
+/// The joint above `joint` in the rig, the arm a hand right under its forearm is strapped to.
+fn joint_above(rigging: &Rigging, joint: &JointName) -> Option<JointName> {
+    let rig = rigging.rig.as_ref()?;
+    let above = rig.nodes[rig.named(joint.as_str())?].parent?;
+    Some(JointName::new(rig.nodes[above].name.clone()))
 }

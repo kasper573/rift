@@ -1,6 +1,6 @@
 //! A skeleton as the game plays it: our rig put together from the joints of its files, every clip
-//! it names found in its file and matched to the rig it is made on, and what each hand's clasp
-//! turns.
+//! it names found in its file and matched to the rig it is made on, and what each hand's strap
+//! and clasp turn.
 
 use std::collections::{BTreeMap, HashMap};
 use std::sync::Arc;
@@ -8,7 +8,7 @@ use std::sync::Arc;
 use bevy::math::{Mat4, Quat};
 
 use super::skeleton::{
-    BuildName, Clip, Cue, GroupName, JointName, Layer, MAX_CLIP, MAX_JOINTS, MIN_CLIP, Rig,
+    BuildName, Clip, Cue, GroupName, Hand, JointName, Layer, MAX_CLIP, MAX_JOINTS, MIN_CLIP, Rig,
     SkeletonDef, SourceRig, check_cue_times,
 };
 use super::stance::StanceId;
@@ -31,6 +31,10 @@ pub struct BuiltSkeleton {
     /// the clasp's clip turns, by the joint's index in the rig, with the turn it opens on. Empty for
     /// a hand without a clasp, or whose clasp turns none of its fingers.
     pub clasps: Vec<Vec<(usize, Quat)>>,
+    /// What each hand's strap holds, by the hand's place among the hands: each joint from the one
+    /// under its arm down to the hand's own that the strap's clip turns, by the joint's index in
+    /// the rig, with the turn it opens on. Empty for a hand without a strap.
+    pub straps: Vec<Vec<(usize, Quat)>>,
     /// What each layer that carries holds, by the layer's place among the layers: each joint under
     /// the one it holds from that its clip turns, by the joint's index in the rig, with the turn
     /// it opens on. Empty for every other layer.
@@ -92,6 +96,7 @@ impl BuiltSkeleton {
             clips,
             index,
             clasps: Vec::new(),
+            straps: Vec::new(),
             carries: Vec::new(),
             gaits: HashMap::new(),
         };
@@ -100,7 +105,17 @@ impl BuiltSkeleton {
             .iter()
             .map(|hand| {
                 hand.clasp.as_ref().map_or_else(Vec::new, |clasp| {
-                    built.opening(&clasp.clip, &clasp.fingers, infos)
+                    built.opening(&clasp.clip, built.under(&clasp.fingers), infos)
+                })
+            })
+            .collect();
+        built.straps = def
+            .hands
+            .iter()
+            .map(|hand| {
+                hand.strap.as_ref().map_or_else(Vec::new, |strap| {
+                    let strapped = built.strapped(hand, &strap.arm);
+                    built.opening(&strap.clip, |joint| strapped.contains(&joint), infos)
                 })
             })
             .collect();
@@ -109,7 +124,7 @@ impl BuiltSkeleton {
             .iter()
             .map(|layer| match layer {
                 Layer::Carry { from, clip, .. } => {
-                    built.opening(clip, std::slice::from_ref(from), infos)
+                    built.opening(clip, built.under(std::slice::from_ref(from)), infos)
                 }
                 _ => Vec::new(),
             })
@@ -127,6 +142,19 @@ impl BuiltSkeleton {
             }
         }
         for (index, hand) in def.hands.iter().enumerate() {
+            if let Some(strap) = &hand.strap
+                && built.straps[index].is_empty()
+            {
+                cx.error(
+                    format!("/hands/{index}/strap/clip"),
+                    "strap holds no joints",
+                    format!(
+                        "{} turns none of the joints from {} up to {}",
+                        strap.clip, hand.joint, strap.arm
+                    ),
+                    "a clip turning the joints between the hand and its arm",
+                );
+            }
             if let Some(clasp) = &hand.clasp
                 && !clasp.fingers.is_empty()
                 && built.clasps[index].is_empty()
@@ -186,11 +214,31 @@ impl BuiltSkeleton {
             .collect()
     }
 
-    /// Each joint from each of `roots` down that `clip` turns at its first moment, with that turn.
+    /// Each joint from the one under `arm` down to the joint of `hand`.
+    fn strapped(&self, hand: &Hand, arm: &JointName) -> Vec<usize> {
+        let (Some(joint), Some(arm)) = (self.rig.named(&hand.joint.0), self.rig.named(&arm.0))
+        else {
+            return Vec::new();
+        };
+        std::iter::successors(Some(joint), |&at| self.rig.nodes[at].parent)
+            .take_while(|&at| at != arm)
+            .collect()
+    }
+
+    /// Whether a joint lies under one of `roots`, or is one.
+    fn under(&self, roots: &[JointName]) -> impl Fn(usize) -> bool + '_ {
+        let roots: Vec<usize> = roots
+            .iter()
+            .filter_map(|root| self.rig.named(&root.0))
+            .collect();
+        move |joint| roots.iter().any(|&root| self.rig.descends(joint, root))
+    }
+
+    /// Each joint `held` picks that `clip` turns at its first moment, with that turn.
     fn opening(
         &self,
         clip: &Clip,
-        roots: &[JointName],
+        held: impl Fn(usize) -> bool,
         infos: &HashMap<String, GltfInfo>,
     ) -> Vec<(usize, Quat)> {
         let Some(played) = self.played(clip).map(|at| &self.clips[at]) else {
@@ -200,14 +248,7 @@ impl BuiltSkeleton {
             return Vec::new();
         };
         let opening = &info.clips[played.animation].opening;
-        let roots: Vec<usize> = roots
-            .iter()
-            .filter_map(|root| self.rig.named(&root.0))
-            .collect();
-        let held = self
-            .rig
-            .joints()
-            .filter(|&joint| roots.iter().any(|&root| self.rig.descends(joint, root)));
+        let held = self.rig.joints().filter(|&joint| held(joint));
         match played.source {
             None => held
                 .filter_map(|joint| {
@@ -473,6 +514,20 @@ fn check_joints(def: &SkeletonDef, tree: &NodeTree, cx: &mut RowCheck) {
     };
     for (index, hand) in def.hands.iter().enumerate() {
         unknown(cx, format!("/hands/{index}/joint"), &hand.joint);
+        if let Some(arm) = hand.strap.as_ref().map(|strap| &strap.arm) {
+            let pointer = format!("/hands/{index}/strap/arm");
+            match (joint(arm), joint(&hand.joint)) {
+                (None, _) => unknown(cx, pointer, arm),
+                (Some(above), Some(held)) if above == held || !tree.descends(held, above) => cx
+                    .error(
+                        pointer,
+                        "arm not above the hand",
+                        format!("{} is not under {arm}", hand.joint),
+                        "a joint the hand's joint lies under",
+                    ),
+                _ => {}
+            }
+        }
         let fingers = hand.clasp.iter().flat_map(|clasp| &clasp.fingers);
         for (at, finger) in fingers.enumerate() {
             unknown(cx, format!("/hands/{index}/clasp/fingers/{at}"), finger);

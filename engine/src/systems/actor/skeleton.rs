@@ -434,7 +434,20 @@ pub struct Hand {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub mirrored: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub strap: Option<HandStrap>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub clasp: Option<Clasp>,
+}
+
+/// How a hand carries a prop strapped to the arm it is on: each joint from the one under `arm`
+/// down to the hand's own held as `clip` turns it at its first moment, over whatever else the body
+/// plays, so the prop turns with the arm alone. A hand without one holds such a prop in its fist.
+#[derive(JsonSchema, Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct HandStrap {
+    /// A joint the hand's own lies under.
+    pub arm: JointName,
+    pub clip: Clip,
 }
 
 /// How a hand's fingers close on an item it holds: each joint from the root of each finger down,
@@ -1630,7 +1643,8 @@ impl SkeletonDef {
         set_of(&self.stances, stance)
     }
 
-    /// Every clip the skeleton names, with where it names it: in its sets, its hands' clasps, its
+    /// Every clip the skeleton names, with where it names it: in its sets, its hands' straps and
+    /// clasps, its
     /// carrying layers, its
     /// cues and its paces.
     pub fn clips(&self) -> Vec<(String, &Clip)> {
@@ -1662,6 +1676,9 @@ impl SkeletonDef {
             })
             .collect();
         for (index, hand) in self.hands.iter().enumerate() {
+            if let Some(strap) = &hand.strap {
+                clips.push((format!("/hands/{index}/strap/clip"), &strap.clip));
+            }
             if let Some(clasp) = &hand.clasp {
                 clips.push((format!("/hands/{index}/clasp/clip"), &clasp.clip));
             }

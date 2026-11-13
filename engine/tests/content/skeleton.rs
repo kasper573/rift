@@ -78,6 +78,23 @@ fn a_skeleton_is_held_to_the_clips_it_names() {
             found: format!("{} turns none of hand \"right\"'s fingers", clip("idle")),
         },
         Case {
+            case: "a strap whose arm is not above the hand",
+            change: |skeleton| {
+                skeleton["hands"][0]["strap"] = json!({ "arm": "hand.l", "clip": clip("idle") })
+            },
+            found: "hand.r is not under hand.l".to_owned(),
+        },
+        Case {
+            case: "a strap whose clip turns no joint from the hand up to its arm",
+            change: |skeleton| {
+                skeleton["hands"][0]["strap"] = json!({ "arm": "body", "clip": clip("idle") })
+            },
+            found: format!(
+                "{} turns none of the joints from hand.r up to body",
+                clip("idle")
+            ),
+        },
+        Case {
             case: "a take its file lacks",
             change: |skeleton| {
                 skeleton["base"]["clips"]["talk"] = json!({ "file": clip("talk"), "take": "chat" })

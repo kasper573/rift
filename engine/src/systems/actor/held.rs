@@ -15,7 +15,7 @@ use crate::core::content::Content;
 use crate::core::content::SchemaMark;
 use crate::core::script::{Arrow, Compiler, EffectDef, EffectStep, NEXT, ScriptFault};
 use crate::systems::area::PropId;
-use crate::systems::item::{Grip, ItemId, PropAxis};
+use crate::systems::item::{Grip, ItemId, PropAxis, PropHold};
 use crate::systems::script::event::NPC;
 use crate::systems::script::{EffectCall, EffectReach, RiftScripting, RunnerKind};
 
@@ -204,12 +204,12 @@ fn hand_at(index: usize) -> HandIndex {
 // A file leaves out the parts of a grip that are none, which a binary format cannot tell from
 // missing ones, so the wire carries every part.
 #[derive(Serialize, Deserialize)]
-struct HandsOnTheWire(Option<(PropId, LocalOffset, LocalTurn, PropAxis, bool)>);
+struct HandsOnTheWire(Option<(PropId, LocalOffset, LocalTurn, PropAxis, PropHold)>);
 
 impl From<HandsAtWork> for HandsOnTheWire {
     fn from(hands: HandsAtWork) -> HandsOnTheWire {
         HandsOnTheWire(hands.tool.map(|ToolInHand { prop, grip }| {
-            (prop, grip.offset, grip.turn, grip.symmetry, grip.hangs)
+            (prop, grip.offset, grip.turn, grip.symmetry, grip.hold)
         }))
     }
 }
@@ -217,13 +217,13 @@ impl From<HandsAtWork> for HandsOnTheWire {
 impl From<HandsOnTheWire> for HandsAtWork {
     fn from(HandsOnTheWire(tool): HandsOnTheWire) -> HandsAtWork {
         HandsAtWork {
-            tool: tool.map(|(prop, offset, turn, symmetry, hangs)| ToolInHand {
+            tool: tool.map(|(prop, offset, turn, symmetry, hold)| ToolInHand {
                 prop,
                 grip: Grip {
                     offset,
                     turn,
                     symmetry,
-                    hangs,
+                    hold,
                 },
             }),
         }

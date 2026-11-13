@@ -58,7 +58,7 @@ use engine::systems::actor::stance::{self, HandIndex, StanceId};
 use engine::systems::actor::{Action, Appearance, ModelDef, Motion, Pose, appearance, render};
 use engine::systems::area::scenery::{self, Eyes, SceneryPlugin, Sight};
 use engine::systems::area::{self, Area, AreaDef, AreaId, Kept, Pictured, Weather, rain};
-use engine::systems::item::{ItemDef, Wear};
+use engine::systems::item::{ItemDef, PropHold, Wear};
 use serde::{Deserialize, Serialize};
 
 /// How far around the target the scenery stands, in times the eye's distance from it: as far as a
@@ -397,6 +397,7 @@ struct Prop {
     scene: String,
     transform: Transform,
     plumb: Option<Plumb>,
+    hold: PropHold,
 }
 
 #[derive(Resource, Default)]
@@ -958,6 +959,7 @@ fn stand(world: &mut World, content: &Content, ground: &Heightfield, standing: &
                 scene: item.get(content).look.get(content).model.path(),
                 transform: render::held_at(model, at, grip),
                 plumb: render::plumb_from(model, at, grip),
+                hold: grip.hold,
             })
         })
         .collect();
@@ -1019,7 +1021,11 @@ fn hang(world: &mut World, model: &ActorModel, standing: &Body) -> bool {
 /// Drives each body's layers as the game drives an idle body holding its props.
 fn drive(world: &mut World, bodies: &[Body]) {
     for standing in bodies {
-        let holding: Vec<HandIndex> = standing.props.iter().map(|prop| prop.hand).collect();
+        let holding: Vec<(HandIndex, PropHold)> = standing
+            .props
+            .iter()
+            .map(|prop| (prop.hand, prop.hold))
+            .collect();
         if let Ok((mut layered, layering)) = world
             .query::<(&mut Layered, &Layering)>()
             .get_mut(world, standing.rig)
