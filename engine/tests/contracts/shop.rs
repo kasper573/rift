@@ -10,7 +10,9 @@ use engine::systems::movement::{self, position};
 use engine::systems::npc::NpcDef;
 use engine::systems::region;
 use engine::systems::script::{self, Speaker};
-use engine::systems::shop::{self, SaleQuote, SaleVerdict, ShopDef, ShopRequest, ShopView};
+use engine::systems::shop::{
+    self, SaleQuote, SaleVerdict, ShopDef, ShopRequest, ShopView, WareRefusal,
+};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, path, said};
 
@@ -75,6 +77,10 @@ fn limited_stock_is_kept_per_player_and_restocks_on_its_timer() {
     assert_eq!(sim.count(first, "tonic"), 3);
     let sold_out = shown(&sim, first).expect("open");
     assert_eq!(sold_out.offers[tonic as usize].left, Some(0));
+    assert_eq!(
+        sold_out.offers[tonic as usize].refusal,
+        Some(WareRefusal::SoldOut)
+    );
 
     sim.send(two, ShopRequest::Buy { offer: tonic });
     sim.tick();
@@ -89,7 +95,8 @@ fn limited_stock_is_kept_per_player_and_restocks_on_its_timer() {
 }
 
 #[test]
-fn a_collector_pays_in_his_own_currency_and_buyback_costs_exactly_what_he_paid() {
+fn a_collector_pays_in_his_own_currency_for_all_or_part_of_a_stack_and_buyback_costs_what_he_paid()
+{
     let mut sim = market();
     let player = sim.join(1);
     sim.give(player, "bone", 7);
@@ -116,26 +123,61 @@ fn a_collector_pays_in_his_own_currency_and_buyback_costs_exactly_what_he_paid()
     assert_eq!(sim.count(player, "tusk"), 1);
 
     let bones = sim.slot_of(player, "bone");
-    let all_bones = ItemStack::new(sim.id::<ItemDef>("bone"), 7);
+    let bone = sim.id::<ItemDef>("bone");
+    let before = shown(&sim, player).expect("open");
+    for refused in [ItemStack::new(bone, 8), one_tusk] {
+        sim.send(
+            conn,
+            ShopRequest::Sell {
+                slot: bones,
+                stack: refused,
+            },
+        );
+    }
+    sim.tick();
+    assert_eq!(sim.count(player, "bone"), 7);
+    assert_eq!(sim.count(player, "token"), 0);
+    let refused = shown(&sim, player).expect("open");
+    assert_eq!(
+        refused.answered,
+        before.answered + 2,
+        "a request that changes nothing is answered all the same"
+    );
+
+    sim.send(
+        conn,
+        ShopRequest::Sell {
+            slot: bones,
+            stack: ItemStack::new(bone, 3),
+        },
+    );
+    sim.tick();
+    assert_eq!(sim.count(player, "bone"), 4);
+    assert_eq!(sim.count(player, "token"), 3);
+    let part = shown(&sim, player).expect("open");
+    assert_eq!(part.buyback.len(), 1);
+    assert_eq!(part.buyback[0].sale.count, 3);
+
+    let bones = sim.slot_of(player, "bone");
     for _ in 0..2 {
         sim.send(
             conn,
             ShopRequest::Sell {
                 slot: bones,
-                stack: all_bones,
+                stack: ItemStack::new(bone, 4),
             },
         );
     }
     sim.tick();
     assert_eq!(sim.count(player, "bone"), 0);
     assert_eq!(sim.count(player, "token"), 7);
-    assert_eq!(shown(&sim, player).expect("open").buyback.len(), 1);
+    assert_eq!(shown(&sim, player).expect("open").buyback.len(), 2);
 
     sim.send(conn, ShopRequest::Buyback { sale: 0 });
     sim.tick();
-    assert_eq!(sim.count(player, "bone"), 7);
-    assert_eq!(sim.count(player, "token"), 0);
-    assert!(shown(&sim, player).expect("open").buyback.is_empty());
+    assert_eq!(sim.count(player, "bone"), 4);
+    assert_eq!(sim.count(player, "token"), 3);
+    assert_eq!(shown(&sim, player).expect("open").buyback.len(), 1);
 }
 
 #[test]

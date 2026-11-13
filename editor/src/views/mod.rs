@@ -35,6 +35,7 @@ use engine::systems::GameSettings;
 use engine::systems::area::{AreaDef, sixteenth};
 use engine::systems::script::Place;
 use ui::egui::Ui;
+use ui::sheet::Tab;
 
 use crate::app::{BottomTab, Editor};
 use crate::play;
@@ -183,7 +184,7 @@ fn insert_if_changed<R: Resource + Clone + PartialEq>(world: &mut World, value: 
     }
 }
 
-pub(crate) fn bottom_tabs(editor: &Editor) -> Vec<(BottomTab, String)> {
+pub(crate) fn bottom_tabs(editor: &Editor) -> Vec<Tab<BottomTab>> {
     let mut tabs: Vec<BottomTab> = match crate::tabs::active_tab(editor) {
         Some(EditorTab::Area { .. }) | Some(EditorTab::Blueprint { .. }) => {
             let mut tabs = vec![BottomTab::Palette, BottomTab::Blueprints];
@@ -215,7 +216,7 @@ pub(crate) fn bottom_tabs(editor: &Editor) -> Vec<(BottomTab, String)> {
                 ),
                 _ => tab.title().to_owned(),
             };
-            (tab, title)
+            Tab::new(tab, title)
         })
         .collect()
 }

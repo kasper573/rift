@@ -5,6 +5,7 @@ use ui::egui;
 use ui::egui::{Align, Label, Layout, Pos2, Rect, Sense, Ui, Vec2};
 use ui::face::{self, TextRole};
 use ui::glyph::{self, Mark};
+use ui::sheet::Tab;
 use ui::{card, ink, sheet};
 
 use super::card::{
@@ -22,7 +23,7 @@ use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::widget::slot_note_source;
 use crate::systems::item::{Inventory, ItemModuleKind, ItemStack};
 use crate::systems::player::session;
-use crate::systems::quest::QuestDef;
+use crate::systems::quest::{Objective, QuestDef};
 use crate::systems::screen::ClientScreen;
 use ui::paint;
 use ui::panel::{self, Edge};
@@ -61,7 +62,7 @@ impl HudWindow for QuestLogWindow {
         SIZE
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
-        let tabs = [LogTab::Active, LogTab::Completed].map(|tab| (tab, tab.title().to_owned()));
+        let tabs = [LogTab::Active, LogTab::Completed].map(|tab| Tab::new(tab, tab.title()));
         let mut tab = world.resource::<Browse>().tab;
         sheet::tabs(ui, &tabs, &mut tab);
         world.resource_mut::<Browse>().tab = tab;
@@ -536,11 +537,22 @@ fn quest_note(world: &World, stack: ItemStack) -> Option<String> {
     }) {
         return Some("begins a quest · use to read it".to_owned());
     }
+    let log = session::me(world).and_then(|seen| world.get::<QuestLog>(seen));
     if !stack.item.get(content).has(ItemModuleKind::QuestItem) {
-        return None;
+        return log?.active.iter().find_map(|active| {
+            let quest = active.quest.get(content);
+            quest.objectives().find_map(|objective| match objective {
+                Objective::Hold(wanted) if wanted.item == stack.item => Some(format!(
+                    "{} {} wanted for {}",
+                    wanted.count,
+                    if wanted.count == 1 { "is" } else { "are" },
+                    quest.title
+                )),
+                _ => None,
+            })
+        });
     }
-    let granted_by = session::me(world)
-        .and_then(|seen| world.get::<QuestLog>(seen))
+    let granted_by = log
         .and_then(|log| {
             log.active.iter().find(|active| {
                 active

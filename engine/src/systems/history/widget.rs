@@ -4,6 +4,7 @@ use ui::egui;
 use ui::egui::{Color32, Ui, Vec2};
 use ui::face::{self, TextRole};
 use ui::ink::{self, Ground};
+use ui::sheet::Tab;
 use ui::theme;
 use ui::{panel, sheet};
 
@@ -110,9 +111,9 @@ impl HudWindow for HistoryWindow {
         SIZE
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
-        let tabs: Vec<(HistoryTab, String)> = HistoryTab::VARIANTS
+        let tabs: Vec<Tab<HistoryTab>> = HistoryTab::VARIANTS
             .iter()
-            .map(|&tab| (tab, tab.title().to_owned()))
+            .map(|&tab| Tab::new(tab, tab.title()))
             .collect();
         let before = world.resource::<HistoryBook>().tab;
         let mut tab = before;

@@ -326,7 +326,7 @@ fn heading(
 /// right of its window, whose `body` works on `state`.
 pub fn inspector<S>(ui: &mut Ui, state: &mut S, id: &str, body: impl FnOnce(&mut S, &mut Ui)) {
     column(ui, ("inspector", id), Side::Right, |ui| {
-        sheet::tabs(ui, &[((), "Inspector".to_owned())], &mut ());
+        sheet::tabs(ui, &[sheet::Tab::new((), "Inspector")], &mut ());
         scrolled(ui, |ui| body(state, ui));
     });
 }

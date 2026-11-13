@@ -1,6 +1,6 @@
 use egui::{Context, Pos2, Rect, Vec2};
 use strum::VariantArray;
-use ui::card::{self, Card};
+use ui::card::{self, Card, CardPane};
 use ui::controls::{RowHover, RowLook};
 use ui::face::{self, Face};
 use ui::glyph::{CardKind, Icon, Mark, Weight};
@@ -213,6 +213,37 @@ fn a_card_keeps_its_width_and_grows_with_what_it_holds_up_to_its_most() {
         "{}",
         long.height()
     );
+}
+
+#[test]
+fn a_card_pane_takes_the_same_room_empty_and_full() {
+    let ctx = context();
+    let pane = CardPane {
+        size: Vec2::new(320.0, 300.0),
+        foot: controls::CONTROL_HEIGHT,
+    };
+    let mut rooms = Vec::new();
+    pass(&ctx, |ui| {
+        rooms.push(pane.show(ui, |_| {}, |_| {}).rect.size());
+        let full = pane.show(
+            ui,
+            |ui| {
+                let mut card = Card::new(CardKind::Equipment, "Rusty Sword");
+                card.max_height = ui.available_height();
+                card.show(ui, |ui, _| {
+                    for _ in 0..40 {
+                        card::fact(ui, "A long line of facts about the sword.");
+                    }
+                });
+            },
+            |ui| {
+                controls::primary(ui, "Sell 2 for 4 Gold");
+                controls::button(ui, "All 4");
+            },
+        );
+        rooms.push(full.rect.size());
+    });
+    assert_eq!(rooms, vec![pane.size, pane.size]);
 }
 
 #[test]

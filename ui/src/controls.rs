@@ -38,6 +38,12 @@ pub fn faded(ui: &mut Ui, text: impl Into<WidgetText>) -> Response {
     button_look(ui, text.into(), Marked::Not, Look::Faded)
 }
 
+/// Keeps the words and the size the button had when pressed, so nothing beside it moves while the
+/// answer is awaited. Whoever draws it sends nothing on a click.
+pub fn waiting(ui: &mut Ui, text: impl Into<WidgetText>) -> Response {
+    button_look(ui, text.into(), Marked::Not, Look::Waiting)
+}
+
 pub fn marked(ui: &mut Ui, mark: Mark, text: impl Into<WidgetText>) -> Response {
     button_look(ui, text.into(), Marked::Before(mark), Look::Outline)
 }
@@ -602,6 +608,7 @@ enum Look {
     Primary,
     Danger,
     Faded,
+    Waiting,
 }
 
 enum Interaction {
@@ -633,11 +640,11 @@ fn button_look(ui: &mut Ui, text: WidgetText, marked: Marked, look: Look) -> Res
     );
     let (rect, response) = ui.allocate_exact_size(size, Sense::click());
     let label = galley.text().to_owned();
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, ui.is_enabled(), &label));
+    let enabled = ui.is_enabled() && !matches!(look, Look::Waiting);
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Button, enabled, &label));
     if !ui.is_rect_visible(rect) {
         return response;
     }
-    let enabled = ui.is_enabled();
     let hovered = enabled && response.hovered();
     let pressed = hovered && response.is_pointer_button_down_on();
     let state = match (hovered, pressed) {
@@ -646,7 +653,9 @@ fn button_look(ui: &mut Ui, text: WidgetText, marked: Marked, look: Look) -> Res
         (false, false) => Interaction::Idle,
     };
     let painter = ui.painter();
+    let dashed = matches!(look, Look::Waiting);
     let (fill, line, text_color) = match (look, enabled) {
+        (Look::Waiting, _) => (Color32::TRANSPARENT, ink::ink_wash(0.5), ink::INK2),
         (_, false) | (Look::Faded, true) => (Color32::TRANSPARENT, ink::ink_wash(0.3), ink::INK3),
         (Look::Outline, true) => (
             match state {
@@ -676,13 +685,17 @@ fn button_look(ui: &mut Ui, text: WidgetText, marked: Marked, look: Look) -> Res
             ink::RUBRIC,
         ),
     };
-    painter.rect(
-        rect,
-        RADIUS,
-        fill,
-        Stroke::new(1.0, line),
-        StrokeKind::Inside,
-    );
+    if dashed {
+        paint::dashed_rect(painter, rect, Stroke::new(1.0, line), 3.0, 3.0);
+    } else {
+        painter.rect(
+            rect,
+            RADIUS,
+            fill,
+            Stroke::new(1.0, line),
+            StrokeKind::Inside,
+        );
+    }
     let mut text_at = rect.center() - galley.size() / 2.0;
     let mark_at = |x: f32| Rect::from_center_size(Pos2::new(x, rect.center().y), Vec2::splat(13.0));
     match marked {

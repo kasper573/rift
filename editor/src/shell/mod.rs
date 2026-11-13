@@ -26,6 +26,7 @@ use ui::egui::text::{LayoutJob, TextFormat};
 use ui::egui::{Align, Context, Layout};
 use ui::egui_dock::{DockArea, DockState, TabViewer};
 use ui::face::{self, TextRole};
+use ui::sheet::Tab;
 use ui::{float, ink, sheet};
 
 use crate::app::{BottomTab, Editor};
@@ -314,7 +315,7 @@ fn workspace(editor: &mut Editor, root: &mut egui::Ui) {
         .show_separator_line(false)
         .frame(egui::Frame::new())
         .show(root, |ui| {
-            let tabs = [((), "Content".to_owned())];
+            let tabs = [Tab::new((), "Content")];
             sheet::tabs(ui, &tabs, &mut ());
             panel::rest(ui, |ui| {
                 egui::Frame::new()
@@ -325,10 +326,10 @@ fn workspace(editor: &mut Editor, root: &mut egui::Ui) {
     panel::divide(root, content.response.rect, panel::Edge::Right);
     shown::panel(root.ctx(), "content", content.response.rect);
     let bottom_tabs = views::bottom_tabs(editor);
-    if !bottom_tabs.iter().any(|(tab, _)| *tab == editor.bottom_tab) {
+    if !bottom_tabs.iter().any(|tab| tab.key == editor.bottom_tab) {
         editor.bottom_tab = bottom_tabs
             .first()
-            .map(|(tab, _)| *tab)
+            .map(|tab| tab.key)
             .unwrap_or(BottomTab::History);
     }
     let bottom = egui::Panel::bottom("bottom")

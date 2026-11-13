@@ -9,7 +9,7 @@ use egui::{
 };
 
 use crate::face::TextRole;
-use crate::{controls, ink};
+use crate::{controls, float, ink};
 
 const RULE_INSET: f32 = 7.0;
 const RULE_GAP: f32 = 8.0;
@@ -295,20 +295,52 @@ pub fn cross(painter: &Painter, rect: Rect, hovered: bool) {
     );
 }
 
-pub fn tabs<T: PartialEq + Copy>(ui: &mut Ui, tabs: &[(T, String)], active: &mut T) {
+pub struct Tab<T> {
+    pub key: T,
+    pub label: String,
+    /// A shut tab keeps its place in the strip, so the tabs beside it never move.
+    pub shut_because: Option<String>,
+}
+
+impl<T> Tab<T> {
+    pub fn new(key: T, label: impl Into<String>) -> Tab<T> {
+        Tab {
+            key,
+            label: label.into(),
+            shut_because: None,
+        }
+    }
+}
+
+pub fn tabs<T: PartialEq + Copy>(ui: &mut Ui, tabs: &[Tab<T>], active: &mut T) {
     let baseline = ui.painter().add(Shape::Noop);
     let mut lip = None;
     let row = ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        for (tab, label) in tabs {
-            let selected = *tab == *active;
-            let color = if selected { ink::RUBRIC } else { ink::INK2 };
+        for Tab {
+            key,
+            label,
+            shut_because,
+        } in tabs
+        {
+            let selected = *key == *active;
+            let open = shut_because.is_none();
+            let color = match (selected, open) {
+                (_, false) => ink::INK3,
+                (true, true) => ink::RUBRIC,
+                (false, true) => ink::INK2,
+            };
             let galley = ui.painter().layout_job(TextRole::Tab.job(label, color));
             let size = galley.size() + Vec2::new(24.0, 10.0);
             let (rect, response) = ui.allocate_exact_size(size, Sense::click());
             response.widget_info(|| {
-                WidgetInfo::selected(WidgetType::SelectableLabel, true, selected, label)
+                WidgetInfo::selected(WidgetType::SelectableLabel, open, selected, label)
             });
+            if let Some(why) = shut_because {
+                float::tooltip(&response, |ui| {
+                    ui.label(TextRole::Tooltip.rich(why));
+                });
+            }
             let radius = CornerRadius {
                 nw: 4,
                 ne: 4,
@@ -317,12 +349,16 @@ pub fn tabs<T: PartialEq + Copy>(ui: &mut Ui, tabs: &[(T, String)], active: &mut
             };
             let fill = if selected {
                 ink::LIGHT
-            } else if response.hovered() {
+            } else if open && response.hovered() {
                 ink::gold_wash(0.2)
             } else {
                 ink::ink_wash(0.05)
             };
-            let border = ink::ink_wash(if selected { 0.5 } else { 0.35 });
+            let border = ink::ink_wash(match (selected, open) {
+                (_, false) => 0.2,
+                (true, true) => 0.5,
+                (false, true) => 0.35,
+            });
             ui.painter().rect(
                 rect,
                 radius,
@@ -338,8 +374,8 @@ pub fn tabs<T: PartialEq + Copy>(ui: &mut Ui, tabs: &[(T, String)], active: &mut
             if selected {
                 lip = Some(rect);
             }
-            if response.clicked() {
-                *active = *tab;
+            if open && response.clicked() {
+                *active = *key;
             }
         }
     });

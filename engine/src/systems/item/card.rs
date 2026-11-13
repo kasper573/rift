@@ -137,6 +137,29 @@ pub fn kind(def: &ItemDef) -> CardKind {
 }
 
 pub fn show(ui: &mut Ui, world: &mut World, item: ItemId, look: CardLook) -> CardResponse {
+    show_noted(ui, world, item, look, &[])
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ItemCardNote {
+    pub text: String,
+    pub tone: CardNoteTone,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CardNoteTone {
+    Plain,
+    Strong,
+    Warning,
+}
+
+pub fn show_noted(
+    ui: &mut Ui,
+    world: &mut World,
+    item: ItemId,
+    look: CardLook,
+    notes: &[ItemCardNote],
+) -> CardResponse {
     let content = world.resource::<Content>().clone();
     let def = item.get(&content);
     let held = session::me(world)
@@ -148,6 +171,15 @@ pub fn show(ui: &mut Ui, world: &mut World, item: ItemId, look: CardLook) -> Car
     card.numeral = numeral.as_deref();
     card.show(ui, |ui, plate| {
         summary(ui, &content, item, plate);
+        // Ahead of the item's own lines, so a long card never cuts off what the view has to say.
+        for note in notes {
+            let text = match note.tone {
+                CardNoteTone::Plain => TextRole::CardBody.rich(&note.text).color(ink::INK),
+                CardNoteTone::Strong => face::bold(&note.text).size(TextRole::CardBody.size()),
+                CardNoteTone::Warning => TextRole::CardBody.rich(&note.text).color(ink::RUBRIC),
+            };
+            ui.add(egui::Label::new(text).wrap());
+        }
         let viewer = session::me(world);
         details(ui, &content, item, |requirement| {
             let viewer = viewer?;

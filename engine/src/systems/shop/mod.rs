@@ -158,6 +158,18 @@ impl ShopDef {
         Ok(&rule.pays)
     }
 
+    pub fn currencies(&self) -> Vec<ItemId> {
+        let mut currencies = Vec::new();
+        let prices = self.sells().flat_map(|offer| &offer.price);
+        let pays = self.buys().flat_map(|rule| &rule.pays);
+        for stack in prices.chain(pays) {
+            if !currencies.contains(&stack.item) {
+                currencies.push(stack.item);
+            }
+        }
+        currencies
+    }
+
     pub fn wants(&self, content: &Content) -> Vec<String> {
         self.buys()
             .map(|rule| match rule.what {
@@ -263,6 +275,9 @@ pub struct ShopView {
     pub offers: Vec<OfferView>,
     pub buyback: Vec<BuybackView>,
     pub quotes: Vec<SaleQuote>,
+    /// A request that changes nothing else still changes this, so whoever sent it can tell an
+    /// answer from silence.
+    pub answered: u32,
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Hash)]
@@ -295,6 +310,8 @@ pub struct BuybackView {
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq, Hash)]
 pub enum WareRefusal {
     Unaffordable(ItemStack),
+    NoRoom { slots: u32 },
+    SoldOut,
     Unavailable(String),
 }
 
@@ -302,14 +319,18 @@ impl WareRefusal {
     pub fn describe(&self, content: &Content) -> String {
         match self {
             WareRefusal::Unaffordable(short) => ExchangeRefusal::Missing(*short).describe(content),
+            WareRefusal::NoRoom { slots } => {
+                ExchangeRefusal::NoRoom { slots: *slots }.describe(content)
+            }
+            WareRefusal::SoldOut => "Sold out for now".to_owned(),
             WareRefusal::Unavailable(reason) => reason.clone(),
         }
     }
 
-    fn of(refusal: ExchangeRefusal, content: &Content) -> WareRefusal {
+    fn of(refusal: ExchangeRefusal) -> WareRefusal {
         match refusal {
             ExchangeRefusal::Missing(short) => WareRefusal::Unaffordable(short),
-            ExchangeRefusal::NoRoom { .. } => WareRefusal::Unavailable(refusal.describe(content)),
+            ExchangeRefusal::NoRoom { slots } => WareRefusal::NoRoom { slots },
         }
     }
 }
@@ -359,6 +380,7 @@ pub struct ShopVisit {
     shop: ShopId,
     flow: FlowKey,
     reactions: u32,
+    answered: u32,
 }
 
 fn open(
@@ -383,6 +405,7 @@ fn open(
         shop,
         flow,
         reactions: 0,
+        answered: 0,
     });
     refresh_view(world, player);
     true
@@ -413,6 +436,10 @@ pub fn requests(world: &mut World) {
             ShopRequest::Sell { slot, stack } => sell(world, player, slot, stack),
             ShopRequest::Buyback { sale } => buy_back(world, player, sale),
         }
+        if let Some(mut visit) = world.get_mut::<ShopVisit>(player) {
+            visit.answered = visit.answered.wrapping_add(1);
+        }
+        refresh_view(world, player);
     }
 }
 
@@ -630,7 +657,6 @@ fn buy(world: &mut World, player: Entity, index: u32) {
         EventKind::Bought,
         ItemStack::new(offer.item, offer.count),
     );
-    refresh_view(world, player);
 }
 
 fn sell(world: &mut World, player: Entity, slot: u32, stack: ItemStack) {
@@ -641,7 +667,8 @@ fn sell(world: &mut World, player: Entity, slot: u32, stack: ItemStack) {
     let held = world
         .get::<Inventory>(player)
         .and_then(|inventory| inventory.slots.get(slot as usize).copied());
-    if held != Some(stack) {
+    if !held.is_some_and(|held| held.item == stack.item && (1..=held.count).contains(&stack.count))
+    {
         return;
     }
     let declined = declined(world, player, shop);
@@ -673,7 +700,6 @@ fn sell(world: &mut World, player: Entity, slot: u32, stack: ItemStack) {
     );
     react(world, player, |reactions| &reactions.sold);
     traded(world, player, shop, EventKind::Sold, stack);
-    refresh_view(world, player);
 }
 
 fn buy_back(world: &mut World, player: Entity, index: u32) {
@@ -703,7 +729,6 @@ fn buy_back(world: &mut World, player: Entity, index: u32) {
     {
         sales.remove(index as usize);
     }
-    refresh_view(world, player);
 }
 
 fn trade(
@@ -738,7 +763,7 @@ fn trade_refusal(
         .clone()
         .exchange(content, price, bought)
         .err()
-        .map(|refusal| WareRefusal::of(refusal, content))
+        .map(WareRefusal::of)
 }
 
 fn offer_refusal(
@@ -754,7 +779,7 @@ fn offer_refusal(
         return Some(WareRefusal::Unavailable(format!("Needs {unmet}")));
     }
     if stock(world, player, shop, index, now).is_some_and(|(left, _)| left == 0) {
-        return Some(WareRefusal::Unavailable("Sold out for now".to_owned()));
+        return Some(WareRefusal::SoldOut);
     }
     trade_refusal(
         content,
@@ -791,9 +816,10 @@ fn stock(
 
 fn refresh_view(world: &mut World, player: Entity) {
     let content = world.resource::<Content>().clone();
-    let Some(shop) = visiting(world, player) else {
+    let Some(visit) = world.get::<ShopVisit>(player) else {
         return;
     };
+    let (shop, answered) = (visit.shop, visit.answered);
     let now = world.resource::<WallClock>().now;
     let inventory = world
         .get::<Inventory>(player)
@@ -822,7 +848,12 @@ fn refresh_view(world: &mut World, player: Entity) {
                 .iter()
                 .map(|sale| BuybackView {
                     sale: sale.clone(),
-                    refusal: trade_refusal(&content, &inventory, &sale.paid, &[]),
+                    refusal: trade_refusal(
+                        &content,
+                        &inventory,
+                        &sale.paid,
+                        &[ItemStack::new(sale.item, sale.count)],
+                    ),
                     held: held(&inventory, &sale.paid),
                 })
                 .collect()
@@ -834,6 +865,7 @@ fn refresh_view(world: &mut World, player: Entity) {
         offers,
         buyback,
         quotes,
+        answered,
     };
     if world.get::<ShopView>(player) != Some(&view) {
         world.entity_mut(player).insert(view);

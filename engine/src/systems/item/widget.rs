@@ -84,14 +84,13 @@ impl HudWindow for InventoryWindow {
         InterfaceIcon::Bag
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
-        let cells = inventory_cells(world);
         sheet::scroll(ui, egui::ScrollArea::vertical().auto_shrink(false), |ui| {
-            ui.spacing_mut().item_spacing = Vec2::splat(SLOT_GAP);
-            ui.horizontal_wrapped(|ui| {
-                for cell in &cells {
-                    bag_slot(ui, world, cell);
-                }
-            });
+            let pane = InventoryPane {
+                width: ui.available_width(),
+                heading: None,
+                selected: &mut None,
+            };
+            inventory_pane(ui, world, pane);
             ui.add_space(6.0);
             let hint = StyledLine::new(hint_pieces(&[
                 (InputAction::InspectItem, " for more information".to_owned()),
@@ -104,6 +103,66 @@ impl HudWindow for InventoryWindow {
     }
 }
 
+pub struct InventoryPane<'a> {
+    pub width: f32,
+    /// A window that says how full the inventory is elsewhere leaves the heading out.
+    pub heading: Option<&'a str>,
+    pub selected: &'a mut Option<u32>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InventoryRoom {
+    pub taken: u32,
+    pub slots: u32,
+}
+
+impl InventoryRoom {
+    pub fn full(self) -> bool {
+        self.taken >= self.slots
+    }
+}
+
+pub fn inventory_pane(ui: &mut Ui, world: &mut World, pane: InventoryPane) {
+    let cells = inventory_cells(world);
+    ui.allocate_ui_with_layout(
+        Vec2::new(pane.width, 0.0),
+        egui::Layout::top_down(egui::Align::Min),
+        |ui| {
+            ui.set_width(pane.width);
+            if let Some(heading) = pane.heading {
+                let InventoryRoom { taken, slots } = inventory_room(world);
+                sheet::section(ui, &format!("{heading} · {taken} of {slots}"));
+            }
+            ui.spacing_mut().item_spacing = Vec2::splat(SLOT_GAP);
+            ui.horizontal_wrapped(|ui| {
+                for cell in &cells {
+                    bag_slot(ui, world, cell, pane.selected);
+                }
+            });
+        },
+    );
+}
+
+pub fn inventory_room(world: &World) -> InventoryRoom {
+    let inventory = session::my_character(world).and_then(|me| me.get::<Inventory>());
+    InventoryRoom {
+        taken: inventory.map_or(0, |inventory| inventory.slots.len() as u32),
+        slots: inventory.map_or(0, |inventory| inventory.max),
+    }
+}
+
+pub fn slot_notes(world: &World, stack: ItemStack) -> Vec<String> {
+    let content = world.resource::<Content>();
+    let notes = world
+        .get_resource::<SlotNotes>()
+        .map(|notes| notes.0.as_slice())
+        .unwrap_or_default();
+    bound_note(stack.item.get(content))
+        .into_iter()
+        .chain(notes.iter().filter_map(|source| source(world, stack)))
+        .collect()
+}
+
 pub(crate) struct SlotLook<'a> {
     pub icon: Option<&'a ImageRef>,
     pub count: u32,
@@ -111,6 +170,7 @@ pub(crate) struct SlotLook<'a> {
     pub faded: bool,
     pub refused: bool,
     pub quest: bool,
+    pub selected: bool,
 }
 
 impl SlotLook<'_> {
@@ -121,6 +181,7 @@ impl SlotLook<'_> {
         faded: false,
         refused: false,
         quest: false,
+        selected: false,
     };
 }
 
@@ -161,7 +222,10 @@ pub(crate) fn slot(
             refused: look.refused,
         },
     );
-    if look.wanted {
+    if look.selected {
+        ui.painter()
+            .rect_stroke(rect, 3.0, Stroke::new(2.0, ink::INK), StrokeKind::Inside);
+    } else if look.wanted {
         ui.painter()
             .rect_stroke(rect, 3.0, Stroke::new(1.5, ink::OCHRE), StrokeKind::Inside);
     }
@@ -219,7 +283,7 @@ const BUILT_IN: [InputAction; 3] = [
     InputAction::InspectItem,
 ];
 
-fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData) {
+fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData, selected: &mut Option<u32>) {
     let Some(filled) = &cell.filled else {
         slot(ui, world, SlotLook::EMPTY, Sense::hover());
         return;
@@ -240,6 +304,7 @@ fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData) {
         faded: refused || carried || left == 0,
         refused: false,
         quest: def.has(ItemModuleKind::QuestItem),
+        selected: *selected == Some(cell.slot),
     };
     let response = slot(ui, world, look, Sense::click_and_drag());
     let candidates: Vec<InputAction> = world
@@ -264,6 +329,9 @@ fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData) {
         .collect();
     let hint = StyledLine::new(hint_pieces(&filled.hints));
     hud::tooltip(&response, world, &def.name, &lines, Some(&hint));
+    if map::clicked(world, InputAction::Select, &response) {
+        *selected = Some(cell.slot);
+    }
 }
 
 fn inventory_cells(world: &World) -> Vec<CellData> {
@@ -273,10 +341,6 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
     let verdicts = world
         .get_resource::<SlotVerdicts>()
         .map(|verdicts| verdicts.0.as_slice())
-        .unwrap_or_default();
-    let notes = world
-        .get_resource::<SlotNotes>()
-        .map(|notes| notes.0.as_slice())
         .unwrap_or_default();
     let asides = world
         .get_resource::<SlotAsides>()
@@ -295,10 +359,7 @@ fn inventory_cells(world: &World) -> Vec<CellData> {
                         stack,
                         aside: asides.iter().map(|source| source(world, slot, stack)).sum(),
                         hints: hints(map, &takeovers, def),
-                        notes: bound_note(def)
-                            .into_iter()
-                            .chain(notes.iter().filter_map(|source| source(world, stack)))
-                            .collect(),
+                        notes: slot_notes(world, stack),
                         verdict: verdicts.iter().find_map(|source| source(world, stack)),
                     }
                 }),

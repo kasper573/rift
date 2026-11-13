@@ -1,7 +1,7 @@
 use egui::epaint::{Mesh, Shadow};
 use egui::{
-    Align2, Color32, CornerRadius, Margin, Painter, Pos2, Rect, Response, Sense, Shape, Stroke,
-    StrokeKind, TextureId, Ui, UiBuilder, Vec2, WidgetInfo, WidgetType,
+    Align, Align2, Color32, CornerRadius, Layout, Margin, Painter, Pos2, Rect, Response, Sense,
+    Shape, Stroke, StrokeKind, TextureId, Ui, UiBuilder, Vec2, WidgetInfo, WidgetType,
 };
 
 use crate::face::TextRole;
@@ -27,6 +27,7 @@ pub const LINE_GAP: f32 = 6.0;
 pub const GRANT_ICON: f32 = 22.0;
 const CROSS_AT: Vec2 = Vec2::new(8.0, 7.0);
 const BAND_TEXT_INSET: f32 = 28.0;
+const PANE_GAP: f32 = 10.0;
 
 pub const SHADOW: Shadow = Shadow {
     offset: [0, 10],
@@ -328,6 +329,40 @@ impl<'a> Card<'a> {
                 ink::OCHRE,
             );
         }
+    }
+}
+
+/// Takes the same room whatever it holds and when it holds nothing, so nothing beside it moves as
+/// the selection changes.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct CardPane {
+    pub size: Vec2,
+    pub foot: f32,
+}
+
+impl CardPane {
+    pub fn show(
+        self,
+        ui: &mut Ui,
+        card: impl FnOnce(&mut Ui),
+        actions: impl FnOnce(&mut Ui),
+    ) -> Response {
+        let (rect, response) = ui.allocate_exact_size(self.size, Sense::hover());
+        let foot = Rect::from_min_max(Pos2::new(rect.min.x, rect.max.y - self.foot), rect.max);
+        let room = Rect::from_min_max(rect.min, Pos2::new(rect.max.x, foot.min.y - PANE_GAP));
+        ui.scope_builder(
+            UiBuilder::new()
+                .max_rect(room)
+                .layout(Layout::top_down(Align::Min)),
+            card,
+        );
+        ui.scope_builder(
+            UiBuilder::new()
+                .max_rect(foot)
+                .layout(Layout::right_to_left(Align::Center)),
+            actions,
+        );
+        response
     }
 }
 
