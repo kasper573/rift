@@ -12,11 +12,13 @@ use crate::core::gui::{self, Band, Tier};
 use crate::core::math::{Pos, Size};
 use crate::systems::settings::{Placed, Placement, UserSettings};
 
+#[derive(Clone, Copy)]
 pub(crate) struct WindowFrame<'a> {
     pub key: &'static str,
+    pub of: Placed,
     pub title: Option<&'a str>,
     pub start: Rect,
-    pub body_limit: Option<Vec2>,
+    pub min: Vec2,
 }
 
 pub(crate) fn widget<R>(
@@ -32,7 +34,7 @@ pub(crate) fn widget<R>(
         .widget_pos(key)
         .map(|pos| Pos2::new(pos.x, pos.y));
     let rest = Rect::from_min_size(saved.unwrap_or(start), drawn_size(gui, id));
-    let at = standing(world, gui, (key, Kept::Spot), rest, Limits::NONE).min;
+    let at = standing(world, gui, key, rest, Limits::NONE).min;
     let shown = egui::Area::new(id)
         .order(Order::Background)
         .fixed_pos(at)
@@ -78,8 +80,7 @@ pub(crate) fn sized_rect(world: &World, gui: &egui::Context, piece: &SizedPiece)
         .placement(piece.of)
         .map(placed_rect)
         .unwrap_or(piece.start);
-    let kept = (piece.key, Kept::Placement(piece.of));
-    standing(world, gui, kept, rest, piece.limits())
+    standing(world, gui, piece.key, rest, piece.limits())
 }
 
 pub(crate) fn grab_sized(
@@ -127,22 +128,20 @@ pub(crate) fn window<R>(
 ) -> egui::InnerResponse<R> {
     let WindowFrame {
         key,
+        of,
         title,
         start,
-        body_limit,
+        min,
     } = frame;
     let id = panel_id(key);
-    let limits = Limits {
-        min: MIN_WINDOW,
-        max: body_limit.map(|body| body + sheet::chrome(true)),
-    };
-    let kept = Kept::Placement(Placed::Window(key));
+    let limits = Limits { min, max: None };
+    let kept = Kept::Placement(of);
     let rest = world
         .resource::<UserSettings>()
-        .placement(Placed::Window(key))
+        .placement(of)
         .map(placed_rect)
         .unwrap_or(start);
-    let rect = standing(world, gui, (key, kept), rest, limits);
+    let rect = standing(world, gui, key, rest, limits);
     let front = front_sheet(world, gui) == Some(key);
     let at_rest = pose == SheetPose::REST;
     let shadow = match (at_rest, front) {
@@ -200,6 +199,31 @@ pub(crate) fn window<R>(
     egui::InnerResponse::new(inner, shown.response)
 }
 
+pub(crate) fn window_handle(
+    ui: &mut Ui,
+    world: &mut World,
+    frame: WindowFrame,
+    name: &str,
+    rect: Rect,
+) {
+    let id = panel_id(frame.key);
+    let handle = ui.interact(rect, id.with("handle"), Sense::drag());
+    handle.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, name));
+    let Some(outer) = ui.memory(|memory| memory.area_rect(id)) else {
+        return;
+    };
+    let limits = Limits {
+        min: frame.min,
+        max: None,
+    };
+    let kept = Kept::Placement(frame.of);
+    grab(
+        world,
+        &handle,
+        Held::new(frame.key, kept, Grip::Move, outer, limits),
+    );
+}
+
 pub(crate) fn placed_spot(
     world: &World,
     gui: &egui::Context,
@@ -211,7 +235,7 @@ pub(crate) fn placed_spot(
         .widget_pos(key)
         .map(|pos| Pos2::new(pos.x, pos.y));
     let rest = Rect::from_min_size(saved.unwrap_or(start), drawn_size(gui, panel_id(key)));
-    standing(world, gui, (key, Kept::Spot), rest, Limits::NONE)
+    standing(world, gui, key, rest, Limits::NONE)
 }
 
 pub(crate) fn grab_spot(world: &mut World, key: &'static str, handle: &egui::Response, rect: Rect) {
@@ -231,10 +255,6 @@ pub(crate) fn front_sheet(world: &World, gui: &egui::Context) -> Option<&'static
 
 pub(crate) fn mark_drawn(world: &mut World, key: &'static str) {
     world.resource_mut::<WindowsDrawn>().now.insert(key);
-}
-
-pub(crate) fn shown_rect(gui: &egui::Context, key: &str) -> Option<Rect> {
-    gui.memory(|memory| memory.area_rect(panel_id(key)))
 }
 
 pub(crate) fn layer(key: &str) -> LayerId {
@@ -277,7 +297,6 @@ pub(super) fn arrange(world: &mut World) {
     }
 }
 
-const MIN_WINDOW: Vec2 = Vec2::new(100.0, 100.0);
 /// The most a sheet's clock moves in one frame, so a stalled frame never skips the motion.
 const MAX_STEP: f32 = 1.0 / 30.0;
 
@@ -385,19 +404,12 @@ fn grab(world: &mut World, handle: &egui::Response, held: Held) {
     });
 }
 
-/// A window and the launcher that opens it share a key, so the hold names which of the two it has.
-fn standing(
-    world: &World,
-    gui: &egui::Context,
-    (key, kept): (&str, Kept),
-    rest: Rect,
-    limits: Limits,
-) -> Rect {
+fn standing(world: &World, gui: &egui::Context, key: &str, rest: Rect, limits: Limits) -> Rect {
     let screen = gui.content_rect();
     let rect = world
         .resource::<Arranging>()
         .0
-        .filter(|held| held.key == key && held.kept == kept)
+        .filter(|held| held.key == key)
         .map_or(rest, |held| held.rect(screen));
     within(rect, screen, limits)
 }

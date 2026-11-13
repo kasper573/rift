@@ -836,7 +836,7 @@ fn slot_key_mark(ui: &Ui, rect: Rect, key: &str) {
         rect.left_top() + Vec2::new(3.0, 1.0),
         Align2::LEFT_TOP,
         key,
-        TextRole::Launcher.font_id(),
+        TextRole::SlotKey.font_id(),
         ink::INK2,
         CREAM_HALO,
     );

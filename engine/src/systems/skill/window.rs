@@ -5,7 +5,7 @@ use ui::float;
 use ui::theme;
 
 use bevy::prelude::*;
-use ui::controls::{self, Pill};
+use ui::controls;
 use ui::egui::scroll_area::{DragScroll, ScrollBarVisibility, ScrollSource};
 use ui::egui::{Align2, Color32, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2};
 use ui::face::{self, TextRole};
@@ -17,7 +17,8 @@ use crate::core::content::Content;
 use crate::core::gui;
 use crate::core::text::{StyledLine, TextPiece};
 use crate::systems::class::{self, ClassDef, NodeKey, SkillPoints};
-use crate::systems::hud::{Carried, HudWindow};
+use crate::systems::hud::Carried;
+use crate::systems::hud::menu::{MenuTab, MenuTabName};
 use crate::systems::input::map::{self, InputAction, input};
 use crate::systems::interface::{InterfaceIcon, InterfaceSound};
 use crate::systems::item::widget::{SlotLook, slot};
@@ -26,54 +27,58 @@ use crate::systems::player::session;
 use crate::systems::skill::bar;
 use ui::words::counted;
 
-const WINDOW_SIZE: Vec2 = Vec2::new(560.0, 440.0);
 const NODE_RADIUS: f32 = 24.0;
 const NODE_ICON: f32 = 28.0;
 const DOCK_HEIGHT: f32 = 34.0;
 const NAME_HALO: f32 = 1.0;
+const COLUMN_GAP: f32 = 16.0;
 
-pub struct SkillsWindow;
+pub struct SkillsMenuTab;
 
-impl HudWindow for SkillsWindow {
-    fn title(&self) -> &'static str {
-        "Skills"
-    }
-    fn toggle(&self) -> InputAction {
-        InputAction::ToggleSkills
+impl MenuTab for SkillsMenuTab {
+    fn name(&self) -> MenuTabName {
+        MenuTabName::Skills
     }
     fn icon(&self) -> InterfaceIcon {
         InterfaceIcon::Skills
     }
-    fn size(&self) -> Vec2 {
-        WINDOW_SIZE
+    fn opens(&self) -> InputAction {
+        InputAction::OpenSkills
     }
-    fn body_limit(&self, world: &World) -> Option<Vec2> {
-        let sheet = Sheet::of(world)?;
-        let canvas = sheet.class.get(world.resource::<Content>()).canvas()?;
-        let view = world.resource::<TreeView>();
-        Some(canvas.size() + view.body - view.viewport.size())
+    fn hints(&self) -> &'static [(InputAction, &'static str)] {
+        &[
+            (InputAction::RaiseRank, "raise"),
+            (InputAction::LowerRank, "lower"),
+            (InputAction::CarryItem, "to the bar"),
+            (InputAction::InspectSkill, "pin the card"),
+        ]
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
         let Some(sheet) = Sheet::of(world) else {
             ui.label(theme::faint("No class yet"));
             return;
         };
-        header(ui, world, &sheet);
         let room = ui.available_rect_before_wrap();
-        let viewport =
-            Rect::from_min_max(room.min, Pos2::new(room.max.x, room.max.y - DOCK_HEIGHT));
-        let view = tree(ui, world, &sheet, viewport);
-        *world.resource_mut::<TreeView>() = view;
-        dock(ui, world, &sheet, room);
+        let beside_card = Rect::from_min_max(
+            room.min,
+            Pos2::new(room.max.x - ui::card::WIDTH - COLUMN_GAP, room.max.y),
+        );
+        ui.scope_builder(UiBuilder::new().max_rect(beside_card), |ui| {
+            header(ui, world, &sheet);
+            let room = ui.available_rect_before_wrap();
+            let viewport =
+                Rect::from_min_max(room.min, Pos2::new(room.max.x, room.max.y - DOCK_HEIGHT));
+            let view = tree(ui, world, &sheet, viewport);
+            *world.resource_mut::<TreeView>() = view;
+            dock(ui, world, &sheet, room);
+        });
     }
 }
 
-/// How the tree sat in its window when last drawn: the window's body, the viewport the tree
-/// pans within, the canvas shown there and how far it is panned. The window may grow until
-/// the viewport takes the whole canvas, and no further.
+/// How the tree sat in its pane when last drawn: the viewport the tree pans within, the canvas
+/// shown there and how far it is panned.
 #[derive(Resource, Clone, Copy, Debug, PartialEq)]
 pub struct TreeView {
-    pub body: Vec2,
     pub viewport: Rect,
     pub content: Vec2,
     pub offset: Vec2,
@@ -82,7 +87,6 @@ pub struct TreeView {
 impl Default for TreeView {
     fn default() -> TreeView {
         TreeView {
-            body: Vec2::ZERO,
             viewport: Rect::ZERO,
             content: Vec2::ZERO,
             offset: Vec2::ZERO,
@@ -90,7 +94,7 @@ impl Default for TreeView {
     }
 }
 
-/// The rank each node is picked up to in the window, not yet confirmed.
+/// The rank each node is picked up to in the tree, not yet confirmed.
 #[derive(Resource, Default, Clone, Debug, PartialEq)]
 pub struct SkillPlan(pub BTreeMap<NodeKey, Rank>);
 
@@ -180,21 +184,8 @@ impl NodeState {
 fn header(ui: &mut Ui, world: &mut World, sheet: &Sheet) {
     let content = world.resource::<Content>().clone();
     let def = sheet.class.get(&content);
-    let plan = world.resource::<SkillPlan>().clone();
-    let picked = sheet.picked_cost(&content, def, &plan);
-    let left = SkillPoints(sheet.to_spend.0.saturating_sub(picked.0));
     ui.horizontal(|ui| {
         ui.label(face::bold(format!("{} · level {}", def.name, sheet.level)));
-        let mut text = format!("{} to spend", counted(left.0, "point"));
-        if picked.0 > 0 {
-            text.push_str(&format!(" · {} picked", counted(picked.0, "point")));
-        }
-        let pill = if left.0 > 0 || picked.0 > 0 {
-            Pill::Gold
-        } else {
-            Pill::Ink
-        };
-        controls::pill(ui, &text, pill);
         let granted = super::granted(world, sheet.me);
         if !granted.is_empty() {
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -293,7 +284,6 @@ fn tree(ui: &mut Ui, world: &mut World, sheet: &Sheet, viewport: Rect) -> TreeVi
         StrokeKind::Outside,
     );
     TreeView {
-        body: ui.max_rect().size(),
         viewport,
         content: shown.inner.content_size,
         offset: shown.inner.state.offset,
@@ -505,30 +495,41 @@ fn lower(world: &mut World, sheet: &Sheet, key: &NodeKey) {
     InterfaceSound::UiMove.play(world);
 }
 
+// Drawn whether or not anything is picked, its buttons faded, so the tree above never moves.
 fn dock(ui: &mut Ui, world: &mut World, sheet: &Sheet, room: Rect) {
     let plan = world.resource::<SkillPlan>().clone();
-    if plan.0.is_empty() {
-        return;
-    }
     let content = world.resource::<Content>().clone();
     let def = sheet.class.get(&content);
     let picked = sheet.picked_cost(&content, def, &plan);
+    let left = SkillPoints(sheet.to_spend.0.saturating_sub(picked.0));
     let dock = Rect::from_min_max(Pos2::new(room.min.x, room.max.y - DOCK_HEIGHT), room.max);
     ui.scope_builder(
         UiBuilder::new()
             .max_rect(dock)
             .layout(egui::Layout::right_to_left(egui::Align::Center)),
         |ui| {
-            let confirm =
-                controls::primary(ui, format!("Confirm · {}", counted(picked.0, "point")));
-            float::tooltip(&confirm, |ui| {
-                ui.label("Spends the picked points for good");
+            let planned = !plan.0.is_empty();
+            let (learn, reset) = ui
+                .add_enabled_ui(planned, |ui| {
+                    let learn = controls::primary(ui, "Learn");
+                    float::tooltip(&learn, |ui| {
+                        ui.label("Spends the picked points for good");
+                    });
+                    let reset = controls::button(ui, "Reset plan");
+                    float::tooltip(&reset, |ui| {
+                        ui.label("Takes every pick back; nothing is spent");
+                    });
+                    (learn, reset)
+                })
+                .inner;
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                let mut text = format!("{} to spend", counted(left.0, "skill point"));
+                if picked.0 > 0 {
+                    text.push_str(&format!(" · {} picked", counted(picked.0, "point")));
+                }
+                ui.add(egui::Label::new(face::body(text)).truncate());
             });
-            let reset = controls::button(ui, "Reset");
-            float::tooltip(&reset, |ui| {
-                ui.label("Takes every pick back; nothing is spent");
-            });
-            if confirm.clicked() {
+            if learn.clicked() {
                 let ranks: Vec<(NodeKey, Rank)> = plan
                     .0
                     .iter()

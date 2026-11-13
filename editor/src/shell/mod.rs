@@ -26,7 +26,7 @@ use ui::egui::text::{LayoutJob, TextFormat};
 use ui::egui::{Align, Context, Layout};
 use ui::egui_dock::{DockArea, DockState, TabViewer};
 use ui::face::{self, TextRole};
-use ui::sheet::Tab;
+use ui::sheet::{Tab, TabSize};
 use ui::{float, ink, sheet};
 
 use crate::app::{BottomTab, Editor};
@@ -316,7 +316,7 @@ fn workspace(editor: &mut Editor, root: &mut egui::Ui) {
         .frame(egui::Frame::new())
         .show(root, |ui| {
             let tabs = [Tab::new((), "Content")];
-            sheet::tabs(ui, &tabs, &mut ());
+            sheet::tabs(ui, TabSize::Sub, &tabs, &mut ());
             panel::rest(ui, |ui| {
                 egui::Frame::new()
                     .inner_margin(egui::Margin::symmetric(10, 8))
@@ -341,7 +341,7 @@ fn workspace(editor: &mut Editor, root: &mut egui::Ui) {
             ..egui::Margin::ZERO
         }))
         .show(root, |ui| {
-            sheet::tabs(ui, &bottom_tabs, &mut editor.bottom_tab);
+            sheet::tabs(ui, TabSize::Sub, &bottom_tabs, &mut editor.bottom_tab);
             panel::rest(ui, |ui| {
                 egui::Frame::new()
                     .inner_margin(egui::Margin::symmetric(10, 8))

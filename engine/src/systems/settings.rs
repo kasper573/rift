@@ -17,12 +17,11 @@ use crate::core::render::video::{self, VideoPreferences};
 use crate::core::render::{CameraPreferences, CameraRig};
 use crate::core::text::{LettersPerSecond, Typing};
 use crate::core::units::{Percent, Seconds, WindowPx};
-use crate::systems::hud::HudWindow;
+use crate::systems::hud::menu::{MenuTab, MenuTabName};
 use crate::systems::input::map::{InputAction, KeyGesture};
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::skill::HotbarSlot;
 
-const WINDOW_SIZE: egui::Vec2 = egui::Vec2::new(400.0, 410.0);
 const SLIDER_WIDTH: f32 = 150.0;
 
 pub(crate) fn plugin(app: &mut App) {
@@ -66,7 +65,7 @@ pub(crate) struct Placement {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum Placed {
-    Window(&'static str),
+    Menu,
     Chat,
 }
 
@@ -105,20 +104,17 @@ pub(crate) enum HotbarKey {
     Custom(KeyGesture),
 }
 
-pub struct SettingsWindow;
+pub struct SettingsMenuTab;
 
-impl HudWindow for SettingsWindow {
-    fn title(&self) -> &'static str {
-        "Settings"
-    }
-    fn toggle(&self) -> InputAction {
-        InputAction::ToggleSettings
+impl MenuTab for SettingsMenuTab {
+    fn name(&self) -> MenuTabName {
+        MenuTabName::Settings
     }
     fn icon(&self) -> InterfaceIcon {
         InterfaceIcon::Settings
     }
-    fn size(&self) -> egui::Vec2 {
-        WINDOW_SIZE
+    fn opens(&self) -> InputAction {
+        InputAction::OpenSettings
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
         let typing = world.get_resource::<Typing>().copied();
@@ -144,6 +140,12 @@ fn show_settings(
 ) {
     ui.spacing_mut().slider_width = SLIDER_WIDTH;
     sheet::section(ui, "Interface");
+    controls::form(ui, ("settings", "menu"), |ui| {
+        let label = ui.label("Menu opens on");
+        menu_tab_picker(ui, settings, label.id);
+        ui.end_row();
+    });
+    ui.add_space(4.0);
     let mut snapping = settings.snapping_enabled();
     if ui.checkbox(&mut snapping, "UI snapping").changed() {
         settings.toggle_snapping();
@@ -229,6 +231,27 @@ fn show_settings(
         }
     });
 }
+
+fn menu_tab_picker(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: egui::Id) {
+    let chosen = settings.menu_opens_on();
+    let mut picked = chosen;
+    controls::combo("menu opens on")
+        .selected_text(chosen.map_or(LAST_USED_TAB, MenuTabName::title))
+        .show_ui(ui, |ui| {
+            ui.selectable_value(&mut picked, None, LAST_USED_TAB);
+            ui.separator();
+            for &tab in MenuTabName::VARIANTS {
+                ui.selectable_value(&mut picked, Some(tab), tab.title());
+            }
+        })
+        .response
+        .labelled_by(label);
+    if picked != chosen {
+        settings.ui.menu.opens_on = picked;
+    }
+}
+
+const LAST_USED_TAB: &str = "The tab I last used";
 
 fn show_video(ui: &mut Ui, settings: &mut Mut<UserSettings>) {
     let mut video = settings.video;
@@ -389,18 +412,20 @@ impl UserSettings {
 
     pub(crate) fn placement(&self, of: Placed) -> Option<Placement> {
         match of {
-            Placed::Window(window) => self.ui.windows.get(window).copied(),
+            Placed::Menu => self.ui.menu.placement,
             Placed::Chat => self.ui.chat.placement,
         }
     }
 
     pub(crate) fn set_placement(&mut self, of: Placed, placement: Placement) {
         match of {
-            Placed::Window(window) => {
-                self.ui.windows.insert(window.to_owned(), placement);
-            }
+            Placed::Menu => self.ui.menu.placement = Some(placement),
             Placed::Chat => self.ui.chat.placement = Some(placement),
         }
+    }
+
+    pub(crate) fn menu_opens_on(&self) -> Option<MenuTabName> {
+        self.ui.menu.opens_on
     }
 
     pub(crate) fn chat_shown(&self) -> bool {
@@ -469,7 +494,7 @@ struct UiSettings {
     #[serde(default)]
     widgets: BTreeMap<String, Pos<WindowPx>>,
     #[serde(default)]
-    windows: BTreeMap<String, Placement>,
+    menu: MenuSettings,
     #[serde(default)]
     hotbar: HotbarSettings,
     #[serde(default)]
@@ -481,11 +506,20 @@ impl Default for UiSettings {
         UiSettings {
             snap: default_snap(),
             widgets: BTreeMap::new(),
-            windows: BTreeMap::new(),
+            menu: MenuSettings::default(),
             hotbar: HotbarSettings::default(),
             chat: ChatSettings::default(),
         }
     }
+}
+
+#[derive(Serialize, Deserialize, Default)]
+struct MenuSettings {
+    #[serde(default)]
+    placement: Option<Placement>,
+    /// None opens on the tab last used this session.
+    #[serde(default)]
+    opens_on: Option<MenuTabName>,
 }
 
 #[derive(Serialize, Deserialize, Default)]

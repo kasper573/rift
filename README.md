@@ -149,7 +149,7 @@ would, through the program's own bindings, confirming each input through the pro
 | `walk` | A walk from home across open ground, and back. |
 | `crossings` | A warp out of the home area crossed, and back. |
 | `combat` | Fights staged at the game's crowd place. |
-| `ui-storm` | Every window opened, swept, dragged, scrolled and typed into. |
+| `ui-storm` | Every tab of the menu opened and swept, then the interface dragged, scrolled and typed into. |
 | `players` | Fifty other players in view at the game's spawn. |
 | `editor-open` | The editor's opening, until the area the game starts in stands in view. |
 | `editor-camera` | The stage of that area turned, panned, and flicked in and out. |
@@ -182,7 +182,7 @@ optional:
 | `home` | The place the scenarios play at, and the area `editor-overview` opens: an `area`, `x` and `y`. | Where the game's characters start. |
 | `crowd_place` | A place where foes crowd, for `combat`. | `combat` is left out. |
 | `walk_to` | The ground the `walk` ends at. | Open ground some way from home, found in the content. |
-| `windows` | The input actions that open the windows `ui-storm` opens. | Every window of the game's interface. |
+| `tabs` | The input actions that open the tabs of the menu `ui-storm` opens, in turn. | Every tab of the menu, the Character tab last. |
 | `character` | The test character the scenarios play. | The game's first, or a fresh one where it has none. |
 
 #### What a scenario must meet

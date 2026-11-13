@@ -297,7 +297,7 @@ pub(super) fn count_chip(ui: &mut Ui, world: &World, more: u32) -> egui::Respons
 pub(super) fn more_text(more: u32) -> StyledLine {
     StyledLine::new(vec![
         TextPiece::text(format!("+{more} more \u{b7} ")),
-        map::input(InputAction::ToggleHistory),
+        map::input(InputAction::OpenHistory),
         TextPiece::text(" history"),
     ])
 }

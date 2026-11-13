@@ -1,11 +1,10 @@
 use bevy::prelude::*;
-use strum::IntoStaticStr;
+use strum::{IntoStaticStr, VariantArray};
 use ui::controls::{self, Pill, RowLook};
 use ui::egui;
 use ui::egui::{Align, Label, Layout, Pos2, Rect, Sense, Ui, Vec2};
 use ui::face::{self, TextRole};
 use ui::glyph::{self, Mark};
-use ui::sheet::Tab;
 use ui::{card, ink, sheet};
 
 use super::card::{
@@ -17,7 +16,8 @@ use crate::core::content::Content;
 use crate::core::time::UnixMillis;
 use crate::systems::GameSettings;
 use crate::systems::dialogue::ChoiceReveal;
-use crate::systems::hud::{self, Confirm, HudWindow};
+use crate::systems::hud::menu::{MenuTab, MenuTabName, SubTabs};
+use crate::systems::hud::{self, Confirm};
 use crate::systems::input::map::{self, InputAction};
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::widget::slot_note_source;
@@ -28,7 +28,6 @@ use crate::systems::screen::ClientScreen;
 use ui::paint;
 use ui::panel::{self, Edge};
 
-const SIZE: Vec2 = Vec2::new(660.0, 440.0);
 const QUESTS_PAGE_WIDTH: f32 = 320.0;
 const LIST_WIDTH: f32 = 250.0;
 const ROW_ICON: f32 = 20.0;
@@ -46,40 +45,51 @@ impl Plugin for QuestLogPlugin {
     }
 }
 
-pub struct QuestLogWindow;
+pub struct QuestsMenuTab;
 
-impl HudWindow for QuestLogWindow {
-    fn title(&self) -> &'static str {
-        "Quests"
-    }
-    fn toggle(&self) -> InputAction {
-        InputAction::ToggleQuestLog
+impl MenuTab for QuestsMenuTab {
+    fn name(&self) -> MenuTabName {
+        MenuTabName::Quests
     }
     fn icon(&self) -> InterfaceIcon {
-        InterfaceIcon::QuestLog
+        InterfaceIcon::Quests
     }
-    fn size(&self) -> Vec2 {
-        SIZE
+    fn opens(&self) -> InputAction {
+        InputAction::OpenQuests
+    }
+    fn sub_tabs(&self, world: &World) -> Option<SubTabs> {
+        let log = session::me(world).and_then(|seen| world.get::<QuestLog>(seen));
+        let count = |tab: LogTab| match tab {
+            LogTab::Active => log.map_or(0, |log| log.active.len()),
+            LogTab::Completed => log.map_or(0, |log| log.finished.len()),
+        };
+        let chosen = world.resource::<Browse>().tab;
+        Some(SubTabs {
+            labels: LogTab::VARIANTS
+                .iter()
+                .map(|&tab| format!("{} · {}", tab.title(), count(tab)))
+                .collect(),
+            chosen: LogTab::VARIANTS
+                .iter()
+                .position(|&tab| tab == chosen)
+                .unwrap_or_default(),
+        })
+    }
+    fn choose_sub_tab(&self, world: &mut World, chosen: usize) {
+        if let Some(&tab) = LogTab::VARIANTS.get(chosen) {
+            world.resource_mut::<Browse>().tab = tab;
+        }
+    }
+    fn hints(&self) -> &'static [(InputAction, &'static str)] {
+        &[(InputAction::Select, "select")]
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
-        let tabs = [LogTab::Active, LogTab::Completed].map(|tab| Tab::new(tab, tab.title()));
-        let mut tab = world.resource::<Browse>().tab;
-        sheet::tabs(ui, &tabs, &mut tab);
-        world.resource_mut::<Browse>().tab = tab;
-        let page = Page::of(world, tab);
+        let page = Page::of(world, world.resource::<Browse>().tab);
         page_ui(ui, world, &page);
     }
 }
 
-pub fn select(world: &mut World, tab: LogTab, quest: QuestId) {
-    let mut browse = world.resource_mut::<Browse>();
-    match tab {
-        LogTab::Active => browse.active = Some(quest),
-        LogTab::Completed => browse.completed = Some(quest),
-    }
-}
-
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, IntoStaticStr)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, IntoStaticStr, VariantArray)]
 pub enum LogTab {
     #[default]
     Active,
@@ -89,6 +99,14 @@ pub enum LogTab {
 impl LogTab {
     fn title(self) -> &'static str {
         self.into()
+    }
+}
+
+fn select(world: &mut World, tab: LogTab, quest: QuestId) {
+    let mut browse = world.resource_mut::<Browse>();
+    match tab {
+        LogTab::Active => browse.active = Some(quest),
+        LogTab::Completed => browse.completed = Some(quest),
     }
 }
 

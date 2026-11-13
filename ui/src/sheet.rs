@@ -295,11 +295,35 @@ pub fn cross(painter: &Painter, rect: Rect, hovered: bool) {
     );
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TabSize {
+    Main,
+    Sub,
+}
+
+impl TabSize {
+    fn role(self) -> TextRole {
+        match self {
+            TabSize::Main => TextRole::MainTab,
+            TabSize::Sub => TextRole::Tab,
+        }
+    }
+
+    fn padding(self) -> Vec2 {
+        match self {
+            TabSize::Main => Vec2::new(11.0, 7.0),
+            TabSize::Sub => Vec2::new(12.0, 5.0),
+        }
+    }
+}
+
 pub struct Tab<T> {
     pub key: T,
     pub label: String,
     /// A shut tab keeps its place in the strip, so the tabs beside it never move.
     pub shut_because: Option<String>,
+    pub icon: Option<TextureId>,
+    pub keys: Option<String>,
 }
 
 impl<T> Tab<T> {
@@ -308,74 +332,30 @@ impl<T> Tab<T> {
             key,
             label: label.into(),
             shut_because: None,
+            icon: None,
+            keys: None,
         }
     }
 }
 
-pub fn tabs<T: PartialEq + Copy>(ui: &mut Ui, tabs: &[Tab<T>], active: &mut T) {
+pub fn tabs<T: PartialEq + Copy>(
+    ui: &mut Ui,
+    size: TabSize,
+    tabs: &[Tab<T>],
+    active: &mut T,
+) -> Rect {
     let baseline = ui.painter().add(Shape::Noop);
     let mut lip = None;
     let row = ui.horizontal(|ui| {
         ui.spacing_mut().item_spacing.x = 4.0;
-        for Tab {
-            key,
-            label,
-            shut_because,
-        } in tabs
-        {
-            let selected = *key == *active;
-            let open = shut_because.is_none();
-            let color = match (selected, open) {
-                (_, false) => ink::INK3,
-                (true, true) => ink::RUBRIC,
-                (false, true) => ink::INK2,
-            };
-            let galley = ui.painter().layout_job(TextRole::Tab.job(label, color));
-            let size = galley.size() + Vec2::new(24.0, 10.0);
-            let (rect, response) = ui.allocate_exact_size(size, Sense::click());
-            response.widget_info(|| {
-                WidgetInfo::selected(WidgetType::SelectableLabel, open, selected, label)
-            });
-            if let Some(why) = shut_because {
-                float::tooltip(&response, |ui| {
-                    ui.label(TextRole::Tooltip.rich(why));
-                });
-            }
-            let radius = CornerRadius {
-                nw: 4,
-                ne: 4,
-                sw: 0,
-                se: 0,
-            };
-            let fill = if selected {
-                ink::LIGHT
-            } else if open && response.hovered() {
-                ink::gold_wash(0.2)
-            } else {
-                ink::ink_wash(0.05)
-            };
-            let border = ink::ink_wash(match (selected, open) {
-                (_, false) => 0.2,
-                (true, true) => 0.5,
-                (false, true) => 0.35,
-            });
-            ui.painter().rect(
-                rect,
-                radius,
-                fill,
-                Stroke::new(1.0, border),
-                StrokeKind::Inside,
-            );
-            ui.painter()
-                .galley(rect.center() - galley.size() / 2.0, galley, color);
-            if response.has_focus() {
-                controls::focus_ring(ui.painter(), rect, radius);
-            }
+        for tab in tabs {
+            let selected = tab.key == *active;
+            let response = tab_button(ui, size, tab, selected);
             if selected {
-                lip = Some(rect);
+                lip = Some(response.rect);
             }
-            if open && response.clicked() {
-                *active = *key;
+            if tab.shut_because.is_none() && response.clicked() {
+                *active = tab.key;
             }
         }
     });
@@ -395,7 +375,97 @@ pub fn tabs<T: PartialEq + Copy>(ui: &mut Ui, tabs: &[Tab<T>], active: &mut T) {
         );
     }
     ui.add_space(6.0);
+    row.response.rect
 }
+
+fn tab_button<T>(ui: &mut Ui, size: TabSize, tab: &Tab<T>, selected: bool) -> Response {
+    let open = tab.shut_because.is_none();
+    let color = match (selected, open) {
+        (_, false) => ink::INK3,
+        (true, true) => ink::RUBRIC,
+        (false, true) => ink::INK2,
+    };
+    let label = ui.painter().layout_job(size.role().job(&tab.label, color));
+    let cap = tab
+        .keys
+        .as_deref()
+        .map(|keys| controls::key_galley(ui, keys, ink::INK3));
+    let cap_size = cap.as_ref().map(controls::key_cap_size);
+    let icon = tab.icon.map(|_| TAB_ICON + TAB_GAP).unwrap_or(0.0);
+    let padding = size.padding();
+    let inner = Vec2::new(
+        icon + label.size().x + cap_size.map_or(0.0, |cap| TAB_GAP + cap.x),
+        label.size().y.max(cap_size.map_or(0.0, |cap| cap.y)),
+    );
+    let (rect, response) = ui.allocate_exact_size(inner + 2.0 * padding, Sense::click());
+    response.widget_info(|| {
+        WidgetInfo::selected(WidgetType::SelectableLabel, open, selected, &tab.label)
+    });
+    if let Some(why) = &tab.shut_because {
+        float::tooltip(&response, |ui| {
+            ui.label(TextRole::Tooltip.rich(why));
+        });
+    }
+    let radius = CornerRadius {
+        nw: 4,
+        ne: 4,
+        sw: 0,
+        se: 0,
+    };
+    let fill = if selected {
+        ink::LIGHT
+    } else if open && response.hovered() {
+        ink::gold_wash(0.2)
+    } else {
+        ink::ink_wash(0.05)
+    };
+    let border = ink::ink_wash(match (selected, open) {
+        (_, false) => 0.2,
+        (true, true) => 0.5,
+        (false, true) => 0.35,
+    });
+    let painter = ui.painter();
+    painter.rect(
+        rect,
+        radius,
+        fill,
+        Stroke::new(1.0, border),
+        StrokeKind::Inside,
+    );
+    let mut left = rect.min.x + padding.x;
+    let middle = rect.center().y;
+    if let Some(texture) = tab.icon {
+        let at = Rect::from_min_size(
+            Pos2::new(left, middle - TAB_ICON / 2.0),
+            Vec2::splat(TAB_ICON),
+        );
+        let tint = if selected || !open {
+            Color32::WHITE
+        } else {
+            ink::wash(Color32::WHITE, 0.8)
+        };
+        painter.image(
+            texture,
+            at,
+            Rect::from_min_max(Pos2::ZERO, Pos2::new(1.0, 1.0)),
+            tint,
+        );
+        left += TAB_ICON + TAB_GAP;
+    }
+    let label_width = label.size().x;
+    painter.galley(Pos2::new(left, middle - label.size().y / 2.0), label, color);
+    if let (Some(cap), Some(cap_size)) = (cap, cap_size) {
+        let at = Pos2::new(left + label_width + TAB_GAP, middle - cap_size.y / 2.0);
+        controls::paint_key_cap(painter, Rect::from_min_size(at, cap_size), cap, ink::INK3);
+    }
+    if response.has_focus() {
+        controls::focus_ring(painter, rect, radius);
+    }
+    response
+}
+
+const TAB_ICON: f32 = 18.0;
+const TAB_GAP: f32 = 7.0;
 
 pub fn section(ui: &mut Ui, text: &str) {
     section_with(ui, text, |_| ());

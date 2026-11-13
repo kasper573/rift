@@ -4,9 +4,9 @@ use std::sync::Arc;
 use egui::emath::Rot2;
 use egui::epaint::TextShape;
 use egui::{
-    Align, Align2, Color32, CornerRadius, InnerResponse, Key, Margin, Painter, Pos2, Rangef, Rect,
-    Response, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, Vec2, WidgetInfo, WidgetText,
-    WidgetType,
+    Align, Align2, Color32, CornerRadius, InnerResponse, Key, Layout, Margin, Painter, Pos2,
+    Rangef, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, UiBuilder, Vec2, WidgetInfo,
+    WidgetText, WidgetType,
 };
 
 use crate::face::{Face, TextRole};
@@ -265,6 +265,71 @@ pub fn key_hint_text(ui: &mut Ui, keys: &str, text: &str) {
         key_hint(ui, keys);
         ui.label(TextRole::Body.rich(text).color(ink::INK2));
     });
+}
+
+#[derive(Clone, Copy)]
+pub struct KeyHint<'a> {
+    pub keys: &'a str,
+    pub does: &'a str,
+}
+
+pub fn hint_line(ui: &mut Ui, hints: &[KeyHint], leaves: Option<KeyHint>) {
+    let top = ui.cursor().min.y;
+    let span = ui.max_rect().x_range();
+    ui.painter().line_segment(
+        [Pos2::new(span.min, top), Pos2::new(span.max, top)],
+        Stroke::new(1.0, ink::ink_wash(0.2)),
+    );
+    ui.add_space(HINT_LINE_GAP);
+    let row = Rect::from_min_size(
+        ui.cursor().min,
+        Vec2::new(ui.available_width(), HINT_LINE_HEIGHT - HINT_LINE_GAP),
+    );
+    let along = Layout::left_to_right(Align::Center);
+    let mut beside = row;
+    if let Some(leaves) = leaves {
+        let at = Rect::from_min_max(
+            Pos2::new(row.max.x - hint_width(ui, &leaves), row.min.y),
+            row.max,
+        );
+        ui.scope_builder(UiBuilder::new().max_rect(at).layout(along), |ui| {
+            key_hint_small(ui, leaves);
+        });
+        beside.max.x = at.min.x - HINT_GAP;
+    }
+    ui.scope_builder(UiBuilder::new().max_rect(beside).layout(along), |ui| {
+        ui.spacing_mut().item_spacing.x = HINT_GAP;
+        for hint in hints {
+            if hint_width(ui, hint) > ui.available_width() {
+                break;
+            }
+            key_hint_small(ui, *hint);
+        }
+    });
+    ui.allocate_rect(row, Sense::hover());
+}
+
+pub const HINT_LINE_HEIGHT: f32 = 28.0;
+const HINT_LINE_GAP: f32 = 6.0;
+const HINT_GAP: f32 = 14.0;
+const HINT_INNER_GAP: f32 = 6.0;
+
+fn key_hint_small(ui: &mut Ui, hint: KeyHint) {
+    ui.horizontal(|ui| {
+        ui.spacing_mut().item_spacing.x = HINT_INNER_GAP;
+        key_hint(ui, hint.keys);
+        ui.label(TextRole::Small.rich(hint.does).color(ink::INK2));
+    });
+}
+
+fn hint_width(ui: &Ui, hint: &KeyHint) -> f32 {
+    let cap = key_cap_size(&key_galley(ui, hint.keys, ink::INK3)).x;
+    let does = ui
+        .painter()
+        .layout_no_wrap(hint.does.to_owned(), TextRole::Small.font_id(), ink::INK2)
+        .size()
+        .x;
+    cap + HINT_INNER_GAP + does
 }
 
 /// A button reading `label`, the `keys` that press it too on a cap beside it.
@@ -746,7 +811,7 @@ fn perimeter(rect: Rect, steps: usize) -> Vec<Pos2> {
 
 const KEYED_GAP: f32 = 8.0;
 
-fn key_galley(ui: &Ui, keys: &str, color: Color32) -> Arc<egui::Galley> {
+pub(crate) fn key_galley(ui: &Ui, keys: &str, color: Color32) -> Arc<egui::Galley> {
     ui.painter().layout_job(TextRole::KeyHint.job(keys, color))
 }
 
@@ -757,11 +822,16 @@ fn rounded_to(value: f32, step: f32) -> f32 {
     (value * scale).round() / scale
 }
 
-fn key_cap_size(galley: &Arc<egui::Galley>) -> Vec2 {
+pub(crate) fn key_cap_size(galley: &Arc<egui::Galley>) -> Vec2 {
     galley.size() + Vec2::new(5.0, 1.0) * 2.0 + Vec2::splat(2.0)
 }
 
-fn paint_key_cap(painter: &Painter, rect: Rect, galley: Arc<egui::Galley>, color: Color32) {
+pub(crate) fn paint_key_cap(
+    painter: &Painter,
+    rect: Rect,
+    galley: Arc<egui::Galley>,
+    color: Color32,
+) {
     painter.rect_stroke(
         rect,
         3.0,

@@ -5,7 +5,7 @@ use ui::drag;
 use ui::egui;
 use ui::egui::{Align, Layout, Pos2, Rect, Sense, Stroke, Ui, UiBuilder, Vec2};
 use ui::face::{self, TextRole};
-use ui::sheet::{self, Depth, Tab};
+use ui::sheet::{self, Depth, Tab, TabSize};
 use ui::{card, ink};
 
 use super::{OfferView, SaleQuote, SaleVerdict, ShopId, ShopRequest, ShopView, WareRefusal};
@@ -198,7 +198,7 @@ fn counter(ui: &mut Ui, world: &mut World, shelf: &Shelf) {
             ),
         ];
         let mut tab = shelf.tab;
-        sheet::tabs(ui, &tabs, &mut tab);
+        sheet::tabs(ui, TabSize::Sub, &tabs, &mut tab);
         if tab != shelf.tab {
             let mut browse = world.resource_mut::<Browse>();
             browse.tab = tab;

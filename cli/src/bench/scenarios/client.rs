@@ -1,5 +1,5 @@
 //! The game client's scenarios: the scenes a player meets, each played through the client's
-//! own bindings at the places and windows the game lends them.
+//! own bindings at the places and tabs the game lends them.
 
 use engine::core::content::Content;
 use engine::core::units::{Degrees, Seconds};
@@ -123,13 +123,13 @@ pub fn catalogue(slots: &ScenarioSlots, content: &Content, smoke: bool) -> Vec<S
             }],
         ));
     }
-    if !slots.windows.is_empty() {
+    if !slots.tabs.is_empty() {
         let mut script = Vec::new();
-        for &window in &slots.windows {
-            script.push(Step::Key(window));
+        for &tab in &slots.tabs {
+            script.push(Step::Key(tab));
             script.push(Step::Wait(Cond::Settled));
+            script.push(Step::SweepInterface);
         }
-        script.push(Step::SweepInterface);
         script.push(Step::DragItems);
         script.push(Step::SlotOptions);
         script.push(Step::DragWindows);
@@ -141,7 +141,7 @@ pub fn catalogue(slots: &ScenarioSlots, content: &Content, smoke: bool) -> Vec<S
         script.push(Step::Type(TYPED.to_owned()));
         script.push(Step::Key(InputAction::SubmitText));
         script.push(Step::Wait(Cond::Settled));
-        script.push(Step::CloseWindows);
+        script.push(Step::LeaveAll);
         scenarios.push(scenario(
             "ui-storm",
             Class::Typical,

@@ -4,7 +4,7 @@ use ui::egui;
 use ui::egui::{Align, Color32, Layout, Rect, Sense, Ui, Vec2};
 use ui::face::TextRole;
 use ui::float;
-use ui::{controls, glyph, ink, sheet};
+use ui::{controls, glyph, ink};
 
 use crate::core::content::Content;
 use crate::core::content::ImageRef;
@@ -15,68 +15,53 @@ use crate::systems::actor::skeleton::EquipmentSlot;
 use crate::systems::actor::stance::{self, HandIndex, HandRole, StanceDef};
 use crate::systems::actor::{Appearance, appearance};
 use crate::systems::equipment::{EquipmentPlace, HoldRequest, UnequipRequest};
-use crate::systems::hud::{self, Carried, HudWindow};
+use crate::systems::hud::{self, Carried};
 use crate::systems::input::map::{self, InputAction, input};
-use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::widget::{SLOT, SlotLook, slot};
 use crate::systems::item::{ItemId, UseItemRequest, card};
 use crate::systems::player::session;
 
-const SLOT_GAP: f32 = 8.0;
-const NAMED_SLOT: f32 = 52.0;
+const SLOT_GAP: f32 = 5.0;
+const NAMED_SLOT: f32 = 46.0;
+pub const PANE_WIDTH: f32 = 5.0 * NAMED_SLOT + 4.0 * SLOT_GAP;
 
-pub struct EquipmentWindow;
-
-impl HudWindow for EquipmentWindow {
-    fn title(&self) -> &'static str {
-        "Equipment"
-    }
-    fn toggle(&self) -> InputAction {
-        InputAction::ToggleEquipment
-    }
-    fn icon(&self) -> InterfaceIcon {
-        InterfaceIcon::Equipment
-    }
-    fn show(&self, ui: &mut Ui, world: &mut World) {
-        let places = places(world);
-        let shown = ui
-            .scope(|ui| {
-                sheet::scroll(ui, egui::ScrollArea::vertical().auto_shrink(false), |ui| {
-                    ui.spacing_mut().item_spacing = Vec2::new(SLOT_GAP, 2.0);
-                    // A place stands taller than its slot by its name, so the row is laid from
-                    // its top: centred, each place would stand lower than the one before it.
-                    let row = Layout::left_to_right(Align::Min).with_main_wrap(true);
-                    let room = Vec2::new(ui.available_width(), SLOT);
-                    ui.allocate_ui_with_layout(room, row, |ui| {
-                        for place in &places {
-                            let span = place.span() as f32;
-                            let width = NAMED_SLOT * span + SLOT_GAP * (span - 1.0);
-                            ui.allocate_ui(Vec2::new(width, SLOT), |ui| {
-                                ui.vertical_centered(|ui| {
-                                    match place.item {
-                                        Some(item) => worn_slot(ui, world, place, item),
-                                        None => empty_slot(ui, world, place),
-                                    }
-                                    ui.add(
-                                        egui::Label::new(
-                                            TextRole::Small.rich(place.label()).color(ink::INK3),
-                                        )
-                                        .truncate(),
-                                    );
-                                });
-                            });
-                        }
+pub fn pane(ui: &mut Ui, world: &mut World) {
+    let places = places(world);
+    let shown = ui
+        .scope(|ui| {
+            ui.spacing_mut().item_spacing = Vec2::new(SLOT_GAP, 2.0);
+            // A place stands taller than its slot by its name, so the row is laid from its top:
+            // centred, each place would stand lower than the one before it.
+            let row = Layout::left_to_right(Align::Min).with_main_wrap(true);
+            let room = Vec2::new(ui.available_width(), SLOT);
+            ui.allocate_ui_with_layout(room, row, |ui| {
+                for place in &places {
+                    let span = place.span() as f32;
+                    let width = NAMED_SLOT * span + SLOT_GAP * (span - 1.0);
+                    ui.allocate_ui(Vec2::new(width, SLOT), |ui| {
+                        ui.vertical_centered(|ui| {
+                            match place.item {
+                                Some(item) => worn_slot(ui, world, place, item),
+                                None => empty_slot(ui, world, place),
+                            }
+                            ui.add(
+                                egui::Label::new(
+                                    TextRole::Small.rich(place.label()).color(ink::INK3),
+                                )
+                                .truncate(),
+                            );
+                        });
                     });
-                });
-            })
-            .response;
-        if let Some(Carried::BagSlot(slot)) = drag::dropped::<Carried>(&shown) {
-            world.write_message(UseItemRequest { slot });
-        }
+                }
+            });
+        })
+        .response;
+    if let Some(Carried::BagSlot(slot)) = drag::dropped::<Carried>(&shown) {
+        world.write_message(UseItemRequest { slot });
     }
 }
 
-/// A place on the window: a hand of the body, two hands a two-hander spans, a slot of its
+/// A place on the pane: a hand of the body, two hands a two-hander spans, a slot of its
 /// skeleton, or the tool slot.
 struct Place {
     slot: EquipmentPlace,

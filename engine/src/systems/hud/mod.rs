@@ -1,13 +1,12 @@
 mod card;
 mod compass;
+pub mod menu;
 mod panel;
 
 pub(crate) use card::{
     Pinned, draw_pinned, forget_pinned, pin, pinned, pinned_rect, raise_pinned, unpin,
 };
-pub(crate) use panel::{
-    SizedPiece, WindowFrame, grab_sized, sheet_pose, sized_rect, widget, window,
-};
+pub(crate) use panel::{SizedPiece, grab_sized, sheet_pose, sized_rect, widget};
 
 use std::collections::HashSet;
 use ui::drag;
@@ -16,32 +15,23 @@ use ui::float;
 
 use bevy::prelude::*;
 use bevy_egui::EguiPrimaryContextPass;
-use ui::egui::{Align2, Color32, Id, LayerId, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
+use ui::egui::{Id, LayerId, Pos2, Rect, Sense, Ui, Vec2};
 use ui::face::{self, TextRole};
-use ui::{controls, ink, sheet, slip};
+use ui::{controls, ink, sheet};
 
+use crate::core::content::Content;
 use crate::core::content::ImageRef;
-use crate::core::content::{Content, Fixture};
 use crate::core::gui::{self, Band, ImageSource, WidgetRects};
 use crate::core::text::{self, StyledLine, TextLook};
-use crate::core::units::WindowPx;
-use crate::systems::input::map::{self, InputAction, InputMap};
-use crate::systems::interface::InterfaceIcon;
-use crate::systems::item::{self, Inventory};
+use crate::systems::input::map::{InputAction, InputMap};
+use crate::systems::item::Inventory;
 use crate::systems::player::{self, session};
 use crate::systems::screen::ClientScreen;
-use crate::systems::settings::{self, UserSettings};
 use crate::systems::skill::{self, HotbarEntry, HotbarSlot, SkillId};
-use crate::systems::{equipment, history, quest, stat};
+use crate::systems::{equipment, quest};
 use ui::dialog;
 
-pub(crate) const WIDGET: WindowPx = WindowPx(46.0);
 pub(crate) const TOOLTIP_WIDTH: f32 = 260.0;
-const WINDOW_SIZE: Vec2 = Vec2::new(400.0, 230.0);
-const LAUNCHER_ICON: f32 = 32.0;
-const LAUNCHER_RIGHT: f32 = 10.0;
-const LAUNCHER_TOP: f32 = 9.0;
-const LAUNCHER_PITCH: f32 = 55.0;
 pub(crate) const MARGIN: f32 = 8.0;
 const CARRIED: f32 = 40.0;
 const CONFIRM: &str = "confirm";
@@ -51,13 +41,12 @@ pub struct HudPlugin;
 
 impl Plugin for HudPlugin {
     fn build(&self, app: &mut App) {
-        app.init_resource::<Open>()
-            .init_resource::<panel::Arranging>()
+        menu::plugin(app);
+        app.init_resource::<panel::Arranging>()
             .init_resource::<panel::SheetClocks>()
             .init_resource::<WindowsDrawn>()
             .init_resource::<Confirming>()
             .init_resource::<Lifting>()
-            .add_systems(Update, toggle_keys.run_if(in_state(ClientScreen::Area)))
             .add_systems(
                 EguiPrimaryContextPass,
                 (
@@ -76,21 +65,6 @@ impl Plugin for HudPlugin {
 
 pub trait HudWidget: Send + Sync {
     fn fallback(&self, screen: Rect) -> Pos2;
-    fn show(&self, ui: &mut Ui, world: &mut World);
-}
-
-pub trait HudWindow: Send + Sync {
-    fn title(&self) -> &'static str;
-    fn toggle(&self) -> InputAction;
-    fn icon(&self) -> InterfaceIcon;
-    fn size(&self) -> Vec2 {
-        WINDOW_SIZE
-    }
-    /// The most body the window may be given, when its content has an edge it must never
-    /// show past.
-    fn body_limit(&self, _world: &World) -> Option<Vec2> {
-        None
-    }
     fn show(&self, ui: &mut Ui, world: &mut World);
 }
 
@@ -148,28 +122,12 @@ pub(crate) fn dismiss_confirm(world: &mut World) -> bool {
     }
 }
 
-pub(crate) fn close_window(world: &mut World, window: &'static str) -> bool {
-    world.resource_mut::<Open>().0.remove(&window)
-}
-
-pub(crate) fn window_open(world: &World, window: &'static str) -> bool {
-    world.resource::<Open>().0.contains(&window)
-}
-
-pub(crate) fn open_windows(world: &World) -> impl Iterator<Item = &'static str> + '_ {
-    world.resource::<Open>().0.iter().copied()
-}
-
-pub(crate) fn window_layer(title: &'static str) -> LayerId {
-    panel::layer(title)
+pub(crate) fn window_layer(key: &'static str) -> LayerId {
+    panel::layer(key)
 }
 
 pub(crate) fn confirm_layer() -> LayerId {
     LayerId::new(Band::Modal.order(), Id::new(CONFIRM))
-}
-
-pub(crate) fn launchers_width() -> f32 {
-    LAUNCHER_RIGHT + WIDGET.0
 }
 
 /// Where every widget and window of the interface stood when last drawn.
@@ -211,41 +169,12 @@ pub(crate) fn file_icon(ui: &mut Ui, world: &mut World, file: &str, size: f32) -
     sized(ui, gui::image_file(world, file), size)
 }
 
-/// Where a window stands this frame, while it is open.
-pub(crate) fn window_rect(world: &World, window: &dyn HudWindow) -> Option<Rect> {
-    let title = window.title();
-    if !window_open(world, title) {
-        return None;
-    }
-    panel::shown_rect(&gui::context(world)?, title)
-}
-
-/// The most a window may be given, when its content bounds it.
-pub(crate) fn window_limit(world: &World, window: &dyn HudWindow) -> Option<Vec2> {
-    let body = window.body_limit(world)?;
-    Some(body + sheet::chrome(true))
-}
-
 static WIDGETS: &[(&str, &dyn HudWidget)] = &[
     ("character", &player::widget::CharacterWidget),
     ("compass", &compass::CompassWidget),
     ("quests", &quest::tracker::QuestTrackerWidget),
     (skill::bar::HOTBAR, &skill::bar::HotbarWidget),
 ];
-
-// Their launchers line up in this order.
-static WINDOWS: &[&dyn HudWindow] = &[
-    &item::widget::InventoryWindow,
-    &equipment::widget::EquipmentWindow,
-    &stat::widget::StatsWindow,
-    &skill::window::SkillsWindow,
-    &quest::log::QuestLogWindow,
-    &history::widget::HistoryWindow,
-    &settings::SettingsWindow,
-];
-
-#[derive(Resource, Default)]
-struct Open(HashSet<&'static str>);
 
 #[derive(Resource, Default)]
 struct WindowsDrawn {
@@ -299,109 +228,7 @@ fn draw_hud(world: &mut World) {
             shown.show(ui, world);
         });
     }
-    let spots = launcher_spots(world, screen);
-    for (&shown, spot) in WINDOWS.iter().zip(spots) {
-        let title = shown.title();
-        let is_open = window_open(world, title);
-        launcher(world, &gui, shown, spot, is_open);
-        let Some(pose) = panel::sheet_pose(world, &gui, title, is_open) else {
-            continue;
-        };
-        let size = shown.size();
-        let centered = Rect::from_min_size(
-            (screen.center() - size / 2.0).max(Pos2::new(MARGIN, MARGIN)),
-            size,
-        );
-        let frame = WindowFrame {
-            key: title,
-            title: Some(title),
-            start: centered,
-            body_limit: shown.body_limit(world),
-        };
-        let mut open = is_open;
-        window(world, &gui, frame, pose, &mut open, |ui, world| {
-            if !is_open {
-                ui.disable();
-            }
-            shown.show(ui, world)
-        });
-        if is_open && !open {
-            close_window(world, title);
-        }
-    }
-}
-
-fn launcher(
-    world: &mut World,
-    gui: &egui::Context,
-    opens: &'static dyn HudWindow,
-    at: Pos2,
-    is_open: bool,
-) {
-    let title = opens.title();
-    let image = opens.icon().get(world.resource::<Content>()).image.clone();
-    let key = world
-        .resource::<InputMap>()
-        .name(opens.toggle())
-        .unwrap_or_default();
-    let button = widget(world, gui, title, at, |ui, world| {
-        let (rect, response) = ui.allocate_exact_size(Vec2::splat(WIDGET.0), Sense::click());
-        response.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, ""));
-        let painter = ui.painter();
-        painter.add(slip::SHADOW.as_shape(rect, 3.0));
-        sheet::radial(painter, rect);
-        let hovered = response.hovered();
-        painter.rect(
-            rect,
-            3.0,
-            if hovered {
-                ink::gold_wash(0.2)
-            } else {
-                Color32::TRANSPARENT
-            },
-            Stroke::new(
-                1.0,
-                if hovered {
-                    ink::OCHRE
-                } else {
-                    ink::ink_wash(0.55)
-                },
-            ),
-            StrokeKind::Inside,
-        );
-        painter.line_segment(
-            [
-                rect.left_top() + Vec2::new(1.0, 1.5),
-                rect.right_top() + Vec2::new(-1.0, 1.5),
-            ],
-            Stroke::new(1.0, ink::ink_wash(0.15)),
-        );
-        if let Some(icon) = gui::image(world, &image) {
-            let at = Rect::from_center_size(rect.center(), Vec2::splat(LAUNCHER_ICON));
-            ui.put(at, icon.widget(Vec2::splat(LAUNCHER_ICON)));
-        }
-        let painter = ui.painter();
-        painter.text(
-            rect.right_bottom() - Vec2::new(4.0, 2.0),
-            Align2::RIGHT_BOTTOM,
-            &key,
-            TextRole::Launcher.font_id(),
-            ink::INK,
-        );
-        if is_open {
-            painter.rect_filled(rect, 3.0, ink::wash(ink::CREAM, 0.55));
-        }
-        if response.has_focus() {
-            controls::focus_ring(painter, rect, 3.0);
-        }
-        float::tooltip(&response, |ui| {
-            ui.label(face::bold(title).size(TextRole::Tooltip.size()));
-        });
-        response
-    });
-    if button.clicked() {
-        world.resource_mut::<Open>().0.insert(title);
-    }
+    menu::draw(world, &gui);
 }
 
 fn draw_confirm(world: &mut World) {
@@ -522,57 +349,6 @@ fn draw_carried(world: &mut World) {
         -Vec2::splat(CARRIED / 2.0),
         |ui| ui.add(image.widget(Vec2::splat(CARRIED))),
     );
-}
-
-/// Where each launcher rests when the player never moved it: its own slot down the column, or
-/// the next one no other launcher already stands on, since spots kept from an older column can
-/// cover a launcher that was added since.
-fn launcher_spots(world: &World, screen: Rect) -> Vec<Pos2> {
-    let settings = world.resource::<UserSettings>();
-    let saved = |window: &dyn HudWindow| {
-        settings
-            .widget_pos(window.title())
-            .map(|pos| Pos2::new(pos.x, pos.y))
-    };
-    let mut taken: Vec<Pos2> = WINDOWS.iter().filter_map(|window| saved(*window)).collect();
-    let covered = |at: Pos2, taken: &[Pos2]| {
-        let rect = Rect::from_min_size(at, Vec2::splat(WIDGET.0));
-        taken
-            .iter()
-            .any(|other| rect.intersects(Rect::from_min_size(*other, Vec2::splat(WIDGET.0))))
-    };
-    let mut spots = Vec::with_capacity(WINDOWS.len());
-    for (slot, window) in WINDOWS.iter().enumerate() {
-        let spot = saved(*window).unwrap_or_else(|| {
-            let free = (slot..)
-                .map(|slot| launcher_pos(slot, screen))
-                .find(|at| !covered(*at, &taken))
-                .expect("the column runs on");
-            taken.push(free);
-            free
-        });
-        spots.push(spot);
-    }
-    spots
-}
-
-fn launcher_pos(slot: usize, screen: Rect) -> Pos2 {
-    Pos2::new(
-        screen.right() - LAUNCHER_RIGHT - WIDGET.0,
-        screen.top() + LAUNCHER_TOP + slot as f32 * LAUNCHER_PITCH,
-    )
-}
-
-fn toggle_keys(world: &mut World) {
-    for window in WINDOWS {
-        let title = window.title();
-        if map::just_pressed(world, window.toggle()) {
-            let mut open = world.resource_mut::<Open>();
-            if !open.0.remove(title) {
-                open.0.insert(title);
-            }
-        }
-    }
 }
 
 fn sized(ui: &mut Ui, image: Option<gui::GuiImage>, size: f32) -> egui::Response {

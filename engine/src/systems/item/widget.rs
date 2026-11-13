@@ -2,16 +2,14 @@ use bevy::prelude::*;
 use ui::drag;
 use ui::egui;
 use ui::egui::{Color32, Rect, Response, Sense, Stroke, StrokeKind, Ui, Vec2};
-use ui::face::TextRole;
 use ui::{controls, ink, sheet};
 
 use crate::core::content::Content;
 use crate::core::content::ImageRef;
 use crate::core::gui::ImageSource;
-use crate::core::text::{self, StyledLine, TextLook, TextPiece};
-use crate::systems::hud::{self, Carried, HudWindow};
+use crate::core::text::{StyledLine, TextPiece};
+use crate::systems::hud::{self, Carried};
 use crate::systems::input::map::{self, InputAction, InputMap, input};
-use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::{
     DropItemRequest, Inventory, ItemDef, ItemId, ItemModuleKind, ItemStack, card,
 };
@@ -71,36 +69,8 @@ pub fn slot_action(app: &mut App, slot_action: SlotAction) {
         .push(slot_action);
 }
 
-pub struct InventoryWindow;
-
-impl HudWindow for InventoryWindow {
-    fn title(&self) -> &'static str {
-        "Inventory"
-    }
-    fn toggle(&self) -> InputAction {
-        InputAction::ToggleInventory
-    }
-    fn icon(&self) -> InterfaceIcon {
-        InterfaceIcon::Bag
-    }
-    fn show(&self, ui: &mut Ui, world: &mut World) {
-        sheet::scroll(ui, egui::ScrollArea::vertical().auto_shrink(false), |ui| {
-            let pane = InventoryPane {
-                width: ui.available_width(),
-                heading: None,
-                selected: &mut None,
-            };
-            inventory_pane(ui, world, pane);
-            ui.add_space(6.0);
-            let hint = StyledLine::new(hint_pieces(&[
-                (InputAction::InspectItem, " for more information".to_owned()),
-                (InputAction::UseItem, " to use or wear".to_owned()),
-                (InputAction::CarryItem, " to carry".to_owned()),
-            ]));
-            let look = TextLook::new(TextRole::Small.size(), ink::INK3);
-            text::show(ui, world, &hint, look, None);
-        });
-    }
+pub fn pane_width(columns: u32) -> f32 {
+    columns as f32 * SLOT + columns.saturating_sub(1) as f32 * SLOT_GAP
 }
 
 pub struct InventoryPane<'a> {

@@ -43,6 +43,7 @@ pub enum TextRole {
     NoteTitle,
     Section,
     Tab,
+    MainTab,
     Band,
     Name,
     Body,
@@ -56,7 +57,7 @@ pub enum TextRole {
     KeyHint,
     Mono,
     Count,
-    Launcher,
+    SlotKey,
 }
 
 impl TextRole {
@@ -65,6 +66,7 @@ impl TextRole {
             TextRole::Title
             | TextRole::Section
             | TextRole::Tab
+            | TextRole::MainTab
             | TextRole::Band
             | TextRole::Name => Face::SmallCapsBold,
             TextRole::NoteTitle => Face::BookBold,
@@ -77,7 +79,7 @@ impl TextRole {
             TextRole::Flavour => Face::Quill,
             TextRole::Numeral => Face::Numerals,
             TextRole::KeyHint | TextRole::Mono => Face::Mono,
-            TextRole::Count | TextRole::Launcher => Face::MonoBold,
+            TextRole::Count | TextRole::SlotKey => Face::MonoBold,
         }
     }
 
@@ -89,11 +91,11 @@ impl TextRole {
             TextRole::Band => 12.5,
             TextRole::Body => 15.0,
             TextRole::CardBody | TextRole::Flavour => 14.5,
-            TextRole::Button => 14.0,
+            TextRole::Button | TextRole::MainTab => 14.0,
             TextRole::Tooltip => 13.5,
             TextRole::Small | TextRole::Numeral | TextRole::Mono => 13.0,
             TextRole::Count => 11.0,
-            TextRole::Launcher => 10.0,
+            TextRole::SlotKey => 10.0,
         }
     }
 
@@ -102,7 +104,7 @@ impl TextRole {
         match self {
             TextRole::Title => 0.06,
             TextRole::Section => 0.1,
-            TextRole::Tab => 0.08,
+            TextRole::Tab | TextRole::MainTab => 0.08,
             TextRole::Name => 0.04,
             _ => 0.0,
         }

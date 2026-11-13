@@ -56,11 +56,12 @@ pub fn pointed_at(world: &mut World, pointed: &crate::core::render::Pointed) -> 
 }
 
 /// Ends the work the player's character has under way, if any.
-pub fn stop(world: &mut World) {
+pub fn stop(world: &mut World) -> bool {
     let working = session::me(world).is_some_and(|me| world.get::<Working>(me).is_some());
     if working {
         world.write_message(StopGathering);
     }
+    working
 }
 
 /// How far through the extraction under way a worker is, from none to all of it.

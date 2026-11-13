@@ -85,8 +85,10 @@ use crate::systems::equipment::{self, EquipmentPlace};
 use crate::systems::history::widget::{self as history, HistoryBook};
 use crate::systems::history::{HistoryMark, HistoryRecord, HistoryTopic};
 use crate::systems::hud;
+use crate::systems::hud::menu::MenuTabName;
 use crate::systems::input::claims::{self, ClickClaim};
 use crate::systems::input::map::InputMap;
+use crate::systems::input::scope::InputScope;
 use crate::systems::interface::CursorId;
 use crate::systems::item::{self, DroppedItem, Inventory, ItemId, ItemStack};
 use crate::systems::movement::{Position, RenderPosition};
@@ -314,6 +316,8 @@ pub fn sample_frame(world: &mut World) {
 pub struct ProbeSnapshot {
     pub frame: u32,
     pub input: ProbeInput,
+    /// Where the player is, which decides the actions that are read and what stepping out does.
+    pub scope: InputScope,
     pub claim: ClickClaim,
     #[schemars(with = "Option<SizeSchema>")]
     pub screen: Option<Size<WindowPx>>,
@@ -635,7 +639,8 @@ pub struct ProbeUiElement {
     pub click_through: bool,
     pub in_world: bool,
     pub slider: Option<f32>,
-    /// Whether a checkbox is ticked; none for anything else.
+    /// Whether a checkbox is ticked, or a tab or a row is the one selected; none for anything
+    /// else.
     pub checked: Option<bool>,
     /// The text of the label that names the element, as a form's label names the field beside it.
     pub labelled_by: Option<String>,
@@ -809,7 +814,7 @@ pub struct ProbeSkills {
     pub planned: Vec<ProbeRank>,
     pub aiming: Option<SkillId>,
     pub reset_prompt: bool,
-    /// The skills window, while open.
+    /// The pane the tree is drawn in, while the menu shows it.
     pub view: Option<ProbeTreeView>,
 }
 
@@ -819,14 +824,10 @@ pub struct ProbeRank {
     pub rank: Rank,
 }
 
-/// How the skills window shows the tree: the canvas (backdrop and nodes) pans within the
-/// viewport, which the canvas always fills, and the window stops growing at `max`.
+/// How the menu shows the skill tree: the canvas (backdrop and nodes) pans within the viewport,
+/// which the canvas always fills.
 #[derive(Serialize, Deserialize, JsonSchema, Clone, Debug, PartialEq)]
 pub struct ProbeTreeView {
-    #[schemars(with = "RectSchema")]
-    pub window: Rect<WindowPx>,
-    #[schemars(with = "Option<SizeSchema>")]
-    pub max: Option<Size<WindowPx>>,
     #[schemars(with = "RectSchema")]
     pub viewport: Rect<WindowPx>,
     #[schemars(with = "SizeSchema")]
@@ -1114,6 +1115,7 @@ fn snapshot(world: &mut World) -> ProbeSnapshot {
             click_run_open: click_run_open(world),
             seen: *world.resource::<ProbeInputSeen>(),
         },
+        scope: *world.resource::<InputScope>(),
         screen: window
             .as_ref()
             .map(|window| Size::new(window.resolution.width(), window.resolution.height())),
@@ -1428,12 +1430,11 @@ fn rank((skill, rank): (&impl ToString, &Rank)) -> ProbeRank {
 }
 
 fn tree_view(world: &World) -> Option<ProbeTreeView> {
-    let window = hud::window_rect(world, &skill::window::SkillsWindow)?;
+    if hud::menu::showing(world) != Some(MenuTabName::Skills) {
+        return None;
+    }
     let view = world.resource::<skill::window::TreeView>();
     Some(ProbeTreeView {
-        window: gui::window_rect(window),
-        max: hud::window_limit(world, &skill::window::SkillsWindow)
-            .map(|max| Size::new(max.x, max.y)),
         viewport: gui::window_rect(view.viewport),
         canvas: Size::new(view.content.x, view.content.y),
         panned: Offset::new(view.offset.x, view.offset.y),

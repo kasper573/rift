@@ -4,7 +4,6 @@ use ui::egui;
 use ui::egui::{Color32, Ui, Vec2};
 use ui::face::{self, TextRole};
 use ui::ink::{self, Ground};
-use ui::sheet::Tab;
 use ui::theme;
 use ui::{panel, sheet};
 
@@ -13,15 +12,15 @@ use super::{
 };
 use crate::core::text::{self, StyledLine, StyledSpan, TextLook};
 use crate::core::time::LocalClock;
-use crate::systems::hud::{self, HudWindow};
+use crate::systems::hud;
+use crate::systems::hud::menu::{self, MenuTab, MenuTabName, SubTabs};
 use crate::systems::input::map::InputAction;
-use crate::systems::interface::{InterfaceIcon, InterfaceSound};
+use crate::systems::interface::InterfaceIcon;
 use crate::systems::player::ClientId;
 use crate::systems::screen::ClientScreen;
 use ui::form;
 use ui::words;
 
-const SIZE: Vec2 = Vec2::new(780.0, 460.0);
 const TIME_WIDTH: f32 = 72.0;
 const ICON: f32 = 16.0;
 const TALK_INDENT: f32 = 12.0;
@@ -92,36 +91,42 @@ impl HistoryBook {
 }
 
 pub fn shown_tab(world: &World) -> Option<HistoryTab> {
-    hud::window_open(world, HistoryWindow.title()).then(|| world.resource::<HistoryBook>().tab)
+    (menu::showing(world) == Some(MenuTabName::History))
+        .then(|| world.resource::<HistoryBook>().tab)
 }
 
-pub struct HistoryWindow;
+pub struct HistoryMenuTab;
 
-impl HudWindow for HistoryWindow {
-    fn title(&self) -> &'static str {
-        "History"
-    }
-    fn toggle(&self) -> InputAction {
-        InputAction::ToggleHistory
+impl MenuTab for HistoryMenuTab {
+    fn name(&self) -> MenuTabName {
+        MenuTabName::History
     }
     fn icon(&self) -> InterfaceIcon {
         InterfaceIcon::History
     }
-    fn size(&self) -> Vec2 {
-        SIZE
+    fn opens(&self) -> InputAction {
+        InputAction::OpenHistory
+    }
+    fn sub_tabs(&self, world: &World) -> Option<SubTabs> {
+        let chosen = world.resource::<HistoryBook>().tab;
+        Some(SubTabs {
+            labels: HistoryTab::VARIANTS
+                .iter()
+                .map(|tab| tab.title().to_owned())
+                .collect(),
+            chosen: HistoryTab::VARIANTS
+                .iter()
+                .position(|&tab| tab == chosen)
+                .unwrap_or_default(),
+        })
+    }
+    fn choose_sub_tab(&self, world: &mut World, chosen: usize) {
+        if let Some(&tab) = HistoryTab::VARIANTS.get(chosen) {
+            world.resource_mut::<HistoryBook>().tab = tab;
+        }
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
-        let tabs: Vec<Tab<HistoryTab>> = HistoryTab::VARIANTS
-            .iter()
-            .map(|&tab| Tab::new(tab, tab.title()))
-            .collect();
-        let before = world.resource::<HistoryBook>().tab;
-        let mut tab = before;
-        sheet::tabs(ui, &tabs, &mut tab);
-        if tab != before {
-            world.resource_mut::<HistoryBook>().tab = tab;
-            InterfaceSound::UiPage.play(world);
-        }
+        let tab = world.resource::<HistoryBook>().tab;
         let rows = rows(world, tab);
         let clock = LocalClock::of_this_machine();
         let area = egui::ScrollArea::vertical()

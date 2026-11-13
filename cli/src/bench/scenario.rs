@@ -1,6 +1,6 @@
 //! What a bench scenario is: a scene staged on the server, a script of the player's input the
 //! driver plays through the client's own bindings, and the criteria its frames must meet. A
-//! scenario names nothing of any game: the places and windows it plays with are
+//! scenario names nothing of any game: the places and tabs it plays with are
 //! slots the game's own scenarios file fills, or that the engine fills from the content when the
 //! game has none.
 
@@ -66,7 +66,7 @@ pub enum Step {
     SweepInterface,
     /// The pointer moved onto the field that takes typing.
     HoverField,
-    /// Every window of the interface dragged a little way by its title, and back.
+    /// Every piece of the interface dragged a little way by its handle, and back.
     DragWindows,
     /// The first item shown in a slot dragged onto the next, with the carry binding; nothing
     /// when fewer than two are shown.
@@ -74,8 +74,9 @@ pub enum Step {
     /// The options of the first item shown in a slot opened by their binding, then dismissed;
     /// nothing when no slot is shown.
     SlotOptions,
-    /// Everything open over the world dismissed, until nothing covers it.
-    CloseWindows,
+    /// Stepped out of whatever the player is in, a press at a time, until they stand in the
+    /// world with no card pinned.
+    LeaveAll,
     Camera(CameraOp),
     /// Staged on the server mid-script.
     Stage(Staging),

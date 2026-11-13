@@ -17,7 +17,6 @@ const MARK: f32 = 16.0;
 const FLAG: f32 = 12.0;
 const FOLD: f32 = 16.0;
 const INDENT: f32 = 18.0;
-const GAP_TO_LAUNCHERS: f32 = 10.0;
 
 pub struct QuestTrackerPlugin;
 
@@ -32,8 +31,8 @@ pub struct QuestTrackerWidget;
 impl HudWidget for QuestTrackerWidget {
     fn fallback(&self, screen: Rect) -> Pos2 {
         Pos2::new(
-            screen.right() - hud::launchers_width() - WIDTH - GAP_TO_LAUNCHERS,
-            screen.top() + 8.0,
+            screen.right() - WIDTH - hud::MARGIN,
+            screen.top() + hud::MARGIN,
         )
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {

@@ -18,7 +18,7 @@ use serde::{Deserialize, Serialize};
 
 use super::places;
 
-/// What a game lends its scenarios: the places they play at, the windows they open, and the
+/// What a game lends its scenarios: the places they play at, the tabs they open, and the
 /// character they play. Read from `bench/scenarios.json` in the game's folder, every slot it
 /// leaves empty filled in from the content.
 #[derive(Serialize, Deserialize, Clone, Debug, Default)]
@@ -30,8 +30,9 @@ pub struct ScenarioSlots {
     pub crowd_place: Option<Place>,
     /// Ground the emptiest view from home looks toward.
     pub empty_view: Option<Pos<Meters>>,
-    /// The actions that open the windows the interface scenarios open, each a toggle.
-    pub windows: Vec<InputAction>,
+    /// The actions that open the tabs of the menu the interface scenario opens, in turn. What it
+    /// goes on to drag and type is done on the last.
+    pub tabs: Vec<InputAction>,
     /// Ground a walk from home ends at, far enough off that new ground comes into view.
     pub walk_to: Option<Pos<Meters>>,
     /// The test character the scenarios play, else the game's first.
@@ -59,21 +60,19 @@ impl ScenarioSlots {
         Ok(slots)
     }
 
-    /// Fills every empty slot from the content: where the player starts for home, every window
-    /// toggle, and a walk from home across open ground.
+    /// Fills every empty slot from the content: where the player starts for home, every tab of
+    /// the menu, and a walk from home across open ground.
     pub fn fill(&mut self, content: &Content) {
         let home = *self
             .home
             .get_or_insert(content.built::<GameSettings>().initial_spawn);
-        if self.windows.is_empty() {
-            self.windows = vec![
-                InputAction::ToggleInventory,
-                InputAction::ToggleEquipment,
-                InputAction::ToggleStats,
-                InputAction::ToggleQuestLog,
-                InputAction::ToggleSkills,
-                InputAction::ToggleHistory,
-                InputAction::ToggleSettings,
+        if self.tabs.is_empty() {
+            self.tabs = vec![
+                InputAction::OpenSkills,
+                InputAction::OpenQuests,
+                InputAction::OpenHistory,
+                InputAction::OpenSettings,
+                InputAction::OpenCharacter,
             ];
         }
         if self.walk_to.is_none() {

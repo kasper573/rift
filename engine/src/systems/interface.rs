@@ -77,13 +77,11 @@ impl ContentFile for InterfaceIconDef {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, strum::IntoStaticStr, strum::VariantArray)]
 #[strum(serialize_all = "snake_case")]
 pub enum InterfaceIcon {
-    Settings,
-    Bag,
-    Equipment,
-    Stats,
-    QuestLog,
-    History,
+    Character,
     Skills,
+    Quests,
+    History,
+    Settings,
 }
 
 impl Fixture for InterfaceIcon {

@@ -1,4 +1,5 @@
 pub mod session;
+pub mod sheet;
 pub mod snapshot;
 pub mod widget;
 

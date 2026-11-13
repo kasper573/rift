@@ -1,49 +1,31 @@
 use bevy::prelude::*;
-use ui::egui;
-use ui::egui::{Ui, Vec2};
-use ui::{face, sheet};
+use ui::egui::{Align, Layout, Stroke, Ui};
+use ui::{face, ink};
 
 use crate::core::content::Content;
-use crate::systems::hud::HudWindow;
-use crate::systems::input::map::InputAction;
-use crate::systems::interface::InterfaceIcon;
 use crate::systems::player::session;
 use crate::systems::{class, stat};
 
-const WINDOW_SIZE: Vec2 = Vec2::new(300.0, 260.0);
-const LABEL_WIDTH: f32 = 140.0;
-const ROW_SPACING: Vec2 = Vec2::new(16.0, 6.0);
+const ROW_PADDING: f32 = 2.0;
 
-pub struct StatsWindow;
-
-impl HudWindow for StatsWindow {
-    fn title(&self) -> &'static str {
-        "Stats"
-    }
-    fn toggle(&self) -> InputAction {
-        InputAction::ToggleStats
-    }
-    fn icon(&self) -> InterfaceIcon {
-        InterfaceIcon::Stats
-    }
-    fn size(&self) -> Vec2 {
-        WINDOW_SIZE
-    }
-    fn show(&self, ui: &mut Ui, world: &mut World) {
-        let rows = stat_rows(world);
-        sheet::scroll(ui, egui::ScrollArea::vertical().auto_shrink(false), |ui| {
-            egui::Grid::new("stats")
-                .num_columns(2)
-                .min_col_width(LABEL_WIDTH)
-                .spacing(ROW_SPACING)
-                .show(ui, |ui| {
-                    for (label, value) in rows {
-                        ui.label(face::body(label));
-                        ui.label(face::bold(value));
-                        ui.end_row();
-                    }
-                });
+pub fn pane(ui: &mut Ui, world: &World) {
+    ui.spacing_mut().item_spacing.y = 0.0;
+    ui.spacing_mut().interact_size.y = 0.0;
+    for (label, value) in stat_rows(world) {
+        ui.add_space(ROW_PADDING);
+        ui.horizontal(|ui| {
+            ui.label(face::body(label));
+            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
+                ui.label(face::bold(value));
+            });
         });
+        ui.add_space(ROW_PADDING);
+        let line = ui.cursor().min.y;
+        ui.painter().hline(
+            ui.max_rect().x_range(),
+            line,
+            Stroke::new(1.0, ink::ink_wash(0.12)),
+        );
     }
 }
 

@@ -90,8 +90,8 @@
         }
       ]
     },
-    "toggle_inventory": {
-      "label": "Open or close the inventory",
+    "open_character": {
+      "label": "Open the Character tab",
       "bindings": [
         {
           "type": "key",
@@ -99,26 +99,17 @@
         }
       ]
     },
-    "toggle_equipment": {
-      "label": "Open or close the equipment",
+    "open_skills": {
+      "label": "Open the Skills tab",
       "bindings": [
         {
           "type": "key",
-          "key": "KeyE"
+          "key": "KeyP"
         }
       ]
     },
-    "toggle_stats": {
-      "label": "Open or close the stats",
-      "bindings": [
-        {
-          "type": "key",
-          "key": "KeyK"
-        }
-      ]
-    },
-    "toggle_quest_log": {
-      "label": "Open or close the quest log",
+    "open_quests": {
+      "label": "Open the Quests tab",
       "bindings": [
         {
           "type": "key",
@@ -126,8 +117,17 @@
         }
       ]
     },
-    "toggle_settings": {
-      "label": "Open or close the settings",
+    "open_history": {
+      "label": "Open the History tab",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "KeyH"
+        }
+      ]
+    },
+    "open_settings": {
+      "label": "Open the Settings tab",
       "bindings": [
         {
           "type": "key",
@@ -136,7 +136,7 @@
       ]
     },
     "dismiss": {
-      "label": "Close what's on top, stop typing, or leave the conversation",
+      "label": "Step out, or open the menu",
       "bindings": [
         {
           "type": "key",
@@ -371,24 +371,6 @@
         {
           "type": "key",
           "key": "Digit9"
-        }
-      ]
-    },
-    "toggle_history": {
-      "label": "Show or hide the conversation so far",
-      "bindings": [
-        {
-          "type": "key",
-          "key": "KeyH"
-        }
-      ]
-    },
-    "toggle_skills": {
-      "label": "Open or close your skills",
-      "bindings": [
-        {
-          "type": "key",
-          "key": "KeyP"
         }
       ]
     },

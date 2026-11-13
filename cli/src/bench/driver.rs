@@ -16,6 +16,7 @@ use engine::core::render::transition::ScreenTransitionPhase;
 use engine::core::units::{Degrees, MeterPos, Meters, Radians, WindowPx};
 use engine::systems::input::camera::DRAG_TURN;
 use engine::systems::input::map::{InputAction, InputBinding, InputMap, KeyModifiers};
+use engine::systems::input::scope::InputScope;
 use engine::systems::player::snapshot::CharacterSnapshot;
 use engine::systems::probe::{
     ProbeFrameQuestion, ProbeFrames, ProbeInput, ProbeInputSeen, ProbeSnapshot, ProbeTerrain,
@@ -148,7 +149,7 @@ impl Driver {
     ) -> Result<(), Failure> {
         self.measuring = None;
         self.note(&format!("=== {name}"));
-        self.close_windows()?;
+        self.step_out()?;
         for staging in stage {
             self.stage(staging)?;
             if let Staging::Place { place } = staging {
@@ -295,7 +296,7 @@ impl Driver {
                     self.note("no item slot to open the options of");
                 }
             }
-            Step::CloseWindows => self.close_windows()?,
+            Step::LeaveAll => self.step_out()?,
             Step::Camera(op) => self.camera(*op)?,
             Step::Stage(staging) => match staging {
                 Staging::Walk { to } => self.walk(*to)?,
@@ -331,21 +332,22 @@ impl Driver {
         Ok(())
     }
 
-    /// Dismisses whatever is open over the world, topmost first, until a dismissal closes
-    /// nothing more: what the interface always shows stays.
-    fn close_windows(&mut self) -> Result<(), Failure> {
-        let mut covered = self.snapshot()?.covered.len();
-        for _ in 0..CLOSE_TRIES {
-            self.act(InputAction::Dismiss)?;
-            self.wait(&Cond::Settled)?;
-            let now = self.snapshot()?.covered.len();
-            if now >= covered {
+    /// Never a press more than it takes: from the world with nothing to step out of, the same
+    /// press would open the menu.
+    fn step_out(&mut self) -> Result<(), Failure> {
+        for _ in 0..STEPS_OUT {
+            let snapshot = self.snapshot()?;
+            let out = snapshot.scope == InputScope::World
+                && snapshot.item_card.is_none()
+                && snapshot.skill_card.is_none();
+            if out {
                 return Ok(());
             }
-            covered = now;
+            self.act(InputAction::Dismiss)?;
+            self.wait(&Cond::Settled)?;
         }
         Err(Failure::Harness(format!(
-            "the interface keeps changing under {CLOSE_TRIES} dismissals"
+            "the player is still not out in the world after {STEPS_OUT} steps out"
         )))
     }
 
@@ -382,7 +384,7 @@ impl Driver {
             .collect())
     }
 
-    /// Drags every window of the interface by its title a little way across the screen and back.
+    /// Drags every piece of the interface by its handle a little way across the screen and back.
     fn drag_windows(&mut self) -> Result<(), Failure> {
         let snapshot = self.snapshot()?;
         let screen = snapshot
@@ -903,11 +905,10 @@ const READ_EVERY: Duration = Duration::from_secs(2);
 const IDLE_SLICE: Duration = Duration::from_millis(50);
 /// Window pixels the pointer moves per step of a steer.
 const STEER_STEP: f32 = 24.0;
-/// How many times the windows are scrolled down looking for an element, and by how much.
+/// How many times the interface is scrolled down looking for an element, and by how much.
 const SCROLL_TRIES: u32 = 8;
 const SCROLL_LINES: i32 = 3;
-/// How many dismissals may be needed to close everything open over the world.
-const CLOSE_TRIES: u32 = 12;
+const STEPS_OUT: u32 = 12;
 /// Window pixels a window is dragged by, across and down.
 const WINDOW_DRAG: f32 = 120.0;
 /// Turns the camera may take to come to face a point, and how far off it may rest, in degrees.
