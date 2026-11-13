@@ -1,13 +1,15 @@
 use bevy_ecs::message::MessageCursor;
 use bevy_replication::ToClient;
 use bevy_terminal::{
-    LineTone, TerminalCompletionRequest, TerminalCompletions, TerminalInput, TerminalLine,
+    LineKind, LineSpeaker, TerminalCompletionRequest, TerminalCompletions, TerminalInput,
+    TerminalLine,
 };
 use engine::core::content::Content;
 use engine::core::net::auth::TokenClaims;
 use engine::core::units::MeterPos;
 use engine::systems::account::{AccountIdentity, RoleDef};
-use engine::systems::{chat, command, movement, script};
+use engine::systems::input::map::InputMap;
+use engine::systems::{chat, command, movement, region, script};
 use serde_json::{Value, json};
 use testkit::{Game, Map, Sim, path};
 
@@ -39,7 +41,7 @@ fn a_command_runs_its_script_on_what_was_typed_and_says_why_it_cannot() {
         send(&mut sim, 1, line);
         assert_eq!(
             lines(&mut sim, 1).last(),
-            Some(&(refusal.to_owned(), LineTone::Failed)),
+            Some(&(refusal.to_owned(), LineKind::Failed)),
             "{line}"
         );
     }
@@ -76,7 +78,68 @@ fn a_command_runs_its_script_on_what_was_typed_and_says_why_it_cannot() {
             "/join <player>",
             "/warp <to>, [x], [y]"
         ]
-        .map(|usage| (usage.to_owned(), LineTone::Said))
+        .map(|usage| (usage.to_owned(), LineKind::Notice))
+    );
+}
+
+#[test]
+fn what_is_said_aloud_reaches_every_terminal_with_who_said_it_and_whether_they_typed_it() {
+    let crier =
+        json!([{ "type": "resident", "npc": "crier.npc.json", "at": { "x": 3.0, "y": 2.0 } }]);
+    let content = Game::new()
+        .area("camp", &Map::open(6, 6), crier)
+        .hero("camp", 2.0, 2.0)
+        .inputs()
+        .npc(
+            "crier",
+            40.0,
+            json!([{ "type": "script", "script": "crier_answers.script.json" }]),
+        )
+        .script(
+            "crier_answers",
+            "npc",
+            json!({
+                "heard": { "type": "on", "event": "heard", "words": ["ahoy"], "within": 4.0, "next": "answer" },
+                "answer": { "type": "say", "text": ["Ahoy yourself."] },
+            }),
+        )
+        .load();
+    let inputs = InputMap::new(&content);
+    let mut sim = camp(content);
+    sim.world.insert_resource(inputs);
+    region::hold_whole(&mut sim.world);
+    sim.join(1);
+    sim.join(2);
+    sim.run(0.5);
+    let listener = sim.conn(2);
+    let mut heard = Vec::new();
+    let mut cursor = MessageCursor::<ToClient<TerminalLine>>::default();
+
+    send(&mut sim, 1, "Ahoy there!");
+    for _ in 0..10 {
+        sim.tick();
+        heard.extend(
+            sim.read(&mut cursor)
+                .into_iter()
+                .filter(|sent| sent.client == listener)
+                .map(|sent| (sent.message.text, sent.message.kind)),
+        );
+    }
+
+    let said = |text: &str, name: &str, typist| {
+        let speaker = LineSpeaker {
+            name: name.to_owned(),
+            typist,
+        };
+        (text.to_owned(), LineKind::Said(speaker))
+    };
+    assert_eq!(
+        heard,
+        vec![
+            said("Ahoy there!", "player 1", Some(1)),
+            said("Ahoy yourself.", "crier", None),
+        ],
+        "a line names its speaker apart from its words, and only a player's names who typed it"
     );
 }
 
@@ -134,7 +197,7 @@ fn a_command_is_for_the_roles_it_names_which_an_account_holds_by_what_its_token_
     send(&mut sim, 2, "/warp camp");
     assert_eq!(
         lines(&mut sim, 2).last(),
-        Some(&("There is no command warp".to_owned(), LineTone::Failed)),
+        Some(&("There is no command warp".to_owned(), LineKind::Failed)),
         "to anyone else the command is no command at all"
     );
     send(&mut sim, 1, "/warp camp, 1, 1");
@@ -312,6 +375,8 @@ fn camp(content: Content) -> Sim {
         .message::<ToClient<engine::systems::item::ItemShown>>()
         .add((
             chat::hear,
+            chat::overhear,
+            chat::rebroadcast,
             command::run,
             command::retire,
             command::complete::answer,
@@ -335,12 +400,12 @@ fn send(sim: &mut Sim, client: u32, line: &str) {
 }
 
 /// The lines the server put in the client's terminal of late, oldest first.
-fn lines(sim: &mut Sim, client: u32) -> Vec<(String, LineTone)> {
+fn lines(sim: &mut Sim, client: u32) -> Vec<(String, LineKind)> {
     let conn = sim.conn(client);
     sim.read(&mut MessageCursor::<ToClient<TerminalLine>>::default())
         .into_iter()
         .filter(|sent| sent.client == conn)
-        .map(|sent| (sent.message.text, sent.message.tone))
+        .map(|sent| (sent.message.text, sent.message.kind))
         .collect()
 }
 

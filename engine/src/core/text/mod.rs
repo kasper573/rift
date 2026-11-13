@@ -1,6 +1,6 @@
 mod paint;
 
-pub use paint::{Hand, TextLook, measure, show, show_shadowed};
+pub use paint::{Hand, TextLook, measure, show};
 
 use std::borrow::Cow;
 use std::collections::HashMap;

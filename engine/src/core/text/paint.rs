@@ -7,12 +7,11 @@ use ui::egui::emath::TSTransform;
 use ui::egui::epaint::TextShape;
 use ui::egui::text::{LayoutJob, TextFormat};
 use ui::egui::{
-    Color32, FontId, Galley, Pos2, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, Vec2,
-    WidgetInfo, WidgetType,
+    Color32, Galley, Pos2, Rect, Response, Sense, Shape, Stroke, StrokeKind, Ui, Vec2, WidgetInfo,
+    WidgetType,
 };
 use ui::face::{Face, TextRole};
 use ui::ink::Ground;
-use ui::paint::TextShadow;
 
 use super::{KeyNames, Lettering, SpanInk, StyledLine, Swing, TextMotion, TextPiece, TextVoice};
 
@@ -142,35 +141,6 @@ pub fn measure(
 }
 
 const HALO_STEPS: usize = 8;
-
-/// `shift` moves and scales the drawing about the text's centre while the space it takes stays put,
-/// so a moving title never reflows what is around it.
-pub fn show_shadowed(
-    ui: &mut Ui,
-    text: &str,
-    font: FontId,
-    color: Color32,
-    shadow: TextShadow,
-    shift: TSTransform,
-) -> Response {
-    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
-    let (rect, response) = ui.allocate_exact_size(galley.size(), Sense::hover());
-    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, text));
-    if !ui.is_rect_visible(rect) {
-        return response;
-    }
-    let centre = rect.center().to_vec2();
-    let around =
-        TSTransform::from_translation(centre) * shift * TSTransform::from_translation(-centre);
-    let mut under = TextShape::new(rect.min + shadow.offset, galley.clone(), shadow.color);
-    under.override_text_color = Some(shadow.color);
-    under.transform(around);
-    let mut over = TextShape::new(rect.min, galley, color);
-    over.transform(around);
-    ui.painter().add(Shape::Text(under));
-    ui.painter().add(Shape::Text(over));
-    response
-}
 
 struct Plan {
     letters: Vec<Letter>,

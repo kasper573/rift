@@ -5,17 +5,19 @@ use super::map::{self, InputAction, InputMap};
 use super::scope::InputScope;
 use crate::core::gui;
 use crate::systems::dialogue::stage;
-use crate::systems::{crafting, hud, item, resource, skill};
+use crate::systems::{crafting, hud, item, resource, skill, terminal};
 
 pub(super) fn plugin(app: &mut App) {
     app.add_systems(Update, dismiss_topmost.run_if(resource_exists::<InputMap>));
 }
 
 fn dismiss_topmost(world: &mut World) {
-    // A field or an open list gives the keyboard back on the press itself.
-    if !map::just_pressed(world, InputAction::Dismiss)
-        || *world.resource::<InputScope>() == InputScope::Typing
-    {
+    if !map::just_pressed(world, InputAction::Dismiss) {
+        return;
+    }
+    // A field in a window and an open list give the keyboard back themselves on the press.
+    if *world.resource::<InputScope>() == InputScope::Typing {
+        terminal::chat::hand_back(world);
         return;
     }
     if skill::bar::cancel_rebind(world) || skill::aim::disarm(world) {

@@ -15,7 +15,6 @@ use crate::core::math::Pos;
 use crate::core::render::transition::{ActiveTransition, ScreenTransitionPhase};
 use crate::core::render::window_point;
 use crate::core::render::world::opacity::Opacity;
-use crate::core::text;
 use crate::core::units::Meters;
 use crate::systems::actor::{Action, Actor, Hitbox, Name};
 use crate::systems::area::AreaObject;
@@ -245,7 +244,7 @@ fn draw_plate(ui: &mut egui::Ui, plate: &Plate) {
         });
     }
     if let Some(name) = &plate.label.name {
-        text::show_shadowed(
+        dusk::label(
             &mut column,
             name,
             name_font(),
@@ -259,7 +258,7 @@ fn draw_plate(ui: &mut egui::Ui, plate: &Plate) {
         plate.label.state.clone(),
     ];
     for line in under.into_iter().flatten() {
-        text::show_shadowed(
+        dusk::label(
             &mut column,
             &line,
             role_font(),

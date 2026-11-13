@@ -584,7 +584,7 @@ fn caption_row(ui: &mut Ui, world: &World, line: &LabelledLine, size: Vec2) {
 fn milestone_row(ui: &mut Ui, world: &World, line: &LabelledLine, row: TransitPose) -> Rect {
     ui.spacing_mut().item_spacing.y = LINE_GAP;
     let shift = TSTransform::new(row.offset, row.scale);
-    let label = text::show_shadowed(
+    let label = dusk::label(
         ui,
         &label_text(&line.label, line.replaced),
         label_font(),
@@ -593,7 +593,7 @@ fn milestone_row(ui: &mut Ui, world: &World, line: &LabelledLine, row: TransitPo
         shift,
     );
     let words = line.text.plain(world.resource::<KeyNames>());
-    let words = text::show_shadowed(
+    let words = dusk::label(
         ui,
         &words,
         Face::BookBold.id(MILESTONE_SIZE),

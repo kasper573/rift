@@ -133,7 +133,7 @@ pub fn catalogue(slots: &ScenarioSlots, content: &Content, smoke: bool) -> Vec<S
         script.push(Step::DragItems);
         script.push(Step::SlotOptions);
         script.push(Step::DragWindows);
-        script.push(Step::Key(InputAction::ToggleTerminal));
+        script.push(Step::Key(InputAction::FocusChat));
         script.push(Step::Wait(Cond::Settled));
         script.push(Step::HoverField);
         script.push(Step::Wheel(3));

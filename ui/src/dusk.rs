@@ -1,8 +1,14 @@
 //! The dark ground of notices: what floats over the world to tell the player something stays apart
 //! from the paper of windows and cards.
 
-use egui::epaint::Shadow;
-use egui::{Color32, CornerRadius, Frame, Margin, Stroke, Vec2};
+use std::sync::Arc;
+
+use egui::emath::TSTransform;
+use egui::epaint::{Shadow, TextShape};
+use egui::{
+    Color32, CornerRadius, FontId, Frame, Galley, Margin, Painter, Pos2, Rect, Response, Sense,
+    Shape, Stroke, Ui, Vec2, WidgetInfo, WidgetType,
+};
 
 use crate::ink::{Ground, Prose};
 use crate::paint::TextShadow;
@@ -14,6 +20,8 @@ pub const TEXT: Color32 = Color32::from_rgb(228, 228, 232);
 pub const DANGER: Color32 = Prose::Danger.on(Ground::Dusk);
 /// A player's name floating over the world.
 pub const PLAYER: Color32 = Prose::Place.on(Ground::Dusk);
+pub const TOWNSPERSON: Color32 = Prose::Name.on(Ground::Dusk);
+pub const NOTICE: Color32 = Prose::Item.on(Ground::Dusk);
 
 pub const RADIUS: CornerRadius = CornerRadius::same(6);
 pub const SHADOW: Shadow = Shadow {
@@ -33,6 +41,53 @@ pub const SMALL_TEXT_SHADOW: TextShadow = TextShadow {
     offset: Vec2::new(1.0, 1.0),
     color: Color32::BLACK,
 };
+
+/// The dusk ground laid behind what floats over the world, `opacity` of the way from clear to
+/// solid, for text that stays whole whatever the plate under it is set to.
+pub fn plate(painter: &Painter, rect: Rect, opacity: f32) {
+    painter.rect_filled(rect, RADIUS, FILL.gamma_multiply(opacity.clamp(0.0, 1.0)));
+}
+
+/// Lettering over the world: `galley` at `at` with `shadow` under it. `shift` moves and scales
+/// the drawing while the space it takes stays put.
+pub fn lettering(
+    painter: &Painter,
+    at: Pos2,
+    galley: Arc<Galley>,
+    shadow: TextShadow,
+    shift: TSTransform,
+) {
+    let mut under = TextShape::new(at + shadow.offset, galley.clone(), shadow.color);
+    under.override_text_color = Some(shadow.color);
+    under.transform(shift);
+    let mut over = TextShape::new(at, galley, Color32::PLACEHOLDER);
+    over.transform(shift);
+    painter.add(Shape::Text(under));
+    painter.add(Shape::Text(over));
+}
+
+/// A line of lettering over the world, as a label. `shift` moves and scales the drawing about
+/// the text's centre while the space it takes stays put, so a moving title never reflows what is
+/// around it.
+pub fn label(
+    ui: &mut Ui,
+    text: &str,
+    font: FontId,
+    color: Color32,
+    shadow: TextShadow,
+    shift: TSTransform,
+) -> Response {
+    let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
+    let (rect, response) = ui.allocate_exact_size(galley.size(), Sense::hover());
+    response.widget_info(|| WidgetInfo::labeled(WidgetType::Label, true, text));
+    if ui.is_rect_visible(rect) {
+        let centre = rect.center().to_vec2();
+        let around =
+            TSTransform::from_translation(centre) * shift * TSTransform::from_translation(-centre);
+        lettering(ui.painter(), rect.min, galley, shadow, around);
+    }
+    response
+}
 
 pub fn frame() -> Frame {
     Frame::new()

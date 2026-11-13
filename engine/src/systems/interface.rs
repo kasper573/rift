@@ -83,7 +83,6 @@ pub enum InterfaceIcon {
     Stats,
     QuestLog,
     History,
-    Terminal,
     Skills,
 }
 

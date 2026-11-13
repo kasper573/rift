@@ -3,9 +3,10 @@ use std::sync::Arc;
 use bevy_app::App;
 use bevy_ecs::message::{MessageCursor, Messages};
 use bevy_ecs::prelude::*;
-use bevy_replication::{AppMessageExt, ClientLink, ToClient};
+use bevy_replication::{AppMessageExt, ToClient};
 use bevy_terminal::{
-    TerminalCompletionRequest, TerminalCompletions, TerminalInput, TerminalLine, TerminalSaid,
+    LineSpeaker, TerminalCompletionRequest, TerminalCompletions, TerminalInput, TerminalLine,
+    TerminalSaid,
 };
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -75,16 +76,17 @@ pub fn rebroadcast(world: &mut World) {
         .drain()
         .collect();
     for said in saids {
+        let client = world.get::<ClientId>(said.conn).copied();
         let name = player::conn_player(world, said.conn)
             .and_then(|player| world.get::<ActorName>(player))
             .map(|name| name.name.clone())
-            .or_else(|| {
-                world
-                    .get::<ClientId>(said.conn)
-                    .map(|client| format!("player {}", client.0))
-            })
+            .or_else(|| client.map(|client| format!("player {}", client.0)))
             .unwrap_or_else(|| "player".to_owned());
-        broadcast(world, format!("{name}: {}", said.text));
+        let speaker = LineSpeaker {
+            name,
+            typist: client.map(|client| u64::from(client.0)),
+        };
+        broadcast(world, speaker, said.text);
     }
 }
 
@@ -143,7 +145,11 @@ pub fn say(world: &mut World, speaker: Entity, text: LineText, within: Meters) {
         .map(|name| name.name.clone())
         .unwrap_or_default();
     let words = text.words(world.resource::<InputMap>());
-    broadcast(world, format!("{name}: {words}"));
+    let voice = LineSpeaker {
+        name: name.clone(),
+        typist: None,
+    };
+    broadcast(world, voice, words);
     let kind = match world.get::<Npc>(speaker) {
         Some(npc) => NotificationKind::Speech { speaker: npc.def },
         None => NotificationKind::Narration {
@@ -233,10 +239,10 @@ fn spoken_words(text: &str) -> Vec<String> {
         .collect()
 }
 
-fn broadcast(world: &mut World, text: String) {
+fn broadcast(world: &mut World, speaker: LineSpeaker, text: String) {
     let conns: Vec<Entity> = world
-        .query_filtered::<Entity, With<ClientLink>>()
+        .query_filtered::<Entity, With<ClientId>>()
         .iter(world)
         .collect();
-    bevy_terminal::broadcast(world, &conns, text);
+    bevy_terminal::say(world, &conns, speaker, text);
 }

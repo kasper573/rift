@@ -16,7 +16,7 @@ use crate::core::render::transition::{ScreenTransition, ScreenTransitionPreferen
 use crate::core::render::video::{self, VideoPreferences};
 use crate::core::render::{CameraPreferences, CameraRig};
 use crate::core::text::{LettersPerSecond, Typing};
-use crate::core::units::{Seconds, WindowPx};
+use crate::core::units::{Percent, Seconds, WindowPx};
 use crate::systems::hud::HudWindow;
 use crate::systems::input::map::{InputAction, KeyGesture};
 use crate::systems::interface::InterfaceIcon;
@@ -62,6 +62,12 @@ pub(crate) struct UserSettings {
 pub(crate) struct Placement {
     pub pos: Pos<WindowPx>,
     pub size: Size<WindowPx>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Placed {
+    Window(&'static str),
+    Chat,
 }
 
 #[derive(Serialize, Deserialize, Clone, Copy, Debug, PartialEq, Eq)]
@@ -187,6 +193,25 @@ fn show_settings(
         }
     });
     ui.add_space(8.0);
+    sheet::section(ui, "Chat");
+    let mut chat = settings.chat_shown();
+    if ui
+        .checkbox(&mut chat, "Show chat")
+        .on_hover_text("Off, chat leaves the screen and its key does nothing")
+        .changed()
+    {
+        settings.toggle_chat();
+    }
+    ui.add_space(4.0);
+    controls::form(ui, ("settings", "chat"), |ui| {
+        let label = ui.label("Chat background");
+        chat_background_slider(ui, settings, label.id);
+        ui.end_row();
+        let label = ui.label("Chat text size");
+        chat_text_slider(ui, settings, label.id);
+        ui.end_row();
+    });
+    ui.add_space(8.0);
     sheet::section(ui, "Video");
     show_video(ui, settings);
     ui.add_space(8.0);
@@ -247,6 +272,33 @@ fn smoothing_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, game: Seconds
             "off".to_owned()
         };
         ui.label(theme::faint(shown));
+    });
+}
+
+fn chat_background_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: egui::Id) {
+    let mut background = settings.chat_background().0;
+    ui.horizontal(|ui| {
+        if controls::slider(ui, &mut background, 0.0..=Percent::WHOLE.0)
+            .labelled_by(label)
+            .changed()
+        {
+            settings.ui.chat.background = Some(Percent(background.round()));
+        }
+        ui.label(theme::faint(format!("{:.0}%", background.round())));
+    });
+}
+
+fn chat_text_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: egui::Id) {
+    let mut size = settings.chat_text_size().0;
+    ui.horizontal(|ui| {
+        let (_, smallest, largest) = CHAT_TEXT_SIZES;
+        if controls::slider(ui, &mut size, smallest.0..=largest.0)
+            .labelled_by(label)
+            .changed()
+        {
+            settings.ui.chat.text_size = Some(WindowPx(size.round()));
+        }
+        ui.label(theme::faint(format!("{:.0} px", size.round())));
     });
 }
 
@@ -335,12 +387,37 @@ impl UserSettings {
         self.ui.widgets.insert(id.to_owned(), pos);
     }
 
-    pub(crate) fn window_placement(&self, id: &str) -> Option<Placement> {
-        self.ui.windows.get(id).copied()
+    pub(crate) fn placement(&self, of: Placed) -> Option<Placement> {
+        match of {
+            Placed::Window(window) => self.ui.windows.get(window).copied(),
+            Placed::Chat => self.ui.chat.placement,
+        }
     }
 
-    pub(crate) fn set_window_placement(&mut self, id: &str, placement: Placement) {
-        self.ui.windows.insert(id.to_owned(), placement);
+    pub(crate) fn set_placement(&mut self, of: Placed, placement: Placement) {
+        match of {
+            Placed::Window(window) => {
+                self.ui.windows.insert(window.to_owned(), placement);
+            }
+            Placed::Chat => self.ui.chat.placement = Some(placement),
+        }
+    }
+
+    pub(crate) fn chat_shown(&self) -> bool {
+        !self.ui.chat.hidden
+    }
+
+    pub(crate) fn toggle_chat(&mut self) {
+        self.ui.chat.hidden = !self.ui.chat.hidden;
+    }
+
+    pub(crate) fn chat_background(&self) -> Percent {
+        self.ui.chat.background.unwrap_or(CHAT_BACKGROUND)
+    }
+
+    pub(crate) fn chat_text_size(&self) -> WindowPx {
+        let size = self.ui.chat.text_size.unwrap_or(CHAT_TEXT_SIZES.0);
+        WindowPx(size.0.clamp(CHAT_TEXT_SIZES.1.0, CHAT_TEXT_SIZES.2.0))
     }
 
     pub(crate) fn hotbar_shape(&self) -> HotbarShape {
@@ -395,6 +472,8 @@ struct UiSettings {
     windows: BTreeMap<String, Placement>,
     #[serde(default)]
     hotbar: HotbarSettings,
+    #[serde(default)]
+    chat: ChatSettings,
 }
 
 impl Default for UiSettings {
@@ -404,9 +483,26 @@ impl Default for UiSettings {
             widgets: BTreeMap::new(),
             windows: BTreeMap::new(),
             hotbar: HotbarSettings::default(),
+            chat: ChatSettings::default(),
         }
     }
 }
+
+#[derive(Serialize, Deserialize, Default)]
+struct ChatSettings {
+    #[serde(default)]
+    hidden: bool,
+    #[serde(default)]
+    placement: Option<Placement>,
+    #[serde(default)]
+    background: Option<Percent>,
+    #[serde(default)]
+    text_size: Option<WindowPx>,
+}
+
+const CHAT_BACKGROUND: Percent = Percent(35.0);
+const CHAT_TEXT_SIZES: (WindowPx, WindowPx, WindowPx) =
+    (WindowPx(15.0), WindowPx(12.0), WindowPx(22.0));
 
 #[derive(Serialize, Deserialize, Default)]
 struct HotbarSettings {

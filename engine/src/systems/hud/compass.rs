@@ -21,10 +21,7 @@ pub struct CompassWidget;
 
 impl HudWidget for CompassWidget {
     fn fallback(&self, screen: Rect) -> Pos2 {
-        Pos2::new(
-            screen.left() + MARGIN,
-            screen.bottom() - MARGIN - SIZE - DOT * 2.0 - DOT_GAP,
-        )
+        Pos2::new(screen.left() + MARGIN, screen.center().y)
     }
 
     fn show(&self, ui: &mut Ui, world: &mut World) {

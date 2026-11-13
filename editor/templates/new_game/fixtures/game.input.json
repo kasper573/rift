@@ -135,15 +135,6 @@
         }
       ]
     },
-    "toggle_terminal": {
-      "label": "Open or close the terminal",
-      "bindings": [
-        {
-          "type": "key",
-          "key": "KeyC"
-        }
-      ]
-    },
     "dismiss": {
       "label": "Close what's on top, stop typing, or leave the conversation",
       "bindings": [
@@ -559,6 +550,15 @@
         {
           "type": "key",
           "key": "AltLeft"
+        }
+      ]
+    },
+    "focus_chat": {
+      "label": "Start typing in chat",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "Enter"
         }
       ]
     }

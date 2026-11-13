@@ -45,7 +45,6 @@ pub enum InputAction {
     ToggleStats,
     ToggleQuestLog,
     ToggleSettings,
-    ToggleTerminal,
     Dismiss,
     SubmitText,
     /// Takes the selected way to go on with what is being typed.
@@ -92,6 +91,7 @@ pub enum InputAction {
     SlotOptions,
     /// Held, to keep the wheel of emotes open round the player's character.
     Emotes,
+    FocusChat,
 }
 
 /// The one file that binds every action, a fixture every game provides.

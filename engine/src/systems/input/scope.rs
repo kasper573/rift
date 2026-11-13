@@ -1,4 +1,5 @@
 use bevy::prelude::*;
+use bevy_egui::EguiPreUpdateSet;
 use bevy_egui::input::EguiWantsInput;
 
 use super::map::InputAction;
@@ -47,7 +48,6 @@ impl InputAction {
             | InputAction::ToggleStats
             | InputAction::ToggleQuestLog
             | InputAction::ToggleSettings
-            | InputAction::ToggleTerminal
             | InputAction::ToggleHistory
             | InputAction::ToggleSkills => &[Conversation, World],
             InputAction::Respawn
@@ -65,7 +65,8 @@ impl InputAction {
             | InputAction::Hotbar7
             | InputAction::Hotbar8
             | InputAction::Hotbar9
-            | InputAction::Emotes => &[World],
+            | InputAction::Emotes
+            | InputAction::FocusChat => &[World],
             InputAction::Dismiss
             | InputAction::Interact
             | InputAction::TurnCamera
@@ -95,9 +96,11 @@ pub fn reads(world: &World, action: InputAction) -> bool {
 
 pub(super) fn plugin(app: &mut App) {
     app.init_resource::<InputScope>()
-        .add_systems(PreUpdate, decide);
+        .add_systems(PreUpdate, decide.before(EguiPreUpdateSet::BeginPass));
 }
 
+// Before the interface begins its pass, where a key may hand the keyboard on: a press is read in
+// the place the player was in when they made it, so one press never takes two steps.
 fn decide(world: &mut World) {
     let scope = if typing(world) {
         InputScope::Typing

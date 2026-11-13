@@ -154,7 +154,7 @@ pub(super) fn draw(world: &mut World, gui: &egui::Context, top: f32) -> f32 {
                                 .max_rect(row.shrink2(Vec2::new(RULE + RULE_GAP, 0.0)))
                                 .layout(Layout::left_to_right(Align::Center)),
                         );
-                        text::show_shadowed(
+                        dusk::label(
                             &mut title_ui,
                             title,
                             title_font.clone(),

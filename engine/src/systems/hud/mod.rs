@@ -5,7 +5,9 @@ mod panel;
 pub(crate) use card::{
     Pinned, draw_pinned, forget_pinned, pin, pinned, pinned_rect, raise_pinned, unpin,
 };
-pub(crate) use panel::{WindowFrame, sheet_pose, widget, window};
+pub(crate) use panel::{
+    SizedPiece, WindowFrame, grab_sized, sheet_pose, sized_rect, widget, window,
+};
 
 use std::collections::HashSet;
 use ui::drag;
@@ -30,7 +32,7 @@ use crate::systems::player::{self, session};
 use crate::systems::screen::ClientScreen;
 use crate::systems::settings::{self, UserSettings};
 use crate::systems::skill::{self, HotbarEntry, HotbarSlot, SkillId};
-use crate::systems::{equipment, history, quest, stat, terminal};
+use crate::systems::{equipment, history, quest, stat};
 use ui::dialog;
 
 pub(crate) const WIDGET: WindowPx = WindowPx(46.0);
@@ -40,7 +42,7 @@ const LAUNCHER_ICON: f32 = 32.0;
 const LAUNCHER_RIGHT: f32 = 10.0;
 const LAUNCHER_TOP: f32 = 9.0;
 const LAUNCHER_PITCH: f32 = 55.0;
-const MARGIN: f32 = 8.0;
+pub(crate) const MARGIN: f32 = 8.0;
 const CARRIED: f32 = 40.0;
 const CONFIRM: &str = "confirm";
 const NOTE: Vec2 = Vec2::new(400.0, 170.0);
@@ -154,10 +156,6 @@ pub(crate) fn window_open(world: &World, window: &'static str) -> bool {
     world.resource::<Open>().0.contains(&window)
 }
 
-pub(crate) fn just_opened(world: &World, window: &'static str) -> bool {
-    !world.resource::<WindowsDrawn>().last.contains(window)
-}
-
 pub(crate) fn open_windows(world: &World) -> impl Iterator<Item = &'static str> + '_ {
     world.resource::<Open>().0.iter().copied()
 }
@@ -244,7 +242,6 @@ static WINDOWS: &[&dyn HudWindow] = &[
     &quest::log::QuestLogWindow,
     &history::widget::HistoryWindow,
     &settings::SettingsWindow,
-    &terminal::widget::TerminalWindow,
 ];
 
 #[derive(Resource, Default)]

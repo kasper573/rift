@@ -17,23 +17,7 @@ impl Game {
     /// reads from it, so a game of only the rows a test declares loads as a whole one. A row the
     /// test declares after replaces the plain one.
     pub fn engine_rows(self) -> Game {
-        let unbound = InputDef {
-            actions: InputAction::VARIANTS
-                .iter()
-                .map(|&action| {
-                    let label = <&str>::from(action).to_owned();
-                    let bound = BoundAction {
-                        label,
-                        bindings: Vec::new(),
-                    };
-                    (action, bound)
-                })
-                .collect(),
-        };
-        let unbound = serde_json::to_value(unbound).expect("an input file");
-        let game = each::<InputFixture>(self, |game, key, _| {
-            game.row(InputDef::TABLE, key, unbound.clone())
-        });
+        let game = self.inputs();
         let game = each::<AttentionMark>(game, |game, key, _| game.mark(key));
         let game = each::<InterfaceSound>(game, |game, key, _| game.sfx(key));
         let game = each::<CursorShape>(game, |game, key, _| game.cursor(key));
@@ -56,6 +40,28 @@ impl Game {
             })
         });
         each::<WorldMap>(game, |game, key, _| game.row("world_map", key, json!({})))
+    }
+
+    /// The input file with every action named and none bound: what a server needs to word the
+    /// inputs a line of text names.
+    pub fn inputs(self) -> Game {
+        let unbound = InputDef {
+            actions: InputAction::VARIANTS
+                .iter()
+                .map(|&action| {
+                    let label = <&str>::from(action).to_owned();
+                    let bound = BoundAction {
+                        label,
+                        bindings: Vec::new(),
+                    };
+                    (action, bound)
+                })
+                .collect(),
+        };
+        let unbound = serde_json::to_value(unbound).expect("an input file");
+        each::<InputFixture>(self, |game, key, _| {
+            game.row(InputDef::TABLE, key, unbound.clone())
+        })
     }
 }
 
