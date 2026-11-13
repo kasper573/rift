@@ -13,7 +13,7 @@ use crate::systems::actor::appearance::SetAppearance;
 use crate::systems::actor::held::SetHeld;
 use crate::systems::actor::playing::{Animate, SetPose, SetStance};
 use crate::systems::area::spawnable::SpawnObject;
-use crate::systems::area::warp::Warp;
+use crate::systems::area::warp::{Warp, WarpToActor};
 use crate::systems::chat::Say;
 use crate::systems::class::GrantXp;
 use crate::systems::combat::effects::{Damage, Heal};
@@ -84,6 +84,7 @@ macro_rules! effects {
 
 effects! {
     Warp(Warp),
+    WarpToActor(WarpToActor),
     Heal(Heal),
     Damage(Damage),
     ApplyStatus(ApplyStatus),

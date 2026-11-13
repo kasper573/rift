@@ -5,6 +5,7 @@ use bevy_terminal::{
 };
 use engine::core::content::Content;
 use engine::core::net::auth::TokenClaims;
+use engine::core::units::MeterPos;
 use engine::systems::account::{AccountIdentity, RoleDef};
 use engine::systems::{chat, command, movement, script};
 use serde_json::{Value, json};
@@ -53,14 +54,26 @@ fn a_command_runs_its_script_on_what_was_typed_and_says_why_it_cannot() {
         "a place is an area, then where in it"
     );
 
+    send(&mut sim, 1, "/join player 2");
+    sim.tick();
+    let (at, theirs) = (
+        movement::position(&sim.world, me).expect("somewhere"),
+        movement::position(&sim.world, friend).expect("somewhere"),
+    );
+    assert!(
+        at.distance(theirs).0 < 1.5,
+        "an actor is warped to where another stands: {at:?} by {theirs:?}"
+    );
+
     send(&mut sim, 2, "/commands");
     sim.tick();
     let told = lines(&mut sim, 2);
     assert_eq!(
-        told[told.len() - 3..],
+        told[told.len() - 4..],
         [
             "/commands",
             "/give <item>, [amount], [player]",
+            "/join <player>",
             "/warp <to>, [x], [y]"
         ]
         .map(|usage| (usage.to_owned(), LineTone::Said))
@@ -111,12 +124,10 @@ fn a_command_is_for_the_roles_it_names_which_an_account_holds_by_what_its_token_
     assert_eq!(
         (offered(&mut sim, 1, "/"), offered(&mut sim, 2, "/")),
         (
-            vec![
-                "commands".to_owned(),
-                "give ".to_owned(),
-                "warp ".to_owned()
-            ],
-            vec!["commands".to_owned(), "give ".to_owned()]
+            ["commands", "give ", "join ", "warp "]
+                .map(str::to_owned)
+                .to_vec(),
+            ["commands", "give ", "join "].map(str::to_owned).to_vec()
         ),
         "a command is only offered to those who may send it"
     );
@@ -207,8 +218,8 @@ fn option(text: &str, detail: &str) -> bevy_terminal::TerminalOption {
     }
 }
 
-/// A camp with a potion, and three commands: one giving an item, one warping to a place, one
-/// listing the commands.
+/// A camp with a potion, and four commands: one giving an item, one warping to a place, one
+/// warping to a player, one listing the commands.
 fn game() -> Game {
     Game::new()
         .area("camp", &Map::open(6, 6), json!([]))
@@ -255,6 +266,23 @@ fn game() -> Game {
             "command",
             "warp",
             json!({ "script": path("script", "warp"), "inputs": ["to"] }),
+        )
+        .row(
+            "script",
+            "join",
+            json!({
+                "runs_on": "command",
+                "variables": { "player": { "type": "character" } },
+                "nodes": {
+                    "sent": { "type": "on", "event": "invoked", "next": "go" },
+                    "go": { "type": "warp_to_actor", "to": { "var": "player" } },
+                },
+            }),
+        )
+        .row(
+            "command",
+            "join",
+            json!({ "script": path("script", "join"), "inputs": ["player"] }),
         )
         .script(
             "commands",
