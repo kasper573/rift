@@ -1,7 +1,7 @@
 use bevy::prelude::*;
 use ui::drag;
 use ui::egui;
-use ui::egui::{Align, Color32, Layout, Rect, Sense, Ui, Vec2};
+use ui::egui::{Align, Color32, Layout, Rect, Sense, Stroke, StrokeKind, Ui, Vec2};
 use ui::face::TextRole;
 use ui::float;
 use ui::{controls, glyph, ink};
@@ -25,7 +25,7 @@ const SLOT_GAP: f32 = 5.0;
 const NAMED_SLOT: f32 = 46.0;
 pub const PANE_WIDTH: f32 = 5.0 * NAMED_SLOT + 4.0 * SLOT_GAP;
 
-pub fn pane(ui: &mut Ui, world: &mut World) {
+pub fn pane(ui: &mut Ui, world: &mut World, selected: &mut Option<EquipmentPlace>) {
     let places = places(world);
     let shown = ui
         .scope(|ui| {
@@ -41,7 +41,7 @@ pub fn pane(ui: &mut Ui, world: &mut World) {
                     ui.allocate_ui(Vec2::new(width, SLOT), |ui| {
                         ui.vertical_centered(|ui| {
                             match place.item {
-                                Some(item) => worn_slot(ui, world, place, item),
+                                Some(item) => worn_slot(ui, world, place, item, selected),
                                 None => empty_slot(ui, world, place),
                             }
                             ui.add(
@@ -184,7 +184,13 @@ fn empty_slot(ui: &mut Ui, world: &mut World, place: &Place) {
     });
 }
 
-fn worn_slot(ui: &mut Ui, world: &mut World, place: &Place, item: ItemId) {
+fn worn_slot(
+    ui: &mut Ui,
+    world: &mut World,
+    place: &Place,
+    item: ItemId,
+    selected: &mut Option<EquipmentPlace>,
+) {
     let content = world.resource::<Content>().clone();
     let def = item.get(&content);
     let faded = drag::carried::<Carried>(ui.ctx()) == Some(Carried::Worn(place.slot.clone()));
@@ -196,14 +202,24 @@ fn worn_slot(ui: &mut Ui, world: &mut World, place: &Place, item: ItemId) {
         faded,
         Sense::click_and_drag(),
     );
+    let is_selected = selected.as_ref() == Some(&place.slot);
+    if is_selected {
+        let border = Stroke::new(2.0, ink::INK);
+        ui.painter()
+            .rect_stroke(response.rect, 3.0, border, StrokeKind::Inside);
+    }
     held_where_dropped(world, place, &response);
     response.widget_info(|| {
-        egui::WidgetInfo::labeled(
+        egui::WidgetInfo::selected(
             egui::WidgetType::Button,
             true,
+            is_selected,
             format!("Worn as {}: {}", place.label(), def.name),
         )
     });
+    if map::clicked(world, InputAction::Select, &response) {
+        *selected = Some(place.slot.clone());
+    }
     if map::clicked(world, InputAction::UseItem, &response) {
         world.write_message(UnequipRequest {
             slot: place.slot.clone(),

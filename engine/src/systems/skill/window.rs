@@ -5,12 +5,16 @@ use ui::float;
 use ui::theme;
 
 use bevy::prelude::*;
+use ui::card::CardPane;
 use ui::controls;
 use ui::egui::scroll_area::{DragScroll, ScrollBarVisibility, ScrollSource};
-use ui::egui::{Align2, Color32, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2};
+use ui::egui::{
+    Align2, Color32, PointerButton, Pos2, Rect, Sense, Stroke, StrokeKind, Ui, UiBuilder, Vec2,
+};
 use ui::face::{self, TextRole};
 use ui::glyph::{self, Mark};
 use ui::ink;
+use ui::sheet::Depth;
 
 use super::{LearnSkillsRequest, Learned, Rank, SkillId, SkillKind, card};
 use crate::core::content::Content;
@@ -21,6 +25,7 @@ use crate::systems::hud::Carried;
 use crate::systems::hud::menu::{MenuTab, MenuTabName};
 use crate::systems::input::map::{self, InputAction, input};
 use crate::systems::interface::{InterfaceIcon, InterfaceSound};
+use crate::systems::item::card::CardLook;
 use crate::systems::item::widget::{SlotLook, slot};
 use crate::systems::notification;
 use crate::systems::player::session;
@@ -72,6 +77,13 @@ impl MenuTab for SkillsMenuTab {
             *world.resource_mut::<TreeView>() = view;
             dock(ui, world, &sheet, room);
         });
+        let card_room = Rect::from_min_max(
+            Pos2::new(beside_card.max.x + COLUMN_GAP, room.min.y),
+            room.max,
+        );
+        ui.scope_builder(UiBuilder::new().max_rect(card_room), |ui| {
+            selected_pane(ui, world, &sheet);
+        });
     }
 }
 
@@ -93,6 +105,9 @@ impl Default for TreeView {
         }
     }
 }
+
+#[derive(Resource, Default, Clone, Debug, PartialEq)]
+pub struct SelectedNode(pub Option<NodeKey>);
 
 /// The rank each node is picked up to in the tree, not yet confirmed.
 #[derive(Resource, Default, Clone, Debug, PartialEq)]
@@ -309,26 +324,10 @@ fn draw_canvas(ui: &mut Ui, world: &mut World, sheet: &Sheet, def: &ClassDef, pl
     }
     let states: BTreeMap<&NodeKey, NodeState> = tree
         .0
-        .iter()
-        .map(|(key, node)| {
-            let held = sheet.learned.rank(key);
-            let max = Rank(node.skill.get(&content).rank_count());
-            let state = match plan.0.get(key) {
-                Some(rank) => NodeState::Picked(*rank),
-                None if held >= max => NodeState::Maxed,
-                None if held > Rank::NONE => NodeState::Learned,
-                None if node
-                    .requires
-                    .iter()
-                    .all(|requirement| requirement.met(world, sheet.me, def, &planned)) =>
-                {
-                    NodeState::Available
-                }
-                None => NodeState::Locked,
-            };
-            (key, state)
-        })
+        .keys()
+        .filter_map(|key| Some((key, node_state(world, sheet, def, &plan, key)?)))
         .collect();
+    let selected = world.resource::<SelectedNode>().0.clone();
     let painter = ui.painter().clone();
     for arrow in tree.arrows() {
         let (Some(from), Some(to)) = (tree.node(arrow.from), tree.node(arrow.to)) else {
@@ -368,14 +367,12 @@ fn draw_canvas(ui: &mut Ui, world: &mut World, sheet: &Sheet, def: &ClassDef, pl
                 format!("{} node: {}", skill.name, state.label()),
             )
         });
-        draw_node(
-            ui,
-            world,
-            &response,
-            node.skill,
+        let look = NodeLook {
             state,
-            sheet.learned.rank(key),
-        );
+            held: sheet.learned.rank(key),
+            selected: selected.as_ref() == Some(key),
+        };
+        draw_node(ui, world, &response, node.skill, look);
         node_input(ui, world, sheet, key, node.skill, state, &response);
     }
 }
@@ -391,6 +388,16 @@ fn node_input(
 ) {
     let held = sheet.learned.rank(key);
     let passive = skill.get(world.resource::<Content>()).kind == SkillKind::Passive;
+    let clicked = [
+        PointerButton::Primary,
+        PointerButton::Secondary,
+        PointerButton::Middle,
+    ]
+    .into_iter()
+    .any(|button| response.clicked_by(button));
+    if clicked {
+        world.resource_mut::<SelectedNode>().0 = Some(key.clone());
+    }
     if map::drag_started(world, InputAction::CarryItem, response) {
         if held > Rank::NONE && !passive {
             drag::carry(ui.ctx(), Carried::Skill(skill));
@@ -426,33 +433,123 @@ fn node_input(
     card::tooltip(response, world, &card::of(world, skill), Some(&hint));
 }
 
-/// One more rank of the node joins the plan, while the skill has ranks left and the points
-/// picked so far leave room for it.
-fn raise(world: &mut World, sheet: &Sheet, key: &NodeKey, state: NodeState) {
+fn node_state(
+    world: &World,
+    sheet: &Sheet,
+    def: &ClassDef,
+    plan: &SkillPlan,
+    key: &NodeKey,
+) -> Option<NodeState> {
+    let content = world.resource::<Content>();
+    let node = def.tree.node(key)?;
+    let held = sheet.learned.rank(key);
+    let max = Rank(node.skill.get(content).rank_count());
+    Some(match plan.0.get(key) {
+        Some(rank) => NodeState::Picked(*rank),
+        None if held >= max => NodeState::Maxed,
+        None if held > Rank::NONE => NodeState::Learned,
+        None if node.requires.iter().all(|requirement| {
+            requirement.met(world, sheet.me, def, &sheet.planned_ranks(plan))
+        }) =>
+        {
+            NodeState::Available
+        }
+        None => NodeState::Locked,
+    })
+}
+
+fn next_rank(world: &World, sheet: &Sheet, key: &NodeKey, state: NodeState) -> Option<Rank> {
     if matches!(state, NodeState::Locked | NodeState::Maxed) {
-        InterfaceSound::UiRefuse.play(world);
-        return;
+        return None;
     }
-    let content = world.resource::<Content>().clone();
-    let def = sheet.class.get(&content);
-    let Some(node) = def.tree.node(key) else {
-        return;
-    };
-    let skill = node.skill.get(&content);
-    let plan = world.resource::<SkillPlan>().clone();
+    let content = world.resource::<Content>();
+    let def = sheet.class.get(content);
+    let skill = def.tree.node(key)?.skill.get(content);
+    let plan = world.resource::<SkillPlan>();
     let current = plan.0.get(key).copied().unwrap_or(sheet.learned.rank(key));
     let next = Rank(current.0 + 1);
     let cost = SkillPoints(skill.cost_to(next).0 - skill.cost_to(current).0);
-    let picked = sheet.picked_cost(&content, def, &plan);
-    if current.0 >= skill.rank_count() || picked.0 + cost.0 > sheet.to_spend.0 {
+    let picked = sheet.picked_cost(content, def, plan);
+    (current.0 < skill.rank_count() && picked.0 + cost.0 <= sheet.to_spend.0).then_some(next)
+}
+
+fn raise(world: &mut World, sheet: &Sheet, key: &NodeKey, state: NodeState) {
+    let Some(next) = next_rank(world, sheet, key, state) else {
         InterfaceSound::UiRefuse.play(world);
         return;
-    }
+    };
     world
         .resource_mut::<SkillPlan>()
         .0
         .insert(key.clone(), next);
     InterfaceSound::UiPick.play(world);
+}
+
+fn selected_pane(ui: &mut Ui, world: &mut World, sheet: &Sheet) {
+    let content = world.resource::<Content>().clone();
+    let def = sheet.class.get(&content);
+    let plan = world.resource::<SkillPlan>().clone();
+    let selected = world.resource::<SelectedNode>().0.clone().and_then(|key| {
+        let state = node_state(world, sheet, def, &plan, &key)?;
+        Some((def.tree.node(&key)?.skill, state, key))
+    });
+    if world.resource::<SelectedNode>().0.is_some() && selected.is_none() {
+        world.resource_mut::<SelectedNode>().0 = None;
+    }
+    ui::sheet::section(ui, "Selected");
+    let pane = CardPane {
+        size: ui.available_size(),
+        foot: controls::CONTROL_HEIGHT,
+    };
+    let can = selected.as_ref().map(|(_, state, key)| {
+        (
+            next_rank(world, sheet, key, *state).is_some(),
+            plan.0.contains_key(key),
+        )
+    });
+    let mut raised = false;
+    let mut lowered = false;
+    pane.show(
+        ui,
+        |ui| match &selected {
+            Some((skill, _, _)) => {
+                let look = CardLook {
+                    width: ui.available_width(),
+                    max_height: ui.available_height().min(ui::card::MAX_HEIGHT),
+                    art: ui::card::ART_SHORT,
+                    closable: false,
+                    depth: Depth::Front,
+                };
+                card::show(ui, world, &card::of(world, *skill), look);
+            }
+            None => {
+                ui.add_space(16.0);
+                ui::sheet::label(ui, TextRole::Small, "Select a skill on the tree", ink::INK3);
+            }
+        },
+        |ui| {
+            let Some((can_raise, can_lower)) = can else {
+                return;
+            };
+            ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
+                raised = ui
+                    .add_enabled_ui(can_raise, |ui| controls::primary(ui, "Raise rank"))
+                    .inner
+                    .clicked();
+                lowered = ui
+                    .add_enabled_ui(can_lower, |ui| controls::button(ui, "Lower rank"))
+                    .inner
+                    .clicked();
+            });
+        },
+    );
+    if let Some((_, state, key)) = &selected {
+        if raised {
+            raise(world, sheet, key, *state);
+        } else if lowered {
+            lower(world, sheet, key);
+        }
+    }
 }
 
 /// The last rank picked on the node leaves the plan, and with it every pick that stood on it.
@@ -545,14 +642,25 @@ fn dock(ui: &mut Ui, world: &mut World, sheet: &Sheet, room: Rect) {
     );
 }
 
+#[derive(Clone, Copy)]
+struct NodeLook {
+    state: NodeState,
+    held: Rank,
+    selected: bool,
+}
+
 fn draw_node(
     ui: &mut Ui,
     world: &mut World,
     response: &egui::Response,
     skill: SkillId,
-    state: NodeState,
-    held: Rank,
+    look: NodeLook,
 ) {
+    let NodeLook {
+        state,
+        held,
+        selected,
+    } = look;
     let content = world.resource::<Content>().clone();
     let def = skill.get(&content);
     let center = response.rect.center();
@@ -577,6 +685,9 @@ fn draw_node(
     }
     if carded {
         painter.circle_stroke(center, NODE_RADIUS + 4.0, Stroke::new(3.0, ink::GOLD2));
+    }
+    if selected {
+        painter.circle_stroke(center, NODE_RADIUS + 7.0, Stroke::new(2.0, ink::LIGHT));
     }
     painter.circle_filled(center, NODE_RADIUS, fill);
     if state == NodeState::Locked {

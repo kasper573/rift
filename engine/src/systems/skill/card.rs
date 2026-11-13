@@ -7,7 +7,6 @@ use ui::face::{self, TextRole};
 use ui::float;
 use ui::glyph::CardKind;
 use ui::ink;
-use ui::sheet::Depth;
 
 use super::{Rank, SkillDef, SkillId, SkillKind, SkillStat};
 use crate::core::content::Content;
@@ -16,6 +15,7 @@ use crate::core::text::{self, StyledLine, TextLook};
 use crate::systems::class::{self, ClassId, NodeKey};
 use crate::systems::equipment::Equipment;
 use crate::systems::hud;
+use crate::systems::item::card::CardLook;
 use crate::systems::item::{Inventory, ItemId};
 use crate::systems::player::session;
 use crate::systems::screen::ClientScreen;
@@ -147,13 +147,7 @@ pub fn kind(def: &SkillDef) -> CardKind {
     }
 }
 
-pub fn show(
-    ui: &mut Ui,
-    world: &mut World,
-    card: &SkillCard,
-    closable: bool,
-    depth: Depth,
-) -> CardResponse {
+pub fn show(ui: &mut Ui, world: &mut World, card: &SkillCard, look: CardLook) -> CardResponse {
     let content = world.resource::<Content>().clone();
     let def = card.skill.get(&content);
     let ranks = def.rank_count();
@@ -169,11 +163,13 @@ pub fn show(
     shown.numeral = Some(&numeral);
     shown.art = Art {
         icon,
-        height: card::ART,
+        height: look.art,
     };
-    shown.closable = closable;
+    shown.width = look.width;
+    shown.max_height = look.max_height;
+    shown.closable = look.closable;
     shown.stamp = maxed.then_some("maxed");
-    shown.depth = depth;
+    shown.depth = look.depth;
     shown.show(ui, |ui, plate| {
         if plate.name_cut {
             card::full_name(ui, &def.name);
@@ -239,7 +235,11 @@ fn overview(world: &World, content: &Content, def: &SkillDef, card: &SkillCard) 
 fn draw_card(world: &mut World) {
     hud::draw_pinned::<SkillId>(world, WINDOW_KEY, |ui, world, skill, depth| {
         let card = of(world, *skill);
-        show(ui, world, &card, true, depth)
+        let look = CardLook {
+            depth,
+            ..CardLook::PINNED
+        };
+        show(ui, world, &card, look)
     });
 }
 

@@ -168,6 +168,25 @@ pub fn equip(
     Ok(())
 }
 
+pub fn displaced_by(world: &World, actor: Entity, item: ItemId) -> Vec<ItemId> {
+    let content = world.resource::<Content>();
+    let ItemKind::Equipment { wear, .. } = &item.get(content).kind else {
+        return Vec::new();
+    };
+    match wear {
+        Wear::Worn { slot, .. } => in_slot(world, actor, &EquipmentPlace::Slot(slot.clone()))
+            .into_iter()
+            .collect(),
+        Wear::Tool { .. } => in_slot(world, actor, &EquipmentPlace::Tool)
+            .into_iter()
+            .collect(),
+        Wear::Held { .. } => {
+            let held = world.get::<Equipment>(actor).map(hands).unwrap_or_default();
+            held::place(content, hand_slots(world, actor), &held, item, None).returned
+        }
+    }
+}
+
 /// The slots items are worn in on the actor's body: its skeleton's.
 pub fn body_slots(world: &World, actor: Entity) -> Vec<EquipmentSlot> {
     appearance::model_of(world, actor)
