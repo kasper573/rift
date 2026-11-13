@@ -9,6 +9,7 @@ use crate::core::content::Content;
 use crate::core::script::{ValueType, VariableType};
 use crate::systems::actor::Name;
 use crate::systems::area::AreaTag;
+use crate::systems::memory::MemoryDef;
 use crate::systems::movement;
 use crate::systems::script::{Place, ScriptDef};
 
@@ -46,10 +47,10 @@ impl ServerRoster {
     }
 }
 
-/// Whether any script of the game takes or keeps a global player, so its worlds must know who
-/// plays in the others.
+/// Whether the game's scripts take or keep a global player, or a memory holds one, so its worlds
+/// must know who plays in the others.
 pub fn wanted(content: &Content) -> bool {
-    content.table::<ScriptDef>().iter().any(|(_, script)| {
+    let scripted = content.table::<ScriptDef>().iter().any(|(_, script)| {
         script
             .variables
             .values()
@@ -59,7 +60,12 @@ pub fn wanted(content: &Content) -> bool {
                 .values()
                 .chain(script.locals.values())
                 .any(|ty| *ty == ValueType::GlobalPlayer)
-    })
+    });
+    let remembered = content
+        .table::<MemoryDef>()
+        .iter()
+        .any(|(_, memory)| memory.ty == ValueType::GlobalPlayer);
+    scripted || remembered
 }
 
 /// The players whose characters stand in `world`, in the order of their clients.
