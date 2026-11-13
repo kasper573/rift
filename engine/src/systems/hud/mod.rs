@@ -228,6 +228,11 @@ struct Pending {
     focused: bool,
 }
 
+/// The menu and the cards that are up, as they are stacked, the one in front first.
+pub(crate) fn sheets_front_first(world: &World) -> Vec<&'static str> {
+    gui::context(world).map_or_else(Vec::new, |gui| panel::sheets_front_first(world, &gui))
+}
+
 fn forget_drawn(mut drawn: ResMut<WindowsDrawn>) {
     let drawn = &mut *drawn;
     drawn.last = std::mem::take(&mut drawn.now);

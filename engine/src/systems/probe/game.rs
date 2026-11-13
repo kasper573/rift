@@ -19,7 +19,7 @@ use crate::systems::actor::ActorModel;
 use crate::systems::actor::skeleton::BuildName;
 use crate::systems::actor::stance::{self, StanceId};
 use crate::systems::area::{self, AreaDef, AreaId, AreaModule, PropId};
-use crate::systems::input::map::{InputAction, InputBinding, InputMap, KeyModifiers};
+use crate::systems::input::map::{InputAction, InputBinding, InputMap, KeyModifiers, WheelTurn};
 use crate::systems::interface::InterfaceIcon;
 use crate::systems::item::{ItemDef, ItemId};
 use crate::systems::movement::Bodies;
@@ -283,6 +283,11 @@ pub enum ProbeGesture {
         button: ProbeButton,
         held: KeyModifiers,
     },
+    /// The wheel turned a notch, with the pointer on what it is meant for.
+    Wheel {
+        turn: WheelTurn,
+        held: KeyModifiers,
+    },
 }
 
 /// A mouse button, as bevy's `MouseButton` names it.
@@ -328,6 +333,10 @@ impl From<InputBinding> for ProbeGesture {
             },
             InputBinding::Drag(gesture) => ProbeGesture::Drag {
                 button: gesture.button.into(),
+                held: gesture.modifiers,
+            },
+            InputBinding::Wheel(gesture) => ProbeGesture::Wheel {
+                turn: gesture.turn,
                 held: gesture.modifiers,
             },
         }

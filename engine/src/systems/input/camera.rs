@@ -1,8 +1,8 @@
-//! Steering the camera: keys turn it a step, tilt it a step and bring it home, the wheel zooms
-//! it, and moving the pointer while turning or tilting it is held turns or tilts it freely, the
+//! Steering the camera: its actions turn it a step, tilt it a step, zoom it a step and bring it
+//! home, and moving the pointer while turning or tilting it is held turns or tilts it freely, the
 //! camera trailing the pointer as it eases. A camera put on a shot is not steered.
 
-use bevy::input::mouse::{AccumulatedMouseMotion, AccumulatedMouseScroll, MouseScrollUnit};
+use bevy::input::mouse::AccumulatedMouseMotion;
 use bevy::prelude::*;
 
 use super::map::{self, InputAction};
@@ -13,12 +13,9 @@ use crate::systems::screen::ClientScreen;
 
 /// How far the camera turns or tilts for a pixel the pointer moves while it is held to.
 pub const DRAG_TURN: Degrees = Degrees(0.4);
-/// How many scrolled lines take the zoom one step.
-const LINES_PER_STEP: f32 = 1.0;
-const PIXELS_PER_STEP: f32 = 60.0;
 
 pub fn plugin(app: &mut App) {
-    app.init_resource::<Scrolled>().add_systems(
+    app.add_systems(
         Update,
         (steer_by_keys, steer_by_pointer)
             .in_set(CameraRigSystems)
@@ -26,16 +23,14 @@ pub fn plugin(app: &mut App) {
     );
 }
 
-/// Scrolling gathered toward the next zoom step.
-#[derive(Resource, Default)]
-struct Scrolled(f32);
-
 fn steer_by_keys(world: &mut World) {
     let left = map::just_pressed(world, InputAction::TurnLeft);
     let right = map::just_pressed(world, InputAction::TurnRight);
     let up = map::just_pressed(world, InputAction::TiltUp);
     let down = map::just_pressed(world, InputAction::TiltDown);
     let home = map::just_pressed(world, InputAction::CameraHome);
+    let closer = u32::from(map::just_pressed(world, InputAction::ZoomIn));
+    let wider = u32::from(map::just_pressed(world, InputAction::ZoomOut));
     let Some(mut rig) = world
         .get_resource_mut::<CameraRig>()
         .filter(|rig| !rig.staged())
@@ -62,41 +57,25 @@ fn steer_by_keys(world: &mut World) {
     if home {
         rig.home();
     }
+    zoom(&mut rig, closer, wider);
 }
 
 fn steer_by_pointer(world: &mut World) {
     if gui::pointer_claimed(world) {
         return;
     }
-    let scroll = world.resource::<AccumulatedMouseScroll>();
-    let steps = match scroll.unit {
-        MouseScrollUnit::Line => scroll.delta.y / LINES_PER_STEP,
-        MouseScrollUnit::Pixel => scroll.delta.y / PIXELS_PER_STEP,
-    };
+    let closer = map::wheeled(world, InputAction::ZoomIn);
+    let wider = map::wheeled(world, InputAction::ZoomOut);
     let moved = world.resource::<AccumulatedMouseMotion>().delta;
     let turned = map::pressed(world, InputAction::TurnCamera).then_some(moved.x);
     let tilted = map::pressed(world, InputAction::TiltCamera).then_some(moved.y);
-    if world
-        .get_resource::<CameraRig>()
-        .is_none_or(|rig| rig.staged())
-    {
-        world.resource_mut::<Scrolled>().0 = 0.0;
-        return;
-    }
-    let mut gathered = world.resource_mut::<Scrolled>();
-    gathered.0 += steps;
-    let zoom = gathered.0.trunc();
-    gathered.0 -= zoom;
-    let Some(mut rig) = world.get_resource_mut::<CameraRig>() else {
+    let Some(mut rig) = world
+        .get_resource_mut::<CameraRig>()
+        .filter(|rig| !rig.staged())
+    else {
         return;
     };
-    for _ in 0..zoom.abs() as u32 {
-        if zoom > 0.0 {
-            rig.zoom_in();
-        } else {
-            rig.zoom_out();
-        }
-    }
+    zoom(&mut rig, closer, wider);
     if let Some(pixels) = turned
         && pixels != 0.0
     {
@@ -106,5 +85,14 @@ fn steer_by_pointer(world: &mut World) {
         && pixels != 0.0
     {
         rig.tilt(Degrees(pixels * DRAG_TURN.0));
+    }
+}
+
+fn zoom(rig: &mut Mut<CameraRig>, closer: u32, wider: u32) {
+    for _ in 0..closer {
+        rig.zoom_in();
+    }
+    for _ in 0..wider {
+        rig.zoom_out();
     }
 }

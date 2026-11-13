@@ -17,15 +17,17 @@ fn step_out(world: &mut World) {
     }
     let scope = *world.resource::<InputScope>();
     let stepped = match scope {
-        // A field in a window and an open list give the keyboard back themselves on the press.
-        InputScope::Typing => terminal::chat::hand_back(world),
+        InputScope::Typing => {
+            let chat = terminal::chat::hand_back(world);
+            gui::release_keyboard(world) || chat
+        }
         InputScope::Modal => hud::dismiss_confirm(world),
         InputScope::Conversation => {
-            flick_card(world) || crafting::panel::cancel(world) || stage::leave(world)
+            close_front(world) || crafting::panel::cancel(world) || stage::leave(world)
         }
-        InputScope::Menu => stop_using_the_bar(world) || flick_card(world) || menu::close(world),
+        InputScope::Menu => stop_using_the_bar(world) || close_front(world),
         InputScope::World => {
-            stop_using_the_bar(world) || flick_card(world) || resource::render::stop(world)
+            stop_using_the_bar(world) || close_front(world) || resource::render::stop(world)
         }
     };
     if !stepped && scope == InputScope::World {
@@ -39,17 +41,15 @@ fn stop_using_the_bar(world: &mut World) -> bool {
     skill::bar::cancel_rebind(world) || skill::aim::disarm(world)
 }
 
-fn flick_card(world: &mut World) -> bool {
-    let item_in_front = gui::context(world).is_some_and(|gui| {
-        gui.memory(|memory| {
-            let place = |layer| memory.layer_ids().position(|drawn| drawn == layer);
-            place(item::card::layer()) > place(skill::card::layer())
+/// The menu and the cards stand in a stack, and a press steps out of the one in front: whichever
+/// the player opened or reached for last. One that is already on its way out is passed over.
+fn close_front(world: &mut World) -> bool {
+    hud::sheets_front_first(world)
+        .into_iter()
+        .any(|sheet| match sheet {
+            menu::WINDOW_KEY => menu::close(world),
+            item::card::WINDOW_KEY => item::card::close(world),
+            skill::card::WINDOW_KEY => skill::card::close(world),
+            _ => false,
         })
-    });
-    let front_first: [fn(&mut World) -> bool; 2] = if item_in_front {
-        [item::card::close, skill::card::close]
-    } else {
-        [skill::card::close, item::card::close]
-    };
-    front_first.into_iter().any(|close| close(world))
 }

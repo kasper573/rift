@@ -244,13 +244,20 @@ pub(crate) fn grab_spot(world: &mut World, key: &'static str, handle: &egui::Res
 }
 
 pub(crate) fn front_sheet(world: &World, gui: &egui::Context) -> Option<&'static str> {
+    sheets_front_first(world, gui).first().copied()
+}
+
+/// The sheets drawn last frame as they are stacked, the one the player reached for last first.
+pub(crate) fn sheets_front_first(world: &World, gui: &egui::Context) -> Vec<&'static str> {
     let drawn = &world.resource::<WindowsDrawn>().last;
-    gui.memory(|memory| {
+    let mut sheets: Vec<&'static str> = gui.memory(|memory| {
         memory
             .layer_ids()
             .filter_map(|layer_id| drawn.iter().copied().find(|key| layer(key) == layer_id))
-            .last()
-    })
+            .collect()
+    });
+    sheets.reverse();
+    sheets
 }
 
 pub(crate) fn mark_drawn(world: &mut World, key: &'static str) {

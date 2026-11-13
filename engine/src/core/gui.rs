@@ -218,6 +218,21 @@ pub fn pointer_claimed(world: &World) -> bool {
         || gui.viewport(|viewport| viewport.hits.click.is_some() || viewport.hits.drag.is_some())
 }
 
+/// Takes the keyboard back from whatever in the interface holds it: a field that is typed in, a
+/// list that is open.
+pub fn release_keyboard(world: &World) -> bool {
+    let Some(gui) = context(world) else {
+        return false;
+    };
+    let field = gui.memory(|memory| memory.focused());
+    if let Some(field) = field {
+        gui.memory_mut(|memory| memory.surrender_focus(field));
+    }
+    let listed = egui::Popup::is_any_open(&gui);
+    egui::Popup::close_all(&gui);
+    field.is_some() || listed
+}
+
 /// Whether the interface is dragging something, which follows the pointer while it lasts.
 pub fn dragging(world: &World) -> bool {
     context(world).is_some_and(|gui| gui.dragged_id().is_some())

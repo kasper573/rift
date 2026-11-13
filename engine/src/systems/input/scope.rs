@@ -29,11 +29,14 @@ pub enum InputScope {
 
 impl InputAction {
     /// Where the action is read as a key or a held button. A click or a drag on a widget is read
-    /// wherever the widget is drawn.
+    /// wherever the widget is drawn, and a turn of the wheel wherever the pointer is.
     pub fn scopes(self) -> &'static [InputScope] {
         use InputScope::{Conversation, Menu, Modal, Typing, World};
         match self {
-            InputAction::SubmitText | InputAction::CompleteText => &[Typing],
+            InputAction::SubmitText
+            | InputAction::CompleteText
+            | InputAction::PageBack
+            | InputAction::PageForward => &[Typing],
             InputAction::TakeDefault => &[Modal],
             InputAction::Advance
             | InputAction::PickChoice
@@ -54,6 +57,8 @@ impl InputAction {
             | InputAction::TiltUp
             | InputAction::TiltDown
             | InputAction::CameraHome
+            | InputAction::ZoomIn
+            | InputAction::ZoomOut
             | InputAction::Emotes => &[World],
             InputAction::OpenCharacter
             | InputAction::OpenSkills

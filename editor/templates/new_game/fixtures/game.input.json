@@ -171,6 +171,24 @@
         }
       ]
     },
+    "page_back": {
+      "label": "Read a page back through what was said",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "PageUp"
+        }
+      ]
+    },
+    "page_forward": {
+      "label": "Read a page on toward the latest line",
+      "bindings": [
+        {
+          "type": "key",
+          "key": "PageDown"
+        }
+      ]
+    },
     "take_default": {
       "label": "Give a question its default answer",
       "bindings": [
@@ -249,6 +267,24 @@
           "type": "mouse",
           "button": "Right",
           "ctrl": true
+        }
+      ]
+    },
+    "zoom_in": {
+      "label": "Bring the camera closer, or the map under the pointer",
+      "bindings": [
+        {
+          "type": "wheel",
+          "turn": "up"
+        }
+      ]
+    },
+    "zoom_out": {
+      "label": "Draw the camera back, or widen the map under the pointer",
+      "bindings": [
+        {
+          "type": "wheel",
+          "turn": "down"
         }
       ]
     },

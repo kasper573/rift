@@ -59,8 +59,8 @@ impl HudWidget for MinimapWidget {
         super::north_bead(ui, world, center + view.north() * (GROUND + RIM / 2.0));
         let buttons =
             [CLOSER_AT, WIDER_AT].map(|angle| center + Vec2::angled(angle.0) * (DISC / 2.0 - 1.0));
-        let stepped =
-            super::reach_buttons(ui, &view, buttons).or_else(|| super::wheeled(ui, &disc, &view));
+        let stepped = super::reach_buttons(ui, &view, buttons)
+            .or_else(|| super::wheeled(ui, world, &disc, &view));
         if let Some(step) = stepped {
             world.resource_mut::<UserSettings>().set_minimap_reach(step);
         }

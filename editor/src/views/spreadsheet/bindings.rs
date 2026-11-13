@@ -1,7 +1,7 @@
 use bevy::input::keyboard::KeyCode;
 use bevy::input::mouse::MouseButton;
 use engine::systems::input::map::{
-    InputAction, InputBinding, InputBindingKind, InputDef, KeyModifiers,
+    InputAction, InputBinding, InputBindingKind, InputDef, KeyModifiers, WheelTurn,
 };
 use serde::Deserialize;
 use serde::de::value::{Error as NameError, StrDeserializer};
@@ -130,7 +130,7 @@ fn bindings(
                 egui::Layout::left_to_right(egui::Align::Center),
                 |ui| {
                     ui.label(if capturing {
-                        egui::RichText::new("press a key or click…").color(theme::TEXT)
+                        egui::RichText::new("make the gesture to bind…").color(theme::TEXT)
                     } else {
                         theme::muted("+ add a binding")
                     });
@@ -171,8 +171,8 @@ enum Capture {
     Cancelled,
 }
 
-/// The binding the input's first key or click makes, taken out of the input so the sheet doesn't
-/// act on it as well.
+/// The binding the input's first key, click or turn of the wheel makes, taken out of the input so
+/// the sheet doesn't act on it as well.
 fn capture(input: &mut egui::InputState, reads: &[InputBindingKind]) -> Option<Capture> {
     let reads = |kind: InputBindingKind| reads.contains(&kind);
     if input.consume_key(egui::Modifiers::NONE, Key::Escape) {
@@ -208,11 +208,24 @@ fn capture(input: &mut egui::InputState, reads: &[InputBindingKind]) -> Option<C
                 .find_map(|(kind, binding)| reads(kind).then_some(binding))
                 .map(|binding| binding.with(held(modifiers)))
             }
+            egui::Event::MouseWheel {
+                delta, modifiers, ..
+            } if reads(InputBindingKind::Wheel) && delta.y != 0.0 => {
+                let turn = if delta.y > 0.0 {
+                    WheelTurn::Up
+                } else {
+                    WheelTurn::Down
+                };
+                Some(InputBinding::wheel(turn).with(held(modifiers)))
+            }
             _ => None,
         };
         binding.map(|binding| (index, binding))
     })?;
     input.events.remove(index);
+    if matches!(capture, InputBinding::Wheel(_)) {
+        input.smooth_scroll_delta = egui::Vec2::ZERO;
+    }
     Some(Capture::Bound(capture))
 }
 

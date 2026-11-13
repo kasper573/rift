@@ -23,6 +23,7 @@ use crate::systems::actor::{Action, Actor, Name};
 use crate::systems::area::{self, AreaId, AreaTag};
 use crate::systems::attention::{self, AttentionId};
 use crate::systems::combat::Attitude;
+use crate::systems::input::map::{self, InputAction};
 use crate::systems::movement::{Position, RenderPosition};
 use crate::systems::npc::Npc;
 use crate::systems::player::{PlayedBy, session};
@@ -341,7 +342,6 @@ const DIAMOND: f32 = 5.5;
 const DOOR: Vec2 = Vec2::new(9.0, 10.0);
 const ATTENTION: f32 = 14.0;
 const HOVER_REACH: f32 = 9.0;
-const POINTS_PER_NOTCH: f32 = 50.0;
 
 const BLANK: Color32 = Color32::from_rgb(0xD9, 0xCB, 0xA3);
 const NO_GROUND: Color32 = Color32::from_rgb(0x4B, 0x43, 0x3A);
@@ -689,33 +689,17 @@ fn round_button(ui: &mut Ui, at: Pos2, said: &str, enabled: bool) -> RoundButton
     RoundButton { response, ink }
 }
 
-fn wheeled(ui: &Ui, map: &egui::Response, view: &MapView) -> Option<MapReachStep> {
-    if !map.contains_pointer() {
+fn wheeled(ui: &Ui, world: &World, chart: &egui::Response, view: &MapView) -> Option<MapReachStep> {
+    if !chart.contains_pointer() {
         return None;
     }
-    let turned: f32 = ui.input(|input| {
-        input
-            .events
-            .iter()
-            .map(|event| match event {
-                egui::Event::MouseWheel { unit, delta, .. } => match unit {
-                    egui::MouseWheelUnit::Point => delta.y / POINTS_PER_NOTCH,
-                    egui::MouseWheelUnit::Line | egui::MouseWheelUnit::Page => delta.y,
-                },
-                _ => 0.0,
-            })
-            .sum()
-    });
-    // Whatever scrolls around the map stays put while the wheel steps its reach.
-    ui.input_mut(|input| input.smooth_scroll_delta = Vec2::ZERO);
-    let notches = ui.data_mut(|data| {
-        let gathered = data.get_temp_mut_or_default::<f32>(map.id);
-        *gathered += turned;
-        let notches = gathered.trunc();
-        *gathered -= notches;
-        notches as i64
-    });
-    let step = (i64::from(view.step.0) - notches).clamp(0, i64::from(view.last_step.0));
+    let zooms = [InputAction::ZoomIn, InputAction::ZoomOut];
+    if zooms.iter().any(|zoom| map::takes_wheel(world, *zoom)) {
+        // Whatever scrolls around the map stays put while the wheel steps its reach.
+        ui.input_mut(|input| input.smooth_scroll_delta = Vec2::ZERO);
+    }
+    let [closer, wider] = zooms.map(|zoom| i64::from(map::wheeled(world, zoom)));
+    let step = (i64::from(view.step.0) - closer + wider).clamp(0, i64::from(view.last_step.0));
     (step != i64::from(view.step.0)).then_some(MapReachStep(step as u32))
 }
 

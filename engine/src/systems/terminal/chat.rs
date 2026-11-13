@@ -274,10 +274,14 @@ fn lines(ui: &mut Ui, world: &World, view: &mut ChatView, room: Rect, look: &Cha
     };
     let catch_up = !typing || std::mem::take(&mut view.catching_up);
     let paged = typing.then(|| {
-        ui.input(|input| {
-            let turned = |key| f32::from(u8::from(input.key_pressed(key)));
-            turned(egui::Key::PageUp) - turned(egui::Key::PageDown)
-        })
+        let keys = world.resource::<InputMap>();
+        let turned = |action| {
+            let pressed = keys
+                .shortcut(action)
+                .is_some_and(|key| ui.input_mut(|input| input.consume_shortcut(&key)));
+            f32::from(u8::from(pressed))
+        };
+        turned(InputAction::PageBack) - turned(InputAction::PageForward)
     });
     let scrolled = ui
         .scope_builder(UiBuilder::new().max_rect(room), |ui| {

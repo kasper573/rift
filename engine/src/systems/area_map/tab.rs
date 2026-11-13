@@ -111,7 +111,7 @@ fn map(ui: &mut Ui, world: &mut World, sheet: egui::Rect) {
     let corner = sheet.right_bottom() - Vec2::splat(INSET);
     let along = Vec2::new(2.0 * BUTTON + BUTTON_GAP, 0.0);
     let stepped = super::reach_buttons(ui, &view, [corner - along, corner]);
-    let stepped = stepped.or_else(|| super::wheeled(ui, &whole, &view));
+    let stepped = stepped.or_else(|| super::wheeled(ui, world, &whole, &view));
     if centre_button(ui, corner - 2.0 * along, middle.is_some()) {
         middle = None;
     }

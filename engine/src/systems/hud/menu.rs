@@ -71,6 +71,9 @@ pub(crate) fn open_on(world: &mut World, tab: MenuTabName) {
     let mut menu = world.resource_mut::<Menu>();
     let was = menu.open.replace(tab);
     menu.last_open = Some(tab);
+    if let Some(gui) = gui::context(world) {
+        gui.move_to_top(panel::layer(WINDOW_KEY));
+    }
     match was {
         None => InterfaceSound::UiOpen.play(world),
         Some(was) if was != tab => InterfaceSound::UiPage.play(world),
@@ -113,7 +116,7 @@ pub(super) fn plugin(app: &mut App) {
 
 pub(super) fn draw(world: &mut World, gui: &egui::Context) {
     let Menu { open, last_open } = *world.resource::<Menu>();
-    let Some(pose) = panel::sheet_pose(world, gui, MENU, open.is_some()) else {
+    let Some(pose) = panel::sheet_pose(world, gui, WINDOW_KEY, open.is_some()) else {
         return;
     };
     let Some(shown) = open.or(last_open) else {
@@ -121,7 +124,7 @@ pub(super) fn draw(world: &mut World, gui: &egui::Context) {
     };
     let screen = gui.content_rect();
     let frame = WindowFrame {
-        key: MENU,
+        key: WINDOW_KEY,
         of: Placed::Menu,
         title: None,
         start: Rect::from_min_size(
@@ -142,7 +145,7 @@ pub(super) fn draw(world: &mut World, gui: &egui::Context) {
     }
 }
 
-const MENU: &str = "menu";
+pub(crate) const WINDOW_KEY: &str = "menu";
 const SIZE: Vec2 = Vec2::new(960.0, 540.0);
 const SMALLEST: Vec2 = Vec2::new(360.0, 240.0);
 const SMALLEST_PAGE: Vec2 = Vec2::new(800.0, 330.0);

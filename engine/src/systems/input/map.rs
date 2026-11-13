@@ -1,6 +1,8 @@
 use std::collections::{BTreeMap, HashMap};
 use ui::egui;
 
+use bevy::input::InputSystems;
+use bevy::input::mouse::{AccumulatedMouseScroll, MouseScrollUnit};
 use bevy::prelude::*;
 use bevy_egui::helpers::bevy_to_egui_physical_key;
 use schemars::{JsonSchema, Schema, SchemaGenerator, json_schema};
@@ -50,6 +52,9 @@ pub enum InputAction {
     SubmitText,
     /// Takes the selected way to go on with what is being typed.
     CompleteText,
+    /// Turns what is being read a page back, toward what came earlier.
+    PageBack,
+    PageForward,
     TakeDefault,
     Respawn,
     TurnLeft,
@@ -59,6 +64,9 @@ pub enum InputAction {
     CameraHome,
     TurnCamera,
     TiltCamera,
+    /// Brings the camera closer, or a map the pointer is on.
+    ZoomIn,
+    ZoomOut,
     ChoosePrevious,
     ChooseNext,
     PickChoice,
@@ -161,8 +169,13 @@ impl InputAction {
             | InputAction::UseSlot
             | InputAction::SlotOptions => &[ActionReading::Click],
             InputAction::CarryItem => &[ActionReading::Drag],
-            InputAction::SubmitText | InputAction::CompleteText | InputAction::TakeDefault => {
-                &[ActionReading::Shortcut]
+            InputAction::SubmitText
+            | InputAction::CompleteText
+            | InputAction::PageBack
+            | InputAction::PageForward
+            | InputAction::TakeDefault => &[ActionReading::Shortcut],
+            InputAction::ZoomIn | InputAction::ZoomOut => {
+                &[ActionReading::Press, ActionReading::Wheel]
             }
             _ => &[ActionReading::Press],
         }
@@ -175,6 +188,7 @@ pub enum ActionReading {
     Press,
     Click,
     Drag,
+    Wheel,
     Shortcut,
 }
 
@@ -189,6 +203,7 @@ impl ActionReading {
             ],
             ActionReading::Click => &[InputBindingKind::Click],
             ActionReading::Drag => &[InputBindingKind::Drag],
+            ActionReading::Wheel => &[InputBindingKind::Wheel],
             ActionReading::Shortcut => &[InputBindingKind::Key],
         }
     }
@@ -266,6 +281,7 @@ pub enum InputBinding {
     },
     Click(ClickGesture),
     Drag(DragGesture),
+    Wheel(WheelGesture),
 }
 
 impl InputBinding {
@@ -298,6 +314,13 @@ impl InputBinding {
         })
     }
 
+    pub const fn wheel(turn: WheelTurn) -> InputBinding {
+        InputBinding::Wheel(WheelGesture {
+            turn,
+            modifiers: KeyModifiers::NONE,
+        })
+    }
+
     pub const fn with(self, held: KeyModifiers) -> InputBinding {
         match self {
             InputBinding::Key(gesture) => InputBinding::Key(KeyGesture {
@@ -317,6 +340,10 @@ impl InputBinding {
                 modifiers: gesture.modifiers.and(held),
                 ..gesture
             }),
+            InputBinding::Wheel(gesture) => InputBinding::Wheel(WheelGesture {
+                modifiers: gesture.modifiers.and(held),
+                ..gesture
+            }),
         }
     }
 
@@ -331,6 +358,7 @@ impl InputBinding {
                 (gesture.modifiers, click_name(gesture.button, gesture.times))
             }
             InputBinding::Drag(gesture) => (gesture.modifiers, drag_name(gesture.button)),
+            InputBinding::Wheel(gesture) => (gesture.modifiers, wheel_name(gesture.turn)),
         };
         capitalized(format!("{}{name}", held_prefix(modifiers)))
     }
@@ -394,7 +422,7 @@ pub fn just_pressed(world: &World, action: InputAction) -> bool {
             InputBinding::Mouse { button, modifiers } => {
                 mouse.just_pressed(button) && KeyModifiers::held(keys) == modifiers
             }
-            InputBinding::Click(_) | InputBinding::Drag(_) => false,
+            InputBinding::Click(_) | InputBinding::Drag(_) | InputBinding::Wheel(_) => false,
         })
 }
 
@@ -414,7 +442,7 @@ pub fn pressed(world: &World, action: InputAction) -> bool {
             InputBinding::Mouse { button, modifiers } => {
                 mouse.pressed(button) && KeyModifiers::held(keys) == modifiers
             }
-            InputBinding::Click(_) | InputBinding::Drag(_) => false,
+            InputBinding::Click(_) | InputBinding::Drag(_) | InputBinding::Wheel(_) => false,
         })
 }
 
@@ -434,6 +462,27 @@ pub fn drag_started(world: &World, action: InputAction, response: &egui::Respons
     })
 }
 
+/// How many notches the wheel turned for `action` this frame. Like a click, a turn belongs to
+/// whatever the pointer is on, so whoever asks has it.
+pub fn wheeled(world: &World, action: InputAction) -> u32 {
+    let keys = world.resource::<ButtonInput<KeyCode>>();
+    let turned = world
+        .get_resource::<WheelNotches>()
+        .map_or(0, |notches| notches.turned);
+    bindings(world, action)
+        .filter_map(|binding| match binding {
+            InputBinding::Wheel(gesture) => Some(gesture.notches(turned, keys)),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0)
+}
+
+/// Whether a turn of the wheel is one of the ways `action` is bound.
+pub fn takes_wheel(world: &World, action: InputAction) -> bool {
+    bindings(world, action).any(|binding| matches!(binding, InputBinding::Wheel(_)))
+}
+
 pub fn input(action: InputAction) -> TextPiece {
     TextPiece::Key(KeyCap::Input(action.into()))
 }
@@ -445,9 +494,12 @@ impl From<InputAction> for InputRef {
 }
 
 pub(super) fn plugin(app: &mut App) {
-    app.add_systems(
+    app.init_resource::<WheelNotches>().add_systems(
         PreUpdate,
-        publish.run_if(resource_exists_and_changed::<InputMap>),
+        (
+            publish.run_if(resource_exists_and_changed::<InputMap>),
+            count_notches.after(InputSystems),
+        ),
     );
 }
 
@@ -552,6 +604,33 @@ impl DragGesture {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub struct WheelGesture {
+    pub turn: WheelTurn,
+    #[serde(flatten)]
+    pub modifiers: KeyModifiers,
+}
+
+/// Which way the wheel turns: up is away from the player's hand.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WheelTurn {
+    Up,
+    Down,
+}
+
+impl WheelGesture {
+    fn notches(&self, turned: i32, keys: &ButtonInput<KeyCode>) -> u32 {
+        if KeyModifiers::held(keys) != self.modifiers {
+            return 0;
+        }
+        match self.turn {
+            WheelTurn::Up => turned.max(0).unsigned_abs(),
+            WheelTurn::Down => turned.min(0).unsigned_abs(),
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct KeyModifiers {
@@ -620,6 +699,26 @@ fn publish(map: Res<InputMap>, mut names: ResMut<KeyNames>) {
     *names = map.key_names();
 }
 
+/// The whole notches the wheel turned this frame, up counted above zero, and what a wheel that
+/// scrolls smoothly has turned toward its next.
+#[derive(Resource, Default)]
+struct WheelNotches {
+    turned: i32,
+    toward_next: f32,
+}
+
+const PIXELS_PER_NOTCH: f32 = 60.0;
+
+fn count_notches(scroll: Res<AccumulatedMouseScroll>, mut notches: ResMut<WheelNotches>) {
+    let turned = match scroll.unit {
+        MouseScrollUnit::Line => scroll.delta.y,
+        MouseScrollUnit::Pixel => scroll.delta.y / PIXELS_PER_NOTCH,
+    };
+    let gathered = notches.toward_next + turned;
+    notches.turned = gathered.trunc() as i32;
+    notches.toward_next = gathered.fract();
+}
+
 const CTRL: [KeyCode; 2] = [KeyCode::ControlLeft, KeyCode::ControlRight];
 const SHIFT: [KeyCode; 2] = [KeyCode::ShiftLeft, KeyCode::ShiftRight];
 const ALT: [KeyCode; 2] = [KeyCode::AltLeft, KeyCode::AltRight];
@@ -653,6 +752,10 @@ fn key_name(key: KeyCode) -> String {
         KeyCode::ArrowDown => "↓",
         KeyCode::ArrowLeft => "←",
         KeyCode::ArrowRight => "→",
+        _ if CTRL.contains(&key) => "Ctrl",
+        _ if SHIFT.contains(&key) => "Shift",
+        _ if ALT.contains(&key) => "Alt",
+        _ if SUPER.contains(&key) => "Super",
         _ => {
             let debug = format!("{key:?}");
             return ["Key", "Digit"]
@@ -676,6 +779,14 @@ fn click_name(button: MouseButton, times: Clicks) -> String {
 
 fn drag_name(button: MouseButton) -> String {
     format!("{}drag", button_prefix(button))
+}
+
+fn wheel_name(turn: WheelTurn) -> String {
+    match turn {
+        WheelTurn::Up => "wheel up",
+        WheelTurn::Down => "wheel down",
+    }
+    .to_owned()
 }
 
 fn button_prefix(button: MouseButton) -> String {
