@@ -24,7 +24,7 @@ use crate::systems::account::{AccountIdentity, RoleId};
 use crate::systems::player::{self, Connected, PlayedBy};
 use crate::systems::script::{
     Condition, EffectCall, EffectReach, EventKind, Owner, OwnerRow, RiftInstances, RiftScripting,
-    RunnerKind, ScriptId, ScriptModule, effect as effects,
+    RunnerKind, ScriptDef, ScriptId, ScriptModule, effect as effects,
 };
 use input::{CommandInput, InputRefusal};
 
@@ -49,10 +49,20 @@ impl ContentFile for TerminalCommandDef {
     const TABLE: &'static str = "command";
 
     fn fresh(near: &Nearby) -> Result<TerminalCommandDef, String> {
+        let script = near.file_where("a script run by commands", |script: &ScriptDef| {
+            script.runs_on == RunnerKind::Command
+        })?;
+        let inputs = near
+            .read(script)?
+            .variables
+            .into_iter()
+            .filter(|(_, variable)| variable.default.is_none())
+            .map(|(name, _)| name)
+            .collect();
         Ok(TerminalCommandDef {
             roles: Vec::new(),
-            script: near.file()?,
-            inputs: Vec::new(),
+            script,
+            inputs,
         })
     }
 }

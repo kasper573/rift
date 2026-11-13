@@ -46,6 +46,14 @@ fn camp() -> Game {
         )
         .item("cap", json!({ "kind": { "type": "resource" } }))
         .shader_on("bark", Stage::Prop)
+        .script(
+            "roll_call",
+            "command",
+            json!({
+                "sent": { "type": "on", "event": "invoked", "next": "list" },
+                "list": { "type": "list_commands" },
+            }),
+        )
 }
 
 #[test]
