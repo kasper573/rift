@@ -67,7 +67,9 @@ pub trait HudWidget: Send + Sync {
     fn hidden(&self, _world: &World) -> bool {
         false
     }
-    fn show(&self, ui: &mut Ui, world: &mut World);
+    // Returns the room of what it drew outside its own, so that whatever keeps clear of the
+    // interface keeps clear of that too.
+    fn show(&self, ui: &mut Ui, world: &mut World) -> Option<Rect>;
 }
 
 /// A question put to the player, answered with `true` for the confirming button and `false` for the
@@ -228,9 +230,14 @@ fn draw_hud(world: &mut World) {
         if shown.hidden(world) {
             continue;
         }
-        widget(world, &gui, name, shown.fallback(screen), |ui, world| {
-            shown.show(ui, world);
+        let past = widget(world, &gui, name, shown.fallback(screen), |ui, world| {
+            shown.show(ui, world)
         });
+        if let Some(past) = past
+            && let Some(drawn) = world.resource_mut::<WidgetRects>().0.get_mut(name)
+        {
+            *drawn = drawn.union(past);
+        }
     }
     menu::draw(world, &gui);
 }

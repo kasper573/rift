@@ -186,6 +186,9 @@ fn show_settings(
             text_speed_slider(ui, settings, typing, label.id);
             ui.end_row();
         }
+        let label = ui.label("Quest tracker backing");
+        tracker_backing_slider(ui, settings, label.id);
+        ui.end_row();
         let label = ui.label("Area transition");
         let current = settings.screen_transition();
         if let Some(transition) = controls::variant_picker(ui, "area transition", current, label.id)
@@ -317,6 +320,19 @@ fn chat_background_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: 
             settings.ui.chat.background = Some(Percent(background.round()));
         }
         ui.label(theme::faint(format!("{:.0}%", background.round())));
+    });
+}
+
+fn tracker_backing_slider(ui: &mut Ui, settings: &mut Mut<UserSettings>, label: egui::Id) {
+    let mut backing = settings.tracker_backing().0;
+    ui.horizontal(|ui| {
+        if controls::slider(ui, &mut backing, 0.0..=Percent::WHOLE.0)
+            .labelled_by(label)
+            .changed()
+        {
+            settings.ui.tracker_backing = Some(Percent(backing.round()));
+        }
+        ui.label(theme::faint(format!("{:.0}%", backing.round())));
     });
 }
 
@@ -453,6 +469,10 @@ impl UserSettings {
         self.ui.minimap.reach = Some(step);
     }
 
+    pub(crate) fn tracker_backing(&self) -> Percent {
+        self.ui.tracker_backing.unwrap_or(Percent(0.0))
+    }
+
     pub(crate) fn chat_shown(&self) -> bool {
         !self.ui.chat.hidden
     }
@@ -526,6 +546,9 @@ struct UiSettings {
     chat: ChatSettings,
     #[serde(default)]
     minimap: MinimapSettings,
+    /// None leaves the tracker's text with nothing behind it.
+    #[serde(default)]
+    tracker_backing: Option<Percent>,
 }
 
 impl Default for UiSettings {
@@ -537,6 +560,7 @@ impl Default for UiSettings {
             player_bar: PlayerBarSettings::default(),
             chat: ChatSettings::default(),
             minimap: MinimapSettings::default(),
+            tracker_backing: None,
         }
     }
 }

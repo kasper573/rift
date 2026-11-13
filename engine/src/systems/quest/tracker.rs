@@ -1,24 +1,33 @@
 use bevy::prelude::*;
-use ui::egui::{Align, Color32, Label, Layout, Pos2, Rect, Ui};
-use ui::face::{self, TextRole};
-use ui::glyph::{self, Mark};
-use ui::{ink, sheet, slip};
+use ui::egui::emath::TSTransform;
+use ui::egui::text::{LayoutJob, TextFormat};
+use ui::egui::{self, Align2, Color32, Pos2, Rect, Sense, Shape, Stroke, Ui, Vec2};
+use ui::face::{Face, TextRole};
+use ui::glyph::Mark;
+use ui::{dusk, ink};
 
 use super::card::Countdown;
 use super::{Parties, QuestId, QuestLog, QuestResult, ready_mark};
 use crate::core::content::ImageRef;
 use crate::core::content::{Content, Fixture};
+use crate::core::gui;
 use crate::systems::hud::{self, HudWidget};
 use crate::systems::item::Inventory;
 use crate::systems::minimap;
 use crate::systems::player::session;
+use crate::systems::settings::UserSettings;
 
 const WIDTH: f32 = 244.0;
 const UNDER_THE_MAP: f32 = 6.0;
+const HEADING: f32 = 20.0;
 const MARK: f32 = 16.0;
-const FLAG: f32 = 12.0;
-const FOLD: f32 = 16.0;
-const INDENT: f32 = 18.0;
+const DIAMOND: f32 = 4.0;
+const CARET: f32 = 4.5;
+const INDENT: f32 = 16.0;
+const ROW_GAP: f32 = 2.0;
+const ENTRY_GAP: f32 = 6.0;
+const PLATE_PADDING: f32 = 8.0;
+const MARK_GAP: f32 = 4.0;
 
 pub struct QuestTrackerPlugin;
 
@@ -37,29 +46,34 @@ impl HudWidget for QuestTrackerWidget {
             screen.top() + hud::MARGIN + minimap::RESTING_SIZE.y + UNDER_THE_MAP,
         )
     }
-    fn show(&self, ui: &mut Ui, world: &mut World) {
+
+    // Only the heading takes room, so only it takes the pointer: a click on what is listed under
+    // it goes on to the world.
+    fn show(&self, ui: &mut Ui, world: &mut World) -> Option<Rect> {
         let entries = entries(world);
         if entries.is_empty() {
-            return;
+            return None;
         }
         let log = session::me(world)
             .and_then(|seen| world.get::<QuestLog>(seen))
             .cloned()
             .unwrap_or_default();
-        slip::show(ui, |ui| {
-            ui.set_width(WIDTH - slip::PADDING.sum().x);
-            ui.spacing_mut().item_spacing.y = 3.0;
-            let folded = world.resource::<Folded>().0;
-            header(ui, world, entries.len(), folded);
-            if folded {
-                return;
-            }
+        let folded = world.resource::<Folded>().0;
+        let backing = ui.painter().add(Shape::Noop);
+        let heading = heading(ui, world, entries.len(), folded);
+        let mut foot = heading.bottom();
+        if !folded {
             for entry in &entries {
-                ui.push_id(("tracked", entry.quest.index()), |ui| {
-                    entry_rows(ui, world, &log, entry);
-                });
+                foot = entry_rows(ui, world, &log, entry, Pos2::new(heading.left(), foot));
             }
-        });
+        }
+        let drawn = Rect::from_min_max(heading.min, Pos2::new(heading.right(), foot));
+        let opacity = world.resource::<UserSettings>().tracker_backing();
+        ui.painter().set(
+            backing,
+            dusk::plate_shape(drawn.expand(PLATE_PADDING), opacity.0 / 100.0),
+        );
+        Some(drawn)
     }
 }
 
@@ -70,7 +84,7 @@ struct Folded(bool);
 enum Tone {
     Plain,
     Done,
-    Next,
+    Timed,
     Bad,
 }
 
@@ -88,79 +102,179 @@ enum Count {
 }
 
 impl Tone {
+    // A tint goes with what the row's mark and words already say, and stays pale enough to read
+    // on the edge every letter carries.
     fn color(self) -> Color32 {
         match self {
-            Tone::Plain | Tone::Next => ink::INK2,
-            Tone::Done => ink::VERDIGRIS,
-            Tone::Bad => ink::RUBRIC,
+            Tone::Plain => Color32::WHITE,
+            Tone::Done => Color32::from_rgb(0xDA, 0xF5, 0xDD),
+            Tone::Timed => Color32::from_rgb(0xFF, 0xEB, 0xB8),
+            Tone::Bad => Color32::from_rgb(0xFF, 0xD9, 0xD2),
+        }
+    }
+
+    fn mark(self) -> Option<Mark> {
+        match self {
+            Tone::Plain => None,
+            Tone::Done => Some(Mark::Check),
+            Tone::Timed => Some(Mark::Hourglass),
+            Tone::Bad => Some(Mark::Cross),
         }
     }
 }
 
-fn header(ui: &mut Ui, world: &mut World, count: usize, folded: bool) {
+fn heading(ui: &mut Ui, world: &mut World, count: usize, folded: bool) -> Rect {
+    let (rect, pressed) = ui.allocate_exact_size(Vec2::new(WIDTH, HEADING), Sense::click());
     let title = if folded {
-        format!("quests ({count})")
+        format!("Quests ({count})")
     } else {
-        "quests".to_owned()
+        "Quests".to_owned()
     };
-    ui.horizontal(|ui| {
-        sheet::label(ui, TextRole::Section, &title, ink::RUBRIC);
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            let (mark, label) = if folded {
-                (Mark::Plus, "Show tracked quests")
-            } else {
-                (Mark::Minus, "Hide tracked quests")
-            };
-            if glyph::button(ui, mark, FOLD, ink::INK2, label).clicked() {
-                world.resource_mut::<Folded>().0 = !folded;
-            }
-        });
-    });
+    let said = if folded {
+        format!("{title} · show tracked quests")
+    } else {
+        format!("{title} · hide tracked quests")
+    };
+    pressed.widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Button, true, said.clone()));
+    if pressed.clicked() {
+        world.resource_mut::<Folded>().0 = !folded;
+    }
+    let galley = ui
+        .painter()
+        .layout_no_wrap(title, TextRole::Section.font_id(), ink::GOLD2);
+    let at = Align2::LEFT_CENTER.anchor_size(rect.left_center(), galley.size());
+    dusk::lettering(
+        ui.painter(),
+        at.min,
+        galley,
+        dusk::EDGED,
+        TSTransform::IDENTITY,
+    );
+    let tip = if folded { Vec2::RIGHT } else { Vec2::DOWN };
+    caret(ui, rect.right_center() - Vec2::new(CARET + 2.0, 0.0), tip);
+    rect
 }
 
-fn entry_rows(ui: &mut Ui, world: &mut World, log: &QuestLog, entry: &Entry) {
+fn caret(ui: &Ui, at: Pos2, tip: Vec2) {
+    let across = tip.rot90();
+    let shape = |grown: f32, color: Color32| {
+        let size = CARET + grown;
+        Shape::convex_polygon(
+            vec![
+                at + tip * size,
+                at - tip * size * 0.6 + across * size,
+                at - tip * size * 0.6 - across * size,
+            ],
+            color,
+            Stroke::NONE,
+        )
+    };
+    ui.painter().add(shape(1.5, Color32::BLACK));
+    ui.painter().add(shape(0.0, ink::GOLD2));
+}
+
+fn entry_rows(ui: &mut Ui, world: &mut World, log: &QuestLog, entry: &Entry, at: Pos2) -> f32 {
     let content = world.resource::<Content>().clone();
-    let small = TextRole::Small.size();
-    ui.horizontal(|ui| {
-        ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-            if entry.timed {
-                let left = Countdown::Left
-                    .label(log, entry.quest, super::card::clock_now())
-                    .unwrap_or_default();
-                ui.label(TextRole::Small.rich(left).color(ink::INK3));
-            }
-            ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                ui.spacing_mut().item_spacing.x = 5.0;
-                glyph::show(ui, Mark::Flag, FLAG, ink::AZURE);
-                if let Some(mark) = &entry.mark {
-                    hud::icon(ui, world, mark, MARK);
-                }
-                ui.add(Label::new(face::bold(entry.quest.get(&content).title.as_str())).truncate());
-            });
-        });
-    });
-    for (label, count, tone) in &entry.rows {
-        let color = tone.color();
-        let count = match count {
-            Count::Hidden => String::new(),
-            Count::Fixed(count) => count.clone(),
-            Count::Live(shows) => shows
-                .label(log, entry.quest, super::card::clock_now())
-                .unwrap_or_default(),
-        };
-        ui.horizontal(|ui| {
-            ui.add_space(INDENT);
-            ui.with_layout(Layout::right_to_left(Align::Center), |ui| {
-                if !count.is_empty() {
-                    ui.label(TextRole::Small.rich(count).color(color).size(small));
-                }
-                ui.with_layout(Layout::left_to_right(Align::Center), |ui| {
-                    ui.add(Label::new(TextRole::Small.rich(label.as_str()).color(color)).wrap());
-                });
-            });
-        });
+    let mut top = at.y + ENTRY_GAP;
+    let diamond = Pos2::new(at.x + DIAMOND + 2.0, top + TextRole::Body.size() * 0.62);
+    for (grown, color) in [(1.5, Color32::BLACK), (0.0, ink::GOLD2)] {
+        let corners = [Vec2::UP, Vec2::RIGHT, Vec2::DOWN, Vec2::LEFT]
+            .map(|corner| diamond + corner * (DIAMOND + grown))
+            .to_vec();
+        ui.painter()
+            .add(Shape::convex_polygon(corners, color, Stroke::NONE));
     }
-    ui.add_space(2.0);
+    let mut left = at.x + INDENT;
+    if let Some(image) = entry.mark.as_ref().and_then(|mark| gui::image(world, mark)) {
+        let spot = Rect::from_min_size(Pos2::new(left, top + 1.0), Vec2::splat(MARK));
+        ui.put(spot, image.widget(Vec2::splat(MARK)));
+        left += MARK + 4.0;
+    }
+    let title = entry.quest.get(&content).title.clone();
+    let id = ui.id().with(("tracked", entry.quest.index()));
+    top = Line {
+        at: Pos2::new(left, top),
+        width: at.x + WIDTH - left,
+        mark: None,
+        text: &title,
+        font: Face::BookBold.id(TextRole::Body.size()),
+        color: Color32::WHITE,
+    }
+    .letter(ui, id.with("title"))
+    .bottom();
+    let rows = entry.rows.iter().map(|(label, count, tone)| {
+        let count = match count {
+            Count::Hidden => None,
+            Count::Fixed(count) => Some(count.clone()),
+            Count::Live(shows) => shows.label(log, entry.quest, super::card::clock_now()),
+        };
+        let said = match count {
+            Some(count) => format!("{label} {count}"),
+            None => label.clone(),
+        };
+        (said, *tone)
+    });
+    let left_on_the_clock = entry
+        .timed
+        .then(|| Countdown::LeftDetail.label(log, entry.quest, super::card::clock_now()))
+        .flatten()
+        .map(|left| (left, Tone::Timed));
+    for (index, (said, tone)) in rows.chain(left_on_the_clock).enumerate() {
+        top = Line {
+            at: Pos2::new(at.x + INDENT, top + ROW_GAP),
+            width: WIDTH - INDENT,
+            mark: tone.mark(),
+            text: &said,
+            font: TextRole::Small.font_id(),
+            color: tone.color(),
+        }
+        .letter(ui, id.with(index))
+        .bottom();
+    }
+    top
+}
+
+struct Line<'a> {
+    at: Pos2,
+    width: f32,
+    mark: Option<Mark>,
+    text: &'a str,
+    font: egui::FontId,
+    color: Color32,
+}
+
+impl Line<'_> {
+    fn letter(self, ui: &mut Ui, id: egui::Id) -> Rect {
+        let mut job = LayoutJob::default();
+        job.wrap.max_width = self.width;
+        if let Some(mark) = self.mark {
+            let icon = mark.icon();
+            let icons = egui::FontId::new(self.font.size, icon.weight.family());
+            let format = TextFormat {
+                valign: egui::Align::Center,
+                ..TextFormat::simple(icons, self.color)
+            };
+            job.append(icon.glyph, 0.0, format);
+        }
+        let lead = if self.mark.is_some() { MARK_GAP } else { 0.0 };
+        job.append(self.text, lead, TextFormat::simple(self.font, self.color));
+        let galley = ui.painter().layout_job(job);
+        let rect = Rect::from_min_size(self.at, galley.size());
+        let said = match self.mark {
+            Some(mark) => format!("{}: {}", mark.word(), self.text),
+            None => self.text.to_owned(),
+        };
+        ui.interact(rect, id, Sense::hover())
+            .widget_info(|| egui::WidgetInfo::labeled(egui::WidgetType::Label, true, said.clone()));
+        dusk::lettering(
+            ui.painter(),
+            self.at,
+            galley,
+            dusk::EDGED,
+            TSTransform::IDENTITY,
+        );
+        rect
+    }
 }
 
 fn entries(world: &World) -> Vec<Entry> {
@@ -182,24 +296,20 @@ fn entries(world: &World) -> Vec<Entry> {
                         quest,
                         mark: Some(ready_mark(def).get(content).icon.clone()),
                         timed,
-                        rows: vec![(def.hand_in_hint(parties, quest), Count::Hidden, Tone::Next)],
+                        rows: vec![(def.hand_in_hint(parties, quest), Count::Hidden, Tone::Done)],
                     });
                 }
                 let progress = def.progress(content, parties, active, inventory);
-                let next = progress.iter().position(|progress| !progress.done());
                 let rows = progress
                     .into_iter()
-                    .enumerate()
-                    .map(|(index, progress)| {
+                    .map(|progress| {
                         let count = if progress.counted {
-                            Count::Fixed(format!("{}/{}", progress.have, progress.need))
+                            Count::Fixed(format!("{} of {}", progress.have, progress.need))
                         } else {
                             Count::Hidden
                         };
                         let tone = if progress.done() {
                             Tone::Done
-                        } else if Some(index) == next {
-                            Tone::Next
                         } else {
                             Tone::Plain
                         };

@@ -34,11 +34,9 @@ impl HudWidget for PlayerBarWidget {
         stage::leavable(world)
     }
 
-    fn show(&self, ui: &mut Ui, world: &mut World) {
+    fn show(&self, ui: &mut Ui, world: &mut World) -> Option<Rect> {
         let now = ui.input(|input| input.time);
-        let Some(sheet) = current_sheet(world, now) else {
-            return;
-        };
+        let sheet = current_sheet(world, now)?;
         let slots = BarSlots::shown(world, ui.ctx());
         let layout = Layout::of(ui.cursor().min, slots.size());
         ui.allocate_rect(layout.vial_and_paper, Sense::hover());
@@ -61,13 +59,17 @@ impl HudWidget for PlayerBarWidget {
                 now,
             );
         }
-        points_button(ui.ctx(), world, &outside, sheet.points);
-        status_row(ui.ctx(), world, &outside);
+        let points = points_button(ui.ctx(), world, &outside, sheet.points);
+        let statuses = status_row(ui.ctx(), world, &outside);
         bar::rebind_notice(
             ui,
             world,
             Pos2::new(layout.paper.center().x, outside.notice_foot),
         );
+        match (points, statuses) {
+            (Some(points), Some(statuses)) => Some(points.union(statuses)),
+            (points, statuses) => points.or(statuses),
+        }
     }
 }
 
@@ -330,9 +332,14 @@ fn gain_float(ui: &Ui, gain: Gain, x: f32, paper_top: f32, now: f64) {
     ui.ctx().request_repaint();
 }
 
-fn points_button(gui: &egui::Context, world: &mut World, outside: &RowOutside, points: u32) {
+fn points_button(
+    gui: &egui::Context,
+    world: &mut World,
+    outside: &RowOutside,
+    points: u32,
+) -> Option<Rect> {
     if points == 0 {
-        return;
+        return None;
     }
     let shown = outside
         .area(gui, "player bar points", Align::Min)
@@ -342,13 +349,16 @@ fn points_button(gui: &egui::Context, world: &mut World, outside: &RowOutside, p
     if shown.inner.clicked() {
         menu::open_on(world, MenuTabName::Skills);
     }
+    Some(shown.response.rect)
 }
 
-fn status_row(gui: &egui::Context, world: &mut World, outside: &RowOutside) {
+fn status_row(gui: &egui::Context, world: &mut World, outside: &RowOutside) -> Option<Rect> {
     let width = (outside.right - outside.left - POINTS_ROOM).max(0.0);
-    outside
+    let shown = outside
         .area(gui, "player bar statuses", Align::Max)
         .show(gui, |ui| {
             status::widget::row(ui, world, width, outside.side)
         });
+    let rect = shown.response.rect;
+    rect.is_positive().then_some(rect)
 }

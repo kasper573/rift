@@ -32,37 +32,61 @@ pub const SHADOW: Shadow = Shadow {
 };
 
 /// Under text floating over the world with no ground of its own: a soft drop below it.
-pub const TEXT_SHADOW: TextShadow = TextShadow {
+pub const TEXT_SHADOW: &[TextShadow] = &[TextShadow {
     offset: Vec2::new(0.0, 2.0),
     color: Color32::from_black_alpha(204),
-};
+}];
 /// Under small text floating over the world: a hard edge a pixel down and right.
-pub const SMALL_TEXT_SHADOW: TextShadow = TextShadow {
+pub const SMALL_TEXT_SHADOW: &[TextShadow] = &[TextShadow {
     offset: Vec2::new(1.0, 1.0),
     color: Color32::BLACK,
-};
+}];
+/// Under text that must read over the brightest ground the world can put behind it: a glow
+/// around it, an edge on every side of each letter and a hard shadow below, so the letter stands
+/// on its own dark ground wherever it is.
+pub const EDGED: &[TextShadow] = &[
+    glow(2.0, 0.0),
+    glow(-2.0, 0.0),
+    glow(0.0, 2.0),
+    glow(0.0, -2.0),
+    glow(1.5, 1.5),
+    glow(-1.5, 1.5),
+    glow(1.5, -1.5),
+    glow(-1.5, -1.5),
+    edge(1.0, 0.0),
+    edge(-1.0, 0.0),
+    edge(0.0, 1.0),
+    edge(0.0, -1.0),
+    edge(1.0, 2.0),
+];
 
 /// The dusk ground laid behind what floats over the world, `opacity` of the way from clear to
 /// solid, for text that stays whole whatever the plate under it is set to.
 pub fn plate(painter: &Painter, rect: Rect, opacity: f32) {
-    painter.rect_filled(rect, RADIUS, FILL.gamma_multiply(opacity.clamp(0.0, 1.0)));
+    painter.add(plate_shape(rect, opacity));
 }
 
-/// Lettering over the world: `galley` at `at` with `shadow` under it. `shift` moves and scales
-/// the drawing while the space it takes stays put.
+pub fn plate_shape(rect: Rect, opacity: f32) -> Shape {
+    Shape::rect_filled(rect, RADIUS, FILL.gamma_multiply(opacity.clamp(0.0, 1.0)))
+}
+
+/// Lettering over the world: `galley` at `at` with a copy of itself as each of `under` lays it
+/// beneath. `shift` moves and scales the drawing while the space it takes stays put.
 pub fn lettering(
     painter: &Painter,
     at: Pos2,
     galley: Arc<Galley>,
-    shadow: TextShadow,
+    under: &[TextShadow],
     shift: TSTransform,
 ) {
-    let mut under = TextShape::new(at + shadow.offset, galley.clone(), shadow.color);
-    under.override_text_color = Some(shadow.color);
-    under.transform(shift);
+    for shadow in under {
+        let mut copy = TextShape::new(at + shadow.offset, galley.clone(), shadow.color);
+        copy.override_text_color = Some(shadow.color);
+        copy.transform(shift);
+        painter.add(Shape::Text(copy));
+    }
     let mut over = TextShape::new(at, galley, Color32::PLACEHOLDER);
     over.transform(shift);
-    painter.add(Shape::Text(under));
     painter.add(Shape::Text(over));
 }
 
@@ -74,7 +98,7 @@ pub fn label(
     text: &str,
     font: FontId,
     color: Color32,
-    shadow: TextShadow,
+    under: &[TextShadow],
     shift: TSTransform,
 ) -> Response {
     let galley = ui.painter().layout_no_wrap(text.to_owned(), font, color);
@@ -84,7 +108,7 @@ pub fn label(
         let centre = rect.center().to_vec2();
         let around =
             TSTransform::from_translation(centre) * shift * TSTransform::from_translation(-centre);
-        lettering(ui.painter(), rect.min, galley, shadow, around);
+        lettering(ui.painter(), rect.min, galley, under, around);
     }
     response
 }
@@ -96,4 +120,18 @@ pub fn frame() -> Frame {
         .corner_radius(RADIUS)
         .inner_margin(Margin::same(8))
         .shadow(SHADOW)
+}
+
+const fn glow(right: f32, down: f32) -> TextShadow {
+    TextShadow {
+        offset: Vec2::new(right, down),
+        color: Color32::from_black_alpha(70),
+    }
+}
+
+const fn edge(right: f32, down: f32) -> TextShadow {
+    TextShadow {
+        offset: Vec2::new(right, down),
+        color: Color32::BLACK,
+    }
 }

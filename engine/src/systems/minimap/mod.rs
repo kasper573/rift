@@ -189,7 +189,7 @@ impl HudWidget for MinimapWidget {
         )
     }
 
-    fn show(&self, ui: &mut Ui, world: &mut World) {
+    fn show(&self, ui: &mut Ui, world: &mut World) -> Option<egui::Rect> {
         let (piece, _) = ui.allocate_exact_size(RESTING_SIZE, Sense::hover());
         let center = piece.center_top() + Vec2::new(0.0, RIM_OVERHANG + DISC / 2.0);
         let whole = egui::Rect::from_center_size(center, Vec2::splat(DISC));
@@ -198,7 +198,7 @@ impl HudWidget for MinimapWidget {
         let Some(view) = MapView::of(world, center) else {
             ui.painter().circle_filled(center, GROUND, BLANK);
             rim(ui, center);
-            return;
+            return None;
         };
         let content = world.resource::<Content>().clone();
         let area_name = view.area.get(&content).name.clone();
@@ -239,6 +239,7 @@ impl HudWidget for MinimapWidget {
                 }
             });
         }
+        None
     }
 }
 
