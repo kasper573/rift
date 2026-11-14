@@ -38,22 +38,34 @@ impl Chunk {
         )
     }
 
-    /// The chunks holding any ground within `reach` of any of this one's, and maybe corner chunks
-    /// that hold none.
-    pub fn within(self, reach: Meters) -> impl Iterator<Item = Chunk> + use<> {
-        let span = (reach.0 / CHUNK_SIDE.0).ceil() as i32;
-        (self.row - span..=self.row + span).flat_map(move |row| {
-            (self.column - span..=self.column + span).map(move |column| Chunk { column, row })
-        })
-    }
-
     /// The chunks holding any ground within `reach` of `at`, and maybe a corner chunk that holds
     /// none.
     pub fn around(at: Pos<Meters>, reach: Meters) -> impl Iterator<Item = Chunk> + use<> {
-        let low = Chunk::at(Pos::new(at.x - reach.0, at.y - reach.0));
-        let high = Chunk::at(Pos::new(at.x + reach.0, at.y + reach.0));
-        (low.row..=high.row).flat_map(move |row| {
-            (low.column..=high.column).map(move |column| Chunk { column, row })
+        ChunkSpan::around(at, reach).chunks()
+    }
+}
+
+/// A rectangle of the grid, from its first chunk to its last.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ChunkSpan {
+    first: Chunk,
+    last: Chunk,
+}
+
+impl ChunkSpan {
+    /// The chunks holding any ground within `reach` of `at`, and maybe a corner chunk that holds
+    /// none.
+    pub fn around(at: Pos<Meters>, reach: Meters) -> ChunkSpan {
+        ChunkSpan {
+            first: Chunk::at(Pos::new(at.x - reach.0, at.y - reach.0)),
+            last: Chunk::at(Pos::new(at.x + reach.0, at.y + reach.0)),
+        }
+    }
+
+    pub fn chunks(self) -> impl Iterator<Item = Chunk> + use<> {
+        let ChunkSpan { first, last } = self;
+        (first.row..=last.row).flat_map(move |row| {
+            (first.column..=last.column).map(move |column| Chunk { column, row })
         })
     }
 }

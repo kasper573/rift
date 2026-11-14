@@ -6,7 +6,7 @@ use bevy_ecs::entity_disabling::Disabled;
 use bevy_ecs::prelude::*;
 use bevy_platform::collections::HashSet;
 
-use crate::core::chunk::{Chunk, ChunkIndex, InChunk};
+use crate::core::chunk::{Chunk, ChunkIndex, ChunkSpan, InChunk};
 use crate::core::content::Content;
 use crate::core::units::Meters;
 use crate::systems::GameSettings;
@@ -16,12 +16,14 @@ use crate::systems::script::RiftScripts;
 use crate::systems::script::event::RiftEvent;
 use crate::systems::skill::SkillDef;
 
-/// The chunks awake, and how far from a player's chunk they reach.
+/// The chunks awake, and how far from a player they reach.
 #[derive(Resource)]
 pub struct Sleep {
     reach: Meters,
-    /// The chunks players stood in as of the last settle, which alone decide what is awake.
     stood: Vec<Chunk>,
+    /// The chunks within reach of each player as of the last settle, sorted, each span once: they
+    /// alone decide what is awake.
+    reached: Vec<ChunkSpan>,
     awake: HashSet<Chunk>,
 }
 
@@ -35,27 +37,33 @@ impl Sleep {
         Sleep {
             reach: awake_reach(content),
             stood: Vec::new(),
+            reached: Vec::new(),
             awake: HashSet::default(),
         }
     }
 }
 
-/// Wakes the chunks a player came near and puts to sleep those every player left, with whatever
-/// walked or was put into a chunk asleep.
+/// Wakes the chunks a player came within reach of and puts to sleep those every player left, with
+/// whatever walked or was put into a chunk asleep.
 pub fn settle(world: &mut World, players: &mut PlayerPositions, filed: &mut Filed) {
-    let mut stood: Vec<Chunk> = players
+    let reach = world.resource::<Sleep>().reach;
+    let (mut stood, mut reached): (Vec<Chunk>, Vec<ChunkSpan>) = players
         .iter(world)
-        .map(|position| Chunk::at(position.pos))
-        .collect();
+        .map(|position| {
+            (
+                Chunk::at(position.pos),
+                ChunkSpan::around(position.pos, reach),
+            )
+        })
+        .unzip();
     stood.sort_unstable();
     stood.dedup();
+    reached.sort_unstable();
+    reached.dedup();
     let (mut woken, mut falling) = (Vec::new(), Vec::new());
     let sleep = world.resource::<Sleep>();
-    if stood != sleep.stood {
-        let awake: HashSet<Chunk> = stood
-            .iter()
-            .flat_map(|chunk| chunk.within(sleep.reach))
-            .collect();
+    if reached != sleep.reached {
+        let awake: HashSet<Chunk> = reached.iter().flat_map(|span| span.chunks()).collect();
         let index = world.resource::<ChunkIndex>();
         woken.extend(
             awake
@@ -69,8 +77,11 @@ pub fn settle(world: &mut World, players: &mut PlayerPositions, filed: &mut File
                 .flat_map(|&chunk| index.in_chunk(chunk).iter().copied()),
         );
         let mut sleep = world.resource_mut::<Sleep>();
-        sleep.stood = stood;
+        sleep.reached = reached;
         sleep.awake = awake;
+    }
+    if stood != world.resource::<Sleep>().stood {
+        world.resource_mut::<Sleep>().stood = stood;
     }
     let awake = &world.resource::<Sleep>().awake;
     falling.extend(
