@@ -23,7 +23,7 @@ use ui::egui::{self, LayerId, Pos2, Rect};
 use ui::motion::{CardPose, LiftedRun};
 
 use super::{
-    DUE_AFTER_A_CHANGE, Lamp, Picture, PictureLook, Scene, on_stage, rendered, view_about,
+    DUE_AFTER_A_CHANGE, Lamp, Lens, Picture, PictureLook, Scene, on_stage, rendered, view_about,
 };
 use crate::core::card::{CardHandling, CardMaterial};
 use crate::core::content::ImageRef;
@@ -454,6 +454,7 @@ const LINGER: f64 = 1.0;
 /// A card's own shader spreads its even light, and its edges are the interface's, smoothed
 /// already.
 const PICTURE_LOOK: PictureLook = PictureLook {
+    lens: Lens::FromTheEye,
     smoothing: Msaa::Off,
     even: 0.0,
 };

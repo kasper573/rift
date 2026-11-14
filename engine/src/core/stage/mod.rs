@@ -5,7 +5,7 @@
 use std::f32::consts::PI;
 
 use bevy::camera::visibility::RenderLayers;
-use bevy::camera::{Exposure, RenderTarget, SubCameraView};
+use bevy::camera::{Exposure, RenderTarget, ScalingMode, SubCameraView};
 use bevy::core_pipeline::tonemapping::{DebandDither, Tonemapping};
 use bevy::image::ImageSampler;
 use bevy::light::AmbientLight;
@@ -119,12 +119,24 @@ impl Lamp {
     }
 }
 
-/// How a picture of the stage is drawn: how its edges are smoothed, and how much light falls on
-/// what it shows from everywhere at once.
+/// How a picture of the stage is drawn: through which lens, how its edges are smoothed, and how
+/// much light falls on what it shows from everywhere at once.
 #[derive(Clone, Copy)]
 struct PictureLook {
+    lens: Lens,
     smoothing: Msaa,
     even: f32,
+}
+
+/// How a picture's camera looks at the stage.
+#[derive(Clone, Copy)]
+enum Lens {
+    /// From the stage's eye over the window's middle, so a thing away from the middle is seen a
+    /// little from its side, as it would be on a table.
+    FromTheEye,
+    /// Straight on from right in front of what it shows, with no perspective: what lies level
+    /// there is seen exactly edge-on.
+    StraightOn,
 }
 
 /// The picture the stage takes of one thing on it: the image the interface shows, the camera
@@ -151,8 +163,8 @@ impl Picture {
         self.texture
     }
 
-    /// Points the camera at the part of the window `view` covers, into a picture of that size,
-    /// with the lamp where the scene hangs it.
+    /// Points the camera at the part of the window `view` covers, through the look's lens, into
+    /// a picture of that size, with the lamp where the scene hangs it.
     fn frame(&mut self, world: &mut World, view: &SubCameraView, scene: &Scene, look: PictureLook) {
         let layer = self.layer(world);
         let lamp = scene.lamp;
@@ -176,13 +188,39 @@ impl Picture {
         let Some(image) = self.image.clone() else {
             return;
         };
-        let lens = Projection::Perspective(PerspectiveProjection {
-            fov: 2.0 * (0.5 * scene.height / scene.eye).atan(),
-            near: scene.eye * DEPTH.0,
-            far: scene.eye * DEPTH.1,
-            ..default()
-        });
-        let stands = Transform::from_xyz(0.0, 0.0, scene.eye);
+        let (near, far) = (scene.eye * DEPTH.0, scene.eye * DEPTH.1);
+        let (lens, stands, part) = match look.lens {
+            Lens::FromTheEye => (
+                Projection::Perspective(PerspectiveProjection {
+                    fov: 2.0 * (0.5 * scene.height / scene.eye).atan(),
+                    near,
+                    far,
+                    ..default()
+                }),
+                Transform::from_xyz(0.0, 0.0, scene.eye),
+                Some(*view),
+            ),
+            Lens::StraightOn => {
+                let pixels = view.full_size.y as f32 / scene.height;
+                let middle = (view.offset + view.size.as_vec2() / 2.0
+                    - view.full_size.as_vec2() / 2.0)
+                    / pixels;
+                let span = view.size.as_vec2() / pixels;
+                (
+                    Projection::Orthographic(OrthographicProjection {
+                        near,
+                        far,
+                        scaling_mode: ScalingMode::Fixed {
+                            width: span.x,
+                            height: span.y,
+                        },
+                        ..OrthographicProjection::default_3d()
+                    }),
+                    Transform::from_xyz(middle.x, -middle.y, scene.eye),
+                    None,
+                )
+            }
+        };
         let camera = *self.camera.get_or_insert_with(|| {
             world
                 .spawn((
@@ -214,9 +252,9 @@ impl Picture {
             },
         ));
         if let Some(mut drawn) = camera.get_mut::<Camera>()
-            && drawn.sub_camera_view != Some(*view)
+            && drawn.sub_camera_view != part
         {
-            drawn.sub_camera_view = Some(*view);
+            drawn.sub_camera_view = part;
         }
         let hangs = Transform::from_translation(lamp.at);
         let light = PointLight {

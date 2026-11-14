@@ -1,5 +1,6 @@
-//! Globes on the stage: a ball of glass holding a liquid, lit by the stage's lamp, and the
-//! interface shows the lit picture where the globe sits.
+//! Globes on the stage: a ball of glass holding a liquid, lit by the stage's lamp and seen
+//! straight from its side, so its liquid's face is a level line. The interface shows the lit
+//! picture where the globe sits.
 
 use std::collections::HashMap;
 use std::f32::consts::{PI, TAU};
@@ -16,7 +17,7 @@ use bevy_egui::EguiPostUpdateSet;
 use ui::egui::{self, Color32, Pos2, Rect};
 
 use super::{
-    DUE_AFTER_A_CHANGE, Lamp, Picture, PictureLook, Scene, on_stage, rendered, view_about,
+    DUE_AFTER_A_CHANGE, Lamp, Lens, Picture, PictureLook, Scene, on_stage, rendered, view_about,
 };
 use crate::core::card::CardHandling;
 
@@ -103,6 +104,7 @@ pub fn show(world: &mut World, painter: &egui::Painter, globe: &Globe) -> bool {
     let reshot = stood.shot != Some(shot);
     if reshot {
         let look = PictureLook {
+            lens: Lens::StraightOn,
             smoothing: Msaa::Sample4,
             even: EVEN,
         };
@@ -375,8 +377,8 @@ fn strike(world: &mut World) {
     }
 }
 
-/// How many pixels wider than its glass a globe's picture is on every side, for the edge the
-/// eye's angle on a globe away from the window's middle adds to it.
+/// How many pixels wider than its glass a globe's picture is on every side, for its smoothed
+/// edge and for where the picture's whole pixels put its middle.
 const MARGIN: u32 = 2;
 /// How much of its glass's reach a globe's liquid fills: the rest is the glass's thickness.
 const LIQUID: f32 = 0.94;
