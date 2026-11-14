@@ -16,11 +16,11 @@ use ui::sheet::PANE_PAD;
 use super::{LearnSkillsRequest, Learned, Rank, SkillId, SkillKind, card};
 use crate::core::content::Content;
 use crate::core::gui;
-use crate::core::text::{StyledLine, TextPiece};
+use crate::core::text::StyledLine;
 use crate::systems::class::{self, ClassDef, NodeKey, SkillPoints};
 use crate::systems::hud::Carried;
 use crate::systems::hud::menu::{MenuTab, MenuTabName};
-use crate::systems::input::map::{self, InputAction, input};
+use crate::systems::input::map::{self, InputAction};
 use crate::systems::interface::{InterfaceIcon, InterfaceSound};
 use crate::systems::notification;
 use crate::systems::player::session;
@@ -43,13 +43,41 @@ impl MenuTab for SkillsMenuTab {
     fn opens(&self) -> InputAction {
         InputAction::OpenSkills
     }
-    fn hints(&self) -> &'static [(InputAction, &'static str)] {
-        &[
-            (InputAction::RaiseRank, "raise"),
-            (InputAction::LowerRank, "lower"),
-            (InputAction::CarryItem, "to the bar"),
-            (InputAction::InspectSkill, "open the card"),
+    fn hints(&self, world: &World) -> Vec<(InputAction, &'static str)> {
+        let Some(sheet) = Sheet::of(world) else {
+            return Vec::new();
+        };
+        let content = world.resource::<Content>();
+        let def = sheet.class.get(content);
+        let plan = world.resource::<SkillPlan>();
+        let can: Vec<NodeInputs> = def
+            .tree
+            .0
+            .keys()
+            .filter_map(|key| NodeInputs::of(world, &sheet, def, plan, key))
+            .collect();
+        [
+            (
+                InputAction::RaiseRank,
+                "raise",
+                can.iter().any(|can| can.raise),
+            ),
+            (
+                InputAction::LowerRank,
+                "lower",
+                can.iter().any(|can| can.lower),
+            ),
+            (
+                InputAction::CarryItem,
+                "to the bar",
+                can.iter().any(|can| can.slot),
+            ),
+            (InputAction::InspectSkill, "open the card", !can.is_empty()),
         ]
+        .into_iter()
+        .filter(|(_, _, does)| *does)
+        .map(|(action, does, _)| (action, does))
+        .collect()
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
         let room = ui.available_rect_before_wrap();
@@ -166,6 +194,33 @@ impl NodeState {
             NodeState::Maxed => "maxed".to_owned(),
             NodeState::Picked(rank) => format!("picked rank {}", rank.0),
         }
+    }
+}
+
+/// What the inputs on a node can do right now.
+#[derive(Clone, Copy)]
+struct NodeInputs {
+    raise: bool,
+    lower: bool,
+    /// Whether the node's skill can go on the bar: it is learned, and not a passive.
+    slot: bool,
+}
+
+impl NodeInputs {
+    fn of(
+        world: &World,
+        sheet: &Sheet,
+        def: &ClassDef,
+        plan: &SkillPlan,
+        key: &NodeKey,
+    ) -> Option<NodeInputs> {
+        let state = node_state(world, sheet, def, plan, key)?;
+        let skill = def.tree.node(key)?.skill.get(world.resource::<Content>());
+        Some(NodeInputs {
+            raise: next_rank(world, sheet, key, state).is_some(),
+            lower: plan.0.contains_key(key),
+            slot: sheet.learned.rank(key) > Rank::NONE && skill.kind != SkillKind::Passive,
+        })
     }
 }
 
@@ -321,18 +376,23 @@ fn node_input(
     } else if map::clicked(world, InputAction::RaiseRank, response) {
         raise(world, sheet, key, state);
     }
-    let hint = StyledLine::new(vec![
-        input(InputAction::RaiseRank),
-        TextPiece::text(" picks a rank · "),
-        input(InputAction::LowerRank),
-        TextPiece::text(" takes one back · "),
-        input(InputAction::InspectSkill),
-        TextPiece::text(" shows its card · "),
-        input(InputAction::PinToBar),
-        TextPiece::text(" puts it on the bar · "),
-        input(InputAction::CarryItem),
-        TextPiece::text(" carries it to a slot"),
-    ]);
+    let can = NodeInputs {
+        raise: next_rank(world, sheet, key, state).is_some(),
+        lower: world.resource::<SkillPlan>().0.contains_key(key),
+        slot: held > Rank::NONE && !passive,
+    };
+    let hint = StyledLine::new(map::hints(
+        [
+            (InputAction::RaiseRank, " picks a rank", can.raise),
+            (InputAction::LowerRank, " takes one back", can.lower),
+            (InputAction::InspectSkill, " shows its card", true),
+            (InputAction::PinToBar, " puts it on the bar", can.slot),
+            (InputAction::CarryItem, " carries it to a slot", can.slot),
+        ]
+        .into_iter()
+        .filter(|(_, _, does)| *does)
+        .map(|(action, does, _)| (action, does)),
+    ));
     card::tooltip(response, world, &card::of(world, skill), Some(&hint));
 }
 
@@ -440,10 +500,13 @@ fn dock(ui: &mut Ui, world: &mut World, sheet: &Sheet, room: Rect) {
         Pos2::new(room.min.x, room.max.y - controls::CONTROL_HEIGHT),
         room.max,
     );
-    let mut text = format!("{} to spend", counted(left.0, "skill point"));
-    if picked.0 > 0 {
-        text.push_str(&format!(" · {} picked", counted(picked.0, "point")));
-    }
+    let to_spend = (left.0 > 0).then(|| format!("{} to spend", counted(left.0, "skill point")));
+    let picked_now = (picked.0 > 0).then(|| format!("{} picked", counted(picked.0, "point")));
+    let text = to_spend
+        .into_iter()
+        .chain(picked_now)
+        .collect::<Vec<_>>()
+        .join(" · ");
     glyph::haloed(
         ui.painter(),
         dock.left_center(),

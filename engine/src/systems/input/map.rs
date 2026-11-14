@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap};
 use ui::egui;
 
@@ -556,6 +557,22 @@ pub fn takes_wheel(world: &World, action: InputAction) -> bool {
 
 pub fn input(action: InputAction) -> TextPiece {
     TextPiece::Key(KeyCap::Input(action.into()))
+}
+
+/// A line of hints, each an input followed by what it does, with a dot between one and the next.
+pub fn hints<S: Into<Cow<'static, str>>>(
+    hints: impl IntoIterator<Item = (InputAction, S)>,
+) -> Vec<TextPiece> {
+    hints
+        .into_iter()
+        .enumerate()
+        .flat_map(|(index, (action, does))| {
+            let separator = (index > 0).then(|| TextPiece::text(" · "));
+            separator
+                .into_iter()
+                .chain([input(action), TextPiece::text(does)])
+        })
+        .collect()
 }
 
 impl From<InputAction> for InputRef {

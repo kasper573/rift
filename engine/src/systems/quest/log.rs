@@ -85,8 +85,13 @@ impl MenuTab for QuestsMenuTab {
             world.resource_mut::<Browse>().tab = tab;
         }
     }
-    fn hints(&self) -> &'static [(InputAction, &'static str)] {
-        &[(InputAction::Select, "select")]
+    fn hints(&self, world: &World) -> Vec<(InputAction, &'static str)> {
+        let page = Page::of(world, world.resource::<Browse>().tab);
+        if page.listed(world.resource::<Content>()).is_empty() {
+            Vec::new()
+        } else {
+            vec![(InputAction::Select, "select")]
+        }
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
         let page = Page::of(world, world.resource::<Browse>().tab);

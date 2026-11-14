@@ -8,9 +8,9 @@ use crate::core::content::Content;
 use crate::core::content::ImageRef;
 use crate::core::gui::ImageSource;
 use crate::core::math::ColorGradient;
-use crate::core::text::{StyledLine, TextPiece};
+use crate::core::text::StyledLine;
 use crate::systems::hud::{self, Carried};
-use crate::systems::input::map::{self, InputAction, InputMap, input};
+use crate::systems::input::map::{self, InputAction, InputMap};
 use crate::systems::item::rarity::ItemRarityId;
 use crate::systems::item::{
     DropItemRequest, Inventory, ItemDef, ItemId, ItemModuleKind, ItemStack, card,
@@ -69,6 +69,37 @@ pub fn slot_action(app: &mut App, slot_action: SlotAction) {
         .get_resource_or_init::<SlotActions>()
         .0
         .push(slot_action);
+}
+
+/// Which inputs do something to what the player's character carries right now: there is an item
+/// each could act on, and nothing has taken the input over.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CarriedInputs {
+    pub uses: bool,
+    pub carries: bool,
+    pub drops: bool,
+    pub inspects: bool,
+}
+
+impl CarriedInputs {
+    pub fn of(world: &World) -> CarriedInputs {
+        let Some(inventory) = session::my_character(world).and_then(|me| me.get::<Inventory>())
+        else {
+            return CarriedInputs::default();
+        };
+        let content = world.resource::<Content>();
+        let map = world.resource::<InputMap>();
+        let takeovers = active_slot_actions(world);
+        let free = |action| !shadowed(map, &takeovers, action);
+        let carried = || inventory.slots.iter().map(|stack| stack.item.get(content));
+        CarriedInputs {
+            uses: free(InputAction::UseItem) && carried().any(|def| card::use_verb(def).is_some()),
+            carries: !inventory.slots.is_empty(),
+            drops: free(InputAction::DropItem)
+                && carried().any(|def| !def.has(ItemModuleKind::Bound)),
+            inspects: free(InputAction::InspectItem) && !inventory.slots.is_empty(),
+        }
+    }
 }
 
 pub fn pane_width(columns: u32) -> f32 {
@@ -394,7 +425,7 @@ fn bag_slot(ui: &mut Ui, world: &mut World, cell: &CellData, selected: Option<&m
         drag::carry(ui.ctx(), Carried::BagSlot(cell.slot));
     }
     let notes = filled.notes.iter().cloned().chain(verdict);
-    let hint = StyledLine::new(hint_pieces(&filled.hints));
+    let hint = StyledLine::new(map::hints(filled.hints.iter().cloned()));
     card::tooltip_noted(world, &response, filled.stack.item, notes, Some(&hint));
     if let Some(selected) = selected
         && map::clicked(world, InputAction::Select, &response)
@@ -475,36 +506,26 @@ fn active_slot_actions(world: &World) -> Vec<SlotAction> {
         .unwrap_or_default()
 }
 
+/// Whether something that takes inventory slots over right now answers a binding of `action`,
+/// which then does nothing of its own.
+fn shadowed(map: &InputMap, takeovers: &[SlotAction], action: InputAction) -> bool {
+    takeovers.iter().any(|takeover| {
+        map.bindings(takeover.action)
+            .iter()
+            .any(|binding| map.bindings(action).contains(binding))
+    })
+}
+
 fn hints(map: &InputMap, takeovers: &[SlotAction], def: &ItemDef) -> Vec<(InputAction, String)> {
-    let shadowed = |action: InputAction| {
-        takeovers.iter().any(|takeover| {
-            map.bindings(takeover.action)
-                .iter()
-                .any(|binding| map.bindings(action).contains(binding))
-        })
-    };
-    let inspect = (!shadowed(InputAction::InspectItem))
+    let inspect = (!shadowed(map, takeovers, InputAction::InspectItem))
         .then(|| (InputAction::InspectItem, " for more information".to_owned()));
     let usage = card::use_verb(def)
-        .filter(|_| !shadowed(InputAction::UseItem))
+        .filter(|_| !shadowed(map, takeovers, InputAction::UseItem))
         .map(|verb| (InputAction::UseItem, format!(" to {verb}")));
     takeovers
         .iter()
         .map(|takeover| (takeover.action, format!(" to {}", takeover.verb)))
         .chain(inspect)
         .chain(usage)
-        .collect()
-}
-
-fn hint_pieces(hints: &[(InputAction, String)]) -> Vec<TextPiece> {
-    hints
-        .iter()
-        .enumerate()
-        .flat_map(|(index, (action, purpose))| {
-            let separator = (index > 0).then(|| TextPiece::text(" · "));
-            separator
-                .into_iter()
-                .chain([input(*action), TextPiece::text(purpose.clone())])
-        })
         .collect()
 }

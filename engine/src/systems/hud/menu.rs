@@ -24,8 +24,9 @@ pub trait MenuTab: Send + Sync {
         None
     }
     fn choose_sub_tab(&self, _world: &mut World, _chosen: usize) {}
-    fn hints(&self) -> &'static [(InputAction, &'static str)] {
-        &[]
+    /// The inputs that do something on the tab as it stands, and what each does.
+    fn hints(&self, _world: &World) -> Vec<(InputAction, &'static str)> {
+        Vec::new()
     }
     fn show(&self, ui: &mut Ui, world: &mut World);
 }
@@ -292,9 +293,9 @@ fn strip(world: &mut World) -> Vec<Tab<MenuTabName>> {
 fn hints(ui: &mut Ui, world: &World, tab: &dyn MenuTab) {
     let keys = world.resource::<InputMap>();
     let named: Vec<(String, &str)> = tab
-        .hints()
-        .iter()
-        .filter_map(|&(action, does)| Some((keys.name(action)?, does)))
+        .hints(world)
+        .into_iter()
+        .filter_map(|(action, does)| Some((keys.name(action)?, does)))
         .collect();
     let hints: Vec<KeyHint> = named
         .iter()

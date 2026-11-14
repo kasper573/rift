@@ -6,7 +6,8 @@ use crate::systems::equipment;
 use crate::systems::hud::menu::{MenuTab, MenuTabName};
 use crate::systems::input::map::InputAction;
 use crate::systems::interface::InterfaceIcon;
-use crate::systems::item::widget::{InventoryPane, inventory_pane};
+use crate::systems::item::widget::{CarriedInputs, InventoryPane, inventory_pane};
+use crate::systems::player::session;
 use crate::systems::stat;
 
 pub struct CharacterMenuTab;
@@ -21,13 +22,31 @@ impl MenuTab for CharacterMenuTab {
     fn opens(&self) -> InputAction {
         InputAction::OpenCharacter
     }
-    fn hints(&self) -> &'static [(InputAction, &'static str)] {
-        &[
-            (InputAction::UseItem, "use, wear or take off"),
-            (InputAction::CarryItem, "carry, or put on the bar"),
-            (InputAction::DropItem, "drop"),
-            (InputAction::InspectItem, "open the card"),
+    fn hints(&self, world: &World) -> Vec<(InputAction, &'static str)> {
+        let carried = CarriedInputs::of(world);
+        let worn = session::me(world).is_some_and(|me| equipment::worn(world, me).next().is_some());
+        [
+            (
+                InputAction::UseItem,
+                "use, wear or take off",
+                carried.uses || worn,
+            ),
+            (
+                InputAction::CarryItem,
+                "carry, or put on the bar",
+                carried.carries || worn,
+            ),
+            (InputAction::DropItem, "drop", carried.drops),
+            (
+                InputAction::InspectItem,
+                "open the card",
+                carried.inspects || worn,
+            ),
         ]
+        .into_iter()
+        .filter(|(_, _, does)| *does)
+        .map(|(action, does, _)| (action, does))
+        .collect()
     }
     fn show(&self, ui: &mut Ui, world: &mut World) {
         let room = ui.available_rect_before_wrap();
